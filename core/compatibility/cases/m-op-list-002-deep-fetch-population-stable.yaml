@@ -9,7 +9,7 @@ when:
     - objectQuery:
         target: parallax.compatibility.Order
         predicate:
-          all: {}
+          "true": {}
       roundTrips: 1
       note: the root orders
       statements:

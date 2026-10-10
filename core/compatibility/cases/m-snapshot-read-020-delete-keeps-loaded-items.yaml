@@ -13,7 +13,7 @@ when:
         target: parallax.compatibility.Order
         predicate:
           eq:
-            attr: parallax.compatibility.Order.id
+            path: parallax.compatibility.Order.id
             value: 1
         includes:
           - segments:
@@ -54,7 +54,7 @@ when:
         target: parallax.compatibility.OrderItem
         predicate:
           eq:
-            attr: parallax.compatibility.OrderItem.orderId
+            path: parallax.compatibility.OrderItem.orderId
             value: 1
       roundTrips: 1
       note: observing the write means issuing another read - the same relationship's rows, re-read, hold item 12 alone

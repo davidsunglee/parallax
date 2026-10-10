@@ -32,7 +32,7 @@ def _forward_plan(target: str, relationship: str) -> deep_fetch.ObjectQueryPlan:
     query = deserialize(
         {
             "target": target,
-            "predicate": {"all": {}},
+            "predicate": {"true": {}},
             "includes": [{"segments": [{"rel": relationship}]}],
         }
     )

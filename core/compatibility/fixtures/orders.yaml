@@ -13,7 +13,7 @@
 # Phase 3 adds OrderItem and OrderStatus rows so relationship navigation and deep
 # fetch have a graph to traverse. The shape is chosen so the relationships fan
 # out unevenly (some orders have items, some don't; some items have statuses,
-# some don't), which makes navigate / exists / deep-fetch results discriminating.
+# some don't), which makes quantifier / presence / deep-fetch results discriminating.
 parallax.compatibility.Order:
   - id: 1
     name: Ada

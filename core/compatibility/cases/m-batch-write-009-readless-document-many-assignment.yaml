@@ -13,7 +13,9 @@ when:
         target:
           entity: parallax.compatibility.Traveler
           predicate:
-            lessThan: { attr: parallax.compatibility.Traveler.id, value: 3 }
+            lessThan:
+              path: parallax.compatibility.Traveler.id
+              value: 3
         assignments:
           - attr: parallax.compatibility.Traveler.tags
             value:

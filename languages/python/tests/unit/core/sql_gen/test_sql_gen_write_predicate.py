@@ -44,7 +44,7 @@ POSITION = model("position")
 # --------------------------------------------------------------------------- #
 def test_comparison_renders_the_column_unaliased() -> None:
     predicate = compile_write_predicate(
-        oa.Comparison(op="lessThan", attr="Account.balance", value="100.00"),
+        oa.Comparison(op="lessThan", subject=oa.FieldSubject("Account.balance"), value="100.00"),
         ACCOUNT,
         POSTGRES,
         target(ACCOUNT, "Account"),
@@ -58,7 +58,7 @@ def test_the_rendered_fragment_is_a_predicate_not_a_statement() -> None:
     # A bare fragment: no `select`, no `from`, no owning table alias anywhere —
     # it is spliced into `update <table> set … where <fragment>` by the caller.
     predicate = compile_write_predicate(
-        oa.Comparison(op="lessThan", attr="Account.balance", value="100.00"),
+        oa.Comparison(op="lessThan", subject=oa.FieldSubject("Account.balance"), value="100.00"),
         ACCOUNT,
         POSTGRES,
         target(ACCOUNT, "Account"),
@@ -74,10 +74,10 @@ def test_all_renders_the_empty_fragment_and_none_renders_unsatisfiable() -> None
     # part of the seam, so equality against a freshly constructed literal pins
     # BOTH members at once and would catch a silently reordered pair.
     assert compile_write_predicate(
-        oa.All(), ACCOUNT, POSTGRES, target(ACCOUNT, "Account")
+        oa.TrueNode(), ACCOUNT, POSTGRES, target(ACCOUNT, "Account")
     ) == CompiledPredicate("", ())
     assert compile_write_predicate(
-        oa.NoneOp(), ACCOUNT, POSTGRES, target(ACCOUNT, "Account")
+        oa.FalseNode(), ACCOUNT, POSTGRES, target(ACCOUNT, "Account")
     ) == CompiledPredicate("1 = 0", ())
 
 
@@ -87,7 +87,7 @@ def test_a_current_row_term_binds_managed_infinity_and_publishes_its_literal() -
         position,
         object_query(
             position.identity,
-            oa.All(),
+            oa.TrueNode(),
             temporal={"valid-time": AsOf("latest"), "transaction-time": AsOf("latest")},
         ),
         POSITION,
@@ -113,40 +113,44 @@ def test_a_current_row_term_binds_managed_infinity_and_publishes_its_literal() -
     "op, expected_sql, expected_binds",
     [
         (
-            oa.Comparison(op="greaterThan", attr="Account.balance", value="5.00"),
+            oa.Comparison(
+                op="greaterThan", subject=oa.FieldSubject("Account.balance"), value="5.00"
+            ),
             "balance > ?",
             (Decimal("5.00"),),
         ),
         (
-            oa.Between(attr="Account.balance", lower="1.00", upper="9.00"),
+            oa.Range(subject=oa.FieldSubject("Account.balance"), lower="1.00", upper="9.00"),
             "balance between ? and ?",
             (Decimal("1.00"), Decimal("9.00")),
         ),
         (
-            oa.Membership(op="in", attr="Account.id", values=(1, 2)),
+            oa.Membership(op="in", subject=oa.FieldSubject("Account.id"), values=(1, 2)),
             "id in (?, ?)",
             (1, 2),
         ),
         (
-            oa.StringMatch(op="startsWith", attr="Account.owner", value="A"),
+            oa.StringMatch(op="startsWith", subject=oa.FieldSubject("Account.owner"), value="A"),
             "owner like ?",
             ("A%",),
         ),
         (
-            oa.StringMatch(op="contains", attr="Account.owner", value="A"),
+            oa.StringMatch(op="contains", subject=oa.FieldSubject("Account.owner"), value="A"),
             "owner like ?",
             ("%A%",),
         ),
         (
-            oa.Not(operand=oa.Comparison(op="eq", attr="Account.owner", value="a")),
+            oa.Not(
+                operand=oa.Comparison(op="eq", subject=oa.FieldSubject("Account.owner"), value="a")
+            ),
             "not owner = ?",
             ("a",),
         ),
         (
             oa.Or(
                 operands=(
-                    oa.Comparison(op="eq", attr="Account.owner", value="a"),
-                    oa.Comparison(op="eq", attr="Account.owner", value="b"),
+                    oa.Comparison(op="eq", subject=oa.FieldSubject("Account.owner"), value="a"),
+                    oa.Comparison(op="eq", subject=oa.FieldSubject("Account.owner"), value="b"),
                 )
             ),
             "owner = ? or owner = ?",
@@ -156,8 +160,12 @@ def test_a_current_row_term_binds_managed_infinity_and_publishes_its_literal() -
             oa.Group(
                 operand=oa.Or(
                     operands=(
-                        oa.Comparison(op="eq", attr="Account.owner", value="a"),
-                        oa.Not(operand=oa.Comparison(op="eq", attr="Account.owner", value="b")),
+                        oa.Comparison(op="eq", subject=oa.FieldSubject("Account.owner"), value="a"),
+                        oa.Not(
+                            operand=oa.Comparison(
+                                op="eq", subject=oa.FieldSubject("Account.owner"), value="b"
+                            )
+                        ),
                     )
                 )
             ),
@@ -189,9 +197,11 @@ def test_write_predicate_binds_follow_operand_order() -> None:
     predicate = compile_write_predicate(
         oa.And(
             operands=(
-                oa.Comparison(op="lessThan", attr="Account.balance", value="100.00"),
-                oa.Comparison(op="eq", attr="Account.owner", value="ada"),
-                oa.Comparison(op="eq", attr="Account.version", value=3),
+                oa.Comparison(
+                    op="lessThan", subject=oa.FieldSubject("Account.balance"), value="100.00"
+                ),
+                oa.Comparison(op="eq", subject=oa.FieldSubject("Account.owner"), value="ada"),
+                oa.Comparison(op="eq", subject=oa.FieldSubject("Account.version"), value=3),
             )
         ),
         ACCOUNT,
@@ -208,11 +218,22 @@ def test_navigation_correlates_an_aliased_subquery_against_the_unaliased_owner()
     # correlation's OWNER side stays unaliased — the readless `delete from orders
     # where exists (...)` shape.
     predicate = compile_write_predicate(
-        oa.Exists(rel="Order.items"), ORDERS, POSTGRES, target(ORDERS, "Order")
+        oa.Quantifier("any", "Order.items"), ORDERS, POSTGRES, target(ORDERS, "Order")
     )
     sql, binds = predicate.sql, predicate.binds
     assert sql == "exists (select 1 from order_item t1 where t1.order_id = id)"
     assert binds == ()
+
+
+def test_a_to_one_hop_correlates_its_scalar_subquery_against_the_unaliased_owner() -> None:
+    predicate = compile_write_predicate(
+        oa.Comparison(op="eq", subject=oa.FieldSubject("OrderItem.order.name"), value="Ada"),
+        ORDERS,
+        POSTGRES,
+        target(ORDERS, "OrderItem"),
+    )
+    assert predicate.sql == "(select t1.name from orders t1 where t1.id = order_id) = ?"
+    assert predicate.binds == ("Ada",)
 
 
 def test_value_object_document_column_renders_unaliased() -> None:
@@ -224,7 +245,7 @@ def test_value_object_document_column_renders_unaliased() -> None:
     # an alias the statement never declares (m-sql rule 1: DML is unaliased with
     # bare columns).
     predicate = compile_write_predicate(
-        oa.NestedComparison(op="nestedEq", path="Customer.address.city", value="Boston"),
+        oa.Comparison(op="eq", subject=oa.FieldSubject("Customer.address.city"), value="Boston"),
         CUSTOMER,
         POSTGRES,
         target(CUSTOMER, "Customer"),
@@ -235,7 +256,7 @@ def test_value_object_document_column_renders_unaliased() -> None:
     # The read lane is the control: identical but for the alias qualification, so
     # this pins the DIFFERENCE rather than merely the write's own text.
     read = compile_read(
-        oa.NestedComparison(op="nestedEq", path="Customer.address.city", value="Boston"),
+        oa.Comparison(op="eq", subject=oa.FieldSubject("Customer.address.city"), value="Boston"),
         CUSTOMER,
         POSTGRES,
         target(CUSTOMER, "Customer"),
@@ -252,8 +273,12 @@ def test_to_many_value_object_traversal_keeps_only_its_own_element_alias() -> No
     # the owning document column must go bare, exactly as the navigation hop above
     # keeps `t1` and drops the owner's alias.
     for op in (
-        oa.NestedComparison(op="nestedEq", path="Customer.address.phones.number", value="555"),
-        oa.NestedExists(path="Customer.address.phones"),
+        oa.Quantifier(
+            "any",
+            "Customer.address.phones",
+            oa.Comparison(op="eq", subject=oa.FieldSubject("number"), value="555"),
+        ),
+        oa.Quantifier("none", "Customer.address.phones"),
     ):
         sql = compile_write_predicate(op, CUSTOMER, POSTGRES, target(CUSTOMER, "Customer")).sql
         assert "t0." not in sql
@@ -279,7 +304,9 @@ def test_inheritance_tag_guard_renders_unaliased() -> None:
     # `EntityScope.own_column` now rather than trusting a caller.
     op = oa.Narrow(
         to=("CardPayment",),
-        operand=oa.Comparison(op="eq", attr="CardPayment.cardNetwork", value="Visa"),
+        operand=oa.Comparison(
+            op="eq", subject=oa.FieldSubject("CardPayment.cardNetwork"), value="Visa"
+        ),
     )
     predicate = compile_write_predicate(op, PAYMENT, POSTGRES, target(PAYMENT, "CardPayment"))
     sql, binds = predicate.sql, predicate.binds
@@ -311,9 +338,9 @@ def test_inheritance_tag_guard_renders_unaliased() -> None:
 # Refusals — identical to the read lane's, since it is the same dispatcher.   #
 # --------------------------------------------------------------------------- #
 def test_unbound_attribute_is_refused() -> None:
-    with pytest.raises(ValueError, match="names no declared attribute"):
+    with pytest.raises(ValueError, match="names no declared member"):
         compile_write_predicate(
-            oa.Comparison(op="eq", attr="Account.mystery", value=1),
+            oa.Comparison(op="eq", subject=oa.FieldSubject("Account.mystery"), value=1),
             ACCOUNT,
             POSTGRES,
             target(ACCOUNT, "Account"),

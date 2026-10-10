@@ -1446,7 +1446,7 @@ no translation alias is conforming.
     target:
       entity: Account
       predicate:
-        lessThan: { attr: Account.balance, value: 200.00 }
+        lessThan: { path: Account.balance, value: 200.00 }
     assignments:
       - { attr: Account.balance, value: 100.00 }
   roundTrips: 1
@@ -2341,8 +2341,8 @@ instruction itself — its verb, its target, and its row count together — is t
 input under test rather than a row's contents.
 
 `then.rejectedRule` is a **closed vocabulary**, each identifier naming a normative
-MUST — the `m-predicate` predicate rules (bound ordering, and the
-nested-predicate resolver), the `m-value-object` materialization/navigation and
+MUST — the `m-predicate` predicate rules (bound ordering, and the path and
+scope resolver), the `m-value-object` materialization/navigation and
 write-validation contracts, and accepted-model formation rules. **Predicate**
 rules:
 
@@ -2357,27 +2357,33 @@ rules:
   same resolved declaration, the managed `lower` value is strictly greater than
   the managed `upper` value, so the range is empty by construction
   (`m-predicate` bound ordering).
-- `null-check-non-nullable-member` — an `isNull` / `isNotNull`, nested null
-  check, or element-relative null check resolves to a leaf whose declaration is
-  non-nullable, so the model-aware resolver rejects the predicate before SQL.
+- `null-check-non-nullable-member` — an `isNull` / `isNotNull` resolves to a
+  field whose declaration is non-nullable, so the model-aware resolver rejects the
+  predicate before SQL.
 - `scalar-collection-unquantified` — a comparison, range, membership, or string
-  predicate, at any scope, or an Object Query Sort Key resolves to a scalar
+  predicate on a field, or an Object Query Sort Key, resolves to a scalar
   collection rather than one scalar value (`m-predicate`, `m-object-query`).
-- `nested-path-first-segment-not-value-object` — a nested path's first segment names
-  no value object declared on the queried entity (`m-predicate`).
-- `nested-path-unknown-member` — an intermediate segment names no declared nested
-  value object, or the leaf names no declared attribute (`m-predicate`).
-- `nested-string-predicate-non-string-member` — a nested string predicate
-  (`nestedLike` / `nestedNotLike` / `nestedStartsWith` / `nestedEndsWith` /
-  `nestedContains`, in either nested scope) resolves to a leaf whose declared neutral
-  type is not `String` (`m-predicate` non-string-member rule). Checked **before**
-  the typed-literal rule, so a `date` / `time` / `timestamp` / `uuid` / `bytes`
-  member — which carries the portable `string` literal and so satisfies the
-  typed-literal check — is named here rather than silently accepted.
+- `path-unknown-member` — a predicate path segment names no member declared at
+  its position, or continues past a scalar field (`m-predicate`).
+- `path-crosses-many` — a predicate path continues past a member holding many
+  objects — a `many` value object or a to-many relationship — instead of binding
+  it with a quantifier (`m-predicate`).
+- `path-target-kind-mismatch` — a path ends on a member of the wrong kind for its
+  node: a quantifier over a single object or scalar, a presence test of a
+  collection or scalar, a path-targeted `narrow` of anything but a to-one
+  relationship, or a scalar operation on an object (`m-predicate`).
+- `predicate-subject-outside-scope` — a subject's form does not match its scope:
+  a subjectless operation outside a scalar-collection quantifier, a field path
+  inside one, an Entity-qualified path inside a bound scope, a relative path at
+  the queried position, or a `narrow` of a bound element (`m-predicate`).
+- `string-predicate-non-string-member` — a string predicate resolves to a field
+  or element whose declared neutral type is not `String` (`m-predicate`
+  non-string-member rule). Checked **before** the typed-literal rule, so a
+  `date` / `time` / `timestamp` / `uuid` / `bytes` member — which carries the
+  portable `string` literal and so satisfies the typed-literal check — is named
+  here rather than silently accepted.
 - `deep-fetch-value-object-segment` — an Include Path segment names a value
   object (`m-value-object` contract 4, `m-deep-fetch`).
-- `navigate-value-object-target` — a `navigate` / `exists` / `notExists` targets a
-  value object (`m-value-object` contract 4, `m-navigate`).
 - `find-root-value-object` — a `find()` is rooted at a value object
   (`m-value-object` contract 5).
 - `subtype-selection-duplicate-alternative` — one Subtype Selection repeats the
@@ -2545,7 +2551,7 @@ invalid models out of the reusable model registry while making each boundary
 executable.
 
 Purely **regex-level** negatives — an empty path after the value-object name, a
-bad-cased segment — are the Predicate schema's job (the `nestedRef` grammar) and
+bad-cased segment — are the Predicate schema's job (the predicate path grammar) and
 stay **schema-validation unit tests**, never `rejected` cases: a syntactically
 malformed query is refused at layer 1 (schema conformance) before a model-aware
 resolver ever runs. Likewise, purely **schema-expressible per-entity** inheritance negatives (a

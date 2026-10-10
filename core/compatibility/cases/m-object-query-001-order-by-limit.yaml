@@ -1,4 +1,4 @@
-# orderBy + limit — directives composed over `all`.
+# orderBy + limit — directives composed over `true`.
 model: models/orders.yaml
 tags: [m-object-query, m-predicate, orderBy, limit, directive, slice-snapshot-1, slice-managed-1]
 shape: read
@@ -6,7 +6,7 @@ when:
   objectQuery:
     target: parallax.compatibility.Order
     predicate:
-      all: {}
+      "true": {}
     orderBy:
       - attr: parallax.compatibility.Order.qty
         direction: desc

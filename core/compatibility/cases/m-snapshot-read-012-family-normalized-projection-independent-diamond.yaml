@@ -13,7 +13,7 @@ when:
     target: parallax.compatibility.Person
     predicate:
       eq:
-        attr: parallax.compatibility.Person.id
+        path: parallax.compatibility.Person.id
         value: 10
     includes:
       - segments:

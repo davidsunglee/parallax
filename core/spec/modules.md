@@ -117,7 +117,7 @@ is both `active` and `cases`-covered has at least one tagged fixture.
 | `m-dialect` | Pure dialect rules (quoting, lock suffix, casing) | active | cases |
 | `m-db-port` | Database execution port | active | contract |
 | `m-db-error` | Database error classification | active | cases |
-| `m-navigate` | Relationship navigation & semi-join (incl. polymorphic targets) | active | cases |
+| `m-navigate` | Relationship navigation: quantified and single-valued traversal (incl. polymorphic targets) | active | cases |
 | `m-deep-fetch` | Deep fetch (N+1 elimination) & narrowed relationship views | active | cases |
 | `m-read-delivery` | Read planning, Page assembly, stored-data judgement, and whole or streamed delivery | active | cases |
 | `m-snapshot-read` | Snapshot graph publication (plain value graphs) | active | cases |
@@ -411,29 +411,30 @@ construction it may reference any behavioral module it harnesses.
   equality as document containment — the containment candidate. The direction is
   one-way: the codec knows nothing about SQL, extraction, or casting, and the cast
   decision itself stays a `m-dialect` one.
-- **`m-sql --> m-relationship`.** A navigation hop lowers to a correlated
-  semi-join whose columns come from the relationship's join predicate. The
+- **`m-sql --> m-relationship`.** A relationship hop lowers to a correlated
+  sub-select or scalar subquery whose columns come from the relationship's join
+  predicate. The
   Relationship Facet is the one place a reverse direction's swapped join exists,
   so SQL lowering reads the compiled direction rather than re-pairing a reverse
   declaration with its defining peer and exchanging the sides itself.
-- **`m-op-list --> m-deep-fetch`.** A navigation filter is a *predicate*
-  (semi-join) and yields no list; deep fetch is a pure per-level fetch
+- **`m-op-list --> m-deep-fetch`.** A relationship predicate is a *predicate*
+  and yields no list; deep fetch is a pure per-level fetch
   algorithm. The lifecycle result surfaces — query-backed lists for the
   managed lifecycle, snapshot graphs for the plain-value lifecycle — sit
   *above* it and are populated by it, mirroring the documented
   `m-snapshot-read --> m-deep-fetch` bullet below: the two are peers, and
   neither depends on the other.
-- **`m-navigate --> m-predicate`.** Navigation's `navigate`/`exists`/
-  `notExists` nodes are algebra vocabulary, so navigation references the
-  algebra directly; before this edge, `m-predicate` was reachable from
+- **`m-navigate --> m-predicate`.** The quantifiers, presence tests, and dotted
+  to-one paths navigation gives behavior are algebra vocabulary, so navigation
+  references the algebra directly; before this edge, `m-predicate` was reachable from
   navigate only transitively, through the now-removed `m-navigate -->
   m-op-list` edge.
 - **`m-navigate --> m-inheritance`.** A relationship target may be a **polymorphic
   position** (`m-inheritance`): navigation resolves it to its effective
   concrete-subtype set (single-`EXISTS` interior tag predicate under
   table-per-hierarchy, grouped-`OR` per-branch `EXISTS` under
-  table-per-concrete-subtype), and a relationship-scope `narrow` must stay within
-  it. Navigation therefore references the inheritance family model directly.
+  table-per-concrete-subtype, and every declared candidate for a to-one hop), and a
+  relationship-scope `narrow` must stay within it. Navigation therefore references the inheritance family model directly.
 - **`m-deep-fetch --> m-inheritance`.** Deep fetch owns narrowed relationship
   views and their derived keys, so it resolves an Include Segment's Subtype
   Selection to its effective concrete set and orders that set canonically —

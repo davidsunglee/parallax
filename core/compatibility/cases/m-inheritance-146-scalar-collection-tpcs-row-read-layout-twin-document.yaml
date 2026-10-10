@@ -5,7 +5,7 @@ when:
   objectQuery:
     target: parallax.compatibility.TagKit
     predicate:
-      all: {}
+      "true": {}
     orderBy:
       - attr: parallax.compatibility.TagKit.id
         direction: asc

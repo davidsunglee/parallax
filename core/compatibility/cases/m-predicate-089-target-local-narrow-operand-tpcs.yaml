@@ -1,0 +1,22 @@
+# With an operand over a table-per-concrete-subtype target, the selected branch reads
+# its own field and the unselected one answers false: a car with more than two seats.
+model: models/predicate-traversal.yaml
+tags: [m-predicate, narrow, relationship, to-one, m-inheritance, table-per-concrete-subtype, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  objectQuery:
+    target: parallax.compatibility.Parking
+    predicate:
+      narrow:
+        path: parallax.compatibility.Parking.vehicle
+        to: [parallax.compatibility.Car]
+        operand:
+          greaterThan: {path: seats, value: 2}
+then:
+  statements:
+  - sql: {postgres: 'select t0.id, t0.vehicle_id from traversal_parking t0 where (coalesce((select array [ false ] from traversal_bike t1 where t1.id = t0.vehicle_id union all select array [ t2.seats > ? ] from traversal_car t2 where t2.id = t0.vehicle_id), array [ false ])) [ 1 ]'}
+    binds: [2]
+  referenceSql: select id, vehicle_id from traversal_parking where vehicle_id in (select id from traversal_car where seats > 2)
+  rows:
+  - {id: 30, vehicle_id: 5}
+  roundTrips: 1

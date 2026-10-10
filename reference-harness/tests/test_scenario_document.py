@@ -38,7 +38,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 _CORE = _REPO_ROOT / "core"
 _CASE_SCHEMA = load_schemas(_CORE)["compatibility-case.schema.json"]
 
-_QUERY = {"target": "Position", "predicate": {"all": {}}}
+_QUERY = {"target": "Position", "predicate": {"true": {}}}
 _FIND = {"uow": "g", "objectQuery": _QUERY}
 _OTHER_FIND = {"uow": "h", "objectQuery": _QUERY}
 _WRITE = {"uow": "g", "write": [{"mutation": "amend", "entity": "Position", "rows": [{"id": 1}]}]}

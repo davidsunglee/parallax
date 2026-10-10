@@ -6,7 +6,7 @@ implementation returns from a set-based query. Per the dependency graph,
 `m-unit-work` (it resolves within a unit of work), and `m-deep-fetch` (a lazy
 list is *populated by* deep fetch — the same relationship `m-snapshot-read`
 has with deep fetch). Lists sit *above* the shared fetch algorithm, not
-underneath it: a navigation node used as a predicate is a semi-join and yields
+underneath it: a relationship predicate is a correlated sub-select and yields
 no list, so `m-navigate` carries no edge to `m-op-list` at all; deep fetch
 populates the list instead, and this module's contract is what makes that
 population's round-trip guarantees observable.

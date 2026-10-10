@@ -1,7 +1,8 @@
-# valueObject to-many affix match: nestedEndsWith through a `many` segment places the
-# LEADING wildcard, the mirror of m-value-object-058 (m-predicate wildcard rule +
-# any-element, m-sql). Postgres golden only — a non-equality element predicate is outside
-# MariaDB's containment scope (m-dialect, "Scope of the containment golden").
+# valueObject to-many affix match: `endsWith` inside an `any` places the LEADING
+# wildcard, the mirror of m-value-object-058 (m-predicate wildcard rule +
+# quantifiers, m-sql). Postgres golden only — a non-equality element predicate is
+# outside MariaDB's containment scope (m-dialect, "Scope of the containment
+# golden").
 model: models/customer.yaml
 tags: [m-value-object, m-predicate, m-sql, m-dialect, nested, json, to-many, any-element, string, endsWith, array-traversal, slice-snapshot-1, slice-managed-1]
 shape: read
@@ -9,9 +10,12 @@ when:
   objectQuery:
     target: parallax.compatibility.Customer
     predicate:
-      nestedEndsWith:
-        path: parallax.compatibility.Customer.address.phones.number
-        value: '9999'
+      any:
+        path: parallax.compatibility.Customer.address.phones
+        where:
+          endsWith:
+            path: number
+            value: '9999'
 then:
   statements:
     - sql:

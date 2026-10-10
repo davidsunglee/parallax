@@ -11,7 +11,7 @@ when:
   objectQuery:
     target: parallax.compatibility.MemberColumnDefaults
     predicate:
-      all: {}
+      "true": {}
 then:
   statements:
     - sql:

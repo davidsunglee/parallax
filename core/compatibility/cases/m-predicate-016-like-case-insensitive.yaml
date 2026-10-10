@@ -8,7 +8,7 @@ when:
     target: parallax.compatibility.Order
     predicate:
       like:
-        attr: parallax.compatibility.Order.name
+        path: parallax.compatibility.Order.name
         value: ada
         caseInsensitive: true
 then:

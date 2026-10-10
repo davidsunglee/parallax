@@ -20,7 +20,7 @@ when:
   objectQuery:
     target: parallax.compatibility.ClassificationTwinItem
     predicate:
-      all: {}
+      "true": {}
     orderBy:
       - attr: parallax.compatibility.ClassificationTwinItem.id
         direction: asc

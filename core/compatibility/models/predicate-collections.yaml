@@ -1,0 +1,84 @@
+# Collection quantifiers and single-valued traversal (m-predicate).
+#
+# A Basket holds scalar collections of four element types, a `many` value object
+# whose elements hold a scalar collection of their own, and a nullable single value
+# object holding one. Its to-one `owner` reaches an Owner, whose nullable `active`
+# and own scalar collection give dotted traversal an absent hop, an unknown field,
+# and a collection reached through a single; an Owner's to-one `manager` reaches
+# another Owner for a second hop, and its to-many `baskets` is quantified back.
+entities:
+  - name: Basket
+    namespace: parallax.compatibility
+    table: basket
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+      - name: label
+        type: string
+        maxLength: 32
+      - name: ownerId
+        type: int64
+        nullable: true
+      - name: tags
+        type: string
+        multiplicity: many
+      - name: scores
+        type: int64
+        multiplicity: many
+      - name: prices
+        type: decimal(8,2)
+        multiplicity: many
+      - name: flags
+        type: boolean
+        multiplicity: many
+    valueObjects:
+      - name: parcels
+        multiplicity: many
+        attributes:
+          - name: sku
+            type: string
+          - name: qty
+            type: int32
+          - name: notes
+            type: string
+            multiplicity: many
+      - name: meta
+        nullable: true
+        attributes:
+          - name: labels
+            type: string
+            multiplicity: many
+    relationships:
+      - name: owner
+        cardinality: many-to-one
+        join:
+          source: ownerId
+          target: { entity: parallax.compatibility.Owner, attribute: id }
+  - name: Owner
+    namespace: parallax.compatibility
+    table: basket_owner
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+      - name: name
+        type: string
+        maxLength: 32
+      - name: active
+        type: boolean
+        nullable: true
+      - name: managerId
+        type: int64
+        nullable: true
+      - name: tags
+        type: string
+        multiplicity: many
+    relationships:
+      - name: manager
+        cardinality: many-to-one
+        join:
+          source: managerId
+          target: { entity: parallax.compatibility.Owner, attribute: id }
+      - name: baskets
+        reverseOf: parallax.compatibility.Basket.owner

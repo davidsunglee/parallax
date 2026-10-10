@@ -37,7 +37,7 @@ from tests.unit._transact_support import CONTACT, FIND_SQL_UNLOCKED, PAYMENT, ac
 _ACCOUNT_ROW: MappingRow = {"id": 1, "owner": "Ada", "balance": Decimal("100.00"), "version": 3}
 _ACCOUNT_QUERY: dict[str, object] = {
     "target": "Account",
-    "predicate": {"eq": {"attr": "Account.id", "value": 1}},
+    "predicate": {"eq": {"path": "Account.id", "value": 1}},
 }
 _CONTACT_ROW: MappingRow = {
     "id": 1,
@@ -48,7 +48,7 @@ _CONTACT_ROW: MappingRow = {
 }
 _CONTACT_QUERY: dict[str, object] = {
     "target": "parallax.compatibility.Contact",
-    "predicate": {"eq": {"attr": "parallax.compatibility.Contact.id", "value": 1}},
+    "predicate": {"eq": {"path": "parallax.compatibility.Contact.id", "value": 1}},
 }
 _GATED_FULL = POSTGRES.to_driver_sql(
     "update account set owner = ?, balance = ?, version = ? where id = ? and version = ?"
@@ -103,7 +103,7 @@ def test_editable_data_leaves_derived_variant_metadata_out() -> None:
 
     def fn(tx: Transaction) -> None:
         node = tx.wire.find(
-            {"target": "Payment", "predicate": {"eq": {"attr": "Payment.id", "value": 4}}}
+            {"target": "Payment", "predicate": {"eq": {"path": "Payment.id", "value": 4}}}
         ).result()
         assert node["familyVariant"] == "CardPayment"
         assert tx.wire.editable_data(node) == {"id": 4, "amount": "1.00", "cardNetwork": "visa"}

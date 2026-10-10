@@ -76,7 +76,7 @@ def _publish(page: Page) -> Callable[[RootView, int], Iterator[object]]:
 def _order_read() -> tuple[Metamodel, CatalogedModel, CompiledRead]:
     meta = model_of(ORDERS_MODEL)
     query = preflight(
-        deserialize({"target": "Order", "predicate": {"all": {}}}),
+        deserialize({"target": "Order", "predicate": {"true": {}}}),
         model=meta,
         form="graph",
     )

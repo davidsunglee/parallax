@@ -210,7 +210,7 @@ _INSTRUCTIONS: list[tuple[str, dict[str, Any]]] = [
         "predicate-update-nontemporal",
         {
             "mutation": "amend",
-            "target": {"entity": "Account", "predicate": {"all": {}}},
+            "target": {"entity": "Account", "predicate": {"true": {}}},
             "assignments": [{"attr": "Account.balance", "value": 0.00}],
         },
     ),
@@ -220,7 +220,7 @@ _INSTRUCTIONS: list[tuple[str, dict[str, Any]]] = [
             "mutation": "delete",
             "target": {
                 "entity": "Account",
-                "predicate": {"eq": {"attr": "Account.id", "value": 1}},
+                "predicate": {"eq": {"path": "Account.id", "value": 1}},
             },
         },
     ),
@@ -228,14 +228,14 @@ _INSTRUCTIONS: list[tuple[str, dict[str, Any]]] = [
         "predicate-terminate-audit",
         {
             "mutation": "terminate",
-            "target": {"entity": "Balance", "predicate": {"all": {}}},
+            "target": {"entity": "Balance", "predicate": {"true": {}}},
         },
     ),
     (
         "predicate-update-bitemporal-plain",
         {
             "mutation": "amend",
-            "target": {"entity": "Position", "predicate": {"all": {}}},
+            "target": {"entity": "Position", "predicate": {"true": {}}},
             "assignments": [{"attr": "Position.value", "value": 150.00}],
             "validFrom": _B1,
         },
@@ -244,7 +244,7 @@ _INSTRUCTIONS: list[tuple[str, dict[str, Any]]] = [
         "predicate-updateUntil-bitemporal-bounded",
         {
             "mutation": "amendUntil",
-            "target": {"entity": "Position", "predicate": {"all": {}}},
+            "target": {"entity": "Position", "predicate": {"true": {}}},
             "assignments": [{"attr": "Position.value", "value": 150.00}],
             "validFrom": _B1,
             "until": _B2,
@@ -296,7 +296,7 @@ _INSTRUCTIONS: list[tuple[str, dict[str, Any]]] = [
         "predicate-terminateUntil-bitemporal-bounded",
         {
             "mutation": "terminateUntil",
-            "target": {"entity": "Position", "predicate": {"all": {}}},
+            "target": {"entity": "Position", "predicate": {"true": {}}},
             "validFrom": _B1,
             "until": _B2,
         },
@@ -335,10 +335,10 @@ def test_keyed_rows_are_frozen_views() -> None:
 
 def test_predicate_carries_a_canonical_predicate_node() -> None:
     instruction = wi.deserialize(
-        {"mutation": "delete", "target": {"entity": "Account", "predicate": {"all": {}}}}
+        {"mutation": "delete", "target": {"entity": "Account", "predicate": {"true": {}}}}
     )
     assert isinstance(instruction, wi.PredicateWrite)
-    assert instruction.target.predicate == predicate_algebra.All()
+    assert instruction.target.predicate == predicate_algebra.TrueNode()
 
 
 # --------------------------------------------------------------------------- #
@@ -388,7 +388,7 @@ def test_ambiguous_and_shapeless_instructions_are_rejected() -> None:
                 "mutation": "delete",
                 "entity": "Account",
                 "rows": [{"id": 1}],
-                "target": {"entity": "Account", "predicate": {"all": {}}},
+                "target": {"entity": "Account", "predicate": {"true": {}}},
             }
         )
     with pytest.raises(wi.WriteInstructionError, match=r"`rows`.*`target`.*or `row`"):
@@ -440,13 +440,13 @@ def test_keyed_structural_rejections(doc: dict[str, Any], match: str) -> None:
     "doc, match",
     [
         (
-            {"mutation": "amend", "target": {"entity": "Account", "predicate": {"all": {}}}},
+            {"mutation": "amend", "target": {"entity": "Account", "predicate": {"true": {}}}},
             "MUST carry `assignments`",
         ),
         (
             {
                 "mutation": "delete",
-                "target": {"entity": "Account", "predicate": {"all": {}}},
+                "target": {"entity": "Account", "predicate": {"true": {}}},
                 "assignments": [{"attr": "Account.balance", "value": 0}],
             },
             "MUST NOT carry `assignments`",
@@ -454,7 +454,7 @@ def test_keyed_structural_rejections(doc: dict[str, Any], match: str) -> None:
         (
             {
                 "mutation": "terminate",
-                "target": {"entity": "Balance", "predicate": {"all": {}}},
+                "target": {"entity": "Balance", "predicate": {"true": {}}},
                 "assignments": [{"attr": "Balance.value", "value": 0}],
             },
             "MUST NOT carry `assignments`",
@@ -462,7 +462,7 @@ def test_keyed_structural_rejections(doc: dict[str, Any], match: str) -> None:
         (
             {
                 "mutation": "terminateUntil",
-                "target": {"entity": "Position", "predicate": {"all": {}}},
+                "target": {"entity": "Position", "predicate": {"true": {}}},
                 "assignments": [{"attr": "Position.value", "value": 0}],
                 "validFrom": _B1,
                 "until": _B2,
@@ -470,7 +470,7 @@ def test_keyed_structural_rejections(doc: dict[str, Any], match: str) -> None:
             "MUST NOT carry `assignments`",
         ),
         (
-            {"mutation": "insert", "target": {"entity": "Account", "predicate": {"all": {}}}},
+            {"mutation": "insert", "target": {"entity": "Account", "predicate": {"true": {}}}},
             "`mutation` must be one of",
         ),
         ({"mutation": "delete", "target": [1, 2]}, "`target` must be a mapping"),
@@ -482,7 +482,7 @@ def test_keyed_structural_rejections(doc: dict[str, Any], match: str) -> None:
         (
             {
                 "mutation": "amend",
-                "target": {"entity": "Account", "predicate": {"all": {}}},
+                "target": {"entity": "Account", "predicate": {"true": {}}},
                 "assignments": [],
             },
             "non-empty list",
@@ -490,7 +490,7 @@ def test_keyed_structural_rejections(doc: dict[str, Any], match: str) -> None:
         (
             {
                 "mutation": "amend",
-                "target": {"entity": "Account", "predicate": {"all": {}}},
+                "target": {"entity": "Account", "predicate": {"true": {}}},
                 "assignments": [["Account.balance", 0]],
             },
             "each assignment must be a mapping",
@@ -498,7 +498,7 @@ def test_keyed_structural_rejections(doc: dict[str, Any], match: str) -> None:
         (
             {
                 "mutation": "amend",
-                "target": {"entity": "Account", "predicate": {"all": {}}},
+                "target": {"entity": "Account", "predicate": {"true": {}}},
                 "assignments": [{"attr": "balance", "value": 0}],
             },
             "`Class.member` reference",
@@ -506,7 +506,7 @@ def test_keyed_structural_rejections(doc: dict[str, Any], match: str) -> None:
         (
             {
                 "mutation": "amendUntil",
-                "target": {"entity": "Position", "predicate": {"all": {}}},
+                "target": {"entity": "Position", "predicate": {"true": {}}},
                 "assignments": [{"attr": "Position.value", "value": 0}],
                 "validFrom": _B1,
             },
@@ -841,7 +841,7 @@ def test_member_name_honesty_accepts_declared_members() -> None:
     predicate = wi.deserialize(
         {
             "mutation": "amend",
-            "target": {"entity": "Account", "predicate": {"all": {}}},
+            "target": {"entity": "Account", "predicate": {"true": {}}},
             "assignments": [{"attr": "Account.balance", "value": 0}],
         }
     )
@@ -1105,7 +1105,7 @@ def test_member_name_honesty_rejects_foreign_assignment_owner() -> None:
     predicate = wi.deserialize(
         {
             "mutation": "amend",
-            "target": {"entity": "Account", "predicate": {"all": {}}},
+            "target": {"entity": "Account", "predicate": {"true": {}}},
             "assignments": [{"attr": "Balance.value", "value": 0.00}],
         }
     )
@@ -1120,7 +1120,7 @@ def test_member_name_honesty_rejects_a_duplicate_assignment() -> None:
     predicate = wi.deserialize(
         {
             "mutation": "amend",
-            "target": {"entity": "Account", "predicate": {"all": {}}},
+            "target": {"entity": "Account", "predicate": {"true": {}}},
             "assignments": [
                 {"attr": "Account.balance", "value": 1},
                 {"attr": "Account.balance", "value": 2},
@@ -1178,7 +1178,7 @@ def test_a_canonical_spelling_resolves_where_the_bare_one_is_ambiguous() -> None
             "a row's history instead of removing it. Use 'delete' instead.",
         ),
         (
-            {"mutation": "terminate", "target": {"entity": "Account", "predicate": {"all": {}}}},
+            {"mutation": "terminate", "target": {"entity": "Account", "predicate": {"true": {}}}},
             "Non-temporal objects like 'Account' do not support 'terminate_where', which "
             "closes a row's history instead of removing it. Use 'delete_where' instead.",
         ),
@@ -1223,14 +1223,14 @@ def test_a_milestone_verb_is_rejected_on_a_non_temporal_target(
         },
         {
             "mutation": "amendUntil",
-            "target": {"entity": "Account", "predicate": {"all": {}}},
+            "target": {"entity": "Account", "predicate": {"true": {}}},
             "assignments": [{"attr": "Account.balance", "value": 0}],
             "validFrom": _B1,
             "until": _B2,
         },
         {
             "mutation": "terminateUntil",
-            "target": {"entity": "Account", "predicate": {"all": {}}},
+            "target": {"entity": "Account", "predicate": {"true": {}}},
             "validFrom": _B1,
             "until": _B2,
         },
@@ -1346,7 +1346,7 @@ def test_member_name_honesty_covers_value_object_members() -> None:
 # (`m-unit-work` "Assigned members"): a CASE-AUTHORED PredicateWrite           #
 # assignment naming a primary-key or framework-owned (version) column, or       #
 # carrying an ill-typed scalar value, is rejected with the SAME classification  #
-# `entity.expressions.AttributeExpr.set` raises at build time for the typed     #
+# `AssignableScalarExpr.set` raises at build time for the typed                #
 # path (`test_where_verbs.py`'s own `test_set_on_a_primary_key_attribute_       #
 # raises` / `..._framework_owned_version_attribute_raises` / `..._a_mismatched_ #
 # type_raises`) and for the edited copy (`test_model_free_authoring.py`'s own    #
@@ -1356,7 +1356,7 @@ def test_member_name_honesty_rejects_a_primary_key_assignment() -> None:
     predicate = wi.deserialize(
         {
             "mutation": "amend",
-            "target": {"entity": "Account", "predicate": {"all": {}}},
+            "target": {"entity": "Account", "predicate": {"true": {}}},
             "assignments": [{"attr": "Account.id", "value": 2}],
         }
     )
@@ -1368,7 +1368,7 @@ def test_member_name_honesty_rejects_a_framework_owned_version_assignment() -> N
     predicate = wi.deserialize(
         {
             "mutation": "amend",
-            "target": {"entity": "Account", "predicate": {"all": {}}},
+            "target": {"entity": "Account", "predicate": {"true": {}}},
             "assignments": [{"attr": "Account.version", "value": 5}],
         }
     )
@@ -1380,7 +1380,7 @@ def test_member_name_honesty_rejects_a_scalar_type_mismatched_assignment() -> No
     predicate = wi.deserialize(
         {
             "mutation": "amend",
-            "target": {"entity": "Account", "predicate": {"all": {}}},
+            "target": {"entity": "Account", "predicate": {"true": {}}},
             "assignments": [{"attr": "Account.owner", "value": 42}],
         }
     )
@@ -1399,7 +1399,7 @@ def test_member_name_honesty_rejects_a_non_document_value_object_assignment() ->
     predicate = wi.deserialize(
         {
             "mutation": "amend",
-            "target": {"entity": "Customer", "predicate": {"all": {}}},
+            "target": {"entity": "Customer", "predicate": {"true": {}}},
             "assignments": [{"attr": "Customer.address", "value": 42}],
         }
     )
@@ -1418,7 +1418,7 @@ def test_member_name_honesty_accepts_a_well_formed_value_object_assignment() -> 
     predicate = wi.deserialize(
         {
             "mutation": "amend",
-            "target": {"entity": "Customer", "predicate": {"all": {}}},
+            "target": {"entity": "Customer", "predicate": {"true": {}}},
             "assignments": [{"attr": "Customer.address", "value": document}],
         }
     )
@@ -1437,7 +1437,7 @@ def test_member_name_honesty_rejects_a_non_nullable_value_object_assignment_of_n
     predicate = wi.deserialize(
         {
             "mutation": "amend",
-            "target": {"entity": "Shipment", "predicate": {"all": {}}},
+            "target": {"entity": "Shipment", "predicate": {"true": {}}},
             "assignments": [{"attr": "Shipment.destination", "value": None}],
         }
     )
@@ -1452,7 +1452,7 @@ def test_member_name_honesty_accepts_a_nullable_value_object_assignment_of_none(
     predicate = wi.deserialize(
         {
             "mutation": "amend",
-            "target": {"entity": "Customer", "predicate": {"all": {}}},
+            "target": {"entity": "Customer", "predicate": {"true": {}}},
             "assignments": [{"attr": "Customer.address", "value": None}],
         }
     )
@@ -1473,7 +1473,7 @@ def test_a_predicate_writes_inverted_between_window_is_rejected() -> None:
             "mutation": "delete",
             "target": {
                 "entity": "Account",
-                "predicate": {"between": {"attr": "Account.id", "lower": 10, "upper": 1}},
+                "predicate": {"between": {"path": "Account.id", "lower": 10, "upper": 1}},
             },
         }
     )
@@ -1489,7 +1489,7 @@ def test_a_predicate_writes_out_of_position_attribute_reference_is_rejected() ->
             "mutation": "delete",
             "target": {
                 "entity": "Order",
-                "predicate": {"eq": {"attr": "OrderItem.sku", "value": "X"}},
+                "predicate": {"eq": {"path": "OrderItem.sku", "value": "X"}},
             },
         }
     )
@@ -1508,7 +1508,7 @@ def test_a_predicate_writes_scope_is_judged_before_its_assignments() -> None:
             "mutation": "amend",
             "target": {
                 "entity": "Account",
-                "predicate": {"between": {"attr": "Account.id", "lower": 10, "upper": 1}},
+                "predicate": {"between": {"path": "Account.id", "lower": 10, "upper": 1}},
             },
             "assignments": [{"attr": "Account.id", "value": 2}],
         }
@@ -1526,7 +1526,7 @@ def test_a_predicate_writes_scope_is_judged_before_its_assignments() -> None:
 # The refusal is the Predicate serde's, one layer earlier, and it is            #
 # structural: the shape has no spelling to reject.                              #
 # --------------------------------------------------------------------------- #
-_BARE_INNER: dict[str, Any] = {"lessThan": {"attr": "Account.balance", "value": 200.00}}
+_BARE_INNER: dict[str, Any] = {"lessThan": {"path": "Account.balance", "value": 200.00}}
 
 
 @pytest.mark.parametrize(
@@ -1569,11 +1569,11 @@ def test_a_query_clause_is_not_a_predicate_at_all(clause: str, predicate: dict[s
         ),
         ("not", {"not": {"operand": {"limit": {"operand": _BARE_INNER, "count": 5}}}}),
         (
-            "exists",
-            {"exists": {"rel": "Account.entries", "op": {"limit": {"operand": _BARE_INNER}}}},
+            "any",
+            {"any": {"path": "Account.entries", "where": {"limit": {"operand": _BARE_INNER}}}},
         ),
     ],
-    ids=["and", "not", "exists"],
+    ids=["and", "not", "any"],
 )
 def test_a_query_clause_is_no_more_spellable_inside_a_predicate(
     position: str, predicate: dict[str, Any]
@@ -1592,15 +1592,15 @@ def test_a_query_clause_is_no_more_spellable_inside_a_predicate(
 @pytest.mark.parametrize(
     ("position", "predicate"),
     [
-        ("exists", {"exists": {"rel": "Order.items"}}),
-        ("notExists", {"notExists": {"rel": "Order.items"}}),
+        ("any", {"any": {"path": "Order.items"}}),
+        ("none", {"none": {"path": "Order.items"}}),
     ],
-    ids=["exists", "not-exists"],
+    ids=["any", "none"],
 )
-def test_a_bare_navigation_filter_carrying_no_inner_predicate_is_accepted(
+def test_a_bare_quantifier_carrying_no_inner_predicate_is_accepted(
     position: str, predicate: dict[str, Any]
 ) -> None:
-    # The optional inner `op` is absent — the recursion has nothing to descend
+    # The optional `where` is absent — the recursion has nothing to descend
     # into and the predicate stays bare.
     assert position in predicate
     orders = _MODELS["orders"]
@@ -1625,7 +1625,7 @@ def test_a_top_level_narrow_is_a_predicate_scoped_filter() -> None:
                 "predicate": {
                     "narrow": {
                         "to": ["CardPayment"],
-                        "operand": {"eq": {"attr": "Payment.id", "value": 1}},
+                        "operand": {"eq": {"path": "Payment.id", "value": 1}},
                     }
                 },
             },
@@ -1639,24 +1639,24 @@ def test_a_top_level_narrow_is_a_predicate_scoped_filter() -> None:
 _ANIMAL = _MODELS["animal"]
 # `Person` owns the polymorphic `animals` (-> the abstract root `Animal`) and is
 # itself a plain non-family, non-temporal, unversioned entity — so a predicate
-# write on it is legal and the narrow inside its navigation filter is the only
+# write on it is legal and the narrow inside its quantifier is the only
 # thing under test.
-_ANIMAL_TO_DOG_NARROW: dict[str, Any] = {"narrow": {"to": ["Dog"], "operand": {"all": {}}}}
+_ANIMAL_TO_DOG_NARROW: dict[str, Any] = {"narrow": {"to": ["Dog"], "operand": {"true": {}}}}
 
 
 @pytest.mark.parametrize(
     ("position", "predicate"),
     [
-        ("exists", {"exists": {"rel": "Person.animals", "op": _ANIMAL_TO_DOG_NARROW}}),
-        ("notExists", {"notExists": {"rel": "Person.animals", "op": _ANIMAL_TO_DOG_NARROW}}),
-        ("navigate", {"navigate": {"rel": "Person.animals", "op": _ANIMAL_TO_DOG_NARROW}}),
+        ("any", {"any": {"path": "Person.animals", "where": _ANIMAL_TO_DOG_NARROW}}),
+        ("none", {"none": {"path": "Person.animals", "where": _ANIMAL_TO_DOG_NARROW}}),
+        ("all", {"all": {"path": "Person.animals", "where": _ANIMAL_TO_DOG_NARROW}}),
         (
             "and",
             {
                 "and": {
                     "operands": [
-                        {"eq": {"attr": "Person.name", "value": "Ada"}},
-                        {"exists": {"rel": "Person.animals", "op": _ANIMAL_TO_DOG_NARROW}},
+                        {"eq": {"path": "Person.name", "value": "Ada"}},
+                        {"any": {"path": "Person.animals", "where": _ANIMAL_TO_DOG_NARROW}},
                     ]
                 }
             },
@@ -1666,8 +1666,8 @@ _ANIMAL_TO_DOG_NARROW: dict[str, Any] = {"narrow": {"to": ["Dog"], "operand": {"
             {
                 "or": {
                     "operands": [
-                        {"eq": {"attr": "Person.name", "value": "Ada"}},
-                        {"exists": {"rel": "Person.animals", "op": _ANIMAL_TO_DOG_NARROW}},
+                        {"eq": {"path": "Person.name", "value": "Ada"}},
+                        {"any": {"path": "Person.animals", "where": _ANIMAL_TO_DOG_NARROW}},
                     ]
                 }
             },
@@ -1676,7 +1676,7 @@ _ANIMAL_TO_DOG_NARROW: dict[str, Any] = {"narrow": {"to": ["Dog"], "operand": {"
             "not",
             {
                 "not": {
-                    "operand": {"exists": {"rel": "Person.animals", "op": _ANIMAL_TO_DOG_NARROW}}
+                    "operand": {"any": {"path": "Person.animals", "where": _ANIMAL_TO_DOG_NARROW}}
                 }
             },
         ),
@@ -1684,12 +1684,12 @@ _ANIMAL_TO_DOG_NARROW: dict[str, Any] = {"narrow": {"to": ["Dog"], "operand": {"
             "group",
             {
                 "group": {
-                    "operand": {"exists": {"rel": "Person.animals", "op": _ANIMAL_TO_DOG_NARROW}}
+                    "operand": {"any": {"path": "Person.animals", "where": _ANIMAL_TO_DOG_NARROW}}
                 }
             },
         ),
     ],
-    ids=["exists", "not-exists", "navigate", "and", "or", "not", "group"],
+    ids=["any", "none", "all", "and", "or", "not", "group"],
 )
 def test_a_predicate_scoped_narrow_is_a_filter_and_is_accepted(
     position: str, predicate: dict[str, Any]
@@ -1725,7 +1725,7 @@ def test_a_predicate_write_on_an_inheritance_family_target_is_rejected() -> None
             "mutation": "delete",
             "target": {
                 "entity": "CardPayment",
-                "predicate": {"eq": {"attr": "CardPayment.id", "value": 1}},
+                "predicate": {"eq": {"path": "CardPayment.id", "value": 1}},
             },
         }
     )
@@ -1740,7 +1740,7 @@ def test_an_invalid_predicate_outranks_the_inheritance_family_rejection() -> Non
             "mutation": "delete",
             "target": {
                 "entity": "CardPayment",
-                "predicate": {"between": {"attr": "CardPayment.id", "lower": 10, "upper": 1}},
+                "predicate": {"between": {"path": "CardPayment.id", "lower": 10, "upper": 1}},
             },
         }
     )
@@ -1759,7 +1759,7 @@ def test_the_inheritance_family_rejection_outranks_the_assignment_rules() -> Non
             "mutation": "amend",
             "target": {
                 "entity": "CardPayment",
-                "predicate": {"eq": {"attr": "CardPayment.id", "value": 1}},
+                "predicate": {"eq": {"path": "CardPayment.id", "value": 1}},
             },
             "assignments": [{"attr": "Payment.amount", "value": 1.00}],
         }
@@ -1776,7 +1776,7 @@ def test_member_name_honesty_rejects_a_non_nullable_scalar_assignment_of_none() 
     predicate = wi.deserialize(
         {
             "mutation": "amend",
-            "target": {"entity": "Shipment", "predicate": {"all": {}}},
+            "target": {"entity": "Shipment", "predicate": {"true": {}}},
             "assignments": [{"attr": "Shipment.name", "value": None}],
         }
     )
@@ -2004,7 +2004,7 @@ def test_a_prepared_write_has_no_field_constructor() -> None:
 _PRODUCERS = pytest.mark.parametrize(
     "prepare", [wi.prepare_typed_write, wi.prepare_wire_write], ids=["typed", "wire"]
 )
-_ALL = predicate_algebra.All()
+_ALL = predicate_algebra.TrueNode()
 
 
 @_PRODUCERS
@@ -2064,7 +2064,10 @@ _ALL = predicate_algebra.All()
         (
             wi.PredicateWrite(
                 "amend",
-                wi.PredicateSelection("Position", predicate_algebra.Between("Position.id", 10, 1)),
+                wi.PredicateSelection(
+                    "Position",
+                    predicate_algebra.Range(predicate_algebra.FieldSubject("Position.id"), 10, 1),
+                ),
                 (wi.WriteAssignment("Position.value", 1),),
             ),
             _POSITION,
@@ -2118,7 +2121,7 @@ def test_both_producers_normalize_an_aware_bound_to_utc(prepare: Any) -> None:
         ),
         pytest.param(
             wi.PredicateWrite(
-                "terminate", wi.PredicateSelection("Balance", predicate_algebra.All()), ()
+                "terminate", wi.PredicateSelection("Balance", predicate_algebra.TrueNode()), ()
             ),
             _BALANCE,
             id="transaction-time-predicate",
@@ -2305,7 +2308,9 @@ def test_a_neutral_insert_row_carries_its_framework_owned_cells() -> None:
 def test_a_predicate_write_selecting_through_an_interpretation_has_no_canonical_document() -> None:
     # The interpreted form is a frontend's captured predicate beside its adapter,
     # not transport: only a canonical node has a write-instruction document.
-    interpretation = predicate_algebra.canonical_interpretation(predicate_algebra.All(), _ANIMAL)
+    interpretation = predicate_algebra.canonical_interpretation(
+        predicate_algebra.TrueNode(), _ANIMAL
+    )
     instruction = wi.PredicateWrite("delete", wi.PredicateSelection("Person", interpretation))
     with pytest.raises(wi.WriteInstructionError, match="no canonical write-instruction document"):
         wi.serialize(instruction)

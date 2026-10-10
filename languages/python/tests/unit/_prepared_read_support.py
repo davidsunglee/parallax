@@ -56,7 +56,7 @@ def compiled_read(model: Metamodel, entity: str | EntityIdentity) -> CompiledRea
         held = _COMPILED[address] = (
             model,
             compile_read(
-                oa.All(),
+                oa.TrueNode(),
                 model,
                 POSTGRES,
                 metadata,

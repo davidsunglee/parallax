@@ -72,7 +72,7 @@ def test_one_statement_materializes_every_collection_typed_and_wire(
 
     typed = database.find(entity.where(entity.id == 1)).result()
     (wire,) = database.wire.find(
-        {"target": f"{_NS}.{entity.__name__}", "predicate": {"all": {}}}
+        {"target": f"{_NS}.{entity.__name__}", "predicate": {"true": {}}}
     ).results()
 
     assert typed.amounts == (
@@ -93,7 +93,7 @@ def test_a_row_form_read_publishes_the_managed_tuple(layout: str, entity: Any) -
     database = own_root(connect(port, _MODEL)).using_database_login()
 
     (published,) = database.read_rows(
-        object_query.deserialize({"target": f"{_NS}.{entity.__name__}", "predicate": {"all": {}}})
+        object_query.deserialize({"target": f"{_NS}.{entity.__name__}", "predicate": {"true": {}}})
     ).rows
 
     assert isinstance(published, Mapping)

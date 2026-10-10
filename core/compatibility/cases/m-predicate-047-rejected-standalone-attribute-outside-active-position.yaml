@@ -8,7 +8,7 @@ when:
     target: parallax.compatibility.Order
     predicate:
       eq:
-        attr: parallax.compatibility.OrderItem.sku
+        path: parallax.compatibility.OrderItem.sku
         value: SKU-1
 then:
   rejectedRule: attribute-outside-active-position

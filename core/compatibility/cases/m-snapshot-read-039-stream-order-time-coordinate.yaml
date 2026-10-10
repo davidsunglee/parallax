@@ -12,7 +12,10 @@ compileEligibility: { mode: run-only, reason: query-result-dependent }
 when:
   objectQuery:
     target: parallax.compatibility.StreamCoordinate
-    predicate: { eq: { attr: parallax.compatibility.StreamCoordinate.clock, value: "09:30:00" } }
+    predicate:
+      eq:
+        path: parallax.compatibility.StreamCoordinate.clock
+        value: "09:30:00"
     orderBy: [{ attr: parallax.compatibility.StreamCoordinate.clock }]
   stream: { batchSize: 1 }
 then:

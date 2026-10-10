@@ -958,7 +958,7 @@ def _instant(at: dt.datetime) -> str:
 def _wire_span_query(entity: type[Any], at: dt.datetime) -> dict[str, object]:
     return {
         "target": _name(entity),
-        "predicate": {"eq": {"attr": f"{_name(entity)}.id", "value": 1}},
+        "predicate": {"eq": {"path": f"{_name(entity)}.id", "value": 1}},
         "temporal": {
             "transaction-time": {"asOf": "latest"},
             "valid-time": {"asOf": _instant(at)},
@@ -1208,7 +1208,7 @@ def test_a_transaction_time_source_replacement_chains_its_complete_state(
         node = tx.wire.find(
             {
                 "target": _name(entity),
-                "predicate": {"eq": {"attr": f"{_name(entity)}.id", "value": 1}},
+                "predicate": {"eq": {"path": f"{_name(entity)}.id", "value": 1}},
                 "temporal": {"transaction-time": {"asOf": "latest"}},
             }
         ).result()

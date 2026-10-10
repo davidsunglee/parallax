@@ -11,7 +11,7 @@ when:
   objectQuery:
     target: parallax.compatibility.Bond
     predicate:
-      all: {}
+      "true": {}
     temporal:
       transaction-time:
         asOf: latest

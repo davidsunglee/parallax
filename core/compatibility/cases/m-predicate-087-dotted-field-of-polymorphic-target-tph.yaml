@@ -1,0 +1,18 @@
+# A dotted field of a polymorphic to-one target reads every declared candidate in the
+# hierarchy table.
+model: models/predicate-traversal.yaml
+tags: [m-predicate, relationship, to-one, traversal, m-inheritance, table-per-hierarchy, m-dialect, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  objectQuery:
+    target: parallax.compatibility.Collar
+    predicate:
+      eq: {path: parallax.compatibility.Collar.pet.name, value: Fido}
+then:
+  statements:
+  - sql: {postgres: 'select t0.id, t0.pet_id from traversal_collar t0 where (select t1.name from traversal_pet t1 where t1.id = t0.pet_id) = ?', mariadb: 'select t0.id, t0.pet_id from traversal_collar t0 where (select t1.name from traversal_pet t1 where t1.id = t0.pet_id) = ?'}
+    binds: [Fido]
+  referenceSql: select id, pet_id from traversal_collar where pet_id in (select id from traversal_pet where name = 'Fido')
+  rows:
+  - {id: 11, pet_id: 2}
+  roundTrips: 1

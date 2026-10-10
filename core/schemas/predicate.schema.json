@@ -2,758 +2,724 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://parallax.dev/schemas/predicate.schema.json",
   "title": "Parallax Predicate Algebra (m-predicate)",
-  "description": "Canonical, format-agnostic serialization of an m-predicate Predicate node: the RECURSIVE Boolean selection grammar and nothing else. Each node is a single-key tagged object. Every query-wide value — the queried position, result narrowing, ordering, the row cap, Temporal Selection, and Includes — is a sibling clause of the Object Query that carries this predicate (object-query.schema.json), so recursion buys composition of selection logic alone. The narrow node here is PREDICATE-SCOPED: it restricts the active position while evaluating its inner predicate, which is a filter rather than whole-result narrowing. Physical interval predicates are injected by m-temporal-read and never authored in a Predicate. The nodes cover the full scalar, string, membership, range, null, Boolean, relationship, nested-value-object, and inheritance-narrowing algebra.",
+  "description": "Canonical, format-agnostic serialization of an m-predicate Predicate node: the RECURSIVE Boolean selection grammar and nothing else. Each node is a single-key tagged object. Every query-wide value — the queried position, result narrowing, ordering, the row cap, Temporal Selection, and Includes — is a sibling clause of the Object Query that carries this predicate (object-query.schema.json), so recursion buys composition of selection logic alone. Scalar operations read an object field through a `path` or, inside a scalar-collection quantifier, the bound element with no `path`; collections are reached only through the `any` / `all` / `none` quantifiers and single objects tested with `exists` / `notExists`. The narrow node here is PREDICATE-SCOPED: it is a filter rather than whole-result narrowing. Physical interval predicates are injected by m-temporal-read and never authored in a Predicate.",
   "$ref": "#/$defs/predicate",
   "$defs": {
-    "attributeRef": {
-      "description": "A metamodel attribute reference of the form Entity.attribute, whose Entity segment is bare or namespace-qualified (identity.schema.json).",
-      "$ref": "identity.schema.json#/$defs/attributeRef"
-    },
-    "relationshipRef": {
-      "description": "A metamodel relationship reference of the form Entity.relationship, whose Entity segment is bare or namespace-qualified (identity.schema.json).",
-      "$ref": "identity.schema.json#/$defs/relationshipRef"
-    },
     "literal": {
       "description": "A non-null serialized typed literal. After the subject resolves, model-aware elaboration decodes it exactly once with m-wire against the resolved NeutralType; null tests use dedicated predicate nodes. The schema intentionally does not duplicate per-type literal grammar.",
-      "type": ["string", "number", "boolean"]
+      "type": [
+        "string",
+        "number",
+        "boolean"
+      ]
+    },
+    "path": {
+      "description": "A predicate path: Entity-qualified at the queried position, relative to the bound object inside a quantifier `where` or a path-targeted narrowing (identity.schema.json). Model-aware validation admits the spelling its scope requires and resolves every segment against declared members, following single value objects and to-one relationships; it rejects a path that continues past a collection.",
+      "anyOf": [
+        {
+          "$ref": "identity.schema.json#/$defs/qualifiedPath"
+        },
+        {
+          "$ref": "identity.schema.json#/$defs/relativePath"
+        }
+      ]
     },
     "predicate": {
       "type": "object",
       "minProperties": 1,
       "maxProperties": 1,
       "oneOf": [
-        { "$ref": "#/$defs/all" },
-        { "$ref": "#/$defs/none" },
-        { "$ref": "#/$defs/eq" },
-        { "$ref": "#/$defs/notEq" },
-        { "$ref": "#/$defs/greaterThan" },
-        { "$ref": "#/$defs/greaterThanEquals" },
-        { "$ref": "#/$defs/lessThan" },
-        { "$ref": "#/$defs/lessThanEquals" },
-        { "$ref": "#/$defs/between" },
-        { "$ref": "#/$defs/isNull" },
-        { "$ref": "#/$defs/isNotNull" },
-        { "$ref": "#/$defs/like" },
-        { "$ref": "#/$defs/notLike" },
-        { "$ref": "#/$defs/startsWith" },
-        { "$ref": "#/$defs/endsWith" },
-        { "$ref": "#/$defs/contains" },
-        { "$ref": "#/$defs/in" },
-        { "$ref": "#/$defs/notIn" },
-        { "$ref": "#/$defs/and" },
-        { "$ref": "#/$defs/or" },
-        { "$ref": "#/$defs/not" },
-        { "$ref": "#/$defs/group" },
-        { "$ref": "#/$defs/navigate" },
-        { "$ref": "#/$defs/exists" },
-        { "$ref": "#/$defs/notExists" },
-        { "$ref": "#/$defs/narrow" },
-        { "$ref": "#/$defs/nestedEq" },
-        { "$ref": "#/$defs/nestedNotEq" },
-        { "$ref": "#/$defs/nestedGt" },
-        { "$ref": "#/$defs/nestedGte" },
-        { "$ref": "#/$defs/nestedLt" },
-        { "$ref": "#/$defs/nestedLte" },
-        { "$ref": "#/$defs/nestedBetween" },
-        { "$ref": "#/$defs/nestedIn" },
-        { "$ref": "#/$defs/nestedNotIn" },
-        { "$ref": "#/$defs/nestedLike" },
-        { "$ref": "#/$defs/nestedNotLike" },
-        { "$ref": "#/$defs/nestedStartsWith" },
-        { "$ref": "#/$defs/nestedEndsWith" },
-        { "$ref": "#/$defs/nestedContains" },
-        { "$ref": "#/$defs/nestedIsNull" },
-        { "$ref": "#/$defs/nestedIsNotNull" },
-        { "$ref": "#/$defs/nestedExists" },
-        { "$ref": "#/$defs/nestedNotExists" }
+        {
+          "$ref": "#/$defs/true"
+        },
+        {
+          "$ref": "#/$defs/false"
+        },
+        {
+          "$ref": "#/$defs/eq"
+        },
+        {
+          "$ref": "#/$defs/notEq"
+        },
+        {
+          "$ref": "#/$defs/greaterThan"
+        },
+        {
+          "$ref": "#/$defs/greaterThanEquals"
+        },
+        {
+          "$ref": "#/$defs/lessThan"
+        },
+        {
+          "$ref": "#/$defs/lessThanEquals"
+        },
+        {
+          "$ref": "#/$defs/between"
+        },
+        {
+          "$ref": "#/$defs/isNull"
+        },
+        {
+          "$ref": "#/$defs/isNotNull"
+        },
+        {
+          "$ref": "#/$defs/like"
+        },
+        {
+          "$ref": "#/$defs/notLike"
+        },
+        {
+          "$ref": "#/$defs/startsWith"
+        },
+        {
+          "$ref": "#/$defs/endsWith"
+        },
+        {
+          "$ref": "#/$defs/contains"
+        },
+        {
+          "$ref": "#/$defs/in"
+        },
+        {
+          "$ref": "#/$defs/notIn"
+        },
+        {
+          "$ref": "#/$defs/and"
+        },
+        {
+          "$ref": "#/$defs/or"
+        },
+        {
+          "$ref": "#/$defs/not"
+        },
+        {
+          "$ref": "#/$defs/group"
+        },
+        {
+          "$ref": "#/$defs/any"
+        },
+        {
+          "$ref": "#/$defs/all"
+        },
+        {
+          "$ref": "#/$defs/none"
+        },
+        {
+          "$ref": "#/$defs/exists"
+        },
+        {
+          "$ref": "#/$defs/notExists"
+        },
+        {
+          "$ref": "#/$defs/narrow"
+        }
       ]
     },
-
-    "all": {
+    "true": {
+      "description": "The constant true predicate: it selects every object its query reaches. A constant names no subject and is not a Boolean field test.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["all"],
+      "required": [
+        "true"
+      ],
       "properties": {
-        "all": { "type": "object", "additionalProperties": false }
+        "true": {
+          "type": "object",
+          "additionalProperties": false
+        }
       }
     },
-    "none": {
+    "false": {
+      "description": "The constant false predicate: it selects nothing.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["none"],
+      "required": [
+        "false"
+      ],
       "properties": {
-        "none": { "type": "object", "additionalProperties": false }
+        "false": {
+          "type": "object",
+          "additionalProperties": false
+        }
       }
     },
-
     "comparison": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["attr", "value"],
-      "properties": {
-        "attr": { "$ref": "#/$defs/attributeRef" },
-        "value": { "$ref": "#/$defs/literal" }
-      }
+      "description": "A comparison body: an object field (`path`) or, with no `path`, the scalar element a scalar-collection quantifier binds, compared against one non-null typed literal.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "path",
+            "value"
+          ],
+          "properties": {
+            "path": {
+              "$ref": "#/$defs/path"
+            },
+            "value": {
+              "$ref": "#/$defs/literal"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "value"
+          ],
+          "properties": {
+            "value": {
+              "$ref": "#/$defs/literal"
+            }
+          }
+        }
+      ]
     },
     "eq": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["eq"],
-      "properties": { "eq": { "$ref": "#/$defs/comparison" } }
+      "required": [
+        "eq"
+      ],
+      "properties": {
+        "eq": {
+          "$ref": "#/$defs/comparison"
+        }
+      }
     },
     "notEq": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["notEq"],
-      "properties": { "notEq": { "$ref": "#/$defs/comparison" } }
+      "required": [
+        "notEq"
+      ],
+      "properties": {
+        "notEq": {
+          "$ref": "#/$defs/comparison"
+        }
+      }
     },
     "greaterThan": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["greaterThan"],
-      "properties": { "greaterThan": { "$ref": "#/$defs/comparison" } }
+      "required": [
+        "greaterThan"
+      ],
+      "properties": {
+        "greaterThan": {
+          "$ref": "#/$defs/comparison"
+        }
+      }
     },
     "greaterThanEquals": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["greaterThanEquals"],
-      "properties": { "greaterThanEquals": { "$ref": "#/$defs/comparison" } }
+      "required": [
+        "greaterThanEquals"
+      ],
+      "properties": {
+        "greaterThanEquals": {
+          "$ref": "#/$defs/comparison"
+        }
+      }
     },
     "lessThan": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["lessThan"],
-      "properties": { "lessThan": { "$ref": "#/$defs/comparison" } }
+      "required": [
+        "lessThan"
+      ],
+      "properties": {
+        "lessThan": {
+          "$ref": "#/$defs/comparison"
+        }
+      }
     },
     "lessThanEquals": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["lessThanEquals"],
-      "properties": { "lessThanEquals": { "$ref": "#/$defs/comparison" } }
-    },
-
-    "between": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["between"],
+      "required": [
+        "lessThanEquals"
+      ],
       "properties": {
-        "between": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["attr", "lower", "upper"],
-          "properties": {
-            "attr": { "$ref": "#/$defs/attributeRef" },
-            "lower": { "$ref": "#/$defs/literal" },
-            "upper": { "$ref": "#/$defs/literal" }
-          }
+        "lessThanEquals": {
+          "$ref": "#/$defs/comparison"
         }
       }
     },
-
-    "nullCheck": {
+    "range": {
+      "description": "An inclusive range one value must satisfy whole: an object field or the bound scalar element, lower bound first.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "path",
+            "lower",
+            "upper"
+          ],
+          "properties": {
+            "path": {
+              "$ref": "#/$defs/path"
+            },
+            "lower": {
+              "$ref": "#/$defs/literal"
+            },
+            "upper": {
+              "$ref": "#/$defs/literal"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "lower",
+            "upper"
+          ],
+          "properties": {
+            "lower": {
+              "$ref": "#/$defs/literal"
+            },
+            "upper": {
+              "$ref": "#/$defs/literal"
+            }
+          }
+        }
+      ]
+    },
+    "between": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["attr"],
-      "properties": { "attr": { "$ref": "#/$defs/attributeRef" } }
+      "required": [
+        "between"
+      ],
+      "properties": {
+        "between": {
+          "$ref": "#/$defs/range"
+        }
+      }
+    },
+    "nullCheck": {
+      "description": "A null check reads an object field only; a collection element is never null.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/path"
+        }
+      }
     },
     "isNull": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["isNull"],
-      "properties": { "isNull": { "$ref": "#/$defs/nullCheck" } }
+      "required": [
+        "isNull"
+      ],
+      "properties": {
+        "isNull": {
+          "$ref": "#/$defs/nullCheck"
+        }
+      }
     },
     "isNotNull": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["isNotNull"],
-      "properties": { "isNotNull": { "$ref": "#/$defs/nullCheck" } }
-    },
-
-    "stringMatch": {
-      "description": "A string predicate. `value` is a plain string; `like`/`notLike` interpret `%`/`_` as wildcards, the affix forms (startsWith/endsWith/contains) treat `value` as a literal and the implementation escapes wildcards. `caseInsensitive` defaults to false.",
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["attr", "value"],
+      "required": [
+        "isNotNull"
+      ],
       "properties": {
-        "attr": { "$ref": "#/$defs/attributeRef" },
-        "value": { "type": "string" },
-        "caseInsensitive": { "type": "boolean", "default": false }
+        "isNotNull": {
+          "$ref": "#/$defs/nullCheck"
+        }
       }
+    },
+    "stringMatch": {
+      "description": "A string predicate over an object field or the bound scalar element. `value` is a plain string; `like`/`notLike` interpret `%`/`_` as wildcards, the affix forms (startsWith/endsWith/contains) treat `value` as a literal and the implementation escapes wildcards. `caseInsensitive` defaults to false.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "path",
+            "value"
+          ],
+          "properties": {
+            "path": {
+              "$ref": "#/$defs/path"
+            },
+            "value": {
+              "type": "string"
+            },
+            "caseInsensitive": {
+              "type": "boolean",
+              "default": false
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "value"
+          ],
+          "properties": {
+            "value": {
+              "type": "string"
+            },
+            "caseInsensitive": {
+              "type": "boolean",
+              "default": false
+            }
+          }
+        }
+      ]
     },
     "like": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["like"],
-      "properties": { "like": { "$ref": "#/$defs/stringMatch" } }
+      "required": [
+        "like"
+      ],
+      "properties": {
+        "like": {
+          "$ref": "#/$defs/stringMatch"
+        }
+      }
     },
     "notLike": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["notLike"],
-      "properties": { "notLike": { "$ref": "#/$defs/stringMatch" } }
+      "required": [
+        "notLike"
+      ],
+      "properties": {
+        "notLike": {
+          "$ref": "#/$defs/stringMatch"
+        }
+      }
     },
     "startsWith": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["startsWith"],
-      "properties": { "startsWith": { "$ref": "#/$defs/stringMatch" } }
+      "required": [
+        "startsWith"
+      ],
+      "properties": {
+        "startsWith": {
+          "$ref": "#/$defs/stringMatch"
+        }
+      }
     },
     "endsWith": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["endsWith"],
-      "properties": { "endsWith": { "$ref": "#/$defs/stringMatch" } }
+      "required": [
+        "endsWith"
+      ],
+      "properties": {
+        "endsWith": {
+          "$ref": "#/$defs/stringMatch"
+        }
+      }
     },
     "contains": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["contains"],
-      "properties": { "contains": { "$ref": "#/$defs/stringMatch" } }
-    },
-
-    "membership": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["attr", "values"],
+      "required": [
+        "contains"
+      ],
       "properties": {
-        "attr": { "$ref": "#/$defs/attributeRef" },
-        "values": {
-          "type": "array",
-          "minItems": 1,
-          "items": { "$ref": "#/$defs/literal" }
+        "contains": {
+          "$ref": "#/$defs/stringMatch"
         }
       }
+    },
+    "membership": {
+      "description": "A membership test of an object field or the bound scalar element against a non-empty list of typed literals.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "path",
+            "values"
+          ],
+          "properties": {
+            "path": {
+              "$ref": "#/$defs/path"
+            },
+            "values": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "$ref": "#/$defs/literal"
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "values"
+          ],
+          "properties": {
+            "values": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "$ref": "#/$defs/literal"
+              }
+            }
+          }
+        }
+      ]
     },
     "in": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["in"],
-      "properties": { "in": { "$ref": "#/$defs/membership" } }
+      "required": [
+        "in"
+      ],
+      "properties": {
+        "in": {
+          "$ref": "#/$defs/membership"
+        }
+      }
     },
     "notIn": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["notIn"],
-      "properties": { "notIn": { "$ref": "#/$defs/membership" } }
+      "required": [
+        "notIn"
+      ],
+      "properties": {
+        "notIn": {
+          "$ref": "#/$defs/membership"
+        }
+      }
     },
-
     "junction": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["operands"],
+      "required": [
+        "operands"
+      ],
       "properties": {
         "operands": {
           "type": "array",
           "minItems": 2,
-          "items": { "$ref": "#/$defs/predicate" }
+          "items": {
+            "$ref": "#/$defs/predicate"
+          }
         }
       }
     },
     "and": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["and"],
-      "properties": { "and": { "$ref": "#/$defs/junction" } }
+      "required": [
+        "and"
+      ],
+      "properties": {
+        "and": {
+          "$ref": "#/$defs/junction"
+        }
+      }
     },
     "or": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["or"],
-      "properties": { "or": { "$ref": "#/$defs/junction" } }
-    },
-    "unary": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["operand"],
-      "properties": { "operand": { "$ref": "#/$defs/predicate" } }
+      "required": [
+        "or"
+      ],
+      "properties": {
+        "or": {
+          "$ref": "#/$defs/junction"
+        }
+      }
     },
     "not": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["not"],
-      "properties": { "not": { "$ref": "#/$defs/unary" } }
+      "required": [
+        "not"
+      ],
+      "properties": {
+        "not": {
+          "$ref": "#/$defs/unary"
+        }
+      }
     },
     "group": {
       "description": "An explicit precedence-nesting node. It wraps a single inner predicate so that a fluent or prefix surface that intends to group a sub-expression serializes to one unambiguous canonical form.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["group"],
-      "properties": { "group": { "$ref": "#/$defs/unary" } }
-    },
-
-    "navigationFilter": {
-      "description": "Filter the queried entity by traversing a relationship. `rel` names the relationship; the optional `op` constrains the related entity. With no `op` it is a pure existence check.",
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["rel"],
+      "required": [
+        "group"
+      ],
       "properties": {
-        "rel": { "$ref": "#/$defs/relationshipRef" },
-        "op": { "$ref": "#/$defs/predicate" }
+        "group": {
+          "$ref": "#/$defs/unary"
+        }
       }
     },
-    "navigate": {
-      "description": "navigate(rel) -> predicate: filter via traversal to a related entity. Lowers to a correlated EXISTS semi-join, so a to-many navigation never multiplies parent rows.",
+    "unary": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["navigate"],
-      "properties": { "navigate": { "$ref": "#/$defs/navigationFilter" } }
+      "required": [
+        "operand"
+      ],
+      "properties": {
+        "operand": {
+          "$ref": "#/$defs/predicate"
+        }
+      }
+    },
+    "quantifierBody": {
+      "description": "The body of `any` / `none`: the collection at `path` — a scalar collection, a `many` value object, or a to-many relationship's related Entities — and an optional `where` binding one element. Without `where` the quantifier tests occupancy.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/path"
+        },
+        "where": {
+          "$ref": "#/$defs/predicate"
+        }
+      }
+    },
+    "universalBody": {
+      "description": "The body of `all`: the collection at `path` and the `where` every element must make true; a universal has no bare form.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "where"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/path"
+        },
+        "where": {
+          "$ref": "#/$defs/predicate"
+        }
+      }
+    },
+    "any": {
+      "description": "any(path[, where]): some element makes `where` true; bare, the collection holds an element.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "any"
+      ],
+      "properties": {
+        "any": {
+          "$ref": "#/$defs/quantifierBody"
+        }
+      }
+    },
+    "all": {
+      "description": "all(path, where): every element makes `where` true — a false or unknown element fails it, and an empty collection satisfies it.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "all"
+      ],
+      "properties": {
+        "all": {
+          "$ref": "#/$defs/universalBody"
+        }
+      }
+    },
+    "none": {
+      "description": "none(path[, where]): no element makes `where` true; bare, the collection is empty or absent.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "none"
+      ],
+      "properties": {
+        "none": {
+          "$ref": "#/$defs/quantifierBody"
+        }
+      }
+    },
+    "presenceBody": {
+      "description": "The single object at `path` — a `one` value object or the Entity a to-one relationship reaches; a presence test carries no predicate.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/path"
+        }
+      }
     },
     "exists": {
-      "description": "exists(rel[, op]): the queried entity has at least one related row (optionally matching `op`). Lowers to a correlated EXISTS.",
+      "description": "exists(path): the single object is present.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["exists"],
-      "properties": { "exists": { "$ref": "#/$defs/navigationFilter" } }
+      "required": [
+        "exists"
+      ],
+      "properties": {
+        "exists": {
+          "$ref": "#/$defs/presenceBody"
+        }
+      }
     },
     "notExists": {
-      "description": "notExists(rel[, op]): the queried entity has no related row (optionally matching `op`). Lowers to a correlated NOT EXISTS.",
+      "description": "notExists(path): the single object is absent.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["notExists"],
-      "properties": { "notExists": { "$ref": "#/$defs/navigationFilter" } }
+      "required": [
+        "notExists"
+      ],
+      "properties": {
+        "notExists": {
+          "$ref": "#/$defs/presenceBody"
+        }
+      }
     },
     "narrow": {
-      "description": "narrow(to, operand): constrain the POLYMORPHIC position supplied by context to a Subtype Selection (m-predicate, m-inheritance). This is PREDICATE-SCOPED narrowing and therefore a filter: the position comes from where the node sits — the enclosing expression's active position for a Boolean term, the relationship target inside a navigation filter, and the enclosing selection's resolved set for a narrow nested in another narrow's operand. Whole-result narrowing is `narrowTo` on the Object Query and has no spelling here. `operand` is evaluated over the narrowed position. Model-aware validation resolves the selection, requires a non-empty subset of the active position, and threads that resolved set into `operand`; SQL lowering lifts the narrow into tag/branch selection (m-sql).",
+      "description": "narrow(to, operand[, path]): constrain a POLYMORPHIC position to a Subtype Selection (m-predicate, m-inheritance). This is PREDICATE-SCOPED narrowing and therefore a filter. Without `path` it narrows the position the enclosing scope is at; with `path` it narrows the single related Entity that path reaches, which is false when absent or outside the selection. `operand` is evaluated over the narrowed position, and a subtype test alone carries the constant true operand. Whole-result narrowing is `narrowTo` on the Object Query and has no spelling here.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["narrow"],
+      "required": [
+        "narrow"
+      ],
       "properties": {
         "narrow": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["to", "operand"],
+          "required": [
+            "to",
+            "operand"
+          ],
           "properties": {
-            "to": { "$ref": "subtype-selection.schema.json#/$defs/subtypeSelection" },
-            "operand": { "$ref": "#/$defs/predicate" }
+            "path": {
+              "$ref": "#/$defs/path"
+            },
+            "to": {
+              "$ref": "subtype-selection.schema.json#/$defs/subtypeSelection"
+            },
+            "operand": {
+              "$ref": "#/$defs/predicate"
+            }
           }
         }
       }
-    },
-
-    "nestedRef": {
-      "description": "A reference into a valueObject's inner field: an Entity spelling (bare or namespace-qualified, identity.schema.json) and its valueObject followed by one or more dotted path segments into the embedded document (e.g. Customer.address.city, Customer.address.geo.lat). Lowers to a dialect-specific text extraction on the value object's backing column (m-sql/m-dialect).",
-      "$ref": "identity.schema.json#/$defs/nestedRef"
-    },
-    "nestedComparison": {
-      "description": "A nested-field comparison: a valueObject inner attribute compared against a non-null serialized typed literal. The path resolves to one declared leaf, then m-wire decodes the value exactly once against that leaf's NeutralType before SQL lowering.",
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["path", "value"],
-      "properties": {
-        "path": { "$ref": "#/$defs/nestedRef" },
-        "value": { "$ref": "#/$defs/literal" }
-      }
-    },
-    "nestedRange": {
-      "description": "A nested-field range test: a valueObject inner attribute (referenced by a dotted path) bounded below and above by TYPED literals. The `path` resolves against the model's declared valueObject structure (as for `nestedComparison`); BOTH bounds are `literal`s whose type MUST match the leaf attribute's declared type (m-predicate). A `lower` strictly greater than its `upper` names an empty range and MUST be rejected (m-predicate bound-ordering rule), checked AFTER the typed-literal rule so a mistyped bound is named as such. Lowers to one `<extraction> between ? and ?` — never two comparisons — with the JSON path bind(s) first, then `lower`, then `upper` (m-sql/m-dialect).",
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["path", "lower", "upper"],
-      "properties": {
-        "path": { "$ref": "#/$defs/nestedRef" },
-        "lower": { "$ref": "#/$defs/literal" },
-        "upper": { "$ref": "#/$defs/literal" }
-      }
-    },
-    "nestedMembership": {
-      "description": "A nested-field membership test: a valueObject inner attribute (referenced by a dotted path) tested against a non-empty list of TYPED literals. The `path` resolves against the model's declared valueObject structure (as for `nestedComparison`); each list value is a `literal` whose type MUST match the leaf attribute's declared type (m-predicate). Lowers to `<extraction> in (?, ?, …)` — negated with a leading `not` for `nestedNotIn` — with the JSON path bind(s) first, then one bind per list value in order (m-sql/m-dialect).",
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["path", "values"],
-      "properties": {
-        "path": { "$ref": "#/$defs/nestedRef" },
-        "values": {
-          "type": "array",
-          "minItems": 1,
-          "items": { "$ref": "#/$defs/literal" }
-        }
-      }
-    },
-    "nestedStringMatch": {
-      "description": "A nested-field string predicate: a valueObject inner attribute (referenced by a dotted path) matched against a pattern or a literal affix. The `path` resolves against the model's declared valueObject structure (as for `nestedComparison`) and its leaf's declared type MUST be `String`; a string predicate aimed at any other member is `nested-string-predicate-non-string-member`, checked BEFORE the typed-literal rule so a `date` / `time` / `timestamp` / `uuid` / `bytes` member — which rides the portable string literal and so would otherwise pass the typed-literal check — is named rather than silently accepted (m-predicate). `value` carries the top-level `stringMatch` semantics unchanged: `%` and `_` are wildcards for `nestedLike` / `nestedNotLike`, while the affix forms (`nestedStartsWith` / `nestedEndsWith` / `nestedContains`) treat it as literal text whose wildcards the implementation escapes. `caseInsensitive` defaults to false and otherwise folds BOTH sides with `lower(...)`. Lowers to `<extraction> like ?` — `<extraction> not like ?` for `nestedNotLike`, the same infix negation the scalar `notLike` renders — with the JSON path bind(s) first, then the pattern, then the escape character when escaping actually changed the literal (m-sql/m-dialect).",
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["path", "value"],
-      "properties": {
-        "path": { "$ref": "#/$defs/nestedRef" },
-        "value": { "type": "string" },
-        "caseInsensitive": { "type": "boolean", "default": false }
-      }
-    },
-    "nestedNullCheck": {
-      "description": "A nested-field presence test: a valueObject inner attribute referenced by a dotted path, with NO compared value. The `path` resolves against the model's declared valueObject structure (as for `nestedComparison`). Per the absence-collapse rule (m-predicate) every 'not present' state — SQL NULL column, missing key, JSON `null`, non-object intermediate segment — yields SQL NULL from the extraction, so `nestedIsNull` matches exactly those rows and `nestedIsNotNull` its complement.",
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["path"],
-      "properties": {
-        "path": { "$ref": "#/$defs/nestedRef" }
-      }
-    },
-    "nestedEq": {
-      "description": "nestedEq(path, value): filter where an embedded valueObject attribute equals a typed literal.",
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["nestedEq"],
-      "properties": { "nestedEq": { "$ref": "#/$defs/nestedComparison" } }
-    },
-    "nestedNotEq": {
-      "description": "nestedNotEq(path, value): filter where an embedded valueObject attribute differs from a typed literal.",
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["nestedNotEq"],
-      "properties": { "nestedNotEq": { "$ref": "#/$defs/nestedComparison" } }
-    },
-    "nestedGt": {
-      "description": "nestedGt(path, value): filter where an embedded valueObject attribute is greater than a typed literal (the extraction is cast to the declared type before comparing).",
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["nestedGt"],
-      "properties": { "nestedGt": { "$ref": "#/$defs/nestedComparison" } }
-    },
-    "nestedGte": {
-      "description": "nestedGte(path, value): filter where an embedded valueObject attribute is greater than or equal to a typed literal.",
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["nestedGte"],
-      "properties": { "nestedGte": { "$ref": "#/$defs/nestedComparison" } }
-    },
-    "nestedLt": {
-      "description": "nestedLt(path, value): filter where an embedded valueObject attribute is less than a typed literal.",
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["nestedLt"],
-      "properties": { "nestedLt": { "$ref": "#/$defs/nestedComparison" } }
-    },
-    "nestedLte": {
-      "description": "nestedLte(path, value): filter where an embedded valueObject attribute is less than or equal to a typed literal.",
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["nestedLte"],
-      "properties": { "nestedLte": { "$ref": "#/$defs/nestedComparison" } }
-    },
-    "nestedBetween": {
-      "description": "nestedBetween(path, lower, upper): filter where an embedded valueObject attribute lies within an inclusive range of two typed literals. One canonical node, never two comparisons — through a `many` segment a SINGLE element must satisfy the whole range.",
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["nestedBetween"],
-      "properties": { "nestedBetween": { "$ref": "#/$defs/nestedRange" } }
-    },
-    "nestedIn": {
-      "description": "nestedIn(path, values): filter where an embedded valueObject attribute is one of a non-empty list of typed literals.",
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["nestedIn"],
-      "properties": { "nestedIn": { "$ref": "#/$defs/nestedMembership" } }
-    },
-    "nestedNotIn": {
-      "description": "nestedNotIn(path, values): filter where an embedded valueObject attribute is NOT one of a non-empty list of typed literals. Through a `many` segment this keeps the uniform any-element reading — SOME element's member is not in the list — exactly as nestedNotEq does; the no-element reading is spelled nestedNotExists(path, where: nestedIn(…)).",
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["nestedNotIn"],
-      "properties": { "nestedNotIn": { "$ref": "#/$defs/nestedMembership" } }
-    },
-    "nestedLike": {
-      "description": "nestedLike(path, value, caseInsensitive?): filter where an embedded valueObject String attribute matches a SQL pattern — `%` and `_` are wildcards and the pattern passes through unescaped.",
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["nestedLike"],
-      "properties": { "nestedLike": { "$ref": "#/$defs/nestedStringMatch" } }
-    },
-    "nestedNotLike": {
-      "description": "nestedNotLike(path, value, caseInsensitive?): the negation of nestedLike, lowered as the infix `not like`. Through a `many` segment it keeps the uniform any-element reading — SOME element's member does not match the pattern.",
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["nestedNotLike"],
-      "properties": { "nestedNotLike": { "$ref": "#/$defs/nestedStringMatch" } }
-    },
-    "nestedStartsWith": {
-      "description": "nestedStartsWith(path, value, caseInsensitive?): filter where an embedded valueObject String attribute begins with the LITERAL text `value`, whose own wildcards are escaped before the trailing `%` is appended.",
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["nestedStartsWith"],
-      "properties": { "nestedStartsWith": { "$ref": "#/$defs/nestedStringMatch" } }
-    },
-    "nestedEndsWith": {
-      "description": "nestedEndsWith(path, value, caseInsensitive?): filter where an embedded valueObject String attribute ends with the LITERAL text `value` (escaped, then prefixed with `%`).",
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["nestedEndsWith"],
-      "properties": { "nestedEndsWith": { "$ref": "#/$defs/nestedStringMatch" } }
-    },
-    "nestedContains": {
-      "description": "nestedContains(path, value, caseInsensitive?): filter where an embedded valueObject String attribute contains the LITERAL text `value` (escaped, then wrapped in `%`).",
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["nestedContains"],
-      "properties": { "nestedContains": { "$ref": "#/$defs/nestedStringMatch" } }
-    },
-    "nestedIsNull": {
-      "description": "nestedIsNull(path): filter where an embedded valueObject attribute is 'not present' (SQL NULL column, missing key, JSON null, or non-object intermediate — all collapsed per m-predicate).",
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["nestedIsNull"],
-      "properties": { "nestedIsNull": { "$ref": "#/$defs/nestedNullCheck" } }
-    },
-    "nestedIsNotNull": {
-      "description": "nestedIsNotNull(path): filter where an embedded valueObject attribute is present (the complement of nestedIsNull).",
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["nestedIsNotNull"],
-      "properties": { "nestedIsNotNull": { "$ref": "#/$defs/nestedNullCheck" } }
-    },
-
-    "valueObjectRef": {
-      "description": "A path that TERMINATES at a valueObject member (not an inner attribute): an Entity spelling (bare or namespace-qualified, identity.schema.json) and its valueObject, optionally followed by nested valueObject segments (e.g. Customer.address, Customer.address.phones). Unlike `nestedRef` — which requires an ATTRIBUTE leaf and so carries at least two member segments — this path may carry just one, because its subject is the value OBJECT itself. It resolves against the declared structure (first member segment a declared valueObject on the entity, each further segment a nested valueObject declared on the preceding member); the final member's multiplicity (`one` / `many`) selects the presence vs non-empty semantics of nestedExists/nestedNotExists (m-predicate).",
-      "$ref": "identity.schema.json#/$defs/valueObjectRef"
-    },
-    "elementRef": {
-      "description": "An ELEMENT-RELATIVE path used ONLY inside a scoped `where` (nestedExists/nestedNotExists over a `many` member). It carries NO Entity spelling — the subject is the array element bound by the enclosing exists — so it is one or more lowercase-initial dotted segments naming declared members of that element (`type`, `number`, or `geo.country` to descend a nested value object of the element). Each segment resolves against the element's declared structure (intermediates nested valueObjects, leaf a declared attribute).",
-      "$ref": "identity.schema.json#/$defs/elementRef"
-    },
-
-    "elementComparison": {
-      "description": "An element-scoped nested comparison: an element-relative `path` compared against a TYPED literal whose type MUST match the leaf attribute's declared type. The subject is the array element bound by the enclosing nestedExists/nestedNotExists `where`.",
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["path", "value"],
-      "properties": {
-        "path": { "$ref": "#/$defs/elementRef" },
-        "value": { "$ref": "#/$defs/literal" }
-      }
-    },
-    "elementRange": {
-      "description": "An element-scoped nested range test: an element-relative `path` bounded below and above by TYPED literals whose type MUST match the leaf attribute's declared type. One element must satisfy the WHOLE range, and the bound-ordering rule applies exactly as it does path-scoped.",
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["path", "lower", "upper"],
-      "properties": {
-        "path": { "$ref": "#/$defs/elementRef" },
-        "lower": { "$ref": "#/$defs/literal" },
-        "upper": { "$ref": "#/$defs/literal" }
-      }
-    },
-    "elementMembership": {
-      "description": "An element-scoped membership test: an element-relative `path` tested against a non-empty list of typed literals.",
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["path", "values"],
-      "properties": {
-        "path": { "$ref": "#/$defs/elementRef" },
-        "values": {
-          "type": "array",
-          "minItems": 1,
-          "items": { "$ref": "#/$defs/literal" }
-        }
-      }
-    },
-    "elementStringMatch": {
-      "description": "An element-scoped string predicate: an element-relative `path` whose leaf's declared type MUST be `String`, matched against a pattern (`nestedLike` / `nestedNotLike`) or a literal affix (the three affix forms), with the same wildcard, escaping, and `caseInsensitive` semantics the path-scoped form carries.",
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["path", "value"],
-      "properties": {
-        "path": { "$ref": "#/$defs/elementRef" },
-        "value": { "type": "string" },
-        "caseInsensitive": { "type": "boolean", "default": false }
-      }
-    },
-    "elementNullCheck": {
-      "description": "An element-scoped presence test: an element-relative `path` with NO compared value.",
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["path"],
-      "properties": { "path": { "$ref": "#/$defs/elementRef" } }
-    },
-    "elementPredicate": {
-      "description": "A scoped sub-predicate evaluated against ONE array element inside a nestedExists/nestedNotExists `where`. It is the flat `nested*` family re-expressed over element-relative paths (`elementRef`), composed with the ordinary boolean combinators. The whole compound must be satisfied by a SINGLE element (same-element semantics), which is what distinguishes it from ANDing flat any-element predicates at the top level (m-predicate).",
-      "type": "object",
-      "minProperties": 1,
-      "maxProperties": 1,
-      "oneOf": [
-        { "$ref": "#/$defs/elementNestedEq" },
-        { "$ref": "#/$defs/elementNestedNotEq" },
-        { "$ref": "#/$defs/elementNestedGt" },
-        { "$ref": "#/$defs/elementNestedGte" },
-        { "$ref": "#/$defs/elementNestedLt" },
-        { "$ref": "#/$defs/elementNestedLte" },
-        { "$ref": "#/$defs/elementNestedBetween" },
-        { "$ref": "#/$defs/elementNestedIn" },
-        { "$ref": "#/$defs/elementNestedNotIn" },
-        { "$ref": "#/$defs/elementNestedLike" },
-        { "$ref": "#/$defs/elementNestedNotLike" },
-        { "$ref": "#/$defs/elementNestedStartsWith" },
-        { "$ref": "#/$defs/elementNestedEndsWith" },
-        { "$ref": "#/$defs/elementNestedContains" },
-        { "$ref": "#/$defs/elementNestedIsNull" },
-        { "$ref": "#/$defs/elementNestedIsNotNull" },
-        { "$ref": "#/$defs/elementAnd" },
-        { "$ref": "#/$defs/elementOr" },
-        { "$ref": "#/$defs/elementNot" },
-        { "$ref": "#/$defs/elementGroup" }
-      ]
-    },
-    "elementNestedEq": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["nestedEq"],
-      "properties": { "nestedEq": { "$ref": "#/$defs/elementComparison" } }
-    },
-    "elementNestedNotEq": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["nestedNotEq"],
-      "properties": { "nestedNotEq": { "$ref": "#/$defs/elementComparison" } }
-    },
-    "elementNestedGt": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["nestedGt"],
-      "properties": { "nestedGt": { "$ref": "#/$defs/elementComparison" } }
-    },
-    "elementNestedGte": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["nestedGte"],
-      "properties": { "nestedGte": { "$ref": "#/$defs/elementComparison" } }
-    },
-    "elementNestedLt": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["nestedLt"],
-      "properties": { "nestedLt": { "$ref": "#/$defs/elementComparison" } }
-    },
-    "elementNestedLte": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["nestedLte"],
-      "properties": { "nestedLte": { "$ref": "#/$defs/elementComparison" } }
-    },
-    "elementNestedBetween": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["nestedBetween"],
-      "properties": { "nestedBetween": { "$ref": "#/$defs/elementRange" } }
-    },
-    "elementNestedIn": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["nestedIn"],
-      "properties": { "nestedIn": { "$ref": "#/$defs/elementMembership" } }
-    },
-    "elementNestedNotIn": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["nestedNotIn"],
-      "properties": { "nestedNotIn": { "$ref": "#/$defs/elementMembership" } }
-    },
-    "elementNestedLike": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["nestedLike"],
-      "properties": { "nestedLike": { "$ref": "#/$defs/elementStringMatch" } }
-    },
-    "elementNestedNotLike": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["nestedNotLike"],
-      "properties": { "nestedNotLike": { "$ref": "#/$defs/elementStringMatch" } }
-    },
-    "elementNestedStartsWith": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["nestedStartsWith"],
-      "properties": { "nestedStartsWith": { "$ref": "#/$defs/elementStringMatch" } }
-    },
-    "elementNestedEndsWith": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["nestedEndsWith"],
-      "properties": { "nestedEndsWith": { "$ref": "#/$defs/elementStringMatch" } }
-    },
-    "elementNestedContains": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["nestedContains"],
-      "properties": { "nestedContains": { "$ref": "#/$defs/elementStringMatch" } }
-    },
-    "elementNestedIsNull": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["nestedIsNull"],
-      "properties": { "nestedIsNull": { "$ref": "#/$defs/elementNullCheck" } }
-    },
-    "elementNestedIsNotNull": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["nestedIsNotNull"],
-      "properties": { "nestedIsNotNull": { "$ref": "#/$defs/elementNullCheck" } }
-    },
-    "elementJunction": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["operands"],
-      "properties": {
-        "operands": {
-          "type": "array",
-          "minItems": 2,
-          "items": { "$ref": "#/$defs/elementPredicate" }
-        }
-      }
-    },
-    "elementUnary": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["operand"],
-      "properties": { "operand": { "$ref": "#/$defs/elementPredicate" } }
-    },
-    "elementAnd": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["and"],
-      "properties": { "and": { "$ref": "#/$defs/elementJunction" } }
-    },
-    "elementOr": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["or"],
-      "properties": { "or": { "$ref": "#/$defs/elementJunction" } }
-    },
-    "elementNot": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["not"],
-      "properties": { "not": { "$ref": "#/$defs/elementUnary" } }
-    },
-    "elementGroup": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["group"],
-      "properties": { "group": { "$ref": "#/$defs/elementUnary" } }
-    },
-
-    "nestedExistsBody": {
-      "description": "The body of nestedExists/nestedNotExists: a value-object-terminated `path` and an OPTIONAL element-scoped `where`. Without `where` the meaning is presence — a `one` member present (non-absent per the absence-collapse rule), a `many` member a NON-EMPTY array. With `where` (a `many` path), ONE element must satisfy the whole compound `where` sub-predicate (same-element semantics); nestedNotExists + where means NO element satisfies it (m-predicate). Lowers to the m-dialect array-traversal form (m-sql).",
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["path"],
-      "properties": {
-        "path": { "$ref": "#/$defs/valueObjectRef" },
-        "where": { "$ref": "#/$defs/elementPredicate" }
-      }
-    },
-    "nestedExists": {
-      "description": "nestedExists(path[, where]): the value object at `path` is present (`one`) or its array is non-empty (`many`); with `where`, at least one element satisfies the compound sub-predicate.",
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["nestedExists"],
-      "properties": { "nestedExists": { "$ref": "#/$defs/nestedExistsBody" } }
-    },
-    "nestedNotExists": {
-      "description": "nestedNotExists(path[, where]): the complement of nestedExists — the value object is absent (`one`) or the array is empty/absent (`many`); with `where`, no element satisfies the compound sub-predicate.",
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["nestedNotExists"],
-      "properties": { "nestedNotExists": { "$ref": "#/$defs/nestedExistsBody" } }
     }
   }
 }

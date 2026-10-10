@@ -22,7 +22,7 @@ _BARRIER_CASE = "m-unit-work-049-a-barrier-keeps-non-temporal-writes-on-their-ow
 _ACCOUNT_ROW = {"id": 1, "owner": "Ada", "balance": decimal.Decimal("5.00"), "version": 1}
 _FIND = {
     "uow": "g",
-    "objectQuery": {"target": "Account", "predicate": {"eq": {"attr": "Account.id", "value": 1}}},
+    "objectQuery": {"target": "Account", "predicate": {"eq": {"path": "Account.id", "value": 1}}},
 }
 
 

@@ -1,5 +1,5 @@
-# navigate(Order.statuses -> OrderStatus.code = 'SHIPPED'): filter orders by a
-# related status event. `Order.statuses` joins on Order.id = OrderStatus.orderId,
+# any(Order.statuses, code = 'SHIPPED'): filter orders by a related status
+# event. `Order.statuses` joins on Order.id = OrderStatus.orderId,
 # matching every status row for the order (order-level and item-level). Only
 # order 2 has a SHIPPED status (row 102), so the result is {2}.
 model: models/orders.yaml
@@ -9,11 +9,11 @@ when:
   objectQuery:
     target: parallax.compatibility.Order
     predicate:
-      navigate:
-        rel: parallax.compatibility.Order.statuses
-        op:
+      any:
+        path: parallax.compatibility.Order.statuses
+        where:
           eq:
-            attr: parallax.compatibility.OrderStatus.code
+            path: code
             value: SHIPPED
 then:
   statements:

@@ -160,7 +160,7 @@ def _wire_find(tx: Transaction, entity: type[Any], at: dt.datetime) -> Any:
     return tx.wire.find(
         {
             "target": _name(entity),
-            "predicate": {"eq": {"attr": f"{_name(entity)}.id", "value": 1}},
+            "predicate": {"eq": {"path": f"{_name(entity)}.id", "value": 1}},
             "temporal": {
                 "transaction-time": {"asOf": "latest"},
                 "valid-time": {"asOf": at.strftime("%Y-%m-%dT%H:%M:%S.%fZ")},

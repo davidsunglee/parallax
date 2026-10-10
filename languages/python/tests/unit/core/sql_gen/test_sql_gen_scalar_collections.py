@@ -25,7 +25,7 @@ _ITEM: EntityMetadata = _FOUND
 
 
 def test_a_row_form_read_projects_every_collection_as_a_document_pair() -> None:
-    compiled = compile_read(oa.All(), _COLUMNS, POSTGRES, _ITEM)
+    compiled = compile_read(oa.TrueNode(), _COLUMNS, POSTGRES, _ITEM)
 
     assert compiled.statement.sql.startswith(
         "select t0.id, not t0.flags is null, t0.flags, not t0.smalls is null, t0.smalls"
@@ -36,7 +36,7 @@ def test_a_row_form_read_projects_every_collection_as_a_document_pair() -> None:
 
 
 def test_a_bytes_collection_keeps_its_storage_key_rather_than_an_encoded_one() -> None:
-    compiled = compile_read(oa.All(), _COLUMNS, POSTGRES, _ITEM)
+    compiled = compile_read(oa.TrueNode(), _COLUMNS, POSTGRES, _ITEM)
     contracts = {
         contract.attribute.identity.name: contract
         for contract in compiled.attribute_reads(_ITEM.identity)
@@ -46,7 +46,7 @@ def test_a_bytes_collection_keeps_its_storage_key_rather_than_an_encoded_one() -
 
 
 def test_a_collection_column_classifies_through_the_codec_with_its_logical_path() -> None:
-    compiled = compile_read(oa.All(), _COLUMNS, POSTGRES, _ITEM)
+    compiled = compile_read(oa.TrueNode(), _COLUMNS, POSTGRES, _ITEM)
     classify = compiled.raw_member_classifier(_ITEM.identity, "tags")
 
     assert classify(PresentDocument(["b", "a", "b"])) == (("b", "a", "b"), ())

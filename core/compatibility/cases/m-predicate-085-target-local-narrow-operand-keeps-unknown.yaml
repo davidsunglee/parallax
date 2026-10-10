@@ -1,0 +1,22 @@
+# A path-targeted narrowing with an operand reads the dog's own field: Rex's bark is
+# loud, Fido's is unknown, the cat is unselected and the absent pet is false.
+model: models/predicate-traversal.yaml
+tags: [m-predicate, narrow, relationship, to-one, m-inheritance, table-per-hierarchy, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  objectQuery:
+    target: parallax.compatibility.Collar
+    predicate:
+      narrow:
+        path: parallax.compatibility.Collar.pet
+        to: [parallax.compatibility.Dog]
+        operand:
+          greaterThan: {path: barkVolume, value: 5}
+then:
+  statements:
+  - sql: {postgres: 'select t0.id, t0.pet_id from traversal_collar t0 where (coalesce((select array [ case when t1.kind = ? then t1.bark_volume > ? else false end ] from traversal_pet t1 where t1.id = t0.pet_id), array [ false ])) [ 1 ]'}
+    binds: [dog, 5]
+  referenceSql: select id, pet_id from traversal_collar where pet_id in (select id from traversal_pet where kind = 'dog' and bark_volume > 5)
+  rows:
+  - {id: 10, pet_id: 1}
+  roundTrips: 1

@@ -10,7 +10,7 @@ when:
     target: parallax.compatibility.CollectionTwinItem
     predicate:
       eq:
-        attr: parallax.compatibility.CollectionTwinItem.tags
+        path: parallax.compatibility.CollectionTwinItem.tags
         value: urgent
 then:
   rejectedRule: scalar-collection-unquantified

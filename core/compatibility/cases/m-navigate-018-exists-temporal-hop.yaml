@@ -14,11 +14,11 @@ when:
   objectQuery:
     target: parallax.compatibility.Policy
     predicate:
-      exists:
-        rel: parallax.compatibility.Policy.coverages
-        op:
+      any:
+        path: parallax.compatibility.Policy.coverages
+        where:
           greaterThanEquals:
-            attr: parallax.compatibility.Coverage.amount
+            path: amount
             value: "600.00"
     temporal:
       transaction-time:

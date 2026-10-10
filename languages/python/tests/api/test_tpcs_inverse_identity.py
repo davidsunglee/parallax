@@ -33,7 +33,7 @@ def test_equal_key_roots_resolve_the_shared_child_inverse_locally(
     query = InverseParent.where(InverseParent.all).include(InverseParent.links.parent)
     wire_query: dict[str, Any] = {
         "target": "InverseParent",
-        "predicate": {"all": {}},
+        "predicate": {"true": {}},
         "includes": [{"segments": [{"rel": "InverseParent.links"}, {"rel": "InverseLink.parent"}]}],
     }
     if streamed:
@@ -67,7 +67,7 @@ def test_narrowed_inverse_admits_only_its_selected_concrete() -> None:
     roots = db.wire.find(
         {
             "target": "InverseParent",
-            "predicate": {"all": {}},
+            "predicate": {"true": {}},
             "includes": [
                 {
                     "segments": [
@@ -128,7 +128,7 @@ def test_public_broad_tpcs_children_report_same_root_witness_conflict(
     target = "InverseLink" if to_one else "InverseOwner"
     wire_query: dict[str, Any] = {
         "target": target,
-        "predicate": {"all": {}},
+        "predicate": {"true": {}},
         "orderBy": [{"attr": f"{target}.id"}],
         "includes": [{"segments": [{"rel": f"{target}.{'parent' if to_one else 'parents'}"}]}],
     }
@@ -171,7 +171,7 @@ def test_public_wire_deeper_inverse_reuses_each_broad_child_on_a_live_database(
     ).using_database_login()
     query: dict[str, Any] = {
         "target": "InverseOwner",
-        "predicate": {"all": {}},
+        "predicate": {"true": {}},
         "orderBy": [{"attr": "InverseOwner.id"}],
         "includes": [
             {

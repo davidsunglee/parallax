@@ -685,8 +685,11 @@ def test_sealing_a_scope_that_reaches_its_parent_today_would_fail(
     )
     assert own.imports_escaping_a_sealed_child_row(own.production_files()) == [
         "parallax-core/src/parallax/core/entity/_expressions.py "
+        "(imports parallax.core.entity._declaration, which "
+        "parallax.core.entity._expressions's own row cannot reject)",
+        "parallax-core/src/parallax/core/entity/_expressions.py "
         "(imports parallax.core.entity._errors, which "
-        "parallax.core.entity._expressions's own row cannot reject)"
+        "parallax.core.entity._expressions's own row cannot reject)",
     ]
 
 

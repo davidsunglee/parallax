@@ -27,7 +27,7 @@ when:
         target: parallax.compatibility.Account
         predicate:
           eq:
-            attr: parallax.compatibility.Account.id
+            path: parallax.compatibility.Account.id
             value: 8
       roundTrips: 1
       note: a dependent find observes the combined insert's final values (read-your-own-writes)

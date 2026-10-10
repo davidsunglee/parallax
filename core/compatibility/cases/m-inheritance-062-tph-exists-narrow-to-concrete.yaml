@@ -7,14 +7,14 @@ when:
   objectQuery:
     target: parallax.compatibility.Person
     predicate:
-      exists:
-        rel: parallax.compatibility.Person.pets
-        op:
+      any:
+        path: parallax.compatibility.Person.pets
+        where:
           narrow:
             to:
               - parallax.compatibility.Cat
             operand:
-              all: {}
+              "true": {}
 then:
   statements:
     - sql:

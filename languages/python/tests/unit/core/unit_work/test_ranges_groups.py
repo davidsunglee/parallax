@@ -88,7 +88,10 @@ def _group(
         PredicateWrite(
             mutation,
             PredicateSelection(
-                "Position", predicate_algebra.Comparison("eq", "Position.value", "100.00")
+                "Position",
+                predicate_algebra.Comparison(
+                    "eq", predicate_algebra.FieldSubject("Position.value"), "100.00"
+                ),
             ),
             (WriteAssignment("Position.value", Decimal(value)),),
             *bounds,
@@ -147,7 +150,10 @@ def test_an_assignment_no_opened_row_expresses_is_refused_while_planning() -> No
         PredicateWrite(
             "amendUntil",
             PredicateSelection(
-                "Position", predicate_algebra.Comparison("eq", "Position.value", "100.00")
+                "Position",
+                predicate_algebra.Comparison(
+                    "eq", predicate_algebra.FieldSubject("Position.value"), "100.00"
+                ),
             ),
             (WriteAssignment("Position.acctNum", {"increment": 1}),),
             _FEB,

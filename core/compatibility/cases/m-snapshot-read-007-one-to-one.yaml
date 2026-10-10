@@ -11,7 +11,7 @@ when:
   objectQuery:
     target: parallax.compatibility.Person
     predicate:
-      all: {}
+      "true": {}
     includes:
       - segments:
           - rel: parallax.compatibility.Person.passport

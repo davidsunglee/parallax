@@ -219,7 +219,7 @@ def _read_span(
     node = tx.wire.find(
         {
             "target": name,
-            "predicate": {"eq": {"attr": f"{name}.id", "value": 1}},
+            "predicate": {"eq": {"path": f"{name}.id", "value": 1}},
             "temporal": {"transaction-time": {"asOf": "latest"}, "valid-time": {"asOf": pin}},
         }
     ).result()
@@ -234,7 +234,7 @@ def _read_log(tx: Transaction, entity: type[Any], representation: _Representatio
     tx.wire.find(
         {
             "target": name,
-            "predicate": {"eq": {"attr": f"{name}.id", "value": 1}},
+            "predicate": {"eq": {"path": f"{name}.id", "value": 1}},
             "temporal": {"transaction-time": {"asOf": "latest"}},
         }
     ).result()

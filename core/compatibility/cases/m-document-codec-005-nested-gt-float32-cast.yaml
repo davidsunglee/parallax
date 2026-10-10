@@ -8,7 +8,7 @@ when:
   objectQuery:
     target: parallax.compatibility.Sample
     predicate:
-      nestedGt:
+      greaterThan:
         path: parallax.compatibility.Sample.profile.ratio
         value: 2
 then:

@@ -27,8 +27,12 @@ when:
             predicate:
               and:
                 operands:
-                  - { eq: { attr: parallax.compatibility.SequenceSpan.label, value: c } }
-                  - { eq: { attr: parallax.compatibility.SequenceSpan.amount, value: 100 } }
+                  - eq:
+                      path: parallax.compatibility.SequenceSpan.label
+                      value: c
+                  - eq:
+                      path: parallax.compatibility.SequenceSpan.amount
+                      value: 100
           assignments:
             - { attr: parallax.compatibility.SequenceSpan.amount, value: 150 }
           validFrom: "2024-02-01T00:00:00.000000Z"
@@ -38,7 +42,10 @@ when:
     - uow: opened
       objectQuery:
         target: parallax.compatibility.SequenceSpan
-        predicate: { eq: { attr: parallax.compatibility.SequenceSpan.id, value: 3 } }
+        predicate:
+          eq:
+            path: parallax.compatibility.SequenceSpan.id
+            value: 3
         temporal: { transaction-time: { asOf: latest }, valid-time: { asOf: "2024-07-01T00:00:00.000000Z" } }
       note: "the find flushes the amendment and reads span 3 in July through the same transaction"
       expectRows:
@@ -55,7 +62,10 @@ when:
         - mutation: amendUntil
           target:
             entity: parallax.compatibility.SequenceSpan
-            predicate: { eq: { attr: parallax.compatibility.SequenceSpan.label, value: c } }
+            predicate:
+              eq:
+                path: parallax.compatibility.SequenceSpan.label
+                value: c
           assignments:
             - { attr: parallax.compatibility.SequenceSpan.amount, value: 150 }
           validFrom: "2024-03-01T00:00:00.000000Z"

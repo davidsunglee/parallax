@@ -15,7 +15,7 @@ when:
         target: parallax.compatibility.Account
         predicate:
           lessThan:
-            attr: parallax.compatibility.Account.balance
+            path: parallax.compatibility.Account.balance
             value: "200.00"
       roundTrips: 1
       statements:
@@ -31,7 +31,9 @@ when:
         target:
           entity: parallax.compatibility.Account
           predicate:
-            lessThan: { attr: parallax.compatibility.Account.balance, value: "200.00" }
+            lessThan:
+              path: parallax.compatibility.Account.balance
+              value: "200.00"
         assignments:
           - { attr: parallax.compatibility.Account.balance, value: "100.00" }
       roundTrips: 1
@@ -43,7 +45,7 @@ when:
         target: parallax.compatibility.Account
         predicate:
           lessThan:
-            attr: parallax.compatibility.Account.balance
+            path: parallax.compatibility.Account.balance
             value: "200.00"
       roundTrips: 1
       statements:

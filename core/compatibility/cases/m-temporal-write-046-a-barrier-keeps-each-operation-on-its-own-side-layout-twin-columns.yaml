@@ -24,7 +24,10 @@ when:
         - mutation: amend
           target:
             entity: parallax.compatibility.SequenceTag
-            predicate: { eq: { attr: parallax.compatibility.SequenceTag.id, value: 1 } }
+            predicate:
+              eq:
+                path: parallax.compatibility.SequenceTag.id
+                value: 1
           assignments:
             - { attr: parallax.compatibility.SequenceTag.label, value: q }
         - mutation: amendUntil
@@ -38,7 +41,10 @@ when:
     - uow: observed
       objectQuery:
         target: parallax.compatibility.SequenceSpan
-        predicate: { eq: { attr: parallax.compatibility.SequenceSpan.id, value: 2 } }
+        predicate:
+          eq:
+            path: parallax.compatibility.SequenceSpan.id
+            value: 2
         temporal: { transaction-time: { asOf: latest }, valid-time: { asOf: "2024-02-01T00:00:00.000000Z" } }
       note: "observe span 2 at February"
       expectRows:
@@ -53,7 +59,10 @@ when:
     - uow: observed
       objectQuery:
         target: parallax.compatibility.SequenceSpan
-        predicate: { eq: { attr: parallax.compatibility.SequenceSpan.id, value: 2 } }
+        predicate:
+          eq:
+            path: parallax.compatibility.SequenceSpan.id
+            value: 2
         temporal: { transaction-time: { asOf: latest }, valid-time: { asOf: "2024-06-01T00:00:00.000000Z" } }
       note: "observe span 2 at June"
       expectRows:
@@ -78,7 +87,10 @@ when:
         - mutation: amend
           target:
             entity: parallax.compatibility.SequenceTag
-            predicate: { eq: { attr: parallax.compatibility.SequenceTag.id, value: 2 } }
+            predicate:
+              eq:
+                path: parallax.compatibility.SequenceTag.id
+                value: 2
           assignments:
             - { attr: parallax.compatibility.SequenceTag.label, value: r }
         - mutation: amendUntil
@@ -93,7 +105,10 @@ when:
     - uow: carried
       objectQuery:
         target: parallax.compatibility.SequenceSpan
-        predicate: { eq: { attr: parallax.compatibility.SequenceSpan.id, value: 3 } }
+        predicate:
+          eq:
+            path: parallax.compatibility.SequenceSpan.id
+            value: 3
         temporal: { transaction-time: { asOf: latest }, valid-time: { asOf: "2024-02-01T00:00:00.000000Z" } }
       note: "observe span 3 at February"
       expectRows:
@@ -117,7 +132,10 @@ when:
         - mutation: amend
           target:
             entity: parallax.compatibility.SequenceTag
-            predicate: { eq: { attr: parallax.compatibility.SequenceTag.id, value: 1 } }
+            predicate:
+              eq:
+                path: parallax.compatibility.SequenceTag.id
+                value: 1
           assignments:
             - { attr: parallax.compatibility.SequenceTag.label, value: s }
         - mutation: amendUntil
@@ -140,7 +158,10 @@ when:
         - mutation: amend
           target:
             entity: parallax.compatibility.SequenceTag
-            predicate: { eq: { attr: parallax.compatibility.SequenceTag.id, value: 2 } }
+            predicate:
+              eq:
+                path: parallax.compatibility.SequenceTag.id
+                value: 2
           assignments:
             - { attr: parallax.compatibility.SequenceTag.label, value: w }
         - mutation: terminate

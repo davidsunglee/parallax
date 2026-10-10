@@ -1,0 +1,22 @@
+# A path-targeted narrowing over a table-per-concrete-subtype target: every declared
+# concrete table contributes a candidate, an unselected one answering false.
+model: models/predicate-traversal.yaml
+tags: [m-predicate, narrow, relationship, to-one, m-inheritance, table-per-concrete-subtype, m-dialect, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  objectQuery:
+    target: parallax.compatibility.Parking
+    predicate:
+      narrow:
+        path: parallax.compatibility.Parking.vehicle
+        to: [parallax.compatibility.Car]
+        operand:
+          'true': {}
+then:
+  statements:
+  - sql: {postgres: 'select t0.id, t0.vehicle_id from traversal_parking t0 where coalesce((select false from traversal_bike t1 where t1.id = t0.vehicle_id union all select true from traversal_car t2 where t2.id = t0.vehicle_id), false)', mariadb: 'select t0.id, t0.vehicle_id from traversal_parking t0 where coalesce((select false from traversal_bike t1 where t1.id = t0.vehicle_id union all select true from traversal_car t2 where t2.id = t0.vehicle_id), false)'}
+  referenceSql: select id, vehicle_id from traversal_parking where vehicle_id in (select id from traversal_car)
+  rows:
+  - {id: 30, vehicle_id: 5}
+  - {id: 33, vehicle_id: 7}
+  roundTrips: 1

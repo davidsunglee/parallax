@@ -25,7 +25,7 @@ from parallax.core import continuation
 from parallax.core.metamodel import Metamodel
 from parallax.core.object_query import object_query, validate_object_query
 from parallax.core.object_query._resolved import ContinuationCoordinate
-from parallax.core.predicate import All
+from parallax.core.predicate import TrueNode
 from parallax.core.read_delivery._page_reader import PageReader
 from parallax.core.read_delivery._paging import PagingParameters, PagingPlan, page_decision
 from parallax.core.sql_gen import SqlGenError
@@ -45,7 +45,7 @@ order through to the refusal without reading it, and which Attributes are in it 
 
 def _page_plan(*, batch_size: int, limit: int | None = None) -> PagingPlan:
     entity = entity_of(ORDERS, "Order")
-    query = object_query(entity.identity, All(), limit=limit)
+    query = object_query(entity.identity, TrueNode(), limit=limit)
     return PagingPlan(
         continuation.plan(validate_object_query(entity, query, ORDERS), ORDERS),
         batch_size,

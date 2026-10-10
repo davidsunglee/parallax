@@ -232,7 +232,7 @@ def flush(
     entity = case.entity.identity.canonical
     target = {
         "entity": entity,
-        "predicate": {"greaterThanEquals": {"attr": f"{entity}.id", "value": 1}},
+        "predicate": {"greaterThanEquals": {"path": f"{entity}.id", "value": 1}},
     }
 
     def body(transaction: Transaction) -> None:

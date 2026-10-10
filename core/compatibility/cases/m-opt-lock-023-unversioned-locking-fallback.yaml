@@ -12,7 +12,7 @@ when:
         target: parallax.compatibility.Wallet
         predicate:
           eq:
-            attr: parallax.compatibility.Wallet.id
+            path: parallax.compatibility.Wallet.id
             value: 1
       roundTrips: 1
       note: observe wallet 1 inside the group; the unversioned target resolves to Locking, so the find takes the shared row lock
@@ -39,7 +39,7 @@ when:
         target: parallax.compatibility.Wallet
         predicate:
           eq:
-            attr: parallax.compatibility.Wallet.id
+            path: parallax.compatibility.Wallet.id
             value: 1
       roundTrips: 1
       note: a dependent find observes the updated balance and takes the same shared lock; the group COMMITS after this, its last step

@@ -10,7 +10,9 @@ when:
         target:
           entity: parallax.compatibility.Wallet
           predicate:
-            lessThan: { attr: parallax.compatibility.Wallet.balance, value: "200.00" }
+            lessThan:
+              path: parallax.compatibility.Wallet.balance
+              value: "200.00"
         assignments:
           - { attr: parallax.compatibility.Wallet.balance, value: "150.00" }
           - { attr: parallax.compatibility.Wallet.owner, value: Updated }
@@ -23,7 +25,7 @@ when:
         target: parallax.compatibility.Wallet
         predicate:
           eq:
-            attr: parallax.compatibility.Wallet.owner
+            path: parallax.compatibility.Wallet.owner
             value: Updated
       roundTrips: 1
       statements:

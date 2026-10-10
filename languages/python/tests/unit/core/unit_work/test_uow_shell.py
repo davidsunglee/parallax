@@ -763,7 +763,10 @@ def _account_group(*states: tuple[int, int]) -> MaterializedWriteGroup:
         PredicateWrite(
             "delete",
             PredicateSelection(
-                "Account", predicate_algebra.Comparison("lessThan", "Account.id", 100)
+                "Account",
+                predicate_algebra.Comparison(
+                    "lessThan", predicate_algebra.FieldSubject("Account.id"), 100
+                ),
             ),
         ),
         _ACCOUNT,
@@ -787,7 +790,10 @@ def _balance_group(*rows: dict[str, object]) -> MaterializedWriteGroup:
         PredicateWrite(
             "terminate",
             PredicateSelection(
-                "Balance", predicate_algebra.Comparison("lessThan", "Balance.value", "100.00")
+                "Balance",
+                predicate_algebra.Comparison(
+                    "lessThan", predicate_algebra.FieldSubject("Balance.value"), "100.00"
+                ),
             ),
         ),
         _BALANCE,
@@ -1055,7 +1061,10 @@ def test_every_other_accepted_item_reports_plain_buffering() -> None:
     predicate = prepare_typed_write(
         PredicateWrite(
             "delete",
-            PredicateSelection("Account", predicate_algebra.Comparison("eq", "Account.id", 1)),
+            PredicateSelection(
+                "Account",
+                predicate_algebra.Comparison("eq", predicate_algebra.FieldSubject("Account.id"), 1),
+            ),
         ),
         _ACCOUNT,
     )
@@ -1727,7 +1736,10 @@ def test_a_unit_a_barrier_kept_back_binds_on_what_the_earlier_unit_spent_and_pro
             PredicateWrite(
                 "amend",
                 PredicateSelection(
-                    "ShellTag", predicate_algebra.Comparison("eq", "ShellTag.id", 1)
+                    "ShellTag",
+                    predicate_algebra.Comparison(
+                        "eq", predicate_algebra.FieldSubject("ShellTag.id"), 1
+                    ),
                 ),
                 assignments=(WriteAssignment("ShellTag.label", "q"),),
             ),
@@ -1798,7 +1810,10 @@ def test_an_objects_proofs_end_when_its_last_following_unit_completes() -> None:
                 PredicateWrite(
                     "amend",
                     PredicateSelection(
-                        "ShellTag", predicate_algebra.Comparison("eq", "ShellTag.id", 1)
+                        "ShellTag",
+                        predicate_algebra.Comparison(
+                            "eq", predicate_algebra.FieldSubject("ShellTag.id"), 1
+                        ),
                     ),
                     assignments=(WriteAssignment("ShellTag.label", "q"),),
                 ),
@@ -1836,7 +1851,12 @@ def _shell_barrier() -> PreparedPredicateWrite:
     barrier = prepare_wire_write(
         PredicateWrite(
             "amend",
-            PredicateSelection("ShellTag", predicate_algebra.Comparison("eq", "ShellTag.id", 1)),
+            PredicateSelection(
+                "ShellTag",
+                predicate_algebra.Comparison(
+                    "eq", predicate_algebra.FieldSubject("ShellTag.id"), 1
+                ),
+            ),
             assignments=(WriteAssignment("ShellTag.label", "q"),),
         ),
         _BARRIERED,

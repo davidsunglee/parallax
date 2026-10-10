@@ -1,59 +1,23 @@
-"""Model-aware Object Query validation for the ``rejected`` case shape.
+"""Model-aware Object Query clause validation for the ``rejected`` case shape.
 
-A query `rejected` case (m-case-format, resolved Q7) carries a SCHEMA-VALID
-`m-object-query` document that a model-aware resolver MUST refuse **before any
-SQL is emitted**. This module walks that document — mostly against the queried
-entity's declared value-object structure — and raises
-:class:`~reference_harness.value_object_resolve.RejectionError` naming the violated
-normative rule:
+A query `rejected` case (m-case-format) carries a SCHEMA-VALID `m-object-query`
+document that a model-aware resolver MUST refuse **before any SQL is emitted**.
+The predicate is judged by :mod:`predicate_validate`; this module judges the
+value-object rules of the query's other clauses and raises
+:class:`~reference_harness.value_object_resolve.RejectionError` naming the
+violated rule:
 
-* a **range** predicate whose `lower` bound is strictly greater than its `upper`,
-  comparing same-kind literals only (m-predicate bound ordering) — at the top level
-  and at both nested scopes. At the top level the rule needs no model, since the two
-  authored literals carry everything it compares; nested, the path and both typed
-  bounds resolve FIRST, so a mistyped bound is named as a type mismatch rather than
-  ordered as a raw literal;
-* a nested-predicate **path** whose first segment is not a declared value object,
-  or whose intermediate / leaf segment is undeclared (m-predicate resolver MUST);
-* a nested-comparison / range / membership **literal** whose type mismatches the leaf
-  attribute's declared neutral type (m-predicate typed-literal MUST);
-* a nested **string predicate** whose resolved leaf is not a `String` member
-  (m-predicate non-string-member MUST) — checked ahead of the typed-literal rule at
-  both nested scopes, because the portable literal carries a `date` / `uuid` /
-  `timestamp` value as a `string` and the literal rule alone would accept it;
-* an **Include Path** segment or a **relationship navigation** (`navigate` /
-  `exists` / `notExists`) aimed at a value object — value objects are reached only
-  by value through their owner, never navigated to (m-value-object contract 4,
-  m-deep-fetch / m-navigate);
-* a **find() rooted at a value object** — a value object is not a queryable root
-  entity (m-value-object contract 5), surfaced here as an attribute reference whose
-  class segment names a declared value object rather than the entity, or as a
-  Subtype Selection at the queried position naming one: the position a source
-  guard resolves at is the queried position itself.
+* an **Include Path** segment aimed at a value object — value objects are
+  reached only by value through their owner, never navigated to
+  (m-value-object contract 4, m-deep-fetch);
+* a **Sort Key** or a **Subtype Selection** at the queried position rooted at a
+  value object — a value object is not a queryable root entity (m-value-object
+  contract 5);
+* a **Sort Key** over a scalar collection, which is not one scalar value.
 
 The reference harness (a non-normative oracle) runs this so the reference
 implementation actually rejects what the `rejected` cases pin — the same refusal
 each language implementation must make.
-
-Scope — value-object rules are enforced at ANY depth within the queried entity's
-own predicate. :func:`validate_object_query` checks every clause and descends
-through the SAME-entity boolean combinators (``and`` / ``or`` / ``not`` /
-``group``) and the Predicate-scoped ``narrow``, so a nested-predicate
-violation (an undeclared path segment, a mistyped literal, a value-object misuse) is
-rejected wherever the offending node appears — buried inside an ``and`` just as at
-the top level. The combinators do not change the root entity, so resolution stays
-against the same declared value-object structure throughout.
-
-Tracked scope limitation (future extension): value-object rules inside a
-RELATED-entity sub-predicate — a navigation's inner predicate (``navigationFilter.op``
-/ the ``op`` a ``navigate`` / ``exists`` / ``notExists`` carries, which resolves
-against a DIFFERENT entity) — are NOT enforced here. That would require cross-entity
-model resolution (following the relationship to its target entity's declared
-structure); no corpus case exercises it, and value objects are never navigation
-targets (they have no identity to correlate), so :func:`validate_object_query` refuses a
-value-object-TARGETED navigation but does not recurse INTO a related entity's
-sub-predicate. Enforcing nested value-object rules across a relationship boundary is
-a documented future extension.
 """
 
 from __future__ import annotations
@@ -61,169 +25,28 @@ from __future__ import annotations
 from typing import Any
 
 from .case import Entity
-from .query_references import ATTRIBUTE_REFERENCE_TAGS
 from .value_object_resolve import (
-    BETWEEN_BOUNDS_INVERTED,
     DEEP_FETCH_VALUE_OBJECT_SEGMENT,
     FIND_ROOT_VALUE_OBJECT,
-    NAVIGATE_VALUE_OBJECT_TARGET,
-    NESTED_STRING_PREDICATE_NON_STRING_MEMBER,
-    NULL_CHECK_NON_NULLABLE_MEMBER,
     SCALAR_COLLECTION_UNQUANTIFIED,
     RejectionError,
-    bounds_inverted,
-    decode_typed_literal,
     find_top_value_object,
-    is_string_member,
-    resolve_element_ref,
-    resolve_nested_ref,
-    resolve_value_object_ref,
-)
-
-# The flat nested comparison family (single-key nodes wrapping a {path, value} body).
-_NESTED_COMPARISON_TAGS = frozenset(
-    {"nestedEq", "nestedNotEq", "nestedGt", "nestedGte", "nestedLt", "nestedLte"}
-)
-# The flat nested membership family (a {path, values} body); the negated form carries
-# the same typed-literal obligation as the positive one.
-_NESTED_MEMBERSHIP_TAGS = frozenset({"nestedIn", "nestedNotIn"})
-# The flat nested string family (a {path, value, caseInsensitive?} body). Pattern
-# grammar and case folding are lowering concerns; what validation owns is the pair of
-# ordered rules below.
-_NESTED_STRING_TAGS = frozenset(
-    {"nestedLike", "nestedNotLike", "nestedStartsWith", "nestedEndsWith", "nestedContains"}
-)
-_STRING_TAGS = frozenset({"like", "notLike", "startsWith", "endsWith", "contains"})
-# Every nested predicate over one leaf member, judged alike at the queried
-# entity's scope and inside a scoped element `where`.
-_NESTED_LEAF_TAGS = (
-    _NESTED_COMPARISON_TAGS
-    | _NESTED_MEMBERSHIP_TAGS
-    | _NESTED_STRING_TAGS
-    | {"nestedBetween", "nestedIsNull", "nestedIsNotNull"}
 )
 
 
 def validate_object_query(entity: Entity, query: Any) -> None:
-    """Reject *query* pre-SQL if it misuses a value object; else return.
-
-    Raises :class:`RejectionError` (``.rule`` one of the query rules) on the first
-    violation. A query with no value-object misuse returns quietly — this is used
-    ONLY for ``rejected`` cases, so it need not fully validate every valid query,
-    only reject the specific negative inputs the corpus pins.
-
-    Every clause is checked: the predicate, each Sort Key's own root, each Include
-    Path's source guard and hops. The predicate walk descends through the
-    SAME-entity boolean combinators (``and`` / ``or`` / ``not`` / ``group``) and the
-    Predicate-scoped ``narrow``, so a violation is caught at ANY depth. It does NOT
-    recurse into a related-entity sub-predicate (a navigation's inner op) — a
-    tracked scope limitation (see the module docstring).
+    """Reject *query*'s non-predicate clauses pre-SQL if they misuse a value
+    object; else return. Used ONLY for ``rejected`` cases, so it rejects the
+    specific negative inputs the corpus pins rather than validating every query.
     """
     if not isinstance(query, dict):
         return
-    validate_predicate(entity, query.get("predicate"))
     _check_source_guard(entity, query.get("narrowTo"))
     for key in query.get("orderBy", []) or []:
         if isinstance(key, dict):
             _check_find_root(entity, key.get("attr"))
             _check_order_key_scalar(entity, key.get("attr"))
     _check_includes(entity, query.get("includes", []) or [])
-
-
-def validate_predicate(entity: Entity, predicate: Any) -> None:
-    """Reject *predicate* pre-SQL if it misuses a value object; else return.
-
-    The clause-free half of :func:`validate_object_query`, and what a
-    predicate-selected write's own bare predicate is judged by.
-    """
-    _walk(entity, predicate)
-
-
-def _walk(entity: Entity, node: Any) -> None:
-    if not isinstance(node, dict) or len(node) != 1:
-        return
-    tag, body = next(iter(node.items()))
-    if tag in _NESTED_LEAF_TAGS:
-        path = body["path"]
-        _check_nested_leaf(
-            tag, body, resolve_nested_ref(entity, path), subject=path, label=repr(path)
-        )
-    elif tag in ("nestedExists", "nestedNotExists"):
-        _check_nested_exists(entity, body)
-    elif tag == "between":
-        _check_between(entity, body)
-    elif tag in ("navigate", "exists", "notExists"):
-        _check_navigation(entity, body)
-    elif tag in ATTRIBUTE_REFERENCE_TAGS:
-        _check_attribute_predicate(entity, tag, body)
-    elif tag in ("and", "or"):
-        for operand in body.get("operands", []):
-            _walk(entity, operand)
-    elif tag in ("not", "group", "narrow"):
-        _walk(entity, body.get("operand"))
-
-
-def _check_attribute_predicate(entity: Entity, tag: str, body: dict[str, Any]) -> None:
-    subject = body.get("attr")
-    _check_find_root(entity, subject)
-    if not isinstance(subject, str):
-        return
-    attribute = entity.attribute_by_name(subject.rpartition(".")[2])
-    if tag in ("isNull", "isNotNull"):
-        _check_null_check(attribute, subject)
-        return
-    _check_single_scalar(attribute, subject)
-    if tag in _STRING_TAGS:
-        _check_string_predicate(attribute, body, subject=subject)
-    elif tag in ("in", "notIn"):
-        for value in body.get("values", []):
-            decode_typed_literal(value, attribute.get("type"), repr(subject))
-    else:
-        decode_typed_literal(body.get("value"), attribute.get("type"), repr(subject))
-
-
-def _check_between(entity: Entity, body: dict[str, Any]) -> None:
-    """A range predicate's own two checks: its subject, then its bound ordering."""
-    subject = body.get("attr")
-    _check_find_root(entity, subject)
-    if not isinstance(subject, str):
-        return
-    attribute = entity.attribute_by_name(subject.rpartition(".")[2])
-    _check_single_scalar(attribute, subject)
-    _check_range_predicate(attribute, body, subject=subject)
-
-
-def _check_bound_ordering(subject: Any, lower: Any, upper: Any) -> None:
-    """Reject a range whose bounds are inverted (m-predicate bound ordering)."""
-    if bounds_inverted(lower, upper):
-        raise RejectionError(
-            BETWEEN_BOUNDS_INVERTED,
-            f"{subject!r}: lower bound {lower!r} is greater than upper bound {upper!r}, "
-            f"so the range is empty and no row can satisfy it",
-        )
-
-
-def _check_nested_leaf(
-    tag: str, body: dict[str, Any], attribute: dict[str, Any], *, subject: str, label: str
-) -> None:
-    """One nested leaf predicate's rules against its resolved leaf ``attribute``.
-
-    ``subject`` names the path in a range or string rule's diagnostic, and
-    ``label`` names it in a comparison or membership literal's.
-    """
-    if tag not in ("nestedIsNull", "nestedIsNotNull"):
-        _check_single_scalar(attribute, subject)
-    if tag in _NESTED_COMPARISON_TAGS:
-        decode_typed_literal(body.get("value"), attribute.get("type"), label)
-    elif tag == "nestedBetween":
-        _check_range_predicate(attribute, body, subject=subject)
-    elif tag in _NESTED_MEMBERSHIP_TAGS:
-        for value in body.get("values", []):
-            decode_typed_literal(value, attribute.get("type"), label)
-    elif tag in _NESTED_STRING_TAGS:
-        _check_string_predicate(attribute, body, subject=subject)
-    else:
-        _check_null_check(attribute, body["path"])
 
 
 def _check_single_scalar(attribute: dict[str, Any], subject: str) -> None:
@@ -245,93 +68,6 @@ def _check_order_key_scalar(entity: Entity, subject: Any) -> None:
     except KeyError:
         return
     _check_single_scalar(attribute, subject)
-
-
-def _check_null_check(attribute: dict[str, Any], subject: str) -> None:
-    if not attribute.get("nullable", False):
-        raise RejectionError(
-            NULL_CHECK_NON_NULLABLE_MEMBER,
-            f"{subject!r}: isNull/isNotNull is invalid for a non-nullable member",
-        )
-
-
-def _check_range_predicate(
-    attribute: dict[str, Any], body: dict[str, Any], *, subject: str
-) -> None:
-    """A nested range's bound checks, in the order m-predicate fixes: both typed
-    bounds, then the bound ordering — the path having already resolved ``attribute``.
-
-    One function for both scopes, because only the resolution of ``attribute``
-    differs. Ordering the bounds last is load-bearing: a mistyped bound is named as a
-    type mismatch rather than ordered as a raw literal of some unrelated kind.
-    """
-    lower = decode_typed_literal(
-        body.get("lower"), attribute.get("type"), f"{subject!r} lower bound"
-    )
-    upper = decode_typed_literal(
-        body.get("upper"), attribute.get("type"), f"{subject!r} upper bound"
-    )
-    _check_bound_ordering(subject, lower, upper)
-
-
-def _check_string_predicate(
-    attribute: dict[str, Any], body: dict[str, Any], *, subject: str
-) -> None:
-    """A nested string predicate's two rules, in the order m-predicate fixes: the
-    resolved member's own type, then the literal's.
-
-    One function serves both scopes because only resolution of ``attribute``
-    differs. Applicability is checked first so an operator aimed at a non-string
-    member reports that stable rule before the operand's independent typed-literal
-    verdict.
-    """
-    declared = attribute.get("type")
-    if not is_string_member(declared):
-        raise RejectionError(
-            NESTED_STRING_PREDICATE_NON_STRING_MEMBER,
-            f"{subject!r}: a string predicate reads text, but the member's declared type "
-            f"is {declared!r}, not 'string'",
-        )
-    decode_typed_literal(body.get("value"), declared, repr(subject))
-
-
-def _check_nested_exists(entity: Entity, body: dict[str, Any]) -> None:
-    value_object = resolve_value_object_ref(entity, body["path"])
-    where = body.get("where")
-    if where is not None:
-        _walk_element(value_object, where)
-
-
-def _walk_element(value_object: dict[str, Any], node: Any) -> None:
-    """Validate a scoped `where` sub-predicate against one array element's structure."""
-    if not isinstance(node, dict) or len(node) != 1:
-        return
-    tag, body = next(iter(node.items()))
-    if tag in _NESTED_LEAF_TAGS:
-        path = body["path"]
-        _check_nested_leaf(
-            tag,
-            body,
-            resolve_element_ref(value_object, path),
-            subject=f"element {path}",
-            label=f"element {path!r}",
-        )
-    elif tag in ("and", "or"):
-        for operand in body.get("operands", []):
-            _walk_element(value_object, operand)
-    elif tag in ("not", "group"):
-        _walk_element(value_object, body.get("operand"))
-
-
-def _check_navigation(entity: Entity, body: dict[str, Any]) -> None:
-    rel = body.get("rel", "")
-    cls, _, member = rel.rpartition(".")
-    if _names(entity, cls) and find_top_value_object(entity, member) is not None:
-        raise RejectionError(
-            NAVIGATE_VALUE_OBJECT_TARGET,
-            f"relationship navigation targets value object {member!r} on {entity.name} — "
-            f"a value object has no identity to correlate and is never a navigation target",
-        )
 
 
 def _check_includes(entity: Entity, paths: Any) -> None:

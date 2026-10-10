@@ -111,9 +111,8 @@ EXAMPLES: Final[list[Example]] = [
     # the SAME `build()` through the shipped `parallax.snapshot.connect` +
     # `parallax-postgres` (test_story_run's generic runner), grading the
     # mirrored case's own `then.rows` (order-insensitive, exact-typed) and
-    # `then.roundTrips`. The `navigate`-tagged siblings (a corpus spelling
-    # redundancy for the identical correlated-EXISTS lowering `exists`
-    # already expresses — m-predicate), the deep-fetch-bearing temporal
+    # `then.roundTrips`. The relationship quantifier siblings (the identical
+    # correlated-EXISTS lowering over another relationship), the deep-fetch-bearing temporal
     # siblings, the multi-concrete polymorphic PROJECTING inheritance reads,
     # and the Customer value-object predicate-read siblings (whose flagship
     # reads are executed graph stories; see GRAPH_STORIES below)
@@ -140,7 +139,7 @@ EXAMPLES: Final[list[Example]] = [
     Example(
         "m-inheritance-040",
         "A narrow that broadens beyond its position",
-        "Animal.where(Animal.narrow(Person))\n"
+        "Animal.where(Animal.is_a(Person))\n"
         '# raises ModelRejectedError(rule="narrow-outside-position")',
     ),
     Example(
@@ -152,25 +151,25 @@ EXAMPLES: Final[list[Example]] = [
     Example(
         "m-inheritance-042",
         "A nested narrow that broadens back out of the enclosing position",
-        "Animal.where(Pet.narrow(Dog, where=Animal.narrow(Cat)))\n"
+        "Animal.where(Pet.is_a(Dog, where=Animal.is_a(Cat)))\n"
         '# raises ModelRejectedError(rule="narrow-outside-position")',
     ),
     Example(
         "m-inheritance-064",
         "A relationship-scope narrow past its target's reachable set",
-        "Person.pets.exists(Pet.narrow(WildBoar))\n"
+        "Person.pets.any(Pet.is_a(WildBoar))\n"
         '# raises ModelRejectedError(rule="narrow-outside-relationship-target")',
     ),
     Example(
         "m-inheritance-132",
         "A Subtype Selection with overlapping alternatives",
-        "Animal.where(Animal.narrow(Dog, Pet))\n"
+        "Animal.where(Animal.is_a(Dog, Pet))\n"
         '# raises ModelRejectedError(rule="subtype-selection-overlapping-alternatives")',
     ),
     Example(
         "m-inheritance-133",
         "A Subtype Selection with an exact duplicate",
-        'Animal.narrow(Dog, Dog)\n# raises QueryDefinitionError(code="query-path-invalid")',
+        'Animal.is_a(Dog, Dog)\n# raises QueryDefinitionError(code="query-path-invalid")',
     ),
     # Rejected-case build/buffer-time proof: the write-side counterpart of the
     # read-side proofs above —
@@ -939,14 +938,12 @@ _INHERITANCE_CONCRETE_LEAF_REJECT_UNREACHABLE_REASON: Final[str] = (
     "is a rejected model, not a developer verb an idiomatic story can narrate"
 )
 
-# `navigate`-tagged corpus siblings: a deliberate spelling redundancy for the
-# IDENTICAL correlated-EXISTS lowering the exercised `.exists()`/`.not_exists()` examples
-# already prove (m-navigate-002/003/004/006/008/009/010) — m-predicate's own
-# framing ("navigate and exists are the same correlated-EXISTS lowering").
-_NAVIGATE_TAG_REDUNDANT_REASON: Final[str] = (
-    "a `navigate`-tagged corpus spelling redundancy for the IDENTICAL correlated-EXISTS "
-    "lowering the exercised `.exists()`/`.not_exists()` examples already prove "
-    "(m-navigate-002/003/004/006/008/009/010) — no distinct developer-facing shape to add"
+# Relationship-quantifier siblings of the exercised `.any(...)` / `.none(...)`
+# examples: the same correlated-EXISTS lowering over another relationship.
+_RELATIONSHIP_QUANTIFIER_SIBLING_REASON: Final[str] = (
+    "a sibling of the exercised relationship quantifier examples "
+    "(m-navigate-002/003/004/006/008/010): the IDENTICAL correlated-EXISTS lowering over "
+    "another relationship — no distinct developer-facing shape to add"
 )
 
 # Temporal deep-fetch GRAPH siblings of the executed m-navigate-013 story (the
@@ -1091,20 +1088,19 @@ _VO_UNKNOWN_NESTED_FIELD_REASON: Final[str] = (
     "attribute at all: `vm.Customer.contact.city == ...` raises a plain Python "
     "`AttributeError` at attribute-access time — before any predicate exists to "
     "validate, so the corpus's own invalid shape (a schema-valid but model-unknown "
-    "nested path) has no idiomatic spelling to build"
+    "path) has no idiomatic spelling to build"
 )
 _VO_DEEPFETCH_SEGMENT_REASON: Final[str] = (
-    "`.include(...)` only accepts `RelationshipPath` arguments; `Customer.address` (a "
-    "value-object `Attr`, not a `Rel`) raises a plain Python `TypeError` when passed to "
-    "it — the type system itself prevents authoring the corpus's invalid "
-    "deep-fetch-through-a-value-object shape"
+    "`.include(...)` only accepts `IncludePath` arguments; `Customer.address` (a "
+    "value-object expression, not a relationship) raises a plain Python `TypeError` "
+    "when passed to it — the type system itself prevents authoring the corpus's "
+    "invalid deep-fetch-through-a-value-object shape"
 )
-_VO_NAVIGATE_TARGET_REASON: Final[str] = (
-    "`Customer.address.exists()` builds successfully, but to a DIFFERENT, valid predicate "
-    "(`nestedExists`, the to-many VO presence quantifier m-value-object-015/016 already "
-    "exercise) — not the corpus's invalid `navigate` node targeting a value object; the "
-    "idiomatic surface has no spelling that produces THAT exact shape, only a "
-    "differently-typed valid one"
+_VO_QUANTIFIED_SINGLE_REASON: Final[str] = (
+    "`Customer.address` is a single value-object expression, which offers "
+    "`exists()` / `not_exists()` and no quantifier: `Customer.address.any(...)` is a "
+    "static error and raises `AttributeError` at access — the corpus's invalid "
+    "quantifier over a single value object has no idiomatic spelling to build"
 )
 
 # Value-type mismatch (m-value-object-043): empirically confirmed (a REPL
@@ -1696,11 +1692,9 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-inheritance-138": _INHERITANCE_CONCRETE_LEAF_REJECT_UNREACHABLE_REASON,
     # -- m-metamodel: foundational model-declaration reject ------------------ #
     "m-metamodel-001": _METAMODEL_MODEL_REJECT_UNREACHABLE_REASON,
-    # -- m-navigate: `navigate`-tagged corpus spelling redundancy ------------ #
-    "m-navigate-001": _NAVIGATE_TAG_REDUNDANT_REASON,
-    "m-navigate-005": _NAVIGATE_TAG_REDUNDANT_REASON,
-    "m-navigate-007": _NAVIGATE_TAG_REDUNDANT_REASON,
-    "m-navigate-011": _NAVIGATE_TAG_REDUNDANT_REASON,
+    # -- m-navigate: relationship quantifier siblings -------------------------- #
+    "m-navigate-001": _RELATIONSHIP_QUANTIFIER_SIBLING_REASON,
+    "m-navigate-005": _RELATIONSHIP_QUANTIFIER_SIBLING_REASON,
     # -- m-navigate / m-snapshot-read: temporal deep-fetch graph siblings ---- #
     "m-navigate-012": _TEMPORAL_DEEPFETCH_GRAPH_SIBLING_REASON,
     "m-navigate-014": _TEMPORAL_DEEPFETCH_GRAPH_SIBLING_REASON,
@@ -1794,7 +1788,7 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     # -- m-value-object: structural rejects (no idiomatic spelling exists) --- #
     "m-value-object-034": _VO_UNKNOWN_NESTED_FIELD_REASON,
     "m-value-object-035": _VO_DEEPFETCH_SEGMENT_REASON,
-    "m-value-object-036": _VO_NAVIGATE_TARGET_REASON,
+    "m-value-object-036": _VO_QUANTIFIED_SINGLE_REASON,
     # -- m-value-object: write-input validation rejects ---------------------- #
     "m-value-object-043": _VO_VALUE_TYPE_MISMATCH_UNREACHABLE_REASON,
     "m-value-object-069": _VO_DEPTH_ZERO_ATTRIBUTE_UNREACHABLE_REASON,

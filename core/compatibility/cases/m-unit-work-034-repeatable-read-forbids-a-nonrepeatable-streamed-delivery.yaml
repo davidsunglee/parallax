@@ -18,7 +18,7 @@ when:
       objectQuery:
         target: parallax.compatibility.Account
         predicate:
-          all: {}
+          "true": {}
       stream:
         batchSize: 2
       roundTrips: 2
@@ -42,7 +42,7 @@ when:
         target: parallax.compatibility.Account
         predicate:
           eq:
-            attr: parallax.compatibility.Account.id
+            path: parallax.compatibility.Account.id
             value: 2
       roundTrips: 1
       note: the writing unit of work observes account 2 before gating on it
@@ -70,7 +70,7 @@ when:
       objectQuery:
         target: parallax.compatibility.Account
         predicate:
-          all: {}
+          "true": {}
       stream:
         batchSize: 2
       roundTrips: 2
@@ -93,7 +93,7 @@ when:
         target: parallax.compatibility.Account
         predicate:
           eq:
-            attr: parallax.compatibility.Account.id
+            path: parallax.compatibility.Account.id
             value: 2
       roundTrips: 1
       note: UNGROUPED, after both groups resolved — the peer's write is durable, 999.00 at version 2

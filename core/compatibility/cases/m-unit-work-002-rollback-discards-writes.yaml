@@ -14,7 +14,7 @@ when:
         target: parallax.compatibility.Account
         predicate:
           eq:
-            attr: parallax.compatibility.Account.id
+            path: parallax.compatibility.Account.id
             value: 1
       roundTrips: 1
       note: observe account 1 (balance 100.00, version 1) before the aborted write, inside the doomed unit of work
@@ -40,7 +40,7 @@ when:
         target: parallax.compatibility.Account
         predicate:
           eq:
-            attr: parallax.compatibility.Account.id
+            path: parallax.compatibility.Account.id
             value: 1
       roundTrips: 1
       note: the SAME find, UNGROUPED, re-resolves after the group's rollback and MUST observe 100.00, not 999.00

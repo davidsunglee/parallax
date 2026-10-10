@@ -183,7 +183,7 @@ def test_a_provider_declining_every_root_still_observes_the_pool() -> None:
     db = _connected(provider, metrics=DetachableSource(), script=[Read()])
     try:
         scoped = db.using_database_login()
-        list(scoped.wire.find({"target": "Account", "predicate": {"all": {}}}).results())
+        list(scoped.wire.find({"target": "Account", "predicate": {"true": {}}}).results())
         assert provider.roots == 1
         assert provider.events == []
         assert len(provider.offered) == 1

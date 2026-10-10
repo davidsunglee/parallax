@@ -5,8 +5,10 @@ import decimal
 import math
 import re
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Literal, NoReturn, assert_never, cast
+from types import MappingProxyType
+from typing import Final, Literal, NoReturn, assert_never, cast
 
 from parallax.core.base import (
     STRING,
@@ -134,6 +136,35 @@ def encode_managed_wire(neutral_type: NeutralType, value: ManagedValue) -> WireV
         case _:
             pass
     return _canonical_spelling(neutral_type, base_managed_carrier(value, neutral_type))
+
+
+type EncodedJsonKind = Literal["boolean", "number", "string"]
+
+# The JSON primitive kind each arm of `_canonical_spelling` below spells its
+# variant's values in. Json has no single kind: its values are any JSON value.
+_ENCODED_JSON_KIND: Final[Mapping[type[NeutralType], EncodedJsonKind | None]] = MappingProxyType(
+    {
+        Boolean: "boolean",
+        Int32: "number",
+        Int64: "number",
+        String: "string",
+        Float32: "number",
+        Float64: "number",
+        Decimal: "string",
+        Bytes: "string",
+        Date: "string",
+        Time: "string",
+        Timestamp: "string",
+        Uuid: "string",
+        Json: None,
+    }
+)
+
+
+def encoded_json_kind(neutral_type: NeutralType) -> EncodedJsonKind | None:
+    """The JSON primitive kind every canonical Wire spelling of
+    ``neutral_type`` takes, or ``None`` where no single kind does."""
+    return _ENCODED_JSON_KIND[type(neutral_type)]
 
 
 # One arm per Neutral Type variant. It runs per value on Wire encode (all of

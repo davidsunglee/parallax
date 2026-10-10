@@ -37,7 +37,7 @@ def _case(arm: str, *, rows: list[dict[str, object]] | None = None) -> dict:
         "model": f"models/item-layout-twin-{arm}.yaml",
         "tags": ["m-storage-layout", "layout-twin"],
         "shape": "read",
-        "when": {"objectQuery": {"target": "example.TwinItem", "predicate": {"all": {}}}},
+        "when": {"objectQuery": {"target": "example.TwinItem", "predicate": {"true": {}}}},
         "then": {
             "statements": [
                 {

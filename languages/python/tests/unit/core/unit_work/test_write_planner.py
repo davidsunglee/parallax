@@ -241,7 +241,10 @@ def _version_group(
     predicate = PredicateWrite(
         mutation,
         PredicateSelection(
-            entity, predicate_algebra.Comparison("lessThan", f"{entity}.balance", "1000000.00")
+            entity,
+            predicate_algebra.Comparison(
+                "lessThan", predicate_algebra.FieldSubject(f"{entity}.balance"), "1000000.00"
+            ),
         ),
         assignments=tuple(
             WriteAssignment(
@@ -567,7 +570,11 @@ def test_multi_row_and_predicate_writes_do_not_coalesce() -> None:
         ),
     )
     predicate = PredicateWrite(
-        "delete", PredicateSelection("Wallet", predicate_algebra.Comparison("eq", "Wallet.id", 1))
+        "delete",
+        PredicateSelection(
+            "Wallet",
+            predicate_algebra.Comparison("eq", predicate_algebra.FieldSubject("Wallet.id"), 1),
+        ),
     )
     plan = _plan([multi, predicate], _WALLET)
     assert len(plan.steps) == 2
@@ -772,7 +779,10 @@ def _predicate_update(entity: str) -> PredicateWrite:
     member = _ASSIGNABLE_MEMBER[entity]
     return PredicateWrite(
         "amend",
-        PredicateSelection(entity, predicate_algebra.Comparison("eq", f"{entity}.id", 1)),
+        PredicateSelection(
+            entity,
+            predicate_algebra.Comparison("eq", predicate_algebra.FieldSubject(f"{entity}.id"), 1),
+        ),
         assignments=(WriteAssignment(f"{entity}.{member}", "Z"),),
     )
 
@@ -810,7 +820,9 @@ def test_no_keyed_write_crosses_a_readless_predicate_write_in_either_direction()
     assert isinstance(predicate_step, PlannedUpdate)
     assert isinstance(predicate_step.target, ResolvedMutationSelection)
     assert predicate_step.target.predicate == predicate_algebra.validate_predicate(
-        predicate_step.target.target, predicate_algebra.Comparison("eq", "Order.id", 1), _ORDERS
+        predicate_step.target.target,
+        predicate_algebra.Comparison("eq", predicate_algebra.FieldSubject("Order.id"), 1),
+        _ORDERS,
     )
 
 
@@ -958,7 +970,9 @@ def test_object_key_of_a_single_row_keyed_write() -> None:
 def test_object_key_is_none_for_unidentifiable_writes() -> None:
     assert object_key(KeyedWrite("insert", "Account", ({"id": 1}, {"id": 2})), _ACCOUNT) is None
     assert object_key(KeyedWrite("insert", "Account", ({"owner": "Ada"},)), _ACCOUNT) is None
-    predicate = PredicateWrite("delete", PredicateSelection("Account", predicate_algebra.All()))
+    predicate = PredicateWrite(
+        "delete", PredicateSelection("Account", predicate_algebra.TrueNode())
+    )
     assert object_key(predicate, _ACCOUNT) is None
 
 
@@ -1182,7 +1196,10 @@ def test_a_readless_predicate_write_carries_an_unbounded_expectation() -> None:
     predicate = PredicateWrite(
         "delete",
         PredicateSelection(
-            "Wallet", predicate_algebra.Comparison("lessThan", "Wallet.balance", "200.00")
+            "Wallet",
+            predicate_algebra.Comparison(
+                "lessThan", predicate_algebra.FieldSubject("Wallet.balance"), "200.00"
+            ),
         ),
     )
     plan = _plan([predicate], _WALLET)
@@ -1314,7 +1331,10 @@ def test_batching_never_touches_a_predicate_write() -> None:
     predicate = PredicateWrite(
         "delete",
         PredicateSelection(
-            "Wallet", predicate_algebra.Comparison("lessThan", "Wallet.balance", "1.00")
+            "Wallet",
+            predicate_algebra.Comparison(
+                "lessThan", predicate_algebra.FieldSubject("Wallet.balance"), "1.00"
+            ),
         ),
     )
     plan = _plan([predicate], _WALLET)
@@ -1323,7 +1343,9 @@ def test_batching_never_touches_a_predicate_write() -> None:
     assert isinstance(step.target, ResolvedMutationSelection)
     assert step.target.predicate == predicate_algebra.validate_predicate(
         step.target.target,
-        predicate_algebra.Comparison("lessThan", "Wallet.balance", "1.00"),
+        predicate_algebra.Comparison(
+            "lessThan", predicate_algebra.FieldSubject("Wallet.balance"), "1.00"
+        ),
         _WALLET,
     )
 
@@ -1657,7 +1679,10 @@ def test_a_prepared_finalize_resolves_targets_without_any_entity_spelling_scan(
         ),
         PredicateWrite(
             "delete",
-            PredicateSelection("Wallet", predicate_algebra.Comparison("eq", "Wallet.id", 2)),
+            PredicateSelection(
+                "Wallet",
+                predicate_algebra.Comparison("eq", predicate_algebra.FieldSubject("Wallet.id"), 2),
+            ),
         ),
     ]
     prepared = observed_buffer(
@@ -1737,7 +1762,10 @@ def _temporal_family_writes() -> list[OrderedWrite]:
         PredicateWrite(
             "terminate",
             PredicateSelection(
-                "Balance", predicate_algebra.Comparison("lessThan", "Balance.value", "1000000.00")
+                "Balance",
+                predicate_algebra.Comparison(
+                    "lessThan", predicate_algebra.FieldSubject("Balance.value"), "1000000.00"
+                ),
             ),
         ),
         _TEMPORAL_FAMILIES,

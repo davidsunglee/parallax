@@ -1,0 +1,24 @@
+# Presence of a single value object is an object at its path. The SQL-NULL address
+# (4), the scalar `geo` (6), and the addresses carrying no `geo` key (8-10) are all
+# absent; a `geo` whose every leaf is JSON null (7), or that carries only `zip` (5), is
+# present.
+model: models/customer.yaml
+tags: [m-predicate, m-value-object, presence, json, absence-collapse, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  objectQuery:
+    target: parallax.compatibility.Customer
+    predicate:
+      exists: {path: parallax.compatibility.Customer.address.geo}
+then:
+  statements:
+  - sql: {postgres: 'select t0.id, t0.name from customer t0 where coalesce(jsonb_typeof(jsonb_extract_path(t0.address, ?)) = ?, false)'}
+    binds: [geo, object]
+  referenceSql: select id, name from customer where jsonb_typeof(address -> 'geo') = 'object'
+  rows:
+  - {id: 1, name: Ada}
+  - {id: 2, name: Linus}
+  - {id: 3, name: Grace}
+  - {id: 5, name: Kavi}
+  - {id: 7, name: Nils}
+  roundTrips: 1

@@ -66,7 +66,7 @@ def _make_case(statements: list[dict[str, Any]], reference_sql: Any = None) -> C
         "model": "models/customer.yaml",
         "tags": ["m-value-object"],
         "shape": "read",
-        "when": {"objectQuery": {"target": "Customer", "predicate": {"all": {}}}},
+        "when": {"objectQuery": {"target": "Customer", "predicate": {"true": {}}}},
         "then": then,
     }
     model = Model(
@@ -84,7 +84,7 @@ def _read_case_doc() -> dict[str, Any]:
         "model": "models/customer.yaml",
         "tags": ["m-value-object"],
         "shape": "read",
-        "when": {"objectQuery": {"target": "Customer", "predicate": {"all": {}}}},
+        "when": {"objectQuery": {"target": "Customer", "predicate": {"true": {}}}},
         "then": {
             "statements": [
                 {

@@ -30,13 +30,7 @@ from parallax.core.db_port import DatabaseConnection, MappingRow, Row, Transacti
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.object_query import AsOfRange, object_query, validate_object_query
 from parallax.core.object_query import deserialize as deserialize_query
-from parallax.core.predicate import (
-    And,
-    Comparison,
-    ModelRejectedError,
-    NestedComparison,
-    NestedExists,
-)
+from parallax.core.predicate import And, Comparison, FieldSubject, ModelRejectedError, Quantifier
 from parallax.core.predicate import serialize as serialize_predicate
 from parallax.core.predicate._resolved import ResolvedComparison
 from parallax.core.temporal_read import TimeInterval
@@ -121,7 +115,7 @@ mutation: amend
 target:
   entity: parallax.compatibility.Account
   predicate:
-    lessThan: { attr: parallax.compatibility.Account.balance, value: "200.00" }
+    lessThan: { path: parallax.compatibility.Account.balance, value: "200.00" }
 assignments:
   - { attr: parallax.compatibility.Account.balance, value: "0.00" }
 """
@@ -393,7 +387,7 @@ def test_case_query_adapter_preserves_canonical_carriers_before_core_validation(
             """
 target: parallax.compatibility.Position
 predicate:
-  lessThan: { attr: parallax.compatibility.Position.value, value: "200.00" }
+  lessThan: { path: parallax.compatibility.Position.value, value: "200.00" }
 temporal:
   transaction-time: { asOf: latest }
   valid-time:
@@ -408,7 +402,7 @@ temporal:
 
     assert serialize_predicate(normalized.predicate) == {
         "lessThan": {
-            "attr": "parallax.compatibility.Position.value",
+            "path": "parallax.compatibility.Position.value",
             "value": "200.00",
         }
     }
@@ -431,7 +425,7 @@ def test_case_query_adapter_does_not_widen_the_timestamp_string_grammar() -> Non
             "target": "parallax.compatibility.Event",
             "predicate": {
                 "eq": {
-                    "attr": "parallax.compatibility.Event.occurredAt",
+                    "path": "parallax.compatibility.Event.occurredAt",
                     "value": "2026-W01-1T00:00:00+00:00",
                 }
             },
@@ -454,22 +448,25 @@ def test_case_query_adapter_preserves_unresolved_predicate_values_for_core_valid
         model.entities[0].identity,
         And(
             operands=(
-                Comparison(op="eq", attr="unqualified", value="plain"),
-                Comparison(op="eq", attr="Missing.value", value="unknown"),
-                NestedComparison(op="nestedEq", path="shallow", value="plain"),
-                NestedComparison(op="nestedEq", path="Missing.doc.value", value="unknown"),
-                NestedExists(
-                    path="parallax.compatibility.Sample.profile.entries",
-                    where=NestedComparison(op="nestedEq", path="missing.value", value="unknown"),
+                Comparison(op="eq", subject=FieldSubject("unqualified"), value="plain"),
+                Comparison(op="eq", subject=FieldSubject("Missing.value"), value="unknown"),
+                Comparison(op="eq", subject=FieldSubject("shallow"), value="plain"),
+                Comparison(op="eq", subject=FieldSubject("Missing.doc.value"), value="unknown"),
+                Comparison(
+                    op="eq",
+                    subject=FieldSubject("parallax.compatibility.Sample.label.deeper"),
+                    value="unknown",
                 ),
-                NestedExists(
-                    path="parallax.compatibility.Sample.profile.entries",
-                    where=NestedComparison(op="nestedEq", path="", value="unknown"),
+                Quantifier(
+                    "any",
+                    "parallax.compatibility.Sample.profile.entries",
+                    Comparison(op="eq", subject=FieldSubject("missing.value"), value="unknown"),
                 ),
-                NestedExists(path="unqualified"),
-                NestedExists(
-                    path="Missing.doc.child",
-                    where=NestedComparison(op="nestedEq", path="value", value="unknown"),
+                Quantifier("any", "unqualified"),
+                Quantifier(
+                    "any",
+                    "Missing.doc.child",
+                    Comparison(op="eq", subject=FieldSubject("value"), value="unknown"),
                 ),
             )
         ),
@@ -480,7 +477,7 @@ def test_case_query_adapter_preserves_unresolved_predicate_values_for_core_valid
     assert serialize_predicate(normalized.predicate) == serialize_predicate(query.predicate)
 
 
-def test_case_ingress_bounds_missing_inheritance_positions_and_empty_relative_paths(
+def test_case_ingress_bounds_missing_inheritance_positions(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     model = models.load_models()["document-codec"]
@@ -496,7 +493,6 @@ def test_case_ingress_bounds_missing_inheritance_positions_and_empty_relative_pa
 
     monkeypatch.setattr(inheritance, "view", missing_view)
     assert _case_ingress._entity_members(model, entity) == {}  # pyright: ignore[reportPrivateUsage]
-    assert _case_ingress._relative_leaf(None, ()) is None  # pyright: ignore[reportPrivateUsage]
 
 
 class _FakePort(ConnectsAsItself):

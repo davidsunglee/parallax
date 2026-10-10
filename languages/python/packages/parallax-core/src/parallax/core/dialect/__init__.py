@@ -35,6 +35,7 @@ __all__ = [
     "DocumentAssignment",
     "DocumentLeafAssignment",
     "DocumentValueAssignment",
+    "EncodedJsonKind",
     "IndexColumnDdl",
     "LockMode",
     "PhysicalIndexName",
@@ -43,6 +44,9 @@ __all__ = [
 ]
 
 LockMode = Literal["locking", "optimistic"]
+
+EncodedJsonKind = Literal["boolean", "number", "string"]
+"""The JSON primitive kind a scalar's canonical document encoding takes."""
 
 
 def projection_result_key(column: str, neutral_type: NeutralType) -> str:
@@ -377,6 +381,53 @@ class Dialect:
             path_binds = []
         fragment = f"case when jsonb_typeof({extract}) = ? then {extract} else cast(? as jsonb) end"
         return fragment, [*path_binds, "array", *path_binds, "[]"]
+
+    def scalar_element(
+        self, element: str, kind: EncodedJsonKind, neutral_type: NeutralType
+    ) -> tuple[str, str, list[object]]:
+        """The extraction and compared expressions of one array element read as
+        a scalar of ``neutral_type``, and their binds.
+
+        ``element`` is the element's own JSON value reference. The scalar is
+        extracted, and cast where the type's comparison casts, only inside the
+        arm of a `case` whose guard confirms the element's JSON kind is
+        ``kind``; any other element yields SQL null, so it stays a candidate
+        whose every comparison is unknown. Placing the cast inside the matching
+        arm, rather than beside a separate kind conjunct, is what keeps a
+        wrong-kind element from reaching the cast at all.
+        """
+        extraction = f"case when jsonb_typeof({element}) = ? then {element} #>> ? end"
+        compared_value = self.nested_cast(f"{element} #>> ?", neutral_type)
+        compared = f"case when jsonb_typeof({element}) = ? then {compared_value} end"
+        return extraction, compared, [kind, "{}"]
+
+    def object_presence(self, document: str, segments: tuple[str, ...]) -> tuple[str, list[object]]:
+        """Whether the single Value Object at ``segments`` inside ``document`` is
+        present, two-valued: a JSON object there is present, and SQL null, a
+        missing key, JSON null, or any non-object is absent.
+
+        ``document`` is an ALREADY-RENDERED document reference, for the same
+        reason :meth:`nested_extract` takes one; an empty ``segments`` probes it
+        directly.
+        """
+        if segments:
+            holes = ", ".join(["?"] * len(segments))
+            extract = f"jsonb_extract_path({document}, {holes})"
+        else:
+            extract = document
+        return f"coalesce(jsonb_typeof({extract}) = ?, false)", [*segments, "object"]
+
+    def boolean_envelope(self, value: str) -> str:
+        """A one-element Boolean array carrying ``value``, null included."""
+        return f"array [ {value} ]"
+
+    def absent_envelope(self) -> str:
+        """The envelope an absent target defaults to: a false element."""
+        return "array [ false ]"
+
+    def envelope_value(self, envelope: str) -> str:
+        """The Boolean ``envelope`` carries, extracted once its defaults apply."""
+        return f"({envelope}) [ 1 ]"
 
     # -- structured documents (m-storage-layout) --------------------------- #
     def document_path(self, segments: Sequence[str]) -> str:

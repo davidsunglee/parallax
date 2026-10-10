@@ -17,36 +17,15 @@ __all__ = [
     "COMPARE",
     "MEMBER_OF",
     "NULL_TEST",
-    "AttributeSubject",
     "Compare",
     "InRange",
     "Match",
     "MemberOf",
     "NullTest",
     "OperandAdmission",
-    "OperationSubject",
-    "PathSubject",
     "PredicateInterpretation",
     "ScalarOperator",
 ]
-
-
-@dataclass(frozen=True, slots=True)
-class AttributeSubject:
-    """An Attribute named by its ``Class.attribute`` reference."""
-
-    reference: str
-
-
-@dataclass(frozen=True, slots=True)
-class PathSubject:
-    """A Value Object leaf named by a dotted path: ``Class.valueObject(.member)*.leaf``
-    from an Entity position, or a path relative to the element a scope binds."""
-
-    path: str
-
-
-type OperationSubject = AttributeSubject | PathSubject
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,7 +70,7 @@ type OperandAdmission = Callable[
     [str, ResolvedPredicateMember, tuple[object, ...]], tuple[ManagedValue, ...]
 ]
 """How one ingress turns an operation's operands into managed values of the
-resolved member, given the subject spelling its refusals name."""
+resolved member's scalar type, given the subject spelling its refusals name."""
 
 
 class PredicateInterpretation(Protocol):

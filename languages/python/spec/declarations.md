@@ -40,7 +40,10 @@ names, not canonical spellings. Indices name local scalar members only, in
 declared component order; inherited members and Value Object paths are excluded.
 
 Mapped names cannot shadow framework query, inspection, edit, serialization,
-Pydantic state, or object-layout members. `model_*` and `__parallax_*` names are
+Pydantic state, or object-layout members, nor any operation a member expression
+answers itself (`any`, `all`, `none`, `element`, `exists`, `is_a`, the scalar
+operation methods, and the like): such a member keeps its canonical name under a
+free Python name through explicit renaming. `model_*` and `__parallax_*` names are
 reserved, including unannotated class-body bindings. Framework temporal members
 cannot be redeclared. The exact rejected spellings are pinned by declaration
 tests and the frontend's reserved-name checks.

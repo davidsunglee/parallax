@@ -142,7 +142,7 @@ def test_actual_wire_projection_rejects_unowned_members_and_malformed_value_obje
     entries = profile.value_object("entries")
     assert entries is not None
     projection = ActualWireProjection(model)
-    query = deserialize_query({"target": entity.identity.canonical, "predicate": {"all": {}}})
+    query = deserialize_query({"target": entity.identity.canonical, "predicate": {"true": {}}})
 
     with pytest.raises(ValueError, match="no projected member owns"):
         projection.published_row(query, {"unknown": 1})
@@ -172,7 +172,7 @@ def test_actual_wire_projection_rejects_unowned_members_and_malformed_value_obje
         projection.published_value_object(entries, ["corrupt"])
 
     unknown_query = deserialize_query(
-        {"target": "parallax.compatibility.Missing", "predicate": {"all": {}}}
+        {"target": "parallax.compatibility.Missing", "predicate": {"true": {}}}
     )
     with pytest.raises(ValueError, match="no such Entity"):
         projection.published_row(unknown_query, {})
@@ -184,7 +184,7 @@ def test_actual_wire_projection_rejects_unowned_members_and_malformed_value_obje
     narrowed_query = deserialize_query(
         {
             "target": entity.identity.canonical,
-            "predicate": {"all": {}},
+            "predicate": {"true": {}},
             "narrowTo": [entity.identity.canonical],
         }
     )
@@ -196,7 +196,7 @@ def test_actual_wire_projection_rejects_unowned_members_and_malformed_value_obje
     invalid_narrow = deserialize_query(
         {
             "target": order.identity.canonical,
-            "predicate": {"all": {}},
+            "predicate": {"true": {}},
             "narrowTo": [order_item.identity.canonical],
         }
     )
@@ -296,7 +296,7 @@ def test_actual_wire_projection_rejects_a_narrowing_product_with_no_position(
     query = deserialize_query(
         {
             "target": entity.identity.canonical,
-            "predicate": {"all": {}},
+            "predicate": {"true": {}},
             "narrowTo": [entity.identity.canonical],
         }
     )

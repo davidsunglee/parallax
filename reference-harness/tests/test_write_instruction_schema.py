@@ -160,7 +160,7 @@ def test_predicate_update_requires_assignments() -> None:
         "mutation": "amend",
         "target": {
             "entity": "Account",
-            "predicate": {"lessThan": {"attr": "Account.balance", "value": 200}},
+            "predicate": {"lessThan": {"path": "Account.balance", "value": 200}},
         },
         "assignments": [{"attr": "Account.balance", "value": 0}],
     }
@@ -175,7 +175,7 @@ def test_predicate_delete_rejects_assignments() -> None:
             "mutation": "delete",
             "target": {
                 "entity": "Account",
-                "predicate": {"eq": {"attr": "Account.id", "value": 1}},
+                "predicate": {"eq": {"path": "Account.id", "value": 1}},
             },
             "assignments": [{"attr": "Account.balance", "value": 0}],
         }
@@ -187,7 +187,7 @@ def test_predicate_until_requires_both_valid_time_bounds() -> None:
     # (m-temporal-write); both bounds are required.
     doc = {
         "mutation": "terminateUntil",
-        "target": {"entity": "Position", "predicate": {"eq": {"attr": "Position.id", "value": 1}}},
+        "target": {"entity": "Position", "predicate": {"eq": {"path": "Position.id", "value": 1}}},
         "validFrom": "2024-01-01T00:00:00+00:00",
         "until": "2024-06-01T00:00:00+00:00",
     }

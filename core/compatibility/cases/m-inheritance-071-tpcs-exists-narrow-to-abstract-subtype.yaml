@@ -7,14 +7,14 @@ when:
   objectQuery:
     target: parallax.compatibility.Folder
     predicate:
-      exists:
-        rel: parallax.compatibility.Folder.documents
-        op:
+      any:
+        path: parallax.compatibility.Folder.documents
+        where:
           narrow:
             to:
               - parallax.compatibility.FinancialDocument
             operand:
-              all: {}
+              "true": {}
 then:
   statements:
     - sql:

@@ -24,7 +24,7 @@ from dataclasses import replace
 import pytest
 
 from parallax.core.metamodel import AttributeIdentity
-from parallax.core.predicate import All, validate_predicate
+from parallax.core.predicate import TrueNode, validate_predicate
 from parallax.core.unit_work import (
     CardinalityCorruptionError,
     MissingTargetError,
@@ -323,7 +323,7 @@ def test_any_count_accepts_every_nonnegative_result(actual: int) -> None:
     step = PlannedUpdate(
         entity=_ACCOUNT,
         target=ResolvedMutationSelection(
-            _ACCOUNT_META, validate_predicate(_ACCOUNT_META, All(), _ACCOUNT_MODEL)
+            _ACCOUNT_META, validate_predicate(_ACCOUNT_META, TrueNode(), _ACCOUNT_MODEL)
         ),
         assignments=_RENAME,
         concurrency=UNVERSIONED,

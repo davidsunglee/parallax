@@ -1,0 +1,23 @@
+# A narrowing two hops away carries its result through both hops: the leash whose
+# collar's pet is a loud dog. A missing collar or pet is false at either hop, and
+# Fido's unknown bark stays unknown.
+model: models/predicate-traversal.yaml
+tags: [m-predicate, narrow, relationship, to-one, m-inheritance, traversal, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  objectQuery:
+    target: parallax.compatibility.Leash
+    predicate:
+      narrow:
+        path: parallax.compatibility.Leash.collar.pet
+        to: [parallax.compatibility.Dog]
+        operand:
+          greaterThan: {path: barkVolume, value: 5}
+then:
+  statements:
+  - sql: {postgres: 'select t0.id, t0.collar_id from traversal_leash t0 where (coalesce((select coalesce((select array [ case when t1.kind = ? then t1.bark_volume > ? else false end ] from traversal_pet t1 where t1.id = t2.pet_id), array [ false ]) from traversal_collar t2 where t2.id = t0.collar_id), array [ false ])) [ 1 ]'}
+    binds: [dog, 5]
+  referenceSql: select id, collar_id from traversal_leash where collar_id in (select id from traversal_collar where pet_id in (select id from traversal_pet where kind = 'dog' and bark_volume > 5))
+  rows:
+  - {id: 20, collar_id: 10}
+  roundTrips: 1

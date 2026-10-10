@@ -68,7 +68,7 @@ from parallax.core.document_codec import (
 )
 from parallax.core.entity._authored_resolver import typed_interpretation
 from parallax.core.entity._construction_input import ABSENT
-from parallax.core.entity._expressions import UnfinishedOperation
+from parallax.core.entity._expressions import AuthoredPath, UnfinishedOperation
 from parallax.core.entity._layout import LayoutCatalog
 from parallax.core.entity._model import DomainModel as _Fixed
 from parallax.core.entity._model import class_index, model_of
@@ -659,7 +659,8 @@ def _classless(model: DomainModel) -> DomainModel:
 
 
 def _unfinished(entity: type[Entity], *names: str, operands: tuple[object, ...]) -> Predicate[Any]:
-    return Predicate(UnfinishedOperation(entity.identity, names, COMPARE["eq"], operands))
+    path = AuthoredPath(entity.identity, names, unfinished=True)
+    return Predicate(UnfinishedOperation(path, COMPARE["eq"], operands))
 
 
 def _amended(model: DomainModel | ServingModel, predicate: Predicate[Any]) -> ScriptedAdapter:
@@ -1044,7 +1045,7 @@ def test_delete_where_over_a_temporal_target_is_refused_at_the_verb(
     port = ScriptedAdapter(Transact())
     target: dict[str, object] = {
         "entity": f"parallax.compatibility.{entity}",
-        "predicate": {"eq": {"attr": f"parallax.compatibility.{entity}.id", "value": 1}},
+        "predicate": {"eq": {"path": f"parallax.compatibility.{entity}.id", "value": 1}},
     }
 
     def fn(tx: Transaction) -> None:
@@ -1700,7 +1701,7 @@ def test_an_encoded_occurrence_assignment_is_decoded_at_ingress_before_it_is_wei
                     "entity": "parallax.compatibility.WhereManagedSubscriber",
                     "predicate": {
                         "eq": {
-                            "attr": "parallax.compatibility.WhereManagedSubscriber.id",
+                            "path": "parallax.compatibility.WhereManagedSubscriber.id",
                             "value": 1,
                         }
                     },
@@ -2242,7 +2243,7 @@ def test_no_typed_bound_reaches_the_shared_lowering_uncanonicalized() -> None:
         tx.wire.amend_where(
             {
                 "entity": "WherePosition",
-                "predicate": {"eq": {"attr": "WherePosition.id", "value": 1}},
+                "predicate": {"eq": {"path": "WherePosition.id", "value": 1}},
             },
             {"value": "300.00"},
             valid_from=dt.datetime.fromisoformat("2024-07-01T00:00:00+00:00"),
@@ -2303,11 +2304,11 @@ _ENGINE_TX_INSTANT = "2024-06-01T00:00:00+00:00"
 
 def _refused_predicates(entity: str) -> list[tuple[str, str, dict[str, object]]]:
     return [
-        ("between", "upper bound", {"between": {"attr": f"{entity}.id", "lower": 10, "upper": 1}}),
+        ("between", "upper bound", {"between": {"path": f"{entity}.id", "lower": 10, "upper": 1}}),
         (
             "unknown-node",
             "unknown predicate node 'limit'",
-            {"limit": {"operand": {"all": {}}, "count": 1}},
+            {"limit": {"operand": {"true": {}}, "count": 1}},
         ),
     ]
 
@@ -2376,7 +2377,7 @@ def test_the_wire_predicate_ingress_refuses_an_unvalidated_inheritance_family_ta
     # refusal is what each one reaches.
     target: dict[str, object] = {
         "entity": entity,
-        "predicate": {"eq": {"attr": f"{entity}.id", "value": 1}},
+        "predicate": {"eq": {"path": f"{entity}.id", "value": 1}},
     }
     port = ScriptedAdapter(Transact())
 
@@ -2423,7 +2424,7 @@ def test_the_wire_predicate_ingress_refuses_a_milestone_verb_on_a_non_temporal_t
 ) -> None:
     target: dict[str, object] = {
         "entity": "Account",
-        "predicate": {"eq": {"attr": "Account.id", "value": 1}},
+        "predicate": {"eq": {"path": "Account.id", "value": 1}},
     }
     window = {
         "valid_from": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
@@ -2457,7 +2458,7 @@ def test_preparation_refuses_an_inheritance_family_predicate_instruction() -> No
             "mutation": "terminate",
             "target": {
                 "entity": "DepositRate",
-                "predicate": {"eq": {"attr": "DepositRate.id", "value": 1}},
+                "predicate": {"eq": {"path": "DepositRate.id", "value": 1}},
             },
             "validFrom": "2024-07-01T00:00:00.000000Z",
         }

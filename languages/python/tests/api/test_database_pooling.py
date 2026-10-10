@@ -149,7 +149,7 @@ def test_a_whole_eager_read_and_each_delivery_page_need_one_slot(profile_run: An
         assert _accounts(db)
         with db.stream(Account.where(Account.all), batch_size=1) as roots:
             assert list(roots)
-        assert db.wire.find({"target": "Account", "predicate": {"all": {}}}).results()
+        assert db.wire.find({"target": "Account", "predicate": {"true": {}}}).results()
 
 
 def test_an_exhausted_delivery_gives_its_slot_back_before_its_scope_ends(
@@ -234,7 +234,7 @@ def test_typed_and_wire_operations_have_the_same_lifetimes(profile_run: Any) -> 
         _ACCOUNT,
     ) as _root_db:
         db = _root_db.using_database_login()
-        node: dict[str, object] = {"target": "Account", "predicate": {"all": {}}}
+        node: dict[str, object] = {"target": "Account", "predicate": {"true": {}}}
         assert db.wire.find(node).results()
         with db.wire.stream(node, batch_size=1) as roots:
             assert list(roots)

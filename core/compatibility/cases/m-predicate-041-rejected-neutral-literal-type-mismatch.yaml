@@ -8,10 +8,10 @@ when:
   objectQuery:
     target: parallax.compatibility.Customer
     predicate:
-      nestedExists:
+      any:
         path: parallax.compatibility.Customer.address.phones
         where:
-          nestedBetween:
+          between:
             path: number
             lower: 42
             upper: 7

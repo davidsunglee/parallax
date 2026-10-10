@@ -8,7 +8,7 @@ when:
   objectQuery:
     target: catalog.Record
     predicate:
-      all: {}
+      "true": {}
 then:
   statements:
     - sql:

@@ -50,7 +50,7 @@ def _restate(tx: Transaction, representation: _Representation, value: str = "5.0
     node = tx.wire.find(
         {
             "target": "parallax.compatibility.Balance",
-            "predicate": {"eq": {"attr": "parallax.compatibility.Balance.id", "value": 1}},
+            "predicate": {"eq": {"path": "parallax.compatibility.Balance.id", "value": 1}},
             "temporal": {"transaction-time": {"asOf": "latest"}},
         }
     ).result()

@@ -12,7 +12,7 @@ when:
   objectQuery:
     target: parallax.compatibility.Animal
     predicate:
-      all: {}
+      "true": {}
     narrowTo:
       - parallax.compatibility.Dog
     orderBy:

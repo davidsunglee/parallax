@@ -764,7 +764,7 @@ def test_tpcs_temporal_only_union_variants_compose(
 def test_tpcs_temporal_union_oracle_does_not_derive_user_predicate_binds() -> None:
     case = copy.deepcopy(_inheritance_case("m-inheritance-093"))
     case.object_query["predicate"] = {
-        "eq": {"attr": "parallax.compatibility.Rate.amount", "value": 2.5}
+        "eq": {"path": "parallax.compatibility.Rate.amount", "value": 2.5}
     }
     case.then["statements"][0]["binds"] = []
 

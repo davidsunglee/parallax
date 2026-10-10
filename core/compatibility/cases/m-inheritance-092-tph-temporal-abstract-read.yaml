@@ -9,7 +9,7 @@ when:
   objectQuery:
     target: parallax.compatibility.Instrument
     predicate:
-      all: {}
+      "true": {}
     temporal:
       transaction-time:
         asOf: latest

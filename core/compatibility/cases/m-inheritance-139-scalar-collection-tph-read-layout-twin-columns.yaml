@@ -10,7 +10,7 @@ when:
   objectQuery:
     target: parallax.compatibility.TagAsset
     predicate:
-      all: {}
+      "true": {}
     orderBy:
       - attr: parallax.compatibility.TagAsset.id
         direction: asc

@@ -6,7 +6,7 @@ from typing import Any, Final, Protocol, cast, overload
 
 from parallax.core import deep_fetch
 from parallax.core.base import ManagedValue, NeutralType
-from parallax.core.entity import Entity, EntityGraphConstruction, RelationshipPath
+from parallax.core.entity import Entity, EntityGraphConstruction, IncludePath
 from parallax.core.execution._publication import SelectedReadModel
 from parallax.core.execution._read_policy import ReadQuery
 from parallax.core.read_delivery import InvalidData, StreamStateError
@@ -80,7 +80,7 @@ class _StreamWireProjection:
     def project(
         self,
         value: object,
-        at: RelationshipPath[Entity, Any] | None,
+        at: IncludePath[Entity, Any] | None,
     ) -> WireEntity | InvalidData[WireEntity]:
         record: InvalidData[object] | None = (
             cast("InvalidData[object]", value) if isinstance(value, InvalidData) else None
@@ -221,7 +221,7 @@ class SnapshotStream[T]:
         self: SnapshotStream[R],
         value: Entity,
         *,
-        at: RelationshipPath[Entity, Any] | None = None,
+        at: IncludePath[Entity, Any] | None = None,
     ) -> WireEntity: ...
 
     @overload
@@ -229,14 +229,14 @@ class SnapshotStream[T]:
         self: SnapshotStream[R],
         value: InvalidData[E],
         *,
-        at: RelationshipPath[Entity, Any] | None = None,
+        at: IncludePath[Entity, Any] | None = None,
     ) -> InvalidData[WireEntity]: ...
 
     def wire(
         self,
         value: object,
         *,
-        at: RelationshipPath[Entity, Any] | None = None,
+        at: IncludePath[Entity, Any] | None = None,
     ) -> WireEntity | InvalidData[WireEntity]:
         """Publish one eligible node under the current delivery Page's request shape."""
         construction = self._projection_construction

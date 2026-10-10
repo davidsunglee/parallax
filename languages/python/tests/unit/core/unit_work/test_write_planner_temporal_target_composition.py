@@ -325,7 +325,10 @@ def _barrier() -> ReadlessPredicateWrite:
     prepared = prepare_wire_write(
         PredicateWrite(
             "amend",
-            PredicateSelection("Wallet", predicate_algebra.Comparison("eq", "Wallet.id", 1)),
+            PredicateSelection(
+                "Wallet",
+                predicate_algebra.Comparison("eq", predicate_algebra.FieldSubject("Wallet.id"), 1),
+            ),
             assignments=(WriteAssignment("Wallet.owner", "Q"),),
         ),
         _WALLET,

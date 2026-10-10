@@ -29,7 +29,7 @@ when:
         target: parallax.compatibility.Position
         predicate:
           eq:
-            attr: parallax.compatibility.Position.id
+            path: parallax.compatibility.Position.id
             value: 9
         temporal:
           transaction-time:

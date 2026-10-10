@@ -1,0 +1,35 @@
+# Fixture rows for models/predicate-traversal.yaml.
+#
+#   Dog 1 Rex   barkVolume 7     Dog 2 Fido barkVolume null     Cat 3 Tom indoor true
+#   Collar 10 -> Rex   Collar 11 -> Fido   Collar 12 -> Tom   Collar 13 -> no pet
+#   Leash 20 -> Collar 10   Leash 21 -> Collar 13   Leash 22 -> no collar   Leash 23 -> Collar 11
+#   Car 5 Volvo seats 4     Bike 6 Trek gears 21    Car 7 Saab seats null
+#   Parking 30 -> 5 (Car)   Parking 31 -> 6 (Bike)  Parking 32 -> no vehicle   Parking 33 -> 7 (Car)
+#
+# Car and Bike key their tables independently and use no shared id here, so each
+# parking reaches one candidate.
+parallax.compatibility.Dog:
+  - { id: 1, name: Rex, barkVolume: 7 }
+  - { id: 2, name: Fido, barkVolume: null }
+parallax.compatibility.Cat:
+  - { id: 3, name: Tom, indoor: true }
+parallax.compatibility.Car:
+  - { id: 5, maker: Volvo, seats: 4 }
+  - { id: 7, maker: Saab, seats: null }
+parallax.compatibility.Bike:
+  - { id: 6, maker: Trek, gears: 21 }
+parallax.compatibility.Collar:
+  - { id: 10, petId: 1 }
+  - { id: 11, petId: 2 }
+  - { id: 12, petId: 3 }
+  - { id: 13, petId: null }
+parallax.compatibility.Leash:
+  - { id: 20, collarId: 10 }
+  - { id: 21, collarId: 13 }
+  - { id: 22, collarId: null }
+  - { id: 23, collarId: 11 }
+parallax.compatibility.Parking:
+  - { id: 30, vehicleId: 5 }
+  - { id: 31, vehicleId: 6 }
+  - { id: 32, vehicleId: null }
+  - { id: 33, vehicleId: 7 }

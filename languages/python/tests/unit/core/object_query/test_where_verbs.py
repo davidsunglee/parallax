@@ -27,17 +27,8 @@ from parallax.core import (
     ValueObject,
     attr,
 )
-from parallax.core.entity import AttributeAssignment, AttributeExpr
+from parallax.core.entity import AttributeAssignment
 from parallax.core.entity._expressions import AuthoredConstant
-from parallax.core.metamodel import (
-    AttributeIdentity,
-    AttributeLocation,
-    EntityIdentity,
-    EntityLocation,
-    ValueObjectAttributeIdentity,
-    ValueObjectAttributeLocation,
-    ValueObjectIdentity,
-)
 from parallax.core.object_query import LATEST, TX_TIME
 from parallax.core.object_query._fluent import mutation_selection
 from tests._support import mirrored_models as mm
@@ -103,49 +94,13 @@ def test_set_string_matches_the_class_member_reference() -> None:
     assert str(assignment) == "parallax.compatibility.Customer.name"
 
 
-def test_set_on_a_nested_value_object_path_raises() -> None:
-    # Only a TOP-LEVEL attribute or value-object member is assignable — a
-    # value object always binds its WHOLE document, never a nested path. The
-    # refusal carries the assignment family every other `.set(...)` refusal does,
-    # so one `except` clause covers the whole surface.
-    with pytest.raises(EditError, match="top-level attribute or value-object member") as caught:
-        vom.Customer.address.city.set("Oslo")
-    violation = caught.value.violations[0]
-    assert violation.code == "edit-nested-path"
-    assert violation.member_name == "address.city"
-
-
-def test_a_nested_path_refusal_locates_the_scalar_inside_the_occurrence() -> None:
-    # The one member position only this surface can name: a keyword edit cannot
-    # spell a path, so `edit(...)` never produces this code or this location.
-    customer = EntityIdentity("parallax.compatibility", "Customer")
-    with pytest.raises(EditError) as caught:
-        vom.Customer.address.geo.country.set("NO")
-    assert caught.value.violations[0].location == ValueObjectAttributeLocation(
-        ValueObjectAttributeIdentity(ValueObjectIdentity(customer, ("address", "geo")), "country")
-    )
-
-
-def test_a_path_hopped_off_a_scalar_locates_at_the_scalar_it_hopped_from() -> None:
-    # A hop resolves dynamically, so a path off a SCALAR builds as readily as
-    # one off an occurrence. There is no member below a scalar to locate at, so
-    # the refusal names the scalar the caller started from.
-    with pytest.raises(EditError) as caught:
-        mm.Person.name.city.set("Oslo")
-    assert caught.value.violations[0].location == AttributeLocation(
-        AttributeIdentity(EntityIdentity("parallax.compatibility", "Person"), "name")
-    )
-
-
-def test_a_nested_path_refusal_on_a_directly_built_expression_names_its_bare_entity() -> None:
-    # An expression built directly carries no member, so the only Entity it
-    # names is the bare string it was constructed with — which is what an
-    # ownerless Entity Identity means. The refusal still fires: the built
-    # assignment would have dropped the path and bound the whole occurrence.
-    address: AttributeExpr[Any, Any] = AttributeExpr("Customer", "address")
-    with pytest.raises(EditError) as caught:
-        address.city.set("Oslo")
-    assert caught.value.violations[0].location == EntityLocation(EntityIdentity(None, "Customer"))
+def test_a_field_reached_through_a_value_object_offers_no_assignment() -> None:
+    # Assignment binds a whole top-level member; a dotted path is query-only.
+    assert not hasattr(vom.Customer.address.city, "set")
+    assert not hasattr(vom.Customer.address.geo, "set")
+    assert not hasattr(vom.Customer.address.geo.country, "set")
+    with pytest.raises(AttributeError):
+        _ = mm.Person.name.city  # type: ignore[attr-defined] - a scalar field has no members
 
 
 def test_set_on_a_top_level_value_object_borrows_the_authored_value() -> None:

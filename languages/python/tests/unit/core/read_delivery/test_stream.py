@@ -199,7 +199,7 @@ class _Publication:
 
 
 def _node() -> ObjectQueryNode:
-    return deserialize({"target": "Order", "predicate": {"all": {}}})
+    return deserialize({"target": "Order", "predicate": {"true": {}}})
 
 
 def _delivery(

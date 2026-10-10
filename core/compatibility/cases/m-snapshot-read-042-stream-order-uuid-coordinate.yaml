@@ -13,7 +13,10 @@ compileEligibility: { mode: run-only, reason: query-result-dependent }
 when:
   objectQuery:
     target: parallax.compatibility.StreamCoordinate
-    predicate: { eq: { attr: parallax.compatibility.StreamCoordinate.token, value: "00000000-0000-4000-8000-0000000000ab" } }
+    predicate:
+      eq:
+        path: parallax.compatibility.StreamCoordinate.token
+        value: "00000000-0000-4000-8000-0000000000ab"
     orderBy: [{ attr: parallax.compatibility.StreamCoordinate.token }]
   stream: { batchSize: 1 }
 then:

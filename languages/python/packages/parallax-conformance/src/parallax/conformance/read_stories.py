@@ -16,6 +16,7 @@ from parallax.conformance.read_models import (
     FinancialDocument,
     Folder,
     Invoice,
+    Person,
 )
 from parallax.conformance.read_models import Balance as _Balance
 from parallax.conformance.story_models import Account, Order, OrderItem, OrderStatus
@@ -162,41 +163,46 @@ READ_STORIES: Final[tuple[ReadStory, ...]] = (
     # -- m-navigate (relationship existence), models/orders.yaml ------------- #
     ReadStory(
         "m-navigate-002",
-        "Relationship existence (bare `.exists()`)",
+        "Relationship occupancy (bare `.any()`)",
         "orders",
-        lambda: Order.where(Order.items.exists()),
-        "query = Order.where(Order.items.exists())",
+        lambda: Order.where(Order.items.any()),
+        "query = Order.where(Order.items.any())",
     ),
     ReadStory(
         "m-navigate-003",
-        "Relationship absence (bare `.not_exists()`)",
+        "Relationship emptiness (bare `.none()`)",
         "orders",
-        lambda: Order.where(Order.items.not_exists()),
-        "query = Order.where(Order.items.not_exists())",
+        lambda: Order.where(Order.items.none()),
+        "query = Order.where(Order.items.none())",
     ),
     ReadStory(
         "m-navigate-004",
-        "Relationship existence with a predicate",
+        "Relationship quantifier with a predicate",
         "orders",
-        lambda: Order.where(Order.items.exists(OrderItem.quantity >= 4)),
-        "query = Order.where(Order.items.exists(OrderItem.quantity >= 4))",
+        lambda: Order.where(Order.items.any(OrderItem.quantity >= 4)),
+        "query = Order.where(Order.items.any(OrderItem.quantity >= 4))",
     ),
     ReadStory(
         "m-navigate-006",
         "A navigation filter composed with a scalar predicate",
         "orders",
-        lambda: Order.where(Order.items.not_exists(), Order.active.is_(True)),
-        "query = Order.where(Order.items.not_exists(), Order.active.is_(True))",
+        lambda: Order.where(Order.items.none(), Order.active.is_(True)),
+        "query = Order.where(Order.items.none(), Order.active.is_(True))",
     ),
     ReadStory(
         "m-navigate-008",
-        "Multi-hop relationship existence",
+        "Nested relationship quantifiers",
         "orders",
-        lambda: Order.where(
-            Order.items.exists(OrderItem.statuses.exists(OrderStatus.code == "PACKED"))
-        ),
-        "query = Order.where(Order.items.exists("
-        'OrderItem.statuses.exists(OrderStatus.code == "PACKED")))',
+        lambda: Order.where(Order.items.any(OrderItem.statuses.any(OrderStatus.code == "PACKED"))),
+        "query = Order.where(Order.items.any("
+        'OrderItem.statuses.any(OrderStatus.code == "PACKED")))',
+    ),
+    ReadStory(
+        "m-navigate-007",
+        "A field through a to-one relationship, guarded by its presence",
+        "orders",
+        lambda: OrderItem.where(OrderItem.order.exists() & (OrderItem.order.name == "Ada")),
+        'query = OrderItem.where(OrderItem.order.exists() & (OrderItem.order.name == "Ada"))',
     ),
     ReadStory(
         "m-navigate-009",
@@ -207,33 +213,40 @@ READ_STORIES: Final[tuple[ReadStory, ...]] = (
     ),
     ReadStory(
         "m-navigate-010",
-        "Negated multi-hop relationship existence",
+        "A relationship emptiness over a nested occupancy",
         "orders",
-        lambda: Order.where(Order.items.not_exists(OrderItem.statuses.exists())),
-        "query = Order.where(Order.items.not_exists(OrderItem.statuses.exists()))",
+        lambda: Order.where(Order.items.none(OrderItem.statuses.any())),
+        "query = Order.where(Order.items.none(OrderItem.statuses.any()))",
+    ),
+    ReadStory(
+        "m-navigate-011",
+        "A field through a one-to-one relationship, guarded by its presence",
+        "person",
+        lambda: Person.where(Person.passport.exists() & (Person.passport.number == "P-AAA")),
+        'query = Person.where(Person.passport.exists() & (Person.passport.number == "P-AAA"))',
     ),
     # -- m-navigate x m-temporal-read (per-hop as-of), models/policy.yaml ---- #
     ReadStory(
         "m-navigate-018",
-        "A semi-join across a temporal hop, explicitly pinned to latest",
+        "A relationship quantifier across a temporal hop, explicitly pinned to latest",
         "policy",
-        lambda: Policy.where(Policy.coverages.exists(Coverage.amount >= Decimal("600.00"))).as_of(
+        lambda: Policy.where(Policy.coverages.any(Coverage.amount >= Decimal("600.00"))).as_of(
             tx_time=LATEST, valid_time=LATEST
         ),
-        'query = Policy.where(Policy.coverages.exists(Coverage.amount >= Decimal("600.00")))'
+        'query = Policy.where(Policy.coverages.any(Coverage.amount >= Decimal("600.00")))'
         ".as_of(\n"
         "    tx_time=LATEST, valid_time=LATEST\n"
         ")",
     ),
     ReadStory(
         "m-navigate-023",
-        "The same semi-join, selecting current Valid Time and defaulting Transaction Time",
+        "The same quantifier, selecting current Valid Time and defaulting Transaction Time",
         "policy",
-        lambda: Policy.where(Policy.coverages.exists(Coverage.amount >= Decimal("600.00"))).as_of(
+        lambda: Policy.where(Policy.coverages.any(Coverage.amount >= Decimal("600.00"))).as_of(
             valid_time=LATEST
         ),
         (
-            'query = Policy.where(Policy.coverages.exists(Coverage.amount >= Decimal("600.00")))'
+            'query = Policy.where(Policy.coverages.any(Coverage.amount >= Decimal("600.00")))'
             ".as_of(\n"
             "    valid_time=LATEST\n"
             ")"
@@ -272,22 +285,22 @@ READ_STORIES: Final[tuple[ReadStory, ...]] = (
         "m-inheritance-012",
         "A result narrowed to one concrete subtype, filtered by its own attribute",
         "animal",
-        lambda: Animal.where(Animal.narrow(Dog, where=Dog.bark_volume > 3)),
-        "query = Animal.where(Animal.narrow(Dog, where=Dog.bark_volume > 3))",
+        lambda: Animal.where(Animal.is_a(Dog, where=Dog.bark_volume > 3)),
+        "query = Animal.where(Animal.is_a(Dog, where=Dog.bark_volume > 3))",
     ),
     ReadStory(
         "m-inheritance-070",
         "Polymorphic navigation over table-per-concrete-subtype (grouped OR)",
         "document",
-        lambda: Folder.where(Folder.documents.exists()),
-        "query = Folder.where(Folder.documents.exists())",
+        lambda: Folder.where(Folder.documents.any()),
+        "query = Folder.where(Folder.documents.any())",
     ),
     ReadStory(
         "m-inheritance-071",
         "The same polymorphic navigation, narrowed to one abstract subtype",
         "document",
-        lambda: Folder.where(Folder.documents.exists(Document.narrow(FinancialDocument))),
-        "query = Folder.where(Folder.documents.exists(Document.narrow(FinancialDocument)))",
+        lambda: Folder.where(Folder.documents.any(Document.is_a(FinancialDocument))),
+        "query = Folder.where(Folder.documents.any(Document.is_a(FinancialDocument)))",
     ),
     ReadStory(
         "m-inheritance-100",

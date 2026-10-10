@@ -33,7 +33,7 @@ def _case(
         "when": {
             "objectQuery": {
                 "target": "example.StreamItem",
-                "predicate": {"in": {"attr": "example.StreamItem.id", "values": values or [1, 2]}},
+                "predicate": {"in": {"path": "example.StreamItem.id", "values": values or [1, 2]}},
             },
             "stream": {"batchSize": batch_size},
         },

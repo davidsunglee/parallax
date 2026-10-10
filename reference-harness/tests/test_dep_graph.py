@@ -423,7 +423,7 @@ def _clean_read_case(tags: list[str]) -> dict:
         "model": "models/orders.yaml",
         "tags": tags,
         "shape": "read",
-        "when": {"objectQuery": {"target": "Order", "predicate": {"all": {}}}},
+        "when": {"objectQuery": {"target": "Order", "predicate": {"true": {}}}},
         "then": {
             "statements": [{"sql": {"postgres": "select t0.id from orders t0"}}],
             "rows": [{"id": 1}],
@@ -603,7 +603,7 @@ def test_profile_gate_accepts_a_scenario_with_per_step_golden(tmp_path: Path) ->
                         ],
                     },
                     {
-                        "find": {"eq": {"attr": "Account.id", "value": 7}},
+                        "find": {"eq": {"path": "Account.id", "value": 7}},
                         "roundTrips": 1,
                         "statements": [
                             {
@@ -662,8 +662,8 @@ def test_real_corpus_declares_the_two_lifecycle_slices() -> None:
 @pytest.mark.parametrize(
     ("slice_tag", "expected"),
     [
-        ("slice-snapshot-1", 721),
-        ("slice-managed-1", 562),
+        ("slice-snapshot-1", 767),
+        ("slice-managed-1", 608),
     ],
 )
 def test_profile_slice_tag_counts(slice_tag: str, expected: int) -> None:

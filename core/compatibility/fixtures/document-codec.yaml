@@ -14,12 +14,12 @@
 #   id 2 Bo    flag false  small -3   ratio 2.5   amount  "9.25"   day 2025-12-31
 #
 # * `amount` orders 10.25 > 9.25 numerically and "10.25" < "9.25" as text, because a
-#   decimal's integer part has no fixed width. `nestedGt(amount, 9.50)` therefore
+#   decimal's integer part has no fixed width. `greaterThan(amount, 9.50)` therefore
 #   returns Ada through the cast and NO row if the same predicate were lowered as a
 #   text comparison — which is why `decimal` sits in m-dialect's cast table even
 #   though its document form is a JSON string.
 # * `flag` is a JSON boolean, and the two dialects' text extractions disagree on its
-#   characters (`true`/`false` on Postgres, `1`/`0` on MariaDB). `nestedEq(flag, true)`
+#   characters (`true`/`false` on Postgres, `1`/`0` on MariaDB). `eq(flag, true)`
 #   returns Ada through the cast on both engines and would silently return nothing on
 #   MariaDB if a bound text were compared instead.
 #

@@ -4,8 +4,8 @@
 owns **cross-entity as-of propagation**. It consumes the symmetric Relationship
 Facet from `m-relationship`; it never reparses descriptor declarations or pairs
 reverse directions. Per the dependency graph, `m-navigate` also depends on
-`m-predicate` (the `navigate` / `exists` / `notExists` nodes it lowers **are**
-algebra vocabulary), `m-unit-work` (navigation resolves through the unit of
+`m-predicate` (the quantifiers, presence tests, dotted to-one paths, and
+target-local narrowings it gives behavior **are** algebra vocabulary), `m-unit-work` (navigation resolves through the unit of
 work), and `m-temporal-read` (a pinned as-of value propagates per hop). The
 **SQL emission** for these nodes is `m-sql`; this module ties the algebra to
 observable behavior. Deep fetch — eagerly populating an object graph while
@@ -24,19 +24,25 @@ execution-time join):
 - the **cardinality** — `one-to-one` / `many-to-one` (to-one) versus
   `one-to-many` (to-many).
 
-A **navigation filter** (`navigate` / `exists` / `notExists`) lowers to a
-**correlated `EXISTS` semi-join** (`m-sql`). The semi-join form is deliberate: it
-filters the queried entity by the *existence* of a related row without joining
-the related columns into the projection, so a to-many traversal **MUST NOT**
-multiply the queried entity's rows. `notExists` is the negated semi-join.
+A **to-many** relationship is reached only through a quantifier (`m-predicate`
+`any` / `all` / `none`), which lowers to a **correlated `EXISTS` sub-select**
+(`m-sql`): it filters the queried entity by the related rows that satisfy (or, for
+`all`, contradict) the quantifier's `where` without joining the related columns
+into the projection, so a to-many traversal **MUST NOT** multiply the queried
+entity's rows. A **to-one** relationship is reached by single-valued traversal —
+a dotted path, a presence test, or a target-local `narrow` — which lowers to a
+correlated **scalar subquery** over the target's candidates (`m-sql`): zero
+candidates supply no value, one supplies the result, and more than one fail the
+statement where it is evaluated. Neither form fetches the related object or marks
+a relationship loaded.
 
-A navigation path segment names a **relationship**; a **value-object segment is
-invalid** here and MUST be rejected. A value object has no identity to correlate
-on — its inner fields are queried *through* the owner with the `m-predicate`
-nested-attribute form, never navigated to (`m-value-object`, "Materialization and
+An Include path segment names a **relationship**; a **value-object segment is
+invalid** there and MUST be rejected (`m-deep-fetch`). A value object has no
+identity to correlate on — its inner fields are read *through* the owner by a
+dotted predicate path, never navigated to (`m-value-object`, "Materialization and
 navigation contract").
 
-The independent `referenceSql` oracle for every navigation filter is the naive
+The independent `referenceSql` oracle for a relationship predicate is a naive
 `key in (select fk from child where <inner op>)` subquery — an obviously-correct
 different formulation that the harness asserts returns the same rows
 (`m-case-format`).
@@ -44,13 +50,16 @@ different formulation that the harness asserts returns the same rows
 ## As-of propagation across relationships
 
 `m-navigate` owns cross-entity as-of propagation. When a read pins an as-of value
-on a temporal source entity (`m-temporal-read`), navigation filters (`navigate` /
-`exists` / `notExists`) and eager-loading paths (`m-deep-fetch`) **MUST propagate
+on a temporal source entity (`m-temporal-read`), relationship predicates — the
+quantifiers, presence tests, dotted to-one paths, and target-local narrowings that
+reach a related entity — and eager-loading paths (`m-deep-fetch`) **MUST propagate
 that value per hop, matched by axis, to every temporal entity reached along the
 path.** The propagated value is auto-injected from the as-of model and **never
 written by the user**. It is part of the SQL for that hop: inside the correlated
-semi-join for navigation filters and inside the per-level child query for deep
-fetch. At each temporal target the propagated value drives *that entity's own*
+sub-select or scalar subquery for a relationship predicate and inside the
+per-level child query for deep fetch. A to-one hop's cardinality is therefore
+judged over the candidates visible at those coordinates — a temporal target's
+other milestones are not candidates. At each temporal target the propagated value drives *that entity's own*
 as-of predicate: **latest** lowers to the single equality `to = infinity`; an
 **as-of instant** lowers to the half-open containment `from <= ? and to > ?`. Each
 axis propagates and lowers independently. A temporal query root already carries
@@ -78,8 +87,8 @@ contexts, and a view materialized from a `history` read (edge-pinned at its
 milestone's from-instant, `m-temporal-read`) dereferences at its own edge.
 
 Propagated coordinates are managed Timestamp values. Navigation appends them to
-the resolved child read, and conjoins them into each relationship semi-join's
-interior, through `m-predicate`'s generated-term operations, which adopt each
+the resolved child read, and conjoins them into each resolved relationship a
+predicate reaches, through `m-predicate`'s generated-term operations, which adopt each
 managed value directly without encoding or decoding a literal. Generated
 relationship-key membership follows the same rule, and no consumer resolves a
 generated term's member or operand again.
@@ -90,14 +99,16 @@ A relationship target (`RelationshipMetadata.join.target.entity`) may be a
 **polymorphic position** in an
 inheritance family (`m-inheritance`): an **abstract root** (reaching any concrete
 subtype in the family), an **abstract subtype** (reaching only its concrete
-descendants), or a **concrete subtype** (monomorphic). The navigation semi-join
-resolves the target to its **effective concrete-subtype set** and constrains the
-correlated sub-select to exactly that set — the same effective-set derivation a
-top-level read uses, applied at the relationship target.
+descendants), or a **concrete subtype** (monomorphic). A quantifier over the
+relationship resolves the target to its **effective concrete-subtype set** and
+constrains the correlated sub-select to exactly that set — the same effective-set
+derivation a top-level read uses, applied at the relationship target. A to-one hop
+evaluates **every** declared candidate in that set, so no subtype condition can
+hide a second candidate.
 
-`narrow` (`m-predicate`) MAY appear in a navigation filter's inner predicate
-(`op`) to constrain the relationship target. Context supplies the target's
-polymorphic position, and `narrow.to` is `m-inheritance`'s shared Subtype
+`narrow` (`m-predicate`) MAY appear in a quantifier's `where` to test the related
+element, or carry a `path` to test a reached to-one target. Context supplies the
+target's polymorphic position, and `narrow.to` is `m-inheritance`'s shared Subtype
 Selection. A narrow whose resolved concrete set is **not a subset** of the
 relationship target's effective concrete set is rejected
 (`narrow-outside-relationship-target`, `m-case-format`) — narrowing to a concrete
@@ -105,8 +116,8 @@ outside the reachable set, even a **sibling** sharing the family root, is invali
 
 The lowering per strategy (fixed by `m-sql`):
 
-- **`table-per-hierarchy`** — one shared child table, so a polymorphic hop is a
-  **single correlated `EXISTS`** whose sub-select carries the correlation predicate
+- **`table-per-hierarchy`** — one shared child table, so a polymorphic quantifier
+  is a **single correlated `EXISTS`** whose sub-select carries the correlation predicate
   **plus the interior tag predicate** over the effective set's `tagValue`s
   (`t1.kind = ?` for one concrete, `t1.kind in (?, …)` for several, in the family's
   canonical alphabetical order, `m-inheritance`). An abstract-**root** target spans
@@ -114,13 +125,15 @@ The lowering per strategy (fixed by `m-sql`):
   (or narrowed) target injects the `in`-list so sibling branches in the same table
   are excluded.
 - **`table-per-concrete-subtype`** — each concrete subtype has its own table, so a
-  polymorphic hop is a **grouped `OR` of one correlated `EXISTS` per effective
+  polymorphic quantifier is a **grouped `OR` of one correlated `EXISTS` per effective
   concrete subtype**, in the family's canonical **alphabetical order**
   (`m-inheritance`): `(exists (select 1 from invoice …) or exists (select 1 from
   memo …) or exists (select 1 from receipt …))`. The grouped `OR` is a **flat
   left-deep** chain (`m-sql` rule 1), so each branch's `EXISTS` alias continues the
   single source-order sequence (`t1`, `t2`, `t3` — the outer query is `t0`); it is
   never hand-folded right-nested. A single concrete is one `EXISTS` (no grouping).
+  A to-one hop instead reads every declared concrete table in one scalar subquery,
+  its branches joined by `union all`.
 
 **As-of propagation** (above) is unchanged by polymorphism: the root as-of value
 propagates per hop, matched by axis, to **every temporal concrete branch** reached
@@ -140,8 +153,9 @@ correlation predicate (and, for `table-per-concrete-subtype`, per `EXISTS` branc
 
 ## What the harness verifies
 
-For each navigation-filter case the compatibility harness (`m-case-format`)
-asserts the standard read layers: the semi-join golden SQL returns exactly
-`then.rows`, and the naive `key in (select fk …)` oracle returns the same rows.
+For each relationship-predicate case the compatibility harness (`m-case-format`)
+asserts the standard read layers: the golden SQL returns exactly `then.rows`, and
+the naive `key in (select fk …)` oracle returns the same rows. A to-one hop's
+refusal of several candidates is asserted against each provider's native error.
 The round-trip and object-graph assertions specific to eager loading are
 `m-deep-fetch`.

@@ -10,7 +10,7 @@ when:
         target: parallax.compatibility.Order
         predicate:
           in:
-            attr: parallax.compatibility.Order.id
+            path: parallax.compatibility.Order.id
             values:
               - 999
       roundTrips: 1
@@ -30,7 +30,7 @@ when:
         target: parallax.compatibility.Order
         predicate:
           in:
-            attr: parallax.compatibility.Order.id
+            path: parallax.compatibility.Order.id
             values:
               - 3
       roundTrips: 1

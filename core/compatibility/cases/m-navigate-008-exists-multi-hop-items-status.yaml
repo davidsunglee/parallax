@@ -8,14 +8,14 @@ when:
   objectQuery:
     target: parallax.compatibility.Order
     predicate:
-      exists:
-        rel: parallax.compatibility.Order.items
-        op:
-          exists:
-            rel: parallax.compatibility.OrderItem.statuses
-            op:
+      any:
+        path: parallax.compatibility.Order.items
+        where:
+          any:
+            path: statuses
+            where:
               eq:
-                attr: parallax.compatibility.OrderStatus.code
+                path: code
                 value: PACKED
 then:
   statements:

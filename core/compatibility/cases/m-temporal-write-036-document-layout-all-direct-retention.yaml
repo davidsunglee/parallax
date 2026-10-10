@@ -20,7 +20,7 @@ when:
         target: parallax.compatibility.Mooring
         predicate:
           eq:
-            attr: parallax.compatibility.Mooring.id
+            path: parallax.compatibility.Mooring.id
             value: 1
         temporal:
           transaction-time:
@@ -41,7 +41,9 @@ when:
         target:
           entity: parallax.compatibility.Mooring
           predicate:
-            eq: { attr: parallax.compatibility.Mooring.id, value: 1 }
+            eq:
+              path: parallax.compatibility.Mooring.id
+              value: 1
         at: "2026-02-15T00:00:00.000000Z"
         validFrom: "2026-03-01T00:00:00.000000Z"
         until: "2026-09-01T00:00:00.000000Z"
@@ -76,7 +78,7 @@ when:
         target: parallax.compatibility.Mooring
         predicate:
           eq:
-            attr: parallax.compatibility.Mooring.id
+            path: parallax.compatibility.Mooring.id
             value: 1
         temporal:
           transaction-time:

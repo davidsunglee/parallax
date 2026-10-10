@@ -1,0 +1,41 @@
+# A filtered `none` holds where no element makes its predicate true, the empty
+# collection included.
+model: models/predicate-collections.yaml
+tags: [m-predicate, quantifier, scalar-collection, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  objectQuery:
+    target: parallax.compatibility.Basket
+    predicate:
+      none:
+        path: parallax.compatibility.Basket.scores
+        where:
+          greaterThan: {value: 10}
+then:
+  statements:
+  - sql: {postgres: 'select t0.id, t0.label, t0.owner_id, not t0.tags is null, t0.tags, not t0.scores is null, t0.scores, not t0.prices is null, t0.prices, not t0.flags is null, t0.flags, not t0.parcels is null, t0.parcels, not t0.meta is null, t0.meta from basket t0 where not exists (select 1 from jsonb_array_elements(case when jsonb_typeof(t0.scores) = ? then t0.scores else cast(? as jsonb) end) t1 where case when jsonb_typeof(t1.value) = ? then cast(t1.value #>> ? as bigint) end > ?)'}
+    binds: [array, '[]', number, '{}', 10]
+  graph:
+    Basket:
+    - id: 2
+      label: two
+      ownerId: null
+      tags: []
+      scores: []
+      prices: []
+      flags: []
+      parcels: []
+      meta: null
+    - id: 4
+      label: four
+      ownerId: 3
+      tags: [urgent]
+      scores: [0]
+      prices: []
+      flags: [true, false]
+      parcels:
+      - sku: d
+        qty: 1
+        notes: [urgent, x]
+      meta: null
+  roundTrips: 1

@@ -32,6 +32,7 @@ from parallax.core.document_codec._authoring import (
 )
 from parallax.core.entity._errors import EntityDefinitionError
 from parallax.core.entity._expressions import (
+    EXPRESSION_OPERATION_NAMES,
     AttributeRef,
     RelationshipRef,
     snake_to_camel,
@@ -343,7 +344,7 @@ RESERVED_MEMBER_NAMES: Final[frozenset[str]] = frozenset(
     {
         "all",
         "where",
-        "narrow",
+        "is_a",
         "include",
         "as_of",
         "as_of_range",
@@ -513,6 +514,7 @@ class ValueObjectShape:
     name_to_py: Mapping[str, str]
     py_to_name: Mapping[str, str]
     nested_classes: Mapping[str, type]
+    nested_shapes: Mapping[str, ValueObjectShape]
     many_py: frozenset[str]
 
     @property
@@ -1124,6 +1126,9 @@ def _build_value_object(
         ),
         py_to_name=MappingProxyType(py_to_name),
         nested_classes=MappingProxyType(nested_classes),
+        nested_shapes=MappingProxyType(
+            {py_name: shape_of(nested_class) for py_name, nested_class in nested_classes.items()}
+        ),
         many_py=frozenset(
             py_name
             for py_name in nested_classes
@@ -1140,8 +1145,9 @@ def _build_value_object(
         occurrences=nested_classes,
         relationships=(),
     )
-    for py_name, canonical in py_to_name.items():
-        setattr(cls, py_name, ElementAttr(canonical, plan.indexes[py_name], shape_of(cls).shape))
+    owner = shape_of(cls)
+    for py_name in py_to_name:
+        setattr(cls, py_name, ElementAttr(py_name, plan.indexes[py_name], owner))
     return cls
 
 
@@ -1296,6 +1302,7 @@ def _build_entity(
                 AttributeRef(identity.canonical, canonical),
                 plan.indexes[py_name],
                 members[canonical],
+                None if py_name not in vo_classes else shape_of(vo_classes[py_name]),
             ),
         )
     for canonical, py_name in relationship_py.items():
@@ -1307,6 +1314,7 @@ def _build_entity(
                 py_name,
                 plan.relationships[py_name],
                 _target_spelling(identity, tuple(relationships), canonical),
+                many=relationship_shapes[canonical].multiplicity is Multiplicity.MANY,
             ),
         )
     _install_inherited_descriptors(cls, plan, own=set(py_to_name) | set(relationship_py.values()))
@@ -1364,6 +1372,15 @@ def _body_members(
                 code="entity-annotation-invalid", message=f"{where}: {refusal}"
             )
         member_kind, inner = classified
+        if py_name in EXPRESSION_OPERATION_NAMES:
+            raise EntityDefinitionError(
+                code="entity-reserved-member-name",
+                message=(
+                    f"{where}: reuses `{py_name}`, an operation every member expression offers, "
+                    "so dotted access could never reach the member; give it another Python "
+                    f"name and keep the canonical one with name={py_name!r}"
+                ),
+            )
         spec = _member_spec(ns.get(py_name), where, expect=member_kind)
         shape = _shape_of_annotation(
             inner,

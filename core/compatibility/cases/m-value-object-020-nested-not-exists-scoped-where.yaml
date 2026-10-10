@@ -1,6 +1,6 @@
-# valueObject to-many: nestedNotExists + `where` means NO element satisfies the
-# compound (m-value-object to-many, m-predicate same-element negation, m-dialect
-# array-traversal form), on Postgres AND MariaDB.
+# valueObject to-many: `none` with a `where` means NO element satisfies the compound
+# (m-value-object to-many, m-predicate quantifiers, m-dialect array-traversal form),
+# on Postgres AND MariaDB.
 model: models/customer.yaml
 tags: [m-value-object, m-predicate, m-sql, m-dialect, nested, json, to-many, exists, scoped, same-element, array-traversal, slice-snapshot-1, slice-managed-1]
 shape: read
@@ -8,15 +8,15 @@ when:
   objectQuery:
     target: parallax.compatibility.Customer
     predicate:
-      nestedNotExists:
+      none:
         path: parallax.compatibility.Customer.address.phones
         where:
           and:
             operands:
-              - nestedEq:
+              - eq:
                   path: type
                   value: home
-              - nestedEq:
+              - eq:
                   path: number
                   value: 555-9999
 then:

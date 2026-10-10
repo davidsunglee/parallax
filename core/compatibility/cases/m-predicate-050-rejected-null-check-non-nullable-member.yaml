@@ -11,6 +11,6 @@ when:
     target: parallax.compatibility.Order
     predicate:
       isNull:
-        attr: parallax.compatibility.Order.name
+        path: parallax.compatibility.Order.name
 then:
   rejectedRule: null-check-non-nullable-member

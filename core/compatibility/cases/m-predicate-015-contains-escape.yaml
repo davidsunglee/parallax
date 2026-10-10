@@ -10,7 +10,7 @@ when:
     target: parallax.compatibility.Order
     predicate:
       contains:
-        attr: parallax.compatibility.Order.sku
+        path: parallax.compatibility.Order.sku
         value: 50%
 then:
   statements:

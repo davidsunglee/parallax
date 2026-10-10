@@ -9,7 +9,7 @@ when:
     - objectQuery:
         target: parallax.compatibility.Order
         predicate:
-          all: {}
+          "true": {}
       roundTrips: 0
       note: construction -> a query-backed list, no DB work
     - action: access

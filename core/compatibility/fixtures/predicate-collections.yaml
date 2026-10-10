@@ -1,0 +1,56 @@
+# Fixture rows for models/predicate-collections.yaml.
+#
+#   Owner 1 Ada  active true   manager 2   tags [vip]
+#   Owner 2 Bob  active null   no manager  tags []
+#   Owner 3 Cy   active false  manager 1   tags [vip, new]
+#
+#   Basket 1 owner Ada  tags [urgent, gift]  scores [5, 25]  prices [1.50]        flags [true]
+#            parcels [{a, 2, [x]}, {b, 0, []}]  meta {labels [m]}
+#   Basket 2 no owner   every collection empty, no parcels, no meta
+#   Basket 3 owner Bob  tags [gift]          scores [15]     prices [2.00, 3.00]  flags [false]
+#            parcels [{c, 5, [urgent]}]          meta {labels []}
+#   Basket 4 owner Cy   tags [urgent]        scores [0]      prices []            flags [true, false]
+#            parcels [{d, 1, [urgent, x]}]       no meta
+parallax.compatibility.Owner:
+  - { id: 1, name: Ada, active: true, managerId: 2, tags: [vip] }
+  - { id: 2, name: Bob, active: null, managerId: null, tags: [] }
+  - { id: 3, name: Cy, active: false, managerId: 1, tags: [vip, new] }
+parallax.compatibility.Basket:
+  - id: 1
+    label: one
+    ownerId: 1
+    tags: [urgent, gift]
+    scores: [5, 25]
+    prices: ["1.50"]
+    flags: [true]
+    parcels:
+      - { sku: a, qty: 2, notes: [x] }
+      - { sku: b, qty: 0, notes: [] }
+    meta: { labels: [m] }
+  - id: 2
+    label: two
+    ownerId: null
+    tags: []
+    scores: []
+    prices: []
+    flags: []
+    parcels: []
+  - id: 3
+    label: three
+    ownerId: 2
+    tags: [gift]
+    scores: [15]
+    prices: ["2.00", "3.00"]
+    flags: [false]
+    parcels:
+      - { sku: c, qty: 5, notes: [urgent] }
+    meta: { labels: [] }
+  - id: 4
+    label: four
+    ownerId: 3
+    tags: [urgent]
+    scores: [0]
+    prices: []
+    flags: [true, false]
+    parcels:
+      - { sku: d, qty: 1, notes: [urgent, x] }

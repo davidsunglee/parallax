@@ -1,0 +1,17 @@
+# A dotted field two hops away, each hop its own scalar subquery.
+model: models/predicate-traversal.yaml
+tags: [m-predicate, relationship, to-one, traversal, m-dialect, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  objectQuery:
+    target: parallax.compatibility.Leash
+    predicate:
+      eq: {path: parallax.compatibility.Leash.collar.pet.name, value: Rex}
+then:
+  statements:
+  - sql: {postgres: 'select t0.id, t0.collar_id from traversal_leash t0 where (select (select t1.name from traversal_pet t1 where t1.id = t2.pet_id) from traversal_collar t2 where t2.id = t0.collar_id) = ?', mariadb: 'select t0.id, t0.collar_id from traversal_leash t0 where (select (select t1.name from traversal_pet t1 where t1.id = t2.pet_id) from traversal_collar t2 where t2.id = t0.collar_id) = ?'}
+    binds: [Rex]
+  referenceSql: select id, collar_id from traversal_leash where collar_id in (select id from traversal_collar where pet_id in (select id from traversal_pet where name = 'Rex'))
+  rows:
+  - {id: 20, collar_id: 10}
+  roundTrips: 1

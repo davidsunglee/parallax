@@ -34,6 +34,7 @@ _IDENTITY = _SCHEMAS["identity.schema.json"]
 _METAMODEL = _SCHEMAS["metamodel.schema.json"]
 _IDENTITY_URL = _IDENTITY["$id"]
 _PREDICATE_URL = _SCHEMAS["predicate.schema.json"]["$id"]
+_OBJECT_QUERY_URL = _SCHEMAS["object-query.schema.json"]["$id"]
 _SUBTYPE_SELECTION_URL = _SCHEMAS["subtype-selection.schema.json"]["$id"]
 _WRITE_URL = _SCHEMAS["write-instruction.schema.json"]["$id"]
 _CASE_URL = _SCHEMAS["compatibility-case.schema.json"]["$id"]
@@ -131,11 +132,21 @@ _VECTORS: dict[str, list[tuple[str, bool]]] = {
         ("Customer.Address", False),
         ("", False),
     ],
-    "elementRef": [
+    "qualifiedPath": [
+        ("Order.status", True),
+        ("Order.customer.active", True),
+        ("parallax.compatibility.Customer.address.city", True),
+        ("Customer", False),  # a path names at least one member
+        ("customer.address", False),
+        ("Customer.Address", False),
+        ("Customer.address.", False),
+        ("", False),
+    ],
+    "relativePath": [
         ("type", True),
         ("geo.country", True),
         ("legacy_ID", True),
-        ("Customer.address", False),  # an element path carries no Entity spelling
+        ("Customer.address", False),  # a relative path carries no Entity spelling
         ("geo.Country", False),
         ("Geo.country", False),
         ("", False),
@@ -144,11 +155,8 @@ _VECTORS: dict[str, list[tuple[str, bool]]] = {
 
 # Where each grammar is reached through a consuming schema's cross-file `$ref`.
 _CONSUMERS: dict[str, list[tuple[str, str]]] = {
-    "attributeRef": [(_PREDICATE_URL, "attributeRef"), (_WRITE_URL, "writeAssignment")],
-    "relationshipRef": [(_PREDICATE_URL, "relationshipRef")],
-    "nestedRef": [(_PREDICATE_URL, "nestedRef")],
-    "valueObjectRef": [(_PREDICATE_URL, "valueObjectRef")],
-    "elementRef": [(_PREDICATE_URL, "elementRef")],
+    "attributeRef": [(_OBJECT_QUERY_URL, "sortKey"), (_WRITE_URL, "writeAssignment")],
+    "relationshipRef": [(_OBJECT_QUERY_URL, "includeSegment")],
     "entityName": [
         (_SUBTYPE_SELECTION_URL, "subtypeSelection"),
         (_WRITE_URL, "entityName"),
@@ -158,7 +166,11 @@ _CONSUMERS: dict[str, list[tuple[str, str]]] = {
 
 # `writeAssignment` wraps its reference in an object, so a bare spelling has to be
 # lifted into the shape the consuming `$def` validates.
-_WRAPPERS: dict[str, object] = {"writeAssignment": "attr"}
+_WRAPPERS: dict[str, object] = {
+    "writeAssignment": "attr",
+    "sortKey": "attr",
+    "includeSegment": "rel",
+}
 
 
 def _fragment_validator(schema_id_url: str, pointer: str) -> Draft202012Validator:
@@ -184,17 +196,27 @@ def test_each_grammar_accepts_and_refuses_its_own_vectors() -> None:
             assert _valid(validator, spelling) is expected, f"{pointer} {spelling!r}"
 
 
-def test_an_element_path_and_a_value_object_path_are_disjoint() -> None:
-    """The capitalized Entity segment is what keeps the two families apart.
+def test_a_relative_path_and_a_qualified_path_are_disjoint() -> None:
+    """The capitalized Entity segment is what keeps the two path families apart.
 
-    `elementRef` is the only reference family carrying no capitalized segment, so
-    a splitter can decide from the text alone whether a dotted path names an
+    `relativePath` is the only reference family carrying no capitalized segment,
+    so a splitter can decide from the text alone whether a dotted path names an
     Entity at all — which is the property the m-metamodel parse rule rests on.
     """
-    element = _fragment_validator(_IDENTITY_URL, "elementRef")
-    value_object = _fragment_validator(_IDENTITY_URL, "valueObjectRef")
+    relative = _fragment_validator(_IDENTITY_URL, "relativePath")
+    qualified = _fragment_validator(_IDENTITY_URL, "qualifiedPath")
     for spelling in ("address.city", "Customer.address"):
-        assert _valid(element, spelling) is not _valid(value_object, spelling)
+        assert _valid(relative, spelling) is not _valid(qualified, spelling)
+
+
+def test_a_predicate_path_is_either_path_family() -> None:
+    path = _fragment_validator(_PREDICATE_URL, "path")
+    for pointer in ("qualifiedPath", "relativePath"):
+        for spelling, expected in _VECTORS[pointer]:
+            if expected:
+                assert _valid(path, spelling), spelling
+    assert not _valid(path, "Customer")
+    assert not _valid(path, "")
 
 
 # --- cross-file equivalence ----------------------------------------------------
@@ -211,8 +233,10 @@ def test_each_consuming_ref_behaves_like_the_canonical_def() -> None:
                 assert _valid(canonical, spelling) is expected
                 if consumer_pointer == "subtypeSelection":
                     doc: Any = [spelling]
+                elif consumer_pointer == "writeAssignment":
+                    doc = {key: spelling, "value": 0}
                 else:
-                    doc = spelling if key is None else {key: spelling, "value": 0}
+                    doc = spelling if key is None else {key: spelling}
                 assert _valid(through_ref, doc) is expected, (
                     f"{schema_url}#/$defs/{consumer_pointer} {spelling!r}"
                 )

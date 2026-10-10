@@ -1,5 +1,6 @@
-# valueObject to-many: two ANDed flat predicates match across DIFFERENT elements
-# (m-value-object to-many, m-predicate any-element), on Postgres AND MariaDB.
+# valueObject to-many: two ANDed quantifiers bind separately, so they match across
+# DIFFERENT elements (m-value-object to-many, m-predicate quantifiers), on Postgres
+# AND MariaDB.
 model: models/customer.yaml
 tags: [m-value-object, m-predicate, m-sql, m-dialect, nested, json, to-many, any-element, array-traversal, slice-snapshot-1, slice-managed-1]
 shape: read
@@ -9,12 +10,18 @@ when:
     predicate:
       and:
         operands:
-          - nestedEq:
-              path: parallax.compatibility.Customer.address.phones.type
-              value: home
-          - nestedEq:
-              path: parallax.compatibility.Customer.address.phones.number
-              value: 555-9999
+          - any:
+              path: parallax.compatibility.Customer.address.phones
+              where:
+                eq:
+                  path: type
+                  value: home
+          - any:
+              path: parallax.compatibility.Customer.address.phones
+              where:
+                eq:
+                  path: number
+                  value: 555-9999
 then:
   statements:
     - sql:

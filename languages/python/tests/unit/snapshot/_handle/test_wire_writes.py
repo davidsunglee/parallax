@@ -82,22 +82,22 @@ _OTHER_UNTIL = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
 
 _ACCOUNT_QUERY: dict[str, object] = {
     "target": "parallax.compatibility.Account",
-    "predicate": {"eq": {"attr": "parallax.compatibility.Account.id", "value": 1}},
+    "predicate": {"eq": {"path": "parallax.compatibility.Account.id", "value": 1}},
 }
 
 _ACCOUNT_READ = Read(rows=[_ACCOUNT_ROW])
 _PERSON_QUERY: dict[str, object] = {
     "target": "parallax.compatibility.Person",
-    "predicate": {"eq": {"attr": "parallax.compatibility.Person.id", "value": 1}},
+    "predicate": {"eq": {"path": "parallax.compatibility.Person.id", "value": 1}},
 }
 _BALANCE_QUERY: dict[str, object] = {
     "target": "parallax.compatibility.Balance",
-    "predicate": {"eq": {"attr": "parallax.compatibility.Balance.id", "value": 1}},
+    "predicate": {"eq": {"path": "parallax.compatibility.Balance.id", "value": 1}},
     "temporal": {"transaction-time": {"asOf": "latest"}},
 }
 _POSITION_QUERY: dict[str, object] = {
     "target": "parallax.compatibility.WherePosition",
-    "predicate": {"eq": {"attr": "parallax.compatibility.WherePosition.id", "value": 1}},
+    "predicate": {"eq": {"path": "parallax.compatibility.WherePosition.id", "value": 1}},
     "temporal": {
         "transaction-time": {"asOf": "latest"},
         "valid-time": {"asOf": "2024-07-01T00:00:00.000000Z"},
@@ -105,7 +105,7 @@ _POSITION_QUERY: dict[str, object] = {
 }
 _PERSON_TARGET: dict[str, object] = {
     "entity": "parallax.compatibility.Person",
-    "predicate": {"eq": {"attr": "parallax.compatibility.Person.id", "value": 1}},
+    "predicate": {"eq": {"path": "parallax.compatibility.Person.id", "value": 1}},
 }
 # The one document-mapped mirror, whose `address` occurrence is what an
 # assignment replaces whole.
@@ -115,11 +115,11 @@ _TRAVELER_ROW: MappingRow = {
 }
 _TRAVELER_QUERY: dict[str, object] = {
     "target": "parallax.compatibility.Traveler",
-    "predicate": {"eq": {"attr": "parallax.compatibility.Traveler.id", "value": 1}},
+    "predicate": {"eq": {"path": "parallax.compatibility.Traveler.id", "value": 1}},
 }
 _CONTACT_QUERY: dict[str, object] = {
     "target": "parallax.compatibility.Contact",
-    "predicate": {"eq": {"attr": "parallax.compatibility.Contact.id", "value": 1}},
+    "predicate": {"eq": {"path": "parallax.compatibility.Contact.id", "value": 1}},
 }
 
 
@@ -159,18 +159,18 @@ ROSTER_META = DomainModel(Roster)
 _SAMPLE_ROW: MappingRow = {"id": 1, "taken": dt.datetime(2024, 5, 1, tzinfo=dt.UTC)}
 _SAMPLE_QUERY: dict[str, object] = {
     "target": "parallax.compatibility.Sample",
-    "predicate": {"eq": {"attr": "parallax.compatibility.Sample.id", "value": 1}},
+    "predicate": {"eq": {"path": "parallax.compatibility.Sample.id", "value": 1}},
 }
 _SAMPLE_TARGET: dict[str, object] = {
     "entity": "parallax.compatibility.Sample",
-    "predicate": {"eq": {"attr": "parallax.compatibility.Sample.id", "value": 1}},
+    "predicate": {"eq": {"path": "parallax.compatibility.Sample.id", "value": 1}},
 }
 # `datetime.min` fourteen hours east of UTC: an accepted wire spelling naming an
 # instant before the first one a canonical UTC spelling can write.
 _UNSPELLABLE_INSTANT = "0001-01-01T00:00:00.000000+14:00"
 _POSITION_TARGET: dict[str, object] = {
     "entity": "parallax.compatibility.WherePosition",
-    "predicate": {"eq": {"attr": "parallax.compatibility.WherePosition.id", "value": 1}},
+    "predicate": {"eq": {"path": "parallax.compatibility.WherePosition.id", "value": 1}},
 }
 
 
@@ -399,7 +399,7 @@ def test_a_wire_predicate_terminate_over_a_temporal_target_materializes() -> Non
         lambda tx: tx.wire.terminate_where(
             {
                 "entity": "parallax.compatibility.Balance",
-                "predicate": {"eq": {"attr": "parallax.compatibility.Balance.id", "value": 1}},
+                "predicate": {"eq": {"path": "parallax.compatibility.Balance.id", "value": 1}},
             }
         )
     )
@@ -413,7 +413,7 @@ def test_the_bounded_predicate_verbs_reach_the_rectangle_split() -> None:
         port = ScriptedAdapter(Transact(Read(rows=[_position_row()]), Write(times=expected)))
         target: dict[str, object] = {
             "entity": "parallax.compatibility.WherePosition",
-            "predicate": {"eq": {"attr": "parallax.compatibility.WherePosition.id", "value": 1}},
+            "predicate": {"eq": {"path": "parallax.compatibility.WherePosition.id", "value": 1}},
         }
 
         def fn(tx: Transaction, verb: str = verb, target: dict[str, object] = target) -> None:
@@ -660,7 +660,7 @@ def test_a_predicate_target_carries_exactly_entity_and_predicate() -> None:
         with pytest.raises(instructions.WriteInstructionError, match="exactly `entity`"):
             tx.wire.delete_where({"entity": "parallax.compatibility.Person"})
         with pytest.raises(instructions.WriteInstructionError, match="non-empty entity name"):
-            tx.wire.delete_where({"entity": "", "predicate": {"all": {}}})
+            tx.wire.delete_where({"entity": "", "predicate": {"true": {}}})
 
     db_for(PERSON, port).transact(fn)
     assert _writes(port) == []
@@ -712,8 +712,8 @@ def test_a_tuple_is_not_a_wire_array_the_predicate_algebra_accepts() -> None:
     # canonical predicate serde refuses for the identical document.
     port = ScriptedAdapter(Transact(Write()))
     operands = (
-        {"eq": {"attr": "parallax.compatibility.Person.id", "value": 1}},
-        {"eq": {"attr": "parallax.compatibility.Person.name", "value": "Ada"}},
+        {"eq": {"path": "parallax.compatibility.Person.id", "value": 1}},
+        {"eq": {"path": "parallax.compatibility.Person.name", "value": "Ada"}},
     )
     target: dict[str, object] = {
         "entity": "parallax.compatibility.Person",
@@ -804,7 +804,7 @@ def test_a_predicate_writes_window_is_judged_before_its_predicate() -> None:
         "entity": "parallax.compatibility.WherePosition",
         "predicate": {
             "between": {
-                "attr": "parallax.compatibility.WherePosition.id",
+                "path": "parallax.compatibility.WherePosition.id",
                 "lower": 10,
                 "upper": 1,
             }
@@ -1520,7 +1520,7 @@ def test_mutating_insert_data_after_the_verb_returns_changes_nothing() -> None:
 
 def test_mutating_a_predicate_target_after_the_verb_returns_changes_nothing() -> None:
     port = ScriptedAdapter(Transact(Write()))
-    predicate: dict[str, Any] = {"eq": {"attr": "parallax.compatibility.Person.id", "value": 1}}
+    predicate: dict[str, Any] = {"eq": {"path": "parallax.compatibility.Person.id", "value": 1}}
     target: dict[str, Any] = {"entity": "parallax.compatibility.Person", "predicate": predicate}
 
     def fn(tx: Transaction) -> None:

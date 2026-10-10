@@ -325,9 +325,10 @@ Construction is model-independent:
 Model-aware validation then resolves one selection inside one active
 polymorphic position. It runs before SQL and applies these steps:
 
-1. Take the active position from context: a query's `target`, a navigation
-   or deep-fetch hop's relationship target, or an enclosing narrow's resolved
-   position.
+1. Take the active position from context: a query's `target`, the related
+   Entity a relationship quantifier binds, a path-targeted narrow's reached
+   target, a deep-fetch hop's relationship target, or an enclosing narrow's
+   resolved position.
 2. Resolve every alternative to its effective concrete-subtype set: a concrete
    subtype resolves to itself and an abstract position to its concrete
    descendants.
@@ -336,8 +337,9 @@ polymorphic position. It runs before SQL and applies these steps:
    sets intersect are `subtype-selection-overlapping-alternatives`.
 4. Require the union to be non-empty and a subset of the active position. An
    empty union is `narrow-empty-effective-set`. An escaping result, predicate, or
-   path-guard selection is `narrow-outside-position`; an escaping navigation or
-   path-segment selection is `narrow-outside-relationship-target`.
+   path-guard selection is `narrow-outside-position`; an escaping selection over a
+   relationship target — inside a quantifier, at a path-targeted narrow's reached
+   target, or on an Include segment — is `narrow-outside-relationship-target`.
 
 The pairwise rule is scoped to one selection. Separate sibling selections are
 independent: two deep-fetch root guards may overlap, including sharing one
@@ -349,7 +351,7 @@ The four consumers add only their own surrounding behavior:
 | Position | Shape | Active position supplied by | Produces |
 |---|---|---|---|
 | query result (`narrowTo`) | the bare selection | the query's `target` | the result position, which the predicate and Sort Keys resolve over |
-| predicate (`narrow`) | `{ to, operand }` | the current predicate position | the position `operand` evaluates over |
+| predicate (`narrow`) | `{ path?, to, operand }` | the current predicate position, or the to-one target `path` reaches | the position `operand` evaluates over |
 | Include Path guard (`appliesTo`) | the bare selection | the queried root position | a source guard, with no view key |
 | Include Path segment (`narrowTo`) | the bare selection | the hop's relationship target | a distinct narrowed view key |
 
@@ -474,7 +476,8 @@ enumerate a family's concretes:
 
 - the table-per-hierarchy tag predicate `in (…)` list and its binds (`m-sql`);
 - the table-per-concrete-subtype `union all` **branch order** (`m-sql`);
-- the grouped-`OR` per-branch `EXISTS` **branch order** for polymorphic navigation
+- the grouped-`OR` per-branch `EXISTS` **branch order** of a polymorphic
+  relationship quantifier, and the `union all` branch order of a to-one hop
   (`m-navigate`, `m-sql`);
 - the derived **narrowed view key** `<rel>[<Concrete>,<Concrete>]` (`m-deep-fetch`);
 - the per-subtype contributor visitation order used by Storage Layout's shared

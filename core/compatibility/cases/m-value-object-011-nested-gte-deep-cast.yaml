@@ -1,4 +1,4 @@
-# valueObject numeric filter: nestedGte over a THREE-level path with a typed cast
+# valueObject numeric filter: greaterThanEquals over a THREE-level path with a typed cast
 # (m-value-object, m-sql, m-dialect), on Postgres AND MariaDB.
 model: models/customer.yaml
 tags: [m-value-object, m-sql, m-dialect, nested, json, cast, numeric, slice-snapshot-1, slice-managed-1]
@@ -7,7 +7,7 @@ when:
   objectQuery:
     target: parallax.compatibility.Customer
     predicate:
-      nestedGte:
+      greaterThanEquals:
         path: parallax.compatibility.Customer.address.geo.point.lat
         value: 59.9
 then:

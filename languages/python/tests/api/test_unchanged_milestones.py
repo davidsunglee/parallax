@@ -135,7 +135,7 @@ def _log_find(tx: Transaction, entity: type[Any], representation: _Representatio
     return tx.wire.find(
         {
             "target": name,
-            "predicate": {"eq": {"attr": f"{name}.id", "value": 1}},
+            "predicate": {"eq": {"path": f"{name}.id", "value": 1}},
             "temporal": {"transaction-time": {"asOf": "latest"}},
         }
     ).result()
@@ -150,7 +150,7 @@ def _span_find(
     return tx.wire.find(
         {
             "target": name,
-            "predicate": {"eq": {"attr": f"{name}.id", "value": 1}},
+            "predicate": {"eq": {"path": f"{name}.id", "value": 1}},
             "temporal": {
                 "transaction-time": {"asOf": "latest"},
                 "valid-time": {"asOf": f"{at:%Y-%m-%dT%H:%M:%S.%fZ}"},

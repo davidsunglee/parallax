@@ -5,17 +5,29 @@ from dataclasses import replace
 from types import MappingProxyType
 
 from parallax.core.base import ManagedValue
-from parallax.core.metamodel import Metamodel, TemporalDimension
+from parallax.core.metamodel import EntityIdentity, Metamodel, TemporalDimension
 from parallax.core.predicate._resolved import (
+    CurrentObject,
+    ObjectPosition,
+    RelatedObject,
     ResolvedAnd,
+    ResolvedComparison,
+    ResolvedConstant,
     ResolvedGroup,
+    ResolvedMembership,
     ResolvedNarrow,
     ResolvedNot,
+    ResolvedNullCheck,
     ResolvedOr,
     ResolvedPredicate,
-    ResolvedSemiJoin,
+    ResolvedPresence,
+    ResolvedQuantifier,
+    ResolvedRange,
+    ResolvedRelationship,
+    ResolvedStringMatch,
+    ScalarElement,
+    SubjectPosition,
 )
-from parallax.core.predicate._resolved import conjunction as _conjunction
 from parallax.core.temporal_read import resolved_hop_as_of_terms
 
 __all__ = ["propagate_hop_terms"]
@@ -28,59 +40,140 @@ def propagate_hop_terms(
     model: Metamodel,
     root_pins: Mapping[TemporalDimension, ManagedValue] = _EMPTY_MANAGED_PINS,
 ) -> ResolvedPredicate:
-    """Conjoin each relationship hop's temporal terms into its interior,
-    retaining every other resolved term as it is."""
-    if not _contains_navigation(predicate):
+    """Give each relationship the predicate reaches the temporal terms its
+    candidates are visible under, retaining every other resolved term as it is."""
+    if not _reaches_relationship(predicate):
         return predicate
-    return _propagated(predicate, model, root_pins)
+    return _Propagation(model, root_pins).predicate(predicate)
 
 
-def _propagated(
-    predicate: ResolvedPredicate,
-    model: Metamodel,
-    root_pins: Mapping[TemporalDimension, ManagedValue],
-) -> ResolvedPredicate:
+class _Propagation:
+    __slots__ = ("_model", "_pins", "_terms")
+
+    def __init__(self, model: Metamodel, pins: Mapping[TemporalDimension, ManagedValue]) -> None:
+        self._model = model
+        self._pins = pins
+        self._terms: dict[EntityIdentity, tuple[ResolvedPredicate, ...]] = {}
+
+    def predicate(self, predicate: ResolvedPredicate) -> ResolvedPredicate:  # noqa: C901 - exhaustive dispatcher
+        """``predicate`` with its relationships' terms filled in — the very
+        object wherever nothing in it changed."""
+        match predicate:
+            case ResolvedAnd(operands=operands) | ResolvedOr(operands=operands):
+                children = tuple(self.predicate(operand) for operand in operands)
+                if _unchanged(children, operands):
+                    return predicate
+                return (
+                    ResolvedAnd(children)
+                    if isinstance(predicate, ResolvedAnd)
+                    else (ResolvedOr(children))
+                )
+            case ResolvedNot(operand=operand) | ResolvedGroup(operand=operand):
+                child = self.predicate(operand)
+                if child is operand:
+                    return predicate
+                return (
+                    ResolvedNot(child)
+                    if isinstance(predicate, ResolvedNot)
+                    else (ResolvedGroup(child))
+                )
+            case (
+                ResolvedComparison()
+                | ResolvedRange()
+                | ResolvedMembership()
+                | ResolvedStringMatch()
+                | ResolvedNullCheck()
+            ):
+                position = self._subject_position(predicate.position)
+                return (
+                    predicate
+                    if position is predicate.position
+                    else replace(predicate, position=position)
+                )
+            case ResolvedQuantifier(collection=collection, where=where, position=position):
+                reached = (
+                    self._relationship(collection)
+                    if isinstance(collection, ResolvedRelationship)
+                    else collection
+                )
+                inner = None if where is None else self.predicate(where)
+                at = self._position(position)
+                if reached is collection and inner is where and at is position:
+                    return predicate
+                return replace(predicate, collection=reached, where=inner, position=at)
+            case ResolvedPresence(target=target, position=position):
+                reached = (
+                    self._relationship(target)
+                    if isinstance(target, ResolvedRelationship)
+                    else target
+                )
+                at = self._position(position)
+                if reached is target and at is position:
+                    return predicate
+                return replace(predicate, target=reached, position=at)
+            case ResolvedNarrow(operand=operand, target=target):
+                inner = None if operand is None else self.predicate(operand)
+                at = self._position(target)
+                if inner is operand and at is target:
+                    return predicate
+                return replace(predicate, operand=inner, target=at)
+            case ResolvedConstant():
+                return predicate
+
+    def _subject_position(self, position: SubjectPosition) -> SubjectPosition:
+        if isinstance(position, ScalarElement):
+            return position
+        return self._position(position)
+
+    def _position(self, position: ObjectPosition) -> ObjectPosition:
+        if isinstance(position, CurrentObject):
+            return position
+        source = self._position(position.source)
+        relationship = self._relationship(position.relationship)
+        if source is position.source and relationship is position.relationship:
+            return position
+        return RelatedObject(source, relationship)
+
+    def _relationship(self, relationship: ResolvedRelationship) -> ResolvedRelationship:
+        identity = relationship.target.identity
+        terms = self._terms.get(identity)
+        if terms is None:
+            terms = resolved_hop_as_of_terms(relationship.target, self._model, self._pins)
+            self._terms[identity] = terms
+        return relationship if not terms else replace(relationship, visibility=terms)
+
+
+def _unchanged(
+    children: tuple[ResolvedPredicate, ...], operands: tuple[ResolvedPredicate, ...]
+) -> bool:
+    return all(child is operand for child, operand in zip(children, operands, strict=True))
+
+
+def _reaches_relationship(predicate: ResolvedPredicate) -> bool:
     match predicate:
-        case ResolvedSemiJoin(target=target, where=where):
-            inner = None if where is None else _propagated(where, model, root_pins)
-            terms = resolved_hop_as_of_terms(target, model, root_pins)
-            combined = (
-                inner
-                if not terms
-                else _conjunction(*terms)
-                if inner is None
-                else _conjunction(inner, *terms)
-            )
-            return predicate if combined is where else replace(predicate, where=combined)
-        case ResolvedAnd(operands=operands):
-            return ResolvedAnd(
-                tuple(_propagated(operand, model, root_pins) for operand in operands)
-            )
-        case ResolvedOr(operands=operands):
-            return ResolvedOr(tuple(_propagated(operand, model, root_pins) for operand in operands))
-        case ResolvedNot(operand=operand):
-            return ResolvedNot(_propagated(operand, model, root_pins))
-        case ResolvedGroup(operand=operand):
-            return ResolvedGroup(_propagated(operand, model, root_pins))
-        case ResolvedNarrow(operand=operand):
-            return replace(predicate, operand=_propagated(operand, model, root_pins))
-        case _:
-            return predicate
-
-
-def _contains_navigation(predicate: ResolvedPredicate) -> bool:
-    match predicate:
-        case ResolvedSemiJoin():
-            return True
         case ResolvedAnd(operands=operands) | ResolvedOr(operands=operands):
-            return any(_contains_navigation(operand) for operand in operands)
+            return any(_reaches_relationship(operand) for operand in operands)
+        case ResolvedNot(operand=operand) | ResolvedGroup(operand=operand):
+            return _reaches_relationship(operand)
         case (
-            ResolvedNot(operand=operand)
-            | ResolvedGroup(operand=operand)
-            | ResolvedNarrow(operand=operand)
+            ResolvedComparison()
+            | ResolvedRange()
+            | ResolvedMembership()
+            | ResolvedStringMatch()
+            | ResolvedNullCheck()
         ):
-            return _contains_navigation(operand)
-        case _:
-            # Scalar operations, constants, and Value Object quantifiers carry
-            # no relationship hop.
+            return isinstance(predicate.position, RelatedObject)
+        case ResolvedQuantifier(collection=collection, where=where, position=position):
+            return (
+                isinstance(collection, ResolvedRelationship)
+                or isinstance(position, RelatedObject)
+                or (where is not None and _reaches_relationship(where))
+            )
+        case ResolvedPresence(target=target, position=position):
+            return isinstance(target, ResolvedRelationship) or isinstance(position, RelatedObject)
+        case ResolvedNarrow(operand=operand, target=target):
+            return isinstance(target, RelatedObject) or (
+                operand is not None and _reaches_relationship(operand)
+            )
+        case ResolvedConstant():
             return False

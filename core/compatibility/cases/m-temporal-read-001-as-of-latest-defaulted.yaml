@@ -6,14 +6,14 @@ when:
   objectQuery:
     target: parallax.compatibility.Balance
     predicate:
-      all: {}
+      "true": {}
     temporal:
       transaction-time:
         asOf: latest
   equivalentEncodings:
     - target: parallax.compatibility.Balance
       predicate:
-        all: {}
+        "true": {}
 then:
   statements:
     - sql:

@@ -18,6 +18,7 @@ import pytest
 from parallax.conformance import case_format
 from parallax.conformance.animal_owner import ANIMAL_MODEL as ANIMAL_OWNER_MODEL
 from parallax.conformance.animal_owner import Person as AnimalOwnerPerson
+from parallax.conformance.class_models import MODELS as CLASS_MODELS
 from parallax.conformance.edit_models import Note
 from parallax.conformance.graph_models import Policy
 from parallax.conformance.models import load_domain_models
@@ -52,7 +53,7 @@ from parallax.core import (
 )
 from parallax.core.entity._model import model_of
 from parallax.core.execution._preflight import preflight
-from parallax.core.object_query import LATEST
+from parallax.core.object_query import LATEST, deserialize
 from parallax.core.object_query._fluent import object_query_node
 from tests._support import inheritance_models as im
 from tests._support import snapshot_models as sm
@@ -89,8 +90,8 @@ BUILDERS: dict[str, Callable[[], ObjectQuery[Any, Any]]] = {
     "m-inheritance-003": lambda: im.Payment.where(im.Payment.all),
     "m-inheritance-013": lambda: sm.Animal.where(sm.Animal.all).narrow(sm.Pet),
     "m-inheritance-015": lambda: sm.Animal.where(
-        sm.Animal.narrow(sm.Dog, where=sm.Dog.bark_volume > 5)
-        | sm.Animal.narrow(sm.Cat, where=sm.Cat.indoor.is_(True))
+        sm.Animal.is_a(sm.Dog, where=sm.Dog.bark_volume > 5)
+        | sm.Animal.is_a(sm.Cat, where=sm.Cat.indoor.is_(True))
     ),
     "m-inheritance-052": lambda: im.Document.where(im.Document.all).narrow(im.FinancialDocument),
     # Value-object traversal over the installed Customer mirror — the query-shape
@@ -98,12 +99,14 @@ BUILDERS: dict[str, Callable[[], ObjectQuery[Any, Any]]] = {
     "m-value-object-001": lambda: Customer.where(Customer.address.city == "Oslo"),
     "m-value-object-002": lambda: Customer.where(Customer.address.geo.country == "US"),
     "m-value-object-007": lambda: Customer.where(Customer.address.city.is_null()),
-    "m-value-object-015": lambda: Customer.where(Customer.address.phones.exists()),
-    "m-value-object-016": lambda: Customer.where(Customer.address.phones.not_exists()),
-    "m-value-object-017": lambda: Customer.where(Customer.address.phones.type == "home"),
+    "m-value-object-015": lambda: Customer.where(Customer.address.phones.any()),
+    "m-value-object-016": lambda: Customer.where(Customer.address.phones.none()),
+    "m-value-object-017": lambda: Customer.where(
+        Customer.address.phones.any(CustomerPhone.type == "home")
+    ),
     "m-value-object-019": lambda: Customer.where(
-        Customer.address.phones.exists(
-            CustomerPhone.type == "home", CustomerPhone.number == "555-9999"
+        Customer.address.phones.any(
+            (CustomerPhone.type == "home") & (CustomerPhone.number == "555-9999")
         )
     ),
     "m-value-object-023": lambda: Customer.where(Customer.all),
@@ -161,8 +164,8 @@ BUILDERS: dict[str, Callable[[], ObjectQuery[Any, Any]]] = {
     "m-inheritance-106": lambda: Payment.where(Payment.all),
     "m-inheritance-107": lambda: AnimalRoot.where(AnimalRoot.all).narrow(Pet),
     "m-inheritance-108": lambda: AnimalRoot.where(
-        AnimalRoot.narrow(Dog, where=Dog.bark_volume > 5)
-        | AnimalRoot.narrow(Cat, where=Cat.indoor.is_(True))
+        AnimalRoot.is_a(Dog, where=Dog.bark_volume > 5)
+        | AnimalRoot.is_a(Cat, where=Cat.indoor.is_(True))
     ),
     "m-inheritance-109": lambda: Document.where(Document.all).narrow(FinancialDocument),
     # Read-produced edit sources: the same public query `test_edit_run.py`
@@ -178,19 +181,35 @@ _CASES = {c.case_id: c for c in case_format.load_cases()}
 _DESCRIPTOR_MODELS = load_domain_models()
 
 
-@pytest.mark.parametrize("case_id", sorted(BUILDERS), ids=sorted(BUILDERS))
-def test_the_idiomatic_query_builds_the_corpus_object_query(case_id: str) -> None:
-    document = case_document(_CASES[case_id])
-    when = document["when"]
-    expected = (
+# Queries whose dotted paths continue past a relationship keep Python member
+# names until a model with Entity Classes resolves them, so they have no
+# canonical export of their own: each is compared, resolved, with its case.
+_UNFINISHED: frozenset[str] = frozenset({"m-navigate-007", "m-navigate-011"})
+
+
+def _case_query(case_id: str) -> dict[str, Any]:
+    when = case_document(_CASES[case_id])["when"]
+    return (
         when["edit"]["source"]["objectQuery"]
         if _CASES[case_id].shape == "edit"
         else when["objectQuery"]
     )
-    assert canonical_document(BUILDERS[case_id]()) == expected
 
 
 @pytest.mark.parametrize("case_id", sorted(BUILDERS), ids=sorted(BUILDERS))
+def test_the_idiomatic_query_builds_the_corpus_object_query(case_id: str) -> None:
+    query = BUILDERS[case_id]()
+    if case_id not in _UNFINISHED:
+        assert canonical_document(query) == _case_query(case_id)
+        return
+    with pytest.raises(QueryDefinitionError, match="no canonical form"):
+        canonical_document(query)
+    model = CLASS_MODELS[Path(_CASES[case_id].model).stem]
+    expected = preflight(deserialize(_case_query(case_id)), model=model_of(model), form="graph")
+    assert typed_resolved(query, model) == expected
+
+
+@pytest.mark.parametrize("case_id", sorted(BUILDERS.keys() - _UNFINISHED))
 def test_the_idiomatic_query_resolves_as_its_canonical_query_does(case_id: str) -> None:
     # The corpus model forms from its descriptor, so it indexes no Entity Class:
     # the Typed query resolves through its declared facts alone, adopting its
@@ -202,11 +221,18 @@ def test_the_idiomatic_query_resolves_as_its_canonical_query_does(case_id: str) 
     assert typed_resolved(query, model) == canonical
 
 
+@pytest.mark.parametrize("case_id", sorted(_UNFINISHED))
+def test_a_model_without_entity_classes_refuses_an_unfinished_path(case_id: str) -> None:
+    model = _DESCRIPTOR_MODELS[Path(_CASES[case_id].model).stem]
+    with pytest.raises(QueryDefinitionError, match="through Wire instead"):
+        typed_resolved(BUILDERS[case_id](), model)
+
+
 def test_expression_rejects_bool_misuse() -> None:
     with pytest.raises(TypeError, match="no truth value"):
         bool(Order.id == 1)  # a Predicate has no truth value
     with pytest.raises(TypeError, match="no truth value"):
-        bool(Order.sku)  # a bare AttributeExpr has no truth value
+        bool(Order.sku)  # a bare scalar expression has no truth value
 
 
 # --------------------------------------------------------------------------- #
@@ -234,17 +260,17 @@ REJECTED_BUILDERS: dict[str, Callable[[], ObjectQuery[Any, Any]]] = {
     # predicate over the owner is CONSTRUCTIBLE at the family position and is
     # refused for naming an entity outside it rather than for naming nothing.
     "m-predicate-045": lambda: _out_of_position(AnimalRoot, AnimalOwnerPerson.name == "Ada"),
-    "m-inheritance-040": lambda: AnimalRoot.where(AnimalRoot.narrow(AnimalOwnerPerson)),
+    "m-inheritance-040": lambda: AnimalRoot.where(AnimalRoot.is_a(AnimalOwnerPerson)),
     "m-inheritance-041": lambda: _out_of_position(sm.Animal, sm.Dog.bark_volume > 5),
     "m-inheritance-042": lambda: sm.Animal.where(
-        sm.Animal.narrow(sm.Dog, where=sm.Animal.narrow(sm.Cat))
+        sm.Animal.is_a(sm.Dog, where=sm.Animal.is_a(sm.Cat))
     ),
     # `Person.pets` targets the abstract subtype Pet; narrowing past its
     # reachable set (WildBoar, a sibling branch) raises the relationship rule.
-    "m-inheritance-064": lambda: AnimalRoot.where(
-        AnimalOwnerPerson.pets.exists(Pet.narrow(WildBoar))
+    "m-inheritance-064": lambda: AnimalOwnerPerson.where(
+        AnimalOwnerPerson.pets.any(Pet.is_a(WildBoar))
     ),
-    "m-inheritance-132": lambda: sm.Animal.where(sm.Animal.narrow(sm.Dog, sm.Pet)),
+    "m-inheritance-132": lambda: sm.Animal.where(sm.Animal.is_a(sm.Dog, sm.Pet)),
 }
 
 
@@ -277,10 +303,10 @@ REJECTED_MODELS: dict[str, DomainModel] = {
 
 
 AUTHORING_REJECTIONS: dict[str, Callable[[], object]] = {
-    "m-predicate-041": lambda: vm.Customer.address.phones.exists(vm.Phone.number.between(42, 7)),
+    "m-predicate-041": lambda: vm.Customer.address.phones.any(vm.Phone.number.between(42, 7)),
     "m-predicate-042": lambda: vm.Customer.address.geo.elevation.starts_with("1"),
-    "m-predicate-043": lambda: Contact.address.phones.expires.starts_with("2024"),
-    "m-predicate-044": lambda: Contact.address.phones.exists(ContactPhone.expires.ends_with("-01")),
+    "m-predicate-043": lambda: Contact.address.phones.any(ContactPhone.expires.starts_with("2024")),
+    "m-predicate-044": lambda: Contact.address.phones.any(ContactPhone.expires.ends_with("-01")),
     "m-value-object-038": lambda: vm.Customer.address.city == 42,
 }
 
@@ -289,7 +315,7 @@ AUTHORING_REJECTIONS: dict[str, Callable[[], object]] = {
 def test_serialized_only_rejections_fail_at_native_query_authoring(case_id: str) -> None:
     assert case_document(_CASES[case_id])["then"]["rejectedRule"] in {
         "neutral-literal-type-mismatch",
-        "nested-string-predicate-non-string-member",
+        "string-predicate-non-string-member",
     }
     with pytest.raises(QueryDefinitionError) as caught:
         AUTHORING_REJECTIONS[case_id]()
@@ -315,5 +341,5 @@ def test_duplicate_subtype_selection_is_rejected_during_query_construction() -> 
         "parallax.compatibility.Dog",
     ]
     with pytest.raises(QueryDefinitionError) as caught:
-        sm.Animal.narrow(sm.Dog, sm.Dog)
+        sm.Animal.is_a(sm.Dog, sm.Dog)
     assert caught.value.code == "query-path-invalid"

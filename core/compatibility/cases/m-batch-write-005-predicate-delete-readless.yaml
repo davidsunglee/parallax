@@ -10,7 +10,9 @@ when:
         target:
           entity: parallax.compatibility.Wallet
           predicate:
-            lessThan: { attr: parallax.compatibility.Wallet.balance, value: "200.00" }
+            lessThan:
+              path: parallax.compatibility.Wallet.balance
+              value: "200.00"
       roundTrips: 1
       statements:
         - sql:
@@ -20,7 +22,7 @@ when:
         target: parallax.compatibility.Wallet
         predicate:
           lessThan:
-            attr: parallax.compatibility.Wallet.balance
+            path: parallax.compatibility.Wallet.balance
             value: "200.00"
       roundTrips: 1
       statements:

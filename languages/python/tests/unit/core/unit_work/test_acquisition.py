@@ -145,7 +145,12 @@ def _predicate(
     return prepare_typed_write(
         PredicateWrite(
             mutation,
-            PredicateSelection(entity, predicate_algebra.Comparison("eq", f"{entity}.id", 1)),
+            PredicateSelection(
+                entity,
+                predicate_algebra.Comparison(
+                    "eq", predicate_algebra.FieldSubject(f"{entity}.id"), 1
+                ),
+            ),
             tuple(assignments),
         ),
         meta,

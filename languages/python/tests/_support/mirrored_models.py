@@ -856,6 +856,17 @@ UNMIRRORED: Mapping[str, str] = MappingProxyType(
             "no mirror authored; it composes the `sequence` generation `pk-sequence` proves with "
             "the transaction-time-only axis `balance` proves"
         ),
+        "predicate-collections": (
+            "portable compatibility-only model for the explicit quantifier algebra: its scalar "
+            "collections, one and many value objects, and self-referencing many-to-one owner "
+            "repeat declaration constructs `scalar-collection-layout-twin`, `customer`, and "
+            "`orders` mirror, and the Typed algebra API tests declare their own owners"
+        ),
+        "predicate-traversal": (
+            "portable compatibility-only model for single-valued traversal: its "
+            "table-per-hierarchy and table-per-concrete-subtype relationship targets repeat the "
+            "mirrored `animal` and `rate` family shapes behind plain many-to-one joins"
+        ),
         "quote": (
             "no mirror authored; it is the mirrored `rate`'s table-per-concrete-subtype family "
             "with a transaction-time-only root axis in place of the bitemporal pair"

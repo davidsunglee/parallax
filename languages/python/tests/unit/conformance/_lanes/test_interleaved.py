@@ -327,7 +327,7 @@ def test_run_interleaved_scenario_case_reports_the_second_groups_own_conflict_to
                         "uow": "x",
                         "objectQuery": {
                             "target": "Account",
-                            "predicate": {"eq": {"attr": "Account.id", "value": 2}},
+                            "predicate": {"eq": {"path": "Account.id", "value": 2}},
                         },
                     },
                     {
@@ -344,7 +344,7 @@ def test_run_interleaved_scenario_case_reports_the_second_groups_own_conflict_to
                         "uow": "y",
                         "objectQuery": {
                             "target": "Account",
-                            "predicate": {"eq": {"attr": "Account.id", "value": 2}},
+                            "predicate": {"eq": {"path": "Account.id", "value": 2}},
                         },
                     },
                     {
@@ -394,7 +394,7 @@ def test_run_interleaved_group_buffers_a_non_last_write_without_flushing() -> No
                         "uow": "x",
                         "objectQuery": {
                             "target": "Account",
-                            "predicate": {"eq": {"attr": "Account.id", "value": 2}},
+                            "predicate": {"eq": {"path": "Account.id", "value": 2}},
                         },
                     },
                     {
@@ -423,7 +423,7 @@ def test_run_interleaved_group_buffers_a_non_last_write_without_flushing() -> No
                         "uow": "y",
                         "objectQuery": {
                             "target": "Account",
-                            "predicate": {"eq": {"attr": "Account.id", "value": 3}},
+                            "predicate": {"eq": {"path": "Account.id", "value": 3}},
                         },
                     },
                 ],
@@ -813,7 +813,7 @@ def _find_balance(key: int) -> dict[str, object]:
     return {
         "objectQuery": {
             "target": "parallax.compatibility.Balance",
-            "predicate": {"eq": {"attr": "parallax.compatibility.Balance.id", "value": key}},
+            "predicate": {"eq": {"path": "parallax.compatibility.Balance.id", "value": key}},
             "temporal": {"transaction-time": {"asOf": "latest"}},
         }
     }
@@ -910,7 +910,7 @@ def test_a_temporal_write_needing_coverage_its_reading_does_not_hold_is_refused(
     find = {
         "objectQuery": {
             "target": "parallax.compatibility.Position",
-            "predicate": {"eq": {"attr": "parallax.compatibility.Position.id", "value": 1}},
+            "predicate": {"eq": {"path": "parallax.compatibility.Position.id", "value": 1}},
             "temporal": {
                 "valid-time": {"asOf": "2024-01-01T00:00:00.000000Z"},
                 "transaction-time": {"asOf": "latest"},

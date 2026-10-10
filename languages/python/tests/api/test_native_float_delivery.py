@@ -217,7 +217,7 @@ def _served(profile_run: Any) -> ScopedDatabase:
 
 
 def _wire_query(entity: str, **clauses: object) -> dict[str, object]:
-    return {"target": f"{_NAMESPACE}.{entity}", "predicate": {"all": {}}, **clauses}
+    return {"target": f"{_NAMESPACE}.{entity}", "predicate": {"true": {}}, **clauses}
 
 
 def _wire_order(entity: str, attribute: str, direction: Direction = "asc") -> list[object]:
@@ -285,7 +285,7 @@ def _predicate_widths(representation: Representation, widths: Mapping[int, tuple
                 tx.wire.amend_where(
                     {
                         "entity": f"{_NAMESPACE}.Reading",
-                        "predicate": {"eq": {"attr": f"{_NAMESPACE}.Reading.id", "value": key}},
+                        "predicate": {"eq": {"path": f"{_NAMESPACE}.Reading.id", "value": key}},
                     },
                     {"f32": f32, "f64": f64},
                 )
@@ -401,7 +401,7 @@ def _restate_samples(representation: Representation, writer: Writer):
                 if writer == "keyed":
                     tx.wire.amend(node, {"sample": sample})
                 else:
-                    target = {"attr": f"{_NAMESPACE}.Plot.id", "value": node["id"]}
+                    target = {"path": f"{_NAMESPACE}.Plot.id", "value": node["id"]}
                     tx.wire.amend_where(
                         {"entity": f"{_NAMESPACE}.Plot", "predicate": {"eq": target}},
                         {"sample": sample},

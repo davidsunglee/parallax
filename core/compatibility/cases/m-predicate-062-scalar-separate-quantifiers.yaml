@@ -1,0 +1,56 @@
+# Two separately authored quantifiers bind independently: [5, 25] has an element
+# above 10 and a different element below 20, so it matches beside [15]. Compare the
+# same-element conjunction in m-predicate-063.
+model: models/predicate-collections.yaml
+tags: [m-predicate, quantifier, scalar-collection, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  objectQuery:
+    target: parallax.compatibility.Basket
+    predicate:
+      and:
+        operands:
+        - any:
+            path: parallax.compatibility.Basket.scores
+            where:
+              greaterThan: {value: 10}
+        - any:
+            path: parallax.compatibility.Basket.scores
+            where:
+              lessThan: {value: 20}
+then:
+  statements:
+  - sql: {postgres: 'select t0.id, t0.label, t0.owner_id, not t0.tags is null, t0.tags, not t0.scores is null, t0.scores, not t0.prices is null, t0.prices, not t0.flags is null, t0.flags, not t0.parcels is null, t0.parcels, not t0.meta is null, t0.meta from basket t0 where exists (select 1 from jsonb_array_elements(case when jsonb_typeof(t0.scores) = ? then t0.scores else cast(? as jsonb) end) t1 where case when jsonb_typeof(t1.value) = ? then cast(t1.value #>> ? as bigint) end > ?) and exists (select 1 from jsonb_array_elements(case when jsonb_typeof(t0.scores) = ? then t0.scores else cast(? as jsonb) end) t2 where case when jsonb_typeof(t2.value) = ? then cast(t2.value #>> ? as bigint) end < ?)'}
+    binds: [array, '[]', number, '{}', 10, array, '[]', number, '{}', 20]
+  graph:
+    Basket:
+    - id: 1
+      label: one
+      ownerId: 1
+      tags: [urgent, gift]
+      scores: [5, 25]
+      prices: ['1.50']
+      flags: [true]
+      parcels:
+      - sku: a
+        qty: 2
+        notes: [x]
+      - sku: b
+        qty: 0
+        notes: []
+      meta:
+        labels: [m]
+    - id: 3
+      label: three
+      ownerId: 2
+      tags: [gift]
+      scores: [15]
+      prices: ['2.00', '3.00']
+      flags: [false]
+      parcels:
+      - sku: c
+        qty: 5
+        notes: [urgent]
+      meta:
+        labels: []
+  roundTrips: 1

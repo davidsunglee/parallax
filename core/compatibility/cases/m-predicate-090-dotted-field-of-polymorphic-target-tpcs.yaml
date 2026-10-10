@@ -1,0 +1,18 @@
+# A dotted field of a table-per-concrete-subtype target reads every concrete table's
+# candidate in one scalar subquery.
+model: models/predicate-traversal.yaml
+tags: [m-predicate, relationship, to-one, traversal, m-inheritance, table-per-concrete-subtype, m-dialect, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  objectQuery:
+    target: parallax.compatibility.Parking
+    predicate:
+      eq: {path: parallax.compatibility.Parking.vehicle.maker, value: Trek}
+then:
+  statements:
+  - sql: {postgres: 'select t0.id, t0.vehicle_id from traversal_parking t0 where (select t1.maker from traversal_bike t1 where t1.id = t0.vehicle_id union all select t2.maker from traversal_car t2 where t2.id = t0.vehicle_id) = ?', mariadb: 'select t0.id, t0.vehicle_id from traversal_parking t0 where (select t1.maker from traversal_bike t1 where t1.id = t0.vehicle_id union all select t2.maker from traversal_car t2 where t2.id = t0.vehicle_id) = ?'}
+    binds: [Trek]
+  referenceSql: select id, vehicle_id from traversal_parking where vehicle_id in (select id from traversal_bike where maker = 'Trek' union all select id from traversal_car where maker = 'Trek')
+  rows:
+  - {id: 31, vehicle_id: 6}
+  roundTrips: 1

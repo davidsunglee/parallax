@@ -20,7 +20,7 @@ _LATEST_TX: dict[str, Any] = {"asOf": "latest"}
 
 
 def _query(target: str, **clauses: Any) -> dict[str, Any]:
-    return {"target": target, "predicate": {"all": {}}, **clauses}
+    return {"target": target, "predicate": {"true": {}}, **clauses}
 
 
 def test_non_temporal_read_needs_no_selection() -> None:

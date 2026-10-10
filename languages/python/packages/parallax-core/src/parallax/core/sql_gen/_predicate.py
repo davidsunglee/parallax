@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+import itertools
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
-from typing import Literal, assert_never
+from typing import Final, Literal, assert_never
 
 from parallax.core.base import STRING, Bytes, ManagedValue, NeutralType
 from parallax.core.dialect import Dialect, projection_result_key
@@ -13,15 +14,18 @@ from parallax.core.metamodel import (
     EntityIdentity,
     EntityMetadata,
     Metamodel,
-    Multiplicity,
     OccurrenceMetadata,
+    TablePerHierarchy,
     ValueObjectAttributeMetadata,
     ValueObjectMetadata,
     entity_by_name,
 )
 from parallax.core.predicate import MembershipOp, StringOp
 from parallax.core.predicate._resolved import (
+    CurrentObject,
     DeferredKeySet,
+    ObjectPosition,
+    RelatedObject,
     ResolvedAnd,
     ResolvedComparison,
     ResolvedConstant,
@@ -33,10 +37,14 @@ from parallax.core.predicate._resolved import (
     ResolvedOr,
     ResolvedPredicate,
     ResolvedPredicateMember,
+    ResolvedPresence,
     ResolvedQuantifier,
     ResolvedRange,
-    ResolvedSemiJoin,
+    ResolvedRelationship,
     ResolvedStringMatch,
+    ScalarCollection,
+    ScalarElement,
+    SubjectPosition,
 )
 from parallax.core.sql_gen._context import SqlGenError, StatementBuilder
 from parallax.core.sql_gen._context import table_layout as _table_layout
@@ -44,14 +52,18 @@ from parallax.core.sql_gen._context import table_layout as _table_layout
 # The family LANE of the compiler — distinct from `parallax.core.inheritance`
 # above, which is the metamodel module. Aliased down to the module-private
 # spelling, so a use site below never confuses the two.
+from parallax.core.sql_gen._inheritance import TagPredicate as _TagPredicate
 from parallax.core.sql_gen._inheritance import entity_view as _entity_view
 from parallax.core.sql_gen._inheritance import (
     plan_resolved_branch_narrow as _plan_resolved_branch_narrow,
 )
+from parallax.core.sql_gen._inheritance import tag_column as _tag_column
 from parallax.core.sql_gen._inheritance import tag_guard as _tph_tag_guard
 
-# The navigation LANE: hop plans in, one correlated `EXISTS` (or a grouped `or`
-# of them) out. Same aliasing-down convention as the family lane above.
+# The navigation LANE: hop plans in, correlated subqueries out. Same
+# aliasing-down convention as the family lane above.
+from parallax.core.sql_gen._navigation import HopPlan as _HopPlan
+from parallax.core.sql_gen._navigation import OpenBranch as _OpenBranch
 from parallax.core.sql_gen._navigation import open_branch as _open_branch
 from parallax.core.sql_gen._navigation import plan_resolved_hop as _plan_resolved_hop
 from parallax.core.storage_layout import (
@@ -61,6 +73,9 @@ from parallax.core.storage_layout import (
     StorageLayoutFacet,
     TableLayout,
 )
+from parallax.core.wire._codec import encoded_json_kind
+
+_HOP_TOKENS: Final = itertools.count()
 
 _COMPARATORS: dict[str, str] = {
     "eq": "=",
@@ -222,7 +237,7 @@ class EntityScope:
             return MemberSubject(
                 column, column, attribute.type, document_resident=False, text_compared=encoded
             )
-        self._record_document_applicability(attribute.identity.entity)
+        self.record_document_applicability(attribute.identity.entity)
         document = self.own_column(placement.slot.column.name)
         extraction, path_binds = self.dialect.nested_extract(document, placement.path)
         self.ctx.bind_structural_all(path_binds)
@@ -256,7 +271,7 @@ class EntityScope:
         """
         placement = self.layout.placement(vo.identity)
         if isinstance(placement, DocumentPath):
-            self._record_document_applicability(vo.identity.entity)
+            self.record_document_applicability(vo.identity.entity)
             return self.own_column(placement.slot.column.name), placement.path
         return self.own_column(self.slot_column(vo.identity)), ()
 
@@ -287,7 +302,9 @@ class EntityScope:
                 return attribute
         raise SqlGenError(f"{attr_ref!r} names no attribute on {self.entity.identity.name}")
 
-    def _record_document_applicability(self, owner: EntityIdentity) -> None:
+    def record_document_applicability(self, owner: EntityIdentity) -> None:
+        """Note that this statement reads a document member ``owner`` declares,
+        which partitions an abstract read whose variants do not all carry it."""
         if self.position is None:
             return
         owner_view = _entity_view(self.facet, owner)
@@ -302,10 +319,13 @@ class EntityScope:
     def next_alias(self) -> str:
         return self.ctx.next_alias()
 
-    def child(self, entity: EntityMetadata, alias: str) -> EntityScope:
+    def child(
+        self, entity: EntityMetadata, alias: str, variant: EntityIdentity | None = None
+    ) -> EntityScope:
         """A nested scope for a correlated hop's interior: the SAME statement
         context (so a nested hop's binds and aliases continue this statement's
-        single sequence), a different active entity and alias.
+        single sequence), a different active entity and alias, and — for one
+        concrete table of a table-per-concrete-subtype target — that ``variant``.
 
         ``unaliased`` deliberately does NOT travel: the subquery this scope
         describes declares `alias` itself, so its columns are alias-qualified
@@ -319,6 +339,7 @@ class EntityScope:
             entity=entity,
             layout=_table_layout(self.ctx.storage, self.ctx.facet, entity.identity),
             alias=alias,
+            variant=variant,
         )
 
 
@@ -328,9 +349,8 @@ class ElementScope:
     (m-value-object same-element semantics).
 
     Every leaf a quantifier's `where` reads is element-relative (`type`,
-    `geo.country` — no leading `Class.valueObject`) and resolves against
-    :attr:`container`, the same array element they all share, extracted through
-    the alias the unnest declared. There is no
+    `geo.country`) and resolves against :attr:`container`, the same array
+    element they all share, extracted through the alias the unnest declared. There is no
     ``unaliased`` here and there cannot be one: that alias is this statement's
     own declaration, so it qualifies in a write's predicate exactly as it does
     in a read's.
@@ -349,7 +369,29 @@ class ElementScope:
         return self.dialect.qualified(self.alias, "value")
 
 
-ResolutionScope = EntityScope | ElementScope
+@dataclass(frozen=True, slots=True)
+class ScalarElementScope:
+    """A predicate resolving against ONE UNNESTED scalar-collection element.
+
+    Every operation a scalar quantifier's `where` holds reads this element, a
+    scalar of :attr:`member`'s declared type, through the alias the unnest
+    declared — always alias-qualified, for the reason :class:`ElementScope`'s
+    is.
+    """
+
+    ctx: StatementBuilder
+    member: ResolvedPredicateMember
+    alias: str
+
+    @property
+    def dialect(self) -> Dialect:
+        return self.ctx.dialect
+
+    def element_reference(self) -> str:
+        return self.dialect.qualified(self.alias, "value")
+
+
+ResolutionScope = EntityScope | ElementScope | ScalarElementScope
 
 type _Operation = (
     ResolvedComparison
@@ -358,27 +400,26 @@ type _Operation = (
     | ResolvedStringMatch
     | ResolvedNullCheck
 )
-type _EntityPredicate = ResolvedConstant | ResolvedNarrow | ResolvedQuantifier | ResolvedSemiJoin
+type _Demand = Callable[[ResolutionScope], str]
 
 
 def lower_predicate(predicate: ResolvedPredicate, scope: ResolutionScope) -> str:
     """Lower one resolved predicate to a SQL fragment, appending binds in order.
 
-    Boolean structure and scalar operations are legal in either scope; an
-    operation reads its member from the scope's current position. Everything
-    else needs an Entity position, which an element scope refuses with one
-    message: `m-predicate`'s `elementPredicate` grammar is a single named
-    production, so what an element `where` gets wrong is always the same thing.
+    A constant true lowers to the empty fragment, which a caller omits from its
+    `where`; composed inside another term it renders as an always-true one.
     """
     match predicate:
+        case ResolvedConstant(truth=truth):
+            return "" if truth else "1 = 0"
         case ResolvedAnd(operands=operands):
-            return " and ".join(lower_predicate(operand, scope) for operand in operands)
+            return " and ".join(_term(operand, scope) for operand in operands)
         case ResolvedOr(operands=operands):
-            return " or ".join(lower_predicate(operand, scope) for operand in operands)
+            return " or ".join(_term(operand, scope) for operand in operands)
         case ResolvedNot(operand=operand):
-            return f"not {lower_predicate(operand, scope)}"
+            return f"not {_term(operand, scope)}"
         case ResolvedGroup(operand=operand):
-            return f"({lower_predicate(operand, scope)})"
+            return f"({_term(operand, scope)})"
         case (
             ResolvedComparison()
             | ResolvedRange()
@@ -387,37 +428,34 @@ def lower_predicate(predicate: ResolvedPredicate, scope: ResolutionScope) -> str
             | ResolvedNullCheck()
         ):
             return _lower_operation(predicate, scope)
-        case _:
-            if isinstance(scope, ElementScope):
-                raise SqlGenError(
-                    f"{type(predicate).__name__} is not a legal nestedExists/nestedNotExists "
-                    "element predicate (m-predicate elementPredicate)"
-                )
-            return _lower_entity_predicate(predicate, scope)
-
-
-def _lower_entity_predicate(predicate: _EntityPredicate, scope: EntityScope) -> str:
-    match predicate:
-        case ResolvedConstant(truth=truth):
-            return "" if truth else "1 = 0"
-        case ResolvedNarrow():
-            return _lower_branch_narrow(predicate, scope)
         case ResolvedQuantifier():
-            return _lower_quantifier(predicate, scope)
-        case ResolvedSemiJoin():
-            return _lower_semi_join(predicate, scope)
+            return _at(
+                predicate.position,
+                scope,
+                lambda reached: _lower_quantifier(predicate, reached),
+                "false" if predicate.kind == "any" else "true",
+            )
+        case ResolvedPresence():
+            return _lower_presence(predicate, scope)
+        case ResolvedNarrow():
+            return _lower_narrow(predicate, scope)
         case _:  # pragma: no cover - exhaustiveness guard
             assert_never(predicate)
+
+
+def _term(predicate: ResolvedPredicate, scope: ResolutionScope) -> str:
+    return lower_predicate(predicate, scope) or "1 = 1"
 
 
 def _lower_operation(operation: _Operation, scope: ResolutionScope) -> str:
     """One scalar operation over its member's subject expression.
 
-    The subject resolves FIRST: a document-resident member's path segments bind
-    ahead of the compared values, which is the order the emitted text puts their
-    holes in.
+    The subject resolves FIRST: a document-resident member's path segments, and
+    every bind a related position's subqueries carry, bind ahead of the
+    compared values, which is the order the emitted text puts their holes in.
     """
-    subject = _subject(operation.member, scope)
+    reads_text = isinstance(operation, ResolvedStringMatch | ResolvedNullCheck)
+    subject = _subject_at(operation.member, operation.position, scope, reads_text=reads_text)
     match operation:
         case ResolvedComparison(op=tag, value=value, framework=framework):
             _bind_operand(value, subject, scope, framework=framework)
@@ -440,13 +478,52 @@ def _lower_operation(operation: _Operation, scope: ResolutionScope) -> str:
             assert_never(operation)
 
 
+def _subject_at(
+    member: ResolvedPredicateMember,
+    position: SubjectPosition,
+    scope: ResolutionScope,
+    *,
+    reads_text: bool,
+) -> MemberSubject:
+    """``member`` as read at ``position`` from ``scope``.
+
+    A related position is reached through one scalar subquery per to-one hop,
+    each selecting what the operation demands — its extraction when it reads
+    text, else its compared value — so absence at any hop reads as SQL null.
+    """
+    if isinstance(position, ScalarElement):
+        if not isinstance(scope, ScalarElementScope):  # pragma: no cover - validated scopes
+            raise SqlGenError(f"{member.identity} element is read outside its quantifier")
+        return _element_subject(member, scope)
+    if isinstance(position, CurrentObject):
+        return _subject(member, scope)
+    reached: list[MemberSubject] = []
+
+    def demand(inner: ResolutionScope) -> str:
+        subject = _subject(member, inner)
+        reached.append(subject)
+        return subject.extraction if reads_text else subject.compared
+
+    expression = _at(position, scope, demand, None)
+    first = reached[0]
+    return MemberSubject(
+        expression,
+        expression,
+        first.type,
+        document_resident=first.document_resident,
+        text_compared=first.text_compared,
+    )
+
+
 def _subject(member: ResolvedPredicateMember, scope: ResolutionScope) -> MemberSubject:
-    """``member`` as read from ``scope``'s current position.
+    """``member`` as read from ``scope``'s current object.
 
     An Attribute is read through its Member Placement. A Value Object leaf is a
     document extraction: from the Entity's document through single occurrences,
     or from the element a quantifier binds, relative to its occurrence.
     """
+    if isinstance(scope, ScalarElementScope):  # pragma: no cover - validated scopes
+        raise SqlGenError(f"{member.identity} is not read from a scalar element")
     if isinstance(member, AttributeMetadata):
         if isinstance(scope, ElementScope):
             raise SqlGenError(f"{member.identity} is not read from a Value Object element")
@@ -456,11 +533,13 @@ def _subject(member: ResolvedPredicateMember, scope: ResolutionScope) -> MemberS
         document, prefix = scope.document_root(vo)
         reference, path = document, (*prefix, *segments)
     else:
-        base = scope.container.identity.path
-        leaf_path = member.identity.value_object.path
-        if leaf_path[: len(base)] != base:
-            raise SqlGenError("resolved element leaf is outside its resolved container")
-        reference, path = scope.element_reference(), (*leaf_path[len(base) :], member.identity.name)
+        reference, path = (
+            scope.element_reference(),
+            (
+                *_relative_path(member.identity.value_object.path, scope.container),
+                member.identity.name,
+            ),
+        )
     extraction, path_binds = scope.dialect.nested_extract(reference, path)
     scope.ctx.bind_structural_all(path_binds)
     return MemberSubject(
@@ -470,6 +549,32 @@ def _subject(member: ResolvedPredicateMember, scope: ResolutionScope) -> MemberS
         document_resident=True,
         text_compared=is_text_compared(member.type),
     )
+
+
+def _element_subject(member: ResolvedPredicateMember, scope: ScalarElementScope) -> MemberSubject:
+    """The bound element as a scalar of ``member``'s declared type, projected
+    only where its JSON kind is the one that type's canonical encoding takes."""
+    kind = encoded_json_kind(member.type)
+    if kind is None:  # pragma: no cover - only Json lacks one kind, and no collection holds it
+        raise SqlGenError(f"{member.type!r} elements carry no single JSON kind")
+    extraction, compared, binds = scope.dialect.scalar_element(
+        scope.element_reference(), kind, member.type
+    )
+    scope.ctx.bind_structural_all(binds)
+    return MemberSubject(
+        extraction,
+        compared,
+        member.type,
+        document_resident=True,
+        text_compared=is_text_compared(member.type),
+    )
+
+
+def _relative_path(path: tuple[str, ...], container: OccurrenceMetadata) -> tuple[str, ...]:
+    base = container.identity.path
+    if path[: len(base)] != base:
+        raise SqlGenError("resolved element member is outside its resolved container")
+    return path[len(base) :]
 
 
 def _lower_membership(
@@ -573,81 +678,404 @@ def _affix_pattern(kind: _AffixOp, value: str) -> tuple[str, bool]:
     assert_never(kind)  # pragma: no cover - exhaustiveness guard
 
 
-def _lower_branch_narrow(narrow: ResolvedNarrow, scope: EntityScope) -> str:
-    """A `narrow` reached MID-predicate (nested inside and/or/not/group) — a
-    **grouped branch predicate** (m-sql "Grouped branch predicates"): the
-    branch's own operand composes with its own tag guard via `and`, and the
-    composition is wrapped in parens whenever there is a branch predicate to
-    disambiguate against a sibling branch joined by `or` (`m-inheritance-015`).
+def _at(
+    position: ObjectPosition, scope: ResolutionScope, demand: _Demand, default: str | None
+) -> str:
+    """``demand`` evaluated at ``position`` from ``scope``.
+
+    Each to-one hop is one correlated scalar subquery over every candidate the
+    relationship declares, so it asserts its own cardinality where it is
+    evaluated: no candidate is SQL null — or ``default`` — and several fail.
+    Hops nest rather than join, so an absent later target never hides an
+    earlier hop's candidates.
     """
-    plan = _plan_resolved_branch_narrow(scope.facet, scope.storage, scope.entity, narrow.position)
+    if isinstance(position, CurrentObject):
+        return demand(scope)
+    hops: list[ResolvedRelationship] = []
+    current: ObjectPosition = position
+    while isinstance(current, RelatedObject):
+        hops.append(current.relationship)
+        current = current.source
+    hops.reverse()
+    if not isinstance(scope, EntityScope):  # pragma: no cover - validated scopes
+        raise SqlGenError("a relationship is reached only from an Entity position")
+    return _hop_chain(hops, scope, demand, default)
+
+
+def _hop_chain(
+    hops: Sequence[ResolvedRelationship], scope: EntityScope, demand: _Demand, default: str | None
+) -> str:
+    first, rest = hops[0], hops[1:]
+    if not rest:
+        return _scalar_hop(first, scope, demand, default)
+    return _scalar_hop(
+        first,
+        scope,
+        lambda reached: _hop_chain(rest, _entity_scope(reached), demand, default),
+        default,
+    )
+
+
+def _entity_scope(scope: ResolutionScope) -> EntityScope:
+    if not isinstance(scope, EntityScope):  # pragma: no cover - a hop's candidate is an Entity
+        raise SqlGenError("a relationship is reached only from an Entity position")
+    return scope
+
+
+def _scalar_hop(
+    relationship: ResolvedRelationship, scope: EntityScope, inner: _Demand, default: str | None
+) -> str:
+    """One correlated scalar subquery selecting ``inner`` from each candidate
+    ``relationship`` reaches; a table-per-concrete-subtype target contributes
+    every declared branch with `union all`."""
+    plan = _hop_plan(relationship, scope, position=None, negate=False)
+    tpcs = _is_tpcs(relationship.target, scope)
+    branches: list[str] = []
+    for branch in plan.branches:
+        # The branch's value precedes its own table in the text, so every alias the
+        # value declares is allocated first and this branch's alias after it,
+        # keeping aliases in source order (m-sql rule 1); a placeholder stands in
+        # for the alias until then.
+        token = f"__hop{next(_HOP_TOKENS)}__"
+        opened = _open_branch(branch, scope, alias=token)
+        branch_scope = scope.child(opened.entity, token, opened.entity.identity if tpcs else None)
+        value = inner(branch_scope)
+        alias = scope.next_alias()
+        where = _candidate_where(relationship, branch_scope, opened, None)
+        selected = f"select {value} from {opened.table} {token} where {where}"
+        branches.append(selected.replace(token, alias))
+    subquery = f"({' union all '.join(branches)})"
+    return subquery if default is None else f"coalesce({subquery}, {default})"
+
+
+def _hop_plan(
+    relationship: ResolvedRelationship,
+    scope: EntityScope,
+    *,
+    position: tuple[EntityIdentity, ...] | None,
+    negate: bool,
+) -> _HopPlan:
+    return _plan_resolved_hop(
+        relationship.target,
+        relationship.source,
+        relationship.related,
+        position=position,
+        scope=scope,
+        negate=negate,
+    )
+
+
+def _opened_branches(
+    plan: _HopPlan, relationship: ResolvedRelationship, scope: EntityScope
+) -> Iterator[tuple[_OpenBranch, EntityScope]]:
+    """Each planned branch with its alias and scope, opened lazily: a branch
+    takes its alias immediately before its own interior lowers, so a later
+    branch's alias follows everything the preceding one allocated."""
+    tpcs = _is_tpcs(relationship.target, scope)
+    for branch in plan.branches:
+        opened = _open_branch(branch, scope)
+        yield (
+            opened,
+            scope.child(opened.entity, opened.alias, opened.entity.identity if tpcs else None),
+        )
+
+
+def _is_tpcs(target: EntityMetadata, scope: EntityScope) -> bool:
+    if target.inheritance is None:
+        return False
+    return not isinstance(_entity_view(scope.facet, target.identity).strategy, TablePerHierarchy)
+
+
+def _candidate_where(
+    relationship: ResolvedRelationship,
+    scope: EntityScope,
+    opened: _OpenBranch,
+    interior: str | None,
+) -> str:
+    """The correlated `where` of one candidate branch: correlation, then the
+    interior (if any), then the hop's visibility terms, then its tag guard —
+    the guard's binds pushed last because its text comes last."""
+    terms = [opened.correlation]
+    if interior:
+        terms.append(interior)
+    terms.extend(_term(term, scope) for term in relationship.visibility)
+    terms.extend(opened.tag_fragment)
+    scope.ctx.bind_framework_all(opened.tag_binds)
+    return " and ".join(terms)
+
+
+def _lower_quantifier(quantifier: ResolvedQuantifier, scope: ResolutionScope) -> str:
+    """A quantifier at the current object of ``scope``.
+
+    ``any`` is a true-matching existence, ``none`` its complement, and ``all``
+    the absence of a counterexample — an element for which the COMPLETE
+    ``where`` is not true, so a false or unknown element fails it. Each binds
+    its own element alias, so separate quantifiers never share one.
+    """
+    collection = quantifier.collection
+    if isinstance(collection, ResolvedRelationship):
+        if not isinstance(scope, EntityScope):  # pragma: no cover - validated scopes
+            raise SqlGenError("a relationship is quantified only from an Entity position")
+        return _lower_relationship_quantifier(quantifier, collection, scope)
+    if isinstance(collection, ScalarCollection):
+        guard = _scalar_array_guard(collection.member, scope)
+        element: ResolutionScope = ScalarElementScope(
+            ctx=scope.ctx, member=collection.member, alias=scope.ctx.next_alias()
+        )
+    else:
+        guard = _occurrence_array_guard(collection, scope)
+        element = ElementScope(ctx=scope.ctx, container=collection, alias=scope.ctx.next_alias())
+    inner = f"select 1 from jsonb_array_elements({guard}) {element.alias}"
+    where = quantifier.where
+    if quantifier.kind == "all":
+        assert where is not None
+        return f"not exists ({inner} where {_counterexample(where, element)})"
+    if where is not None:
+        interior = lower_predicate(where, element)
+        if interior:
+            inner = f"{inner} where {interior}"
+    keyword = "not exists" if quantifier.kind == "none" else "exists"
+    return f"{keyword} ({inner})"
+
+
+def _counterexample(where: ResolvedPredicate, scope: ResolutionScope) -> str:
+    """An element the complete predicate ``where`` does not make true."""
+    return f"not ({_term(where, scope)}) is true"
+
+
+def _scalar_array_guard(member: ResolvedPredicateMember, scope: ResolutionScope) -> str:
+    """The guarded array a scalar collection's elements are unnested from."""
+    if isinstance(scope, ScalarElementScope):  # pragma: no cover - validated scopes
+        raise SqlGenError("a scalar element holds no collection")
+    if isinstance(member, AttributeMetadata):
+        if not isinstance(scope, EntityScope):  # pragma: no cover - validated scopes
+            raise SqlGenError(f"{member.identity} is not read from a Value Object element")
+        placement = scope.layout.placement(member.identity)
+        if isinstance(placement, DocumentPath):
+            scope.record_document_applicability(member.identity.entity)
+            document, segments = scope.own_column(placement.slot.column.name), placement.path
+        else:
+            document, segments = scope.own_column(scope.slot_column(member.identity)), ()
+    elif isinstance(scope, EntityScope):
+        vo, path = _resolved_vo_path(member, scope)
+        document, prefix = scope.document_root(vo)
+        segments = (*prefix, *path)
+    else:
+        document = scope.element_reference()
+        segments = (
+            *_relative_path(member.identity.value_object.path, scope.container),
+            member.identity.name,
+        )
+    guard, binds = scope.dialect.array_guard(document, segments)
+    scope.ctx.bind_framework_all(binds)
+    return guard
+
+
+def _occurrence_array_guard(occurrence: OccurrenceMetadata, scope: ResolutionScope) -> str:
+    """The guarded array a ``many`` Value Object's elements are unnested from."""
+    document, segments = _occurrence_carrier(occurrence, scope)
+    guard, binds = scope.dialect.array_guard(document, segments)
+    scope.ctx.bind_framework_all(binds)
+    return guard
+
+
+def _occurrence_carrier(
+    occurrence: OccurrenceMetadata, scope: ResolutionScope
+) -> tuple[str, tuple[str, ...]]:
+    """The rendered document carrying ``occurrence`` and the path reaching it."""
+    identity = occurrence.identity
+    if isinstance(scope, EntityScope):
+        vo = _entity_view(scope.facet, identity.entity).applicable_value_object(identity.path[0])
+        if vo is None:
+            raise SqlGenError(
+                f"resolved Value Object {identity} is absent from the active position"
+            )
+        document, prefix = scope.document_root(vo)
+        return document, (*prefix, *identity.path[1:])
+    if isinstance(scope, ScalarElementScope):  # pragma: no cover - validated scopes
+        raise SqlGenError("a scalar element holds no Value Object")
+    return scope.element_reference(), _relative_path(identity.path, scope.container)
+
+
+def _lower_relationship_quantifier(
+    quantifier: ResolvedQuantifier, relationship: ResolvedRelationship, scope: EntityScope
+) -> str:
+    """One correlated `exists` per planned branch of the related Entity.
+
+    An ``any`` or ``none`` whose ``where`` is itself a narrowing of the bound
+    element selects the branches the hop plans rather than lowering a guard in
+    each: an element outside the selection makes that narrowing false, so it
+    can neither match ``any`` nor spoil ``none``. A universal keeps every
+    branch, because such an element is its counterexample.
+    """
+    where = quantifier.where
+    narrowed = (
+        where
+        if quantifier.kind != "all"
+        and isinstance(where, ResolvedNarrow)
+        and isinstance(where.target, CurrentObject)
+        else None
+    )
+    inner = where if narrowed is None else narrowed.operand
+    negate = quantifier.kind != "any"
+    plan = _hop_plan(
+        relationship,
+        scope,
+        position=None if narrowed is None else narrowed.selection,
+        negate=negate,
+    )
+    fragments: list[str] = []
+    for opened, branch_scope in _opened_branches(plan, relationship, scope):
+        if quantifier.kind == "all":
+            assert inner is not None
+            interior: str | None = _counterexample(inner, branch_scope)
+        else:
+            interior = None if inner is None else lower_predicate(inner, branch_scope)
+        where_sql = _candidate_where(relationship, branch_scope, opened, interior)
+        fragments.append(
+            f"{opened.keyword} (select 1 from {opened.table} {opened.alias} where {where_sql})"
+        )
+    return plan.combine(fragments)
+
+
+def _lower_presence(presence: ResolvedPresence, scope: ResolutionScope) -> str:
+    """Whether a single object is present, two-valued: an absent target at any
+    preceding hop reads as absent."""
+    target = presence.target
+    if isinstance(presence.position, CurrentObject):
+        if isinstance(target, ResolvedRelationship):
+            if not isinstance(scope, EntityScope):  # pragma: no cover - validated scopes
+                raise SqlGenError("a relationship is reached only from an Entity position")
+            return _relationship_presence(target, scope, negate=presence.negated)
+        sql = _object_presence(target, scope)
+        return f"not {sql}" if presence.negated else sql
+
+    def present(reached: ResolutionScope) -> str:
+        if isinstance(target, ResolvedRelationship):
+            return _relationship_presence(target, _entity_scope(reached), negate=False)
+        return _object_presence(target, reached)
+
+    sql = _at(presence.position, scope, present, "false")
+    return f"not {sql}" if presence.negated else sql
+
+
+def _relationship_presence(
+    relationship: ResolvedRelationship, scope: EntityScope, *, negate: bool
+) -> str:
+    plan = _hop_plan(relationship, scope, position=None, negate=negate)
+    fragments = [
+        f"{opened.keyword} (select 1 from {opened.table} {opened.alias} where "
+        f"{_candidate_where(relationship, branch_scope, opened, None)})"
+        for opened, branch_scope in _opened_branches(plan, relationship, scope)
+    ]
+    return plan.combine(fragments)
+
+
+def _object_presence(occurrence: OccurrenceMetadata, scope: ResolutionScope) -> str:
+    document, segments = _occurrence_carrier(occurrence, scope)
+    sql, binds = scope.dialect.object_presence(document, segments)
+    scope.ctx.bind_framework_all(binds)
+    return sql
+
+
+def _lower_narrow(narrow: ResolvedNarrow, scope: ResolutionScope) -> str:
+    target = narrow.target
+    if isinstance(target, CurrentObject):
+        if not isinstance(scope, EntityScope):  # pragma: no cover - validated scopes
+            raise SqlGenError("a narrow addresses an Entity position, not a bound element")
+        return _lower_branch_narrow(narrow, scope)
+    relationship = target.relationship
+    if narrow.operand is None:
+        return _at(
+            target.source,
+            scope,
+            lambda reached: _scalar_hop(
+                relationship,
+                _entity_scope(reached),
+                lambda candidate: _selected(narrow, relationship, _entity_scope(candidate)),
+                "false",
+            ),
+            "false",
+        )
+    dialect = scope.dialect
+    default = dialect.absent_envelope()
+    operand = narrow.operand
+    envelope = _at(
+        target.source,
+        scope,
+        lambda reached: _scalar_hop(
+            relationship,
+            _entity_scope(reached),
+            lambda candidate: dialect.boolean_envelope(
+                _selected_operand(narrow, relationship, _entity_scope(candidate), operand)
+            ),
+            default,
+        ),
+        default,
+    )
+    return dialect.envelope_value(envelope)
+
+
+def _selected(
+    narrow: ResolvedNarrow, relationship: ResolvedRelationship, candidate: EntityScope
+) -> str:
+    """Whether ``candidate`` belongs to the narrowing's selection: its tag
+    guard in a hierarchy table, its branch's own answer in a concrete table."""
+    target = relationship.target
+    if target.inheritance is None:
+        return "true"
+    if candidate.variant is not None:
+        return "true" if candidate.variant in narrow.selection else "false"
+    root = _entity_view(candidate.facet, target.identity).root
+    layout = _table_layout(candidate.storage, candidate.facet, root)
+    tag_sql, tag_binds = _tph_tag_guard(
+        candidate, candidate.facet, _TagPredicate(_tag_column(layout, root), narrow.selection)
+    )
+    candidate.ctx.bind_framework_all(tag_binds)
+    return tag_sql
+
+
+def _selected_operand(
+    narrow: ResolvedNarrow,
+    relationship: ResolvedRelationship,
+    candidate: EntityScope,
+    operand: ResolvedPredicate,
+) -> str:
+    """The narrowing's complete result at one candidate: the operand where the
+    candidate is selected, false where it is not."""
+    if candidate.variant is not None:
+        if candidate.variant not in narrow.selection:
+            return "false"
+        return _term(operand, candidate)
+    selected = _selected(narrow, relationship, candidate)
+    if selected == "true":
+        return _term(operand, candidate)
+    return f"case when {selected} then {_term(operand, candidate)} else false end"
+
+
+def _lower_branch_narrow(narrow: ResolvedNarrow, scope: EntityScope) -> str:
+    """A `narrow` of the current Entity — a **grouped branch predicate** (m-sql
+    "Grouped branch predicates"): the branch's own operand composes with its
+    own tag guard via `and`, and the composition is wrapped in parens whenever
+    there is a branch predicate to disambiguate against a sibling branch joined
+    by `or` (`m-inheritance-015`).
+    """
+    plan = _plan_resolved_branch_narrow(scope.facet, scope.storage, scope.entity, narrow.selection)
+    operand = narrow.operand
     if scope.variant is not None:
         if scope.variant not in plan.position:
             return "1 = 0"
-        return lower_predicate(narrow.operand, scope) or "1 = 1"
+        return ("" if operand is None else lower_predicate(operand, scope)) or "1 = 1"
     if plan.tag is None:  # pragma: no cover - TPCS union branches always carry a variant
         raise SqlGenError("a TPCS branch narrow requires a concrete branch scope")
     # Branch predicate first, THEN the guard's binds — the same explicit ordering
     # the top-level read states, for the same reason.
-    branch_sql = lower_predicate(narrow.operand, scope)
+    branch_sql = "" if operand is None else lower_predicate(operand, scope)
     tag_sql, tag_binds = _tph_tag_guard(scope, scope.facet, plan.tag)
     scope.ctx.bind_framework_all(tag_binds)
     if not branch_sql:
         return tag_sql
     return f"({branch_sql} and {tag_sql})"
-
-
-def _lower_semi_join(join: ResolvedSemiJoin, scope: EntityScope) -> str:
-    """One correlated `EXISTS` per planned branch of the reached Entity.
-
-    A `where` that is itself a `narrow` selects the branches the hop plans
-    rather than lowering as a guard inside each of them.
-    """
-    narrowed = join.where if isinstance(join.where, ResolvedNarrow) else None
-    inner = join.where if narrowed is None else narrowed.operand
-    plan = _plan_resolved_hop(
-        join.target,
-        join.source,
-        join.related,
-        position=None if narrowed is None else narrowed.position,
-        scope=scope,
-        negate=join.negated,
-    )
-    fragments: list[str] = []
-    for branch in plan.branches:
-        # Opened INSIDE the loop, not up front: a branch takes its alias
-        # immediately before its own interior lowers, so a later branch's alias
-        # follows everything the preceding branch's interior allocated. Hoisting
-        # this would renumber a grouped table-per-concrete-subtype hop whose
-        # interior itself navigates.
-        opened = _open_branch(branch, scope)
-        child_scope = scope.child(opened.entity, opened.alias)
-        where = _hop_where(inner, opened.correlation, child_scope, *opened.tag_fragment)
-        # AFTER the interior: the plan carried the guard's bind VALUES precisely so
-        # this push is the caller's own visible statement (`_navigation` holds no
-        # capability to have pushed them itself).
-        child_scope.ctx.bind_framework_all(opened.tag_binds)
-        fragments.append(opened.render(where))
-    return plan.combine(fragments)
-
-
-def _hop_where(
-    inner: ResolvedPredicate | None,
-    correlation: str,
-    child_scope: EntityScope,
-    *extra: str,
-) -> str:
-    """The correlated sub-select's `where` clause: correlation, then the (optional)
-    interior predicate, then any trailing fragment (a TPH tag guard) — the shared
-    term order every hop shape composes (m-sql "Grouped branch predicates":
-    a user/interior predicate binds before a framework-injected guard)."""
-    terms = [correlation]
-    if inner is not None:
-        inner_sql = lower_predicate(inner, child_scope)
-        if inner_sql:
-            terms.append(inner_sql)
-    terms.extend(extra)
-    return " and ".join(terms)
 
 
 def _resolved_vo_path(
@@ -658,36 +1086,3 @@ def _resolved_vo_path(
     if vo is None:
         raise SqlGenError(f"resolved Value Object {identity} is absent from the active position")
     return vo, (*identity.path[1:], leaf.identity.name)
-
-
-def _lower_quantifier(quantifier: ResolvedQuantifier, scope: EntityScope) -> str:
-    """A bare quantifier is a non-empty / empty-or-absent test over the guarded
-    unnest; its `where` composes on the SAME unnested alias (same-element
-    semantics, m-value-object), so separate quantifiers never share an alias.
-    Postgres `EXISTS` is never NULL, so `none` needs no `coalesce` wrap:
-    `not exists (...)` over zero unnested elements is already true (m-sql,
-    explicit). MariaDB's containment form DOES need one — but this claim is
-    Postgres-only and that form is not implemented here.
-
-    The `where` is handed back to :func:`lower_predicate` under an
-    :class:`ElementScope`; there is no second dispatcher for it.
-    """
-    occurrence = quantifier.occurrence
-    identity = occurrence.identity
-    vo = _entity_view(scope.facet, identity.entity).applicable_value_object(identity.path[0])
-    if vo is None:
-        raise SqlGenError(f"resolved Value Object {identity} is absent from the active position")
-    if occurrence.multiplicity is not Multiplicity.MANY:
-        raise SqlGenError(
-            f"nestedExists/nestedNotExists over a `one`-multiplicity value object "
-            f"({identity}) has no goldened lowering yet"
-        )
-    document, prefix = scope.document_root(vo)
-    guard_sql, guard_binds = scope.dialect.array_guard(document, (*prefix, *identity.path[1:]))
-    scope.ctx.bind_framework_all(guard_binds)
-    element = ElementScope(ctx=scope.ctx, container=occurrence, alias=scope.next_alias())
-    inner = f"select 1 from jsonb_array_elements({guard_sql}) {element.alias}"
-    if quantifier.where is not None:
-        inner = f"{inner} where {lower_predicate(quantifier.where, element)}"
-    keyword = "not exists" if quantifier.kind == "none" else "exists"
-    return f"{keyword} ({inner})"

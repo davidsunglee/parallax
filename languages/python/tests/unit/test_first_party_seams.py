@@ -99,7 +99,7 @@ def _account_query(target: str = "parallax.compatibility.Account") -> ObjectQuer
     return deserialize_query(
         {
             "target": target,
-            "predicate": {"eq": {"attr": "parallax.compatibility.Account.id", "value": 3}},
+            "predicate": {"eq": {"path": "parallax.compatibility.Account.id", "value": 3}},
         }
     )
 
@@ -252,7 +252,7 @@ def _person_query() -> ObjectQueryNode:
     return deserialize_query(
         {
             "target": "parallax.compatibility.Person",
-            "predicate": {"eq": {"attr": "parallax.compatibility.Person.id", "value": 1}},
+            "predicate": {"eq": {"path": "parallax.compatibility.Person.id", "value": 1}},
         }
     )
 
@@ -422,7 +422,7 @@ def test_the_wire_read_reports_a_deferred_feature_by_name() -> None:
     query = deserialize_query(
         {
             "target": "parallax.compatibility.Policy",
-            "predicate": {"all": {}},
+            "predicate": {"true": {}},
             "temporal": {
                 "valid-time": {"asOf": "latest"},
                 "transaction-time": {"history": {}},
@@ -443,7 +443,7 @@ def test_a_deferred_participating_read_flushes_nothing() -> None:
     query = deserialize_query(
         {
             "target": "parallax.compatibility.Policy",
-            "predicate": {"all": {}},
+            "predicate": {"true": {}},
             "temporal": {
                 "valid-time": {"asOf": "latest"},
                 "transaction-time": {"history": {}},
@@ -466,7 +466,7 @@ def test_a_row_form_read_refuses_the_relationship_levels_it_cannot_materialize()
     query = deserialize_query(
         {
             "target": "parallax.compatibility.Policy",
-            "predicate": {"all": {}},
+            "predicate": {"true": {}},
             "temporal": _latest("transaction-time", "valid-time"),
             "includes": [{"segments": [{"rel": "parallax.compatibility.Policy.coverages"}]}],
         }
@@ -484,7 +484,7 @@ def test_a_refused_row_form_participating_read_flushes_nothing() -> None:
     query = deserialize_query(
         {
             "target": "parallax.compatibility.Order",
-            "predicate": {"all": {}},
+            "predicate": {"true": {}},
             "includes": [{"segments": [{"rel": "parallax.compatibility.Order.items"}]}],
         }
     )
@@ -505,7 +505,7 @@ def test_an_ordered_capped_query_carrying_no_includes_still_answers() -> None:
     query = deserialize_query(
         {
             "target": "parallax.compatibility.Order",
-            "predicate": {"all": {}},
+            "predicate": {"true": {}},
             "orderBy": [{"attr": "parallax.compatibility.Order.id"}],
             "limit": 1,
         }
@@ -570,7 +570,7 @@ def _run_on[T](db: ScopedDatabase, fn: Callable[[Transaction], T]) -> T:
 def _predicate_target() -> dict[str, object]:
     return {
         "entity": "parallax.compatibility.Account",
-        "predicate": {"eq": {"attr": "parallax.compatibility.Account.id", "value": 3}},
+        "predicate": {"eq": {"path": "parallax.compatibility.Account.id", "value": 3}},
     }
 
 

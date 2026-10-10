@@ -9,13 +9,13 @@ when:
       and:
         operands:
           - eq:
-              attr: parallax.compatibility.Order.active
+              path: parallax.compatibility.Order.active
               value: true
           - greaterThan:
-              attr: parallax.compatibility.Order.qty
+              path: parallax.compatibility.Order.qty
               value: 5
           - lessThan:
-              attr: parallax.compatibility.Order.qty
+              path: parallax.compatibility.Order.qty
               value: 30
 then:
   statements:

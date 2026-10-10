@@ -48,7 +48,7 @@ when:
         target: parallax.compatibility.WriteTwinItem
         predicate:
           eq:
-            attr: parallax.compatibility.WriteTwinItem.id
+            path: parallax.compatibility.WriteTwinItem.id
             value: 2
       roundTrips: 1
       note: the restated occurrence is what item 2 holds when the second edit arrives
@@ -101,7 +101,7 @@ when:
         target: parallax.compatibility.WriteTwinItem
         predicate:
           eq:
-            attr: parallax.compatibility.WriteTwinItem.id
+            path: parallax.compatibility.WriteTwinItem.id
             value: 2
       roundTrips: 1
       note: only the second edit's own value survives, and `label` and `marks` are untouched throughout

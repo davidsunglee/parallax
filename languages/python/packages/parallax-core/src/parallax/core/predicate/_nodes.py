@@ -6,46 +6,40 @@ from typing import Final, Literal
 from parallax.core.metamodel import EntityIdentity
 
 __all__ = [
+    "CURRENT_SCALAR_ELEMENT",
     "QUERY_DEFINITION_CODES",
-    "All",
     "And",
-    "Between",
     "Comparison",
     "ComparisonOp",
-    "Exists",
+    "CurrentScalarElement",
+    "FalseNode",
+    "FieldSubject",
     "Group",
     "Membership",
     "MembershipOp",
     "Narrow",
-    "Navigate",
-    "NestedComparison",
-    "NestedComparisonOp",
-    "NestedExists",
-    "NestedMembership",
-    "NestedMembershipOp",
-    "NestedNotExists",
-    "NestedNullCheck",
-    "NestedNullOp",
-    "NestedRange",
-    "NestedStringMatch",
-    "NestedStringOp",
-    "NoneOp",
     "Not",
-    "NotExists",
     "NullCheck",
     "NullOp",
     "Or",
     "PredicateNode",
+    "Presence",
+    "PresenceOp",
+    "Quantifier",
+    "QuantifierKind",
     "QueryDefinitionError",
-    "Scalar",
+    "Range",
+    "ScalarLiteral",
+    "ScalarSubject",
     "StringMatch",
     "StringOp",
     "SubtypeSelection",
+    "TrueNode",
     "canonical_subtype_selection",
 ]
 
 # A non-null serialized typed literal. Null tests use dedicated nodes.
-Scalar = str | int | float | bool
+ScalarLiteral = str | int | float | bool
 
 
 def _require_non_null_literal(value: object) -> None:
@@ -56,7 +50,7 @@ def _require_non_null_literal(value: object) -> None:
         )
 
 
-def _require_non_null_literals(values: tuple[Scalar, ...]) -> None:
+def _require_non_null_literals(values: tuple[ScalarLiteral, ...]) -> None:
     for value in values:
         _require_non_null_literal(value)
 
@@ -85,14 +79,8 @@ ComparisonOp = Literal[
 NullOp = Literal["isNull", "isNotNull"]
 StringOp = Literal["like", "notLike", "startsWith", "endsWith", "contains"]
 MembershipOp = Literal["in", "notIn"]
-NestedComparisonOp = Literal[
-    "nestedEq", "nestedNotEq", "nestedGt", "nestedGte", "nestedLt", "nestedLte"
-]
-NestedMembershipOp = Literal["nestedIn", "nestedNotIn"]
-NestedStringOp = Literal[
-    "nestedLike", "nestedNotLike", "nestedStartsWith", "nestedEndsWith", "nestedContains"
-]
-NestedNullOp = Literal["nestedIsNull", "nestedIsNotNull"]
+QuantifierKind = Literal["any", "all", "none"]
+PresenceOp = Literal["exists", "notExists"]
 
 
 QUERY_DEFINITION_CODES: Final[frozenset[str]] = frozenset(
@@ -137,34 +125,54 @@ class QueryDefinitionError(ValueError):
 
 
 @dataclass(frozen=True, slots=True)
-class All:
-    """The identity — selects every row (no ``WHERE``)."""
+class TrueNode:
+    """The constant true predicate: it selects every object its query reaches."""
 
 
 @dataclass(frozen=True, slots=True)
-class NoneOp:
-    """The absorbing element — matches nothing (``where 1 = 0``)."""
+class FalseNode:
+    """The constant false predicate: it selects nothing."""
+
+
+@dataclass(frozen=True, slots=True)
+class FieldSubject:
+    """An object field named by its canonical path: Entity-qualified at the
+    queried position, relative to the bound object inside a scope."""
+
+    path: str
+
+    def __post_init__(self) -> None:
+        if not self.path:
+            raise ValueError("a field subject names a nonempty path")
+
+
+@dataclass(frozen=True, slots=True)
+class CurrentScalarElement:
+    """The scalar an enclosing scalar-collection quantifier binds."""
+
+
+CURRENT_SCALAR_ELEMENT: Final = CurrentScalarElement()
+
+ScalarSubject = FieldSubject | CurrentScalarElement
 
 
 @dataclass(frozen=True, slots=True)
 class Comparison:
-    """A scalar comparison of one attribute against a literal."""
-
     op: ComparisonOp
-    attr: str
-    value: Scalar
+    subject: ScalarSubject
+    value: ScalarLiteral
 
     def __post_init__(self) -> None:
         _require_non_null_literal(self.value)
 
 
 @dataclass(frozen=True, slots=True)
-class Between:
-    """``attr between lower and upper`` (two ordered binds)."""
+class Range:
+    """An inclusive range one value must satisfy whole, lower bound first."""
 
-    attr: str
-    lower: Scalar
-    upper: Scalar
+    subject: ScalarSubject
+    lower: ScalarLiteral
+    upper: ScalarLiteral
 
     def __post_init__(self) -> None:
         _require_non_null_literal(self.lower)
@@ -173,10 +181,8 @@ class Between:
 
 @dataclass(frozen=True, slots=True)
 class NullCheck:
-    """``attr is null`` / ``not attr is null``."""
-
     op: NullOp
-    attr: str
+    subject: FieldSubject
 
 
 @dataclass(frozen=True, slots=True)
@@ -184,15 +190,12 @@ class StringMatch:
     """A string predicate; affix forms escape wildcards, ``like`` passes through.
 
     ``case_insensitive`` is ``None`` when the authored node omitted the optional
-    ``caseInsensitive`` flag (the schema default is ``false``). Serde round-trips
-    that absence faithfully — an omitted flag serializes back omitted, an explicit
-    ``false``/``true`` serializes back verbatim — while SQL lowering treats an
-    absent flag as the ``false`` default (``if case_insensitive`` is falsy for
-    ``None``).
+    ``caseInsensitive`` flag, so serde round-trips an omitted flag omitted and an
+    explicit ``false``/``true`` verbatim.
     """
 
     op: StringOp
-    attr: str
+    subject: ScalarSubject
     value: str
     case_insensitive: bool | None = None
 
@@ -202,11 +205,9 @@ class StringMatch:
 
 @dataclass(frozen=True, slots=True)
 class Membership:
-    """``attr in (…)`` / ``not attr in (…)`` over a non-empty value list."""
-
     op: MembershipOp
-    attr: str
-    values: tuple[Scalar, ...]
+    subject: ScalarSubject
+    values: tuple[ScalarLiteral, ...]
 
     def __post_init__(self) -> None:
         _require_non_null_literals(self.values)
@@ -228,8 +229,6 @@ class Or:
 
 @dataclass(frozen=True, slots=True)
 class Not:
-    """Logical negation of one operand."""
-
     operand: PredicateNode
 
 
@@ -241,140 +240,47 @@ class Group:
 
 
 @dataclass(frozen=True, slots=True)
+class Quantifier:
+    """Whether some (``any``), every (``all``), or no (``none``) element of the
+    collection at ``path`` makes ``where`` true; bare ``any`` and ``none`` test
+    occupancy alone, and ``all`` always carries ``where``."""
+
+    kind: QuantifierKind
+    path: str
+    where: PredicateNode | None = None
+
+    def __post_init__(self) -> None:
+        if self.kind == "all" and self.where is None:
+            raise ValueError("an `all` quantifier carries a `where` predicate")
+
+
+@dataclass(frozen=True, slots=True)
+class Presence:
+    """Whether the single object at ``path`` is present (``exists``) or absent."""
+
+    op: PresenceOp
+    path: str
+
+
+@dataclass(frozen=True, slots=True)
 class Narrow:
-    """Constrain a polymorphic position to a subset of its subtypes."""
+    """``operand`` over a polymorphic position narrowed to a Subtype Selection:
+    the current position, or the to-one target ``path`` reaches from it."""
 
     to: SubtypeSelection
     operand: PredicateNode
+    path: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "to", canonical_subtype_selection(self.to))
 
 
-@dataclass(frozen=True, slots=True)
-class NestedComparison:
-    """A value-object inner-attribute comparison against a typed literal."""
-
-    op: NestedComparisonOp
-    path: str
-    value: Scalar
-
-    def __post_init__(self) -> None:
-        _require_non_null_literal(self.value)
-
-
-@dataclass(frozen=True, slots=True)
-class NestedRange:
-    """A value-object inner-attribute range test against two typed literal bounds.
-
-    One canonical node, never a pair of comparisons: through a Many occurrence the
-    flat family is any-element, so `>= lower` and `<= upper` as two nodes could be
-    satisfied by two *different* elements, while this node requires one element to
-    satisfy the whole range (`m-predicate`).
-    """
-
-    path: str
-    lower: Scalar
-    upper: Scalar
-
-    def __post_init__(self) -> None:
-        _require_non_null_literal(self.lower)
-        _require_non_null_literal(self.upper)
-
-
-@dataclass(frozen=True, slots=True)
-class NestedMembership:
-    """A value-object inner-attribute membership test over typed literals.
-
-    The negated form keeps the uniform any-element reading through a Many
-    occurrence — some element's member is not in the list — which is why it is one
-    node with the positive form rather than a negation of existence.
-    """
-
-    op: NestedMembershipOp
-    path: str
-    values: tuple[Scalar, ...]
-
-    def __post_init__(self) -> None:
-        _require_non_null_literals(self.values)
-
-
-@dataclass(frozen=True, slots=True)
-class NestedStringMatch:
-    """A value-object inner-attribute string predicate over a ``String`` member.
-
-    Carries :class:`StringMatch`'s semantics against a nested extraction — affix
-    forms escape wildcards, ``nestedLike``/``nestedNotLike`` pass the pattern
-    through, and ``case_insensitive`` follows the same omitted-versus-explicit
-    round-trip rule. It is a node of its own rather than a reuse of
-    :class:`StringMatch` because serialization dispatches on the node class and the
-    two spell their subject differently (``path`` versus ``attr``); one class serves
-    BOTH nested scopes, as every other nested node does.
-    """
-
-    op: NestedStringOp
-    path: str
-    value: str
-    case_insensitive: bool | None = None
-
-    def __post_init__(self) -> None:
-        _require_non_null_literal(self.value)
-
-
-@dataclass(frozen=True, slots=True)
-class NestedNullCheck:
-    """A value-object inner-attribute presence test (absence-collapse rule)."""
-
-    op: NestedNullOp
-    path: str
-
-
-@dataclass(frozen=True, slots=True)
-class NestedExists:
-    """The value object at ``path`` is present / non-empty; optional element ``where``."""
-
-    path: str
-    where: PredicateNode | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class NestedNotExists:
-    """The complement of :class:`NestedExists`."""
-
-    path: str
-    where: PredicateNode | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class Navigate:
-    """Filter the queried entity by traversing a relationship (correlated EXISTS)."""
-
-    rel: str
-    op: PredicateNode | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class Exists:
-    """The queried entity has >=1 related row (optionally matching ``op``)."""
-
-    rel: str
-    op: PredicateNode | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class NotExists:
-    """The queried entity has no related row (optionally matching ``op``)."""
-
-    rel: str
-    op: PredicateNode | None = None
-
-
 # The exhaustive read-path Predicate union (m-predicate); m-sql lowers over it.
 PredicateNode = (
-    All
-    | NoneOp
+    TrueNode
+    | FalseNode
     | Comparison
-    | Between
+    | Range
     | NullCheck
     | StringMatch
     | Membership
@@ -382,15 +288,7 @@ PredicateNode = (
     | Or
     | Not
     | Group
+    | Quantifier
+    | Presence
     | Narrow
-    | NestedComparison
-    | NestedRange
-    | NestedMembership
-    | NestedStringMatch
-    | NestedNullCheck
-    | NestedExists
-    | NestedNotExists
-    | Navigate
-    | Exists
-    | NotExists
 )

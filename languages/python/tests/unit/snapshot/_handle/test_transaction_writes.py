@@ -478,7 +478,7 @@ def test_a_keyed_update_changing_one_member_writes_its_whole_literal_set(
             node = tx.wire.find(
                 {
                     "target": "parallax.compatibility.Balance",
-                    "predicate": {"eq": {"attr": "parallax.compatibility.Balance.id", "value": 1}},
+                    "predicate": {"eq": {"path": "parallax.compatibility.Balance.id", "value": 1}},
                     "temporal": {"transaction-time": {"asOf": "latest"}},
                 }
             ).result()
@@ -793,7 +793,7 @@ def test_a_bounded_predicate_write_states_its_window_as_a_pair() -> None:
             tx.wire.terminate_where(
                 {
                     "entity": "WherePosition",
-                    "predicate": {"eq": {"attr": "WherePosition.id", "value": 1}},
+                    "predicate": {"eq": {"path": "WherePosition.id", "value": 1}},
                 },
                 valid_from=FIXED,
                 until=cast("dt.datetime", None),

@@ -148,7 +148,7 @@ entities:
         maxLength: 32
     relationships:
       # Targets the abstract ROOT Document: reaches any concrete { Invoice, Memo,
-      # Receipt }. A narrow in a navigation filter's `op` may restrict it to a subset.
+      # Receipt }. A narrow in a quantifier's `where` may restrict it to a subset.
       - name: documents
         cardinality: one-to-many
         join:

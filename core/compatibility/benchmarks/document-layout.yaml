@@ -37,7 +37,7 @@ dataset:
     fanout: 5
 objectQuery:
   target: parallax.compatibility.Traveler
-  predicate: { all: {} }
+  predicate: { "true": {} }
   includes:
     - segments:
         - rel: parallax.compatibility.Traveler.trips

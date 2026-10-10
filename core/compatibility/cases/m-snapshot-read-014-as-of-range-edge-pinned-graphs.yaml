@@ -8,7 +8,7 @@ when:
     target: parallax.compatibility.InvoiceLine
     predicate:
       eq:
-        attr: parallax.compatibility.InvoiceLine.id
+        path: parallax.compatibility.InvoiceLine.id
         value: 1000
     temporal:
       transaction-time:

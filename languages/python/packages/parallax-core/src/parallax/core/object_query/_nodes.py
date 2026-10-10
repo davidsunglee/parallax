@@ -21,7 +21,7 @@ __all__ = [
     "AsOf",
     "AsOfRange",
     "History",
-    "IncludePath",
+    "IncludePathNode",
     "IncludeSegment",
     "InterpretedQuery",
     "Latest",
@@ -210,7 +210,7 @@ class IncludeSegment:
 
 
 @dataclass(frozen=True, slots=True)
-class IncludePath:
+class IncludePathNode:
     """One Include Path: the ordered, non-empty hops it traverses, and the
     optional source guard restricting which queried objects it starts from.
 
@@ -252,7 +252,7 @@ class ObjectQueryNode:
     temporal: Mapping[TemporalDimension, TemporalSelection] = _NO_TEMPORAL
     order_by: tuple[OrderKey, ...] = ()
     limit: int | None = None
-    includes: tuple[IncludePath, ...] = field(default_factory=tuple)
+    includes: tuple[IncludePathNode, ...] = field(default_factory=tuple)
 
 
 class QueryClauses(Protocol):
@@ -274,7 +274,7 @@ class QueryClauses(Protocol):
     def limit(self) -> int | None: ...
 
     @property
-    def includes(self) -> tuple[IncludePath, ...]: ...
+    def includes(self) -> tuple[IncludePathNode, ...]: ...
 
 
 @dataclass(frozen=True, slots=True)

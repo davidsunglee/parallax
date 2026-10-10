@@ -76,7 +76,9 @@ def test_an_insert_refuses_a_malformed_collection_at_its_position(
 )
 def test_a_predicate_assignment_refuses_a_malformed_collection(tags: object, message: str) -> None:
     refusal = _refusal(
-        lambda tx: tx.wire.amend_where({"entity": _ORDER, "predicate": {"all": {}}}, {"tags": tags})
+        lambda tx: tx.wire.amend_where(
+            {"entity": _ORDER, "predicate": {"true": {}}}, {"tags": tags}
+        )
     )
 
     assert message in str(refusal)

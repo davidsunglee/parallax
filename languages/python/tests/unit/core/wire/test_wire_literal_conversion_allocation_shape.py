@@ -53,9 +53,7 @@ def _builder() -> StatementBuilder:
 def _same_type_statement(bind_count: int) -> Callable[[], LoweredStatement]:
     def build() -> LoweredStatement:
         membership = predicate.Membership(
-            op="in",
-            attr="Wallet.owner",
-            values=("value",) * bind_count,
+            op="in", subject=predicate.FieldSubject("Wallet.owner"), values=("value",) * bind_count
         )
         statement = compile_read(membership, _MODEL, POSTGRES, _WALLET).statement
         assert len(statement.binds) == bind_count

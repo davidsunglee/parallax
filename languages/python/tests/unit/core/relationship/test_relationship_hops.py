@@ -34,11 +34,11 @@ from parallax.core import (
     attr,
     rel,
 )
-from parallax.core.entity import RelationshipPath
-from parallax.core.entity._expressions import RelationshipRef
+from parallax.core.entity import IncludePath
+from parallax.core.entity._expressions import IncludeTraversal, include_traversal
 from parallax.core.entity._model import model_of
 from parallax.core.object_query import IncludeSegment, validate_object_query
-from parallax.core.object_query._nodes import IncludePath
+from parallax.core.object_query._nodes import IncludePathNode
 from tests._support.query_probes import canonical_query
 
 
@@ -118,8 +118,8 @@ PETS = DomainModel(Owner, Animal, Dog, Toy)
 
 
 def _preflight(
-    models: DomainModel, root: type[Entity], path: RelationshipPath[Any, Any]
-) -> tuple[IncludePath, ...]:
+    models: DomainModel, root: type[Entity], path: IncludePath[Any, Any]
+) -> tuple[IncludePathNode, ...]:
     """Build the Includes clause ``path`` authors and validate it as a read does."""
     query = canonical_query(root.where(root.all).include(path))
     validate_object_query(models.meta(root), query, model_of(models))
@@ -129,7 +129,7 @@ def _preflight(
 def test_a_deeper_hop_spells_its_owner_from_the_paths_target() -> None:
     # The owner is the hop target's own canonical Entity spelling, and the member
     # is the canonical name its Python spelling denotes.
-    path = SalesOrder.customer.notes
+    path = include_traversal(SalesOrder.customer.notes)
     assert [segment.rel for segment in path.segments] == [
         "sales.Order.customer",
         "sales.Customer.notes",
@@ -137,13 +137,13 @@ def test_a_deeper_hop_spells_its_owner_from_the_paths_target() -> None:
 
 
 def test_a_deeper_hop_camel_cases_a_snake_case_member_spelling() -> None:
-    assert Owner.dogs.some_member.segments[-1].rel == "Dog.someMember"
+    assert include_traversal(Owner.dogs.some_member).segments[-1].rel == "Dog.someMember"
 
 
 def test_a_deeper_hop_validates_as_an_include_path() -> None:
     includes = _preflight(LEDGER, SalesOrder, SalesOrder.customer.notes)
     assert includes == (
-        IncludePath(
+        IncludePathNode(
             segments=(
                 IncludeSegment(rel="sales.Order.customer"),
                 IncludeSegment(rel="sales.Customer.notes"),
@@ -170,7 +170,9 @@ def test_a_renamed_deeper_member_erases_and_preflight_refuses_it() -> None:
     # through a path rooted at the Entity that declares it keeps the exact name.
     with pytest.raises(ValueError, match="names no declared relationship on Branch"):
         _preflight(ORCHARD, Root, Root.branches.leaves)
-    assert Branch.leaves.segments == (IncludeSegment(rel="orchard.Branch.canopy"),)
+    assert include_traversal(Branch.leaves).segments == (
+        IncludeSegment(rel="orchard.Branch.canopy"),
+    )
 
 
 def test_an_inherited_deeper_member_erases_and_preflight_refuses_it() -> None:
@@ -193,23 +195,23 @@ def test_a_hop_naming_an_attribute_of_the_target_is_refused_at_preflight() -> No
 
 
 def test_a_first_hop_target_is_the_canonical_entity_spelling() -> None:
-    assert SalesOrder.customer.target == "sales.Customer"
-    assert Root.branches.target == "orchard.Branch"
+    assert include_traversal(SalesOrder.customer).target == "sales.Customer"
+    assert include_traversal(Root.branches).target == "orchard.Branch"
 
 
 def test_a_first_hop_reference_names_its_owner_exactly_and_its_declared_member() -> None:
     # The reference splits the first segment the way the wire spells it: the
     # owner's canonical Entity spelling, and the relationship's own declared
     # name rather than the Python member it was authored as.
-    assert Root.branches.ref == RelationshipRef("orchard.Root", "branches")
-    assert Branch.leaves.ref == RelationshipRef("orchard.Branch", "canopy")
-    assert SalesOrder.customer.ref == RelationshipRef("sales.Order", "customer")
+    assert include_traversal(Root.branches).segments[0].rel == "orchard.Root.branches"
+    assert include_traversal(Branch.leaves).segments[0].rel == "orchard.Branch.canopy"
+    assert include_traversal(SalesOrder.customer).segments[0].rel == "sales.Order.customer"
 
 
 def test_a_hop_narrowed_to_one_class_targets_it_canonically() -> None:
     # A narrow list is a reference position like any other, so it names each
     # class exactly — the same spelling the path's own target takes.
-    path = Root.branches.narrow(Branch)
+    path = include_traversal(Root.branches.narrow(Branch))
     assert path.segments[-1].narrow_to == ("orchard.Branch",)
     assert path.target == "orchard.Branch"
 
@@ -223,7 +225,7 @@ def test_a_hop_narrowed_to_a_class_declaring_no_identity_names_it_pythonically()
     class Bare:
         pass
 
-    path = Root.branches.narrow(Bare)  # pyright: ignore[reportArgumentType]
+    path = include_traversal(Root.branches.narrow(Bare))  # pyright: ignore[reportArgumentType]
     assert path.segments[-1].narrow_to == ("Bare",)
     assert path.target == "Bare"
 
@@ -256,7 +258,7 @@ def test_a_deeper_hop_narrows_independently_of_the_hop_it_continued() -> None:
     # Single-shot is per segment rather than per path: continuing to another
     # relationship starts a fresh alternative list, and the hop it continued
     # keeps the one it was given.
-    path = Root.branches.narrow(Branch).leaves.narrow(Leaf)
+    path = include_traversal(Root.branches.narrow(Branch).leaves.narrow(Leaf))
     assert [(segment.rel, segment.narrow_to) for segment in path.segments] == [
         ("orchard.Root.branches", ("orchard.Branch",)),
         ("orchard.Branch.leaves", ("orchard.Leaf",)),
@@ -266,15 +268,15 @@ def test_a_deeper_hop_narrows_independently_of_the_hop_it_continued() -> None:
 def test_a_path_that_already_continued_cannot_continue_again() -> None:
     # What a composed hop points at is a declaration fact of an Entity this path
     # reaches no class for, so a third hop has no owner to spell itself from.
-    continued = SalesOrder.customer.notes
-    assert continued.target is None
-    with pytest.raises(AttributeError, match="already continued past the hop"):
-        _ = continued.deeper
+    assert include_traversal(SalesOrder.customer.notes).target is None
+    with pytest.raises(QueryDefinitionError, match="already continued past the hop") as caught:
+        SalesOrder.where(SalesOrder.all).include(SalesOrder.customer.notes.deeper)
+    assert caught.value.code == "query-path-invalid"
 
 
 def test_a_directly_built_path_carries_no_target_and_cannot_continue() -> None:
-    built: RelationshipPath[SalesOrder, Any] = RelationshipPath(
-        segments=(IncludeSegment(rel="sales.Order.customer"),), target=None
+    built: IncludePath[SalesOrder, Any] = IncludePath(
+        IncludeTraversal(segments=(IncludeSegment(rel="sales.Order.customer"),), target=None)
     )
     with pytest.raises(AttributeError, match="already continued past the hop"):
         _ = built.notes

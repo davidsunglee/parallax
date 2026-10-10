@@ -38,7 +38,11 @@ from parallax.core import (
     rel,
 )
 from parallax.core import AbstractSubtype as AbstractSubtypeRole
-from parallax.core.entity import AttributeExpr, RelationshipPath
+from parallax.core.entity._expressions import (
+    AssignableManyValueObjectExpr,
+    AssignableScalarExpr,
+    RelationshipExpr,
+)
 from parallax.core.entity._model import model_of
 from parallax.core.inheritance._rules import (
     CONCRETE_SUBTYPE_WITH_CHILDREN,
@@ -393,10 +397,10 @@ def test_class_access_to_an_inherited_member_still_seeds_a_predicate() -> None:
     # Nothing the engine puts in the way of Pydantic's field collection outlives
     # class creation: every inherited member name resolves through the MRO to the
     # descriptor the declaring class installed.
-    assert isinstance(_Glider.name, AttributeExpr)
-    assert isinstance(_Glider.badges, AttributeExpr)
-    assert isinstance(_Glider.tx_start, AttributeExpr)
-    assert isinstance(_Glider.fleet, RelationshipPath)
+    assert isinstance(_Glider.name, AssignableScalarExpr)
+    assert isinstance(_Glider.badges, AssignableManyValueObjectExpr)
+    assert isinstance(_Glider.tx_start, AssignableScalarExpr)
+    assert isinstance(_Glider.fleet, RelationshipExpr)
 
 
 def test_hydrating_a_descendant_fills_every_uncarried_inherited_member() -> None:

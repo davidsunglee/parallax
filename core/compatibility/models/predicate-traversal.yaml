@@ -1,0 +1,122 @@
+# Single-valued traversal into polymorphic targets (m-predicate, m-inheritance).
+#
+# A Collar's to-one `pet` reaches a table-per-hierarchy family (Pet over Dog and
+# Cat); a Parking's to-one `vehicle` reaches a table-per-concrete-subtype family
+# (Vehicle over Car and Bike), whose concrete tables key their rows independently;
+# and a Leash's to-one `collar` puts a second hop in front of the first, so a
+# reached target is a related target's related target.
+entities:
+  - name: Pet
+    namespace: parallax.compatibility
+    table: traversal_pet
+    inheritance:
+      role: root
+      strategy: table-per-hierarchy
+      tag:
+        column: kind
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+      - name: name
+        type: string
+        maxLength: 32
+  - name: Dog
+    namespace: parallax.compatibility
+    inheritance:
+      role: concrete-subtype
+      parent: parallax.compatibility.Pet
+      tagValue: dog
+    attributes:
+      - name: barkVolume
+        type: int32
+        nullable: true
+  - name: Cat
+    namespace: parallax.compatibility
+    inheritance:
+      role: concrete-subtype
+      parent: parallax.compatibility.Pet
+      tagValue: cat
+    attributes:
+      - name: indoor
+        type: boolean
+        nullable: true
+  - name: Vehicle
+    namespace: parallax.compatibility
+    inheritance:
+      role: root
+      strategy: table-per-concrete-subtype
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+      - name: maker
+        type: string
+        maxLength: 32
+  - name: Car
+    namespace: parallax.compatibility
+    table: traversal_car
+    inheritance:
+      role: concrete-subtype
+      parent: parallax.compatibility.Vehicle
+    attributes:
+      - name: seats
+        type: int32
+        nullable: true
+  - name: Bike
+    namespace: parallax.compatibility
+    table: traversal_bike
+    inheritance:
+      role: concrete-subtype
+      parent: parallax.compatibility.Vehicle
+    attributes:
+      - name: gears
+        type: int32
+  - name: Collar
+    namespace: parallax.compatibility
+    table: traversal_collar
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+      - name: petId
+        type: int64
+        nullable: true
+    relationships:
+      - name: pet
+        cardinality: many-to-one
+        join:
+          source: petId
+          target: { entity: parallax.compatibility.Pet, attribute: id }
+  - name: Leash
+    namespace: parallax.compatibility
+    table: traversal_leash
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+      - name: collarId
+        type: int64
+        nullable: true
+    relationships:
+      - name: collar
+        cardinality: many-to-one
+        join:
+          source: collarId
+          target: { entity: parallax.compatibility.Collar, attribute: id }
+  - name: Parking
+    namespace: parallax.compatibility
+    table: traversal_parking
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+      - name: vehicleId
+        type: int64
+        nullable: true
+    relationships:
+      - name: vehicle
+        cardinality: many-to-one
+        join:
+          source: vehicleId
+          target: { entity: parallax.compatibility.Vehicle, attribute: id }

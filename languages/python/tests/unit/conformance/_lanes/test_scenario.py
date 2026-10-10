@@ -683,7 +683,7 @@ def test_run_scenario_case_reports_an_ungrouped_finds_own_materialized_graph() -
             {
                 "objectQuery": {
                     "target": "Order",
-                    "predicate": {"eq": {"attr": "Order.id", "value": 1}},
+                    "predicate": {"eq": {"path": "Order.id", "value": 1}},
                     "includes": [{"segments": [{"rel": "Order.items"}]}],
                 },
                 "expectGraph": {"Order": [{"id": 1}]},
@@ -893,7 +893,7 @@ def _two_group_interleave_steps() -> list[dict[str, object]]:
             "uow": "a",
             "objectQuery": {
                 "target": "Account",
-                "predicate": {"eq": {"attr": "Account.id", "value": 1}},
+                "predicate": {"eq": {"path": "Account.id", "value": 1}},
             },
             "roundTrips": 1,
             "statements": [{"sql": {"postgres": "select ... where t0.id = ?"}, "binds": [1]}],
@@ -902,7 +902,7 @@ def _two_group_interleave_steps() -> list[dict[str, object]]:
             "uow": "b",
             "objectQuery": {
                 "target": "Account",
-                "predicate": {"eq": {"attr": "Account.id", "value": 2}},
+                "predicate": {"eq": {"path": "Account.id", "value": 2}},
             },
             "roundTrips": 1,
             "statements": [{"sql": {"postgres": "select ... where t0.id = ?"}, "binds": [2]}],
@@ -986,21 +986,21 @@ def test_scenario_uow_spans_rejects_interleaving_beyond_the_two_group_shape() ->
             "uow": "a",
             "objectQuery": {
                 "target": "Account",
-                "predicate": {"eq": {"attr": "Account.id", "value": 1}},
+                "predicate": {"eq": {"path": "Account.id", "value": 1}},
             },
         },
         {
             "uow": "b",
             "objectQuery": {
                 "target": "Account",
-                "predicate": {"eq": {"attr": "Account.id", "value": 2}},
+                "predicate": {"eq": {"path": "Account.id", "value": 2}},
             },
         },
         {
             "uow": "c",
             "objectQuery": {
                 "target": "Account",
-                "predicate": {"eq": {"attr": "Account.id", "value": 3}},
+                "predicate": {"eq": {"path": "Account.id", "value": 3}},
             },
         },
         {
@@ -1024,14 +1024,14 @@ def test_group_tx_instant_falls_back_to_inert_when_the_group_has_no_write() -> N
             "uow": "a",
             "objectQuery": {
                 "target": "Account",
-                "predicate": {"eq": {"attr": "Account.id", "value": 1}},
+                "predicate": {"eq": {"path": "Account.id", "value": 1}},
             },
         },
         {
             "uow": "a",
             "objectQuery": {
                 "target": "Account",
-                "predicate": {"eq": {"attr": "Account.id", "value": 1}},
+                "predicate": {"eq": {"path": "Account.id", "value": 1}},
             },
         },
     ]
@@ -2132,7 +2132,7 @@ def test_predicate_shaped_scenario_write_lowers_readless_not_a_keyerror() -> Non
                             "target": {
                                 "entity": "Wallet",
                                 "predicate": {
-                                    "lessThan": {"attr": "Wallet.balance", "value": "200.00"}
+                                    "lessThan": {"path": "Wallet.balance", "value": "200.00"}
                                 },
                             },
                         }
@@ -2163,7 +2163,7 @@ def test_predicate_shaped_write_sequence_entry_refuses_loudly() -> None:
                         "target": {
                             "entity": "Wallet",
                             "predicate": {
-                                "lessThan": {"attr": "Wallet.balance", "value": "200.00"}
+                                "lessThan": {"path": "Wallet.balance", "value": "200.00"}
                             },
                         },
                     }
@@ -2192,7 +2192,7 @@ def test_run_scenario_case_executes_a_readless_predicate_write() -> None:
                             "target": {
                                 "entity": "Wallet",
                                 "predicate": {
-                                    "lessThan": {"attr": "Wallet.balance", "value": "200.00"}
+                                    "lessThan": {"path": "Wallet.balance", "value": "200.00"}
                                 },
                             },
                         }
@@ -2226,7 +2226,7 @@ def test_run_scenario_case_executes_a_materializing_predicate_write_pair() -> No
                         "objectQuery": {
                             "target": "Account",
                             "predicate": {
-                                "lessThan": {"attr": "Account.balance", "value": "200.00"}
+                                "lessThan": {"path": "Account.balance", "value": "200.00"}
                             },
                         },
                     },
@@ -2236,7 +2236,7 @@ def test_run_scenario_case_executes_a_materializing_predicate_write_pair() -> No
                             "target": {
                                 "entity": "Account",
                                 "predicate": {
-                                    "lessThan": {"attr": "Account.balance", "value": "200.00"}
+                                    "lessThan": {"path": "Account.balance", "value": "200.00"}
                                 },
                             },
                         }
@@ -2277,7 +2277,7 @@ def test_run_scenario_case_readless_predicate_write_rollback_aborts_but_counts_t
                             "target": {
                                 "entity": "Wallet",
                                 "predicate": {
-                                    "lessThan": {"attr": "Wallet.balance", "value": "200.00"}
+                                    "lessThan": {"path": "Wallet.balance", "value": "200.00"}
                                 },
                             },
                         },
@@ -2310,7 +2310,7 @@ def test_materializing_predicate_write_rollback_aborts_but_counts_the_round_trip
                         "objectQuery": {
                             "target": "Account",
                             "predicate": {
-                                "lessThan": {"attr": "Account.balance", "value": "200.00"}
+                                "lessThan": {"path": "Account.balance", "value": "200.00"}
                             },
                         },
                     },
@@ -2320,7 +2320,7 @@ def test_materializing_predicate_write_rollback_aborts_but_counts_the_round_trip
                             "target": {
                                 "entity": "Account",
                                 "predicate": {
-                                    "lessThan": {"attr": "Account.balance", "value": "200.00"}
+                                    "lessThan": {"path": "Account.balance", "value": "200.00"}
                                 },
                             },
                         },
@@ -2345,7 +2345,7 @@ def test_materializing_predicate_write_rollback_aborts_but_counts_the_round_trip
 
 
 def _ledger_predicate() -> dict[str, object]:
-    return {"eq": {"attr": "parallax.compatibility.Ledger.id", "value": 2}}
+    return {"eq": {"path": "parallax.compatibility.Ledger.id", "value": 2}}
 
 
 def _ledger_materializing_pair(at: str, *, rollback: bool = False) -> list[dict[str, object]]:
@@ -2494,7 +2494,7 @@ def test_run_materializing_pair_rejects_a_mismatched_preceding_find_target() -> 
         {
             "objectQuery": {
                 "target": "Wallet",
-                "predicate": {"eq": {"attr": "Wallet.id", "value": 1}},
+                "predicate": {"eq": {"path": "Wallet.id", "value": 1}},
             }
         },
         {
@@ -2502,7 +2502,7 @@ def test_run_materializing_pair_rejects_a_mismatched_preceding_find_target() -> 
                 "mutation": "delete",
                 "target": {
                     "entity": "Account",
-                    "predicate": {"lessThan": {"attr": "Account.balance", "value": "200.00"}},
+                    "predicate": {"lessThan": {"path": "Account.balance", "value": "200.00"}},
                 },
             }
         },
@@ -2538,7 +2538,7 @@ def test_run_scenario_case_rejects_a_materializing_pair_whose_find_predicate_dif
                     {
                         "objectQuery": {
                             "target": "Account",
-                            "predicate": {"eq": {"attr": "Account.balance", "value": "100.00"}},
+                            "predicate": {"eq": {"path": "Account.balance", "value": "100.00"}},
                         },
                     },
                     {
@@ -2547,7 +2547,7 @@ def test_run_scenario_case_rejects_a_materializing_pair_whose_find_predicate_dif
                             "target": {
                                 "entity": "Account",
                                 "predicate": {
-                                    "lessThan": {"attr": "Account.balance", "value": "200.00"}
+                                    "lessThan": {"path": "Account.balance", "value": "200.00"}
                                 },
                             },
                         }
@@ -2856,7 +2856,7 @@ def test_predicate_writes_require_no_keyed_unit_source_read_or_framework_classif
     model = models.load_models()["account"]
     instruction = instructions.PredicateWrite(
         "amend",
-        instructions.PredicateSelection("parallax.compatibility.Account", predicate.All()),
+        instructions.PredicateSelection("parallax.compatibility.Account", predicate.TrueNode()),
         (instructions.WriteAssignment("parallax.compatibility.Account.owner", "Ada"),),
     )
     prepared = instructions.prepare_typed_write(instruction, model)
@@ -3298,7 +3298,7 @@ def test_a_grouped_write_addressing_a_key_no_read_published_is_refused() -> None
                 "uow": "g",
                 "objectQuery": {
                     "target": "parallax.compatibility.Ledger",
-                    "predicate": {"eq": {"attr": "parallax.compatibility.Ledger.id", "value": 2}},
+                    "predicate": {"eq": {"path": "parallax.compatibility.Ledger.id", "value": 2}},
                     "temporal": {"transaction-time": {"asOf": "latest"}},
                 },
                 "roundTrips": 1,
@@ -3324,7 +3324,7 @@ def test_a_named_find_publishing_no_row_of_a_writes_key_settles_nothing() -> Non
                         "uow": "g",
                         "objectQuery": {
                             "target": "Account",
-                            "predicate": {"eq": {"attr": "Account.id", "value": 1}},
+                            "predicate": {"eq": {"path": "Account.id", "value": 1}},
                         },
                         "roundTrips": 1,
                     },
@@ -3359,7 +3359,7 @@ def test_a_transaction_time_past_reading_is_skipped_as_a_write_source() -> None:
                 "uow": "g",
                 "objectQuery": {
                     "target": "parallax.compatibility.Ledger",
-                    "predicate": {"eq": {"attr": "parallax.compatibility.Ledger.id", "value": 2}},
+                    "predicate": {"eq": {"path": "parallax.compatibility.Ledger.id", "value": 2}},
                     "temporal": {"transaction-time": {"asOf": "latest"}},
                 },
                 "roundTrips": 1,
@@ -3368,7 +3368,7 @@ def test_a_transaction_time_past_reading_is_skipped_as_a_write_source() -> None:
                 "uow": "g",
                 "objectQuery": {
                     "target": "parallax.compatibility.Ledger",
-                    "predicate": {"eq": {"attr": "parallax.compatibility.Ledger.id", "value": 2}},
+                    "predicate": {"eq": {"path": "parallax.compatibility.Ledger.id", "value": 2}},
                     "temporal": {
                         "transaction-time": {"asOf": "2024-03-01T00:00:00.000000Z"},
                     },
@@ -3642,7 +3642,7 @@ def test_a_readless_predicate_write_opens_at_the_roots_level() -> None:
                             "target": {
                                 "entity": "Wallet",
                                 "predicate": {
-                                    "lessThan": {"attr": "Wallet.balance", "value": "200.00"}
+                                    "lessThan": {"path": "Wallet.balance", "value": "200.00"}
                                 },
                             },
                         }
@@ -3667,7 +3667,7 @@ def test_a_materializing_pair_opens_its_one_transaction_at_the_roots_level() -> 
                         "objectQuery": {
                             "target": "Account",
                             "predicate": {
-                                "lessThan": {"attr": "Account.balance", "value": "200.00"}
+                                "lessThan": {"path": "Account.balance", "value": "200.00"}
                             },
                         },
                     },
@@ -3677,7 +3677,7 @@ def test_a_materializing_pair_opens_its_one_transaction_at_the_roots_level() -> 
                             "target": {
                                 "entity": "Account",
                                 "predicate": {
-                                    "lessThan": {"attr": "Account.balance", "value": "200.00"}
+                                    "lessThan": {"path": "Account.balance", "value": "200.00"}
                                 },
                             },
                         }

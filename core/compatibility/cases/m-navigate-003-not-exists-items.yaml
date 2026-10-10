@@ -1,4 +1,4 @@
-# notExists(Order.items): orders with no line items — the negated semi-join. The
+# none(Order.items): orders with no line items — the negated correlated sub-select. The
 # golden SQL normalizes the negation as a leading `not exists (...)`. Orders 3,
 # 4, 5 have no items.
 model: models/orders.yaml
@@ -8,8 +8,8 @@ when:
   objectQuery:
     target: parallax.compatibility.Order
     predicate:
-      notExists:
-        rel: parallax.compatibility.Order.items
+      none:
+        path: parallax.compatibility.Order.items
 then:
   statements:
     - sql:

@@ -23,7 +23,9 @@ from parallax.core.object_query._resolved import (
 )
 from parallax.core.predicate._resolved import (
     DeferredKeySet,
+    RelatedObject,
     ResolvedAnd,
+    ResolvedCollection,
     ResolvedComparison,
     ResolvedConstant,
     ResolvedGroup,
@@ -33,10 +35,12 @@ from parallax.core.predicate._resolved import (
     ResolvedNullCheck,
     ResolvedOr,
     ResolvedPredicate,
+    ResolvedPresence,
     ResolvedQuantifier,
     ResolvedRange,
-    ResolvedSemiJoin,
     ResolvedStringMatch,
+    ScalarCollection,
+    SubjectPosition,
 )
 from parallax.core.read_delivery._fetch import correlation_table, entity_read_lock, slot_table
 from parallax.core.read_delivery._page import PageBuilder, ViewSchema
@@ -308,45 +312,91 @@ def _predicate_key(predicate: ResolvedPredicate) -> object:  # noqa: C901 - exha
     match predicate:
         case ResolvedConstant(truth=truth):
             return ResolvedConstant, truth
-        case ResolvedComparison(op=op, member=member, value=value, framework=framework):
-            return ResolvedComparison, op, member.identity, _operand_key(value), framework
-        case ResolvedRange(member=member, lower=lower, upper=upper):
-            return ResolvedRange, member.identity, _operand_key(lower), _operand_key(upper)
-        case ResolvedMembership(op=op, member=member, values=values):
+        case ResolvedComparison(
+            op=op, member=member, value=value, framework=framework, position=position
+        ):
+            return (
+                ResolvedComparison,
+                op,
+                member.identity,
+                _operand_key(value),
+                framework,
+                _position_key(position),
+            )
+        case ResolvedRange(member=member, lower=lower, upper=upper, position=position):
+            return (
+                ResolvedRange,
+                member.identity,
+                _operand_key(lower),
+                _operand_key(upper),
+                _position_key(position),
+            )
+        case ResolvedMembership(op=op, member=member, values=values, position=position):
             operands = (
                 values
                 if isinstance(values, DeferredKeySet)
                 else tuple(_operand_key(value) for value in values)
             )
-            return ResolvedMembership, op, member.identity, operands
+            return ResolvedMembership, op, member.identity, operands, _position_key(position)
         case ResolvedStringMatch(
-            op=op, member=member, pattern=pattern, case_insensitive=case_insensitive
+            op=op,
+            member=member,
+            pattern=pattern,
+            case_insensitive=case_insensitive,
+            position=position,
         ):
-            return ResolvedStringMatch, op, member.identity, _operand_key(pattern), case_insensitive
-        case ResolvedNullCheck(op=op, member=member):
-            return ResolvedNullCheck, op, member.identity
+            return (
+                ResolvedStringMatch,
+                op,
+                member.identity,
+                _operand_key(pattern),
+                case_insensitive,
+                _position_key(position),
+            )
+        case ResolvedNullCheck(op=op, member=member, position=position):
+            return ResolvedNullCheck, op, member.identity, _position_key(position)
         case ResolvedAnd(operands=operands) | ResolvedOr(operands=operands):
             return type(predicate), tuple(_predicate_key(operand) for operand in operands)
         case ResolvedNot(operand=operand) | ResolvedGroup(operand=operand):
             return type(predicate), _predicate_key(operand)
-        case ResolvedNarrow(position=position, operand=operand):
-            return ResolvedNarrow, position, _predicate_key(operand)
-        case ResolvedQuantifier(kind=kind, occurrence=occurrence, where=where):
+        case ResolvedNarrow(selection=selection, operand=operand, target=target):
+            return (
+                ResolvedNarrow,
+                selection,
+                None if operand is None else _predicate_key(operand),
+                _position_key(target),
+            )
+        case ResolvedQuantifier(kind=kind, collection=collection, where=where, position=position):
             return (
                 ResolvedQuantifier,
                 kind,
-                occurrence.identity,
+                _collection_key(collection),
                 None if where is None else _predicate_key(where),
+                _position_key(position),
             )
-        case ResolvedSemiJoin(relationship=relationship, negated=negated, where=where):
+        case ResolvedPresence(negated=negated, target=target, position=position):
             return (
-                ResolvedSemiJoin,
-                relationship,
+                ResolvedPresence,
                 negated,
-                None if where is None else _predicate_key(where),
+                target.identity,
+                _position_key(position),
             )
         case _:  # pragma: no cover - exhaustiveness guard
             assert_never(predicate)
+
+
+def _position_key(position: SubjectPosition) -> object:
+    """``position`` as the relationship hops that reach it from the current
+    object; the current object and a bound scalar element are their own keys."""
+    if isinstance(position, RelatedObject):
+        return position.relationship.identity, _position_key(position.source)
+    return type(position)
+
+
+def _collection_key(collection: ResolvedCollection) -> object:
+    if isinstance(collection, ScalarCollection):
+        return ScalarCollection, collection.member.identity
+    return type(collection), collection.identity
 
 
 def _temporal_key(selection: ResolvedTemporalSelection) -> object:

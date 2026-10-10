@@ -12,7 +12,7 @@ when:
   objectQuery:
     target: parallax.compatibility.Traveler
     predicate:
-      all: {}
+      "true": {}
     includes:
       - segments:
           - rel: parallax.compatibility.Traveler.trips

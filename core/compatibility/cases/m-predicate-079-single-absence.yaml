@@ -1,0 +1,24 @@
+# `notExists` tests a single related object's absence.
+model: models/predicate-collections.yaml
+tags: [m-predicate, relationship, to-one, exists, m-dialect, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  objectQuery:
+    target: parallax.compatibility.Basket
+    predicate:
+      notExists: {path: parallax.compatibility.Basket.owner}
+then:
+  statements:
+  - sql: {postgres: 'select t0.id, t0.label, t0.owner_id, not t0.tags is null, t0.tags, not t0.scores is null, t0.scores, not t0.prices is null, t0.prices, not t0.flags is null, t0.flags, not t0.parcels is null, t0.parcels, not t0.meta is null, t0.meta from basket t0 where not exists (select 1 from basket_owner t1 where t1.id = t0.owner_id)', mariadb: 'select t0.id, t0.label, t0.owner_id, not t0.tags is null, t0.tags, not t0.scores is null, t0.scores, not t0.prices is null, t0.prices, not t0.flags is null, t0.flags, not t0.parcels is null, t0.parcels, not t0.meta is null, t0.meta from basket t0 where not exists (select 1 from basket_owner t1 where t1.id = t0.owner_id)'}
+  graph:
+    Basket:
+    - id: 2
+      label: two
+      ownerId: null
+      tags: []
+      scores: []
+      prices: []
+      flags: []
+      parcels: []
+      meta: null
+  roundTrips: 1

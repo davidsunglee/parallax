@@ -7,7 +7,7 @@ when:
     target: parallax.compatibility.CardPayment
     predicate:
       greaterThan:
-        attr: parallax.compatibility.CardPayment.amount
+        path: parallax.compatibility.CardPayment.amount
         value: "60.00"
 then:
   statements:

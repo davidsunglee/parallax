@@ -10408,6 +10408,379 @@
       ]
     }
   },
+  "models/predicate-collections.yaml": {
+    "basket": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Basket"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Basket.id",
+          "declaringOwner": "parallax.compatibility.Basket",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Basket"
+          ],
+          "column": "label",
+          "contributor": "attribute:parallax.compatibility.Basket.label",
+          "declaringOwner": "parallax.compatibility.Basket",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Basket"
+          ],
+          "column": "owner_id",
+          "contributor": "attribute:parallax.compatibility.Basket.ownerId",
+          "declaringOwner": "parallax.compatibility.Basket",
+          "effectiveNullable": true,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Basket"
+          ],
+          "column": "tags",
+          "contributor": "attribute:parallax.compatibility.Basket.tags",
+          "declaringOwner": "parallax.compatibility.Basket",
+          "effectiveNullable": false,
+          "tier": "document"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Basket"
+          ],
+          "column": "scores",
+          "contributor": "attribute:parallax.compatibility.Basket.scores",
+          "declaringOwner": "parallax.compatibility.Basket",
+          "effectiveNullable": false,
+          "tier": "document"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Basket"
+          ],
+          "column": "prices",
+          "contributor": "attribute:parallax.compatibility.Basket.prices",
+          "declaringOwner": "parallax.compatibility.Basket",
+          "effectiveNullable": false,
+          "tier": "document"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Basket"
+          ],
+          "column": "flags",
+          "contributor": "attribute:parallax.compatibility.Basket.flags",
+          "declaringOwner": "parallax.compatibility.Basket",
+          "effectiveNullable": false,
+          "tier": "document"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Basket"
+          ],
+          "column": "parcels",
+          "contributor": "valueObject:parallax.compatibility.Basket.parcels",
+          "declaringOwner": "parallax.compatibility.Basket",
+          "effectiveNullable": false,
+          "tier": "document"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Basket"
+          ],
+          "column": "meta",
+          "contributor": "valueObject:parallax.compatibility.Basket.meta",
+          "declaringOwner": "parallax.compatibility.Basket",
+          "effectiveNullable": true,
+          "tier": "document"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    },
+    "basket_owner": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Owner"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Owner.id",
+          "declaringOwner": "parallax.compatibility.Owner",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Owner"
+          ],
+          "column": "name",
+          "contributor": "attribute:parallax.compatibility.Owner.name",
+          "declaringOwner": "parallax.compatibility.Owner",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Owner"
+          ],
+          "column": "active",
+          "contributor": "attribute:parallax.compatibility.Owner.active",
+          "declaringOwner": "parallax.compatibility.Owner",
+          "effectiveNullable": true,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Owner"
+          ],
+          "column": "manager_id",
+          "contributor": "attribute:parallax.compatibility.Owner.managerId",
+          "declaringOwner": "parallax.compatibility.Owner",
+          "effectiveNullable": true,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Owner"
+          ],
+          "column": "tags",
+          "contributor": "attribute:parallax.compatibility.Owner.tags",
+          "declaringOwner": "parallax.compatibility.Owner",
+          "effectiveNullable": false,
+          "tier": "document"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    }
+  },
+  "models/predicate-traversal.yaml": {
+    "traversal_bike": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Bike"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Vehicle.id",
+          "declaringOwner": "parallax.compatibility.Vehicle",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Bike"
+          ],
+          "column": "maker",
+          "contributor": "attribute:parallax.compatibility.Vehicle.maker",
+          "declaringOwner": "parallax.compatibility.Vehicle",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Bike"
+          ],
+          "column": "gears",
+          "contributor": "attribute:parallax.compatibility.Bike.gears",
+          "declaringOwner": "parallax.compatibility.Bike",
+          "effectiveNullable": false,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    },
+    "traversal_car": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Car"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Vehicle.id",
+          "declaringOwner": "parallax.compatibility.Vehicle",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Car"
+          ],
+          "column": "maker",
+          "contributor": "attribute:parallax.compatibility.Vehicle.maker",
+          "declaringOwner": "parallax.compatibility.Vehicle",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Car"
+          ],
+          "column": "seats",
+          "contributor": "attribute:parallax.compatibility.Car.seats",
+          "declaringOwner": "parallax.compatibility.Car",
+          "effectiveNullable": true,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    },
+    "traversal_collar": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Collar"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Collar.id",
+          "declaringOwner": "parallax.compatibility.Collar",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Collar"
+          ],
+          "column": "pet_id",
+          "contributor": "attribute:parallax.compatibility.Collar.petId",
+          "declaringOwner": "parallax.compatibility.Collar",
+          "effectiveNullable": true,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    },
+    "traversal_leash": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Leash"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Leash.id",
+          "declaringOwner": "parallax.compatibility.Leash",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Leash"
+          ],
+          "column": "collar_id",
+          "contributor": "attribute:parallax.compatibility.Leash.collarId",
+          "declaringOwner": "parallax.compatibility.Leash",
+          "effectiveNullable": true,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    },
+    "traversal_parking": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Parking"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Parking.id",
+          "declaringOwner": "parallax.compatibility.Parking",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Parking"
+          ],
+          "column": "vehicle_id",
+          "contributor": "attribute:parallax.compatibility.Parking.vehicleId",
+          "declaringOwner": "parallax.compatibility.Parking",
+          "effectiveNullable": true,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    },
+    "traversal_pet": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Cat",
+            "parallax.compatibility.Dog"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Pet.id",
+          "declaringOwner": "parallax.compatibility.Pet",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Cat",
+            "parallax.compatibility.Dog"
+          ],
+          "column": "kind",
+          "contributor": "discriminator:parallax.compatibility.Pet",
+          "declaringOwner": "parallax.compatibility.Pet",
+          "effectiveNullable": false,
+          "tier": "discriminator"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Cat",
+            "parallax.compatibility.Dog"
+          ],
+          "column": "name",
+          "contributor": "attribute:parallax.compatibility.Pet.name",
+          "declaringOwner": "parallax.compatibility.Pet",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Cat"
+          ],
+          "column": "indoor",
+          "contributor": "attribute:parallax.compatibility.Cat.indoor",
+          "declaringOwner": "parallax.compatibility.Cat",
+          "effectiveNullable": true,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Dog"
+          ],
+          "column": "bark_volume",
+          "contributor": "attribute:parallax.compatibility.Dog.barkVolume",
+          "declaringOwner": "parallax.compatibility.Dog",
+          "effectiveNullable": true,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    }
+  },
   "models/quote.yaml": {
     "spot_quote": {
       "columns": [

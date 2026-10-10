@@ -67,6 +67,9 @@ choices at each point; both are normative for their dialect (`m-sql`). The catal
 | **nested extraction form** (`m-value-object` / `m-sql`) | `jsonb_extract_path_text(col, ?, …)` — one `?` bind per path segment | `json_value(col, ?)` — one `?` bind for the whole `'$.a.b'` path (see below) |
 | **typed cast form** (`m-value-object` / `m-sql`) | `cast(<extraction> as double precision)` / `… as bigint` (the `<extraction>::type` surface normalizes to the same) | `cast(<extraction> as double)` / `… as signed` (see below) — the numeric family and `boolean`; the six text-compared types compare as the canonical document text on both dialects |
 | **array traversal form** (`m-value-object` / `m-sql`) | correlated `exists (select 1 from jsonb_array_elements(<array-guard>) t1 …)` — a set-returning unnest, the array reached through a `case`/`jsonb_typeof` guard so a non-array yields zero elements | the JSON **containment family** — `json_contains(col, ?, ?)` / `json_length(col, ?)` under a `json_type(json_extract(col, ?)) = 'ARRAY'` guard (see below) |
+| **scalar element projection** (`m-predicate` scalar quantifiers) | `case when jsonb_typeof(t1.value) = ? then <typed projection of t1.value #>> ?> end` — the element's declared JSON kind guards the projection (see below) | none — a filtered scalar quantifier is outside the MariaDB lane and is refused (see below) |
+| **single-object presence** (`m-predicate` `exists` over a value object) | `coalesce(jsonb_typeof(jsonb_extract_path(col, ?, …)) = ?, false)` | none — outside the MariaDB lane |
+| **Boolean result envelope** (`m-sql` target-local narrowing with an operand) | `(coalesce((select array [ <boolean> ] …), array [ false ])) [ 1 ]` — keeps a selected target's unknown apart from an absent target (see below) | none — outside the MariaDB lane |
 | **document mutation-expression form** (`m-storage-layout` / `m-sql`) | **nested** `jsonb_set(<inner>, ?, cast(? as jsonb))` — one call per assigned path, innermost first | **native N-pair** `json_set(col, ?, json_extract(?, '$'), …)` — one call, one pair per assigned path (see below) |
 | **structural document equality** (`m-document-codec` / `m-case-format`) | `=` on `jsonb` — the type normalizes on storage, so `=` is already structural | `json_equals(a, b)` — `json` is a `longtext` alias, so `=` is textual and key-order sensitive (see below) |
 | `SELECT` shape (column list, alias scheme) | `select t0.col, … from tbl t0 where …` | identical |
@@ -115,7 +118,7 @@ name the concrete storage type.
 ### Nested extraction form (`m-value-object`)
 
 Reading or filtering an inner attribute of a `valueObject` (`m-value-object`,
-`m-predicate`'s `nested*` predicates) is a text/value extraction from the
+a dotted `m-predicate` path through the value object) is a text/value extraction from the
 structured-document column, and its **spelling and bind shape are a dialect
 decision** owned here — the algebra fixes only the path, not the SQL:
 
@@ -254,32 +257,38 @@ names the concrete cast type.
 
 ### Array traversal form (`m-value-object`)
 
-A `many` value object is a JSON **array** of documents in the same column
-(`m-value-object`). Testing it — `nestedExists` / `nestedNotExists`, or a flat
-`nested*` predicate whose path crosses the `many` member (any-element),
-`m-predicate` — requires **traversing the array**, and the spelling is a dialect
-decision owned here. The two concrete dialects pick genuinely different function
-families; both produce the identical observable row set (the independent
-`referenceSql` oracle proves it per case, `m-case-format`):
+A `many` value object and a scalar collection are JSON **arrays** — of documents
+or of scalars — in their structured column or document member. A quantifier over
+one (`m-predicate` `any` / `all` / `none`) requires **traversing the array**, and
+the spelling is a dialect decision owned here. The two concrete dialects pick
+genuinely different function families; both produce the identical observable row
+set wherever both are goldened (the independent `referenceSql` oracle proves it
+per case, `m-case-format`):
 
-Both dialects **guard against a non-array** `many` value. A member is a real,
+Both dialects **guard against a non-array** carrier. A member is a real,
 schema-flexible JSON value, so it may be stored not just as a SQL `NULL` column, a
 missing key, or an empty array, but as an explicit JSON `null`, a JSON **scalar**,
-or a JSON **object**. Absence-collapse (`m-predicate`) folds every non-array to
-"not present" — **zero elements** — so the traversal MUST read a non-array that way,
-never as an error or a spurious element. On Postgres the array is reached through a
-**`case`/`jsonb_typeof` array guard** (`<array-guard>` below); on MariaDB a
-**`json_type(json_extract(col, ?)) = 'ARRAY'` guard** (`<g>` below) precedes the
-containment / length test.
+or a JSON **object**. A quantifier reads every non-array as **zero elements**
+(`m-predicate`), never as an error or a spurious element. On Postgres the array is
+reached through a **`case`/`jsonb_typeof` array guard** (`<array-guard>` below); on
+MariaDB a **`json_type(json_extract(col, ?)) = 'ARRAY'` guard** (`<g>` below)
+precedes the containment / length test. A collection that is its column's whole
+value (a top-level scalar collection under Columns) is guarded over the column
+itself: Postgres `case when jsonb_typeof(col) = ? then col else cast(? as jsonb)
+end`, MariaDB with the root path `'$'`.
 
 | Aspect | Postgres | MariaDB |
 |---|---|---|
 | array guard | `<array-guard>` = `case when jsonb_typeof(jsonb_extract_path(col, ?)) = ? then jsonb_extract_path(col, ?) else cast(? as jsonb) end` — yields the array only when it **is** a JSON array, else an empty `[]`; the path binds **twice**, plus the type name `array` and `[]` | `<g>` = `json_type(json_extract(col, ?)) = ?` — true only when the member **is** a JSON array (bind: the path, then the type name `ARRAY`) |
-| element unnest | `jsonb_array_elements(<array-guard>)` inside a correlated `exists (select 1 from … t1 where <element-predicate>)` — the element alias binds one row per element; `jsonb_array_elements` is **strict** and errors on a non-array, so the guard is required — a NULL column / missing key / JSON `null` / JSON scalar / JSON object all yield **zero** elements | none — MariaDB has no set-returning array unnest usable as golden SQL (see below); the containment family under `<g>` expresses the same predicates directly |
-| any-element predicate | `exists (select 1 from jsonb_array_elements(<array-guard>) t1 where <ext>(t1.value, ?) = ?)` | `<g> and json_contains(col, ?, ?)` — bind a candidate JSON **document** (the codec's `{"type": "home"}`, adapted to this dialect's structured-document type at bind time exactly as a written document is) and the array path (`'$.phones'`); containment against an array is **any-element**. The `<g>` guard is required because `json_contains` matches a JSON **object** that contains the candidate |
-| same-element (`where`) | one `exists` with every element predicate on the **same** `t1` alias | one `<g> and json_contains(col, ?, ?)` whose candidate object carries **every** required field, one key per constrained path — a single element must contain all of them |
-| non-empty (`exists`, no `where`) | `exists (select 1 from jsonb_array_elements(<array-guard>) t1)` | `<g> and json_length(col, ?) > ?` (`> 0`) — the `<g>` guard is required because `json_length` of a JSON scalar (or JSON `null`) is `1` |
-| empty-or-absent (`notExists`) | `not exists (…)` — `not exists` over zero elements is **true**, so an empty array, a NULL column, and a non-array value all match | wrap the guarded containment / length in `coalesce(<g> and …, ?)` so a NULL column, missing key, non-array value, and empty array all read as the "no match" value the leading `not` then admits |
+| element unnest | `jsonb_array_elements(<array-guard>)` inside a correlated `exists (select 1 from … t1 where <element-predicate>)` — the element alias binds one row per element; `jsonb_array_elements` is **strict** and errors on a non-array, so the guard is required — a NULL column / missing key / JSON `null` / JSON scalar / JSON object all yield **zero** elements | none — MariaDB has no set-returning array unnest usable as golden SQL (see below); the containment family under `<g>` expresses the forms it covers directly |
+| value-object `any` with an equality `where` | `exists (select 1 from jsonb_array_elements(<array-guard>) t1 where <ext>(t1.value, ?) = ?)` | `<g> and json_contains(col, ?, ?)` — bind a candidate JSON **document** (the codec's `{"type": "home"}`, adapted to this dialect's structured-document type at bind time exactly as a written document is) and the array path (`'$.phones'`); containment against an array is **any-element**. The `<g>` guard is required because `json_contains` matches a JSON **object** that contains the candidate |
+| one `where` conjunction | one `exists` with every element predicate on the **same** `t1` alias | one `<g> and json_contains(col, ?, ?)` whose candidate object carries **every** required field, one key per constrained path — a single element must contain all of them |
+| bare `any` | `exists (select 1 from jsonb_array_elements(<array-guard>) t1)` | `<g> and json_length(col, ?) > ?` (`> 0`) — the `<g>` guard is required because `json_length` of a JSON scalar (or JSON `null`) is `1` |
+| bare `none`, and `none` with an equality `where` | `not exists (…)` — `not exists` over zero elements is **true**, so an empty array, a NULL column, and a non-array value all match | wrap the guarded containment / length in `coalesce(<g> and …, ?)` so a NULL column, missing key, non-array value, and empty array all read as the "no match" value the leading `not` then admits |
+
+`all` lowers on Postgres to the absence of a counterexample — `not exists (select 1
+from jsonb_array_elements(<array-guard>) t1 where not (<where>) is true)` — and has
+no MariaDB form (*The MariaDB lane*).
 
 **The candidate document is not this seam's to spell.** `json_contains` binds a
 candidate document, and its content — each constrained leaf's **document
@@ -304,72 +313,96 @@ fixed-point property it enforces **is** normative — `m-case-format` layer 3) d
 not round-trip the `COLUMNS ( … PATH '…')` clause to a stable, re-parseable,
 executable form. So golden SQL — which MUST be a normalizer fixed point — cannot use
 `JSON_TABLE`. The **containment family** (`json_contains` / `json_length`) expresses
-the same any-element and same-element predicates as scalar functions that keep their
-paths and candidates as `?` binds and normalize cleanly; it is the MariaDB golden
-form. `JSON_TABLE` still appears — as the **independent `referenceSql` oracle**
+the equality and occupancy forms as scalar functions that keep their paths and
+candidates as `?` binds and normalize cleanly; it is the MariaDB golden form.
+`JSON_TABLE` still appears — as the **independent `referenceSql` oracle**
 (parse-only, executed against real MariaDB), a deliberately different element-unnest
-formulation that the harness asserts returns the same rows. A future dialect with a
-set-returning unnest (Snowflake `LATERAL FLATTEN`) slots behind this same decision
-point.
+formulation that the harness asserts returns the same rows.
 
 **Scope of the containment golden — equality only.** `json_contains` is a
-**containment** predicate: it expresses element predicates that are equality against
-a fixed candidate. It covers exactly two shapes: an **any-element `nestedEq`**
-through a `many` segment, and a **same-element `where` whose compound is a
-conjunction of equalities over distinct paths** (`nestedEq` and/or nested `and`)
-carried in one candidate object. It **cannot** express any other element predicate,
-even though
-`m-predicate` admits the whole scoped `nested*` family inside `where` and the flat
-`nested*` family through a `many` segment. Concretely, `json_contains` cannot lower:
+**containment** predicate: it expresses value-object element predicates that are
+equality against a fixed candidate. It covers exactly `any` and `none` over a `many`
+value object whose `where` is an equality or a conjunction of equalities over
+distinct paths, carried in one candidate object. It **cannot** express:
 
-- a **flat any-element** non-equality predicate through a `many` segment —
-  `nestedNotEq`, or a range `nestedGt` / `nestedGte` / `nestedLt` / `nestedLte` /
-  `nestedBetween`, or a membership `nestedIn` / `nestedNotIn`, or a string predicate
-  `nestedLike` / `nestedNotLike` / `nestedStartsWith` / `nestedEndsWith` /
-  `nestedContains`, or a presence test `nestedIsNull` / `nestedIsNotNull`;
-- an element-scoped **`where` containing any non-`eq` leaf** — that is, every one of
-  the fifteen element nodes `elementNestedEq` is not: a range
-  (`elementNestedGt` / `elementNestedGte` / `elementNestedLt` / `elementNestedLte` /
-  `elementNestedBetween`), an `elementNestedNotEq`, a membership
-  (`elementNestedIn` / `elementNestedNotIn`), a string predicate
-  (`elementNestedLike` / `elementNestedNotLike` / `elementNestedStartsWith` /
-  `elementNestedEndsWith` / `elementNestedContains`), or an element null check
-  (`elementNestedIsNull` / `elementNestedIsNotNull`);
-- an element-scoped **`where` whose combinator is not a plain conjunction** — an
-  `or`, a `not`, or a `group` around a disjunction (only a flat `and` of equalities
-  over distinct paths maps to a single candidate object);
-- an element-scoped **`where` whose equalities constrain one element-relative path
-  with two different values** — `type = 'home' and type = 'work'` on the same
-  element. A candidate object carries **one value per key**, so the two constraints
-  cannot both ride it, and lowering either one alone produces a `json_contains` that
-  matches elements the predicate excludes: the conjunction is unsatisfiable and must
-  return **no** row, while `{"type":"work"}` returns every row with a work phone.
-  Two equalities on one path that carry the **same** value are one constraint, not
-  two, and the candidate expresses them exactly (`m-sql`).
+- a `where` containing any other leaf — a range, `notEq`, a membership, a string
+  predicate, or a null check;
+- a `where` whose combinator is not a plain conjunction — an `or`, a `not`, or a
+  `group` around a disjunction;
+- a `where` whose equalities constrain one element-relative path with two
+  different values — `type = 'home' and type = 'work'` on the same element. A
+  candidate object carries **one value per key**, so the two constraints cannot
+  both ride it, and lowering either one alone produces a `json_contains` that
+  matches elements the predicate excludes. Two equalities on one path that carry
+  the **same** value are one constraint, not two, and the candidate expresses them
+  exactly (`m-sql`);
+- `all`, whose counterexample search needs one row per element.
 
 Each of those requires a **set-returning element unnest** that binds one row per
-element (`JSON_TABLE`) — the last one included, since two constraints on one path
-are two ordinary predicates on one unnested row — which the current reference
-harness cannot normalize as
-golden SQL (above). **These to-many element predicates on MariaDB are
-therefore a documented deferred limitation**: the algebra and the Postgres lowering
-(`jsonb_array_elements`, fully general — its `<array-guard>` unnest expresses every
-element predicate and combinator) support them; the MariaDB **golden** does not until
-a set-returning unnest can be normalized (or a set-returning dialect such as
-Snowflake `LATERAL FLATTEN` supplies one behind this seam). The compatibility
-corpus's **dual-dialect** to-many coverage is equality-based, consistent with this
-scope; a case exercising one of the forms above carries a Postgres golden only.
+element (`JSON_TABLE`), which golden SQL cannot normalize (above). The algebra and
+the Postgres lowering support them; a case exercising one carries a Postgres golden
+only.
 
-**MariaDB-lowering flag.** Because the schema (`predicate.schema.json`)
-*admits* these forms — the scoped `nested*` family and the flat `many`-crossing
-family are schema-valid at every operator — a MariaDB implementation MUST NOT emit
-wrong SQL for one it cannot lower. It **MUST reject it with a clear capability
-diagnostic** (an unsupported-predicate rejection naming the containment-golden
-scope), exactly as it rejects any other unsupported predicate, rather than silently
-producing a `json_contains` that does not mean what the predicate says. This is the
-MariaDB-lowering boundary: lower the equality shapes above to the
-containment golden, reject every non-equality to-many element predicate until a
-set-returning unnest is available.
+### Scalar element projection (`m-predicate` scalar quantifiers)
+
+Inside a quantifier over a scalar collection, each element is an unnested JSON
+value (`t1.value`). Before it is compared, its JSON **kind** is checked against the
+kind its declared Neutral Type encodes as — a typed fact SQL lowering takes from
+`m-wire` once per operation and passes here; this seam reads no Wire table of its
+own. The projection is a `case` whose matching-kind arm extracts the scalar and
+whose other arm is SQL `NULL`:
+
+```text
+case when jsonb_typeof(t1.value) = ? then <projection> end
+  binds: the kind ('boolean' | 'number' | 'string'), then the projection's own
+```
+
+The `<projection>` extracts the element's text with `t1.value #>> ?` (bind `'{}'`,
+the empty path, so no member segment is invented) and applies the **typed cast
+form** above for the cast table's types (`cast(t1.value #>> ? as bigint)`, `… as
+real`, `… as decimal(p, s)`, `… as boolean`), comparing the six text-compared types
+as that text directly. The cast stays inside the matching arm: a separate kind
+conjunct would not order the cast after the check, and a wrong-kind element would
+reach it. A wrong-kind element or a JSON `null` element therefore projects SQL
+`NULL` and every comparison over it is unknown (`m-predicate`); a correct-kind
+element the cast cannot convert fails the statement through the database
+execution error route.
+
+### Single-object presence
+
+Presence of a single value object (`m-predicate` `exists` / `notExists`) is an
+object at its path: `coalesce(jsonb_typeof(jsonb_extract_path(col, ?, …)) = ?,
+false)`, binding each path segment and then `object`, and `not coalesce(…)` for
+absence. The `coalesce` folds a SQL-`NULL` column's unknown into absence, so the
+test is never unknown.
+
+### Boolean result envelope
+
+A path-targeted `narrow` with an operand (`m-sql`) must return three outcomes from
+one scalar subquery — false for an absent or unselected target, and the operand's
+true, false, or unknown for a selected one. A scalar subquery returning a
+nullable Boolean cannot tell an absent target's empty result from a selected
+target's unknown, so Postgres carries the Boolean in a one-element array:
+`(coalesce((select array [ <boolean> ] from … ), array [ false ])) [ 1 ]`. An absent
+target yields no array and takes the `array [ false ]` default; a selected target's
+`array [ null ]` is non-null and survives every enclosing hop's default, and the
+element is extracted only after the outermost hop.
+
+### The MariaDB lane
+
+MariaDB executes an exact bounded subset of the algebra: scalar operations through
+any number of single value-object and to-one relationship hops (the nested
+extraction and typed cast forms above, inside the scalar subqueries `m-sql` emits),
+bare path-targeted subtype tests, bare scalar-collection and value-object occupancy
+(`any` / `none` with no `where`) under the `<g>` guard, and the value-object
+containment forms the containment golden covers. A MariaDB implementation **MUST
+reject**, with a capability diagnostic naming the unsupported form, a filtered
+scalar quantifier (`any` / `none` with a `where`), every `all`, a path-targeted
+`narrow` with an operand, a `where` outside the containment golden's scope, and a
+predicate that nests any of them inside an otherwise supported expression — never
+lowering an approximation. MariaDB's native cardinality failure (errno `1242`) for
+a to-one hop reaching several candidates follows the execution error route as
+Postgres's `21000` does (`m-db-error`).
 
 ### Document mutation-expression form (`m-storage-layout`)
 

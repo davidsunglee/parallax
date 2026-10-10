@@ -92,7 +92,7 @@ def _query(
 ) -> oq.ObjectQueryNode:
     return oq.object_query(
         entity.identity,
-        predicate if predicate is not None else oa.All(),
+        predicate if predicate is not None else oa.TrueNode(),
         temporal=temporal,
         **clauses,  # pyright: ignore[reportArgumentType] - the caller names real clauses
     )
@@ -339,7 +339,7 @@ def test_history_injects_no_term() -> None:
     where, binds = _where(
         BALANCE,
         {"transaction-time": oq.History()},
-        oa.Comparison(op="eq", attr="Balance.id", value=1),
+        oa.Comparison(op="eq", subject=oa.FieldSubject("Balance.id"), value=1),
     )
     assert where == "t0.bal_id = ?"
     assert binds == (1,)
@@ -349,7 +349,7 @@ def test_as_of_composes_after_a_user_predicate() -> None:
     where, binds = _where(
         BALANCE,
         {"transaction-time": oq.AsOf("latest")},
-        oa.Comparison(op="eq", attr="Balance.acctNum", value="A"),
+        oa.Comparison(op="eq", subject=oa.FieldSubject("Balance.acctNum"), value="A"),
     )
     assert where == "t0.acct_num = ? and t0.out_z = ?"
     assert binds == ("A", INFINITY)
@@ -418,7 +418,7 @@ def test_bitemporal_history_scans_both_axes() -> None:
     where, binds = _where(
         POSITION,
         {"transaction-time": oq.History(), "valid-time": oq.History()},
-        oa.Comparison(op="eq", attr="Position.id", value=1),
+        oa.Comparison(op="eq", subject=oa.FieldSubject("Position.id"), value=1),
     )
     assert where == "t0.pos_id = ?"
     assert binds == (1,)
@@ -430,8 +430,8 @@ def test_bitemporal_history_scans_both_axes() -> None:
 def test_non_temporal_read_is_identity() -> None:
     op = oa.Or(
         operands=(
-            oa.Comparison(op="lessThan", attr="Order.qty", value=10),
-            oa.Comparison(op="greaterThan", attr="Order.qty", value=25),
+            oa.Comparison(op="lessThan", subject=oa.FieldSubject("Order.qty"), value=10),
+            oa.Comparison(op="greaterThan", subject=oa.FieldSubject("Order.qty"), value=25),
         )
     )
     query = _validated(ORDERS, predicate=op)
@@ -463,11 +463,16 @@ def test_a_user_predicate_conjoins_with_the_injected_as_of_terms() -> None:
     # share: `all` contributes no conjunct, an `and` flattens into the enclosing
     # conjunction, and an `or` is grouped first so the injected term cannot
     # silently re-associate into its weaker binding.
-    predicate = oa.Comparison(op="eq", attr="Balance.id", value=1)
+    predicate = oa.Comparison(op="eq", subject=oa.FieldSubject("Balance.id"), value=1)
     conjunction = oa.And(
-        operands=(predicate, oa.Comparison(op="eq", attr="Balance.acctNum", value="A"))
+        operands=(
+            predicate,
+            oa.Comparison(op="eq", subject=oa.FieldSubject("Balance.acctNum"), value="A"),
+        )
     )
-    disjunction = oa.Or(operands=(predicate, oa.Comparison(op="eq", attr="Balance.id", value=2)))
+    disjunction = oa.Or(
+        operands=(predicate, oa.Comparison(op="eq", subject=oa.FieldSubject("Balance.id"), value=2))
+    )
     pin: dict[QueryTemporalDimension, oq.TemporalSelection] = {
         "transaction-time": oq.AsOf("latest")
     }
@@ -482,7 +487,7 @@ def test_a_user_predicate_conjoins_with_the_injected_as_of_terms() -> None:
 
     resolved_conjunction = resolved(conjunction)
     assert isinstance(resolved_conjunction, ResolvedAnd)
-    assert injected(oa.All()) == as_of
+    assert injected(oa.TrueNode()) == as_of
     assert injected(predicate) == ResolvedAnd((cast("Any", resolved(predicate)), as_of))
     assert injected(conjunction) == ResolvedAnd((*resolved_conjunction.operands, as_of))
     assert injected(disjunction) == ResolvedAnd(

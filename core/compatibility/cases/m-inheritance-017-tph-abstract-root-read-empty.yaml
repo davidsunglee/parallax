@@ -7,7 +7,7 @@ when:
     target: parallax.compatibility.Animal
     predicate:
       eq:
-        attr: parallax.compatibility.Animal.name
+        path: parallax.compatibility.Animal.name
         value: Ghost
 then:
   statements:

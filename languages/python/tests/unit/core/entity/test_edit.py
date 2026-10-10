@@ -420,7 +420,7 @@ def test_every_edit_code_has_a_reachable_refusal() -> None:
         lambda: _account().model_copy(),
         lambda: _account().edit(shoe_size=9),
         lambda: mm.Person(id=1, name="Ada").edit(passport=None),
-        lambda: vm.Customer.address.city.set("Oslo"),
+        lambda: vm.Customer(id=1, name="Ada").edit(**{"address.city": "Oslo"}),
         lambda: _account().edit(id=2),
         lambda: _Reading(id=1, celsius=1.0).edit(computed="x"),
         lambda: balance.edit(tx_end=dt.datetime(2024, 6, 1, tzinfo=dt.UTC)),

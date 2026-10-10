@@ -11,7 +11,7 @@ when:
   objectQuery:
     target: parallax.compatibility.Animal
     predicate:
-      all: {}
+      "true": {}
     includes:
       - appliesTo:
           - parallax.compatibility.WildBoar

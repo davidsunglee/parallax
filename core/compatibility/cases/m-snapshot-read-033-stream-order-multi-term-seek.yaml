@@ -12,7 +12,7 @@ when:
   objectQuery:
     target: parallax.compatibility.Order
     predicate:
-      all: {}
+      "true": {}
     orderBy:
       - attr: parallax.compatibility.Order.active
         direction: asc

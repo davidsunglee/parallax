@@ -9,10 +9,10 @@ when:
       or:
         operands:
           - lessThan:
-              attr: parallax.compatibility.Order.qty
+              path: parallax.compatibility.Order.qty
               value: 10
           - greaterThan:
-              attr: parallax.compatibility.Order.qty
+              path: parallax.compatibility.Order.qty
               value: 25
 then:
   statements:

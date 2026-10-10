@@ -1,0 +1,15 @@
+# Negative (m-predicate explicit quantification): a field path continues past a
+# `many` value object instead of binding it with a quantifier, so model-aware
+# validation refuses it before SQL rather than reading it as matching some element.
+model: models/customer.yaml
+tags: [m-predicate, m-value-object, rejected, negative, to-many, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  objectQuery:
+    target: parallax.compatibility.Customer
+    predicate:
+      eq:
+        path: parallax.compatibility.Customer.address.phones.type
+        value: home
+then:
+  rejectedRule: path-crosses-many

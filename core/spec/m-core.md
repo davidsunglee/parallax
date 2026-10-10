@@ -249,8 +249,8 @@ functions. Examples include Postgres `jsonb`, MariaDB `json`, and Snowflake
 `VARIANT`.
 
 An implementation **MUST** read and filter a value object's inner fields through
-the nested-attribute access form (`m-predicate` `nestedEq` / `nestedNotEq`,
-lowered to a dialect-specific document extraction by `m-sql` / `m-dialect`). A
+a dotted predicate path (`m-predicate` *Value-object fields*, lowered to a
+dialect-specific document extraction by `m-sql` / `m-dialect`). A
 `Json`-typed column **MAY** be `null` when the value object is declared
 `nullable`; otherwise it is `not null` and carries the embedded object.
 

@@ -139,7 +139,10 @@ def test_a_readless_predicate_write_is_actor_neutral() -> None:
     predicate = PredicateWrite(
         "delete",
         PredicateSelection(
-            "Wallet", predicate_algebra.Comparison("lessThan", "Wallet.balance", "200.00")
+            "Wallet",
+            predicate_algebra.Comparison(
+                "lessThan", predicate_algebra.FieldSubject("Wallet.balance"), "200.00"
+            ),
         ),
     )
     _assert_neutral([predicate], _WALLET)

@@ -15,7 +15,7 @@ when:
   objectQuery:
     target: parallax.compatibility.Coverage
     predicate:
-      all: {}
+      "true": {}
     temporal:
       transaction-time:
         asOf: latest

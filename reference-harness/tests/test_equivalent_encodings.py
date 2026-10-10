@@ -41,7 +41,7 @@ _QUERY = _query(
         "and": {
             "operands": [
                 {"group": {"operand": {"or": {"operands": [{"x": 1}, {"y": 2}]}}}},
-                {"eq": {"attr": "Order.active", "value": True}},
+                {"eq": {"path": "Order.active", "value": True}},
             ]
         }
     }
@@ -56,7 +56,7 @@ def test_matching_encoding_passes() -> None:
             "and": {
                 "operands": [
                     {"group": {"operand": {"or": {"operands": [{"x": 1}, {"y": 2}]}}}},
-                    {"eq": {"value": True, "attr": "Order.active"}},
+                    {"eq": {"value": True, "path": "Order.active"}},
                 ]
             }
         }
@@ -72,7 +72,7 @@ def test_mismatched_encoding_raises() -> None:
             "and": {
                 "operands": [
                     {"or": {"operands": [{"x": 1}, {"y": 2}]}},
-                    {"eq": {"attr": "Order.active", "value": True}},
+                    {"eq": {"path": "Order.active", "value": True}},
                 ]
             }
         }
@@ -88,14 +88,14 @@ def test_absent_field_is_a_noop() -> None:
 def test_omitted_transaction_time_normalizes_to_explicit_latest() -> None:
     canonical_query = {
         "target": "Balance",
-        "predicate": {"all": {}},
+        "predicate": {"true": {}},
         "temporal": {"transaction-time": {"asOf": "latest"}},
     }
     raw = {
         "shape": "read",
         "when": {
             "objectQuery": canonical_query,
-            "equivalentEncodings": [{"target": "Balance", "predicate": {"all": {}}}],
+            "equivalentEncodings": [{"target": "Balance", "predicate": {"true": {}}}],
         },
     }
     model = Model(
@@ -116,10 +116,10 @@ def test_scenario_step_normalizes_its_own_equivalent_encoding() -> None:
                 {
                     "objectQuery": {
                         "target": "Balance",
-                        "predicate": {"all": {}},
+                        "predicate": {"true": {}},
                         "temporal": {"transaction-time": {"asOf": "latest"}},
                     },
-                    "equivalentEncodings": [{"target": "Balance", "predicate": {"all": {}}}],
+                    "equivalentEncodings": [{"target": "Balance", "predicate": {"true": {}}}],
                     "roundTrips": 1,
                 }
             ]
@@ -143,10 +143,10 @@ def test_include_paths_are_an_order_insensitive_canonicalized_set() -> None:
         ]
     }
     canonical_query = _query(
-        {"all": {}}, includes=[maximal, {"segments": [{"rel": "Order.statuses"}]}]
+        {"true": {}}, includes=[maximal, {"segments": [{"rel": "Order.statuses"}]}]
     )
     alternate = _query(
-        {"all": {}},
+        {"true": {}},
         includes=[
             {"segments": [{"rel": "Order.statuses"}]},
             {"segments": [{"rel": "Order.items"}]},
@@ -160,7 +160,7 @@ def test_include_paths_are_an_order_insensitive_canonicalized_set() -> None:
 def test_include_canonicalization_keeps_broad_and_narrowed_paths_distinct() -> None:
     broad = {"segments": [{"rel": "Person.pets"}]}
     narrowed = {"segments": [{"rel": "Person.pets", "narrowTo": ["Dog"]}]}
-    query = _query({"all": {}}, includes=[narrowed, broad, narrowed])
+    query = _query({"true": {}}, includes=[narrowed, broad, narrowed])
     assert canonical(query)["includes"] == [broad, narrowed]
 
 
@@ -169,8 +169,8 @@ def test_canonicalization_keeps_boolean_operand_order_but_sorts_subtype_selectio
     and_right = {"and": {"operands": [{"y": 2}, {"x": 1}]}}
     or_left = {"or": {"operands": [{"x": 1}, {"y": 2}]}}
     or_right = {"or": {"operands": [{"y": 2}, {"x": 1}]}}
-    narrow_left = {"narrow": {"to": ["Cat", "Dog"], "operand": {"all": {}}}}
-    narrow_right = {"narrow": {"to": ["Dog", "Cat"], "operand": {"all": {}}}}
+    narrow_left = {"narrow": {"to": ["Cat", "Dog"], "operand": {"true": {}}}}
+    narrow_right = {"narrow": {"to": ["Dog", "Cat"], "operand": {"true": {}}}}
     assert canonical(and_left) != canonical(and_right)
     assert canonical(or_left) != canonical(or_right)
     assert canonical(narrow_left) == canonical(narrow_right)

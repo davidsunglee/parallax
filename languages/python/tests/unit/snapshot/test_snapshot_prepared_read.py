@@ -234,7 +234,7 @@ def _compiled(model: Metamodel, name: str, *, narrow_to: tuple[str, ...] = ()) -
     what resolves the read's position to fewer concretes than its family has.
     """
     return compile_read(
-        oa.All(),
+        oa.TrueNode(),
         model,
         POSTGRES,
         target(model, name),

@@ -8,7 +8,7 @@ when:
   objectQuery:
     target: parallax.compatibility.Customer
     predicate:
-      all: {}
+      "true": {}
 then:
   statements:
     - sql:

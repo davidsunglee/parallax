@@ -8,7 +8,7 @@ when:
         target: parallax.compatibility.Account
         predicate:
           eq:
-            attr: parallax.compatibility.Account.id
+            path: parallax.compatibility.Account.id
             value: 1
       roundTrips: 1
       note: cache MISS — execute the find once against the database
@@ -22,7 +22,7 @@ when:
         target: parallax.compatibility.Account
         predicate:
           eq:
-            attr: parallax.compatibility.Account.id
+            path: parallax.compatibility.Account.id
             value: 1
       roundTrips: 0
       sameObjectAs: 0

@@ -13,7 +13,7 @@ when:
         target: parallax.compatibility.Animal
         predicate:
           eq:
-            attr: parallax.compatibility.Animal.id
+            path: parallax.compatibility.Animal.id
             value: 1
       roundTrips: 1
       note: ROOT finder over the abstract family root — the concrete superset + raw tag
@@ -27,7 +27,7 @@ when:
         target: parallax.compatibility.Dog
         predicate:
           eq:
-            attr: parallax.compatibility.Dog.id
+            path: parallax.compatibility.Dog.id
             value: 1
       roundTrips: 1
       sameObjectAs: 0

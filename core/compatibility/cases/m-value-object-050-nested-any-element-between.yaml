@@ -1,8 +1,7 @@
-# valueObject to-many range: nestedBetween through a `many` segment is ANY-ELEMENT,
-# and ONE element must satisfy the WHOLE range (m-predicate nested range +
-# any-element, m-sql, m-dialect array-traversal form). Postgres golden only — a
-# non-equality element predicate is outside MariaDB's containment scope (m-dialect,
-# "Scope of the containment golden").
+# valueObject to-many range: `any` with a `between` needs ONE element to satisfy the
+# WHOLE range (m-predicate range + quantifiers, m-sql, m-dialect array-traversal
+# form). Postgres golden only — a non-equality element predicate is outside
+# MariaDB's containment scope (m-dialect, "Scope of the containment golden").
 model: models/customer.yaml
 tags: [m-value-object, m-predicate, m-sql, m-dialect, nested, json, to-many, any-element, between, array-traversal, slice-snapshot-1, slice-managed-1]
 shape: read
@@ -10,10 +9,13 @@ when:
   objectQuery:
     target: parallax.compatibility.Customer
     predicate:
-      nestedBetween:
-        path: parallax.compatibility.Customer.address.phones.number
-        lower: 555-0000
-        upper: 555-1234
+      any:
+        path: parallax.compatibility.Customer.address.phones
+        where:
+          between:
+            path: number
+            lower: 555-0000
+            upper: 555-1234
 then:
   statements:
     - sql:

@@ -16,7 +16,8 @@ from typing import Any, cast
 import pytest
 
 from parallax.conformance import animal_owner, read_models
-from parallax.core.entity import RelationshipPath, UnloadedRelationshipError
+from parallax.core.entity import IncludePath, UnloadedRelationshipError
+from parallax.core.entity._expressions import IncludeTraversal
 from parallax.core.object_query import IncludeSegment
 from parallax.core.temporal_read import Pin
 from parallax.snapshot import (
@@ -255,11 +256,15 @@ def test_a_narrowed_view_is_read_by_its_own_path_and_never_marks_the_broad_one()
 
 def test_equivalent_narrow_spellings_name_one_view() -> None:
     root = _narrowed_owner("pets[Cat,Dog]")
-    directly = RelationshipPath[Any, Any](
-        segments=(
-            IncludeSegment(rel="parallax.compatibility.AnimalOwner.pets", narrow_to=("Dog", "Cat")),
-        ),
-        target=None,
+    directly = IncludePath[Any, Any](
+        IncludeTraversal(
+            segments=(
+                IncludeSegment(
+                    rel="parallax.compatibility.AnimalOwner.pets", narrow_to=("Dog", "Cat")
+                ),
+            ),
+            target=None,
+        )
     )
     assert is_view_loaded(root, sm.AnimalOwner.pets.narrow(sm.Cat, sm.Dog)) is True
     assert is_view_loaded(root, directly) is True
@@ -300,12 +305,14 @@ def test_a_deeper_segment_whose_owner_does_not_apply_is_refused_mid_traversal() 
     (root,) = fixture.materialize(owner)
     # `AnimalOwner.animals` reaches an `Animal`; continuing with a segment
     # spelled from an unrelated owner reaches nothing that declares it.
-    path = RelationshipPath[Any, Any](
-        segments=(
-            IncludeSegment(rel="parallax.compatibility.AnimalOwner.animals"),
-            IncludeSegment(rel="parallax.compatibility.SnapOrder.items"),
-        ),
-        target=None,
+    path = IncludePath[Any, Any](
+        IncludeTraversal(
+            segments=(
+                IncludeSegment(rel="parallax.compatibility.AnimalOwner.animals"),
+                IncludeSegment(rel="parallax.compatibility.SnapOrder.items"),
+            ),
+            target=None,
+        )
     )
     with pytest.raises(SnapshotInspectionError) as refusal:
         view(root, path)

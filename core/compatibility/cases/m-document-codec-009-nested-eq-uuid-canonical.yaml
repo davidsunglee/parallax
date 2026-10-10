@@ -8,7 +8,7 @@ when:
   objectQuery:
     target: parallax.compatibility.Sample
     predicate:
-      nestedEq:
+      eq:
         path: parallax.compatibility.Sample.profile.token
         value: "123e4567-e89b-12d3-a456-426614174000"
 then:

@@ -1,0 +1,18 @@
+# Negative (m-predicate current-scope binding): inside a quantifier's `where` a
+# path is relative to the bound element, so an Entity-qualified path naming the
+# queried Entity is an outer capture and is refused before SQL.
+model: models/orders.yaml
+tags: [m-predicate, m-navigate, rejected, negative, relationship, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  objectQuery:
+    target: parallax.compatibility.Order
+    predicate:
+      any:
+        path: parallax.compatibility.Order.items
+        where:
+          eq:
+            path: parallax.compatibility.Order.name
+            value: Ada
+then:
+  rejectedRule: predicate-subject-outside-scope

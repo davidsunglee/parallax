@@ -675,7 +675,7 @@ representation-bound. ADR 0057 declares Typed and Wire peer interfaces over one
 transaction. Python implements the derivation only as `Entity.edit(**changes)`,
 whose judgement resolves names through `WireNames` derived from a Python class,
 and implements path traversal only as `_inspection.view`, which requires
-`snapshot_state_of(node)` and a class-derived `RelationshipPath` — "never a bare
+`snapshot_state_of(node)` and a class-derived `IncludePath` — "never a bare
 relationship name". The Wire surface has neither, so a consumer holding wire
 nodes and a metamodel can reach neither module. The conformance engine is that
 consumer: it runs class-free against every corpus model, and `class_models.py`

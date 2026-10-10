@@ -1,4 +1,4 @@
-# valueObject numeric filter: nestedLt with a typed cast (m-value-object, m-sql,
+# valueObject numeric filter: lessThan with a typed cast (m-value-object, m-sql,
 # m-dialect typed cast form), on Postgres AND MariaDB.
 model: models/customer.yaml
 tags: [m-value-object, m-sql, m-dialect, nested, json, cast, numeric, slice-snapshot-1, slice-managed-1]
@@ -7,7 +7,7 @@ when:
   objectQuery:
     target: parallax.compatibility.Customer
     predicate:
-      nestedLt:
+      lessThan:
         path: parallax.compatibility.Customer.address.geo.elevation
         value: 8
 then:

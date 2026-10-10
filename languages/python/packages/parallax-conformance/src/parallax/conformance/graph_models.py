@@ -55,12 +55,13 @@ class Claim(
     namespace=_NS,
     indices=(index("claim_coverage", "coverage_id"),),
 ):
-    """Mirror of ``models/policy.yaml`` ``Claim`` (bitemporal leaf, no
-    relationships of its own)."""
+    """Mirror of ``models/policy.yaml`` ``Claim`` (bitemporal; the to-one
+    ``coverage`` hop reaches a milestoned Coverage)."""
 
     id: Attr[int] = attr(primary_key=True)
     coverage_id: Attr[int]
     reserve: Attr[Decimal] = attr(precision=18, scale=2)
+    coverage: Rel[Coverage | None] = rel(reverse_of="claims")
 
 
 POLICY_MODEL = DomainModel(Policy, Coverage, Claim)

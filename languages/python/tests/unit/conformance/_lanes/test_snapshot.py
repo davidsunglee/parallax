@@ -504,14 +504,14 @@ def test_compile_scenario_case_snapshot_lane_wraps_a_sql_gen_error() -> None:
             {
                 "objectQuery": {
                     "target": "Order",
-                    "predicate": {"eq": {"attr": "Order.nope", "value": 1}},
+                    "predicate": {"eq": {"path": "Order.nope", "value": 1}},
                 }
             },
             {"action": "mutate", "on": 0, "set": {"x": 1}},
         ]
     }
     case = _synthetic_write("scenario", {"model": "models/orders.yaml", "when": when})
-    with pytest.raises(EngineError, match="names no declared attribute"):
+    with pytest.raises(EngineError, match="names no declared member"):
         _compile(case, "postgres")
 
 
@@ -533,14 +533,14 @@ def test_run_scenario_case_snapshot_lane_wraps_an_error_from_the_find_executor()
             {
                 "objectQuery": {
                     "target": "Order",
-                    "predicate": {"eq": {"attr": "Order.nope", "value": 1}},
+                    "predicate": {"eq": {"path": "Order.nope", "value": 1}},
                 }
             },
             {"action": "mutate", "on": 0, "set": {"x": 1}},
         ]
     }
     case = _synthetic_write("scenario", {"model": "models/orders.yaml", "when": when})
-    with pytest.raises(EngineError, match="names no declared attribute"):
+    with pytest.raises(EngineError, match="names no declared member"):
         _run(case, QueueDbPort([]))
 
 
@@ -596,7 +596,7 @@ def test_run_scenario_case_snapshot_lane_refuses_a_set_the_read_cannot_assign() 
             {
                 "objectQuery": {
                     "target": "Order",
-                    "predicate": {"eq": {"attr": "Order.id", "value": 1}},
+                    "predicate": {"eq": {"path": "Order.id", "value": 1}},
                 }
             },
             {"action": "mutate", "on": 0, "set": {"nickname": "Mutant"}},
@@ -672,7 +672,7 @@ def test_run_scenario_case_reports_an_undeclared_pin_refusal_loudly() -> None:
             {
                 "objectQuery": {
                     "target": "Position",
-                    "predicate": {"eq": {"attr": "Position.id", "value": 1}},
+                    "predicate": {"eq": {"path": "Position.id", "value": 1}},
                     "temporal": {
                         "transaction-time": {"asOf": "2024-02-01T00:00:00.000000Z"},
                         "valid-time": {"asOf": "latest"},
@@ -707,7 +707,7 @@ def test_run_scenario_case_reports_an_unraised_expect_error_loudly() -> None:
             {
                 "objectQuery": {
                     "target": "Order",
-                    "predicate": {"eq": {"attr": "Order.id", "value": 1}},
+                    "predicate": {"eq": {"path": "Order.id", "value": 1}},
                 }
             },
             {
@@ -763,7 +763,7 @@ def test_run_scenario_case_reports_a_snapshot_lane_finds_own_materialized_graph(
             {
                 "objectQuery": {
                     "target": "Order",
-                    "predicate": {"eq": {"attr": "Order.id", "value": 1}},
+                    "predicate": {"eq": {"path": "Order.id", "value": 1}},
                     "includes": [{"segments": [{"rel": "Order.items"}]}],
                 },
                 "expectGraph": {"Order": [{"id": 1}]},
@@ -791,7 +791,7 @@ def test_run_scenario_case_lets_an_edit_chain_name_the_copy_before_it() -> None:
             {
                 "objectQuery": {
                     "target": "Order",
-                    "predicate": {"eq": {"attr": "Order.id", "value": 1}},
+                    "predicate": {"eq": {"path": "Order.id", "value": 1}},
                     "includes": [{"segments": [{"rel": "Order.items"}]}],
                 }
             },
@@ -810,7 +810,7 @@ def test_run_scenario_case_lets_an_edit_chain_name_the_copy_before_it() -> None:
 def _orders_access_scenario(access: dict[str, object], *, includes: bool) -> case_format.Case:
     query: dict[str, object] = {
         "target": "Order",
-        "predicate": {"eq": {"attr": "Order.id", "value": 1}},
+        "predicate": {"eq": {"path": "Order.id", "value": 1}},
     }
     if includes:
         query["includes"] = [{"segments": [{"rel": "Order.items"}]}]
@@ -847,7 +847,7 @@ def test_run_scenario_case_access_step_graph_refuses_an_on_naming_a_derived_copy
             {
                 "objectQuery": {
                     "target": "Order",
-                    "predicate": {"eq": {"attr": "Order.id", "value": 1}},
+                    "predicate": {"eq": {"path": "Order.id", "value": 1}},
                     "includes": [{"segments": [{"rel": "Order.items"}]}],
                 }
             },
@@ -907,7 +907,7 @@ def test_run_scenario_case_access_step_graph_walks_a_to_one_arm() -> None:
     # sequence, so the traversal appends instead of extending.
     query = {
         "target": "OrderItem",
-        "predicate": {"eq": {"attr": "OrderItem.id", "value": 11}},
+        "predicate": {"eq": {"path": "OrderItem.id", "value": 11}},
         "includes": [{"segments": [{"rel": "OrderItem.order"}]}],
     }
     when = {
@@ -954,7 +954,7 @@ _ITEM_11_STATUS_ROWS: list[dict[str, object]] = [
 def _status_root_access(includes: list[dict[str, object]], access: dict[str, object]):
     query = {
         "target": "OrderStatus",
-        "predicate": {"eq": {"attr": "OrderStatus.orderId", "value": 1}},
+        "predicate": {"eq": {"path": "OrderStatus.orderId", "value": 1}},
         "includes": includes,
     }
     when = {"scenario": [{"objectQuery": query}, access]}
@@ -995,7 +995,7 @@ def test_run_scenario_case_access_step_graph_omits_a_terminal_null_after_a_fan_o
     # nothing rather than a null node beside the real one.
     query = {
         "target": "Order",
-        "predicate": {"eq": {"attr": "Order.id", "value": 1}},
+        "predicate": {"eq": {"path": "Order.id", "value": 1}},
         "includes": [{"segments": [{"rel": "Order.statuses"}, {"rel": "OrderStatus.orderItem"}]}],
     }
     when = {
@@ -1050,7 +1050,7 @@ class _QueueWritePort(QueueDbPort):
 def _write_between_find_and_access(write: object) -> case_format.Case:
     query = {
         "target": "Order",
-        "predicate": {"eq": {"attr": "Order.id", "value": 1}},
+        "predicate": {"eq": {"path": "Order.id", "value": 1}},
         "includes": [{"segments": [{"rel": "Order.items"}]}],
     }
     when = {
@@ -1088,7 +1088,7 @@ def _ledger_write_after_find_and_mutate(write: object) -> case_format.Case:
             {
                 "objectQuery": {
                     "target": "parallax.compatibility.Ledger",
-                    "predicate": {"eq": {"attr": "parallax.compatibility.Ledger.id", "value": 2}},
+                    "predicate": {"eq": {"path": "parallax.compatibility.Ledger.id", "value": 2}},
                     "temporal": {"transaction-time": {"asOf": "latest"}},
                 }
             },
@@ -1187,7 +1187,7 @@ def test_compile_scenario_case_lowers_a_snapshot_lane_write_step() -> None:
             {
                 "objectQuery": {
                     "target": "Order",
-                    "predicate": {"eq": {"attr": "Order.id", "value": 1}},
+                    "predicate": {"eq": {"path": "Order.id", "value": 1}},
                 }
             },
             {"action": "mutate", "on": 0, "set": {"name": "Mutant"}},
@@ -1216,7 +1216,7 @@ def test_run_scenario_case_refuses_a_materializing_predicate_write_on_the_snapsh
         "mutation": "amend",
         "target": {
             "entity": "parallax.compatibility.Ledger",
-            "predicate": {"lessThan": {"attr": value, "value": "500.00"}},
+            "predicate": {"lessThan": {"path": value, "value": "500.00"}},
         },
         "assignments": [{"attr": value, "value": "5.00"}],
         "at": "2024-05-01T00:00:00+00:00",
@@ -1236,7 +1236,7 @@ def test_run_scenario_case_refuses_a_readless_predicate_write_on_the_snapshot_la
         "target": {
             "entity": "parallax.compatibility.OrderItem",
             "predicate": {
-                "lessThan": {"attr": "parallax.compatibility.OrderItem.quantity", "value": 5}
+                "lessThan": {"path": "parallax.compatibility.OrderItem.quantity", "value": 5}
             },
         },
     }
@@ -1319,7 +1319,7 @@ def test_a_snapshot_scenarios_write_step_opens_at_the_cases_root_level() -> None
             {
                 "objectQuery": {
                     "target": "Order",
-                    "predicate": {"eq": {"attr": "Order.id", "value": 1}},
+                    "predicate": {"eq": {"path": "Order.id", "value": 1}},
                 }
             },
             {

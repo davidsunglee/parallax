@@ -7,15 +7,15 @@ when:
   objectQuery:
     target: parallax.compatibility.Person
     predicate:
-      exists:
-        rel: parallax.compatibility.Person.pets
-        op:
+      any:
+        path: parallax.compatibility.Person.pets
+        where:
           narrow:
             to:
               - parallax.compatibility.Dog
             operand:
               eq:
-                attr: parallax.compatibility.Dog.barkVolume
+                path: barkVolume
                 value: 7
 then:
   statements:

@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Any
 
 from .corpus_yaml import read_corpus_yaml
-from .query_references import ATTRIBUTE_REFERENCE_TAGS, PATH_REFERENCE_TAGS
+from .query_references import PATH_TAGS
 from .references import split_reference
 
 __all__ = ["check", "main"]
@@ -37,17 +37,9 @@ __all__ = ["check", "main"]
 _AMBIGUOUS_REFERENCE_RULE = "reference-ambiguous-entity-name"
 
 # Every member carrying a nested predicate: a boolean combinator's or a
-# Predicate-scoped narrow's `operand`, a navigation's `op`, and an element
-# scope's `where`. A carrier adds no reference of its own, so one table serves
-# all of them.
-_OPERAND_MEMBERS = ("operand", "op", "where")
-
-# The one member each reference-bearing predicate tag names its reference in.
-_REFERENCE_MEMBER = {
-    **dict.fromkeys(ATTRIBUTE_REFERENCE_TAGS, "attr"),
-    **dict.fromkeys(PATH_REFERENCE_TAGS, "path"),
-    **dict.fromkeys(("navigate", "exists", "notExists"), "rel"),
-}
+# narrow's `operand`, and a quantifier's `where`. A carrier adds no reference of
+# its own, so one table serves all of them.
+_OPERAND_MEMBERS = ("operand", "where")
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,9 +132,10 @@ class _Report:
         self._check(spelling, spelling, (), where, declarations)
 
     def member(self, reference: Any, where: str, declarations: _Declarations) -> None:
-        """Check the Entity spelling of a member reference (an ``attr``, a
-        ``rel``, or a value-object ``path``). An element-relative path names no
-        Entity and is answered by its own resolver, never here."""
+        """Check the Entity spelling of a member reference (a Sort Key's
+        ``attr``, an Include segment's ``rel``, or a predicate ``path``). A
+        relative path names no Entity and is answered by its own resolver,
+        never here."""
         if not isinstance(reference, str):
             return
         named, members = split_reference(reference)
@@ -182,10 +175,9 @@ def _walk_predicate(node: Any, where: str, report: _Report, declarations: _Decla
     at = f"{where}.{tag}"
     if not isinstance(body, Mapping):
         return
-    reference = _REFERENCE_MEMBER.get(tag)
-    if reference is not None:
-        report.member(body.get(reference), f"{at}.{reference}", declarations)
-    elif tag in ("and", "or"):
+    if tag in PATH_TAGS:
+        report.member(body.get("path"), f"{at}.path", declarations)
+    if tag in ("and", "or"):
         for index, operand in enumerate(_items(body.get("operands"))):
             _walk_predicate(operand, f"{at}.operands[{index}]", report, declarations)
     elif tag == "narrow":

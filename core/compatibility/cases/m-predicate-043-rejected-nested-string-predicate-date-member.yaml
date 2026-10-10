@@ -7,8 +7,11 @@ when:
   objectQuery:
     target: parallax.compatibility.Contact
     predicate:
-      nestedStartsWith:
-        path: parallax.compatibility.Contact.address.phones.expires
-        value: '2024'
+      any:
+        path: parallax.compatibility.Contact.address.phones
+        where:
+          startsWith:
+            path: expires
+            value: '2024'
 then:
-  rejectedRule: nested-string-predicate-non-string-member
+  rejectedRule: string-predicate-non-string-member

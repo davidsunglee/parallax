@@ -1,0 +1,13 @@
+# Negative (m-predicate subject scope): an operation without a path reads the
+# scalar a scalar-collection quantifier binds, and none encloses this one.
+model: models/scalar-collection-layout-twin-columns.yaml
+tags: [m-predicate, rejected, negative, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  objectQuery:
+    target: parallax.compatibility.CollectionTwinItem
+    predicate:
+      eq:
+        value: urgent
+then:
+  rejectedRule: predicate-subject-outside-scope

@@ -9,7 +9,7 @@ when:
   objectQuery:
     target: parallax.compatibility.Document
     predicate:
-      all: {}
+      "true": {}
 then:
   statements:
     - sql:

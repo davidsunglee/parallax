@@ -114,7 +114,7 @@ def _typed_query() -> Any:
 
 def _wire_node() -> ObjectQueryNode:
     return deserialize_query(
-        {"target": "Account", "predicate": {"eq": {"attr": "Account.id", "value": 7}}}
+        {"target": "Account", "predicate": {"eq": {"path": "Account.id", "value": 7}}}
     )
 
 
@@ -126,7 +126,7 @@ def _balance_node(temporal: dict[str, object]) -> ObjectQueryNode:
     return deserialize_query(
         {
             "target": "Balance",
-            "predicate": {"eq": {"attr": "Balance.id", "value": 1}},
+            "predicate": {"eq": {"path": "Balance.id", "value": 1}},
             "temporal": temporal,
         }
     )
@@ -567,7 +567,7 @@ def test_a_query_the_gate_refuses_reaches_no_execution_capability(verb_name: str
     # A refused read opens no activity and runs no body, which is what leaves a
     # participating one's buffer untouched: the flush lives inside `eager`, and
     # `eager` is never reached.
-    unknown = deserialize_query({"target": "Balance", "predicate": {"all": {}}})
+    unknown = deserialize_query({"target": "Balance", "predicate": {"true": {}}})
     port = RefusingAdapter()
     scope, execution = _scope(port)
     verbs: dict[str, Callable[[], object]] = {

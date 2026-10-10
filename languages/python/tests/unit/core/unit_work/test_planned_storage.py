@@ -170,7 +170,9 @@ def _version_group(
             "amend",
             PredicateSelection(
                 entity,
-                predicate_algebra.Comparison("lessThan", f"{entity}.balance", "1000000.00"),
+                predicate_algebra.Comparison(
+                    "lessThan", predicate_algebra.FieldSubject(f"{entity}.balance"), "1000000.00"
+                ),
             ),
             assignments=(WriteAssignment(f"{entity}.balance", Decimal(str(assigned))),),
         ),
@@ -218,7 +220,9 @@ def _temporal_group(
             "terminate",
             PredicateSelection(
                 entity,
-                predicate_algebra.Comparison("lessThan", f"{entity}.value", "1000000.00"),
+                predicate_algebra.Comparison(
+                    "lessThan", predicate_algebra.FieldSubject(f"{entity}.value"), "1000000.00"
+                ),
             ),
         ),
         _BALANCE,
@@ -577,7 +581,10 @@ def _value_update(entity: str, valid_from: dt.datetime | None) -> PredicateWrite
     return PredicateWrite(
         "amend",
         PredicateSelection(
-            entity, predicate_algebra.Comparison("lessThan", f"{entity}.value", "1000000.00")
+            entity,
+            predicate_algebra.Comparison(
+                "lessThan", predicate_algebra.FieldSubject(f"{entity}.value"), "1000000.00"
+            ),
         ),
         assignments=(WriteAssignment(f"{entity}.value", Decimal("9.00")),),
         valid_from=valid_from,
@@ -588,7 +595,10 @@ def _terminate(entity: str, valid_from: dt.datetime) -> PredicateWrite:
     return PredicateWrite(
         "terminate",
         PredicateSelection(
-            entity, predicate_algebra.Comparison("lessThan", f"{entity}.value", "1000000.00")
+            entity,
+            predicate_algebra.Comparison(
+                "lessThan", predicate_algebra.FieldSubject(f"{entity}.value"), "1000000.00"
+            ),
         ),
         valid_from=valid_from,
     )
@@ -762,7 +772,10 @@ def test_a_materialized_plan_shares_an_assigned_document_and_the_retained_predec
     group = temporal_group(
         PredicateWrite(
             "amend",
-            PredicateSelection("Branch", predicate_algebra.Comparison("eq", "Branch.id", 1)),
+            PredicateSelection(
+                "Branch",
+                predicate_algebra.Comparison("eq", predicate_algebra.FieldSubject("Branch.id"), 1),
+            ),
             assignments=(WriteAssignment("Branch.address", assigned_address),),
             valid_from=dt.datetime(2024, 7, 1, tzinfo=dt.UTC),
         ),

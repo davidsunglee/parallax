@@ -5,15 +5,15 @@ tags: [m-navigate, m-predicate, m-inheritance, table-per-hierarchy, narrow, reje
 shape: rejected
 when:
   objectQuery:
-    target: parallax.compatibility.Animal
+    target: parallax.compatibility.Person
     predicate:
-      exists:
-        rel: parallax.compatibility.Person.pets
-        op:
+      any:
+        path: parallax.compatibility.Person.pets
+        where:
           narrow:
             to:
               - parallax.compatibility.WildBoar
             operand:
-              all: {}
+              "true": {}
 then:
   rejectedRule: narrow-outside-relationship-target

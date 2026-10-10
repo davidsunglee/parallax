@@ -12,7 +12,9 @@ when:
         target:
           entity: parallax.compatibility.CollectionTwinItem
           predicate:
-            lessThan: { attr: parallax.compatibility.CollectionTwinItem.id, value: 3 }
+            lessThan:
+              path: parallax.compatibility.CollectionTwinItem.id
+              value: 3
         assignments:
           - attr: parallax.compatibility.CollectionTwinItem.parts
             value:

@@ -90,7 +90,7 @@ def _valid(validator: Draft202012Validator, doc: Any) -> bool:
 
 
 _TARGETS = [
-    ({"entity": "Account", "predicate": {"all": {}}}, True),
+    ({"entity": "Account", "predicate": {"true": {}}}, True),
     ({"entity": "Account"}, False),  # missing predicate
     ({"entity": "Account", "predicate": {}, "extra": 1}, False),  # closed shape
 ]

@@ -16,9 +16,9 @@ import pytest
 from parallax.conformance import case_format
 from parallax.core import object_query as oq
 from parallax.core.metamodel import EntityIdentity
-from parallax.core.object_query._nodes import IncludePath
+from parallax.core.object_query._nodes import IncludePathNode
 from parallax.core.object_query.serde import serialize
-from parallax.core.predicate import All, CanonicalDocumentError, QueryDefinitionError
+from parallax.core.predicate import CanonicalDocumentError, QueryDefinitionError, TrueNode
 from tests._support.corpus import case_document
 
 _ORDER = "parallax.compatibility.Order"
@@ -60,20 +60,20 @@ def _round_trips(doc: dict[str, Any]) -> None:
 @pytest.mark.parametrize(
     "doc",
     [
-        {"target": _ORDER, "predicate": {"all": {}}},
+        {"target": _ORDER, "predicate": {"true": {}}},
         {
             "target": _ORDER,
-            "predicate": {"eq": {"attr": f"{_ORDER}.id", "value": 1}},
+            "predicate": {"eq": {"path": f"{_ORDER}.id", "value": 1}},
             "narrowTo": ["parallax.compatibility.PriorityOrder"],
         },
         {
             "target": _ORDER,
-            "predicate": {"all": {}},
+            "predicate": {"true": {}},
             "temporal": {"transaction-time": {"asOf": "latest"}},
         },
         {
             "target": _ORDER,
-            "predicate": {"all": {}},
+            "predicate": {"true": {}},
             "temporal": {
                 "transaction-time": {"asOf": "2024-01-01T00:00:00+00:00"},
                 "valid-time": {
@@ -86,18 +86,18 @@ def _round_trips(doc: dict[str, Any]) -> None:
         },
         {
             "target": _ORDER,
-            "predicate": {"all": {}},
+            "predicate": {"true": {}},
             "temporal": {"valid-time": {"history": {}}},
         },
         {
             "target": _ORDER,
-            "predicate": {"all": {}},
+            "predicate": {"true": {}},
             "orderBy": [{"attr": f"{_ORDER}.sku", "direction": "desc", "nulls": "first"}],
             "limit": 2,
         },
         {
             "target": _ORDER,
-            "predicate": {"all": {}},
+            "predicate": {"true": {}},
             "includes": [
                 {
                     "appliesTo": ["parallax.compatibility.PriorityOrder"],
@@ -129,10 +129,10 @@ def test_a_canonical_query_round_trips_as_a_fixed_point(doc: dict[str, Any]) -> 
 def test_the_target_keeps_its_authored_entity_spelling() -> None:
     # A query names no model, so the queried position is split structurally and
     # comes back exactly as authored — a bare spelling stays bare.
-    assert oq.deserialize({"target": "Order", "predicate": {"all": {}}}).target == EntityIdentity(
+    assert oq.deserialize({"target": "Order", "predicate": {"true": {}}}).target == EntityIdentity(
         None, "Order"
     )
-    assert oq.deserialize({"target": _ORDER, "predicate": {"all": {}}}).target == EntityIdentity(
+    assert oq.deserialize({"target": _ORDER, "predicate": {"true": {}}}).target == EntityIdentity(
         "parallax.compatibility", "Order"
     )
 
@@ -140,30 +140,30 @@ def test_the_target_keeps_its_authored_entity_spelling() -> None:
 def test_an_omitted_clause_round_trips_omitted() -> None:
     # Every optional clause is absent rather than defaulted, so serialization
     # never manufactures one a caller did not author.
-    node = oq.deserialize({"target": _ORDER, "predicate": {"all": {}}})
+    node = oq.deserialize({"target": _ORDER, "predicate": {"true": {}}})
     assert node.narrow_to is None
     assert node.temporal == {}
     assert node.order_by == ()
     assert node.limit is None
     assert node.includes == ()
-    assert serialize(node) == {"target": _ORDER, "predicate": {"all": {}}}
+    assert serialize(node) == {"target": _ORDER, "predicate": {"true": {}}}
 
 
 def test_a_sort_keys_optional_members_stay_distinct_from_their_defaults() -> None:
     # Omission and an explicit value denote the same order but are distinct
     # authorings, exactly as they were as Predicate nodes.
     omitted = oq.deserialize(
-        {"target": _ORDER, "predicate": {"all": {}}, "orderBy": [{"attr": f"{_ORDER}.sku"}]}
+        {"target": _ORDER, "predicate": {"true": {}}, "orderBy": [{"attr": f"{_ORDER}.sku"}]}
     )
     assert omitted.order_by[0].direction is None
     assert omitted.order_by[0].nulls is None
     _round_trips(
-        {"target": _ORDER, "predicate": {"all": {}}, "orderBy": [{"attr": f"{_ORDER}.sku"}]}
+        {"target": _ORDER, "predicate": {"true": {}}, "orderBy": [{"attr": f"{_ORDER}.sku"}]}
     )
     _round_trips(
         {
             "target": _ORDER,
-            "predicate": {"all": {}},
+            "predicate": {"true": {}},
             "orderBy": [{"attr": f"{_ORDER}.sku", "direction": "asc", "nulls": "last"}],
         }
     )
@@ -182,7 +182,7 @@ def test_the_temporal_map_serializes_in_canonical_dimension_order() -> None:
     # way round canonicalizes to one form.
     authored: dict[str, Any] = {
         "target": _ORDER,
-        "predicate": {"all": {}},
+        "predicate": {"true": {}},
         "temporal": {"valid-time": {"history": {}}, "transaction-time": {"asOf": "latest"}},
     }
     assert list(serialize(oq.deserialize(authored))["temporal"]) == [  # pyright: ignore[reportArgumentType]
@@ -195,7 +195,7 @@ def test_a_subtype_selection_canonicalizes_in_every_position_it_occupies() -> No
     node = oq.deserialize(
         {
             "target": _ORDER,
-            "predicate": {"all": {}},
+            "predicate": {"true": {}},
             "narrowTo": ["b.Second", "a.First"],
             "includes": [
                 {
@@ -216,28 +216,28 @@ def test_deserialize_canonicalizes_the_include_set_before_serialization() -> Non
     statuses: dict[str, Any] = {"segments": [{"rel": "Order.statuses"}]}
     doc: dict[str, Any] = {
         "target": "Order",
-        "predicate": {"all": {}},
+        "predicate": {"true": {}},
         "includes": [statuses, short, maximal, maximal],
     }
     assert serialize(oq.deserialize(doc)) == {
         "target": "Order",
-        "predicate": {"all": {}},
+        "predicate": {"true": {}},
         "includes": [maximal, statuses],
     }
 
 
 def test_serialize_canonicalizes_a_directly_constructed_include_set() -> None:
-    short = IncludePath(segments=(oq.IncludeSegment(rel="Order.items"),))
-    maximal = IncludePath(
+    short = IncludePathNode(segments=(oq.IncludeSegment(rel="Order.items"),))
+    maximal = IncludePathNode(
         segments=(
             oq.IncludeSegment(rel="Order.items"),
             oq.IncludeSegment(rel="OrderItem.statuses"),
         )
     )
-    statuses = IncludePath(segments=(oq.IncludeSegment(rel="Order.statuses"),))
+    statuses = IncludePathNode(segments=(oq.IncludeSegment(rel="Order.statuses"),))
     node = oq.ObjectQueryNode(
         target=EntityIdentity(None, "Order"),
-        predicate=All(),
+        predicate=TrueNode(),
         includes=(statuses, short, maximal, maximal),
     )
     assert serialize(node)["includes"] == [
@@ -248,21 +248,21 @@ def test_serialize_canonicalizes_a_directly_constructed_include_set() -> None:
 
 _MALFORMED: list[tuple[Any, str]] = [
     ("not-a-mapping", "objectQuery must be a mapping"),
-    ({"predicate": {"all": {}}}, r"missing required clause `target`"),
+    ({"predicate": {"true": {}}}, r"missing required clause `target`"),
     ({"target": _ORDER}, r"missing required clause `predicate`"),
-    ({"target": _ORDER, "predicate": {"all": {}}, "x": 1}, r"unexpected key\(s\) \['x'\]"),
-    ({"target": "bad name", "predicate": {"all": {}}}, "is not a valid entity name"),
-    ({"target": _ORDER, "predicate": {"all": {}}, "limit": 0}, "positive integer"),
-    ({"target": _ORDER, "predicate": {"all": {}}, "narrowTo": []}, "non-empty list"),
-    ({"target": _ORDER, "predicate": {"all": {}}, "orderBy": []}, "non-empty list"),
+    ({"target": _ORDER, "predicate": {"true": {}}, "x": 1}, r"unexpected key\(s\) \['x'\]"),
+    ({"target": "bad name", "predicate": {"true": {}}}, "is not a valid entity name"),
+    ({"target": _ORDER, "predicate": {"true": {}}, "limit": 0}, "positive integer"),
+    ({"target": _ORDER, "predicate": {"true": {}}, "narrowTo": []}, "non-empty list"),
+    ({"target": _ORDER, "predicate": {"true": {}}, "orderBy": []}, "non-empty list"),
     (
-        {"target": _ORDER, "predicate": {"all": {}}, "orderBy": [{"attr": "bad attr"}]},
+        {"target": _ORDER, "predicate": {"true": {}}, "orderBy": [{"attr": "bad attr"}]},
         "not a valid attribute reference",
     ),
     (
         {
             "target": _ORDER,
-            "predicate": {"all": {}},
+            "predicate": {"true": {}},
             "orderBy": [{"attr": f"{_ORDER}.sku", "direction": "sideways"}],
         },
         r"`direction` must be 'asc' or 'desc'",
@@ -270,7 +270,7 @@ _MALFORMED: list[tuple[Any, str]] = [
     (
         {
             "target": _ORDER,
-            "predicate": {"all": {}},
+            "predicate": {"true": {}},
             "orderBy": [{"attr": f"{_ORDER}.sku", "nulls": "middle"}],
         },
         r"`nulls` must be 'first' or 'last'",
@@ -278,20 +278,20 @@ _MALFORMED: list[tuple[Any, str]] = [
     (
         {
             "target": _ORDER,
-            "predicate": {"all": {}},
+            "predicate": {"true": {}},
             "orderBy": [{"attr": f"{_ORDER}.sku", "x": 1}],
         },
         r"orderBy key: unexpected key\(s\) \['x'\]",
     ),
-    ({"target": _ORDER, "predicate": {"all": {}}, "includes": []}, "non-empty list"),
+    ({"target": _ORDER, "predicate": {"true": {}}, "includes": []}, "non-empty list"),
     (
-        {"target": _ORDER, "predicate": {"all": {}}, "includes": [{"segments": []}]},
+        {"target": _ORDER, "predicate": {"true": {}}, "includes": [{"segments": []}]},
         "`segments` must be a non-empty list",
     ),
     (
         {
             "target": _ORDER,
-            "predicate": {"all": {}},
+            "predicate": {"true": {}},
             "includes": [{"segments": [{"rel": "bad rel"}]}],
         },
         "not a valid relationship reference",
@@ -299,19 +299,19 @@ _MALFORMED: list[tuple[Any, str]] = [
     (
         {
             "target": _ORDER,
-            "predicate": {"all": {}},
+            "predicate": {"true": {}},
             "includes": [{"segments": [{"rel": f"{_ORDER}.items", "x": 1}]}],
         },
         r"include segment: unexpected key\(s\) \['x'\]",
     ),
     (
-        {"target": _ORDER, "predicate": {"all": {}}, "temporal": {}},
+        {"target": _ORDER, "predicate": {"true": {}}, "temporal": {}},
         "names at least one dimension",
     ),
     (
         {
             "target": _ORDER,
-            "predicate": {"all": {}},
+            "predicate": {"true": {}},
             "temporal": {"decision-time": {"history": {}}},
         },
         r"temporal: unexpected key\(s\) \['decision-time'\]",
@@ -319,7 +319,7 @@ _MALFORMED: list[tuple[Any, str]] = [
     (
         {
             "target": _ORDER,
-            "predicate": {"all": {}},
+            "predicate": {"true": {}},
             "temporal": {"valid-time": {"mystery": {}}},
         },
         "unknown Temporal Selection",
@@ -327,7 +327,7 @@ _MALFORMED: list[tuple[Any, str]] = [
     (
         {
             "target": _ORDER,
-            "predicate": {"all": {}},
+            "predicate": {"true": {}},
             "temporal": {"valid-time": {"asOf": "now"}},
         },
         "must be a canonical coordinate",
@@ -335,7 +335,7 @@ _MALFORMED: list[tuple[Any, str]] = [
     (
         {
             "target": _ORDER,
-            "predicate": {"all": {}},
+            "predicate": {"true": {}},
             "temporal": {"valid-time": {"asOf": 20240101}},
         },
         "must be a non-empty temporal value",
@@ -343,7 +343,7 @@ _MALFORMED: list[tuple[Any, str]] = [
     (
         {
             "target": _ORDER,
-            "predicate": {"all": {}},
+            "predicate": {"true": {}},
             "temporal": {
                 "valid-time": {"asOfRange": {"start": "latest", "end": "2024-01-01T00:00:00Z"}}
             },
@@ -353,7 +353,7 @@ _MALFORMED: list[tuple[Any, str]] = [
     (
         {
             "target": _ORDER,
-            "predicate": {"all": {}},
+            "predicate": {"true": {}},
             "temporal": {"valid-time": {"asOf": "latest", "history": {}}},
         },
         "a Temporal Selection has exactly one key",

@@ -234,7 +234,7 @@ def test_a_deep_fetch_level_is_a_second_call_under_the_same_read() -> None:
     _db(port, recorder, ORDERS).wire.find(
         {
             "target": "Order",
-            "predicate": {"eq": {"attr": "Order.id", "value": 1}},
+            "predicate": {"eq": {"path": "Order.id", "value": 1}},
             "includes": [{"segments": [{"rel": "Order.items"}]}],
         }
     )
@@ -267,7 +267,7 @@ def test_pipelined_sibling_levels_keep_one_ordered_call_per_statement() -> None:
     _db(port, recorder, ORDERS).wire.find(
         {
             "target": "Order",
-            "predicate": {"eq": {"attr": "Order.id", "value": 1}},
+            "predicate": {"eq": {"path": "Order.id", "value": 1}},
             "includes": [
                 {"segments": [{"rel": "Order.items"}]},
                 {"segments": [{"rel": "Order.tags"}]},
@@ -312,7 +312,7 @@ def test_a_failed_sibling_pipeline_balances_every_open_call() -> None:
         _db(port, recorder, ORDERS).wire.find(
             {
                 "target": "Order",
-                "predicate": {"eq": {"attr": "Order.id", "value": 1}},
+                "predicate": {"eq": {"path": "Order.id", "value": 1}},
                 "includes": [
                     {"segments": [{"rel": "Order.items"}]},
                     {"segments": [{"rel": "Order.tags"}]},
@@ -352,10 +352,10 @@ def test_the_wire_and_values_lanes_name_their_own_interface() -> None:
     recorder = RecordingLifecycleProvider()
     port = ScriptedAdapter(Read(rows=[NEW_ROW], times=2))
     db = _db(port, recorder)
-    db.wire.find({"target": "Account", "predicate": {"eq": {"attr": "Account.id", "value": 7}}})
+    db.wire.find({"target": "Account", "predicate": {"eq": {"path": "Account.id", "value": 7}}})
     db.read_rows(
         deserialize_query(
-            {"target": "Account", "predicate": {"eq": {"attr": "Account.id", "value": 7}}}
+            {"target": "Account", "predicate": {"eq": {"path": "Account.id", "value": 7}}}
         )
     )
     wire_root, rows_root = recorder.roots
@@ -481,7 +481,7 @@ def test_a_read_refused_by_preflight_creates_no_root() -> None:
     recorder = RecordingLifecycleProvider()
     port = ScriptedAdapter()
     with pytest.raises(QueryTargetError):
-        _db(port, recorder).wire.find({"target": "NoSuchEntity", "predicate": {"all": {}}})
+        _db(port, recorder).wire.find({"target": "NoSuchEntity", "predicate": {"true": {}}})
     assert recorder.roots == ()
     assert port.calls == []
 

@@ -15,7 +15,7 @@ when:
         target: parallax.compatibility.Order
         predicate:
           eq:
-            attr: parallax.compatibility.Order.id
+            path: parallax.compatibility.Order.id
             value: 3
       roundTrips: 1
       note: materialize a snapshot of order 3 with NO relationships included, so `items` is absent rather than empty

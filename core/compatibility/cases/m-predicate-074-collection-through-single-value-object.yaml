@@ -1,0 +1,35 @@
+# A collection reached through a single value object: an absent `meta` holds no
+# labels. MariaDB's guarded occupancy lane spells the same test.
+model: models/predicate-collections.yaml
+tags: [m-predicate, quantifier, scalar-collection, m-value-object, m-dialect, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  objectQuery:
+    target: parallax.compatibility.Basket
+    predicate:
+      any: {path: parallax.compatibility.Basket.meta.labels}
+then:
+  statements:
+  - sql: {postgres: 'select t0.id, t0.label, t0.owner_id, not t0.tags is null, t0.tags, not t0.scores is null, t0.scores, not t0.prices is null, t0.prices, not t0.flags is null, t0.flags, not t0.parcels is null, t0.parcels, not t0.meta is null, t0.meta from basket t0 where exists (select 1 from jsonb_array_elements(case when jsonb_typeof(jsonb_extract_path(t0.meta, ?)) = ? then jsonb_extract_path(t0.meta, ?) else cast(? as jsonb) end) t1)', mariadb: 'select t0.id, t0.label, t0.owner_id, not t0.tags is null, t0.tags, not t0.scores is null, t0.scores, not t0.prices is null, t0.prices, not t0.flags is null, t0.flags, not t0.parcels is null, t0.parcels, not t0.meta is null, t0.meta from basket t0 where json_type(json_extract(t0.meta, ?)) = ? and json_length(t0.meta, ?) > ?'}
+    binds:
+      postgres: [labels, array, labels, '[]']
+      mariadb: [$.labels, ARRAY, $.labels, 0]
+  graph:
+    Basket:
+    - id: 1
+      label: one
+      ownerId: 1
+      tags: [urgent, gift]
+      scores: [5, 25]
+      prices: ['1.50']
+      flags: [true]
+      parcels:
+      - sku: a
+        qty: 2
+        notes: [x]
+      - sku: b
+        qty: 0
+        notes: []
+      meta:
+        labels: [m]
+  roundTrips: 1

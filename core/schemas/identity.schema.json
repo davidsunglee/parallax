@@ -49,8 +49,13 @@
       "type": "string",
       "pattern": "^([a-z][a-z0-9]*(\\.[a-z][a-z0-9]*)*\\.)?[A-Z][A-Za-z0-9]*(\\.[a-z][A-Za-z0-9_]*)+$"
     },
-    "elementRef": {
-      "description": "An ELEMENT-RELATIVE path: one or more member identifiers, carrying NO Entity spelling at all because its subject is an array element bound by an enclosing scoped `where`. It is distinguishable from a `valueObjectRef` by exactly the property the split rule rests on — no segment begins with an uppercase letter.",
+    "qualifiedPath": {
+      "description": "An Entity-qualified predicate path: an `entityName` followed by one or more member identifiers, read from the queried position through single value objects and to-one relationships (`Order.status`, `Order.address.city`, `Order.customer.active`). It names its Entity because the queried position spells every path from it.",
+      "type": "string",
+      "pattern": "^([a-z][a-z0-9]*(\\.[a-z][a-z0-9]*)*\\.)?[A-Z][A-Za-z0-9]*(\\.[a-z][A-Za-z0-9_]*)+$"
+    },
+    "relativePath": {
+      "description": "A RELATIVE predicate path: one or more member identifiers and NO Entity spelling, read from the object a scope binds — a quantified element or a narrowed related target (`sku`, `product.category`, `geo.country`). It is distinguishable from a `qualifiedPath` by exactly the property the split rule rests on: no segment begins with an uppercase letter.",
       "type": "string",
       "pattern": "^[a-z][A-Za-z0-9_]*(\\.[a-z][A-Za-z0-9_]*)*$"
     }

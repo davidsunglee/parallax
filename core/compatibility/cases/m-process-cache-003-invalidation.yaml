@@ -9,7 +9,7 @@ when:
         target: parallax.compatibility.Account
         predicate:
           eq:
-            attr: parallax.compatibility.Account.id
+            path: parallax.compatibility.Account.id
             value: 2
       roundTrips: 1
       note: cache MISS — read account 2 (balance 250.00, version 1), caching the result
@@ -30,7 +30,7 @@ when:
         target: parallax.compatibility.Account
         predicate:
           eq:
-            attr: parallax.compatibility.Account.id
+            path: parallax.compatibility.Account.id
             value: 2
       roundTrips: 1
       note: the SAME find re-resolves (cache MISS) and MUST observe 777.00 / version 2, not 250.00 / version 1

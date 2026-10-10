@@ -19,7 +19,7 @@ when:
         target: parallax.compatibility.Expedition
         predicate:
           eq:
-            attr: parallax.compatibility.Expedition.id
+            path: parallax.compatibility.Expedition.id
             value: 7
         temporal:
           transaction-time:
@@ -38,7 +38,9 @@ when:
         target:
           entity: parallax.compatibility.Expedition
           predicate:
-            eq: { attr: parallax.compatibility.Expedition.id, value: 7 }
+            eq:
+              path: parallax.compatibility.Expedition.id
+              value: 7
         assignments:
           - { attr: parallax.compatibility.Expedition.title, value: Coastal Return }
           - attr: parallax.compatibility.Expedition.route

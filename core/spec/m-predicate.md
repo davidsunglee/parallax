@@ -14,7 +14,7 @@ an eager fetch — have no spelling here rather than a rejection rule.
 canonical Entity, Attribute, Relationship, and Value Object Identities), on
 `m-inheritance` (the `narrow` node constrains a polymorphic entity position
 against the family's effective concrete-subtype set), and on `m-wire` (for
-serialized typed-literal conversion). Relationship behavior is
+serialized typed-literal conversion and each scalar type's encoded JSON kind). Relationship behavior is
 not reconstructed here: `m-navigate` consumes the compiled `m-relationship`
 facet.
 
@@ -57,15 +57,15 @@ per-language re-expressions of a query (fluent builders, etc.) are **illustrativ
 only** — never the normative encoding.
 
 The encoding is a tagged object: each node is a single-key object whose key names
-the predicate kind. Attribute references are `Class.attribute` strings, resolved
-against the model. Examples:
+the predicate kind. A field is addressed by a `path` string resolved against the
+model. Examples:
 
 ```json
-{ "all": {} }
+{ "true": {} }
 ```
 
 ```json
-{ "eq": { "attr": "Order.id", "value": 42 } }
+{ "eq": { "path": "Order.id", "value": 42 } }
 ```
 
 Serialized Predicate literal positions admit only non-null string, number, or
@@ -76,26 +76,27 @@ grammar is checked after member resolution.
 
 ## Predicate set
 
-`m-predicate` is the canonical Predicate algebra. Its schema covers the
-single-entity predicate algebra, relationship navigation, Predicate-scoped
-subtype narrowing, and nested value-object predicates. Aggregation is a separate
-query form owned by `m-agg`; its interchange schema does not extend this
-Predicate union. Each node below carries a single canonical
-serialization; a conforming Predicate serde implementation **MUST**
-validate and round-trip every node in `predicate.schema.json` unchanged. Executing
-a node may depend on other core modules: `m-metamodel` supplies canonical local
-attributes, relationship declarations, As-Of Axes, and Value Objects;
-`m-navigate` owns behavior over the compiled `m-relationship` facet; `m-sql`
-owns SQL lowering; `m-temporal-read` owns temporal interval behavior.
+`m-predicate` is the canonical Predicate algebra. Its schema covers Boolean
+constants and composition, scalar operations over a field or a bound scalar
+element, explicit quantifiers over every collection kind, single-object presence,
+and Predicate-scoped subtype narrowing. Aggregation is a separate query form owned
+by `m-agg`; its interchange schema does not extend this Predicate union. Each node
+below carries a single canonical serialization; a conforming Predicate serde
+implementation **MUST** validate and round-trip every node in
+`predicate.schema.json` unchanged. Executing a node may depend on other core
+modules: `m-metamodel` supplies canonical attributes, relationship declarations,
+As-Of Axes, and Value Objects; `m-navigate` owns behavior over the compiled
+`m-relationship` facet; `m-sql` owns SQL lowering; `m-temporal-read` owns temporal
+interval behavior.
 
 ### Entity spellings in a reference position
 
 Every predicate position that names an Entity spells it either **bare** — the
 Entity's local name alone — or **canonically**, the namespace-qualified
-`<namespace>.<Entity>` of `m-metamodel`. The positions are the Entity prefix of
-an `attr`, a `rel`, and a nested value-object `path`, plus each Subtype Selection
-alternative. `m-object-query`'s own reference positions — the queried `target`, a
-Sort Key's `attr`, an Include Segment's `rel` — carry the identical rule.
+`<namespace>.<Entity>` of `m-metamodel`. The positions are the Entity prefix of an
+Entity-qualified `path`, plus each Subtype Selection alternative.
+`m-object-query`'s own reference positions — the queried `target`, a Sort Key's
+`attr`, an Include Segment's `rel` — carry the identical rule.
 
 **Input is permissive; output is exact.** A bare spelling remains legal at every
 one of those positions and MUST resolve whenever it names exactly one declared
@@ -109,9 +110,9 @@ Splitting a reference into its Entity spelling and its member path is
 `m-metamodel`'s parse rule — *the last capitalized segment is the Entity's local
 name* — and needs no model: `parallax.compatibility.Order.id` names the Entity
 `parallax.compatibility.Order` and the member `id`, while `Order.address.city`
-names the Entity `Order` and the member path `address.city`. An element-relative
-path inside a scoped `where` carries no capitalized segment and so names no
-Entity; its subject is the array element the enclosing exists binds.
+names the Entity `Order` and the member path `address.city`. A relative path
+carries no capitalized segment and so names no Entity; its subject is the object
+the enclosing scope binds (*Paths and scopes*).
 
 Entity Identity is **namespace-qualified** (`m-metamodel`), so one model may
 declare the same local name in two namespaces. A **bare** reference naming such a
@@ -138,19 +139,61 @@ write — admits the same two spellings and resolves by the same rule; the surfa
 owning that position names the refusal in its own vocabulary rather than in this
 one.
 
-### Identities
+### Paths and scopes
+
+Every operation reads its subject from a **scope**, and the scope decides how a
+`path` is spelled:
+
+| Scope | Opened by | Path spelling |
+|---|---|---|
+| the queried Entity position | the query (or predicate-selected write) itself | **Entity-qualified** (`Order.status`) |
+| a related Entity | a quantifier over a to-many relationship, or a path-targeted `narrow` | **relative** to the bound Entity (`sku`) |
+| a Value Object element | a quantifier over a `many` value object | **relative** to the element (`type`, `geo.country`) |
+| a scalar element | a quantifier over a scalar collection | **none** — the operation omits `path` |
+
+A path follows **single** members only: from its head it may continue through a
+`one` value object or a to-one relationship, and it stops at the member it names —
+a scalar attribute, a scalar collection, a value object, or a relationship. A
+resolver **MUST** reject a path that
+
+- names an undeclared member, or continues past a scalar
+  (`path-unknown-member`);
+- continues past a `many` value object or a to-many relationship
+  (`path-crosses-many`) — every many crossing is an explicit quantifier, and the
+  path continues relative to the element it binds;
+- ends on a member the operation cannot address (`path-target-kind-mismatch`): a
+  scalar operation needs a field, a quantifier a collection, a presence test a
+  single value object or to-one relationship, and a path-targeted `narrow` a
+  to-one relationship;
+- is spelled for another scope (`predicate-subject-outside-scope`): a relative
+  path at the queried position, an Entity-qualified one inside a bound scope, a
+  field inside a scalar-element scope, a subjectless operation outside one, or a
+  `narrow` without a target inside an element scope.
+
+Each segment resolves against declared structure: an Entity's applicable members,
+a value object's declared members (`m-value-object` — a recursive, typed
+composite, never opaque JSON keys), and a relationship's declared target. Because
+the structure is declared, a resolved field has a neutral type and every
+comparison is **typed**. A subject reached through a to-one relationship is read
+at that **related position**, and a quantifier over a collection reached that way
+ranges over the related object's collection (*Single-valued traversal*).
+
+### Constants
 
 | Predicate | Encoding | Meaning |
 |---|---|---|
-| `all` | `{ "all": {} }` | the identity — selects every row (no `WHERE`) |
-| `none` | `{ "none": {} }` | the absorbing element — matches nothing |
+| `true` | `{ "true": {} }` | the identity — selects every row (no `WHERE`) |
+| `false` | `{ "false": {} }` | the absorbing element — matches nothing |
 
-`none` is the dual of `all`; it lowers to an unsatisfiable predicate.
+Constants are subjectless and carry empty bodies; they are not Boolean field
+tests. A constant does not bypass a query's other clauses: an unfiltered query is
+still positioned, ordered, limited, and temporally selected by them.
 
 ### Equality and range
 
-Each takes `{ "attr": "Class.attribute", "value": <literal> }`. The value becomes
-a bind placeholder in the golden SQL.
+Each takes `{ "path"?, "value": <literal> }`. The value becomes a bind placeholder
+in the golden SQL. `path` names an object field; it is omitted exactly when the
+subject is the scalar element a scalar-collection quantifier binds.
 
 | Predicate | SQL operator |
 |---|---|
@@ -161,9 +204,10 @@ a bind placeholder in the golden SQL.
 | `lessThan` | `<` |
 | `lessThanEquals` | `<=` |
 
-`between` is a convenience over a bounded pair and takes
-`{ "attr", "lower", "upper" }`; it lowers to `attr between ? and ?` (two ordered
-binds: lower, then upper) and is equivalent to `>= lower AND <= upper`.
+`between` is **one** canonical node over a bounded pair and takes
+`{ "path"?, "lower", "upper" }`; it lowers to `<subject> between ? and ?` (two
+ordered binds: lower, then upper). It is never rewritten into a pair of
+comparisons: inside a quantifier one element must satisfy both bounds together.
 
 **Bound-ordering rule.** The two bounds describe a range, so a `lower` strictly
 greater than its `upper` names an empty range no row can satisfy; a resolver
@@ -174,35 +218,41 @@ then compare the two managed values. A conversion failure therefore wins over
 `between-bounds-inverted`. Only a **strictly** greater lower bound is rejected;
 equal bounds name the single-value range and are legal.
 
+After resolving the subject, a resolver **MUST** call
+`m-wire.decodeWire(member.neutralType, literal)` exactly once per typed literal and
+retain only the managed result. Wire failures map to
+`neutral-literal-type-mismatch`, `neutral-literal-noncanonical`, or
+`neutral-literal-out-of-space`, with the canonical resolved member and literal
+location.
+
 ### Null
 
-`isNull` / `isNotNull` take `{ "attr": "Class.attribute" }`. Per SQL three-valued
-logic, `isNotNull` excludes NULL rows; `notLike`/`notIn`/`notEq` against a NULL
-column likewise yield NULL (not true) and so exclude that row.
+`isNull` / `isNotNull` take `{ "path" }` — always a field: a scalar element is
+never null to the algebra, so a subjectless null check is refused
+(`predicate-subject-outside-scope`). Per SQL three-valued logic, `isNotNull`
+excludes NULL rows; `notLike`/`notIn`/`notEq` against a NULL subject likewise
+yield NULL (not true) and so exclude that row.
 
 A null check is meaningful only where the declared member admits null. A
-model-aware resolver **MUST** reject `isNull` / `isNotNull`, `nestedIsNull` /
-`nestedIsNotNull`, and element-relative null checks over a non-nullable leaf
+model-aware resolver **MUST** reject a null check over a non-nullable member
 (`null-check-non-nullable-member`, `m-case-format` rejected vocabulary) before
-emitting SQL. This is checked at the resolved leaf in every scope; physical
+emitting SQL. This is checked at the resolved member in every scope; physical
 Columns or Document placement does not change the verdict. A scalar collection is
 never nullable, so a null check over one is refused by this rule.
 
 ### Scalar collections
 
 A scalar collection (`m-metamodel`) is a sequence of values rather than one
-value, and no predicate here reaches its elements implicitly. A model-aware
-resolver **MUST** reject a comparison, range, membership, or string predicate —
-at the queried entity, through a nested path, or inside an element-scoped
-`where` — whose resolved subject is a scalar collection
-(`scalar-collection-unquantified`, `m-case-format` rejected vocabulary). The
-subject is judged before any literal is decoded, so the rule is named rather than
-a literal mismatch against the element type, and no comparison is read as matching
-some element.
+value, and no operation reaches its elements implicitly. A model-aware resolver
+**MUST** reject a comparison, range, membership, or string predicate whose `path`
+resolves to a scalar collection (`scalar-collection-unquantified`, `m-case-format`
+rejected vocabulary). The subject is judged before any literal is decoded, so the
+rule is named rather than a literal mismatch against the element type. The
+elements are reached only through a quantifier (*Quantifiers*).
 
 ### String
 
-The string predicates take `{ "attr", "value", "caseInsensitive"? }`
+The string predicates take `{ "path"?, "value", "caseInsensitive"? }`
 (`caseInsensitive` defaults to `false`).
 
 | Predicate | Pattern semantics |
@@ -220,148 +270,66 @@ the literal matches literally. The canonical escape character is the backslash
 pattern contains an escape sequence. `like`/`notLike` do **not** escape — their
 `value` is already a pattern.
 
-**Case-insensitive rule.** When `caseInsensitive` is `true`, both the column and
-the pattern are folded with `lower(...)`: `lower(attr) like lower(?)`. (A language
-MAY use a dialect-native case-insensitive operator behind the `m-sql` seam; the
-golden SQL fixes the portable `lower(...)` form.)
+**Case-insensitive rule.** When `caseInsensitive` is `true`, both the subject and
+the pattern are folded with `lower(...)`: `lower(<subject>) like lower(?)`. (A
+language MAY use a dialect-native case-insensitive operator behind the `m-sql`
+seam; the golden SQL fixes the portable `lower(...)` form.)
+
+**Non-string-member rule.** A string predicate reads text, so its resolved
+member's declared neutral type **MUST** be `String`; a resolver **MUST** reject any
+other member (`string-predicate-non-string-member`, `m-case-format` rejected
+vocabulary), in every scope. This is a **separate** rule from the typed-literal
+one, and the two are checked in order — **subject first**, exactly as a range's
+bound ordering is: the subject resolves, its type is checked against the
+predicate, and only then is the pattern checked.
+
+Ordering them the other way would blame the pattern for the member's problem, and
+— because the algebra's portable literal vocabulary carries `Date` / `Time` /
+`Timestamp` / `Uuid` / `Bytes` as `string`s — would **accept** `startsWith` against
+a `Date` member rather than reject it.
 
 ### Membership
 
-`in` / `notIn` take `{ "attr", "values": [ … ] }` (non-empty). Each value is a
-bind, in list order; the SQL is `attr in (?, ?, …)`. The `in(subquery)` form is
-not part of this schema revision.
+`in` / `notIn` take `{ "path"?, "values": [ … ] }` (non-empty). Each value is a
+bind, in list order; the SQL is `<subject> in (?, ?, …)`. The `in(subquery)` form
+is not part of this schema revision.
 
-### Nested value-object predicates
+### Value-object fields
 
-Nested predicates read an inner attribute of an `m-value-object`, which core
-stores as a single dialect-mapped `json` column. They use a dotted path of the
-form `Class.valueObject.segment[.segment...]` that resolves against the entity's
-**declared** value-object structure (`m-value-object` — a recursive, typed
-composite), never against opaque JSON keys:
-
-- `Class` is the queried entity.
-- The first segment **MUST** name a `valueObject` declared on that entity.
-- Each intermediate segment **MUST** name a nested `valueObject` declared on the
-  preceding member.
-- The final (leaf) segment **MUST** name an `attribute` declared on the
-  preceding member.
-
-A resolver **MUST** validate every segment against the declared structure and
-**MUST** reject a path whose first segment is not a declared value object, whose
-intermediate segment is not a declared nested value object, or whose leaf is not a
-declared attribute. Because the structure is declared, the leaf attribute has a
-neutral type, and the comparison is **typed**.
-
-The predicate family is **flat** and **parallel** to the scalar single-entity
-algebra — one single-key tagged node per operator, each with a closed body:
-
-| Predicate | Encoding | Meaning |
-|---|---|---|
-| `nestedEq` | `{ "nestedEq": { "path", "value" } }` | the value at `path` equals `value` |
-| `nestedNotEq` | `{ "nestedNotEq": { "path", "value" } }` | the value at `path` does not equal `value` |
-| `nestedGt` | `{ "nestedGt": { "path", "value" } }` | the value at `path` is greater than `value` |
-| `nestedGte` | `{ "nestedGte": { "path", "value" } }` | the value at `path` is greater than or equal to `value` |
-| `nestedLt` | `{ "nestedLt": { "path", "value" } }` | the value at `path` is less than `value` |
-| `nestedLte` | `{ "nestedLte": { "path", "value" } }` | the value at `path` is less than or equal to `value` |
-| `nestedBetween` | `{ "nestedBetween": { "path", "lower", "upper" } }` | the value at `path` lies in the inclusive range `[lower, upper]` |
-| `nestedIn` | `{ "nestedIn": { "path", "values" } }` | the value at `path` is one of `values` (non-empty list) |
-| `nestedNotIn` | `{ "nestedNotIn": { "path", "values" } }` | the value at `path` is not one of `values` (non-empty list) |
-| `nestedLike` | `{ "nestedLike": { "path", "value", "caseInsensitive"? } }` | the value at `path` matches the pattern `value` |
-| `nestedNotLike` | `{ "nestedNotLike": { "path", "value", "caseInsensitive"? } }` | the value at `path` does not match the pattern `value` |
-| `nestedStartsWith` | `{ "nestedStartsWith": { "path", "value", "caseInsensitive"? } }` | the value at `path` begins with the literal `value` |
-| `nestedEndsWith` | `{ "nestedEndsWith": { "path", "value", "caseInsensitive"? } }` | the value at `path` ends with the literal `value` |
-| `nestedContains` | `{ "nestedContains": { "path", "value", "caseInsensitive"? } }` | the value at `path` contains the literal `value` |
-| `nestedIsNull` | `{ "nestedIsNull": { "path" } }` | the value at `path` is **not present** (see the absence-collapse rule) |
-| `nestedIsNotNull` | `{ "nestedIsNotNull": { "path" } }` | the value at `path` **is present** (the complement) |
-
-The five string predicates carry a plain `string` `value` rather than a polymorphic
-literal; the rest of the comparison / range / membership `value`(s) are non-null
-serialized typed literals (`string` / finite `number` / `boolean`). Null is not a
-member of any neutral type; null tests use the dedicated presence nodes. After
-resolving the exact leaf, a resolver **MUST** call
-`m-wire.decodeWire(leaf.neutralType, literal)` exactly once and retain only the
-managed result. Wire failures map to `neutral-literal-type-mismatch`,
-`neutral-literal-noncanonical`, or `neutral-literal-out-of-space`, with the
-canonical resolved member and literal location. The presence tests
-(`nestedIsNull` / `nestedIsNotNull`) carry a `path` only. `m-sql` lowers a nested
-read to a dialect-specific extraction from the structured-document column and,
-where the declared type requires one, **casts** it before comparing; the extraction
-spelling, which types cast and which compare as the canonical document text, the
-typed-cast form, and the **bind order** (per-segment JSON keys vs a single path
-bind) are all `m-dialect` decisions (`m-sql`, `m-dialect`), not fixed by this
-algebra.
-
-`nestedBetween` is **one** canonical node — it is never rewritten into a pair of
-comparisons, because the two forms diverge through a `many` segment (below). Both
-its bounds are typed literals against the same leaf, and the bound-ordering rule
-above governs it unchanged. The previous `nested-literal-type-mismatch` rule is
-retired; nested and depth-0 conversion failures use the same neutral taxonomy.
-
-The five nested string predicates carry the **String** section's semantics above
-unchanged, against the nested extraction instead of a column: `nestedLike` /
-`nestedNotLike` take `value` as the SQL pattern with `%` and `_` as wildcards and
-never escape it, the affix forms (`nestedStartsWith` / `nestedEndsWith` /
-`nestedContains`) take it as literal text whose own `%`, `_`, and escape characters
-the implementation **MUST** escape before wrapping with the affix wildcards, and
-`caseInsensitive` folds both sides with `lower(...)`. There is one rule for both
-scopes and for the top level; nothing about the pattern grammar changes because the
-subject is nested. Their `value` is a plain `string` rather than a polymorphic
-literal, which is why the leaf's own type carries the rule below rather than the
-literal's.
-
-**Non-string-member rule.** A string predicate reads text, so its resolved leaf's
-declared neutral type **MUST** be `String`; a resolver **MUST** reject any other
-leaf (`nested-string-predicate-non-string-member`, `m-case-format` rejected
-vocabulary). This is a **separate** rule from the typed-literal one, and the two are
-checked in order — **subject first**, exactly as a range's bound ordering is: the
-path resolves, the leaf's type is checked against the predicate, and only then is
-the literal checked.
-
-```text
-resolve nested member -> leaf
-if the predicate is a string predicate and leaf.type is not String:
-    reject("nested-string-predicate-non-string-member")
-if decodeWire(leaf.type, value) fails:
-    reject(the corresponding neutral-literal reason)
-```
-
-Ordering them the other way would blame the literal for the member's problem, and —
-because the algebra's portable literal vocabulary carries `Date` / `Time` /
-`Timestamp` / `Uuid` / `Bytes` as `string`s — would **accept** `nestedStartsWith`
-against a `Date` member rather than reject it. The dedicated rule names the real
-fault and closes that hole.
+A field inside a value object is addressed by the same dotted `path` as any other
+field (`Order.address.city`, or `geo.country` inside a value-object quantifier).
+`m-sql` lowers it to a dialect-specific extraction from the structured-document
+column and, where the declared type requires one, **casts** it before comparing;
+the extraction spelling, which types cast and which compare as the canonical
+document text, the typed-cast form, and the **bind order** are `m-dialect`
+decisions (`m-sql`), not fixed by this algebra.
 
 #### Absence-collapse rule
 
-A nested field is in exactly one of two observable conditions: **present** — the
-extraction yields a non-NULL, non-JSON-`null` scalar — or **not present**. Four
+A value-object field is in exactly one of two observable conditions: **present** —
+the extraction yields a non-NULL, non-JSON-`null` scalar — or **not present**. Four
 distinguishable storage states all collapse to **not present**, uniformly, for
-every nested predicate:
+every operation over the field:
 
 - the value-object **column is SQL `NULL`** (the whole value object is absent);
 - a **path segment is missing** from the stored document (no such key);
 - the selected value is an explicit **JSON `null`**;
 - an **intermediate segment is a non-object** (a scalar or array blocks descent).
 
-In every one of these the extraction yields SQL `NULL`, so a comparison
-(`nestedEq` / `nestedNotEq` / `nestedGt` / `nestedGte` / `nestedLt` / `nestedLte`),
-a range (`nestedBetween`), a membership test (`nestedIn` / `nestedNotIn`), and a
-string predicate (`nestedLike` / `nestedNotLike` / `nestedStartsWith` /
-`nestedEndsWith` / `nestedContains`) are
-neither true — the row is **excluded**, exactly as the scalar `notEq`/`notIn` null
-behavior above. The negative forms are not exceptions: `nestedNotEq`,
-`nestedNotIn`, and `nestedNotLike` over a not-present member yield `NULL`, not
-true, so absence never satisfies a negative predicate. `nestedIsNull` is true
-**exactly** on the
-rows a comparison excludes for this reason (all four not-present states);
-`nestedIsNotNull` is its complement (the present rows). An implementation **MUST
-NOT** distinguish JSON `null` from a missing key or a null column at the predicate
-level — the states stay distinguishable in the stored data but are indistinguishable
-to the algebra.
+In every one of these the extraction yields SQL `NULL`, so a comparison, a range,
+a membership test, and a string predicate are neither true — the row is
+**excluded**, exactly as the scalar `notEq`/`notIn` null behavior above. The
+negative forms are not exceptions: `notEq`, `notIn`, and `notLike` over a
+not-present field yield `NULL`, not true, so absence never satisfies a negative
+predicate. `isNull` is true **exactly** on the rows a comparison excludes for this
+reason (all four not-present states); `isNotNull` is its complement. An
+implementation **MUST NOT** distinguish JSON `null` from a missing key or a null
+column at the predicate level — the states stay distinguishable in the stored data
+but are indistinguishable to the algebra.
 
 This collapse is a **predicate observation**, not a stored-data-validity verdict.
-It decides whether a nested predicate matches and nothing else. In particular, it
-does not make a missing or JSON-null required member valid, authorize a result
+It decides whether a predicate matches and nothing else. In particular, it does
+not make a missing or JSON-null required member valid, authorize a result
 materializer to discard the contradiction, or turn a wrong-kind occurrence into
 conforming stored data. A read may therefore both exclude a row from an ordinary
 comparison for the reason above and report that the stored member violates its
@@ -381,114 +349,133 @@ validity rule: every requested position within a logical root has the
 `m-document-codec` verdict under either layout, while every predicate extraction
 retains the collapse defined here.
 
-#### To-many members — any-element and same-element semantics
+### Quantifiers
 
-A value object declared `multiplicity: many` is an ordered **JSON array** of documents in the
-same column (`m-value-object`). Two things become expressible over it, and the
-distinction between them is load-bearing.
-
-**Flat predicates through a `many` segment mean *any element matches*.** A flat
-`nested*` predicate whose path crosses a `many` member (e.g.
-`nestedEq(Customer.address.phones.type, "home")`) is true for a row iff **some
-element** of that array satisfies it. Each such predicate is evaluated
-**independently**: ANDing two of them at the top level (`and(nestedEq(phones.type,
-"home"), nestedEq(phones.number, "555-9999"))`) means "some element has
-`type = home` **and** some — *possibly different* — element has
-`number = 555-9999`". The absence-collapse rule still holds: a null column, a
-missing array, an empty array, a **non-array value** (an explicit JSON `null`, a
-JSON scalar, or a JSON object — anything that is not a JSON array collapses to
-**zero elements**), or an element whose leaf is not present contributes no matching
-element. A non-array value is read as not-present even when its own scalar value or
-object content would match the predicate.
-
-**A range still binds one element.** Because `nestedBetween` is one node rather
-than two comparisons, a row matches it iff **some single element** satisfies
-`>= lower AND <= upper` together. Rewriting it as
-`and(nestedGte(…, lower), nestedLte(…, upper))` would be a *different* predicate
-through a `many` segment: the two flat comparisons evaluate independently, so two
-*different* elements could satisfy one bound each. That is precisely why the node
-is canonical and never lowered as a pair.
-
-**Any-element is uniform across the whole flat family, negative forms included.**
-`nestedNotEq`, `nestedNotIn`, and `nestedNotLike` through a `many` segment mean
-"**some** element's member is not equal to / not in the list / not like the
-pattern", never "**no** element's member is". The
-two readings differ on real data, so the choice is observable: with phones
-`[{home, 555-1234}, {work, 555-9999}]`, `nestedNotIn(phones.type, [work])` matches
-that row (its first element's `type` is `home`), while the no-element reading does
-not. The no-element reading is already spellable, and that is why it is not
-overloaded onto `nestedNotIn`:
-
-```yaml
-# any-element — the meaning of nestedNotIn: SOME element's type is not `work`
-nestedNotIn: { path: Customer.address.phones.type, values: [work] }
-
-# no-element — spelled with nestedNotExists: NO element's type is `work`
-nestedNotExists:
-  path: Customer.address.phones
-  where:
-    nestedIn: { path: type, values: [work] }
-```
-
-**The absence rule inside an element.** An element that does not carry the member
-at all — a missing key, an explicit JSON `null`, or a non-object blocking descent —
-extracts SQL `NULL`, so ordinary three-valued logic excludes it: that element
-satisfies neither the positive nor the negative form and contributes no matching
-element. A row therefore matches `nestedNotIn` only when some element **has** the
-member and its value is outside the list, exactly as it matches `nestedIn` only
-when some element has the member and its value is inside it.
-
-**`nestedExists` / `nestedNotExists` test the member itself**, over a
-**value-object-terminated** path (`Class.valueObject(.valueObject)*`, ending at a
-value object rather than at an inner attribute):
+Scalar collections, `many` value objects, and to-many relationships share one
+quantifier vocabulary. Each quantifier names its collection by a required `path`,
+reached through single members from the scope it is written in; the collection's
+canonical kind decides what its `where` binds — a scalar element, a value-object
+element, or a related Entity.
 
 | Predicate | Encoding | Meaning |
 |---|---|---|
-| `nestedExists` | `{ "nestedExists": { "path", "where"? } }` | the value object at `path` is **present** (`one`) or its array is **non-empty** (`many`); with `where`, **at least one** element satisfies the compound sub-predicate |
-| `nestedNotExists` | `{ "nestedNotExists": { "path", "where"? } }` | the complement — the value object is **absent** (`one`) or the array is **empty or absent** (`many`); with `where`, **no** element satisfies the compound sub-predicate |
+| `any` | `{ "any": { "path", "where"? } }` | some element makes `where` true; bare, the collection is non-empty |
+| `none` | `{ "none": { "path", "where"? } }` | no element makes `where` true; bare, the collection is empty |
+| `all` | `{ "all": { "path", "where" } }` | every element makes `where` true; it has no bare form |
 
-Without `where`, `nestedExists` on a `many` path is a pure non-empty test (an empty
-array, a missing key, a JSON `null`, a SQL `NULL` column, **and any non-array value
-— a JSON scalar or a JSON object** — all read as not-present, so `nestedNotExists`
-matches every one of them — an empty array, a NULL column, and a non-array value are
-**indistinguishable** to the algebra, exactly as the scalar absence-collapse rule
-folds them).
+`where` is evaluated once per element, as **one complete predicate** binding that
+one element: every operation inside it — both bounds of a range, a negated
+comparison, a whole Boolean compound — reads the same element. Its truth decides
+the quantifier:
 
-**The scoped `where` expresses same-element matching.** With `where`, one element
-must satisfy the **whole** compound sub-predicate — so `nestedExists` with `where`
-is *not* the same as ANDing flat predicates. The sub-predicate inside `where` is
-the same `nested*` family re-expressed over **element-relative** paths (`type`,
-`geo.country` — declared members of the element, **no** leading `Class.valueObject`)
-composed with the ordinary `and` / `or` / `not` / `group` combinators. It resolves
-against the element's declared structure; a resolver **MUST** reject an
-element-relative path that names an undeclared member.
+```text
+one element's where   any   none   all
+true                  true  false  true
+false                 false true   false
+unknown               false true   false
+empty collection      false true   true
+```
 
-The discriminating pair, with phones `[{home, 555-1234}, {work, 555-9999}]` (id 1 in
-the corpus fixtures):
+`all` succeeds only when every evaluation is **true**: false and unknown both fail
+it, so `all(p)` is not `none(not p)` wherever `p` can be unknown. Matching a
+non-empty collection all of whose elements satisfy `p` is the explicit
+conjunction of a bare `any` with `all(p)`.
+
+Separate quantifiers bind separately, and their elements may differ: two `any`
+nodes over the same collection, joined by `and`, are satisfied by two different
+elements, while one `any` whose `where` is their conjunction requires one element
+carrying both. That distinction is observable and load-bearing:
 
 ```yaml
-# unscoped AND — MATCHES: different elements may satisfy each predicate
+# two quantifiers — MATCHES when different phones satisfy each:
 and:
   operands:
-    - nestedEq: { path: Customer.address.phones.type,   value: home }
-    - nestedEq: { path: Customer.address.phones.number, value: '555-9999' }
+    - any: { path: Customer.address.phones, where: { eq: { path: type, value: home } } }
+    - any: { path: Customer.address.phones, where: { eq: { path: number, value: '555-9999' } } }
 
-# scoped exists — does NOT match: ONE element must satisfy the whole compound
-nestedExists:
+# one quantifier — matches only when ONE phone satisfies both:
+any:
   path: Customer.address.phones
   where:
     and:
       operands:
-        - nestedEq: { path: type,   value: home }
-        - nestedEq: { path: number, value: '555-9999' }
+        - eq: { path: type, value: home }
+        - eq: { path: number, value: '555-9999' }
 ```
 
-The unscoped form lowers to two **independent** existence checks (a row where `home`
-and `555-9999` live in *different* elements matches); the scoped form lowers to a
-**single** existence check binding one element, so both predicates must hold on the
-*same* element. `nestedNotExists` with `where` is its negation — "no element
-satisfies the compound". The array-traversal spelling per dialect is an `m-dialect`
-decision (`m-sql`), never fixed by this algebra.
+Quantifiers nest: a `where` may quantify a collection of the element it binds,
+with a path relative to that element. Negation complements the complete predicate
+exactly where it is authored and never moves across a quantifier:
+
+```yaml
+# some line has no urgent tag — not "the order has no urgent tag anywhere":
+any:
+  path: Order.lines
+  where:
+    none:
+      path: tags
+      where: { eq: { value: urgent } }
+```
+
+**Carriers.** A collection stored as SQL `NULL`, a missing key, an explicit JSON
+`null`, a JSON scalar, or a JSON object holds **zero elements** to a quantifier, as
+does a collection reached through an absent single value object or to-one
+relationship. This is a predicate observation only: a malformed carrier remains
+invalid stored data that publication refuses (`m-document-codec`). An actual array
+keeps every position.
+
+**Scalar elements keep their declared encoding kind.** Before a scalar element is
+compared, its JSON kind is checked against the kind its declared type encodes as
+(`m-wire`): a Boolean collection expects JSON booleans, the integer and float types
+JSON numbers, and Decimal and the text-encoded types JSON strings. An element of
+another kind, and a JSON `null` element, remain candidates but supply no value, so
+every operation over them is **unknown** — an integer collection holding the JSON
+string `"42"` does not satisfy `eq 42`, and that element fails `all`. A
+correct-kind element is compared through the ordinary typed projection; the kind
+check is not canonical stored-data validation, and a conversion the database
+cannot perform fails the statement through the execution error route.
+
+```text
+integer collection   any(eq 42)   none(eq 42)   all(eq 42)
+[42]                 true         false         true
+["42"]               false        true          false
+[42, "42"]           true         false         false
+```
+
+### Presence
+
+| Predicate | Encoding | Meaning |
+|---|---|---|
+| `exists` | `{ "exists": { "path" } }` | the single value object or to-one related Entity at `path` is present |
+| `notExists` | `{ "notExists": { "path" } }` | it is absent |
+
+A presence test carries no predicate and is always true or false. Presence of a
+value object is an object at its path — SQL `NULL`, a missing key, JSON `null`, and
+a non-object are all absent. Presence of a related Entity is a visible candidate
+target at the read's temporal coordinates (`m-navigate`). A collection has no
+presence of its own: bare `any` / `none` test its occupancy.
+
+### Single-valued traversal
+
+A path continues through a to-one relationship exactly as through a single value
+object: `Order.customer.active` reads the `active` field of the one customer the
+order reaches. Traversal is by canonical Relationship Identity and keeps every
+relationship rule — join, temporal visibility (`m-navigate`), direction, and the
+target's family.
+
+A dotted field keeps nullable-field truth: when no target is reached, the field
+supplies no value and ordinary comparisons — negative ones included — are unknown,
+never matches. A presence test, not a negated comparison, distinguishes an absent
+target from a present one with a null field. A dotted operation never multiplies
+the queried rows and is never an existential match: it evaluates the declared
+target's candidates at the propagated temporal coordinates — before any subtype
+selection or field condition could hide one — and **zero** candidates supply no
+value, **one** supplies the demanded result, and **more than one** fail the
+statement when it is evaluated, through the database execution route (`m-sql`,
+`m-db-error` assigns the failure no neutral category). A collection reached
+through an absent target is empty: bare `any` is false, `none` and `all` are true.
+Loaded relationships and deep fetch, which take the first related target, are not
+dotted traversal and are unchanged.
 
 ### Boolean combinators
 
@@ -508,32 +495,17 @@ than `or`, `(a or b) and c` requires a `group`, whereas `a or b and c` parses as
 `a or (b and c)` and needs none — the two are distinct canonical nodes with
 distinct golden SQL.
 
-## Relationship algebra
+## Relationships
 
 Relationships are traversed **by canonical Relationship Identity** — never as a
-user-written join. The canonical wire form spells that identity as
-`Class.relationship`; resolution binds it to `m-metamodel`, while `m-navigate`
-uses the compiled `m-relationship` facet for target and join behavior. A
-navigation node references a relationship and (for
-the filter forms) carries an optional inner predicate constraining the related
-entity. These nodes lower to **correlated semi-joins** so a to-many traversal
-never multiplies the queried entity's rows (`m-sql`, `m-navigate`).
-
-### Navigation filters
-
-| Predicate | Encoding | Meaning |
-|---|---|---|
-| `navigate` | `{ "navigate": { "rel", "op"? } }` | filter the queried entity by traversing `rel`; `op` (optional) constrains the related entity |
-| `exists` | `{ "exists": { "rel", "op"? } }` | the queried entity has ≥1 related row (optionally matching `op`) |
-| `notExists` | `{ "notExists": { "rel", "op"? } }` | the queried entity has no related row (optionally matching `op`) |
-
-`rel` is a relationship reference of the form `Class.relationship`. `navigate`
-and `exists` are the same correlated-`EXISTS` lowering (a navigation filter *is*
-a positive existence check); `notExists` is the negated form. With no `op`,
-`exists`/`notExists` are pure existence/absence checks. The inner `op` is a
-normal predicate tree resolved **against the related entity's attributes**
-(`OrderItem.sku`, …), so any predicate from the single-entity algebra composes
-inside a navigation.
+user-written join. A to-many relationship is a collection and is reached only
+through a quantifier, whose `where` resolves **against the related Entity**: its
+paths are relative to the bound Entity (`sku`, `product.category`). A to-one
+relationship is a single member: dotted paths continue through it, `exists` /
+`notExists` test its presence, and a path-targeted `narrow` tests its subtype.
+`m-navigate` owns relationship behavior over the compiled `m-relationship` facet,
+and `m-sql` lowers quantifiers to correlated sub-selects and to-one hops to scalar
+subqueries, so a to-many traversal never multiplies the queried entity's rows.
 
 ## Subtype narrowing
 
@@ -546,22 +518,59 @@ can never be confused for one another:
 
 | Predicate | Encoding | Meaning |
 |---|---|---|
-| `narrow` | `{ "narrow": { "to": [ … ], "operand" } }` | evaluate `operand` over the active position narrowed by the Subtype Selection `to` |
+| `narrow` | `{ "narrow": { "path"?, "to": [ … ], "operand" } }` | the Entity at the active position — or, with `path`, the to-one target `path` reaches — belongs to the Subtype Selection `to`, and `operand` holds there |
 
-The containing structure supplies the position: at the top of a query's
-`predicate` it is the query's own result position (its `target`, narrowed by its
-`narrowTo` clause), a Boolean term uses that Boolean expression's active
-position, a `navigate` / `exists` / `notExists` filter uses the relationship
-target, and a `narrow` inside another `narrow`'s operand uses the enclosing
-selection's resolved position. The position is never repeated in the node. `operand` is evaluated over the selection's resolved position, so a
-concrete-subtype-declared attribute becomes referenceable there.
+Without `path`, the containing structure supplies the position: at the top of a
+query's `predicate` it is the query's own result position (its `target`, narrowed
+by its `narrowTo` clause), a Boolean term uses that Boolean expression's active
+position, a quantifier over a to-many relationship uses the Entity it binds, and a
+`narrow` inside another `narrow`'s operand uses the enclosing selection's resolved
+position. The position is never repeated in the node. `operand` is evaluated over
+the selection's resolved position, so a concrete-subtype-declared attribute
+becomes referenceable there. A subtype test alone carries the constant `true`
+operand.
 
 ```yaml
 # target: Animal (root); narrow to Pet (abstract subtype -> Dog, Cat):
 narrow:
   to: [Pet]
-  operand: { all: {} }
+  operand: { "true": {} }
 ```
+
+**Target-local narrowing.** With `path`, the Subtype Selection resolves against
+the to-one target that path reaches — through single members only — and `operand`
+reads that target with relative paths:
+
+```yaml
+narrow:
+  path: Order.customer
+  to: [VipCustomer]
+  operand:
+    greaterThan: { path: creditLimit, value: 100 }
+```
+
+An absent target, and one outside the selection, make the node **false**; a
+selected target keeps the operand's true, false, or **unknown** — narrowing does
+not truth-normalize it. Ordinary negation complements the completed node, so
+negating it includes absent and unselected targets but leaves an unknown operand
+unknown:
+
+```text
+reached target                     narrow     not(narrow)
+absent                             false      true
+present, outside the selection     false      true
+selected, operand true             true       false
+selected, operand false            false      true
+selected, operand unknown          unknown    unknown
+```
+
+The selection is a filter over one reached target, not a request for a narrowed
+Include view or a narrowing of the returned roots, and it applies the cardinality
+assertion of single-valued traversal to every declared candidate before the
+selection is consulted. Inside a quantifier over a to-many relationship a `narrow`
+needs no `path`: it tests the element, and it does not restrict which elements the
+quantifier ranges over — `all` over a subtype test requires every element to pass
+it.
 
 Subtype Selection construction and the clamp/resolve/union/subset rule are
 specified once in `m-inheritance`. This module adds these operand consequences:
@@ -614,35 +623,36 @@ is fixed by `m-sql`.
 Public Wire predicate nodes are untrusted serialized syntax. Predicate
 elaboration consumes that syntax plus the accepted model and returns one private
 immutable `ResolvedPredicate`: a closed union of Boolean constants and
-composition, scalar operations, subtype narrowing, Value Object quantifiers, and
-relationship semi-joins. It is the sole execution representation of a predicate,
+composition, scalar operations, subtype narrowing, quantifiers, and presence
+tests. It is the sole execution representation of a predicate,
 not a second public AST, and has no serialization contract. Construction is
 restricted to this module so illegal subject/operator/literal combinations are
 not representable downstream.
 
 Each variant retains only its resolved facts, never its authored node. A scalar
-operation retains its operator, the exact resolved member it reads from the
-current position — an Attribute, or a Value Object leaf — and its complete
-managed operand shape: one value for comparison, two ordered bounds for
-`between`, or one managed tuple for membership rather than one wrapper per
-element. A string match retains its pattern text and whether it folds case, and a
-null check its member alone. The nested operator family resolves to the same
-operators as the attribute family; which family it was authored in is not a
-retained fact. Recursive variants retain resolved children, and no variant
-carries storage placement or precomputed SQL text. Reusing one authored node at
+operation retains its operator, the exact resolved member it reads — an
+Attribute, or a Value Object leaf — the **position** it reads it at (the current
+object, a related object reached through to-one relationships, or the bound
+scalar element), and its complete managed operand shape: one value for
+comparison, two ordered bounds for `between`, or one managed tuple for membership
+rather than one wrapper per element. A string match retains its pattern text and
+whether it folds case, and a null check its member alone. A related position
+retains each resolved relationship direction, its target, both join endpoints,
+and the temporal terms its candidates are visible under. Recursive variants retain
+resolved children, and no variant carries storage placement or precomputed SQL
+text. Reusing one authored node at
 two semantic positions creates two resolved occurrences; repeating one resolved
 occurrence across physical SQL branches reuses that occurrence.
 
-Elaboration interprets existence and many-crossing grammar directly into
-resolved scopes. `nestedExists` / `nestedNotExists` resolve to an `any` / `none`
-quantifier over the occurrence at their path, with the elaborated element
-`where` bound to its element. A flat nested predicate whose path crosses a
-`many` occurrence resolves to an `any` quantifier over the first such
-occurrence, binding the operation to that occurrence's element — exactly the
-any-element reading above. A relationship `exists`, `notExists`, or `navigate`
-resolves to a semi-join retaining the relationship direction, its target, both
-join endpoints, its polarity, and its optional interior predicate resolved at the
-target's position.
+A quantifier retains its kind, the collection it ranges over — a scalar
+collection, a value-object occurrence, or a resolved relationship — the position
+that collection is read at, and its `where` resolved in the scope of the element
+it binds. A presence test retains its polarity, its single value-object occurrence
+or resolved relationship, and its position. A narrowing retains its accepted
+selection, the position it tests — the current object or a reached target — and
+its operand resolved there, or no operand for subtype membership alone; the
+constant `true` operand elaborates to that same absent operand. Elaboration never
+manufactures an existential scope a node did not author.
 
 Elaboration dispatches exhaustively over the closed authored union. For each
 typed literal it resolves the subject and operator first, calls
@@ -677,10 +687,8 @@ included; it is never normalized again for another type.
 ## Forward map of the rest of the algebra
 
 For orientation, this schema revision leaves membership `in(subquery)` out of the
-required predicate set. The nested value-object nodes — the flat `nested*` family
-(`nestedEq`, `nestedNotEq`, `nestedGt`, `nestedGte`, `nestedLt`, `nestedLte`,
-`nestedIn`, `nestedIsNull`, `nestedIsNotNull`) plus the to-many `nestedExists` /
-`nestedNotExists` with their optional element-scoped `where` — have canonical
-encodings and are part of the algebra, with SQL lowering specified by `m-sql`.
-Temporal Selection is a clause of `m-object-query`, whose observable behavior
-`m-temporal-read` specifies.
+required predicate set. Temporal Selection is a clause of `m-object-query`, whose
+observable behavior `m-temporal-read` specifies. Public truth-testing operations
+— a node or method that turns an unknown into true or false — are not part of the
+algebra; the complete-predicate truth test strict `all` requires is internal to
+its lowering.

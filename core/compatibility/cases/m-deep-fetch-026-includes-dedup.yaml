@@ -7,14 +7,14 @@ when:
   objectQuery:
     target: parallax.compatibility.OrderItem
     predicate:
-      all: {}
+      "true": {}
     includes:
       - segments:
           - rel: parallax.compatibility.OrderItem.order
   equivalentEncodings:
     - target: parallax.compatibility.OrderItem
       predicate:
-        all: {}
+        "true": {}
       includes:
         - segments:
             - rel: parallax.compatibility.OrderItem.order

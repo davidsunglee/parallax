@@ -11,7 +11,9 @@ when:
     target:
       entity: parallax.compatibility.CollectionTwinItem
       predicate:
-        eq: { attr: parallax.compatibility.CollectionTwinItem.id, value: 1 }
+        eq:
+          path: parallax.compatibility.CollectionTwinItem.id
+          value: 1
     assignments:
       - attr: parallax.compatibility.CollectionTwinItem.counts
         value: [5, "6"]

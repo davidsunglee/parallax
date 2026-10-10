@@ -10,7 +10,7 @@ when:
     target: parallax.compatibility.Balance
     predicate:
       eq:
-        attr: parallax.compatibility.Balance.acctNum
+        path: parallax.compatibility.Balance.acctNum
         value: A
     temporal:
       transaction-time:

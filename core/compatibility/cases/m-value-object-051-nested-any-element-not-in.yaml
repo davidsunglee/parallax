@@ -1,9 +1,8 @@
-# valueObject to-many negated membership: nestedNotIn through a `many` segment keeps
-# the UNIFORM any-element reading — SOME element's member is not in the list — never
-# the no-element reading (m-predicate any-element + absence collapse, m-sql,
-# m-dialect array-traversal form). Postgres golden only — a non-equality element
-# predicate is outside MariaDB's containment scope (m-dialect, "Scope of the
-# containment golden").
+# valueObject to-many negated membership: `any` with `notIn` asks whether SOME
+# element's member is outside the list, which is not `none` with `in` (m-predicate
+# quantifiers + absence collapse, m-sql, m-dialect array-traversal form). Postgres
+# golden only — a non-equality element predicate is outside MariaDB's containment
+# scope (m-dialect, "Scope of the containment golden").
 model: models/customer.yaml
 tags: [m-value-object, m-predicate, m-sql, m-dialect, nested, json, to-many, any-element, notIn, absence-collapse, array-traversal, slice-snapshot-1, slice-managed-1]
 shape: read
@@ -11,10 +10,13 @@ when:
   objectQuery:
     target: parallax.compatibility.Customer
     predicate:
-      nestedNotIn:
-        path: parallax.compatibility.Customer.address.phones.type
-        values:
-          - work
+      any:
+        path: parallax.compatibility.Customer.address.phones
+        where:
+          notIn:
+            path: type
+            values:
+              - work
 then:
   statements:
     - sql:

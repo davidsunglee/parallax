@@ -8,8 +8,8 @@ when:
   objectQuery:
     target: parallax.compatibility.Order
     predicate:
-      exists:
-        rel: parallax.compatibility.Order.items
+      any:
+        path: parallax.compatibility.Order.items
 then:
   statements:
     - sql:

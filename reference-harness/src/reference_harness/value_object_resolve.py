@@ -11,13 +11,12 @@ This module owns three things:
 * :class:`RejectionError` — raised by a validator with the ``rule`` it violated.
 * The closed **rule vocabulary** (:data:`REJECTED_RULES`) — the small set of
   ``then.rejectedRule`` identifiers, each naming a normative MUST from
-  ``m-predicate`` (predicate bound ordering and the nested-predicate resolver) or
+  ``m-predicate`` (predicate bound ordering and the path and scope resolver) or
   the ``m-value-object`` materialization/navigation contract. The schema pins the
   SAME vocabulary in the ``then.rejectedRule`` enum; the two MUST agree.
-* The **member resolvers** — resolve a dotted nested path / value-object-terminated
-  path / element-relative path against an entity's *declared* recursive value-object
-  structure, raising :class:`RejectionError` on the first undeclared segment, plus
-  the literal-level checks (declared-type match, and range-bound ordering).
+* The declared-structure lookups and the literal-level checks (declared-type
+  match, and range-bound ordering); predicate path resolution itself lives in
+  :mod:`predicate_paths`.
 
 These are non-normative grading machinery: they let the reference harness make the
 reference implementation actually reject what the ``rejected`` cases pin, exactly as
@@ -30,25 +29,25 @@ from typing import Any
 
 from .case import Entity
 from .portable_literal import PortableLiteralError, decode
-from .references import split_reference
 
 # --- rule vocabulary --------------------------------------------------------
 #
 # The closed set of `then.rejectedRule` identifiers. Kept in lockstep with the
 # `then.rejectedRule` enum in compatibility-case.schema.json (m-case-format).
 
-# PredicateNode rules (m-predicate bound-ordering + nested-predicate resolver MUSTs,
-# m-value-object materialization/navigation contract clauses 4/5).
+# PredicateNode rules (m-predicate bound-ordering and path/scope resolver MUSTs,
+# m-value-object materialization contract clauses 4/5).
 BETWEEN_BOUNDS_INVERTED = "between-bounds-inverted"
 NULL_CHECK_NON_NULLABLE_MEMBER = "null-check-non-nullable-member"
-NESTED_PATH_FIRST_SEGMENT_NOT_VALUE_OBJECT = "nested-path-first-segment-not-value-object"
-NESTED_PATH_UNKNOWN_MEMBER = "nested-path-unknown-member"
+PATH_UNKNOWN_MEMBER = "path-unknown-member"
+PATH_CROSSES_MANY = "path-crosses-many"
+PATH_TARGET_KIND_MISMATCH = "path-target-kind-mismatch"
+PREDICATE_SUBJECT_OUTSIDE_SCOPE = "predicate-subject-outside-scope"
 NEUTRAL_LITERAL_TYPE_MISMATCH = "neutral-literal-type-mismatch"
 NEUTRAL_LITERAL_NONCANONICAL = "neutral-literal-noncanonical"
 NEUTRAL_LITERAL_OUT_OF_SPACE = "neutral-literal-out-of-space"
-NESTED_STRING_PREDICATE_NON_STRING_MEMBER = "nested-string-predicate-non-string-member"
+STRING_PREDICATE_NON_STRING_MEMBER = "string-predicate-non-string-member"
 DEEP_FETCH_VALUE_OBJECT_SEGMENT = "deep-fetch-value-object-segment"
-NAVIGATE_VALUE_OBJECT_TARGET = "navigate-value-object-target"
 FIND_ROOT_VALUE_OBJECT = "find-root-value-object"
 SCALAR_COLLECTION_UNQUANTIFIED = "scalar-collection-unquantified"
 
@@ -61,14 +60,15 @@ REJECTED_RULES: frozenset[str] = frozenset(
     {
         BETWEEN_BOUNDS_INVERTED,
         NULL_CHECK_NON_NULLABLE_MEMBER,
-        NESTED_PATH_FIRST_SEGMENT_NOT_VALUE_OBJECT,
-        NESTED_PATH_UNKNOWN_MEMBER,
+        PATH_UNKNOWN_MEMBER,
+        PATH_CROSSES_MANY,
+        PATH_TARGET_KIND_MISMATCH,
+        PREDICATE_SUBJECT_OUTSIDE_SCOPE,
         NEUTRAL_LITERAL_TYPE_MISMATCH,
         NEUTRAL_LITERAL_NONCANONICAL,
         NEUTRAL_LITERAL_OUT_OF_SPACE,
-        NESTED_STRING_PREDICATE_NON_STRING_MEMBER,
+        STRING_PREDICATE_NON_STRING_MEMBER,
         DEEP_FETCH_VALUE_OBJECT_SEGMENT,
-        NAVIGATE_VALUE_OBJECT_TARGET,
         FIND_ROOT_VALUE_OBJECT,
         SCALAR_COLLECTION_UNQUANTIFIED,
         WRITE_REQUIRED_ATTRIBUTE_MISSING,
@@ -207,97 +207,3 @@ def find_attribute(value_object: dict[str, Any], name: str) -> dict[str, Any] | 
         if attribute.get("name") == name:
             return attribute
     return None
-
-
-# --- path resolution --------------------------------------------------------
-
-
-def resolve_nested_ref(entity: Entity, path: str) -> dict[str, Any]:
-    """Resolve a ``Class.valueObject.field(.field)*`` path to its LEAF attribute.
-
-    Raises :class:`RejectionError` on the first undeclared segment: the first
-    segment must name a declared value object on *entity*
-    (``nested-path-first-segment-not-value-object``), each intermediate a nested
-    value object and the leaf an attribute (``nested-path-unknown-member``). The
-    schema's ``nestedRef`` grammar already guarantees ≥3 dotted components, so a
-    resolved path always has a value-object segment and an attribute leaf.
-    """
-    _cls, members = split_reference(path)
-    first, *rest = members
-    value_object = find_top_value_object(entity, first)
-    if value_object is None:
-        raise RejectionError(
-            NESTED_PATH_FIRST_SEGMENT_NOT_VALUE_OBJECT,
-            f"{path!r}: {first!r} is not a value object declared on {entity.name}",
-        )
-    *intermediates, leaf = rest
-    current = value_object
-    for segment in intermediates:
-        nested = find_nested_value_object(current, segment)
-        if nested is None:
-            raise RejectionError(
-                NESTED_PATH_UNKNOWN_MEMBER,
-                f"{path!r}: {segment!r} is not a nested value object of {current['name']!r}",
-            )
-        current = nested
-    attribute = find_attribute(current, leaf)
-    if attribute is None:
-        raise RejectionError(
-            NESTED_PATH_UNKNOWN_MEMBER,
-            f"{path!r}: {leaf!r} is not an attribute of {current['name']!r}",
-        )
-    return attribute
-
-
-def resolve_value_object_ref(entity: Entity, path: str) -> dict[str, Any]:
-    """Resolve a ``Class.valueObject(.valueObject)*`` path to its terminal value object.
-
-    Used by ``nestedExists`` / ``nestedNotExists`` (the path ends AT a value object,
-    not an attribute). Raises :class:`RejectionError` on the first undeclared segment.
-    """
-    _cls, members = split_reference(path)
-    first, *rest = members
-    value_object = find_top_value_object(entity, first)
-    if value_object is None:
-        raise RejectionError(
-            NESTED_PATH_FIRST_SEGMENT_NOT_VALUE_OBJECT,
-            f"{path!r}: {first!r} is not a value object declared on {entity.name}",
-        )
-    current = value_object
-    for segment in rest:
-        nested = find_nested_value_object(current, segment)
-        if nested is None:
-            raise RejectionError(
-                NESTED_PATH_UNKNOWN_MEMBER,
-                f"{path!r}: {segment!r} is not a nested value object of {current['name']!r}",
-            )
-        current = nested
-    return current
-
-
-def resolve_element_ref(value_object: dict[str, Any], path: str) -> dict[str, Any]:
-    """Resolve an ELEMENT-RELATIVE path (no leading ``Class.valueObject``) to a leaf.
-
-    The subject is one element of a ``many`` value object bound by an enclosing
-    ``nestedExists`` / ``nestedNotExists`` ``where`` (same-element semantics). Each
-    segment resolves against the element's declared structure; the leaf is an
-    attribute. Raises :class:`RejectionError` on an undeclared segment.
-    """
-    *intermediates, leaf = path.split(".")
-    current = value_object
-    for segment in intermediates:
-        nested = find_nested_value_object(current, segment)
-        if nested is None:
-            raise RejectionError(
-                NESTED_PATH_UNKNOWN_MEMBER,
-                f"element path {path!r}: {segment!r} is not a nested value object of "
-                f"{current['name']!r}",
-            )
-        current = nested
-    attribute = find_attribute(current, leaf)
-    if attribute is None:
-        raise RejectionError(
-            NESTED_PATH_UNKNOWN_MEMBER,
-            f"element path {path!r}: {leaf!r} is not an attribute of {current['name']!r}",
-        )
-    return attribute

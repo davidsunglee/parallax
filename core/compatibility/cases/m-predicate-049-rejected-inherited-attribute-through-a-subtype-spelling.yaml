@@ -8,7 +8,7 @@ when:
     target: parallax.compatibility.Animal
     predicate:
       eq:
-        attr: parallax.compatibility.Dog.name
+        path: parallax.compatibility.Dog.name
         value: Rex
 then:
   rejectedRule: subtype-attribute-outside-narrow-scope

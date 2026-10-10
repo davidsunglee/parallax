@@ -72,8 +72,8 @@ def test_narrow_nested_under_a_table_per_concrete_subtype_family_partitions_bran
     # selected branches receive true and every other branch receives false.
     op = oa.Or(
         operands=(
-            oa.Narrow(to=("Invoice",), operand=oa.All()),
-            oa.Narrow(to=("Memo",), operand=oa.All()),
+            oa.Narrow(to=("Invoice",), operand=oa.TrueNode()),
+            oa.Narrow(to=("Memo",), operand=oa.TrueNode()),
         )
     )
     compiled = compile_read(op, DOCUMENT, POSTGRES, target(DOCUMENT, "Document"))
@@ -92,7 +92,7 @@ def test_narrow_nested_under_a_table_per_concrete_subtype_family_partitions_bran
 
 def test_tpcs_document_single_branch_projects_its_document() -> None:
     compiled = compile_read(
-        oa.All(),
+        oa.TrueNode(),
         DOCUMENT_LAYOUT,
         POSTGRES,
         target(DOCUMENT_LAYOUT, "Publication"),
@@ -128,7 +128,7 @@ def test_a_narrow_naming_an_undeclared_entity_is_refused() -> None:
     # already position-valid; an unresolvable member therefore means the caller
     # skipped that step, and refusing loudly is what keeps it from silently
     # lowering to an empty position.
-    op = oa.Narrow(to=("Unicorn",), operand=oa.All())
+    op = oa.Narrow(to=("Unicorn",), operand=oa.TrueNode())
     with pytest.raises(ModelRejectedError) as excinfo:
         compile_read(op, ANIMAL, POSTGRES, target(ANIMAL, "Animal"))
     assert excinfo.value.rule == "narrow-empty-effective-set"
@@ -137,7 +137,7 @@ def test_a_narrow_naming_an_undeclared_entity_is_refused() -> None:
 def test_entity_query_narrow_cannot_span_inheritance_families() -> None:
     with pytest.raises(ModelRejectedError) as excinfo:
         compile_read(
-            oa.All(),
+            oa.TrueNode(),
             DOCUMENT,
             POSTGRES,
             target(DOCUMENT, "Document"),
@@ -149,13 +149,13 @@ def test_entity_query_narrow_cannot_span_inheritance_families() -> None:
 def test_tph_tag_predicate_whole_family_root_injects_none() -> None:
     # Reading the abstract root untouched (no narrow) spans the whole shared
     # table: the absence of a tag predicate IS the contract (m-sql).
-    compiled = compile_read(oa.All(), PAYMENT, POSTGRES, target(PAYMENT, "Payment"))
+    compiled = compile_read(oa.TrueNode(), PAYMENT, POSTGRES, target(PAYMENT, "Payment"))
     assert "where" not in compiled.statement.sql
     assert compiled.statement.binds == ()
 
 
 def test_tph_tag_predicate_one_concrete_injects_eq() -> None:
-    compiled = compile_read(oa.All(), PAYMENT, POSTGRES, target(PAYMENT, "CardPayment"))
+    compiled = compile_read(oa.TrueNode(), PAYMENT, POSTGRES, target(PAYMENT, "CardPayment"))
     assert compiled.statement.sql.endswith("where t0.kind = ?")
     assert compiled.statement.binds == ("card",)
 
@@ -164,7 +164,7 @@ def test_tph_tag_predicate_several_concretes_injects_in_alphabetical_order() -> 
     # Pet (abstract subtype) resolves to {Cat, Dog} — a PROPER SUBSET of the whole
     # animal table — so it injects `in (...)`, never the whole-family "no tag" form,
     # even though it is reached with no narrow at all.
-    compiled = compile_read(oa.All(), ANIMAL, POSTGRES, target(ANIMAL, "Pet"))
+    compiled = compile_read(oa.TrueNode(), ANIMAL, POSTGRES, target(ANIMAL, "Pet"))
     assert compiled.statement.sql.endswith("where t0.kind in (?, ?)")
     assert compiled.statement.binds == ("cat", "dog")
 
@@ -173,7 +173,9 @@ def test_tph_user_predicate_then_tag_binds_user_first() -> None:
     # The injected tag composes via `and` AFTER the user predicate — binds read
     # user-first, then tag (m-sql).
     compiled = compile_read(
-        oa.Comparison(op="greaterThan", attr="CardPayment.amount", value="60.00"),
+        oa.Comparison(
+            op="greaterThan", subject=oa.FieldSubject("CardPayment.amount"), value="60.00"
+        ),
         PAYMENT,
         POSTGRES,
         target(PAYMENT, "CardPayment"),
@@ -188,7 +190,7 @@ def test_tph_narrow_to_one_concrete_from_an_abstract_target_still_carries_the_ta
     # being abstract, never to the narrowing's resolved cardinality) and still injects `=`
     # (cardinality-keyed).
     compiled = compile_read(
-        oa.Comparison(op="greaterThan", attr="Dog.barkVolume", value=3),
+        oa.Comparison(op="greaterThan", subject=oa.FieldSubject("Dog.barkVolume"), value=3),
         ANIMAL,
         POSTGRES,
         target(ANIMAL, "Animal"),
@@ -210,11 +212,15 @@ def test_tph_grouped_branch_predicates_join_by_or() -> None:
             operands=(
                 oa.Narrow(
                     to=("Dog",),
-                    operand=oa.Comparison(op="greaterThan", attr="Dog.barkVolume", value=5),
+                    operand=oa.Comparison(
+                        op="greaterThan", subject=oa.FieldSubject("Dog.barkVolume"), value=5
+                    ),
                 ),
                 oa.Narrow(
                     to=("Cat",),
-                    operand=oa.Comparison(op="eq", attr="Cat.indoor", value=True),
+                    operand=oa.Comparison(
+                        op="eq", subject=oa.FieldSubject("Cat.indoor"), value=True
+                    ),
                 ),
             )
         ),
@@ -233,11 +239,15 @@ def test_tph_heterogeneous_document_predicate_partitions_by_variant() -> None:
         operands=(
             oa.Narrow(
                 to=("CardPayment",),
-                operand=oa.Comparison(op="eq", attr="CardPayment.detail", value="visa-4242"),
+                operand=oa.Comparison(
+                    op="eq", subject=oa.FieldSubject("CardPayment.detail"), value="visa-4242"
+                ),
             ),
             oa.Narrow(
                 to=("CashPayment",),
-                operand=oa.Comparison(op="greaterThan", attr="CashPayment.detail", value="10.00"),
+                operand=oa.Comparison(
+                    op="greaterThan", subject=oa.FieldSubject("CashPayment.detail"), value="10.00"
+                ),
             ),
         )
     )
@@ -266,7 +276,9 @@ def test_tph_heterogeneous_document_predicate_partitions_by_variant() -> None:
 
 def test_tph_top_level_narrow_partitions_before_variant_specific_document_cast() -> None:
     compiled = compile_read(
-        oa.Comparison(op="greaterThan", attr="CashPayment.detail", value="10.00"),
+        oa.Comparison(
+            op="greaterThan", subject=oa.FieldSubject("CashPayment.detail"), value="10.00"
+        ),
         DOCUMENT_LAYOUT,
         POSTGRES,
         target(DOCUMENT_LAYOUT, "Payment"),
@@ -288,11 +300,15 @@ def _heterogeneous_payment_predicate() -> oa.PredicateNode:
         operands=(
             oa.Narrow(
                 to=("CardPayment",),
-                operand=oa.Comparison(op="eq", attr="CardPayment.detail", value="visa-4242"),
+                operand=oa.Comparison(
+                    op="eq", subject=oa.FieldSubject("CardPayment.detail"), value="visa-4242"
+                ),
             ),
             oa.Narrow(
                 to=("CashPayment",),
-                operand=oa.Comparison(op="greaterThan", attr="CashPayment.detail", value="10.00"),
+                operand=oa.Comparison(
+                    op="greaterThan", subject=oa.FieldSubject("CashPayment.detail"), value="10.00"
+                ),
             ),
         )
     )
@@ -347,7 +363,7 @@ def test_tph_document_partition_locks_base_rows_through_one_outer_read() -> None
 
 def test_tph_document_classification_uses_only_the_tagged_variant_shape() -> None:
     compiled = compile_read(
-        oa.All(),
+        oa.TrueNode(),
         DOCUMENT_LAYOUT,
         POSTGRES,
         target(DOCUMENT_LAYOUT, "Payment"),
@@ -388,7 +404,7 @@ def test_tph_document_classification_uses_only_the_tagged_variant_shape() -> Non
 
 def test_tph_concrete_document_read_uses_only_that_variants_shape() -> None:
     compiled = compile_read(
-        oa.All(), DOCUMENT_LAYOUT, POSTGRES, target(DOCUMENT_LAYOUT, "CardPayment")
+        oa.TrueNode(), DOCUMENT_LAYOUT, POSTGRES, target(DOCUMENT_LAYOUT, "CardPayment")
     )
 
     row = {
@@ -413,7 +429,7 @@ def test_tph_concrete_target_names_its_rows_without_reading_a_carrier() -> None:
     # compiled: every row names that concrete with no `familyVariant`, a row
     # without any tag column resolves the same way, and `resolvable` is the
     # concrete alone rather than the family the tag map would reach.
-    compiled = compile_read(oa.All(), PAYMENT, POSTGRES, target(PAYMENT, "CardPayment"))
+    compiled = compile_read(oa.TrueNode(), PAYMENT, POSTGRES, target(PAYMENT, "CardPayment"))
     card = target(PAYMENT, "CardPayment").identity
     assert "kind" not in compiled.result_keys
     resolved, variant, unknown, _document = compiled.row_identity(
@@ -445,7 +461,7 @@ def test_tph_document_family_with_no_resident_members_projects_no_document() -> 
     )
     meta = formed(Metamodel(entities=(root, concrete)))
 
-    compiled = compile_read(oa.All(), meta, POSTGRES, target(meta, "EmptyRoot"))
+    compiled = compile_read(oa.TrueNode(), meta, POSTGRES, target(meta, "EmptyRoot"))
     assert compiled.statement.sql == "select t0.id, t0.kind from empty_root t0"
     resolved, variant, unknown, _document = compiled.row_identity({"id": 1, "kind": "leaf"})
     assert (resolved, variant, unknown) == (target(meta, "EmptyLeaf").identity, "EmptyLeaf", None)
@@ -508,7 +524,7 @@ def test_family_document_padding_keeps_an_unselected_occurrence_only_resident_sh
     )
     meta = formed(Metamodel(entities=(root, scalar, occurrence)))
 
-    compiled = compile_read(oa.All(), meta, POSTGRES, target(meta, "MixedRoot"))
+    compiled = compile_read(oa.TrueNode(), meta, POSTGRES, target(meta, "MixedRoot"))
 
     assert "payload" in compiled.statement.sql
 
@@ -527,11 +543,12 @@ def test_user_binds_precede_framework_tag_binds() -> None:
     # executing as `bark_volume = 'dog' and kind = 5`. Asserting SQL and binds
     # TOGETHER is the point: either half alone stays green under that defect.
     compiled = compile_read(
-        oa.Exists(
-            rel="Person.animals",
-            op=oa.Narrow(
+        oa.Quantifier(
+            "any",
+            "Person.animals",
+            oa.Narrow(
                 to=("Dog",),
-                operand=oa.Comparison(op="eq", attr="Dog.barkVolume", value=5),
+                operand=oa.Comparison(op="eq", subject=oa.FieldSubject("barkVolume"), value=5),
             ),
         ),
         ANIMAL,
@@ -551,7 +568,7 @@ def test_tph_abstract_superset_projection_follows_shared_table_layout_tiers() ->
     # order — ancestry prefix (Animal's own, then Pet's own) first, never
     # alphabetized across the chain, then each concrete's own block in
     # alphabetical subtype order (Cat before Dog before WildBoar).
-    compiled = compile_read(oa.All(), ANIMAL, POSTGRES, target(ANIMAL, "Animal"))
+    compiled = compile_read(oa.TrueNode(), ANIMAL, POSTGRES, target(ANIMAL, "Animal"))
     assert compiled.statement.sql == (
         "select t0.id, t0.kind, t0.name, t0.owner_id, t0.license_id, t0.indoor, "
         "t0.bark_volume, t0.tusk_length from animal t0"
@@ -573,7 +590,7 @@ def test_tph_narrowed_projection_drops_slots_outside_the_position() -> None:
     # Cat/Dog keeps every slot applicable to one of them and drops WildBoar's
     # own `tusk_length`, without disturbing the surviving tier order.
     compiled = compile_read(
-        oa.All(),
+        oa.TrueNode(),
         ANIMAL,
         POSTGRES,
         target(ANIMAL, "Animal"),
@@ -591,13 +608,13 @@ def test_tph_equivalent_narrow_spellings_collapse() -> None:
     # descendants) resolve to the same effective set and MUST lower identically,
     # regardless of the authored `to` order or spelling (m-predicate / m-sql).
     by_abstract = compile_read(
-        oa.Narrow(to=("Pet",), operand=oa.All()),
+        oa.Narrow(to=("Pet",), operand=oa.TrueNode()),
         ANIMAL,
         POSTGRES,
         target(ANIMAL, "Animal"),
     )
     by_concretes = compile_read(
-        oa.Narrow(to=("Dog", "Cat"), operand=oa.All()),
+        oa.Narrow(to=("Dog", "Cat"), operand=oa.TrueNode()),
         ANIMAL,
         POSTGRES,
         target(ANIMAL, "Animal"),
@@ -612,7 +629,7 @@ def test_tph_narrow_canonical_alphabetical_order_independent_of_authored_order()
     # The `to` list's authored order never leaks into the lowered `in (...)` list —
     # it is always the family's canonical alphabetical order.
     compiled = compile_read(
-        oa.Narrow(to=("Dog", "Cat"), operand=oa.All()),
+        oa.Narrow(to=("Dog", "Cat"), operand=oa.TrueNode()),
         ANIMAL,
         POSTGRES,
         target(ANIMAL, "Animal"),
@@ -622,7 +639,7 @@ def test_tph_narrow_canonical_alphabetical_order_independent_of_authored_order()
 
 
 def test_tpcs_single_concrete_is_an_ordinary_read_no_tag_no_union() -> None:
-    compiled = compile_read(oa.All(), DOCUMENT, POSTGRES, target(DOCUMENT, "Invoice"))
+    compiled = compile_read(oa.TrueNode(), DOCUMENT, POSTGRES, target(DOCUMENT, "Invoice"))
     assert compiled.statement.sql == (
         "select t0.id, t0.title, t0.folder_id, t0.currency, t0.amount_due from invoice t0"
     )
@@ -632,7 +649,9 @@ def test_tpcs_single_concrete_is_an_ordinary_read_no_tag_no_union() -> None:
 
 
 def test_tpcs_union_all_branch_order_alias_restart_casts_and_literal() -> None:
-    compiled = compile_read(oa.All(), DOCUMENT, POSTGRES, target(DOCUMENT, "FinancialDocument"))
+    compiled = compile_read(
+        oa.TrueNode(), DOCUMENT, POSTGRES, target(DOCUMENT, "FinancialDocument")
+    )
     assert compiled.result_keys == (
         "id",
         "title",
@@ -670,7 +689,9 @@ def test_tpcs_union_predicate_on_a_sibling_only_member_is_refused() -> None:
     # backstop, and the message names the contributor and the branch table.
     with pytest.raises(ModelRejectedError) as excinfo:
         compile_read(
-            oa.Comparison(op="greaterThan", attr="Invoice.amountDue", value="1.00"),
+            oa.Comparison(
+                op="greaterThan", subject=oa.FieldSubject("Invoice.amountDue"), value="1.00"
+            ),
             DOCUMENT,
             POSTGRES,
             target(DOCUMENT, "FinancialDocument"),
@@ -684,7 +705,7 @@ def test_tph_temporal_slots_follow_every_domain_slot_across_ancestry() -> None:
     # slots — `coupon` (Bond) and `ticker` (Equity) — still precede every
     # root-owned Temporal slot in the shared Table.
     compiled = compile_read(
-        oa.All(),
+        oa.TrueNode(),
         INSTRUMENT,
         POSTGRES,
         target(INSTRUMENT, "Instrument"),
@@ -707,7 +728,7 @@ def test_tpcs_union_uses_one_logical_contributor_order_across_branches() -> None
     # branch that does not own a contributor renders the typed `NULL`
     # placeholder in that contributor's own position rather than reordering.
     compiled = compile_read(
-        oa.All(),
+        oa.TrueNode(),
         RATE,
         POSTGRES,
         target(RATE, "Rate"),
@@ -736,7 +757,7 @@ def test_tpcs_single_concrete_projects_its_own_table_layout_tier_order() -> None
     # slots, its own `Domain` slot, then the inherited `Temporal` slots — no
     # discriminator and no variant literal.
     compiled = compile_read(
-        oa.All(),
+        oa.TrueNode(),
         RATE,
         POSTGRES,
         target(RATE, "DepositRate"),
@@ -815,15 +836,15 @@ def test_tpcs_union_restarts_aliases_per_branch_and_concatenates_binds() -> None
 
     op = oa.And(
         operands=(
-            oa.Comparison(op="eq", attr="Doc.title", value="T"),
-            oa.Exists(rel="Doc.owner", op=oa.Comparison(op="eq", attr="Owner.name", value="N")),
+            oa.Comparison(op="eq", subject=oa.FieldSubject("Doc.title"), value="T"),
+            oa.Comparison(op="eq", subject=oa.FieldSubject("Doc.owner.name"), value="N"),
         )
     )
     compiled = compile_read(op, meta, POSTGRES, target(meta, "Doc"))
     branches = compiled.statement.sql.split(" union all ")
     assert len(branches) == 2
     # BOTH branches restart the whole sequence: base `t0`, hop alias `t1`.
-    hop = "exists (select 1 from owner t1 where t1.id = t0.owner_id and t1.name = ?)"
+    hop = "(select t1.name from owner t1 where t1.id = t0.owner_id) = ?"
     assert branches[0] == (
         "select t0.id, t0.title, t0.owner_id, t0.due, cast(null as integer) paid, "
         f"'Inv' family_variant from inv t0 where t0.title = ? and {hop}"
@@ -841,21 +862,21 @@ def test_tpcs_string_cast_placeholder_diverges_by_declared_length() -> None:
     # The abstract ROOT read pulls in Memo too, whose `body` needs a bounded
     # varchar(64) placeholder on the other two branches, and Memo's own branch
     # NULL-casts the FinancialDocument-only `currency` (varchar(3)).
-    compiled = compile_read(oa.All(), DOCUMENT, POSTGRES, target(DOCUMENT, "Document"))
+    compiled = compile_read(oa.TrueNode(), DOCUMENT, POSTGRES, target(DOCUMENT, "Document"))
     assert "cast(null as varchar(64)) body" in compiled.statement.sql
     assert "cast(null as varchar(3)) currency" in compiled.statement.sql
 
 
 def test_tpcs_equivalent_narrow_spellings_collapse() -> None:
     by_abstract = compile_read(
-        oa.All(),
+        oa.TrueNode(),
         DOCUMENT,
         POSTGRES,
         target(DOCUMENT, "Document"),
         narrow_to=_narrow(DOCUMENT, "FinancialDocument"),
     )
     by_concretes = compile_read(
-        oa.All(),
+        oa.TrueNode(),
         DOCUMENT,
         POSTGRES,
         target(DOCUMENT, "Document"),
@@ -863,7 +884,7 @@ def test_tpcs_equivalent_narrow_spellings_collapse() -> None:
     )
     assert by_abstract.statement == by_concretes.statement
     # And matches reading the abstract subtype directly, no narrow at all.
-    direct = compile_read(oa.All(), DOCUMENT, POSTGRES, target(DOCUMENT, "FinancialDocument"))
+    direct = compile_read(oa.TrueNode(), DOCUMENT, POSTGRES, target(DOCUMENT, "FinancialDocument"))
     assert by_abstract.statement == direct.statement
 
 
@@ -874,10 +895,12 @@ def test_tph_nested_narrow_with_a_trivial_branch_needs_no_grouping() -> None:
     compiled = compile_read(
         oa.Or(
             operands=(
-                oa.Narrow(to=("Dog",), operand=oa.All()),
+                oa.Narrow(to=("Dog",), operand=oa.TrueNode()),
                 oa.Narrow(
                     to=("Cat",),
-                    operand=oa.Comparison(op="eq", attr="Cat.indoor", value=True),
+                    operand=oa.Comparison(
+                        op="eq", subject=oa.FieldSubject("Cat.indoor"), value=True
+                    ),
                 ),
             )
         ),
@@ -922,7 +945,9 @@ def test_tph_abstract_instance_form_projects_the_value_object_document_last() ->
         attributes=(Attribute(name="x", type="int32", column="x"),),
     )
     meta = formed(Metamodel(entities=(root, leaf)))
-    compiled = compile_read(oa.All(), meta, POSTGRES, target(meta, "Root"), result_form="instance")
+    compiled = compile_read(
+        oa.TrueNode(), meta, POSTGRES, target(meta, "Root"), result_form="instance"
+    )
     assert compiled.statement.sql == (
         "select t0.id, t0.kind, t0.x, not t0.meta is null, t0.meta from root_tbl t0"
     )
@@ -989,7 +1014,9 @@ def test_tpcs_literal_identity_selects_the_direct_value_object_contract() -> Non
         inheritance=Inheritance(role="concrete-subtype", parent="Root"),
     )
     meta = formed(Metamodel(entities=(root, first, second)))
-    compiled = compile_read(oa.All(), meta, POSTGRES, target(meta, "Root"), result_form="instance")
+    compiled = compile_read(
+        oa.TrueNode(), meta, POSTGRES, target(meta, "Root"), result_form="instance"
+    )
     row = {
         "id": 1,
         "payload": "00ff",
@@ -1011,7 +1038,7 @@ def test_tph_tag_identity_holds_regardless_of_narrow_cardinality() -> None:
     # and still transformed. The map is the WHOLE family's, not the narrow's
     # resolved position — `WildBoar` is outside the narrow and still maps.
     compiled = compile_read(
-        oa.Narrow(to=("Dog",), operand=oa.All()),
+        oa.Narrow(to=("Dog",), operand=oa.TrueNode()),
         ANIMAL,
         POSTGRES,
         target(ANIMAL, "Animal"),
@@ -1050,7 +1077,7 @@ def test_tph_row_tagged_outside_the_composed_family_is_refused_by_name() -> None
         attributes=(Attribute(name="howl", type="string", column="howl", nullable=True),),
     )
     partial = formed(Metamodel(entities=(root, wolf)))
-    compiled = compile_read(oa.All(), partial, POSTGRES, target(partial, "Beast"))
+    compiled = compile_read(oa.TrueNode(), partial, POSTGRES, target(partial, "Beast"))
 
     assert compiled.statement.sql == "select t0.id, t0.kind, t0.howl from beast t0"
     wolf_identity, wolf_variant, wolf_unknown, _document = compiled.row_identity(
@@ -1146,7 +1173,7 @@ def test_own_column_occurrences_are_classified_for_the_concrete_the_row_names() 
     # carrier the port returned, for the level that owns it to judge.
     meta = _own_column_occurrences()
     compiled = compile_read(
-        oa.All(), meta, POSTGRES, target(meta, "Vessel"), result_form="instance"
+        oa.TrueNode(), meta, POSTGRES, target(meta, "Vessel"), result_form="instance"
     )
     assert compiled.resolved_position == (
         target(meta, "Barge").identity,
@@ -1171,7 +1198,7 @@ def test_a_tpcs_union_lands_its_document_tier_under_one_row_key() -> None:
     # tier under one result alias whichever branch rendered the row. One column
     # for the whole read rests on exactly that, and both branches read through it.
     compiled = compile_read(
-        oa.All(),
+        oa.TrueNode(),
         DOCUMENT_LAYOUT,
         POSTGRES,
         target(DOCUMENT_LAYOUT, "Publication"),
@@ -1198,7 +1225,7 @@ def test_a_tpcs_union_lands_its_document_tier_under_one_row_key() -> None:
 
 
 def test_tpcs_union_read_resolves_the_projected_literal_column() -> None:
-    compiled = compile_read(oa.All(), DOCUMENT, POSTGRES, target(DOCUMENT, "Document"))
+    compiled = compile_read(oa.TrueNode(), DOCUMENT, POSTGRES, target(DOCUMENT, "Document"))
     row = {"id": 1, "title": "A", "family_variant": "Invoice"}
     resolved, variant, unknown, _document = compiled.row_identity(row)
     assert (resolved, variant, unknown) == (
@@ -1248,7 +1275,7 @@ def test_tpcs_union_preserves_qualified_duplicate_variant_identities() -> None:
     root_metadata = meta.entity(EntityIdentity("catalog", "Record"))
     assert root_metadata is not None
 
-    compiled = compile_read(oa.All(), meta, POSTGRES, root_metadata)
+    compiled = compile_read(oa.TrueNode(), meta, POSTGRES, root_metadata)
 
     assert compiled.statement.sql == (
         "select t0.id, t0.shared_label parallax_attr_0, cast(null as text) "
@@ -1274,7 +1301,7 @@ def test_tpcs_narrow_to_a_single_concrete_carries_no_family_variant() -> None:
     # resolved concrete has no shared table to discriminate and no sibling branch
     # to distinguish it from, so it projects no variant carrier.
     compiled = compile_read(
-        oa.All(),
+        oa.TrueNode(),
         DOCUMENT,
         POSTGRES,
         target(DOCUMENT, "Document"),
@@ -1295,14 +1322,15 @@ def test_tpcs_narrow_to_a_single_concrete_carries_no_family_variant() -> None:
 # --------------------------------------------------------------------------- #
 def test_narrow_to_is_none_for_a_bare_read() -> None:
     assert (
-        compile_read(oa.All(), DOCUMENT, POSTGRES, target(DOCUMENT, "Document")).narrow_to is None
+        compile_read(oa.TrueNode(), DOCUMENT, POSTGRES, target(DOCUMENT, "Document")).narrow_to
+        is None
     )
 
 
 def test_narrow_to_carries_a_top_level_narrows_authored_subtypes() -> None:
     invoice = target(DOCUMENT, "Invoice").identity
     assert compile_read(
-        oa.All(),
+        oa.TrueNode(),
         DOCUMENT,
         POSTGRES,
         target(DOCUMENT, "Document"),
@@ -1314,7 +1342,7 @@ def test_narrow_to_is_independent_of_result_shape_fields() -> None:
     narrowed = _narrow(ANIMAL, "Cat", "Dog")
     assert (
         compile_read(
-            oa.All(),
+            oa.TrueNode(),
             ANIMAL,
             POSTGRES,
             target(ANIMAL, "Animal"),
@@ -1332,11 +1360,13 @@ def test_a_mid_predicate_narrow_is_not_the_reads_own_narrow() -> None:
         operands=(
             oa.Narrow(
                 to=("Dog",),
-                operand=oa.Comparison(op="greaterThan", attr="Dog.barkVolume", value=5),
+                operand=oa.Comparison(
+                    op="greaterThan", subject=oa.FieldSubject("Dog.barkVolume"), value=5
+                ),
             ),
             oa.Narrow(
                 to=("Cat",),
-                operand=oa.Comparison(op="eq", attr="Cat.indoor", value=True),
+                operand=oa.Comparison(op="eq", subject=oa.FieldSubject("Cat.indoor"), value=True),
             ),
         )
     )
@@ -1372,12 +1402,18 @@ def test_family_attribute_resolution_spans_the_roots_projection_superset() -> No
 
     # The root's own and the concrete's own both resolve from the concrete target.
     compiled = compile_read(
-        oa.Comparison(op="eq", attr="Root.id", value=1), meta, POSTGRES, target(meta, "Leaf")
+        oa.Comparison(op="eq", subject=oa.FieldSubject("Root.id"), value=1),
+        meta,
+        POSTGRES,
+        target(meta, "Leaf"),
     )
     assert compiled.statement.sql.endswith("where t0.id = ? and t0.kind = ?")
     with pytest.raises(ModelRejectedError) as excinfo:
         compile_read(
-            oa.Comparison(op="eq", attr="Barren.y", value=1), meta, POSTGRES, target(meta, "Leaf")
+            oa.Comparison(op="eq", subject=oa.FieldSubject("Barren.y"), value=1),
+            meta,
+            POSTGRES,
+            target(meta, "Leaf"),
         )
     assert excinfo.value.rule == "subtype-attribute-outside-narrow-scope"
 
@@ -1397,13 +1433,13 @@ def test_tpcs_union_refuses_only_a_genuinely_requested_read_lock() -> None:
     # be silently dropped because that lock is what licenses a later ungated
     # write. An unversioned family takes that lock under either preference.
     compiled = compile_read(
-        oa.All(), APPLIANCE, POSTGRES, target(APPLIANCE, "Appliance"), preference="optimistic"
+        oa.TrueNode(), APPLIANCE, POSTGRES, target(APPLIANCE, "Appliance"), preference="optimistic"
     )
     assert " union all " in compiled.statement.sql
     assert "for share" not in compiled.statement.sql
     with pytest.raises(SqlGenError, match="read-lock suffix over a table-per-concrete-subtype"):
         compile_read(
-            oa.All(), DOCUMENT, POSTGRES, target(DOCUMENT, "Document"), preference="locking"
+            oa.TrueNode(), DOCUMENT, POSTGRES, target(DOCUMENT, "Document"), preference="locking"
         )
 
 
@@ -1413,7 +1449,7 @@ def test_tpcs_union_orders_by_the_collision_safe_result_alias() -> None:
     # ordering by it must name the alias — `u.family_variant` would order by the
     # variant literal instead, silently answering a different query.
     compiled = compile_read(
-        oa.All(),
+        oa.TrueNode(),
         MATERIALIZATION_KEYS,
         POSTGRES,
         target(MATERIALIZATION_KEYS, "Record"),
@@ -1425,7 +1461,7 @@ def test_tpcs_union_orders_by_the_collision_safe_result_alias() -> None:
 
 def test_tpcs_tuple_rows_read_branch_values_through_collision_safe_aliases() -> None:
     compiled = compile_read(
-        oa.All(),
+        oa.TrueNode(),
         MATERIALIZATION_KEYS,
         POSTGRES,
         target(MATERIALIZATION_KEYS, "Record"),
@@ -1461,7 +1497,7 @@ def test_tpcs_union_orders_a_document_resident_key_through_the_union_alias() -> 
     # branch bind and before the cap's. The wrapped branches project the document
     # as a single aliased cell and the outer select expands the read pair.
     compiled = compile_read(
-        oa.All(),
+        oa.TrueNode(),
         DOCUMENT_LAYOUT,
         POSTGRES,
         target(DOCUMENT_LAYOUT, "Publication"),
@@ -1507,7 +1543,7 @@ def test_tpcs_union_projects_a_top_level_occurrence_for_the_instance_form_alone(
     # Structured Column, so the owning branch projects the document read pair and
     # each sibling branch the typed `NULL` placeholder under the same result alias.
     instance = compile_read(
-        oa.All(), DOCUMENT, POSTGRES, target(DOCUMENT, "Document"), result_form="instance"
+        oa.TrueNode(), DOCUMENT, POSTGRES, target(DOCUMENT, "Document"), result_form="instance"
     )
     assert (
         "not t0.annotation is null, t0.annotation, 'Memo' family_variant"
@@ -1515,6 +1551,6 @@ def test_tpcs_union_projects_a_top_level_occurrence_for_the_instance_form_alone(
     assert instance.statement.sql.count("false, cast(null as jsonb) annotation") == 2
     assert instance.document_reads == ((7, 8),)
 
-    row_form = compile_read(oa.All(), DOCUMENT, POSTGRES, target(DOCUMENT, "Document"))
+    row_form = compile_read(oa.TrueNode(), DOCUMENT, POSTGRES, target(DOCUMENT, "Document"))
     assert "annotation" not in row_form.statement.sql
     assert row_form.document_reads == ()

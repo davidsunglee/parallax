@@ -7,7 +7,7 @@ when:
   objectQuery:
     target: parallax.compatibility.Customer
     predicate:
-      nestedBetween:
+      between:
         path: parallax.compatibility.Customer.address.geo.elevation
         lower: 12
         upper: 5

@@ -15,7 +15,10 @@ when:
     - uow: kept
       objectQuery:
         target: parallax.compatibility.KeptSpan
-        predicate: { eq: { attr: parallax.compatibility.KeptSpan.id, value: 1 } }
+        predicate:
+          eq:
+            path: parallax.compatibility.KeptSpan.id
+            value: 1
         temporal: { transaction-time: { asOf: latest }, valid-time: { asOf: "2024-03-01T00:00:00.000000Z" } }
       note: "observe span 1 at March, under the shared lock"
       expectRows:
@@ -41,7 +44,10 @@ when:
     - uow: kept
       objectQuery:
         target: parallax.compatibility.KeptSpan
-        predicate: { eq: { attr: parallax.compatibility.KeptSpan.id, value: 2 } }
+        predicate:
+          eq:
+            path: parallax.compatibility.KeptSpan.id
+            value: 2
         temporal: { transaction-time: { asOf: latest }, valid-time: { asOf: "2024-02-01T00:00:00.000000Z" } }
       note: "flush the range, then observe span 2 at February"
       expectRows:
@@ -75,7 +81,10 @@ when:
     - uow: kept
       objectQuery:
         target: parallax.compatibility.KeptLog
-        predicate: { eq: { attr: parallax.compatibility.KeptLog.id, value: 1 } }
+        predicate:
+          eq:
+            path: parallax.compatibility.KeptLog.id
+            value: 1
         temporal: { transaction-time: { asOf: latest } }
       expectRows:
         - id: 1
@@ -95,7 +104,10 @@ when:
     - uow: kept
       objectQuery:
         target: parallax.compatibility.KeptLog
-        predicate: { eq: { attr: parallax.compatibility.KeptLog.id, value: 2 } }
+        predicate:
+          eq:
+            path: parallax.compatibility.KeptLog.id
+            value: 2
         temporal: { transaction-time: { asOf: latest } }
       expectRows:
         - id: 2
@@ -115,7 +127,10 @@ when:
     - uow: changed
       objectQuery:
         target: parallax.compatibility.KeptSpan
-        predicate: { eq: { attr: parallax.compatibility.KeptSpan.id, value: 2 } }
+        predicate:
+          eq:
+            path: parallax.compatibility.KeptSpan.id
+            value: 2
         temporal: { transaction-time: { asOf: latest }, valid-time: { asOf: "2024-07-01T00:00:00.000000Z" } }
       note: "span 2 is still the rectangle it started as"
       expectRows:

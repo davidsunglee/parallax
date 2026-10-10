@@ -84,7 +84,7 @@ _WALLET_UPDATE = POSTGRES.to_driver_sql("update wallet set balance = ? where id 
 
 _ACCOUNT_ONE = {
     "target": "Account",
-    "predicate": {"eq": {"attr": "Account.id", "value": 1}},
+    "predicate": {"eq": {"path": "Account.id", "value": 1}},
 }
 
 

@@ -32,7 +32,7 @@ import pytest
 
 from parallax.core.base import FrozenMap
 from parallax.core.metamodel import AttributeIdentity, ValueObjectIdentity
-from parallax.core.predicate import All, validate_predicate
+from parallax.core.predicate import TrueNode, validate_predicate
 from parallax.core.write_plan import (
     SUPERSEDED,
     PlannedClose,
@@ -265,7 +265,7 @@ def test_a_predicate_target_implies_unversioned_and_an_unbounded_effect(
     with pytest.raises(ValueError, match="Resolved Mutation Selection is readless"):
         _delete(
             ResolvedMutationSelection(
-                _ACCOUNT_META, validate_predicate(_ACCOUNT_META, All(), _ACCOUNT_MODEL)
+                _ACCOUNT_META, validate_predicate(_ACCOUNT_META, TrueNode(), _ACCOUNT_MODEL)
             ),
             concurrency,
             affected_rows,

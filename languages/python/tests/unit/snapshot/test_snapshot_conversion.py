@@ -1088,7 +1088,7 @@ def _hull_family() -> Metamodel:
 
 HULL = _hull_family()
 _HULL_TO_SKIFF = compile_read(
-    oa.All(),
+    oa.TrueNode(),
     HULL,
     POSTGRES,
     target(HULL, "Hull"),

@@ -8,21 +8,21 @@ when:
   objectQuery:
     target: parallax.compatibility.Sample
     predicate:
-      nestedExists:
+      any:
         path: parallax.compatibility.Sample.profile.entries
         where:
           and:
             operands:
-              - nestedEq:
+              - eq:
                   path: kind
                   value: home
-              - nestedEq:
+              - eq:
                   path: active
                   value: true
-              - nestedEq:
+              - eq:
                   path: price
                   value: "19.99"
-              - nestedEq:
+              - eq:
                   path: issued
                   value: '2026-02-01'
 then:

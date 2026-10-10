@@ -12,7 +12,7 @@ when:
         target: parallax.compatibility.Customer
         predicate:
           eq:
-            attr: parallax.compatibility.Customer.id
+            path: parallax.compatibility.Customer.id
             value: 1
       roundTrips: 1
       note: managed find materializes the owner WITH its address Document slot — INSTANCE-FORM (id, name, then address presence/value pair last)

@@ -66,7 +66,7 @@ def _query(value: object = 1) -> ResolvedObjectQuery:
         deserialize(
             {
                 "target": "Order",
-                "predicate": {"eq": {"attr": "Order.id", "value": value}},
+                "predicate": {"eq": {"path": "Order.id", "value": value}},
             }
         ),
         model=_META,
@@ -79,7 +79,7 @@ def _name_query(value: str) -> ResolvedObjectQuery:
         deserialize(
             {
                 "target": "Order",
-                "predicate": {"eq": {"attr": "Order.name", "value": value}},
+                "predicate": {"eq": {"path": "Order.name", "value": value}},
             }
         ),
         model=_META,
@@ -171,47 +171,47 @@ def _animal_query(predicate: Mapping[str, object], **clauses: object) -> dict[st
 
 
 def _balance_query(temporal: Mapping[str, object]) -> dict[str, object]:
-    return {"target": "Balance", "predicate": {"all": {}}, "temporal": temporal}
+    return {"target": "Balance", "predicate": {"true": {}}, "temporal": temporal}
 
 
-_PHONE_HOME = {"nestedEq": {"path": "type", "value": "home"}}
-_ID_ONE = {"eq": {"attr": "Order.id", "value": 1}}
-_NAMED_A = {"eq": {"attr": "Order.name", "value": "A"}}
+_PHONE_HOME = {"eq": {"path": "type", "value": "home"}}
+_ID_ONE = {"eq": {"path": "Order.id", "value": 1}}
+_NAMED_A = {"eq": {"path": "Order.name", "value": "A"}}
 
 # Pairs of resolved queries that compile to different SQL or binds: each pair
 # differs in exactly one SQL-relevant fact, so a key that ignored it would share
 # one cached plan between them.
 _DISTINCT_QUERIES: tuple[tuple[str, Metamodel, dict[str, object], dict[str, object]], ...] = (
-    ("constant", _ORDERS, _order_query({"all": {}}), _order_query({"none": {}})),
+    ("constant", _ORDERS, _order_query({"true": {}}), _order_query({"false": {}})),
     (
         "range-bound",
         _ORDERS,
-        _order_query({"between": {"attr": "Order.qty", "lower": 1, "upper": 5}}),
-        _order_query({"between": {"attr": "Order.qty", "lower": 1, "upper": 6}}),
+        _order_query({"between": {"path": "Order.qty", "lower": 1, "upper": 5}}),
+        _order_query({"between": {"path": "Order.qty", "lower": 1, "upper": 6}}),
     ),
     (
         "membership-values",
         _ORDERS,
-        _order_query({"in": {"attr": "Order.id", "values": [1, 2]}}),
-        _order_query({"in": {"attr": "Order.id", "values": [1, 3]}}),
+        _order_query({"in": {"path": "Order.id", "values": [1, 2]}}),
+        _order_query({"in": {"path": "Order.id", "values": [1, 3]}}),
     ),
     (
         "membership-polarity",
         _ORDERS,
-        _order_query({"in": {"attr": "Order.id", "values": [1, 2]}}),
-        _order_query({"notIn": {"attr": "Order.id", "values": [1, 2]}}),
+        _order_query({"in": {"path": "Order.id", "values": [1, 2]}}),
+        _order_query({"notIn": {"path": "Order.id", "values": [1, 2]}}),
     ),
     (
         "string-folding",
         _ORDERS,
-        _order_query({"startsWith": {"attr": "Order.name", "value": "A"}}),
-        _order_query({"startsWith": {"attr": "Order.name", "value": "A", "caseInsensitive": True}}),
+        _order_query({"startsWith": {"path": "Order.name", "value": "A"}}),
+        _order_query({"startsWith": {"path": "Order.name", "value": "A", "caseInsensitive": True}}),
     ),
     (
         "null-check",
         _CUSTOMER,
-        _customer_query({"nestedIsNull": {"path": "Customer.address.geo.elevation"}}),
-        _customer_query({"nestedIsNotNull": {"path": "Customer.address.geo.elevation"}}),
+        _customer_query({"isNull": {"path": "Customer.address.geo.elevation"}}),
+        _customer_query({"isNotNull": {"path": "Customer.address.geo.elevation"}}),
     ),
     (
         "boolean-connective",
@@ -228,40 +228,82 @@ _DISTINCT_QUERIES: tuple[tuple[str, Metamodel, dict[str, object], dict[str, obje
     (
         "predicate-narrowing",
         _ANIMAL,
-        _animal_query({"narrow": {"to": ["Dog"], "operand": {"all": {}}}}),
-        _animal_query({"narrow": {"to": ["Cat"], "operand": {"all": {}}}}),
+        _animal_query({"narrow": {"to": ["Dog"], "operand": {"true": {}}}}),
+        _animal_query({"narrow": {"to": ["Cat"], "operand": {"true": {}}}}),
     ),
     (
         "quantifier-kind",
         _CUSTOMER,
-        _customer_query({"nestedExists": {"path": "Customer.address.phones"}}),
-        _customer_query({"nestedNotExists": {"path": "Customer.address.phones"}}),
+        _customer_query({"any": {"path": "Customer.address.phones"}}),
+        _customer_query({"none": {"path": "Customer.address.phones"}}),
+    ),
+    (
+        "universal-kind",
+        _CUSTOMER,
+        _customer_query({"any": {"path": "Customer.address.phones", "where": _PHONE_HOME}}),
+        _customer_query({"all": {"path": "Customer.address.phones", "where": _PHONE_HOME}}),
     ),
     (
         "quantifier-scope",
         _CUSTOMER,
-        _customer_query({"nestedExists": {"path": "Customer.address.phones"}}),
+        _customer_query({"any": {"path": "Customer.address.phones"}}),
+        _customer_query({"any": {"path": "Customer.address.phones", "where": _PHONE_HOME}}),
+    ),
+    (
+        "relationship-quantifier-kind",
+        _CUSTOMER,
+        _customer_query({"any": {"path": "Customer.locations"}}),
+        _customer_query({"none": {"path": "Customer.locations"}}),
+    ),
+    (
+        "relationship-quantifier-interior",
+        _CUSTOMER,
+        _customer_query({"any": {"path": "Customer.locations"}}),
         _customer_query(
-            {"nestedExists": {"path": "Customer.address.phones", "where": _PHONE_HOME}}
+            {
+                "any": {
+                    "path": "Customer.locations",
+                    "where": {"eq": {"path": "label", "value": "home"}},
+                }
+            }
         ),
     ),
     (
-        "semi-join-polarity",
+        "presence-polarity",
         _CUSTOMER,
-        _customer_query({"exists": {"rel": "Customer.locations"}}),
-        _customer_query({"notExists": {"rel": "Customer.locations"}}),
+        _customer_query({"exists": {"path": "Customer.address.geo"}}),
+        _customer_query({"notExists": {"path": "Customer.address.geo"}}),
     ),
     (
-        "semi-join-interior",
-        _CUSTOMER,
-        _customer_query({"exists": {"rel": "Customer.locations"}}),
-        _customer_query(
-            {
-                "exists": {
-                    "rel": "Customer.locations",
-                    "op": {"eq": {"attr": "Location.label", "value": "home"}},
-                }
-            }
+        "reached-position",
+        _ORDERS,
+        {
+            "target": "OrderStatus",
+            "predicate": {"eq": {"path": "OrderStatus.order.name", "value": "A"}},
+        },
+        {
+            "target": "OrderStatus",
+            "predicate": {"eq": {"path": "OrderStatus.orderItem.order.name", "value": "A"}},
+        },
+    ),
+    (
+        "element-operand",
+        corpus_model("predicate-collections"),
+        {
+            "target": "Basket",
+            "predicate": {"any": {"path": "Basket.tags", "where": {"eq": {"value": "a"}}}},
+        },
+        {
+            "target": "Basket",
+            "predicate": {"any": {"path": "Basket.tags", "where": {"eq": {"value": "b"}}}},
+        },
+    ),
+    (
+        "narrowed-target",
+        _ANIMAL,
+        _animal_query({"narrow": {"to": ["Dog"], "operand": {"true": {}}}}),
+        _animal_query(
+            {"narrow": {"path": "Animal.owner", "to": ["Person"], "operand": {"true": {}}}}
         ),
     ),
     (
@@ -303,20 +345,20 @@ _DISTINCT_QUERIES: tuple[tuple[str, Metamodel, dict[str, object], dict[str, obje
     (
         "ordering",
         _ORDERS,
-        _order_query({"all": {}}, orderBy=[{"attr": "Order.id", "direction": "asc"}]),
-        _order_query({"all": {}}, orderBy=[{"attr": "Order.id", "direction": "desc"}]),
+        _order_query({"true": {}}, orderBy=[{"attr": "Order.id", "direction": "asc"}]),
+        _order_query({"true": {}}, orderBy=[{"attr": "Order.id", "direction": "desc"}]),
     ),
     (
         "includes",
         _CUSTOMER,
-        _customer_query({"all": {}}),
-        _customer_query({"all": {}}, includes=[{"segments": [{"rel": "Customer.locations"}]}]),
+        _customer_query({"true": {}}),
+        _customer_query({"true": {}}, includes=[{"segments": [{"rel": "Customer.locations"}]}]),
     ),
     (
         "result-narrowing",
         _ANIMAL,
-        _animal_query({"all": {}}),
-        _animal_query({"all": {}}, narrowTo=["Dog"]),
+        _animal_query({"true": {}}),
+        _animal_query({"true": {}}, narrowTo=["Dog"]),
     ),
 )
 
@@ -336,13 +378,13 @@ def test_query_keys_separate_every_sql_relevant_resolved_fact(
     assert key != _resolved_key(meta, second)
 
 
-def test_a_flat_nested_predicate_through_a_many_keys_like_its_same_element_quantifier() -> None:
-    flat = _customer_query({"nestedEq": {"path": "Customer.address.phones.type", "value": "home"}})
-    scoped = _customer_query(
-        {"nestedExists": {"path": "Customer.address.phones", "where": _PHONE_HOME}}
+def test_equal_quantifiers_key_alike_however_they_were_spelled() -> None:
+    qualified = _customer_query(
+        {"any": {"path": "parallax.compatibility.Customer.address.phones", "where": _PHONE_HOME}}
     )
+    bare = _customer_query({"any": {"path": "Customer.address.phones", "where": _PHONE_HOME}})
 
-    assert _resolved_key(_CUSTOMER, flat) == _resolved_key(_CUSTOMER, scoped)
+    assert _resolved_key(_CUSTOMER, qualified) == _resolved_key(_CUSTOMER, bare)
 
 
 class _HashCountingString(str):
@@ -433,7 +475,7 @@ def test_same_family_ignores_only_the_delivery_discriminator() -> None:
 
 def test_an_unpaged_query_keeps_its_authored_limit_in_its_family() -> None:
     def selected(**clauses: object) -> ResolvedObjectQuery:
-        authored = {"target": "Order", "predicate": {"eq": {"attr": "Order.id", "value": 1}}}
+        authored = {"target": "Order", "predicate": {"eq": {"path": "Order.id", "value": 1}}}
         return preflight(deserialize(authored | clauses), model=_META, form="graph")
 
     assert not _key(selected(limit=3)).same_family(_key(selected()))

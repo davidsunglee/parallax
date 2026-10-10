@@ -24,7 +24,7 @@ from parallax.core.metamodel import EntityMetadata, Metamodel
 from parallax.core.navigate import propagate_hop_terms
 from parallax.core.object_query import AsOf, TemporalSelection
 from parallax.core.object_query._nodes import TemporalDimension as QueryTemporalDimension
-from parallax.core.predicate._resolved import ResolvedPredicate, ResolvedSemiJoin
+from parallax.core.predicate._resolved import ResolvedPredicate, ResolvedQuantifier
 from tests._support.sql import compile_read
 from tests.unit._corpus_model_support import model as accepted_model
 from tests.unit._corpus_model_support import target
@@ -79,11 +79,11 @@ def _where(
     [
         oa.Or(
             operands=(
-                oa.Comparison(op="lessThan", attr="Order.qty", value=10),
-                oa.Comparison(op="greaterThan", attr="Order.qty", value=25),
+                oa.Comparison(op="lessThan", subject=oa.FieldSubject("Order.qty"), value=10),
+                oa.Comparison(op="greaterThan", subject=oa.FieldSubject("Order.qty"), value=25),
             )
         ),
-        oa.All(),
+        oa.TrueNode(),
     ],
     ids=["navigation-free", "unfiltered"],
 )
@@ -92,10 +92,10 @@ def test_propagation_is_identity_without_any_navigation_node(op: oa.PredicateNod
     assert propagate_hop_terms(product, ORDERS) is product
 
 
-def test_walk_recurses_through_predicate_combinators_only() -> None:
-    hop = oa.Exists(rel="Order.items")
+def test_a_hop_gaining_no_term_leaves_every_enclosing_combinator_as_it_is() -> None:
+    hop = oa.Quantifier("any", "Order.items")
     wrapped_ops: list[oa.PredicateNode] = [
-        oa.Or(operands=(hop, oa.All())),
+        oa.Or(operands=(hop, oa.TrueNode())),
         oa.Not(operand=hop),
         oa.Group(operand=hop),
         oa.Narrow(to=("Order",), operand=hop),
@@ -103,25 +103,25 @@ def test_walk_recurses_through_predicate_combinators_only() -> None:
     for op in wrapped_ops:
         product = oa.validate_predicate(ORDER, op, ORDERS)
         propagated = propagate_hop_terms(product, ORDERS)
-        assert propagated is not product
-        assert type(propagated) is type(product), op
-        assert propagated == product, op
+        assert propagated is product, op
 
 
 # --------------------------------------------------------------------------- #
 # Non-temporal relationship target: no as-of term at all.                     #
 # --------------------------------------------------------------------------- #
 def test_non_temporal_target_carries_no_as_of_term() -> None:
-    op = oa.Exists(
-        rel="Order.items", op=oa.Comparison(op="eq", attr="OrderItem.sku", value="A-100")
+    op = oa.Quantifier(
+        "any",
+        "Order.items",
+        oa.Comparison(op="eq", subject=oa.FieldSubject("sku"), value="A-100"),
     )
     product = oa.validate_predicate(ORDER, op, ORDERS)
     assert propagate_hop_terms(product, ORDERS) is product
 
 
 def test_non_temporal_bare_hop_stays_without_an_interior() -> None:
-    propagated = _propagated(oa.Exists(rel="Order.items"), ORDERS, ORDER)
-    assert isinstance(propagated, ResolvedSemiJoin)
+    propagated = _propagated(oa.Quantifier("any", "Order.items"), ORDERS, ORDER)
+    assert isinstance(propagated, ResolvedQuantifier)
     assert propagated.where is None
 
 
@@ -133,15 +133,17 @@ def test_non_temporal_bare_hop_stays_without_an_interior() -> None:
 # temporal -> non-temporal (the child carries NO as-of term).                  #
 # --------------------------------------------------------------------------- #
 def test_non_temporal_root_reaching_a_temporal_target_defaults_every_axis_to_latest() -> None:
-    op = oa.Exists(rel="Tenant.leases")
+    op = oa.Quantifier("any", "Tenant.leases")
     where, binds = _where(op, LEASE, "Tenant")
     assert where == "exists (select 1 from lease t1 where t1.tenant_id = t0.id and t1.out_z = ?)"
     assert binds == (INFINITY,)
 
 
 def test_temporal_root_reaching_a_non_temporal_target_carries_no_as_of_term() -> None:
-    op = oa.Exists(
-        rel="Lease.notes", op=oa.Comparison(op="eq", attr="LeaseNote.text", value="renewed")
+    op = oa.Quantifier(
+        "any",
+        "Lease.notes",
+        oa.Comparison(op="eq", subject=oa.FieldSubject("text"), value="renewed"),
     )
     product = oa.validate_predicate(LEASE_ENTITY, op, LEASE)
     assert propagate_hop_terms(product, LEASE) is product
@@ -151,9 +153,10 @@ def test_temporal_root_reaching_a_non_temporal_target_carries_no_as_of_term() ->
 # Temporal target: latest default (root_pins omitted/empty).                  #
 # --------------------------------------------------------------------------- #
 def test_bare_hop_over_a_temporal_target_gets_the_latest_default_both_axes() -> None:
-    op = oa.Exists(
-        rel="Policy.coverages",
-        op=oa.Comparison(op="greaterThanEquals", attr="Coverage.amount", value="600.00"),
+    op = oa.Quantifier(
+        "any",
+        "Policy.coverages",
+        oa.Comparison(op="greaterThanEquals", subject=oa.FieldSubject("amount"), value="600.00"),
     )
     where, binds = _where(
         op,
@@ -169,7 +172,7 @@ def test_bare_hop_over_a_temporal_target_gets_the_latest_default_both_axes() -> 
 
 
 def test_bare_hop_with_no_inner_op_gets_only_the_as_of_term() -> None:
-    op = oa.Exists(rel="Policy.coverages")
+    op = oa.Quantifier("any", "Policy.coverages")
     where, binds = _where(
         op,
         POLICY,
@@ -187,7 +190,7 @@ def test_bare_hop_with_no_inner_op_gets_only_the_as_of_term() -> None:
 # Temporal target: an explicit root pin propagates verbatim, matched by axis. #
 # --------------------------------------------------------------------------- #
 def test_root_pinned_instant_propagates_to_the_hop_valid_time_first() -> None:
-    op = oa.Exists(rel="Policy.coverages")
+    op = oa.Quantifier("any", "Policy.coverages")
     where, binds = _where(
         op,
         POLICY,
@@ -212,7 +215,7 @@ def test_root_pinned_instant_propagates_to_the_hop_valid_time_first() -> None:
 
 
 def test_root_pin_on_one_axis_only_still_defaults_the_other_to_latest() -> None:
-    op = oa.Exists(rel="Policy.coverages")
+    op = oa.Quantifier("any", "Policy.coverages")
     where, binds = _where(
         op,
         POLICY,
@@ -238,7 +241,7 @@ def test_root_pin_on_one_axis_only_still_defaults_the_other_to_latest() -> None:
 # Multi-hop: the SAME root pin rides every hop, however deep.                  #
 # --------------------------------------------------------------------------- #
 def test_multi_hop_propagates_the_same_root_pin_to_every_hop() -> None:
-    op = oa.Exists(rel="Policy.coverages", op=oa.Exists(rel="Coverage.claims"))
+    op = oa.Quantifier("any", "Policy.coverages", oa.Quantifier("any", "claims"))
     where, binds = _where(
         op,
         POLICY,
@@ -335,9 +338,53 @@ _ZOO = models.accepted_model(_ZOO_MODEL)
 def test_polymorphic_temporal_relationship_target_resolves_axes_via_the_family_root() -> None:
     # `Zoo.creatures` targets the abstract root `Creature` directly, so this also
     # covers the non-narrowed, whole-family case (m-sql injects no tag predicate).
-    op = oa.Exists(rel="Zoo.creatures")
+    op = oa.Quantifier("any", "Zoo.creatures")
     where, binds = _where(op, _ZOO, "Zoo")
     assert where == (
         "exists (select 1 from lion t1 where t1.zoo_id = t0.id and t1.thru_z = ? and t1.out_z = ?)"
     )
     assert binds == (INFINITY, INFINITY)
+
+
+# --------------------------------------------------------------------------- #
+# To-one hops: the reached candidate is filtered by the same visibility.      #
+# --------------------------------------------------------------------------- #
+_PINNED: dict[QueryTemporalDimension, TemporalSelection] = {
+    "valid-time": AsOf(_B),
+    "transaction-time": AsOf(_P),
+}
+_COVERAGE_VISIBLE = "t1.from_z <= ? and t1.thru_z > ? and t1.in_z <= ? and t1.out_z > ?"
+_CLAIM_VISIBLE = "t0.from_z <= ? and t0.thru_z > ? and t0.in_z <= ? and t0.out_z > ?"
+
+
+def test_a_field_past_a_to_one_hop_reads_only_its_visible_candidate() -> None:
+    op = oa.Comparison(
+        op="greaterThan", subject=oa.FieldSubject("Claim.coverage.amount"), value="1.00"
+    )
+    where, binds = _where(op, POLICY, "Claim", temporal=_PINNED)
+    assert where == (
+        f"(select t1.amount from coverage t1 where t1.id = t0.coverage_id and {_COVERAGE_VISIBLE}) "
+        f"> ? and {_CLAIM_VISIBLE}"
+    )
+    assert binds[:4] == (_B_MANAGED, _B_MANAGED, _P_MANAGED, _P_MANAGED)
+    assert binds[4] == decimal.Decimal("1.00")
+
+
+def test_presence_of_a_to_one_target_tests_only_its_visible_candidate() -> None:
+    where, _ = _where(oa.Presence("notExists", "Claim.coverage"), POLICY, "Claim", temporal=_PINNED)
+    assert where == (
+        f"not exists (select 1 from coverage t1 where t1.id = t0.coverage_id and "
+        f"{_COVERAGE_VISIBLE}) and {_CLAIM_VISIBLE}"
+    )
+
+
+def test_a_negated_hop_and_a_narrowed_target_carry_the_hops_terms() -> None:
+    claim = target(POLICY, "Claim")
+    for op in (
+        oa.Not(operand=oa.Presence("exists", "Claim.coverage")),
+        oa.Narrow(path="Claim.coverage", to=("Coverage",), operand=oa.TrueNode()),
+    ):
+        product = oa.validate_predicate(claim, op, POLICY)
+        propagated = propagate_hop_terms(product, POLICY)
+        assert propagated is not product
+        assert type(propagated) is type(product)

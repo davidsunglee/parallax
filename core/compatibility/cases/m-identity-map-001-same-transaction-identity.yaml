@@ -11,7 +11,7 @@ when:
         target: parallax.compatibility.Account
         predicate:
           eq:
-            attr: parallax.compatibility.Account.id
+            path: parallax.compatibility.Account.id
             value: 2
       roundTrips: 1
       note: find by primary key
@@ -25,7 +25,7 @@ when:
         target: parallax.compatibility.Account
         predicate:
           eq:
-            attr: parallax.compatibility.Account.owner
+            path: parallax.compatibility.Account.owner
             value: Linus
       roundTrips: 1
       sameObjectAs: 0

@@ -60,7 +60,14 @@ from parallax.core.object_query._resolved import (
     ContinuationCoordinate,
     ResolvedObjectQuery,
 )
-from parallax.core.predicate import All, Comparison, Or, PredicateNode, validate_predicate
+from parallax.core.predicate import (
+    Comparison,
+    FieldSubject,
+    Or,
+    PredicateNode,
+    TrueNode,
+    validate_predicate,
+)
 from parallax.core.predicate._resolved import ResolvedConstant
 from parallax.core.sql_gen._compile import compile_read as compile_entity_query
 from parallax.core.sql_gen._context import LoweredStatement
@@ -112,7 +119,7 @@ def _planned(
         selections.setdefault(dimension, AsOf("latest"))
     query = object_query(
         entity.identity,
-        predicate if predicate is not None else All(),
+        predicate if predicate is not None else TrueNode(),
         temporal=selections,
         **clauses,  # pyright: ignore[reportArgumentType] - the caller names real clauses
     )
@@ -150,7 +157,7 @@ def _normalized(order: Sequence[OrderKey]) -> tuple[OrderKey, ...]:
 
 def _active(model: Metamodel, target: str) -> Comparison:
     canonical = entity_of(model, target).identity.canonical
-    return Comparison(op="eq", attr=f"{canonical}.name", value="A")
+    return Comparison(op="eq", subject=FieldSubject(f"{canonical}.name"), value="A")
 
 
 # --------------------------------------------------------------------------- #
@@ -239,7 +246,7 @@ def test_a_subtype_position_pages_by_its_family_roots_key() -> None:
         for attribute in dog.declared_attributes
         if isinstance(attribute.primary_key, PrimaryKey)
     ]
-    query = validate_object_query(dog, object_query(dog.identity, All()), ANIMAL)
+    query = validate_object_query(dog, object_query(dog.identity, TrueNode()), ANIMAL)
     node = continuation.plan(query, ANIMAL).first(limit=5)
     assert _order(node) == _normalized((OrderKey(attr=_ANIMAL_ID, direction="asc"),))
 
@@ -251,7 +258,7 @@ def test_a_narrowed_reads_sort_key_is_measured_at_the_narrowed_position() -> Non
     animal = entity_of(ANIMAL, "Animal")
     query = object_query(
         animal.identity,
-        All(),
+        TrueNode(),
         narrow_to=("parallax.compatibility.Dog",),
         order_by=(OrderKey(attr=_DOG_BARK, direction="desc"),),
     )
@@ -500,7 +507,9 @@ def test_an_eager_read_of_the_same_query_captures_nothing() -> None:
     # very same ordering but no paging emits no hidden cell and lifts no
     # coordinate off its rows.
     entity = entity_of(ORDERS, "Order")
-    query = object_query(entity.identity, All(), order_by=(OrderKey(attr=_ORDER_SKU),), limit=2)
+    query = object_query(
+        entity.identity, TrueNode(), order_by=(OrderKey(attr=_ORDER_SKU),), limit=2
+    )
     compiled = compile_entity_query(
         deep_fetch.plan(
             validate_object_query(entity, query, ORDERS), ORDERS, projection=_PROJECTION
@@ -628,7 +637,7 @@ def test_a_callers_disjunction_is_grouped_before_the_seek_is_conjoined_to_it() -
     # one without grouping it would silently re-associate the caller's own
     # predicate into the seek's first branch.
     left = _active(ORDERS, "Order")
-    right = Comparison(op="eq", attr=_ORDER_QTY, value=1)
+    right = Comparison(op="eq", subject=FieldSubject(_ORDER_QTY), value=1)
     plan = _planned(ORDERS, "Order", predicate=Or(operands=(left, right)))
     statement = _lowered(ORDERS, plan.after(ContinuationCoordinate((1,)), limit=3))
     assert _where(statement) == (
@@ -790,7 +799,7 @@ def test_an_inherited_milestone_set_read_orders_by_the_family_owners_key_and_edg
         deposit_rate,
         object_query(
             deposit_rate.identity,
-            All(),
+            TrueNode(),
             temporal={"transaction-time": History(), "valid-time": AsOf("latest")},
         ),
         RATE,
@@ -1282,7 +1291,7 @@ def test_the_page_node_is_a_fresh_value_rather_than_a_mutated_query() -> None:
     # A plan answers nodes and holds no state, so two pages of one plan are two
     # values and the query it was planned from is untouched.
     entity = entity_of(ORDERS, "Order")
-    query: ObjectQueryNode = object_query(entity.identity, All())
+    query: ObjectQueryNode = object_query(entity.identity, TrueNode())
     plan = continuation.plan(validate_object_query(entity, query, ORDERS), ORDERS)
     first = plan.first(limit=2)
     later = plan.after(ContinuationCoordinate((9,)), limit=2)
