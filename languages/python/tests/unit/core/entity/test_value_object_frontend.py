@@ -24,7 +24,10 @@ from parallax.core.entity import EntityDefinitionError, Predicate
 from parallax.core.entity._declaration import shape_of
 from parallax.core.entity._expressions import (
     AssignableScalarExpr,
+    AuthoredPath,
+    AuthoredPresence,
     ManyValueObjectExpr,
+    PreparedOperation,
     ScalarExpr,
     ValueObjectExpr,
 )
@@ -37,9 +40,10 @@ from parallax.core.metamodel import (
     ValueObjectOccurrenceDeclaration,
     ValueObjectShapeDeclaration,
 )
-from parallax.core.predicate import QueryDefinitionError, serialize
+from parallax.core.predicate import QueryDefinitionError
+from parallax.core.predicate._interpretation import COMPARE
 from tests._support import value_object_models as vm
-from tests._support.query_probes import predicate_node
+from tests._support.query_probes import predicate_document
 from tests.unit.core.entity._value_object_document_support import inserted_document
 from tests.unit.core.entity.value_object_bad_models import (
     build_copy_verb_value_object,
@@ -139,81 +143,85 @@ def _field(expression: object) -> ScalarExpr[Any, Any]:
     return cast("ScalarExpr[Any, Any]", expression)
 
 
+def _phone_where(predicate: Predicate[Any]) -> object:
+    """``predicate`` exported inside the quantifier over the phones it reads."""
+    query = vm.Customer.where(vm.Customer.address.phones.any(predicate))
+    return predicate_document(query, vm.CUSTOMER_MODEL)["any"]["where"]  # type: ignore[index] - the exported document's shape
+
+
+def _customer_where(predicate: Predicate[Any]) -> dict[str, object]:
+    return predicate_document(vm.Customer.where(predicate), vm.CUSTOMER_MODEL)
+
+
 def test_value_object_class_access_builds_relative_paths() -> None:
     predicate = _field(vm.Phone.type) == "home"
     assert isinstance(predicate, Predicate)
-    assert serialize(predicate_node(predicate)) == {"eq": {"path": "type", "value": "home"}}
+    assert _phone_where(predicate) == {"eq": {"path": "type", "value": "home"}}
 
 
 def test_every_relative_field_operator_builds_the_ordinary_scalar_node() -> None:
     phone_type = _field(vm.Phone.type)
-    assert serialize(predicate_node(phone_type != "home")) == {
-        "notEq": {"path": "type", "value": "home"}
-    }
-    assert serialize(predicate_node(phone_type > "a")) == {
-        "greaterThan": {"path": "type", "value": "a"}
-    }
-    assert serialize(predicate_node(phone_type >= "a")) == {
-        "greaterThanEquals": {"path": "type", "value": "a"}
-    }
-    assert serialize(predicate_node(phone_type < "z")) == {
-        "lessThan": {"path": "type", "value": "z"}
-    }
-    assert serialize(predicate_node(phone_type <= "z")) == {
-        "lessThanEquals": {"path": "type", "value": "z"}
-    }
-    assert serialize(predicate_node(phone_type.in_(["home", "work"]))) == {
+    assert _phone_where(phone_type != "home") == {"notEq": {"path": "type", "value": "home"}}
+    assert _phone_where(phone_type > "a") == {"greaterThan": {"path": "type", "value": "a"}}
+    assert _phone_where(phone_type >= "a") == {"greaterThanEquals": {"path": "type", "value": "a"}}
+    assert _phone_where(phone_type < "z") == {"lessThan": {"path": "type", "value": "z"}}
+    assert _phone_where(phone_type <= "z") == {"lessThanEquals": {"path": "type", "value": "z"}}
+    assert _phone_where(phone_type.in_(["home", "work"])) == {
         "in": {"path": "type", "values": ["home", "work"]}
     }
-    assert serialize(predicate_node(phone_type.not_in(["work"]))) == {
+    assert _phone_where(phone_type.not_in(["work"])) == {
         "notIn": {"path": "type", "values": ["work"]}
     }
-    assert serialize(predicate_node(phone_type.between("a", "z"))) == {
+    assert _phone_where(phone_type.between("a", "z")) == {
         "between": {"path": "type", "lower": "a", "upper": "z"}
     }
-    assert serialize(predicate_node(phone_type.like("ho%"))) == {
-        "like": {"path": "type", "value": "ho%"}
-    }
-    assert serialize(predicate_node(phone_type.not_like("ho%"))) == {
-        "notLike": {"path": "type", "value": "ho%"}
-    }
-    assert serialize(predicate_node(phone_type.starts_with("ho"))) == {
+    assert _phone_where(phone_type.like("ho%")) == {"like": {"path": "type", "value": "ho%"}}
+    assert _phone_where(phone_type.not_like("ho%")) == {"notLike": {"path": "type", "value": "ho%"}}
+    assert _phone_where(phone_type.starts_with("ho")) == {
         "startsWith": {"path": "type", "value": "ho"}
     }
-    assert serialize(predicate_node(phone_type.ends_with("me"))) == {
-        "endsWith": {"path": "type", "value": "me"}
-    }
-    assert serialize(predicate_node(phone_type.contains("om", case_insensitive=True))) == {
+    assert _phone_where(phone_type.ends_with("me")) == {"endsWith": {"path": "type", "value": "me"}}
+    assert _phone_where(phone_type.contains("om", case_insensitive=True)) == {
         "contains": {"path": "type", "value": "om", "caseInsensitive": True}
     }
-    assert serialize(predicate_node(phone_type.is_null())) == {"isNull": {"path": "type"}}
-    assert serialize(predicate_node(phone_type.is_not_null())) == {"isNotNull": {"path": "type"}}
+    assert _phone_where(phone_type.is_null()) == {"isNull": {"path": "type"}}
+    assert _phone_where(phone_type.is_not_null()) == {"isNotNull": {"path": "type"}}
 
 
 def test_a_boolean_field_reads_as_an_explicit_equality() -> None:
     class Toggle(ValueObject):
         enabled: Attr[bool | None]
 
-    predicate = _field(Toggle.enabled).is_(True)
-    assert serialize(predicate_node(predicate)) == {"eq": {"path": "enabled", "value": True}}
+    authored = _field(Toggle.enabled).is_(True).authored
+    assert isinstance(authored, PreparedOperation)
+    assert (authored.operator, authored.operands) == (COMPARE["eq"], (True,))
 
 
 def test_a_single_value_object_hop_continues_the_relative_path() -> None:
     geo = vm.Address.geo
     assert isinstance(geo, ValueObjectExpr)
-    assert serialize(predicate_node(geo.country == "DE")) == {
-        "eq": {"path": "geo.country", "value": "DE"}
-    }
-    assert serialize(predicate_node(geo.exists())) == {"exists": {"path": "geo"}}
-    assert serialize(predicate_node(geo.not_exists())) == {"notExists": {"path": "geo"}}
+    compared = (geo.country == "DE").authored
+    present, absent = geo.exists().authored, geo.not_exists().authored
+    assert isinstance(compared, PreparedOperation)
+    assert isinstance(compared.subject, AuthoredPath)
+    assert compared.subject.names == ("geo", "country")
+    assert isinstance(present, AuthoredPresence) and isinstance(absent, AuthoredPresence)
+    assert (present.negated, present.target.names) == (False, ("geo",))
+    assert (absent.negated, absent.target.names) == (True, ("geo",))
 
 
 def test_a_many_value_object_is_quantified_rather_than_traversed() -> None:
     phones = vm.Address.phones
     assert isinstance(phones, ManyValueObjectExpr)
     assert not hasattr(phones, "number")
-    assert serialize(predicate_node(phones.any(_field(vm.Phone.type) == "home"))) == {
-        "any": {"path": "phones", "where": {"eq": {"path": "type", "value": "home"}}}
+    assert predicate_document(
+        vm.Customer.where(vm.Customer.address.phones.any(_field(vm.Phone.type) == "home")),
+        vm.CUSTOMER_MODEL,
+    ) == {
+        "any": {
+            "path": "parallax.compatibility.Customer.address.phones",
+            "where": {"eq": {"path": "type", "value": "home"}},
+        }
     }
 
 
@@ -241,7 +249,7 @@ def test_field_access_refuses_unknown_members_and_nonnullable_null_checks() -> N
 def test_an_entity_rooted_value_object_predicate_carries_the_dotted_canonical_path() -> None:
     predicate: Predicate[Any] = vm.Customer.address.geo.country == "DE"
     assert isinstance(predicate, Predicate)
-    assert serialize(predicate_node(predicate)) == {
+    assert _customer_where(predicate) == {
         "eq": {"path": "parallax.compatibility.Customer.address.geo.country", "value": "DE"}
     }
 
@@ -267,22 +275,20 @@ def test_invalid_relative_operand_reports_the_complete_developer_input_rule() ->
 
 
 def test_a_dotted_range_membership_and_match_carry_the_whole_path() -> None:
-    assert serialize(predicate_node(vm.Customer.address.geo.elevation.between(5, 12))) == {
+    assert _customer_where(vm.Customer.address.geo.elevation.between(5, 12)) == {
         "between": {
             "path": "parallax.compatibility.Customer.address.geo.elevation",
             "lower": 5,
             "upper": 12,
         }
     }
-    assert serialize(predicate_node(vm.Customer.address.city.not_in(["Oslo"]))) == {
+    assert _customer_where(vm.Customer.address.city.not_in(["Oslo"])) == {
         "notIn": {"path": "parallax.compatibility.Customer.address.city", "values": ["Oslo"]}
     }
-    assert serialize(predicate_node(vm.Customer.address.city.starts_with("Os"))) == {
+    assert _customer_where(vm.Customer.address.city.starts_with("Os")) == {
         "startsWith": {"path": "parallax.compatibility.Customer.address.city", "value": "Os"}
     }
-    assert serialize(
-        predicate_node(vm.Customer.address.city.like("OS%", case_insensitive=True))
-    ) == {
+    assert _customer_where(vm.Customer.address.city.like("OS%", case_insensitive=True)) == {
         "like": {
             "path": "parallax.compatibility.Customer.address.city",
             "value": "OS%",
@@ -290,13 +296,13 @@ def test_a_dotted_range_membership_and_match_carry_the_whole_path() -> None:
         }
     }
     # The fluent surface never authors an explicit `caseInsensitive: false`.
-    assert serialize(predicate_node(vm.Customer.name.starts_with("A"))) == {
+    assert _customer_where(vm.Customer.name.starts_with("A")) == {
         "startsWith": {"path": "parallax.compatibility.Customer.name", "value": "A"}
     }
-    assert serialize(predicate_node(vm.Customer.name.not_in(["Ada"]))) == {
+    assert _customer_where(vm.Customer.name.not_in(["Ada"])) == {
         "notIn": {"path": "parallax.compatibility.Customer.name", "values": ["Ada"]}
     }
-    assert serialize(predicate_node(vm.Customer.id.between(1, 3))) == {
+    assert _customer_where(vm.Customer.id.between(1, 3)) == {
         "between": {"path": "parallax.compatibility.Customer.id", "lower": 1, "upper": 3}
     }
 

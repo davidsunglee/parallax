@@ -39,6 +39,7 @@ from parallax.core.db_port import (
     RolledBack,
     TransactionOutcome,
 )
+from parallax.core.entity._authored_resolver import object_query_node
 from parallax.core.entity._model import model_of
 from parallax.core.execution import (
     DatabaseOptions,
@@ -54,7 +55,6 @@ from parallax.core.execution._attempt import Attempt
 from parallax.core.execution._planning import build_write_planner
 from parallax.core.execution._scope import ExecutionScope
 from parallax.core.object_query import ObjectQueryNode
-from parallax.core.object_query._fluent import object_query_node
 from parallax.core.unit_work import (
     DatabaseLoginActor,
     RollbackOnlyError,
@@ -99,7 +99,7 @@ def deadlock() -> DatabaseError:
 
 
 def _account_seven() -> ObjectQueryNode:
-    return object_query_node(mm.Account.where(mm.Account.id == 7))
+    return object_query_node(mm.Account.where(mm.Account.id == 7), ACCOUNT)
 
 
 def test_abort_discards_the_buffer_and_withholds_the_value() -> None:

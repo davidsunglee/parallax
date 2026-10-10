@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, cast
 
+from parallax.core import ObjectQuery
 from parallax.core.db_port import DatabaseConnection
 from parallax.core.entity import (
     UNLOADED,
@@ -12,11 +13,11 @@ from parallax.core.entity import (
     NodeHandle,
     lifecycle_state_of,
 )
+from parallax.core.entity._authored_resolver import object_query_node
 from parallax.core.execution import ModelSelection
 from parallax.core.execution._preflight import preflight
 from parallax.core.execution._publication import read_projection
 from parallax.core.metamodel import EntityIdentity
-from parallax.core.object_query._fluent import ObjectQuery, object_query_node
 from parallax.core.read_delivery._delivery import find as execute_read
 from parallax.core.read_delivery._page import Page
 from parallax.snapshot._publication._root import RootView
@@ -67,7 +68,7 @@ class AnotherSource:
     own.
     """
 
-    __slots__ = ("_construction", "_model", "_port")
+    __slots__ = ("_construction", "_domain_model", "_model", "_port")
 
     def __init__(self, selection: ModelSelection, port: DatabaseConnection) -> None:
         selected = read_projection(selection)
@@ -76,6 +77,7 @@ class AnotherSource:
                 "this source materializes Entity Class instances, so it takes a selection "
                 "prepared from a class-backed Domain Model"
             )
+        self._domain_model = selection.model
         self._model = selected.model
         self._construction = selected.construction
         self._port = port
@@ -91,7 +93,7 @@ class AnotherSource:
         relationship view, so reading a query's levels and then dropping them
         would answer a result missing the relationships the caller asked for.
         """
-        node = object_query_node(query)
+        node = object_query_node(query, self._domain_model)
         if node.includes:
             raise ValueError(
                 "this source materializes root-only Pages, and the query includes "

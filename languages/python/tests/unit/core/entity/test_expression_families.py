@@ -15,6 +15,7 @@ from parallax.core import (
     MANY_TO_ONE,
     ONE_TO_MANY,
     Attr,
+    DomainModel,
     Entity,
     EntityDefinitionError,
     IncludePath,
@@ -36,6 +37,7 @@ from parallax.core.entity._expressions import (
     ScalarElementExpr,
     ScalarExpr,
 )
+from parallax.core.predicate import Comparison, FieldSubject, Quantifier
 from tests._support.query_probes import predicate_node
 
 _NS = "expression.families"
@@ -109,8 +111,11 @@ def test_collections_refuse_single_value_operations_statically() -> None:
 
 
 def test_a_quantifier_reads_its_where_from_the_element_class() -> None:
-    assert predicate_node(Route.legs.any(Leg.origin.city == "Oslo")) == predicate_node(
-        Route.legs.any(Leg.origin.city == "Oslo")
+    routes = DomainModel(Route, Carrier)
+    assert predicate_node(Route.where(Route.legs.any(Leg.origin.city == "Oslo")), routes) == (
+        Quantifier(
+            "any", f"{_NS}.Route.legs", Comparison("eq", FieldSubject("origin.city"), "Oslo")
+        )
     )
     Route.legs.any(Route.id == 1)  # pyright: ignore[reportArgumentType]
 
@@ -145,5 +150,7 @@ def test_a_renamed_member_keeps_its_canonical_name_behind_a_free_python_name() -
         id: Attr[int] = attr(primary_key=True)
         any_seat: Attr[str] = attr(name="any", max_length=8)
 
-    assert predicate_node(Ticket.any_seat == "A1") == predicate_node(Ticket.any_seat == "A1")
+    assert predicate_node(Ticket.where(Ticket.any_seat == "A1"), DomainModel(Ticket)) == (
+        Comparison("eq", FieldSubject(f"{_NS}.Ticket.any"), "A1")
+    )
     assert Ticket.any_seat is not None

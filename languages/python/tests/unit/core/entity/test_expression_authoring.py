@@ -26,6 +26,10 @@ from parallax.core import (
     attr,
     rel,
 )
+from parallax.core.entity import model_of
+from parallax.core.entity._authored_resolver import object_query_node
+from parallax.core.entity._expressions import AuthoredQuantifier
+from parallax.core.execution._preflight import preflight
 from parallax.core.predicate import Presence, Quantifier, serialize
 from parallax.core.predicate._resolved import (
     RelatedObject,
@@ -37,6 +41,7 @@ from parallax.core.predicate._resolved import (
     ResolvedStringMatch,
 )
 from tests._support.query_probes import predicate_node, typed_resolved
+from tests._support.snapshot_models import ANIMAL_MODEL, Animal, AnimalOwner, Dog, Pet
 
 _NS = "expression.authoring"
 
@@ -91,16 +96,16 @@ def _resolved(query: Any) -> Any:
     return typed_resolved(query, MODEL).predicate
 
 
-def _kind(predicate: Any) -> str:
-    node = predicate_node(predicate)
+def _kind(query: Any) -> str:
+    node = predicate_node(query, MODEL)
     assert isinstance(node, Quantifier)
     return node.kind
 
 
 def test_collections_quantify_and_refuse_whole_value_use() -> None:
-    assert _kind(Basket.tags.all(Basket.tags.element == "a")) == "all"
-    assert _kind(Basket.parts.all(Part.sku == "a")) == "all"
-    assert _kind(Holder.baskets.all(Basket.id > 0)) == "all"
+    assert _kind(Basket.where(Basket.tags.all(Basket.tags.element == "a"))) == "all"
+    assert _kind(Basket.where(Basket.parts.all(Part.sku == "a"))) == "all"
+    assert _kind(Holder.where(Holder.baskets.all(Basket.id > 0))) == "all"
     for collection in (Basket.tags, Basket.parts):
         with pytest.raises(TypeError, match="no truth value"):
             bool(collection)
@@ -120,7 +125,7 @@ def test_a_scalar_element_is_read_only_inside_its_own_collections_quantifier() -
     with pytest.raises(QueryDefinitionError, match="not an element of"):
         Basket.parts.any(cast("Any", Basket.tags.element == "a"))
     nested = Basket.tags.any(Basket.marks.any(Basket.marks.element == 1))
-    assert isinstance(predicate_node(nested), Quantifier)
+    assert isinstance(nested.authored, AuthoredQuantifier)
 
 
 def test_a_scalar_element_resolves_inside_its_quantifier() -> None:
@@ -155,7 +160,9 @@ def test_include_takes_only_include_paths() -> None:
 
 
 def test_a_to_one_relationship_tests_presence() -> None:
-    assert predicate_node(Basket.owner.not_exists()) == Presence("notExists", f"{_BASKET}.owner")
+    assert predicate_node(Basket.where(Basket.owner.not_exists()), MODEL) == Presence(
+        "notExists", f"{_BASKET}.owner"
+    )
 
 
 def test_a_deferred_continuation_offers_every_candidate_operation() -> None:
@@ -163,8 +170,9 @@ def test_a_deferred_continuation_offers_every_candidate_operation() -> None:
     with pytest.raises(AttributeError):
         _ = deferred._private
     assert repr(deferred) == f"DeferredExpr({_BASKET}.owner.name)"
-    with pytest.raises(QueryDefinitionError, match="no canonical form"):
-        predicate_node(Basket.owner.tags.any())
+    assert predicate_node(Basket.where(Basket.owner.tags.any()), MODEL) == Quantifier(
+        "any", f"{_BASKET}.owner.tags"
+    )
 
 
 @pytest.mark.parametrize(
@@ -230,20 +238,22 @@ def test_a_class_the_serving_model_does_not_compose_is_refused() -> None:
 
 
 def test_the_export_never_respells_another_class_as_the_bound_entity() -> None:
-    # Inside `Holder.baskets` only `Basket` paths are relative; `Holder.id` there
-    # would otherwise export as the basket's own `id`.
-    outer = predicate_node(Holder.baskets.any(cast("Any", Holder.id == 1)))
-    own = predicate_node(Holder.baskets.any(Basket.id == 1))
-    assert serialize(outer)["any"]["where"] == {  # type: ignore[index] - the exported document's shape
-        "eq": {"path": f"{_NS}.Holder.id", "value": 1}
-    }
+    # Inside `Holder.baskets` only paths applicable to a basket are relative;
+    # `Holder.id` there is refused by the export exactly as by resolution.
+    own = predicate_node(Holder.where(Holder.baskets.any(Basket.id == 1)), MODEL)
     assert serialize(own)["any"]["where"] == {"eq": {"path": "id", "value": 1}}  # type: ignore[index] - the exported document's shape
-    with pytest.raises(ModelRejectedError):
-        _resolved(Holder.where(Holder.baskets.any(cast("Any", Holder.id == 1))))
+    outer = Holder.where(Holder.baskets.any(cast("Any", Holder.id == 1)))
+    with pytest.raises(ModelRejectedError) as exported:
+        predicate_node(outer, MODEL)
+    with pytest.raises(ModelRejectedError) as resolved:
+        _resolved(outer)
+    assert exported.value.rule == resolved.value.rule
 
 
 def test_a_target_local_narrow_exports_its_reached_entitys_paths_relative() -> None:
-    narrowed = predicate_node(Basket.owner.is_a(Owner, where=Owner.name == "Ada"))
+    narrowed = predicate_node(
+        Basket.where(Basket.owner.is_a(Owner, where=Owner.name == "Ada")), MODEL
+    )
     assert serialize(narrowed) == {
         "narrow": {
             "path": f"{_BASKET}.owner",
@@ -251,3 +261,41 @@ def test_a_target_local_narrow_exports_its_reached_entitys_paths_relative() -> N
             "operand": {"eq": {"path": "name", "value": "Ada"}},
         }
     }
+
+
+def _wire_accepts(query: Any, model: DomainModel) -> dict[str, object]:
+    node = object_query_node(query, model)
+    preflight(node, model=model_of(model), form="graph")
+    return serialize(node.predicate)
+
+
+def test_an_ancestor_receiver_exports_relative_to_the_scope_it_binds() -> None:
+    ancestor = AnimalOwner.where(AnimalOwner.pets.any(Animal.name == "Ada"))
+    inherited = AnimalOwner.where(AnimalOwner.pets.any(Pet.name == "Ada"))
+    for query in (ancestor, inherited):
+        assert _wire_accepts(query, ANIMAL_MODEL)["any"]["where"] == {  # type: ignore[index] - the exported document's shape
+            "eq": {"path": "name", "value": "Ada"}
+        }
+
+
+def test_an_ancestor_receiver_inside_a_narrowing_exports_relative() -> None:
+    query = AnimalOwner.where(
+        AnimalOwner.animals.any(Animal.is_a(Dog, where=Pet.license_id == "x"))
+    )
+    narrowed = _wire_accepts(query, ANIMAL_MODEL)["any"]["where"]  # type: ignore[index] - the exported document's shape
+    assert narrowed["narrow"]["operand"] == {"eq": {"path": "licenseId", "value": "x"}}
+
+
+def test_a_receiver_resolution_refuses_is_refused_by_the_export() -> None:
+    # A Pet subtype test at the broader Animal position: statically refused too.
+    query = AnimalOwner.where(AnimalOwner.animals.any(cast("Any", Pet.is_a(Dog))))
+    with pytest.raises(ModelRejectedError) as exported:
+        object_query_node(query, ANIMAL_MODEL)
+    with pytest.raises(ModelRejectedError) as resolved:
+        typed_resolved(query, ANIMAL_MODEL)
+    assert exported.value.rule == resolved.value.rule == "subtype-attribute-outside-narrow-scope"
+
+
+def test_a_query_over_an_entity_the_serving_model_lacks_has_no_export() -> None:
+    with pytest.raises(QueryDefinitionError, match="declares no such Entity"):
+        object_query_node(Stranger.where(Stranger.id == 1), MODEL)

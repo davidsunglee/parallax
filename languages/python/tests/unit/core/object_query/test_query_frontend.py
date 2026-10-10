@@ -30,10 +30,10 @@ from parallax.core import (
     TxTemporal,
     attr,
 )
+from parallax.core.entity._authored_resolver import object_query_node
 from parallax.core.entity._entity import build_object_query
 from parallax.core.entity._expressions import ScalarExpr
 from parallax.core.metamodel import EntityIdentity
-from parallax.core.object_query._fluent import object_query_node
 from tests._support.query_probes import canonical_document, predicate_document, predicate_node
 
 _NS = "parallax.compatibility"
@@ -57,7 +57,7 @@ _WIDGETS = DomainModel(Widget)
 def _op(pred: Predicate[Any]) -> dict[str, object]:
     from parallax.core.predicate import serialize
 
-    return serialize(predicate_node(pred))
+    return serialize(predicate_node(Widget.where(pred), _WIDGETS))
 
 
 def test_scalar_comparison_operators() -> None:
@@ -185,7 +185,7 @@ def test_boolean_combinators_and_grouping() -> None:
 
 def test_where_conjoins_and_flattens() -> None:
     query = Widget.where(Widget.active.is_(True), Widget.qty > 1)
-    assert predicate_document(query) == {
+    assert predicate_document(query, _WIDGETS) == {
         "and": {
             "operands": [
                 {"eq": {"path": "parallax.compatibility.Widget.active", "value": True}},
@@ -193,8 +193,8 @@ def test_where_conjoins_and_flattens() -> None:
             ]
         }
     }
-    assert predicate_document(Widget.where(Widget.all)) == {"true": {}}
-    assert predicate_document(Widget.where(Widget.id == 1)) == {
+    assert predicate_document(Widget.where(Widget.all), _WIDGETS) == {"true": {}}
+    assert predicate_document(Widget.where(Widget.id == 1), _WIDGETS) == {
         "eq": {"path": "parallax.compatibility.Widget.id", "value": 1}
     }
 
@@ -231,7 +231,7 @@ def test_the_unfiltered_spelling_is_the_whole_filter_or_none_of_it() -> None:
 
 def test_result_shaping_clauses() -> None:
     query = Widget.where(Widget.all).order_by(Widget.qty.desc(), Widget.name.asc()).limit(5)
-    document = canonical_document(query)
+    document = canonical_document(query, _WIDGETS)
     assert document["orderBy"] == [
         {"attr": "parallax.compatibility.Widget.qty", "direction": "desc"},
         {"attr": "parallax.compatibility.Widget.name", "direction": "asc"},
@@ -244,7 +244,9 @@ def test_clause_invocation_order_never_reaches_the_wire() -> None:
     # no call sequence can reach the canonical document.
     ordered_first = Widget.where(Widget.all).order_by(Widget.qty.asc()).limit(2)
     limited_first = Widget.where(Widget.all).limit(2).order_by(Widget.qty.asc())
-    assert canonical_document(ordered_first) == canonical_document(limited_first)
+    assert canonical_document(ordered_first, _WIDGETS) == canonical_document(
+        limited_first, _WIDGETS
+    )
 
 
 def test_clause_guards() -> None:
@@ -303,20 +305,20 @@ def test_an_object_query_is_an_opaque_value_with_no_truth_and_no_structural_equa
     # canonical nodes rather than queries.
     twin = Widget.where(Widget.id == 1)
     assert query != twin
-    assert canonical_document(query) == canonical_document(twin)
+    assert canonical_document(query, _WIDGETS) == canonical_document(twin, _WIDGETS)
 
 
 def test_every_clause_answers_a_new_query_and_leaves_its_receiver_alone() -> None:
     base = Widget.where(Widget.all)
     limited = base.limit(3)
     assert limited is not base
-    assert predicate_document(base) == {"true": {}}
+    assert predicate_document(base, _WIDGETS) == {"true": {}}
 
 
 def test_the_canonical_node_carries_the_query_clauses_and_nothing_else() -> None:
-    node = object_query_node(Widget.where(Widget.id == 1))
+    node = object_query_node(Widget.where(Widget.id == 1), _WIDGETS)
     assert node.target == EntityIdentity(_NS, "Widget")
-    assert node.predicate == predicate_node(Widget.id == 1)
+    assert node.predicate == predicate_node(Widget.where(Widget.id == 1), _WIDGETS)
     # The exact shape: the queried position and the seven clause fields, with no
     # model, class index, feature tag, provider state, SQL, or serialization.
     assert [field.name for field in fields(node)] == [
@@ -334,15 +336,14 @@ def test_the_canonical_node_is_the_querys_own_value() -> None:
     # Nothing derives a second representation to memoize: reading the node twice
     # answers the same frozen value the query has held since it was built.
     query = Widget.where(Widget.id == 1)
-    first, second = object_query_node(query), object_query_node(query)
+    first, second = object_query_node(query, _WIDGETS), object_query_node(query, _WIDGETS)
     assert first == second
 
 
 # --------------------------------------------------------------------------- #
 # Axis-keyed temporal-read clauses (m-temporal-read) over two locally declared #
 # framework-base entities — proving the flat Temporal Selection map (one entry #
-# per declared axis, LATEST -> latest, single-shot per dimension) with no      #
-# whole model behind it, since authoring reaches none.                         #
+# per declared axis, LATEST -> latest, single-shot per dimension).             #
 # --------------------------------------------------------------------------- #
 class Balance(TxTemporal, table="balance", namespace=_NS):
     """A Transaction-Time-Only entity: the one axis a temporal clause may pin."""
@@ -356,6 +357,9 @@ class Position(Bitemporal, table="position", namespace=_NS):
     id: Attr[int] = attr(primary_key=True)
 
 
+_TEMPORAL = DomainModel(Balance, Position)
+
+
 class _WindowSubclass(tuple[dt.datetime, ...]):
     """A `tuple` subclass, which a scan window is required NOT to be."""
 
@@ -367,7 +371,7 @@ def test_as_of_latest_serializes_the_current_pin() -> None:
 
 
 def _temporal(query: ObjectQuery[Any, Any]) -> object:
-    return canonical_document(query)["temporal"]
+    return canonical_document(query, _TEMPORAL)["temporal"]
 
 
 def test_omitted_transaction_time_normalizes_to_explicit_latest() -> None:
@@ -494,7 +498,7 @@ def test_mixed_bitemporal_variants_compose_in_both_call_orders() -> None:
 
 def test_bitemporal_query_requires_a_valid_time_selection_when_it_is_read() -> None:
     with pytest.raises(QueryDefinitionError, match="requires an explicit Valid-Time selection"):
-        object_query_node(Position.where(Position.all))
+        object_query_node(Position.where(Position.all), _TEMPORAL)
 
 
 def test_history_rejects_a_string_dimension() -> None:

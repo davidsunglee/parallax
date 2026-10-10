@@ -109,10 +109,10 @@ from parallax.core import (
     rel,
 )
 from parallax.core.entity import AttributeAssignment
+from parallax.core.entity._authored_resolver import object_query_node
 from parallax.core.entity._expressions import AuthoredConstant, include_traversal
 from parallax.core.entity._model import model_of
 from parallax.core.execution._preflight import preflight
-from parallax.core.object_query._fluent import object_query_node
 from parallax.core.predicate import TrueNode
 from parallax.core.unit_work import (
     PredicateSelection,
@@ -223,7 +223,7 @@ def preflighted(
     the query itself so a case can go on to assert its canonical lowering. A
     rejection propagates.
     """
-    preflight(object_query_node(query), model=model_of(models), form="graph")
+    preflight(object_query_node(query, models), model=model_of(models), form="graph")
     return query
 
 
@@ -267,7 +267,7 @@ def test_an_ancestors_predicate_addresses_every_descendant_position() -> None:
     # The acceptance half of the same mechanism, and the case an INVARIANT
     # parameter would break: `Predicate[Animal]` lands in a `Dog` position
     # because a root-declared member is available to every concrete under it.
-    assert predicate_document(preflighted(Dog.where(Animal.name == "Ada"))) == {
+    assert predicate_document(preflighted(Dog.where(Animal.name == "Ada")), _ANIMALS) == {
         "eq": {"path": "parallax.compatibility.Animal.name", "value": "Ada"}
     }
 
@@ -277,7 +277,7 @@ def test_an_inherited_member_is_parameterized_by_the_class_it_is_reached_through
     # `Dog`-positioned predicate while the wire keeps the DECLARING Entity — the
     # spelling that makes the reference applicable to every concrete under
     # `Animal`. The two are different questions and the two answers differ.
-    assert predicate_document(preflighted(Dog.where(Dog.name == "Ada"))) == {
+    assert predicate_document(preflighted(Dog.where(Dog.name == "Ada")), _ANIMALS) == {
         "eq": {"path": "parallax.compatibility.Animal.name", "value": "Ada"}
     }
 
@@ -290,7 +290,7 @@ def test_a_subtype_spelling_of_an_inherited_member_is_narrower_than_the_model_is
     # under `Animal` answers. The remedy is to spell the member through the class
     # that declares it, and the suppression records the asymmetry rather than
     # leaving it to be discovered.
-    assert predicate_document(preflighted(Animal.where(Dog.name == "Ada"))) == {  # pyright: ignore[reportArgumentType]
+    assert predicate_document(preflighted(Animal.where(Dog.name == "Ada")), _ANIMALS) == {  # pyright: ignore[reportArgumentType]
         "eq": {"path": "parallax.compatibility.Animal.name", "value": "Ada"}
     }
 
@@ -305,10 +305,12 @@ def test_one_identity_reached_through_two_classes_is_refused_statically_only() -
     # runtime twin: preflight is handed nothing that differs.
     foreign = TwinLeft.where(TwinRight.id == 1)  # pyright: ignore[reportArgumentType]
     native = TwinLeft.where(TwinLeft.id == 1)
-    assert predicate_document(preflighted(foreign, _TWINS)) == {
+    assert predicate_document(preflighted(foreign, _TWINS), _TWINS) == {
         "eq": {"path": "parallax.tests.typed.TypedTwin.id", "value": 1}
     }
-    assert predicate_document(preflighted(native, _TWINS)) == predicate_document(foreign)
+    assert predicate_document(preflighted(native, _TWINS), _TWINS) == predicate_document(
+        foreign, _TWINS
+    )
 
 
 def test_a_conjunction_addresses_the_position_both_of_its_operands_address() -> None:
@@ -316,7 +318,7 @@ def test_a_conjunction_addresses_the_position_both_of_its_operands_address() -> 
     # lands in the descendant's query — the case a combinator demanding one
     # shared parameter would refuse for a reason no rule states.
     assert predicate_document(
-        preflighted(Dog.where((Animal.name == "Ada") & (Dog.bark_volume > 3)))
+        preflighted(Dog.where((Animal.name == "Ada") & (Dog.bark_volume > 3))), _ANIMALS
     ) == {
         "and": {
             "operands": [
@@ -333,7 +335,7 @@ def test_a_mixed_conjunction_reads_the_same_in_the_other_operand_order() -> None
     # two spellings, so both orders are pinned: the position a combination
     # addresses is the meet, which no operand order can move.
     assert predicate_document(
-        preflighted(Dog.where((Dog.bark_volume > 3) & (Animal.name == "Ada")))
+        preflighted(Dog.where((Dog.bark_volume > 3) & (Animal.name == "Ada"))), _ANIMALS
     ) == {
         "and": {
             "operands": [
@@ -376,10 +378,10 @@ def test_a_disjunction_addresses_the_meet_in_either_operand_order() -> None:
     # in both orders too — the combinator, not the combination, is what the
     # position comes from.
     ancestor_first = predicate_document(
-        preflighted(Dog.where((Animal.name == "Ada") | (Dog.bark_volume > 3)))
+        preflighted(Dog.where((Animal.name == "Ada") | (Dog.bark_volume > 3))), _ANIMALS
     )
     descendant_first = predicate_document(
-        preflighted(Dog.where((Dog.bark_volume > 3) | (Animal.name == "Ada")))
+        preflighted(Dog.where((Dog.bark_volume > 3) | (Animal.name == "Ada"))), _ANIMALS
     )
     assert ancestor_first == {
         "or": {
@@ -446,7 +448,7 @@ def test_a_narrow_scope_is_how_a_descendants_member_reaches_an_ancestor_position
     # is the WHOLE filter narrows the result, so it lands in `narrowTo` and its
     # own scoped predicate is what the query filters by.
     assert canonical_document(
-        preflighted(Animal.where(Animal.is_a(Dog, where=Dog.bark_volume > 3)))
+        preflighted(Animal.where(Animal.is_a(Dog, where=Dog.bark_volume > 3))), _ANIMALS
     ) == {
         "target": "parallax.compatibility.Animal",
         "predicate": {"greaterThan": {"path": "parallax.compatibility.Dog.barkVolume", "value": 3}},
@@ -466,12 +468,12 @@ def test_narrowing_after_the_predicate_is_refused_statically_and_only_statically
     # one canonical value.
     late_narrow = Animal.where(Dog.bark_volume > 3).narrow(Dog)  # pyright: ignore[reportArgumentType]
     narrow_first = Animal.where(Animal.is_a(Dog, where=Dog.bark_volume > 3))
-    document = canonical_document(preflighted(late_narrow))
+    document = canonical_document(preflighted(late_narrow), _ANIMALS)
     assert document["narrowTo"] == ["parallax.compatibility.Dog"]
     assert document["predicate"] == {
         "greaterThan": {"path": "parallax.compatibility.Dog.barkVolume", "value": 3}
     }
-    assert canonical_document(preflighted(narrow_first)) == document
+    assert canonical_document(preflighted(narrow_first), _ANIMALS) == document
 
 
 def test_a_narrowing_reached_through_a_boolean_stays_a_filter() -> None:
@@ -480,7 +482,7 @@ def test_a_narrowing_reached_through_a_boolean_stays_a_filter() -> None:
     # term of the selection and the result position stays where the query is —
     # so the query returns un-narrowed objects and carries no `narrowTo` at all.
     combined = Animal.where(Animal.is_a(Dog, where=Dog.bark_volume > 3) | (Animal.name == "Ada"))
-    document = canonical_document(preflighted(combined))
+    document = canonical_document(preflighted(combined), _ANIMALS)
     assert "narrowTo" not in document
     assert document["predicate"] == {
         "or": {
@@ -512,7 +514,7 @@ def test_a_comparison_literal_is_encoded_to_canonical_wire_at_authoring() -> Non
     # canonical serialized literal, so model-aware preflight decodes exactly
     # that value once rather than interpreting a Python float later.
     assert predicate_document(
-        preflighted(SnapOrder.where(SnapOrder.price >= Decimal("600.00")), _ORDERS)
+        preflighted(SnapOrder.where(SnapOrder.price >= Decimal("600.00")), _ORDERS), _ORDERS
     ) == {
         "greaterThanEquals": {
             "path": "parallax.compatibility.SnapOrder.price",
@@ -593,7 +595,7 @@ def test_an_ancestors_sort_key_orders_a_union_narrowed_result() -> None:
     # `SortKey[Animal]` lands in a `Cat | Dog` result and the validator agrees.
     key: SortKey[Cat | Dog] = Animal.name.asc()
     document = canonical_document(
-        preflighted(Animal.where(Animal.all).narrow(Cat, Dog).order_by(key))
+        preflighted(Animal.where(Animal.all).narrow(Cat, Dog).order_by(key)), _ANIMALS
     )
     assert document["narrowTo"] == [
         "parallax.compatibility.Cat",
@@ -618,7 +620,9 @@ def test_a_sort_key_orders_the_result_a_single_subtype_narrow_moved_to() -> None
     # And the acceptance a narrow to ONE subtype buys: the same key the
     # un-narrowed query refused is applicable once the result is `Dog`.
     key: SortKey[Dog] = Dog.bark_volume.desc()
-    document = canonical_document(preflighted(Animal.where(Animal.all).narrow(Dog).order_by(key)))
+    document = canonical_document(
+        preflighted(Animal.where(Animal.all).narrow(Dog).order_by(key)), _ANIMALS
+    )
     assert document["narrowTo"] == ["parallax.compatibility.Dog"]
     assert document["orderBy"] == [
         {"attr": "parallax.compatibility.Dog.barkVolume", "direction": "desc"}
@@ -630,7 +634,9 @@ def test_null_placement_stays_on_the_sort_key_and_keeps_its_position() -> None:
     # Key rather than the canonical node, and the single-shot rule stays the
     # canonical node's own.
     key: SortKey[Dog] = Dog.bark_volume.desc().nulls_first()
-    document = canonical_document(preflighted(Animal.where(Animal.all).narrow(Dog).order_by(key)))
+    document = canonical_document(
+        preflighted(Animal.where(Animal.all).narrow(Dog).order_by(key)), _ANIMALS
+    )
     assert document["orderBy"] == [
         {"attr": "parallax.compatibility.Dog.barkVolume", "direction": "desc", "nulls": "first"}
     ]
@@ -649,7 +655,7 @@ def test_null_placement_stays_on_the_sort_key_and_keeps_its_position() -> None:
 
 def test_narrowing_to_one_subtype_answers_that_subtype() -> None:
     admitted = Animal.where(Animal.all).narrow(Dog).order_by(Dog.bark_volume.desc())
-    document = canonical_document(preflighted(admitted))
+    document = canonical_document(preflighted(admitted), _ANIMALS)
     assert document["narrowTo"] == ["parallax.compatibility.Dog"]
     assert document["orderBy"] == [
         {"attr": "parallax.compatibility.Dog.barkVolume", "direction": "desc"}
@@ -664,7 +670,7 @@ def test_narrowing_to_one_subtype_answers_that_subtype() -> None:
 
 def test_narrowing_to_two_subtypes_answers_their_union() -> None:
     admitted = Animal.where(Animal.all).narrow(Cat, Dog).order_by(Animal.name.asc())
-    document = canonical_document(preflighted(admitted))
+    document = canonical_document(preflighted(admitted), _ANIMALS)
     assert document["narrowTo"] == [
         "parallax.compatibility.Cat",
         "parallax.compatibility.Dog",
@@ -690,13 +696,13 @@ def test_the_variadic_narrow_tail_leaves_the_result_where_it_was() -> None:
     # runtime twin to raise.
     subtypes: list[type[Entity]] = [Dog]
     admitted = Animal.where(Animal.all).narrow(*subtypes).order_by(Animal.name.asc())
-    document = canonical_document(preflighted(admitted))
+    document = canonical_document(preflighted(admitted), _ANIMALS)
     assert document["narrowTo"] == ["parallax.compatibility.Dog"]
     assert document["orderBy"] == [
         {"attr": "parallax.compatibility.Animal.name", "direction": "asc"}
     ]
     conservative = Animal.where(Animal.all).narrow(*subtypes).order_by(Dog.bark_volume.desc())  # pyright: ignore[reportArgumentType]
-    assert canonical_document(preflighted(conservative))["orderBy"] == [
+    assert canonical_document(preflighted(conservative), _ANIMALS)["orderBy"] == [
         {"attr": "parallax.compatibility.Dog.barkVolume", "direction": "desc"}
     ]
 
@@ -710,8 +716,8 @@ def test_ordering_before_narrowing_is_refused_statically_and_only_statically() -
     # is written, which is why the suppression below has no runtime twin.
     late_narrow = Animal.where(Animal.all).order_by(Dog.bark_volume.desc()).narrow(Dog)  # pyright: ignore[reportArgumentType]
     early_narrow = Animal.where(Animal.all).narrow(Dog).order_by(Dog.bark_volume.desc())
-    assert canonical_document(preflighted(late_narrow)) == canonical_document(
-        preflighted(early_narrow)
+    assert canonical_document(preflighted(late_narrow), _ANIMALS) == canonical_document(
+        preflighted(early_narrow), _ANIMALS
     )
 
 
@@ -753,7 +759,7 @@ def test_an_unfiltered_query_written_at_another_position_is_refused_statically()
     # records why: a `true` node names no position, so nothing downstream can
     # tell these two apart — which is exactly why the parameter is the only
     # place the mistake is visible at all.
-    assert predicate_document(preflighted(Animal.where(Dog.all))) == {"true": {}}  # pyright: ignore[reportArgumentType]
+    assert predicate_document(preflighted(Animal.where(Dog.all)), _ANIMALS) == {"true": {}}  # pyright: ignore[reportArgumentType]
 
 
 def test_an_unfiltered_query_is_the_whole_filter_and_composes_with_nothing() -> None:
@@ -781,10 +787,10 @@ def test_the_unfiltered_query_survives_a_class_reached_through_a_type_parameter(
         return cls.all
 
     dogs: AllPredicate[Dog] = unfiltered(Dog)
-    assert predicate_document(preflighted(Dog.where(dogs))) == {"true": {}}
-    assert predicate_document(preflighted(Animal.where(Animal.all))) == predicate_document(
-        preflighted(Animal.where(Animal.all))
-    )
+    assert predicate_document(preflighted(Dog.where(dogs)), _ANIMALS) == {"true": {}}
+    assert predicate_document(
+        preflighted(Animal.where(Animal.all)), _ANIMALS
+    ) == predicate_document(preflighted(Animal.where(Animal.all)), _ANIMALS)
 
 
 def test_a_member_named_all_collides_with_the_query_root() -> None:
@@ -825,7 +831,9 @@ def test_a_descendants_path_is_a_legal_include_source_of_its_ancestors_query() -
     # SOURCE guard says, so the query accepts it and the guard resolves inside
     # the position.
     source: IncludePath[Beast, Any] = Hound.keeper
-    document = canonical_document(preflighted(Beast.where(Beast.all).include(source), _BESTIARY))
+    document = canonical_document(
+        preflighted(Beast.where(Beast.all).include(source), _BESTIARY), _BESTIARY
+    )
     assert document["includes"] == [
         {
             "appliesTo": ["parallax.tests.typed.Hound"],
@@ -860,7 +868,7 @@ def test_a_hop_narrowed_to_a_descendant_stands_where_the_broad_hop_does() -> Non
     narrowed: IncludePath[Keeper, Beast] = Keeper.beasts.narrow(Hound)
     broad: IncludePath[Keeper, Hound] = Keeper.beasts  # pyright: ignore[reportAssignmentType]
     document = canonical_document(
-        preflighted(Keeper.where(Keeper.all).include(narrowed), _BESTIARY)
+        preflighted(Keeper.where(Keeper.all).include(narrowed), _BESTIARY), _BESTIARY
     )
     assert document["includes"] == [
         {
@@ -926,8 +934,8 @@ def test_a_reference_names_the_namespace_its_own_class_declares() -> None:
     # would have named both Entities and therefore neither.
     query = LeftShared.where(LeftShared.id == 1)
     expected = {"eq": {"path": "parallax.tests.typed.alpha.Shared.id", "value": 1}}
-    assert predicate_document(preflighted(query, _ONE_SHARED_NAME)) == expected
-    assert predicate_document(preflighted(query, _TWO_SHARED_NAMES)) == expected
+    assert predicate_document(preflighted(query, _ONE_SHARED_NAME), _ONE_SHARED_NAME) == expected
+    assert predicate_document(preflighted(query, _TWO_SHARED_NAMES), _TWO_SHARED_NAMES) == expected
 
 
 def test_a_relationship_hop_past_the_first_erases_and_the_gate_refuses_it() -> None:
@@ -976,8 +984,8 @@ def test_a_narrow_receiver_does_not_restate_the_relationship_position() -> None:
     # so both spellings lower identically and the same Dog selection is legal.
     through_target = AnimalOwner.where(AnimalOwner.pets.any(Pet.is_a(Dog)))
     through_ancestor = AnimalOwner.where(AnimalOwner.pets.any(Animal.is_a(Dog)))
-    assert predicate_document(preflighted(through_ancestor)) == predicate_document(
-        preflighted(through_target)
+    assert predicate_document(preflighted(through_ancestor), _ANIMALS) == predicate_document(
+        preflighted(through_target), _ANIMALS
     )
 
 

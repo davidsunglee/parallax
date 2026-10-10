@@ -11,12 +11,19 @@ from typing import Any, Final, Protocol, cast, overload
 
 from parallax.conformance import _case_ingress, case_format, models
 from parallax.conformance.budget import BudgetContract
-from parallax.core import inheritance, opt_lock, relationship, storage_layout, temporal_read
+from parallax.core import (
+    ObjectQuery,
+    inheritance,
+    opt_lock,
+    relationship,
+    storage_layout,
+    temporal_read,
+)
 from parallax.core.entity import DomainModel
+from parallax.core.entity._authored_resolver import object_query_node
 from parallax.core.metamodel import Metamodel
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query import deserialize as deserialize_query
-from parallax.core.object_query._fluent import ObjectQuery, object_query_node
 
 __all__ = [
     "ACQUISITION_LEVELS",
@@ -415,7 +422,9 @@ class Workload:
                     f"{identity.canonical}"
                 )
         if query is not None:
-            class_query = _case_ingress.normalize_case_query(object_query_node(query), class_model)
+            class_query = _case_ingress.normalize_case_query(
+                object_query_node(query, domain_model), class_model
+            )
             if class_query != self.query:
                 raise ValueError(f"{self.id}: class-backed query differs from its fixture")
 

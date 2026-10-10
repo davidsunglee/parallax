@@ -540,16 +540,16 @@ ACCEPTED_CONFORMANCE_PRIVATE_REACHES: dict[tuple[str, str], frozenset[str]] = {
     ("parallax.conformance.another_source", "parallax.core.execution._publication"): frozenset(
         {"read_projection"}
     ),
-    ("parallax.conformance.another_source", "parallax.core.object_query._fluent"): frozenset(
-        {"ObjectQuery", "object_query_node"}
+    ("parallax.conformance.another_source", "parallax.core.entity._authored_resolver"): frozenset(
+        {"object_query_node"}
     ),
     # A measurement consumer may retain class-backed publication types only after
     # this catalog proves both their complete accepted model and their canonical
-    # Object Query equal the fixture-owned descriptor forms. ObjectQuery's
-    # canonicalization seam is the only path that can perform the latter without
-    # duplicating fluent clause state or serialization rules.
-    ("parallax.conformance.workloads", "parallax.core.object_query._fluent"): frozenset(
-        {"ObjectQuery", "object_query_node"}
+    # Object Query equal the fixture-owned descriptor forms. The Typed export
+    # under the serving model is the only path that can perform the latter
+    # without duplicating fluent clause state, resolution, or serialization rules.
+    ("parallax.conformance.workloads", "parallax.core.entity._authored_resolver"): frozenset(
+        {"object_query_node"}
     ),
     ("parallax.conformance.models", "parallax.core.entity._model"): frozenset({"model_of"}),
     # Case ingress decodes stored state through the codec's one authored-document
