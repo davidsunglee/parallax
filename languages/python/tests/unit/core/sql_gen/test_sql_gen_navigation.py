@@ -555,7 +555,7 @@ def _title(path: str, value: str = "x") -> oa.Comparison:
         (oa.Quantifier("all", "Holder.empties", _title("title")), "1 = 1"),
         (oa.Presence("exists", "Holder.empty"), "1 = 0"),
         (oa.Presence("notExists", "Holder.empty"), "1 = 1"),
-        (_title("Holder.empty.title"), "null"),
+        (_title("Holder.empty.title"), "cast(null as boolean)"),
         (oa.NullCheck(op="isNull", subject=oa.FieldSubject("Holder.empty.holderId")), "1 = 1"),
         (oa.NullCheck(op="isNotNull", subject=oa.FieldSubject("Holder.empty.holderId")), "1 = 0"),
     ],
@@ -576,7 +576,7 @@ def test_a_relationship_to_a_target_without_concrete_subtypes_reaches_no_candida
         (oa.Quantifier("any", "Holder.empty.holder.empties"), "false"),
         (oa.Quantifier("none", "Holder.empty.holder.empties"), "true"),
         (oa.Presence("exists", "Holder.empty.holder"), "false"),
-        (_title("Holder.empty.holder.empty.title"), "null"),
+        (_title("Holder.empty.holder.empty.title"), "cast(null as boolean)"),
     ],
 )
 def test_a_position_past_a_target_without_candidates_answers_its_absence(
@@ -596,3 +596,34 @@ def test_a_relationship_to_a_target_without_candidates_answers_inside_a_hop() ->
     assert compiled.statement.sql.endswith(
         "where coalesce((select 1 = 1 from holder t1 where t1.id = t0.next_id), true)"
     )
+
+
+_NEXT = "from holder t1 where t1.id = t0.next_id)"
+
+
+@pytest.mark.parametrize("strategy", ["tph", "tpcs"])
+@pytest.mark.parametrize(
+    ("predicate", "expected"),
+    [
+        (
+            oa.Quantifier("any", "Holder.next.empty.holder.empties"),
+            f"coalesce((select false {_NEXT}, false)",
+        ),
+        (
+            oa.Presence("exists", "Holder.next.empty.holder"),
+            f"coalesce((select false {_NEXT}, false)",
+        ),
+        (_title("Holder.next.empty.title"), f"(select cast(null as boolean) {_NEXT}"),
+        (
+            oa.NullCheck(op="isNull", subject=oa.FieldSubject("Holder.next.empty.holderId")),
+            f"coalesce((select 1 = 1 {_NEXT}, 1 = 1)",
+        ),
+    ],
+)
+def test_a_target_without_candidates_answers_inside_every_preceding_hop(
+    strategy: Literal["tph", "tpcs"], predicate: oa.PredicateNode, expected: str
+) -> None:
+    model = _dormant_target_model(strategy)
+    compiled = compile_read(predicate, model, POSTGRES, target(model, "Holder"))
+    assert compiled.statement.sql.endswith(f"from holder t0 where {expected}")
+    assert compiled.statement.binds == ()

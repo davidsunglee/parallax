@@ -491,11 +491,13 @@ row inside a sub-select's alias, a value-object extraction (*valueObject*), or a
 scalar element's kind-guarded projection (*Scalar collection quantifiers*).
 
 A complete predicate stays whole where it is composed: a quantifier's `where`
-beside the sub-select's correlation, a `narrow`'s operand (beside its tag guard,
-or standing in for the `narrow` in a concrete table's branch), and a query's
-predicate beside a seek, tag guard, or injected temporal term are each
-parenthesized when their own text has a top-level `or`, so a conjoined term
-cannot re-associate into the disjunction's last branch.
+beside the sub-select's correlation, a `narrow`'s operand beside its tag guard,
+and a query's predicate beside a seek, tag guard, or injected temporal term are
+each parenthesized when their own text has a top-level `or`, so a conjoined term
+cannot re-associate into the disjunction's last branch. A `narrow`'s operand
+standing in for the `narrow` in a concrete table's branch is parenthesized when
+it is an `and` or `or`, so the narrowing stays one term, as its tag-guarded form
+does, and a `not` over it negates it whole.
 
 A framework-generated child-level membership carries a **deferred key set**
 rather than an authored list. Its statement is compiled once with one template
@@ -785,10 +787,15 @@ presence default to `false`, `none` and `all` to `true`, a bare subtype test to
 
 A relationship whose target's effective concrete set is empty (`m-inheritance`
 lets a model compose a family partially) has no candidate table to read, so it
-lowers to its absent answer directly: its `any` and presence to `1 = 0`, its
+lowers to its absent answer at that hop: its `any` and presence to `1 = 0`, its
 `none`, `all`, and `notExists` to `1 = 1`, a Boolean read past it to that hop's
-default, and a field operation past it to `null` — except a null check, which
-sees the missing value (`isNull` is `1 = 1`, `isNotNull` `1 = 0`).
+default, and a field operation past it to unknown — except a null check, which
+sees the missing value (`isNull` is `1 = 1`, `isNotNull` `1 = 0`). Every hop
+before it is still evaluated, selecting that answer from each of its candidates
+with the answer as its absence default, so a preceding hop still asserts its
+cardinality. The unknown is a Boolean-typed null (Postgres
+`cast(null as boolean)`), because an untyped `null` a scalar subquery selects
+is text.
 
 **Path-targeted narrowing.** A bare `narrow` with a `path` selects the reached
 target's subtype membership: under table-per-hierarchy its tag test
