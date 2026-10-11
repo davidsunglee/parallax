@@ -1029,8 +1029,8 @@ Postgres DML:
 |---|---|
 | **insertUntil** | one `insert into position(cols…) values (?, …, ?)` with Valid Time `[vf, until)` and Transaction Time `[txInstant, infinity)` |
 | **amendUntil** (inactivate) | `update position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ?` — binds `[txInstant, pk, observedValidEnd, infinity]` (closes Transaction Time of the addressed rectangle) |
-| **amendUntil** (head / middle / tail) | three `insert`s at Transaction Time `[txInstant, infinity)` — `head` Valid Time `[from_z, vf)` old value, `middle` Valid Time `[vf, until)` new value, `tail` Valid Time `[until, infinity)` old value |
-| **terminateUntil** | the inactivate `update` + `head` + `tail` inserts only (**no** `middle`) |
+| **amendUntil** (head / middle / tail) | one `insert into position(cols…) values (?, …, ?), (?, …, ?), (?, …, ?)` at Transaction Time `[txInstant, infinity)` — `head` Valid Time `[from_z, vf)` old value, `middle` Valid Time `[vf, until)` new value, `tail` Valid Time `[until, infinity)` old value, one value tuple each (*Requested ranges*) |
+| **terminateUntil** | the inactivate `update` + one `insert` of the `head` and `tail` tuples only (**no** `middle`) |
 
 The inactivate `update` **addresses** the one rectangle it closes: the primary key
 plus one exclusive upper bound **per As-Of Axis** — the observed rectangle's own
@@ -1058,17 +1058,16 @@ plain `amend` is the inactivate `update` plus a `head` **and** a new `tail`; pla
 |---|---|---|
 | **insert** (plain) | `insert into position(cols…) values (?, …, ?)` — fully-current row, Valid Time `[V, infinity)`, Transaction Time `[txInstant, infinity)` | `[…row…, V, infinity, txInstant, infinity]` |
 | **amend** (inactivate) | `update position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ?` | `[txInstant, pk, observedValidEnd, infinity]` |
-| **amend** (head) | `insert into position(cols…) values (?, …, ?)` — old value, Valid Time `[from_z, V)`, Transaction Time `[txInstant, infinity)` | `[…row…, from_z, V, txInstant, infinity]` |
-| **amend** (new tail) | `insert into position(cols…) values (?, …, ?)` — new value, Valid Time `[V, infinity)`, Transaction Time `[txInstant, infinity)` | `[…row…, V, infinity, txInstant, infinity]` |
+| **amend** (head + new tail) | `insert into position(cols…) values (?, …, ?), (?, …, ?)` — `head` old value, Valid Time `[from_z, V)`, then new `tail` new value, Valid Time `[V, infinity)`, both at Transaction Time `[txInstant, infinity)` | `[…row…, from_z, V, txInstant, infinity, …row…, V, infinity, txInstant, infinity]` |
 | **terminate** (inactivate) | `update position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ?` | `[txInstant, pk, observedValidEnd, infinity]` |
 | **terminate** (head) | `insert into position(cols…) values (?, …, ?)` — old value, Valid Time `[from_z, V)`, Transaction Time `[txInstant, infinity)` | `[…row…, from_z, V, txInstant, infinity]` |
 
 Plain `insert` opens a fully-current rectangle (`thru_z = out_z = infinity`) with
 **no** inactivation and no prior row to close — the `until = infinity`
 degenerate of `insertUntil`, sharing that template's `INSERT` shape (so the optimistic
-inactivation gate below does not apply to it). Plain `amend` is **three** statements
-(inactivate + `head` + new `tail`) and plain `terminate` is **two** (inactivate +
-`head`); neither chains a `middle` or an old-`tail`, so a plain `amend` runs the new
+inactivation gate below does not apply to it). Plain `amend` is **two** statements
+(inactivate + one `insert` of `head` and new `tail`) and plain `terminate` is
+**two** (inactivate + `head`); neither chains a `middle` or an old-`tail`, so a plain `amend` runs the new
 value unbounded to infinity and a plain `terminate` leaves `[V, infinity)` covered by
 no current-on-Transaction-Time row. The inactivate `update` for both addresses its
 rectangle exactly as the `*Until` inactivate above does, so the optimistic gate below

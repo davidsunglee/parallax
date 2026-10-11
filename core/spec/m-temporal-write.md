@@ -906,6 +906,6 @@ lone `head`, with `[V, infinity)` covered by no current-on-Transaction-Time row;
 no inactivation. The DML statement count must equal the sum of the steps' declared
 statement counts and the case's `then.roundTrips` (a plain `insert` step is 1
 statement; a plain `terminate` step is 2 statements — inactivate + `head`; a plain
-`amend` step is 3 — inactivate + `head` + new `tail`). The standalone witnesses are
-`m-temporal-write-025-plain-insert`, `m-temporal-write-022-plain-update-split`, and
+`amend` step is 2 — inactivate + one `insert` of `head` and new `tail`). The
+standalone witnesses are `m-temporal-write-025-plain-insert`, `m-temporal-write-022-plain-update-split`, and
 `m-temporal-write-023-plain-terminate`.

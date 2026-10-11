@@ -782,7 +782,12 @@ class Attempt:
         """
         following, following_bound, failure = _look_ahead(cursor)
         if following is None or following_bound is None:
-            self._run_alone(first, cursor, failure)
+            try:
+                self._run_alone(first, cursor, failure)
+            finally:
+                # Where the lone effect's own failure overtakes this one, this
+                # frame must not keep it reachable from that failure either.
+                failure = None
             return following
         chunk = _LoweredWriteChunk()
         chunk.append(first, cursor.lowered_within(first, bound))

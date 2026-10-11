@@ -210,9 +210,10 @@ insert, a unit, a barrier, or a round, and an internal statement cap ends it
 before another step is even taken. Before a run's first effect is lowered, the
 one step after it is taken, unprepared: where that step cannot join, or no step
 remains, the effect would be its run's only one and runs alone, and the taken
-step waits its turn. A failure taking that step propagates only once the effect
-running alone has succeeded. The whole result is validated before any of
-it is interpreted, so a malformed one fails the batch with the integrity error
+step waits its turn. An ordinary failure taking that step propagates only once
+the effect running alone has succeeded; a control-flow or fatal one propagates
+before that effect is lowered. The whole result is validated before any of it
+is interpreted, so a malformed one fails the batch with the integrity error
 ahead of any shortfall it reports. Confirmed outcomes are then enforced in
 original order against the exact steps they were lowered from: an earlier
 shortfall outranks a later statement failure or interruption, a statement
