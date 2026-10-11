@@ -227,6 +227,11 @@ class InsertStatementBuilder:
     earlier entries' binds and bind metadata as they were and :meth:`finish`
     still renders exactly the entries appended. A generated-value expression
     folds into its own statement and never reaches this builder.
+
+    One builder compiles either a logical multi-entry insert, every entry of
+    which it holds before finishing, or a run of single-entry openings
+    execution groups into one physical statement, which ends wherever
+    :meth:`has_capacity` stops admitting another entry.
     """
 
     __slots__ = (
@@ -263,6 +268,12 @@ class InsertStatementBuilder:
         self._statement = _ctx(meta, dialect)
         self._statement.bind_typed_row(_bound(payload.values, documents), self._pattern)
         self._entries = 1
+
+    def has_capacity(self, entries: int, binds: int) -> bool:
+        """Whether one more entry keeps the statement within ``entries``
+        entries and ``binds`` binds. Every entry binds exactly one value per
+        cell the first entry placed, a whole document included."""
+        return self._entries < entries and (self._entries + 1) * len(self._pattern) <= binds
 
     def append(self, entry: WriteRow, payload: RowPayload) -> None:
         _require_prepared_from(self._entity, entry, payload)
