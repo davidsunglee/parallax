@@ -71,7 +71,7 @@ from tests._support.clock_probes import instant_at
 from tests._support.lowering_probes import lower_instruction, lower_instruction_steps
 from tests.unit._corpus_model_support import corpus_records, formed
 
-_OPENINGS: Final = "parallax.core.execution._write_lowering._OPENING_ENTRIES"
+_OPENINGS: Final = "parallax.core.execution._write_lowering._OPENING_ENTRY_CAP"
 _META: Final = model_of(MODELS["position"])
 _ENTITY = entity_by_name(_META, "Position")
 assert _ENTITY is not None
@@ -291,7 +291,6 @@ def test_a_run_of_openings_is_one_statement_of_every_entry_in_order() -> None:
     assert statement.wire_binds() == _wire(*steps)
     assert statement.is_compiler_proven
     assert (following, failure, taken.taken) == (None, None, 4)
-    # Origins and values differ; each entry was prepared once.
     assert preparer.prepared == [step.entries[0] for step in steps]
 
 
@@ -349,8 +348,7 @@ def test_a_step_that_cannot_join_ends_the_run_taken_but_unprepared(kind: str) ->
     assert following is boundary
     assert failure is None
     assert (statement.sql, statement.binds) == _joined(*steps[:2])
-    # Exactly one step past the run was taken, and nothing was prepared for it.
-    assert taken.taken == 3
+    assert taken.taken == len(run) + 1
     assert preparer.prepared == [step.entries[0] for step in run]
 
 
@@ -543,7 +541,6 @@ def test_a_settled_range_keeps_its_logical_steps_and_groups_only_its_openings() 
     assert physical[1].wire_binds() == tuple(
         bind for statement in raw[1:] for bind in statement.wire_binds()
     )
-    # The raw traversal of the same settled steps is unchanged.
     assert [
         (statement.sql, statement.binds)
         for _step, statement in stream_lowered(steps, LayoutPayloadPreparer(model), model, POSTGRES)
@@ -575,7 +572,6 @@ class DocumentSpan(
 
 _SPANS: Final = model_of(DomainModel(ColumnsSpan, DocumentSpan))
 
-# Empty, duplicate-preserving, nested, and large collections.
 _COLLECTIONS: Final[tuple[tuple[tuple[str, ...], tuple[Mapping[str, object], ...]], ...]] = (
     ((), ()),
     (("a", "a", "b"), ({"stops": ("x", "x")},)),

@@ -41,10 +41,7 @@ __all__ = [
     "stream_physical",
 ]
 
-_OPENING_ENTRIES: Final = 64
-"""The most entries one grouped opening statement inserts. It bounds the
-statement a run of openings builds before that statement executes; a longer run
-continues in another statement once this one has run."""
+_OPENING_ENTRY_CAP: Final = 64
 
 
 class LoweredOpening(NamedTuple):
@@ -132,7 +129,7 @@ class LoweringCursor:
         )
         binds = self._dialect.max_bind_parameters
         following: PlannedStep | None = None
-        while builder.has_capacity(_OPENING_ENTRIES, binds):
+        while builder.has_capacity(_OPENING_ENTRY_CAP, binds):
             try:
                 following = self.take()
                 joining = _joining(following, entity, members)
