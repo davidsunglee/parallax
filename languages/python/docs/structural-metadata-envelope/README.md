@@ -1,17 +1,11 @@
 # Structural metadata evidence
 
-The read and write cost evidence for the structural-metadata unification: the
-protocol every capture under this directory follows, the frozen workload
-manifest, what each window contains and excludes, and the limits of what the
-measurements can show. `before/` is the clean pre-optimization baseline,
-`after/` the clean capture of the unified implementation under the same
-protocol, on the same runner and interpreters, and `recovered/` the one
-capture of the tree that recovers the read and predicate-acquisition time the
-unification cost, under the same protocol again; `after/comparison.md` is the
-cell-by-cell rendering of `tools/cost_report.py --compare before/portfolio.json
-after/portfolio.json`, which *After capture* below reads, and
-`recovered/comparison-before.md` and `recovered/comparison-after.md` are the
-renderings of `recovered/` against each, which *Recovered capture* reads.
+Read and write cost evidence, with the capture protocol, workload boundaries,
+and limits of the measurements. `before/` is the fixed pre-optimization
+baseline and `after/` the fixed structural-metadata unification capture.
+`recovered/` holds the latest complete HEAD capture, including subsequent
+features. *Current HEAD capture* describes its provenance and comparisons;
+the earlier capture accounts below remain historical evidence.
 
 The portfolio under `recovered/` is the repository's canonical current cost
 portfolio: `just python-check-evidence` verifies the members `verify` in
@@ -40,8 +34,11 @@ window; `cost_report.py --compare` pairs two readings only when their subject,
 runtime, window, workload, cell, and unit all agree, lists every cell present on
 one side alone, and refuses a pair whose unit differs.
 
-Timing uses three warm-ups and nine measured samples per cell; the value is the
-median and every sample is retained. A timing delta between two captures within
+The isolated cell readers use three warm-ups and nine measured samples per
+cell; the value is the median and every sample is retained. Lifecycle overhead
+uses its own paired method: 200 warm-ups and 3,000 interleaved pairs on 3.14,
+with the plain and observed runs paired before their difference is summarized.
+A timing delta between two captures within
 **5%** is read as noise (`cost_report.TIMING_NOISE_ALLOWANCE`) and a byte delta
 within **3%** likewise (`cost_report.MEMORY_NOISE_ALLOWANCE`); count deltas are
 exact. Both allowances come from a diagnostic trial of two identical quiet
@@ -458,38 +455,19 @@ would surface as a gate failure to be read against this basis, never as a
 ceiling to relax.
 
 The gates were first derived from `before/` and have since been re-derived
-under the same rule from `after/` and from each capture that became the
-canonical `recovered/`. Git history keeps each earlier derivation's account
-beside the capture it came from. The present basis is the capture described
-under *Recovered capture*, and every reading of it had first been graded against
-the ceilings the outgoing basis set (*Recovered capture*, *Memory*). Its
-derivation grew the file from 346 to 382 addresses: the retained and
-high-water readings of the 18 target writes entered, and of the 346 existing
-ceilings 42 are unchanged to the byte, 174 fell, and 130 rose.
+under the same rule whenever a verified capture became canonical. Git history
+keeps the earlier derivations beside their captures. The present basis is
+*Current HEAD capture*: all **580 runtime readings at 382 gated addresses**
+were first graded against the outgoing ceilings, and all passed. The closest
+was `txtime.unchanged.document.wire.transientBytes` on 3.14 at 3,745 B against
+3,856 B, **97.1%** of its outgoing ceiling.
 
-- **Entered:** the target writes' retained ceilings at 2,280–2,764 B/row and
-  their high-water ceilings at 15,901–26,780 B/row, `plain` the smallest and
-  `bitemporal` the largest.
-- **Rose, every one a write-lowering ceiling:** the high-water mark of every
-  insert (the geometry and leaf-type inserts by 0.5–4.0%, `txtime.opening` by
-  4.0–6.7%), every Wire insert's checkpoint (+0.4% to +6.2%), every
-  acquisition checkpoint (+0.2% to +5.8%), the two `rows-128` acquisition
-  high-water marks (+0.5% and +6.1%), and the four model-preparation ceilings
-  (up to +0.33%).
-- **Fell:** every categorical-update, `txtime.unchanged` high-water, and
-  changed-ancestor ceiling (−1.8% to −55.4%), every Typed insert's checkpoint
-  (−0.8% to −7.4%), the other acquisition high-water marks (−0.4% to −5.8%),
-  and on the read side every geometry and leaf-type read peak (−0.1% to
-  −1.8%), the two `leaf-timestamp` retained ceilings (−0.03% and −0.02%), the
-  cold plans (−4.5% to −5.1%), and the guarded plans (−9.8% to −12.0%).
-- **Held:** the geometry and other leaf-type reads' retained ceilings and
-  `txtime.unchanged`'s checkpoints.
-
-*Recovered capture* › *Against COR-191's capture* attributes each movement:
-the rises to the attempt-scoped insertion admission and unit-of-work state
-that keyed update and replacement brought, and to `eb70a89e`'s acquisition
-transient; the falls to the same change's write composition and body-only
-ancestor workload, and to the prepared-read work before it.
+Re-derivation preserves all 382 addresses and the **1.10** factor: 309 ceilings
+fell, 21 rose, and 52 stayed identical. These are the owner's mechanical
+outputs from the new basis, after the old-ceiling check; no ceiling was edited
+individually. The new predicate-flush and feature-boundary readings remain
+outside the existing gated windows, so this capture does not expand the gate
+policy. Cross-day changes in a ceiling alone do not identify a code cause.
 
 A gate's
 sensitivity is therefore the headroom alone at every address: a retained
@@ -1250,23 +1228,139 @@ transient B/projection, 50.7 KiB peak for 64 KiB, 57.4 KiB prepared set. Every
 delivery and stress ceiling other than the seventeen timing cells, the one
 memory cell, and the two scaling arms named above is within its limit.
 
-## Recovered capture — `recovered/`
+## Current HEAD capture — `recovered/`
 
-The repository's canonical current cost portfolio: one complete capture of the
+One complete capture from clean, published HEAD
+`dabb0e68f8d1d7ef6c9847860497be14134916c9`, on **2026-10-10
+22:03:43–23:03:29 EDT** (2026-10-11 02:03:43–03:03:29 UTC).
+The collector exited **0**, taking **59m46s wall clock** and 3,585.845 s in its
+recorded collection span. No workload levels, supported runtimes, warm-ups,
+or samples were reduced to reach the one-hour target. The canonical collector
+ran under `caffeinate -i` and nice 5; original member output was retained
+outside Git before validation, without changing measured windows.
+
+The runner was Mac17,4, Apple M5, 10 cores, 32 GiB, arm64, macOS 27.0.1 build
+26A434. CPython **3.13.16** ran in valid per-member temporary environments and
+**3.14.8** in the checkout environment. Each actual reader entrypoint and a
+representative isolated child on both minors passed before collection.
+OrbStack was stopped and started before capture; the cached
+`postgres:18.6-alpine` image and actual PostgreSQL binary were verified as
+18.6. The Mac stayed on AC, backup workers remained inactive with Backblaze
+paused, and no competing tests or measurements ran. Runner observations and
+raw logs are retained outside Git; runtime identities, instrument source
+hashes and durations are in [conditions.json](recovered/conditions.json) and
+[durations.json](recovered/durations.json).
+
+| Member | Authority | Runtimes | Readings | Collection seconds |
+|---|---|---|---:|---:|
+| snapshot-delivery | authoritative | 3.13, 3.14; leaf types on 3.14 | 596 | 2,984.773 |
+| lifecycle-overhead | non-authoritative | 3.14 | 87 | 12.090 |
+| instance-state | non-authoritative | 3.13, 3.14 | 696 | 14.379 |
+| write-lowering | non-authoritative | 3.13, 3.14; leaf types on 3.14 | 1,542 | 553.498 |
+| feature-boundary | non-authoritative | 3.13, 3.14 | 180 | 21.018 |
+
+All five members name the same clean producing commit. There are **3,101
+readings**, no errors, no incomplete cells, and no collector failures. Authority
+labels follow the existing contract; provider-free members remain
+non-authoritative. No post-capture re-classification was needed. Portfolio
+SHA-256 is `7d4527465a4db68c6546db9b647f60092cdddea7d15f1c7d3f0133bab51281d1`.
+
+Exact-current verification requiring snapshot, write, instance-state and
+feature-boundary passed, as did lock freshness. Recorded and inspected lock
+digests are `0c597c32531f30dffce18e68e6838c33d9b446223abd504e42e35cd6cb829385`.
+Five advisories remain, distinct from integrity failures and blocking memory
+gates:
+
+```text
+advisory: duplicate-include.providerFreeCpu.eager.maxMs is outside its timing ceiling
+advisory: duplicate-include.providerFreeCpu.eager.minRootsPerSecond is outside its timing ceiling
+advisory: versioned-document.live.page32.minRootsPerSecond is outside its timing ceiling
+advisory: document-heavy.streamedMemory.page128PeakKiB grows 77.997 KiB between memory arms
+advisory: bitemporal-current.streamedMemory.page32PeakKiB grows 16.344 KiB between memory arms
+```
+
+Every gated reading passed its outgoing memory ceiling before the basis was
+updated (*Memory gates* › *Basis*). The feature member establishes its first
+baseline; it has no historical paired values or memory gates.
+
+### Comparisons and limits
+
+[comparison-previous.md](recovered/comparison-previous.md) pairs this capture
+with the outgoing canonical portfolio at `dabb0e68f` (the October 5 capture).
+All 2,897 outgoing readings pair. Four predicate-flush cases add 24 readings;
+the new feature member adds 180. No outgoing address disappears. Seventy
+instance-state pairs have zero bases and are reported incomparable.
+
+Hardware, OS, PostgreSQL, interpreter patch versions and embedded Budget
+Contract match the outgoing capture. Lock, workload digests and some instrument
+source hashes differ. Consequently `--require-compatible` rejects the pair;
+these are descriptive comparisons across days, not isolated causal trials.
+The unchanged timing and memory noise allowances still apply.
+
+Median paired elapsed changes across the three guarded warm-plan controls are
+−82.62% on 3.13 and −89.21% on 3.14; their retained bytes are unchanged.
+Across 25 live elapsed/latency cells, the medians are −29.57% and −29.87%.
+Conversely, the eight changed-ancestor keyed timing cells have a median
+**+6.58%** on 3.13 and −0.63% on 3.14. These are medians of individual cell
+ratios, not ratios of pooled samples or total collection durations, and do not
+support a universal timing improvement claim.
+
+[comparison-before.md](recovered/comparison-before.md) and
+[comparison-after.md](recovered/comparison-after.md) compare the fixed bases;
+each has 1,292 missing-base and 368 missing-head readings. Their runtime and
+source identity limitations remain as described in their historical accounts.
+[comparison-cor-191.md](recovered/comparison-cor-191.md) uses the exact Git
+portfolio and conditions at **`dc65ef88`**, with 312 missing-base and zero
+missing-head readings. The HOME archive formerly cited as that base differs
+from Git and is not the base of this rendering. None of these historical pairs
+passes strict compatibility.
+
+### First feature-boundary evidence
+
+[feature-boundary.json](recovered/feature-boundary.json) records 30 cases on
+both minors with elapsed, retained and high-water measurements: 180 readings.
+The executable membership and window contracts belong to
+[`_feature_boundary_support.py`](../../tests/unit/_feature_boundary_support.py).
+Typed binding measures interpretation and production preflight; cold planning
+includes those operations and first-cache planning, SQL compilation and literal
+binding. Model preparation, expression authoring and cache construction are
+outside these windows. Scalar collection encode/decode uses production codecs
+on prepared inputs and holds the result at the retained checkpoint.
+
+| Window | 3.13 median µs (range) | 3.14 median µs (range) |
+|---|---:|---:|
+| Typed binding, six shapes | 11.875 (6.500–17.250) | 11.146 (6.333–16.666) |
+| Typed cold plan, six shapes | 107.605 (83.542–119.792) | 103.021 (80.042–114.583) |
+| Scalar encode, 128 elements, three types | 65.375 (50.083–243.791) | 55.875 (45.458–228.791) |
+| Scalar decode, 128 elements, three types | 32.167 (11.708–301.625) | 31.084 (10.250–270.042) |
+
+Each row summarizes per-case medians across the named shapes or types; it does
+not combine their sample distributions. Empty and eight-element collections
+are also retained in the envelope. Byte metrics describe separate checkpoints
+and peaks and must not be added together.
+
+## Historical October 5 recovered capture — superseded
+
+This account and its tables are frozen observations of the October 5 capture.
+Every `recovered/` file reference in this section refers to the version retained
+at **`dabb0e68f` in Git**, before the current capture replaced it. Its provenance,
+re-classification and numerical comparisons are historical, rather than claims
+about the current files or memory basis.
+
+The then-canonical cost portfolio: one complete capture of the
 head of `main`, taken immediately after keyed update and replacement with
 caller-supplied preconditions merged (`b36fb6af..189def23`) and nothing else
 had. `before/` stays the recovery reference and `after/` the fixed regression
 baseline; neither is recaptured. `comparison-before.md`,
 `comparison-after.md` and `comparison-cor-191.md` are this capture's plain
 `--compare` renderings against `before/`, `after/`, and the capture it
-replaces. This capture is the basis every memory gate is derived from
-(*Memory gates* › *Basis*).
+replaces. This capture was the basis of the outgoing memory gates.
 
 The capture this one replaces was taken at `dc65ef88` on the same machine and
 OS build, under CPython 3.14.7 and 3.13.15, after the Snapshot reading child
 came to run only the support module its address reads. That account belongs to
 the tree it was taken from and is not restated here. Git history keeps its
-bytes, and a byte-for-byte copy is kept outside Git at
+bytes; a separate archive is kept outside Git at
 `$HOME/.local/share/parallax/evidence/cor-156/outgoing-recovered/`, beside the
 other retained captures the comparisons are rendered against; no tool, test, or
 workflow reads that path.
@@ -1410,8 +1504,10 @@ zero-valued instance-state cells (72 against `before/`, 70 against `after/`).
 
 `comparison-cor-191.md` renders `--compare
 $HOME/.local/share/parallax/evidence/cor-156/outgoing-recovered/portfolio.json
-recovered/portfolio.json`; the base is byte-identical to `recovered/` at
-`dc65ef88` in Git history. `--require-compatible` refuses the pair over
+recovered/portfolio.json`; this historical rendering used the HOME archive,
+which differs from the portfolio at `dc65ef88` in Git history. The current
+rendering uses the exact Git base, as described above.
+`--require-compatible` refuses the pair over
 snapshot-delivery and write-lowering, as it should: their envelopes disagree on
 `budgetContractDigest`, `lockDigest`, and `cpython`, write-lowering's also on
 `workloadDigest` and its keyed-write window's description, the interpreters and
