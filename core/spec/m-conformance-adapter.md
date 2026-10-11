@@ -325,7 +325,8 @@ Example:
 - `/coherence/1/objectQuery`
 
 For deep-fetch and write-sequence cases, `emissions` contains one item per
-statement in execution order.
+statement in execution order — per physical statement, not per Planned Write, so
+openings one multi-row insert carries are one item (`m-sql` *Requested ranges*).
 
 ## `run`
 

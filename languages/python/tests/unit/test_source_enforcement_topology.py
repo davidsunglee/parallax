@@ -98,7 +98,9 @@ _CARRIER_NEUTRAL_PRIVATE_SQL_REACHES: dict[tuple[str, str], frozenset[str]] = {
     (
         "parallax.core.execution._write_lowering",
         "parallax.core.sql_gen._write",
-    ): frozenset({"StepPayload", "compile_write_step", "effect_bind_bound"}),
+    ): frozenset(
+        {"InsertStatementBuilder", "StepPayload", "compile_write_step", "effect_bind_bound"}
+    ),
 }
 
 

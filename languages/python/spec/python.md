@@ -569,7 +569,7 @@ which `tools/check_scope_ownership.py` demands (*Filesystem ownership*, below).
   parallax.core.sql_gen._compile | CompiledRead, compile_read | parallax.core.execution._attempt
   parallax.core.sql_gen._compile | CompiledRead | parallax.core.read_delivery._fetch; parallax.core.read_delivery._page_reader
   parallax.core.sql_gen._seek | null_pattern | parallax.core.read_delivery._read_plan
-  parallax.core.sql_gen._write | StepPayload, compile_write_step, effect_bind_bound | parallax.core.execution._write_lowering
+  parallax.core.sql_gen._write | InsertStatementBuilder, StepPayload, compile_write_step, effect_bind_bound | parallax.core.execution._write_lowering
   ```
 
   Read delivery's and execution's imports are first-party private

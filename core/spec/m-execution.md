@@ -231,6 +231,34 @@ follows is submitted. Rollback, rollback-only state, retry classification of
 the failure that propagates, and the precedence of cancellation and fatal
 exceptions are unchanged.
 
+Execution may instead insert a run of contiguous temporal openings —
+single-entry inserts of one Entity naming the same members and holding no
+generated value — with one multi-row statement (`m-sql` *Requested ranges*).
+Each opening remains its own Planned Write, and the statement is one ordinary
+Database Call. Whether an opening may join is decided from the step before its
+payload is demanded. Before another step is taken the statement must have room
+for one more entry within the dialect's bind limit (`m-dialect`) and an
+internal entry cap; at that capacity the statement runs before another step is
+taken, and otherwise the one taken step that cannot join waits, unprepared,
+until the statement has run. A run never crosses a unit, a barrier, a round, or
+an effect, so no opening moves ahead of the effect it follows. Any other insert
+runs alone as before, and a logical multi-entry insert is never split.
+
+Taking, preparing, or appending a later opening of a run may fail ordinarily.
+The openings appended before it are then inserted as the one statement they were
+selected as — never prepared again or inserted one at a time — and that failure
+propagates only where the statement succeeds. A failure preparing the run's
+first opening inserts nothing, and a control-flow or fatal exception inserts
+none of the run.
+
+A grouped statement succeeds or fails as a whole. Its failure is the
+statement's own database error, classified and judged for retry as any
+statement's is; it can name another constraint, message, or category than the
+error the earliest failing opening would raise alone, and it is neither
+attributed to an opening nor explained by replaying or reading anything. A unit
+whose statement fails is never reported, and its attempt rolls back and becomes
+rollback-only exactly as for any other failure.
+
 ## What the suite pins down
 
 | Case | What it proves |

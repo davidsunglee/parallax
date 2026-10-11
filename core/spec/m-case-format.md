@@ -200,7 +200,7 @@ A case is one of **eleven shapes**, named by the required top-level `shape`:
 #### The statement entry
 
 Every SQL statement in a case — golden or naive — is a **statement entry**: a
-closed `{sql, binds}` object carrying one logical statement together with its own
+closed `{sql, binds}` object carrying one statement together with its own
 binds. This is the single most load-bearing structure in the format: one shared
 vocabulary everywhere SQL appears (`then.statements`, every per-step `statements`
 list, and `given.apply`), so there is **no positional pairing convention** to learn
@@ -259,7 +259,9 @@ given:
 ```
 
 A multi-statement (deep fetch) golden is an ordered list of entries — one per
-deep-fetch level or write-sequence DML step; each entry carries only its own
+deep-fetch level or per DML statement a write sequence executes, so openings one
+multi-row insert carries are one entry (`m-sql` *Requested ranges*), not one
+per Planned Write; each entry carries only its own
 `binds`, and a statement with no binds omits the `binds` key entirely:
 
 ```yaml

@@ -814,6 +814,34 @@ class Attempt:
             observation.finish_calls(result)
             _enforce_ordered_result(chunk, result, observation)
 
+    def _run_openings(self, first: PlannedInsert, cursor: LoweringCursor) -> PlannedStep | None:
+        """Insert ``first`` and the compatible openings following it with one
+        statement (:meth:`LoweringCursor.lowered_opening`), and answer the step
+        after the run — taken from ``cursor`` but not lowered — or ``None``
+        where ``cursor`` ran out.
+
+        The statement is one ordinary Database Call, enforced as an insert is,
+        and its failure is the whole statement's own: it is neither attributed
+        to one of the openings nor replayed one opening at a time. A later
+        opening failing ordinarily to be taken or prepared ends the run: the
+        openings appended before it are inserted as selected, and only if they
+        succeed does that failure propagate. ``first`` failing inserts nothing,
+        and a control-flow or fatal exception inserts none of the run. The step
+        after a run that reached its capacity is taken only once the run's
+        statement has run.
+        """
+        statement, following, failure = cursor.lowered_opening(first)
+        try:
+            self._run(first, statement)
+        except BaseException:
+            # The statement's own failure is the one raised; the preparation
+            # failure it overtook is dropped rather than kept reachable from it.
+            failure = None
+            raise
+        if failure is not None:
+            raise failure
+        return cursor.take() if following is None else following
+
     def _run(self, step: PlannedStep, statement: LoweredStatement) -> None:
         batch = self._batch
         connection = self._connection
