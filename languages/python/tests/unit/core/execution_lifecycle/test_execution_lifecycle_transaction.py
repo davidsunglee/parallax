@@ -880,6 +880,7 @@ def test_a_value_two_reads_produced_names_the_later_read_when_the_callback_re_ra
         quote_char=POSTGRES.quote_char,
         error_codes=POSTGRES.error_codes,
         max_identifier_bytes=POSTGRES.max_identifier_bytes,
+        max_bind_parameters=POSTGRES.max_bind_parameters,
     )
     recorder = RecordingLifecycleProvider()
     port = ScriptedAdapter(Transact(), dialect=dialect)

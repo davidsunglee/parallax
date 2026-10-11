@@ -64,6 +64,7 @@ def _refusing() -> Dialect:
         quote_char=POSTGRES.quote_char,
         error_codes=POSTGRES.error_codes,
         max_identifier_bytes=POSTGRES.max_identifier_bytes,
+        max_bind_parameters=POSTGRES.max_bind_parameters,
     )
 
 
