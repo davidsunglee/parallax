@@ -1749,8 +1749,18 @@ class _LiveOrderedCalls:
         if exc is None:
             return
         remaining = len(self._calls) - self._finished
-        if remaining and self._publisher.active:
-            self._finish_each(DatabaseCallUnconfirmed(database_diagnostic_for(exc)), remaining)
+        if not remaining or not self._publisher.active:
+            return
+        unconfirmed = DatabaseCallUnconfirmed(database_diagnostic_for(exc))
+        if isinstance(exc, Exception):
+            self._finish_each(unconfirmed, remaining)
+            return
+        # A control-flow or fatal exception stays primary over the one a
+        # delivery that aborts the root raises while reporting it.
+        try:
+            self._finish_each(unconfirmed, remaining)
+        except BaseException:
+            return
 
     def invoke[S, R](self, transport: Callable[[S], R], statements: S, /) -> R:
         if not self._publisher.active:

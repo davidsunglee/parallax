@@ -184,7 +184,7 @@ class DatabaseCallStarted(_Event):
 
 @dataclass(frozen=True, slots=True)
 class DatabaseCallFinished(_Event):
-    """The round trip came back, however it came back.
+    """The call finished, however it finished.
 
     ``statement`` repeats the same borrowed value Started carried.
     ``duration_ns`` is monotonic elapsed time around the port invocation alone:

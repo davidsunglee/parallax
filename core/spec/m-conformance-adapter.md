@@ -364,10 +364,10 @@ observations to `then.rows`, `then.graph`, `then.graphs`, `then.tableState`,
 `then.affectedRows`, cache/identity expectations, and `then.roundTrips`.
 
 The `roundTrips` a `run` reports is what its execution actually cost: every
-database call the run made, a failed one included, with begin, commit, and
-rollback counting none (`m-execution-lifecycle`). It is therefore not a tally of the
-statements the adapter emitted — the two differ whenever a statement is planned
-but never executed, and whenever a retry re-executes one — so an adapter reports
+database call the run made, a failed, not-executed, or unconfirmed one included,
+with begin, commit, and rollback counting none (`m-execution-lifecycle`). It is
+therefore not a tally of the statements the adapter emitted — the two differ
+whenever a statement is planned but never presented to the port, and whenever a retry re-executes one — so an adapter reports
 the count its own execution recorded rather than the length of its `emissions`
 array. `compile`, which executes nothing, reports the emitted-statement count
 instead; that is the one place the two readings legitimately differ.

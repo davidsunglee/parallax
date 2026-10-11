@@ -877,6 +877,17 @@ def test_a_finished_delivery_aborting_the_root_emits_nothing_more() -> None:
     assert provider.seen[-1] is finished[-1], "delivery stopped at the aborting event"
 
 
+def test_an_unconfirmed_delivery_aborting_the_root_keeps_the_fatal_exception_primary() -> None:
+    interrupted = KeyboardInterrupt()
+    provider = _Tripping(_nth(DatabaseCallFinished, 1), SystemExit())
+    port = ScriptedAdapter(Transact(Ordered(raises=interrupted)), ordered=True)
+    flushed = _flush(port, _close(1), _close(2), provider=provider)
+    assert flushed.raised is interrupted
+    finished = [event for event in provider.seen if isinstance(event, DatabaseCallFinished)]
+    assert len(finished) == 1
+    assert provider.seen[-1] is finished[-1], "delivery stopped at the aborting event"
+
+
 @pytest.mark.parametrize(
     "trips",
     [
