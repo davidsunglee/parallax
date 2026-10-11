@@ -348,7 +348,7 @@ _POSITION_META: Final = model_of(_POSITIONS)
 _POSITION_ENTITY = entity_by_name(_POSITION_META, "Position")
 assert _POSITION_ENTITY is not None
 _POSITION: Final = _POSITION_ENTITY.identity
-_OPENING_CAP: Final = "parallax.core.execution._write_lowering._OPENING_ENTRIES"
+_OPENING_CAP: Final = "parallax.core.execution._write_lowering._OPENING_ENTRY_CAP"
 _AT: Final = dt.datetime(2024, 2, 15, tzinfo=dt.UTC)
 
 
@@ -544,8 +544,6 @@ def test_a_grouped_unit_reports_once_after_its_statement_and_a_failed_one_report
     reported = _Reported(port, ())
     _run_positions(port, lambda attempt: _flush(attempt, plan, reported))
     assert port.calls == [BeginCall(), *_physical(*first), *_physical(*second), CommitCall()]
-    # The first unit is reported once its grouped statement ran, before the
-    # second unit's opening is even taken.
     assert [
         (unit, writes)
         for (unit, _bound, _allocated), (writes, _asked) in zip(

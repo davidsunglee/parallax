@@ -81,7 +81,6 @@ _T0 = dt.datetime(2023, 12, 1, tzinfo=dt.UTC)
 _TA = dt.datetime(2024, 1, 10, tzinfo=dt.UTC)
 _JAN, _FEB, _AUG, _SEP = (dt.datetime(2024, month, 1, tzinfo=dt.UTC) for month in (1, 2, 8, 9))
 
-# Empty, duplicate-preserving, nested, and large collections.
 _TAGS = ("a", "a", *(f"t{index}" for index in range(300)))
 _LEGS = (Leg(stops=()), Leg(stops=("x", "x")), *(Leg(stops=("s",) * 40) for _ in range(20)))
 
@@ -251,8 +250,6 @@ def _failed(
             db.transact(edit, max_retries=2)
     events = _events(provider)
     rows = _rows(profile_run, ColumnsSpan)
-    # The attempt left nothing of its own: the stored rows are the seed and
-    # the other session's row alone.
     assert len(rows) == len(before) + 1
     assert all(row in rows for row in before)
     return _Failed(
@@ -295,7 +292,6 @@ def test_a_grouped_statement_fails_whole_with_its_own_diagnostic_and_retry_verdi
     assert _diagnostic(grouped) == ("uniqueViolation", "23505")
     assert len(grouped.writes) == 2
     assert grouped.writes[1].count("), (") == 2
-    # Each attempt rolls back once, on the verdict its own failure earns.
     for failed in (raw, grouped):
         (finished,) = failed.attempts
         assert isinstance(finished.outcome, AttemptRolledBack)
