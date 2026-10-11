@@ -65,13 +65,12 @@ from parallax.core.write_plan.plan import (
     OwnedEndpoint,
     PlannedWrites,
     SourceAuthority,
+    StepSegment,
     TemporalWriteOwnership,
     UnitEffects,
-    eager_segment,
 )
 from parallax.core.write_plan.planned_rows import assigned_name, resolve_row
 from parallax.core.write_plan.steps import TERMINATED, KeyTarget, PlannedValue
-from parallax.core.write_plan.steps import PlannedWrite as PlannedStep
 
 __all__ = [
     "DeferredGroupRange",
@@ -1232,12 +1231,12 @@ class GroupContinuation:
         self._next = last
         starts = [self._start(index) for index in range(first, last)]
         reads = self._read(starts)
-        steps: list[PlannedStep] = []
+        segments: list[StepSegment] = []
         for key, start in starts:
             bound = self._settled(key, start, reads.get(key, ()))
-            steps.extend(bound.steps)
+            segments.extend(bound.steps.segments)
             self._record(bound)
-        return PlannedWrites((eager_segment(steps),)) if steps else PlannedWrites()
+        return PlannedWrites(tuple(segments))
 
     def finish(self) -> UnitEffects:
         """What every batch's success publishes, once no batch remains."""

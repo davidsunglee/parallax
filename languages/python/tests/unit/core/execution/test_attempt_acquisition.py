@@ -328,6 +328,51 @@ def test_a_coverage_read_is_a_read_call_of_the_write_batch_reaching_its_range() 
     ]
 
 
+def test_each_deferred_range_reads_its_coverage_only_once_the_unit_before_it_ran() -> None:
+    # Two Optimistic caller-addressed writes are two deferred units of one flush:
+    # each reads its coverage at its own turn, so the second unit's read follows
+    # the first unit's statements rather than being prepared alongside them.
+    recorder = RecordingLifecycleProvider()
+
+    def stored(key: int) -> MappingRow:
+        return {
+            "bal_id": key,
+            "acct_num": "A",
+            "val": Decimal("5.00"),
+            "in_z": _T0,
+            "out_z": INFINITY,
+        }
+
+    port = ScriptedAdapter(
+        Transact(Read(rows=[stored(1)]), Write(), Write(), Read(rows=[stored(2)]), Write(), Write())
+    )
+    patches = [
+        prepare_wire_write(
+            TargetWrite("amend", "Balance", {"id": key, "value": "9.00"}, if_tx_start=_T0),
+            model_of(_BALANCE),
+        )
+        for key in (1, 2)
+    ]
+
+    def fn(tx: Attempt) -> None:
+        for patch in patches:
+            tx.target_write(patch)
+
+    scope(port, _BALANCE, provider=recorder).transact(fn, itself, concurrency="optimistic")
+    assert [type(call) for call in port.calls] == [
+        BeginCall,
+        ReadCall,
+        WriteCall,
+        WriteCall,
+        ReadCall,
+        WriteCall,
+        WriteCall,
+        CommitCall,
+    ]
+    events = recorder.roots[-1].events
+    assert sum(isinstance(event, WriteBatchStarted) for event in events) == 1
+
+
 # --------------------------------------------------------------------------- #
 # A retained target row: its Attributes judged by its read, its occurrences    #
 # by its completion, exactly as a read of the same stored row judges them.     #

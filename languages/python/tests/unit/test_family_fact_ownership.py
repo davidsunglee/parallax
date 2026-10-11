@@ -277,7 +277,7 @@ def test_planning_and_lowering_prepared_writes_take_the_version_from_its_owner(
         )
     )
     lowered: list[tuple[PlannedWrite, LoweredStatement]] = list(
-        stream_lowered(plan, LayoutPayloadPreparer(_MODEL), _MODEL, POSTGRES)
+        stream_lowered(plan.steps, LayoutPayloadPreparer(_MODEL), _MODEL, POSTGRES)
     )
 
     assert callers == []
@@ -374,7 +374,7 @@ def test_admitting_planning_and_lowering_temporal_writes_take_axes_from_the_fami
     steps = list(plan.steps)
     assert list(plan.steps) == steps
     payloads = LayoutPayloadPreparer(_TEMPORAL_MODEL)
-    lowered = list(stream_lowered(plan, payloads, _TEMPORAL_MODEL, POSTGRES))
+    lowered = list(stream_lowered(plan.steps, payloads, _TEMPORAL_MODEL, POSTGRES))
     # The Bitemporal amendment group settles at execution; its selected rows
     # cover its window, so it reads nothing.
     (deferred,) = (unit.deferred for unit in plan.units if unit.deferred is not None)

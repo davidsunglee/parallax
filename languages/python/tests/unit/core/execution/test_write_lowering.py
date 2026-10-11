@@ -166,7 +166,9 @@ def _flush_and_lower(
     )
     return [
         statement
-        for _step, statement in stream_lowered(plan, LayoutPayloadPreparer(model), model, POSTGRES)
+        for _step, statement in stream_lowered(
+            plan.steps, LayoutPayloadPreparer(model), model, POSTGRES
+        )
     ]
 
 

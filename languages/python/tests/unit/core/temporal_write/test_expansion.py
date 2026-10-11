@@ -205,7 +205,7 @@ def test_a_predecessor_the_transform_does_not_reach_is_left_alone() -> None:
         _SPAN_FACTS,
         later,
     )
-    assert expanded.steps == ()
+    assert not expanded.steps
     assert (tuple(expanded.changed), expanded.removed, expanded.derived) == ((), (), ())
 
 
@@ -620,7 +620,7 @@ def test_only_an_emitted_successor_prepares_the_bindable_predecessor(
 
     monkeypatch.setattr(PredecessorRow, "with_bindable_document", counting)
     assigning = _expansion(_SPAN_FACTS, _assigning(TimeInterval(_MAR, _SEP), {"amount": 300}))
-    successors = _expand(assigning, _SPAN_FACTS, _STORED).steps[1:]
+    _effect, *successors = _expand(assigning, _SPAN_FACTS, _STORED).steps
     (bindable,) = prepared
     assert {id(step.entries[0].origin.predecessor) for step in successors} == {id(bindable)}  # type: ignore[union-attr]
 

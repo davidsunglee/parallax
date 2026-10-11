@@ -260,8 +260,8 @@ class LifecycleObservation:
 
         ``kind`` matters because a participating read force-flushes: the DML a
         read triggers belongs to the write step that buffered it, which reports
-        its own pure re-lowering, so asking a find step for its reads is what
-        keeps one statement from being emitted under two pointers.
+        it, so asking a find step for its reads is what keeps one statement from
+        being emitted under two pointers.
         """
         return tuple(
             call.statement for call in self.calls[mark:] if kind is None or call.kind == kind
@@ -373,21 +373,17 @@ class _StatementIndexer:
     the call ran.
 
     The correspondence is positional — the k-th call ran the k-th emission — but
-    it is not assumed. On the grouped-scenario lanes the two sides are built
-    independently: the emissions are a pure re-lowering of the case-authored
-    rows, per step, while execution buffers the whole group and flushes it as one
-    plan, so foreign-key reordering inside that plan, or any drift between the
-    two lowerings, would leave position *k* naming a different statement while
-    the case still graded green. Comparing the SQL text closes every mechanism
-    that changes it.
+    it is not assumed. A run reports its emissions per step rather than per
+    call: a held group's flushed writes are reported under the write steps that
+    buffered them, and its reads under the steps that issued them, so a lane
+    that placed a statement under the wrong step would leave position *k*
+    naming a different statement while the case still graded green. Comparing
+    the SQL text closes every mechanism that changes it.
 
-    Binds are reconciled before this, by the lane that reported the emission:
-    the two sides differ in representation on purpose — the emission stays on the
-    undecoded, case-authored wire spelling (an authored ``250.00``) while
-    execution binds the native carrier a decode produced (``Decimal("250.00")``)
-    — so they are compared where the difference is known, in wire space with the
-    exact-Decimal reconciliation goldens are graded under. What is left here is
-    the index's own question, which the SQL answers.
+    Binds need no comparison here: a run's emission of a delivered call is the
+    very Lowered Statement that call borrowed, and the case's goldens grade it in
+    wire space with exact-Decimal reconciliation. What is left here is the
+    index's own question, which the SQL answers.
 
     The positions the delivering lane charged to a keyed write's resolving reads
     are the calls the emission order does not hold at all: they are skipped

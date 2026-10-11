@@ -1,9 +1,9 @@
 """Planning and lowering one write instruction, for suites that pin a single
 write's DML.
 
-The shipped seam (:func:`~parallax.core.execution._write_lowering.stream_lowered`) is
-plan-scoped, because a Write Plan is what the executor holds. A unit test
-usually pins the statements of one instruction, so this plans it — through the
+The shipped seam (:func:`~parallax.core.execution._write_lowering.stream_lowered`)
+lowers settled steps, which a Write Plan is what the executor takes them from. A
+unit test usually pins the statements of one instruction, so this plans it — through the
 SAME production wiring :func:`~parallax.core.execution._planning.build_write_planner`
 builds — as the one-instruction buffer it means, and hands back the lowered
 statements in order.
@@ -89,7 +89,7 @@ def _stream(
             counts_unchanged_rows=dialect.counts_unchanged_rows,
         )
     )
-    return list(stream_lowered(plan, LayoutPayloadPreparer(model), model, dialect))
+    return list(stream_lowered(plan.steps, LayoutPayloadPreparer(model), model, dialect))
 
 
 def _prepared(instruction: WriteInstruction, model: Metamodel) -> PreparedWrite:

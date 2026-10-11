@@ -83,7 +83,9 @@ def test_the_compile_lane_emits_exactly_one_plans_own_lowering(
     expected = [
         statement
         for value in planned
-        for _step, statement in stream_lowered(value, LayoutPayloadPreparer(model), model, POSTGRES)
+        for _step, statement in stream_lowered(
+            value.steps, LayoutPayloadPreparer(model), model, POSTGRES
+        )
     ]
     assert [(emission.sql, emission.binds) for emission in emissions] == [
         (statement.sql, statement.binds) for statement in expected

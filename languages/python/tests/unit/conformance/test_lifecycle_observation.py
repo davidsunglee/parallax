@@ -19,6 +19,7 @@ from uuid import uuid4
 import pytest
 
 from parallax import conformance
+from parallax.conformance._lanes.scenario import GroupState, group_writes
 from parallax.conformance._lifecycle_observation import (
     LifecycleObservation,
     LifecycleRun,
@@ -27,6 +28,7 @@ from parallax.conformance._lifecycle_observation import (
     lifecycle_run,
 )
 from parallax.conformance._lifecycle_recording import RecordedRoot
+from parallax.conformance._mechanism.envelope import EngineError
 from parallax.core.db_port import (
     AcquisitionReason,
     CleanupCode,
@@ -608,6 +610,51 @@ def test_a_resolving_read_takes_no_index_and_shifts_none() -> None:
     )
     events = cast("list[dict[str, Any]]", _roots(portable)[0]["events"])
     assert [event["databaseCallStarted"].get("statement") for event in events] == [None, 0, 1]
+
+
+def test_a_held_groups_delivered_writes_are_reported_under_the_steps_that_buffered_them() -> None:
+    """A held group's writes reach the wire when a later read forces a flush, or
+    at its boundary. Each write step reports what was delivered after it
+    finished buffering, so the steps' reports, read in step order, are the
+    delivery order itself, and every call's index names its own statement."""
+    observation = LifecycleObservation()
+    handler = _Handler(observation)
+    state = GroupState()
+    handler.deliver(_call("read", "select 1"))
+    state.buffered.append((1, len(observation.writes)))
+    handler.deliver(_call("write", "insert 1"), _call("read", "select 2"))
+    state.buffered.append((3, len(observation.writes)))
+    state.buffered.append((4, len(observation.writes)))
+    handler.deliver(_call("write", "insert 2"), _call("write", "update 3"))
+
+    shares = group_writes(state, observation.writes, "a group")
+    assert {index: [statement.sql for statement in share] for index, share in shares.items()} == {
+        1: ["insert 1"],
+        3: [],
+        4: ["insert 2", "update 3"],
+    }
+    emitted = [
+        "select 1",
+        *(statement.sql for statement in shares[1]),
+        "select 2",
+        *(statement.sql for statement in (*shares[3], *shares[4])),
+    ]
+    events = cast(
+        "list[dict[str, Any]]",
+        _roots(execution_lifecycle_observation(observation.roots, emitted))[0]["events"],
+    )
+    assert [event["databaseCallStarted"]["statement"] for event in events] == [0, 1, 2, 3, 4]
+
+
+def test_a_write_delivered_before_any_step_buffered_one_is_an_adapter_defect() -> None:
+    observation = LifecycleObservation()
+    _Handler(observation).deliver(_call("write", "insert 1"))
+    state = GroupState()
+    state.buffered.append((0, len(observation.writes)))
+    with pytest.raises(EngineError, match="before any write step had buffered one"):
+        group_writes(state, observation.writes, "a group")
+    with pytest.raises(EngineError, match="delivered 1 write"):
+        group_writes(GroupState(), observation.writes, "a group")
 
 
 # --- the run collects what its several handles each observed -------------------

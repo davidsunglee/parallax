@@ -32,7 +32,9 @@ __all__ = [
     "TemporalWriteOwnership",
     "UnitEffects",
     "WritePlan",
+    "WriteStepView",
     "eager_segment",
+    "eager_writes",
 ]
 
 
@@ -108,6 +110,11 @@ class PlannedWrites:
         segment_index = bisect.bisect_right(self._offsets, resolved) - 1
         return self.segments[segment_index].step(resolved - self._offsets[segment_index])
 
+    def view(self, first: int, stop: int) -> WriteStepView:
+        """The steps from position ``first`` up to ``stop``, exclusive, borrowed
+        from this sequence (:class:`WriteStepView`)."""
+        return WriteStepView(self, first, stop)
+
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, PlannedWrites):
             return NotImplemented
@@ -118,6 +125,56 @@ class PlannedWrites:
     # reason no meaningful `__hash__` exists (Planned Writes is a value never
     # used as a mapping/set key).
     __hash__ = None  # pyright: ignore[reportAssignmentType] - deliberately unhashable
+
+
+@dataclass(frozen=True, slots=True)
+class WriteStepView:
+    """A contiguous span of one :class:`PlannedWrites` sequence, from position
+    ``first`` up to ``stop``, exclusive, possibly empty.
+
+    The view holds its owner and two positions and nothing else. Iterating it
+    walks only the owner's segments the span intersects, in order, asking each
+    for every spanned step once per pass, so a consumer that keeps the step it
+    was handed never has a lazily backed segment rebuild it again.
+    """
+
+    owner: PlannedWrites
+    first: int
+    stop: int
+
+    def __post_init__(self) -> None:
+        if not 0 <= self.first <= self.stop <= len(self.owner):
+            raise ValueError(
+                f"a view spans positions within its {len(self.owner)} Planned Write(s) in "
+                f"order, not {self.first} to {self.stop}"
+            )
+
+    def __len__(self) -> int:
+        return self.stop - self.first
+
+    def __iter__(self) -> Iterator[PlannedWrite]:
+        position = self.first
+        stop = self.stop
+        if position == stop:
+            return
+        owner = self.owner
+        offsets = owner._offsets  # pyright: ignore[reportPrivateUsage] - the owner's own index
+        segments = owner.segments
+        segment_index = bisect.bisect_right(offsets, position) - 1
+        while position < stop:
+            segment = segments[segment_index]
+            base = offsets[segment_index]
+            end = min(base + len(segment), stop)
+            for index in range(position - base, end - base):
+                yield segment.step(index)
+            position = end
+            segment_index += 1
+
+
+def eager_writes(steps: Sequence[PlannedWrite]) -> PlannedWrites:
+    """The Planned Writes sequence of already-settled ``steps``, in order: one
+    eager segment, or none for no step."""
+    return PlannedWrites((eager_segment(steps),)) if steps else PlannedWrites()
 
 
 @dataclass(frozen=True, slots=True)
@@ -355,10 +412,10 @@ class UnitEffects:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class BoundRange(UnitEffects):
-    """What a range became once bound to its coverage: the physical steps it
+    """What a range became once bound to its coverage: the Planned Writes it
     executes, in order, beside the effects their success publishes."""
 
-    steps: tuple[PlannedWrite, ...]
+    steps: PlannedWrites
 
 
 class DeferredRange:

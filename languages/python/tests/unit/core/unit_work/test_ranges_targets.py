@@ -331,7 +331,7 @@ def test_an_equal_target_of_a_row_the_attempt_opened_is_kept_without_a_statement
         [opened],
         ownership=owned,
     )
-    assert (bound.steps, tuple(bound.changed), bound.removed) == ((), (), ())
+    assert (tuple(bound.steps), tuple(bound.changed), bound.removed) == ((), (), ())
 
 
 # --------------------------------------------------------------------------- #

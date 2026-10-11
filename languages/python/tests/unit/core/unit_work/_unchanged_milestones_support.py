@@ -154,7 +154,7 @@ def step_kinds(steps: Iterable[PlannedWrite]) -> list[str]:
     return [type(step).__name__ for step in steps]
 
 
-def opened_windows(steps: Sequence[PlannedWrite]) -> list[tuple[object, object, object]]:
+def opened_windows(steps: Iterable[PlannedWrite]) -> list[tuple[object, object, object]]:
     windows: list[tuple[object, object, object]] = []
     for step in steps:
         if isinstance(step, PlannedInsert):
