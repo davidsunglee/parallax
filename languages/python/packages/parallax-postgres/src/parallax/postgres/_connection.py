@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import sys
 from collections.abc import Callable, Generator, Sequence
 from dataclasses import dataclass
 from typing import Any, cast
@@ -562,6 +563,7 @@ def _write_in_order(
     shares the result queue. Prepared-cache maintenance psycopg queues between
     statements answers no statement, and its failure ends collection.
     """
+    ambient = sys.exception()
     intake = _ResultIntake(dialect, connection.info.encoding)
     cursors: list[_CountCursor] = []
     settled: int | None = None
@@ -579,9 +581,34 @@ def _write_in_order(
                 raise
             settled = intake.recorded
     except Exception as escaped:
-        trusted = intake.recorded if settled is None else settled
-        return _answered(dialect, cursors[:trusted], len(cursors), len(statements), escaped)
-    return _answered(dialect, cursors[: intake.recorded], len(cursors), len(statements), None)
+        displaced = _displaced_control_flow(escaped, ambient)
+        if displaced is None:
+            trusted = intake.recorded if settled is None else settled
+            return _answered(dialect, cursors[:trusted], len(cursors), len(statements), escaped)
+    else:
+        return _answered(dialect, cursors[: intake.recorded], len(cursors), len(statements), None)
+    raise displaced
+
+
+def _displaced_control_flow(
+    escaped: Exception, ambient: BaseException | None
+) -> BaseException | None:
+    """The control-flow exception raised during the write that ``escaped``
+    took the place of, if any.
+
+    Psycopg answers an interrupt while it waits by cancelling the statement and
+    collecting what remains. A count cursor records the cancellation rather
+    than raising it, so a failure later in that collection, such as aborted
+    prepared-cache maintenance, escapes instead and carries the interrupt only
+    as context. ``ambient`` is the exception already being handled when the
+    write began; its context chain predates the write.
+    """
+    context = escaped.__context__
+    while context is not None and context is not ambient:
+        if not isinstance(context, Exception):
+            return context
+        context = context.__context__
+    return None
 
 
 def _answered(

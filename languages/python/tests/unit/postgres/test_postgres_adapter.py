@@ -25,7 +25,7 @@ import pytest
 from psycopg import errors, postgres
 from psycopg.abc import Dumper, Loader
 from psycopg.adapt import AdaptersMap, PyFormat, Transformer
-from psycopg.pq import ExecStatus, Format
+from psycopg.pq import ExecStatus, Format, TransactionStatus
 from psycopg.rows import TupleRow
 from psycopg.sql import Composable
 from psycopg.types.json import Jsonb, JsonbLoader
@@ -1182,6 +1182,62 @@ def test_control_flow_propagates_as_itself_and_leaves_the_scope_suspect(
 
     assert facade.suspect
     assert server.pipeline_status == 0
+
+
+@pytest.mark.parametrize("phase", ["queueing", "exit"])
+@pytest.mark.parametrize("interrupt", [KeyboardInterrupt, SystemExit])
+def test_an_interrupt_psycopg_cancels_propagates_past_failed_maintenance_behind_it(
+    monkeypatch: pytest.MonkeyPatch, phase: str, interrupt: type[BaseException]
+) -> None:
+    # The statement is blocked when the interrupt arrives. Psycopg cancels it
+    # and collects what remains; the deallocation queued behind it is aborted,
+    # and that abort is what psycopg raises in the interrupt's place.
+    server = Server(script([failed("57014", "canceling statement due to user request")]))
+    raised = interrupt()
+
+    def interrupt_once() -> None:
+        server.on_wait = lambda: None
+        raise raised
+
+    def block(call: int) -> None:
+        if call == 2:
+            server.early = True
+            server.held = True
+
+    if phase == "queueing":
+        server.on_communicate = block
+    else:
+        server.held = True
+    server.on_wait = interrupt_once
+    with native_session(monkeypatch, server) as native:
+        _owing_deallocation(native)
+        server.transaction_status = TransactionStatus.ACTIVE
+        facade = PostgresConnection(native)
+        with pytest.raises(interrupt) as propagated:
+            _ordered_writes(facade)
+        server.transaction_status = TransactionStatus.IDLE
+
+    assert propagated.value is raised
+    assert propagated.value.__context__ is None
+    assert facade.suspect
+
+
+def test_an_interrupt_already_being_handled_is_not_the_writes_own(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    server = Server(script([failed("23505", "duplicate key")]))
+    with native_session(monkeypatch, server) as native:
+        _owing_deallocation(native)
+        facade = PostgresConnection(native)
+        try:
+            raise KeyboardInterrupt
+        except KeyboardInterrupt:
+            result = _ordered_writes(facade)
+
+    assert isinstance(result, OrderedWriteResultInterrupted)
+    assert isinstance(result.error, DatabaseError)
+    assert isinstance(result.error.__cause__, errors.PipelineAborted)
+    assert facade.suspect
 
 
 def test_a_connection_that_cannot_open_a_pipeline_sends_nothing(
