@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import cast
@@ -19,7 +18,6 @@ __all__ = [
     "Emission",
     "EngineError",
     "ScenarioRun",
-    "delivered",
     "driver_binds",
     "emissions",
     "graph_root",
@@ -92,54 +90,6 @@ class ScenarioRun:
     step_graphs: list[dict[str, object]]
     units: dict[str, dict[str, object]] | None = None
     table_state: dict[str, list[MappingRow]] | None = None
-
-
-def delivered(
-    planned: Sequence[LoweredStatement], observed: Sequence[LoweredStatement], where: str
-) -> tuple[LoweredStatement, ...]:
-    """``planned``, once the lifecycle has confirmed it is what ran.
-
-    A write lane reports the plan rather than the delivered statement, because
-    `then.statements` is graded on BOTH lanes and only one of them executes: the
-    compile lane has no delivery to read, so an emission sourced from one would
-    make the two lanes report different spellings of one oracle. The plan is a
-    SECOND derivation of the same statements, though, and a second derivation is
-    exactly what can drift — which is what this closes. Every statement the unit
-    put on the wire is reconciled with the plan it came from, so what the case
-    grades is the plan only where the plan is what the database saw.
-
-    Binds are reconciled through each statement's compiler-owned Wire projection,
-    so carrier differences are admitted only where typed metadata or an explicit
-    Wire override declares them.
-    """
-    if len(planned) != len(observed):
-        raise EngineError(
-            f"{where}: the plan holds {len(planned)} statement(s) but the lifecycle delivered "
-            f"{len(observed)}; the emission a case grades is the plan, so a plan the execution "
-            f"did not follow would report DML nobody ran"
-        )
-    for index, (plan, ran) in enumerate(zip(planned, observed, strict=True)):
-        if plan.sql != ran.sql:
-            raise EngineError(
-                f"{where}: statement {index} is planned as {plan.sql!r} but the lifecycle "
-                f"delivered {ran.sql!r}"
-            )
-        if not _same_wire_binds(plan.wire_binds(), ran.wire_binds()):
-            raise EngineError(
-                f"{where}: statement {index} is planned with binds (canonical Wire) "
-                f"{plan.wire_binds()!r} but the lifecycle delivered {ran.wire_binds()!r}"
-            )
-    return tuple(planned)
-
-
-def _same_wire_binds(left: tuple[object, ...], right: tuple[object, ...]) -> bool:
-    if len(left) != len(right):
-        return False
-    return all(
-        json.dumps(one, sort_keys=True, separators=(",", ":"))
-        == json.dumps(other, sort_keys=True, separators=(",", ":"))
-        for one, other in zip(left, right, strict=True)
-    )
 
 
 def driver_binds(binds: Sequence[object]) -> list[object]:

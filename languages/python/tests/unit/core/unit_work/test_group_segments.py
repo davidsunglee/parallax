@@ -1229,6 +1229,28 @@ def test_each_selected_object_is_amended_from_its_start_through_its_later_covera
     assert list(driven.effects.removed) == []
 
 
+def test_a_round_combines_each_objects_settled_steps_rather_than_flattening_them() -> None:
+    # Each object of a round settles as a range of its own, and the round's
+    # Planned Writes holds those ranges' own segments in selection order: one
+    # per object, in the order its steps execute.
+    group = _selected(
+        "amendUntil",
+        _position_row(1, _OPENED_AT),
+        _position_row(2, _OPENED_AT, _MAY),
+        _position_row(3, _WINDOW_FROM),
+    )
+    (unit,) = _finalized(_POSITION, group).units
+    driven = drive_group(
+        _POSITION,
+        unit,
+        [PredecessorRow(members=_position_row(2, _MAY, _OCT))],
+        transaction_instant=instant_at("2024-06-01T00:00:00+00:00"),
+    )
+    (writes,) = driven.rounds
+    assert [len(segment) for segment in writes.segments] == [4, 5, 3]
+    assert list(writes.view(4, 9)) == driven.steps[4:9]
+
+
 def test_a_later_row_the_attempt_opened_is_revised_from_its_own_start() -> None:
     # The later row the window reaches is the attempt's own: it is revised in
     # place into its carried tail, keeping its address, and its changed part

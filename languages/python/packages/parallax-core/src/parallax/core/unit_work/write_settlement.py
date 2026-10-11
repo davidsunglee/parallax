@@ -86,6 +86,7 @@ from parallax.core.write_plan.plan import (
     TemporalWriteOwnership,
     WritePlan,
     eager_segment,
+    eager_writes,
 )
 from parallax.core.write_plan.planned_rows import (
     WritePlanningError,
@@ -368,7 +369,11 @@ class WritePlanCompiler:
         observations of one state, changes that state wherever its steps
         change the row it observed."""
         if isinstance(item, ReadlessPredicateWrite):
-            return BoundRange(steps=(_readless_step(item.instruction, audit),)), None, None
+            return (
+                BoundRange(steps=eager_writes((_readless_step(item.instruction, audit),))),
+                None,
+                None,
+            )
         own_state: VersionedStateKey | None = None
         observation: WriteObservation | None = None
         claim: SourceAuthority | None = None
@@ -455,7 +460,8 @@ class WritePlanCompiler:
         changed = _changes(source)
         if instruction.mutation == "insert":
             return BoundRange(
-                steps=(self._settle_insert(facts, instruction, audit),), changed=changed
+                steps=eager_writes((self._settle_insert(facts, instruction, audit),)),
+                changed=changed,
             )
         addressed = self._addressed_facts(facts, concurrency, conditioned=conditioned)
         observed_version = (
@@ -465,34 +471,30 @@ class WritePlanCompiler:
         )
         if advances and observed_version is not None:
             observed_version = self._advanced(observed_version, advances)
-        return BoundRange(
-            steps=(
-                _decorated(
-                    audit,
-                    non_temporal_step(
-                        facts,
-                        addressed,
-                        emission=(
-                            DELETION
-                            if instruction.mutation == "delete"
-                            else Revision(
-                                _addressed_assignments(facts, addressed, instruction.rows[0]),
-                                self._version_overlay(facts.version_attribute),
-                            )
-                        ),
-                        key_rows=instruction.rows,
-                        observed_version=observed_version,
-                        # One addressed instruction is ONE step however many keys it
-                        # addresses, so its expectation is the whole batch's (ADR 0044)
-                        # rather than a per-row one.
-                        affected_rows=ExactCount(
-                            expected=len(instruction.rows), on_shortfall=addressed.shortfall
-                        ),
-                    ),
+        step = _decorated(
+            audit,
+            non_temporal_step(
+                facts,
+                addressed,
+                emission=(
+                    DELETION
+                    if instruction.mutation == "delete"
+                    else Revision(
+                        _addressed_assignments(facts, addressed, instruction.rows[0]),
+                        self._version_overlay(facts.version_attribute),
+                    )
+                ),
+                key_rows=instruction.rows,
+                observed_version=observed_version,
+                # One addressed instruction is ONE step however many keys it
+                # addresses, so its expectation is the whole batch's (ADR 0044)
+                # rather than a per-row one.
+                affected_rows=ExactCount(
+                    expected=len(instruction.rows), on_shortfall=addressed.shortfall
                 ),
             ),
-            changed=changed,
         )
+        return BoundRange(steps=eager_writes((step,)), changed=changed)
 
     def _range(
         self,
@@ -505,7 +507,7 @@ class WritePlanCompiler:
         *,
         start: int,
         guards: bool,
-    ) -> tuple[tuple[PlannedStep, ...], ExecutionUnit]:
+    ) -> tuple[PlannedWrites, ExecutionUnit]:
         """``item`` settled as a range over its temporal object's coverage: the
         steps it binds now and the unit they form from ``start``, or no step
         and the unit carrying the deferred range execution binds.
@@ -537,7 +539,7 @@ class WritePlanCompiler:
         )
         claim = range_claims(item)
         if isinstance(ranged, DeferredTemporalRange):
-            return (), ExecutionUnit(end=start, claim=claim, deferred=ranged)
+            return PlannedWrites(), ExecutionUnit(end=start, claim=claim, deferred=ranged)
         steps = ranged.steps
         return steps, ExecutionUnit(
             end=start + len(steps),
@@ -658,7 +660,7 @@ class WritePlanCompiler:
             ),
         )
         return BoundRange(
-            steps=inserts,
+            steps=eager_writes(inserts),
             changed=_changes(source),
             opened=Openings(
                 continued=openings(facts, inserts),
@@ -677,7 +679,7 @@ class WritePlanCompiler:
         *,
         start: int,
         guards: bool,
-    ) -> tuple[tuple[PlannedStep, ...], ExecutionUnit]:
+    ) -> tuple[PlannedWrites, ExecutionUnit]:
         """A pending Bitemporal insertion and the writes it authorized since,
         settled as the one unit of new lineages they leave of its window,
         together with any stored coverage a replacement it authorized reaches
@@ -701,7 +703,7 @@ class WritePlanCompiler:
             guards=guards,
         )
         if isinstance(ranged, DeferredTemporalRange):
-            return (), ExecutionUnit(end=start, deferred=ranged)
+            return PlannedWrites(), ExecutionUnit(end=start, deferred=ranged)
         steps = ranged.steps
         return steps, ExecutionUnit(
             end=start + len(steps),

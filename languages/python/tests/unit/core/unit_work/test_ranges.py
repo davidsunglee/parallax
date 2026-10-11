@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import dataclasses
 import datetime as dt
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from typing import Any
 
 import pytest
@@ -194,7 +194,7 @@ def _bind(
     )
 
 
-def _windows(steps: Sequence[PlannedWrite]) -> list[tuple[object, object, object]]:
+def _windows(steps: Iterable[PlannedWrite]) -> list[tuple[object, object, object]]:
     windows: list[tuple[object, object, object]] = []
     for step in steps:
         if isinstance(step, PlannedInsert):
@@ -214,7 +214,12 @@ def test_a_range_binds_alike_whether_planning_knew_its_coverage_or_execution_rea
 
     bound = _bind(read, [_TAIL])
 
-    assert bound.steps == tuple(known.steps)
+    assert bound.steps == known.steps
+    # A bound range holds its settled steps as the one sequence owner an
+    # executor borrows spans of, the same sequence a plan's steps are.
+    (segment,) = bound.steps.segments
+    assert list(bound.steps.view(1, len(bound.steps))) == list(known.steps)[1:]
+    assert len(segment) == len(known.steps)
     # The changed parts of both originals hold the same complete state, so
     # they merge into one row; each original is still closed under its own
     # proof.

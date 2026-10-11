@@ -527,7 +527,7 @@ ACCEPTED_CONFORMANCE_PRIVATE_REACHES: dict[tuple[str, str], frozenset[str]] = {
     (
         "parallax.conformance._lanes.scenario",
         "parallax.core.execution._write_lowering",
-    ): frozenset({"lowered", "stream_lowered"}),
+    ): frozenset({"stream_lowered"}),
     ("parallax.conformance._lanes.scenario", "parallax.core.execution._keyed_writes"): frozenset(
         {"validate_source_pin"}
     ),

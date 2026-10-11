@@ -453,12 +453,16 @@ def test_run_interleaved_group_buffers_a_non_last_write_without_flushing() -> No
     assert _shortfalls(run.units) == []
     assert run.round_trips == 4
     assert len(ours_port.writes) == 2  # buffered together, flushed once at the group's last step
+    # One flush delivered both steps' writes, and nothing it delivered names the
+    # step that buffered each, so both are reported under the last write step
+    # buffered before it, in the order they ran.
     assert [e.case_pointer for e in run.emissions] == [
         "/scenario/0/objectQuery",
-        "/scenario/1/write",
+        "/scenario/2/write",
         "/scenario/2/write",
         "/scenario/3/objectQuery",
     ]
+    assert [e.sql.split(" ")[0] for e in run.emissions[1:3]] == ["insert", "update"]
     assert run.step_rows == [
         {"at": "/scenario/0", "rows": [_wire_row(row_v1)]},
         {"at": "/scenario/3", "rows": [_wire_row(row3)]},

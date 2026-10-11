@@ -4,7 +4,7 @@ import contextlib
 import datetime as dt
 import threading
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from parallax.conformance import case_format, models
 from parallax.conformance._database_control import (
@@ -19,6 +19,7 @@ from parallax.conformance._lanes.scenario import (
     LoweredStep,
     flush_failure,
     group_tx_instant,
+    group_writes,
     read_table_state,
     refuse_a_conflict_retry_opt_in,
     run_group_step,
@@ -67,6 +68,7 @@ class _InterleavedGroupResult:
     failure: BaseException | None = None
     rows: dict[int, dict[str, object]] = field(default_factory=_empty_group_rows)
     round_trips: int = 0
+    state: GroupState = field(default_factory=GroupState)
 
 
 def _run_interleaved_group(
@@ -86,9 +88,9 @@ def _run_interleaved_group(
     :func:`~parallax.conformance._lanes.scenario._run_uow_group` drives over a
     contiguous span,
     generalized to an explicit index list and gated by ``turnstile`` at every
-    step. A write step's lowering is therefore recorded BEFORE the group's own
-    flush executes it, so a step that later CONFLICTS still reports its own
-    well-formed golden DML (`m-opt-lock` "Conflict detection" — the SQL is
+    step. A write step reports the DML its group's own flush delivered for it,
+    so a step whose flush CONFLICTS still reports the well-formed statement that
+    reached the database (`m-opt-lock` "Conflict detection" — the SQL is
     correct, the row count is not).
 
     The group's own boundary flushes what its last step buffered, and that
@@ -113,15 +115,14 @@ def _run_interleaved_group(
 
     ``session`` is passed beside the shared ``context`` rather than read out of
     it because the two groups run on two connections: each group's steps execute
-    on, and lower in the spelling of, the dedicated session opened for it. Its
-    steps run at ``tx_instant``, the group's own Transaction Instant — the same
-    instant ``session``'s Clock answers, so the oracle and the execution plan at
-    one value.
+    on the dedicated session opened for it. Its steps run at ``tx_instant``, the
+    group's own Transaction Instant — the same instant ``session``'s Clock
+    answers.
 
     ``context`` carries no case-state tracker, and that is the invariant two
     concurrent sessions rest on: a temporal write settles against what its own
     group's reads retained — the value production's verb is handed, through
-    :class:`~parallax.conformance._lanes.scenario.GroupEvidence` — so the oracle
+    :class:`~parallax.conformance._lanes.scenario.GroupEvidence` — so the lane
     models nothing the other session could have changed, the two threads share
     no mutable state, and a group's abort leaves nothing behind to discard. A
     write whose plan would need more than those reads retained — a coverage read
@@ -136,7 +137,7 @@ def _run_interleaved_group(
     well-formed SQL and still pass.
     """
     lowered: dict[int, LoweredStep] = {}
-    state = GroupState()
+    state = result.state
     running: list[int] = []
 
     def body(tx: Transaction) -> None:
@@ -348,25 +349,19 @@ def run_interleaved_scenario_case(
     for result in (result_a, result_b):
         if result.failure is not None:
             raise result.failure
-    # Each group's writes reach the wire in its own boundary flush — a
-    # conflicting flush included, whose gated statement reached the database and
-    # reported zero rows — so a group's own steps are reconciled against its own
-    # connection's delivery. Reconciled on this thread rather than inside the
-    # worker, so a disagreement surfaces where every other failure of this lane
-    # does.
+    # Each group's writes reach the wire in its own flushes — a conflicting
+    # flush included, whose gated statement reached the database and reported
+    # zero rows — so a group's own write steps report its own connection's
+    # delivery. Attributed on this thread rather than inside the worker, so a
+    # disagreement surfaces where every other failure of this lane does.
+    lowered: dict[int, LoweredStep] = {}
     for result, observed in ((result_a, observed_a), (result_b, observed_b)):
-        envelope.delivered(
-            [
-                statement
-                for step in result.lowered.values()
-                if step.is_write
-                for statement in step.statements
-            ],
-            observed.writes,
-            "an interleaved `uow` group",
+        shares = group_writes(result.state, observed.writes, "an interleaved `uow` group")
+        lowered.update(
+            (index, replace(step, statements=shares[index]) if step.is_write else step)
+            for index, step in result.lowered.items()
         )
 
-    lowered: dict[int, LoweredStep] = {**result_a.lowered, **result_b.lowered}
     rows_by_index: dict[int, dict[str, object]] = {**result_a.rows, **result_b.rows}
     # Each group's own transaction counted its own calls; the trailing ungrouped
     # verify finds add theirs below.

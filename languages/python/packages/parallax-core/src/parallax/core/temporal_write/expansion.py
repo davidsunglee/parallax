@@ -43,8 +43,10 @@ from parallax.core.write_plan.plan import (
     DerivedRow,
     Openings,
     OwnedEndpoint,
+    PlannedWrites,
     TemporalWriteOwnership,
     UnitEffects,
+    eager_writes,
 )
 from parallax.core.write_plan.planned_rows import (
     PreparedAssignment,
@@ -148,7 +150,7 @@ class TemporalFacts:
     instant: dt.datetime
 
 
-_NOTHING: Final[BoundRange] = BoundRange(steps=())
+_NOTHING: Final[BoundRange] = BoundRange(steps=PlannedWrites())
 
 type _Extent = tuple[object, object, bool]
 """One successor's Valid-Time start and end — ``None`` both without Valid
@@ -614,7 +616,11 @@ class PredecessorExpander:
         reached = settlement.reached
         candidates = settlement.candidates
         if not reached and not candidates:
-            return _NOTHING if concludes is None else BoundRange(steps=(), concludes=concludes)
+            return (
+                _NOTHING
+                if concludes is None
+                else BoundRange(steps=PlannedWrites(), concludes=concludes)
+            )
         opened: list[_Opened] = []
         revised: list[_Filed] | None = None
         if len(candidates) < 2 or not isinstance(facts.shape, Bitemporal):
@@ -632,7 +638,7 @@ class PredecessorExpander:
         entity = facts.entity.identity
         inserts = tuple(PlannedInsert(entity=entity, entries=(row,)) for _, row, _, _ in opened)
         return BoundRange(
-            steps=(*effects, *inserts),
+            steps=eager_writes((*effects, *inserts)),
             changed=tuple(record.state for record in reached if _changes(record.code)),
             removed=tuple(record.own for record in reached if record.code & _DISPOSAL == _REMOVE),
             opened=_openings(facts, opened, revised or ()),

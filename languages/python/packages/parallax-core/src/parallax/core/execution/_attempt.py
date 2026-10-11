@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Callable, Iterable
+from collections.abc import Callable
 from typing import Any, cast
 
 from parallax.core import deep_fetch, inheritance
@@ -30,7 +30,7 @@ from parallax.core.execution._read_policy import (
     read_rows,
     resolved,
 )
-from parallax.core.execution._write_lowering import lowered, stream_lowered
+from parallax.core.execution._write_lowering import stream_lowered
 from parallax.core.execution_lifecycle import ReadInterface
 from parallax.core.execution_lifecycle._activity import (
     INERT,
@@ -97,7 +97,7 @@ from parallax.core.unit_work.uow import (
     ReportUnitCompletion,
 )
 from parallax.core.write_plan import WritePlan
-from parallax.core.write_plan.plan import BoundRange, ExecutionUnit, UnitEffects
+from parallax.core.write_plan.plan import BoundRange, ExecutionUnit, UnitEffects, WriteStepView
 from parallax.core.write_plan.steps import PlannedInsert
 from parallax.core.write_plan.steps import PlannedWrite as PlannedStep
 
@@ -597,22 +597,17 @@ class Attempt:
         bind_deferred: BindDeferredRange,
         completed: ReportUnitCompletion,
     ) -> None:
-        """Lower each planned step, execute every statement in order, hand each
-        result back to the unit of work to interpret, and report each execution
-        unit to it as soon as that unit's last step has been enforced.
+        """Execute each execution unit's steps in order, hand each result back
+        to the unit of work to interpret, and report each unit to it as soon as
+        its last step has been enforced.
 
-        The single write-lowering seam (:func:`stream_lowered`) run on the
-        transaction's own connection, inside the still-open ``port.transaction``
-        scope — so an abort rolls back force-flushed writes with everything else.
-        Every statement stores the payload the adopted planner's preparer
-        prepares for it when its turn comes, and a unit is driven to completion
-        before the next statement is even lowered, so a later step's lowering
-        failure cannot overtake an earlier deferred unit.
-        Every step lowers to exactly one statement, and a temporal mutation's
-        effect on its predecessor precedes the rows it opens, so a failure there
-        aborts BEFORE those rows ever execute. A unit is reported before any
-        step of the next one runs, so what it changed is published before later
-        work proceeds.
+        Every unit's steps run through one driver (:meth:`_execute_steps`) on
+        the transaction's own connection, inside the still-open
+        ``port.transaction`` scope — so an abort rolls back force-flushed writes
+        with everything else. A unit is reported before any step of the next one
+        is even lowered, so what it changed is published before later work
+        proceeds, and a later step's lowering failure cannot overtake an earlier
+        deferred unit.
 
         A unit with a deferred range reaches its turn with no planned step: the
         unit of work reads its coverage and binds the range
@@ -621,50 +616,19 @@ class Attempt:
         bound. Where binding answers a continuation, each round it prepares
         executes the same way before the next is prepared, and the unit is
         reported once, with what the continuation finishes with, after the last.
-
-        This performs NO classification of its own: the adopted Write Planner
-        already spent the concurrency mode while settling each step, and this
-        reports only the driver's count to
-        :func:`~parallax.core.unit_work.enforce_affected_rows`, which owns the
-        authoritative reading of the step's Affected Rows Policy (ADR 0048).
-        That enforcement runs inside its own attribution bracket, because a
-        shortfall is judged AFTER the call it judges has already completed: the
-        bracket is what lets the batch's failure name that completed call
-        instead of the enforcement being read as a failure of the batch itself.
-
-        An insert whose key the database allocates for a row the unit records
-        answers that key: it runs as row-producing DML, core reads the key from
-        the rows it returned (:func:`~parallax.core.unit_work.allocated_keys`)
-        inside the same bracket, and the unit is reported with it.
         """
         # The trigger is the batch's, and the batch this runs inside already
         # carries it; taking it again here would be a second spelling of one
         # fact.
         del trigger
-        meta = self._write.model.meta
-        dialect = self._connection.dialect
-        statements = stream_lowered(plan, self._write.planner.payloads, meta, dialect)
-        units = iter(plan.units)
-        unit = next(units, None)
-        executed = 0
-        allocated: list[object] = []
-        while True:
-            while unit is not None and unit.end == executed:
-                self._complete(unit, bind_deferred, completed, tuple(allocated))
-                allocated.clear()
-                unit = next(units, None)
-            lowered_step = next(statements, None)
-            if lowered_step is None:
-                return
-            step, statement = lowered_step
-            if unit is not None and unit.opened.allocated and returns_rows(step):
-                allocated.extend(self._run_returning(step, statement))
-            else:
-                self._run(step, statement)
-            # A unit reached next may be prepared in rounds, which must not
-            # find an executed step still held here.
-            lowered_step = step = statement = None
-            executed += 1
+        steps = plan.steps
+        start = 0
+        for unit in plan.units:
+            allocated = self._execute_steps(
+                steps.view(start, unit.end), allocates=bool(unit.opened.allocated)
+            )
+            start = unit.end
+            self._complete(unit, bind_deferred, completed, allocated)
 
     def _complete(
         self,
@@ -679,7 +643,7 @@ class Attempt:
             return
         bound = bind_deferred(deferred)
         if isinstance(bound, BoundRange):
-            self._run_all(bound.steps)
+            self._execute_steps(bound.steps.view(0, len(bound.steps)), allocates=False)
             completed(unit, bound)
             return
         completed(unit, self._continued(bound))
@@ -698,7 +662,7 @@ class Attempt:
         try:
             writes = continuation.pull()
             while writes is not None:
-                self._run_all(writes)
+                self._execute_steps(writes.view(0, len(writes)), allocates=False)
                 writes = None
                 writes = continuation.pull()
             effects = continuation.finish()
@@ -713,12 +677,41 @@ class Attempt:
         continuation.close()
         return effects
 
-    def _run_all(self, steps: Iterable[PlannedStep]) -> None:
-        meta = self._write.model.meta
-        payloads = self._write.planner.payloads
-        dialect = self._connection.dialect
-        for step in steps:
-            self._run(step, lowered(step, payloads, meta, dialect))
+    def _execute_steps(self, steps: WriteStepView, /, *, allocates: bool) -> tuple[object, ...]:
+        """Lower, execute, and enforce each of ``steps`` in order, each lowered
+        only once every earlier one has been enforced, and answer the keys the
+        database allocated, in step order, where the unit ``allocates`` any.
+
+        Each statement stores the payload the adopted planner's preparer
+        prepares for it when its turn comes, and every step lowers to exactly
+        one statement. A temporal mutation's effect on its predecessor precedes
+        the rows it opens, so a failure there aborts BEFORE those rows ever
+        execute.
+
+        This performs NO classification of its own: the adopted Write Planner
+        already spent the concurrency mode while settling each step, and this
+        reports only the driver's count to
+        :func:`~parallax.core.unit_work.enforce_affected_rows`, which owns the
+        authoritative reading of the step's Affected Rows Policy (ADR 0048).
+        That enforcement runs inside its own attribution bracket, because a
+        shortfall is judged AFTER the call it judges has already completed: the
+        bracket is what lets the batch's failure name that completed call
+        instead of the enforcement being read as a failure of the batch itself.
+
+        An insert whose key the database allocates for a row the unit records
+        answers that key: it runs as row-producing DML, core reads the key from
+        the rows it returned (:func:`~parallax.core.unit_work.allocated_keys`)
+        inside the same bracket, and the unit is reported with it.
+        """
+        allocated: list[object] = []
+        for step, statement in stream_lowered(
+            steps, self._write.planner.payloads, self._write.model.meta, self._connection.dialect
+        ):
+            if allocates and returns_rows(step):
+                allocated.extend(self._run_returning(step, statement))
+            else:
+                self._run(step, statement)
+        return tuple(allocated)
 
     def _run(self, step: PlannedStep, statement: LoweredStatement) -> None:
         batch = self._batch

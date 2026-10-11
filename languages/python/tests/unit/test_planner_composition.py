@@ -8,13 +8,14 @@ planners this module can recognize, a real write is driven through each lane, an
 the drive is then followed all the way to the statements it emits.
 
 The chain is closed link by link. Every planning the drive performed ran on a
-planner the factory built. Every Write Plan that was streamed through
-``stream_lowered`` is by identity a plan one of those plannings returned, and the
-plans streamed are the plans planned, in order, so a factory plan the lane
-discarded is named too. Every step rendered by ``compile_write_step`` — the one function
-that turns a settled step into a statement — is by identity a step of one of
-those streamed plans. An unrelated implementation of the planner interface
-inherits nothing, so it performs no planning this module records and appears in
+planner the factory built. Every step sequence streamed through
+``stream_lowered`` is by identity the steps of a plan one of those plannings
+returned, or a span borrowed from them, and the plans streamed are the plans
+planned, in order, so a factory plan the lane discarded is named too. Every step
+rendered by ``compile_write_step`` — the one function that turns a settled step
+into a statement — is by identity a step of one of those streamed sequences. An
+unrelated implementation of the planner interface inherits nothing, so it
+performs no planning this module records and appears in
 no subclass registry; but its plan still has to become SQL, and every route from
 a plan to SQL runs through those two functions under a name this module replaced.
 
@@ -49,7 +50,7 @@ injects is the neutral one, so no planner a write path reaches can decorate.
 from __future__ import annotations
 
 import sys
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
@@ -73,6 +74,7 @@ from parallax.core.unit_work.strategy import (
 )
 from parallax.core.write_plan import WritePlan
 from parallax.core.write_plan.payload import WritePayloadPreparer
+from parallax.core.write_plan.plan import WriteStepView
 from parallax.core.write_plan.steps import PlannedWrite
 from parallax.snapshot import Transaction
 from tests._support import mirrored_models as mm
@@ -114,13 +116,13 @@ class _Planning:
 @dataclass(slots=True)
 class _Composition:
     """One drive's planning provenance: the planners the composition root built
-    while it ran, every planning that ran, every plan whose lowering was streamed,
-    and every step rendered into a statement."""
+    while it ran, every planning that ran, every step sequence whose lowering was
+    streamed, and every step rendered into a statement."""
 
     lane: str
     built: list[_Built]
     planned: list[_Planning]
-    lowered: list[WritePlan]
+    lowered: list[Iterable[PlannedWrite]]
     rendered: list[PlannedWrite]
 
     def escaped(self) -> list[WritePlanningRequest]:
@@ -131,13 +133,27 @@ class _Composition:
             if not any(one.planner is built.planner for built in self.built)
         ]
 
-    def unaccounted(self) -> list[WritePlan]:
-        """The lowered plans no planning recorded here produced."""
-        return [plan for plan in self.lowered if not any(plan is one.plan for one in self.planned)]
+    def sources(self) -> list[object]:
+        """Each sequence the streams read from, a span standing for the sequence
+        it was borrowed from, once per run of streams reading the same one."""
+        sources: list[object] = []
+        for streamed in self.lowered:
+            source = streamed.owner if isinstance(streamed, WriteStepView) else streamed
+            if not sources or sources[-1] is not source:
+                sources.append(source)
+        return sources
+
+    def unaccounted(self) -> list[object]:
+        """The streamed sequences no planning recorded here produced."""
+        return [
+            source
+            for source in self.sources()
+            if not any(source is one.plan.steps for one in self.planned)
+        ]
 
     def steps_of_lowered_plans(self) -> list[PlannedWrite]:
-        """Every step the streamed plans hold, in the order streaming reaches them."""
-        return [step for plan in self.lowered for step in plan.steps]
+        """Every step the streamed sequences hold, in the order streaming reaches them."""
+        return [step for streamed in self.lowered for step in streamed]
 
 
 def _bindings_of(original: object) -> list[tuple[ModuleType, str]]:
@@ -204,10 +220,13 @@ def _watch(lane: str, monkeypatch: pytest.MonkeyPatch) -> _Composition:
         return finalized
 
     def lower(
-        plan: WritePlan, payloads: WritePayloadPreparer, meta: Metamodel, dialect: Dialect
+        steps: Iterable[PlannedWrite],
+        payloads: WritePayloadPreparer,
+        meta: Metamodel,
+        dialect: Dialect,
     ) -> Iterator[tuple[PlannedWrite, LoweredStatement]]:
-        seen.lowered.append(plan)
-        yield from streaming(plan, payloads, meta, dialect)
+        seen.lowered.append(steps)
+        yield from streaming(steps, payloads, meta, dialect)
 
     def render(
         step: PlannedWrite, payload: StepPayload, meta: Metamodel, dialect: Dialect
@@ -234,12 +253,14 @@ def _assert_planned_only_through_the_factory(seen: _Composition, plannings: int)
     )
     unaccounted = seen.unaccounted()
     assert not unaccounted, (
-        f"{seen.lane}: {len(unaccounted)} of {len(seen.lowered)} plans reached the write-"
-        f"lowering seam without any planning recorded here having produced them, so something "
-        f"other than this factory's planners planned them"
+        f"{seen.lane}: {len(unaccounted)} of {len(seen.sources())} step sequences reached the "
+        f"write-lowering seam without any planning recorded here having produced them, so "
+        f"something other than this factory's planners planned them"
     )
-    assert [id(one.plan) for one in seen.planned] == [id(plan) for plan in seen.lowered], (
-        f"{seen.lane}: {len(seen.planned)} plannings produced plans but {len(seen.lowered)} "
+    assert [id(one.plan.steps) for one in seen.planned] == [
+        id(source) for source in seen.sources()
+    ], (
+        f"{seen.lane}: {len(seen.planned)} plannings produced plans but {len(seen.sources())} "
         f"reached the write-lowering seam — a plan this factory produced was discarded, or one "
         f"was lowered twice"
     )
@@ -381,10 +402,7 @@ def test_the_conformance_conflict_lane_plans_through_planners_the_factory_built(
     )
 
     assert emissions, "a case that emitted nothing exercised no write lane"
-    _assert_planned_only_through_the_factory(seen, plannings=2)
-    # This drive crosses BOTH consumers: a `Database` executes the attempt while
-    # the engine re-lowers the same buffer as its emissions oracle. Two receivers
-    # is what says the oracle planned on a planner of its own rather than
-    # borrowing the transaction's — the shape the other engine entries reach
-    # without a `Database` in play.
-    assert len({id(one.planner) for one in seen.planned}) == 2
+    # The engine reports what the attempt's flush delivered, so the one planning
+    # is the `Database`'s own: the lane plans no second copy of the buffer to
+    # report it.
+    _assert_planned_only_through_the_factory(seen, plannings=1)

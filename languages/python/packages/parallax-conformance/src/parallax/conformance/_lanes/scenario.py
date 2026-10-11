@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Final, Literal, Protocol, cast
 
 from parallax.conformance import (
@@ -73,7 +73,7 @@ from parallax.core.execution import (
 )
 from parallax.core.execution._keyed_writes import validate_source_pin
 from parallax.core.execution._planning import build_write_planner
-from parallax.core.execution._write_lowering import lowered, stream_lowered
+from parallax.core.execution._write_lowering import stream_lowered
 from parallax.core.metamodel import (
     AbstractRoot,
     AbstractSubtype,
@@ -138,7 +138,8 @@ from parallax.core.write_plan import (
     WritePlan,
     WritePlanningError,
 )
-from parallax.core.write_plan.plan import NO_TEMPORAL_WRITE_OWNERSHIP
+from parallax.core.write_plan.payload import WritePayloadPreparer
+from parallax.core.write_plan.plan import NO_TEMPORAL_WRITE_OWNERSHIP, WriteStepView
 from parallax.core.write_plan.steps import KeyTarget, PlannedWrite
 from parallax.snapshot import Database, ScopedDatabase, Snapshot, Transaction, WireEntity
 from parallax.snapshot._publication._wire import authoring_of, read_origin_of
@@ -192,13 +193,12 @@ __all__ = [
 # transaction per unit, ``clock=FixedClock(<entry at>)``, ADR 0010), stated
 # through the PUBLIC ``tx.wire`` verb each mutation names against the value the
 # unit's own read published (never the typed instance verbs, which this engine's
-# case-driven metamodel has no compiled classes for). The COMPILE lane still
-# lowers PURELY (no database, ``build_write_planner(...).finalize(...)`` /
-# ``stream_lowered``) — that pure lowering is ALSO what the RUN lane's
-# emissions/round-trips observation grades against,
-# since both are the SAME deterministic computation over the SAME
-# instructions/observations/instant (`_resolve_entries` / `_lower_resolved`
-# below are the shared core).
+# case-driven metamodel has no compiled classes for), and reports the DML its
+# lifecycle delivered. The COMPILE lane still lowers PURELY (no database,
+# ``build_write_planner(...).finalize(...)`` / ``stream_lowered``). Both lanes
+# resolve and plan the SAME instructions/observations/instant
+# (`_resolve_entries` / `_settle_resolved` below are the shared core), which is
+# what advances the case state a later unit settles against.
 
 # The lowering failures the write lanes convert to a neutral :class:`EngineError`,
 # so the adapter reports a ``*-failed`` diagnostic rather than leaking a lower-layer
@@ -235,7 +235,7 @@ INERT_CLOCK_INSTANT: Final[str] = "1970-01-01T00:00:00+00:00"
 # The compile lane's own audit-neutral Subject Actor: this lane never opens
 # a real Execution Scope, and a Planning Request requires one regardless
 # (`m-unit-work`) — the harness proves the value is never inspected, so any
-# nonempty constant serves every pure re-lowering call below identically.
+# nonempty constant serves every pure planning call below identically.
 _PLANNING_ACTOR: Final[SubjectActor] = SubjectActor("conformance-compile-lane")
 
 
@@ -311,8 +311,8 @@ class _ResolvedWrite:
     """One case write entry's row, resolved against whatever evidence its lane
     supplies and ready for BOTH consumers of a write buffer.
 
-    ``oracle_observation`` is the evidence as a VALUE, for the pure re-lowering
-    (:func:`_lower_resolved`) that plans with no unit of work behind it. The real
+    ``oracle_observation`` is the evidence as a VALUE, for the pure planning
+    (:func:`_settle_resolved`) that plans with no unit of work behind it. The real
     execution needs no peer of it: it states each write through the public verb
     its mutation names, against the value this unit's own read published, so what
     that write settles against is the claim the value already carries. An entry
@@ -640,7 +640,7 @@ def _build_temporal_instruction(
     runs (the planner folds it into the pending insert before finalization
     ever sees it) — its observation is forced to `None`, and ``evidence`` is never
     asked. What the ledger ends up holding for the key is the COALESCED row:
-    :func:`_lower_resolved` tracks the surviving Planned Insert off the finished
+    :func:`_settle_resolved` tracks the surviving Planned Insert off the finished
     plan, so the tracked state is the milestone the flush actually writes rather
     than a stand-in for it.
     """
@@ -679,7 +679,7 @@ def _build_temporal_instruction(
 def _settled_against_source(
     entity_name: str, pk_key: ObjectKey | None, source: ObservedNodes
 ) -> WriteObservation:
-    """The observation the PURE re-lowering oracle plans a write with when its
+    """The observation the PURE planning oracle plans a write with when its
     step named the find it came from (`m-case-format` *Settling against a grouped
     find*).
 
@@ -873,7 +873,7 @@ def _binds_row_observations(
     This decides OBSERVATION BINDING only, never statement count:
     :func:`_build_instructions` buffers one single-row instruction per row
     regardless, and leaves every merge to the planner's own collapse stage
-    (:func:`_lower_resolved`, an Attempt's flush execution).
+    (:func:`_settle_resolved`, an Attempt's flush execution).
     What a bound observation changes is that the planner refuses to merge that
     row at all, which is exactly the point — a merged multi-row instruction has
     nowhere to carry a per-row observed version. The question is answered with
@@ -921,7 +921,8 @@ def _check_statement_count_consistency(
     emitted and fail loudly on a mismatch (an authoring error), rather than
     silently trusting either number.
 
-    ``emitted_count`` comes from the real plan (:func:`_lower_resolved`), so the
+    ``emitted_count`` is what the compile lane's real plan lowers to
+    (:func:`_lower_resolved`), or what the run lane's flush delivered, so the
     assertion sees every stage the planner applies — coalescing, physical-shape
     collapse, and the ELISION that drops a keyed update whose effective change
     set is empty (`m-opt-lock`'s no-op write) — rather than a second,
@@ -1039,10 +1040,10 @@ def _build_instructions(
     work may hold several observed GENERATIONS of it, so the unnamed fallback
     answers the latest reading while the reference is what names any other.
 
-    An entry's authored ``statements`` count is graded later, once
-    :func:`_lower_resolved` has actually planned and lowered the buffer these
-    instructions join (:func:`_check_statement_count_consistency`) — nothing
-    here predicts what the flush will emit.
+    An entry's authored ``statements`` count is graded later, once the buffer
+    these instructions join has actually been lowered or delivered
+    (:func:`_check_statement_count_consistency`) — nothing here predicts what
+    the flush will emit.
     """
     if "entity" not in entry:
         target = entry.get("target")
@@ -1132,7 +1133,7 @@ def _resolve_entries(
 ) -> list[_ResolvedWrite]:
     """Every entry in one choreography unit's buffer -> its resolved
     instructions (retiring from ``shadow`` the milestone each close consumes) —
-    the shared core both the PURE lowering (:func:`_lower_resolved`) and the
+    the shared core both the PURE planning (:func:`_settle_resolved`) and the
     RUN lane's real `db.transact` execution (:func:`_execute_write_unit`)
     consume, so a temporal write's observation is never resolved (or its
     milestone retired) twice for one unit. ``unit_inserted`` tracks this SAME
@@ -1213,18 +1214,35 @@ def _lower_resolved(
     tx_instant: str,
     advances: TemporalShadow | None,
 ) -> tuple[LoweredStatement, ...]:
-    """Plan one write buffer through the SAME ``build_write_planner`` factory
-    model preparation uses (`parallax.core.execution.prepare_model`)
-    and lower each survivor — PURE, no database. The planner is the ONE
-    authority that merges a case entry's rows: every entry arrives as its own
-    per-row instructions, and which of them share a statement is decided HERE,
-    per physical shape, by the same `batch_write.collapses` eligibility answer
-    production consults.
+    """Plan one write buffer (:func:`_settle_resolved`) and lower each survivor
+    through the production lowering seam — PURE, no database. The planner is the
+    ONE authority that merges a case entry's rows: every entry arrives as its own
+    per-row instructions, and which of them share a statement is decided by the
+    same `batch_write.collapses` eligibility answer production consults.
 
     ``entries`` are the case entries ``resolved`` was built from, carried only so
     their authored ``statements`` counts can be graded against the statements
     this ONE plan actually emits (:func:`_check_statement_count_consistency`) —
     the count is never derived from a second, reconstructed plan.
+    """
+    statements = _settle_resolved(
+        resolved, model, dialect, concurrency, tx_instant, advances
+    ).lowered(model, dialect)
+    _check_statement_count_consistency(entries, len(statements))
+    return statements
+
+
+def _settle_resolved(
+    resolved: Sequence[_ResolvedWrite],
+    model: AcceptedMetamodel,
+    dialect: Dialect,
+    concurrency: Concurrency,
+    tx_instant: str,
+    advances: TemporalShadow | None,
+) -> ExecutedPlan:
+    """Plan one write buffer through the SAME ``build_write_planner`` factory
+    model preparation uses (`parallax.core.execution.prepare_model`), and advance
+    the case state by what that plan settles.
 
     The case-state ledger, ``advances``, moves HERE, from THIS plan's own opened rows
     (:meth:`TemporalShadow.track_opened`), and keeps every milestone a write left
@@ -1238,15 +1256,12 @@ def _lower_resolved(
     a range whose coverage no observation holds is refused rather than bound.
     """
     buffer = [_buffered(write.instruction, write.oracle_observation, model) for write in resolved]
-    plan, statements = _plan_and_lower(
-        model, dialect, concurrency, tx_instant, buffer, coverage=advances
-    )
-    _check_statement_count_consistency(entries, len(statements))
+    executed = _planned(model, dialect, concurrency, tx_instant, buffer, coverage=advances)
     if advances is None:
-        return statements
+        return executed
     advances.keep_unchanged(
         model,
-        plan.steps,
+        executed.steps,
         (
             (write.instruction.target, write.oracle_observation)
             for write in resolved
@@ -1254,11 +1269,11 @@ def _lower_resolved(
             and isinstance(write.oracle_observation, TemporalObservation)
         ),
     )
-    advances.track_opened(model, plan.steps, retired=plan.changed)
-    return statements
+    advances.track_opened(model, executed.steps, retired=executed.changed)
+    return executed
 
 
-def _plan_and_lower(
+def _planned(
     model: AcceptedMetamodel,
     dialect: Dialect,
     concurrency: Concurrency,
@@ -1266,18 +1281,17 @@ def _plan_and_lower(
     buffered_writes: Sequence[BufferItem],
     *,
     coverage: TemporalShadow | None = None,
-) -> tuple[ExecutedPlan, tuple[LoweredStatement, ...]]:
+) -> ExecutedPlan:
     """Plan one write buffer through the SAME ``build_write_planner`` factory the
-    composition layer uses and lower every surviving step PURELY, in execution
-    order, beside the plan they came from.
+    composition layer uses, beside every span of settled steps its execution
+    runs, in execution order.
 
     The buffer is composed first, as a unit of work composes each write it
     admits. A range whose requested window reaches coverage its observations do
     not hold is read and bound through the unit of work's own acquisition and
     binding, its coverage read from the case state ``coverage`` tracks — the
-    rows the execution's own coverage read returns — so its statements stand
-    where the execution runs them; a lane tracking no case state has none to
-    bind to.
+    rows the execution's own coverage read returns — so its steps stand where
+    the execution runs them; a lane tracking no case state has none to bind to.
     """
     planner = build_write_planner(model)
     instant = _pinned_instant(tx_instant)
@@ -1291,57 +1305,72 @@ def _plan_and_lower(
         )
     )
     acquire_rows = None if coverage is None else coverage.acquisition(model)
-    executed = ExecutedPlan(plan)
-    statements: list[LoweredStatement] = []
-    units = iter(plan.units)
-    unit = next(units, None)
-    position = 0
+    executed = ExecutedPlan(plan, planner.payloads)
+    start = 0
+    for unit in plan.units:
+        executed.runs.append(plan.steps.view(start, unit.end))
+        start = unit.end
+        deferred = unit.deferred
+        if deferred is None:
+            continue
+        if acquire_rows is None:
+            raise EngineError(
+                "a range write reached coverage no observation of its unit holds, and "
+                "this lane tracks no case state to bind it to"
+            )
+        bound = bind_deferred_range(
+            deferred,
+            acquire_rows=acquire_rows,
+            planner=planner,
+            ownership=NO_TEMPORAL_WRITE_OWNERSHIP,
+            actor_identity=_PLANNING_ACTOR,
+            transaction_instant=instant,
+        )
+        executed.runs.append(bound.steps.view(0, len(bound.steps)))
+        executed.changed.extend(bound.changed)
+    return executed
 
-    def bind_deferred() -> None:
-        nonlocal unit
-        while unit is not None and unit.end == position:
-            deferred = unit.deferred
-            if deferred is not None:
-                if acquire_rows is None:
-                    raise EngineError(
-                        "a range write reached coverage no observation of its unit holds, and "
-                        "this lane tracks no case state to bind it to"
-                    )
-                bound = bind_deferred_range(
-                    deferred,
-                    acquire_rows=acquire_rows,
-                    planner=planner,
-                    ownership=NO_TEMPORAL_WRITE_OWNERSHIP,
-                    actor_identity=_PLANNING_ACTOR,
-                    transaction_instant=instant,
-                )
-                executed.steps.extend(bound.steps)
-                executed.changed.extend(bound.changed)
-                statements.extend(
-                    lowered(step, planner.payloads, model, dialect) for step in bound.steps
-                )
-            unit = next(units, None)
 
-    lowering = stream_lowered(plan, planner.payloads, model, dialect)
-    while True:
-        bind_deferred()
-        lowered_step = next(lowering, None)
-        if lowered_step is None:
-            return executed, tuple(statements)
-        step, statement = lowered_step
-        executed.steps.append(step)
-        statements.append(statement)
-        position += 1
+def _plan_and_lower(
+    model: AcceptedMetamodel,
+    dialect: Dialect,
+    concurrency: Concurrency,
+    tx_instant: str,
+    buffered_writes: Sequence[BufferItem],
+    *,
+    coverage: TemporalShadow | None = None,
+) -> tuple[ExecutedPlan, tuple[LoweredStatement, ...]]:
+    """Plan one write buffer (:func:`_planned`) and lower every surviving step
+    PURELY, in execution order, beside the plan they came from."""
+    executed = _planned(model, dialect, concurrency, tx_instant, buffered_writes, coverage=coverage)
+    return executed, executed.lowered(model, dialect)
 
 
 @dataclass(slots=True)
 class ExecutedPlan:
-    """One write buffer's plan beside every step its execution runs, deferred
-    ranges bound, and the observed states those bound ranges changed."""
+    """One write buffer's plan beside each span of steps its execution runs, in
+    execution order — each unit's planned steps, and the steps a deferred unit
+    bound at its turn — the observed states those bound ranges changed, and the
+    preparer that plan's statements store their payloads through."""
 
     plan: WritePlan
-    steps: list[PlannedWrite] = field(default_factory=list[PlannedWrite])
+    payloads: WritePayloadPreparer
+    runs: list[WriteStepView] = field(default_factory=list[WriteStepView])
     changed: list[ObservedStateKey] = field(default_factory=list[ObservedStateKey])
+
+    @property
+    def steps(self) -> list[PlannedWrite]:
+        """Every step the runs hold, in execution order."""
+        return [step for run in self.runs for step in run]
+
+    def lowered(self, model: AcceptedMetamodel, dialect: Dialect) -> tuple[LoweredStatement, ...]:
+        """Every statement the runs lower to, in execution order, each through
+        the production lowering seam the executor runs them through."""
+        return tuple(
+            statement
+            for run in self.runs
+            for _step, statement in stream_lowered(run, self.payloads, model, dialect)
+        )
 
 
 def lower_writes(
@@ -1354,11 +1383,7 @@ def lower_writes(
     group_observations: GroupObservations,
 ) -> tuple[LoweredStatement, ...]:
     """Resolve and PURE-lower one write buffer — the COMPILE lane's own
-    lowering, and the RUN lane's emissions/round-trips oracle (`_execute_write_unit`
-    resolves its own entries via :func:`_resolve_entries` and reuses
-    :func:`_lower_resolved` directly, rather than calling this a second time, so
-    each consumed observation is retired once and the buffer's one plan is
-    tracked once)."""
+    lowering."""
     resolved = _resolve_entries(entries, model, shadow, group_observations)
     return _lower_resolved(resolved, entries, model, dialect, concurrency, tx_instant, shadow)
 
@@ -2154,7 +2179,6 @@ def _execute_write_unit(
     options: DatabaseOptions,
     requests: case_format.TransactionKeywords,
     resolved: Sequence[_ResolvedWrite],
-    statements: Sequence[LoweredStatement],
     tx_instant: str,
     lifecycle: LifecycleRun,
     *,
@@ -2165,11 +2189,8 @@ def _execute_write_unit(
     connected with ``options``, requesting exactly ``requests``,
     ``clock=FixedClock(tx_instant)``
     (ADR 0010: instants come from the Clock Strategy, never a per-operation
-    override), and report the DML it ran beside the calls it cost.
-
-    ``statements`` is the caller's plan for the same ``resolved`` instructions,
-    reported back once the delivered lifecycle has confirmed the unit ran exactly
-    it (:func:`~parallax.conformance._mechanism.envelope.delivered`).
+    override), and report the DML its lifecycle delivered beside the calls it
+    cost.
 
     Every write against existing state is stated through the PUBLIC ``tx.wire``
     verb its mutation names, against the value this unit's own resolving reads
@@ -2182,38 +2203,11 @@ def _execute_write_unit(
     a case counts them in `then.roundTrips` and authors no golden for them, so
     they name no statement index in the lifecycle observation.
 
-    A unit whose writes are the framework's own bookkeeping takes
-    :func:`_execute_framework_write_unit` instead, which opens no unit of work
-    at all — those statements have no verb to be stated through. A marker entry
-    is a choreography unit of its own and therefore the buffer's ONLY entry
-    (`m-case-format` "Buffered keyed write instructions"), so anything beside it
-    states a form no case may author and is refused here rather than silently
-    executed as one unit: a caller-authored entry would put half the DML through
-    a public verb and half around it, and a second marker would fold two of the
-    framework's own units into one flush, hiding whichever boundary the corpus
-    meant to grade.
-
     A ``rollback: true`` step runs on the aborting port (`m-unit-work` abort
     contract): the boundary's own pre-commit flush still puts the buffered DML
     on the wire — and counts its round trips — before the provider rolls the
     transaction back.
     """
-    framework = _framework_writes(resolved, model)
-    if framework:
-        if len(framework) != len(resolved):
-            raise EngineError(
-                "a choreography unit states either the framework's own bookkeeping or the writes "
-                f"a caller authors, never both: this one holds {len(framework)} entry(s) carrying "
-                f"a DB-computed write marker beside {len(resolved) - len(framework)} that a "
-                "public verb states"
-            )
-        if len(resolved) != 1:
-            raise EngineError(
-                "an entry carrying a DB-computed write marker states the framework's own "
-                "bookkeeping and is a choreography unit of its own, so it is the buffer's only "
-                f"entry: this one holds {len(resolved)}"
-            )
-        return tuple(statements), _execute_framework_write_unit(port, statements, rollback=rollback)
     instant = normalize_instant(dt.datetime.fromisoformat(tx_instant))
     observed = lifecycle.observation()
     with Database.connect(
@@ -2235,9 +2229,39 @@ def _execute_write_unit(
 
         with absorbing_rollback():
             transact(database, body, **requests)
-        return envelope.delivered(
-            statements, observed.writes, "a keyed write unit"
-        ), observed.round_trips
+        return observed.writes, observed.round_trips
+
+
+def _framework_unit(resolved: Sequence[_ResolvedWrite], model: AcceptedMetamodel) -> bool:
+    """Whether one choreography unit states the framework's own bookkeeping,
+    which :func:`_execute_framework_write_unit` executes because no public verb
+    states it.
+
+    A marker entry is a choreography unit of its own and therefore the buffer's
+    ONLY entry (`m-case-format` "Buffered keyed write instructions"), so anything
+    beside it states a form no case may author and is refused here rather than
+    silently executed as one unit: a caller-authored entry would put half the DML
+    through a public verb and half around it, and a second marker would fold two
+    of the framework's own units into one flush, hiding whichever boundary the
+    corpus meant to grade.
+    """
+    framework = _framework_writes(resolved, model)
+    if not framework:
+        return False
+    if len(framework) != len(resolved):
+        raise EngineError(
+            "a choreography unit states either the framework's own bookkeeping or the writes "
+            f"a caller authors, never both: this one holds {len(framework)} entry(s) carrying "
+            f"a DB-computed write marker beside {len(resolved) - len(framework)} that a "
+            "public verb states"
+        )
+    if len(resolved) != 1:
+        raise EngineError(
+            "an entry carrying a DB-computed write marker states the framework's own "
+            "bookkeeping and is a choreography unit of its own, so it is the buffer's only "
+            f"entry: this one holds {len(resolved)}"
+        )
+    return True
 
 
 def execute_keyed_unit(
@@ -2250,9 +2274,9 @@ def execute_keyed_unit(
     rollback: bool,
 ) -> tuple[tuple[LoweredStatement, ...], int]:
     """One buffered-keyed-write choreography unit, whole: resolve its entries
-    once, re-lower that ONE resolution purely, and execute it as its own
-    ``db.transact`` — reporting the DML the plan holds beside the round trips
-    the execution cost.
+    once, plan that ONE resolution to advance the case state, and execute it as
+    its own ``db.transact`` — reporting the DML its lifecycle delivered beside
+    the round trips the execution cost.
 
     Every producer of an ungrouped keyed unit drives this — a scenario's
     ungrouped write step on either scenario lane, and a writeSequence entry — so
@@ -2262,26 +2286,31 @@ def execute_keyed_unit(
     doomed unit's tracked advances are discarded with the rows its abort erases.
 
     Resolution happens ONCE and both consumers read it, so a temporal write's
-    observation is consumed (and its milestone retired) a single time; the
-    emission is therefore the PURE re-lowering of the very instructions the
-    execution buffered, with binds observed through the lowered statement's
-    canonical Wire projection. That plan is reported only where the
-    delivered lifecycle confirms the unit ran it
-    (:func:`~parallax.conformance._mechanism.envelope.delivered`), so being
-    the plan and being what the database saw are one claim rather than two.
+    observation is consumed (and its milestone retired) a single time. The
+    emission is what the lifecycle delivered, each statement in the canonical
+    Lowered Statement form its Database Call borrowed, and its count is the one
+    the entries' authored ``statements`` assert. A unit whose writes are the
+    framework's own bookkeeping opens no unit of work at all — those statements
+    have no verb to be stated through — so its own plan is what it executes and
+    reports (:func:`_execute_framework_write_unit`).
     """
     tx_instant = entry_instant(entries[0])
     shadow = context.case_state()
     with shadow.staged(doomed=rollback):
         resolved = _resolve_entries(entries, context.model, shadow, group_observations)
-        statements = _lower_resolved(
-            resolved,
-            entries,
-            context.model,
-            port.dialect,
-            context.concurrency,
-            tx_instant,
-            shadow,
+        if _framework_unit(resolved, context.model):
+            statements = _lower_resolved(
+                resolved,
+                entries,
+                context.model,
+                port.dialect,
+                context.concurrency,
+                tx_instant,
+                shadow,
+            )
+            return statements, _execute_framework_write_unit(port, statements, rollback=rollback)
+        _settle_resolved(
+            resolved, context.model, port.dialect, context.concurrency, tx_instant, shadow
         )
         ran, unit_trips = _execute_write_unit(
             port,
@@ -2290,11 +2319,11 @@ def execute_keyed_unit(
             context.options,
             context.requests,
             resolved,
-            statements,
             tx_instant,
             lifecycle,
             rollback=rollback,
         )
+    _check_statement_count_consistency(entries, len(ran))
     return ran, unit_trips
 
 
@@ -2303,7 +2332,6 @@ def _run_readless_predicate_write(
     context: CaseContext,
     raw_write: Mapping[str, object],
     instruction: PreparedPredicateWrite,
-    statement: LoweredStatement,
     tx_instant: str,
     lifecycle: LifecycleRun,
     *,
@@ -2312,14 +2340,10 @@ def _run_readless_predicate_write(
     """Execute a READLESS scenario predicate-write step (`m-batch-write-005`/
     ``-006``) through the SAME production ``db.transact`` entry point every
     other write path uses. The public Wire verb prepares the case's authored
-    target and canonically projected changes, while the separate prepared
-    product remains the independent lowering oracle.
+    target and canonically projected changes from ``instruction``.
 
-    The reported emission is ``statement`` — lowered from that same prepared
-    product — and its compiler metadata renders the canonical Wire binds used
-    for grading and delivery reconciliation. It is reported only where the
-    delivered lifecycle confirms this transaction ran it
-    (:func:`~parallax.conformance._mechanism.envelope.delivered`).
+    The reported emission is the DML the lifecycle delivered, whose compiler
+    metadata renders the canonical Wire binds used for grading.
     """
     instant = normalize_instant(dt.datetime.fromisoformat(tx_instant))
     observed = lifecycle.observation()
@@ -2337,10 +2361,7 @@ def _run_readless_predicate_write(
 
         with absorbing_rollback():
             transact(database, body, **context.requests)
-        return (
-            envelope.delivered((statement,), observed.writes, "a readless predicate write"),
-            observed.round_trips,
-        )
+        return observed.writes, observed.round_trips
 
 
 def is_materializing_write_step(
@@ -2660,6 +2681,10 @@ def _empty_settled() -> set[ObjectKey]:
     return set()
 
 
+def _empty_buffered() -> list[tuple[int, int]]:
+    return []
+
+
 @dataclass(frozen=True, slots=True)
 class GroupState:
     """What ONE `uow` group accumulates as its own steps run, and nothing wider.
@@ -2673,14 +2698,46 @@ class GroupState:
     ``opened`` holds what this group's own inserts answered, which is how
     read-your-own-writes reaches a row no find could have returned. ``settled``
     holds the keys whose temporal write already settled against this group's
-    reads (:class:`GroupEvidence`). All four are built fresh per group, never a
-    scenario-wide store, so no value crosses a transaction boundary.
+    reads (:class:`GroupEvidence`). ``buffered`` holds each write step's index,
+    in step order, beside how many writes the group had delivered once that step
+    finished buffering (:func:`group_writes`). All five are built fresh per
+    group, never a scenario-wide store, so no value crosses a transaction
+    boundary.
     """
 
     published: list[WireEntity] = field(default_factory=_empty_published)
     finds: dict[int, tuple[WireEntity, ...]] = field(default_factory=_empty_group_finds)
     opened: dict[ObjectKey, WireEntity] = field(default_factory=_empty_opened)
     settled: set[ObjectKey] = field(default_factory=_empty_settled)
+    buffered: list[tuple[int, int]] = field(default_factory=_empty_buffered)
+
+
+def group_writes(
+    state: GroupState, delivered: Sequence[LoweredStatement], where: str
+) -> dict[int, tuple[LoweredStatement, ...]]:
+    """Each write step's share of the writes one held group's flushes delivered,
+    keyed by step index.
+
+    A held group's buffered writes reach the wire when a later read forces a
+    flush, or at its boundary, so the step a delivered write belongs to is read
+    off when it was delivered: each write step owns what was delivered after it
+    finished buffering and before the next write step had, and the last owns
+    everything after. Write steps buffered before one flush therefore report that
+    flush's statements under the last of them, because what one flush delivers
+    carries no trace of the step that buffered each write.
+    """
+    shares: dict[int, tuple[LoweredStatement, ...]] = {}
+    buffered = state.buffered
+    first = buffered[0][1] if buffered else len(delivered)
+    if first:
+        raise EngineError(
+            f"{where}: the lifecycle delivered {first} write(s) before any write step had "
+            "buffered one"
+        )
+    for position, (index, start) in enumerate(buffered):
+        stop = buffered[position + 1][1] if position + 1 < len(buffered) else len(delivered)
+        shares[index] = tuple(delivered[start:stop])
+    return shares
 
 
 def _published_nodes(snapshot: Snapshot[WireEntity]) -> tuple[WireEntity, ...]:
@@ -2735,7 +2792,7 @@ def _published_from(roots: Iterable[object]) -> tuple[WireEntity, ...]:
 
 
 def _published_claims(nodes: Sequence[WireEntity]) -> GroupObservations:
-    """The retained claims ``nodes`` carry, in order — what the PURE re-lowering
+    """The retained claims ``nodes`` carry, in order — what the PURE planning
     oracle plans with, derived from the same values the real write settles
     against so the two can never name different states."""
     claims: list[RetainedObservation] = []
@@ -2899,7 +2956,7 @@ def _buffer_wire_write(
     mutation names.
 
     Driven off the SAME :class:`_ResolvedWrite` the pure oracle plans, so the
-    real write and the reported emission read one resolution: the durable row,
+    real write and the case state it advances read one resolution: the durable row,
     its Valid-Time bounds, and its mutation all come from the instruction, and
     what this adds is only which verb states them and which published value the
     write is addressed by.
@@ -3121,21 +3178,23 @@ def run_group_step(
     A WRITE step resolves its entries against this group's own published values
     (never a scenario-wide store) — a temporal entry's predecessor through the
     evidence ``context`` selects (:class:`CaseStateEvidence` where the lane models
-    case state, :class:`GroupEvidence` where it models none) — records the pure
-    re-lowering every
-    other write path uses (:func:`_lower_resolved`) BEFORE the group's flush
-    executes anything — the runner reconciles the group's whole plan against what
-    that flush delivered — and then buffers each resolved write through the PUBLIC
-    ``tx.wire`` verb its mutation names, against the value this group published
-    for its key. Every entry a group holds is therefore caller-authored: a
-    DB-computed write marker is a choreography unit of its own and no group step
-    may carry one (`m-case-format` "Buffered keyed write instructions"), which
-    this refuses by name rather than leaving to the verb that would reject the
-    value. A READLESS predicate-write step lowers and buffers exactly as an
-    ungrouped one does (:func:`_run_readless_predicate_write`), but into the
-    group's held transaction, so the flush that delivers it also orders the
-    keyed writes buffered on either side of it. A FIND step runs through
-    ``tx.wire.find`` — the participating
+    case state, :class:`GroupEvidence` where it models none) — plans them as
+    every other write path does (:func:`_settle_resolved`), advancing the case
+    state where the lane models one and refusing a range whose coverage its
+    evidence does not hold where it models none, and then buffers each resolved
+    write through the PUBLIC ``tx.wire`` verb its mutation names, against the
+    value this group published for its key. Every entry a group holds is
+    therefore caller-authored: a DB-computed write marker is a choreography unit
+    of its own and no group step may carry one (`m-case-format` "Buffered keyed
+    write instructions"), which this refuses by name rather than leaving to the
+    verb that would reject the value. A READLESS predicate-write step buffers
+    exactly as an ungrouped one does (:func:`_run_readless_predicate_write`),
+    but into the group's held transaction, so the flush that delivers it also
+    orders the keyed writes buffered on either side of it. A write step's
+    statements are those the group's flushes deliver for it, which its runner
+    attributes once they ran (:func:`group_writes`), so the step answers none of
+    its own; it records in ``state`` that it finished buffering. A FIND step
+    runs through ``tx.wire.find`` — the participating
     Wire read, which force-flushes any pending buffered write, takes the read
     lock its target Entity's own Effective Concurrency Strategy calls for, and
     retains onto each published node what a later write settles against — and
@@ -3148,12 +3207,11 @@ def run_group_step(
     observation, read across either call to recover the statements the step
     emits — for a delivery, every page's.
 
-    ``session`` is the connection ``tx`` was opened over, and the spelling of
-    every statement this step lowers is read off its port. A group runs on its
-    own connection — an interleaved group's on the dedicated session opened for
-    it — so the lowering
-    a step reports is spelled by whatever is about to execute it rather than by
-    the caller's own port.
+    ``session`` is the connection ``tx`` was opened over, and the dialect a write
+    step plans under is read off its port. A group runs on its own connection —
+    an interleaved group's on the dedicated session opened for it — so a step
+    plans as whatever is about to execute it rather than as the caller's own
+    port.
 
     Returns the step's lowered emission pointer, and — for a read step — what it
     published beside it (:class:`_StepRead`), which is the step's own
@@ -3164,14 +3222,10 @@ def run_group_step(
     if "write" in step and is_predicate_write_step(step["write"]):
         raw_write = cast("Mapping[str, object]", step["write"])
         prepared = _prepared_case_predicate_write(raw_write, model)
-        statement = _lower_predicate_write_step(
-            prepared, model, session.dialect, context.concurrency
-        )
         _buffer_wire_predicate_write(tx, model, raw_write, prepared)
+        state.buffered.append((index, len(observation.writes)))
         return (
-            LoweredStep(
-                f"/scenario/{index}/write", (statement,), True, step.get("rollback") is True
-            ),
+            LoweredStep(f"/scenario/{index}/write", (), True, step.get("rollback") is True),
             None,
         )
     if "write" in step:
@@ -3198,18 +3252,13 @@ def run_group_step(
                 "marker, which states the framework's own bookkeeping and is a choreography unit "
                 "of its own — a `uow` group's held transaction has no verb to buffer one through"
             )
-        statements = _lower_resolved(
-            resolved,
-            entries,
-            model,
-            session.dialect,
-            context.concurrency,
-            tx_instant,
-            context.shadow,
+        _settle_resolved(
+            resolved, model, session.dialect, context.concurrency, tx_instant, context.shadow
         )
         for write, named in zip(resolved, sources, strict=True):
             _buffer_wire_write(tx, model, state, write, named)
-        return LoweredStep(f"/scenario/{index}/write", statements, True, False), None
+        state.buffered.append((index, len(observation.writes)))
+        return LoweredStep(f"/scenario/{index}/write", (), True, False), None
     return _group_read(tx, context, state, step, index, observation)
 
 
@@ -3303,19 +3352,15 @@ def _run_uow_group(
 
         with context.case_state().staged(doomed=doomed), absorbing_rollback():
             transact(session.database, body, **context.requests)
-        # The group's writes reach the wire in ONE flush at its boundary, so a step's
-        # own plan is reconciled against the group's whole delivery rather than
-        # against a flush of its own: what the transaction wrote is every write
-        # step's DML, in the order those steps buffered it.
-        envelope.delivered(
-            [statement for step in lowered if step.is_write for statement in step.statements],
-            observation.writes,
-            "a held `uow` group",
-        )
+        shares = group_writes(state, observation.writes, "a held `uow` group")
+        reported = [
+            replace(step, statements=shares[index]) if step.is_write else step
+            for index, step in zip(range(start, end + 1), lowered, strict=True)
+        ]
         # Every statement this ONE transaction put on the wire, which is where the
         # group's round trips come from rather than from a second count this lane
         # keeps.
-        return _GroupRun(lowered, observation.round_trips, rows_observed, step_graphs)
+        return _GroupRun(reported, observation.round_trips, rows_observed, step_graphs)
     finally:
         session.close()
 
@@ -3603,7 +3648,6 @@ def run_scenario_case(
     steps = case_document.scenario_steps(case)
     serving = case_serving_model(case)
     model = models.accepted_model_of(serving.current().model)
-    dialect = port.dialect
     concurrency = case_document.concurrency(case)
     shadow = TemporalShadow()
     rows_observed: list[dict[str, object]] = []
@@ -3695,13 +3739,11 @@ def run_scenario_case(
                 raw_predicate_write = cast("Mapping[str, object]", raw_write)
                 tx_instant = entry_instant(raw_predicate_write)
                 instruction = _prepared_case_predicate_write(raw_predicate_write, model)
-                statement = _lower_predicate_write_step(instruction, model, dialect, concurrency)
                 ran, predicate_trips = _run_readless_predicate_write(
                     port,
                     context,
                     raw_predicate_write,
                     instruction,
-                    statement,
                     tx_instant,
                     lifecycle,
                     rollback=rollback,
@@ -3814,17 +3856,15 @@ def _conflict_mutation(when: Mapping[str, object]) -> Literal["amend", "delete"]
 @dataclass(frozen=True, slots=True)
 class _ConflictWrite:
     """One row of a NON-TEMPORAL conflict attempt's ``write``, resolved once for
-    both the pure re-lowering and the real execution: the durable row, the
-    single-row instruction a unit of work buffers for it, that instruction's
-    coalescing identity, and the Version Observation the row's reserved
-    ``observedVersion`` described.
+    the real execution: the durable row, the single-row instruction a unit of
+    work buffers for it, that instruction's coalescing identity, and the Version
+    Observation the row's reserved ``observedVersion`` described.
 
     The observation is a DECLARED FACT the case states, never the evidence the
     write settles against: the real execution reads its own source and settles
     against what that read observed (:func:`_conflict_source_nodes`), and this
     value is what that observation is cross-checked against
-    (:func:`_refuse_unobserved_conflict_version`). The pure oracle plans with it
-    directly, having no read behind it.
+    (:func:`_refuse_unobserved_conflict_version`).
     """
 
     row: dict[str, object]
@@ -3878,29 +3918,6 @@ def _landed_conflict_rows(resolved: Sequence[_ConflictWrite]) -> int:
     resolve coalesces with nothing and stands for itself."""
     keyed = {write.key for write in resolved if write.key is not None}
     return len(keyed) + sum(1 for write in resolved if write.key is None)
-
-
-def _lower_conflict_write(
-    model: AcceptedMetamodel,
-    dialect: Dialect,
-    concurrency: Concurrency,
-    resolved: Sequence[_ConflictWrite],
-) -> tuple[LoweredStatement, ...]:
-    """PURE-lower one NON-TEMPORAL conflict attempt's resolved ``write`` rows:
-    plan the whole buffer through the SAME ``build_write_planner`` factory the
-    model preparation uses (`parallax.core.execution.prepare_model`) and
-    lower every survivor, so a MULTI-KEY attempt reports the ONE set-based
-    statement its real execution emits rather than the per-row statements an
-    uncollapsed plan would have rendered.
-    """
-    _plan, statements = _plan_and_lower(
-        model,
-        dialect,
-        concurrency,
-        INERT_CLOCK_INSTANT,
-        [_buffered(write.instruction, write.observation, model) for write in resolved],
-    )
-    return statements
 
 
 def _implied_shortfall_error(
@@ -4161,12 +4178,11 @@ def _run_conflict_write(
     nodes: Mapping[ObjectKey, WireEntity],
     lifecycle: LifecycleRun,
 ) -> tuple[tuple[LoweredStatement, ...], int, int]:
-    """Lower and execute one NON-TEMPORAL conflict attempt's write through
+    """Execute one NON-TEMPORAL conflict attempt's write through
     ``db.transact`` — ONE transaction over a root connected with ``options``,
     an inert Clock (never consumed by a non-temporal write), and exactly the
     options the attempt requests (``requests``); ``concurrency`` is the
-    planning value the emission is lowered and the implied shortfall classified
-    under.
+    planning value the implied shortfall is classified under.
 
     Every row is written through the PUBLIC keyed Wire verb its mutation names,
     against the node ``nodes`` published for its key, so a MULTI-KEY attempt
@@ -4179,15 +4195,12 @@ def _run_conflict_write(
     shortfall surfacing as a stale write, or the reverse — propagates and fails
     the case.
 
-    ``statements`` (the reported golden-comparable emission) is
-    :func:`_lower_conflict_write`'s own PURE re-lowering of the original rows.
-    Its Lowered Statement carries the metadata that projects native execution
-    carriers and planned carriers into one canonical Wire observation. It is
-    reported only where the delivered lifecycle confirms the attempt ran it
-    (:func:`~parallax.conformance._mechanism.envelope.delivered`).
+    The reported golden-comparable emission is the DML the lifecycle delivered,
+    each statement in the canonical Lowered Statement form its Database Call
+    borrowed, whose metadata projects native execution carriers into one
+    canonical Wire observation.
     """
     resolved = _resolve_conflict_writes(model, target, mutation, write_rows)
-    statements = _lower_conflict_write(model, port.dialect, concurrency, resolved)
     instant = normalize_instant(dt.datetime.fromisoformat(INERT_CLOCK_INSTANT))
     observed = lifecycle.observation()
     with Database.connect(
@@ -4214,8 +4227,7 @@ def _run_conflict_write(
         observation_requiring = _versioned_non_temporal_version_attribute(model, target) is not None
         implied = _implied_shortfall_error(observation_requiring, concurrency, model, target)
         affected = _conflict_attempt_affected(database, requests, implied, body)
-        ran = envelope.delivered(statements, observed.writes, "a conflict attempt")
-        return ran, affected, observed.round_trips
+        return observed.writes, affected, observed.round_trips
 
 
 def _conflict_changes(model: AcceptedMetamodel, write: _ConflictWrite) -> dict[str, object]:

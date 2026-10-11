@@ -42,6 +42,7 @@ from parallax.core.db_port import (
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._model import model_of
 from parallax.core.execution import DatabaseOptions
+from parallax.core.execution_lifecycle import DatabaseCallStarted
 from parallax.core.metamodel import (
     EntityIdentity,
 )
@@ -330,7 +331,9 @@ def test_run_scenario_case_groups_a_committing_uow_span_into_one_transaction() -
 def test_run_scenario_case_holds_a_grouped_readless_predicate_write_in_the_groups_flush() -> None:
     # m-batch-write-011: the predicate write is buffered into the group's own
     # transaction rather than run as a unit of its own, so the one flush at the
-    # boundary delivers it between the keyed writes buffered on either side.
+    # boundary delivers it between the keyed writes buffered on either side. The
+    # run reports what that flush delivered, under the last write step buffered
+    # before it: nothing a flush delivers names the step that buffered it.
     port = FakeWritePort(
         find_rows=[
             {
@@ -346,11 +349,13 @@ def test_run_scenario_case_holds_a_grouped_readless_predicate_write_in_the_group
     assert run.round_trips == 5
     assert [e.case_pointer for e in run.emissions] == [
         "/scenario/0/objectQuery",
-        "/scenario/1/write",
-        "/scenario/2/write",
+        "/scenario/3/write",
+        "/scenario/3/write",
         "/scenario/3/write",
         "/scenario/3/write",
     ]
+    # What is reported is what the port executed, in the order it executed it.
+    assert [e.sql.replace("?", "%s") for e in run.emissions[1:]] == [sql for sql, _ in port.writes]
     assert [sql.split("(")[0] for sql, _ in port.writes] == [
         "delete from order_item where id = %s",
         "update order_item set sku = %s where quantity < %s",
@@ -1547,6 +1552,48 @@ def test_run_write_sequence_case_executes_each_entry_as_its_own_transaction() ->
         "order_tag",
         "order_note",
     }
+
+
+def test_a_run_reports_the_statements_its_database_calls_borrowed() -> None:
+    # The run lane plans no second copy of a unit's DML to report: each emission
+    # is the very Lowered Statement the delivered Database Call borrowed.
+    lifecycle = LifecycleRun()
+    emissions, _table_state, _round_trips = scenario.run_write_sequence_case(
+        _case("m-unit-work-003"), FakeWritePort(), lifecycle
+    )
+    delivered = [
+        event.statement
+        for root in lifecycle.roots
+        for event in root.events
+        if isinstance(event, DatabaseCallStarted)
+    ]
+    assert len(emissions) == len(delivered) == 2
+    assert all(
+        emission.statement is statement
+        for emission, statement in zip(emissions, delivered, strict=True)
+    )
+
+
+def test_a_run_grades_an_authored_statement_count_against_what_it_delivered() -> None:
+    case = _synthetic_write(
+        "writeSequence",
+        {
+            "when": {
+                "writeSequence": [
+                    {
+                        "mutation": "insert",
+                        "entity": "Account",
+                        "statements": 2,
+                        "rows": [{"id": 90, "owner": "Noether", "balance": "5.00", "version": 1}],
+                    }
+                ]
+            }
+        },
+    )
+    port = FakeWritePort()
+    with pytest.raises(EngineError, match="does not match the 1 statement"):
+        scenario.run_write_sequence_case(case, port)
+    assert len(port.writes) == 1
 
 
 def test_run_write_sequence_case_settles_a_temporal_write_against_its_resolving_read() -> None:

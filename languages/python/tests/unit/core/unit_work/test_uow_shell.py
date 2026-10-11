@@ -102,6 +102,7 @@ from parallax.core.write_plan.plan import (
     ExecutionUnit,
     Openings,
     OwnedEndpoint,
+    PlannedWrites,
 )
 from parallax.core.write_plan.steps import INFINITY as PLANNED_INFINITY
 from parallax.core.write_plan.steps import NEW_LINEAGE, Finite, PlannedClose, PlannedUpdate
@@ -1252,7 +1253,7 @@ def test_a_bound_range_reported_for_a_planned_unit_dooms_the_attempt() -> None:
         bind_deferred: BindDeferredRange,
         completed: Callable[[ExecutionUnit, BoundRange | None], None],
     ) -> None:
-        completed(plan.units[0], BoundRange(steps=()))
+        completed(plan.units[0], BoundRange(steps=PlannedWrites()))
 
     def body(uow: UnitOfWork) -> None:
         uow.buffer(_account_write("amend", 1, 7))
@@ -1411,7 +1412,7 @@ def test_a_unit_that_changes_nothing_spends_its_evidence_and_leaves_its_state_fr
 
     _run(body, meta=_POSITION, executor=recorder)
     assert _step_kinds(recorder) == ["PlannedInsert"]
-    assert [bound.steps for bound in recorder.bound] == [()]
+    assert [tuple(bound.steps) for bound in recorder.bound] == [()]
 
 
 @pytest.mark.parametrize(
@@ -1598,7 +1599,9 @@ def test_a_row_a_unit_removes_and_reopens_at_one_address_stays_owned() -> None:
             return
         completed(
             unit,
-            BoundRange(steps=(), removed=(endpoint,), opened=Openings(fresh=(endpoint,))),
+            BoundRange(
+                steps=PlannedWrites(), removed=(endpoint,), opened=Openings(fresh=(endpoint,))
+            ),
         )
 
     def body(uow: UnitOfWork) -> None:

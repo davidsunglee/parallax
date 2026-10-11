@@ -69,7 +69,9 @@ def _plan_under(
 def _statements(plan: WritePlan, model: Metamodel) -> list[LoweredStatement]:
     return [
         statement
-        for _step, statement in stream_lowered(plan, LayoutPayloadPreparer(model), model, POSTGRES)
+        for _step, statement in stream_lowered(
+            plan.steps, LayoutPayloadPreparer(model), model, POSTGRES
+        )
     ]
 
 
