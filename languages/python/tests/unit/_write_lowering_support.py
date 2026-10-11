@@ -291,8 +291,8 @@ class Case:
     answers, keyed by physical column as the driver answers it, and ``None`` for
     an insert, which reads nothing; an ``addressed`` target reads nothing before
     its verb, and its stored row answers the reads the target itself makes
-    inside the window. ``statements`` is how many statements the flush
-    executes.
+    inside the window. ``statements`` is how many Planned Writes the flush
+    realizes; grouped openings can realize several in one physical statement.
     """
 
     name: str
