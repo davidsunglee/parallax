@@ -398,6 +398,19 @@ def _rows(statement: lowering_support.Executed) -> list[tuple[object, ...]]:
     return [statement.binds[index * width : (index + 1) * width] for index in range(tuples)]
 
 
+def _physical(case: lowering_support.Case) -> list[tuple[str, int]]:
+    """The statements ``case``'s flush executes, each with the value tuples it
+    renders: a temporal change closes its predecessor, then opens every
+    successor in one insert."""
+    if case.mutation == "insert":
+        return [("insert", 1)]
+    if case.family == "plain":
+        return [("update", 1)]
+    if case.statements == 0:
+        return []
+    return [("update", 1), ("insert", case.statements - 1)]
+
+
 def _stored_document(case: lowering_support.Case) -> Mapping[str, object]:
     """The Structured Column of the Relational Document row ``case`` revises."""
     assert case.layout == "document" and case.stored is not None
@@ -408,12 +421,11 @@ def _stored_document(case: lowering_support.Case) -> Mapping[str, object]:
 def test_every_keyed_case_lowers_its_stated_writes_and_dumps_each_document(
     case: lowering_support.Case,
 ) -> None:
-    # A case states the Planned Writes its flush realizes; a Bitemporal split's
-    # successors are one insert after its close.
     lowered = lowering_support.lowered(case)
     assert sum(len(_rows(statement)) for statement in lowered) == case.statements
-    if case.family == "bitemporal":
-        assert [statement.sql.split(" ", 1)[0] for statement in lowered] == ["update", "insert"]
+    assert [
+        (statement.sql.split(" ", 1)[0], len(_rows(statement))) for statement in lowered
+    ] == _physical(case)
     for statement in lowered:
         assert len(statement.dumped) == len(statement.binds)
         for bind, buffer in zip(statement.binds, statement.dumped, strict=True):
