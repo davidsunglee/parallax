@@ -135,15 +135,41 @@ class DatabaseCallFailed:
     diagnostic: DatabaseFailureDiagnostic
 
 
+@dataclass(frozen=True, slots=True)
+class DatabaseCallNotExecuted:
+    """The call was presented to the port and confirmed never to execute: an
+    earlier call of the same transport invocation failed, or the transport
+    established it never sent the statement. It carries no count and no
+    diagnostic of its own."""
+
+
+@dataclass(frozen=True, slots=True)
+class DatabaseCallUnconfirmed:
+    """Whether the call executed cannot be established, because the transport
+    invocation carrying it was interrupted.
+
+    ``diagnostic`` describes that transport failure, shared by every call it
+    left unconfirmed; it does not claim this statement failed.
+    """
+
+    diagnostic: DatabaseFailureDiagnostic
+
+
 type DatabaseCallOutcome = (
-    DatabaseReadCompleted | DatabaseWriteCompleted | DatabaseWriteRowsCompleted | DatabaseCallFailed
+    DatabaseReadCompleted
+    | DatabaseWriteCompleted
+    | DatabaseWriteRowsCompleted
+    | DatabaseCallFailed
+    | DatabaseCallNotExecuted
+    | DatabaseCallUnconfirmed
 )
 """How a Database Call ended, a closed union of exactly one member."""
 
 
 @dataclass(frozen=True, slots=True)
 class DatabaseCallStarted(_Event):
-    """One attempted round trip to the database is about to run.
+    """One statement is about to be presented to the port, alone or as one of
+    an ordered transport invocation's statements; neither proves it executes.
 
     ``statement`` is the exact deeply immutable Lowered Statement presented to
     the port. It is BORROWED for synchronous delivery: neither its text nor its
@@ -164,11 +190,17 @@ class DatabaseCallFinished(_Event):
     ``duration_ns`` is monotonic elapsed time around the port invocation alone:
     the clock starts after Started has been delivered and stops before Finished
     is constructed, so Handler time stays outside it.
+
+    ``shared_timing_id`` is ``None`` for a call the port ran alone. Calls one
+    ordered transport invocation carried all name the Activity ID of its first
+    call there and all report that invocation's one duration, so their
+    durations overlap and are charged once per identity, never summed.
     """
 
     statement: LoweredStatement
     duration_ns: int
     outcome: DatabaseCallOutcome
+    shared_timing_id: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

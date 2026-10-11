@@ -210,6 +210,35 @@ def test_a_completed_call_omitting_its_count_is_refused_by_both_schemas() -> Non
     assert not _valid_against("conformance-adapter.schema.json", _run_envelope(_lifecycle(root)))
 
 
+def _finished_as(payload: dict[str, Any]) -> tuple[bool, bool]:
+    """Whether each side of the mirror admits the write call finishing with ``payload``."""
+    root = _write_root()
+    root["events"][6]["databaseCallFinished"] = payload
+    return (
+        _valid_against("compatibility-case.schema.json", _case(_lifecycle(root))),
+        _valid_against("conformance-adapter.schema.json", _run_envelope(_lifecycle(root))),
+    )
+
+
+def test_a_call_confirmed_never_to_execute_states_nothing_else() -> None:
+    assert _finished_as({"outcome": "notExecuted"}) == (True, True)
+    assert _finished_as({"outcome": "notExecuted", "affectedRows": 0}) == (False, False)
+    assert _finished_as({"outcome": "notExecuted", "category": None}) == (False, False)
+
+
+def test_an_unconfirmed_call_states_the_interruptions_category_and_no_count() -> None:
+    assert _finished_as({"outcome": "unconfirmed", "category": None}) == (True, True)
+    assert _finished_as({"outcome": "unconfirmed", "category": "deadlock", "code": "x"}) == (
+        True,
+        True,
+    )
+    assert _finished_as({"outcome": "unconfirmed"}) == (False, False)
+    assert _finished_as({"outcome": "unconfirmed", "category": None, "affectedRows": 1}) == (
+        False,
+        False,
+    )
+
+
 # --- the target names an Entity, on both sides of the mirror ------------------
 
 

@@ -41,6 +41,7 @@ if TYPE_CHECKING:
         ConnectionContext,
         DocumentReadOrdinals,
         IsolationLevel,
+        OrderedWriteTransport,
         PipelineStatement,
         PoolMetricsSource,
         Row,
@@ -174,6 +175,10 @@ class PostgresControl:
 
     def execute_write(self, sql: str, binds: Sequence[Bind]) -> int:
         return self._execution.execute_write(sql, binds)
+
+    @property
+    def ordered_write_transport(self) -> OrderedWriteTransport | None:
+        return self._execution.ordered_write_transport
 
     def transaction[T](
         self, body: Callable[[DatabaseConnection], T], *, isolation: IsolationLevel | None = None

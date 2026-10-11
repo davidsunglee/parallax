@@ -199,6 +199,38 @@ before the earlier unit completes, so a later step's lowering failure cannot
 overtake it. A unit that fails is never reported, and the failure dooms the
 attempt.
 
+Where the connection holds ordered write transport (`m-db-port`), a run of
+contiguous count-only temporal effects — closes, guards, revisions, and
+removals — is presented in one invocation instead of one call each; every other
+step, and every step on a connection holding none, runs alone. Whether a step
+may join a run is decided from the step itself before its payload is demanded,
+including the bound on binds its statement promises to fit the dialect's limit;
+a statement exceeding that promise is a lowering failure. A run never crosses an
+insert, a unit, a barrier, or a round, and an internal statement cap ends it
+before another step is even taken. The whole result is validated before any of
+it is interpreted, so a malformed one fails the batch with the integrity error
+ahead of any shortfall it reports. Confirmed outcomes are then enforced in
+original order against the exact steps they were lowered from: an earlier
+shortfall outranks a later statement failure or interruption, a statement
+failure propagates as itself, and an interruption no earlier outcome overtook
+propagates last. Nothing after the run is lowered before the run is enforced.
+
+Taking or lowering a later effect of a run may fail ordinarily after earlier
+effects were lowered. The run's lowered prefix is then presented and enforced as
+it was selected — never lowered again, replayed, or split into calls of its own
+— and that failure propagates only where the prefix succeeds. A failure lowering
+the run's first effect presents nothing, and a control-flow or fatal exception
+presents none of the prefix.
+
+Ordered transport departs from running each step alone in exactly two ways.
+Later effects of the current run can execute, and take locks, before an earlier
+effect's shortfall is enforced, because a zero-row count is a successful
+statement to the database; the failed unit still publishes nothing and its
+attempt rolls back. And a later effect can be lowered before the prefix it
+follows is submitted. Rollback, rollback-only state, retry classification of
+the failure that propagates, and the precedence of cancellation and fatal
+exceptions are unchanged.
+
 ## What the suite pins down
 
 | Case | What it proves |

@@ -34,7 +34,7 @@ an advisory sensitivity, not graded.
 from __future__ import annotations
 
 import sys
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from itertools import pairwise
 from statistics import median
 from typing import Any, Final, cast
@@ -45,8 +45,7 @@ import write_lowering_reading
 from parallax.conformance.budget import MemoryGates
 from parallax.core.base import DocumentValue, PresentDocument, detach_json_container
 from parallax.core.db_port import JsonDocument
-from parallax.core.execution import _attempt
-from parallax.core.execution._write_lowering import stream_lowered
+from parallax.core.execution._write_lowering import LoweringCursor
 from parallax.core.unit_work import instructions
 from tests.unit import _memory_gate_support as gate_support
 from tests.unit import _predicate_acquisition_support as acquisition_support
@@ -216,12 +215,12 @@ def _keeping_keys_per_row(project: Callable[..., Any]) -> Callable[..., Any]:
     return projected
 
 
-def _lowering_twice(stream: Callable[..., Iterator[Any]]) -> Callable[..., Iterator[Any]]:
-    def streamed(*args: object, **kwargs: object) -> Iterator[Any]:
-        yield from stream(*args, **kwargs)
-        yield from stream(*args, **kwargs)
+def _lowering_twice(lower: Callable[..., Any]) -> Callable[..., Any]:
+    def lowered(*args: object, **kwargs: object) -> Any:
+        lower(*args, **kwargs)
+        return lower(*args, **kwargs)
 
-    return streamed
+    return lowered
 
 
 @in_a_child_interpreter
@@ -358,7 +357,7 @@ def test_seeded_per_row_retention_trips_the_acquisition_gates_and_their_amortiza
 
 @in_a_child_interpreter
 def test_a_duplicate_lowering_traversal_stays_within_every_gate_and_doubles_its_passes() -> None:
-    # A second lowering of the settled plan allocates and frees everything the
+    # A second lowering of each settled step allocates and frees everything the
     # first did, inside the window and before any sample: the checkpoint is
     # taken before lowering and the high-water mark is a maximum, so neither
     # gate moves. What does move is the pass observation — the successor patches
@@ -370,11 +369,7 @@ def test_a_duplicate_lowering_traversal_stays_within_every_gate_and_doubles_its_
     # per reading, so no two readings are compared within the noise allowance.
     unseeded = _Reading(TRAVERSED_CASE)
     with pytest.MonkeyPatch.context() as patched:
-        patched.setattr(
-            _attempt,
-            "stream_lowered",
-            _lowering_twice(stream_lowered),
-        )
+        patched.setattr(LoweringCursor, "lowered", _lowering_twice(LoweringCursor.lowered))
         seeded = _Reading(TRAVERSED_CASE)
     assert not _outside(TRAVERSED_CASE, RETAINED, seeded)
     assert not _outside(TRAVERSED_CASE, TRANSIENT, seeded)

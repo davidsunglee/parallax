@@ -1540,6 +1540,12 @@ backend **MUST** execute distinct `ExactCount` steps separately; it MAY still
 reuse statement preparation and stream bind rows. This is what preserves exact
 attribution of a shortfall to the step that caused it.
 
+Ordered write transport (`m-db-port`) is such a batch wherever its result
+confirms a count for a step. A statement failure, confirmed non-execution, an
+unconfirmed statement, and an interruption supply no count: the unit of work
+interprets only confirmed counts, each against its own step and in step order,
+and a failure or interruption propagates as itself (`m-execution`).
+
 ## Strategy selection — one preference, an effective strategy per Entity
 
 An outer unit of work resolves one **Concurrency Preference**, `locking` or

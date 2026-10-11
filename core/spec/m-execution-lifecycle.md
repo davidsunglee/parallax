@@ -220,11 +220,13 @@ The database-call transitions are:
 
 ```text
 DatabaseCallStarted(target, kind, statement)
-DatabaseCallFinished(statement, durationNs,
+DatabaseCallFinished(statement, durationNs, sharedTimingId?,
     DatabaseReadCompleted(returnedRows)
   | DatabaseWriteCompleted(affectedRows)
   | DatabaseWriteRowsCompleted(returnedRows)
-  | DatabaseCallFailed(diagnostic))
+  | DatabaseCallFailed(diagnostic)
+  | DatabaseCallNotExecuted
+  | DatabaseCallUnconfirmed(diagnostic))
 ```
 
 `kind` is `read` or `write`. A write is count-only or row-producing
@@ -244,6 +246,46 @@ belongs to the same demarcation the count already excludes.
 
 Every statement-reaching operation belongs to exactly one Read, Write Batch, or
 Stream Batch. A call is its direct child. No other activity kind owns a call.
+
+### Calls one ordered transport invocation carries
+
+An ordered write transport invocation (`m-db-port`) is one Database Call per
+statement it presents, not one for the invocation, and presentation is no proof
+that a statement executed. Every call's Started transition is delivered before
+the port is invoked, and every Finished transition after it, each set
+contiguously in presentation order. The calls finish from the same validated
+result the write batch interprets:
+
+| Result fact | Finished outcome |
+|---|---|
+| a confirmed count | `DatabaseWriteCompleted(affectedRows)` |
+| a confirmed statement failure | `DatabaseCallFailed(diagnostic)` |
+| confirmed non-execution, after an earlier failure or in an unsent suffix | `DatabaseCallNotExecuted`, with no count and no diagnostic |
+| a statement in the unconfirmed span | `DatabaseCallUnconfirmed(diagnostic)`, the transport failure's diagnostic |
+
+An unconfirmed call's diagnostic describes the interruption, shared by every
+call it left unconfirmed, and never claims that call's statement failed. An
+ordinary exception escaping the invocation, and a result the write batch refuses
+as malformed, finish every call unconfirmed with that exception's diagnostic. A
+control-flow or fatal exception after the Started transitions were delivered
+finishes every call not yet finished as unconfirmed while delivery remains
+active, and the exception stays primary. A Started delivery that aborts the root
+invokes nothing and finishes nothing, and a delivery that aborts the root part
+way through the Finished transitions finishes nothing more.
+
+Every Finished transition of one invocation reports the invocation's one
+`durationNs`, timed around the port invocation alone, and carries
+`sharedTimingId`: the Activity ID of the invocation's first call. Those
+durations overlap. They are charged once per timing identity, never summed as
+database or transport time, and neither the identity nor equal durations
+establish one network exchange. A call the port ran alone carries no timing
+identity.
+
+A statement failure, and a shortfall enforced against a confirmed count, are
+attributed to their own call through the enforcement relation, in presentation
+order. An interruption that propagates, an exception escaping the invocation,
+and a malformed result are the Write Batch's direct failures: no unconfirmed
+call is named as their cause.
 
 ## Transaction events
 
@@ -615,9 +657,12 @@ Handler and stays silent on every path where nothing went wrong.
 
 With `N` concurrent accepted roots, `P` active Providers, and maximum activity
 depth `D`, core live lifecycle memory is `O(N × (P + D))` and independent of
-events already completed, retry count, stream length, result cardinality, and
-materialized graph size. Core constructs one transient event per transition and
-shares it across fan-out. Built-in non-recording handlers retain only bounded
+events already completed, retry count, stream length, result cardinality,
+materialized graph size, and the number of statements one ordered transport
+invocation presents: observing one keeps no activity, outcome, or event per
+call, and an unobserved invocation is opened without allocating, inspecting its
+statements, or reading a clock. Core constructs one transient event per
+transition and shares it across fan-out. Built-in non-recording handlers retain only bounded
 per-root state; asynchronous exporters use application-owned bounded queues.
 Delivery work is `O(events × active providers)`. A custom Handler that retains
 borrowed events or uses unbounded state violates the Handler contract.
@@ -629,7 +674,8 @@ contains a `roots` list of normalized Root Executions, each with a positive
 first-observation index, kind, and ordered events. A portable event retains sequence, activity,
 parent, transition, outcome, stable code, database category, physical row
 counts, retry classification, and statement indexes. It omits UUIDs, monotonic
-durations, implementation type names, messages, stack traces, and native codes.
+durations and the timing identities calls share, implementation type names,
+messages, stack traces, and native codes.
 
 A Database Call transition names its statement by zero-based index into the
 case's flattened golden statement order. Two calls name none: every call on an

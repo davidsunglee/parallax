@@ -24,6 +24,7 @@ from parallax.core.db_port import (
     DocumentReadOrdinals,
     IsolationLevel,
     JsonDocument,
+    OrderedWriteTransport,
     PipelineStatement,
     RollbackFailed,
     RollbackTrigger,
@@ -510,6 +511,12 @@ class PostgresConnection:
         with translating_driver_errors(self.dialect), connection.cursor() as cursor:
             cursor.execute(sql.encode(), adapt_binds(binds))
             return cursor.rowcount
+
+    @property
+    def ordered_write_transport(self) -> OrderedWriteTransport | None:
+        """None: no ordered write transport is qualified for this adapter, so
+        every write runs alone."""
+        return None
 
     def transaction[T](
         self,

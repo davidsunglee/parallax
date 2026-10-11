@@ -14,9 +14,14 @@ from parallax.core.db_port import (
     AcquisitionReason,
     CleanupResult,
     CommitFailed,
+    ConfirmedWriteOutcome,
     ConnectionAcquisitionError,
     IsolationLevel,
+    OrderedWriteResult,
+    OrderedWriteResultComplete,
     RollbackTrigger,
+    StatementFailed,
+    StatementNotExecuted,
 )
 from parallax.core.diagnostics import FailureDiagnostic, diagnostic_for, qualified_type
 from parallax.core.execution_lifecycle._diagnostics import (
@@ -44,8 +49,10 @@ from parallax.core.execution_lifecycle._events import (
     DatabaseCallFailed,
     DatabaseCallFinished,
     DatabaseCallKind,
+    DatabaseCallNotExecuted,
     DatabaseCallOutcome,
     DatabaseCallStarted,
+    DatabaseCallUnconfirmed,
     DatabaseReadCompleted,
     DatabaseWriteCompleted,
     DatabaseWriteRowsCompleted,
@@ -321,6 +328,62 @@ class WriteBatchActivity(Protocol):
         Naming the call explicitly is what keeps proximity — "the last call" —
         from ever being the test.
         """
+        ...
+
+    def ordered_calls(self, calls: OrderedCallInput, /) -> OrderedCallObservation:
+        """Open one Database Call of this batch for each of ``calls``, which
+        one ordered transport invocation presents together.
+
+        ``calls`` is borrowed until the observation is left and must not change
+        while it is open.
+        """
+        ...
+
+
+class OrderedCallInput(Protocol):
+    """The statements one ordered transport invocation presents, in order: each
+    one's exact Lowered Statement and the Entity it writes."""
+
+    def __len__(self) -> int: ...
+
+    def __getitem__(self, index: int, /) -> LoweredStatement: ...
+
+    def target(self, index: int, /) -> ActivityTarget: ...
+
+
+class OrderedCallObservation(Protocol):
+    """The Database Calls of one ordered transport invocation, observed together.
+
+    Entering delivers every call's Started transition. :meth:`invoke` times the
+    one invocation, which every call reports as its duration. Once the result is
+    known to be well formed, :meth:`finish_calls` delivers each call's Finished
+    transition from it; leaving under an exception instead finishes every call
+    not yet finished as unconfirmed, with that exception's diagnostic, and
+    names none of them as its cause.
+    """
+
+    def __enter__(self) -> OrderedCallObservation: ...
+
+    def __exit__(
+        self,
+        _exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        _traceback: TracebackType | None,
+        /,
+    ) -> None: ...
+
+    def invoke[S, R](self, transport: Callable[[S], R], statements: S, /) -> R:
+        """``transport`` applied to ``statements``, timed when observed."""
+        ...
+
+    def finish_calls(self, result: OrderedWriteResult, /) -> None:
+        """Finish every call from ``result``, which the caller already proved
+        well formed for the calls this observation opened."""
+        ...
+
+    def enforcing(self, index: int, /) -> EnforcementScope:
+        """Bracket the enforcement of what the call at ``index`` established,
+        naming that call as the cause of whatever the enforcement raises."""
         ...
 
 
@@ -736,8 +799,16 @@ class _InertActivity:
     ) -> _InertActivity:
         return self
 
-    def enforcing(self, call: DatabaseCallActivity, /) -> _InertActivity:
+    def enforcing(self, call: DatabaseCallActivity | int, /) -> _InertActivity:
         return self
+
+    def ordered_calls(self, calls: OrderedCallInput, /) -> _InertActivity:
+        return self
+
+    def invoke[S, R](self, transport: Callable[[S], R], statements: S, /) -> R:
+        return transport(statements)
+
+    def finish_calls(self, result: OrderedWriteResult, /) -> None: ...
 
     def read(self, target: ActivityTarget, interface: ReadInterface, /) -> _InertActivity:
         return self
@@ -1608,6 +1679,154 @@ class _LiveWriteBatch(_LiveActivity):
 
     def enforcing(self, call: DatabaseCallActivity, /) -> _LiveEnforcement:
         return _LiveEnforcement(self, call._activity_id if isinstance(call, _LiveActivity) else 0)
+
+    def ordered_calls(self, calls: OrderedCallInput, /) -> OrderedCallObservation:
+        publisher = self._publisher
+        if not publisher.active:
+            return INERT
+        return _LiveOrderedCalls(publisher, self, self._activity_id, calls)
+
+
+_NOT_EXECUTED: Final = DatabaseCallNotExecuted()
+
+
+class _LiveOrderedCalls:
+    """One observed ordered transport invocation: a Database Call per presented
+    statement, all Started before the port is invoked and all Finished from
+    the one result, each reporting the invocation's one duration.
+
+    It keeps no state per call. The publisher delivers serially and refuses
+    re-entry, so Activity IDs taken back to back are contiguous: a call's ID is
+    the first one's plus its position, and which calls are still unresolved is
+    the one count of calls already finished. Finishing takes that count before
+    delivering, so no call finishes twice whatever a delivery raises. The first
+    call's ID is also every Finished transition's timing identity.
+    """
+
+    __slots__ = (
+        "_batch",
+        "_batch_id",
+        "_calls",
+        "_duration_ns",
+        "_finished",
+        "_first_id",
+        "_publisher",
+    )
+
+    def __init__(
+        self,
+        publisher: _Publisher,
+        batch: _LiveWriteBatch,
+        batch_id: int,
+        calls: OrderedCallInput,
+    ) -> None:
+        self._publisher = publisher
+        self._batch = batch
+        self._batch_id = batch_id
+        self._calls = calls
+        self._first_id = 0
+        self._finished = 0
+        self._duration_ns = 0
+
+    def __enter__(self) -> _LiveOrderedCalls:
+        publisher = self._publisher
+        self._first_id = publisher.open_activity()
+        self._start(0)
+        for index in range(1, len(self._calls)):
+            if not publisher.active:
+                break
+            publisher.open_activity()
+            self._start(index)
+        return self
+
+    def __exit__(
+        self,
+        _exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        _traceback: TracebackType | None,
+        /,
+    ) -> None:
+        if exc is None:
+            return
+        remaining = len(self._calls) - self._finished
+        if remaining and self._publisher.active:
+            self._finish_each(DatabaseCallUnconfirmed(database_diagnostic_for(exc)), remaining)
+
+    def invoke[S, R](self, transport: Callable[[S], R], statements: S, /) -> R:
+        if not self._publisher.active:
+            return transport(statements)
+        started_ns = time.perf_counter_ns()
+        try:
+            return transport(statements)
+        finally:
+            self._duration_ns = time.perf_counter_ns() - started_ns
+
+    def finish_calls(self, result: OrderedWriteResult, /) -> None:
+        if isinstance(result, OrderedWriteResultComplete):
+            self._finish_confirmed(result.outcomes)
+            return
+        if not self._finish_confirmed(result.confirmed):
+            return
+        if result.unconfirmed_count and self._publisher.active:
+            unconfirmed = DatabaseCallUnconfirmed(database_diagnostic_for(result.error))
+            if not self._finish_each(unconfirmed, result.unconfirmed_count):
+                return
+        self._finish_each(_NOT_EXECUTED, result.unsent_count)
+
+    def enforcing(self, index: int, /) -> _LiveEnforcement:
+        return _LiveEnforcement(self._batch, self._first_id + index)
+
+    def _start(self, index: int) -> None:
+        publisher = self._publisher
+        calls = self._calls
+        publisher.deliver(
+            DatabaseCallStarted(
+                publisher.execution_id,
+                publisher.take_sequence(),
+                self._first_id + index,
+                self._batch_id,
+                calls.target(index).canonical,
+                "write",
+                calls[index],
+            )
+        )
+
+    def _finish_confirmed(self, outcomes: tuple[ConfirmedWriteOutcome, ...]) -> bool:
+        return all(self._finish(_confirmed_outcome(outcome)) for outcome in outcomes)
+
+    def _finish_each(self, outcome: DatabaseCallOutcome, count: int) -> bool:
+        return all(self._finish(outcome) for _ in range(count))
+
+    def _finish(self, outcome: DatabaseCallOutcome) -> bool:
+        """Finish the next unresolved call with ``outcome``, or answer ``False``
+        and finish nothing once delivery has stopped."""
+        publisher = self._publisher
+        if not publisher.active:
+            return False
+        index = self._finished
+        self._finished = index + 1
+        first_id = self._first_id
+        publisher.deliver(
+            DatabaseCallFinished(
+                publisher.execution_id,
+                publisher.take_sequence(),
+                first_id + index,
+                self._batch_id,
+                self._calls[index],
+                self._duration_ns,
+                outcome,
+                first_id,
+            )
+        )
+        return True
+
+
+def _confirmed_outcome(outcome: ConfirmedWriteOutcome) -> DatabaseCallOutcome:
+    if isinstance(outcome, StatementFailed):
+        return DatabaseCallFailed(database_diagnostic_for(outcome.error))
+    if isinstance(outcome, StatementNotExecuted):
+        return _NOT_EXECUTED
+    return DatabaseWriteCompleted(outcome)
 
 
 class _LiveStreamBatch(_LiveConnectionOwner):

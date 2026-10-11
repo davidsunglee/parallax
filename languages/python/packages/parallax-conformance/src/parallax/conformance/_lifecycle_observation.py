@@ -34,7 +34,11 @@ from parallax.core.execution_lifecycle import (
     DatabaseCallFailed,
     DatabaseCallFinished,
     DatabaseCallKind,
+    DatabaseCallNotExecuted,
+    DatabaseCallOutcome,
     DatabaseCallStarted,
+    DatabaseCallUnconfirmed,
+    DatabaseFailureDiagnostic,
     DatabaseReadCompleted,
     DatabaseWriteCompleted,
     DatabaseWriteRowsCompleted,
@@ -598,18 +602,14 @@ def _write_batch_outcome(outcome: WriteBatchCompleted | WriteBatchFailed) -> dic
             assert_never(unreachable)
 
 
-def _database_call_outcome(
-    outcome: DatabaseReadCompleted
-    | DatabaseWriteCompleted
-    | DatabaseWriteRowsCompleted
-    | DatabaseCallFailed,
-) -> dict[str, object]:
+def _database_call_outcome(outcome: DatabaseCallOutcome) -> dict[str, object]:
     """A call's own terminal outcome.
 
-    A failed call is the ONE place the neutral `m-db-error` Category is
-    portable, because it is the one place `m-execution-lifecycle` puts a
-    Database Failure Diagnostic; the native code it sits beside is not portable
-    and stays out.
+    A failed or unconfirmed call is the ONE place the neutral `m-db-error`
+    Category is portable, because it is the one place `m-execution-lifecycle`
+    puts a Database Failure Diagnostic; the native code it sits beside is not
+    portable and stays out. Neither the duration nor the timing identity a call
+    shares with others of one transport invocation is portable either.
     """
     match outcome:
         case DatabaseReadCompleted(returned_rows):
@@ -619,12 +619,20 @@ def _database_call_outcome(
         case DatabaseWriteRowsCompleted(returned_rows):
             return {"outcome": "writeRowsCompleted", "returnedRows": returned_rows}
         case DatabaseCallFailed(diagnostic):
-            failed: dict[str, object] = {"outcome": "failed", "category": diagnostic.category}
-            if diagnostic.failure.code is not None:
-                failed["code"] = diagnostic.failure.code
-            return failed
+            return _diagnosed("failed", diagnostic)
+        case DatabaseCallNotExecuted():
+            return {"outcome": "notExecuted"}
+        case DatabaseCallUnconfirmed(diagnostic):
+            return _diagnosed("unconfirmed", diagnostic)
         case _ as unreachable:  # pragma: no cover - exhaustiveness guard
             assert_never(unreachable)
+
+
+def _diagnosed(outcome: str, diagnostic: DatabaseFailureDiagnostic) -> dict[str, object]:
+    fields: dict[str, object] = {"outcome": outcome, "category": diagnostic.category}
+    if diagnostic.failure.code is not None:
+        fields["code"] = diagnostic.failure.code
+    return fields
 
 
 def _invocation(invocation: OuterInvocation | JoinedInvocation) -> dict[str, object]:

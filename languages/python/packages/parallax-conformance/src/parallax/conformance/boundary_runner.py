@@ -15,6 +15,7 @@ from parallax.core import Entity
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
     BeginFailed,
+    CanonicalWriteStatement,
     CleanupIssue,
     CleanupResult,
     ConnectionAcquisitionError,
@@ -26,10 +27,16 @@ from parallax.core.db_port import (
     DocumentReadOrdinals,
     Invalidated,
     IsolationLevel,
+    OrderedWriteResult,
+    OrderedWriteResultComplete,
+    OrderedWriteResultInterrupted,
+    OrderedWriteTransport,
     PipelineStatement,
     PoolMetricsSource,
     ReleaseUnconfirmed,
     Row,
+    StatementFailed,
+    StatementNotExecuted,
     TransactionOutcome,
 )
 from parallax.core.diagnostics import diagnostic_for
@@ -453,6 +460,11 @@ class FaultInjectingPort:
     Affected Rows Policy shortfall -> ``enforce_affected_rows`` ->
     ``OptimisticLockConflictError`` fire through the genuine write-seam
     code path.
+
+    Where the inner port has ordered write transport, so does this one, and
+    the fault meets the first statement an invocation presents: a raised error
+    fails it and executes none after it, and the conflict matches no row while
+    the rest of the invocation reaches the inner port.
     """
 
     def __init__(
@@ -467,6 +479,7 @@ class FaultInjectingPort:
         self._fault = fault
         self._persistent = persistent
         self._state = state if state is not None else _FaultState()
+        self._ordered = None if inner.ordered_write_transport is None else self._ordered_write
 
     @property
     def dialect(self) -> Dialect:
@@ -491,6 +504,28 @@ class FaultInjectingPort:
                 return 0
             raise armed.error()
         return self._inner.execute_write(sql, binds)
+
+    @property
+    def ordered_write_transport(self) -> OrderedWriteTransport | None:
+        return self._ordered
+
+    def _ordered_write(self, statements: Sequence[CanonicalWriteStatement]) -> OrderedWriteResult:
+        transport = cast("OrderedWriteTransport", self._inner.ordered_write_transport)
+        armed = self._armed_at("work")
+        if armed is None:
+            return transport(statements)
+        self._state.fired = True
+        if armed.error is not None:
+            skipped = (StatementNotExecuted(),) * (len(statements) - 1)
+            return OrderedWriteResultComplete((StatementFailed(armed.error()), *skipped))
+        if len(statements) == 1:
+            return OrderedWriteResultComplete((0,))
+        rest = transport(statements[1:])
+        if isinstance(rest, OrderedWriteResultComplete):
+            return OrderedWriteResultComplete((0, *rest.outcomes))
+        return OrderedWriteResultInterrupted(
+            (0, *rest.confirmed), rest.unconfirmed_count, rest.unsent_count, rest.error
+        )
 
     def transaction[T](
         self, body: Callable[[DatabaseConnection], T], *, isolation: IsolationLevel | None = None

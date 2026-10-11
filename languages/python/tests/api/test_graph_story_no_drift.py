@@ -54,6 +54,7 @@ from parallax.core.db_port import (
     DatabaseConnection,
     IsolationLevel,
     MappingRow,
+    OrderedWriteTransport,
     Row,
     TransactionOutcome,
 )
@@ -302,6 +303,10 @@ class _ResponseRecordingConnection:
 
     def execute_write(self, sql: str, binds: Sequence[Bind]) -> int:
         return self._inner.execute_write(sql, binds)
+
+    @property
+    def ordered_write_transport(self) -> OrderedWriteTransport | None:
+        return self._inner.ordered_write_transport
 
     def transaction[T](
         self,

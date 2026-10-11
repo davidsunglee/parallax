@@ -549,7 +549,8 @@ same optional normalized `executionLifecycle` shape: ordered Root Executions
 whose UUIDs are replaced by positive first-observation indexes, each carrying
 its kind and ordered correlated events. Mirroring the oracle lets a runner
 compare the two structurally without making portable assertions about UUIDs,
-durations, runtime type names, or diagnostic text.
+durations or the timing identities calls share, runtime type names, or
+diagnostic text.
 
 The observation reports events the implementation's own installed recording
 Handler received, never a re-derivation from the case. The adapter prepares a

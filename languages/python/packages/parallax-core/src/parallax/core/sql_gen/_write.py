@@ -66,7 +66,7 @@ from parallax.core.write_plan.steps import (
     WriteTarget,
 )
 
-__all__ = ["InsertStatementBuilder", "StepPayload", "compile_write_step"]
+__all__ = ["InsertStatementBuilder", "StepPayload", "compile_write_step", "effect_bind_bound"]
 
 type StepPayload = tuple[RowPayload, ...] | AssignmentPayload | None
 """The prepared values one step's statement stores: one Row Payload per insert
@@ -150,6 +150,27 @@ def compile_write_step(
         case PlannedTemporalGuard():
             _require_no_payload(step, payload)
             return _lower_milestone_guard(step, meta, dialect)
+
+
+def effect_bind_bound(
+    step: PlannedClose | PlannedTemporalRevision | PlannedTemporalRemoval | PlannedTemporalGuard,
+) -> int:
+    """The most binds ``step``'s statement carries, known before its payload is
+    prepared.
+
+    The milestone address binds each key value, at most one table-per-hierarchy
+    tag, and each axis end, and a gate binds once more. Each member a revising
+    step assigns binds at most twice: once in a Column of its own, or a path and
+    a value in the shared Structured Column's mutation expression (`m-dialect`).
+    """
+    target = step.target
+    bound = len(target.key_values) + 1 + len(target.end_values)
+    if isinstance(step.concurrency, TemporalGate):
+        bound += 1
+    if isinstance(step, PlannedClose | PlannedTemporalRevision):
+        assignments = step.assignments
+        bound += 2 * (len(assignments.attributes) + len(assignments.value_objects))
+    return bound
 
 
 def _row_payloads(step: PlannedInsert, payload: StepPayload) -> tuple[RowPayload, ...]:

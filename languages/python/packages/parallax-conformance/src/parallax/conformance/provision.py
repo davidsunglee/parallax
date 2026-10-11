@@ -55,6 +55,7 @@ if TYPE_CHECKING:
         DocumentReadOrdinals,
         DriverManaged,
         IsolationLevel,
+        OrderedWriteTransport,
         PipelineStatement,
         PoolMetricsSource,
         Row,
@@ -398,6 +399,10 @@ class ContainerDatabase:  # pragma: no cover - exercised by the Docker-backed la
 
     def execute_write(self, sql: str, binds: Sequence[Bind]) -> int:
         return self._session.execute_write(sql, binds)
+
+    @property
+    def ordered_write_transport(self) -> OrderedWriteTransport | None:
+        return self._session.ordered_write_transport
 
     def transaction[T](
         self, body: Callable[[DatabaseConnection], T], *, isolation: IsolationLevel | None = None

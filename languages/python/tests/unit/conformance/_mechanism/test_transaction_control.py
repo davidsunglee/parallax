@@ -14,6 +14,7 @@ from parallax.conformance._mechanism.transaction_control import (
     write_connection,
 )
 from parallax.core.db_port import DatabaseConnection, PipelineStatement, RolledBack
+from tests._support.db_port import ScriptedAdapter
 from tests.unit.conformance._recording_ports import FakeWritePort
 
 
@@ -27,6 +28,14 @@ def test_the_aborting_port_passes_reads_and_writes_through() -> None:
     assert port.execute_pipeline((PipelineStatement("select 1"),)) == [[(1,)]]
     assert port.execute_write("update account set balance = ?", [1]) == 1
     assert inner.reads and inner.writes
+
+
+def test_the_aborting_port_answers_the_inner_ordered_transport_it_leaves_undecorated() -> None:
+    absent = write_connection(FakeWritePort(), rollback=True)
+    assert absent.ordered_write_transport is None
+    inner = ScriptedAdapter(ordered=True)
+    port = write_connection(inner, rollback=True)
+    assert port.ordered_write_transport is inner.ordered_write_transport
 
 
 def test_a_port_that_does_not_roll_back_is_handed_back_undecorated() -> None:

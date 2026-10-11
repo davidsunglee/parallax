@@ -17,8 +17,10 @@ immutable script, and a call the script does not reach is a failure at the call
 rather than a silently different answer. The script is a TREE: a ``Transact``
 entry nests the entries its body may run, so which side of a transaction
 boundary a call landed on is stated by the shape rather than left implicit.
-``RefusingAdapter`` answers nothing at all, for a path asserted to reach no
-database, so it records nothing either. What ``ScriptedAdapter`` records is one
+An adapter built with ``ordered=True`` also has ordered write transport, whose
+invocations take :class:`Ordered` entries; every other one runs each write
+alone. ``RefusingAdapter`` answers nothing at all, for a path asserted to reach
+no database, so it records nothing either. What ``ScriptedAdapter`` records is one
 flat chronology of :data:`PortCall` values, where the
 ``begin``/``commit``/``rollback`` markers already carry the scope the script had
 to nest to express.
@@ -51,6 +53,7 @@ from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
     BeginFailed,
     Bind,
+    CanonicalWriteStatement,
     CleanupResult,
     CommitFailed,
     Committed,
@@ -60,12 +63,17 @@ from parallax.core.db_port import (
     DatabaseConnection,
     DocumentReadOrdinals,
     IsolationLevel,
+    OrderedWriteResult,
+    OrderedWriteResultComplete,
+    OrderedWriteResultInterrupted,
+    OrderedWriteTransport,
     PipelineStatement,
     PoolMetricsSource,
     Returned,
     RollbackFailed,
     RolledBack,
     Row,
+    StatementFailed,
     TransactionOutcome,
 )
 from parallax.core.dialect import POSTGRES, Dialect
@@ -76,6 +84,8 @@ __all__ = [
     "CommitCall",
     "ConnectsAsItself",
     "DetachableMetrics",
+    "Ordered",
+    "OrderedCall",
     "PortCall",
     "Read",
     "ReadCall",
@@ -119,6 +129,14 @@ class WriteCall:
 
 
 @dataclass(frozen=True, slots=True)
+class OrderedCall:
+    """One ordered write transport invocation, as the port received it: each
+    presented statement in the driver form the adapter converts it to."""
+
+    writes: tuple[WriteCall, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class BeginCall:
     """A transaction boundary opened, carrying the isolation the caller asked for.
 
@@ -141,7 +159,7 @@ class RollbackCall:
     """The boundary the last ``BeginCall`` opened ended by rolling back."""
 
 
-type PortCall = ReadCall | WriteCall | BeginCall | CommitCall | RollbackCall
+type PortCall = ReadCall | WriteCall | OrderedCall | BeginCall | CommitCall | RollbackCall
 
 
 # --------------------------------------------------------------------------- #
@@ -166,6 +184,20 @@ class Write:
 
     affected: int = 1
     raises: DatabaseError | None = None
+    times: int = 1
+
+
+@dataclass(frozen=True, slots=True)
+class Ordered:
+    """The next ordered write transport invocation: this result, or this
+    exception escaping it.
+
+    ``result`` is whatever the transport answers, unchecked, so a script can
+    hand execution a malformed one.
+    """
+
+    result: object = None
+    raises: BaseException | None = None
     times: int = 1
 
 
@@ -202,10 +234,10 @@ class Transact:
         object.__setattr__(self, "times", times)
 
 
-type ScriptEntry = Read | Write | Transact
+type ScriptEntry = Read | Write | Ordered | Transact
 
 
-def _failures(entries: Sequence[ScriptEntry]) -> Iterator[Exception]:
+def _failures(entries: Sequence[ScriptEntry]) -> Iterator[BaseException]:
     """Every failure the script would report, once per reporting call."""
     for entry in entries:
         for _ in range(entry.times):
@@ -213,8 +245,24 @@ def _failures(entries: Sequence[ScriptEntry]) -> Iterator[Exception]:
                 clauses = (entry.begin, entry.commit, entry.rollback)
                 yield from (clause for clause in clauses if clause is not None)
                 yield from _failures(entry.body)
-            elif entry.raises is not None:
+                continue
+            if entry.raises is not None:
                 yield entry.raises
+            if isinstance(entry, Ordered):
+                yield from _result_failures(entry.result)
+
+
+def _result_failures(result: object) -> Iterator[BaseException]:
+    match result:
+        case OrderedWriteResultComplete(outcomes=outcomes):
+            confirmed: tuple[object, ...] = outcomes
+        case OrderedWriteResultInterrupted(confirmed=confirmed, error=error):
+            yield error
+        case _:
+            return
+    for outcome in confirmed:
+        if isinstance(outcome, StatementFailed):
+            yield outcome.error
 
 
 @dataclass(slots=True)
@@ -256,6 +304,9 @@ class _ScriptedConnection:
     def __init__(self, adapter: ScriptedAdapter) -> None:
         self._adapter: ScriptedAdapter | None = adapter
         self.dialect = adapter.dialect
+        self.ordered_write_transport: OrderedWriteTransport | None = (
+            None if adapter.ordered_write_transport is None else self._ordered
+        )
 
     def revoke(self) -> None:
         self._adapter = None
@@ -276,6 +327,9 @@ class _ScriptedConnection:
 
     def execute_write(self, sql: str, binds: Sequence[Bind]) -> int:
         return self._script().execute_write(sql, binds)
+
+    def _ordered(self, statements: Sequence[CanonicalWriteStatement]) -> OrderedWriteResult:
+        return self._script().execute_ordered(statements)
 
     def execute_pipeline(self, statements: Sequence[PipelineStatement]) -> list[list[Row]]:
         return self._script().execute_pipeline(statements)
@@ -407,7 +461,8 @@ class ScriptedAdapter:
     writing the two before it. ``acquisitions``, ``cleanups``, and ``closes``
     record what actually happened. ``metrics`` is the pool source the runtime
     this opens publishes, absent by default because a script describes
-    statements rather than a pool.
+    statements rather than a pool. ``ordered`` gives every connection ordered
+    write transport over :class:`Ordered` entries.
     """
 
     dialect: Dialect
@@ -419,14 +474,18 @@ class ScriptedAdapter:
         acquisition_failures: Sequence[ConnectionAcquisitionError | None] = (),
         cleanup_results: Sequence[CleanupResult | None] = (),
         metrics: PoolMetricsSource | None = None,
+        ordered: bool = False,
     ) -> None:
-        seen: dict[int, Exception] = {}
+        seen: dict[int, BaseException] = {}
         for failure in _failures(script):
             if id(failure) in seen:
                 raise ValueError("one failure instance cannot be reported by two calls")
             seen[id(failure)] = failure
         self.dialect = dialect
         self.metrics = metrics
+        self.ordered_write_transport: OrderedWriteTransport | None = (
+            self.execute_ordered if ordered else None
+        )
         self.calls: list[PortCall] = []
         self.acquisitions = 0
         self.closes = 0
@@ -487,6 +546,23 @@ class ScriptedAdapter:
         if entry.raises is not None:
             raise entry.raises
         return entry.affected
+
+    def execute_ordered(self, statements: Sequence[CanonicalWriteStatement]) -> OrderedWriteResult:
+        """One ordered write transport invocation, converting each canonical
+        statement to the driver's form as an adapter does before submission."""
+        entry = self._scopes[-1].take(Ordered, f"{len(statements)} ordered statements")
+        to_driver = self.dialect.to_driver_sql
+        self.calls.append(
+            OrderedCall(
+                tuple(
+                    WriteCall(to_driver(statement.sql), tuple(statement.binds))
+                    for statement in statements
+                )
+            )
+        )
+        if entry.raises is not None:
+            raise entry.raises
+        return cast("OrderedWriteResult", entry.result)
 
     def execute_pipeline(self, statements: Sequence[PipelineStatement]) -> list[list[Row]]:
         return [
@@ -567,6 +643,7 @@ class RefusingAdapter:
     """
 
     dialect: Dialect
+    ordered_write_transport: OrderedWriteTransport | None = None
 
     def __init__(self, *, dialect: Dialect = POSTGRES) -> None:
         self.dialect = dialect

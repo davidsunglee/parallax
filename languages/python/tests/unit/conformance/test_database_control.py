@@ -257,6 +257,11 @@ def test_a_control_forwards_every_verb_to_the_shipped_execution_over_its_session
     assert (connection.begins, connection.commits) == (1, 1)
 
 
+def test_a_control_has_the_ordered_transport_its_shipped_execution_has() -> None:
+    control = _control(_FakeConnection(rows=[]))
+    assert control.ordered_write_transport is None
+
+
 def test_a_control_undoes_its_own_held_transaction_through_the_driver() -> None:
     # `rollback` is the verb an application's Database has no use for: only a
     # session the harness itself holds open across statements can be told to

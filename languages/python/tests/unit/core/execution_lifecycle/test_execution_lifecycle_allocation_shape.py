@@ -50,8 +50,10 @@ from parallax.core.execution_lifecycle._activity import (
 from tests._support.repo import PY_ROOT
 from tests.unit.core.execution_lifecycle._lifecycle_cost_support import (
     AFFECTED,
+    ORDERED,
     STATEMENT,
     TARGET,
+    present,
     rows,
 )
 from tests.unit.memory_instruments import (
@@ -126,8 +128,9 @@ def _unobserved_transaction(sample: Callable[[], None]) -> None:
 
     The scopes a transaction opens are the ones no read reaches — the invocation,
     the attempt whose start the port body announces, the batch a flush runs
-    inside, and the enforcement bracket that follows each write — so the free
-    path they take is graded here rather than inferred from the read's.
+    inside, the enforcement bracket that follows each write, and the observation
+    of an ordered transport invocation with its own bracket — so the free path
+    they take is graded here rather than inferred from the read's.
     """
     with (
         open_transaction_root(
@@ -143,8 +146,10 @@ def _unobserved_transaction(sample: Callable[[], None]) -> None:
         with attempt.write_batch("pre_commit") as batch:
             with batch.database_call(STATEMENT, "write", TARGET) as call:
                 call.write_completed(AFFECTED)
-            with batch.enforcing(call):
-                sample()
+            with batch.enforcing(call), batch.ordered_calls(ORDERED) as calls:
+                calls.finish_calls(calls.invoke(present, ORDERED))
+                with calls.enforcing(0):
+                    sample()
         attempt.committed()
 
 
@@ -306,9 +311,9 @@ def test_an_unobserved_write_batch_allocates_nothing_either() -> None:
 
 @in_a_child_interpreter
 def test_an_unobserved_transaction_allocates_nothing_across_its_whole_seam() -> None:
-    # The invocation, the attempt, the batch, and the enforcement bracket are
-    # four more scopes an unobserved operation opens, and the specification costs
-    # every one of them at nothing.
+    # The invocation, the attempt, the batch, the enforcement brackets, and an
+    # ordered invocation's observation are more scopes an unobserved operation
+    # opens, and the specification costs every one of them at nothing.
     tracemalloc.start()
     try:
         kept, transient = allocation(_unobserved_transaction)

@@ -46,7 +46,9 @@ from parallax.core.execution_lifecycle import (
     ConnectionAcquired,
     DatabaseCallFailed,
     DatabaseCallFinished,
+    DatabaseCallNotExecuted,
     DatabaseCallStarted,
+    DatabaseCallUnconfirmed,
     DatabaseReadCompleted,
     DatabaseWriteCompleted,
     DatabaseWriteRowsCompleted,
@@ -278,6 +280,86 @@ def test_a_database_call_reports_its_duration_row_count_and_neutral_category(
     assert failure.fields["database_category"] == "deadlock"
     assert failure.fields["database_native_code"] == "40P01"
     assert failure.level == logging.DEBUG, "an ordinary non-root Finished"
+
+
+def test_a_call_ordered_transport_never_ran_or_left_unknown_logs_its_own_outcome(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    skipped, unknown = _records(
+        caplog,
+        [
+            DatabaseCallFinished(
+                EXECUTION.id, 1, 3, 1, STATEMENT, 6_000, DatabaseCallNotExecuted(), 2
+            ),
+            DatabaseCallFinished(
+                EXECUTION.id,
+                2,
+                4,
+                1,
+                STATEMENT,
+                6_000,
+                DatabaseCallUnconfirmed(_DATABASE_FAILURE),
+                2,
+            ),
+        ],
+    )
+    assert skipped.fields["outcome"] == "notExecuted"
+    assert "database_category" not in skipped.fields
+    assert "error_type" not in skipped.fields
+    assert unknown.fields["outcome"] == "unconfirmed"
+    assert unknown.fields["database_category"] == "deadlock"
+    assert unknown.fields["database_native_code"] == "40P01"
+    assert unknown.level == logging.DEBUG, "an ordinary non-root Finished"
+    assert [record.fields["shared_timing_id"] for record in (skipped, unknown)] == [2, 2]
+    assert [record.fields["duration_ns"] for record in (skipped, unknown)] == [6_000, 6_000]
+
+
+def test_the_summary_charges_one_transport_invocation_once_however_many_calls_it_carried(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    def call(sequence: int, activity: int, duration: int, timing: int | None) -> ExecutionEvent:
+        return DatabaseCallFinished(
+            EXECUTION.id,
+            sequence,
+            activity,
+            1,
+            STATEMENT,
+            duration,
+            DatabaseWriteCompleted(1),
+            timing,
+        )
+
+    events: list[ExecutionEvent] = [
+        ReadStarted(EXECUTION.id, 1, 1, None, "Account", "typed", "edition"),
+        call(2, 2, 1_000, None),
+        call(3, 3, 5_000, 3),
+        call(4, 4, 5_000, 3),
+        call(5, 5, 5_000, 3),
+        call(6, 6, 7_000, 6),
+        call(7, 7, 7_000, 6),
+        call(8, 8, 3_000, None),
+        call(9, 9, 3_000, None),
+        ReadFinished(EXECUTION.id, 10, 1, None, ReadCompleted()),
+    ]
+    *calls, summary = _records(caplog, events)
+    # Every call is counted and every count summed, while each shared timing is
+    # charged at its first call only; calls run alone are each their own.
+    assert summary.fields["total_database_calls"] == 8
+    assert summary.fields["total_affected_rows"] == 8
+    assert summary.fields["total_database_duration_ns"] == 1_000 + 5_000 + 7_000 + 3_000 + 3_000
+    alone = [
+        record for record in calls if record.fields.get("transition") == "databaseCallFinished"
+    ]
+    assert ["shared_timing_id" in record.fields for record in alone] == [
+        False,
+        True,
+        True,
+        True,
+        True,
+        True,
+        False,
+        False,
+    ]
 
 
 def test_only_diagnostic_detail_carries_the_bounded_message_and_stack(
