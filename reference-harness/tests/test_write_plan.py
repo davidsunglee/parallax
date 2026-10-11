@@ -17,7 +17,9 @@ import pytest
 
 from reference_harness import write_plan
 from reference_harness.case import Case, discover_cases
+from reference_harness.case_assertions import CaseFailure
 from reference_harness.write_plan import (
+    insert_value_rows,
     parse_insert_columns,
     parse_set_columns,
     statement_object,
@@ -76,6 +78,7 @@ def test_write_grading_offers_operations_and_no_lexical_primitive() -> None:
         "close_address_binds",
         "has_temporal_gate",
         "has_version_gate",
+        "insert_value_rows",
         "is_existing_row_statement",
         "is_milestone_guard_statement",
         "parse_insert_columns",
@@ -156,6 +159,32 @@ def test_an_insert_column_list_reads_no_syntax_inside_a_quoted_identifier() -> N
     # still the one that follows the table.
     max_form = 'insert into t(id, note) select coalesce(max(t0."id"), ?) + ?, ? from t t0'
     assert parse_insert_columns(case, max_form) == ["id", "note"]
+
+
+# --- the rows an insert binds -------------------------------------------------
+
+
+def test_each_value_tuple_of_an_insert_binds_its_own_row() -> None:
+    # Openings sharing one statement bind one tuple each, in order; a call inside a
+    # tuple is part of that tuple, and neither a quoted bracket nor a quoted `?` is
+    # syntax.
+    case = _a_case()
+    statement = (
+        'insert into t(id, "a)?", doc) values (?, ?, cast(? as jsonb)), (?, ?, cast(? as jsonb))'
+    )
+    assert insert_value_rows(case, statement, [1, "x", "{}", 2, "y", "[]"]) == [
+        [1, "x", "{}"],
+        [2, "y", "[]"],
+    ]
+    assert insert_value_rows(case, "insert into t(id) values (?)", [7]) == [[7]]
+
+
+def test_an_insert_binding_other_than_its_placeholders_is_refused() -> None:
+    case = _a_case()
+    with pytest.raises(CaseFailure, match="renders 4 placeholder"):
+        insert_value_rows(case, "insert into t(a, b) values (?, ?), (?, ?)", [1, 2, 3])
+    with pytest.raises(CaseFailure, match="VALUES tuples"):
+        insert_value_rows(case, "update t set a = ?", [1])
 
 
 # --- which object an existing-row statement addresses ------------------------

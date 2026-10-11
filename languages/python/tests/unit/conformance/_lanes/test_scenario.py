@@ -1260,7 +1260,7 @@ def test_run_scenario_case_settles_a_grouped_temporal_close_against_the_find_it_
     # a store keyed by identity alone could not have chosen between. The write
     # runs from its source's pin through infinity, so the flush reads the
     # coverage beyond R2 and closes R3 too; R2's changed part and R3's are one
-    # row.
+    # row, which one insert opens beside R2's head.
     r2 = {
         "pos_id": 1,
         "acct_num": "A",
@@ -1278,11 +1278,11 @@ def test_run_scenario_case_settles_a_grouped_temporal_close_against_the_find_it_
     }
     port = FakeWritePort(read_script=[[r2], [r3], [r2, r3]])
     run = scenario.run_scenario_case(_load_case("m-unit-work-015"), port)
-    assert run.round_trips == 7
+    assert run.round_trips == 6
     assert [e.case_pointer for e in run.emissions] == [
         "/scenario/0/objectQuery",
         "/scenario/1/objectQuery",
-        *["/scenario/2/write"] * 4,
+        *["/scenario/2/write"] * 3,
     ]
     close = run.emissions[2]
     assert close.sql.startswith("update position set out_z = ?")
@@ -1396,7 +1396,13 @@ def test_a_range_beyond_its_observation_binds_the_coverage_the_tracker_reads() -
         "PlannedInsert",
         "PlannedInsert",
     ]
-    assert len(statements) == len(executed.steps)
+    # The two closes lower alone and the two openings share one statement.
+    assert [statement.sql.split(" ", 1)[0] for statement in statements] == [
+        "update",
+        "update",
+        "insert",
+    ]
+    assert statements[2].sql.count("), (") == 1
     assert len(executed.changed) == 2
 
 
@@ -1662,8 +1668,8 @@ def test_run_write_sequence_case_buffers_a_bounded_bitemporal_valid_time_window(
     _emissions, table_state, round_trips = scenario.run_write_sequence_case(
         _load_case("m-temporal-write-017"), port
     )
-    assert round_trips == 6
-    assert len(port.writes) == 5 and port.commits == 2
+    assert round_trips == 4
+    assert len(port.writes) == 3 and port.commits == 2
     assert table_state is not None and "position" in table_state
 
 
@@ -3273,7 +3279,7 @@ def test_a_bounded_bitemporal_terminate_entry_reaches_its_own_wire_verb() -> Non
     _emissions, _table_state, round_trips = scenario.run_write_sequence_case(
         _load_case("m-temporal-write-018"), port
     )
-    assert round_trips == 5  # four statements plus the terminateUntil entry's own read
+    assert round_trips == 4  # three statements plus the terminateUntil entry's own read
     assert port.writes[1][0].startswith("update position set out_z")
 
 
@@ -3937,7 +3943,7 @@ def test_a_bounded_temporal_target_step_reads_its_coverage_then_writes_its_windo
     _emissions, _table_state, round_trips = scenario.run_write_sequence_case(
         _load_case("m-temporal-write-042"), port
     )
-    assert round_trips == 6
+    assert round_trips == 4
     (coverage,) = (binds for sql, binds in port.reads if "t0.thru_z > " in sql)
     assert coverage == [
         1,
@@ -3945,4 +3951,5 @@ def test_a_bounded_temporal_target_step_reads_its_coverage_then_writes_its_windo
         dt.datetime(2024, 9, 1, tzinfo=dt.UTC),
         INFINITY,
     ]
-    assert [sql.split(" ", 1)[0] for sql, _ in port.writes] == ["insert", "update", *["insert"] * 3]
+    assert [sql.split(" ", 1)[0] for sql, _ in port.writes] == ["insert", "update", "insert"]
+    assert port.writes[2][0].count("), (") == 2

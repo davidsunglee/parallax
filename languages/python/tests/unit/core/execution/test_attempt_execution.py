@@ -76,7 +76,6 @@ from tests._support.db_port import (
     Write,
     WriteCall,
 )
-from tests._support.opening_selection import select_grouped_openings
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
 from tests.unit.core.execution._execution_support import ACCOUNT, itself, scope
 
@@ -529,10 +528,7 @@ def _run_positions(port: ScriptedAdapter, body: Callable[[Attempt], None]) -> No
     scope(port, _POSITIONS).transact(body, itself, concurrency="locking")
 
 
-def test_a_grouped_unit_reports_once_after_its_statement_and_a_failed_one_reports_none(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    select_grouped_openings(monkeypatch)
+def test_a_grouped_unit_reports_once_after_its_statement_and_a_failed_one_reports_none() -> None:
     first = (_close(1), _opening(1), _opening(2), _opening(3))
     second = (_opening(5),)
     plan = WritePlan(
@@ -573,7 +569,6 @@ def test_a_flushed_runs_statements_are_the_ones_its_dry_traversal_answers(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(_OPENING_CAP, 2)
-    select_grouped_openings(monkeypatch)
     steps = (_close(1), _opening(1), _opening(2), _opening(3), _close(2), _opening(4))
     physical = _physical(*steps)
     assert len(physical) == 5

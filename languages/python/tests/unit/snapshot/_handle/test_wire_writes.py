@@ -53,6 +53,7 @@ from tests._support.db_port import (
     Transact,
     Write,
     WriteCall,
+    inserted_rows,
 )
 from tests._support.root_ownership import own_root
 from tests.unit._transact_support import (
@@ -333,7 +334,7 @@ def test_a_wire_terminate_closes_the_observed_milestone() -> None:
 
 
 def test_a_bounded_wire_update_splits_the_observed_rectangle() -> None:
-    port = ScriptedAdapter(Transact(Read(rows=[_position_row()]), Write(times=4)))
+    port = ScriptedAdapter(Transact(Read(rows=[_position_row()]), Write(times=2)))
 
     def fn(tx: Transaction) -> None:
         tx.wire.amend(_node(tx, _POSITION_QUERY), {"value": "300.00"}, until=_UNTIL)
@@ -342,12 +343,13 @@ def test_a_bounded_wire_update_splits_the_observed_rectangle() -> None:
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
     ).using_database_login().transact(fn)
 
-    kinds = [op.sql.split()[0] for op in _writes(port)]
-    assert kinds == ["update", "insert", "insert", "insert"]
+    close, opened = _writes(port)
+    assert [close.sql.split()[0], opened.sql.split()[0]] == ["update", "insert"]
+    assert len(inserted_rows(opened)) == 3
 
 
 def test_a_bounded_wire_terminate_closes_and_reopens_the_flanks() -> None:
-    port = ScriptedAdapter(Transact(Read(rows=[_position_row()]), Write(times=3)))
+    port = ScriptedAdapter(Transact(Read(rows=[_position_row()]), Write(times=2)))
 
     def fn(tx: Transaction) -> None:
         tx.wire.terminate(_node(tx, _POSITION_QUERY), until=_UNTIL)
@@ -356,8 +358,9 @@ def test_a_bounded_wire_terminate_closes_and_reopens_the_flanks() -> None:
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
     ).using_database_login().transact(fn)
 
-    kinds = [op.sql.split()[0] for op in _writes(port)]
-    assert kinds == ["update", "insert", "insert"]
+    close, opened = _writes(port)
+    assert [close.sql.split()[0], opened.sql.split()[0]] == ["update", "insert"]
+    assert len(inserted_rows(opened)) == 2
 
 
 def test_a_bounded_wire_insert_opens_one_bounded_rectangle() -> None:
@@ -409,8 +412,8 @@ def test_a_wire_predicate_terminate_over_a_temporal_target_materializes() -> Non
 
 
 def test_the_bounded_predicate_verbs_reach_the_rectangle_split() -> None:
-    for verb, expected in (("update_where", 4), ("terminate_where", 3)):
-        port = ScriptedAdapter(Transact(Read(rows=[_position_row()]), Write(times=expected)))
+    for verb, rows in (("update_where", 3), ("terminate_where", 2)):
+        port = ScriptedAdapter(Transact(Read(rows=[_position_row()]), Write(times=2)))
         target: dict[str, object] = {
             "entity": "parallax.compatibility.WherePosition",
             "predicate": {"eq": {"path": "parallax.compatibility.WherePosition.id", "value": 1}},
@@ -427,7 +430,8 @@ def test_the_bounded_predicate_verbs_reach_the_rectangle_split() -> None:
         own_root(
             Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
         ).using_database_login().transact(fn)
-        assert len(_writes(port)) == expected
+        _close, opened = _writes(port)
+        assert len(inserted_rows(opened)) == rows
 
 
 # --------------------------------------------------------------------------- #

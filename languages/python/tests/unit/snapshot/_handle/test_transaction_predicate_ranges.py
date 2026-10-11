@@ -41,6 +41,7 @@ from tests._support.db_port import (
     Transact,
     Write,
     WriteCall,
+    inserted_rows,
 )
 from tests._support.root_ownership import own_root
 from tests.unit._where_position_model import WHERE_POSITION_META, WherePosition
@@ -107,7 +108,7 @@ def test_a_start_equal_object_still_amends_the_later_coverage_it_reaches() -> No
         Transact(
             Read(rows=[_row(1, _JAN, _APR, "150.00")]),
             Read(rows=[_row(1, _APR, _JUL, "200.00")]),
-            Write(times=3),
+            Write(times=2),
         )
     )
     _transact(port, concurrency="locking", fn=_amend)
@@ -116,10 +117,11 @@ def test_a_start_equal_object_still_amends_the_later_coverage_it_reaches() -> No
     coverage = reads[1]
     assert coverage.binds[:3] == (1, _APR, _JUN)
     assert coverage.sql.endswith(" for share of t0")
-    close, changed, carried = [call for call in port.calls if isinstance(call, WriteCall)]
+    close, opened = [call for call in port.calls if isinstance(call, WriteCall)]
+    changed, carried = inserted_rows(opened)
     assert close.sql.startswith("update") and _JUL in close.binds
-    assert (changed.binds[2], changed.binds[3:5]) == (Decimal("150.00"), (_APR, _JUN))
-    assert (carried.binds[2], carried.binds[3:5]) == (Decimal("200.00"), (_JUN, _JUL))
+    assert (changed[2], changed[3:5]) == (Decimal("150.00"), (_APR, _JUN))
+    assert (carried[2], carried[3:5]) == (Decimal("200.00"), (_JUN, _JUL))
 
 
 def test_an_unchanged_start_is_proven_by_a_guard_under_optimistic_concurrency() -> None:
@@ -173,15 +175,15 @@ def test_each_batch_executes_before_the_next_is_read(monkeypatch: pytest.MonkeyP
         Transact(
             Read(rows=_two_objects()),
             Read(rows=[_row(1, _APR, _JUL, "200.00")]),
-            Write(times=5),
+            Write(times=3),
             Read(rows=[_row(2, _APR, _JUL, "200.00")]),
-            Write(times=5),
+            Write(times=3),
         )
     )
     _transact(port, concurrency="locking", fn=_amend)
-    # Each object's two closes, its head, its two equal changed parts as one
-    # row, and its tail.
-    batch = ["read", "update", "update", "insert", "insert", "insert"]
+    # Each object's two closes, then one insert of its head, its two equal
+    # changed parts as one row, and its tail.
+    batch = ["read", "update", "update", "insert"]
     assert _kinds(port) == ["read", *batch, *batch, "CommitCall"]
 
 
@@ -194,7 +196,7 @@ def test_a_later_batchs_failure_rolls_back_what_earlier_batches_executed(
         Transact(
             Read(rows=_two_objects()),
             Read(rows=[_row(1, _APR, _JUL, "200.00")]),
-            Write(times=5),
+            Write(times=3),
             Read(raises=failure),
         )
     )
@@ -206,8 +208,6 @@ def test_a_later_batchs_failure_rolls_back_what_earlier_batches_executed(
         "read",
         "update",
         "update",
-        "insert",
-        "insert",
         "insert",
         "read",
         "RollbackCall",
@@ -244,7 +244,7 @@ def test_a_cleanup_failure_alone_refuses_the_groups_success(
         Transact(
             Read(rows=[_row(1, _JAN, _APR, "100.00")]),
             Read(rows=[]),
-            Write(times=3),
+            Write(times=2),
         )
     )
     with raises_contextualized(_CleanupFailedError):
@@ -294,7 +294,7 @@ def test_an_interruption_between_batches_closes_the_group_and_rolls_back(
         Transact(
             Read(rows=_two_objects()),
             Read(rows=[_row(1, _APR, _JUL, "200.00")]),
-            Write(times=6),
+            Write(times=3),
         )
     )
     with pytest.raises(KeyboardInterrupt):
@@ -317,9 +317,9 @@ def test_the_group_completes_once_after_its_last_batch(monkeypatch: pytest.Monke
         Transact(
             Read(rows=_two_objects()),
             Read(rows=[]),
-            Write(times=3),
+            Write(times=2),
             Read(rows=[]),
-            Write(times=3),
+            Write(times=2),
         )
     )
     _transact(port, concurrency="locking", fn=_amend)
@@ -352,9 +352,9 @@ def test_planning_hands_the_selected_rows_over_and_each_batch_releases_its_own(
         Transact(
             Read(rows=_two_objects()),
             Read(rows=[_row(1, _APR, _JUL, "200.00")]),
-            Write(times=5),
+            Write(times=3),
             Read(rows=[_row(2, _APR, _JUL, "200.00")]),
-            Write(times=5),
+            Write(times=3),
         )
     )
     _transact(port, concurrency="locking", fn=_amend)
@@ -448,7 +448,7 @@ def test_a_collection_amendment_keeps_an_equal_start_and_reads_later_coverage_at
         Transact(
             Read(rows=[_tagged(1, _JAN, _APR, ["z", "z"])]),
             Read(rows=[_tagged(1, _APR, _JUL, ["y"])]),
-            Write(times=3),
+            Write(times=2),
         )
     )
     _transact_tagged(port, concurrency="locking")
@@ -456,10 +456,11 @@ def test_a_collection_amendment_keeps_an_equal_start_and_reads_later_coverage_at
     assert selection.binds.count(_FEB) == 2
     # Only the uncovered April onwards is read, and only when the flush reaches it.
     assert coverage.binds[:3] == (1, _APR, _JUN)
-    assert _kinds(port) == ["read", "read", "update", "insert", "insert", "CommitCall"]
-    _close, changed, carried = [call for call in port.calls if isinstance(call, WriteCall)]
-    assert JsonDocument(("z", "z")) in changed.binds
-    assert JsonDocument(("y",)) in carried.binds
+    assert _kinds(port) == ["read", "read", "update", "insert", "CommitCall"]
+    _close, opened = [call for call in port.calls if isinstance(call, WriteCall)]
+    changed, carried = inserted_rows(opened)
+    assert JsonDocument(("z", "z")) in changed
+    assert JsonDocument(("y",)) in carried
 
 
 @pytest.mark.parametrize("concurrency", ["optimistic", "locking"])

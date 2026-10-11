@@ -17,8 +17,8 @@ when:
       at: "2024-01-01T00:00:00.000000Z"
     - mutation: amend
       entity: parallax.compatibility.Position
-      statements: 3
-      note: inactivate the original on the Transaction-Time dimension, then chain head (old) + new tail (new)
+      statements: 2
+      note: inactivate the original on the Transaction-Time dimension, then chain head (old) + new tail (new) in one multi-row insert
       rows:
         - { id: 1, value: "200.00" }
       validFrom: "2024-06-01T00:00:00.000000Z"
@@ -34,13 +34,9 @@ then:
         mariadb: update `position` set out_z = ? where pos_id = ? and thru_z = ? and out_z = ? and in_z = ?
       binds: ["2024-07-01T00:00:00.000000Z", 1, infinity, infinity, "2024-01-01T00:00:00.000000Z"]
     - sql:
-        postgres: insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
-        mariadb: insert into `position` (pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
-      binds: [1, A, "100.00", "2024-01-01T00:00:00.000000Z", "2024-06-01T00:00:00.000000Z", "2024-07-01T00:00:00.000000Z", infinity]
-    - sql:
-        postgres: insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
-        mariadb: insert into `position` (pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
-      binds: [1, A, "200.00", "2024-06-01T00:00:00.000000Z", infinity, "2024-07-01T00:00:00.000000Z", infinity]
+        postgres: insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?)
+        mariadb: insert into `position` (pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?)
+      binds: [1, A, "100.00", "2024-01-01T00:00:00.000000Z", "2024-06-01T00:00:00.000000Z", "2024-07-01T00:00:00.000000Z", infinity, 1, A, "200.00", "2024-06-01T00:00:00.000000Z", infinity, "2024-07-01T00:00:00.000000Z", infinity]
   tableState:
     position:
       - pos_id: 1
@@ -64,4 +60,4 @@ then:
         thru_z: infinity
         in_z: "2024-07-01T00:00:00.000000Z"
         out_z: infinity
-  roundTrips: 5
+  roundTrips: 4

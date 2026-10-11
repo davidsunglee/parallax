@@ -49,6 +49,7 @@ from tests._support.db_port import (
     Transact,
     Write,
     WriteCall,
+    inserted_rows,
 )
 from tests._support.root_ownership import own_root
 from tests.unit._transact_support import (
@@ -87,9 +88,10 @@ def _writes(port: ScriptedAdapter) -> list[WriteCall]:
 def _opened(port: ScriptedAdapter) -> list[tuple[object, object, object]]:
     """Each inserted Bitemporal row as its value and Valid-Time bounds."""
     return [
-        (call.binds[2], call.binds[3], call.binds[4])
+        (row[2], row[3], row[4])
         for call in _writes(port)
         if call.sql.startswith("insert into")
+        for row in inserted_rows(call)
     ]
 
 
@@ -141,7 +143,7 @@ def test_a_pending_opening_takes_each_edit_over_only_the_coverage_it_opens(
     expected: tuple[tuple[str, object, object], ...],
     representation: str,
 ) -> None:
-    port = ScriptedAdapter(Transact(Write(times=len(expected))))
+    port = ScriptedAdapter(Transact(Write()))
 
     def fn(tx: Transaction) -> None:
         bounds: dict[str, Any] = {} if opening_end is None else {"until": opening_end}
@@ -157,7 +159,8 @@ def test_a_pending_opening_takes_each_edit_over_only_the_coverage_it_opens(
         tx.wire.amend(node, {"value": "150.00"}, **edit)
 
     _transact(port, fn)
-    assert [call.sql.split(" ", 1)[0] for call in _writes(port)] == ["insert"] * len(expected)
+    # Every row the opening leaves is inserted, by one statement.
+    assert [call.sql.split(" ", 1)[0] for call in _writes(port)] == ["insert"]
     assert _opened(port) == [(Decimal(value), start, end) for value, start, end in expected]
 
 
@@ -165,7 +168,7 @@ def test_an_edit_bounded_at_or_before_the_anchor_is_refused_and_leaves_the_openi
     # The bound is judged against the start the edit takes from its insertion,
     # so a bound that does not follow the anchor is refused before anything
     # changes, and a valid edit afterwards still transforms the whole opening.
-    port = ScriptedAdapter(Transact(Write(times=2)))
+    port = ScriptedAdapter(Transact(Write()))
 
     def fn(tx: Transaction) -> None:
         opened = _position()
@@ -183,7 +186,7 @@ def test_an_edit_bounded_at_or_before_the_anchor_is_refused_and_leaves_the_openi
 
 
 def test_repeated_bounded_edits_start_at_the_anchor_rather_than_at_a_split() -> None:
-    port = ScriptedAdapter(Transact(Write(times=2)))
+    port = ScriptedAdapter(Transact(Write()))
 
     def fn(tx: Transaction) -> None:
         opened = _position()
@@ -996,7 +999,7 @@ def test_composition_spends_the_observed_source_and_not_the_insertions_authority
         Transact(
             Write(),
             Read(rows=[_rectangle(_MAR, _SEP)]),
-            Write(times=3),
+            Write(times=2),
             Read(rows=[_rectangle(_MAR, _MAY, "150.00")]),
             Read(rows=[_rectangle(_MAR, _MAY, "150.00")]),
             Write(),
@@ -1087,7 +1090,7 @@ def test_removing_a_bitemporal_row_no_insertion_opened_leaves_the_insertions_sta
         Transact(
             Write(),
             Read(rows=[stored]),
-            Write(times=3),
+            Write(times=2),
             Read(rows=[rewritten]),
             Write(),
         )
@@ -1105,7 +1108,6 @@ def test_removing_a_bitemporal_row_no_insertion_opened_leaves_the_insertions_sta
     assert [call.sql.split(" ", 1)[0] for call in _writes(port)] == [
         "insert",
         "update",
-        "insert",
         "insert",
         "delete",
     ]
@@ -1155,7 +1157,7 @@ def test_a_pending_replacement_transforms_the_stored_coverage_it_reaches(
     concurrency: str,
 ) -> None:
     stored = _stored(_MAY, _AUG)
-    port = ScriptedAdapter(Transact(Read(rows=[stored]), Write(times=3)))
+    port = ScriptedAdapter(Transact(Read(rows=[stored]), Write(times=2)))
     own_root(
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
     ).using_database_login().transact(
@@ -1166,14 +1168,15 @@ def test_a_pending_replacement_transforms_the_stored_coverage_it_reaches(
     assert coverage.sql.endswith(
         "where t0.id = %s and t0.thru_z > %s and t0.from_z < %s and t0.out_z = %s" + lock
     )
-    close, *openings = _writes(port)
+    close, opened = _writes(port)
     gate = " and in_z = %s" if concurrency == "optimistic" else ""
     assert close.sql == (
         "update where_position set out_z = %s where id = %s and thru_z = %s and out_z = %s" + gate
     )
     # The opening's part, the gap, and the stored row's replaced part hold one
-    # state and open as one row; the stored row's tail keeps its own.
-    assert [call.sql.split(" ", 1)[0] for call in openings] == ["insert"] * 2
+    # state and open as one row; the stored row's tail keeps its own, and one
+    # statement inserts both.
+    assert opened.sql.startswith("insert")
     assert _opened(port) == [
         (Decimal("300.00"), _JAN, _JUN),
         (Decimal("200.00"), _JUN, _AUG),
@@ -1181,7 +1184,7 @@ def test_a_pending_replacement_transforms_the_stored_coverage_it_reaches(
 
 
 def test_a_pending_replacement_inside_its_opening_reads_nothing() -> None:
-    port = ScriptedAdapter(Transact(Write(times=2)))
+    port = ScriptedAdapter(Transact(Write()))
 
     def fn(tx: Transaction) -> None:
         opened = _position()

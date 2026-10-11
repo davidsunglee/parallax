@@ -128,6 +128,7 @@ from tests._support.db_port import (
     Transact,
     Write,
     WriteCall,
+    inserted_rows,
 )
 from tests._support.root_ownership import own_root
 from tests.unit import _predicate_acquisition_support as acquisition_support
@@ -1317,7 +1318,7 @@ def _position_row() -> MappingRow:
 
 
 def test_materializing_plain_update_where_over_a_bitemporal_target() -> None:
-    port = ScriptedAdapter(Transact(Read(rows=[_position_row()]), Write(times=3)))
+    port = ScriptedAdapter(Transact(Read(rows=[_position_row()]), Write(times=2)))
     valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
 
     def fn(tx: Transaction) -> None:
@@ -1331,7 +1332,8 @@ def test_materializing_plain_update_where_over_a_bitemporal_target() -> None:
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
     ).using_database_login().transact(fn, concurrency="optimistic")
     writes = [op for op in port.calls if isinstance(op, WriteCall)]
-    assert len(writes) == 3  # close + head (old) + new tail
+    assert len(writes) == 2  # close + one insert of head (old) and new tail
+    assert len(inserted_rows(writes[1])) == 2
 
 
 def test_materializing_plain_terminate_where_over_a_bitemporal_target() -> None:
@@ -1349,7 +1351,7 @@ def test_materializing_plain_terminate_where_over_a_bitemporal_target() -> None:
 
 
 def test_materializing_bounded_update_where_over_a_bitemporal_target() -> None:
-    port = ScriptedAdapter(Transact(Read(rows=[_position_row()]), Write(times=4)))
+    port = ScriptedAdapter(Transact(Read(rows=[_position_row()]), Write(times=2)))
     valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
     until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
 
@@ -1365,11 +1367,12 @@ def test_materializing_bounded_update_where_over_a_bitemporal_target() -> None:
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
     ).using_database_login().transact(fn, concurrency="optimistic")
     writes = [op for op in port.calls if isinstance(op, WriteCall)]
-    assert len(writes) == 4  # close + head + middle + tail
+    assert len(writes) == 2  # close + one insert of head, middle, and tail
+    assert len(inserted_rows(writes[1])) == 3
 
 
 def test_materializing_bounded_terminate_where_over_a_bitemporal_target() -> None:
-    port = ScriptedAdapter(Transact(Read(rows=[_position_row()]), Write(times=3)))
+    port = ScriptedAdapter(Transact(Read(rows=[_position_row()]), Write(times=2)))
     valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
     until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
 
@@ -1382,18 +1385,20 @@ def test_materializing_bounded_terminate_where_over_a_bitemporal_target() -> Non
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
     ).using_database_login().transact(fn, concurrency="optimistic")
     writes = [op for op in port.calls if isinstance(op, WriteCall)]
-    assert len(writes) == 3  # close + head + tail (no middle)
+    assert len(writes) == 2  # close + one insert of head and tail (no middle)
+    assert len(inserted_rows(writes[1])) == 2
 
 
 def test_materializing_bounded_terminate_where_writes_per_resolved_row() -> None:
     # The single-row test above proves the per-row shape
     # (close + head + tail); this proves the MATERIALIZE loop itself resolves
     # and writes MULTIPLE rows, exactly like `update_where`'s / `delete_where`'s
-    # own multi-row pins -- N resolved rows -> 3*N keyed writes, no cross-row
-    # elision (`m-opt-lock.md` "Predicate-selected writes materialize when
+    # own multi-row pins -- N resolved rows -> N closes, each followed by the
+    # one insert of its own head and tail, no cross-row elision
+    # (`m-opt-lock.md` "Predicate-selected writes materialize when
     # observations are needed").
     port = ScriptedAdapter(
-        Transact(Read(rows=[_position_row(), {**_position_row(), "id": 2}]), Write(times=6))
+        Transact(Read(rows=[_position_row(), {**_position_row(), "id": 2}]), Write(times=4))
     )
     valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
     until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
@@ -1409,7 +1414,9 @@ def test_materializing_bounded_terminate_where_writes_per_resolved_row() -> None
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
     ).using_database_login().transact(fn, concurrency="optimistic")
     writes = [op for op in port.calls if isinstance(op, WriteCall)]
-    assert len(writes) == 6  # 2 resolved rows * (close + head + tail)
+    assert len(writes) == 4  # 2 resolved rows * (close + one insert of head and tail)
+    assert [len(inserted_rows(insert)) for insert in writes[1::2]] == [2, 2]
+    assert [insert.binds[0] for insert in writes[1::2]] == [1, 2]
 
 
 def _rectangle_row(*, address: dict[str, DocumentValue] | None) -> MappingRow:
@@ -1434,7 +1441,7 @@ def test_materializing_bitemporal_update_where_carries_the_unassigned_value_obje
     # observed prior rectangle"; `m-value-object` "the document rides every
     # chained/split row whole" — never decomposed).
     address: dict[str, DocumentValue] = {"city": "Helsinki"}
-    port = ScriptedAdapter(Transact(Read(rows=[_rectangle_row(address=address)]), Write(times=3)))
+    port = ScriptedAdapter(Transact(Read(rows=[_rectangle_row(address=address)]), Write(times=2)))
     valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
 
     def fn(tx: Transaction) -> None:
@@ -1450,9 +1457,8 @@ def test_materializing_bitemporal_update_where_carries_the_unassigned_value_obje
     reads = [op for op in port.calls if isinstance(op, ReadCall)]
     writes = [op for op in port.calls if isinstance(op, WriteCall)]
     assert "t0.address" in reads[0].sql  # the need-sensitive projection fired
-    assert len(writes) == 3  # close + head (old) + new tail
-    head_binds = writes[1].binds
-    tail_binds = writes[2].binds
+    assert len(writes) == 2  # close + one insert of head (old) and new tail
+    head_binds, tail_binds = inserted_rows(writes[1])
     assert head_binds[-1] == JsonDocument(address)  # head: OLD value, unreassigned document
     assert tail_binds[-1] == JsonDocument(address)  # new tail: NEW value, SAME document
     assert tail_binds[2] == Decimal("300.00")  # the assigned scalar column DOES take the new value
@@ -1464,7 +1470,7 @@ def test_materializing_bounded_update_where_bitemporal_carries_the_value_object_
     # resolved row's own `address` forward, whole, since the caller reassigns
     # only `value` — the document is never decomposed at any chain slot.
     address: dict[str, DocumentValue] = {"city": "Tampere"}
-    port = ScriptedAdapter(Transact(Read(rows=[_rectangle_row(address=address)]), Write(times=4)))
+    port = ScriptedAdapter(Transact(Read(rows=[_rectangle_row(address=address)]), Write(times=2)))
     valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
     until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
 
@@ -1480,10 +1486,8 @@ def test_materializing_bounded_update_where_bitemporal_carries_the_value_object_
         Database.connect(port, _WHERE_RECTANGLE_META, clock=FixedClock(FIXED))
     ).using_database_login().transact(fn, concurrency="optimistic")
     writes = [op for op in port.calls if isinstance(op, WriteCall)]
-    assert len(writes) == 4  # close + head + middle + tail
-    head_binds = writes[1].binds
-    middle_binds = writes[2].binds
-    tail_binds = writes[3].binds
+    assert len(writes) == 2  # close + one insert of head, middle, and tail
+    head_binds, middle_binds, tail_binds = inserted_rows(writes[1])
     assert head_binds[-1] == JsonDocument(address)
     assert middle_binds[-1] == JsonDocument(address)
     assert tail_binds[-1] == JsonDocument(address)
@@ -1526,7 +1530,7 @@ def test_materializing_bounded_terminate_where_bitemporal_carries_the_document_p
     # BOTH chain the resolved row's OLD payload forward
     # (`m-temporal-write` *Temporal expansion*), so the document rides both, whole.
     address: dict[str, DocumentValue] = {"city": "Tampere"}
-    port = ScriptedAdapter(Transact(Read(rows=[_rectangle_row(address=address)]), Write(times=3)))
+    port = ScriptedAdapter(Transact(Read(rows=[_rectangle_row(address=address)]), Write(times=2)))
     valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
     until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
 
@@ -1541,9 +1545,8 @@ def test_materializing_bounded_terminate_where_bitemporal_carries_the_document_p
     reads = [op for op in port.calls if isinstance(op, ReadCall)]
     writes = [op for op in port.calls if isinstance(op, WriteCall)]
     assert "t0.address" in reads[0].sql  # the need-sensitive projection fired
-    assert len(writes) == 3  # close + head + tail (no middle)
-    head_binds = writes[1].binds
-    tail_binds = writes[2].binds
+    assert len(writes) == 2  # close + one insert of head and tail (no middle)
+    head_binds, tail_binds = inserted_rows(writes[1])
     assert head_binds[-1] == JsonDocument(address)
     assert tail_binds[-1] == JsonDocument(address)
 
@@ -2163,7 +2166,7 @@ def test_a_non_utc_bound_reaches_the_buffer_as_its_managed_utc_instant() -> None
     # gate's own canonical literals, so a
     # bound authored at a NON-UTC offset lands in the rectangle split as the
     # same instant in UTC, never as the caller's spelling.
-    port = ScriptedAdapter(Transact(Read(rows=[_position_row()]), Write(times=4)))
+    port = ScriptedAdapter(Transact(Read(rows=[_position_row()]), Write(times=2)))
 
     def fn(tx: Transaction) -> None:
         _bounded_write(
@@ -2177,8 +2180,8 @@ def test_a_non_utc_bound_reaches_the_buffer_as_its_managed_utc_instant() -> None
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
     ).using_database_login().transact(fn, concurrency="optimistic")
     writes = [op for op in port.calls if isinstance(op, WriteCall)]
-    assert len(writes) == 4  # close + head + middle + tail
-    middle_binds = writes[2].binds
+    assert len(writes) == 2  # close + one insert of head, middle, and tail
+    _head_binds, middle_binds, _tail_binds = inserted_rows(writes[1])
     assert (
         _NON_UTC_VALID_FROM.astimezone(dt.UTC) in middle_binds
     )  # the authored `valid_from`, in UTC
@@ -2189,11 +2192,11 @@ def test_no_typed_bound_reaches_the_shared_lowering_uncanonicalized() -> None:
     # WHAT THIS PINS. A `PredicateWrite` this lane builds never carries a
     # non-canonical value in a canonical field, proved on the shape that binds
     # BOTH Valid-Time slots into SQL — a bitemporal `updateUntil`, whose
-    # rectangle split emits four statements:
+    # rectangle split emits a close and one insert of its three rows:
     #
     #   - a bound that cannot render never becomes an instruction, so nothing is
     #     buffered and no statement is ever issued;
-    #   - a bound that can render arrives already normalized, so the four
+    #   - a bound that can render arrives already normalized, so the
     #     statements a typed call produces are INDISTINGUISHABLE from the ones
     #     the WIRE peer produces for the canonical target and bounds the
     #     conformance engine hands it. Anything other than the canonical literal
@@ -2223,7 +2226,7 @@ def test_no_typed_bound_reaches_the_shared_lowering_uncanonicalized() -> None:
         ).using_database_login().transact(unrenderable)
     assert idle.calls == [BeginCall(), RollbackCall()]
 
-    typed_port = ScriptedAdapter(Transact(Read(rows=[_position_row()]), Write(times=4)))
+    typed_port = ScriptedAdapter(Transact(Read(rows=[_position_row()]), Write(times=2)))
 
     def typed(tx: Transaction) -> None:
         tx.amend_where(
@@ -2237,7 +2240,7 @@ def test_no_typed_bound_reaches_the_shared_lowering_uncanonicalized() -> None:
         Database.connect(typed_port, WHERE_POSITION_META, clock=FixedClock(FIXED))
     ).using_database_login().transact(typed, concurrency="optimistic")
 
-    seam_port = ScriptedAdapter(Transact(Read(rows=[_position_row()]), Write(times=4)))
+    seam_port = ScriptedAdapter(Transact(Read(rows=[_position_row()]), Write(times=2)))
 
     def wire(tx: Transaction) -> None:
         tx.wire.amend_where(
@@ -2254,7 +2257,8 @@ def test_no_typed_bound_reaches_the_shared_lowering_uncanonicalized() -> None:
         Database.connect(seam_port, WHERE_POSITION_META, clock=FixedClock(FIXED))
     ).using_database_login().transact(wire, concurrency="optimistic")
     typed_writes = [op for op in typed_port.calls if isinstance(op, WriteCall)]
-    assert len(typed_writes) == 4  # close + head + middle + tail
+    assert len(typed_writes) == 2  # close + one insert of head, middle, and tail
+    assert len(inserted_rows(typed_writes[1])) == 3
     assert typed_writes == [op for op in seam_port.calls if isinstance(op, WriteCall)]
 
 

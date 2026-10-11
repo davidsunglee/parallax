@@ -1,9 +1,10 @@
 """Planning and lowering one write instruction, for suites that pin a single
 write's DML.
 
-The shipped seam (:func:`~parallax.core.execution._write_lowering.stream_lowered`)
-lowers settled steps, which a Write Plan is what the executor takes them from. A
-unit test usually pins the statements of one instruction, so this plans it — through the
+Each settled step lowers alone through the shipped seam
+(:func:`~parallax.core.execution._write_lowering.lowered`), one statement per
+Planned Write, whatever statements execution then groups them into. A unit test
+usually pins the statements of one instruction, so this plans it — through the
 SAME production wiring :func:`~parallax.core.execution._planning.build_write_planner`
 builds — as the one-instruction buffer it means, and hands back the lowered
 statements in order.
@@ -11,9 +12,11 @@ statements in order.
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Iterator
+
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.execution._planning import build_write_planner
-from parallax.core.execution._write_lowering import stream_lowered
+from parallax.core.execution._write_lowering import lowered
 from parallax.core.metamodel import Metamodel
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.unit_work import Concurrency, TransactionInstant, WritePlanningRequest
@@ -25,12 +28,22 @@ from parallax.core.unit_work.instructions import (
 )
 from parallax.core.write_payload import LayoutPayloadPreparer
 from parallax.core.write_plan import WriteObservation
+from parallax.core.write_plan.payload import WritePayloadPreparer
 from parallax.core.write_plan.plan import NO_TEMPORAL_WRITE_OWNERSHIP, TemporalWriteOwnership
 from parallax.core.write_plan.steps import PlannedWrite as PlannedStep
 from tests._support.clock_probes import inert_instant
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY, observed_write
 
-__all__ = ["lower_instruction", "lower_instruction_steps"]
+__all__ = ["lower_instruction", "lower_instruction_steps", "lowered_steps"]
+
+
+def lowered_steps(
+    steps: Iterable[PlannedStep], payloads: WritePayloadPreparer, meta: Metamodel, dialect: Dialect
+) -> Iterator[tuple[PlannedStep, LoweredStatement]]:
+    """Each of ``steps`` paired with the one statement it lowers to alone, in
+    order, each lowered only when it is asked for."""
+    for step in steps:
+        yield step, lowered(step, payloads, meta, dialect)
 
 
 def lower_instruction(
@@ -89,7 +102,7 @@ def _stream(
             counts_unchanged_rows=dialect.counts_unchanged_rows,
         )
     )
-    return list(stream_lowered(plan.steps, LayoutPayloadPreparer(model), model, dialect))
+    return list(lowered_steps(plan.steps, LayoutPayloadPreparer(model), model, dialect))
 
 
 def _prepared(instruction: WriteInstruction, model: Metamodel) -> PreparedWrite:

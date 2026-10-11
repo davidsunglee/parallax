@@ -199,15 +199,19 @@ before the earlier unit completes, so a later step's lowering failure cannot
 overtake it. A unit that fails is never reported, and the failure dooms the
 attempt.
 
-Where the connection holds ordered write transport (`m-db-port`), a run of
-contiguous count-only temporal effects — closes, guards, revisions, and
+Where the connection holds ordered write transport (`m-db-port`), a run of two
+or more contiguous count-only temporal effects — closes, guards, revisions, and
 removals — is presented in one invocation instead of one call each; every other
 step, and every step on a connection holding none, runs alone. Whether a step
 may join a run is decided from the step itself before its payload is demanded,
 including the bound on binds its statement promises to fit the dialect's limit;
 a statement exceeding that promise is a lowering failure. A run never crosses an
 insert, a unit, a barrier, or a round, and an internal statement cap ends it
-before another step is even taken. The whole result is validated before any of
+before another step is even taken. Before a run's first effect is lowered, the
+one step after it is taken, unprepared: where that step cannot join, or no step
+remains, the effect would be its run's only one and runs alone, and the taken
+step waits its turn. A failure taking that step propagates only once the effect
+running alone has succeeded. The whole result is validated before any of
 it is interpreted, so a malformed one fails the batch with the integrity error
 ahead of any shortfall it reports. Confirmed outcomes are then enforced in
 original order against the exact steps they were lowered from: an earlier
@@ -231,9 +235,9 @@ follows is submitted. Rollback, rollback-only state, retry classification of
 the failure that propagates, and the precedence of cancellation and fatal
 exceptions are unchanged.
 
-Execution may instead insert a run of contiguous temporal openings —
-single-entry inserts of one Entity naming the same members and holding no
-generated value — with one multi-row statement (`m-sql` *Requested ranges*).
+Execution inserts a run of contiguous temporal openings — single-entry inserts
+of one Entity naming the same members and holding no generated value — with
+one multi-row statement (`m-sql` *Requested ranges*), on every connection.
 Each opening remains its own Planned Write, and the statement is one ordinary
 Database Call. Whether an opening may join is decided from the step before its
 payload is demanded. Before another step is taken the statement must have room

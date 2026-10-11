@@ -70,6 +70,10 @@ _CREDENTIAL_REFUSAL = "the credential source could not produce a password"
 # refused before any connection exists.
 _TEXT_LOADERS = compiled_loaders(psycopg.pq.__impl__)
 
+# Resolved once, as the adapter is imported: the libpq psycopg loaded fixes
+# whether a pipeline can run on any connection this process opens.
+_PIPELINED = psycopg.capabilities.has_pipeline()
+
 
 class _DocumentJsonbLoader(JsonbLoader):
     def __init__(self, oid: int, context: AdaptContext | None = None) -> None:
@@ -693,11 +697,12 @@ class PostgresConnection:
     name that could drift from it.
     """
 
-    __slots__ = ("_connection", "_suspect")
+    __slots__ = ("_connection", "_ordered", "_suspect")
 
     def __init__(self, connection: psycopg.Connection[TupleRow]) -> None:
         self._connection: psycopg.Connection[TupleRow] | None = connection
         self._suspect = False
+        self._ordered: OrderedWriteTransport | None = self._ordered_writes if _PIPELINED else None
 
     @property
     def suspect(self) -> bool:
@@ -758,9 +763,9 @@ class PostgresConnection:
 
     @property
     def ordered_write_transport(self) -> OrderedWriteTransport | None:
-        """None: no ordered write transport is qualified for this adapter, so
-        every write runs alone."""
-        return None
+        """This scope's ordered write operation, stored once, where the libpq
+        psycopg loaded can run a pipeline; None where it cannot."""
+        return self._ordered
 
     def _ordered_writes(self, statements: Sequence[CanonicalWriteStatement]) -> OrderedWriteResult:
         """The ordered write transport operation over this scope's connection.

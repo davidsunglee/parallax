@@ -71,6 +71,7 @@ from tests._support.db_port import (
     Transact,
     Write,
     WriteCall,
+    inserted_rows,
 )
 from tests._support.root_ownership import own_root
 from tests.unit._transact_support import (
@@ -508,7 +509,7 @@ def _branch_row(*, address: dict[str, object] | None) -> MappingRow:
 def test_bitemporal_update_after_a_find_carries_observed_valid_time_bounds() -> None:
     # Rectangle splitting consumes the observed Valid-Time bounds and full payload.
     # A real find-then-update makes both facts observable in the emitted DML.
-    port = ScriptedAdapter(Transact(Read(rows=[_branch_row(address=None)]), Write(times=3)))
+    port = ScriptedAdapter(Transact(Read(rows=[_branch_row(address=None)]), Write(times=2)))
     db = db_for(MODELS["branch"], port)
 
     def fn(tx: Transaction) -> None:
@@ -521,9 +522,8 @@ def test_bitemporal_update_after_a_find_carries_observed_valid_time_bounds() -> 
 
     db.transact(fn)
     write_ops = [op for op in port.calls if isinstance(op, WriteCall)]
-    assert len(write_ops) == 3  # close the rectangle, then chain head + tail
-    head_binds = write_ops[1].binds
-    tail_binds = write_ops[2].binds
+    assert len(write_ops) == 2  # close the rectangle, then chain head + tail in one insert
+    head_binds, tail_binds = inserted_rows(write_ops[1])
     # The HEAD rectangle runs from the OBSERVED valid_from up to the
     # mutation instant, and carries the OBSERVED name. Neither value appears
     # anywhere in the sparse edited copy, so both can only have come from the
@@ -549,7 +549,7 @@ def test_bitemporal_update_after_a_find_keeps_the_observed_value_object_document
         "geo": {"country": "FI"},
         "phones": [],
     }
-    port = ScriptedAdapter(Transact(Read(rows=[_branch_row(address=address)]), Write(times=3)))
+    port = ScriptedAdapter(Transact(Read(rows=[_branch_row(address=address)]), Write(times=2)))
     db = db_for(MODELS["branch"], port)
 
     def fn(tx: Transaction) -> None:
@@ -562,11 +562,10 @@ def test_bitemporal_update_after_a_find_keeps_the_observed_value_object_document
 
     db.transact(fn)
     write_ops = [op for op in port.calls if isinstance(op, WriteCall)]
-    assert len(write_ops) == 3
+    assert len(write_ops) == 2
     # BOTH chained rectangles carry the document, not just the one whose
     # payload the edited copy supplied.
-    for op in write_ops[1:]:
-        binds = op.binds
+    for binds in inserted_rows(write_ops[1]):
         assert binds[-1] == JsonDocument(value=address), binds
 
 
@@ -706,9 +705,9 @@ def test_what_a_read_publishes_never_reaches_its_retained_evidence(
     table = "owned_document_charter" if layout == "document" else "owned_columns_charter"
     row = _owned_row(layout)
     port = (
-        ScriptedAdapter(Read(rows=[row]), Transact(Write(times=3)))
+        ScriptedAdapter(Read(rows=[row]), Transact(Write(times=2)))
         if standalone
-        else ScriptedAdapter(Transact(Read(rows=[row]), Write(times=3)))
+        else ScriptedAdapter(Transact(Read(rows=[row]), Write(times=2)))
     )
     handler = WriteDocumentBinds()
     db = db_for(DomainModel(entity), port, lifecycle_provider=handler)
@@ -753,25 +752,26 @@ def test_what_a_read_publishes_never_reaches_its_retained_evidence(
     observation = origin.observation.evidence
     assert isinstance(observation, TemporalObservation)
     retained = observation.predecessor.document
-    close, head, tail = (op for op in port.calls if isinstance(op, WriteCall))
+    close, opened = (op for op in port.calls if isinstance(op, WriteCall))
+    head, tail = inserted_rows(opened)
     assert close.sql.startswith(f"update {table} set out_z")
     assert handler.documents
     assert handler.mutated == []
     if layout == "document":
         assert retained is cast("PresentDocument", row["payload"]).document
         assert retained == _OWNED_DOCUMENT
-        carried = cast("JsonDocument", head.binds[-1]).value
+        carried = cast("JsonDocument", head[-1]).value
         assert type(carried) is FrozenMap
         assert carried == retained
-        changed = cast("JsonDocument", tail.binds[-1]).value
+        changed = cast("JsonDocument", tail[-1]).value
         assert _as_json(changed) == {**_OWNED_DOCUMENT, "title": "Southbound"}
         assert handler.documents == [carried, changed]
         return
     assert retained is None
     declared_route = {"name": "Coastal", "geo": {"country": "NO"}, "stops": [{"port": "Oslo"}]}
     for insert, title in ((head, "Northbound"), (tail, "Southbound")):
-        route, legs = (cast("JsonDocument", bind).value for bind in insert.binds[-2:])
-        assert insert.binds[1] == title
+        route, legs = (cast("JsonDocument", bind).value for bind in insert[-2:])
+        assert insert[1] == title
         assert _as_json(route) == declared_route
         assert _as_json(legs) == [{"port": "Bergen"}]
 

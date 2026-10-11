@@ -101,6 +101,7 @@ __all__ = [
     "Write",
     "WriteCall",
     "body_outcome",
+    "inserted_rows",
 ]
 
 _REVOKED = "this scripted connection's scope has ended"
@@ -126,6 +127,16 @@ class WriteCall:
 
     sql: str
     binds: tuple[Bind, ...] = ()
+
+
+def inserted_rows(call: WriteCall) -> tuple[tuple[Bind, ...], ...]:
+    """The binds of each row the insert ``call`` carries, one per value tuple
+    its statement renders: a run of temporal openings shares one multi-row
+    statement (`m-execution` *Flush execution*)."""
+    tuples = call.sql.count("), (") + 1
+    width, extra = divmod(len(call.binds), tuples)
+    assert call.sql.startswith("insert") and not extra, call.sql
+    return tuple(call.binds[index * width : (index + 1) * width] for index in range(tuples))
 
 
 @dataclass(frozen=True, slots=True)

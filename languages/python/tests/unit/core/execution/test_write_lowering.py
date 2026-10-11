@@ -1,8 +1,8 @@
 """Write-DML lowering unit tests (execution's lowering seam, m-sql write DML).
 
-``parallax.core.execution._write_lowering.stream_lowered`` is the single
-write-lowering seam both the developer transaction path and the conformance
-engine reuse. These tests pin its byte-exact non-temporal keyed emissions against
+``parallax.core.execution._write_lowering.lowered`` is the single
+write-lowering seam each Planned Write lowers through alone, whichever path
+reaches it. These tests pin its byte-exact non-temporal keyed emissions against
 the corpus goldens (``m-unit-work-001/003/005``, ``m-opt-lock-002/005/006/013``,
 ``m-inheritance-007/008/009/010/084/104``, ``m-pk-gen-001``), compose it with the
 Write Planner for the coalescing / mixed-flush / cancellation cases
@@ -65,7 +65,7 @@ from parallax.core.db_port import JsonDocument
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity._model import model_of
 from parallax.core.execution._planning import build_write_planner
-from parallax.core.execution._write_lowering import lowered, stream_lowered
+from parallax.core.execution._write_lowering import lowered
 from parallax.core.metamodel import (
     AttributeIdentity,
     AttributeMetadata,
@@ -134,7 +134,7 @@ from parallax.core.write_plan.steps import (
 from parallax.core.write_plan.steps import PlannedWrite as PlannedStep
 from parallax.descriptor import _records
 from tests._support.clock_probes import inert_instant
-from tests._support.lowering_probes import lower_instruction, lower_instruction_steps
+from tests._support.lowering_probes import lower_instruction, lower_instruction_steps, lowered_steps
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY, observed_buffer
 from tests.unit._corpus_identity_support import corpus_object_key
 from tests.unit._corpus_model_support import formed, records
@@ -184,7 +184,7 @@ def _flush_and_lower(
     )
     return [
         statement
-        for _step, statement in stream_lowered(
+        for _step, statement in lowered_steps(
             plan.steps, LayoutPayloadPreparer(model), model, POSTGRES
         )
     ]
@@ -799,7 +799,7 @@ def test_inheritance_family_predicate_write_is_rejected_before_sql(
     # `UnitOfWork.buffer_predicate`) guard the developer `_where` verbs and the
     # engine's buffering translation — but they are NOT on every road here.
     # The conformance engine's readless predicate-write step
-    # (`scenario._lower_predicate_write_step`) reaches `stream_lowered` straight
+    # (`scenario._lower_predicate_write_step`) reaches `stream_physical` straight
     # from a deserialized instruction. The lowering-side guard must
     # reject the `narrow` case before it can introduce an alias that unaliased
     # DML never declares (`m-sql` rule 1).
@@ -1995,7 +1995,7 @@ def test_an_ordinary_insert_yields_no_statement_until_every_entry_compiles() -> 
     step = PlannedInsert(
         entity=_BUILDER_LEDGER, entries=tuple(_ledger_entry(key) for key in (1, 2, 3))
     )
-    statements = stream_lowered(
+    statements = lowered_steps(
         (step,), _scripted_rows({3: _invalid_cell}), _BUILDER_MODEL, POSTGRES
     )
 

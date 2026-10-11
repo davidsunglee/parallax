@@ -10,7 +10,6 @@ from parallax.core import predicate as predicate_algebra
 from parallax.core.base import INFINITY
 from parallax.core.dialect import POSTGRES
 from parallax.core.execution._planning import build_write_planner
-from parallax.core.execution._write_lowering import stream_lowered
 from parallax.core.metamodel import Metamodel
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.unit_work import (
@@ -36,6 +35,7 @@ from parallax.core.write_plan import (
     WritePlan,
 )
 from tests._support.clock_probes import inert_instant, instant_at
+from tests._support.lowering_probes import lowered_steps
 from tests._support.planner_probes import observed_buffer
 
 _MODELS = models.load_models()
@@ -69,7 +69,7 @@ def _plan_under(
 def _statements(plan: WritePlan, model: Metamodel) -> list[LoweredStatement]:
     return [
         statement
-        for _step, statement in stream_lowered(
+        for _step, statement in lowered_steps(
             plan.steps, LayoutPayloadPreparer(model), model, POSTGRES
         )
     ]

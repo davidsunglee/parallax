@@ -24,8 +24,8 @@ when:
       at: "2024-01-01T00:00:00.000000Z"
     - mutation: amendUntil
       entity: parallax.compatibility.Branch
-      statements: 4
-      note: inactivate the original on the Transaction-Time dimension, then chain head / middle / tail carrying D1 / D2 / D1
+      statements: 2
+      note: inactivate the original on the Transaction-Time dimension, then chain head / middle / tail carrying D1 / D2 / D1 in one multi-row insert
       rows:
         - id: 1
           name: Central Branch
@@ -63,8 +63,8 @@ then:
         mariadb: update branch set out_z = ? where br_id = ? and thru_z = ? and out_z = ? and in_z = ?
       binds: ["2024-02-15T00:00:00.000000Z", 1, infinity, infinity, "2024-01-01T00:00:00.000000Z"]
     - sql:
-        postgres: insert into branch(br_id, name, from_z, thru_z, in_z, out_z, address) values (?, ?, ?, ?, ?, ?, ?)
-        mariadb: insert into branch(br_id, name, from_z, thru_z, in_z, out_z, address) values (?, ?, ?, ?, ?, ?, ?)
+        postgres: insert into branch(br_id, name, from_z, thru_z, in_z, out_z, address) values (?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?)
+        mariadb: insert into branch(br_id, name, from_z, thru_z, in_z, out_z, address) values (?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?)
       binds:
         - 1
         - Central Branch
@@ -78,10 +78,6 @@ then:
             country: FI
           phones:
             - { type: main, number: '555-1000' }
-    - sql:
-        postgres: insert into branch(br_id, name, from_z, thru_z, in_z, out_z, address) values (?, ?, ?, ?, ?, ?, ?)
-        mariadb: insert into branch(br_id, name, from_z, thru_z, in_z, out_z, address) values (?, ?, ?, ?, ?, ?, ?)
-      binds:
         - 1
         - Central Branch
         - "2024-03-01T00:00:00.000000Z"
@@ -95,10 +91,6 @@ then:
           phones:
             - { type: main, number: '555-3000' }
             - { type: fax, number: '555-3001' }
-    - sql:
-        postgres: insert into branch(br_id, name, from_z, thru_z, in_z, out_z, address) values (?, ?, ?, ?, ?, ?, ?)
-        mariadb: insert into branch(br_id, name, from_z, thru_z, in_z, out_z, address) values (?, ?, ?, ?, ?, ?, ?)
-      binds:
         - 1
         - Central Branch
         - "2024-09-01T00:00:00.000000Z"
@@ -166,4 +158,4 @@ then:
             country: FI
           phones:
             - { type: main, number: '555-1000' }
-  roundTrips: 6
+  roundTrips: 4

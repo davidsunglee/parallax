@@ -45,6 +45,7 @@ import write_lowering_reading
 from parallax.conformance.budget import MemoryGates
 from parallax.core.base import DocumentValue, PresentDocument, detach_json_container
 from parallax.core.db_port import JsonDocument
+from parallax.core.execution import _write_lowering
 from parallax.core.execution._write_lowering import LoweringCursor
 from parallax.core.unit_work import instructions
 from tests.unit import _memory_gate_support as gate_support
@@ -357,7 +358,8 @@ def test_seeded_per_row_retention_trips_the_acquisition_gates_and_their_amortiza
 
 @in_a_child_interpreter
 def test_a_duplicate_lowering_traversal_stays_within_every_gate_and_doubles_its_passes() -> None:
-    # A second lowering of each settled step allocates and frees everything the
+    # A second lowering of each settled step — of each opening's row, where an
+    # opening joins a multi-row insert — allocates and frees everything the
     # first did, inside the window and before any sample: the checkpoint is
     # taken before lowering and the high-water mark is a maximum, so neither
     # gate moves. What does move is the pass observation — the successor patches
@@ -370,6 +372,11 @@ def test_a_duplicate_lowering_traversal_stays_within_every_gate_and_doubles_its_
     unseeded = _Reading(TRAVERSED_CASE)
     with pytest.MonkeyPatch.context() as patched:
         patched.setattr(LoweringCursor, "lowered", _lowering_twice(LoweringCursor.lowered))
+        patched.setattr(
+            _write_lowering,
+            "_row_payload",
+            _lowering_twice(_write_lowering._row_payload),  # pyright: ignore[reportPrivateUsage] - an opening row's own lowering
+        )
         seeded = _Reading(TRAVERSED_CASE)
     assert not _outside(TRAVERSED_CASE, RETAINED, seeded)
     assert not _outside(TRAVERSED_CASE, TRANSIENT, seeded)

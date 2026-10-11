@@ -8,13 +8,14 @@ planners this module can recognize, a real write is driven through each lane, an
 the drive is then followed all the way to the statements it emits.
 
 The chain is closed link by link. Every planning the drive performed ran on a
-planner the factory built. Every step sequence streamed through
-``stream_lowered``, or taken through a ``LoweringCursor``, is by identity the
-steps of a plan one of those plannings returned, or a span borrowed from them,
-and the plans streamed are the plans planned, in order, so a factory plan the
-lane discarded is named too. Every step
-rendered by ``compile_write_step`` — the one function that turns a settled step
-into a statement — is by identity a step of one of those streamed sequences. An
+planner the factory built. Every step sequence taken through a
+``LoweringCursor`` is by identity the steps of a plan one of those plannings
+returned, or a span borrowed from them, and the plans streamed are the plans
+planned, in order, so a factory plan the lane discarded is named too. Every step
+rendered by ``compile_write_step`` — the function that turns a settled step into
+a statement of its own — is by identity a step of one of those streamed
+sequences; the drives here settle no run of temporal openings, which the cursor
+renders into one statement together. An
 unrelated implementation of the planner interface inherits nothing, so it
 performs no planning this module records and appears in
 no subclass registry; but its plan still has to become SQL, and every route from
@@ -51,7 +52,7 @@ injects is the neutral one, so no planner a write path reaches can decorate.
 from __future__ import annotations
 
 import sys
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
@@ -63,7 +64,7 @@ from parallax.conformance import case_format, engine
 from parallax.core.dialect import Dialect
 from parallax.core.execution import _planning, prepare_model
 from parallax.core.execution._publication import write_projection
-from parallax.core.execution._write_lowering import LoweringCursor, stream_lowered
+from parallax.core.execution._write_lowering import LoweringCursor
 from parallax.core.metamodel import Metamodel
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.sql_gen._write import StepPayload, compile_write_step
@@ -199,7 +200,6 @@ def _watch(lane: str, monkeypatch: pytest.MonkeyPatch) -> _Composition:
     """
     seen = _Composition(lane=lane, built=[], planned=[], lowered=[], rendered=[])
     finalizing = WritePlanner.finalize
-    streaming = stream_lowered
     cursoring = LoweringCursor
     rendering = compile_write_step
 
@@ -222,15 +222,6 @@ def _watch(lane: str, monkeypatch: pytest.MonkeyPatch) -> _Composition:
         seen.planned.append(_Planning(planner=self, request=request, plan=finalized))
         return finalized
 
-    def lower(
-        steps: Iterable[PlannedWrite],
-        payloads: WritePayloadPreparer,
-        meta: Metamodel,
-        dialect: Dialect,
-    ) -> Iterator[tuple[PlannedWrite, LoweredStatement]]:
-        seen.lowered.append(steps)
-        yield from streaming(steps, payloads, meta, dialect)
-
     def cursor(
         steps: Iterable[PlannedWrite],
         payloads: WritePayloadPreparer,
@@ -249,7 +240,6 @@ def _watch(lane: str, monkeypatch: pytest.MonkeyPatch) -> _Composition:
     monkeypatch.setattr(_planning, "WritePlanner", construct)
     monkeypatch.setattr(WritePlanner, "finalize", finalize)
     watched: tuple[tuple[object, object], ...] = (
-        (lower, stream_lowered),
         (cursor, LoweringCursor),
         (render, compile_write_step),
     )

@@ -249,8 +249,7 @@ def test_a_finds_reference_oracle_runs_on_the_reader_the_golden_used(
     script = [
         *_rows(_LATEST_POSITION, _LATEST_POSITION),
         Affected(1),
-        Affected(1),
-        Affected(1),
+        Affected(2),
         *_rows(_CORRECTED_POSITION, _CORRECTED_POSITION),
     ]
     with ScriptedProvider(script=script) as db:
@@ -285,8 +284,7 @@ def test_a_materializing_predicate_writes_resolving_read_is_an_ordinary_step(
     script = [
         *_rows(_LATEST_POSITION, _LATEST_POSITION),
         Affected(1),
-        Affected(1),
-        Affected(1),
+        Affected(2),
         *_rows(_CORRECTED_POSITION, _CORRECTED_POSITION),
     ]
     with ScriptedProvider(script=script) as db:

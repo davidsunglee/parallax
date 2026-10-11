@@ -1,16 +1,15 @@
 """Grouped temporal openings against a real server (`m-execution` *Flush
 execution*, `m-sql` *Requested ranges*).
 
-Execution does not select the grouped opening operation yet, so each proof runs
-the same public writes twice: once as execution realizes them, and once with
-the step driver that selects grouped openings
-(:func:`~tests._support.opening_selection.select_grouped_openings`). What a
-scripted port cannot establish is here: that PostgreSQL stores from one
-multi-row statement exactly the history the singleton statements store,
-collections of every shape included, and that a grouped statement fails as a
-whole with its own native diagnostic — which can differ from the error the
-earliest failing opening raises alone — while the attempt still rolls back,
-refuses further work, and reports that diagnostic's own retry verdict.
+Each proof runs the same public writes twice: once as execution realizes them,
+grouping the openings, and once with the internal entry cap at one, so each
+opening runs as the singleton statement it lowers to alone. What a scripted
+port cannot establish is here: that PostgreSQL stores from one multi-row
+statement exactly the history the singleton statements store, collections of
+every shape included, and that a grouped statement fails as a whole with its
+own native diagnostic — which can differ from the error the earliest failing
+opening raises alone — while the attempt still rolls back, refuses further
+work, and reports that diagnostic's own retry verdict.
 """
 
 from __future__ import annotations
@@ -27,7 +26,7 @@ from parallax.conformance.scripted_clock import ScriptedClock
 from parallax.core import Attr, Bitemporal, Document, DomainModel, Entity, ValueObject, attr
 from parallax.core.db_error import DatabaseError
 from parallax.core.entity._model import model_of
-from parallax.core.execution import ExecutionFailure
+from parallax.core.execution import ExecutionFailure, _write_lowering
 from parallax.core.execution_lifecycle import (
     AttemptRolledBack,
     DatabaseCallFailed,
@@ -38,7 +37,6 @@ from parallax.core.execution_lifecycle import (
 )
 from parallax.core.unit_work import RollbackOnlyError
 from parallax.snapshot import ScopedDatabase, Transaction, connect
-from tests._support.opening_selection import select_grouped_openings
 from tests._support.root_ownership import own_root
 
 _NAMESPACE = "temporal.openings"
@@ -145,6 +143,11 @@ def _writes(events: list[ExecutionEvent]) -> list[str]:
     ]
 
 
+def _singletons(patched: pytest.MonkeyPatch) -> None:
+    """Cap each grouped opening at one entry, so every opening runs alone."""
+    patched.setattr(_write_lowering, "_OPENING_ENTRY_CAP", 1)
+
+
 def _realized(
     profile_run: Any,
     monkeypatch: pytest.MonkeyPatch,
@@ -157,8 +160,8 @@ def _realized(
     db = _database(profile_run, provider)
     _seed(db, entity, _TAGS)
     with monkeypatch.context() as patched:
-        if grouped:
-            select_grouped_openings(patched)
+        if not grouped:
+            _singletons(patched)
         db.transact(lambda tx: _amend(tx, entity), concurrency=concurrency)
     return _Realized(_rows(profile_run, entity), _writes(_events(provider)))
 
@@ -244,8 +247,8 @@ def _failed(
     before = _rows(profile_run, ColumnsSpan)
     edit = _conflicting_amendment(profile_run, ColumnsSpan, then)
     with monkeypatch.context() as patched:
-        if grouped:
-            select_grouped_openings(patched)
+        if not grouped:
+            _singletons(patched)
         with pytest.raises(ExecutionFailure) as escaped:
             db.transact(edit, max_retries=2)
     events = _events(provider)
