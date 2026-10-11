@@ -14,9 +14,10 @@ lifetimes in ``test_postgres_pool.py``.
 from __future__ import annotations
 
 import decimal
+import gc
 import json
-from collections.abc import Callable
-from types import SimpleNamespace
+from collections.abc import Callable, Sequence
+from types import FrameType, FunctionType, ModuleType, SimpleNamespace
 from typing import Any, cast
 
 import psycopg
@@ -24,7 +25,7 @@ import pytest
 from psycopg import errors, postgres
 from psycopg.abc import Dumper, Loader
 from psycopg.adapt import AdaptersMap, PyFormat, Transformer
-from psycopg.pq import Format
+from psycopg.pq import ExecStatus, Format
 from psycopg.rows import TupleRow
 from psycopg.sql import Composable
 from psycopg.types.json import Jsonb, JsonbLoader
@@ -44,12 +45,19 @@ from parallax.core.db_port import (
     ISOLATION_LEVELS,
     BeginFailed,
     CallbackRaised,
+    CanonicalWriteStatement,
     CommitFailed,
     Committed,
     JsonDocument,
+    OrderedWriteResult,
+    OrderedWriteResultComplete,
+    OrderedWriteResultIntegrityError,
+    OrderedWriteResultInterrupted,
     PipelineStatement,
     RollbackFailed,
     RolledBack,
+    StatementFailed,
+    StatementNotExecuted,
     isolation_level,
 )
 from parallax.core.dialect import PhysicalIndexName
@@ -75,6 +83,17 @@ from parallax.postgres._connection import (
     initialize_connection,
     translate_driver_error,
     translating_driver_errors,
+)
+from tests.unit.postgres._native_pipeline_support import (
+    Result,
+    Server,
+    Statement,
+    aborted,
+    counted,
+    failed,
+    native_session,
+    script,
+    unowned,
 )
 
 # Read off the class rather than named again here: these seams are the adapter's
@@ -792,6 +811,406 @@ def test_execute_write_reraises_a_driver_error_at_the_boundary() -> None:
         adapter.execute_write("update gauge set v = %s", [1])
     assert exc_info.value.category == "deadlock"
     assert exc_info.value.native_code == "40P01"
+
+
+# --------------------------------------------------------------------------- #
+# The ordered write operation, over a real psycopg connection whose libpq      #
+# session is scripted. The live proofs are test_postgres_ordered_writes.py's.  #
+# --------------------------------------------------------------------------- #
+
+_WRITES = (
+    Statement("update a set v = 1"),
+    Statement("update b set v = 2"),
+    Statement("delete from c"),
+)
+
+
+def _ordered_writes(
+    facade: PostgresConnection, statements: Sequence[CanonicalWriteStatement] = _WRITES
+) -> OrderedWriteResult:
+    return facade._ordered_writes(statements)  # pyright: ignore[reportPrivateUsage] - the operation is qualified here before the facade advertises it
+
+
+def _written(
+    monkeypatch: pytest.MonkeyPatch,
+    server: Server,
+    statements: Sequence[CanonicalWriteStatement] = _WRITES,
+) -> tuple[OrderedWriteResult, PostgresConnection]:
+    with native_session(monkeypatch, server) as native:
+        facade = PostgresConnection(native)
+        return _ordered_writes(facade, statements), facade
+
+
+def _raising(error: type[BaseException], message: str, at: int) -> Callable[[int], None]:
+    def hook(call: int) -> None:
+        if call == at:
+            raise error(message)
+
+    return hook
+
+
+def test_ordered_writes_answer_each_statement_its_own_count_in_presentation_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Canonical SQL is converted once: a literal `%` crosses doubled for the
+    # driver's parameter style, which a bare `%` would break.
+    statements = (
+        Statement("update \"rate%\" set v = 1 where k = '?'"),
+        Statement("update b set v = 2"),
+        Statement("delete from c"),
+    )
+    server = Server(script([counted(1)], [counted(0)], [counted(3)]))
+
+    result, facade = _written(monkeypatch, server, statements)
+
+    assert result == OrderedWriteResultComplete((1, 0, 3))
+    assert server.sent == [
+        b"update \"rate%\" set v = 1 where k = '?'",
+        b"update b set v = 2",
+        b"delete from c",
+        "sync",
+    ]
+    assert server.pipeline_status == 0
+    assert not facade.suspect
+
+
+def test_counts_handed_over_while_later_statements_queue_stay_with_their_statements(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    server = Server(script([counted(2)], [counted(0)], [counted(1)]))
+    server.early = True
+
+    result, _facade = _written(monkeypatch, server)
+
+    assert result == OrderedWriteResultComplete((2, 0, 1))
+    assert server.handed_early == 4
+
+
+def test_a_statement_error_is_its_own_failure_and_confirms_what_it_kept_from_running(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def answer() -> Callable[[bytes], list[Result]]:
+        return script([counted(1)], [failed("23505", "duplicate key", constraint="coverage_pkey")])
+
+    statements = (*_WRITES, Statement("delete from d"))
+    first, facade = _written(monkeypatch, Server(answer()), statements)
+    second, _ = _written(monkeypatch, Server(answer()), statements)
+
+    assert isinstance(first, OrderedWriteResultComplete)
+    count, failure, *skipped = first.outcomes
+    assert count == 1
+    assert skipped == [StatementNotExecuted(), StatementNotExecuted()]
+    assert isinstance(failure, StatementFailed)
+    error = failure.error
+    assert isinstance(error, DatabaseError)
+    assert (error.category, error.native_code, error.message) == (
+        "uniqueViolation",
+        "23505",
+        "duplicate key",
+    )
+    assert error.violated_index == PhysicalIndexName("coverage_pkey")
+    assert isinstance(error.__cause__, errors.UniqueViolation)
+    assert error.__traceback__ is None
+    assert error.__cause__.__traceback__ is None
+    assert isinstance(second, OrderedWriteResultComplete)
+    repeated = second.outcomes[1]
+    assert isinstance(repeated, StatementFailed)
+    assert repeated.error is not error
+    assert not facade.suspect
+
+
+def _reaches(root: object, target: object) -> bool:
+    """Whether ``target`` is reachable from ``root`` through object references,
+    short of classes, modules, functions, and frames (a frame would arrive only
+    through a traceback, which is asserted on directly)."""
+    opaque = (type, ModuleType, FunctionType, FrameType)
+    seen: set[int] = set()
+    pending = [root]
+    while pending:
+        item = pending.pop()
+        if item is target:
+            return True
+        if id(item) in seen or isinstance(item, opaque):
+            continue
+        seen.add(id(item))
+        pending.extend(gc.get_referents(item))
+    return False
+
+
+def test_a_statement_failure_keeps_neither_its_connection_nor_its_statements_reachable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    server = Server(script([failed("23505", "duplicate key")]))
+    with native_session(monkeypatch, server) as native:
+        result = _ordered_writes(PostgresConnection(native))
+
+        assert isinstance(result, OrderedWriteResultComplete)
+        failure = result.outcomes[0]
+        assert isinstance(failure, StatementFailed)
+        assert failure.error.__context__ is None
+        assert not _reaches(failure.error, native)
+        assert not any(_reaches(failure.error, statement) for statement in _WRITES)
+
+
+@pytest.mark.parametrize(
+    ("answered", "native_code"),
+    [
+        (
+            [failed("57P01", "terminating connection", severity=b"FATAL")],
+            "57P01",
+        ),
+        ([unowned("server closed the connection unexpectedly")], None),
+        ([failed("23505", "duplicate key"), unowned("server closed the connection")], "23505"),
+    ],
+    ids=["session-ending", "raised-by-libpq", "beside-another-result"],
+)
+def test_a_failure_its_statement_did_not_cause_interrupts_rather_than_failing_it(
+    monkeypatch: pytest.MonkeyPatch, answered: list[Result], native_code: str | None
+) -> None:
+    result, facade = _written(monkeypatch, Server(script([counted(1)], answered)))
+
+    assert isinstance(result, OrderedWriteResultInterrupted)
+    assert (result.confirmed, result.unconfirmed_count, result.unsent_count) == ((1,), 2, 0)
+    assert isinstance(result.error, DatabaseError)
+    assert result.error.native_code == native_code
+    assert facade.suspect
+
+
+@pytest.mark.parametrize(
+    ("answered", "description"),
+    [
+        ([Result(ExecStatus.TUPLES_OK)], "result status TUPLES_OK"),
+        ([Result(ExecStatus.COMMAND_OK)], "no affected-row count"),
+        ([counted(1), counted(1)], "2 results"),
+        ([Result(99)], "result status 99"),
+    ],
+    ids=["rows", "uncounted", "two-results", "unknown-status"],
+)
+def test_a_result_no_count_only_statement_produces_is_an_integrity_failure(
+    monkeypatch: pytest.MonkeyPatch, answered: list[Result], description: str
+) -> None:
+    server = Server(script([counted(1)], answered, [counted(1)]))
+    with native_session(monkeypatch, server) as native:
+        facade = PostgresConnection(native)
+        with pytest.raises(OrderedWriteResultIntegrityError) as refused:
+            _ordered_writes(facade)
+
+    message = str(refused.value)
+    assert f"statement 1 of an ordered write with {description}," in message
+    assert "update" not in message
+    assert facade.suspect
+
+
+def test_results_collected_by_an_exit_that_failed_are_left_unconfirmed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    server = Server()
+    server.on_fetch = _raising(psycopg.OperationalError, "consuming input failed", at=2)
+
+    result, facade = _written(monkeypatch, server)
+
+    assert isinstance(result, OrderedWriteResultInterrupted)
+    assert (result.confirmed, result.unconfirmed_count, result.unsent_count) == ((), 3, 0)
+    assert isinstance(result.error, DatabaseError)
+    assert result.error.native_code is None
+    assert isinstance(result.error.__cause__, psycopg.OperationalError)
+    assert facade.suspect
+
+
+def test_results_collected_while_queueing_survive_an_exit_that_failed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    server = Server(script([counted(1)], [counted(0)], [counted(1)]))
+    server.early = True
+    server.on_communicate = _raising(psycopg.OperationalError, "sending sync failed", at=4)
+
+    result, facade = _written(monkeypatch, server)
+
+    assert isinstance(result, OrderedWriteResultInterrupted)
+    assert (result.confirmed, result.unconfirmed_count, result.unsent_count) == ((1, 0, 1), 0, 0)
+    assert facade.suspect
+
+
+def test_results_arriving_after_a_driver_call_failed_are_never_trusted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The failed read dropped the first statement's answer, so what psycopg
+    # pairs with that statement afterwards belongs to something else.
+    server = Server()
+
+    def lose(call: int) -> None:
+        if call == 2:
+            server.lose("consuming input failed")
+
+    server.on_communicate = lose
+
+    result, facade = _written(monkeypatch, server)
+
+    assert isinstance(result, OrderedWriteResultInterrupted)
+    assert (result.confirmed, result.unconfirmed_count, result.unsent_count) == ((), 2, 1)
+    assert server.sent == [b"update a set v = 1", b"update b set v = 2", "sync"]
+    assert facade.suspect
+
+
+class _Unrenderable:
+    @property
+    def sql(self) -> str:
+        raise ValueError("no canonical text")
+
+    @property
+    def binds(self) -> Sequence[object]:
+        return ()
+
+
+def test_statements_never_handed_to_the_driver_are_the_unsent_suffix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    statements = (_WRITES[0], _Unrenderable(), _WRITES[1])
+
+    result, facade = _written(monkeypatch, Server(), statements)
+
+    assert isinstance(result, OrderedWriteResultInterrupted)
+    assert (result.confirmed, result.unconfirmed_count, result.unsent_count) == ((), 1, 2)
+    assert isinstance(result.error, ValueError)
+    assert facade.suspect
+
+
+def test_a_statement_the_driver_refused_to_send_is_unconfirmed_and_the_rest_unsent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    server = Server()
+    server.refuse = lambda query: query == b"update b set v = 2"
+
+    result, _facade = _written(monkeypatch, server)
+
+    assert isinstance(result, OrderedWriteResultInterrupted)
+    assert (result.confirmed, result.unconfirmed_count, result.unsent_count) == ((), 2, 1)
+    assert isinstance(result.error, DatabaseError)
+    assert isinstance(result.error.__cause__, psycopg.OperationalError)
+
+
+def _owing_deallocation(native: psycopg.Connection[TupleRow]) -> None:
+    native._prepared._to_flush.append(b"_pg3_0")  # pyright: ignore[reportPrivateUsage] - the deallocation a pipeline's own eviction leaves owed
+
+
+def _deallocation() -> object:
+    return (
+        ("close", b"_pg3_0")
+        if psycopg.capabilities.has_send_close_prepared()
+        else b"DEALLOCATE _pg3_0"
+    )
+
+
+def test_prepared_cache_maintenance_between_statements_answers_none_of_them(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    server = Server()
+    with native_session(monkeypatch, server) as native:
+        _owing_deallocation(native)
+        result = _ordered_writes(PostgresConnection(native))
+
+    assert result == OrderedWriteResultComplete((1, 1, 1))
+    assert server.sent == [
+        b"update a set v = 1",
+        _deallocation(),
+        b"update b set v = 2",
+        b"delete from c",
+        "sync",
+    ]
+
+
+def test_failed_prepared_cache_maintenance_interrupts_without_blaming_a_statement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    server = Server(script([failed("23505", "duplicate key")]))
+    with native_session(monkeypatch, server) as native:
+        _owing_deallocation(native)
+        facade = PostgresConnection(native)
+        result = _ordered_writes(facade)
+
+    assert isinstance(result, OrderedWriteResultInterrupted)
+    assert (result.confirmed, result.unconfirmed_count, result.unsent_count) == ((), 3, 0)
+    assert isinstance(result.error, DatabaseError)
+    assert isinstance(result.error.__cause__, errors.PipelineAborted)
+    assert facade.suspect
+
+
+def test_an_abort_no_confirmed_failure_explains_ends_what_is_confirmed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result, facade = _written(monkeypatch, Server(script([counted(1)], [aborted()], [counted(1)])))
+
+    assert isinstance(result, OrderedWriteResultInterrupted)
+    assert (result.confirmed, result.unconfirmed_count, result.unsent_count) == ((1,), 2, 0)
+    assert isinstance(result.error, DatabaseError)
+    assert (result.error.category, result.error.native_code) == (None, None)
+    assert "before answering every statement" in result.error.message
+    assert facade.suspect
+
+
+def test_answers_that_stop_arriving_leave_the_rest_unconfirmed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    server = Server()
+
+    def vanish(call: int) -> None:
+        if call == 2:
+            server.answers.clear()
+
+    server.on_fetch = vanish
+
+    result, facade = _written(monkeypatch, server)
+
+    assert isinstance(result, OrderedWriteResultInterrupted)
+    assert (result.confirmed, result.unconfirmed_count, result.unsent_count) == ((1,), 2, 0)
+    assert facade.suspect
+
+
+@pytest.mark.parametrize("phase", ["queueing", "exit"])
+def test_control_flow_propagates_as_itself_and_leaves_the_scope_suspect(
+    monkeypatch: pytest.MonkeyPatch, phase: str
+) -> None:
+    server = Server()
+    if phase == "queueing":
+        server.on_communicate = _raising(KeyboardInterrupt, "", at=2)
+    else:
+        server.on_fetch = _raising(KeyboardInterrupt, "", at=1)
+    with native_session(monkeypatch, server) as native:
+        facade = PostgresConnection(native)
+        with pytest.raises(KeyboardInterrupt):
+            _ordered_writes(facade)
+
+    assert facade.suspect
+    assert server.pipeline_status == 0
+
+
+def test_a_connection_that_cannot_open_a_pipeline_sends_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    server = Server()
+    with native_session(monkeypatch, server) as native:
+        facade = PostgresConnection(native)
+        server.finish()
+        result = _ordered_writes(facade)
+
+    assert isinstance(result, OrderedWriteResultInterrupted)
+    assert (result.confirmed, result.unconfirmed_count, result.unsent_count) == ((), 0, 3)
+    assert server.sent == []
+    assert facade.suspect
+
+
+def test_a_saved_ordered_write_operation_runs_nothing_once_its_scope_is_revoked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    server = Server()
+    with native_session(monkeypatch, server) as native:
+        facade = PostgresConnection(native)
+        saved = facade._ordered_writes  # pyright: ignore[reportPrivateUsage] - a reference kept past its scope
+        facade.revoke()
+        with pytest.raises(RuntimeError, match="scope has ended"):
+            saved(_WRITES)
+
+    assert server.sent == []
 
 
 class _BodyFailure(Exception):

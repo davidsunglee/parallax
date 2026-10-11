@@ -29,7 +29,7 @@ import psycopg_pool
 import pytest
 from psycopg.adapt import AdaptersMap
 from psycopg.pq import TransactionStatus
-from psycopg.rows import tuple_row
+from psycopg.rows import TupleRow, tuple_row
 
 from parallax.core.base import INFINITY, PresentDocument
 from parallax.core.db_port import (
@@ -39,6 +39,9 @@ from parallax.core.db_port import (
     CredentialResolutionError,
     DatabaseStartupError,
     Invalidated,
+    OrderedWriteResult,
+    OrderedWriteResultComplete,
+    OrderedWriteResultInterrupted,
     Password,
     ReleaseUnconfirmed,
     Returned,
@@ -47,6 +50,7 @@ from parallax.postgres import OnDemandOptions, PoolOptions, PostgresRole
 from parallax.postgres._connection import ConnectionEstablishment, IncompatibleSessionError
 from parallax.postgres._context import PostgresConnectionContext, release
 from parallax.postgres._runtime import PROBE_SQL, PostgresRuntime, open_runtime
+from tests.unit.postgres._native_pipeline_support import Server, Statement, native_session
 
 _PROBE_ROW = {
     "ready": 1,
@@ -913,6 +917,49 @@ def test_a_cleanup_issue_carries_a_detached_diagnostic_and_no_live_object() -> N
 def test_a_release_unconfirmed_result_must_name_at_least_one_issue() -> None:
     with pytest.raises(ValueError, match="at least one cleanup issue"):
         ReleaseUnconfirmed(())
+
+
+def _ordered_write_scope(
+    monkeypatch: pytest.MonkeyPatch, server: Server
+) -> tuple[OrderedWriteResult, Any, Any, psycopg.Connection[TupleRow]]:
+    """One acquisition that presents a single ordered write, and what releasing
+    it established."""
+    with native_session(monkeypatch, server) as native:
+        pool = _pool(cast("Any", native))
+        scope = _context(pool)
+        with scope as facade:
+            result = facade._ordered_writes((Statement("update a set v = 1"),))
+        return result, scope.cleanup_result, pool, native
+
+
+def test_an_interrupted_ordered_write_disposes_of_its_connection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    server = Server()
+
+    def lose(call: int) -> None:
+        if call == 1:
+            raise psycopg.OperationalError("consuming input failed")
+
+    server.on_fetch = lose
+
+    result, cleanup, pool, native = _ordered_write_scope(monkeypatch, server)
+
+    assert isinstance(result, OrderedWriteResultInterrupted)
+    assert isinstance(cleanup, Invalidated)
+    assert [(issue.phase, issue.code) for issue in cleanup.issues] == [("inspect", "suspect")]
+    assert native.closed
+    assert pool.returned == [native]
+
+
+def test_a_completed_ordered_write_leaves_its_connection_reusable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result, cleanup, pool, native = _ordered_write_scope(monkeypatch, Server())
+
+    assert result == OrderedWriteResultComplete((1,))
+    assert cleanup == Returned()
+    assert pool.returned == [native]
 
 
 # --------------------------------------------------------------------------- #

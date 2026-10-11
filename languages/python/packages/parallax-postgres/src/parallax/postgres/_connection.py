@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import contextlib
 from collections.abc import Callable, Generator, Sequence
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, cast
 
 import psycopg
 from psycopg.abc import AdaptContext, Buffer
 from psycopg.adapt import Dumper
+from psycopg.errors import error_from_result
+from psycopg.pq import DiagnosticField, ExecStatus
+from psycopg.pq.abc import PGresult
 from psycopg.rows import RowMaker, TupleRow, tuple_row
 from psycopg.sql import SQL, Literal
 from psycopg.types.json import Jsonb, JsonbBinaryLoader, JsonbLoader
@@ -16,20 +20,28 @@ from parallax.core.db_error import DatabaseError, classify_error
 from parallax.core.db_port import (
     BeginFailed,
     CallbackRaised,
+    CanonicalWriteStatement,
     CommitFailed,
     Committed,
+    ConfirmedWriteOutcome,
     CredentialResolutionError,
     CredentialSource,
     DatabaseConnection,
     DocumentReadOrdinals,
     IsolationLevel,
     JsonDocument,
+    OrderedWriteResult,
+    OrderedWriteResultComplete,
+    OrderedWriteResultIntegrityError,
+    OrderedWriteResultInterrupted,
     OrderedWriteTransport,
     PipelineStatement,
     RollbackFailed,
     RollbackTrigger,
     RolledBack,
     Row,
+    StatementFailed,
+    StatementNotExecuted,
     TransactionOutcome,
 )
 from parallax.core.dialect import POSTGRES, Dialect
@@ -129,15 +141,16 @@ def translate_driver_error(dialect: Dialect, exc: psycopg.Error) -> DatabaseErro
     )
 
 
-def boundary_failure(dialect: Dialect, exc: psycopg.Error) -> DatabaseError:
-    """The neutral error a transaction outcome carries for a boundary failure.
+def reported_failure(dialect: Dialect, exc: psycopg.Error) -> DatabaseError:
+    """The neutral error for a driver failure that is reported rather than raised.
 
-    A statement failure reaches its caller through ``raise ... from``, which is
-    what leaves the driver's own exception on it as the cause. A boundary failure
-    is reported rather than raised, so the same chaining happens here: without it
-    the psycopg exception the classification came from would be dropped on the way
-    into the outcome, and a caller re-raising the error later would see no cause
-    at all.
+    A statement failure ``execute`` meets reaches its caller through
+    ``raise ... from``, which is what leaves the driver's own exception on it as
+    the cause. A transaction outcome's boundary failure, and a statement failure
+    or interruption an ordered write result carries, are reported instead, so the
+    same chaining happens here: without it the psycopg exception the
+    classification came from would be dropped on the way into the report, and a
+    caller raising the error later would see no cause at all.
     """
     error = translate_driver_error(dialect, exc)
     error.__cause__ = exc
@@ -430,6 +443,210 @@ class ConnectionEstablishment:
         return resolve
 
 
+_COMMAND_OK = ExecStatus.COMMAND_OK
+_FATAL_ERROR = ExecStatus.FATAL_ERROR
+_PIPELINE_ABORTED = ExecStatus.PIPELINE_ABORTED
+_NOT_EXECUTED = StatementNotExecuted()
+_UNANSWERED = "PostgreSQL ended an ordered write before answering every statement it was sent"
+
+
+@dataclass(frozen=True, slots=True)
+class _Unowned:
+    """A failure a statement's result carried that the statement did not cause,
+    such as the session ending around it."""
+
+    error: DatabaseError
+
+
+@dataclass(frozen=True, slots=True)
+class _Unexpected:
+    """A result no count-only statement produces, described without its content."""
+
+    description: str
+
+
+type _Established = ConfirmedWriteOutcome | _Unowned | _Unexpected
+
+
+class _ResultIntake:
+    """What one ordered write's count cursors record their results through.
+
+    Psycopg pairs each result with the cursor whose command produced it by queue
+    position. A driver call that raises can drop results it had already taken
+    from libpq while their queue positions remain, so a result handed over after
+    one raises could pair with the wrong cursor and is never trusted.
+    """
+
+    __slots__ = ("_dialect", "_encoding", "accepting", "recorded")
+
+    def __init__(self, dialect: Dialect, encoding: str) -> None:
+        self._dialect = dialect
+        self._encoding = encoding
+        self.accepting = True
+        self.recorded = 0
+
+    def established(self, results: list[PGresult]) -> _Established:
+        self.recorded += 1
+        if len(results) != 1:
+            for result in results:
+                if result.status == _FATAL_ERROR:
+                    return _Unowned(self._error(result))
+            return _Unexpected(f"{len(results)} results")
+        result = results[0]
+        status = result.status
+        if status == _COMMAND_OK:
+            count = result.command_tuples
+            return _Unexpected("no affected-row count") if count is None else count
+        if status == _PIPELINE_ABORTED:
+            return _NOT_EXECUTED
+        if status != _FATAL_ERROR:
+            return _Unexpected(f"result status {_status_name(status)}")
+        error = self._error(result)
+        # A statement's own failure is an ERROR the server raised with a
+        # SQLSTATE. A FATAL or PANIC ends the session wherever it happens to be,
+        # and an error libpq raises itself carries no SQLSTATE at all.
+        owned = result.error_field(DiagnosticField.SEVERITY_NONLOCALIZED) == b"ERROR" and (
+            result.error_field(DiagnosticField.SQLSTATE) is not None
+        )
+        return StatementFailed(error) if owned else _Unowned(error)
+
+    def _error(self, result: PGresult) -> DatabaseError:
+        return reported_failure(self._dialect, error_from_result(result, self._encoding))
+
+
+def _status_name(status: int) -> str:
+    try:
+        return ExecStatus(status).name
+    except ValueError:
+        return str(status)
+
+
+class _CountCursor(psycopg.Cursor[TupleRow]):
+    """One presented statement's cursor, recording the outcome its result
+    establishes instead of attaching the result.
+
+    Psycopg checks a result before attaching it and raises on a failed or
+    aborted one, so both hooks are replaced: recording in the check is what
+    keeps those outcomes, and attaching nothing keeps no result set or row
+    machinery.
+    """
+
+    __slots__ = ("_intake", "outcome")
+
+    def __init__(self, connection: psycopg.Connection[TupleRow], intake: _ResultIntake) -> None:
+        super().__init__(connection)
+        self._intake = intake
+        self.outcome: _Established | None = None
+
+    def _check_results(self, results: list[PGresult]) -> None:
+        intake = self._intake
+        if intake.accepting:
+            self.outcome = intake.established(results)
+
+    def _set_results(self, results: list[PGresult]) -> None:
+        del results
+
+
+def _write_in_order(
+    connection: psycopg.Connection[TupleRow],
+    dialect: Dialect,
+    statements: Sequence[CanonicalWriteStatement],
+) -> OrderedWriteResult:
+    """Present ``statements`` in one pipeline and answer what it established.
+
+    The pipeline's exit is its one synchronization, so its results arrive while
+    later statements are queued or as it exits. An exit that raises leaves the
+    results it recorded untrusted; one that returns lost none.
+
+    Each statement executes unprepared, so no preparation command of its own
+    shares the result queue. Prepared-cache maintenance psycopg queues between
+    statements answers no statement, and its failure ends collection.
+    """
+    intake = _ResultIntake(dialect, connection.info.encoding)
+    cursors: list[_CountCursor] = []
+    settled: int | None = None
+    try:
+        with connection.pipeline():
+            try:
+                for statement in statements:
+                    query = dialect.to_driver_sql(statement.sql).encode()
+                    binds = adapt_binds(statement.binds)
+                    cursor = _CountCursor(connection, intake)
+                    cursors.append(cursor)
+                    cursor.execute(query, binds, prepare=False)
+            except BaseException:
+                intake.accepting = False
+                raise
+            settled = intake.recorded
+    except Exception as escaped:
+        trusted = intake.recorded if settled is None else settled
+        return _answered(dialect, cursors[:trusted], len(cursors), len(statements), escaped)
+    return _answered(dialect, cursors[: intake.recorded], len(cursors), len(statements), None)
+
+
+def _answered(
+    dialect: Dialect,
+    recorded: list[_CountCursor],
+    sent: int,
+    presented: int,
+    escaped: Exception | None,
+) -> OrderedWriteResult:
+    """The result the ``recorded`` cursors establish for ``presented``
+    statements, of which only the first ``sent`` ever reached psycopg.
+
+    Psycopg hands results over in queue order, so the cursors that recorded one
+    are always a leading run.
+    """
+    established: list[_Established] = []
+    for index, cursor in enumerate(recorded):
+        outcome = cast("_Established", cursor.outcome)
+        if isinstance(outcome, _Unexpected):
+            raise OrderedWriteResultIntegrityError(
+                f"PostgreSQL answered statement {index} of an ordered write with "
+                f"{outcome.description}, which no count-only statement produces"
+            )
+        established.append(outcome)
+    confirmed = _confirmed(established)
+    if escaped is None and len(confirmed) == presented:
+        return OrderedWriteResultComplete(confirmed)
+    return OrderedWriteResultInterrupted(
+        confirmed,
+        sent - len(confirmed),
+        presented - sent,
+        _interruption(dialect, established, escaped),
+    )
+
+
+def _confirmed(established: list[_Established]) -> tuple[ConfirmedWriteOutcome, ...]:
+    """The leading outcomes each established for its own statement.
+
+    An aborted statement is confirmed unexecuted only behind a confirmed
+    failure; an abort with no failure before it was caused by something no
+    statement owns.
+    """
+    confirmed: list[ConfirmedWriteOutcome] = []
+    failed = False
+    for outcome in established:
+        if isinstance(outcome, _Unowned | _Unexpected) or (
+            isinstance(outcome, StatementNotExecuted) and not failed
+        ):
+            break
+        failed = failed or isinstance(outcome, StatementFailed)
+        confirmed.append(outcome)
+    return tuple(confirmed)
+
+
+def _interruption(
+    dialect: Dialect, established: list[_Established], escaped: Exception | None
+) -> Exception:
+    for outcome in established:
+        if isinstance(outcome, _Unowned):
+            return outcome.error
+    if escaped is None:
+        return classify_error(dialect, None, _UNANSWERED)
+    return reported_failure(dialect, escaped) if isinstance(escaped, psycopg.Error) else escaped
+
+
 class PostgresConnection:
     """One acquisition's execution access: a :class:`DatabaseConnection` over a
     psycopg connection somebody else owns the lifetime of.
@@ -518,6 +735,25 @@ class PostgresConnection:
         every write runs alone."""
         return None
 
+    def _ordered_writes(self, statements: Sequence[CanonicalWriteStatement]) -> OrderedWriteResult:
+        """The ordered write transport operation over this scope's connection.
+
+        An interruption leaves the connection in a state nothing established,
+        as does any exception escaping it, so either marks this scope suspect
+        for its cleanup to dispose of; the connection is reached anew on every
+        call, so a saved reference to this operation runs nothing once the
+        scope is revoked.
+        """
+        connection = self._native()
+        try:
+            result = _write_in_order(connection, self.dialect, statements)
+        except BaseException:
+            self._suspect = True
+            raise
+        if isinstance(result, OrderedWriteResultInterrupted):
+            self._suspect = True
+        return result
+
     def transaction[T](
         self,
         body: Callable[[DatabaseConnection], T],
@@ -573,7 +809,7 @@ class PostgresConnection:
         try:
             boundary.__enter__()
         except psycopg.Error as exc:
-            return BeginFailed(boundary_failure(self.dialect, exc))
+            return BeginFailed(reported_failure(self.dialect, exc))
         if spelling is not None:
             unopened = self._at_isolation(spelling, boundary=boundary)
             if unopened is not None:
@@ -585,7 +821,7 @@ class PostgresConnection:
         try:
             boundary.__exit__(None, None, None)
         except psycopg.Error as exc:
-            return self._undone(CommitFailed(boundary_failure(self.dialect, exc)), boundary=None)
+            return self._undone(CommitFailed(reported_failure(self.dialect, exc)), boundary=None)
         return Committed(value)
 
     def _at_isolation(
@@ -625,7 +861,7 @@ class PostgresConnection:
                 self._native().rollback()
             except psycopg.Error:
                 self._suspect = True
-            return BeginFailed(boundary_failure(self.dialect, exc))
+            return BeginFailed(reported_failure(self.dialect, exc))
         return None
 
     def _undone(
@@ -655,7 +891,7 @@ class PostgresConnection:
                 boundary.__exit__(type(error), error, error.__traceback__)
             self._native().rollback()
         except psycopg.Error as exc:
-            rollback_error = boundary_failure(self.dialect, exc)
+            rollback_error = reported_failure(self.dialect, exc)
             self._suspect = True
             return RollbackFailed(trigger, rollback_error)
         return RolledBack(trigger)
