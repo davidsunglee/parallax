@@ -699,17 +699,19 @@ class Attempt:
         return effects
 
     def _execute_steps(self, steps: WriteStepView, /, *, allocates: bool) -> tuple[object, ...]:
-        """Lower, execute, and enforce each of ``steps`` in order, none lowered
-        before every earlier one has been enforced, and answer the keys the
-        database allocated, in step order, where the unit ``allocates`` any.
+        """Lower, execute, and enforce each of ``steps`` in order, and answer
+        the keys the database allocated, in step order, where the unit
+        ``allocates`` any.
 
         Each statement stores the payload the adopted planner's preparer
         prepares for it when its turn comes, and every step lowers to exactly
         one statement. A temporal mutation's effect on its predecessor precedes
         the rows it opens, so a failure there aborts BEFORE those rows ever
-        execute. Where the connection has ordered write transport, a run of
-        contiguous count-only temporal effects is presented together instead
-        (:meth:`_run_ordered`); every other step runs alone.
+        execute. A step that runs alone is lowered only once every earlier step
+        has been enforced. Where the connection has ordered write transport, a
+        run of contiguous count-only temporal effects is instead lowered whole
+        and presented together before any of it is enforced
+        (:meth:`_run_ordered`).
 
         This performs NO classification of its own: the adopted Write Planner
         already spent the concurrency mode while settling each step, and this

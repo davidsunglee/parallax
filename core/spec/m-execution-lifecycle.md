@@ -238,7 +238,9 @@ no observer reads one as the other. `statement` is the exact deeply immutable Lo
 Statement presented to the port and is repeated on Finished. It is borrowed for
 synchronous delivery: core does not copy its text or binds, and a Handler must
 not retain it. `durationNs` is monotonic elapsed time around the port invocation
-alone; Handler time is outside it. A failed call still counts one round trip.
+alone; Handler time is outside it. Every call counts one round trip, a failed,
+not-executed, or unconfirmed one included: the count is of statements presented
+to the port, not of network exchanges or of statements known to have executed.
 Transaction begin, commit, and rollback are not Database Calls and count none,
 and neither is whatever an adapter runs to open a boundary at a requested
 Isolation Level: applying the level is part of opening the boundary, so it
