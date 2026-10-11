@@ -704,14 +704,17 @@ class Attempt:
         ``allocates`` any.
 
         Each statement stores the payload the adopted planner's preparer
-        prepares for it when its turn comes, and every step lowers to exactly
-        one statement. A temporal mutation's effect on its predecessor precedes
-        the rows it opens, so a failure there aborts BEFORE those rows ever
-        execute. A step that runs alone is lowered only once every earlier step
-        has been enforced. Where the connection has ordered write transport, a
-        run of contiguous count-only temporal effects is instead lowered whole
-        and presented together before any of it is enforced
-        (:meth:`_run_ordered`).
+        prepares for it when its turn comes. A temporal mutation's effect on
+        its predecessor precedes the rows it opens, so a failure there aborts
+        BEFORE those rows ever execute. A step that runs alone is lowered only
+        once every earlier step has been enforced, and nothing is lowered ahead
+        of that but the one step a run takes to find where it ends, which waits
+        unprepared. Where the connection has ordered write transport, a run of
+        two or more contiguous count-only temporal effects is instead lowered
+        whole and presented together before any of it is enforced
+        (:meth:`_run_ordered`). A run of contiguous compatible temporal
+        openings is inserted by one multi-row statement (:meth:`_run_openings`),
+        each opening remaining its own step.
 
         This performs NO classification of its own: the adopted Write Planner
         already spent the concurrency mode while settling each step, and this
@@ -740,6 +743,10 @@ class Attempt:
                 if bound is not None:
                     step = self._run_ordered(step, bound, cursor, transport)
                     continue
+            first = cursor.opening(step)
+            if first is not None:
+                step = self._run_openings(first, cursor)
+                continue
             statement = cursor.lowered(step)
             if allocates and returns_rows(step):
                 allocated.extend(self._run_returning(step, statement))
@@ -760,20 +767,32 @@ class Attempt:
         after the run — taken from ``cursor`` but not lowered — or ``None``
         where ``cursor`` ran out.
 
-        The run ends before a step transport cannot carry, and at
+        The step after ``first`` is taken before anything is lowered: where
+        transport cannot carry it, or none remains, ``first`` would be the
+        run's only effect and runs alone instead. Taking it may fail
+        ordinarily, and ``first`` then runs alone before that failure
+        propagates, exactly as it would have without the look ahead.
+
+        Otherwise the run ends before a step transport cannot carry, and at
         :data:`_ORDERED_STATEMENTS` before another step is even taken. Taking
         or lowering a later effect may fail ordinarily: the effects already
         lowered are then presented and enforced as they were selected, and only
         if they succeed does that failure propagate. ``first`` failing presents
         nothing, and a control-flow or fatal exception presents none of them.
         """
+        following, following_bound, failure = _look_ahead(cursor)
+        if following is None or following_bound is None:
+            self._run_alone(first, cursor, failure)
+            return following
         chunk = _LoweredWriteChunk()
         chunk.append(first, cursor.lowered_within(first, bound))
-        following: PlannedStep | None = None
-        failure: Exception | None = None
         capped = True
-        while len(chunk) < _ORDERED_STATEMENTS:
+        while True:
             try:
+                chunk.append(following, cursor.lowered_within(following, following_bound))
+                following = None
+                if len(chunk) >= _ORDERED_STATEMENTS:
+                    break
                 following = cursor.take()
                 if following is None:
                     capped = False
@@ -782,12 +801,9 @@ class Attempt:
                 if following_bound is None:
                     capped = False
                     break
-                statement = cursor.lowered_within(following, following_bound)
             except Exception as error:
                 failure = error
                 break
-            chunk.append(following, statement)
-            following = None
         try:
             self._present(chunk, transport)
         except BaseException:
@@ -798,6 +814,19 @@ class Attempt:
         if failure is not None:
             raise failure
         return cursor.take() if capped else following
+
+    def _run_alone(
+        self, step: PlannedStep, cursor: LoweringCursor, failure: Exception | None
+    ) -> None:
+        """Run ``step`` alone, then raise ``failure`` — the ordinary failure
+        taking the step after it raised — only where ``step`` succeeded."""
+        try:
+            self._run(step, cursor.lowered(step))
+        except BaseException:
+            failure = None
+            raise
+        if failure is not None:
+            raise failure
 
     def _present(self, chunk: _LoweredWriteChunk, transport: OrderedWriteTransport) -> None:
         """Present ``chunk`` through ``transport`` in one invocation, then
@@ -910,6 +939,17 @@ class _LoweredWriteChunk(Sequence[LoweredStatement]):
 
     def target(self, index: int) -> ActivityTarget:
         return self._steps[index].entity
+
+
+def _look_ahead(cursor: LoweringCursor) -> tuple[PlannedStep | None, int | None, Exception | None]:
+    """The step after an effect, taken from ``cursor`` but not lowered, with
+    the bound ordered transport would carry it within, or else the ordinary
+    failure taking it raised."""
+    try:
+        following = cursor.take()
+        return following, None if following is None else cursor.ordered_bound(following), None
+    except Exception as error:
+        return None, None, error
 
 
 def _integrity(problem: str) -> OrderedWriteResultIntegrityError:

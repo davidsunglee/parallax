@@ -1150,11 +1150,11 @@ been.
 
 Each successor and gap row remains its own Planned Write; the statements that
 carry them are physical realization. Contiguous openings of one Entity that
-name the same members and carry no generated value may share one multi-row
-insert of the *Batched insert / update* form below, one value tuple per opening
-in the order above, each statement within the dialect's bind limit
-(`m-execution` *Flush execution*). Such a statement succeeds or fails as a
-whole, and its error is the statement's own rather than any one opening's.
+name the same members and carry no generated value share one multi-row insert
+of the *Batched insert / update* form below, one value tuple per opening in the
+order above, each statement within the dialect's bind limit and an internal
+entry cap (`m-execution` *Flush execution*). Such a statement succeeds or fails
+as a whole, and its error is the statement's own rather than any one opening's.
 
 A rectangle the write leaves unchanged (`m-temporal-write` *Unchanged milestones*) is
 neither inactivated nor reopened. Under Optimistic, where the dialect's write

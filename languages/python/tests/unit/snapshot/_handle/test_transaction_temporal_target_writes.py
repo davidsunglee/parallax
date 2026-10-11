@@ -57,6 +57,7 @@ from tests._support.db_port import (
     Transact,
     Write,
     WriteCall,
+    inserted_rows,
 )
 from tests.unit._transact_support import (
     BALANCE,
@@ -164,7 +165,7 @@ def test_an_optimistic_transaction_time_target_reads_its_current_row_only_at_flu
 
 def test_an_optimistic_bitemporal_target_binds_every_interval_its_window_reaches() -> None:
     later = _rectangle(_JUN, INFINITY_INSTANT, "200.00", tx_start=_T1)
-    port = ScriptedAdapter(Transact(Read(rows=[_rectangle(_JAN, _JUN), later]), Write(times=5)))
+    port = ScriptedAdapter(Transact(Read(rows=[_rectangle(_JAN, _JUN), later]), Write(times=3)))
 
     def fn(tx: Transaction) -> None:
         _patch(tx, value="150.00")
@@ -176,12 +177,12 @@ def test_an_optimistic_bitemporal_target_binds_every_interval_its_window_reaches
         "where t0.id = %s and t0.thru_z > %s and t0.from_z < %s and t0.out_z = %s"
     )
     assert coverage.binds == (1, _MAR, _SEP, INFINITY_INSTANT)
-    start, later_close, *opened = _writes(port)
+    start, later_close, opened = _writes(port)
     # The start's gate binds the caller's milestone, a later row's its own; the
     # equal changed parts of both open as one row.
     assert (start.binds[2], start.binds[-1]) == (_JUN, _T0)
     assert (later_close.binds[2], later_close.binds[-1]) == ("infinity", _T1)
-    assert [call.binds[2:5] for call in opened] == [
+    assert [row[2:5] for row in inserted_rows(opened)] == [
         (Decimal("100.00"), _JAN, _MAR),
         (Decimal("150.00"), _MAR, _SEP),
         (Decimal("200.00"), _SEP, INFINITY_INSTANT),
@@ -285,7 +286,7 @@ def test_a_locking_bitemporal_target_reads_its_start_at_the_call_and_writes_unga
     # The start read at the call holds the whole window, so the flush reuses it
     # as the range's coverage and reads nothing more.
     port = ScriptedAdapter(
-        Transact(Read(rows=[_rectangle(_JAN, INFINITY_INSTANT)]), Write(times=4))
+        Transact(Read(rows=[_rectangle(_JAN, INFINITY_INSTANT)]), Write(times=2))
     )
 
     def fn(tx: Transaction) -> None:
@@ -299,9 +300,9 @@ def test_a_locking_bitemporal_target_reads_its_start_at_the_call_and_writes_unga
 
     _db(port).transact(fn, concurrency="locking")
     assert len(_reads(port)) == 1
-    close, *opened = _writes(port)
+    close, opened = _writes(port)
     assert close.sql.endswith("where id = %s and thru_z = %s and out_z = %s")
-    assert [call.binds[2:5] for call in opened] == [
+    assert [row[2:5] for row in inserted_rows(opened)] == [
         (Decimal("100.00"), _JAN, _MAR),
         (Decimal("150.00"), _MAR, _SEP),
         (Decimal("100.00"), _SEP, INFINITY_INSTANT),
@@ -377,7 +378,7 @@ def test_a_held_read_of_a_rectangle_its_start_lies_inside_is_no_exact_hit() -> N
 
 def test_a_locking_target_reuses_a_pending_observed_write_of_its_start() -> None:
     port = ScriptedAdapter(
-        Transact(Read(rows=[_rectangle(_JAN, INFINITY_INSTANT)]), Write(times=4))
+        Transact(Read(rows=[_rectangle(_JAN, INFINITY_INSTANT)]), Write(times=2))
     )
 
     def fn(tx: Transaction) -> None:
@@ -390,9 +391,10 @@ def test_a_locking_target_reuses_a_pending_observed_write_of_its_start() -> None
 
     _db(port).transact(fn, concurrency="locking")
     assert len(_reads(port)) == 1
-    _close, head, middle, tail = _writes(port)
-    assert middle.binds[1:5] == ("B", Decimal("150.00"), _MAR, _SEP)
-    assert (head.binds[1:3], tail.binds[1:3]) == (("A", Decimal("100.00")),) * 2
+    _close, opened = _writes(port)
+    head, middle, tail = inserted_rows(opened)
+    assert middle[1:5] == ("B", Decimal("150.00"), _MAR, _SEP)
+    assert (head[1:3], tail[1:3]) == (("A", Decimal("100.00")),) * 2
 
 
 # --------------------------------------------------------------------------- #
@@ -407,15 +409,15 @@ def _calendar(*starts: tuple[dt.datetime, str]) -> list[MappingRow]:
 
 def test_a_locking_target_reads_only_the_coverage_its_acquired_start_leaves() -> None:
     first, later = _calendar((_JAN, "100.00"), (_JUN, "200.00"))
-    port = ScriptedAdapter(Transact(Read(rows=[first]), Read(rows=[later]), Write(times=5)))
+    port = ScriptedAdapter(Transact(Read(rows=[first]), Read(rows=[later]), Write(times=3)))
     _db(port).transact(lambda tx: _patch(tx, value="150.00"), concurrency="locking")
     _acquired, coverage = _reads(port)
     assert coverage.sql.endswith(
         "where t0.id = %s and t0.thru_z > %s and t0.from_z < %s and t0.out_z = %s for share of t0"
     )
     assert coverage.binds == (1, _JUN, _SEP, INFINITY_INSTANT)
-    _start, _later, *opened = _writes(port)
-    assert [call.binds[2:5] for call in opened] == [
+    _start, _later, opened = _writes(port)
+    assert [row[2:5] for row in inserted_rows(opened)] == [
         (Decimal("100.00"), _JAN, _MAR),
         (Decimal("150.00"), _MAR, _SEP),
         (Decimal("200.00"), _SEP, INFINITY_INSTANT),
@@ -426,7 +428,7 @@ def test_a_locking_target_reads_only_the_coverage_its_acquired_start_leaves() ->
 def test_a_part_the_coverage_read_finds_empty_is_a_gap_read_once(replaces: bool) -> None:
     (first,) = _calendar((_JAN, "100.00"))
     first = {**first, "thru_z": _JUN}
-    port = ScriptedAdapter(Transact(Read(rows=[first]), Read(rows=[]), Write(times=4)))
+    port = ScriptedAdapter(Transact(Read(rows=[first]), Read(rows=[]), Write(times=2)))
 
     def fn(tx: Transaction) -> None:
         if replaces:
@@ -436,7 +438,12 @@ def test_a_part_the_coverage_read_finds_empty_is_a_gap_read_once(replaces: bool)
 
     _db(port).transact(fn, concurrency="locking")
     assert len(_reads(port)) == 2
-    windows = [call.binds[3:5] for call in _writes(port) if call.sql.startswith("insert")]
+    windows = [
+        row[3:5]
+        for call in _writes(port)
+        if call.sql.startswith("insert")
+        for row in inserted_rows(call)
+    ]
     # A replacement opens its state over the gap the empty read resolved, as one
     # row with the part it replaced before it; an amendment leaves the gap.
     assert windows == [(_JAN, _MAR), (_MAR, _SEP if replaces else _JUN)]
@@ -490,7 +497,7 @@ def test_the_parts_two_acquired_starts_leave_are_read_together_up_to_the_term_ca
 def test_a_barrier_follower_reuses_the_acquired_start_no_earlier_unit_changed() -> None:
     first, kept = _calendar((_JAN, "100.00"), (dt.datetime(2024, 5, 1, tzinfo=dt.UTC), "200.00"))
     port = ScriptedAdapter(
-        Transact(Read(rows=[first]), Read(rows=[kept]), Write(times=4), Write(), Write(times=4))
+        Transact(Read(rows=[first]), Read(rows=[kept]), Write(times=2), Write(), Write(times=2))
     )
 
     def fn(tx: Transaction) -> None:
@@ -502,22 +509,12 @@ def test_a_barrier_follower_reuses_the_acquired_start_no_earlier_unit_changed() 
     # Each unit binds to the rectangle its own call acquired; the barrier
     # between them changed neither.
     assert len(_reads(port)) == 2
-    assert _sql_kinds(port)[-9:] == [
-        "close",
-        "insert",
-        "insert",
-        "insert",
-        "barrier",
-        "close",
-        "insert",
-        "insert",
-        "insert",
-    ]
+    assert _sql_kinds(port)[-5:] == ["close", "insert", "barrier", "close", "insert"]
 
 
 def test_a_barrier_follower_reuses_an_acquired_start_an_earlier_unit_kept_unchanged() -> None:
     whole = _rectangle(_JAN, INFINITY_INSTANT)
-    port = ScriptedAdapter(Transact(Read(rows=[whole], times=2), Write(), Write(times=4)))
+    port = ScriptedAdapter(Transact(Read(rows=[whole], times=2), Write(), Write(times=2)))
 
     def fn(tx: Transaction) -> None:
         _window_patch(tx, _FEB_APR, "100.00")
@@ -528,7 +525,7 @@ def test_a_barrier_follower_reuses_an_acquired_start_an_earlier_unit_kept_unchan
     # The first unit keeps the rectangle it found holding its value, so the
     # rectangle the second call acquired still stands as it was read.
     assert len(_reads(port)) == 2
-    assert _sql_kinds(port)[-5:] == ["barrier", "close", "insert", "insert", "insert"]
+    assert _sql_kinds(port)[-3:] == ["barrier", "close", "insert"]
 
 
 def test_an_acquired_start_an_earlier_unit_revised_in_place_is_read_again() -> None:
@@ -542,13 +539,13 @@ def test_an_acquired_start_an_earlier_unit_revised_in_place_is_read_again() -> N
     port = ScriptedAdapter(
         Transact(
             Read(rows=[whole]),
-            Write(times=4),
+            Write(times=2),
             Read(rows=[]),
             Read(rows=[owned], times=2),
             Write(times=2),
             Write(),
             Read(rows=[{**owned, "from_z": _APR}]),
-            Write(times=3),
+            Write(times=2),
         )
     )
 
@@ -567,7 +564,12 @@ def test_an_acquired_start_an_earlier_unit_revised_in_place_is_read_again() -> N
 
     _barriered(port).transact(fn, concurrency="locking")
     assert _reads(port)[-1].binds == (1, _JUN, jul, INFINITY_INSTANT)
-    inserted = [call.binds[1:5] for call in _writes(port)[-3:] if call.sql.startswith("insert")]
+    inserted = [
+        row[1:5]
+        for call in _writes(port)[-2:]
+        if call.sql.startswith("insert")
+        for row in inserted_rows(call)
+    ]
     assert inserted == [("A", Decimal("150.00"), _APR, _JUN), ("A", Decimal("180.00"), _JUN, jul)]
 
 
@@ -693,8 +695,8 @@ def test_a_temporal_targets_window_and_revision_are_judged_before_an_empty_patch
 
 def test_a_typed_replacement_selects_its_bounded_form_by_until_alone() -> None:
     port = ScriptedAdapter(
-        Transact(Read(rows=[_rectangle(_JAN, INFINITY_INSTANT)]), Write(times=3)),
-        Transact(Read(rows=[_rectangle(_JAN, INFINITY_INSTANT)]), Write(times=4)),
+        Transact(Read(rows=[_rectangle(_JAN, INFINITY_INSTANT)]), Write(times=2)),
+        Transact(Read(rows=[_rectangle(_JAN, INFINITY_INSTANT)]), Write(times=2)),
     )
 
     def unbounded(tx: Transaction) -> None:
@@ -707,7 +709,7 @@ def test_a_typed_replacement_selects_its_bounded_form_by_until_alone() -> None:
     _db(port).transact(unbounded)
     _db(port).transact(lambda tx: _replace(tx, typed=True))
     inserts = [call for call in _writes(port) if call.sql.startswith("insert")]
-    assert [call.binds[3:5] for call in inserts] == [
+    assert [row[3:5] for call in inserts for row in inserted_rows(call)] == [
         (_JAN, _MAR),
         (_MAR, INFINITY_INSTANT),
         (_JAN, _MAR),
@@ -811,7 +813,7 @@ def test_exact_window_target_and_observed_writes_compose_into_one_range(
         Transact(
             Read(rows=[_HELD]),
             *coverage,
-            Write(times=3 if middle is not None else 2),
+            Write(times=2),
             Read(rows=[]),
         )
     )
@@ -826,12 +828,12 @@ def test_exact_window_target_and_observed_writes_compose_into_one_range(
             tx.amend(source.edit(acct_num="again"))
 
     _db(port).transact(fn, concurrency=concurrency)
-    close, *opened = _writes(port)
+    close, opened = _writes(port)
     gated = concurrency == "optimistic"
     assert close.sql.endswith("and in_z = %s" if gated else "and out_z = %s")
     if gated:
         assert close.binds[-1] == _T0
-    windows = [(call.binds[1], call.binds[2], call.binds[3], call.binds[4]) for call in opened]
+    windows = [(row[1], row[2], row[3], row[4]) for row in inserted_rows(opened)]
     tail = ("A", Decimal("100.00"), _SEP, INFINITY_INSTANT)
     if middle is None:
         assert windows == [tail]
@@ -885,7 +887,7 @@ def test_a_target_after_an_observed_write_of_another_revision_is_refused() -> No
     # The source observed the rectangle at a later revision than the one the
     # caller states, so the two cannot start from one state.
     port = ScriptedAdapter(
-        Transact(Read(rows=[_rectangle(_MAR, INFINITY_INSTANT, tx_start=_T1)]), Write(times=3))
+        Transact(Read(rows=[_rectangle(_MAR, INFINITY_INSTANT, tx_start=_T1)]), Write(times=2))
     )
 
     def fn(tx: Transaction) -> None:
@@ -894,7 +896,7 @@ def test_a_target_after_an_observed_write_of_another_revision_is_refused() -> No
             _patch(tx, value="150.00")
 
     _db(port).transact(fn)
-    assert len(_writes(port)) == 3
+    assert len(_writes(port)) == 2
 
 
 # --------------------------------------------------------------------------- #
@@ -932,15 +934,15 @@ def test_an_equal_valued_temporal_patch_of_a_stale_start_still_fails_its_precond
 
 def test_an_equal_patch_keeps_each_rectangle_it_leaves_and_rewrites_the_others() -> None:
     later = _rectangle(_JUN, INFINITY_INSTANT, "200.00", tx_start=_T1)
-    port = ScriptedAdapter(Transact(Read(rows=[_rectangle(_JAN, _JUN), later]), Write(times=4)))
+    port = ScriptedAdapter(Transact(Read(rows=[_rectangle(_JAN, _JUN), later]), Write(times=3)))
     _db(port).transact(lambda tx: _patch(tx, value="100.00"))
-    guard, close, *opened = _writes(port)
+    guard, close, opened = _writes(port)
     # The start already holds the value over everything the window reaches of
     # it, so its guard keeps it; the later rectangle changes over its own part.
     assert guard.sql.startswith("update where_position set in_z = in_z")
     assert guard.binds[-1] == _T0
     assert (close.binds[2], close.binds[-1]) == ("infinity", _T1)
-    assert [call.binds[2:5] for call in opened] == [
+    assert [row[2:5] for row in inserted_rows(opened)] == [
         (Decimal("100.00"), _JUN, _SEP),
         (Decimal("200.00"), _SEP, INFINITY_INSTANT),
     ]
@@ -951,7 +953,7 @@ def test_a_temporal_target_runs_at_the_configured_isolation_level(
     concurrency: _Concurrency,
 ) -> None:
     port = ScriptedAdapter(
-        Transact(Read(rows=[_rectangle(_JAN, INFINITY_INSTANT)]), Write(times=4))
+        Transact(Read(rows=[_rectangle(_JAN, INFINITY_INSTANT)]), Write(times=2))
     )
     _db(port).transact(lambda tx: _patch(tx, value="150.00"), concurrency=concurrency)
     assert port.calls[0] == BeginCall(isolation="read_committed")
@@ -1156,7 +1158,7 @@ def test_disjoint_targets_of_one_rectangle_close_it_once_and_open_each_piece(
     # Under Locking each start is read at its own call, and the one rectangle
     # both reads found covers the whole range, which reads nothing more.
     reads = Read(rows=[whole], times=2) if concurrency == "locking" else Read(rows=[whole])
-    port = ScriptedAdapter(Transact(reads, Write(times=6)))
+    port = ScriptedAdapter(Transact(reads, Write(times=2)))
 
     def fn(tx: Transaction) -> None:
         _window_patch(tx, _FEB_APR, "150.00")
@@ -1169,10 +1171,10 @@ def test_disjoint_targets_of_one_rectangle_close_it_once_and_open_each_piece(
     if concurrency == "optimistic":
         (coverage,) = _reads(port)
         assert coverage.binds == (1, _FEB, _AUG, INFINITY_INSTANT)
-    close, *opened = _writes(port)
+    close, opened = _writes(port)
     if concurrency == "optimistic":
         assert close.binds[-1] == _T0
-    assert [call.binds[2:5] for call in opened] == [
+    assert [row[2:5] for row in inserted_rows(opened)] == [
         (Decimal("100.00"), _JAN, _FEB),
         (Decimal("150.00"), _FEB, _APR),
         (Decimal("100.00"), _APR, _JUN),
@@ -1200,10 +1202,10 @@ def test_a_barrier_keeps_each_disjoint_operation_on_its_own_side(
     port = ScriptedAdapter(
         Transact(
             Read(rows=[whole], times=reads),
-            Write(times=4),
+            Write(times=2),
             Write(),
             Read(rows=[_owned(_APR)]),
-            Write(times=3),
+            Write(times=2),
         )
     )
 
@@ -1216,25 +1218,15 @@ def test_a_barrier_keeps_each_disjoint_operation_on_its_own_side(
         _window_patch(tx, _JUN_AUG, "175.00")
 
     _barriered(port).transact(fn, concurrency=concurrency)
-    assert _sql_kinds(port)[-9:] == [
-        "close",
-        "insert",
-        "insert",
-        "insert",
-        "barrier",
-        "read",
-        "revise",
-        "insert",
-        "insert",
-    ]
+    assert _sql_kinds(port)[-6:] == ["close", "insert", "barrier", "read", "revise", "insert"]
     later_read = _reads(port)[-1]
     assert later_read.binds == (1, _JUN, _AUG, INFINITY_INSTANT)
     # The later operation's start now stands at a row the first unit derived
     # from the original the caller stated, which proves the caller's start:
     # its own row is revised in place, gated on nothing the caller stated.
-    revision, *opened = _writes(port)[-3:]
+    revision, opened = _writes(port)[-2:]
     assert _T0 not in revision.binds
-    assert [call.binds[2:5] for call in opened] == [
+    assert [row[2:5] for row in inserted_rows(opened)] == [
         (Decimal("100.00"), _APR, _JUN),
         (Decimal("175.00"), _JUN, _AUG),
     ]
@@ -1246,7 +1238,7 @@ def test_an_exact_window_write_after_a_barrier_carries_the_values_the_first_unit
     port = ScriptedAdapter(
         Transact(
             Read(rows=[whole], times=2),
-            Write(times=4),
+            Write(times=2),
             Write(),
             Read(rows=[middle]),
             Write(),
@@ -1281,7 +1273,7 @@ def test_a_proof_never_outlives_its_flush_so_a_later_call_restates_its_start(
     # reuses as coverage, or the Optimistic flush's own coverage read; the last
     # is the second call's acquisition, or the commit flush's coverage read.
     port = ScriptedAdapter(
-        Transact(Read(rows=[whole]), Write(times=4), Read(rows=[]), Read(rows=[_owned(_APR)]))
+        Transact(Read(rows=[whole]), Write(times=2), Read(rows=[]), Read(rows=[_owned(_APR)]))
     )
 
     def fn(tx: Transaction) -> None:
@@ -1294,7 +1286,7 @@ def test_a_proof_never_outlives_its_flush_so_a_later_call_restates_its_start(
     with raises_contextualized(WritePreconditionError) as failed:
         _barriered(port).transact(fn, concurrency=concurrency)
     assert failed.value.expected == _T0
-    assert len(_writes(port)) == 4
+    assert len(_writes(port)) == 2
 
 
 def test_a_lost_first_unit_runs_nothing_after_it_and_a_lost_later_one_rolls_back() -> None:
@@ -1312,7 +1304,7 @@ def test_a_lost_first_unit_runs_nothing_after_it_and_a_lost_later_one_rolls_back
     lost_later = ScriptedAdapter(
         Transact(
             Read(rows=[whole]),
-            Write(times=4),
+            Write(times=2),
             Write(),
             Read(rows=[_owned(_APR)]),
             Write(affected=0),
@@ -1327,14 +1319,14 @@ def test_a_chain_across_two_barriers_carries_the_original_through_the_middle_uni
     port = ScriptedAdapter(
         Transact(
             Read(rows=[_rectangle(_JAN, INFINITY_INSTANT)]),
-            Write(times=4),
+            Write(times=2),
             Write(),
             Read(rows=[_owned(_APR)]),
-            Write(times=3),
+            Write(times=2),
             Write(),
             # The middle unit revised the tail it read into [August, infinity).
             Read(rows=[_owned(_AUG)]),
-            Write(times=3),
+            Write(times=2),
         )
     )
 
@@ -1346,10 +1338,10 @@ def test_a_chain_across_two_barriers_carries_the_original_through_the_middle_uni
         _window_patch(tx, (_SEP, _DEC), "200.00")
 
     _barriered(port).transact(fn)
-    assert _sql_kinds(port)[-4:] == ["read", "revise", "insert", "insert"]
-    *_earlier, revision, gap, last = _writes(port)
+    assert _sql_kinds(port)[-3:] == ["read", "revise", "insert"]
+    *_earlier, revision, opened = _writes(port)
     assert _T0 not in revision.binds
-    assert [call.binds[2:5] for call in (gap, last)] == [
+    assert [row[2:5] for row in inserted_rows(opened)] == [
         (Decimal("100.00"), _AUG, _SEP),
         (Decimal("200.00"), _SEP, _DEC),
     ]
@@ -1361,7 +1353,7 @@ def test_a_destruction_of_the_same_window_after_a_barrier_removes_what_the_first
     port = ScriptedAdapter(
         Transact(
             Read(rows=[whole], times=2),
-            Write(times=4),
+            Write(times=2),
             Write(),
             Read(rows=[middle]),
             Write(),

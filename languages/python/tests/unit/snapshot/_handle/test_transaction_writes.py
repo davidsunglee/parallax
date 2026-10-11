@@ -64,6 +64,7 @@ from tests._support.db_port import (
     Transact,
     Write,
     WriteCall,
+    inserted_rows,
 )
 from tests._support.model_capabilities import cataloged_for, graph_construction_for
 from tests._support.root_ownership import own_root
@@ -92,7 +93,7 @@ from tests.unit.snapshot._handle import _mixed_strategy_model as mx
 
 
 # --------------------------------------------------------------------------- #
-# Wiring: buffer -> flush -> stream_lowered -> execute_write on the connection.#
+# Wiring: buffer -> flush -> lowering cursor -> execute_write on the connection.#
 # --------------------------------------------------------------------------- #
 def test_commit_flushes_the_buffer_through_the_lowering_seam() -> None:
     port = ScriptedAdapter(Transact(Write()))
@@ -565,8 +566,8 @@ def _position_row_dt() -> MappingRow:
 # --------------------------------------------------------------------------- #
 def test_keyed_update_lowers_a_plain_bitemporal_correction() -> None:
     # m-temporal-write-022 "plain-update-split", replayed through the KEYED verb:
-    # close + head (old) + new tail.
-    port = ScriptedAdapter(Transact(Read(rows=[_position_row_dt()]), Write(times=3)))
+    # close + one insert of head (old) and new tail.
+    port = ScriptedAdapter(Transact(Read(rows=[_position_row_dt()]), Write(times=2)))
     valid_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 
     def fn(tx: Transaction) -> None:
@@ -579,7 +580,8 @@ def test_keyed_update_lowers_a_plain_bitemporal_correction() -> None:
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
     ).using_database_login().transact(fn, concurrency="optimistic")
     writes = [op for op in port.calls if isinstance(op, WriteCall)]
-    assert len(writes) == 3  # close + head (old) + new tail
+    assert len(writes) == 2  # close + one insert of head (old) and new tail
+    assert len(inserted_rows(writes[1])) == 2
 
 
 def test_keyed_terminate_lowers_a_plain_bitemporal_termination() -> None:
@@ -603,8 +605,8 @@ def test_keyed_terminate_lowers_a_plain_bitemporal_termination() -> None:
 
 def test_a_bounded_keyed_update_lowers_the_rectangle_split() -> None:
     # m-temporal-write-017 "update-until-rectangle-split", replayed through the
-    # KEYED verb: close + head + middle + tail.
-    port = ScriptedAdapter(Transact(Read(rows=[_position_row_dt()]), Write(times=4)))
+    # KEYED verb: close + one insert of head, middle, and tail.
+    port = ScriptedAdapter(Transact(Read(rows=[_position_row_dt()]), Write(times=2)))
     valid_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
     until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
 
@@ -618,7 +620,8 @@ def test_a_bounded_keyed_update_lowers_the_rectangle_split() -> None:
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
     ).using_database_login().transact(fn, concurrency="optimistic")
     writes = [op for op in port.calls if isinstance(op, WriteCall)]
-    assert len(writes) == 4  # close + head + middle + tail
+    assert len(writes) == 2  # close + one insert of head, middle, and tail
+    assert len(inserted_rows(writes[1])) == 3
 
 
 def test_a_bounded_keyed_update_expressing_no_member_issues_no_dml() -> None:
@@ -830,7 +833,7 @@ def test_an_update_beyond_its_observed_rectangle_reads_the_coverage_it_reaches(
     jan, mar, jun = (dt.datetime(2024, month, 1, tzinfo=dt.UTC) for month in (1, 3, 6))
     head = _rectangle(jan, jun, "100.00")
     tail = _rectangle(jun, INFINITY_INSTANT, "200.00")
-    port = ScriptedAdapter(Transact(Read(rows=[head]), Read(rows=[tail]), Write(times=4)))
+    port = ScriptedAdapter(Transact(Read(rows=[head]), Read(rows=[tail]), Write(times=3)))
 
     def fn(tx: Transaction) -> None:
         source = tx.find(WherePosition.where(WherePosition.id == 1).as_of(valid_time=mar)).result()
@@ -848,9 +851,9 @@ def test_an_update_beyond_its_observed_rectangle_reads_the_coverage_it_reaches(
     )
     assert coverage.binds == (1, jun, INFINITY_INSTANT)
     writes = [call for call in port.calls if isinstance(call, WriteCall)]
-    assert [call.sql.split(" ", 1)[0] for call in writes] == ["update"] * 2 + ["insert"] * 2
+    assert [call.sql.split(" ", 1)[0] for call in writes] == ["update", "update", "insert"]
     assert [call.binds[2] for call in writes[:2]] == [jun, "infinity"]
-    assert [call.binds[2:5] for call in writes[2:]] == [
+    assert [row[2:5] for row in inserted_rows(writes[2])] == [
         (Decimal("100.00"), jan, mar),
         (Decimal("150.00"), mar, INFINITY_INSTANT),
     ]
@@ -860,7 +863,7 @@ def test_a_bounded_update_reads_coverage_only_up_to_its_bound() -> None:
     jan, mar, jun, sep = (dt.datetime(2024, month, 1, tzinfo=dt.UTC) for month in (1, 3, 6, 9))
     head = _rectangle(jan, jun, "100.00")
     tail = _rectangle(jun, INFINITY_INSTANT, "200.00")
-    port = ScriptedAdapter(Transact(Read(rows=[head]), Read(rows=[tail]), Write(times=5)))
+    port = ScriptedAdapter(Transact(Read(rows=[head]), Read(rows=[tail]), Write(times=3)))
 
     def fn(tx: Transaction) -> None:
         source = tx.find(WherePosition.where(WherePosition.id == 1).as_of(valid_time=mar)).result()
@@ -876,7 +879,7 @@ def test_a_bounded_update_reads_coverage_only_up_to_its_bound() -> None:
     )
     assert coverage.binds == (1, jun, sep, INFINITY_INSTANT)
     writes = [call for call in port.calls if isinstance(call, WriteCall)]
-    assert [call.binds[2:5] for call in writes[2:]] == [
+    assert [row[2:5] for row in inserted_rows(writes[2])] == [
         (Decimal("100.00"), jan, mar),
         (Decimal("150.00"), mar, sep),
         (Decimal("200.00"), sep, INFINITY_INSTANT),
@@ -889,7 +892,7 @@ def test_a_source_keeps_its_pin_through_projection_and_streaming(delivery: str) 
     # each start their write at the Valid-Time pin of the read that produced
     # them — the head the close carries ends there.
     mar = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
-    port = ScriptedAdapter(Transact(Read(rows=[_position_row_dt()]), Write(times=3)))
+    port = ScriptedAdapter(Transact(Read(rows=[_position_row_dt()]), Write(times=2)))
     query = WherePosition.where(WherePosition.id == 1).as_of(valid_time=mar)
 
     def fn(tx: Transaction) -> None:
@@ -903,7 +906,8 @@ def test_a_source_keeps_its_pin_through_projection_and_streaming(delivery: str) 
     own_root(
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
     ).using_database_login().transact(fn, concurrency="optimistic")
-    head, tail = [call.binds for call in port.calls if isinstance(call, WriteCall)][1:]
+    _close, opened = [call for call in port.calls if isinstance(call, WriteCall)]
+    head, tail = inserted_rows(opened)
     assert head[2:5] == (Decimal("100.00"), dt.datetime(2024, 1, 1, tzinfo=dt.UTC), mar)
     assert tail[2:4] == (Decimal("150.00"), mar)
     assert tail[4] is INFINITY_INSTANT
@@ -938,8 +942,8 @@ def test_a_source_with_no_pin_and_no_standing_insertion_names_no_start() -> None
 
 def test_a_bounded_keyed_terminate_lowers_head_and_tail_only() -> None:
     # m-temporal-write-018 "terminate-until", replayed through the KEYED verb:
-    # close + head + tail (no middle).
-    port = ScriptedAdapter(Transact(Read(rows=[_position_row_dt()]), Write(times=3)))
+    # close + one insert of head and tail (no middle).
+    port = ScriptedAdapter(Transact(Read(rows=[_position_row_dt()]), Write(times=2)))
     valid_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
     until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
 
@@ -953,7 +957,8 @@ def test_a_bounded_keyed_terminate_lowers_head_and_tail_only() -> None:
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
     ).using_database_login().transact(fn, concurrency="optimistic")
     writes = [op for op in port.calls if isinstance(op, WriteCall)]
-    assert len(writes) == 3  # close + head + tail
+    assert len(writes) == 2  # close + one insert of head and tail
+    assert len(inserted_rows(writes[1])) == 2
 
 
 def test_a_keyed_update_of_a_source_read_at_valid_time_latest_is_refused() -> None:

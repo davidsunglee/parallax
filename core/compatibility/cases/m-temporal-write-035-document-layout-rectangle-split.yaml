@@ -21,8 +21,8 @@ when:
       at: "2026-01-01T00:00:00.000000Z"
     - mutation: amendUntil
       entity: parallax.compatibility.Charter
-      statements: 4
-      note: inactivate the original, then chain head / middle / tail carrying old / new / old
+      statements: 2
+      note: inactivate the original, then chain head / middle / tail carrying old / new / old in one multi-row insert
       rows:
         - id: 1
           route: Oslo-Tromso
@@ -50,8 +50,8 @@ then:
         mariadb: update charter set out_z = ? where id = ? and thru_z = ? and out_z = ?
       binds: ["2026-02-15T00:00:00.000000Z", 1, infinity, infinity]
     - sql:
-        postgres: insert into charter(id, from_z, thru_z, in_z, out_z, payload) values (?, ?, ?, ?, ?, ?)
-        mariadb: insert into charter(id, from_z, thru_z, in_z, out_z, payload) values (?, ?, ?, ?, ?, ?)
+        postgres: insert into charter(id, from_z, thru_z, in_z, out_z, payload) values (?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?)
+        mariadb: insert into charter(id, from_z, thru_z, in_z, out_z, payload) values (?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?)
       binds:
         - 1
         - "2026-01-01T00:00:00.000000Z"
@@ -61,10 +61,6 @@ then:
         - route: Oslo-Bergen
           terms:
             clause: standard
-    - sql:
-        postgres: insert into charter(id, from_z, thru_z, in_z, out_z, payload) values (?, ?, ?, ?, ?, ?)
-        mariadb: insert into charter(id, from_z, thru_z, in_z, out_z, payload) values (?, ?, ?, ?, ?, ?)
-      binds:
         - 1
         - "2026-03-01T00:00:00.000000Z"
         - "2026-09-01T00:00:00.000000Z"
@@ -73,10 +69,6 @@ then:
         - route: Oslo-Tromso
           terms:
             clause: winter
-    - sql:
-        postgres: insert into charter(id, from_z, thru_z, in_z, out_z, payload) values (?, ?, ?, ?, ?, ?)
-        mariadb: insert into charter(id, from_z, thru_z, in_z, out_z, payload) values (?, ?, ?, ?, ?, ?)
-      binds:
         - 1
         - "2026-09-01T00:00:00.000000Z"
         - infinity
@@ -123,4 +115,4 @@ then:
           route: Oslo-Bergen
           terms:
             clause: standard
-  roundTrips: 6
+  roundTrips: 4

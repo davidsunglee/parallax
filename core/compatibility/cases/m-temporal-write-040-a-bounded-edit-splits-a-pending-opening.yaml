@@ -19,15 +19,12 @@ when:
           validFrom: "2024-01-01T00:00:00.000000Z"
           until: "2024-06-01T00:00:00.000000Z"
           at: "2024-01-01T00:00:00.000000Z"
-      roundTrips: 2
-      note: the buffered INSERT of position 9 and the bounded UPDATE of it compose over the opening's own coverage — the flush inserts [Jan, Jun) at 150 and [Jun, infinity) at 100, closing nothing
+      roundTrips: 1
+      note: the buffered INSERT of position 9 and the bounded UPDATE of it compose over the opening's own coverage — the flush inserts [Jan, Jun) at 150 and [Jun, infinity) at 100 in one multi-row insert, closing nothing
       statements:
         - sql:
-            postgres: insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
-          binds: [9, D, "150.00", "2024-01-01T00:00:00.000000Z", "2024-06-01T00:00:00.000000Z", "2024-01-01T00:00:00.000000Z", infinity]
-        - sql:
-            postgres: insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
-          binds: [9, D, "100.00", "2024-06-01T00:00:00.000000Z", infinity, "2024-01-01T00:00:00.000000Z", infinity]
+            postgres: insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?)
+          binds: [9, D, "150.00", "2024-01-01T00:00:00.000000Z", "2024-06-01T00:00:00.000000Z", "2024-01-01T00:00:00.000000Z", infinity, 9, D, "100.00", "2024-06-01T00:00:00.000000Z", infinity, "2024-01-01T00:00:00.000000Z", infinity]
     - objectQuery:
         target: parallax.compatibility.Position
         predicate:
@@ -69,4 +66,4 @@ when:
       expectRows:
         - { pos_id: 9, acct_num: D, val: "100.00", from_z: "2024-06-01T00:00:00.000000Z", thru_z: infinity, in_z: "2024-01-01T00:00:00.000000Z", out_z: infinity }
 then:
-  roundTrips: 4
+  roundTrips: 3

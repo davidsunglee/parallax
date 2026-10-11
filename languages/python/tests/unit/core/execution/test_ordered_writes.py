@@ -1,8 +1,9 @@
 """Ordered write transport through the Attempt's step driver (`m-execution`,
 `m-db-port`, `m-execution-lifecycle`).
 
-A connection holding ordered write transport receives each run of contiguous
-count-only temporal effects in one invocation. The result is proved well formed
+A connection holding ordered write transport receives each run of two or more
+contiguous count-only temporal effects in one invocation, and an effect that
+would be its run's only one runs alone. The result is proved well formed
 before any of it is read, then enforced in original order against the exact
 steps the statements were lowered from, and nothing after the run is lowered
 before that. Every presented statement stays one Database Call, finished from
@@ -41,7 +42,7 @@ from parallax.core.execution._attempt import (
     _LoweredWriteChunk,  # pyright: ignore[reportPrivateUsage] - the chunk is the presented sequence itself
 )
 from parallax.core.execution._planning import build_write_planner
-from parallax.core.execution._write_lowering import LoweringCursor, lowered
+from parallax.core.execution._write_lowering import LoweredOpening, LoweringCursor, lowered
 from parallax.core.execution_lifecycle import (
     AttemptRolledBack,
     CausedFailure,
@@ -321,37 +322,111 @@ def test_a_connection_without_ordered_transport_runs_and_lowers_each_effect_alon
     assert flushed.segment.asked == [(0, 1), (1, 2), (2, 3)]
 
 
+def _lowering_recorded(
+    monkeypatch: pytest.MonkeyPatch, steps: tuple[PlannedWrite, ...], port: ScriptedAdapter
+) -> list[tuple[int, int]]:
+    """Where each of ``steps`` lowering alone or beginning a grouped opening is
+    recorded: its position, with how many port calls had been made by then."""
+    lowered_at: list[tuple[int, int]] = []
+    alone = LoweringCursor.lowered
+    opening = LoweringCursor.lowered_opening
+
+    def lowering(cursor: LoweringCursor, step: PlannedWrite) -> LoweredStatement:
+        lowered_at.append((steps.index(step), len(port.calls)))
+        return alone(cursor, step)
+
+    def grouping(cursor: LoweringCursor, first: PlannedInsert) -> LoweredOpening:
+        lowered_at.append((steps.index(first), len(port.calls)))
+        return opening(cursor, first)
+
+    monkeypatch.setattr(LoweringCursor, "lowered", lowering)
+    monkeypatch.setattr(LoweringCursor, "lowered_opening", grouping)
+    return lowered_at
+
+
+def _alone(step: PlannedWrite) -> WriteCall:
+    return WriteCall(POSTGRES.to_driver_sql(_statement_sql(step)), _binds(step))
+
+
 def test_a_step_transport_cannot_carry_ends_the_run_untouched_until_the_run_is_enforced(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    lowered_at: list[tuple[int, int]] = []
-    real = LoweringCursor.lowered
-
-    def recording(cursor: LoweringCursor, step: PlannedWrite) -> LoweredStatement:
-        lowered_at.append((steps.index(step), len(port.calls)))
-        return real(cursor, step)
-
-    monkeypatch.setattr(LoweringCursor, "lowered", recording)
-    steps = (_close(1), _close(2), _insert(9), _close(3))
+    steps = (_close(1), _close(2), _insert(9), _close(3), _close(4))
     port = ScriptedAdapter(
         Transact(
             Ordered(OrderedWriteResultComplete((1, 1))),
             Write(),
-            Ordered(OrderedWriteResultComplete((1,))),
+            Ordered(OrderedWriteResultComplete((1, 1))),
         ),
         ordered=True,
     )
+    lowered_at = _lowering_recorded(monkeypatch, steps, port)
     flushed = _flush(port, *steps)
     assert flushed.raised is None
     assert port.calls == _committed(
-        _ordered(_close(1), _close(2)),
-        WriteCall(POSTGRES.to_driver_sql(_statement_sql(_insert(9))), _binds(_insert(9))),
-        _ordered(_close(3)),
+        _ordered(_close(1), _close(2)), _alone(_insert(9)), _ordered(_close(3), _close(4))
     )
     # The insert was taken to end the run — the one step looked ahead — and
-    # lowered only once the run before it had been enforced.
-    assert flushed.segment.asked == [(0, 1), (1, 1), (2, 1), (3, 3)]
+    # lowered only once the run before it had been enforced; the close after it
+    # was taken, unprepared, to end the insert's own statement.
+    assert flushed.segment.asked == [(0, 1), (1, 1), (2, 1), (3, 2), (4, 3)]
     assert lowered_at == [(2, 2)]
+
+
+def test_an_effect_that_would_be_its_runs_only_one_runs_alone_before_anything_after_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    steps = (_close(1), _insert(9), _guard(2))
+    port = ScriptedAdapter(Transact(Write(times=3)), ordered=True)
+    lowered_at = _lowering_recorded(monkeypatch, steps, port)
+    flushed = _flush(port, *steps)
+    assert flushed.raised is None
+    assert port.calls == _committed(*(_alone(step) for step in steps))
+    # The insert was taken, unprepared, to decide the close runs alone, and
+    # lowered only once the close ran; the guard, taken to end the insert's
+    # statement, was lowered once that ran and, the last step, ran alone too.
+    assert flushed.segment.asked == [(0, 1), (1, 1), (2, 2)]
+    assert lowered_at == [(0, 1), (1, 2), (2, 3)]
+
+
+@pytest.mark.parametrize(
+    ("failure", "affected", "raised"),
+    [
+        (RuntimeError("the next step cannot be rebuilt"), 1, "failure"),
+        (RuntimeError("never raised"), 0, "shortfall"),
+        (KeyboardInterrupt(), 1, "failure"),
+    ],
+    ids=["ordinary", "shortfall-wins", "fatal"],
+)
+def test_a_lone_effects_look_ahead_failing_runs_it_alone_only_for_an_ordinary_failure(
+    failure: BaseException, affected: int, raised: str
+) -> None:
+    steps = (_close(1), _close(2))
+    ordinary = isinstance(failure, Exception)
+    port = ScriptedAdapter(
+        Transact(*((Write(affected=affected),) if ordinary else ())), ordered=True
+    )
+    segment = _Unbuildable(port, steps, broken=1, failure=failure)
+    plan = WritePlan(steps=PlannedWrites((segment,)), units=(ExecutionUnit(end=2),))
+    caught: list[BaseException] = []
+
+    def body(attempt: Attempt) -> None:
+        try:
+            attempt._execute_flush(  # pyright: ignore[reportPrivateUsage] - drives the executor over a hand-built plan
+                plan, trigger="pre_commit", bind_deferred=_unbound, completed=_never_completed
+            )
+        except BaseException as error:
+            caught.append(error)
+
+    scope(port, _MODEL).transact(body, itself, concurrency="locking")
+    (propagated,) = caught
+    if raised == "shortfall":
+        assert isinstance(propagated, StaleWriteError)
+        assert propagated.__context__ is None
+    else:
+        assert propagated is failure
+    # Nothing was lowered before the look ahead, so a fatal one runs nothing.
+    assert port.calls == _committed(*((_alone(steps[0]),) if ordinary else ()))
 
 
 def test_the_statement_cap_ends_a_run_before_another_step_is_taken(
@@ -362,31 +437,29 @@ def test_the_statement_cap_ends_a_run_before_another_step_is_taken(
     port = ScriptedAdapter(
         Transact(
             Ordered(OrderedWriteResultComplete((1, 1)), times=2),
-            Ordered(OrderedWriteResultComplete((1,))),
+            Write(),
         ),
         ordered=True,
     )
     flushed = _flush(port, *steps)
     assert flushed.raised is None
-    assert port.calls == _committed(
-        _ordered(*steps[:2]), _ordered(*steps[2:4]), _ordered(*steps[4:])
-    )
+    # The last close, the only one left after the cap, runs alone.
+    assert port.calls == _committed(_ordered(*steps[:2]), _ordered(*steps[2:4]), _alone(steps[4]))
     assert flushed.segment.asked == [(0, 1), (1, 1), (2, 2), (3, 2), (4, 3)]
 
 
 def test_a_run_never_crosses_a_unit_and_each_unit_reports_before_the_next_is_taken() -> None:
-    steps = (_close(1), _close(2), _close(3))
+    steps = (_close(1), _close(2), _close(3), _close(4))
     port = ScriptedAdapter(
-        Transact(
-            Ordered(OrderedWriteResultComplete((1, 1))),
-            Ordered(OrderedWriteResultComplete((1,))),
-        ),
+        Transact(Write(), Ordered(OrderedWriteResultComplete((1, 1))), Write()),
         ordered=True,
     )
-    units = (ExecutionUnit(end=2), ExecutionUnit(end=3))
+    units = (ExecutionUnit(end=1), ExecutionUnit(end=3), ExecutionUnit(end=4))
     flushed = _flush(port, *steps, units=units)
     assert flushed.raised is None
-    assert port.calls == _committed(_ordered(*steps[:2]), _ordered(steps[2]))
+    # The first unit's close would be the only one of its run, since a run
+    # never reaches into the next unit, so it runs alone; so does the last's.
+    assert port.calls == _committed(_alone(steps[0]), _ordered(*steps[1:3]), _alone(steps[3]))
     assert flushed.reported == list(units)
 
 
@@ -403,11 +476,11 @@ def test_an_effect_whose_statement_could_exceed_the_bind_limit_runs_alone() -> N
     narrow = replace(POSTGRES, max_bind_parameters=5)
     # A close promises six binds and a guard five, so only the guard fits.
     port = ScriptedAdapter(
-        Transact(Write(), Ordered(OrderedWriteResultComplete((1,)))),
+        Transact(Write(), Ordered(OrderedWriteResultComplete((1, 1)))),
         dialect=narrow,
         ordered=True,
     )
-    flushed = _flush(port, _close(1), _guard(2))
+    flushed = _flush(port, _close(1), _guard(2), _guard(3))
     assert flushed.raised is None
     assert [type(call) for call in port.calls] == [BeginCall, WriteCall, OrderedCall, CommitCall]
 
@@ -786,11 +859,7 @@ def test_every_presented_statement_is_one_call_sharing_the_invocations_timing() 
     provider = RecordingLifecycleProvider()
     steps = (_close(1), _guard(2), _insert(9), _close(3))
     port = ScriptedAdapter(
-        Transact(
-            Ordered(OrderedWriteResultComplete((1, 1))),
-            Write(),
-            Ordered(OrderedWriteResultComplete((1,))),
-        ),
+        Transact(Ordered(OrderedWriteResultComplete((1, 1))), Write(times=2)),
         ordered=True,
     )
     flushed = _flush(port, *steps, provider=provider)
@@ -813,8 +882,9 @@ def test_every_presented_statement_is_one_call_sharing_the_invocations_timing() 
     pair, alone, last = finished[:2], finished[2], finished[3]
     assert [call.shared_timing_id for call in pair] == [first, first]
     assert pair[0].duration_ns == pair[1].duration_ns
+    # Calls that ran alone share no timing, the last close included.
     assert alone.shared_timing_id is None
-    assert last.shared_timing_id == last.activity_id
+    assert last.shared_timing_id is None
     started = [event for event in calls if isinstance(event, DatabaseCallStarted)]
     assert [event.kind for event in started] == ["write"] * 4
     assert all(event.target == "parallax.compatibility.Position" for event in started)

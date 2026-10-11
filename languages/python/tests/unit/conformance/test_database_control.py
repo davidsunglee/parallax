@@ -257,9 +257,17 @@ def test_a_control_forwards_every_verb_to_the_shipped_execution_over_its_session
     assert (connection.begins, connection.commits) == (1, 1)
 
 
-def test_a_control_has_the_ordered_transport_its_shipped_execution_has() -> None:
+@pytest.mark.parametrize("pipelined", [True, False], ids=["pipeline", "no-pipeline"])
+def test_a_control_has_the_ordered_transport_its_shipped_execution_has(
+    monkeypatch: pytest.MonkeyPatch, pipelined: bool
+) -> None:
+    # The shipped execution holds its operation where libpq can pipeline, and
+    # the control forwards that very operation rather than one of its own.
+    monkeypatch.setattr("parallax.postgres._connection._PIPELINED", pipelined)
     control = _control(_FakeConnection(rows=[]))
-    assert control.ordered_write_transport is None
+    transport = control.ordered_write_transport
+    assert (transport is not None) is pipelined
+    assert transport is control.ordered_write_transport
 
 
 def test_a_control_undoes_its_own_held_transaction_through_the_driver() -> None:

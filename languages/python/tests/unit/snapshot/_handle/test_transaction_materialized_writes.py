@@ -17,6 +17,7 @@ from tests._support.db_port import (
     Transact,
     Write,
     WriteCall,
+    inserted_rows,
 )
 from tests._support.root_ownership import own_root
 from tests.unit._transact_support import BALANCE as BALANCE_MODEL
@@ -47,7 +48,7 @@ def _position_row(row_id: int) -> dict[str, object]:
 
 def test_a_multi_row_materialized_bitemporal_update_lowers_one_close_and_chain_per_row() -> None:
     port = ScriptedAdapter(
-        Transact(Read(rows=[_position_row(1), _position_row(2), _position_row(3)]), Write(times=9))
+        Transact(Read(rows=[_position_row(1), _position_row(2), _position_row(3)]), Write(times=6))
     )
     valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
     clock = FixedClock(dt.datetime(2024, 6, 1, tzinfo=dt.UTC))
@@ -62,20 +63,18 @@ def test_a_multi_row_materialized_bitemporal_update_lowers_one_close_and_chain_p
     own_root(
         Database.connect(port, WHERE_POSITION_META, clock=clock)
     ).using_database_login().transact(fn, concurrency="optimistic")
-    writes = [(op.sql, op.binds) for op in port.calls if isinstance(op, WriteCall)]
-    # Each resolved row settles to its own close + head + tail (three
-    # statements), and the three rows' own topologies never interleave or
-    # merge — the SAME per-row shape a single-row materialize proves,
-    # scaled to three, with no shared mutable state between rows.
-    assert len(writes) == 9
-    closes = [(sql, binds) for sql, binds in writes if sql.startswith("update ")]
-    inserts = [(sql, binds) for sql, binds in writes if sql.startswith("insert ")]
-    assert len(closes) == 3
-    assert len(inserts) == 6
-    closed_keys = {binds[1] for _sql, binds in closes}  # `... where pos_id = ? and ...`
-    inserted_keys = {binds[0] for _sql, binds in inserts}  # `insert into position(pos_id, ...`
-    assert closed_keys == {1, 2, 3}
-    assert inserted_keys == {1, 2, 3}
+    writes = [op for op in port.calls if isinstance(op, WriteCall)]
+    # Each resolved row settles to its own close, then one insert of its own
+    # head + tail (two statements), and the three rows' own topologies never
+    # interleave or merge — the SAME per-row shape a single-row materialize
+    # proves, scaled to three, with no shared mutable state between rows.
+    assert [op.sql.split(" ", 1)[0] for op in writes] == ["update", "insert"] * 3
+    closed_keys = [op.binds[1] for op in writes[::2]]  # `... where pos_id = ? and ...`
+    inserted_keys = [  # `insert into position(pos_id, ...`
+        [row[0] for row in inserted_rows(op)] for op in writes[1::2]
+    ]
+    assert closed_keys == [1, 2, 3]
+    assert inserted_keys == [[1, 1], [2, 2], [3, 3]]
 
 
 # --------------------------------------------------------------------------- #

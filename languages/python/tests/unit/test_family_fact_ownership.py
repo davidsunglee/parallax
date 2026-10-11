@@ -44,7 +44,6 @@ from parallax.core.entity._model import model_of
 from parallax.core.execution._concurrency import CONCURRENCY
 from parallax.core.execution._planning import build_write_planner
 from parallax.core.execution._write_lowering import lowered as lower
-from parallax.core.execution._write_lowering import stream_lowered
 from parallax.core.metamodel import AttributeMetadata, EntityIdentity, Metamodel
 from parallax.core.object_query import LATEST, TX_TIME
 from parallax.core.object_query._fluent import ObjectQuery
@@ -104,6 +103,7 @@ from tests._support.db_port import (
     Write,
     WriteCall,
 )
+from tests._support.lowering_probes import lowered_steps
 from tests._support.model_capabilities import graph_construction_for
 from tests._support.planner_probes import NO_ROW_READS, TEST_ACTOR_IDENTITY, observed_buffer
 from tests._support.root_ownership import own_root
@@ -277,7 +277,7 @@ def test_planning_and_lowering_prepared_writes_take_the_version_from_its_owner(
         )
     )
     lowered: list[tuple[PlannedWrite, LoweredStatement]] = list(
-        stream_lowered(plan.steps, LayoutPayloadPreparer(_MODEL), _MODEL, POSTGRES)
+        lowered_steps(plan.steps, LayoutPayloadPreparer(_MODEL), _MODEL, POSTGRES)
     )
 
     assert callers == []
@@ -374,7 +374,7 @@ def test_admitting_planning_and_lowering_temporal_writes_take_axes_from_the_fami
     steps = list(plan.steps)
     assert list(plan.steps) == steps
     payloads = LayoutPayloadPreparer(_TEMPORAL_MODEL)
-    lowered = list(stream_lowered(plan.steps, payloads, _TEMPORAL_MODEL, POSTGRES))
+    lowered = list(lowered_steps(plan.steps, payloads, _TEMPORAL_MODEL, POSTGRES))
     # The Bitemporal amendment group settles at execution; its selected rows
     # cover its window, so it reads nothing.
     (deferred,) = (unit.deferred for unit in plan.units if unit.deferred is not None)

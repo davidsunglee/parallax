@@ -125,6 +125,7 @@ from .write_plan import (
     close_address_binds,
     has_temporal_gate,
     has_version_gate,
+    insert_value_rows,
     is_milestone_guard_statement,
     parse_insert_columns,
     parse_set_columns,
@@ -1885,12 +1886,15 @@ def _assert_until_input(
         in the closing step's own ① row, so both are reconstructed from the case's own
         earlier steps (:func:`_observed_rectangle`); the gate rides the golden directly
         (no ``observedTxStart`` token on the writeSequence step);
-      * every chained INSERT opens a fresh Transaction-Time milestone, so its ``in_z``
+      * every chained row opens a fresh Transaction-Time milestone, so its ``in_z``
         bind equals ``at`` and its ``out_z`` bind equals ``infinity``;
-      * the chained inserts' Valid-Time windows (``from_z`` / ``thru_z``) are EXACTLY
+      * the chained rows' Valid-Time windows (``from_z`` / ``thru_z``) are EXACTLY
         the successors the split re-opens (:func:`_split_successors`) from ①'s
         ``validFrom`` / ``until`` and the reconstructed rectangle's own bounds, in
-        head / middle / tail order.
+        head / middle / tail order;
+      * the chained rows are contiguous openings of one Entity naming the same
+        members, so they share ONE multi-row INSERT, one value tuple per row
+        (`m-sql` *Requested ranges*), read apart by :func:`write_plan.insert_value_rows`.
 
     The domain values are carried, not derived, so they are graded observably by
     ``then.tableState`` in the run rather than restated in ①.
@@ -1943,12 +1947,17 @@ def _assert_until_input(
         ]
 
     chained_windows: list[tuple[Any, Any]] = []
+    inserts = 0
     for statement, binds in zip(step_statements, step_binds, strict=True):
         if "insert into" in statement.lower():
-            # A chained milestone opens at fresh Transaction Time [at, infinity).
-            assert_write_values(case, [at], [binds[in_z_pos]], statement)
-            assert_write_values(case, [infinity], [binds[out_z_pos]], statement)
-            chained_windows.append((binds[from_z_pos], binds[thru_z_pos]))
+            inserts += 1
+            # Each chained milestone opens at fresh Transaction Time [at, infinity).
+            rows = insert_value_rows(case, statement, binds)
+            assert_write_values(case, [at] * len(rows), [row[in_z_pos] for row in rows], statement)
+            assert_write_values(
+                case, [infinity] * len(rows), [row[out_z_pos] for row in rows], statement
+            )
+            chained_windows.extend((row[from_z_pos], row[thru_z_pos]) for row in rows)
             continue
         if observed is None:
             raise CaseFailure(
@@ -1975,15 +1984,17 @@ def _assert_until_input(
             )
         assert_write_values(case, expected, binds, statement)
 
-    _assert_split_successor_windows(case, expected_windows, chained_windows)
+    _assert_split_successor_windows(case, expected_windows, chained_windows, inserts)
 
 
 def _assert_split_successor_windows(
     case: Case,
     expected_windows: list[tuple[Any, Any]],
     chained_windows: list[tuple[Any, Any]],
+    inserts: int,
 ) -> None:
-    """The chained INSERTs' Valid-Time windows are exactly the derived successors."""
+    """The chained rows' Valid-Time windows are exactly the derived successors, and
+    the ``inserts`` statements carrying them are one."""
     matched = len(expected_windows) == len(chained_windows) and all(
         write_value_equal(want_start, got_start) and write_value_equal(want_end, got_end)
         for (want_start, want_end), (got_start, got_end) in zip(
@@ -1992,10 +2003,17 @@ def _assert_split_successor_windows(
     )
     if not matched:
         raise CaseFailure(
-            f"{case.path.name}: the chained inserts' Valid-Time windows {chained_windows!r} "
+            f"{case.path.name}: the chained rows' Valid-Time windows {chained_windows!r} "
             f"!= the successors the rectangle split re-opens {expected_windows!r} — the "
             f"head / middle / tail windows are DERIVED from ①'s validFrom / until and the "
             f"closed rectangle's own bounds, never read from the golden."
+        )
+    if inserts > 1:
+        raise CaseFailure(
+            f"{case.path.name}: the split's {len(chained_windows)} chained milestones are "
+            f"contiguous openings of one Entity naming the same members, so they share ONE "
+            f"multi-row INSERT (`m-sql` *Requested ranges*, `m-execution` *Flush execution*), "
+            f"but its golden renders them as {inserts} INSERTs."
         )
 
 

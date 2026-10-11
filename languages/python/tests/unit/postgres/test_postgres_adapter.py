@@ -801,8 +801,24 @@ def test_execute_reraises_a_driver_error_at_the_boundary() -> None:
     assert exc_info.value.native_code == "23505"
 
 
-def test_no_ordered_write_transport_is_qualified_so_every_write_runs_alone() -> None:
-    assert _adapter(_FakeConnection()).ordered_write_transport is None
+def test_the_adapter_reads_pipeline_availability_from_the_libpq_psycopg_loaded() -> None:
+    assert connection_module._PIPELINED is psycopg.capabilities.has_pipeline()  # pyright: ignore[reportPrivateUsage] - the availability the facade selects on
+
+
+@pytest.mark.parametrize("pipelined", [True, False], ids=["pipeline", "no-pipeline"])
+def test_a_scope_holds_its_ordered_write_operation_exactly_where_libpq_can_pipeline(
+    monkeypatch: pytest.MonkeyPatch, pipelined: bool
+) -> None:
+    monkeypatch.setattr(connection_module, "_PIPELINED", pipelined)
+    facade = _adapter(_FakeConnection())
+    transport = facade.ordered_write_transport
+    if not pipelined:
+        assert transport is None
+        return
+    # Stored once: every read answers the same operation of this scope.
+    assert transport is not None
+    assert transport is facade.ordered_write_transport
+    assert transport == facade._ordered_writes  # pyright: ignore[reportPrivateUsage] - the scope's own operation
 
 
 def test_execute_write_reraises_a_driver_error_at_the_boundary() -> None:

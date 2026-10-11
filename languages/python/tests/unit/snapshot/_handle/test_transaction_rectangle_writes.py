@@ -21,6 +21,7 @@ from tests._support.db_port import (
     Transact,
     Write,
     WriteCall,
+    inserted_rows,
 )
 from tests.unit._transact_support import (
     INFINITY_INSTANT,
@@ -83,7 +84,7 @@ def test_a_close_addresses_the_rectangle_the_written_value_came_from(
     # the observation is resolved, which a lowering-only probe cannot see.
     port = ScriptedAdapter(
         Transact(
-            Read(rows=[_CURRENT_RECTANGLE]), Read(rows=[_RETROACTIVE_RECTANGLE]), Write(times=3)
+            Read(rows=[_CURRENT_RECTANGLE]), Read(rows=[_RETROACTIVE_RECTANGLE]), Write(times=2)
         )
     )
 
@@ -102,7 +103,8 @@ def test_a_close_addresses_the_rectangle_the_written_value_came_from(
 
     db_for(WHERE_POSITION_META, port).transact(fn, concurrency=concurrency)
 
-    close, head, tail = (op for op in port.calls if isinstance(op, WriteCall))
+    close, opened = (op for op in port.calls if isinstance(op, WriteCall))
+    head, tail = inserted_rows(opened)
     assert close == WriteCall(
         POSTGRES.to_driver_sql(
             "update where_position set out_z = ? "
@@ -110,7 +112,7 @@ def test_a_close_addresses_the_rectangle_the_written_value_came_from(
         ),
         (dt.datetime(2024, 6, 1, tzinfo=dt.UTC), 1, "infinity", "infinity", *gate_binds),
     )
-    assert head.binds == (
+    assert head == (
         1,
         "A",
         Decimal("100.00"),
@@ -119,7 +121,7 @@ def test_a_close_addresses_the_rectangle_the_written_value_came_from(
         dt.datetime(2024, 6, 1, tzinfo=dt.UTC),
         INFINITY_INSTANT,
     )
-    assert tail.binds == (
+    assert tail == (
         1,
         "A",
         Decimal("150.00"),

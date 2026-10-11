@@ -37,7 +37,6 @@ __all__ = [
     "lowered",
     "lowered_within",
     "ordered_bind_bound",
-    "stream_lowered",
     "stream_physical",
 ]
 
@@ -140,27 +139,6 @@ class LoweringCursor:
                 return LoweredOpening(builder.finish(), None, error)
             following = None
         return LoweredOpening(builder.finish(), following, None)
-
-
-def stream_lowered(
-    steps: Iterable[PlannedStep], payloads: WritePayloadPreparer, meta: Metamodel, dialect: Dialect
-) -> Iterator[tuple[PlannedStep, LoweredStatement]]:
-    """Each of ``steps`` paired with the statement it lowers to, in order,
-    each taken from ``steps`` and lowered only when it is asked for.
-
-    ``steps`` is a plan's sequence, or a span borrowed from it, a bound range,
-    or a continuation round. The step is yielded alongside its statement
-    because the step — not the statement — carries the Affected Rows Policy
-    the executor asks the unit of work to interpret. Pairing them here keeps
-    that policy on the very value the statement was lowered from, so a lazily
-    rebuilt step is never rebuilt again to be enforced.
-
-    A temporal mutation's finalized close precedes the successors it chains
-    (`m-unit-work` "expand temporal topology in place"), so a close's own
-    shortfall aborts BEFORE the rows it would have chained execute.
-    """
-    for step in steps:
-        yield (step, lowered(step, payloads, meta, dialect))
 
 
 def stream_physical(

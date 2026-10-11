@@ -30,7 +30,6 @@ from parallax.core.execution._write_lowering import (
     LoweredOpening,
     LoweringCursor,
     lowered,
-    stream_lowered,
     stream_physical,
 )
 from parallax.core.metamodel import (
@@ -68,7 +67,7 @@ from parallax.core.write_plan.steps import (
 )
 from parallax.core.write_plan.steps import PlannedWrite as PlannedStep
 from tests._support.clock_probes import instant_at
-from tests._support.lowering_probes import lower_instruction, lower_instruction_steps
+from tests._support.lowering_probes import lower_instruction, lower_instruction_steps, lowered_steps
 from tests.unit._corpus_model_support import corpus_records, formed
 
 _OPENINGS: Final = "parallax.core.execution._write_lowering._OPENING_ENTRY_CAP"
@@ -543,7 +542,7 @@ def test_a_settled_range_keeps_its_logical_steps_and_groups_only_its_openings() 
     )
     assert [
         (statement.sql, statement.binds)
-        for _step, statement in stream_lowered(steps, LayoutPayloadPreparer(model), model, POSTGRES)
+        for _step, statement in lowered_steps(steps, LayoutPayloadPreparer(model), model, POSTGRES)
     ] == [(statement.sql, statement.binds) for statement in raw]
 
 

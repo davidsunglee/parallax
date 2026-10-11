@@ -58,7 +58,7 @@ when:
             - { id: 1, value: "150.00" }
           validFrom: "2024-03-01T00:00:00.000000Z"
           at: "2024-10-01T00:00:00.000000Z"
-      roundTrips: 5
+      roundTrips: 4
       note: correct the value the step-0 read returned from its pin through infinity — the close addresses R2 by its finite end (thru_z 2024-06-01), the flush reads the coverage beyond it and closes R3 under its own start; R2's head carries its value, and R2's set tail and R3 set over its own unassigned members hold one complete state, so they open as one successor
       statements:
         - sql:
@@ -68,13 +68,10 @@ when:
             postgres: update position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ? and in_z = ?
           binds: ["2024-10-01T00:00:00.000000Z", 1, infinity, infinity, "2024-04-01T00:00:00.000000Z"]
         - sql:
-            postgres: insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
-          binds: [1, A, "100.00", "2024-01-01T00:00:00.000000Z", "2024-03-01T00:00:00.000000Z", "2024-10-01T00:00:00.000000Z", infinity]
-        - sql:
-            postgres: insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
-          binds: [1, A, "150.00", "2024-03-01T00:00:00.000000Z", infinity, "2024-10-01T00:00:00.000000Z", infinity]
+            postgres: insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?)
+          binds: [1, A, "100.00", "2024-01-01T00:00:00.000000Z", "2024-03-01T00:00:00.000000Z", "2024-10-01T00:00:00.000000Z", infinity, 1, A, "150.00", "2024-03-01T00:00:00.000000Z", infinity, "2024-10-01T00:00:00.000000Z", infinity]
 then:
-  roundTrips: 7
+  roundTrips: 6
   tableState:
     position:
       - pos_id: 1

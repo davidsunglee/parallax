@@ -169,6 +169,9 @@ _PREDICATE_TARGETS: Final = 32
 _READ_ROOTS: Final = 128
 _PAGE_SIZE: Final = 32
 _REFUSALS_PER_WINDOW: Final = 4
+_OPENINGS_PER_INSERT: Final = 64
+"""The most openings one multi-row insert carries (`m-execution` *Flush
+execution*)."""
 _STRIDE: Final = 5
 """The destruction workload's i-th termination removes row ``(i * 5) % size``:
 five is coprime with every size, so the order visits every row, neither
@@ -294,26 +297,38 @@ class Outcome:
         }
 
 
+def _inserts(rows: int) -> int:
+    """The statements inserting ``rows`` contiguous openings of one shape:
+    one multi-row insert per :data:`_OPENINGS_PER_INSERT` of them."""
+    return -(-rows // _OPENINGS_PER_INSERT)
+
+
 def expected_outcome(cell: Cell) -> Outcome:
     """What one complete run of ``cell`` reports."""
     if isinstance(cell, AlgorithmCell):
         size = cell.size
         if cell.algorithm == "replacement-gaps":
-            # Each stored interval closes, its first replacement opens, and the
-            # second's part of it and the gap after it open as one row.
-            return Outcome(statements=3 * size // 2, reads=1)
+            # Each stored interval closes; then its first replacement opens, and
+            # the second's part of it and the gap after it open as one row.
+            return Outcome(statements=size // 2 + _inserts(size), reads=1)
+        # The insertion is stored, then its split revises the stored row in
+        # place and inserts the size - 1 rows after it.
+        split = 2 + _inserts(size - 1)
         if cell.algorithm == "destruction-merge":
-            return Outcome(statements=size + 1, reads=size // 2 + size, admitted=1)
-        return Outcome(statements=size + 4, reads=size // 2 + 4, refused=2 * _REFUSALS_PER_WINDOW)
+            return Outcome(statements=split, reads=size // 2 + size, admitted=1)
+        # The superseded insertion is stored and then terminated before the
+        # split, and the first row's termination is flushed between windows.
+        return Outcome(statements=split + 3, reads=size // 2 + 4, refused=2 * _REFUSALS_PER_WINDOW)
     match cell.flow:
         case "source-keyed" | "target-patch":
-            return Outcome(statements=4, reads=1)
+            # A close, then one insert of the head, middle, and tail.
+            return Outcome(statements=2, reads=1)
         case "target-replace":
-            # Three closes, the head and tail, and one row over the replaced
-            # intervals and the gaps between them.
-            return Outcome(statements=6, reads=1)
+            # Three closes, then one insert of the head and tail and one row
+            # over the replaced intervals and the gaps between them.
+            return Outcome(statements=4, reads=1)
         case "predicate":
-            return Outcome(statements=4 * _PREDICATE_TARGETS, reads=1)
+            return Outcome(statements=2 * _PREDICATE_TARGETS, reads=1)
         case "read-eager":
             return Outcome(reads=1, roots=_READ_ROOTS)
         case "read-stream":

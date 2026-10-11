@@ -592,6 +592,62 @@ def _insert_column_list(statement: str) -> str | None:
     return None
 
 
+def insert_value_rows(case: Case, statement: str, binds: list[Any]) -> list[list[Any]]:
+    """An INSERT's binds, one list per value tuple it renders, in tuple order.
+
+    A multi-row INSERT carries one value tuple per row — a batched insert
+    (`m-batch-write`) and a run of temporal openings sharing one statement
+    (`m-sql` *Requested ranges*) alike — so a row's binds are found by counting
+    each tuple's own placeholders rather than by assuming one row per statement.
+    Read through :func:`_sql_scan`, so neither a bracket nor a `?` inside a quoted
+    identifier or a string literal is taken for syntax.
+    """
+    values = _values_clause(statement)
+    if values is None:
+        raise CaseFailure(
+            f"{case.path.name}: could not find the VALUES tuples of golden INSERT {statement!r}."
+        )
+    widths = _tuple_widths(values)
+    if sum(widths) != len(binds):
+        raise CaseFailure(
+            f"{case.path.name}: golden INSERT {statement!r} renders {sum(widths)} "
+            f"placeholder(s) across {len(widths)} value tuple(s) but carries {len(binds)} bind(s)."
+        )
+    rows: list[list[Any]] = []
+    start = 0
+    for width in widths:
+        rows.append(binds[start : start + width])
+        start += width
+    return rows
+
+
+def _values_clause(statement: str) -> str | None:
+    """What follows an INSERT's own top-level `values` keyword, or ``None`` where
+    the statement is no INSERT naming its columns or renders no such keyword."""
+    if _insert_column_list(statement) is None:
+        return None
+    lowered = statement.lower()
+    for index, _char, depth in _sql_scan(statement):
+        if depth == 0 and _keyword_at(lowered, index, "values"):
+            return statement[index:]
+    return None
+
+
+def _tuple_widths(values: str) -> list[int]:
+    """How many placeholders each top-level parenthesised tuple of *values* holds."""
+    widths: list[int] = []
+    current: int | None = None
+    for _index, char, depth in _sql_scan(values):
+        if char == "(" and depth == 1:
+            current = 0
+        elif char == ")" and depth == 0 and current is not None:
+            widths.append(current)
+            current = None
+        elif char == "?" and current is not None:
+            current += 1
+    return widths
+
+
 def parse_set_columns(statement: str) -> list[str] | None:
     """The columns an UPDATE assigns, in the order its `set` clause renders them, or
     ``None`` when the statement carries no `set` clause at all.

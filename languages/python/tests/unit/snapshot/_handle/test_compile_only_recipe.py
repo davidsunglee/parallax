@@ -2,7 +2,7 @@
 
 Two halves of one contract. The compile lane reaches production's planning path
 DIRECTLY — ``buffered_write`` into ``build_write_planner(model).finalize(...)`` into
-``stream_lowered(...)`` — so the emission oracle and the executed SQL are one
+``stream_physical(...)`` — so the emission oracle and the executed SQL are one
 computation rather than two that agree. And runtime returns and retains no
 ``WritePlan``: there is no ``plan_neutral``, no ``compile_neutral``, no
 ``connect_neutral``, and no public flush, so a caller can neither reach a plan nor
@@ -26,7 +26,7 @@ from parallax.conformance import case_format, engine
 from parallax.conformance._lanes import scenario
 from parallax.core.dialect import POSTGRES
 from parallax.core.execution._planning import build_write_planner
-from parallax.core.execution._write_lowering import stream_lowered
+from parallax.core.execution._write_lowering import stream_physical
 from parallax.core.unit_work import WritePlanner, WritePlanningRequest
 from parallax.core.write_payload import LayoutPayloadPreparer
 from parallax.core.write_plan import WritePlan
@@ -47,11 +47,12 @@ _CASE: Path = (
 
 
 def test_the_compile_lane_names_the_same_seams_the_runtime_flush_does() -> None:
-    """Not "an equivalent planner" — the identical factory and lowering
-    function ``ScopedDatabase.transact`` injects, reached under their own names."""
+    """Not "an equivalent planner" — the identical factory ``ScopedDatabase.transact``
+    injects, and the lowering traversal over execution's own cursor operations,
+    reached under their own names."""
     lane: Mapping[str, object] = vars(scenario)
     assert lane["build_write_planner"] is build_write_planner
-    assert lane["stream_lowered"] is stream_lowered
+    assert lane["stream_physical"] is stream_physical
 
 
 def test_the_compile_lane_emits_exactly_one_plans_own_lowering(
@@ -83,9 +84,7 @@ def test_the_compile_lane_emits_exactly_one_plans_own_lowering(
     expected = [
         statement
         for value in planned
-        for _step, statement in stream_lowered(
-            value.steps, LayoutPayloadPreparer(model), model, POSTGRES
-        )
+        for statement in stream_physical(value.steps, LayoutPayloadPreparer(model), model, POSTGRES)
     ]
     assert [(emission.sql, emission.binds) for emission in emissions] == [
         (statement.sql, statement.binds) for statement in expected

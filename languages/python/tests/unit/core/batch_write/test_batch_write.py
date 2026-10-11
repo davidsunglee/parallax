@@ -23,13 +23,13 @@ from parallax.core import batch_write
 from parallax.core.dialect import POSTGRES
 from parallax.core.execution._keyed_sql import collapse_group_key
 from parallax.core.execution._planning import build_write_planner
-from parallax.core.execution._write_lowering import stream_lowered
 from parallax.core.metamodel import AttributeMetadata, EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.unit_work import BufferItem, KeyedWrite, WritePlanningRequest, WriteRejectedError
 from parallax.core.write_payload import LayoutPayloadPreparer
 from parallax.descriptor import _records
 from tests._support.clock_probes import inert_instant
+from tests._support.lowering_probes import lowered_steps
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY, observed_buffer
 from tests.unit._corpus_model_support import formed
 
@@ -101,7 +101,7 @@ def _flush_and_lower(
     )
     return [
         statement
-        for _step, statement in stream_lowered(
+        for _step, statement in lowered_steps(
             plan.steps, LayoutPayloadPreparer(model), model, POSTGRES
         )
     ]

@@ -26,6 +26,7 @@ from tests._support.db_port import (
     Transact,
     Write,
     WriteCall,
+    inserted_rows,
 )
 from tests._support.root_ownership import own_root
 from tests.unit._transact_support import (
@@ -237,10 +238,10 @@ def _position_at(tx: Transaction, at: dt.datetime) -> WherePosition:
 def test_temporal_assignments_over_different_windows_compose_in_authored_order() -> None:
     # Two pins of one observed rectangle start two windows; their assignments
     # compose rather than refuse, the later value winning where they overlap,
-    # and the rectangle is split once: the close, then the head, the earlier
-    # write's own interval, the overlap, and the carried tail.
+    # and the rectangle is split once: the close, then one insert of the head,
+    # the earlier write's own interval, the overlap, and the carried tail.
     port = ScriptedAdapter(
-        Transact(Read(rows=[_position_row()]), Read(rows=[_position_row()]), Write(times=5))
+        Transact(Read(rows=[_position_row()]), Read(rows=[_position_row()]), Write(times=2))
     )
 
     def fn(tx: Transaction) -> None:
@@ -252,9 +253,9 @@ def test_temporal_assignments_over_different_windows_compose_in_authored_order()
     own_root(
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
     ).using_database_login().transact(fn)
-    close, *openings = _writes(port)
+    close, opened = _writes(port)
     assert close.sql.startswith("update where_position set out_z")
-    assert [write.binds[2:5] for write in openings] == [
+    assert [row[2:5] for row in inserted_rows(opened)] == [
         (Decimal("100.00"), _TX_START, _VALID_FROM),
         (Decimal("9.00"), _VALID_FROM, _OTHER_FROM),
         (Decimal("8.00"), _OTHER_FROM, _UNTIL),
@@ -283,7 +284,7 @@ def test_a_destruction_over_another_window_of_the_same_state_is_refused() -> Non
 
 def test_a_refused_composition_leaves_the_earlier_write_pending_and_executable() -> None:
     port = ScriptedAdapter(
-        Transact(Read(rows=[_position_row()]), Read(rows=[_position_row()]), Write(times=4))
+        Transact(Read(rows=[_position_row()]), Read(rows=[_position_row()]), Write(times=2))
     )
 
     def fn(tx: Transaction) -> None:
@@ -297,9 +298,9 @@ def test_a_refused_composition_leaves_the_earlier_write_pending_and_executable()
     own_root(
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
     ).using_database_login().transact(fn)
-    close, *openings = _writes(port)
+    close, opened = _writes(port)
     assert close.sql.startswith("update where_position set out_z")
-    assert [write.binds[2] for write in openings] == [
+    assert [row[2] for row in inserted_rows(opened)] == [
         Decimal("100.00"),
         Decimal("9.00"),
         Decimal("100.00"),
@@ -309,7 +310,7 @@ def test_a_refused_composition_leaves_the_earlier_write_pending_and_executable()
 def test_temporal_updates_over_one_region_merge_into_one_rectangle_split() -> None:
     # One region, so the two sparse assignments merge and the split is planned
     # once rather than twice.
-    port = ScriptedAdapter(Transact(Read(rows=[_position_row()]), Write(times=4)))
+    port = ScriptedAdapter(Transact(Read(rows=[_position_row()]), Write(times=2)))
 
     def fn(tx: Transaction) -> None:
         node = _position_at(tx, _VALID_FROM)
@@ -319,7 +320,9 @@ def test_temporal_updates_over_one_region_merge_into_one_rectangle_split() -> No
     own_root(
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
     ).using_database_login().transact(fn)
-    assert len(_writes(port)) == 4  # close + head + middle + tail, once
+    close, opened = _writes(port)  # close + one insert of head, middle, and tail, once
+    assert close.sql.startswith("update where_position set out_z")
+    assert len(inserted_rows(opened)) == 3
 
 
 def _position_row() -> dict[str, object]:

@@ -30,7 +30,7 @@ from reference_harness.ddl_builder import ddl_for, declared_contributors
 from reference_harness.object_query_oracle import assert_case_read
 from reference_harness.storage_layout import derived_primary_key_index
 from reference_harness.table_state import read_table
-from reference_harness.write_plan import has_temporal_gate
+from reference_harness.write_plan import has_temporal_gate, insert_value_rows
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
@@ -252,14 +252,16 @@ def test_plain_split_write_input_holds_for_authored_cases() -> None:
 
 def test_plain_two_way_split_and_plain_terminate_statement_shapes() -> None:
     # The plain-update split is inactivate + head (old) + new tail (new) — a TWO-way
-    # split (no middle, no old-tail): the `update` step is 3 statements, 4 with the
-    # opening insert.
+    # split (no middle, no old-tail) whose two chained rows share one INSERT: the
+    # `update` step is 2 statements, 3 with the opening insert.
     split = next(
         c for c in _plain_split_write_cases() if c.path.stem.startswith("m-temporal-write-022")
     )
     update_step = next(s for s in split.write_sequence if s["mutation"] == "amend")
-    assert update_step["statements"] == 3
-    assert len(split.golden_statements("postgres")) == 4
+    assert update_step["statements"] == 2
+    assert len(split.golden_statements("postgres")) == 3
+    chained = split.golden_statements("postgres")[2]
+    assert len(insert_value_rows(split, chained, split.statement_binds(2))) == 2
     _assert_write_step_count(split, "postgres")
 
     # The plain terminate is inactivate + head (old) only — no tail: the `terminate`
@@ -459,15 +461,39 @@ def test_gated_close_with_extra_placeholder_arity_mismatch_is_rejected() -> None
         _assert_write_input_columns(case, "postgres")
 
 
-def test_rectangle_split_has_inactivate_plus_three_inserts() -> None:
+def test_rectangle_split_has_inactivate_plus_one_three_row_insert() -> None:
     update_until = next(
         c for c in _phase8_cases() if "update-until" in c.tags and c.is_write_sequence
     )
-    # The updateUntil step is 4 statements: 1 inactivate UPDATE + head/middle/tail
-    # inserts. With the leading insert that opens the original, 5 statements total.
+    # The updateUntil step is 2 statements: 1 inactivate UPDATE + one INSERT carrying
+    # the head / middle / tail rows. With the leading insert that opens the original,
+    # 3 statements total.
     step = next(s for s in update_until.write_sequence if s["mutation"] == "amendUntil")
-    assert step["statements"] == 4
-    assert len(update_until.golden_statements("postgres")) == 5
+    assert step["statements"] == 2
+    assert len(update_until.golden_statements("postgres")) == 3
+    chained = update_until.golden_statements("postgres")[2]
+    assert len(insert_value_rows(update_until, chained, update_until.statement_binds(2))) == 3
+
+
+def test_a_split_rendering_its_chained_rows_as_separate_inserts_is_refused() -> None:
+    # The rows a split chains are contiguous openings of one Entity naming the same
+    # members, so they share one multi-row INSERT; a golden spelling each as an
+    # INSERT of its own carries the same rows and windows and is still refused.
+    case = copy.deepcopy(
+        next(c for c in _until_write_cases() if c.path.stem.startswith("m-temporal-write-017"))
+    )
+    statements = case.then["statements"]
+    grouped = statements[2]
+    rows = insert_value_rows(case, grouped["sql"]["postgres"], case.statement_binds(2))
+    single = {
+        dialect: re.sub(r"(\) values \([^()]*\))(, \([^()]*\))+$", r"\1", sql)
+        for dialect, sql in grouped["sql"].items()
+    }
+    statements[2:] = [{"sql": dict(single), "binds": row} for row in rows]
+    step = next(s for s in case.write_sequence if s["mutation"] == "amendUntil")
+    step["statements"] = 4
+    with pytest.raises(CaseFailure, match="share ONE multi-row INSERT"):
+        _assert_write_input_columns(case, "postgres")
 
 
 # --- temporal inheritance composition -----------------------------------------

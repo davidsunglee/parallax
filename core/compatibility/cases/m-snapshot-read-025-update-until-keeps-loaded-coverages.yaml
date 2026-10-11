@@ -42,21 +42,15 @@ when:
           validFrom: "2024-03-01T00:00:00.000000Z"
           until: "2024-09-01T00:00:00.000000Z"
           at: "2024-07-01T00:00:00.000000Z"
-      roundTrips: 5
-      note: split the very rectangle the loaded `coverages` view holds - inactivate it, chain head / middle / tail, plus the resolving read the keyed write owes
+      roundTrips: 3
+      note: split the very rectangle the loaded `coverages` view holds - inactivate it, chain head / middle / tail in one multi-row insert, plus the resolving read the keyed write owes
       statements:
         - sql:
             postgres: update coverage set out_z = ? where id = ? and thru_z = ? and out_z = ? and in_z = ?
           binds: ["2024-07-01T00:00:00.000000Z", 20, infinity, infinity, "2024-01-01T00:00:00.000000Z"]
         - sql:
-            postgres: insert into coverage(id, policy_id, amount, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
-          binds: [20, 2, "300.00", "2024-01-01T00:00:00.000000Z", "2024-03-01T00:00:00.000000Z", "2024-07-01T00:00:00.000000Z", infinity]
-        - sql:
-            postgres: insert into coverage(id, policy_id, amount, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
-          binds: [20, 2, "999.00", "2024-03-01T00:00:00.000000Z", "2024-09-01T00:00:00.000000Z", "2024-07-01T00:00:00.000000Z", infinity]
-        - sql:
-            postgres: insert into coverage(id, policy_id, amount, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
-          binds: [20, 2, "300.00", "2024-09-01T00:00:00.000000Z", infinity, "2024-07-01T00:00:00.000000Z", infinity]
+            postgres: insert into coverage(id, policy_id, amount, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?)
+          binds: [20, 2, "300.00", "2024-01-01T00:00:00.000000Z", "2024-03-01T00:00:00.000000Z", "2024-07-01T00:00:00.000000Z", infinity, 20, 2, "999.00", "2024-03-01T00:00:00.000000Z", "2024-09-01T00:00:00.000000Z", "2024-07-01T00:00:00.000000Z", infinity, 20, 2, "300.00", "2024-09-01T00:00:00.000000Z", infinity, "2024-07-01T00:00:00.000000Z", infinity]
     - action: access
       "on": 0
       path: coverages
@@ -86,4 +80,4 @@ when:
       expectRows:
         - { id: 20, policy_id: 2, amount: "999.00", from_z: "2024-03-01T00:00:00.000000Z", thru_z: "2024-09-01T00:00:00.000000Z", in_z: "2024-07-01T00:00:00.000000Z", out_z: infinity }
 then:
-  roundTrips: 8
+  roundTrips: 6

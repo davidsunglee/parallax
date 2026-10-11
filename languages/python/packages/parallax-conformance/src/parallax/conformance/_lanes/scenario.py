@@ -73,7 +73,7 @@ from parallax.core.execution import (
 )
 from parallax.core.execution._keyed_writes import validate_source_pin
 from parallax.core.execution._planning import build_write_planner
-from parallax.core.execution._write_lowering import stream_lowered
+from parallax.core.execution._write_lowering import stream_physical
 from parallax.core.metamodel import (
     AbstractRoot,
     AbstractSubtype,
@@ -177,9 +177,10 @@ __all__ = [
 
 # A write step is one unit of work: its buffered keyed writes are planned by
 # the SAME ``build_write_planner`` factory production uses (``m-unit-work``)
-# and each surviving :class:`~parallax.core.unit_work.PlannedWrite` is lowered
-# to DML by the shared ``execution._write_lowering.stream_lowered`` seam — the deliberate
-# ``m-sql`` write edge the conformance family may compose (the import-side DAG
+# and the surviving :class:`~parallax.core.unit_work.PlannedWrite` steps are
+# lowered to the physical statements execution runs by the shared
+# ``execution._write_lowering.stream_physical`` seam — the deliberate ``m-sql``
+# write edge the conformance family may compose (the import-side DAG
 # exemption). A **scenario** is a *sequence* of units of work: a write step
 # commits (or, ``rollback: true``, aborts) its coalesced DML, then a ``find``
 # reads committed state through the read path. A **writeSequence** lowers each
@@ -195,7 +196,7 @@ __all__ = [
 # unit's own read published (never the typed instance verbs, which this engine's
 # case-driven metamodel has no compiled classes for), and reports the DML its
 # lifecycle delivered. The COMPILE lane still lowers PURELY (no database,
-# ``build_write_planner(...).finalize(...)`` / ``stream_lowered``). Both lanes
+# ``build_write_planner(...).finalize(...)`` / ``stream_physical``). Both lanes
 # resolve and plan the SAME instructions/observations/instant
 # (`_resolve_entries` / `_settle_resolved` below are the shared core), which is
 # what advances the case state a later unit settles against.
@@ -1369,7 +1370,7 @@ class ExecutedPlan:
         return tuple(
             statement
             for run in self.runs
-            for _step, statement in stream_lowered(run, self.payloads, model, dialect)
+            for statement in stream_physical(run, self.payloads, model, dialect)
         )
 
 
@@ -1407,7 +1408,7 @@ def _lower_predicate_write_step(
     """Lower a READLESS scenario predicate-write step (`m-batch-write-005`/
     ``-006``) to its ONE statement — PURE, no database. Deserializes +
     validates the canonical instruction, then reuses the SAME
-    ``build_write_planner`` -> ``stream_lowered`` seam every other write path
+    ``build_write_planner`` -> ``stream_physical`` seam every other write path
     does (batching is a structural no-op for a lone predicate write).
 
     The case-format preparation seam normalizes only carrier differences before

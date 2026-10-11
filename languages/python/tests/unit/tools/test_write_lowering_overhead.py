@@ -217,7 +217,7 @@ def test_a_target_reads_nothing_before_its_verb_and_its_one_read_inside_the_wind
                 opened=lambda port=port: port.events.append("opened"),
                 buffered=lambda port=port: port.events.append("buffered"),
             )
-        writes = ["write"] * case.statements
+        writes = ["write"] * len(lowering_support.lowered(case))
         if case.family == "plain":
             assert port.events == ["opened", "read", "buffered", *writes], case.name
         else:
@@ -389,6 +389,15 @@ def _documents(statement_binds: Sequence[object]) -> list[object]:
     return [bind.value for bind in statement_binds if isinstance(bind, JsonDocument)]
 
 
+def _rows(statement: lowering_support.Executed) -> list[tuple[object, ...]]:
+    """The binds of each value tuple ``statement`` renders: one per Planned
+    Write, since a run of temporal openings shares one multi-row insert
+    (`m-execution` *Flush execution*); any other statement is one."""
+    tuples = statement.sql.count("), (") + 1 if statement.sql.startswith("insert") else 1
+    width = len(statement.binds) // tuples
+    return [statement.binds[index * width : (index + 1) * width] for index in range(tuples)]
+
+
 def _stored_document(case: lowering_support.Case) -> Mapping[str, object]:
     """The Structured Column of the Relational Document row ``case`` revises."""
     assert case.layout == "document" and case.stored is not None
@@ -396,11 +405,15 @@ def _stored_document(case: lowering_support.Case) -> Mapping[str, object]:
 
 
 @pytest.mark.parametrize("case", lowering_support.CASES, ids=lambda case: case.name)
-def test_every_keyed_case_lowers_to_its_stated_statements_and_dumps_each_document(
+def test_every_keyed_case_lowers_its_stated_writes_and_dumps_each_document(
     case: lowering_support.Case,
 ) -> None:
+    # A case states the Planned Writes its flush realizes; a Bitemporal split's
+    # successors are one insert after its close.
     lowered = lowering_support.lowered(case)
-    assert len(lowered) == case.statements
+    assert sum(len(_rows(statement)) for statement in lowered) == case.statements
+    if case.family == "bitemporal":
+        assert [statement.sql.split(" ", 1)[0] for statement in lowered] == ["update", "insert"]
     for statement in lowered:
         assert len(statement.dumped) == len(statement.binds)
         for bind, buffer in zip(statement.binds, statement.dumped, strict=True):
@@ -436,12 +449,12 @@ def test_an_unchanged_successor_writes_nothing_and_a_changed_one_replaces_it() -
 def test_a_bitemporal_interior_update_carries_head_and_tail_and_changes_the_middle() -> None:
     for layout in lowering_support.LAYOUTS:
         case = lowering_support.case_named(f"bitemporal.interior.{layout}.typed")
-        _close, head, middle, tail = lowering_support.lowered(case)
+        _close, opened = lowering_support.lowered(case)
         titles = [
-            next(bind for bind in statement.binds if isinstance(bind, str) and "title" in bind)
+            next(bind for bind in row if isinstance(bind, str) and "title" in bind)
             if layout == "columns"
-            else cast("Mapping[str, object]", _documents(statement.binds)[0])["title"]
-            for statement in (head, middle, tail)
+            else cast("Mapping[str, object]", _documents(row)[0])["title"]
+            for row in _rows(opened)
         ]
         assert titles == ["title-before", "title-middle", "title-before"]
 

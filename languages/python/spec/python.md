@@ -622,7 +622,7 @@ which `tools/check_scope_ownership.py` demands (*Filesystem ownership*, below).
   Snapshot's own `publish_roots`, `RootView`, and `require_publishable`, so the
   delivery and stored-data refusal it grades are production's. The scenario and
   snapshot lanes drive the production write planner, lowering, and source-pin
-  check through the conformance-only `build_write_planner`, `stream_lowered`,
+  check through the conformance-only `build_write_planner`, `stream_physical`,
   and `validate_source_pin`, read from the execution modules that define them,
   and the snapshot lane spells a Wire family variant with `FAMILY_VARIANT_KEY`
   from the Wire publication module. The scenario lane reads each published Wire value's Read Origin
@@ -631,7 +631,7 @@ which `tools/check_scope_ownership.py` demands (*Filesystem ownership*, below).
   readers the Wire write verbs use, so the claims and keys it settles are the
   ones a real write settles against; both are implementation-private, so no
   exported name reaches them. The scenario lane lowers a bound deferred range's
-  steps through that same `stream_lowered` rather than reaching the `m-sql`
+  steps through that same `stream_physical` rather than reaching the `m-sql`
   write-step compiler, and the case loader's `wire._json.authored_number` reach is the production YAML
   token-preservation seam. Compatibility inputs use canonical Wire literals, so
   case ingress needs no private token-inspection reach. Case ingress does reach

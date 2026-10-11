@@ -103,20 +103,21 @@ _STATEMENTS: Final[Mapping[tuple[Profile, Verb], int]] = {
     ("transaction_time", "terminate"): 1,
     ("bitemporal", "insert"): 1,
     ("bitemporal", "bounded_insert"): 1,
-    ("bitemporal", "amend"): 3,
-    ("bitemporal", "bounded_update"): 4,
+    ("bitemporal", "amend"): 2,
+    ("bitemporal", "bounded_update"): 2,
     ("bitemporal", "terminate"): 2,
-    ("bitemporal", "bounded_terminate"): 3,
+    ("bitemporal", "bounded_terminate"): 2,
 }
 """How much DML each admitted verb emits, by the target's temporal profile.
 
 A non-temporal row is written in place. A Transaction-Time-Only update closes the
 current milestone and opens the next; a `terminate` only closes. A Bitemporal
-write over an OBSERVED rectangle additionally splits it around the window it
-states, which is why those counts are the largest and why a bounded verb's differ
-from its plain peer's; an `insert` observes nothing and opens one rectangle, so it
-costs the one statement every insert costs. Every pair this omits is one
-:func:`_applicability_refusal` refuses.
+write over an OBSERVED rectangle closes it and opens the pieces the window it
+states splits it into, every piece by one multi-row insert, so a plain and a
+bounded verb cost the same two statements however many pieces they open; an
+`insert` observes nothing and opens one rectangle, so it costs the one statement
+every insert costs. Every pair this omits is one :func:`_applicability_refusal`
+refuses.
 """
 
 
@@ -371,18 +372,15 @@ def test_a_reversed_window_is_refused_before_the_change_set_is_weighed(
 def _over_a_buffered_insert(scenario: Scenario) -> Answer:
     """What a write over a row this unit of work still holds buffered answers.
 
-    The opening's inserts are the only statements: an assignment merges into the
+    The opening's insert is the only statement: an assignment merges into the
     row the insert opens, and a `delete` or a `terminate` cancels the pair
     outright. A bounded write reaches only part of an unbounded opening, so a
-    bounded update splits it into two inserts at its bound — one, where it
-    assigns what the opening already holds, since the two parts then hold one
-    state — and a bounded termination leaves its tail to insert.
+    bounded update splits it into two rows at its bound — one, where it assigns
+    what the opening already holds, since the two parts then hold one state —
+    which one statement inserts, and a bounded termination leaves its tail to
+    insert.
     """
-    if scenario.verb == "bounded_update":
-        return _wrote(1 if scenario.change == "net_zero" else 2)
-    if scenario.verb == "bounded_terminate":
-        return _wrote(1)
-    if scenario.verb in _UPDATE_VERBS:
+    if scenario.verb in ("bounded_update", "bounded_terminate", *_UPDATE_VERBS):
         return _wrote(1)
     return _wrote(0)
 
