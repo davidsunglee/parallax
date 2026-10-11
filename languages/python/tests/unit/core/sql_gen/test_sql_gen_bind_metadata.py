@@ -10,6 +10,7 @@ import pytest
 from parallax.core import deep_fetch, inheritance, storage_layout
 from parallax.core.base import DATE, FLOAT32, INFINITY, INT64, STRING, TIMESTAMP, ManagedValue
 from parallax.core.base import Decimal as DecimalType
+from parallax.core.db_port import JsonDocument
 from parallax.core.dialect import POSTGRES
 from parallax.core.predicate._resolved import DeferredKeySet, ResolvedConstant
 from parallax.core.sql_gen import _compile as sql_compile
@@ -19,6 +20,7 @@ from parallax.core.sql_gen._context import (
     SqlGenError,
     StatementBuilder,
     _RepeatedTypedBindSpan,  # pyright: ignore[reportPrivateUsage]
+    _TypedBindSlot,  # pyright: ignore[reportPrivateUsage]
     _TypedBindSpan,  # pyright: ignore[reportPrivateUsage]
     _WireBindOverride,  # pyright: ignore[reportPrivateUsage]
 )
@@ -470,6 +472,127 @@ def test_typed_row_binding_rejects_the_literal_open_bound_at_a_timestamp_slot(
 def test_typed_row_binding_rejects_inconsistent_widths() -> None:
     with pytest.raises(SqlGenError, match="inconsistent row widths"):
         _builder().bind_typed_rows((("one",), ("two", "extra")), ((STRING, "MANAGED"),))
+
+
+_MIXED_ROW: tuple[_TypedBindSlot | None, ...] = (
+    (INT64, "MANAGED"),
+    None,
+    (TIMESTAMP, "MANAGED"),
+    (DATE, "MANAGED"),
+)
+
+
+def _mixed_row(key: int, day: object) -> tuple[object, ...]:
+    return (key, JsonDocument({"key": key}), INFINITY, day)
+
+
+def test_a_refused_typed_row_binds_nothing_after_valid_scalar_document_and_open_cells() -> None:
+    prefix = _builder()
+    refused = _builder()
+    for builder in (prefix, refused):
+        builder.bind_typed_row(_mixed_row(1, dt.date(2024, 1, 1)), _MIXED_ROW)
+        builder.bind_typed_row(_mixed_row(2, dt.date(2024, 1, 2)), _MIXED_ROW)
+
+    with pytest.raises(SqlGenError, match="does not match MANAGED slot"):
+        refused.bind_typed_row(_mixed_row(3, "not-a-date"), _MIXED_ROW)
+    with pytest.raises(SqlGenError, match="inconsistent row widths"):
+        refused.bind_typed_row(_mixed_row(4, dt.date(2024, 1, 4))[:-1], _MIXED_ROW)
+
+    expected = prefix.finish("values (?, ?, ?, ?), (?, ?, ?, ?)")
+    actual = refused.finish("values (?, ?, ?, ?), (?, ?, ?, ?)")
+    assert actual == expected
+    assert actual.typed_bind_spans == (
+        _RepeatedTypedBindSpan(0, 1, 4, 2, INT64, "MANAGED"),
+        _RepeatedTypedBindSpan(3, 1, 4, 2, DATE, "MANAGED"),
+    )
+    assert actual.wire_bind_overrides == (
+        _WireBindOverride(2, "infinity"),
+        _WireBindOverride(6, "infinity"),
+    )
+
+
+def test_each_signature_change_seals_the_group_of_rows_before_it() -> None:
+    # A nullable cell bound as None has no typed span, so the row holding it
+    # starts its own group, and the next full row starts another.
+    builder = _builder()
+    pattern: tuple[_TypedBindSlot, ...] = ((STRING, "MANAGED"), (STRING, "MANAGED"))
+    for row in (("a", "b"), ("c", "d"), (None, "e"), ("f", "g"), ("h", "i")):
+        builder.bind_typed_row(row, pattern)
+
+    statement = builder.finish("")
+
+    assert statement.typed_bind_spans == (
+        _RepeatedTypedBindSpan(0, 2, 2, 2, STRING, "MANAGED"),
+        _TypedBindSpan(5, 6, STRING, "MANAGED"),
+        _RepeatedTypedBindSpan(6, 2, 2, 2, STRING, "MANAGED"),
+    )
+
+
+def test_an_open_row_run_seals_before_any_other_bind_or_fragment() -> None:
+    builder = _builder()
+    builder.bind_managed("lead", STRING)
+    builder.bind_typed_row(("a", "b"), ((STRING, "MANAGED"), (STRING, "MANAGED")))
+    builder.bind_framework(INFINITY)
+    builder.bind_typed_row(("c",), ((STRING, "MANAGED"),))
+    builder.bind_typed_row(("d",), ((STRING, "MANAGED"),))
+    fragment = _builder()
+    fragment.bind_managed("tail", STRING)
+    builder.append_fragment(fragment.finish(""))
+    builder.bind_typed_row(("e",), ((STRING, "MANAGED"),))
+
+    statement = builder.finish("")
+
+    assert statement.binds == ("lead", "a", "b", INFINITY, "c", "d", "tail", "e")
+    assert statement.typed_bind_spans == (
+        _TypedBindSpan(0, 3, STRING, "MANAGED"),
+        _RepeatedTypedBindSpan(4, 1, 1, 2, STRING, "MANAGED"),
+        _TypedBindSpan(6, 8, STRING, "MANAGED"),
+    )
+    assert statement.wire_bind_overrides == (_WireBindOverride(3, "infinity"),)
+
+
+def test_wide_homogeneous_rows_share_one_repeated_descriptor() -> None:
+    width, row_count = 256, 64
+    builder = _builder()
+    slot: _TypedBindSlot = (STRING, "MANAGED")
+    pattern = (slot,) * width
+    for _ in range(row_count):
+        builder.bind_typed_row(("value",) * width, pattern)
+
+    statement = builder.finish("")
+
+    assert statement.typed_bind_spans == (
+        _RepeatedTypedBindSpan(0, width, width, row_count, STRING, "MANAGED"),
+    )
+
+
+def test_wide_heterogeneous_rows_compact_each_slot_run_within_each_group() -> None:
+    width = 64
+    pattern: tuple[_TypedBindSlot, ...] = tuple(
+        (INT64, "MANAGED") if offset % 2 == 0 else (STRING, "MANAGED") for offset in range(width)
+    )
+    full = tuple(offset if offset % 2 == 0 else str(offset) for offset in range(width))
+    holed = tuple(None if offset == 5 else value for offset, value in enumerate(full))
+    builder = _builder()
+    for row in (full, full, full, holed, full, full):
+        builder.bind_typed_row(row, pattern)
+
+    spans = builder.finish("").typed_bind_spans
+
+    leading, holed_spans, trailing = spans[:width], spans[width:-width], spans[-width:]
+    assert leading == tuple(
+        _RepeatedTypedBindSpan(offset, 1, width, 3, *pattern[offset]) for offset in range(width)
+    )
+    holed_start = 3 * width
+    assert holed_spans == tuple(
+        _TypedBindSpan(holed_start + offset, holed_start + offset + 1, *pattern[offset])
+        for offset in range(width)
+        if offset != 5
+    )
+    assert trailing == tuple(
+        _RepeatedTypedBindSpan(4 * width + offset, 1, width, 2, *pattern[offset])
+        for offset in range(width)
+    )
 
 
 def test_statement_builder_rejects_unproven_or_invalid_fragment_metadata() -> None:

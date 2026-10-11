@@ -202,10 +202,20 @@ class Dialect:
     # DERIVED name has to fit a budget; an authored Table or Column name is the
     # author's own and is spelled as declared.
     max_identifier_bytes: int
+    # The most bind parameters one statement may carry (`m-dialect` "Bind
+    # parameter limit"): a positive bound on each statement alone.
+    max_bind_parameters: int
     # Whether an UPDATE's native affected count includes the rows it matched
     # but left unchanged, which is what lets a matched count prove that an
     # unchanged row still stands as observed (`m-dialect` "Unchanged-row count").
     counts_unchanged_rows: bool = False
+
+    def __post_init__(self) -> None:
+        limit = self.max_bind_parameters
+        if type(limit) is not int or limit < 1:
+            raise ValueError(
+                f"a dialect's bind parameter limit is a positive integer, got {limit!r}"
+            )
 
     # -- identifiers ------------------------------------------------------- #
     def quote(self, identifier: str) -> str:
@@ -631,5 +641,6 @@ POSTGRES: Final[Dialect] = Dialect(
         "55P03": "lockWaitTimeout",
     },
     max_identifier_bytes=63,
+    max_bind_parameters=65_535,
     counts_unchanged_rows=True,
 )

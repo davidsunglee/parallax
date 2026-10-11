@@ -17,6 +17,7 @@ suites' claims are about one declaration seen from both sides.
 from __future__ import annotations
 
 import copy
+import dataclasses
 import datetime as dt
 from collections.abc import Mapping
 from typing import Final, cast
@@ -38,7 +39,8 @@ from parallax.core.metamodel import (
     Metamodel,
     ValueObjectIdentity,
 )
-from parallax.core.sql_gen import LoweredStatement
+from parallax.core.sql_gen import LoweredStatement, SqlGenError
+from parallax.core.sql_gen._write import InsertStatementBuilder
 from parallax.core.unit_work import KeyedWrite
 from parallax.core.unit_work.instructions import WriteInstruction
 from parallax.core.write_payload import LayoutPayloadPreparer
@@ -224,6 +226,38 @@ def test_same_membered_rows_collapse_into_one_multi_row_insert() -> None:
     assert statement.sql == "insert into person(id, payload) values (?, ?), (?, ?)"
     assert _document(statement, 1) == {"displayName": "Ada", "tags": []}
     assert _document(statement, 3) == {"displayName": "Bo", "tags": []}
+
+
+def test_a_refused_entry_leaves_every_appended_document_bound_as_it_was() -> None:
+    # Each entry's complete document binds whole and uncopied, and an entry
+    # refused for its key cell binds neither that cell nor its document.
+    payloads = LayoutPayloadPreparer(DOCUMENT)
+    entries = tuple(
+        WriteRow(
+            row=PlannedRow(
+                attributes={
+                    AttributeIdentity(PERSON, "id"): key,
+                    AttributeIdentity(PERSON, "displayName"): name,
+                }
+            ),
+            origin=NEW_LINEAGE,
+        )
+        for key, name in ((1, "Ada"), (2, "Bo"), (3, "Cy"))
+    )
+    first, second, third = (payloads.row(PERSON, entry) for entry in entries)
+    builder = InsertStatementBuilder(PERSON, entries[0], first, DOCUMENT, POSTGRES)
+    builder.append(entries[1], second)
+
+    with pytest.raises(SqlGenError, match="does not match MANAGED slot"):
+        builder.append(entries[2], dataclasses.replace(third, values=("3", *third.values[1:])))
+
+    statement = builder.finish()
+    assert statement == lowered(
+        PlannedInsert(entity=PERSON, entries=entries[:2]), payloads, DOCUMENT, POSTGRES
+    )
+    assert statement.sql == "insert into person(id, payload) values (?, ?), (?, ?)"
+    assert _document(statement, 1) is first.values[1]
+    assert _document(statement, 3) is second.values[1]
 
 
 def test_two_rows_naming_different_document_members_do_not_share_one_statement() -> None:

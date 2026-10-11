@@ -22,14 +22,15 @@ DB-computed marker with a loud
 effective table the same way — each a forward-error posture, never a wrong
 emission, mirroring the read compiler's own.
 
-The final section pins the halves the non-temporal insert family crosses
+A later section pins the halves the non-temporal insert family crosses
 separately: the Write Planner settling an instruction into finalized steps, and
 the shared lowering path preparing and rendering a step built by hand — proving
 that lowering answers a purely physical question and never re-derives a semantic
 one — and the private SQL compiler refusing a payload that was not prepared from
 the step it renders.
 The composed emissions above are the byte-exact evidence; these are the seam
-itself.
+itself. The last section pins the insert compiler's entry-atomic appends and the
+order in which a logical insert's preparation and validation refusals win.
 """
 
 from __future__ import annotations
@@ -38,19 +39,31 @@ import dataclasses
 import datetime as dt
 import gc
 import weakref
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from decimal import Decimal
 from types import MappingProxyType
 from typing import cast
 
 import pytest
 
-from parallax.core import inheritance, opt_lock, storage_layout
+from parallax.core import (
+    Attr,
+    DomainModel,
+    TxTemporal,
+    ValueObject,
+    attr,
+    inheritance,
+    opt_lock,
+    storage_layout,
+    temporal_read,
+)
 from parallax.core import predicate as oa
 from parallax.core._formation_profile import form_metamodel
-from parallax.core.base import STRING, FrozenMap
+from parallax.core.base import INFINITY as OPEN_BOUND
+from parallax.core.base import INT64, STRING, TIMESTAMP, FrozenMap
 from parallax.core.db_port import JsonDocument
 from parallax.core.dialect import POSTGRES, Dialect
+from parallax.core.entity._model import model_of
 from parallax.core.execution._planning import build_write_planner
 from parallax.core.execution._write_lowering import lowered, stream_lowered
 from parallax.core.metamodel import (
@@ -70,8 +83,13 @@ from parallax.core.metamodel import Column as CoreColumn
 from parallax.core.metamodel import Table as CoreTable
 from parallax.core.model_formation import MetamodelValidationError
 from parallax.core.sql_gen import LoweredStatement, SqlGenError
-from parallax.core.sql_gen._write import StepPayload, compile_write_step
+from parallax.core.sql_gen._context import (
+    _RepeatedTypedBindSpan,  # pyright: ignore[reportPrivateUsage]
+    _TypedBindSpan,  # pyright: ignore[reportPrivateUsage]
+)
+from parallax.core.sql_gen._write import InsertStatementBuilder, StepPayload, compile_write_step
 from parallax.core.storage_layout import InheritanceDiscriminator
+from parallax.core.temporal_read import TransactionTimeOnly
 from parallax.core.unit_work import (
     Concurrency,
     KeyedWrite,
@@ -1747,3 +1765,255 @@ def test_lowering_keeps_no_model_alive() -> None:
     del model, payloads
     gc.collect()
     assert layout() is None
+
+
+# --------------------------------------------------------------------------- #
+# One insert statement compiles entry by entry, and a refused entry leaves the #
+# entries before it as they were; a logical insert still refuses as a whole,  #
+# in the order its preparation and validation barriers already decided.       #
+# --------------------------------------------------------------------------- #
+class BuilderShelf(ValueObject):
+    label: Attr[str]
+
+
+class BuilderLedger(TxTemporal, table="builder_ledger", namespace="lowering.insert_builder"):
+    id: Attr[int] = attr(primary_key=True)
+    amount: Attr[int]
+    memo: Attr[str | None]
+    shelf: Attr[BuilderShelf]
+
+
+_BUILDER_MODEL = model_of(DomainModel(BuilderLedger))
+_BUILDER_LEDGER = EntityIdentity("lowering.insert_builder", "BuilderLedger")
+_BUILDER_SHELF = ValueObjectIdentity(_BUILDER_LEDGER, ("shelf",))
+_BUILDER_OPENED = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+
+
+def _ledger_entry(key: int, memo: str | None = "kept") -> WriteRow:
+    shape = temporal_read.view(_BUILDER_MODEL).shape(_BUILDER_LEDGER)
+    assert isinstance(shape, TransactionTimeOnly)
+    return WriteRow(
+        row=PlannedRow(
+            attributes={
+                AttributeIdentity(_BUILDER_LEDGER, "id"): key,
+                AttributeIdentity(_BUILDER_LEDGER, "amount"): key * 10,
+                AttributeIdentity(_BUILDER_LEDGER, "memo"): memo,
+                shape.transaction_time.start_attribute: _BUILDER_OPENED,
+                shape.transaction_time.end_attribute: OPEN_BOUND,
+            },
+            value_objects={_BUILDER_SHELF: {"label": f"shelf-{key}"}},
+        ),
+        origin=NEW_LINEAGE,
+    )
+
+
+def _ledger_payload(entry: WriteRow) -> RowPayload:
+    return LayoutPayloadPreparer(_BUILDER_MODEL).row(_BUILDER_LEDGER, entry)
+
+
+def _ledger_builder(*entries: WriteRow) -> InsertStatementBuilder:
+    first, *rest = entries
+    builder = InsertStatementBuilder(
+        _BUILDER_LEDGER, first, _ledger_payload(first), _BUILDER_MODEL, POSTGRES
+    )
+    for entry in rest:
+        builder.append(entry, _ledger_payload(entry))
+    return builder
+
+
+def _with_value(payload: RowPayload, index: int, value: object) -> RowPayload:
+    values = list(payload.values)
+    values[index] = value
+    return dataclasses.replace(payload, values=tuple(values))
+
+
+def test_an_insert_compiles_each_entrys_cells_and_compacts_equal_signature_runs() -> None:
+    entries = (
+        _ledger_entry(1),
+        _ledger_entry(2),
+        _ledger_entry(3, memo=None),
+        _ledger_entry(4),
+    )
+
+    statement = lowered(
+        PlannedInsert(entity=_BUILDER_LEDGER, entries=entries),
+        LayoutPayloadPreparer(_BUILDER_MODEL),
+        _BUILDER_MODEL,
+        POSTGRES,
+    )
+
+    row = "(?, ?, ?, ?, ?, ?)"
+    assert statement.sql == (
+        f"insert into builder_ledger(id, amount, memo, in_z, out_z, shelf) values "
+        f"{row}, {row}, {row}, {row}"
+    )
+    assert statement == _ledger_builder(*entries).finish()
+    assert statement.binds[12:] == (
+        3,
+        30,
+        None,
+        _BUILDER_OPENED,
+        OPEN_BOUND,
+        JsonDocument(FrozenMap({"label": "shelf-3"})),
+        4,
+        40,
+        "kept",
+        _BUILDER_OPENED,
+        OPEN_BOUND,
+        JsonDocument(FrozenMap({"label": "shelf-4"})),
+    )
+    assert statement.typed_bind_spans == (
+        _RepeatedTypedBindSpan(0, 2, 6, 2, INT64, "MANAGED"),
+        _RepeatedTypedBindSpan(2, 1, 6, 2, STRING, "MANAGED"),
+        _RepeatedTypedBindSpan(3, 1, 6, 2, TIMESTAMP, "MANAGED"),
+        _TypedBindSpan(12, 14, INT64, "MANAGED"),
+        _TypedBindSpan(15, 16, TIMESTAMP, "MANAGED"),
+        _TypedBindSpan(18, 20, INT64, "MANAGED"),
+        _TypedBindSpan(20, 21, STRING, "MANAGED"),
+        _TypedBindSpan(21, 22, TIMESTAMP, "MANAGED"),
+    )
+    assert [override.index for override in statement.wire_bind_overrides] == [4, 10, 16, 22]
+    assert statement.wire_binds()[16:18] == ("infinity", {"label": "shelf-3"})
+
+
+@pytest.mark.parametrize(
+    ("refusal", "message"),
+    [
+        ("another entry's payload", "belongs to another entry"),
+        ("other cells", "every entry of one insert stores the same cells"),
+        ("an invalid scalar cell", "does not match MANAGED slot"),
+        ("an invalid open bound after valid scalar cells", "does not match MANAGED slot"),
+    ],
+)
+def test_a_refused_entry_leaves_the_compiled_prefix_unchanged(refusal: str, message: str) -> None:
+    entries = (_ledger_entry(1), _ledger_entry(2, memo=None))
+    candidate = _ledger_entry(3)
+    payload = _ledger_payload(candidate)
+    match refusal:
+        case "another entry's payload":
+            payload = _ledger_payload(_ledger_entry(3))
+        case "other cells":
+            payload = dataclasses.replace(
+                payload, contributors=payload.contributors[:-1], values=payload.values[:-1]
+            )
+        case "an invalid scalar cell":
+            payload = _with_value(payload, 1, "thirty")
+        case _:
+            payload = _with_value(payload, 4, "infinity")
+    builder = _ledger_builder(*entries)
+
+    with pytest.raises(SqlGenError, match=message):
+        builder.append(candidate, payload)
+
+    statement = builder.finish()
+    expected = _ledger_builder(*entries).finish()
+    assert statement == expected
+    assert statement.wire_binds() == expected.wire_binds()
+    assert statement.sql.endswith("values (?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?)")
+
+
+class _PreparationFailure(Exception):
+    pass
+
+
+def _scripted_rows(
+    script: Mapping[int, Callable[[WriteRow, RowPayload], RowPayload]],
+    demanded: list[int] | None = None,
+) -> LayoutPayloadPreparer:
+    """A preparer whose payload for each ledger key ``script`` may replace."""
+
+    class _Scripted(LayoutPayloadPreparer):
+        def row(self, entity: EntityIdentity, write_row: WriteRow) -> RowPayload:
+            key = cast("int", write_row.row.attributes[AttributeIdentity(_BUILDER_LEDGER, "id")])
+            if demanded is not None:
+                demanded.append(key)
+            prepared = super().row(entity, write_row)
+            return script.get(key, lambda _entry, payload: payload)(write_row, prepared)
+
+    return _Scripted(_BUILDER_MODEL)
+
+
+def _invalid_cell(_entry: WriteRow, payload: RowPayload) -> RowPayload:
+    return _with_value(payload, 1, "invalid")
+
+
+def _foreign(_entry: WriteRow, _payload: RowPayload) -> RowPayload:
+    return _ledger_payload(_ledger_entry(99))
+
+
+def _narrower(_entry: WriteRow, payload: RowPayload) -> RowPayload:
+    return dataclasses.replace(
+        payload, contributors=payload.contributors[:-1], values=payload.values[:-1]
+    )
+
+
+def _unprepared(_entry: WriteRow, _payload: RowPayload) -> RowPayload:
+    raise _PreparationFailure
+
+
+@pytest.mark.parametrize(
+    ("script", "winner", "message"),
+    [
+        pytest.param(
+            {1: _invalid_cell, 2: _unprepared}, _PreparationFailure, "", id="type-vs-prep"
+        ),
+        pytest.param({1: _foreign, 2: _unprepared}, _PreparationFailure, "", id="source-vs-prep"),
+        pytest.param({1: _narrower, 3: _unprepared}, _PreparationFailure, "", id="cells-vs-prep"),
+        pytest.param(
+            {1: _invalid_cell, 2: _foreign}, SqlGenError, "another entry", id="type-vs-source"
+        ),
+        pytest.param(
+            {2: _narrower, 3: _foreign}, SqlGenError, "another entry", id="cells-vs-source"
+        ),
+        pytest.param(
+            {1: _invalid_cell, 3: _narrower}, SqlGenError, "same cells", id="type-vs-cells"
+        ),
+    ],
+)
+def test_an_earlier_entrys_refusal_never_overtakes_a_later_higher_priority_one(
+    script: Mapping[int, Callable[[WriteRow, RowPayload], RowPayload]],
+    winner: type[Exception],
+    message: str,
+) -> None:
+    # A logical insert prepares every entry, then proves every payload its
+    # own, then checks every entry for the first entry's cells, and only then
+    # binds values — so whichever barrier an entry fails first decides the
+    # error, wherever that entry sits in the step.
+    demanded: list[int] = []
+    step = PlannedInsert(
+        entity=_BUILDER_LEDGER, entries=tuple(_ledger_entry(key) for key in (1, 2, 3))
+    )
+
+    with pytest.raises(winner, match=message or None):
+        lowered(step, _scripted_rows(script, demanded), _BUILDER_MODEL, POSTGRES)
+
+    unprepared = [key for key, prepare in script.items() if prepare is _unprepared]
+    assert demanded == [key for key in (1, 2, 3) if key <= min(unprepared, default=3)]
+
+
+def test_an_ordinary_insert_yields_no_statement_until_every_entry_compiles() -> None:
+    step = PlannedInsert(
+        entity=_BUILDER_LEDGER, entries=tuple(_ledger_entry(key) for key in (1, 2, 3))
+    )
+    statements = stream_lowered(
+        (step,), _scripted_rows({3: _invalid_cell}), _BUILDER_MODEL, POSTGRES
+    )
+
+    with pytest.raises(SqlGenError, match="does not match MANAGED slot"):
+        next(statements)
+
+
+def test_a_multi_entry_generated_value_refusal_follows_the_shared_cells_check() -> None:
+    attendee = _identity(PK_MAX, "Attendee")
+    row = PlannedRow(attributes={_attribute(PK_MAX, "Attendee", "id"): MAX_PLUS_ONE})
+    entries = (WriteRow(row=row, origin=NEW_LINEAGE), WriteRow(row=row, origin=NEW_LINEAGE))
+    payloads = LayoutPayloadPreparer(PK_MAX)
+    first, second = (payloads.row(attendee, entry) for entry in entries)
+    narrower = dataclasses.replace(
+        second, contributors=second.contributors[:-1], values=second.values[:-1]
+    )
+
+    with pytest.raises(SqlGenError, match="every entry of one insert stores the same cells"):
+        compile_write_step(
+            PlannedInsert(entity=attendee, entries=entries), (first, narrower), PK_MAX, POSTGRES
+        )

@@ -80,6 +80,7 @@ choices at each point; both are normative for their dialect (`m-sql`). The catal
 | temp-table DDL | `CREATE TEMPORARY TABLE … ON COMMIT DROP` | `CREATE TEMPORARY TABLE …` |
 | **schema DDL primitives** (`m-schema-delta`) | `create table` / `alter table … add column` / `alter table … alter column …` / `create [unique] index … on …` / `drop index …` | the same statements, with `modify` restating a whole column and `drop index … on <table>` naming its Table (see below) |
 | **identifier byte limit** (`m-schema-delta`) | 63 | 64 |
+| **bind parameter limit** | 65535 | 65535 |
 | typed bind normalization | every declared-type bind remains its managed carrier; an open-upper-bound sentinel is an unannotated framework bind | every declared-type bind remains its managed carrier; an open-upper-bound sentinel is an unannotated framework bind adapted to the max sentinel |
 | **infinity representation** | native `'infinity'::timestamptz` | **max-sentinel** `datetime` (no native infinity) |
 | error-code classification (`m-db-error`) | SQLSTATE: `23505` unique, `40P01`/`40001` deadlock, `55P03` lock timeout | errno: `1062`/`1022`/`1169`/`1859` duplicate, `1213`/`1020` deadlock, `1205` lock timeout |
@@ -611,6 +612,18 @@ without truncating it: **63** on Postgres and **64** on MariaDB. It constrains
 DERIVED identifiers only. An authored Table or Column name is the author's own
 and is spelled as declared; the one identifier this system derives is a Physical
 Index Name, whose shortening rule is `m-schema-delta`'s.
+
+### Bind parameter limit
+
+`maxBindParameters` is the most bind parameters one statement may carry:
+**65535** on both Postgres and MariaDB, the largest count their protocols'
+two-byte parameter-count field expresses. Every dialect declares it as a
+positive integer. It bounds each statement alone: statements a transport sends
+together each carry their own allowance rather than sharing one. A lowering
+that combines separately planned writes into one statement keeps that statement
+within the limit; a statement whose bind count one Planned Write already fixes
+is neither split nor refused on this account, and the database's own refusal
+stands.
 
 ### `NULL` ordering
 

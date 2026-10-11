@@ -15,6 +15,8 @@ and runs in the ``dbfree`` class.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from parallax.core.base import (
@@ -341,6 +343,21 @@ def test_identifier_byte_limit_is_declared(dialect: Dialect) -> None:
     # Only a DERIVED identifier has to fit a budget, so the limit is a fact about
     # the database rather than a rule applied to authored names here.
     assert dialect.max_identifier_bytes == 63
+
+
+@pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
+def test_bind_parameter_limit_is_declared(dialect: Dialect) -> None:
+    assert dialect.max_bind_parameters == 65_535
+
+
+@pytest.mark.parametrize("limit", [0, -1, True, 1.0, "65535"], ids=repr)
+def test_bind_parameter_limit_is_a_positive_integer(limit: object) -> None:
+    with pytest.raises(ValueError, match="bind parameter limit is a positive integer"):
+        replace(POSTGRES, max_bind_parameters=limit)
+
+
+def test_one_bind_parameter_is_a_limit() -> None:
+    assert replace(POSTGRES, max_bind_parameters=1).max_bind_parameters == 1
 
 
 @pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)

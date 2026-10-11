@@ -300,6 +300,9 @@ class StatementBuilder:
         "_binds",
         "_classified",
         "_next_alias_index",
+        "_row_count",
+        "_row_signature",
+        "_row_start",
         "_typed_spans",
         "_wire_overrides",
         "dialect",
@@ -324,6 +327,9 @@ class StatementBuilder:
         self._typed_spans: list[_BindSpan] = []
         self._wire_overrides: dict[int, WireValue] = {}
         self._classified = 0
+        self._row_signature: tuple[_TypedBindSlot | None, ...] = ()
+        self._row_start = 0
+        self._row_count = 0
         self.requires_variant_partition = False
         self._next_alias_index = 1
 
@@ -375,84 +381,79 @@ class StatementBuilder:
         rows: Sequence[Sequence[object]],
         pattern: Sequence[_TypedBindSlot | None],
     ) -> None:
-        """Append rows and compact their actual non-null type/form runs."""
-        if not rows:
-            return
-        width = len(pattern)
-        if any(len(row) != width for row in rows):
-            raise SqlGenError("a repeated bind pattern has inconsistent row widths")
-        if len(rows) == 1:
-            for value, slot in zip(rows[0], pattern, strict=True):
-                self._bind_row_value(value, slot)
-            return
-        start = len(self._binds)
+        """Append ``rows`` as one closed run of :meth:`bind_typed_row`."""
         for row in rows:
-            for value in row:
-                self._append(value)
-                if value is INFINITY:
-                    self._wire_overrides[len(self._binds) - 1] = INFINITY_LITERAL
-        signatures = tuple(
-            tuple(
-                self._typed_row_slot(value, slot) for value, slot in zip(row, pattern, strict=True)
-            )
-            for row in rows
-        )
-        self._append_row_spans(start, width, signatures)
+            self.bind_typed_row(row, pattern)
+        self._seal_typed_rows()
 
-    def _append_row_spans(
-        self,
-        start: int,
-        width: int,
-        signatures: tuple[tuple[_TypedBindSlot | None, ...], ...],
+    def bind_typed_row(
+        self, row: Sequence[object], pattern: Sequence[_TypedBindSlot | None]
     ) -> None:
-        """Record the typed spans of rows bound contiguously from ``start``.
+        """Append ``row`` once every cell is valid for its slot in ``pattern``.
 
-        Consecutive rows with one signature form a group, and each run of equal
-        non-null slots in that signature becomes one span: a repeated span across
-        a group of several rows, or a plain span for a group of one.
+        A refused row binds nothing, so every earlier bind and its metadata stand.
+        Consecutive rows form one run whose typed spans are recorded when it
+        seals — at the next other bind, fragment, or :meth:`finish`: rows of
+        one actual non-null type/form signature share a repeated span per run
+        of equal slots, and a row of another signature starts the next group.
         """
-        group_start = 0
-        for group_stop in range(1, len(signatures) + 1):
-            if group_stop < len(signatures) and signatures[group_stop] == signatures[group_start]:
+        if len(row) != len(pattern):
+            raise SqlGenError("a repeated bind pattern has inconsistent row widths")
+        signature = tuple(
+            [self._typed_row_slot(value, slot) for value, slot in zip(row, pattern, strict=True)]
+        )
+        binds = self._binds
+        if not self._row_count or signature != self._row_signature:
+            self._seal_typed_rows()
+            self._row_signature = signature
+            self._row_start = len(binds)
+        self._row_count += 1
+        for value in row:
+            if value is INFINITY:
+                self._wire_overrides[len(binds)] = INFINITY_LITERAL
+            binds.append(value)
+        self._classified += len(row)
+
+    def _seal_typed_rows(self) -> None:
+        """Record the open run's spans: each run of equal non-null slots in its
+        signature becomes one span, repeated across a group of several rows or
+        plain for a group of one."""
+        repetitions = self._row_count
+        if not repetitions:
+            return
+        self._row_count = 0
+        signature = self._row_signature
+        start = self._row_start
+        run_start = 0
+        run_slot: _TypedBindSlot | None = None
+        for offset, slot in enumerate((*signature, None)):
+            if slot == run_slot:
                 continue
-            signature = signatures[group_start]
-            run_start: int | None = None
-            run_slot: _TypedBindSlot | None = None
-            for offset, slot in enumerate((*signature, None)):
-                if slot == run_slot:
-                    continue
-                if run_slot is not None and run_start is not None:
-                    run_type, run_form = run_slot
-                    repetitions = group_stop - group_start
-                    span_start = start + group_start * width + run_start
-                    if repetitions == 1:
-                        self._append_typed_span(
-                            _TypedBindSpan(
-                                span_start,
-                                span_start + offset - run_start,
-                                run_type,
-                                run_form,
-                            )
+            if run_slot is not None:
+                run_type, run_form = run_slot
+                if repetitions == 1:
+                    self._append_typed_span(
+                        _TypedBindSpan(start + run_start, start + offset, run_type, run_form)
+                    )
+                else:
+                    self._typed_spans.append(
+                        _RepeatedTypedBindSpan(
+                            start + run_start,
+                            offset - run_start,
+                            len(signature),
+                            repetitions,
+                            run_type,
+                            run_form,
                         )
-                    else:
-                        self._typed_spans.append(
-                            _RepeatedTypedBindSpan(
-                                span_start,
-                                offset - run_start,
-                                width,
-                                repetitions,
-                                run_type,
-                                run_form,
-                            )
-                        )
-                run_start = offset if slot is not None else None
-                run_slot = slot
-            group_start = group_stop
+                    )
+            run_start = offset
+            run_slot = slot
 
     def append_fragment(self, statement: LoweredStatement) -> None:
         """Append a compiler-proven fragment without discarding bind provenance."""
         if not statement.is_compiler_proven:
             raise SqlGenError("only a finished compiler fragment may be appended")
+        self._seal_typed_rows()
         offset = len(self._binds)
         self._binds.extend(statement.binds)
         self._classified += len(statement.binds)
@@ -463,6 +464,7 @@ class StatementBuilder:
 
     def finish(self, sql: str) -> LoweredStatement:
         """Validate bind metadata and seal a compiler-proven statement."""
+        self._seal_typed_rows()
         if self._classified != len(self._binds):
             raise SqlGenError("every compiler bind must be supplied through one role-specific API")
         occupied: set[int] = set()
@@ -491,20 +493,10 @@ class StatementBuilder:
         return LoweredStatement(sql, tuple(self._binds), spans, overrides, True)
 
     def _append(self, value: object) -> None:
+        if self._row_count:
+            self._seal_typed_rows()
         self._binds.append(value)
         self._classified += 1
-
-    def _bind_row_value(self, value: object, slot: _TypedBindSlot | None) -> None:
-        typed_slot = self._typed_row_slot(value, slot)
-        if typed_slot is not None:
-            neutral_type, form = typed_slot
-            self._bind_typed(value, neutral_type, form)
-        elif value is INFINITY:
-            self.bind_framework(value)
-        elif isinstance(value, JsonDocument):
-            self.bind_document(value)
-        else:
-            self.bind_structural(value)
 
     def _typed_row_slot(self, value: object, slot: _TypedBindSlot | None) -> _TypedBindSlot | None:
         if slot is None or value is None:
