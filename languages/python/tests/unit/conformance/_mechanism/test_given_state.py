@@ -36,6 +36,7 @@ from parallax.core.base import INFINITY
 from parallax.core.db_port import (
     DatabaseConnection,
     JsonDocument,
+    OrderedWriteTransport,
     PipelineStatement,
     Row,
     TransactionOutcome,
@@ -62,6 +63,7 @@ class _CorruptionPort:
     """A port answering one stored document and recording what was written back."""
 
     dialect: Dialect = POSTGRES
+    ordered_write_transport: OrderedWriteTransport | None = None
 
     def __init__(self, stored: object) -> None:
         self._stored = stored

@@ -40,17 +40,31 @@ from parallax.core.db_port import (
     DocumentReadOrdinals,
     Invalidated,
     MappingRow,
+    OrderedWriteResultComplete,
+    OrderedWriteResultInterrupted,
     PipelineStatement,
     ReleaseUnconfirmed,
     Returned,
     Row,
+    StatementFailed,
+    StatementNotExecuted,
     TransactionOutcome,
 )
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.execution import DatabaseOptions, TransactionOptionConflictError
+from parallax.core.sql_gen import LoweredStatement
 from parallax.snapshot import Database, ScopedDatabase, Transaction
 from tests._support.adoption import raises_contextualized
-from tests._support.db_port import ConnectsAsItself, body_outcome
+from tests._support.db_port import (
+    ConnectsAsItself,
+    Ordered,
+    OrderedCall,
+    ScriptedAdapter,
+    ScriptEntry,
+    Transact,
+    WriteCall,
+    body_outcome,
+)
 from tests._support.root_ownership import own_root
 from tests.unit._transact_support import balance_row
 
@@ -530,6 +544,112 @@ def test_a_setup_failure_surfaces_terminally_after_one_attempt() -> None:
         )
     assert unopened.value.category is None
     assert inner.boundaries == 0
+
+
+_PRESENTED: tuple[LoweredStatement, ...] = (
+    LoweredStatement("update x set y = ? where id = ?", (1, 1)),
+    LoweredStatement("update x set y = ? where id = ?", (2, 2)),
+    LoweredStatement("delete from x where id = ?", (3,)),
+)
+
+
+def _presented(*statements: LoweredStatement) -> OrderedCall:
+    return OrderedCall(
+        tuple(
+            WriteCall(POSTGRES.to_driver_sql(statement.sql), statement.binds)
+            for statement in statements
+        )
+    )
+
+
+def _ordered_port(
+    fault: str | None, *script: ScriptEntry
+) -> tuple[FaultInjectingPort, ScriptedAdapter]:
+    inner = ScriptedAdapter(*script, ordered=True)
+    return FaultInjectingPort(inner, fault=fault, persistent=False), inner
+
+
+def test_fault_injecting_port_has_ordered_transport_exactly_where_its_inner_port_does() -> None:
+    assert (
+        FaultInjectingPort(_FakePort(rows=[]), fault=None, persistent=False).ordered_write_transport
+        is None
+    )
+    port, inner = _ordered_port(None)
+    # Its own operation, stored once, so interception is never bypassed.
+    assert port.ordered_write_transport is not None
+    assert port.ordered_write_transport is not inner.ordered_write_transport
+    assert port.ordered_write_transport is port.ordered_write_transport
+
+
+def test_fault_injecting_port_forwards_an_unfaulted_invocation_unchanged() -> None:
+    answered = OrderedWriteResultComplete((1, 1, 1))
+    port, inner = _ordered_port(None, Ordered(answered))
+    transport = port.ordered_write_transport
+    assert transport is not None
+    assert transport(_PRESENTED) is answered
+    assert inner.calls == [_presented(*_PRESENTED)]
+
+
+def test_a_raised_fault_fails_the_first_statement_and_executes_none_after_it() -> None:
+    port, inner = _ordered_port("deadlock")
+    transport = port.ordered_write_transport
+    assert transport is not None
+    result = transport(_PRESENTED)
+    assert isinstance(result, OrderedWriteResultComplete)
+    failed, *skipped = result.outcomes
+    assert isinstance(failed, StatementFailed)
+    assert isinstance(failed.error, DatabaseError)
+    assert failed.error.category == "deadlock"
+    assert skipped == [StatementNotExecuted(), StatementNotExecuted()]
+    assert inner.calls == []
+    # Fired once: the next invocation reaches the inner port.
+    with pytest.raises(AssertionError, match="unscripted ordered"):
+        transport(_PRESENTED)
+
+
+def test_a_conflict_matches_no_row_for_the_first_statement_and_runs_the_rest() -> None:
+    port, inner = _ordered_port(
+        "optimistic-lock-conflict", Ordered(OrderedWriteResultComplete((1, 1)))
+    )
+    transport = port.ordered_write_transport
+    assert transport is not None
+    assert transport(_PRESENTED) == OrderedWriteResultComplete((0, 1, 1))
+    assert inner.calls == [_presented(*_PRESENTED[1:])]
+
+
+def test_a_conflict_on_a_lone_statement_reaches_no_inner_port() -> None:
+    port, inner = _ordered_port("optimistic-lock-conflict")
+    transport = port.ordered_write_transport
+    assert transport is not None
+    assert transport(_PRESENTED[:1]) == OrderedWriteResultComplete((0,))
+    assert inner.calls == []
+
+
+def test_a_conflict_keeps_the_interruption_the_rest_of_the_invocation_met() -> None:
+    lost = DatabaseError(category=None, native_code="08006", message="connection lost")
+    port, _inner = _ordered_port(
+        "optimistic-lock-conflict", Ordered(OrderedWriteResultInterrupted((1,), 1, 0, lost))
+    )
+    transport = port.ordered_write_transport
+    assert transport is not None
+    assert transport(_PRESENTED) == OrderedWriteResultInterrupted((0, 1), 1, 0, lost)
+
+
+def test_the_transaction_callbacks_connection_keeps_the_ordered_interception() -> None:
+    port, _inner = _ordered_port("deadlock", Transact())
+    seen: list[DatabaseConnection] = []
+
+    def body(connection: DatabaseConnection) -> None:
+        seen.append(connection)
+
+    port.transaction(body)
+    (connection,) = seen
+    assert isinstance(connection, FaultInjectingPort)
+    transport = connection.ordered_write_transport
+    assert transport is not None
+    result = transport(_PRESENTED[:1])
+    assert isinstance(result, OrderedWriteResultComplete)
+    assert isinstance(result.outcomes[0], StatementFailed)
 
 
 def test_fault_injecting_port_no_fault_passes_reads_and_writes_through() -> None:

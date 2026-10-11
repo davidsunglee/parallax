@@ -98,6 +98,7 @@ from parallax.core.db_port import (
     Committed,
     DatabaseConnection,
     MappingRow,
+    OrderedWriteTransport,
     PipelineStatement,
     Returned,
     RolledBack,
@@ -239,10 +240,12 @@ class _MemoryPort:
     It answers one row to every read and one affected row to every write, so the
     denominator is the smallest a real workload could have and the two arms
     differ by the lifecycle alone. ``statements`` is what the latency projection
-    charges its round trips against.
+    charges its round trips against. It has no ordered write transport, so
+    every write it answers is one call of its own.
     """
 
     dialect: Dialect = POSTGRES
+    ordered_write_transport: OrderedWriteTransport | None = None
 
     def __init__(self) -> None:
         self.statements = 0

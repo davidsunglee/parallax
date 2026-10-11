@@ -21,6 +21,7 @@ from parallax.core.db_port import (
     ConnectionContext,
     ConnectionContextSource,
     DatabaseConnection,
+    OrderedWriteTransport,
     PipelineStatement,
     PoolMetricsSource,
     Returned,
@@ -147,6 +148,12 @@ class ConnectsAsItself:
 
     def open(self) -> SoleConnectionRuntime:
         return SoleConnectionRuntime(cast("DatabaseConnection", self))
+
+    @property
+    def ordered_write_transport(self) -> OrderedWriteTransport | None:
+        """None: an in-memory stand-in runs each write alone unless it says
+        otherwise."""
+        return None
 
     def execute_pipeline(self, statements: Sequence[PipelineStatement]) -> list[list[Row]]:
         connection = cast("DatabaseConnection", self)

@@ -38,6 +38,7 @@ from parallax.core.db_port import (
     DatabaseConnection,
     DocumentReadOrdinals,
     MappingRow,
+    OrderedWriteTransport,
     PipelineStatement,
     Returned,
     Row,
@@ -215,6 +216,7 @@ class CatalogPort:
     """
 
     dialect: Dialect = POSTGRES
+    ordered_write_transport: OrderedWriteTransport | None = None
     __slots__ = ("_delivered", "_fanout", "_items", "_orders")
 
     def __init__(self, workload: Workload, total: int) -> None:

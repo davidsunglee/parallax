@@ -2223,7 +2223,10 @@ contains ordered events. Every event names its one-based `sequence`,
 
 The portable projection retains activity topology, stable outcomes and codes,
 database categories, physical row counts, retry classification, and statement
-indexes. It omits UUIDs, durations, implementation type names, messages, stack
+indexes. A Database Call finishes with any `m-execution-lifecycle` outcome,
+`notExecuted` and `unconfirmed` included, and an unconfirmed call states the
+category of the interruption that left it so. It omits UUIDs, durations and the
+timing identities calls share, implementation type names, messages, stack
 traces, and native database codes. A Database Call names its statement by
 zero-based index into the case's flattened authored golden statement order. Two
 calls name none: every call on the `api-conformance` lane, where a case authors

@@ -20,15 +20,23 @@ carried by this MODULE's underscore — the same convention the private
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Final
 
+from parallax.core.db_port import (
+    CanonicalWriteStatement,
+    OrderedWriteResult,
+    OrderedWriteResultComplete,
+)
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.sql_gen import LoweredStatement
 
 __all__ = [
     "AFFECTED",
+    "ORDERED",
     "STATEMENT",
     "TARGET",
+    "present",
     "rows",
 ]
 
@@ -45,3 +53,30 @@ AFFECTED: Final = 5_000
 def rows(count: int) -> list[dict[str, object]]:
     """``count`` rows shaped as a driver hands them back."""
     return [{"id": index} for index in range(count)]
+
+
+class _Untouchable:
+    """Statements an ordered invocation presents, refusing every inspection:
+    an unobserved invocation hands them to its transport and reads none."""
+
+    __slots__ = ()
+
+    def __len__(self) -> int:
+        raise AssertionError("an unobserved ordered invocation counts no statement")
+
+    def __getitem__(self, index: int, /) -> LoweredStatement:
+        raise AssertionError("an unobserved ordered invocation reads no statement")
+
+    def target(self, index: int, /) -> EntityIdentity:
+        raise AssertionError("an unobserved ordered invocation spells no target")
+
+
+ORDERED: Final = _Untouchable()
+
+_COMPLETED: Final = OrderedWriteResultComplete((AFFECTED,))
+
+
+def present(statements: Sequence[CanonicalWriteStatement] | _Untouchable) -> OrderedWriteResult:
+    """An ordered transport answering one completed count, whatever it is handed."""
+    del statements
+    return _COMPLETED

@@ -52,7 +52,9 @@ from parallax.core.execution_lifecycle import (
     ConnectionAcquired,
     DatabaseCallFailed,
     DatabaseCallFinished,
+    DatabaseCallNotExecuted,
     DatabaseCallStarted,
+    DatabaseCallUnconfirmed,
     DatabaseReadCompleted,
     DatabaseWriteCompleted,
     DatabaseWriteRowsCompleted,
@@ -239,6 +241,25 @@ def test_a_database_call_outcome_carries_its_own_count_or_its_category() -> None
     call = DatabaseCallFinished(_EXECUTION, 1, 1, None, _STATEMENT, 7, unclassified)
     assert _transition(call) == {
         "databaseCallFinished": {"outcome": "failed", "category": None, "code": "gone"}
+    }
+
+
+def test_a_call_ordered_transport_never_ran_or_left_unknown_states_only_what_is_portable() -> None:
+    skipped = DatabaseCallFinished(
+        _EXECUTION, 1, 2, None, _STATEMENT, 7, DatabaseCallNotExecuted(), shared_timing_id=1
+    )
+    # Neither the shared duration nor the identity naming it is portable.
+    assert _transition(skipped) == {"databaseCallFinished": {"outcome": "notExecuted"}}
+    interruption = DatabaseFailureDiagnostic(_diagnostic("connection lost"), None, "08006")
+    unknown = DatabaseCallFinished(
+        _EXECUTION, 1, 3, None, _STATEMENT, 7, DatabaseCallUnconfirmed(interruption), 1
+    )
+    assert _transition(unknown) == {
+        "databaseCallFinished": {
+            "outcome": "unconfirmed",
+            "category": None,
+            "code": "connection lost",
+        }
     }
 
 

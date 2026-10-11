@@ -57,6 +57,17 @@ For every supported adapter, the smoke suite covers:
   handles, return their row batches in statement order, and complete in one
   pipeline synchronization; array-valued child keys cross the adapter as one
   bound parameter
+- an adapter that answers `orderedWriteTransport` absent proves only that it does.
+  One that holds the operation (`m-db-port`) proves, against the real driver:
+  each presented statement converted from canonical SQL once and executed in
+  order, answering its own count; mixed statement kinds and tables in one
+  invocation; a server statement error reported as that statement's own fresh
+  failure, followed by confirmed non-execution of the statements it kept from
+  executing; an ordinary interruption reported as the confirmed outcomes it
+  established, an unconfirmed span, and only an established unsent suffix,
+  without a fabricated outcome; cancellation and fatal exceptions propagating
+  as themselves rather than as a result; and cleanup that does not return a
+  connection an interrupted invocation left in an unknown state for reuse
 - a transaction callback that commits on success and reports `Committed(value)`
 - distinct `BeginFailed`, callback- and commit-triggered `RolledBack`, and
   callback- and commit-triggered `RollbackFailed` boundary outcomes

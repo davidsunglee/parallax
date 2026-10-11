@@ -782,6 +782,10 @@ def test_execute_reraises_a_driver_error_at_the_boundary() -> None:
     assert exc_info.value.native_code == "23505"
 
 
+def test_no_ordered_write_transport_is_qualified_so_every_write_runs_alone() -> None:
+    assert _adapter(_FakeConnection()).ordered_write_transport is None
+
+
 def test_execute_write_reraises_a_driver_error_at_the_boundary() -> None:
     adapter = _adapter(_FakeConnection(cursor_error=errors.DeadlockDetected("deadlock")))
     with pytest.raises(DatabaseError) as exc_info:

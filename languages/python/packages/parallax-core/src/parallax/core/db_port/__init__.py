@@ -55,12 +55,14 @@ __all__ = [
     "BeginFailed",
     "Bind",
     "CallbackRaised",
+    "CanonicalWriteStatement",
     "CleanupCode",
     "CleanupIssue",
     "CleanupPhase",
     "CleanupResult",
     "CommitFailed",
     "Committed",
+    "ConfirmedWriteOutcome",
     "ConnectionAcquisitionError",
     "ConnectionContext",
     "ConnectionContextSource",
@@ -79,6 +81,11 @@ __all__ = [
     "IsolationLevel",
     "JsonDocument",
     "MappingRow",
+    "OrderedWriteResult",
+    "OrderedWriteResultComplete",
+    "OrderedWriteResultIntegrityError",
+    "OrderedWriteResultInterrupted",
+    "OrderedWriteTransport",
     "Password",
     "PipelineStatement",
     "PoolAvailable",
@@ -95,6 +102,8 @@ __all__ = [
     "RolledBack",
     "Row",
     "StartupPhase",
+    "StatementFailed",
+    "StatementNotExecuted",
     "TransactionOutcome",
     "isolation_level",
     "report_resource_issues",
@@ -115,6 +124,86 @@ class PipelineStatement:
     sql: str
     binds: tuple[Bind, ...] = ()
     document_reads: tuple[DocumentReadOrdinals, ...] = ()
+
+
+class CanonicalWriteStatement(Protocol):
+    """One count-only DML statement presented to ordered write transport.
+
+    ``sql`` is the dialect's CANONICAL text, with `?` placeholders: the adapter
+    converts it to its driver's form once, immediately before submission,
+    unlike ``execute_write``, which receives driver-ready SQL.
+    """
+
+    @property
+    def sql(self) -> str: ...
+
+    @property
+    def binds(self) -> Sequence[Bind]: ...
+
+
+@dataclass(frozen=True, slots=True)
+class StatementFailed:
+    """The statement reached the database and failed there; ``error`` is that
+    statement's own translated failure, shared with no other statement."""
+
+    error: Exception
+
+
+@dataclass(frozen=True, slots=True)
+class StatementNotExecuted:
+    """The statement was confirmed not to execute, because an earlier statement
+    of the same invocation failed."""
+
+
+type ConfirmedWriteOutcome = int | StatementFailed | StatementNotExecuted
+"""What the adapter established for one presented statement: its native
+affected-row count, its own failure, or confirmed non-execution."""
+
+
+@dataclass(frozen=True, slots=True)
+class OrderedWriteResultComplete:
+    """Result collection completed: one confirmed outcome per presented
+    statement, in presentation order.
+
+    Completion says nothing about success or commit: it may carry statement
+    failures and the statements they kept from executing.
+    """
+
+    outcomes: tuple[ConfirmedWriteOutcome, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class OrderedWriteResultInterrupted:
+    """Transport failed before every outcome was established.
+
+    The presented statements partition, in order, into ``confirmed`` outcomes,
+    ``unconfirmed_count`` statements whose execution cannot be established, and
+    ``unsent_count`` statements the adapter established it never sent. ``error``
+    is the one transport failure, reported once for the whole invocation.
+    """
+
+    confirmed: tuple[ConfirmedWriteOutcome, ...]
+    unconfirmed_count: int
+    unsent_count: int
+    error: Exception
+
+
+type OrderedWriteResult = OrderedWriteResultComplete | OrderedWriteResultInterrupted
+"""How one ordered write transport invocation ended, a closed union."""
+
+type OrderedWriteTransport = Callable[[Sequence[CanonicalWriteStatement]], OrderedWriteResult]
+"""A connection's qualified ordered write transport: every presented statement
+in one invocation, answered with exact original-order outcomes."""
+
+
+class OrderedWriteResultIntegrityError(RuntimeError):
+    """An ordered write transport answered a result its own presented statements
+    contradict: a broken adapter contract, never a database failure, and never
+    retriable.
+
+    Its message is bounded structure — positions, counts, and type names — and
+    copies no statement, bind, or outcome value.
+    """
 
 
 # The closed portable isolation vocabulary (m-db-port). Each level names the
@@ -247,9 +336,11 @@ class DatabaseConnection(Protocol):
     """The abstract database execution port (m-db-port).
 
     Every error an implementation MAKES ITSELF to report a failure — a statement
-    failure raised by ``execute`` or ``execute_write``, or a transaction-boundary
-    failure carried by a ``transaction`` outcome, meaning its begin, its commit, or
-    its rollback — is an instance SHARED WITH NO OTHER INVOCATION, built where
+    failure raised by ``execute`` or ``execute_write``, a statement failure or
+    interruption an ordered write transport result carries, or a
+    transaction-boundary failure carried by a ``transaction`` outcome, meaning its
+    begin, its commit, or its rollback — is an instance SHARED WITH NO OTHER
+    INVOCATION OR STATEMENT, built where
     the failure occurs, never cached or pooled, however identical two failures'
     category, native code, and message are. Above the seam a failure is recognized
     by the object caught, and a caller may catch one failed call and keep going, so
@@ -291,6 +382,18 @@ class DatabaseConnection(Protocol):
 
     def execute_write(self, sql: str, binds: Sequence[Bind]) -> int:
         """Run a DML statement and return the driver's affected-row count."""
+        ...
+
+    @property
+    def ordered_write_transport(self) -> OrderedWriteTransport | None:
+        """This connection's qualified ordered write transport, or ``None`` for
+        one that runs each write separately.
+
+        The same stored value on every access for the connection's lifetime.
+        A decorating port answers ``None`` exactly where the port it stands in
+        for does, and otherwise a callable of its own that keeps its
+        interception, forwarding canonical statements unchanged.
+        """
         ...
 
     def transaction[T](

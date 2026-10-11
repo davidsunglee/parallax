@@ -28,7 +28,9 @@ from parallax.core.execution_lifecycle._events import (
     ConnectionAcquired,
     DatabaseCallFailed,
     DatabaseCallFinished,
+    DatabaseCallNotExecuted,
     DatabaseCallStarted,
+    DatabaseCallUnconfirmed,
     DatabaseReadCompleted,
     DatabaseWriteCompleted,
     DatabaseWriteRowsCompleted,
@@ -133,14 +135,16 @@ class _Projected[T](NamedTuple):
 class _Counters:
     """One root's running totals — the only state a built-in Handler accumulates.
 
-    Ten integers, so per-root state is bounded however long the root runs, how
-    many times it retries, or how large its results are. They are what the root
-    summary reports instead of the events they were read from.
+    Ten integers and the last shared timing identity charged, so per-root state
+    is bounded however long the root runs, how many times it retries, or how
+    large its results are. They are what the root summary reports instead of
+    the events they were read from.
     """
 
     __slots__ = (
         "affected_rows",
         "attempts",
+        "charged_timing_id",
         "database_calls",
         "database_duration_ns",
         "events",
@@ -162,6 +166,7 @@ class _Counters:
         self.affected_rows = 0
         self.attempts = 0
         self.joined_invocations = 0
+        self.charged_timing_id: int | None = None
 
 
 def _diagnostic_fields(
@@ -348,48 +353,58 @@ def _closed_early_fields(
     return {"outcome": "closedEarly"}
 
 
+def _timed(event: DatabaseCallFinished, fields: dict[str, object]) -> dict[str, object]:
+    """``fields`` with the call's duration, and the timing identity it shares
+    where its duration is a transport invocation's rather than its own."""
+    fields["duration_ns"] = event.duration_ns
+    if event.shared_timing_id is not None:
+        fields["shared_timing_id"] = event.shared_timing_id
+    return fields
+
+
 def _database_read_fields(
     event: DatabaseCallFinished, _detail: LifecycleLogDetail
 ) -> dict[str, object]:
     outcome = cast(DatabaseReadCompleted, event.outcome)
-    return {
-        "outcome": "readCompleted",
-        "returned_rows": outcome.returned_rows,
-        "duration_ns": event.duration_ns,
-    }
+    return _timed(event, {"outcome": "readCompleted", "returned_rows": outcome.returned_rows})
 
 
 def _database_write_fields(
     event: DatabaseCallFinished, _detail: LifecycleLogDetail
 ) -> dict[str, object]:
     outcome = cast(DatabaseWriteCompleted, event.outcome)
-    return {
-        "outcome": "writeCompleted",
-        "affected_rows": outcome.affected_rows,
-        "duration_ns": event.duration_ns,
-    }
+    return _timed(event, {"outcome": "writeCompleted", "affected_rows": outcome.affected_rows})
 
 
 def _database_write_rows_fields(
     event: DatabaseCallFinished, _detail: LifecycleLogDetail
 ) -> dict[str, object]:
     outcome = cast(DatabaseWriteRowsCompleted, event.outcome)
-    return {
-        "outcome": "writeRowsCompleted",
-        "returned_rows": outcome.returned_rows,
-        "duration_ns": event.duration_ns,
-    }
+    return _timed(event, {"outcome": "writeRowsCompleted", "returned_rows": outcome.returned_rows})
 
 
 def _database_call_failed_fields(
     event: DatabaseCallFinished, detail: LifecycleLogDetail
 ) -> dict[str, object]:
     outcome = cast(DatabaseCallFailed, event.outcome)
-    return {
-        "outcome": "failed",
-        **_database_failure_fields(outcome.diagnostic, detail),
-        "duration_ns": event.duration_ns,
-    }
+    return _timed(
+        event, {"outcome": "failed", **_database_failure_fields(outcome.diagnostic, detail)}
+    )
+
+
+def _database_call_not_executed_fields(
+    event: DatabaseCallFinished, _detail: LifecycleLogDetail
+) -> dict[str, object]:
+    return _timed(event, {"outcome": "notExecuted"})
+
+
+def _database_call_unconfirmed_fields(
+    event: DatabaseCallFinished, detail: LifecycleLogDetail
+) -> dict[str, object]:
+    outcome = cast(DatabaseCallUnconfirmed, event.outcome)
+    return _timed(
+        event, {"outcome": "unconfirmed", **_database_failure_fields(outcome.diagnostic, detail)}
+    )
 
 
 def _cleanup_fields(result: CleanupResult | None) -> dict[str, object]:
@@ -538,6 +553,24 @@ def _database_call_projection(event: DatabaseCallFinished, transition: str) -> _
         case DatabaseCallFailed():
             projected = _Projected(
                 _finished_level(event, True), transition, True, event, _database_call_failed_fields
+            )
+            return projected
+        case DatabaseCallNotExecuted():
+            projected = _Projected(
+                _finished_level(event, False),
+                transition,
+                True,
+                event,
+                _database_call_not_executed_fields,
+            )
+            return projected
+        case DatabaseCallUnconfirmed():
+            projected = _Projected(
+                _finished_level(event, True),
+                transition,
+                True,
+                event,
+                _database_call_unconfirmed_fields,
             )
             return projected
         case _ as unreachable:  # pragma: no cover - exhaustiveness guard
@@ -835,7 +868,13 @@ class _LoggingHandler:
         counters.events += 1
         if isinstance(event, DatabaseCallFinished):
             counters.database_calls += 1
-            counters.database_duration_ns += event.duration_ns
+            # Calls sharing one transport invocation's timing finish
+            # contiguously and report its one duration, so it is charged once:
+            # at the first Finished transition naming that identity.
+            timing_id = event.shared_timing_id
+            if timing_id is None or timing_id != counters.charged_timing_id:
+                counters.database_duration_ns += event.duration_ns
+                counters.charged_timing_id = timing_id
             outcome = event.outcome
             if isinstance(outcome, DatabaseReadCompleted):
                 counters.returned_rows += outcome.returned_rows

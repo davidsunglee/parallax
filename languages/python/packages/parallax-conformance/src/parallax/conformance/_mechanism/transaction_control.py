@@ -16,6 +16,7 @@ from parallax.core.db_port import (
     DatabaseConnection,
     DocumentReadOrdinals,
     IsolationLevel,
+    OrderedWriteTransport,
     PipelineStatement,
     RollbackFailed,
     RolledBack,
@@ -127,6 +128,12 @@ class _AbortingPort:
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:
         return self._inner.execute_write(sql, binds)
+
+    @property
+    def ordered_write_transport(self) -> OrderedWriteTransport | None:
+        # Statements pass through undecorated, so the inner capability is this
+        # port's own.
+        return self._inner.ordered_write_transport
 
     def transaction[T](
         self, body: Callable[[DatabaseConnection], T], *, isolation: IsolationLevel | None = None

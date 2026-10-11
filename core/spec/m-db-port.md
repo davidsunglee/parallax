@@ -16,6 +16,7 @@ The port names a
 `execute(sql, binds, documentReads) → rows` /
 `executePipeline(statements) → row batches` /
 `executeWrite(sql, binds) → affected-row count` /
+optional `orderedWriteTransport(statements) → ordered write result` /
 `transaction(body, isolation?)` contract and nothing more. `execute` and
 `executePipeline` are row/result oriented;
 DML that needs write-outcome classification uses `executeWrite` and **MUST NOT**
@@ -97,10 +98,77 @@ preserves both triggering and rollback errors when rollback fails. The outcome
 is not public provenance and transaction begin, commit, and rollback remain
 outside Database Call accounting.
 
+## Ordered write transport
+
+`orderedWriteTransport` is optional. A connection either holds one operation
+for its whole lifetime or answers its absence, and absence means every
+count-only write runs alone through `executeWrite`. Presence is a qualification
+claim — the adapter satisfies this whole section — not a statement that its
+driver can pipeline; nothing selects it from a dialect.
+
+The operation takes an ordered, nonempty sequence of count-only DML statements
+and presents them to the database in that order in one invocation. Each carries
+its **canonical** SQL, with the dialect's `?` placeholders, and its binds:
+unlike `executeWrite`, which receives driver-ready SQL, the adapter converts
+each statement to its driver's form itself, once, immediately before
+submission, and adapts its binds as it adapts any other. Every statement fits
+the dialect's bind limit on its own (`m-dialect`); the statements share no
+parameter budget. One invocation is neither a transaction boundary nor a
+promise of one network exchange, and execution lifecycle accounting is one
+Database Call per presented statement.
+
+It answers one closed result:
+
+```text
+Complete(outcomes)
+Interrupted(confirmed, unconfirmedCount, unsentCount, error)
+
+outcome := affectedRowCount | StatementFailed(error) | StatementNotExecuted
+```
+
+`Complete` means result collection finished, with one outcome per presented
+statement in presentation order; it says nothing about success or commit. A
+count is that statement's native affected-row count, with the meaning the
+dialect declares. `StatementFailed` carries that statement's own translated
+failure. `StatementNotExecuted` is confirmed non-execution, admitted only after
+an earlier confirmed `StatementFailed` of the same invocation.
+
+`Interrupted` reports an ordinary transport failure that ended collection
+early. The presented statements partition, in order, into the `confirmed`
+outcomes, a contiguous span of `unconfirmedCount` statements whose execution
+cannot be established, and a suffix of `unsentCount` statements the adapter
+established it never sent; the three lengths sum to the number presented.
+`error` is the one transport failure, reported once for the invocation and
+never copied into a statement's outcome. An adapter reports only what it
+established: it MUST NOT fabricate a count, a statement failure, or
+non-execution to fill the form, and uncertainty alone never claims that a
+particular statement failed.
+
+Counts and span lengths are nonnegative integers, never Booleans, and every
+failure a result carries is an ordinary exception. The consumer validates the
+whole result against the statements it presented before interpreting any of
+it: a result they contradict is a broken adapter contract, refused as a
+non-retriable **Ordered Write Result Integrity Error** whose diagnostic is
+bounded structure — positions, counts, and type names — rather than
+statements, binds, or outcome values. Interpreting a valid result's counts
+stays the unit of work's (`m-unit-work`).
+
+A control-flow or fatal exception, cancellation included, is never converted
+into an `Interrupted` result; it propagates from the operation as itself.
+Neither the adapter nor its consumer replays, retries, or recovers any
+statement of a failed or interrupted invocation.
+
+A decorating port, and the transaction-scoped port `transaction` hands its
+body, answers absence exactly where the port it stands in for does. A decorator
+that intercepts writes holds an operation of its own wherever the inner one is
+present, keeping that interception and forwarding the canonical statements
+unchanged; only a decorator that leaves writes undecorated MAY answer the inner
+operation itself.
+
 ## Configuration, runtime, and one connection at a time
 
 The port has a second half, used by a different caller. Query code receives
-EXECUTION alone — the five verbs above — and can neither acquire nor release;
+EXECUTION alone — the verbs above — and can neither acquire nor release;
 composition receives the LIFETIME and never executes. That split is what lets a
 connection be held for exactly one operation without any statement being able to
 take or give one back.
@@ -501,9 +569,10 @@ snapshot conflict is a `deadlock` on either engine and retries on the same terms
 
 ## One error instance per failed invocation
 
-An error the port itself produces — raised by `execute`, `executePipeline`, or `executeWrite`, or
-carried by a `transaction` outcome for begin, commit, or rollback failure — is
-an instance **shared with no other invocation**. An implementation MUST build
+An error the port itself produces — raised by `execute`, `executePipeline`, or `executeWrite`,
+carried by an ordered write result as a statement failure or an interruption,
+or carried by a `transaction` outcome for begin, commit, or rollback failure —
+is an instance **shared with no other invocation** or statement. An implementation MUST build
 that error where the failure occurs and MUST NOT report a cached, pooled, or
 otherwise reused error object, however identical two failures' category, native
 code, and message are (`m-db-error` constrains what an error carries; this

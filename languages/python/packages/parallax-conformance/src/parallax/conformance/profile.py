@@ -11,6 +11,7 @@ from parallax.core.db_port import (
     DeclaresDialect,
     DocumentReadOrdinals,
     IsolationLevel,
+    OrderedWriteTransport,
     PipelineStatement,
     Row,
     TransactionOutcome,
@@ -74,6 +75,10 @@ class _NoProvisioningPort:
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover
         raise AssertionError(f"a rejected-case run must not execute SQL: {sql!r}")
+
+    @property
+    def ordered_write_transport(self) -> OrderedWriteTransport | None:  # pragma: no cover
+        return None
 
     def execute_pipeline(
         self, statements: Sequence[PipelineStatement]

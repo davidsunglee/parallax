@@ -9,17 +9,20 @@ recording wraps both halves of a case database and records each modeled
 transaction bodies — and every write in a transaction body the lane runs on its
 directly driven session. A statement the lane executes on that session outside
 a transaction is one the case authors verbatim, such as ``given.apply``, and is
-forwarded unrecorded.
+forwarded unrecorded. A connection with ordered write transport records each
+statement an invocation presents, in the driver form its adapter submits.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from types import TracebackType
+from typing import cast
 
 from parallax.conformance._database_control import CaseDatabase
 from parallax.core.db_port import (
     Bind,
+    CanonicalWriteStatement,
     CleanupResult,
     ConnectionContext,
     ConnectionContextSource,
@@ -27,6 +30,8 @@ from parallax.core.db_port import (
     DatabaseRuntime,
     DocumentReadOrdinals,
     IsolationLevel,
+    OrderedWriteResult,
+    OrderedWriteTransport,
     PipelineStatement,
     PoolMetricsSource,
     Row,
@@ -106,6 +111,7 @@ class _RecordingConnection:
     def __init__(self, inner: DatabaseConnection, writes: list[DriverWrite]) -> None:
         self._inner = inner
         self._writes = writes
+        self._ordered = None if inner.ordered_write_transport is None else self._ordered_write
 
     @property
     def dialect(self) -> Dialect:
@@ -125,6 +131,17 @@ class _RecordingConnection:
     def execute_write(self, sql: str, binds: Sequence[Bind]) -> int:
         self._writes.append((sql, list(binds)))
         return self._inner.execute_write(sql, binds)
+
+    @property
+    def ordered_write_transport(self) -> OrderedWriteTransport | None:
+        return self._ordered
+
+    def _ordered_write(self, statements: Sequence[CanonicalWriteStatement]) -> OrderedWriteResult:
+        to_driver = self._inner.dialect.to_driver_sql
+        self._writes.extend(
+            (to_driver(statement.sql), list(statement.binds)) for statement in statements
+        )
+        return cast("OrderedWriteTransport", self._inner.ordered_write_transport)(statements)
 
     def transaction[T](
         self, body: Callable[[DatabaseConnection], T], *, isolation: IsolationLevel | None = None
@@ -149,6 +166,10 @@ class RecordingCaseDatabase(_RecordingConnection):
 
     def execute_write(self, sql: str, binds: Sequence[Bind]) -> int:
         return self._case.execute_write(sql, binds)
+
+    @property
+    def ordered_write_transport(self) -> OrderedWriteTransport | None:
+        return self._case.ordered_write_transport
 
     def open(self) -> DatabaseRuntime:
         return _RecordingRuntime(self._case.open(), self._writes)

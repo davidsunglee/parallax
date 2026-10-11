@@ -9,17 +9,18 @@ the drive is then followed all the way to the statements it emits.
 
 The chain is closed link by link. Every planning the drive performed ran on a
 planner the factory built. Every step sequence streamed through
-``stream_lowered`` is by identity the steps of a plan one of those plannings
-returned, or a span borrowed from them, and the plans streamed are the plans
-planned, in order, so a factory plan the lane discarded is named too. Every step
+``stream_lowered``, or taken through a ``LoweringCursor``, is by identity the
+steps of a plan one of those plannings returned, or a span borrowed from them,
+and the plans streamed are the plans planned, in order, so a factory plan the
+lane discarded is named too. Every step
 rendered by ``compile_write_step`` — the one function that turns a settled step
 into a statement — is by identity a step of one of those streamed sequences. An
 unrelated implementation of the planner interface inherits nothing, so it
 performs no planning this module records and appears in
 no subclass registry; but its plan still has to become SQL, and every route from
-a plan to SQL runs through those two functions under a name this module replaced.
+a plan to SQL runs through those seams under a name this module replaced.
 
-Both functions are replaced wherever an imported ``parallax`` module holds them,
+Every seam is replaced wherever an imported ``parallax`` module holds it,
 under whatever name the holder bound them by and in the modules defining them
 included, so a caller reaching the seam through an aliased import — or binding it
 while the watch is installed, since every route to it reads one of the replaced
@@ -62,7 +63,7 @@ from parallax.conformance import case_format, engine
 from parallax.core.dialect import Dialect
 from parallax.core.execution import _planning, prepare_model
 from parallax.core.execution._publication import write_projection
-from parallax.core.execution._write_lowering import stream_lowered
+from parallax.core.execution._write_lowering import LoweringCursor, stream_lowered
 from parallax.core.metamodel import Metamodel
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.sql_gen._write import StepPayload, compile_write_step
@@ -184,20 +185,22 @@ def _watch(lane: str, monkeypatch: pytest.MonkeyPatch) -> _Composition:
     factory: both consumers bind ``build_write_planner`` at import time, so a
     patch of that name would intercept neither, while the class name is read
     inside the factory body on every call. ``raising`` is left on throughout and a
-    lowering function nothing holds fails the watch outright, so the day a name
-    moves this fails rather than silently watching nothing.
+    lowering seam nothing holds fails the watch outright, so the day a name moves
+    this fails rather than silently watching nothing.
 
     ``finalize`` is watched on the class rather than on the built planners, so a
     planning that ran on some OTHER ``WritePlanner`` is visible instead of merely
-    absent. The lowering functions are watched because a plan an unrelated
+    absent. The lowering seams are watched because a plan an unrelated
     implementation produced runs no watched ``plan`` at all and would otherwise be
-    invisible right up to the statements it emits; the plan is recorded when its
-    stream is STARTED rather than when the seam is called, so a stream nobody
-    consumed accounts for nothing.
+    invisible right up to the statements it emits; a streamed plan is recorded
+    when its stream is STARTED rather than when the seam is called, so a stream
+    nobody consumed accounts for nothing, and a cursor's when execution opens it
+    to take its first step.
     """
     seen = _Composition(lane=lane, built=[], planned=[], lowered=[], rendered=[])
     finalizing = WritePlanner.finalize
     streaming = stream_lowered
+    cursoring = LoweringCursor
     rendering = compile_write_step
 
     def construct(
@@ -228,6 +231,15 @@ def _watch(lane: str, monkeypatch: pytest.MonkeyPatch) -> _Composition:
         seen.lowered.append(steps)
         yield from streaming(steps, payloads, meta, dialect)
 
+    def cursor(
+        steps: Iterable[PlannedWrite],
+        payloads: WritePayloadPreparer,
+        meta: Metamodel,
+        dialect: Dialect,
+    ) -> LoweringCursor:
+        seen.lowered.append(steps)
+        return cursoring(steps, payloads, meta, dialect)
+
     def render(
         step: PlannedWrite, payload: StepPayload, meta: Metamodel, dialect: Dialect
     ) -> LoweredStatement:
@@ -236,7 +248,12 @@ def _watch(lane: str, monkeypatch: pytest.MonkeyPatch) -> _Composition:
 
     monkeypatch.setattr(_planning, "WritePlanner", construct)
     monkeypatch.setattr(WritePlanner, "finalize", finalize)
-    for replacement, original in ((lower, stream_lowered), (render, compile_write_step)):
+    watched: tuple[tuple[object, object], ...] = (
+        (lower, stream_lowered),
+        (cursor, LoweringCursor),
+        (render, compile_write_step),
+    )
+    for replacement, original in watched:
         holders = _bindings_of(original)
         assert holders, f"nothing imported holds {original}, so watching it grades nothing"
         for module, bound in holders:
