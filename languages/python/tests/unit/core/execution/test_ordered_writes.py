@@ -389,6 +389,16 @@ def test_an_effect_that_would_be_its_runs_only_one_runs_alone_before_anything_af
     assert lowered_at == [(0, 1), (1, 2), (2, 3)]
 
 
+def _reaches(error: BaseException, held: object) -> bool:
+    """Whether any frame ``error`` propagated through still holds ``held``."""
+    trace = error.__traceback__
+    while trace is not None:
+        if any(value is held for value in trace.tb_frame.f_locals.values()):
+            return True
+        trace = trace.tb_next
+    return False
+
+
 @pytest.mark.parametrize(
     ("failure", "affected", "raised"),
     [
@@ -423,6 +433,7 @@ def test_a_lone_effects_look_ahead_failing_runs_it_alone_only_for_an_ordinary_fa
     if raised == "shortfall":
         assert isinstance(propagated, StaleWriteError)
         assert propagated.__context__ is None
+        assert not _reaches(propagated, failure)
     else:
         assert propagated is failure
     # Nothing was lowered before the look ahead, so a fatal one runs nothing.
@@ -786,11 +797,13 @@ def test_a_prefix_failure_wins_over_the_lowering_failure_it_overtook(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     steps = (_close(1), _close(2), _close(3))
-    _failing_at(monkeypatch, steps[1], SqlGenError("never raised"))
+    overtaken = SqlGenError("never raised")
+    _failing_at(monkeypatch, steps[1], overtaken)
     port = ScriptedAdapter(Transact(Ordered(OrderedWriteResultComplete((0,)))), ordered=True)
     flushed = _flush(port, *steps)
     assert isinstance(flushed.raised, StaleWriteError)
     assert flushed.raised.__context__ is None
+    assert not _reaches(flushed.raised, overtaken)
     assert port.calls == _committed(_ordered(steps[0]))
 
 

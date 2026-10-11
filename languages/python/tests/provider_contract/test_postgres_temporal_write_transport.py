@@ -8,12 +8,13 @@ runs must cross the port exactly as :func:`expected_realization` calculates
 from the workload — ordered invocations of its closes where the acquired
 connection holds ordered write transport, and multi-row inserts of its
 openings — and must leave exactly the history :func:`expected_history`
-calculates, collections included.
+calculates, each collection cell row still holding its seeded collections.
 """
 
 from __future__ import annotations
 
 import datetime as dt
+import json
 from collections.abc import Callable
 from typing import Any, Literal, cast
 
@@ -180,8 +181,8 @@ def _concurrency(workload: Workload) -> _Concurrency:
 
 
 def _stored(profile_run: Any, cell: Cell) -> tuple[list[HistoryRow], int | None]:
-    """The cell's stored history, and for the collection cell how many distinct
-    collection documents its rows hold."""
+    """The cell's stored history, and for the collection cell how many of its
+    rows hold collections other than the seeded ones."""
     table = _TABLES[cell.workload]
     keys = objects(cell.workload, cell.size, 0)
     bounds = [min(keys), max(keys)]
@@ -206,12 +207,13 @@ def _stored(profile_run: Any, cell: Cell) -> tuple[list[HistoryRow], int | None]
     )
     if cell.workload != "collection-amend":
         return rows, None
-    ((collections,),) = port.execute(
-        f"select count(distinct ({document}->'tags')::text || ({document}->'legs')::text) "
-        f"from {table} where id between %s and %s",
-        bounds,
+    ((differing,),) = port.execute(
+        f"select count(*) from {table} where id between %s and %s "
+        f"and (({document}->'tags') is distinct from %s::jsonb "
+        f"or ({document}->'legs') is distinct from %s::jsonb)",
+        [*bounds, json.dumps(_TAGS), json.dumps(_LEGS)],
     )
-    return rows, int(collections)
+    return rows, int(differing)
 
 
 def _database(profile_run: Any, tally: PortTally) -> ScopedDatabase:
@@ -228,7 +230,7 @@ def test_a_temporal_write_crosses_the_port_as_calculated_and_leaves_its_history(
     profile_run.reset(model_of(_MODEL), _fixtures(cell))
     tally = PortTally()
     _database(profile_run, tally).transact(_write(cell), concurrency=_concurrency(cell.workload))
-    stored, collections = _stored(profile_run, cell)
+    stored, differing = _stored(profile_run, cell)
     expected = expected_history(cell.workload, cell.size, 0)
     assert stored == expected
     # Each closed milestone and each opened row is one Planned Write, however
@@ -237,5 +239,5 @@ def test_a_temporal_write_crosses_the_port_as_calculated_and_leaves_its_history(
     assert tally.realization() == expected_realization(
         cell, ordered=psycopg.capabilities.has_pipeline()
     )
-    if collections is not None:
-        assert collections == 1
+    if differing is not None:
+        assert differing == 0
