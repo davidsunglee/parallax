@@ -458,16 +458,50 @@ The gates were first derived from `before/` and have since been re-derived
 under the same rule whenever a verified capture became canonical. Git history
 keeps the earlier derivations beside their captures. The present basis is
 *Current HEAD capture*: all **580 runtime readings at 382 gated addresses**
-were first graded against the outgoing ceilings, and all passed. The closest
-was `txtime.unchanged.document.wire.transientBytes` on 3.14 at 3,745 B against
-3,856 B, **97.1%** of its outgoing ceiling.
+were first graded against the outgoing ceilings. 560 passed; the closest was
+`ancestor.sparse-64.document.typed.transientBytes` on 3.14 at 8,987 B/row
+against 9,257, **97.1%** of its outgoing ceiling.
 
-Re-derivation preserves all 382 addresses and the **1.10** factor: 309 ceilings
-fell, 21 rose, and 52 stayed identical. These are the owner's mechanical
-outputs from the new basis, after the old-ceiling check; no ceiling was edited
-individually. The new predicate-flush and feature-boundary readings remain
-outside the existing gated windows, so this capture does not expand the gate
-policy. Cross-day changes in a ceiling alone do not identify a code cause.
+The other 20 readings exceed their outgoing ceilings by design. They are the
+`transientBytes` high-water marks, on both runtimes, of the ten bitemporal
+writes that open more than one successor row:
+`bitemporal.interior.{columns,document}.{typed,wire}`,
+`bitemporal.target-patch.{columns,document}.wire`, and
+`bitemporal.target-replace.{columns,document}.{typed,wire}`. Contiguous
+compatible temporal openings lower to one multi-row insert of up to 64 entries,
+so a write that opens three successor rows holds all three rows' binds live in
+one statement rather than releasing each row's before forming the next.
+
+| Addresses | Readings, B/row | Outgoing ceilings, B/row | Over the ceiling | Against the outgoing readings |
+|---|---:|---:|---:|---:|
+| `bitemporal.interior.*`, four | 17,838–20,123 | 15,549–17,408 | +5.2% to +25.3% | +21.2% to +37.8% |
+| `bitemporal.target-*`, six | 24,038–24,591 | 21,753–23,071 | +4.3% to +12.9% | +15.7% to +26.1% |
+
+Their retained checkpoints are unchanged to the byte, as is every keyed-write
+retained checkpoint in the capture. A diagnostic reading of the same ten cases
+at the producing tree, outside this capture, with grouped openings limited to
+one entry, read high-water marks 2,878–4,998 B/row lower, every one under its
+outgoing ceiling, and identical retained bytes. The repository owner authorized
+re-basing these ten addresses on the grouped readings, and their ceilings were
+re-derived with every other one under the unchanged rule.
+
+Re-derivation preserves all 382 addresses and the **1.10** factor: 16 ceilings
+fell, 116 rose, and 250 stayed identical. Those ten rose 16.4–37.8%. The other
+106 rises passed their outgoing ceilings:
+
+- `txtime.changed` and the changed-ancestor updates' high-water marks, twelve
+  ceilings, rose 2.4–6.8%. This capture does not attribute the rise.
+- The typed geometry, leaf-type and `txtime.opening` insert high-water marks,
+  65 ceilings, rose 0.07–1.30%.
+- The `rows-8` acquisition and leaf-type acquisition checkpoints, 26 ceilings,
+  rose 1–2 B.
+- Three `leaf-timestamp` read ceilings rose 0.11–0.21%.
+
+The falls are all within 1.8%: `plain.changed`, `txtime.target-*`, and
+`geometry.depth-8` high-water marks, two cold plans, one guarded plan, and the
+`leaf-timestamp.document` peak. These are the owner's mechanical outputs from
+the new basis, after the old-ceiling check; no ceiling was edited individually.
+Cross-day changes in a ceiling alone do not identify a code cause.
 
 A gate's
 sensitivity is therefore the headroom alone at every address: a retained
@@ -1230,6 +1264,114 @@ memory cell, and the two scaling arms named above is within its limit.
 
 ## Current HEAD capture — `recovered/`
 
+One complete capture from the clean head of a published pull-request branch,
+`609980718cbf3bcfaf3448fb6642a329b754fe87`, on **2026-10-11
+19:19:51–20:19:14 EDT** (2026-10-11 23:19:51 – 2026-10-12 00:19:14 UTC).
+The collector exited **0**, taking **59m23s wall clock** and 3,562.946 s in its
+recorded collection span. No workload levels, supported runtimes, warm-ups,
+or samples were reduced. The canonical collector, `tools/cost_report.py --out`
+as `just python-report-cost` runs it, ran under `caffeinate -i` and nice 5;
+its original output, collector log, and load samples are retained outside Git.
+
+The runner was the outgoing capture's: Mac17,4, Apple M5, 10 cores, 32 GiB,
+arm64, macOS 27.0.1 build 26A434, on AC power. CPython **3.13.16** ran in
+per-member temporary environments and **3.14.8** in the checkout environment.
+OrbStack was stopped and started before capture, and the `postgres:18.6-alpine`
+server was verified as 18.6. No competing tests or measurements ran, but the
+machine was not idle. The 1-, 5- and 15-minute load averages were 2.46, 2.54
+and 3.06 at the start and 2.78, 2.17 and 2.15 at the end, and the 1-minute
+figure stayed around 1.5–2.5 during the run. The HumanLayer app's WebKit
+renderer stayed active throughout, and `mediaanalysisd` used about 25% of a
+core early in the run. Unlike the outgoing capture's, this run's record does
+not establish whether the Backblaze backup workers were paused. Runtime
+identities, instrument source hashes and durations are in
+[conditions.json](recovered/conditions.json) and
+[durations.json](recovered/durations.json).
+
+| Member | Authority | Runtimes | Readings | Collection seconds |
+|---|---|---|---:|---:|
+| snapshot-delivery | authoritative | 3.13, 3.14; leaf types on 3.14 | 596 | 2,969.840 |
+| lifecycle-overhead | non-authoritative | 3.14 | 87 | 12.388 |
+| instance-state | non-authoritative | 3.13, 3.14 | 696 | 14.449 |
+| write-lowering | non-authoritative | 3.13, 3.14; leaf types on 3.14 | 1,542 | 544.997 |
+| feature-boundary | non-authoritative | 3.13, 3.14 | 180 | 21.172 |
+
+All five members name the same clean producing commit. There are **3,101
+readings**, no errors, no incomplete cells, and no collector failures. Authority
+labels follow the existing contract; provider-free members remain
+non-authoritative. No post-capture re-classification was needed. Portfolio
+SHA-256 is `7d5b9f8bcaf8c7d388332bb4983895bce81fafdd20c405a6ad2cc264e079c43d`.
+
+Exact-current verification requiring snapshot, write, instance-state and
+feature-boundary passed, as did lock freshness. Recorded and inspected lock
+digests are `0c597c32531f30dffce18e68e6838c33d9b446223abd504e42e35cd6cb829385`.
+Against the re-derived gates three advisories remain, distinct from integrity
+failures and blocking memory gates:
+
+```text
+advisory: duplicate-include.providerFreeCpu.eager.maxMs is outside its timing ceiling
+advisory: duplicate-include.providerFreeCpu.eager.minRootsPerSecond is outside its timing ceiling
+advisory: document-heavy.streamedMemory.page128PeakKiB grows 78.090 KiB between memory arms
+```
+
+Against the outgoing gates, verification also stated the twenty memory-gate
+advisories *Memory gates* › *Basis* accounts for, one per runtime at each of
+the ten grouped-opening addresses. Every other gated reading passed its
+outgoing ceiling before the basis was updated.
+
+### Comparisons and limits
+
+[comparison-previous.md](recovered/comparison-previous.md) pairs this capture
+with the outgoing canonical portfolio retained at `609980718` in Git (the
+October 10 capture). All 3,101 readings pair; no address appears or
+disappears. Seventy instance-state pairs have zero bases and are reported
+incomparable. No count changed.
+
+Hardware, OS, PostgreSQL, interpreter patch versions, lock and embedded Budget
+Contract match the outgoing capture. The write-lowering workload digest
+differs: its digested support module,
+[`_write_lowering_support.py`](../../tests/unit/_write_lowering_support.py),
+documents `Case.statements` as a count of Planned Writes. The snapshot-delivery
+reading and lifecycle-overhead instrument sources also differ. Consequently
+`--require-compatible` rejects the pair over snapshot-delivery and
+write-lowering; these are descriptive comparisons across days, not isolated
+causal trials. The unchanged timing and memory noise allowances still apply.
+
+Every keyed-write retained checkpoint is unchanged to the byte on both
+runtimes. The ten grouped-opening high-water marks rise 15.7–37.8%, as
+*Memory gates* › *Basis* records. The `txtime.changed` and changed-ancestor
+`depth-1`, `width-16` and `sparse-64` high-water marks rise 3.9–6.8%
+(+410 to +576 B/row); the other keyed-write high-water marks move −1.8% to
++2.5%, with medians of +0.04% on 3.13 and +0.13% on 3.14. The single-sample
+`predicate-flush.unchanged.objects-128.document` retained readings are 8.1%
+and 8.2% larger, 11–12 B/row.
+
+The ten grouped-opening writes' elapsed medians change by a median −1.97% on
+3.13 and −5.60% on 3.14, with the four interior writes at −3.10% and −6.51%.
+The `txtime.changed` elapsed cells move +7.69% and +2.67%, and the
+changed-ancestor cells +4.47% and +1.47%. Across every keyed-write elapsed cell
+the medians are +2.30% on 3.13 and +1.05% on 3.14, and across 25 live
+elapsed/latency cells +0.14% and −1.40%. These are medians of individual cell
+ratios, not ratios of pooled samples or total collection durations, and do not
+support a timing claim beyond the cells named.
+
+[comparison-before.md](recovered/comparison-before.md) and
+[comparison-after.md](recovered/comparison-after.md) compare the fixed bases;
+each has 1,292 missing-base and 368 missing-head readings. Their runtime and
+source identity limitations remain as described in their historical accounts.
+[comparison-cor-191.md](recovered/comparison-cor-191.md) uses the exact Git
+portfolio and conditions at **`dc65ef88`**, with 312 missing-base and zero
+missing-head readings. None of these historical pairs passes strict
+compatibility.
+
+## Historical October 10 recovered capture — superseded
+
+This account and its tables are frozen observations of the October 10 capture.
+Every `recovered/` file reference in this section refers to the version retained
+at **`609980718` in Git**, before the current capture replaced it. Its
+provenance, verification, grading and comparisons are historical, rather than
+claims about the current files or memory basis.
+
 One complete capture from clean, published HEAD
 `dabb0e68f8d1d7ef6c9847860497be14134916c9`, on **2026-10-10
 22:03:43–23:03:29 EDT** (2026-10-11 02:03:43–03:03:29 UTC).
@@ -1279,9 +1421,14 @@ advisory: document-heavy.streamedMemory.page128PeakKiB grows 77.997 KiB between 
 advisory: bitemporal-current.streamedMemory.page32PeakKiB grows 16.344 KiB between memory arms
 ```
 
-Every gated reading passed its outgoing memory ceiling before the basis was
-updated (*Memory gates* › *Basis*). The feature member establishes its first
-baseline; it has no historical paired values or memory gates.
+Every gated reading passed its outgoing memory ceiling before it became the
+basis: all 580 runtime readings at 382 gated addresses, the closest
+`txtime.unchanged.document.wire.transientBytes` on 3.14 at 3,745 B against
+3,856 B, 97.1% of its ceiling. Its re-derivation preserved all 382 addresses
+and the 1.10 factor: 309 ceilings fell, 21 rose, and 52 stayed identical, and
+the new predicate-flush and feature-boundary readings stayed outside the gated
+windows. The feature member established its first baseline; it had no
+historical paired values or memory gates.
 
 ### Comparisons and limits
 
@@ -1343,7 +1490,7 @@ and peaks and must not be added together.
 
 This account and its tables are frozen observations of the October 5 capture.
 Every `recovered/` file reference in this section refers to the version retained
-at **`dabb0e68f` in Git**, before the current capture replaced it. Its provenance,
+at **`dabb0e68f` in Git**, before the October 10 capture replaced it. Its provenance,
 re-classification and numerical comparisons are historical, rather than claims
 about the current files or memory basis.
 

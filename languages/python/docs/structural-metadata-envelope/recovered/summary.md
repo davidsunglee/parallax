@@ -2,7 +2,7 @@
 
 | Subject | Authority | Runtimes | Readings | Within | Outside | Unavailable |
 |---|---|---|---:|---:|---:|---:|
-| snapshot-delivery | authoritative | 3.13, 3.14 | 596 | 87 | 3 | 0 |
+| snapshot-delivery | authoritative | 3.13, 3.14 | 596 | 88 | 2 | 0 |
 | lifecycle-overhead | non-authoritative | - | 87 | 5 | 10 | 0 |
 | instance-state | non-authoritative | - | 696 | 4 | 4 | 0 |
 | write-lowering | non-authoritative | 3.13, 3.14 | 1542 | 0 | 0 | 0 |
@@ -12,362 +12,362 @@ Budget outcomes are advisory. This collector fails only for a missing or invalid
 
 ## Durations
 
-Critical path: 3585.845 s, the `python-report-cost` collection span. Nested spans are included in their parents and are never summed.
+Critical path: 3562.946 s, the `python-report-cost` collection span. Nested spans are included in their parents and are never summed.
 
 | Scope | Name | Labels | Started | Seconds |
 |---|---|---|---|---:|
-| collection | python-report-cost | - | 2026-10-11T02:03:43.641941+00:00 | 3585.845 |
-| member | snapshot-delivery | member=snapshot-delivery | 2026-10-11T02:03:43.642222+00:00 | 2984.773 |
-| setup | identity | member=snapshot-delivery, runtime=3.13 | 2026-10-11T02:03:43.948464+00:00 | 0.049 |
-| setup | identity | member=snapshot-delivery, runtime=3.14 | 2026-10-11T02:03:43.997515+00:00 | 0.027 |
-| setup | provisioner | member=snapshot-delivery | 2026-10-11T02:03:44.024833+00:00 | 4.074 |
-| workload | conventional-fanout | member=snapshot-delivery, runtime=3.13 | 2026-10-11T02:03:48.101655+00:00 | 113.860 |
-| setup | provision | member=snapshot-delivery, roots=200, runtime=3.13, workload=conventional-fanout | 2026-10-11T02:03:48.101666+00:00 | 3.331 |
-| setup | provision | member=snapshot-delivery, roots=2000, runtime=3.13, workload=conventional-fanout | 2026-10-11T02:04:07.260406+00:00 | 31.427 |
-| workload | duplicate-include | member=snapshot-delivery, runtime=3.13 | 2026-10-11T02:05:41.961808+00:00 | 123.672 |
-| setup | provision | member=snapshot-delivery, roots=200, runtime=3.13, workload=duplicate-include | 2026-10-11T02:05:41.961855+00:00 | 3.794 |
-| setup | provision | member=snapshot-delivery, roots=2000, runtime=3.13, workload=duplicate-include | 2026-10-11T02:06:03.267016+00:00 | 31.361 |
-| workload | document-heavy | member=snapshot-delivery, runtime=3.13 | 2026-10-11T02:07:45.635110+00:00 | 98.206 |
-| setup | provision | member=snapshot-delivery, roots=200, runtime=3.13, workload=document-heavy | 2026-10-11T02:07:45.635149+00:00 | 0.741 |
-| setup | provision | member=snapshot-delivery, roots=2000, runtime=3.13, workload=document-heavy | 2026-10-11T02:08:05.033189+00:00 | 6.033 |
-| workload | versioned-document | member=snapshot-delivery, runtime=3.13 | 2026-10-11T02:09:23.841353+00:00 | 72.773 |
-| setup | provision | member=snapshot-delivery, roots=200, runtime=3.13, workload=versioned-document | 2026-10-11T02:09:23.841392+00:00 | 0.229 |
-| setup | provision | member=snapshot-delivery, roots=2000, runtime=3.13, workload=versioned-document | 2026-10-11T02:09:39.175646+00:00 | 1.057 |
-| workload | bitemporal-current | member=snapshot-delivery, runtime=3.13 | 2026-10-11T02:10:36.614947+00:00 | 73.245 |
-| setup | provision | member=snapshot-delivery, roots=200, runtime=3.13, workload=bitemporal-current | 2026-10-11T02:10:36.614982+00:00 | 0.221 |
-| setup | provision | member=snapshot-delivery, roots=2000, runtime=3.13, workload=bitemporal-current | 2026-10-11T02:10:51.986827+00:00 | 1.081 |
-| workload | stress-columns | member=snapshot-delivery, runtime=3.13 | 2026-10-11T02:11:49.859748+00:00 | 9.905 |
-| workload | stress-document | member=snapshot-delivery, runtime=3.13 | 2026-10-11T02:11:59.764848+00:00 | 10.345 |
-| workload | geometry | member=snapshot-delivery, runtime=3.13 | 2026-10-11T02:12:10.109780+00:00 | 188.347 |
-| workload | plan | member=snapshot-delivery, runtime=3.13 | 2026-10-11T02:15:18.457281+00:00 | 16.866 |
-| workload | control | member=snapshot-delivery, runtime=3.13 | 2026-10-11T02:15:35.323273+00:00 | 151.564 |
-| workload | conventional-fanout | member=snapshot-delivery, runtime=3.14 | 2026-10-11T02:18:06.889632+00:00 | 121.696 |
-| setup | provision | member=snapshot-delivery, roots=200, runtime=3.14, workload=conventional-fanout | 2026-10-11T02:18:06.889660+00:00 | 3.117 |
-| setup | provision | member=snapshot-delivery, roots=2000, runtime=3.14, workload=conventional-fanout | 2026-10-11T02:18:26.465713+00:00 | 30.573 |
-| workload | duplicate-include | member=snapshot-delivery, runtime=3.14 | 2026-10-11T02:20:08.585639+00:00 | 128.243 |
-| setup | provision | member=snapshot-delivery, roots=200, runtime=3.14, workload=duplicate-include | 2026-10-11T02:20:08.585677+00:00 | 3.185 |
-| setup | provision | member=snapshot-delivery, roots=2000, runtime=3.14, workload=duplicate-include | 2026-10-11T02:20:29.478102+00:00 | 30.383 |
-| workload | document-heavy | member=snapshot-delivery, runtime=3.14 | 2026-10-11T02:22:16.828664+00:00 | 99.927 |
-| setup | provision | member=snapshot-delivery, roots=200, runtime=3.14, workload=document-heavy | 2026-10-11T02:22:16.828707+00:00 | 0.697 |
-| setup | provision | member=snapshot-delivery, roots=2000, runtime=3.14, workload=document-heavy | 2026-10-11T02:22:35.645360+00:00 | 6.068 |
-| workload | versioned-document | member=snapshot-delivery, runtime=3.14 | 2026-10-11T02:23:56.755914+00:00 | 76.535 |
-| setup | provision | member=snapshot-delivery, roots=200, runtime=3.14, workload=versioned-document | 2026-10-11T02:23:56.755951+00:00 | 0.242 |
-| setup | provision | member=snapshot-delivery, roots=2000, runtime=3.14, workload=versioned-document | 2026-10-11T02:24:11.900486+00:00 | 1.061 |
-| workload | bitemporal-current | member=snapshot-delivery, runtime=3.14 | 2026-10-11T02:25:13.291220+00:00 | 76.726 |
-| setup | provision | member=snapshot-delivery, roots=200, runtime=3.14, workload=bitemporal-current | 2026-10-11T02:25:13.291257+00:00 | 0.242 |
-| setup | provision | member=snapshot-delivery, roots=2000, runtime=3.14, workload=bitemporal-current | 2026-10-11T02:25:28.429720+00:00 | 1.069 |
-| workload | stress-columns | member=snapshot-delivery, runtime=3.14 | 2026-10-11T02:26:30.017353+00:00 | 7.596 |
-| workload | stress-document | member=snapshot-delivery, runtime=3.14 | 2026-10-11T02:26:37.613626+00:00 | 7.882 |
-| workload | geometry | member=snapshot-delivery, runtime=3.14 | 2026-10-11T02:26:45.496190+00:00 | 159.954 |
-| workload | leaf | member=snapshot-delivery, runtime=3.14 | 2026-10-11T02:29:25.450100+00:00 | 1290.797 |
-| workload | plan | member=snapshot-delivery, runtime=3.14 | 2026-10-11T02:50:56.253738+00:00 | 15.087 |
-| workload | control | member=snapshot-delivery, runtime=3.14 | 2026-10-11T02:51:11.341207+00:00 | 136.552 |
-| setup | close | member=snapshot-delivery | 2026-10-11T02:53:27.973025+00:00 | 0.204 |
-| member | lifecycle-overhead | member=lifecycle-overhead | 2026-10-11T02:53:28.448022+00:00 | 12.090 |
-| member | instance-state | member=instance-state | 2026-10-11T02:53:40.539774+00:00 | 14.379 |
-| setup | identity | member=instance-state, runtime=3.13 | 2026-10-11T02:53:40.770498+00:00 | 0.089 |
-| setup | identity | member=instance-state, runtime=3.14 | 2026-10-11T02:53:40.859293+00:00 | 0.028 |
-| scenario | shallow | member=instance-state, runtime=3.13 | 2026-10-11T02:53:40.887288+00:00 | 0.923 |
-| scenario | wide | member=instance-state, runtime=3.13 | 2026-10-11T02:53:41.810142+00:00 | 1.088 |
-| scenario | nested | member=instance-state, runtime=3.13 | 2026-10-11T02:53:42.898415+00:00 | 1.699 |
-| scenario | nullable | member=instance-state, runtime=3.13 | 2026-10-11T02:53:44.597735+00:00 | 0.948 |
-| scenario | partial | member=instance-state, runtime=3.13 | 2026-10-11T02:53:45.545970+00:00 | 0.887 |
-| scenario | polymorphic | member=instance-state, runtime=3.13 | 2026-10-11T02:53:46.433057+00:00 | 0.879 |
-| scenario | warmed | member=instance-state, runtime=3.13 | 2026-10-11T02:53:47.312242+00:00 | 0.789 |
-| scenario | shallow | member=instance-state, runtime=3.14 | 2026-10-11T02:53:48.101676+00:00 | 0.792 |
-| scenario | wide | member=instance-state, runtime=3.14 | 2026-10-11T02:53:48.893306+00:00 | 1.017 |
-| scenario | nested | member=instance-state, runtime=3.14 | 2026-10-11T02:53:49.910427+00:00 | 1.599 |
-| scenario | nullable | member=instance-state, runtime=3.14 | 2026-10-11T02:53:51.509250+00:00 | 0.881 |
-| scenario | partial | member=instance-state, runtime=3.14 | 2026-10-11T02:53:52.390625+00:00 | 0.842 |
-| scenario | polymorphic | member=instance-state, runtime=3.14 | 2026-10-11T02:53:53.232985+00:00 | 0.833 |
-| scenario | warmed | member=instance-state, runtime=3.14 | 2026-10-11T02:53:54.066298+00:00 | 0.751 |
-| member | write-lowering | member=write-lowering | 2026-10-11T02:53:54.929552+00:00 | 553.498 |
-| setup | identity | member=write-lowering, runtime=3.13 | 2026-10-11T02:53:55.306025+00:00 | 0.064 |
-| setup | identity | member=write-lowering, runtime=3.14 | 2026-10-11T02:53:55.369928+00:00 | 0.029 |
-| case | txtime.opening.columns.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-11T02:53:55.399203+00:00 | 0.907 |
-| case | txtime.changed.columns.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-11T02:53:56.306076+00:00 | 1.025 |
-| case | txtime.unchanged.columns.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-11T02:53:57.330929+00:00 | 0.860 |
-| case | plain.changed.columns.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-11T02:53:58.191158+00:00 | 0.948 |
-| case | bitemporal.interior.columns.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-11T02:53:59.139275+00:00 | 1.157 |
-| case | txtime.opening.columns.wire | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-11T02:54:00.296127+00:00 | 0.799 |
-| case | txtime.changed.columns.wire | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-11T02:54:01.095308+00:00 | 0.988 |
-| case | txtime.unchanged.columns.wire | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-11T02:54:02.083049+00:00 | 0.845 |
-| case | plain.changed.columns.wire | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-11T02:54:02.928051+00:00 | 0.910 |
-| case | bitemporal.interior.columns.wire | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-11T02:54:03.838080+00:00 | 1.110 |
-| case | txtime.opening.document.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-11T02:54:04.948515+00:00 | 0.799 |
-| case | txtime.changed.document.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-11T02:54:05.747497+00:00 | 1.019 |
-| case | txtime.unchanged.document.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-11T02:54:06.766726+00:00 | 0.863 |
-| case | plain.changed.document.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-11T02:54:07.629479+00:00 | 0.942 |
-| case | bitemporal.interior.document.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-11T02:54:08.571844+00:00 | 1.146 |
-| case | txtime.opening.document.wire | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-11T02:54:09.717714+00:00 | 0.800 |
-| case | txtime.changed.document.wire | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-11T02:54:10.517528+00:00 | 0.987 |
-| case | txtime.unchanged.document.wire | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-11T02:54:11.504848+00:00 | 0.840 |
-| case | plain.changed.document.wire | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-11T02:54:12.345297+00:00 | 0.910 |
-| case | bitemporal.interior.document.wire | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-11T02:54:13.255443+00:00 | 1.101 |
-| case | geometry.depth-1.columns.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-11T02:54:14.356482+00:00 | 0.854 |
-| case | geometry.depth-1.document.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-11T02:54:15.210897+00:00 | 0.797 |
-| case | geometry.depth-4.columns.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-11T02:54:16.007617+00:00 | 0.861 |
-| case | geometry.depth-4.document.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-11T02:54:16.869146+00:00 | 0.921 |
-| case | geometry.depth-8.columns.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-11T02:54:17.790416+00:00 | 0.883 |
-| case | geometry.depth-8.document.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-11T02:54:18.673334+00:00 | 0.900 |
-| case | geometry.many-0.columns.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-11T02:54:19.573454+00:00 | 0.762 |
-| case | geometry.many-0.document.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-11T02:54:20.335418+00:00 | 0.760 |
-| case | geometry.many-8.columns.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-11T02:54:21.095519+00:00 | 0.863 |
-| case | geometry.many-8.document.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-11T02:54:21.958500+00:00 | 0.857 |
-| case | geometry.many-32.columns.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-11T02:54:22.815853+00:00 | 1.132 |
-| case | geometry.many-32.document.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-11T02:54:23.948312+00:00 | 1.126 |
-| case | geometry.width-16.columns.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-11T02:54:25.074175+00:00 | 0.888 |
-| case | geometry.width-16.document.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-11T02:54:25.961944+00:00 | 0.879 |
-| case | geometry.width-64.columns.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-11T02:54:26.840820+00:00 | 1.273 |
-| case | geometry.width-64.document.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-11T02:54:28.114294+00:00 | 1.274 |
-| case | geometry.sparse-64.columns.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-11T02:54:29.388138+00:00 | 0.861 |
-| case | geometry.sparse-64.document.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-11T02:54:30.248791+00:00 | 0.855 |
-| case | ancestor.depth-1.columns.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-11T02:54:31.104178+00:00 | 1.000 |
-| case | ancestor.depth-1.document.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-11T02:54:32.103924+00:00 | 0.983 |
-| case | ancestor.width-16.columns.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-11T02:54:33.087104+00:00 | 1.081 |
-| case | ancestor.width-16.document.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-11T02:54:34.167735+00:00 | 1.062 |
-| case | ancestor.width-64.columns.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-11T02:54:35.229637+00:00 | 1.449 |
-| case | ancestor.width-64.document.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-11T02:54:36.678688+00:00 | 1.368 |
-| case | ancestor.sparse-64.columns.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-11T02:54:38.046497+00:00 | 1.055 |
-| case | ancestor.sparse-64.document.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-11T02:54:39.102013+00:00 | 1.027 |
-| case | plain.target-patch.columns.wire | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-11T02:54:40.128584+00:00 | 0.876 |
-| case | plain.target-replace.columns.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-11T02:54:41.004502+00:00 | 0.896 |
-| case | plain.target-replace.columns.wire | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-11T02:54:41.900845+00:00 | 0.881 |
-| case | plain.target-patch.document.wire | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-11T02:54:42.781535+00:00 | 0.925 |
-| case | plain.target-replace.document.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-11T02:54:43.706746+00:00 | 0.937 |
-| case | plain.target-replace.document.wire | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-11T02:54:44.644119+00:00 | 0.933 |
-| case | txtime.target-patch.columns.wire | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-11T02:54:45.577410+00:00 | 1.005 |
-| case | txtime.target-replace.columns.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-11T02:54:46.582288+00:00 | 1.030 |
-| case | txtime.target-replace.columns.wire | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-11T02:54:47.612135+00:00 | 1.020 |
-| case | txtime.target-patch.document.wire | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-11T02:54:48.632156+00:00 | 1.027 |
-| case | txtime.target-replace.document.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-11T02:54:49.658950+00:00 | 1.022 |
-| case | txtime.target-replace.document.wire | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-11T02:54:50.680731+00:00 | 1.028 |
-| case | bitemporal.target-patch.columns.wire | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-11T02:54:51.709072+00:00 | 1.137 |
-| case | bitemporal.target-replace.columns.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-11T02:54:52.846406+00:00 | 1.162 |
-| case | bitemporal.target-replace.columns.wire | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-11T02:54:54.007982+00:00 | 1.140 |
-| case | bitemporal.target-patch.document.wire | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-11T02:54:55.148013+00:00 | 1.143 |
-| case | bitemporal.target-replace.document.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-11T02:54:56.291156+00:00 | 1.151 |
-| case | bitemporal.target-replace.document.wire | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-11T02:54:57.442180+00:00 | 1.128 |
-| case | acquisition.rows-8.columns | member=write-lowering, runtime=3.13, window=predicate-acquisition | 2026-10-11T02:54:58.570365+00:00 | 1.069 |
-| case | acquisition.rows-32.columns | member=write-lowering, runtime=3.13, window=predicate-acquisition | 2026-10-11T02:54:59.639445+00:00 | 1.684 |
-| case | acquisition.rows-128.columns | member=write-lowering, runtime=3.13, window=predicate-acquisition | 2026-10-11T02:55:01.323573+00:00 | 4.103 |
-| case | acquisition.rows-8.document | member=write-lowering, runtime=3.13, window=predicate-acquisition | 2026-10-11T02:55:05.426921+00:00 | 1.065 |
-| case | acquisition.rows-32.document | member=write-lowering, runtime=3.13, window=predicate-acquisition | 2026-10-11T02:55:06.492219+00:00 | 1.699 |
-| case | acquisition.rows-128.document | member=write-lowering, runtime=3.13, window=predicate-acquisition | 2026-10-11T02:55:08.191562+00:00 | 4.221 |
-| case | response.insert.family.wire | member=write-lowering, runtime=3.13, window=wire-insert-response | 2026-10-11T02:55:12.412299+00:00 | 0.787 |
-| case | model.prepared | member=write-lowering, runtime=3.13, window=model-preparation | 2026-10-11T02:55:13.199641+00:00 | 4.899 |
-| case | model.prepared.family | member=write-lowering, runtime=3.13, window=model-preparation | 2026-10-11T02:55:18.098777+00:00 | 1.024 |
-| case | predicate-flush.reaching.objects-128.columns | member=write-lowering, runtime=3.13, window=predicate-flush | 2026-10-11T02:55:19.123250+00:00 | 37.760 |
-| case | predicate-flush.reaching.objects-128.document | member=write-lowering, runtime=3.13, window=predicate-flush | 2026-10-11T02:55:56.883149+00:00 | 36.957 |
-| case | predicate-flush.unchanged.objects-128.document | member=write-lowering, runtime=3.13, window=predicate-flush | 2026-10-11T02:56:33.840145+00:00 | 16.984 |
-| case | predicate-flush.wide.history-128.document | member=write-lowering, runtime=3.13, window=predicate-flush | 2026-10-11T02:56:50.824558+00:00 | 12.030 |
-| case | txtime.opening.columns.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:57:02.854288+00:00 | 0.804 |
-| case | txtime.changed.columns.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:57:03.658117+00:00 | 0.994 |
-| case | txtime.unchanged.columns.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:57:04.652540+00:00 | 0.871 |
-| case | plain.changed.columns.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:57:05.524026+00:00 | 0.939 |
-| case | bitemporal.interior.columns.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:57:06.463284+00:00 | 1.124 |
-| case | txtime.opening.columns.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:57:07.587561+00:00 | 0.813 |
-| case | txtime.changed.columns.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:57:08.400598+00:00 | 0.972 |
-| case | txtime.unchanged.columns.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:57:09.373138+00:00 | 0.846 |
-| case | plain.changed.columns.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:57:10.219524+00:00 | 0.906 |
-| case | bitemporal.interior.columns.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:57:11.125574+00:00 | 1.083 |
-| case | txtime.opening.document.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:57:12.209050+00:00 | 0.796 |
-| case | txtime.changed.document.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:57:13.005313+00:00 | 1.011 |
-| case | txtime.unchanged.document.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:57:14.016595+00:00 | 0.866 |
-| case | plain.changed.document.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:57:14.883063+00:00 | 0.936 |
-| case | bitemporal.interior.document.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:57:15.819268+00:00 | 1.111 |
-| case | txtime.opening.document.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:57:16.930545+00:00 | 0.803 |
-| case | txtime.changed.document.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:57:17.733722+00:00 | 0.974 |
-| case | txtime.unchanged.document.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:57:18.708103+00:00 | 0.851 |
-| case | plain.changed.document.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:57:19.559531+00:00 | 0.911 |
-| case | bitemporal.interior.document.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:57:20.470637+00:00 | 1.072 |
-| case | geometry.depth-1.columns.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:57:21.542701+00:00 | 0.800 |
-| case | geometry.depth-1.document.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:57:22.342465+00:00 | 0.797 |
-| case | geometry.depth-4.columns.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:57:23.139001+00:00 | 0.838 |
-| case | geometry.depth-4.document.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:57:23.976796+00:00 | 0.838 |
-| case | geometry.depth-8.columns.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:57:24.814371+00:00 | 0.875 |
-| case | geometry.depth-8.document.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:57:25.689632+00:00 | 0.896 |
-| case | geometry.many-0.columns.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:57:26.585821+00:00 | 0.793 |
-| case | geometry.many-0.document.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:57:27.378454+00:00 | 0.780 |
-| case | geometry.many-8.columns.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:57:28.158354+00:00 | 0.858 |
-| case | geometry.many-8.document.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:57:29.015901+00:00 | 0.879 |
-| case | geometry.many-32.columns.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:57:29.895319+00:00 | 1.096 |
-| case | geometry.many-32.document.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:57:30.991043+00:00 | 1.085 |
-| case | geometry.width-16.columns.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:57:32.076394+00:00 | 0.876 |
-| case | geometry.width-16.document.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:57:32.952246+00:00 | 0.874 |
-| case | geometry.width-64.columns.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:57:33.826716+00:00 | 1.194 |
-| case | geometry.width-64.document.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:57:35.020459+00:00 | 1.199 |
-| case | geometry.sparse-64.columns.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:57:36.219737+00:00 | 0.848 |
-| case | geometry.sparse-64.document.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:57:37.068173+00:00 | 0.854 |
-| case | ancestor.depth-1.columns.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:57:37.922693+00:00 | 0.986 |
-| case | ancestor.depth-1.document.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:57:38.908753+00:00 | 0.970 |
-| case | ancestor.width-16.columns.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:57:39.879186+00:00 | 1.052 |
-| case | ancestor.width-16.document.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:57:40.931196+00:00 | 1.030 |
-| case | ancestor.width-64.columns.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:57:41.961420+00:00 | 1.378 |
-| case | ancestor.width-64.document.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:57:43.339112+00:00 | 1.302 |
-| case | ancestor.sparse-64.columns.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:57:44.641141+00:00 | 1.041 |
-| case | ancestor.sparse-64.document.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:57:45.682543+00:00 | 0.999 |
-| case | leaf.string.columns.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:57:46.681862+00:00 | 1.418 |
-| case | leaf.string.document.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:57:48.099731+00:00 | 1.414 |
-| case | leaf.boolean.columns.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:57:49.513563+00:00 | 1.044 |
-| case | leaf.boolean.columns.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:57:50.557660+00:00 | 1.132 |
-| case | leaf.boolean.document.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:57:51.689934+00:00 | 1.039 |
-| case | leaf.boolean.document.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:57:52.729267+00:00 | 1.148 |
-| case | leaf.int32.columns.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:57:53.877659+00:00 | 1.090 |
-| case | leaf.int32.columns.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:57:54.967424+00:00 | 1.319 |
-| case | leaf.int32.document.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:57:56.286295+00:00 | 1.101 |
-| case | leaf.int32.document.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:57:57.387768+00:00 | 1.322 |
-| case | leaf.int64.columns.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:57:58.709913+00:00 | 1.127 |
-| case | leaf.int64.columns.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:57:59.837126+00:00 | 1.342 |
-| case | leaf.int64.document.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:58:01.179500+00:00 | 1.116 |
-| case | leaf.int64.document.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:58:02.295344+00:00 | 1.344 |
-| case | leaf.float32.columns.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:58:03.639874+00:00 | 1.626 |
-| case | leaf.float32.columns.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:58:05.265941+00:00 | 2.132 |
-| case | leaf.float32.document.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:58:07.397971+00:00 | 1.656 |
-| case | leaf.float32.document.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:58:09.053794+00:00 | 2.131 |
-| case | leaf.float64.columns.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:58:11.184735+00:00 | 1.192 |
-| case | leaf.float64.columns.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:58:12.377310+00:00 | 1.342 |
-| case | leaf.float64.document.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:58:13.719385+00:00 | 1.218 |
-| case | leaf.float64.document.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:58:14.937711+00:00 | 1.337 |
-| case | leaf.decimal.columns.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:58:16.275003+00:00 | 1.941 |
-| case | leaf.decimal.columns.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:58:18.216438+00:00 | 3.443 |
-| case | leaf.decimal.document.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:58:21.659551+00:00 | 1.941 |
-| case | leaf.decimal.document.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:58:23.600996+00:00 | 3.429 |
-| case | leaf.bytes.columns.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:58:27.030038+00:00 | 1.203 |
-| case | leaf.bytes.columns.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:58:28.232731+00:00 | 1.482 |
-| case | leaf.bytes.document.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:58:29.714870+00:00 | 1.198 |
-| case | leaf.bytes.document.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:58:30.913246+00:00 | 1.460 |
-| case | leaf.date.columns.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:58:32.372916+00:00 | 1.293 |
-| case | leaf.date.columns.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:58:33.666303+00:00 | 1.733 |
-| case | leaf.date.document.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:58:35.399597+00:00 | 1.302 |
-| case | leaf.date.document.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:58:36.701580+00:00 | 1.738 |
-| case | leaf.time.columns.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:58:38.439723+00:00 | 1.337 |
-| case | leaf.time.columns.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:58:39.776520+00:00 | 1.730 |
-| case | leaf.time.document.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:58:41.506297+00:00 | 1.334 |
-| case | leaf.time.document.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:58:42.840686+00:00 | 1.730 |
-| case | leaf.timestamp.columns.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:58:44.570409+00:00 | 2.048 |
-| case | leaf.timestamp.columns.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:58:46.618668+00:00 | 3.322 |
-| case | leaf.timestamp.document.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:58:49.941111+00:00 | 2.053 |
-| case | leaf.timestamp.document.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:58:51.994444+00:00 | 3.347 |
-| case | leaf.uuid.columns.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:58:55.341943+00:00 | 1.856 |
-| case | leaf.uuid.columns.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:58:57.197864+00:00 | 2.415 |
-| case | leaf.uuid.document.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:58:59.613060+00:00 | 1.846 |
-| case | leaf.uuid.document.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:59:01.459218+00:00 | 2.437 |
-| case | plain.target-patch.columns.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:59:03.896750+00:00 | 0.879 |
-| case | plain.target-replace.columns.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:59:04.775338+00:00 | 0.896 |
-| case | plain.target-replace.columns.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:59:05.671845+00:00 | 0.870 |
-| case | plain.target-patch.document.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:59:06.542013+00:00 | 0.914 |
-| case | plain.target-replace.document.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:59:07.456241+00:00 | 0.911 |
-| case | plain.target-replace.document.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:59:08.367385+00:00 | 0.921 |
-| case | txtime.target-patch.columns.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:59:09.288738+00:00 | 0.985 |
-| case | txtime.target-replace.columns.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:59:10.273534+00:00 | 1.013 |
-| case | txtime.target-replace.columns.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:59:11.287002+00:00 | 0.991 |
-| case | txtime.target-patch.document.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:59:12.277570+00:00 | 0.993 |
-| case | txtime.target-replace.document.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:59:13.270808+00:00 | 1.000 |
-| case | txtime.target-replace.document.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:59:14.270836+00:00 | 1.003 |
-| case | bitemporal.target-patch.columns.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:59:15.274164+00:00 | 1.103 |
-| case | bitemporal.target-replace.columns.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:59:16.376836+00:00 | 1.115 |
-| case | bitemporal.target-replace.columns.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:59:17.491978+00:00 | 1.108 |
-| case | bitemporal.target-patch.document.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:59:18.599650+00:00 | 1.115 |
-| case | bitemporal.target-replace.document.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:59:19.714670+00:00 | 1.107 |
-| case | bitemporal.target-replace.document.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-11T02:59:20.821752+00:00 | 1.102 |
-| case | acquisition.rows-8.columns | member=write-lowering, runtime=3.14, window=predicate-acquisition | 2026-10-11T02:59:21.923802+00:00 | 1.022 |
-| case | acquisition.rows-32.columns | member=write-lowering, runtime=3.14, window=predicate-acquisition | 2026-10-11T02:59:22.946063+00:00 | 1.519 |
-| case | acquisition.rows-128.columns | member=write-lowering, runtime=3.14, window=predicate-acquisition | 2026-10-11T02:59:24.464645+00:00 | 3.594 |
-| case | acquisition.rows-8.document | member=write-lowering, runtime=3.14, window=predicate-acquisition | 2026-10-11T02:59:28.058430+00:00 | 1.025 |
-| case | acquisition.rows-32.document | member=write-lowering, runtime=3.14, window=predicate-acquisition | 2026-10-11T02:59:29.083180+00:00 | 1.540 |
-| case | acquisition.rows-128.document | member=write-lowering, runtime=3.14, window=predicate-acquisition | 2026-10-11T02:59:30.623655+00:00 | 3.696 |
-| case | leaf-acquisition.string.rows-8.columns | member=write-lowering, runtime=3.14, window=predicate-acquisition | 2026-10-11T02:59:34.319728+00:00 | 2.061 |
-| case | leaf-acquisition.string.rows-8.document | member=write-lowering, runtime=3.14, window=predicate-acquisition | 2026-10-11T02:59:36.380540+00:00 | 2.069 |
-| case | leaf-acquisition.boolean.rows-8.columns | member=write-lowering, runtime=3.14, window=predicate-acquisition | 2026-10-11T02:59:38.449645+00:00 | 1.379 |
-| case | leaf-acquisition.boolean.rows-8.document | member=write-lowering, runtime=3.14, window=predicate-acquisition | 2026-10-11T02:59:39.828542+00:00 | 1.393 |
-| case | leaf-acquisition.int32.rows-8.columns | member=write-lowering, runtime=3.14, window=predicate-acquisition | 2026-10-11T02:59:41.221778+00:00 | 1.891 |
-| case | leaf-acquisition.int32.rows-8.document | member=write-lowering, runtime=3.14, window=predicate-acquisition | 2026-10-11T02:59:43.112802+00:00 | 1.879 |
-| case | leaf-acquisition.int64.rows-8.columns | member=write-lowering, runtime=3.14, window=predicate-acquisition | 2026-10-11T02:59:44.991632+00:00 | 2.064 |
-| case | leaf-acquisition.int64.rows-8.document | member=write-lowering, runtime=3.14, window=predicate-acquisition | 2026-10-11T02:59:47.055671+00:00 | 2.041 |
-| case | leaf-acquisition.float32.rows-8.columns | member=write-lowering, runtime=3.14, window=predicate-acquisition | 2026-10-11T02:59:49.097008+00:00 | 6.510 |
-| case | leaf-acquisition.float32.rows-8.document | member=write-lowering, runtime=3.14, window=predicate-acquisition | 2026-10-11T02:59:55.607392+00:00 | 6.353 |
-| case | leaf-acquisition.float64.rows-8.columns | member=write-lowering, runtime=3.14, window=predicate-acquisition | 2026-10-11T03:00:01.960943+00:00 | 2.719 |
-| case | leaf-acquisition.float64.rows-8.document | member=write-lowering, runtime=3.14, window=predicate-acquisition | 2026-10-11T03:00:04.679495+00:00 | 2.719 |
-| case | leaf-acquisition.decimal.rows-8.columns | member=write-lowering, runtime=3.14, window=predicate-acquisition | 2026-10-11T03:00:07.398492+00:00 | 9.715 |
-| case | leaf-acquisition.decimal.rows-8.document | member=write-lowering, runtime=3.14, window=predicate-acquisition | 2026-10-11T03:00:17.113430+00:00 | 9.358 |
-| case | leaf-acquisition.bytes.rows-8.columns | member=write-lowering, runtime=3.14, window=predicate-acquisition | 2026-10-11T03:00:26.471962+00:00 | 3.622 |
-| case | leaf-acquisition.bytes.rows-8.document | member=write-lowering, runtime=3.14, window=predicate-acquisition | 2026-10-11T03:00:30.094204+00:00 | 3.571 |
-| case | leaf-acquisition.date.rows-8.columns | member=write-lowering, runtime=3.14, window=predicate-acquisition | 2026-10-11T03:00:33.665730+00:00 | 4.621 |
-| case | leaf-acquisition.date.rows-8.document | member=write-lowering, runtime=3.14, window=predicate-acquisition | 2026-10-11T03:00:38.286291+00:00 | 4.709 |
-| case | leaf-acquisition.time.rows-8.columns | member=write-lowering, runtime=3.14, window=predicate-acquisition | 2026-10-11T03:00:42.994978+00:00 | 5.938 |
-| case | leaf-acquisition.time.rows-8.document | member=write-lowering, runtime=3.14, window=predicate-acquisition | 2026-10-11T03:00:48.933017+00:00 | 6.015 |
-| case | leaf-acquisition.timestamp.rows-8.columns | member=write-lowering, runtime=3.14, window=predicate-acquisition | 2026-10-11T03:00:54.947628+00:00 | 14.510 |
-| case | leaf-acquisition.timestamp.rows-8.document | member=write-lowering, runtime=3.14, window=predicate-acquisition | 2026-10-11T03:01:09.457731+00:00 | 14.331 |
-| case | leaf-acquisition.uuid.rows-8.columns | member=write-lowering, runtime=3.14, window=predicate-acquisition | 2026-10-11T03:01:23.788923+00:00 | 5.054 |
-| case | leaf-acquisition.uuid.rows-8.document | member=write-lowering, runtime=3.14, window=predicate-acquisition | 2026-10-11T03:01:28.842595+00:00 | 4.869 |
-| case | response.insert.family.wire | member=write-lowering, runtime=3.14, window=wire-insert-response | 2026-10-11T03:01:33.711775+00:00 | 0.789 |
-| case | model.prepared | member=write-lowering, runtime=3.14, window=model-preparation | 2026-10-11T03:01:34.500956+00:00 | 4.007 |
-| case | model.prepared.family | member=write-lowering, runtime=3.14, window=model-preparation | 2026-10-11T03:01:38.507530+00:00 | 0.971 |
-| case | predicate-flush.reaching.objects-128.columns | member=write-lowering, runtime=3.14, window=predicate-flush | 2026-10-11T03:01:39.479029+00:00 | 32.826 |
-| case | predicate-flush.reaching.objects-128.document | member=write-lowering, runtime=3.14, window=predicate-flush | 2026-10-11T03:02:12.304700+00:00 | 31.366 |
-| case | predicate-flush.unchanged.objects-128.document | member=write-lowering, runtime=3.14, window=predicate-flush | 2026-10-11T03:02:43.670745+00:00 | 14.348 |
-| case | predicate-flush.wide.history-128.document | member=write-lowering, runtime=3.14, window=predicate-flush | 2026-10-11T03:02:58.018981+00:00 | 10.212 |
-| member | feature-boundary | member=feature-boundary | 2026-10-11T03:03:08.473655+00:00 | 21.018 |
-| setup | identity | member=feature-boundary, runtime=3.13 | 2026-10-11T03:03:08.691014+00:00 | 0.062 |
-| setup | identity | member=feature-boundary, runtime=3.14 | 2026-10-11T03:03:08.753149+00:00 | 0.027 |
-| case | predicate.shallow-scalar.binding | member=feature-boundary, runtime=3.13, window=typed-predicate-binding | 2026-10-11T03:03:08.780442+00:00 | 0.321 |
-| case | predicate.shallow-scalar.cold-plan | member=feature-boundary, runtime=3.13, window=typed-cold-plan | 2026-10-11T03:03:09.100968+00:00 | 0.404 |
-| case | predicate.scalar-any.binding | member=feature-boundary, runtime=3.13, window=typed-predicate-binding | 2026-10-11T03:03:09.504658+00:00 | 0.300 |
-| case | predicate.scalar-any.cold-plan | member=feature-boundary, runtime=3.13, window=typed-cold-plan | 2026-10-11T03:03:09.804547+00:00 | 0.407 |
-| case | predicate.nested-all.binding | member=feature-boundary, runtime=3.13, window=typed-predicate-binding | 2026-10-11T03:03:10.212044+00:00 | 0.300 |
-| case | predicate.nested-all.cold-plan | member=feature-boundary, runtime=3.13, window=typed-cold-plan | 2026-10-11T03:03:10.512000+00:00 | 0.412 |
-| case | predicate.two-hop-to-one.binding | member=feature-boundary, runtime=3.13, window=typed-predicate-binding | 2026-10-11T03:03:10.924227+00:00 | 0.315 |
-| case | predicate.two-hop-to-one.cold-plan | member=feature-boundary, runtime=3.13, window=typed-cold-plan | 2026-10-11T03:03:11.239641+00:00 | 0.425 |
-| case | predicate.quantifier-through-to-one.binding | member=feature-boundary, runtime=3.13, window=typed-predicate-binding | 2026-10-11T03:03:11.664614+00:00 | 0.307 |
-| case | predicate.quantifier-through-to-one.cold-plan | member=feature-boundary, runtime=3.13, window=typed-cold-plan | 2026-10-11T03:03:11.971814+00:00 | 0.421 |
-| case | predicate.subtype-narrowing.binding | member=feature-boundary, runtime=3.13, window=typed-predicate-binding | 2026-10-11T03:03:12.392470+00:00 | 0.306 |
-| case | predicate.subtype-narrowing.cold-plan | member=feature-boundary, runtime=3.13, window=typed-cold-plan | 2026-10-11T03:03:12.698196+00:00 | 0.422 |
-| case | scalar-collection.integer.size-0.encode | member=feature-boundary, runtime=3.13, window=scalar-collection-encode | 2026-10-11T03:03:13.120262+00:00 | 0.291 |
-| case | scalar-collection.integer.size-0.decode | member=feature-boundary, runtime=3.13, window=scalar-collection-decode | 2026-10-11T03:03:13.411140+00:00 | 0.289 |
-| case | scalar-collection.integer.size-8.encode | member=feature-boundary, runtime=3.13, window=scalar-collection-encode | 2026-10-11T03:03:13.699801+00:00 | 0.292 |
-| case | scalar-collection.integer.size-8.decode | member=feature-boundary, runtime=3.13, window=scalar-collection-decode | 2026-10-11T03:03:13.991595+00:00 | 0.293 |
-| case | scalar-collection.integer.size-128.encode | member=feature-boundary, runtime=3.13, window=scalar-collection-encode | 2026-10-11T03:03:14.284210+00:00 | 0.327 |
-| case | scalar-collection.integer.size-128.decode | member=feature-boundary, runtime=3.13, window=scalar-collection-decode | 2026-10-11T03:03:14.611518+00:00 | 0.316 |
-| case | scalar-collection.string.size-0.encode | member=feature-boundary, runtime=3.13, window=scalar-collection-encode | 2026-10-11T03:03:14.927963+00:00 | 0.294 |
-| case | scalar-collection.string.size-0.decode | member=feature-boundary, runtime=3.13, window=scalar-collection-decode | 2026-10-11T03:03:15.221875+00:00 | 0.288 |
-| case | scalar-collection.string.size-8.encode | member=feature-boundary, runtime=3.13, window=scalar-collection-encode | 2026-10-11T03:03:15.509711+00:00 | 0.294 |
-| case | scalar-collection.string.size-8.decode | member=feature-boundary, runtime=3.13, window=scalar-collection-decode | 2026-10-11T03:03:15.803299+00:00 | 0.293 |
-| case | scalar-collection.string.size-128.encode | member=feature-boundary, runtime=3.13, window=scalar-collection-encode | 2026-10-11T03:03:16.096618+00:00 | 0.366 |
-| case | scalar-collection.string.size-128.decode | member=feature-boundary, runtime=3.13, window=scalar-collection-decode | 2026-10-11T03:03:16.462855+00:00 | 0.293 |
-| case | scalar-collection.decimal.size-0.encode | member=feature-boundary, runtime=3.13, window=scalar-collection-encode | 2026-10-11T03:03:16.755787+00:00 | 0.287 |
-| case | scalar-collection.decimal.size-0.decode | member=feature-boundary, runtime=3.13, window=scalar-collection-decode | 2026-10-11T03:03:17.042828+00:00 | 0.292 |
-| case | scalar-collection.decimal.size-8.encode | member=feature-boundary, runtime=3.13, window=scalar-collection-encode | 2026-10-11T03:03:17.334483+00:00 | 0.318 |
-| case | scalar-collection.decimal.size-8.decode | member=feature-boundary, runtime=3.13, window=scalar-collection-decode | 2026-10-11T03:03:17.652195+00:00 | 0.313 |
-| case | scalar-collection.decimal.size-128.encode | member=feature-boundary, runtime=3.13, window=scalar-collection-encode | 2026-10-11T03:03:17.965439+00:00 | 0.682 |
-| case | scalar-collection.decimal.size-128.decode | member=feature-boundary, runtime=3.13, window=scalar-collection-decode | 2026-10-11T03:03:18.647214+00:00 | 0.705 |
-| case | predicate.shallow-scalar.binding | member=feature-boundary, runtime=3.14, window=typed-predicate-binding | 2026-10-11T03:03:19.352121+00:00 | 0.291 |
-| case | predicate.shallow-scalar.cold-plan | member=feature-boundary, runtime=3.14, window=typed-cold-plan | 2026-10-11T03:03:19.642768+00:00 | 0.373 |
-| case | predicate.scalar-any.binding | member=feature-boundary, runtime=3.14, window=typed-predicate-binding | 2026-10-11T03:03:20.015735+00:00 | 0.291 |
-| case | predicate.scalar-any.cold-plan | member=feature-boundary, runtime=3.14, window=typed-cold-plan | 2026-10-11T03:03:20.306916+00:00 | 0.380 |
-| case | predicate.nested-all.binding | member=feature-boundary, runtime=3.14, window=typed-predicate-binding | 2026-10-11T03:03:20.686699+00:00 | 0.290 |
-| case | predicate.nested-all.cold-plan | member=feature-boundary, runtime=3.14, window=typed-cold-plan | 2026-10-11T03:03:20.976932+00:00 | 0.392 |
-| case | predicate.two-hop-to-one.binding | member=feature-boundary, runtime=3.14, window=typed-predicate-binding | 2026-10-11T03:03:21.368999+00:00 | 0.301 |
-| case | predicate.two-hop-to-one.cold-plan | member=feature-boundary, runtime=3.14, window=typed-cold-plan | 2026-10-11T03:03:21.669804+00:00 | 0.398 |
-| case | predicate.quantifier-through-to-one.binding | member=feature-boundary, runtime=3.14, window=typed-predicate-binding | 2026-10-11T03:03:22.067827+00:00 | 0.297 |
-| case | predicate.quantifier-through-to-one.cold-plan | member=feature-boundary, runtime=3.14, window=typed-cold-plan | 2026-10-11T03:03:22.365269+00:00 | 0.393 |
-| case | predicate.subtype-narrowing.binding | member=feature-boundary, runtime=3.14, window=typed-predicate-binding | 2026-10-11T03:03:22.758553+00:00 | 0.297 |
-| case | predicate.subtype-narrowing.cold-plan | member=feature-boundary, runtime=3.14, window=typed-cold-plan | 2026-10-11T03:03:23.055269+00:00 | 0.399 |
-| case | scalar-collection.integer.size-0.encode | member=feature-boundary, runtime=3.14, window=scalar-collection-encode | 2026-10-11T03:03:23.454369+00:00 | 0.281 |
-| case | scalar-collection.integer.size-0.decode | member=feature-boundary, runtime=3.14, window=scalar-collection-decode | 2026-10-11T03:03:23.735204+00:00 | 0.281 |
-| case | scalar-collection.integer.size-8.encode | member=feature-boundary, runtime=3.14, window=scalar-collection-encode | 2026-10-11T03:03:24.015909+00:00 | 0.286 |
-| case | scalar-collection.integer.size-8.decode | member=feature-boundary, runtime=3.14, window=scalar-collection-decode | 2026-10-11T03:03:24.302439+00:00 | 0.284 |
-| case | scalar-collection.integer.size-128.encode | member=feature-boundary, runtime=3.14, window=scalar-collection-encode | 2026-10-11T03:03:24.586398+00:00 | 0.317 |
-| case | scalar-collection.integer.size-128.decode | member=feature-boundary, runtime=3.14, window=scalar-collection-decode | 2026-10-11T03:03:24.903625+00:00 | 0.315 |
-| case | scalar-collection.string.size-0.encode | member=feature-boundary, runtime=3.14, window=scalar-collection-encode | 2026-10-11T03:03:25.219123+00:00 | 0.282 |
-| case | scalar-collection.string.size-0.decode | member=feature-boundary, runtime=3.14, window=scalar-collection-decode | 2026-10-11T03:03:25.501460+00:00 | 0.283 |
-| case | scalar-collection.string.size-8.encode | member=feature-boundary, runtime=3.14, window=scalar-collection-encode | 2026-10-11T03:03:25.784682+00:00 | 0.286 |
-| case | scalar-collection.string.size-8.decode | member=feature-boundary, runtime=3.14, window=scalar-collection-decode | 2026-10-11T03:03:26.070451+00:00 | 0.282 |
-| case | scalar-collection.string.size-128.encode | member=feature-boundary, runtime=3.14, window=scalar-collection-encode | 2026-10-11T03:03:26.352935+00:00 | 0.350 |
-| case | scalar-collection.string.size-128.decode | member=feature-boundary, runtime=3.14, window=scalar-collection-decode | 2026-10-11T03:03:26.703311+00:00 | 0.283 |
-| case | scalar-collection.decimal.size-0.encode | member=feature-boundary, runtime=3.14, window=scalar-collection-encode | 2026-10-11T03:03:26.986832+00:00 | 0.285 |
-| case | scalar-collection.decimal.size-0.decode | member=feature-boundary, runtime=3.14, window=scalar-collection-decode | 2026-10-11T03:03:27.272100+00:00 | 0.281 |
-| case | scalar-collection.decimal.size-8.encode | member=feature-boundary, runtime=3.14, window=scalar-collection-encode | 2026-10-11T03:03:27.553275+00:00 | 0.302 |
-| case | scalar-collection.decimal.size-8.decode | member=feature-boundary, runtime=3.14, window=scalar-collection-decode | 2026-10-11T03:03:27.855680+00:00 | 0.309 |
-| case | scalar-collection.decimal.size-128.encode | member=feature-boundary, runtime=3.14, window=scalar-collection-encode | 2026-10-11T03:03:28.164269+00:00 | 0.608 |
-| case | scalar-collection.decimal.size-128.decode | member=feature-boundary, runtime=3.14, window=scalar-collection-decode | 2026-10-11T03:03:28.772617+00:00 | 0.625 |
+| collection | python-report-cost | - | 2026-10-11T23:19:51.938930+00:00 | 3562.946 |
+| member | snapshot-delivery | member=snapshot-delivery | 2026-10-11T23:19:51.939070+00:00 | 2969.840 |
+| setup | identity | member=snapshot-delivery, runtime=3.13 | 2026-10-11T23:19:52.251199+00:00 | 3.337 |
+| setup | identity | member=snapshot-delivery, runtime=3.14 | 2026-10-11T23:19:55.588506+00:00 | 0.028 |
+| setup | provisioner | member=snapshot-delivery | 2026-10-11T23:19:55.617283+00:00 | 2.995 |
+| workload | conventional-fanout | member=snapshot-delivery, runtime=3.13 | 2026-10-11T23:19:58.614727+00:00 | 120.457 |
+| setup | provision | member=snapshot-delivery, roots=200, runtime=3.13, workload=conventional-fanout | 2026-10-11T23:19:58.614740+00:00 | 3.151 |
+| setup | provision | member=snapshot-delivery, roots=2000, runtime=3.13, workload=conventional-fanout | 2026-10-11T23:20:22.537599+00:00 | 33.948 |
+| workload | duplicate-include | member=snapshot-delivery, runtime=3.13 | 2026-10-11T23:21:59.072405+00:00 | 120.694 |
+| setup | provision | member=snapshot-delivery, roots=200, runtime=3.13, workload=duplicate-include | 2026-10-11T23:21:59.072450+00:00 | 3.110 |
+| setup | provision | member=snapshot-delivery, roots=2000, runtime=3.13, workload=duplicate-include | 2026-10-11T23:22:19.573827+00:00 | 29.794 |
+| workload | document-heavy | member=snapshot-delivery, runtime=3.13 | 2026-10-11T23:23:59.766904+00:00 | 97.307 |
+| setup | provision | member=snapshot-delivery, roots=200, runtime=3.13, workload=document-heavy | 2026-10-11T23:23:59.766944+00:00 | 1.000 |
+| setup | provision | member=snapshot-delivery, roots=2000, runtime=3.13, workload=document-heavy | 2026-10-11T23:24:20.876491+00:00 | 6.187 |
+| workload | versioned-document | member=snapshot-delivery, runtime=3.13 | 2026-10-11T23:25:37.074448+00:00 | 68.608 |
+| setup | provision | member=snapshot-delivery, roots=200, runtime=3.13, workload=versioned-document | 2026-10-11T23:25:37.074486+00:00 | 0.155 |
+| setup | provision | member=snapshot-delivery, roots=2000, runtime=3.13, workload=versioned-document | 2026-10-11T23:25:51.642692+00:00 | 1.065 |
+| workload | bitemporal-current | member=snapshot-delivery, runtime=3.13 | 2026-10-11T23:26:45.683150+00:00 | 68.245 |
+| setup | provision | member=snapshot-delivery, roots=200, runtime=3.13, workload=bitemporal-current | 2026-10-11T23:26:45.683195+00:00 | 0.225 |
+| setup | provision | member=snapshot-delivery, roots=2000, runtime=3.13, workload=bitemporal-current | 2026-10-11T23:27:00.814053+00:00 | 1.093 |
+| workload | stress-columns | member=snapshot-delivery, runtime=3.13 | 2026-10-11T23:27:53.928310+00:00 | 9.767 |
+| workload | stress-document | member=snapshot-delivery, runtime=3.13 | 2026-10-11T23:28:03.695136+00:00 | 10.178 |
+| workload | geometry | member=snapshot-delivery, runtime=3.13 | 2026-10-11T23:28:13.873391+00:00 | 187.828 |
+| workload | plan | member=snapshot-delivery, runtime=3.13 | 2026-10-11T23:31:21.702277+00:00 | 16.544 |
+| workload | control | member=snapshot-delivery, runtime=3.13 | 2026-10-11T23:31:38.246411+00:00 | 148.202 |
+| workload | conventional-fanout | member=snapshot-delivery, runtime=3.14 | 2026-10-11T23:34:06.450783+00:00 | 115.303 |
+| setup | provision | member=snapshot-delivery, roots=200, runtime=3.14, workload=conventional-fanout | 2026-10-11T23:34:06.450808+00:00 | 3.152 |
+| setup | provision | member=snapshot-delivery, roots=2000, runtime=3.14, workload=conventional-fanout | 2026-10-11T23:34:25.299432+00:00 | 29.512 |
+| workload | duplicate-include | member=snapshot-delivery, runtime=3.14 | 2026-10-11T23:36:01.753847+00:00 | 121.936 |
+| setup | provision | member=snapshot-delivery, roots=200, runtime=3.14, workload=duplicate-include | 2026-10-11T23:36:01.753890+00:00 | 3.049 |
+| setup | provision | member=snapshot-delivery, roots=2000, runtime=3.14, workload=duplicate-include | 2026-10-11T23:36:21.693060+00:00 | 29.543 |
+| workload | document-heavy | member=snapshot-delivery, runtime=3.14 | 2026-10-11T23:38:03.689978+00:00 | 98.750 |
+| setup | provision | member=snapshot-delivery, roots=200, runtime=3.14, workload=document-heavy | 2026-10-11T23:38:03.690017+00:00 | 0.919 |
+| setup | provision | member=snapshot-delivery, roots=2000, runtime=3.14, workload=document-heavy | 2026-10-11T23:38:22.612949+00:00 | 5.714 |
+| workload | versioned-document | member=snapshot-delivery, runtime=3.14 | 2026-10-11T23:39:42.440323+00:00 | 80.284 |
+| setup | provision | member=snapshot-delivery, roots=200, runtime=3.14, workload=versioned-document | 2026-10-11T23:39:42.440359+00:00 | 0.154 |
+| setup | provision | member=snapshot-delivery, roots=2000, runtime=3.14, workload=versioned-document | 2026-10-11T23:40:01.494603+00:00 | 1.144 |
+| workload | bitemporal-current | member=snapshot-delivery, runtime=3.14 | 2026-10-11T23:41:02.724833+00:00 | 75.900 |
+| setup | provision | member=snapshot-delivery, roots=200, runtime=3.14, workload=bitemporal-current | 2026-10-11T23:41:02.724876+00:00 | 0.224 |
+| setup | provision | member=snapshot-delivery, roots=2000, runtime=3.14, workload=bitemporal-current | 2026-10-11T23:41:17.772076+00:00 | 1.048 |
+| workload | stress-columns | member=snapshot-delivery, runtime=3.14 | 2026-10-11T23:42:18.625237+00:00 | 7.480 |
+| workload | stress-document | member=snapshot-delivery, runtime=3.14 | 2026-10-11T23:42:26.105387+00:00 | 7.905 |
+| workload | geometry | member=snapshot-delivery, runtime=3.14 | 2026-10-11T23:42:34.010993+00:00 | 160.620 |
+| workload | leaf | member=snapshot-delivery, runtime=3.14 | 2026-10-11T23:45:14.631406+00:00 | 1291.058 |
+| workload | plan | member=snapshot-delivery, runtime=3.14 | 2026-10-12T00:06:45.691084+00:00 | 16.236 |
+| workload | control | member=snapshot-delivery, runtime=3.14 | 2026-10-12T00:07:01.927646+00:00 | 139.397 |
+| setup | close | member=snapshot-delivery | 2026-10-12T00:09:21.390664+00:00 | 0.189 |
+| member | lifecycle-overhead | member=lifecycle-overhead | 2026-10-12T00:09:21.816627+00:00 | 12.388 |
+| member | instance-state | member=instance-state | 2026-10-12T00:09:34.208067+00:00 | 14.449 |
+| setup | identity | member=instance-state, runtime=3.13 | 2026-10-12T00:09:34.440783+00:00 | 0.125 |
+| setup | identity | member=instance-state, runtime=3.14 | 2026-10-12T00:09:34.566187+00:00 | 0.028 |
+| scenario | shallow | member=instance-state, runtime=3.13 | 2026-10-12T00:09:34.594127+00:00 | 0.951 |
+| scenario | wide | member=instance-state, runtime=3.13 | 2026-10-12T00:09:35.544703+00:00 | 1.098 |
+| scenario | nested | member=instance-state, runtime=3.13 | 2026-10-12T00:09:36.642817+00:00 | 1.716 |
+| scenario | nullable | member=instance-state, runtime=3.13 | 2026-10-12T00:09:38.358954+00:00 | 0.954 |
+| scenario | partial | member=instance-state, runtime=3.13 | 2026-10-12T00:09:39.313091+00:00 | 0.898 |
+| scenario | polymorphic | member=instance-state, runtime=3.13 | 2026-10-12T00:09:40.211028+00:00 | 0.888 |
+| scenario | warmed | member=instance-state, runtime=3.13 | 2026-10-12T00:09:41.099279+00:00 | 0.793 |
+| scenario | shallow | member=instance-state, runtime=3.14 | 2026-10-12T00:09:41.891837+00:00 | 0.796 |
+| scenario | wide | member=instance-state, runtime=3.14 | 2026-10-12T00:09:42.687607+00:00 | 0.991 |
+| scenario | nested | member=instance-state, runtime=3.14 | 2026-10-12T00:09:43.678517+00:00 | 1.590 |
+| scenario | nullable | member=instance-state, runtime=3.14 | 2026-10-12T00:09:45.268829+00:00 | 0.881 |
+| scenario | partial | member=instance-state, runtime=3.14 | 2026-10-12T00:09:46.149405+00:00 | 0.832 |
+| scenario | polymorphic | member=instance-state, runtime=3.14 | 2026-10-12T00:09:46.981725+00:00 | 0.828 |
+| scenario | warmed | member=instance-state, runtime=3.14 | 2026-10-12T00:09:47.810125+00:00 | 0.760 |
+| member | write-lowering | member=write-lowering | 2026-10-12T00:09:48.668345+00:00 | 544.997 |
+| setup | identity | member=write-lowering, runtime=3.13 | 2026-10-12T00:09:49.050585+00:00 | 0.076 |
+| setup | identity | member=write-lowering, runtime=3.14 | 2026-10-12T00:09:49.127010+00:00 | 0.028 |
+| case | txtime.opening.columns.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-12T00:09:49.155191+00:00 | 0.957 |
+| case | txtime.changed.columns.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-12T00:09:50.112687+00:00 | 1.025 |
+| case | txtime.unchanged.columns.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-12T00:09:51.137600+00:00 | 0.880 |
+| case | plain.changed.columns.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-12T00:09:52.017599+00:00 | 0.958 |
+| case | bitemporal.interior.columns.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-12T00:09:52.975544+00:00 | 1.138 |
+| case | txtime.opening.columns.wire | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-12T00:09:54.113308+00:00 | 0.790 |
+| case | txtime.changed.columns.wire | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-12T00:09:54.903084+00:00 | 0.993 |
+| case | txtime.unchanged.columns.wire | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-12T00:09:55.895635+00:00 | 0.858 |
+| case | plain.changed.columns.wire | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-12T00:09:56.753792+00:00 | 0.912 |
+| case | bitemporal.interior.columns.wire | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-12T00:09:57.665572+00:00 | 1.100 |
+| case | txtime.opening.document.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-12T00:09:58.765619+00:00 | 0.790 |
+| case | txtime.changed.document.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-12T00:09:59.555701+00:00 | 1.021 |
+| case | txtime.unchanged.document.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-12T00:10:00.576445+00:00 | 0.850 |
+| case | plain.changed.document.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-12T00:10:01.426965+00:00 | 0.969 |
+| case | bitemporal.interior.document.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-12T00:10:02.396339+00:00 | 1.116 |
+| case | txtime.opening.document.wire | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-12T00:10:03.511874+00:00 | 0.800 |
+| case | txtime.changed.document.wire | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-12T00:10:04.312099+00:00 | 0.991 |
+| case | txtime.unchanged.document.wire | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-12T00:10:05.302741+00:00 | 0.855 |
+| case | plain.changed.document.wire | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-12T00:10:06.157433+00:00 | 0.917 |
+| case | bitemporal.interior.document.wire | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-12T00:10:07.074694+00:00 | 1.096 |
+| case | geometry.depth-1.columns.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-12T00:10:08.170265+00:00 | 0.794 |
+| case | geometry.depth-1.document.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-12T00:10:08.964428+00:00 | 0.791 |
+| case | geometry.depth-4.columns.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-12T00:10:09.755605+00:00 | 0.832 |
+| case | geometry.depth-4.document.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-12T00:10:10.587154+00:00 | 0.829 |
+| case | geometry.depth-8.columns.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-12T00:10:11.416685+00:00 | 0.892 |
+| case | geometry.depth-8.document.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-12T00:10:12.308400+00:00 | 0.875 |
+| case | geometry.many-0.columns.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-12T00:10:13.183750+00:00 | 0.779 |
+| case | geometry.many-0.document.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-12T00:10:13.962776+00:00 | 0.764 |
+| case | geometry.many-8.columns.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-12T00:10:14.726627+00:00 | 0.862 |
+| case | geometry.many-8.document.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-12T00:10:15.588675+00:00 | 0.857 |
+| case | geometry.many-32.columns.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-12T00:10:16.445624+00:00 | 1.137 |
+| case | geometry.many-32.document.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-12T00:10:17.582479+00:00 | 1.133 |
+| case | geometry.width-16.columns.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-12T00:10:18.715191+00:00 | 0.883 |
+| case | geometry.width-16.document.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-12T00:10:19.598726+00:00 | 0.885 |
+| case | geometry.width-64.columns.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-12T00:10:20.483522+00:00 | 1.273 |
+| case | geometry.width-64.document.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-12T00:10:21.756140+00:00 | 1.287 |
+| case | geometry.sparse-64.columns.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-12T00:10:23.043429+00:00 | 0.858 |
+| case | geometry.sparse-64.document.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-12T00:10:23.901624+00:00 | 0.870 |
+| case | ancestor.depth-1.columns.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-12T00:10:24.771510+00:00 | 1.002 |
+| case | ancestor.depth-1.document.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-12T00:10:25.773180+00:00 | 0.997 |
+| case | ancestor.width-16.columns.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-12T00:10:26.770057+00:00 | 1.092 |
+| case | ancestor.width-16.document.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-12T00:10:27.861875+00:00 | 1.066 |
+| case | ancestor.width-64.columns.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-12T00:10:28.927904+00:00 | 1.460 |
+| case | ancestor.width-64.document.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-12T00:10:30.388438+00:00 | 1.363 |
+| case | ancestor.sparse-64.columns.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-12T00:10:31.751808+00:00 | 1.069 |
+| case | ancestor.sparse-64.document.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-12T00:10:32.820576+00:00 | 1.026 |
+| case | plain.target-patch.columns.wire | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-12T00:10:33.846704+00:00 | 0.886 |
+| case | plain.target-replace.columns.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-12T00:10:34.732938+00:00 | 0.903 |
+| case | plain.target-replace.columns.wire | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-12T00:10:35.636247+00:00 | 0.911 |
+| case | plain.target-patch.document.wire | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-12T00:10:36.547011+00:00 | 0.919 |
+| case | plain.target-replace.document.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-12T00:10:37.465805+00:00 | 0.970 |
+| case | plain.target-replace.document.wire | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-12T00:10:38.435916+00:00 | 0.914 |
+| case | txtime.target-patch.columns.wire | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-12T00:10:39.350185+00:00 | 1.026 |
+| case | txtime.target-replace.columns.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-12T00:10:40.376646+00:00 | 1.031 |
+| case | txtime.target-replace.columns.wire | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-12T00:10:41.407445+00:00 | 1.029 |
+| case | txtime.target-patch.document.wire | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-12T00:10:42.436856+00:00 | 1.013 |
+| case | txtime.target-replace.document.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-12T00:10:43.449997+00:00 | 1.046 |
+| case | txtime.target-replace.document.wire | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-12T00:10:44.495623+00:00 | 1.015 |
+| case | bitemporal.target-patch.columns.wire | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-12T00:10:45.510808+00:00 | 1.128 |
+| case | bitemporal.target-replace.columns.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-12T00:10:46.638566+00:00 | 1.133 |
+| case | bitemporal.target-replace.columns.wire | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-12T00:10:47.771327+00:00 | 1.126 |
+| case | bitemporal.target-patch.document.wire | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-12T00:10:48.897362+00:00 | 1.117 |
+| case | bitemporal.target-replace.document.typed | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-12T00:10:50.014128+00:00 | 1.134 |
+| case | bitemporal.target-replace.document.wire | member=write-lowering, runtime=3.13, window=keyed-write | 2026-10-12T00:10:51.148536+00:00 | 1.118 |
+| case | acquisition.rows-8.columns | member=write-lowering, runtime=3.13, window=predicate-acquisition | 2026-10-12T00:10:52.266478+00:00 | 1.081 |
+| case | acquisition.rows-32.columns | member=write-lowering, runtime=3.13, window=predicate-acquisition | 2026-10-12T00:10:53.347338+00:00 | 1.683 |
+| case | acquisition.rows-128.columns | member=write-lowering, runtime=3.13, window=predicate-acquisition | 2026-10-12T00:10:55.030692+00:00 | 4.071 |
+| case | acquisition.rows-8.document | member=write-lowering, runtime=3.13, window=predicate-acquisition | 2026-10-12T00:10:59.102197+00:00 | 1.075 |
+| case | acquisition.rows-32.document | member=write-lowering, runtime=3.13, window=predicate-acquisition | 2026-10-12T00:11:00.176881+00:00 | 1.691 |
+| case | acquisition.rows-128.document | member=write-lowering, runtime=3.13, window=predicate-acquisition | 2026-10-12T00:11:01.868337+00:00 | 4.180 |
+| case | response.insert.family.wire | member=write-lowering, runtime=3.13, window=wire-insert-response | 2026-10-12T00:11:06.048684+00:00 | 0.806 |
+| case | model.prepared | member=write-lowering, runtime=3.13, window=model-preparation | 2026-10-12T00:11:06.854678+00:00 | 4.898 |
+| case | model.prepared.family | member=write-lowering, runtime=3.13, window=model-preparation | 2026-10-12T00:11:11.752631+00:00 | 1.013 |
+| case | predicate-flush.reaching.objects-128.columns | member=write-lowering, runtime=3.13, window=predicate-flush | 2026-10-12T00:11:12.765461+00:00 | 35.716 |
+| case | predicate-flush.reaching.objects-128.document | member=write-lowering, runtime=3.13, window=predicate-flush | 2026-10-12T00:11:48.481693+00:00 | 34.891 |
+| case | predicate-flush.unchanged.objects-128.document | member=write-lowering, runtime=3.13, window=predicate-flush | 2026-10-12T00:12:23.373120+00:00 | 17.165 |
+| case | predicate-flush.wide.history-128.document | member=write-lowering, runtime=3.13, window=predicate-flush | 2026-10-12T00:12:40.537998+00:00 | 11.958 |
+| case | txtime.opening.columns.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:12:52.495764+00:00 | 0.794 |
+| case | txtime.changed.columns.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:12:53.289478+00:00 | 1.005 |
+| case | txtime.unchanged.columns.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:12:54.294724+00:00 | 0.846 |
+| case | plain.changed.columns.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:12:55.140778+00:00 | 0.926 |
+| case | bitemporal.interior.columns.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:12:56.066829+00:00 | 1.080 |
+| case | txtime.opening.columns.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:12:57.147121+00:00 | 0.797 |
+| case | txtime.changed.columns.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:12:57.944147+00:00 | 0.964 |
+| case | txtime.unchanged.columns.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:12:58.908615+00:00 | 0.832 |
+| case | plain.changed.columns.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:12:59.740983+00:00 | 0.899 |
+| case | bitemporal.interior.columns.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:13:00.639599+00:00 | 1.053 |
+| case | txtime.opening.document.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:13:01.692470+00:00 | 0.789 |
+| case | txtime.changed.document.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:13:02.481360+00:00 | 0.984 |
+| case | txtime.unchanged.document.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:13:03.465042+00:00 | 0.842 |
+| case | plain.changed.document.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:13:04.306987+00:00 | 0.920 |
+| case | bitemporal.interior.document.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:13:05.226718+00:00 | 1.088 |
+| case | txtime.opening.document.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:13:06.314804+00:00 | 0.817 |
+| case | txtime.changed.document.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:13:07.132134+00:00 | 0.968 |
+| case | txtime.unchanged.document.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:13:08.099996+00:00 | 0.852 |
+| case | plain.changed.document.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:13:08.952125+00:00 | 0.901 |
+| case | bitemporal.interior.document.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:13:09.853025+00:00 | 1.051 |
+| case | geometry.depth-1.columns.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:13:10.904156+00:00 | 0.791 |
+| case | geometry.depth-1.document.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:13:11.694830+00:00 | 0.790 |
+| case | geometry.depth-4.columns.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:13:12.484853+00:00 | 0.818 |
+| case | geometry.depth-4.document.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:13:13.303317+00:00 | 0.834 |
+| case | geometry.depth-8.columns.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:13:14.137009+00:00 | 0.869 |
+| case | geometry.depth-8.document.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:13:15.005664+00:00 | 0.878 |
+| case | geometry.many-0.columns.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:13:15.883631+00:00 | 0.775 |
+| case | geometry.many-0.document.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:13:16.659058+00:00 | 0.768 |
+| case | geometry.many-8.columns.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:13:17.427235+00:00 | 0.853 |
+| case | geometry.many-8.document.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:13:18.280636+00:00 | 0.852 |
+| case | geometry.many-32.columns.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:13:19.133035+00:00 | 1.074 |
+| case | geometry.many-32.document.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:13:20.207064+00:00 | 1.080 |
+| case | geometry.width-16.columns.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:13:21.287505+00:00 | 0.882 |
+| case | geometry.width-16.document.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:13:22.169923+00:00 | 0.859 |
+| case | geometry.width-64.columns.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:13:23.029240+00:00 | 1.195 |
+| case | geometry.width-64.document.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:13:24.223872+00:00 | 1.186 |
+| case | geometry.sparse-64.columns.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:13:25.410208+00:00 | 0.842 |
+| case | geometry.sparse-64.document.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:13:26.252304+00:00 | 0.831 |
+| case | ancestor.depth-1.columns.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:13:27.083796+00:00 | 0.977 |
+| case | ancestor.depth-1.document.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:13:28.060344+00:00 | 0.965 |
+| case | ancestor.width-16.columns.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:13:29.025002+00:00 | 1.038 |
+| case | ancestor.width-16.document.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:13:30.063491+00:00 | 1.015 |
+| case | ancestor.width-64.columns.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:13:31.078372+00:00 | 1.366 |
+| case | ancestor.width-64.document.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:13:32.444456+00:00 | 1.276 |
+| case | ancestor.sparse-64.columns.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:13:33.720360+00:00 | 1.018 |
+| case | ancestor.sparse-64.document.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:13:34.737967+00:00 | 0.986 |
+| case | leaf.string.columns.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:13:35.724433+00:00 | 1.385 |
+| case | leaf.string.document.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:13:37.109205+00:00 | 1.389 |
+| case | leaf.boolean.columns.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:13:38.498092+00:00 | 1.048 |
+| case | leaf.boolean.columns.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:13:39.546142+00:00 | 1.142 |
+| case | leaf.boolean.document.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:13:40.687734+00:00 | 1.033 |
+| case | leaf.boolean.document.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:13:41.720373+00:00 | 1.113 |
+| case | leaf.int32.columns.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:13:42.833492+00:00 | 1.100 |
+| case | leaf.int32.columns.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:13:43.933234+00:00 | 1.303 |
+| case | leaf.int32.document.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:13:45.235901+00:00 | 1.094 |
+| case | leaf.int32.document.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:13:46.329553+00:00 | 1.301 |
+| case | leaf.int64.columns.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:13:47.630673+00:00 | 1.108 |
+| case | leaf.int64.columns.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:13:48.738903+00:00 | 1.330 |
+| case | leaf.int64.document.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:13:50.068504+00:00 | 1.113 |
+| case | leaf.int64.document.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:13:51.181267+00:00 | 1.330 |
+| case | leaf.float32.columns.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:13:52.511649+00:00 | 1.624 |
+| case | leaf.float32.columns.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:13:54.136183+00:00 | 2.161 |
+| case | leaf.float32.document.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:13:56.297251+00:00 | 1.625 |
+| case | leaf.float32.document.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:13:57.922336+00:00 | 2.136 |
+| case | leaf.float64.columns.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:14:00.058651+00:00 | 1.186 |
+| case | leaf.float64.columns.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:14:01.244622+00:00 | 1.310 |
+| case | leaf.float64.document.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:14:02.554377+00:00 | 1.196 |
+| case | leaf.float64.document.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:14:03.750072+00:00 | 1.324 |
+| case | leaf.decimal.columns.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:14:05.074229+00:00 | 1.946 |
+| case | leaf.decimal.columns.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:14:07.020607+00:00 | 3.384 |
+| case | leaf.decimal.document.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:14:10.404915+00:00 | 1.980 |
+| case | leaf.decimal.document.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:14:12.385312+00:00 | 3.370 |
+| case | leaf.bytes.columns.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:14:15.755480+00:00 | 1.201 |
+| case | leaf.bytes.columns.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:14:16.956529+00:00 | 1.469 |
+| case | leaf.bytes.document.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:14:18.425881+00:00 | 1.191 |
+| case | leaf.bytes.document.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:14:19.617308+00:00 | 1.432 |
+| case | leaf.date.columns.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:14:21.049843+00:00 | 1.304 |
+| case | leaf.date.columns.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:14:22.354342+00:00 | 1.706 |
+| case | leaf.date.document.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:14:24.060435+00:00 | 1.306 |
+| case | leaf.date.document.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:14:25.366291+00:00 | 1.734 |
+| case | leaf.time.columns.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:14:27.100817+00:00 | 1.348 |
+| case | leaf.time.columns.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:14:28.449224+00:00 | 1.736 |
+| case | leaf.time.document.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:14:30.185317+00:00 | 1.341 |
+| case | leaf.time.document.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:14:31.526551+00:00 | 1.740 |
+| case | leaf.timestamp.columns.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:14:33.266754+00:00 | 2.064 |
+| case | leaf.timestamp.columns.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:14:35.330553+00:00 | 3.292 |
+| case | leaf.timestamp.document.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:14:38.622680+00:00 | 2.077 |
+| case | leaf.timestamp.document.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:14:40.700194+00:00 | 3.347 |
+| case | leaf.uuid.columns.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:14:44.047312+00:00 | 1.851 |
+| case | leaf.uuid.columns.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:14:45.897941+00:00 | 2.406 |
+| case | leaf.uuid.document.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:14:48.303552+00:00 | 1.851 |
+| case | leaf.uuid.document.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:14:50.154271+00:00 | 2.450 |
+| case | plain.target-patch.columns.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:14:52.604644+00:00 | 0.863 |
+| case | plain.target-replace.columns.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:14:53.467425+00:00 | 0.907 |
+| case | plain.target-replace.columns.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:14:54.374959+00:00 | 0.871 |
+| case | plain.target-patch.document.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:14:55.245623+00:00 | 0.893 |
+| case | plain.target-replace.document.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:14:56.139101+00:00 | 0.903 |
+| case | plain.target-replace.document.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:14:57.041792+00:00 | 0.898 |
+| case | txtime.target-patch.columns.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:14:57.940255+00:00 | 0.978 |
+| case | txtime.target-replace.columns.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:14:58.918679+00:00 | 0.991 |
+| case | txtime.target-replace.columns.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:14:59.909889+00:00 | 0.980 |
+| case | txtime.target-patch.document.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:15:00.889772+00:00 | 0.980 |
+| case | txtime.target-replace.document.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:15:01.869886+00:00 | 0.989 |
+| case | txtime.target-replace.document.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:15:02.858662+00:00 | 0.991 |
+| case | bitemporal.target-patch.columns.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:15:03.849440+00:00 | 1.068 |
+| case | bitemporal.target-replace.columns.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:15:04.917920+00:00 | 1.090 |
+| case | bitemporal.target-replace.columns.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:15:06.007624+00:00 | 1.104 |
+| case | bitemporal.target-patch.document.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:15:07.111497+00:00 | 1.069 |
+| case | bitemporal.target-replace.document.typed | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:15:08.180456+00:00 | 1.068 |
+| case | bitemporal.target-replace.document.wire | member=write-lowering, runtime=3.14, window=keyed-write | 2026-10-12T00:15:09.248666+00:00 | 1.067 |
+| case | acquisition.rows-8.columns | member=write-lowering, runtime=3.14, window=predicate-acquisition | 2026-10-12T00:15:10.316107+00:00 | 1.017 |
+| case | acquisition.rows-32.columns | member=write-lowering, runtime=3.14, window=predicate-acquisition | 2026-10-12T00:15:11.333480+00:00 | 1.540 |
+| case | acquisition.rows-128.columns | member=write-lowering, runtime=3.14, window=predicate-acquisition | 2026-10-12T00:15:12.873860+00:00 | 3.472 |
+| case | acquisition.rows-8.document | member=write-lowering, runtime=3.14, window=predicate-acquisition | 2026-10-12T00:15:16.346081+00:00 | 1.013 |
+| case | acquisition.rows-32.document | member=write-lowering, runtime=3.14, window=predicate-acquisition | 2026-10-12T00:15:17.359439+00:00 | 1.528 |
+| case | acquisition.rows-128.document | member=write-lowering, runtime=3.14, window=predicate-acquisition | 2026-10-12T00:15:18.887949+00:00 | 3.624 |
+| case | leaf-acquisition.string.rows-8.columns | member=write-lowering, runtime=3.14, window=predicate-acquisition | 2026-10-12T00:15:22.512267+00:00 | 2.023 |
+| case | leaf-acquisition.string.rows-8.document | member=write-lowering, runtime=3.14, window=predicate-acquisition | 2026-10-12T00:15:24.535340+00:00 | 1.971 |
+| case | leaf-acquisition.boolean.rows-8.columns | member=write-lowering, runtime=3.14, window=predicate-acquisition | 2026-10-12T00:15:26.506284+00:00 | 1.354 |
+| case | leaf-acquisition.boolean.rows-8.document | member=write-lowering, runtime=3.14, window=predicate-acquisition | 2026-10-12T00:15:27.860351+00:00 | 1.352 |
+| case | leaf-acquisition.int32.rows-8.columns | member=write-lowering, runtime=3.14, window=predicate-acquisition | 2026-10-12T00:15:29.212441+00:00 | 1.857 |
+| case | leaf-acquisition.int32.rows-8.document | member=write-lowering, runtime=3.14, window=predicate-acquisition | 2026-10-12T00:15:31.069007+00:00 | 1.848 |
+| case | leaf-acquisition.int64.rows-8.columns | member=write-lowering, runtime=3.14, window=predicate-acquisition | 2026-10-12T00:15:32.916691+00:00 | 2.009 |
+| case | leaf-acquisition.int64.rows-8.document | member=write-lowering, runtime=3.14, window=predicate-acquisition | 2026-10-12T00:15:34.925657+00:00 | 2.041 |
+| case | leaf-acquisition.float32.rows-8.columns | member=write-lowering, runtime=3.14, window=predicate-acquisition | 2026-10-12T00:15:36.967008+00:00 | 6.362 |
+| case | leaf-acquisition.float32.rows-8.document | member=write-lowering, runtime=3.14, window=predicate-acquisition | 2026-10-12T00:15:43.328678+00:00 | 6.392 |
+| case | leaf-acquisition.float64.rows-8.columns | member=write-lowering, runtime=3.14, window=predicate-acquisition | 2026-10-12T00:15:49.720285+00:00 | 2.727 |
+| case | leaf-acquisition.float64.rows-8.document | member=write-lowering, runtime=3.14, window=predicate-acquisition | 2026-10-12T00:15:52.447166+00:00 | 2.745 |
+| case | leaf-acquisition.decimal.rows-8.columns | member=write-lowering, runtime=3.14, window=predicate-acquisition | 2026-10-12T00:15:55.192323+00:00 | 9.285 |
+| case | leaf-acquisition.decimal.rows-8.document | member=write-lowering, runtime=3.14, window=predicate-acquisition | 2026-10-12T00:16:04.477871+00:00 | 9.389 |
+| case | leaf-acquisition.bytes.rows-8.columns | member=write-lowering, runtime=3.14, window=predicate-acquisition | 2026-10-12T00:16:13.866735+00:00 | 3.531 |
+| case | leaf-acquisition.bytes.rows-8.document | member=write-lowering, runtime=3.14, window=predicate-acquisition | 2026-10-12T00:16:17.398057+00:00 | 3.444 |
+| case | leaf-acquisition.date.rows-8.columns | member=write-lowering, runtime=3.14, window=predicate-acquisition | 2026-10-12T00:16:20.841971+00:00 | 4.735 |
+| case | leaf-acquisition.date.rows-8.document | member=write-lowering, runtime=3.14, window=predicate-acquisition | 2026-10-12T00:16:25.577319+00:00 | 4.690 |
+| case | leaf-acquisition.time.rows-8.columns | member=write-lowering, runtime=3.14, window=predicate-acquisition | 2026-10-12T00:16:30.267351+00:00 | 5.830 |
+| case | leaf-acquisition.time.rows-8.document | member=write-lowering, runtime=3.14, window=predicate-acquisition | 2026-10-12T00:16:36.096951+00:00 | 5.909 |
+| case | leaf-acquisition.timestamp.rows-8.columns | member=write-lowering, runtime=3.14, window=predicate-acquisition | 2026-10-12T00:16:42.005899+00:00 | 14.299 |
+| case | leaf-acquisition.timestamp.rows-8.document | member=write-lowering, runtime=3.14, window=predicate-acquisition | 2026-10-12T00:16:56.305050+00:00 | 14.687 |
+| case | leaf-acquisition.uuid.rows-8.columns | member=write-lowering, runtime=3.14, window=predicate-acquisition | 2026-10-12T00:17:10.992208+00:00 | 5.055 |
+| case | leaf-acquisition.uuid.rows-8.document | member=write-lowering, runtime=3.14, window=predicate-acquisition | 2026-10-12T00:17:16.047748+00:00 | 4.950 |
+| case | response.insert.family.wire | member=write-lowering, runtime=3.14, window=wire-insert-response | 2026-10-12T00:17:20.997470+00:00 | 0.784 |
+| case | model.prepared | member=write-lowering, runtime=3.14, window=model-preparation | 2026-10-12T00:17:21.781544+00:00 | 4.044 |
+| case | model.prepared.family | member=write-lowering, runtime=3.14, window=model-preparation | 2026-10-12T00:17:25.825802+00:00 | 0.956 |
+| case | predicate-flush.reaching.objects-128.columns | member=write-lowering, runtime=3.14, window=predicate-flush | 2026-10-12T00:17:26.781771+00:00 | 31.179 |
+| case | predicate-flush.reaching.objects-128.document | member=write-lowering, runtime=3.14, window=predicate-flush | 2026-10-12T00:17:57.960911+00:00 | 31.138 |
+| case | predicate-flush.unchanged.objects-128.document | member=write-lowering, runtime=3.14, window=predicate-flush | 2026-10-12T00:18:29.099239+00:00 | 14.123 |
+| case | predicate-flush.wide.history-128.document | member=write-lowering, runtime=3.14, window=predicate-flush | 2026-10-12T00:18:43.222012+00:00 | 10.299 |
+| member | feature-boundary | member=feature-boundary | 2026-10-12T00:18:53.710011+00:00 | 21.172 |
+| setup | identity | member=feature-boundary, runtime=3.13 | 2026-10-12T00:18:53.925328+00:00 | 0.076 |
+| setup | identity | member=feature-boundary, runtime=3.14 | 2026-10-12T00:18:54.001443+00:00 | 0.028 |
+| case | predicate.shallow-scalar.binding | member=feature-boundary, runtime=3.13, window=typed-predicate-binding | 2026-10-12T00:18:54.029528+00:00 | 0.325 |
+| case | predicate.shallow-scalar.cold-plan | member=feature-boundary, runtime=3.13, window=typed-cold-plan | 2026-10-12T00:18:54.354320+00:00 | 0.395 |
+| case | predicate.scalar-any.binding | member=feature-boundary, runtime=3.13, window=typed-predicate-binding | 2026-10-12T00:18:54.749658+00:00 | 0.302 |
+| case | predicate.scalar-any.cold-plan | member=feature-boundary, runtime=3.13, window=typed-cold-plan | 2026-10-12T00:18:55.051337+00:00 | 0.402 |
+| case | predicate.nested-all.binding | member=feature-boundary, runtime=3.13, window=typed-predicate-binding | 2026-10-12T00:18:55.453633+00:00 | 0.307 |
+| case | predicate.nested-all.cold-plan | member=feature-boundary, runtime=3.13, window=typed-cold-plan | 2026-10-12T00:18:55.760759+00:00 | 0.420 |
+| case | predicate.two-hop-to-one.binding | member=feature-boundary, runtime=3.13, window=typed-predicate-binding | 2026-10-12T00:18:56.180904+00:00 | 0.309 |
+| case | predicate.two-hop-to-one.cold-plan | member=feature-boundary, runtime=3.13, window=typed-cold-plan | 2026-10-12T00:18:56.490324+00:00 | 0.428 |
+| case | predicate.quantifier-through-to-one.binding | member=feature-boundary, runtime=3.13, window=typed-predicate-binding | 2026-10-12T00:18:56.917951+00:00 | 0.304 |
+| case | predicate.quantifier-through-to-one.cold-plan | member=feature-boundary, runtime=3.13, window=typed-cold-plan | 2026-10-12T00:18:57.221552+00:00 | 0.419 |
+| case | predicate.subtype-narrowing.binding | member=feature-boundary, runtime=3.13, window=typed-predicate-binding | 2026-10-12T00:18:57.640682+00:00 | 0.310 |
+| case | predicate.subtype-narrowing.cold-plan | member=feature-boundary, runtime=3.13, window=typed-cold-plan | 2026-10-12T00:18:57.951117+00:00 | 0.423 |
+| case | scalar-collection.integer.size-0.encode | member=feature-boundary, runtime=3.13, window=scalar-collection-encode | 2026-10-12T00:18:58.374616+00:00 | 0.289 |
+| case | scalar-collection.integer.size-0.decode | member=feature-boundary, runtime=3.13, window=scalar-collection-decode | 2026-10-12T00:18:58.663228+00:00 | 0.289 |
+| case | scalar-collection.integer.size-8.encode | member=feature-boundary, runtime=3.13, window=scalar-collection-encode | 2026-10-12T00:18:58.951844+00:00 | 0.292 |
+| case | scalar-collection.integer.size-8.decode | member=feature-boundary, runtime=3.13, window=scalar-collection-decode | 2026-10-12T00:18:59.243782+00:00 | 0.289 |
+| case | scalar-collection.integer.size-128.encode | member=feature-boundary, runtime=3.13, window=scalar-collection-encode | 2026-10-12T00:18:59.532603+00:00 | 0.328 |
+| case | scalar-collection.integer.size-128.decode | member=feature-boundary, runtime=3.13, window=scalar-collection-decode | 2026-10-12T00:18:59.860537+00:00 | 0.321 |
+| case | scalar-collection.string.size-0.encode | member=feature-boundary, runtime=3.13, window=scalar-collection-encode | 2026-10-12T00:19:00.181141+00:00 | 0.287 |
+| case | scalar-collection.string.size-0.decode | member=feature-boundary, runtime=3.13, window=scalar-collection-decode | 2026-10-12T00:19:00.468043+00:00 | 0.287 |
+| case | scalar-collection.string.size-8.encode | member=feature-boundary, runtime=3.13, window=scalar-collection-encode | 2026-10-12T00:19:00.755161+00:00 | 0.292 |
+| case | scalar-collection.string.size-8.decode | member=feature-boundary, runtime=3.13, window=scalar-collection-decode | 2026-10-12T00:19:01.047426+00:00 | 0.289 |
+| case | scalar-collection.string.size-128.encode | member=feature-boundary, runtime=3.13, window=scalar-collection-encode | 2026-10-12T00:19:01.336137+00:00 | 0.367 |
+| case | scalar-collection.string.size-128.decode | member=feature-boundary, runtime=3.13, window=scalar-collection-decode | 2026-10-12T00:19:01.703536+00:00 | 0.301 |
+| case | scalar-collection.decimal.size-0.encode | member=feature-boundary, runtime=3.13, window=scalar-collection-encode | 2026-10-12T00:19:02.004262+00:00 | 0.291 |
+| case | scalar-collection.decimal.size-0.decode | member=feature-boundary, runtime=3.13, window=scalar-collection-decode | 2026-10-12T00:19:02.295500+00:00 | 0.289 |
+| case | scalar-collection.decimal.size-8.encode | member=feature-boundary, runtime=3.13, window=scalar-collection-encode | 2026-10-12T00:19:02.584647+00:00 | 0.313 |
+| case | scalar-collection.decimal.size-8.decode | member=feature-boundary, runtime=3.13, window=scalar-collection-decode | 2026-10-12T00:19:02.898152+00:00 | 0.317 |
+| case | scalar-collection.decimal.size-128.encode | member=feature-boundary, runtime=3.13, window=scalar-collection-encode | 2026-10-12T00:19:03.214810+00:00 | 0.679 |
+| case | scalar-collection.decimal.size-128.decode | member=feature-boundary, runtime=3.13, window=scalar-collection-decode | 2026-10-12T00:19:03.893488+00:00 | 0.725 |
+| case | predicate.shallow-scalar.binding | member=feature-boundary, runtime=3.14, window=typed-predicate-binding | 2026-10-12T00:19:04.618572+00:00 | 0.289 |
+| case | predicate.shallow-scalar.cold-plan | member=feature-boundary, runtime=3.14, window=typed-cold-plan | 2026-10-12T00:19:04.907868+00:00 | 0.378 |
+| case | predicate.scalar-any.binding | member=feature-boundary, runtime=3.14, window=typed-predicate-binding | 2026-10-12T00:19:05.285912+00:00 | 0.309 |
+| case | predicate.scalar-any.cold-plan | member=feature-boundary, runtime=3.14, window=typed-cold-plan | 2026-10-12T00:19:05.595275+00:00 | 0.385 |
+| case | predicate.nested-all.binding | member=feature-boundary, runtime=3.14, window=typed-predicate-binding | 2026-10-12T00:19:05.980615+00:00 | 0.293 |
+| case | predicate.nested-all.cold-plan | member=feature-boundary, runtime=3.14, window=typed-cold-plan | 2026-10-12T00:19:06.273472+00:00 | 0.408 |
+| case | predicate.two-hop-to-one.binding | member=feature-boundary, runtime=3.14, window=typed-predicate-binding | 2026-10-12T00:19:06.681417+00:00 | 0.300 |
+| case | predicate.two-hop-to-one.cold-plan | member=feature-boundary, runtime=3.14, window=typed-cold-plan | 2026-10-12T00:19:06.981234+00:00 | 0.410 |
+| case | predicate.quantifier-through-to-one.binding | member=feature-boundary, runtime=3.14, window=typed-predicate-binding | 2026-10-12T00:19:07.390813+00:00 | 0.324 |
+| case | predicate.quantifier-through-to-one.cold-plan | member=feature-boundary, runtime=3.14, window=typed-cold-plan | 2026-10-12T00:19:07.714632+00:00 | 0.437 |
+| case | predicate.subtype-narrowing.binding | member=feature-boundary, runtime=3.14, window=typed-predicate-binding | 2026-10-12T00:19:08.151761+00:00 | 0.317 |
+| case | predicate.subtype-narrowing.cold-plan | member=feature-boundary, runtime=3.14, window=typed-cold-plan | 2026-10-12T00:19:08.468843+00:00 | 0.396 |
+| case | scalar-collection.integer.size-0.encode | member=feature-boundary, runtime=3.14, window=scalar-collection-encode | 2026-10-12T00:19:08.864389+00:00 | 0.282 |
+| case | scalar-collection.integer.size-0.decode | member=feature-boundary, runtime=3.14, window=scalar-collection-decode | 2026-10-12T00:19:09.146311+00:00 | 0.283 |
+| case | scalar-collection.integer.size-8.encode | member=feature-boundary, runtime=3.14, window=scalar-collection-encode | 2026-10-12T00:19:09.429152+00:00 | 0.281 |
+| case | scalar-collection.integer.size-8.decode | member=feature-boundary, runtime=3.14, window=scalar-collection-decode | 2026-10-12T00:19:09.710506+00:00 | 0.290 |
+| case | scalar-collection.integer.size-128.encode | member=feature-boundary, runtime=3.14, window=scalar-collection-encode | 2026-10-12T00:19:10.000973+00:00 | 0.316 |
+| case | scalar-collection.integer.size-128.decode | member=feature-boundary, runtime=3.14, window=scalar-collection-decode | 2026-10-12T00:19:10.316693+00:00 | 0.327 |
+| case | scalar-collection.string.size-0.encode | member=feature-boundary, runtime=3.14, window=scalar-collection-encode | 2026-10-12T00:19:10.643907+00:00 | 0.279 |
+| case | scalar-collection.string.size-0.decode | member=feature-boundary, runtime=3.14, window=scalar-collection-decode | 2026-10-12T00:19:10.923160+00:00 | 0.280 |
+| case | scalar-collection.string.size-8.encode | member=feature-boundary, runtime=3.14, window=scalar-collection-encode | 2026-10-12T00:19:11.203605+00:00 | 0.285 |
+| case | scalar-collection.string.size-8.decode | member=feature-boundary, runtime=3.14, window=scalar-collection-decode | 2026-10-12T00:19:11.488373+00:00 | 0.283 |
+| case | scalar-collection.string.size-128.encode | member=feature-boundary, runtime=3.14, window=scalar-collection-encode | 2026-10-12T00:19:11.771437+00:00 | 0.353 |
+| case | scalar-collection.string.size-128.decode | member=feature-boundary, runtime=3.14, window=scalar-collection-decode | 2026-10-12T00:19:12.124685+00:00 | 0.285 |
+| case | scalar-collection.decimal.size-0.encode | member=feature-boundary, runtime=3.14, window=scalar-collection-encode | 2026-10-12T00:19:12.409831+00:00 | 0.281 |
+| case | scalar-collection.decimal.size-0.decode | member=feature-boundary, runtime=3.14, window=scalar-collection-decode | 2026-10-12T00:19:12.691041+00:00 | 0.280 |
+| case | scalar-collection.decimal.size-8.encode | member=feature-boundary, runtime=3.14, window=scalar-collection-encode | 2026-10-12T00:19:12.971546+00:00 | 0.301 |
+| case | scalar-collection.decimal.size-8.decode | member=feature-boundary, runtime=3.14, window=scalar-collection-decode | 2026-10-12T00:19:13.272990+00:00 | 0.309 |
+| case | scalar-collection.decimal.size-128.encode | member=feature-boundary, runtime=3.14, window=scalar-collection-encode | 2026-10-12T00:19:13.581644+00:00 | 0.607 |
+| case | scalar-collection.decimal.size-128.decode | member=feature-boundary, runtime=3.14, window=scalar-collection-decode | 2026-10-12T00:19:14.189100+00:00 | 0.617 |

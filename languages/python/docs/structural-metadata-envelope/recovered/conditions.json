@@ -9,7 +9,7 @@
           "version": "3.13.16"
         },
         "3.14": {
-          "executable": "/Users/david/Code/parallax/languages/python/.venv/bin/python",
+          "executable": "/Users/david/.humanlayer/workspaces/cor-201-reduce-temporal-range-write-round-trips-qwqfrc/parallax/languages/python/.venv/bin/python",
           "implementation": "CPython",
           "status": "available",
           "version": "3.14.8"
@@ -31,7 +31,7 @@
           "version": "3.13.16"
         },
         "3.14": {
-          "executable": "/Users/david/Code/parallax/languages/python/.venv/bin/python",
+          "executable": "/Users/david/.humanlayer/workspaces/cor-201-reduce-temporal-range-write-round-trips-qwqfrc/parallax/languages/python/.venv/bin/python",
           "implementation": "CPython",
           "status": "available",
           "version": "3.14.8"
@@ -51,14 +51,14 @@
           "status": "unavailable"
         },
         "3.14": {
-          "executable": "/Users/david/Code/parallax/languages/python/.venv/bin/python",
+          "executable": "/Users/david/.humanlayer/workspaces/cor-201-reduce-temporal-range-write-round-trips-qwqfrc/parallax/languages/python/.venv/bin/python",
           "implementation": "CPython",
           "status": "available",
           "version": "3.14.8"
         }
       },
       "sources": {
-        "tools/lifecycle_overhead.py": "7a1dc46eb9db518fca0d6352999ee50b2926be3742100a8b5ec9f2bf99e5cf56"
+        "tools/lifecycle_overhead.py": "958e780dc76008bc5ac9cb8363c5de38d0e7a0e745fcde294d470fab187762d3"
       }
     },
     "snapshot-delivery": {
@@ -70,7 +70,7 @@
           "version": "3.13.16"
         },
         "3.14": {
-          "executable": "/Users/david/Code/parallax/languages/python/.venv/bin/python",
+          "executable": "/Users/david/.humanlayer/workspaces/cor-201-reduce-temporal-range-write-round-trips-qwqfrc/parallax/languages/python/.venv/bin/python",
           "implementation": "CPython",
           "status": "available",
           "version": "3.14.8"
@@ -84,7 +84,7 @@
         "tests/unit/_workload_spelling_support.py": "c84e87a236d549df8423293c7b05cf5a5ebb6c5a20149ffa1b9abe57527d8636",
         "tests/unit/memory_instruments.py": "cc1c8140dd4a66aa886b9d014ec10adebb9a8dbfac23a3cd73d2bf837723894a",
         "tools/snapshot_delivery_overhead.py": "f20a3d3740f0c5ebd0fa1b403e0a898fdd131178e635f80377d9db56ba946d7c",
-        "tools/snapshot_delivery_reading.py": "de89d6f3b0bf09a6c14291cb78c7c0cf28a5c0209d94ceb85eb9f43a15af8b91"
+        "tools/snapshot_delivery_reading.py": "6ac0aeb0409c086f2a7ac9c9b142db056f0a9f8c3d54b5b8b1944980aeff5aaa"
       }
     },
     "write-lowering": {
@@ -96,7 +96,7 @@
           "version": "3.13.16"
         },
         "3.14": {
-          "executable": "/Users/david/Code/parallax/languages/python/.venv/bin/python",
+          "executable": "/Users/david/.humanlayer/workspaces/cor-201-reduce-temporal-range-write-round-trips-qwqfrc/parallax/languages/python/.venv/bin/python",
           "implementation": "CPython",
           "status": "available",
           "version": "3.14.8"
@@ -107,7 +107,7 @@
         "tests/unit/_predicate_acquisition_support.py": "d2cad746701931c54a21d8db9844c39ba08a4107d4cf02e7b78d2c712c252aac",
         "tests/unit/_structural_geometry_support.py": "d8f5eafd4cd8cfc4069fc169243fde4b936c692cb8aac4a4761829b1754a1bf1",
         "tests/unit/_workload_spelling_support.py": "c84e87a236d549df8423293c7b05cf5a5ebb6c5a20149ffa1b9abe57527d8636",
-        "tests/unit/_write_lowering_support.py": "7b5ad5df2d5ac6ce392dc4e86e25b576058e82989cf9101b0a2075fe90703a07",
+        "tests/unit/_write_lowering_support.py": "9f578c88a7659b4971d2f817ddb057aaa247b7a77de41137d13cd61252db9861",
         "tests/unit/memory_instruments.py": "cc1c8140dd4a66aa886b9d014ec10adebb9a8dbfac23a3cd73d2bf837723894a",
         "tools/write_lowering_overhead.py": "aaf6a65b71c1113e5f18ec718b54c85444c741879e3101caf7b2591236f00019",
         "tools/write_lowering_reading.py": "209c9a25b8549adc453a34709a6fdf530253d32575ffc5a1cbedebded121cdf4"
