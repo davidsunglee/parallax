@@ -1,6 +1,3 @@
-# A match reads the candidates visible at the read's coordinates. At valid time
-# 2024-03-01, Coverage 10's visible milestone holds 600.00 (its later one holds
-# 700.00), so claim 1000 matches; Coverage 20 holds 300.00.
 model: models/policy.yaml
 tags: [m-predicate, relationship, to-one, exists, matching, m-temporal-read, temporal, propagation, bitemporal, m-dialect, slice-snapshot-1, slice-managed-1]
 shape: read

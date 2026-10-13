@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any, Final, Literal, cast
 
 from parallax.core.base import INFINITY
+from parallax.core.dialect import POSTGRES
 
 MANIFEST_VERSION: Final = 1
 ENVIRONMENT_PREFIX: Final = "PARALLAX_TO_ONE_PERFORMANCE_"
@@ -493,6 +494,18 @@ class _Check:
         return condition
 
 
+def _record(value: object) -> Mapping[str, Any]:
+    return cast("Mapping[str, Any]", value) if isinstance(value, Mapping) else {}
+
+
+def _filled(value: object, kind: type) -> bool:
+    return isinstance(value, kind) and bool(value)
+
+
+def _number(value: object) -> bool:
+    return isinstance(value, int | float) and not isinstance(value, bool)
+
+
 def _check_files(manifest: Mapping[str, Any], root: Path, check: _Check) -> dict[str, Any]:
     loaded: dict[str, Any] = {}
     entries = manifest.get("files")
@@ -522,17 +535,25 @@ def _check_provenance(manifest: Mapping[str, Any], check: _Check) -> None:
         dt.datetime.fromisoformat(cast("str", created))
     except (TypeError, ValueError):
         check.expect(False, f"createdAt {created!r} is not a timestamp")
-    command = cast("Mapping[str, Any]", manifest.get("command") or {})
-    check.expect(isinstance(command.get("argv"), list), "the command is not recorded")
-    compiler = cast("Mapping[str, Any]", manifest.get("compiler") or {})
+    command = _record(manifest.get("command"))
+    check.expect(_filled(command.get("argv"), list), "the command is not recorded")
+    check.expect(
+        isinstance(command.get("environment"), Mapping), "the command environment is not recorded"
+    )
+    compiler = _record(manifest.get("compiler"))
     check.expect(bool(compiler.get("branch")), "the compiler branch is not recorded")
     check.expect(bool(_SHA.match(str(compiler.get("sha")))), "the compiler SHA is not recorded")
     check.expect(isinstance(compiler.get("dirty"), bool), "the dirty state is not recorded")
     check.expect(
         bool(_DIGEST.match(str(compiler.get("diffDigest")))), "the diff digest is not recorded"
     )
+    driver_files = _record(_record(manifest.get("driver")).get("files"))
+    check.expect(
+        bool(driver_files) and all(_DIGEST.match(str(digest)) for digest in driver_files.values()),
+        "the driver files are not recorded",
+    )
     for owner in ("driver", "schema", "seed"):
-        record = cast("Mapping[str, Any]", manifest.get(owner) or {})
+        record = _record(manifest.get(owner))
         check.expect(
             bool(_DIGEST.match(str(record.get("digest")))), f"the {owner} digest is not recorded"
         )
@@ -565,7 +586,13 @@ def validate_inventory(path: Path, manifest: Sequence[Classification]) -> list[s
         check.expect(entry.get("suite") == known.suite, f"{name} changed suite")
         check.expect(entry.get("pairing") == known.pairing, f"{name} changed pairing")
         check.expect(entry.get("kind") == known.kind, f"{name} changed kind")
-        check.expect(isinstance(parameters.get(name), Mapping), f"{name} has no parameters")
+        recorded = _record(parameters.get(name))
+        check.expect(
+            _filled(recorded.get("objectQuery"), Mapping)
+            and _filled(recorded.get("reference"), str)
+            and isinstance(recorded.get("finalScales"), list),
+            f"{name} has no complete parameters",
+        )
         check.expect(entry.get("observation") == known.observation, f"{name} changed observation")
         statement = statements.get(name)
         if known.pairing == "current-only":
@@ -584,19 +611,27 @@ def validate_inventory(path: Path, manifest: Sequence[Classification]) -> list[s
     return check.problems
 
 
+def _placeholders(sql: str) -> int:
+    """The binds ``sql`` takes, counted as the PostgreSQL driver reads it."""
+    return POSTGRES.to_driver_sql(sql).replace("%%", "").count("%s")
+
+
 def _check_statement(name: str, statement: Mapping[str, Any], check: _Check) -> None:
-    check.expect(isinstance(statement.get("sql"), str) and statement["sql"], f"{name} has no SQL")
+    sql = statement.get("sql")
+    if not check.expect(_filled(sql, str), f"{name} has no SQL"):
+        return
     binds = statement.get("binds")
     try:
         decoded = decode_binds(cast("Sequence[Mapping[str, object]]", binds))
         lossless = encode_binds(decoded) == binds
     except (EvidenceError, TypeError, ValueError, AttributeError):
-        lossless = False
-    check.expect(lossless, f"{name}'s binds are not losslessly replayable")
-    check.expect(
-        str(statement.get("sql", "")).count("?") >= len(cast("Sequence[object]", binds or ())),
-        f"{name} binds more values than its SQL has placeholders",
-    )
+        decoded, lossless = (), False
+    if check.expect(lossless, f"{name}'s binds are not losslessly replayable"):
+        placeholders = _placeholders(cast("str", sql))
+        check.expect(
+            placeholders == len(decoded),
+            f"{name} binds {len(decoded)} values to {placeholders} placeholders",
+        )
 
 
 def validate_capture(
@@ -605,44 +640,50 @@ def validate_capture(
     """Every problem the measured capture at ``path`` has; none when valid.
 
     A selected paired point needs both production variants and a referenced
-    baseline; a selected current-only point needs complete current samples and
-    no baseline. Every point needs semantic parity with its independent
-    reference. Unselected workloads need nothing, except that a final campaign
-    must cover the whole final matrix of its suite.
+    baseline; a selected current-only point needs complete current samples, and
+    a capture selecting no paired point never reads its baseline. Every point's
+    observations must agree with its independent reference. Unselected
+    workloads need nothing, except that a final campaign must cover the whole
+    final matrix of its suite.
     """
     check = _Check([])
     document = load(path)
     _check_provenance(document, check)
     check.expect(document.get("kind") == "capture", "not a capture manifest")
-    server = cast("Mapping[str, Any]", document.get("server") or {})
-    for name in ("image", "version", "settings"):
-        check.expect(bool(server.get(name)), f"the server {name} is not recorded")
-    protocol = cast("Mapping[str, Any]", document.get("protocol") or {})
+    server = _record(document.get("server"))
+    for name, kind in (("image", str), ("version", str), ("settings", Mapping), ("container", str)):
+        check.expect(_filled(server.get(name), kind), f"the server {name} is not recorded")
+    protocol = _record(document.get("protocol"))
     samples, explains = protocol.get("samples"), protocol.get("explains")
     check.expect(isinstance(samples, int) and samples > 0, "the sample count is not recorded")
     check.expect(isinstance(explains, int) and explains > 0, "the EXPLAIN count is not recorded")
-    check.expect(isinstance(protocol.get("warmups"), int), "the warmup count is not recorded")
-    selection = cast("Mapping[str, Any]", document.get("selection") or {})
+    warmups = protocol.get("warmups")
+    check.expect(isinstance(warmups, int) and warmups >= 0, "the warmup count is not recorded")
+    for name in ("order", "ordinaryTiming", "explainTiming"):
+        check.expect(_filled(protocol.get(name), str), f"the protocol {name} is not recorded")
+    expected = {entry.id: entry for entry in manifest}
+    selection = _record(document.get("selection"))
     points = {
         (str(point[0]), str(point[1]))
         for point in cast("list[list[str]]", selection.get("points", []))
     }
     check.expect(bool(points), "the capture selects no point")
-    scales = cast(
-        "Mapping[str, Any]",
-        cast("Mapping[str, Any]", document.get("seed") or {}).get("scales") or {},
-    )
+    _check_selection(selection, points, expected, final_matrix, check)
+    scales = _record(_record(document.get("seed")).get("scales"))
     for scale in {scale for _, scale in points}:
-        record = cast("Mapping[str, Any]", scales.get(scale) or {})
+        record = _record(scales.get(scale))
         check.expect(
-            isinstance(record.get("counts"), Mapping)
-            and isinstance(record.get("parameters"), Mapping),
-            f"scale {scale} records no seeded counts and parameters",
+            all(
+                _filled(record.get(name), Mapping)
+                for name in ("counts", "distributions", "parameters")
+            ),
+            f"scale {scale} records no seeded counts, distributions, and parameters",
         )
     loaded = _check_files(document, path.parent, check)
-    expected = {entry.id: entry for entry in manifest}
     baseline = cast("Mapping[str, Any] | None", document.get("baseline"))
-    frozen = {} if baseline is None else _frozen(baseline, check)
+    replays = any(expected[name].pairing == "paired" for name, _ in points if name in expected)
+    frozen = _frozen(baseline, check) if baseline is not None and replays else {}
+    selected_variants = set(cast("list[str]", selection.get("variants") or []))
     entries = {
         (str(entry.get("id")), str(entry.get("scale"))): entry
         for entry in cast("list[Mapping[str, Any]]", document.get("workloads", []))
@@ -659,6 +700,10 @@ def validate_capture(
             str(variant.get("variant")): variant
             for variant in cast("list[Mapping[str, Any]]", entry.get("variants", []))
         }
+        check.expect(
+            set(variants) == {name for name in known.variants if name in selected_variants},
+            f"{label} measures variants other than its selected ones",
+        )
         if known.pairing == "current-only":
             check.expect(set(variants) == {"current"}, f"{label} is current-only")
         else:
@@ -674,19 +719,75 @@ def validate_capture(
             )
         for name, variant in variants.items():
             _check_variant(f"{label}/{name}", variant, loaded, samples, explains, check)
-        observations = cast("Mapping[str, Any]", entry.get("observations") or {})
-        check.expect(observations.get("parity") is True, f"{label} lacks semantic parity")
-        check.expect(bool(observations.get("reference")), f"{label} has no reference reading")
-        check.expect(bool(observations.get("public")), f"{label} has no public execution")
-    if selection.get("campaign") == "final":
-        suite = selection.get("suite")
-        required = {
-            point
-            for point in final_matrix
-            if point[0] in expected and suite in ("all", expected[point[0]].suite)
-        }
-        check.expect(required <= points, f"the final campaign omits {sorted(required - points)}")
+        _check_observations(label, known.kind, set(variants), entry, check)
     return check.problems
+
+
+def _check_selection(
+    selection: Mapping[str, Any],
+    points: set[tuple[str, str]],
+    expected: Mapping[str, Classification],
+    final_matrix: Sequence[tuple[str, str]],
+    check: _Check,
+) -> None:
+    """The recorded selection is one ``select`` could make, and its points are
+    exactly those its workloads and scale or campaign produce."""
+    suite, campaign = selection.get("suite"), selection.get("campaign")
+    check.expect(suite in (*SUITES, "all"), f"the selected suite {suite!r} is unknown")
+    check.expect(campaign in ("focused", "final"), f"the selected campaign {campaign!r} is unknown")
+    members = {name for name, entry in expected.items() if suite in ("all", entry.suite)}
+    workloads = [str(name) for name in cast("list[object]", selection.get("workloads") or [])]
+    check.expect(
+        bool(workloads) and set(workloads) <= members and len(set(workloads)) == len(workloads),
+        f"the selected workloads {workloads} are not distinct {suite!r} workloads",
+    )
+    declared = {variant for name in members for variant in expected[name].variants}
+    variants = cast("list[object]", selection.get("variants") or [])
+    check.expect(
+        bool(variants) and set(variants) <= declared,
+        f"the selected variants {variants} are not declared by the {suite!r} workloads",
+    )
+    if campaign == "final":
+        required = {point for point in final_matrix if point[0] in members}
+        check.expect(required <= points, f"the final campaign omits {sorted(required - points)}")
+        produced = {point for point in final_matrix if point[0] in workloads}
+    else:
+        produced = {(name, str(selection.get("scale"))) for name in workloads}
+    check.expect(points == produced, "the selected points are not those of its workloads")
+
+
+def _check_observations(
+    label: str, kind: Kind, variants: set[str], entry: Mapping[str, Any], check: _Check
+) -> None:
+    """Parity recomputed from the recorded observations: every variant
+    statement and the public execution read the reference's roots with their
+    multiplicity, and every mutation affected as many rows."""
+    observations = _record(entry.get("observations"))
+    reference = _record(observations.get("reference"))
+    if not check.expect(
+        bool(_DIGEST.match(str(reference.get("digest"))))
+        and isinstance(reference.get("count"), int),
+        f"{label} has no reference reading",
+    ):
+        return
+    statements = _record(observations.get("statements"))
+    public = _record(observations.get("public"))
+    affected = _record(observations.get("affectedRows"))
+    check.expect(bool(public), f"{label} has no public execution")
+    check.expect(set(statements) == variants, f"{label} does not observe every variant")
+    check.expect(
+        set(affected) == (set() if kind == "read" else variants),
+        f"{label} does not count every mutation's affected rows",
+    )
+    check.expect(
+        all(
+            record.get("digest") == reference["digest"]
+            and record.get("count", reference["count"]) == reference["count"]
+            for record in (*map(_record, statements.values()), public)
+        )
+        and all(count == reference["count"] for count in affected.values()),
+        f"{label} lacks semantic parity",
+    )
 
 
 def _frozen(baseline: Mapping[str, Any], check: _Check) -> dict[str, Any]:
@@ -704,6 +805,37 @@ def _frozen(baseline: Mapping[str, Any], check: _Check) -> dict[str, Any]:
     return statements
 
 
+_ACTUAL_WORK: Final = (
+    "Actual Loops",
+    "Actual Rows",
+    "Actual Total Time",
+    "Shared Hit Blocks",
+    "Shared Read Blocks",
+)
+
+
+def _executed_node(node: object) -> bool:
+    record = _record(node)
+    children = record.get("Plans", [])
+    return (
+        _filled(record.get("Node Type"), str)
+        and all(_number(record.get(name)) for name in _ACTUAL_WORK)
+        and isinstance(children, list)
+        and all(_executed_node(child) for child in cast("list[object]", children))
+    )
+
+
+def _executed_plan(plan: object) -> bool:
+    """An ``EXPLAIN (ANALYZE, BUFFERS)`` sample: server timings, and actual
+    loops, rows, time, and buffer work at every node."""
+    record = _record(plan)
+    return (
+        _number(record.get("Execution Time"))
+        and _number(record.get("Planning Time"))
+        and _executed_node(record.get("Plan"))
+    )
+
+
 def _check_variant(
     label: str,
     variant: Mapping[str, Any],
@@ -718,14 +850,26 @@ def _check_variant(
         _check_statement(label, cast("Mapping[str, Any]", statement), check)
     if not check.expect(measured is not None, f"{label} has no samples file"):
         return
-    measured = cast("Mapping[str, Any]", measured)
-    plans = cast("list[Mapping[str, Any]]", measured.get("explain", []))
-    check.expect(len(measured.get("ordinaryNs", [])) == samples, f"{label} lacks ordinary samples")
-    check.expect(len(plans) == explains, f"{label} lacks EXPLAIN samples")
+    measured = _record(measured)
+    ordinary = measured.get("ordinaryNs")
     check.expect(
-        all("Plan" in plan and "Execution Time" in plan for plan in plans),
-        f"{label} holds a sample that is not an executed plan",
+        isinstance(ordinary, list)
+        and len(cast("list[object]", ordinary)) == samples
+        and all(
+            isinstance(sample, int) and not isinstance(sample, bool) and sample > 0
+            for sample in cast("list[object]", ordinary)
+        ),
+        f"{label} lacks ordinary samples",
     )
+    plans = measured.get("explain")
+    if check.expect(
+        isinstance(plans, list) and len(cast("list[object]", plans)) == explains,
+        f"{label} lacks EXPLAIN samples",
+    ):
+        check.expect(
+            all(_executed_plan(plan) for plan in cast("list[object]", plans)),
+            f"{label} holds a sample that is not an executed plan",
+        )
 
 
 def assert_valid(problems: Sequence[str]) -> None:

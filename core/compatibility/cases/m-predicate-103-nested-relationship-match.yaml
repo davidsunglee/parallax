@@ -1,5 +1,3 @@
-# A match nests: the owner's own manager is matched inside the owner's operand,
-# each relative to the Entity its match binds. Only Ada is managed by Bob.
 model: models/predicate-collections.yaml
 tags: [m-predicate, relationship, to-one, exists, matching, nested, m-dialect, slice-snapshot-1, slice-managed-1]
 shape: read

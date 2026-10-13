@@ -1,6 +1,3 @@
-# The operand narrows the candidate it binds: a car with more than two seats. Every
-# concrete table of the table-per-concrete-subtype target is a candidate, and the
-# bike's branch cannot satisfy the narrowing. Car 7's seats are unknown.
 model: models/predicate-traversal.yaml
 tags: [m-predicate, relationship, to-one, exists, matching, narrow, m-inheritance, table-per-concrete-subtype, m-dialect, slice-snapshot-1, slice-managed-1]
 shape: read

@@ -1,5 +1,3 @@
-# Negative (m-predicate relationship matching): only a to-one relationship's target
-# is matched against a predicate; a single value object's presence takes none.
 model: models/customer.yaml
 tags: [m-predicate, m-value-object, rejected, negative, matching, slice-snapshot-1, slice-managed-1]
 shape: rejected

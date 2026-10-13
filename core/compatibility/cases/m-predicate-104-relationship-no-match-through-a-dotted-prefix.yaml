@@ -1,6 +1,3 @@
-# A dotted prefix reaches one owner and its manager is matched: no manager named Ada.
-# A basket with no owner has no prefix to reach, so nothing matches and it is
-# selected; so is Bob's, whose owner has no manager. Only Cy's manager is Ada.
 model: models/predicate-collections.yaml
 tags: [m-predicate, relationship, to-one, notExists, matching, traversal, m-dialect, slice-snapshot-1, slice-managed-1]
 shape: read

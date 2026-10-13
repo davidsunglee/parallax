@@ -1,6 +1,3 @@
-# Negated matching complements the complete match: no owner makes the operand true.
-# Unlike a negated dotted comparison (m-predicate-077), it includes the basket with
-# no owner and the one whose owner's operand is unknown.
 model: models/predicate-collections.yaml
 tags: [m-predicate, relationship, to-one, notExists, matching, negation, m-dialect, slice-snapshot-1, slice-managed-1]
 shape: read
