@@ -1,13 +1,5 @@
 # Fixture rows for models/predicate-traversal.yaml.
 #
-#   Dog 1 Rex   barkVolume 7     Dog 2 Fido barkVolume null     Cat 3 Tom indoor true
-#   Collar 10 -> Rex   Collar 11 -> Fido   Collar 12 -> Tom   Collar 13 -> no pet
-#   Leash 20 -> Collar 10   Leash 21 -> Collar 13   Leash 22 -> no collar   Leash 23 -> Collar 11
-#   Car 5 Volvo seats 4     Bike 6 Trek gears 21    Car 7 Saab seats null
-#   Car 5 -> Dealer 40 Nordic   Bike 6 -> Dealer 41 Velo   Car 7 -> no dealer
-#   Parking 30 -> 5 (Car)   Parking 31 -> 6 (Bike)  Parking 32 -> no vehicle   Parking 33 -> 7 (Car)
-#   Ticket 50 -> 30   Ticket 51 -> 31   Ticket 52 -> 32   Ticket 53 -> 33   Ticket 54 -> no parking
-#
 # Car and Bike key their tables independently and use no shared id here, so each
 # parking reaches one candidate.
 parallax.compatibility.Dog:
