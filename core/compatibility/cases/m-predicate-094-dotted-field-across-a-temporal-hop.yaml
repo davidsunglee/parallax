@@ -1,7 +1,7 @@
 # A dotted field across a temporal to-one hop reads only the milestone visible at the
 # read's coordinates: Coverage 10 holds three milestones, and the claim reaches the one
-# current at Latest, whose amount is 700.00. The join carries the hop's Latest terms;
-# joining every milestone would read the claim three times.
+# current at Latest, whose amount is 700.00. Joining every milestone would read the
+# claim three times.
 model: models/policy.yaml
 tags: [m-predicate, relationship, to-one, traversal, m-temporal-read, temporal, propagation, bitemporal, slice-snapshot-1, slice-managed-1]
 shape: read

@@ -1,6 +1,6 @@
 # At finite coordinates on both axes the hop reads the milestone Coverage 10 held
 # then: the superseded 500.00, whose Valid Time also covers the corrected milestones'
-# but whose Transaction Time does not. The join carries both containment pairs.
+# but whose Transaction Time does not.
 model: models/policy.yaml
 tags: [m-predicate, relationship, to-one, traversal, m-temporal-read, temporal, propagation, bitemporal, m-dialect, slice-snapshot-1, slice-managed-1]
 shape: read

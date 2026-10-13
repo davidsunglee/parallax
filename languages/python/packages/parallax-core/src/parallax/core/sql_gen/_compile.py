@@ -751,7 +751,7 @@ def compile_write_predicate(
     storage = _storage_view(model)
     ctx = StatementBuilder(model, facet, storage, dialect)
     scope = _EntityScope(
-        ctx, target, _table_layout(storage, facet, target.identity), unaliased=True
+        ctx, target, _table_layout(storage, facet, target.identity), unaliased=True, local=True
     )
     where_sql = _lower_predicate(op, scope)
     statement = ctx.finish(where_sql)

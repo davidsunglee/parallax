@@ -949,6 +949,26 @@ def test_a_match_past_a_dotted_prefix_keeps_its_scalar_form_when_its_operand_qua
     )
 
 
+def test_a_quantifier_past_a_dotted_prefix_joins_nothing_inside_its_scalar_subquery() -> None:
+    compiled = compile_read(
+        oa.Quantifier(
+            "any",
+            "OrderStatus.orderItem.order.items",
+            oa.Comparison(op="eq", subject=oa.FieldSubject("order.name"), value="Ada"),
+        ),
+        ORDERS,
+        POSTGRES,
+        target(ORDERS, "OrderStatus"),
+    )
+    assert compiled.statement.sql.endswith(
+        "from order_status t0 where coalesce((select coalesce((select exists (select 1 "
+        "from order_item t1 where t1.order_id = t3.id and "
+        "(select t2.name from orders t2 where t2.id = t1.order_id) = ?) "
+        "from orders t3 where t3.id = t4.order_id), false) "
+        "from order_item t4 where t4.id = t0.order_item_id), false)"
+    )
+
+
 def test_a_multi_table_target_keeps_its_full_candidate_assertion() -> None:
     op = oa.And(
         operands=(
@@ -1093,6 +1113,19 @@ def test_readless_predicate_dml_keeps_every_scalar_form() -> None:
     assert compiled.sql == (
         "exists (select 1 from orders t1 where t1.id = order_id) "
         "and (select t2.name from orders t2 where t2.id = order_id) = ?"
+    )
+
+
+def test_readless_predicate_dml_keeps_a_quantifier_operand_s_scalar_form() -> None:
+    op = oa.Quantifier(
+        "any",
+        "Order.items",
+        oa.Comparison(op="eq", subject=oa.FieldSubject("order.name"), value="Ada"),
+    )
+    compiled = compile_write_predicate(op, ORDERS, POSTGRES, target(ORDERS, "Order"))
+    assert compiled.sql == (
+        "exists (select 1 from order_item t1 where t1.order_id = id "
+        "and (select t2.name from orders t2 where t2.id = t1.order_id) = ?)"
     )
 
 

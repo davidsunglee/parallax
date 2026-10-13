@@ -1,5 +1,3 @@
-# A match's operand is its own lexical scope: each vehicle candidate's correlated
-# exists joins the proven dealer its operand reads.
 model: models/predicate-traversal.yaml
 tags: [m-predicate, relationship, to-one, exists, matching, traversal, m-inheritance, table-per-concrete-subtype, m-dialect, slice-snapshot-1, slice-managed-1]
 shape: read
