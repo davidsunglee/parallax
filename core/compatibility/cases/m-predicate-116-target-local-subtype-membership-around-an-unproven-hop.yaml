@@ -1,5 +1,3 @@
-# A bare subtype test of the vehicle behind a joined parking keeps the vehicle's
-# scalar subquery over both candidate tables, confined to the joined parking.
 model: models/predicate-traversal.yaml
 tags: [m-predicate, narrow, relationship, to-one, m-inheritance, table-per-concrete-subtype, m-dialect, slice-snapshot-1, slice-managed-1]
 shape: read

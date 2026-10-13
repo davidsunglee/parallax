@@ -159,7 +159,8 @@ def shared_relationship_is_eligible(
     if len(candidates.branches) != 1:
         return False
     (branch,) = candidates.branches
-    if branch.family_guard is not None and not branch.family_guard.position:
+    guard = branch.family_guard
+    if guard is not None and not guard.position:  # pragma: no cover - an empty family is unplanned
         return False
     visibility = relationship.visibility
     layout = _table_layout(scope.storage, scope.facet, branch.entity.identity)

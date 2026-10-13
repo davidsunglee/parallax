@@ -879,9 +879,9 @@ eq(Ticket.parking.vehicle.dealer.name, 'Nordic')
 Every other demand keeps its scalar form: one left with no proven hop to share,
 a quantifier over a collection the target holds, every demand of a path-targeted
 `narrow`'s operand, which its target's joined row or subquery evaluates, and
-readless predicate DML, which has no `from` to join (`m-batch-write`). A locking
-read keeps its scalar forms on a dialect whose shared-row lock cannot be limited
-to the root alias (`m-dialect`).
+every demand of readless predicate DML, whose statement has no `from` to join
+(`m-batch-write`). A locking read keeps its scalar forms on a dialect whose
+shared-row lock cannot be limited to the root alias (`m-dialect`).
 
 #### Correlated scalar subqueries
 
@@ -896,7 +896,8 @@ collection the target holds selects the quantifier's Boolean, and a
 path-targeted `narrow` selects its subtype test. Each further hop nests another
 scalar subquery inside the one before it, its select list read through the inner
 hop, whether or not that hop is proven: a subquery the database evaluates once per
-row joins nothing of its own. Readless predicate DML renders the path above so:
+row joins nothing of its own, nor does a correlated `exists` nested inside it.
+Readless predicate DML renders the path above so:
 
 ```text
 eq(OrderStatus.orderItem.order.name, 'Ada')

@@ -1,6 +1,3 @@
-# The parking hop is proven and joined; the multi-table vehicle is not, so its
-# scalar subquery keeps both candidate tables and repeats the parking join's terms
-# to read only the joined parking's vehicle, and the dealer nests inside it.
 model: models/predicate-traversal.yaml
 tags: [m-predicate, relationship, to-one, traversal, m-inheritance, table-per-concrete-subtype, m-dialect, slice-snapshot-1, slice-managed-1]
 shape: read

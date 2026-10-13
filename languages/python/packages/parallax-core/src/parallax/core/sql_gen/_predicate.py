@@ -175,6 +175,11 @@ class EntityScope:
     ``sources`` is the lexical scope's plan of shared relationship sources and
     the demands that read through them (:func:`plan_shared_sources`); a scope
     without one evaluates every demand in its local form.
+
+    ``local`` marks a scope a database evaluates once per row of an enclosing
+    correlated scalar subquery, or one of readless predicate DML. It travels to
+    every nested scope, none of which plans shared sources, so a correlated
+    `exists` opened there keeps its operand's local form.
     """
 
     ctx: StatementBuilder
@@ -186,6 +191,7 @@ class EntityScope:
     variant: EntityIdentity | None = None
     wrapped: bool = False
     sources: _SourcePlan | None = None
+    local: bool = False
 
     @property
     def meta(self) -> Metamodel:
@@ -365,7 +371,7 @@ class EntityScope:
         — the child correlation qualified, the parent column bare). Nor does a
         source plan, which belongs to the lexical scope that planned it. The
         child's own Table Layout does travel, because the hop selects from the
-        child's own table.
+        child's own table, and so does :attr:`local`.
         """
         return EntityScope(
             ctx=self.ctx,
@@ -373,6 +379,7 @@ class EntityScope:
             layout=_table_layout(self.ctx.storage, self.ctx.facet, entity.identity),
             alias=alias,
             variant=variant,
+            local=self.local,
         )
 
 
@@ -873,6 +880,7 @@ def _scalar_hop(
         # for the alias until then.
         token = _hop_token()
         rendered, branch_scope = _rendered_candidate(branch, relationship, scope, alias=token)
+        branch_scope = replace(branch_scope, local=True)
         value = inner(branch_scope)
         alias = scope.next_alias()
         where = _candidate_where(relationship, branch_scope, rendered, None, reach)
@@ -1111,15 +1119,18 @@ def _candidate_exists(
     counterexample: bool = False,
 ) -> str:
     """One candidate branch's `exists`: its complete ``operand`` — or, for a
-    universal, its counterexample — beside the candidate test, the operand's
-    shared sources joined to the candidate as its own lexical scope."""
-    if operand is None:
-        where_sql = _candidate_where(relationship, scope, rendered, None)
-        return f"exists (select 1 from {rendered.table} {rendered.alias} where {where_sql})"
-    body = plan_shared_sources(operand, scope)
-    joins = render_shared_sources(body)
-    source = f"{rendered.table} {rendered.alias}" + (f" {joins}" if joins else "")
-    interior = _counterexample(operand, body) if counterexample else _conjunct(operand, body)
+    universal, its counterexample — beside the candidate test. Outside a
+    :attr:`~EntityScope.local` scope the operand's shared sources join the
+    candidate as its own lexical scope."""
+    source = f"{rendered.table} {rendered.alias}"
+    interior: str | None = None
+    body = scope
+    if operand is not None:
+        if not scope.local:
+            body = plan_shared_sources(operand, scope)
+            joins = render_shared_sources(body)
+            source = f"{source} {joins}" if joins else source
+        interior = _counterexample(operand, body) if counterexample else _conjunct(operand, body)
     where_sql = _candidate_where(relationship, body, rendered, interior)
     return f"exists (select 1 from {source} where {where_sql})"
 
