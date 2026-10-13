@@ -1,0 +1,21 @@
+# A match's operand is its own lexical scope: each vehicle candidate's correlated
+# exists joins the proven dealer its operand reads.
+model: models/predicate-traversal.yaml
+tags: [m-predicate, relationship, to-one, exists, matching, traversal, m-inheritance, table-per-concrete-subtype, m-dialect, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  objectQuery:
+    target: parallax.compatibility.Parking
+    predicate:
+      exists:
+        path: parallax.compatibility.Parking.vehicle
+        where:
+          eq: {path: dealer.name, value: Velo}
+then:
+  statements:
+  - sql: {postgres: 'select t0.id, t0.vehicle_id from traversal_parking t0 where (exists (select 1 from traversal_bike t1 left join traversal_dealer t2 on t2.id = t1.dealer_id where t1.id = t0.vehicle_id and t2.name = ?) or exists (select 1 from traversal_car t3 left join traversal_dealer t4 on t4.id = t3.dealer_id where t3.id = t0.vehicle_id and t4.name = ?))', mariadb: 'select t0.id, t0.vehicle_id from traversal_parking t0 where (exists (select 1 from traversal_bike t1 left join traversal_dealer t2 on t2.id = t1.dealer_id where t1.id = t0.vehicle_id and t2.name = ?) or exists (select 1 from traversal_car t3 left join traversal_dealer t4 on t4.id = t3.dealer_id where t3.id = t0.vehicle_id and t4.name = ?))'}
+    binds: [Velo, Velo]
+  referenceSql: select id, vehicle_id from traversal_parking where vehicle_id in (select b.id from traversal_bike b join traversal_dealer d on d.id = b.dealer_id where d.name = 'Velo')
+  rows:
+  - {id: 31, vehicle_id: 6}
+  roundTrips: 1

@@ -18,6 +18,7 @@ import pytest
 
 from parallax.conformance.models import accepted_model
 from parallax.core import predicate as oa
+from parallax.core.base import INFINITY
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import Metamodel
 from parallax.core.object_query import AsOf
@@ -29,6 +30,9 @@ ORDERS = model("orders")
 ANIMAL = model("animal")
 DOCUMENT = model("document")
 PERSON = model("person")
+TRAVERSAL = model("predicate-traversal")
+POLICY = model("policy")
+TWIN = model("scalar-collection-layout-twin-columns")
 
 
 def test_an_unknown_relationship_is_rejected() -> None:
@@ -402,16 +406,11 @@ def test_tpcs_branches_take_their_aliases_as_each_branch_opens() -> None:
     )
     compiled = compile_read(op, meta, POSTGRES, target(meta, "Folder"))
     assert compiled.statement.sql.endswith(
-        "where (exists (select 1 from inv t1 where t1.folder_id = t0.id and "
-        "(select t2.name from owner t2 where t2.id = t1.owner_id) = ?) "
-        "or exists (select 1 from rec t3 where t3.folder_id = t0.id and "
-        "(select t4.name from owner t4 where t4.id = t3.owner_id) = ?))"
+        "where (exists (select 1 from inv t1 left join owner t2 on t2.id = t1.owner_id "
+        "where t1.folder_id = t0.id and t2.name = ?) "
+        "or exists (select 1 from rec t3 left join owner t4 on t4.id = t3.owner_id "
+        "where t3.folder_id = t0.id and t4.name = ?))"
     )
-
-
-TRAVERSAL = model("predicate-traversal")
-POLICY = model("policy")
-TWIN = model("scalar-collection-layout-twin-columns")
 
 
 def test_presence_two_hops_away_tests_its_target_at_the_joined_prefix() -> None:
@@ -460,31 +459,29 @@ def test_a_match_past_a_dotted_prefix_is_false_where_the_prefix_reaches_nothing(
     )
 
 
-def test_a_narrow_over_a_monomorphic_target_tests_presence_and_its_operand() -> None:
+def test_a_narrow_of_a_joined_target_tests_its_presence_and_keeps_its_operand() -> None:
+    claim = target(POLICY, "Claim")
+    coverage = "left join coverage t1 on t1.id = t0.coverage_id and t1.thru_z = ? and t1.out_z = ?"
     bare = compile_read(
         oa.Narrow(path="Claim.coverage", to=("Coverage",), operand=oa.TrueNode()),
         POLICY,
         POSTGRES,
-        target(POLICY, "Claim"),
+        claim,
         temporal={"valid-time": AsOf("latest"), "transaction-time": AsOf("latest")},
     )
-    assert "coalesce((select true from coverage t1 where t1.id = t0.coverage_id" in (
-        bare.statement.sql
-    )
+    assert f"{coverage} where (not t1.id is null) and t0.thru_z = ?" in bare.statement.sql
+    amount = oa.Comparison(op="greaterThan", subject=oa.FieldSubject("amount"), value="1.00")
     operand = compile_read(
-        oa.Narrow(
-            path="Claim.coverage",
-            to=("Coverage",),
-            operand=oa.Comparison(
-                op="greaterThan", subject=oa.FieldSubject("amount"), value="1.00"
-            ),
-        ),
+        oa.Narrow(path="Claim.coverage", to=("Coverage",), operand=amount),
         POLICY,
         POSTGRES,
-        target(POLICY, "Claim"),
+        claim,
         temporal={"valid-time": AsOf("latest"), "transaction-time": AsOf("latest")},
     )
-    assert "(coalesce((select array [ t1.amount > ? ] from coverage t1" in operand.statement.sql
+    assert (
+        f"{coverage} where case when not t1.id is null then t1.amount > ? else false end "
+        "and t0.thru_z = ?"
+    ) in operand.statement.sql
 
 
 def test_presence_of_a_single_value_object_inside_an_element_reads_the_element() -> None:
@@ -910,7 +907,7 @@ def test_the_same_conversion_inside_a_match_keeps_its_correlated_exists() -> Non
     )
 
 
-def test_a_match_reading_through_a_further_hop_keeps_its_correlated_exists() -> None:
+def test_a_match_reading_through_a_further_hop_joins_it_inside_its_correlated_exists() -> None:
     op = oa.And(
         operands=(
             oa.Comparison(op="eq", subject=oa.FieldSubject("OrderStatus.orderItem.sku"), value="S"),
@@ -924,8 +921,8 @@ def test_a_match_reading_through_a_further_hop_keeps_its_correlated_exists() -> 
     compiled = compile_read(op, ORDERS, POSTGRES, target(ORDERS, "OrderStatus"))
     assert compiled.statement.sql.endswith(
         "left join order_item t1 on t1.id = t0.order_item_id where t1.sku = ? and "
-        "exists (select 1 from order_item t2 where t2.id = t0.order_item_id and "
-        "(select t3.name from orders t3 where t3.id = t2.order_id) = ?)"
+        "exists (select 1 from order_item t2 left join orders t3 on t3.id = t2.order_id "
+        "where t2.id = t0.order_item_id and t3.name = ?)"
     )
 
 
@@ -968,7 +965,42 @@ def test_a_multi_table_target_keeps_its_full_candidate_assertion() -> None:
     )
 
 
-def test_a_temporal_target_keeps_its_scalar_candidate_assertion() -> None:
+def test_a_narrow_whose_operand_reads_past_its_target_keeps_a_monomorphic_envelope() -> None:
+    # A joined narrowing admits only an operand over its target's own row; this
+    # one reads a further hop, so the single hop stays the narrowing's subquery.
+    compiled = compile_read(
+        oa.Narrow(
+            path="Claim.coverage",
+            to=("Coverage",),
+            operand=oa.Comparison(op="eq", subject=oa.FieldSubject("policy.name"), value="Auto"),
+        ),
+        POLICY,
+        POSTGRES,
+        target(POLICY, "Claim"),
+        temporal={"valid-time": AsOf("latest"), "transaction-time": AsOf("latest")},
+    )
+    assert "join" not in compiled.statement.sql
+    assert "where (coalesce((select array [ (select t1.name from policy t1 where " in (
+        compiled.statement.sql
+    )
+
+
+_MARCH = "2024-03-01T00:00:00Z"
+
+
+@pytest.mark.parametrize(
+    ("valid_time", "transaction_time", "visible"),
+    [
+        ("latest", "latest", "t1.thru_z = ? and t1.out_z = ?"),
+        (_MARCH, "latest", "t1.from_z <= ? and t1.thru_z > ? and t1.out_z = ?"),
+        (_MARCH, _MARCH, "t1.from_z <= ? and t1.thru_z > ? and t1.in_z <= ? and t1.out_z > ?"),
+    ],
+)
+def test_a_temporal_target_at_one_coordinate_per_axis_reads_a_shared_join(
+    valid_time: str, transaction_time: str, visible: str
+) -> None:
+    # Latest ends fix the physical key; a finite instant fixes no end, so the
+    # logical key and one perspective per axis prove the one milestone instead.
     compiled = compile_read(
         oa.Comparison(
             op="greaterThan", subject=oa.FieldSubject("Claim.coverage.amount"), value="1.00"
@@ -976,12 +1008,55 @@ def test_a_temporal_target_keeps_its_scalar_candidate_assertion() -> None:
         POLICY,
         POSTGRES,
         target(POLICY, "Claim"),
-        temporal={"valid-time": AsOf("latest"), "transaction-time": AsOf("latest")},
+        temporal={"valid-time": AsOf(valid_time), "transaction-time": AsOf(transaction_time)},
     )
-    assert "left join" not in compiled.statement.sql
-    assert "(select t1.amount from coverage t1 where t1.id = t0.coverage_id" in (
+    assert f"from claim t0 left join coverage t1 on t1.id = t0.coverage_id and {visible} " in (
         compiled.statement.sql
     )
+    assert " where t1.amount > ? and " in compiled.statement.sql
+
+
+def test_each_temporal_hop_is_proven_at_the_coordinates_propagated_to_it() -> None:
+    compiled = compile_read(
+        oa.Comparison(op="eq", subject=oa.FieldSubject("Claim.coverage.policy.name"), value="A"),
+        POLICY,
+        POSTGRES,
+        target(POLICY, "Claim"),
+        temporal={"valid-time": AsOf(_MARCH), "transaction-time": AsOf("latest")},
+    )
+    assert compiled.statement.sql.endswith(
+        "left join coverage t1 on t1.id = t0.coverage_id and t1.from_z <= ? and t1.thru_z > ? "
+        "and t1.out_z = ? left join policy t2 on t2.id = t1.policy_id and t2.from_z <= ? "
+        "and t2.thru_z > ? and t2.out_z = ? where t2.name = ? and t0.from_z <= ? "
+        "and t0.thru_z > ? and t0.out_z = ?"
+    )
+
+
+@pytest.mark.parametrize(
+    ("unique", "expected"),
+    [
+        (True, "left join badge t1 on t1.holder_id = t0.id and t1.thru_z = ? and t1.out_z = ? "),
+        (False, "where (select t1.code from badge t1 where t1.holder_id = t0.id and t1.thru_z"),
+    ],
+)
+def test_a_temporal_target_correlated_off_its_logical_key_needs_a_unique_key(
+    unique: bool, expected: str
+) -> None:
+    # One perspective per axis identifies one milestone of one logical object;
+    # a badge reached by its holder is not reached by its own key.
+    family = _document_model(
+        _entity("Holder", relationships=[_rel("badge", "id", "Badge", "holderId", "one-to-one")]),
+        _entity(
+            "Badge",
+            "holderId",
+            temporality="bitemporal",
+            members=[{"name": "code", "type": "string", "maxLength": 8}],
+            indices=[{"name": "badge_holder", "attributes": ["holderId"], "unique": unique}],
+        ),
+    )
+    op = oa.Comparison(op="eq", subject=oa.FieldSubject("Holder.badge.code"), value="B")
+    compiled = compile_read(op, family, POSTGRES, target(family, "Holder"))
+    assert expected in compiled.statement.sql
 
 
 @pytest.mark.parametrize(
@@ -1019,6 +1094,297 @@ def test_readless_predicate_dml_keeps_every_scalar_form() -> None:
         "exists (select 1 from orders t1 where t1.id = order_id) "
         "and (select t2.name from orders t2 where t2.id = order_id) = ?"
     )
+
+
+def _vehicle_desk_model() -> Metamodel:
+    return _document_model(
+        _entity("Desk", "spanId", relationships=[_rel("span", "spanId", "Span")]),
+        _entity(
+            "Span",
+            "vehicleId",
+            temporality="bitemporal",
+            relationships=[_rel("vehicle", "vehicleId", "Vehicle")],
+        ),
+        {
+            "name": "Vehicle",
+            "inheritance": {"role": "root", "strategy": "table-per-concrete-subtype"},
+            "attributes": [_KEY, _reference("dealerId")],
+            "relationships": [_rel("dealer", "dealerId", "Dealer")],
+        },
+        _concrete("Car", "Vehicle", table="car"),
+        _concrete("Bike", "Vehicle", table="bike"),
+        _entity("Dealer", members=[{"name": "name", "type": "string", "maxLength": 8}]),
+    )
+
+
+_SPAN_REACHED = "t1.id = t0.span_id and t1.thru_z = ? and t1.out_z = ?"
+
+
+def test_an_unproven_hop_behind_a_joined_prefix_reads_only_that_prefix_s_candidates() -> None:
+    # Each vehicle branch repeats the span join's terms, so its candidates are the
+    # joined span's alone wherever the term is evaluated; the dealer, though
+    # proven, nests in the branch's select list rather than joining inside a
+    # subquery that runs once per row.
+    family = _vehicle_desk_model()
+    op = oa.Comparison(op="eq", subject=oa.FieldSubject("Desk.span.vehicle.dealer.name"), value="x")
+    compiled = compile_read(op, family, POSTGRES, target(family, "Desk"))
+    assert compiled.statement.sql.endswith(
+        f"from desk t0 left join span t1 on {_SPAN_REACHED} where (select (select t2.name "
+        "from dealer t2 where t2.id = t3.dealer_id) from bike t3 where t3.id = t1.vehicle_id "
+        f"and {_SPAN_REACHED} union all select (select t4.name from dealer t4 where "
+        f"t4.id = t5.dealer_id) from car t5 where t5.id = t1.vehicle_id and {_SPAN_REACHED}) = ?"
+    )
+    assert compiled.statement.binds == (*(INFINITY,) * 6, "x")
+
+
+def test_a_presence_past_an_unproven_hop_keeps_its_absence_default_behind_the_join() -> None:
+    family = _vehicle_desk_model()
+    compiled = compile_read(
+        oa.Presence("notExists", "Desk.span.vehicle.dealer"),
+        family,
+        POSTGRES,
+        target(family, "Desk"),
+    )
+    assert compiled.statement.sql.endswith(
+        f"from desk t0 left join span t1 on {_SPAN_REACHED} where not coalesce((select exists "
+        "(select 1 from dealer t2 where t2.id = t3.dealer_id) from bike t3 where "
+        f"t3.id = t1.vehicle_id and {_SPAN_REACHED} union all select exists (select 1 from "
+        f"dealer t4 where t4.id = t5.dealer_id) from car t5 where t5.id = t1.vehicle_id and "
+        f"{_SPAN_REACHED}), false)"
+    )
+
+
+def test_a_conversion_past_proven_hops_shares_all_but_its_last_hop() -> None:
+    # The cast cannot be a filter over the joined crate, so the crate is read by a
+    # subquery confined to the joined box, while the box itself is shared.
+    family = _document_model(
+        _entity("Shelf", "boxId", relationships=[_rel("box", "boxId", "Box")]),
+        _entity("Box", "crateId", relationships=[_rel("crate", "crateId", "Crate")]),
+        _entity(
+            "Crate",
+            layout={"document": {"column": "payload"}},
+            members=[{"name": "weight", "type": "decimal(18,2)"}],
+        ),
+    )
+    op = oa.Comparison(
+        op="greaterThan", subject=oa.FieldSubject("Shelf.box.crate.weight"), value="1.00"
+    )
+    compiled = compile_read(op, family, POSTGRES, target(family, "Shelf"))
+    assert compiled.statement.sql.endswith(
+        "from shelf t0 left join box t1 on t1.id = t0.box_id where (select "
+        "cast(jsonb_extract_path_text(t2.payload, ?) as decimal(18, 2)) from crate t2 "
+        "where t2.id = t1.crate_id and t1.id = t0.box_id) > ?"
+    )
+
+
+def _pet_owner_model() -> Metamodel:
+    return _document_model(
+        _entity("Leash", "collarId", relationships=[_rel("collar", "collarId", "Collar")]),
+        _entity("Collar", "petId", relationships=[_rel("pet", "petId", "Pet")]),
+        {
+            "name": "Pet",
+            "table": "pet",
+            "inheritance": {
+                "role": "root",
+                "strategy": "table-per-hierarchy",
+                "tag": {"column": "kind"},
+            },
+            "attributes": [_KEY, {"name": "name", "type": "string", "maxLength": 8}],
+        },
+        {
+            **_concrete("Dog", "Pet", tagValue="dog"),
+            "attributes": [_reference("ownerId")],
+            "relationships": [_rel("owner", "ownerId", "Owner")],
+        },
+        _concrete("Cat", "Pet", tagValue="cat"),
+        _entity("Owner", members=[{"name": "name", "type": "string", "maxLength": 8}]),
+    )
+
+
+def test_a_joined_narrow_stays_one_term_under_negation_and_disjunction() -> None:
+    narrowed = oa.Narrow(path="Collar.pet", to=("Dog",), operand=oa.TrueNode())
+    op = oa.Or(
+        operands=(
+            oa.Not(operand=narrowed),
+            oa.Comparison(op="eq", subject=oa.FieldSubject("Collar.id"), value=13),
+        )
+    )
+    compiled = compile_read(op, TRAVERSAL, POSTGRES, target(TRAVERSAL, "Collar"))
+    assert compiled.statement.sql.endswith(
+        "left join traversal_pet t1 on t1.id = t0.pet_id "
+        "where not (not t1.id is null and t1.kind = ?) or t0.id = ?"
+    )
+    assert compiled.statement.binds == ("dog", 13)
+
+
+def test_a_narrow_whose_operand_reads_past_its_target_keeps_its_candidate_subquery() -> None:
+    # The same narrowing over a joined pet would test the owner's subquery on pets
+    # no leash reaches, so only the collar is shared and the pet keeps its
+    # envelope, confined to the joined collar.
+    family = _pet_owner_model()
+    op = oa.Narrow(
+        path="Leash.collar.pet",
+        to=("Dog",),
+        operand=oa.Comparison(op="eq", subject=oa.FieldSubject("owner.name"), value="Ann"),
+    )
+    compiled = compile_read(op, family, POSTGRES, target(family, "Leash"))
+    assert compiled.statement.sql.endswith(
+        "from leash t0 left join collar t1 on t1.id = t0.collar_id where (coalesce((select "
+        "array [ case when t3.kind = ? then (select t2.name from owner t2 where t2.id = "
+        "t3.owner_id) = ? else false end ] from pet t3 where t3.id = t1.pet_id and "
+        "t1.id = t0.collar_id), array [ false ])) [ 1 ]"
+    )
+    assert compiled.statement.binds == ("dog", "Ann")
+
+
+def test_a_narrowing_of_the_read_row_joins_the_hops_its_operand_reads() -> None:
+    family = _pet_owner_model()
+    op = oa.Narrow(
+        to=("Dog",),
+        operand=oa.Comparison(op="eq", subject=oa.FieldSubject("Dog.owner.name"), value="Ann"),
+    )
+    compiled = compile_read(op, family, POSTGRES, target(family, "Pet"))
+    assert compiled.statement.sql.endswith(
+        "from pet t0 left join owner t1 on t1.id = t0.owner_id where (t1.name = ? and t0.kind = ?)"
+    )
+    assert compiled.statement.binds == ("Ann", "dog")
+
+
+def test_a_union_branch_outside_a_narrowing_joins_nothing_for_its_operand() -> None:
+    family = _document_model(
+        {
+            "name": "Vehicle",
+            "inheritance": {"role": "root", "strategy": "table-per-concrete-subtype"},
+            "attributes": [_KEY],
+        },
+        {
+            **_concrete("Car", "Vehicle", table="car"),
+            "attributes": [_reference("ownerId")],
+            "relationships": [_rel("owner", "ownerId", "Owner")],
+        },
+        _concrete("Bike", "Vehicle", table="bike"),
+        _entity("Owner", members=[{"name": "name", "type": "string", "maxLength": 8}]),
+    )
+    op = oa.Narrow(
+        to=("Car",),
+        operand=oa.Comparison(op="eq", subject=oa.FieldSubject("Car.owner.name"), value="Ann"),
+    )
+    compiled = compile_read(op, family, POSTGRES, target(family, "Vehicle"))
+    bike, car = compiled.statement.sql.split(" union all ")
+    assert "join" not in bike
+    assert bike.endswith("from bike t0 where 1 = 0")
+    assert "from car t0 left join owner t1 on t1.id = t0.owner_id where t1.name = ?" in car
+
+
+def test_a_partition_of_a_table_per_hierarchy_read_joins_its_proven_hops() -> None:
+    family = _document_model(
+        _entity("Account", members=[{"name": "name", "type": "string", "maxLength": 8}]),
+        {
+            "name": "Payment",
+            "table": "payment",
+            "layout": {"document": {"column": "payload"}},
+            "inheritance": {
+                "role": "root",
+                "strategy": "table-per-hierarchy",
+                "tag": {"column": "kind"},
+            },
+            "attributes": [_KEY, _reference("accountId")],
+            "relationships": [_rel("account", "accountId", "Account")],
+        },
+        {
+            **_concrete("Card", "Payment", tagValue="card"),
+            "attributes": [{"name": "detail", "type": "string", "maxLength": 8}],
+        },
+        {
+            **_concrete("Cash", "Payment", tagValue="cash"),
+            "attributes": [{"name": "detail", "type": "decimal(18,2)"}],
+        },
+    )
+    detail = oa.Or(
+        operands=(
+            oa.Narrow(
+                to=("Card",),
+                operand=oa.Comparison(op="eq", subject=oa.FieldSubject("Card.detail"), value="v"),
+            ),
+            oa.Narrow(
+                to=("Cash",),
+                operand=oa.Comparison(
+                    op="greaterThan", subject=oa.FieldSubject("Cash.detail"), value="1.00"
+                ),
+            ),
+        )
+    )
+    named = oa.Comparison(op="eq", subject=oa.FieldSubject("Payment.account.name"), value="A")
+    compiled = compile_read(
+        oa.And(operands=(detail, named)), family, POSTGRES, target(family, "Payment")
+    )
+    card, cash = compiled.statement.sql.split(" union all ")
+    for branch, alias in ((card, "p1"), (cash, "p2")):
+        assert (
+            f"offset 0) {alias} left join account t1 on t1.id = {alias}.account_id where "
+        ) in branch
+        assert branch.endswith(" and t1.name = ?")
+
+
+def test_a_universal_joins_its_operands_proven_hop_beside_its_counterexample() -> None:
+    op = oa.Quantifier(
+        "all",
+        "Order.items",
+        oa.Comparison(op="eq", subject=oa.FieldSubject("order.name"), value="Ada"),
+    )
+    compiled = compile_read(op, ORDERS, POSTGRES, target(ORDERS, "Order"))
+    assert compiled.statement.sql.endswith(
+        "where not exists (select 1 from order_item t1 left join orders t2 on "
+        "t2.id = t1.order_id where t1.order_id = t0.id and not (t2.name = ?) is true)"
+    )
+
+
+_KEY: dict[str, object] = {"name": "id", "type": "int64", "primaryKey": True}
+
+
+def _reference(name: str) -> dict[str, object]:
+    return {"name": name, "type": "int64", "nullable": True}
+
+
+def _rel(
+    name: str, source: str, entity: str, attribute: str = "id", cardinality: str = "many-to-one"
+) -> dict[str, object]:
+    return {
+        "name": name,
+        "cardinality": cardinality,
+        "join": {"source": source, "target": {"entity": entity, "attribute": attribute}},
+    }
+
+
+def _entity(
+    name: str,
+    *references: str,
+    members: list[dict[str, object]] | None = None,
+    relationships: list[dict[str, object]] | None = None,
+    **declared: object,
+) -> dict[str, object]:
+    """A standalone Entity on its own table, keyed by `id`, with a nullable
+    Int64 Attribute per reference."""
+    return {
+        "name": name,
+        "table": name.lower(),
+        "attributes": [_KEY, *map(_reference, references), *(members or [])],
+        "relationships": relationships or [],
+        **declared,
+    }
+
+
+def _concrete(name: str, parent: str, **declared: object) -> dict[str, object]:
+    inheritance: dict[str, object] = {"role": "concrete-subtype", "parent": parent}
+    if "tagValue" in declared:
+        inheritance["tagValue"] = declared.pop("tagValue")
+    return {"name": name, "inheritance": inheritance, **declared}
+
+
+def _document_model(*entities: dict[str, object]) -> Metamodel:
+    from parallax.descriptor._ingest import ingest_document
+
+    return formed(ingest_document({"entities": list(entities)}))
 
 
 def _tph_owner_model() -> Metamodel:

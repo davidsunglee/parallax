@@ -1,0 +1,27 @@
+# Negating a narrowing behind a joined parking selects the bike, the parking with no
+# vehicle, and the ticket with no parking, while car 7's unknown seats match
+# neither form.
+model: models/predicate-traversal.yaml
+tags: [m-predicate, narrow, relationship, to-one, m-inheritance, table-per-concrete-subtype, negation, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  objectQuery:
+    target: parallax.compatibility.Ticket
+    predicate:
+      not:
+        operand:
+          narrow:
+            path: parallax.compatibility.Ticket.parking.vehicle
+            to: [parallax.compatibility.Car]
+            operand:
+              greaterThan: {path: seats, value: 2}
+then:
+  statements:
+  - sql: {postgres: 'select t0.id, t0.parking_id from traversal_ticket t0 left join traversal_parking t1 on t1.id = t0.parking_id where not (coalesce((select array [ false ] from traversal_bike t2 where t2.id = t1.vehicle_id and t1.id = t0.parking_id union all select array [ t3.seats > ? ] from traversal_car t3 where t3.id = t1.vehicle_id and t1.id = t0.parking_id), array [ false ])) [ 1 ]'}
+    binds: [2]
+  referenceSql: select id, parking_id from traversal_ticket where parking_id is null or parking_id in (select id from traversal_parking where vehicle_id is null or vehicle_id in (select id from traversal_bike))
+  rows:
+  - {id: 51, parking_id: 31}
+  - {id: 52, parking_id: 32}
+  - {id: 54, parking_id: null}
+  roundTrips: 1

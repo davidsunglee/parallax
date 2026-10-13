@@ -252,6 +252,10 @@ _DUPLICATE_CANDIDATE_CODE = {"postgres": "21000", "mariadb": 1242}
         # A subtype test over the reached target evaluates every declared branch,
         # so the selection cannot hide the second candidate.
         "m-predicate-088-target-local-subtype-membership-tpcs",
+        # Behind a joined parking the vehicle hop keeps its scalar subquery, so the
+        # twin fails it although it reaches no dealer and a narrowing excludes it.
+        "m-predicate-114-dotted-field-around-an-unproven-hop",
+        "m-predicate-116-target-local-subtype-membership-around-an-unproven-hop",
     ],
 )
 def test_a_to_one_hop_reaching_two_candidates_fails_through_the_database(

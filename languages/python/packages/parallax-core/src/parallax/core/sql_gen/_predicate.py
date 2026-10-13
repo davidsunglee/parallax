@@ -505,16 +505,23 @@ def _lower_operation(operation: _Operation, scope: ResolutionScope) -> str:
     every bind a related position's subqueries carry, bind ahead of the
     compared values, which is the order the emitted text puts their holes in.
     A demand planned onto a shared source reads its member from that source's
-    joined row, where a missing target supplies SQL null.
+    joined row, where a missing target supplies SQL null, or through the
+    confined scalar subqueries of the hops past it.
     """
     placement = _placement(operation, scope)
-    if placement is not None:
+    reads_text = isinstance(operation, ResolvedStringMatch | ResolvedNullCheck)
+    if placement is not None and placement.hops:
+        subject = _subject_reached(
+            operation.member,
+            lambda demand: _confined(placement, demand, None),
+            reads_text=reads_text,
+        )
+    elif placement is not None:
         subject = _subject(operation.member, _reached(placement))
     else:
         before = _before_empty_target(operation.position, scope)
         if before is not None:
             return _absent_operation(operation, before, scope)
-        reads_text = isinstance(operation, ResolvedStringMatch | ResolvedNullCheck)
         subject = _subject_at(operation.member, operation.position, scope, reads_text=reads_text)
     match operation:
         case ResolvedComparison(op=tag, value=value, framework=framework):
@@ -558,9 +565,10 @@ def _subject_at(
 ) -> MemberSubject:
     """``member`` as read at ``position`` from ``scope``.
 
-    A related position is reached through one scalar subquery per to-one hop,
-    each selecting what the operation demands — its extraction when it reads
-    text, else its compared value — so absence at any hop reads as SQL null.
+    A related position is reached through the hops' correlated scalar
+    subqueries (:func:`_hop_chain`), selecting what the operation demands — its
+    extraction when it reads text, else its compared value — so absence at any
+    hop reads as SQL null.
     """
     if isinstance(position, ScalarElement):
         if not isinstance(scope, ScalarElementScope):  # pragma: no cover - validated scopes
@@ -568,6 +576,15 @@ def _subject_at(
         return _element_subject(member, scope)
     if isinstance(position, CurrentObject):
         return _subject(member, scope)
+    return _subject_reached(
+        member, lambda demand: _at(position, scope, demand, None), reads_text=reads_text
+    )
+
+
+def _subject_reached(
+    member: ResolvedPredicateMember, chain: Callable[[_Demand], str], *, reads_text: bool
+) -> MemberSubject:
+    """``member`` read at the end of ``chain``, as the operation demands it."""
     reached: list[MemberSubject] = []
 
     def demand(inner: ResolutionScope) -> str:
@@ -575,7 +592,7 @@ def _subject_at(
         reached.append(subject)
         return subject.extraction if reads_text else subject.compared
 
-    expression = _at(position, scope, demand, None)
+    expression = chain(demand)
     first = reached[0]
     return MemberSubject(
         expression,
@@ -752,20 +769,13 @@ def _affix_pattern(kind: _AffixOp, value: str) -> tuple[str, bool]:
 def _at(
     position: ObjectPosition, scope: ResolutionScope, demand: _Demand, default: str | None
 ) -> str:
-    """``demand`` evaluated at ``position`` from ``scope`` in its local form.
-
-    Each to-one hop is one correlated scalar subquery over every candidate the
-    relationship declares, so it asserts its own cardinality where it is
-    evaluated: no candidate is SQL null — or ``default`` — and several fail.
-    A hop whose target has no concrete subtype answers ``default`` inside the
-    hop before it. Hops nest rather than join, so an absent later target never
-    hides an earlier hop's candidates.
-    """
+    """``demand`` evaluated at ``position`` from ``scope`` in its local form,
+    through the hops' correlated scalar subqueries (:func:`_hop_chain`)."""
     if isinstance(position, CurrentObject):
         return demand(scope)
     if not isinstance(scope, EntityScope):  # pragma: no cover - validated scopes
         raise SqlGenError("a relationship is reached only from an Entity position")
-    return _hop_chain(_hops(position), scope, demand, default)
+    return _hop_chain(tuple(_hops(position)), scope, demand, default)
 
 
 def _before_empty_target(
@@ -791,21 +801,51 @@ def _reaches_nothing(relationship: ResolvedRelationship, scope: EntityScope) -> 
 
 
 def _hop_chain(
-    hops: Sequence[ResolvedRelationship], scope: EntityScope, demand: _Demand, default: str | None
+    hops: tuple[ResolvedRelationship, ...],
+    scope: EntityScope,
+    demand: _Demand,
+    default: str | None,
+    *,
+    reach: tuple[_SharedSource, ...] = (),
 ) -> str:
+    """``demand`` evaluated past ``hops`` from ``scope``.
+
+    Each to-one hop is one correlated scalar subquery over every candidate the
+    relationship declares, so it asserts its own cardinality where it is
+    evaluated: no candidate is SQL null — or ``default`` — and several fail.
+    A hop whose target has no concrete subtype answers ``default`` inside the
+    hop before it. Hops nest rather than join, so an absent later target never
+    hides an earlier hop's candidates, and a subquery a database runs once per
+    row never plans a join of its own. ``reach`` confines the first hop's
+    candidates to the shared sources the scope's row joined (:func:`_confined`).
+    """
     first, rest = hops[0], hops[1:]
     if _reaches_nothing(first, scope):
         if default is None:  # pragma: no cover - an operation answers before the empty target
             raise SqlGenError("a field is read through a relationship with no candidate")
         return default
     if not rest:
-        return _scalar_hop(first, scope, demand, default)
+        return _scalar_hop(first, scope, demand, default, reach)
     return _scalar_hop(
         first,
         scope,
         lambda reached: _hop_chain(rest, _entity_scope(reached), demand, default),
         default,
+        reach,
     )
+
+
+def _proven_prefix(
+    hops: tuple[ResolvedRelationship, ...], scope: EntityScope
+) -> tuple[tuple[ResolvedRelationship, _RelationshipCandidateBranch], ...]:
+    """The leading ``hops`` proven unique, each with its one candidate branch."""
+    proven: list[tuple[ResolvedRelationship, _RelationshipCandidateBranch]] = []
+    for hop in hops:
+        candidates = _candidates(hop, scope)
+        if not _shared_relationship_is_eligible(hop, candidates, scope):
+            break
+        proven.append((hop, candidates.branches[0]))
+    return tuple(proven)
 
 
 def _entity_scope(scope: ResolutionScope) -> EntityScope:
@@ -815,7 +855,11 @@ def _entity_scope(scope: ResolutionScope) -> EntityScope:
 
 
 def _scalar_hop(
-    relationship: ResolvedRelationship, scope: EntityScope, inner: _Demand, default: str | None
+    relationship: ResolvedRelationship,
+    scope: EntityScope,
+    inner: _Demand,
+    default: str | None,
+    reach: tuple[_SharedSource, ...] = (),
 ) -> str:
     """One correlated scalar subquery selecting ``inner`` from each candidate
     ``relationship`` reaches; a table-per-concrete-subtype target contributes
@@ -827,15 +871,19 @@ def _scalar_hop(
         # value declares is allocated first and this branch's alias after it,
         # keeping aliases in source order (m-sql rule 1); a placeholder stands in
         # for the alias until then.
-        token = f"__hop{next(_HOP_TOKENS)}__"
+        token = _hop_token()
         rendered, branch_scope = _rendered_candidate(branch, relationship, scope, alias=token)
         value = inner(branch_scope)
         alias = scope.next_alias()
-        where = _candidate_where(relationship, branch_scope, rendered, None)
+        where = _candidate_where(relationship, branch_scope, rendered, None, reach)
         selected = f"select {value} from {rendered.table} {token} where {where}"
         branches.append(selected.replace(token, alias))
     subquery = f"({' union all '.join(branches)})"
     return subquery if default is None else f"coalesce({subquery}, {default})"
+
+
+def _hop_token() -> str:
+    return f"__hop{next(_HOP_TOKENS)}__"
 
 
 def _candidates(
@@ -890,10 +938,12 @@ def _candidate_where(
     scope: EntityScope,
     rendered: _RenderedRelationshipCandidate,
     interior: str | None,
+    reach: tuple[_SharedSource, ...] = (),
 ) -> str:
     """The correlated `where` of one candidate branch: correlation, then the
     interior (if any), then the hop's visibility terms, then its family guard —
-    the guard's binds pushed last because its text comes last."""
+    the guard's binds pushed last because its text comes last — then the join
+    terms of each ``reach`` source in join order."""
     terms = [rendered.correlation_sql]
     if interior:
         terms.append(interior)
@@ -901,6 +951,27 @@ def _candidate_where(
     if rendered.family_guard_sql is not None:
         terms.append(rendered.family_guard_sql)
     scope.ctx.bind_framework_all(rendered.family_guard_binds)
+    for source in reach:
+        origin, target = source.origin, _rendered_scope(source)
+        if origin is None:  # pragma: no cover - a rendered source records its origin
+            raise SqlGenError("a shared source is confined to before its join renders")
+        rejoined = _render_relationship_candidate(source.candidate, origin, target.alias)
+        terms.append(_join_terms(source.relationship, target, rejoined))
+    return " and ".join(terms)
+
+
+def _join_terms(
+    relationship: ResolvedRelationship,
+    target: EntityScope,
+    rendered: _RenderedRelationshipCandidate,
+) -> str:
+    """A joined target's `on`: its correlation, its visibility terms, then its
+    family guard, each pushing its binds as its text lands."""
+    terms = [rendered.correlation_sql]
+    terms.extend(_term(term, target) for term in relationship.visibility)
+    if rendered.family_guard_sql is not None:
+        terms.append(rendered.family_guard_sql)
+    target.ctx.bind_framework_all(rendered.family_guard_binds)
     return " and ".join(terms)
 
 
@@ -1022,14 +1093,12 @@ def _lower_relationship_quantifier(
     plan = _candidates(
         relationship, scope, position=None if narrowed is None else narrowed.selection
     )
-    fragments: list[str] = []
-    for rendered, branch_scope in _opened_branches(plan, relationship, scope):
-        if quantifier.kind == "all":
-            assert inner is not None
-            interior: str | None = _counterexample(inner, branch_scope)
-        else:
-            interior = None if inner is None else _conjunct(inner, branch_scope)
-        fragments.append(_candidate_exists(relationship, branch_scope, rendered, interior))
+    fragments = [
+        _candidate_exists(
+            relationship, branch_scope, rendered, inner, counterexample=quantifier.kind == "all"
+        )
+        for rendered, branch_scope in _opened_branches(plan, relationship, scope)
+    ]
     return _existential(fragments, negate=quantifier.kind != "any")
 
 
@@ -1037,10 +1106,22 @@ def _candidate_exists(
     relationship: ResolvedRelationship,
     scope: EntityScope,
     rendered: _RenderedRelationshipCandidate,
-    interior: str | None,
+    operand: ResolvedPredicate | None,
+    *,
+    counterexample: bool = False,
 ) -> str:
-    where_sql = _candidate_where(relationship, scope, rendered, interior)
-    return f"exists (select 1 from {rendered.table} {rendered.alias} where {where_sql})"
+    """One candidate branch's `exists`: its complete ``operand`` — or, for a
+    universal, its counterexample — beside the candidate test, the operand's
+    shared sources joined to the candidate as its own lexical scope."""
+    if operand is None:
+        where_sql = _candidate_where(relationship, scope, rendered, None)
+        return f"exists (select 1 from {rendered.table} {rendered.alias} where {where_sql})"
+    body = plan_shared_sources(operand, scope)
+    joins = render_shared_sources(body)
+    source = f"{rendered.table} {rendered.alias}" + (f" {joins}" if joins else "")
+    interior = _counterexample(operand, body) if counterexample else _conjunct(operand, body)
+    where_sql = _candidate_where(relationship, body, rendered, interior)
+    return f"exists (select 1 from {source} where {where_sql})"
 
 
 def _lower_presence(presence: ResolvedPresence, scope: ResolutionScope) -> str:
@@ -1051,22 +1132,23 @@ def _lower_presence(presence: ResolvedPresence, scope: ResolutionScope) -> str:
     if placement is not None:
         return _planned_presence(presence, placement)
     target = presence.target
-    where = presence.where
     if isinstance(presence.position, CurrentObject):
         if isinstance(target, ResolvedRelationship):
             if not isinstance(scope, EntityScope):  # pragma: no cover - validated scopes
                 raise SqlGenError("a relationship is reached only from an Entity position")
-            return _relationship_presence(target, scope, where, negate=presence.negated)
+            return _relationship_presence(target, scope, presence.where, negate=presence.negated)
         sql = _object_presence(target, scope)
         return f"not {sql}" if presence.negated else sql
-
-    def present(reached: ResolutionScope) -> str:
-        if isinstance(target, ResolvedRelationship):
-            return _relationship_presence(target, _entity_scope(reached), where, negate=False)
-        return _object_presence(target, reached)
-
-    sql = _at(presence.position, scope, present, "false")
+    sql = _at(presence.position, scope, lambda reached: _present(presence, reached), "false")
     return f"not {sql}" if presence.negated else sql
+
+
+def _present(presence: ResolvedPresence, reached: ResolutionScope) -> str:
+    """``presence``'s positive test at the object its position reaches."""
+    target = presence.target
+    if isinstance(target, ResolvedRelationship):
+        return _relationship_presence(target, _entity_scope(reached), presence.where, negate=False)
+    return _object_presence(target, reached)
 
 
 def _relationship_presence(
@@ -1079,12 +1161,7 @@ def _relationship_presence(
     if _reaches_nothing(relationship, scope):
         return "1 = 1" if negate else "1 = 0"
     fragments = [
-        _candidate_exists(
-            relationship,
-            branch_scope,
-            rendered,
-            None if where is None else _conjunct(where, branch_scope),
-        )
+        _candidate_exists(relationship, branch_scope, rendered, where)
         for rendered, branch_scope in _opened_branches(
             _candidates(relationship, scope), relationship, scope
         )
@@ -1094,10 +1171,14 @@ def _relationship_presence(
 
 def _planned_presence(presence: ResolvedPresence, placement: _DemandPlacement) -> str:
     """A presence evaluated at its planned source: through a shared target's
-    join where it reuses one, else as its own test at the shared prefix it
+    join where it reuses one, through the confined hops past the shared
+    prefix where it has any, else as its own test at the shared prefix it
     reaches, where a missing prefix correlates nothing and so is absent."""
     if placement.reuses is not None:
         return _joined_presence(placement.reuses, presence.where, negated=presence.negated)
+    if placement.hops:
+        sql = _confined(placement, lambda reached: _present(presence, reached), "false")
+        return f"not {sql}" if presence.negated else sql
     reached = _reached(placement)
     target = presence.target
     if isinstance(target, ResolvedRelationship):
@@ -1117,14 +1198,20 @@ def _joined_presence(
     operand's unknown.
     """
     target = _rendered_scope(source)
-    key = target.layout.physical_primary_key
-    if not key:  # pragma: no cover - eligibility requires a unique key, and so a primary key
-        raise SqlGenError(f"{target.layout.table.name!r} has no physical primary key")
-    absent = f"{target.own_column(key[0].column.name)} is null"
+    absent = _absent(target)
     if where is None:
         return absent if negated else f"not {absent}"
     match = f"case when {absent} then false else ({_term(where, target)}) is true end"
     return f"not {match}" if negated else match
+
+
+def _absent(target: EntityScope) -> str:
+    """Whether a joined target is missing: its first physical primary-key
+    Column, which no row holds null, reads null."""
+    key = target.layout.physical_primary_key
+    if not key:  # pragma: no cover - a joined target is a keyed table row
+        raise SqlGenError(f"{target.layout.table.name!r} has no physical primary key")
+    return f"{target.own_column(key[0].column.name)} is null"
 
 
 def _object_presence(occurrence: OccurrenceMetadata, scope: ResolutionScope) -> str:
@@ -1135,41 +1222,53 @@ def _object_presence(occurrence: OccurrenceMetadata, scope: ResolutionScope) -> 
 
 
 def _lower_narrow(narrow: ResolvedNarrow, scope: ResolutionScope) -> str:
+    """A narrowing of the current Entity, or of a reached target: at a shared
+    target's joined row where one is planned, else as its own candidate's
+    result in the target's correlated scalar subquery, which keeps every
+    declared candidate under its cardinality assertion."""
     target = narrow.target
     if isinstance(target, CurrentObject):
         if not isinstance(scope, EntityScope):  # pragma: no cover - validated scopes
             raise SqlGenError("a narrow addresses an Entity position, not a bound element")
         return _lower_branch_narrow(narrow, scope)
     relationship = target.relationship
-    if narrow.operand is None:
-        return _at(
-            target.source,
-            scope,
-            lambda reached: _scalar_hop(
-                relationship,
-                _entity_scope(reached),
-                lambda candidate: _selected(narrow, relationship, _entity_scope(candidate)),
-                "false",
-            ),
-            "false",
+    placement = _placement(narrow, scope)
+    if placement is not None and not placement.hops:
+        return _joined_narrow(narrow, relationship, _reached(placement))
+
+    def chain(demand: _Demand, default: str) -> str:
+        if placement is not None:
+            return _confined(placement, demand, default)
+        return _at(target, scope, demand, default)
+
+    operand = narrow.operand
+    if operand is None:
+        return chain(
+            lambda candidate: _selected(narrow, relationship, _entity_scope(candidate)), "false"
         )
     dialect = scope.dialect
-    default = dialect.absent_envelope()
-    operand = narrow.operand
-    envelope = _at(
-        target.source,
-        scope,
-        lambda reached: _scalar_hop(
-            relationship,
-            _entity_scope(reached),
-            lambda candidate: dialect.boolean_envelope(
-                _selected_operand(narrow, relationship, _entity_scope(candidate), operand)
-            ),
-            default,
+    envelope = chain(
+        lambda candidate: dialect.boolean_envelope(
+            _selected_operand(narrow, relationship, _entity_scope(candidate), operand)
         ),
-        default,
+        dialect.absent_envelope(),
     )
     return dialect.envelope_value(envelope)
+
+
+def _joined_narrow(
+    narrow: ResolvedNarrow, relationship: ResolvedRelationship, target: EntityScope
+) -> str:
+    """A narrowing over a shared target's joined row: false where the target is
+    missing or outside the selection, else its operand's own truth, unknown
+    included."""
+    guard = f"not {_absent(target)}"
+    selected = _selected(narrow, relationship, target)
+    if selected != "true":
+        guard = f"{guard} and {selected}"
+    if narrow.operand is None:
+        return f"({guard})"
+    return f"case when {guard} then {_term(narrow.operand, target)} else false end"
 
 
 def _selected(
@@ -1253,14 +1352,12 @@ def _resolved_vo_path(
 def plan_shared_sources(predicate: ResolvedPredicate, scope: EntityScope) -> EntityScope:
     """``scope`` owning the shared relationship sources ``predicate`` reads through.
 
-    A demand shares a source only where every hop it crosses is eligible
-    (:func:`shared_relationship_is_eligible`) and its evaluation there is safe
-    (:func:`_evaluation_is_safe`); every other demand keeps its local form.
-    Scalar operations and presence tests reached through to-one hops at this
-    scope plan sources; a quantifier, a narrowing, and every operand they or a
-    match bind keep their own local forms. A presence whose target another
-    demand shares reads that target's join. Planning allocates no alias and
-    pushes no bind.
+    Scalar operations, presence tests, and target narrowings reached through
+    to-one hops at this scope, and those in the operand of a narrowing of the
+    scope's own row, plan sources (:func:`_plan_reached`); a quantifier's,
+    match's, or narrowing's operand evaluated in a subquery plans its own when
+    it renders. A presence whose target another demand shares reads that
+    target's join. Planning allocates no alias and pushes no bind.
     """
     plan: _SourcePlan = SourcePlan()
     scope.ctx.own_source_plan(plan)
@@ -1292,42 +1389,84 @@ def _plan_demands(
             | ResolvedNullCheck()
         ):
             if isinstance(predicate.position, RelatedObject):
-                _plan_reached(predicate, predicate.position, scope, plan)
-        case ResolvedPresence(position=position):
-            reached = (
-                _plan_reached(predicate, position, scope, plan)
-                if isinstance(position, RelatedObject)
-                else None
-            )
-            if isinstance(predicate.target, ResolvedRelationship) and (
-                reached is not None or isinstance(position, CurrentObject)
-            ):
-                presences.append((predicate, reached))
+                _plan_reached(predicate, tuple(_hops(predicate.position)), scope, plan)
+        case ResolvedPresence():
+            _plan_presence(predicate, scope, plan, presences)
+        case ResolvedNarrow(target=RelatedObject() as target):
+            _plan_reached(predicate, tuple(_hops(target)), scope, plan)
+        case ResolvedNarrow(target=CurrentObject(), operand=operand) if operand is not None:
+            if _narrow_lowers_operand(predicate, scope):
+                _plan_demands(operand, scope, plan, presences)
         case _:
             pass
 
 
+def _plan_presence(
+    presence: ResolvedPresence,
+    scope: EntityScope,
+    plan: _SourcePlan,
+    presences: list[tuple[ResolvedPresence, _SharedSource | None]],
+) -> None:
+    """Place ``presence`` past its hops, and note a relationship presence whose
+    own target a shared source might already join."""
+    position = presence.position
+    if isinstance(position, RelatedObject):
+        placement = _plan_reached(presence, tuple(_hops(position)), scope, plan)
+        if placement is None or placement.hops:
+            return
+        reached = placement.reached
+    else:
+        reached = None
+    if isinstance(presence.target, ResolvedRelationship):
+        presences.append((presence, reached))
+
+
+def _narrow_lowers_operand(narrow: ResolvedNarrow, scope: EntityScope) -> bool:
+    """Whether a narrowing of ``scope``'s own row lowers its operand there: a
+    concrete branch outside the selection answers false without it."""
+    if scope.variant is None:
+        return True
+    selected = _plan_resolved_branch_narrow(
+        scope.facet, scope.storage, scope.entity, narrow.selection
+    ).position
+    return scope.variant in selected
+
+
 def _plan_reached(
-    demand: ResolvedPredicate, position: RelatedObject, scope: EntityScope, plan: _SourcePlan
-) -> _SharedSource | None:
-    """Place ``demand`` on the shared source reaching ``position``, opening the
-    sources its hops need, where every hop is eligible and the demand is safe
-    to evaluate on the joined row; ``None`` leaves it local."""
-    hops = _hops(position)
-    branches: list[_RelationshipCandidateBranch] = []
-    for hop in hops:
-        candidates = _candidates(hop, scope)
-        if not _shared_relationship_is_eligible(hop, candidates, scope):
-            return None
-        branches.append(candidates.branches[0])
-    target = _table_layout(scope.storage, scope.facet, branches[-1].entity.identity)
-    if not _evaluation_is_safe(demand, target, scope):
+    demand: ResolvedPredicate,
+    hops: tuple[ResolvedRelationship, ...],
+    scope: EntityScope,
+    plan: _SourcePlan,
+) -> _DemandPlacement | None:
+    """Place ``demand`` on the shared sources of its leading proven ``hops``.
+
+    Where every hop is proven and the demand is safe over the last target's
+    joined row, it reads that row. Otherwise the proven prefix — every hop but
+    the demand's last where all are proven — is shared, and the demand
+    continues through its own scalar subqueries confined to that prefix, so it
+    evaluates exactly the candidates its local form would. With no shared
+    prefix, or past a target with no concrete subtype, it stays local.
+    """
+    if any(_reaches_nothing(hop, scope) for hop in hops):
         return None
+    branches = [branch for _, branch in _proven_prefix(hops, scope)]
+    target = (
+        _table_layout(scope.storage, scope.facet, branches[-1].entity.identity)
+        if branches
+        else None
+    )
+    if len(branches) == len(hops) and _evaluation_is_safe(demand, target, scope, "joined-row"):
+        shared = len(hops)
+    else:
+        shared = min(len(branches), len(hops) - 1)
+        if not shared or not _evaluation_is_safe(demand, None, scope, "confined"):
+            return None
     reached: _SharedSource | None = None
-    for hop, branch in zip(hops, branches, strict=True):
+    for hop, branch in zip(hops[:shared], branches, strict=False):
         reached = plan.adopt(reached, hop, branch)
-    plan.place(demand, DemandPlacement(reached))
-    return reached
+    placement: _DemandPlacement = DemandPlacement(reached, hops=hops[shared:])
+    plan.place(demand, placement)
+    return placement
 
 
 def _plan_reuse(
@@ -1360,22 +1499,44 @@ def _hops(position: RelatedObject) -> list[ResolvedRelationship]:
     return hops
 
 
-def _evaluation_is_safe(demand: ResolvedPredicate, target: TableLayout, scope: EntityScope) -> bool:
-    """Whether evaluating ``demand`` over ``target``'s joined row evaluates
-    nothing that can fail where its local form would not have.
+type _Exposure = Literal["joined-row", "confined"]
+
+
+def _evaluation_is_safe(
+    demand: ResolvedPredicate,
+    target: TableLayout | None,
+    scope: EntityScope,
+    exposure: _Exposure,
+) -> bool:
+    """Whether evaluating ``demand`` under ``exposure`` evaluates nothing that
+    can fail where its local form would not have.
 
     Uniqueness says how many rows a target has, not what a demand evaluates
     over them; this is the one place that second question is answered. A local
     demand reads its target inside a correlated subquery, over only the
-    candidates that subquery admitted. A term over a joined row is a filter
-    instead, which a database may test against any target row it scans —
-    including rows no source row reaches, which a presence guard does not
-    exclude. So a projection that can fail on stored data keeps its local form
+    candidates that subquery admitted.
+
+    A ``"joined-row"`` demand is a term over ``target``'s joined row instead: a
+    filter a database may test against any target row it scans — including
+    rows no source row reaches, which neither a presence guard nor a `case`
+    excludes. So a projection that can fail on stored data keeps its local form
     there: a document-resident member converted to its declared type, and a
-    presence's or match's operand that evaluates anything
+    presence's, match's, or narrowing's operand that evaluates anything
     :func:`_operand_is_safe` cannot establish. A direct Column, extracted text,
     and a presence or null test cannot fail.
+
+    A ``"confined"`` demand continues from a joined row through its own scalar
+    subqueries, the first of which repeats the join terms of every shared
+    source it is reached through. It therefore yields — and asserts the
+    cardinality of — only the candidates of the joined row the evaluating row
+    reaches, and every later hop and the demand's projection are evaluated in
+    its select list: exactly what the local form evaluates, wherever the
+    database tests the term.
     """
+    if exposure == "confined":
+        return True
+    if target is None:  # pragma: no cover - a joined-row demand reads a planned target
+        raise SqlGenError("a joined-row demand reads no target")
     match demand:
         case ResolvedComparison(member=member) | ResolvedRange(member=member):
             return not _converts(member, target)
@@ -1390,12 +1551,14 @@ def _evaluation_is_safe(demand: ResolvedPredicate, target: TableLayout, scope: E
                 )
                 for branch in _candidates(relationship, scope).branches
             )
+        case ResolvedNarrow(operand=operand) if operand is not None:
+            return _operand_is_safe(operand, target)
         case _:
             return True
 
 
 def _operand_is_safe(operand: ResolvedPredicate, target: TableLayout) -> bool:
-    """Whether a presence's or match's ``operand``, resolved at ``target``,
+    """Whether a match's or narrowing's ``operand``, resolved at ``target``,
     reads only that target's own row without a projection that can fail.
 
     A further hop's scalar subquery asserts its cardinality and a quantifier,
@@ -1450,14 +1613,27 @@ def render_shared_sources(scope: EntityScope) -> str:
     for source in plan.sources:
         parent = scope if source.parent is None else _rendered_scope(source.parent)
         rendered, target = _rendered_candidate(source.candidate, source.relationship, parent)
-        source.scope = target
-        terms = [rendered.correlation_sql]
-        terms.extend(_term(term, target) for term in source.relationship.visibility)
-        if rendered.family_guard_sql is not None:
-            terms.append(rendered.family_guard_sql)
-        target.ctx.bind_framework_all(rendered.family_guard_binds)
-        joins.append(f"left join {rendered.table} {rendered.alias} on {' and '.join(terms)}")
+        source.scope, source.origin = target, parent
+        terms = _join_terms(source.relationship, target, rendered)
+        joins.append(f"left join {rendered.table} {rendered.alias} on {terms}")
     return " ".join(joins)
+
+
+def _confined(placement: _DemandPlacement, demand: _Demand, default: str | None) -> str:
+    """``demand`` evaluated past ``placement``'s shared prefix through its own
+    hops, the first hop's candidates confined to the prefix the row joined."""
+    return _hop_chain(placement.hops, _reached(placement), demand, default, reach=_reach(placement))
+
+
+def _reach(placement: _DemandPlacement) -> tuple[_SharedSource, ...]:
+    """The shared sources ``placement`` is reached through, in join order."""
+    chain: list[_SharedSource] = []
+    source = placement.reached
+    while source is not None:
+        chain.append(source)
+        source = source.parent
+    chain.reverse()
+    return tuple(chain)
 
 
 def _placement(predicate: ResolvedPredicate, scope: ResolutionScope) -> _DemandPlacement | None:

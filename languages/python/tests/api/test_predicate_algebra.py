@@ -10,15 +10,18 @@ algebra's answer over them is part of its contract.
 
 from __future__ import annotations
 
+import datetime as dt
 from collections.abc import Iterable
 from typing import Any, cast
 
 import pytest
 
 from parallax.core import (
+    LATEST,
     MANY_TO_ONE,
     AbstractRoot,
     Attr,
+    Bitemporal,
     ConcreteSubtype,
     DomainModel,
     Entity,
@@ -93,7 +96,31 @@ class Lease(Entity, table="pa_lease", namespace=_NS):
     owner: Rel[Owner | None] = rel(cardinality=MANY_TO_ONE, join=("owner_id", "id"))
 
 
-_MODEL = DomainModel(Owner, Basket, Vehicle, Car, Bike, Parking, Lease)
+class Ticket(Entity, table="pa_ticket", namespace=_NS):
+    id: Attr[int] = attr(primary_key=True)
+    parking_id: Attr[int | None]
+    parking: Rel[Parking | None] = rel(cardinality=MANY_TO_ONE, join=("parking_id", "id"))
+
+
+class Plan(Bitemporal, table="pa_plan", namespace=_NS):
+    id: Attr[int] = attr(primary_key=True)
+    premium: Attr[int] = attr(type=Int32)
+
+
+class Policy(Bitemporal, table="pa_policy", namespace=_NS):
+    id: Attr[int] = attr(primary_key=True)
+    plan_id: Attr[int]
+    note: Attr[str] = attr(max_length=8)
+    plan: Rel[Plan] = rel(cardinality=MANY_TO_ONE, join=("plan_id", "id"))
+
+
+class Desk(Entity, table="pa_desk", namespace=_NS):
+    id: Attr[int] = attr(primary_key=True)
+    plan_id: Attr[int | None]
+    plan: Rel[Plan | None] = rel(cardinality=MANY_TO_ONE, join=("plan_id", "id"))
+
+
+_MODEL = DomainModel(Owner, Basket, Vehicle, Car, Bike, Parking, Lease, Ticket, Plan, Policy, Desk)
 
 
 def _served(profile_run: Any) -> ScopedDatabase:
@@ -340,9 +367,11 @@ def test_a_to_one_hop_reaching_two_candidates_fails_in_the_database(profile_run:
     _assert_ambiguous(db, Parking.vehicle.maker == "Volvo")
 
 
-def _assert_ambiguous(db: ScopedDatabase, predicate: Predicate[Any]) -> None:
+def _assert_ambiguous(
+    db: ScopedDatabase, predicate: Predicate[Any], root: type[Entity] = Parking
+) -> None:
     with pytest.raises(Exception) as raised:
-        db.find(Parking.where(predicate)).results()
+        db.find(root.where(predicate)).results()
     cause: BaseException | None = raised.value
     while cause is not None and not isinstance(cause, DatabaseError):
         cause = cause.__cause__ or getattr(cause, "cause", None)
@@ -392,3 +421,173 @@ def test_a_relationship_match_is_existential_over_every_candidate(profile_run: A
     assert _ids(db, Parking, Parking.vehicle.exists(Vehicle.owner.active.is_(True))) == {30, 31}
     # A dotted prefix before the matched relationship still demands one candidate.
     _assert_ambiguous(db, Parking.vehicle.owner.exists(Owner.active.is_(True)))
+
+
+def _seed_tickets(profile_run: Any, db: ScopedDatabase) -> None:
+    _seed_parking(profile_run, db)
+    db.transact(
+        lambda tx: [
+            tx.insert(Ticket(id=ticket, parking_id=parking))
+            for ticket, parking in ((50, 30), (51, 31), (52, 32), (53, 33), (54, None))
+        ]
+    )
+
+
+def test_a_hop_around_an_unproven_one_reads_through_the_shared_prefix(profile_run: Any) -> None:
+    db = _served(profile_run)
+    _seed_tickets(profile_run, db)
+    active = Ticket.parking.vehicle.owner.active
+    assert _ids(db, Ticket, active.is_(True)) == {50, 51}
+    # A missing parking, vehicle, or owner leaves the field unknown at every hop.
+    assert _ids(db, Ticket, active.is_null()) == {52, 53, 54}
+    assert _ids(db, Ticket, ~active.is_(True)) == set()
+    assert _ids(db, Ticket, Ticket.parking.vehicle.is_a(Car)) == {50, 53}
+    roomy = Ticket.parking.vehicle.is_a(Car, where=Car.seats > 2)
+    assert _ids(db, Ticket, ~roomy) == {51, 52, 54}
+    assert _ids(db, Ticket, Ticket.parking.vehicle.exists(Vehicle.maker == "Trek")) == {51}
+
+
+def test_the_unproven_hop_still_fails_on_two_candidates_the_ticket_reaches(
+    profile_run: Any,
+) -> None:
+    db = _served(profile_run)
+    _seed_tickets(profile_run, db)
+    db.transact(lambda tx: tx.insert(Bike(id=5, maker="Twin", gears=3, owner_id=None)))
+    # The twin reaches no owner and is not a car, yet it is the second candidate.
+    _assert_ambiguous(db, Ticket.parking.vehicle.owner.active.is_(True), Ticket)
+    _assert_ambiguous(db, Ticket.parking.vehicle.is_a(Car), Ticket)
+
+
+def test_the_unproven_hop_never_reads_a_parking_no_ticket_reaches(profile_run: Any) -> None:
+    db = _served(profile_run)
+    _seed_tickets(profile_run, db)
+    db.transact(
+        lambda tx: [
+            tx.insert(Car(id=9, maker="Volvo", seats=2, owner_id=None)),
+            tx.insert(Bike(id=9, maker="Twin", gears=3, owner_id=None)),
+            tx.insert(Parking(id=34, vehicle_id=9)),
+        ]
+    )
+    # Parking 34's vehicle is ambiguous, but no ticket reaches it, so the strict
+    # comparison over the joined parking cannot expose it to the vehicle hop.
+    reached = (Ticket.parking.id > 0) & (Ticket.parking.vehicle.maker == "Volvo")
+    assert _ids(db, Ticket, reached) == {50}
+
+
+_JANUARY = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+_MARCH = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
+_JUNE = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
+_JULY = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
+
+
+def _seed_plans(profile_run: Any) -> None:
+    """Plan 1 was corrected in April: its first milestone overlaps the corrected
+    two in Valid Time only, and those two are adjacent at June. Plan 2 never
+    changed, and no plan 3 exists."""
+    rows = (
+        (1, 10, "2024-01-01", "infinity", "2024-01-01", "2024-04-01"),
+        (1, 20, "2024-01-01", "2024-06-01", "2024-04-01", "infinity"),
+        (1, 30, "2024-06-01", "infinity", "2024-04-01", "infinity"),
+        (2, 20, "2024-01-01", "infinity", "2024-01-01", "infinity"),
+    )
+    current = "'2024-01-01', 'infinity', '2024-01-01', 'infinity'"
+    _write(
+        profile_run,
+        (
+            *(
+                "insert into pa_plan (id, premium, from_z, thru_z, in_z, out_z) values "
+                f"({plan}, {premium}, '{valid}', '{until}', '{since}', '{out}')"
+                for plan, premium, valid, until, since, out in rows
+            ),
+            *(
+                "insert into pa_policy (id, plan_id, note, from_z, thru_z, in_z, out_z) "
+                f"values ({policy}, {policy}, 'n', {current})"
+                for policy in (1, 2, 3)
+            ),
+            "insert into pa_desk (id, plan_id) values (1, 1), (2, 2), (3, 3), (4, null)",
+        ),
+    )
+
+
+def _policies(db: ScopedDatabase, predicate: Predicate[Any], **pin: Any) -> list[int]:
+    found = db.find(Policy.where(predicate).order_by(Policy.id.asc()).as_of(**pin)).results()
+    return [policy.id for policy in found]
+
+
+def test_a_temporal_hop_joins_the_one_milestone_each_coordinate_selects(
+    profile_run: Any,
+) -> None:
+    db = _served(profile_run)
+    _seed_plans(profile_run)
+    premium = Policy.plan.premium
+    latest = {"tx_time": LATEST, "valid_time": LATEST}
+    assert _policies(db, premium == 30, **latest) == [1]
+    assert _policies(db, premium == 20, **latest) == [2]
+    assert _policies(db, premium == 20, tx_time=LATEST, valid_time=_MARCH) == [1, 2]
+    # The corrected milestones are adjacent: June belongs to the later one alone.
+    assert _policies(db, premium == 30, tx_time=LATEST, valid_time=_JUNE) == [1]
+    assert _policies(db, premium >= 20, tx_time=LATEST, valid_time=_JUNE) == [1, 2]
+    assert _policies(db, premium == 10, tx_time=_MARCH, valid_time=_MARCH) == [1]
+    assert _policies(db, Policy.plan.not_exists(), tx_time=LATEST, valid_time=_MARCH) == [3]
+    assert _policies(db, ~(premium == 20), tx_time=LATEST, valid_time=_JANUARY) == []
+
+
+def test_temporal_joins_deliver_wire_streamed_and_paged_roots_alike(profile_run: Any) -> None:
+    db = _served(profile_run)
+    _seed_plans(profile_run)
+    query = (
+        Policy.where(Policy.plan.premium >= 20)
+        .order_by(Policy.id.desc())
+        .as_of(tx_time=LATEST, valid_time=_MARCH)
+    )
+    eager = [policy.id for policy in db.find(query).results()]
+    assert eager == [2, 1]
+    with db.stream(query, batch_size=1) as streamed:
+        assert [policy.id for policy in streamed] == eager
+    assert [policy.id for policy in db.find(query.limit(1)).results()] == [2]
+    assert not any(is_view_loaded(policy, Policy.plan) for policy in db.find(query).results())
+    document = {
+        "target": Policy.identity.canonical,
+        "predicate": {
+            "greaterThanEquals": {"path": f"{Policy.identity.canonical}.plan.premium", "value": 20}
+        },
+        "temporal": {
+            "transaction-time": {"asOf": "latest"},
+            "valid-time": {"asOf": "2024-03-01T00:00:00.000000Z"},
+        },
+    }
+    wire = sorted(cast("Any", node)["id"] for node in db.wire.find(document).results())
+    assert wire == sorted(eager)
+
+
+def test_a_locking_read_through_a_temporal_join_locks_only_its_roots(profile_run: Any) -> None:
+    db = _served(profile_run)
+    _seed_plans(profile_run)
+
+    def locked(tx: Transaction) -> list[int]:
+        query = Desk.where(Desk.plan.premium == 30).order_by(Desk.id.asc())
+        found = [desk.id for desk in tx.find(query).results()]
+        control = profile_run.control()
+        try:
+            control.execute("select id from pa_plan where id = 1 for update nowait", [])
+            with pytest.raises(Exception, match="could not obtain lock"):
+                control.execute("select id from pa_desk where id = 1 for update nowait", [])
+        finally:
+            control.close()
+        return found
+
+    assert db.transact(locked, concurrency="locking") == [1]
+
+
+def test_a_temporal_predicate_write_acquires_through_the_temporal_join(profile_run: Any) -> None:
+    db = _served(profile_run)
+    _seed_plans(profile_run)
+    db.transact(
+        lambda tx: tx.amend_where(
+            Policy.where(Policy.plan.premium == 30), Policy.note.set("top"), valid_from=_JULY
+        )
+    )
+    found = db.find(
+        Policy.where(Policy.note == "top").as_of(tx_time=LATEST, valid_time=_JULY)
+    ).results()
+    assert [policy.id for policy in found] == [1]

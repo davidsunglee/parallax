@@ -1,16 +1,25 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass
 
+from parallax.core.base import INFINITY
 from parallax.core.metamodel import (
     AbstractRoot,
+    AsOfAxisMetadata,
+    AttributeIdentity,
     AttributeMetadata,
     EntityIdentity,
     EntityMetadata,
     Metamodel,
     TablePerHierarchy,
 )
-from parallax.core.predicate._resolved import ResolvedRelationship
+from parallax.core.predicate._resolved import (
+    CurrentObject,
+    ResolvedComparison,
+    ResolvedPredicate,
+    ResolvedRelationship,
+)
 from parallax.core.sql_gen._context import PlanScope as _PlanScope
 from parallax.core.sql_gen._context import SqlGenError
 from parallax.core.sql_gen._context import table_layout as _table_layout
@@ -137,24 +146,69 @@ def shared_relationship_is_eligible(
     join cannot multiply the rows it is joined to.
 
     Only one physical branch qualifies, because a Table's unique key says
-    nothing about another concrete Table of the same family. Its correlation's
-    strict equality must fix every Column of one of that Table's unique keys;
-    strict equality never matches a null component, so a nullable unique Column
-    qualifies too. Declared cardinality, authored conditions, and operand-local
-    subtype selection prove nothing. A temporal target keeps its candidate
-    assertion: an end-based key is not fixed by a correlation alone.
+    nothing about another concrete Table of the same family. Then either the
+    strict equalities of its correlation and generated visibility fix every
+    Column of one of that Table's unique keys — strict equality never matches a
+    null component, so a nullable unique Column qualifies too, and a Latest end
+    equality fixes a temporal end — or the correlation fixes the target family's
+    logical key and the visibility selects one perspective on every temporal
+    axis, which the full-history non-overlap invariant (`m-temporal-write`)
+    makes one milestone. Declared cardinality, authored conditions, and
+    operand-local subtype selection prove nothing.
     """
     if len(candidates.branches) != 1:
         return False
     (branch,) = candidates.branches
     if branch.family_guard is not None and not branch.family_guard.position:
         return False
-    shape = _temporal_view(scope.meta).shape(relationship.target.identity)
-    if shape is not None and _ranked_axes(shape):
-        return False
+    visibility = relationship.visibility
     layout = _table_layout(scope.storage, scope.facet, branch.entity.identity)
-    fixed = {branch.related.identity}
-    return any(
+    fixed = {branch.related.identity, *_latest_ends(visibility)}
+    if any(
         key.columns and all(slot.contributor in fixed for slot in key.columns)
         for key in layout.unique_keys
+    ):
+        return True
+    shape = _temporal_view(scope.meta).shape(relationship.target.identity)
+    axes = () if shape is None else _ranked_axes(shape)
+    logical_key = _entity_view(scope.facet, relationship.target.identity).primary_key
+    return (
+        bool(axes)
+        and branch.related.identity == logical_key.identity
+        and all(_one_perspective(axis, visibility) for axis in axes)
     )
+
+
+def _latest_ends(visibility: tuple[ResolvedPredicate, ...]) -> Iterator[AttributeIdentity]:
+    for term in visibility:
+        if (
+            isinstance(term, ResolvedComparison)
+            and term.op == "eq"
+            and term.framework
+            and term.value is INFINITY
+            and isinstance(term.position, CurrentObject)
+            and isinstance(term.member, AttributeMetadata)
+        ):
+            yield term.member.identity
+
+
+def _one_perspective(axis: AsOfAxisMetadata, visibility: tuple[ResolvedPredicate, ...]) -> bool:
+    """Whether ``visibility`` selects ``axis`` at one coordinate: its Latest end
+    equality, or the containment pair of one finite instant."""
+    if axis.end_attribute in set(_latest_ends(visibility)):
+        return True
+    starts: list[object] = []
+    ends: list[object] = []
+    for term in visibility:
+        if (
+            not isinstance(term, ResolvedComparison)
+            or term.framework
+            or not isinstance(term.position, CurrentObject)
+        ):
+            continue
+        member = term.member.identity
+        if term.op == "lessThanEquals" and member == axis.start_attribute:
+            starts.append(term.value)
+        elif term.op == "greaterThan" and member == axis.end_attribute:
+            ends.append(term.value)
+    return any(start == end for start in starts for end in ends)

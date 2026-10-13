@@ -361,13 +361,15 @@ def test_a_field_past_a_to_one_hop_reads_only_its_visible_candidate() -> None:
     op = oa.Comparison(
         op="greaterThan", subject=oa.FieldSubject("Claim.coverage.amount"), value="1.00"
     )
-    where, binds = _where(op, POLICY, "Claim", temporal=_PINNED)
-    assert where == (
-        f"(select t1.amount from coverage t1 where t1.id = t0.coverage_id and {_COVERAGE_VISIBLE}) "
-        f"> ? and {_CLAIM_VISIBLE}"
+    statement = compile_read(
+        op, POLICY, POSTGRES, target(POLICY, "Claim"), temporal=_PINNED
+    ).statement
+    assert statement.sql.endswith(
+        f"from claim t0 left join coverage t1 on t1.id = t0.coverage_id and {_COVERAGE_VISIBLE} "
+        f"where t1.amount > ? and {_CLAIM_VISIBLE}"
     )
-    assert binds[:4] == (_B_MANAGED, _B_MANAGED, _P_MANAGED, _P_MANAGED)
-    assert binds[4] == decimal.Decimal("1.00")
+    assert statement.binds[:4] == (_B_MANAGED, _B_MANAGED, _P_MANAGED, _P_MANAGED)
+    assert statement.binds[4] == decimal.Decimal("1.00")
 
 
 def test_presence_of_a_to_one_target_tests_only_its_visible_candidate() -> None:

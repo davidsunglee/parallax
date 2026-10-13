@@ -485,6 +485,7 @@ left-to-right.
 | `exists` / `notExists` of a to-one relationship | `[not] exists (select 1 from target t1 where t1.key = t0.fk [and <where>])` |
 | a field through a to-one relationship | `(select t1.col from target t1 where t1.key = t0.fk) <op> ?` |
 | a field through a shared to-one relationship | `… left join target t1 on t1.key = t0.fk where t1.col <op> ?` |
+| a `narrow` of a shared to-one relationship's target | `… left join target t1 on t1.key = t0.fk where (not t1.pk is null and t1.tag = ?)` |
 
 The operator rows show a field of the queried row (`t0.col`); every operation
 lowers identically over the subject its position supplies — a field of a related
@@ -771,16 +772,32 @@ subquery** over the target's candidates.
 
 A hop is **proven unique** when it reads exactly one physical candidate table — a
 standalone target, a table-per-hierarchy family, or a table-per-concrete-subtype
-family with one effective concrete — of a non-temporal target, and its
-correlation equality fixes every Column of one of that table's unique keys
-(`m-storage-layout` *Physical indexes*). Strict equality matches no `NULL`, so a
-nullable unique Column qualifies. Declared cardinality, an authored field
-condition, and operand-local subtype selection prove nothing, and one concrete
-table's unique key proves nothing about another's rows.
+family with one effective concrete — and either
 
-At the read's own row — the queried Entity, or one branch of a
-table-per-concrete-subtype union — a field operation or a presence test reached
-only through proven hops reads them as `left join`s following the read's `from`:
+- the strict equalities of its correlation and its generated visibility fix every
+  Column of one of that table's unique keys (`m-storage-layout` *Physical
+  indexes*), a Latest visibility term `to = ?` (infinity) fixing a temporal end; or
+- its correlation fixes the target family's logical primary key and its generated
+  visibility selects one coordinate on every As-Of Axis the target declares: the
+  Latest term, or the containment pair `from <= ? and to > ?` of one finite
+  instant.
+
+Strict equality matches no `NULL`, so a nullable unique Column qualifies. The
+visibility is the one generated for the hop (`m-navigate`), not the read's own
+temporal selection. Declared cardinality, an authored field condition, and
+operand-local subtype selection prove nothing, and one concrete table's unique key
+proves nothing about another's rows. The second proof rests on the full-history
+non-overlap invariant (`m-temporal-write` *Milestones of one object never
+overlap*), which a join trusts rather than checks: over storage that breaks it, a
+join may supply one row per overlapping milestone where the scalar form would
+fail.
+
+At a lexical scope's own row — the queried Entity, one branch of a
+table-per-concrete-subtype union, one partition of a table-per-hierarchy read, or
+the candidate of a correlated `exists` that tests a relationship match's or a
+relationship quantifier's operand — a field operation, a presence test, or a
+path-targeted `narrow` reached only through proven hops reads them as `left
+join`s following that row's own table:
 
 ```text
 eq(OrderStatus.orderItem.order.name, 'Ada')
@@ -795,12 +812,13 @@ guard. Joins appear in the order their occurrences are first demanded, each afte
 the join it is reached from, so they take their aliases (rule 1) and push their
 binds before anything in the `where`. Every demand reaching the same
 **occurrence** — the same relationship direction from the same source, with the
-same target family and visibility — reads the same join, so repeated fields and
-the common prefixes of multi-hop paths share it; another relationship to the same
-Entity opens its own. A `left join` keeps every row and supplies `NULL` for a
-missing target, so a field read past any missing hop is unknown and a null check
-over it is true, exactly as the scalar form answers, and a proven hop never
-multiplies the rows it is joined to.
+same target family and visibility, in the same lexical scope — reads the same
+join, so repeated fields and the common prefixes of multi-hop paths share it;
+another relationship to the same Entity, or an operand's own scope, opens its own.
+A `left join` keeps every row and supplies `NULL` for a missing target, so a field
+read past any missing hop is unknown and a null check over it is true, exactly as
+the scalar form answers, and a proven hop never multiplies the rows it is joined
+to.
 
 A presence test or relationship match reached through proven hops tests its own
 target at the joined prefix, without the scalar form's `coalesce`: a missing
@@ -822,21 +840,48 @@ A match then tests its complete `where` for truth beneath that presence,
 `notExists` negates whole: a present target whose `where` is unknown does not
 match. Presence or matching alone opens no join for its own target.
 
-A comparison, range, or membership test of a document-resident member whose
-comparison casts to its declared type (`m-dialect`) keeps its scalar form even
-through proven hops: a term of the `where` may be evaluated over target rows the
-scalar form's candidate test excludes, and that conversion can fail on stored
-text. A match tested over a joined row — at a joined prefix, or beneath a shared
-target's presence guard, which excludes only a missing target — likewise keeps
-its scalar form when its `where` holds such a conversion or reads beyond its
-target's own row: through a further hop, a quantifier, a `narrow` with an
-operand, or another match. Every other demand keeps its scalar form as well: one
-crossing a hop that is not proven unique, a quantifier over a collection the
-target holds, a path-targeted `narrow`, every demand inside a quantifier's, a
-match's, or a `narrow`'s operand, a branch of a partitioned table-per-hierarchy
-read, and readless predicate DML, which has no `from` to join (`m-batch-write`).
-A locking read keeps its scalar forms on a dialect whose shared-row lock cannot
-be limited to the root alias (`m-dialect`).
+A path-targeted `narrow` of a joined target tests the join's presence and its own
+subtype selection — the tag test under table-per-hierarchy — as one grouped term,
+`(not t1.id is null and t1.kind = ?)`, so a missing or unselected target is false.
+With an operand it keeps a selected target's unknown, without the scalar form's
+envelope: `case when not t1.id is null and t1.kind = ? then <operand> else false
+end`.
+
+A term of a scope's `where` may be evaluated over joined target rows that no row
+of the scope reaches. So a comparison, range, or membership test of a
+document-resident member whose comparison casts to its declared type
+(`m-dialect`) does not read a joined row: that conversion can fail on stored text
+the scalar form's candidate test excludes. A match or a `narrow` tested over a
+joined row likewise does not when its operand holds such a conversion or reads
+beyond its target's own row: through a further hop, a quantifier, a `narrow` with
+an operand, or another match.
+
+Such a demand, and one crossing a hop that is not proven unique, shares the
+proven hops it starts with — every hop but its last where all are proven — and
+continues from the last of them through **confined** correlated scalar
+subqueries (*Correlated scalar subqueries*). The first of them repeats, after its
+own candidate terms, the `on` terms of each join it is reached through, in join
+order, so its candidates are those of the joined row the scope's row reaches and
+its select list evaluates exactly what the unshared scalar form evaluates,
+wherever the database evaluates the term:
+
+```text
+eq(Ticket.parking.vehicle.dealer.name, 'Nordic')
+  → … from traversal_ticket t0
+      left join traversal_parking t1 on t1.id = t0.parking_id
+      where (select (select t2.name from traversal_dealer t2 where t2.id = t3.dealer_id)
+             from traversal_bike t3 where t3.id = t1.vehicle_id and t1.id = t0.parking_id
+             union all
+             select (select t4.name from traversal_dealer t4 where t4.id = t5.dealer_id)
+             from traversal_car t5 where t5.id = t1.vehicle_id and t1.id = t0.parking_id) = ?
+```
+
+Every other demand keeps its scalar form: one left with no proven hop to share,
+a quantifier over a collection the target holds, every demand of a path-targeted
+`narrow`'s operand, which its target's joined row or subquery evaluates, and
+readless predicate DML, which has no `from` to join (`m-batch-write`). A locking
+read keeps its scalar forms on a dialect whose shared-row lock cannot be limited
+to the root alias (`m-dialect`).
 
 #### Correlated scalar subqueries
 
@@ -850,7 +895,8 @@ quantifier's is (*Relationship predicates*), a quantifier over a
 collection the target holds selects the quantifier's Boolean, and a
 path-targeted `narrow` selects its subtype test. Each further hop nests another
 scalar subquery inside the one before it, its select list read through the inner
-hop, as readless predicate DML renders the path above:
+hop, whether or not that hop is proven: a subquery the database evaluates once per
+row joins nothing of its own. Readless predicate DML renders the path above so:
 
 ```text
 eq(OrderStatus.orderItem.order.name, 'Ada')
@@ -871,7 +917,9 @@ table, the branches joined by `union all` inside the one subquery
 (`(select t1.maker from traversal_bike t1 where t1.id = t0.vehicle_id union all
 select t2.maker from traversal_car t2 where t2.id = t0.vehicle_id)`), each branch
 its own source-ordered alias. An authored subtype selection or field condition is
-evaluated over those candidates, never used to drop one.
+evaluated over those candidates, never used to drop one. A **confined** subquery
+(*Shared to-one joins*) appends the join terms it repeats after each branch's
+candidate terms.
 
 Where a hop's result is Boolean, the subquery's absence default is the empty
 collection's or the absent target's answer, applied with `coalesce`: `any` and
@@ -890,16 +938,16 @@ cardinality. The unknown is a Boolean-typed null (Postgres
 `cast(null as boolean)`), because an untyped `null` a scalar subquery selects
 is text.
 
-**Path-targeted narrowing.** A bare `narrow` with a `path` selects the reached
-target's subtype membership: under table-per-hierarchy its tag test
-(`coalesce((select t1.kind = ? from traversal_pet t1 where t1.id = t0.pet_id),
-false)`), under table-per-concrete-subtype one constant per branch — `true` for a
-selected concrete's table, `false` for every other — joined by `union all`, so a
-nonselected branch still contributes its candidate. With an operand the node must
-keep a selected target's unknown apart from an absent target's false, so Postgres
-carries the result in `m-dialect`'s **Boolean result envelope**: each branch
-selects `array [ case when <selected> then <operand> else false end ]`, the hop
-defaults to `array [ false ]`, and the element is extracted once, after the
+**Path-targeted narrowing.** A bare `narrow` with a `path` whose target is not
+joined selects the reached target's subtype membership: under table-per-hierarchy
+its tag test (`coalesce((select t1.kind = ? from traversal_pet t1 where t1.id =
+t0.pet_id), false)`), under table-per-concrete-subtype one constant per branch —
+`true` for a selected concrete's table, `false` for every other — joined by `union
+all`, so a nonselected branch still contributes its candidate. With an operand the
+node must keep a selected target's unknown apart from an absent target's false, so
+Postgres carries the result in `m-dialect`'s **Boolean result envelope**: each
+branch selects `array [ case when <selected> then <operand> else false end ]`, the
+hop defaults to `array [ false ]`, and the element is extracted once, after the
 outermost hop.
 
 ### Polymorphic relationship quantifiers

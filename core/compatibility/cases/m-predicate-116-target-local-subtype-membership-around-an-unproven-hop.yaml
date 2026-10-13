@@ -1,0 +1,22 @@
+# A bare subtype test of the vehicle behind a joined parking keeps the vehicle's
+# scalar subquery over both candidate tables, confined to the joined parking.
+model: models/predicate-traversal.yaml
+tags: [m-predicate, narrow, relationship, to-one, m-inheritance, table-per-concrete-subtype, m-dialect, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  objectQuery:
+    target: parallax.compatibility.Ticket
+    predicate:
+      narrow:
+        path: parallax.compatibility.Ticket.parking.vehicle
+        to: [parallax.compatibility.Car]
+        operand:
+          'true': {}
+then:
+  statements:
+  - sql: {postgres: 'select t0.id, t0.parking_id from traversal_ticket t0 left join traversal_parking t1 on t1.id = t0.parking_id where coalesce((select false from traversal_bike t2 where t2.id = t1.vehicle_id and t1.id = t0.parking_id union all select true from traversal_car t3 where t3.id = t1.vehicle_id and t1.id = t0.parking_id), false)', mariadb: 'select t0.id, t0.parking_id from traversal_ticket t0 left join traversal_parking t1 on t1.id = t0.parking_id where coalesce((select false from traversal_bike t2 where t2.id = t1.vehicle_id and t1.id = t0.parking_id union all select true from traversal_car t3 where t3.id = t1.vehicle_id and t1.id = t0.parking_id), false)'}
+  referenceSql: select id, parking_id from traversal_ticket where parking_id in (select id from traversal_parking where vehicle_id in (select id from traversal_car))
+  rows:
+  - {id: 50, parking_id: 30}
+  - {id: 53, parking_id: 33}
+  roundTrips: 1

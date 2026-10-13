@@ -10591,6 +10591,16 @@
           "applicableEntities": [
             "parallax.compatibility.Bike"
           ],
+          "column": "dealer_id",
+          "contributor": "attribute:parallax.compatibility.Vehicle.dealerId",
+          "declaringOwner": "parallax.compatibility.Vehicle",
+          "effectiveNullable": true,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Bike"
+          ],
           "column": "gears",
           "contributor": "attribute:parallax.compatibility.Bike.gears",
           "declaringOwner": "parallax.compatibility.Bike",
@@ -10628,6 +10638,16 @@
           "applicableEntities": [
             "parallax.compatibility.Car"
           ],
+          "column": "dealer_id",
+          "contributor": "attribute:parallax.compatibility.Vehicle.dealerId",
+          "declaringOwner": "parallax.compatibility.Vehicle",
+          "effectiveNullable": true,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Car"
+          ],
           "column": "seats",
           "contributor": "attribute:parallax.compatibility.Car.seats",
           "declaringOwner": "parallax.compatibility.Car",
@@ -10658,6 +10678,33 @@
           "column": "pet_id",
           "contributor": "attribute:parallax.compatibility.Collar.petId",
           "declaringOwner": "parallax.compatibility.Collar",
+          "effectiveNullable": true,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    },
+    "traversal_dealer": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Dealer"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Dealer.id",
+          "declaringOwner": "parallax.compatibility.Dealer",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Dealer"
+          ],
+          "column": "name",
+          "contributor": "attribute:parallax.compatibility.Dealer.name",
+          "declaringOwner": "parallax.compatibility.Dealer",
           "effectiveNullable": true,
           "tier": "domain"
         }
@@ -10772,6 +10819,33 @@
           "column": "bark_volume",
           "contributor": "attribute:parallax.compatibility.Dog.barkVolume",
           "declaringOwner": "parallax.compatibility.Dog",
+          "effectiveNullable": true,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    },
+    "traversal_ticket": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Ticket"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Ticket.id",
+          "declaringOwner": "parallax.compatibility.Ticket",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Ticket"
+          ],
+          "column": "parking_id",
+          "contributor": "attribute:parallax.compatibility.Ticket.parkingId",
+          "declaringOwner": "parallax.compatibility.Ticket",
           "effectiveNullable": true,
           "tier": "domain"
         }

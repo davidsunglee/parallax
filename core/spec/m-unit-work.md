@@ -473,7 +473,8 @@ the window no current row covers opens with it (`m-temporal-write` *Observed
 writes span their requested extent*). Authority comes first: a source whose
 evidence or insertion authority fails opens nothing, so a replacement is never
 an upsert, and existing-row proofs still do not coordinate concurrent creation
-inside a gap.
+inside a gap, which can leave invalid overlapping coverage (`m-temporal-write`
+*Concurrent creation in gaps is not coordinated*).
 
 ### Caller-addressed writes
 

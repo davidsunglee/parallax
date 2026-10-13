@@ -1,0 +1,19 @@
+# A dealer name read around the unproven vehicle hop is missing wherever any hop
+# reaches nothing: no parking, no vehicle, or a car without a dealer.
+model: models/predicate-traversal.yaml
+tags: [m-predicate, relationship, to-one, traversal, isNull, m-inheritance, table-per-concrete-subtype, m-dialect, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  objectQuery:
+    target: parallax.compatibility.Ticket
+    predicate:
+      isNull: {path: parallax.compatibility.Ticket.parking.vehicle.dealer.name}
+then:
+  statements:
+  - sql: {postgres: 'select t0.id, t0.parking_id from traversal_ticket t0 left join traversal_parking t1 on t1.id = t0.parking_id where (select (select t2.name from traversal_dealer t2 where t2.id = t3.dealer_id) from traversal_bike t3 where t3.id = t1.vehicle_id and t1.id = t0.parking_id union all select (select t4.name from traversal_dealer t4 where t4.id = t5.dealer_id) from traversal_car t5 where t5.id = t1.vehicle_id and t1.id = t0.parking_id) is null', mariadb: 'select t0.id, t0.parking_id from traversal_ticket t0 left join traversal_parking t1 on t1.id = t0.parking_id where (select (select t2.name from traversal_dealer t2 where t2.id = t3.dealer_id) from traversal_bike t3 where t3.id = t1.vehicle_id and t1.id = t0.parking_id union all select (select t4.name from traversal_dealer t4 where t4.id = t5.dealer_id) from traversal_car t5 where t5.id = t1.vehicle_id and t1.id = t0.parking_id) is null'}
+  referenceSql: select id, parking_id from traversal_ticket where id not in (select t.id from traversal_ticket t join traversal_parking p on p.id = t.parking_id join (select id, dealer_id from traversal_car union all select id, dealer_id from traversal_bike) v on v.id = p.vehicle_id join traversal_dealer d on d.id = v.dealer_id where d.name is not null)
+  rows:
+  - {id: 52, parking_id: 32}
+  - {id: 53, parking_id: 33}
+  - {id: 54, parking_id: null}
+  roundTrips: 1

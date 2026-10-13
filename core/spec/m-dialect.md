@@ -775,7 +775,8 @@ placement-free spelling `m-deep-fetch-012` already witnesses).
   Only the root alias's rows are locked. Postgres's qualified form names the root
   alias, so a locking read may join shared to-one targets (`m-sql` *Shared to-one
   joins*); MariaDB's unqualified form would also lock every joined target row, so
-  a locking MariaDB read keeps its to-one demands in their scalar forms.
+  a locking MariaDB read joins nothing beside its root and keeps its to-one
+  demands in their correlated subqueries.
 
   This decision point specifies object-find locking only; it defines no lock
   behavior for any other read shape. Prior art: Reladomo keeps aggregated-data

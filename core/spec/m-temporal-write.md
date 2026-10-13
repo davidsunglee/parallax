@@ -13,6 +13,35 @@ the family-effective state it carries; and on `m-document-codec` for effective
 comparison. `m-unit-work`'s Write Planner drives the expansion, the SQL emission
 is `m-sql`, and the conflict/retry contract is `m-opt-lock`.
 
+## Milestones of one object never overlap
+
+Distinct milestones of one logical object never overlap on every declared As-Of
+Axis at once. Transaction-Time-Only milestones of one key have disjoint
+Transaction-Time intervals; Bitemporal milestones of one key have disjoint
+`(Valid Time × Transaction Time)` rectangles. Overlap on one axis alone is
+legal — successive Transaction-Time versions share a Valid-Time interval, and
+disjoint Valid-Time slices share a Transaction-Time interval — and so is the
+adjacency of two half-open intervals. The invariant covers history as well as
+current coverage.
+
+```text
+Same object, current on Transaction Time:
+  valid [January, April) and [April, July)    adjacent, valid
+  valid [January, July) and [April, October)  overlapping, invalid
+
+Same object, successive Transaction-Time versions:
+  valid [January, July), tx [T0, T1)
+  valid [January, July), tx [T1, infinity)    valid history
+```
+
+Every write this module specifies preserves the invariant over the coverage it
+reads. Storage that breaks it — through the race *Concurrent creation in gaps
+is not coordinated* describes, or a writer outside the framework — is invalid,
+not another temporal state: no read chooses one of the overlapping milestones,
+and nothing here detects or repairs it. Readers rely on the invariant without
+checking it (`m-read-delivery` *Streamed delivery*; `m-sql` *Shared to-one
+joins*).
+
 ## Transaction-Time-Only milestone-chaining writes
 
 In Transaction-Time-Only mode there is no Valid-Time dimension, so the
@@ -395,8 +424,10 @@ attempt adds no history of its own.
 **Concurrent creation in gaps is not coordinated.** The existing-row guards and
 shared locks above protect rows that exist when the flush reads them. A
 concurrent transaction may still open coverage inside a gap a replacement fills,
-or a gap an amendment passes over, and both commits can leave overlapping current
-coverage; no isolation level is raised to prevent it. A write binds to the rows
+or a gap an amendment passes over, and both commits can leave overlapping
+coverage; no isolation level is raised to prevent it. The result breaks
+*Milestones of one object never overlap*: it is invalid storage, not a second
+valid state. A write binds to the rows
 it already holds — the rectangles it observed, unless an ordering barrier
 follows earlier writes of its object; the starting rectangles a Locking
 acquisition retained that are still current; the starting rectangle a

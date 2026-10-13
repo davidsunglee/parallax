@@ -33,10 +33,11 @@ entity's rows. A **to-one** relationship is reached by single-valued traversal �
 a dotted path or a target-local `narrow` — which lowers to a correlated **scalar
 subquery** over the target's candidates (`m-sql`): zero candidates supply no
 value, one supplies the result, and more than one fail the statement where it is
-evaluated. Where the target's physical keys prove at most one candidate, the
-traversal may instead read a shared `left join` (`m-sql` *Shared to-one joins*),
-which supplies no value for a missing target and cannot multiply the queried
-entity's rows; an unproven hop always keeps its scalar subquery. A presence test
+evaluated. Where the target's physical keys — or its logical key at one temporal
+perspective per axis, below — prove at most one candidate, the traversal may
+instead read a shared `left join` (`m-sql` *Shared to-one joins*), which
+supplies no value for a missing target and cannot multiply the queried entity's
+rows over valid storage; an unproven hop always keeps its scalar subquery. A presence test
 of the relationship itself is not a value dereference: it lowers to a correlated
 `EXISTS`, or reads a join another demand already shares, and asserts nothing
 about cardinality. A
@@ -70,7 +71,11 @@ written by the user**. It is part of the SQL for that hop: inside the correlated
 sub-select or scalar subquery for a relationship predicate and inside the
 per-level child query for deep fetch. A to-one hop's cardinality is therefore
 judged over the candidates visible at those coordinates — a temporal target's
-other milestones are not candidates. At each temporal target the propagated value drives *that entity's own*
+other milestones are not candidates. Because one object's milestones never overlap
+on every axis (`m-temporal-write` *Milestones of one object never overlap*), a hop
+correlated to the target's logical key and selecting one coordinate on each of its
+axes reaches at most one milestone; the coordinates that count are the ones
+propagated to that hop, not the root's selection. At each temporal target the propagated value drives *that entity's own*
 as-of predicate: **latest** lowers to the single equality `to = infinity`; an
 **as-of instant** lowers to the half-open containment `from <= ? and to > ?`. Each
 axis propagates and lowers independently. A temporal query root already carries
