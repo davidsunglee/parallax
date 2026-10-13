@@ -14,7 +14,7 @@ when:
           greaterThan: {path: barkVolume, value: 5}
 then:
   statements:
-  - sql: {postgres: 'select t0.id, t0.pet_id from traversal_collar t0 where (coalesce((select array [ case when t1.kind = ? then t1.bark_volume > ? else false end ] from traversal_pet t1 where t1.id = t0.pet_id), array [ false ])) [ 1 ]'}
+  - sql: {postgres: 'select t0.id, t0.pet_id from traversal_collar t0 left join traversal_pet t1 on t1.id = t0.pet_id where case when not t1.id is null and t1.kind = ? then t1.bark_volume > ? else false end'}
     binds: [dog, 5]
   referenceSql: select id, pet_id from traversal_collar where pet_id in (select id from traversal_pet where kind = 'dog' and bark_volume > 5)
   rows:

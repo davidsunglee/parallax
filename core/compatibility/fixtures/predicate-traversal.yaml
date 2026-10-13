@@ -4,7 +4,9 @@
 #   Collar 10 -> Rex   Collar 11 -> Fido   Collar 12 -> Tom   Collar 13 -> no pet
 #   Leash 20 -> Collar 10   Leash 21 -> Collar 13   Leash 22 -> no collar   Leash 23 -> Collar 11
 #   Car 5 Volvo seats 4     Bike 6 Trek gears 21    Car 7 Saab seats null
+#   Car 5 -> Dealer 40 Nordic   Bike 6 -> Dealer 41 Velo   Car 7 -> no dealer
 #   Parking 30 -> 5 (Car)   Parking 31 -> 6 (Bike)  Parking 32 -> no vehicle   Parking 33 -> 7 (Car)
+#   Ticket 50 -> 30   Ticket 51 -> 31   Ticket 52 -> 32   Ticket 53 -> 33   Ticket 54 -> no parking
 #
 # Car and Bike key their tables independently and use no shared id here, so each
 # parking reaches one candidate.
@@ -14,10 +16,10 @@ parallax.compatibility.Dog:
 parallax.compatibility.Cat:
   - { id: 3, name: Tom, indoor: true }
 parallax.compatibility.Car:
-  - { id: 5, maker: Volvo, seats: 4 }
-  - { id: 7, maker: Saab, seats: null }
+  - { id: 5, maker: Volvo, seats: 4, dealerId: 40 }
+  - { id: 7, maker: Saab, seats: null, dealerId: null }
 parallax.compatibility.Bike:
-  - { id: 6, maker: Trek, gears: 21 }
+  - { id: 6, maker: Trek, gears: 21, dealerId: 41 }
 parallax.compatibility.Collar:
   - { id: 10, petId: 1 }
   - { id: 11, petId: 2 }
@@ -33,3 +35,12 @@ parallax.compatibility.Parking:
   - { id: 31, vehicleId: 6 }
   - { id: 32, vehicleId: null }
   - { id: 33, vehicleId: 7 }
+parallax.compatibility.Dealer:
+  - { id: 40, name: Nordic }
+  - { id: 41, name: Velo }
+parallax.compatibility.Ticket:
+  - { id: 50, parkingId: 30 }
+  - { id: 51, parkingId: 31 }
+  - { id: 52, parkingId: 32 }
+  - { id: 53, parkingId: 33 }
+  - { id: 54, parkingId: null }

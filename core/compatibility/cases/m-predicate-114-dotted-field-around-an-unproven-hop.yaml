@@ -1,0 +1,19 @@
+# The parking hop is proven and joined; the multi-table vehicle is not, so its
+# scalar subquery keeps both candidate tables and repeats the parking join's terms
+# to read only the joined parking's vehicle, and the dealer nests inside it.
+model: models/predicate-traversal.yaml
+tags: [m-predicate, relationship, to-one, traversal, m-inheritance, table-per-concrete-subtype, m-dialect, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  objectQuery:
+    target: parallax.compatibility.Ticket
+    predicate:
+      eq: {path: parallax.compatibility.Ticket.parking.vehicle.dealer.name, value: Nordic}
+then:
+  statements:
+  - sql: {postgres: 'select t0.id, t0.parking_id from traversal_ticket t0 left join traversal_parking t1 on t1.id = t0.parking_id where (select (select t2.name from traversal_dealer t2 where t2.id = t3.dealer_id) from traversal_bike t3 where t3.id = t1.vehicle_id and t1.id = t0.parking_id union all select (select t4.name from traversal_dealer t4 where t4.id = t5.dealer_id) from traversal_car t5 where t5.id = t1.vehicle_id and t1.id = t0.parking_id) = ?', mariadb: 'select t0.id, t0.parking_id from traversal_ticket t0 left join traversal_parking t1 on t1.id = t0.parking_id where (select (select t2.name from traversal_dealer t2 where t2.id = t3.dealer_id) from traversal_bike t3 where t3.id = t1.vehicle_id and t1.id = t0.parking_id union all select (select t4.name from traversal_dealer t4 where t4.id = t5.dealer_id) from traversal_car t5 where t5.id = t1.vehicle_id and t1.id = t0.parking_id) = ?'}
+    binds: [Nordic]
+  referenceSql: select id, parking_id from traversal_ticket where parking_id in (select p.id from traversal_parking p join traversal_car c on c.id = p.vehicle_id join traversal_dealer d on d.id = c.dealer_id where d.name = 'Nordic')
+  rows:
+  - {id: 50, parking_id: 30}
+  roundTrips: 1

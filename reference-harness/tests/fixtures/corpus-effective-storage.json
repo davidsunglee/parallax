@@ -3791,6 +3791,14 @@
       "documentPath": {},
       "valueObject": {}
     },
+    "parallax.compatibility.Dealer": {
+      "attribute": {
+        "id": "id",
+        "name": "name"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
     "parallax.compatibility.Dog": {
       "attribute": {
         "barkVolume": "bark_volume"
@@ -3822,8 +3830,17 @@
       "documentPath": {},
       "valueObject": {}
     },
+    "parallax.compatibility.Ticket": {
+      "attribute": {
+        "id": "id",
+        "parkingId": "parking_id"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
     "parallax.compatibility.Vehicle": {
       "attribute": {
+        "dealerId": "dealer_id",
         "id": "id",
         "maker": "maker"
       },

@@ -21,7 +21,7 @@ from parallax.core import predicate as oa
 from parallax.core.dialect import POSTGRES
 from parallax.core.object_query import History
 from parallax.core.predicate import ModelRejectedError
-from tests._support.sql import compile_read
+from tests._support.sql import compile_read, compile_write_predicate
 from tests.unit._corpus_model_support import formed, model, target
 
 CUSTOMER = model("customer")
@@ -813,4 +813,17 @@ def test_presence_of_a_value_object_past_a_to_one_hop_reads_the_related_document
     assert compiled.statement.sql.endswith(
         "left join customer t1 on t1.id = t0.customer_id "
         "where coalesce(jsonb_typeof(t1.address) = ?, false)"
+    )
+
+
+def test_readless_dml_tests_a_value_object_past_a_to_one_hop_in_its_scalar_hop() -> None:
+    compiled = compile_write_predicate(
+        oa.Presence("exists", "Location.customer.address"),
+        CUSTOMER,
+        POSTGRES,
+        target(CUSTOMER, "Location"),
+    )
+    assert compiled.sql == (
+        "coalesce((select coalesce(jsonb_typeof(t1.address) = ?, false) "
+        "from customer t1 where t1.id = customer_id), false)"
     )

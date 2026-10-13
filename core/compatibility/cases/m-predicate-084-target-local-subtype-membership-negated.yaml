@@ -15,7 +15,7 @@ when:
               'true': {}
 then:
   statements:
-  - sql: {postgres: 'select t0.id, t0.pet_id from traversal_collar t0 where not coalesce((select t1.kind = ? from traversal_pet t1 where t1.id = t0.pet_id), false)', mariadb: 'select t0.id, t0.pet_id from traversal_collar t0 where not coalesce((select t1.kind = ? from traversal_pet t1 where t1.id = t0.pet_id), false)'}
+  - sql: {postgres: 'select t0.id, t0.pet_id from traversal_collar t0 left join traversal_pet t1 on t1.id = t0.pet_id where not (not t1.id is null and t1.kind = ?)', mariadb: 'select t0.id, t0.pet_id from traversal_collar t0 left join traversal_pet t1 on t1.id = t0.pet_id where not (not t1.id is null and t1.kind = ?)'}
     binds: [dog]
   referenceSql: select id, pet_id from traversal_collar where pet_id is null or pet_id not in (select id from traversal_pet where kind = 'dog')
   rows:

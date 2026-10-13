@@ -497,7 +497,12 @@ target's candidates at the propagated temporal coordinates — before any subtyp
 selection or field condition could hide one — and **zero** candidates supply no
 value, **one** supplies the demanded result, and **more than one** fail the
 statement when it is evaluated, through the database execution route (`m-sql`,
-`m-db-error` assigns the failure no neutral category). A collection reached
+`m-db-error` assigns the failure no neutral category). A temporal target reached
+by its logical key at one coordinate on every axis has at most one candidate by
+the full-history non-overlap invariant (`m-temporal-write` *Milestones of one
+object never overlap*), so that traversal is trusted rather than checked: over
+storage that breaks the invariant it may answer once per overlapping milestone
+instead of failing, and no read promises to detect the breach. A collection reached
 through an absent target is empty: bare `any` is false, `none` and `all` are true.
 Loaded relationships and deep fetch, which take the first related target, are not
 dotted traversal and are unchanged.

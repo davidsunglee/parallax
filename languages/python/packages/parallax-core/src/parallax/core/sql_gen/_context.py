@@ -299,24 +299,31 @@ class SharedSource[Candidate, Scope]:
 
     ``candidate`` is the occurrence's one physical candidate branch and
     ``parent`` the shared source it is reached from, or ``None`` where the
-    scope's own row reaches it. ``scope`` resolves the target's members once the
-    join has rendered and taken its alias.
+    scope's own row reaches it. Once the join has rendered and taken its alias,
+    ``scope`` resolves the target's members and ``origin`` is the scope its
+    correlation was rendered against.
     """
 
     relationship: ResolvedRelationship
     candidate: Candidate
     parent: SharedSource[Candidate, Scope] | None
     scope: Scope | None = None
+    origin: Scope | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class DemandPlacement[Candidate, Scope]:
     """Where one planned demand is evaluated: at ``reached``, or at its scope's
     own row where that is ``None``. A presence whose target is itself shared
-    reads that target's join, ``reuses``, instead of opening a candidate."""
+    reads that target's join, ``reuses``, instead of opening a candidate.
+
+    ``hops`` continue past ``reached`` in the demand's own correlated scalar
+    subqueries, each candidate test confined to the row ``reached`` joined for
+    the row it is evaluated beside."""
 
     reached: SharedSource[Candidate, Scope] | None
     reuses: SharedSource[Candidate, Scope] | None = None
+    hops: tuple[ResolvedRelationship, ...] = ()
 
 
 class _RenderedPlan(Protocol):

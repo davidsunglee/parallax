@@ -322,8 +322,9 @@ several roots share one key and the key no longer separates them; what does is
 the milestone each stands at, which is the family's own As-Of Axis starts in
 canonical axis rank — Valid Time before Transaction Time. A milestone's edge is
 unique within its key by construction (`m-temporal-read`: a from-instant lies
-inside its own half-open interval, and two milestones of one key do not overlap
-on every axis at once), so the composed order is total for every read shape and
+inside its own half-open interval; `m-temporal-write` *Milestones of one object
+never overlap*: two milestones of one key do not overlap on every axis at once),
+so the composed order is total for every read shape and
 no two roots tie in it — over storage the model describes. Where storage has lost
 a constraint the order rests on, two roots may stand at ONE evaluated coordinate,
 and *Ending a delivery at a tie* below settles what a delivery does about it. Every declared axis contributes, whether the query

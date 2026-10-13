@@ -1,7 +1,7 @@
-# A dotted field across a temporal to-one hop reads only the candidate visible at the
+# A dotted field across a temporal to-one hop reads only the milestone visible at the
 # read's coordinates: Coverage 10 holds three milestones, and the claim reaches the one
-# current at Latest, whose amount is 700.00. Reading every milestone would offer the
-# hop three candidates.
+# current at Latest, whose amount is 700.00. The join carries the hop's Latest terms;
+# joining every milestone would read the claim three times.
 model: models/policy.yaml
 tags: [m-predicate, relationship, to-one, traversal, m-temporal-read, temporal, propagation, bitemporal, slice-snapshot-1, slice-managed-1]
 shape: read
@@ -15,7 +15,7 @@ when:
       valid-time: {asOf: latest}
 then:
   statements:
-  - sql: {postgres: 'select t0.id, t0.coverage_id, t0.reserve, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from claim t0 where (select t1.amount from coverage t1 where t1.id = t0.coverage_id and t1.thru_z = ? and t1.out_z = ?) = ? and t0.thru_z = ? and t0.out_z = ?', mariadb: 'select t0.id, t0.coverage_id, t0.reserve, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from claim t0 where (select t1.amount from coverage t1 where t1.id = t0.coverage_id and t1.thru_z = ? and t1.out_z = ?) = ? and t0.thru_z = ? and t0.out_z = ?'}
+  - sql: {postgres: 'select t0.id, t0.coverage_id, t0.reserve, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from claim t0 left join coverage t1 on t1.id = t0.coverage_id and t1.thru_z = ? and t1.out_z = ? where t1.amount = ? and t0.thru_z = ? and t0.out_z = ?', mariadb: 'select t0.id, t0.coverage_id, t0.reserve, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from claim t0 left join coverage t1 on t1.id = t0.coverage_id and t1.thru_z = ? and t1.out_z = ? where t1.amount = ? and t0.thru_z = ? and t0.out_z = ?'}
     binds: [infinity, infinity, '700.00', infinity, infinity]
   referenceSql: select id, coverage_id, reserve, from_z, thru_z, in_z, out_z from claim where coverage_id in (select id from coverage where amount = 700.00 and thru_z > '9000-01-01' and out_z > '9000-01-01') and thru_z > '9000-01-01' and out_z > '9000-01-01'
   rows:

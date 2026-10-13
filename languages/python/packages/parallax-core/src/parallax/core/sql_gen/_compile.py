@@ -766,9 +766,9 @@ def _selection(predicate: ResolvedPredicate, scope: _EntityScope, parts: list[st
     """Append the joins of ``predicate``'s shared sources to ``parts`` and lower
     ``predicate`` beside them, so every alias and bind follows the text.
 
-    The read forms selecting from one physical Table share this seam. A
-    partitioned table-per-hierarchy branch and a write's bare predicate keep
-    every demand in its local form.
+    The read forms selecting from one physical Table or one of its partitions
+    share this seam; a write's bare predicate keeps every demand in its local
+    form.
     """
     planned = _plan_shared_sources(predicate, scope)
     joins = _render_shared_sources(planned)
@@ -1126,8 +1126,8 @@ def _compile_tph_partitioned(
             branch_ctx.bind_structural_all(projection_binds)
         branch_ctx.bind_framework_all(tag_binds)
         branch_ctx.bind_framework_all(fence_binds)
-        inner = _lower_predicate(predicate, branch_scope)
         parts = [f"select {projection}", f"from ({tagged}) {tagged_alias}"]
+        inner = _selection(predicate, branch_scope, parts)
         if inner:
             parts.append(f"where {inner}")
         branch_sql = " ".join(parts)

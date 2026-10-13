@@ -1,0 +1,22 @@
+# At finite coordinates on both axes the hop reads the milestone Coverage 10 held
+# then: the superseded 500.00, whose Valid Time also covers the corrected milestones'
+# but whose Transaction Time does not. The join carries both containment pairs.
+model: models/policy.yaml
+tags: [m-predicate, relationship, to-one, traversal, m-temporal-read, temporal, propagation, bitemporal, m-dialect, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  objectQuery:
+    target: parallax.compatibility.Claim
+    predicate:
+      eq: {path: parallax.compatibility.Claim.coverage.amount, value: '500.00'}
+    temporal:
+      transaction-time: {asOf: "2024-03-01T00:00:00.000000Z"}
+      valid-time: {asOf: "2024-03-01T00:00:00.000000Z"}
+then:
+  statements:
+  - sql: {postgres: 'select t0.id, t0.coverage_id, t0.reserve, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from claim t0 left join coverage t1 on t1.id = t0.coverage_id and t1.from_z <= ? and t1.thru_z > ? and t1.in_z <= ? and t1.out_z > ? where t1.amount = ? and t0.from_z <= ? and t0.thru_z > ? and t0.in_z <= ? and t0.out_z > ?', mariadb: 'select t0.id, t0.coverage_id, t0.reserve, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from claim t0 left join coverage t1 on t1.id = t0.coverage_id and t1.from_z <= ? and t1.thru_z > ? and t1.in_z <= ? and t1.out_z > ? where t1.amount = ? and t0.from_z <= ? and t0.thru_z > ? and t0.in_z <= ? and t0.out_z > ?'}
+    binds: ['2024-03-01T00:00:00.000000Z', '2024-03-01T00:00:00.000000Z', '2024-03-01T00:00:00.000000Z', '2024-03-01T00:00:00.000000Z', '500.00', '2024-03-01T00:00:00.000000Z', '2024-03-01T00:00:00.000000Z', '2024-03-01T00:00:00.000000Z', '2024-03-01T00:00:00.000000Z']
+  referenceSql: select id, coverage_id, reserve, from_z, thru_z, in_z, out_z from claim where coverage_id in (select id from coverage where amount = 500.00 and from_z <= '2024-03-01' and thru_z > '2024-03-01' and in_z <= '2024-03-01' and out_z > '2024-03-01') and from_z <= '2024-03-01' and thru_z > '2024-03-01' and in_z <= '2024-03-01' and out_z > '2024-03-01'
+  rows:
+  - {id: 1000, coverage_id: 10, reserve: '9000.00', from_z: '2024-01-01T00:00:00.000000Z', thru_z: infinity, in_z: '2024-01-01T00:00:00.000000Z', out_z: infinity}
+  roundTrips: 1
