@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
 from dataclasses import dataclass
 
 from parallax.core.metamodel import (
@@ -11,6 +10,7 @@ from parallax.core.metamodel import (
     Metamodel,
     TablePerHierarchy,
 )
+from parallax.core.predicate._resolved import ResolvedRelationship
 from parallax.core.sql_gen._context import PlanScope as _PlanScope
 from parallax.core.sql_gen._context import SqlGenError
 from parallax.core.sql_gen._context import table_layout as _table_layout
@@ -18,47 +18,38 @@ from parallax.core.sql_gen._inheritance import TagPredicate as _TagPredicate
 from parallax.core.sql_gen._inheritance import entity_view as _entity_view
 from parallax.core.sql_gen._inheritance import tag_column as _tag_column
 from parallax.core.sql_gen._inheritance import tag_guard as _tag_guard
+from parallax.core.temporal_read import ranked_axes as _ranked_axes
+from parallax.core.temporal_read import view as _temporal_view
 
 
 @dataclass(frozen=True, slots=True)
-class HopBranch:
-    """One resolved correlated branch, before it takes an alias."""
+class RelationshipCandidateBranch:
+    """One physical Table a relationship's candidates are read from, which can
+    yield zero, one, or several rows; it takes no alias until it renders."""
 
     entity: EntityMetadata
     table: str
+    source: AttributeMetadata
     related: AttributeMetadata
-    parent_column: str
-    tag: _TagPredicate | None
-    keyword: str
+    family_guard: _TagPredicate | None
 
 
 @dataclass(frozen=True, slots=True)
-class HopPlan:
-    branches: tuple[HopBranch, ...]
-    grouped: bool
-    negate: bool
-
-    def combine(self, fragments: Sequence[str]) -> str:
-        if not self.grouped:
-            return fragments[0]
-        grouped = f"({' or '.join(fragments)})"
-        return f"not {grouped}" if self.negate else grouped
+class RelationshipCandidatePlan:
+    branches: tuple[RelationshipCandidateBranch, ...]
 
 
 @dataclass(frozen=True, slots=True)
-class OpenBranch:
-    """An aliased branch with correlation and deferred framework tag binds."""
+class RenderedRelationshipCandidate:
+    """A branch rendered under one alias against one parent scope; its family
+    guard's binds travel as values for the caller to push where its text lands."""
 
     entity: EntityMetadata
     alias: str
     table: str
-    correlation: str
-    tag_fragment: tuple[str, ...]
-    tag_binds: tuple[object, ...]
-    keyword: str
-
-    def render(self, where: str) -> str:
-        return f"{self.keyword} (select 1 from {self.table} {self.alias} where {where})"
+    correlation_sql: str
+    family_guard_sql: str | None
+    family_guard_binds: tuple[object, ...]
 
 
 def _entity(model: Metamodel, identity: EntityIdentity) -> EntityMetadata:
@@ -68,149 +59,102 @@ def _entity(model: Metamodel, identity: EntityIdentity) -> EntityMetadata:
     return entity
 
 
-def plan_resolved_hop(
-    target: EntityMetadata,
-    source: AttributeMetadata,
-    related: AttributeMetadata,
+def plan_relationship_candidates(
+    relationship: ResolvedRelationship,
     *,
     position: tuple[EntityIdentity, ...] | None,
     scope: _PlanScope,
-    negate: bool,
-) -> HopPlan:
-    """Plan one hop from validation's exact target and join endpoints."""
-    parent_column = scope.column_for(source)
+) -> RelationshipCandidatePlan:
+    """Every physical branch ``relationship``'s candidates come from, read from
+    canonical metadata and layout; ``position`` selects a narrower effective
+    family where a quantifier's operand narrows its element."""
+    target = relationship.target
     if target.inheritance is None:
-        return _plan_simple_hop(target, parent_column, related, scope, negate=negate)
+        return _plan(_branch(target, relationship, scope, None))
     view = _entity_view(scope.facet, target.identity)
     effective = tuple(view.concrete_subtypes) if position is None else position
-    is_bare_root = position is None and isinstance(target.inheritance, AbstractRoot)
     if isinstance(view.strategy, TablePerHierarchy):
-        return _plan_tph_hop(
-            view.root,
-            effective,
-            parent_column,
-            related,
-            scope,
-            is_bare_root=is_bare_root,
-            negate=negate,
+        is_bare_root = position is None and isinstance(target.inheritance, AbstractRoot)
+        root = view.root
+        layout = _table_layout(scope.storage, scope.facet, root)
+        guard = None if is_bare_root else _TagPredicate(_tag_column(layout, root), effective)
+        return _plan(_branch(_entity(scope.meta, root), relationship, scope, guard))
+    return RelationshipCandidatePlan(
+        tuple(
+            _branch(_entity(scope.meta, concrete), relationship, scope, None)
+            for concrete in effective
         )
-    return _plan_tpcs_hop(effective, parent_column, related, scope, negate=negate)
+    )
 
 
-def open_branch(branch: HopBranch, scope: _PlanScope, alias: str | None = None) -> OpenBranch:
-    """Allocate one branch alias, or adopt ``alias``, and render facts that depend on it."""
-    alias = scope.next_alias() if alias is None else alias
-    child = scope.child(branch.entity, alias)
-    correlation = f"{child.column_for(branch.related)} = {branch.parent_column}"
-    tag_fragment: tuple[str, ...] = ()
-    tag_binds: tuple[object, ...] = ()
-    if branch.tag is not None:
-        tag_sql, tag_binds = _tag_guard(child, scope.facet, branch.tag)
-        tag_fragment = (tag_sql,)
-    return OpenBranch(
+def _plan(branch: RelationshipCandidateBranch) -> RelationshipCandidatePlan:
+    return RelationshipCandidatePlan((branch,))
+
+
+def _branch(
+    entity: EntityMetadata,
+    relationship: ResolvedRelationship,
+    scope: _PlanScope,
+    family_guard: _TagPredicate | None,
+) -> RelationshipCandidateBranch:
+    return RelationshipCandidateBranch(
+        entity=entity,
+        table=_table_layout(scope.storage, scope.facet, entity.identity).table.name,
+        source=relationship.source,
+        related=relationship.related,
+        family_guard=family_guard,
+    )
+
+
+def render_relationship_candidate(
+    branch: RelationshipCandidateBranch, parent: _PlanScope, alias: str | None = None
+) -> RenderedRelationshipCandidate:
+    """Allocate one branch alias, or adopt ``alias``, and render its correlation
+    against ``parent``'s own source endpoint and its family guard."""
+    alias = parent.next_alias() if alias is None else alias
+    child = parent.child(branch.entity, alias)
+    correlation = f"{child.column_for(branch.related)} = {parent.column_for(branch.source)}"
+    guard_sql: str | None = None
+    guard_binds: tuple[object, ...] = ()
+    if branch.family_guard is not None:
+        guard_sql, guard_binds = _tag_guard(child, parent.facet, branch.family_guard)
+    return RenderedRelationshipCandidate(
         entity=branch.entity,
         alias=alias,
         table=branch.table,
-        correlation=correlation,
-        tag_fragment=tag_fragment,
-        tag_binds=tag_binds,
-        keyword=branch.keyword,
+        correlation_sql=correlation,
+        family_guard_sql=guard_sql,
+        family_guard_binds=guard_binds,
     )
 
 
-def _plan_simple_hop(
-    target: EntityMetadata,
-    parent_column: str,
-    related: AttributeMetadata,
+def shared_relationship_is_eligible(
+    relationship: ResolvedRelationship,
+    candidates: RelationshipCandidatePlan,
     scope: _PlanScope,
-    *,
-    negate: bool,
-) -> HopPlan:
-    return HopPlan(
-        branches=(
-            HopBranch(
-                entity=target,
-                table=_table_layout(scope.storage, scope.facet, target.identity).table.name,
-                related=related,
-                parent_column=parent_column,
-                tag=None,
-                keyword=_keyword(negate),
-            ),
-        ),
-        grouped=False,
-        negate=negate,
+) -> bool:
+    """Whether ``relationship`` reaches at most one candidate row, so a shared
+    join cannot multiply the rows it is joined to.
+
+    Only one physical branch qualifies, because a Table's unique key says
+    nothing about another concrete Table of the same family. Its correlation's
+    strict equality must fix every Column of one of that Table's unique keys;
+    strict equality never matches a null component, so a nullable unique Column
+    qualifies too. Declared cardinality, authored conditions, and operand-local
+    subtype selection prove nothing. A temporal target keeps its candidate
+    assertion: an end-based key is not fixed by a correlation alone.
+    """
+    if len(candidates.branches) != 1:
+        return False
+    (branch,) = candidates.branches
+    if branch.family_guard is not None and not branch.family_guard.position:
+        return False
+    shape = _temporal_view(scope.meta).shape(relationship.target.identity)
+    if shape is not None and _ranked_axes(shape):
+        return False
+    layout = _table_layout(scope.storage, scope.facet, branch.entity.identity)
+    fixed = {branch.related.identity}
+    return any(
+        key.columns and all(slot.contributor in fixed for slot in key.columns)
+        for key in layout.unique_keys
     )
-
-
-def _plan_tph_hop(
-    root: EntityIdentity,
-    position: Sequence[EntityIdentity],
-    parent_column: str,
-    related: AttributeMetadata,
-    scope: _PlanScope,
-    *,
-    is_bare_root: bool,
-    negate: bool,
-) -> HopPlan:
-    layout = _table_layout(scope.storage, scope.facet, root)
-    tag = None if is_bare_root else _TagPredicate(_tag_column(layout, root), tuple(position))
-    return HopPlan(
-        branches=(
-            HopBranch(
-                entity=_entity(scope.meta, root),
-                table=layout.table.name,
-                related=related,
-                parent_column=parent_column,
-                tag=tag,
-                keyword=_keyword(negate),
-            ),
-        ),
-        grouped=False,
-        negate=negate,
-    )
-
-
-def _plan_tpcs_hop(
-    position: Sequence[EntityIdentity],
-    parent_column: str,
-    related: AttributeMetadata,
-    scope: _PlanScope,
-    *,
-    negate: bool,
-) -> HopPlan:
-    if len(position) == 1:
-        return HopPlan(
-            branches=(_tpcs_branch(position[0], parent_column, related, scope, negate=negate),),
-            grouped=False,
-            negate=negate,
-        )
-    return HopPlan(
-        branches=tuple(
-            _tpcs_branch(concrete, parent_column, related, scope, negate=False)
-            for concrete in position
-        ),
-        grouped=True,
-        negate=negate,
-    )
-
-
-def _tpcs_branch(
-    concrete: EntityIdentity,
-    parent_column: str,
-    related: AttributeMetadata,
-    scope: _PlanScope,
-    *,
-    negate: bool,
-) -> HopBranch:
-    return HopBranch(
-        entity=_entity(scope.meta, concrete),
-        table=_table_layout(scope.storage, scope.facet, concrete).table.name,
-        related=related,
-        parent_column=parent_column,
-        tag=None,
-        keyword=_keyword(negate),
-    )
-
-
-def _keyword(negate: bool) -> str:
-    return "not exists" if negate else "exists"

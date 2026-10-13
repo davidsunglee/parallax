@@ -412,8 +412,8 @@ construction it may reference any behavioral module it harnesses.
   one-way: the codec knows nothing about SQL, extraction, or casting, and the cast
   decision itself stays a `m-dialect` one.
 - **`m-sql --> m-relationship`.** A relationship hop lowers to a correlated
-  sub-select or scalar subquery whose columns come from the relationship's join
-  predicate. The
+  sub-select, scalar subquery, or shared join whose columns come from the
+  relationship's join predicate. The
   Relationship Facet is the one place a reverse direction's swapped join exists,
   so SQL lowering reads the compiled direction rather than re-pairing a reverse
   declaration with its defining peer and exchanging the sides itself.

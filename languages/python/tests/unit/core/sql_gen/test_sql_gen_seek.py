@@ -10,6 +10,7 @@ which any composed clause can show.
 
 from __future__ import annotations
 
+import datetime as dt
 from dataclasses import replace
 from typing import Final
 
@@ -28,7 +29,7 @@ from parallax.core.object_query._resolved import (
     ResolvedObjectQuery,
     ResolvedSeek,
 )
-from parallax.core.predicate import TrueNode
+from parallax.core.predicate import Comparison, FieldSubject, TrueNode
 from parallax.core.sql_gen import SqlGenError
 from parallax.core.sql_gen._compile import compile_read as compile_entity_query
 from parallax.core.sql_gen._context import LoweredStatement
@@ -548,3 +549,28 @@ def test_a_direct_column_carrier_outside_its_declared_type_has_no_reported_form(
     statement = _lowered(ORDERS, node)
     with pytest.raises(WireEncodingError):
         statement.wire_binds()
+
+
+def test_each_continuing_arm_joins_its_own_shared_sources_beneath_the_root_lock() -> None:
+    # Both arms of a nullable leading term's continuing page select from their own
+    # statement, so each joins the shared order itself, binds the predicate where
+    # its own text puts it, and leaves the shared lock to the reattached base row.
+    entity = entity_of(ORDERS, "OrderItem")
+    query = object_query(
+        entity.identity,
+        Comparison(op="eq", subject=FieldSubject("OrderItem.order.name"), value="Ada"),
+        order_by=(OrderKey(attr="parallax.compatibility.OrderItem.shippedOn"),),
+    )
+    node = continuation.plan(validate_object_query(entity, query, ORDERS), ORDERS).after(
+        ContinuationCoordinate((dt.date(2024, 2, 15), 11)), limit=2
+    )
+    statement = _lowered(ORDERS, node, lock="locking")
+    joined = "from order_item t0 left join orders t1 on t1.id = t0.order_id where t1.name = ? and "
+    assert statement.sql.count(joined) == 2
+    assert f"{joined}t0.shipped_on is null order by" in statement.sql
+    assert statement.sql.endswith(
+        ") u join order_item t0 on u.id = t0.id "
+        "order by u.parallax_seek_0 asc, u.parallax_seek_1 asc limit ? for share of t0"
+    )
+    february = dt.date(2024, 2, 15)
+    assert statement.binds == ("Ada", february, february, february, 11, 2, "Ada", 2, 2)

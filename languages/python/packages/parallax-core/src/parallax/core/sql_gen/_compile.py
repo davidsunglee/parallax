@@ -70,6 +70,8 @@ from parallax.core.sql_gen._inheritance import tag_guard as _tph_tag_guard
 from parallax.core.sql_gen._predicate import EntityScope as _EntityScope
 from parallax.core.sql_gen._predicate import MemberSubject as _MemberSubject
 from parallax.core.sql_gen._predicate import lower_predicate as _lower_predicate
+from parallax.core.sql_gen._predicate import plan_shared_sources as _plan_shared_sources
+from parallax.core.sql_gen._predicate import render_shared_sources as _render_shared_sources
 
 # The continuation lane: one resolver per read shape, feeding the order clause,
 # the hidden capture cell, and the seek alike.
@@ -714,7 +716,7 @@ def _compile_read_arm(
         f"from {layout.table.name} {scope.alias}",
     ]
 
-    where_sql = _lower_predicate(predicate, scope)
+    where_sql = _selection(predicate, scope, parts)
     seek_sql = _sought(terms, scope, scope.subject_for, paging, ctx, null_tail=null_tail)
     _append_where(parts, _beside_a_guard(predicate, where_sql, guarded=bool(seek_sql)), seek_sql)
     _append_result_shape(parts, scope, terms, scope.subject_for, limit, lock)
@@ -758,6 +760,21 @@ def compile_write_predicate(
         statement.binds,
         statement,
     )
+
+
+def _selection(predicate: ResolvedPredicate, scope: _EntityScope, parts: list[str]) -> str:
+    """Append the joins of ``predicate``'s shared sources to ``parts`` and lower
+    ``predicate`` beside them, so every alias and bind follows the text.
+
+    The read forms selecting from one physical Table share this seam. A
+    partitioned table-per-hierarchy branch and a write's bare predicate keep
+    every demand in its local form.
+    """
+    planned = _plan_shared_sources(predicate, scope)
+    joins = _render_shared_sources(planned)
+    if joins:
+        parts.append(joins)
+    return _lower_predicate(predicate, planned)
 
 
 def _reserved_result_keys(model: Metamodel, storage: _StorageLayoutFacet) -> frozenset[str]:
@@ -1015,7 +1032,7 @@ def _compile_tph_read(
         f"from {plan.table} {scope.alias}",
     ]
 
-    inner_sql = _lower_predicate(predicate, scope)
+    inner_sql = _selection(predicate, scope, parts)
     seek_sql = _sought(terms, scope, scope.subject_for, paging, ctx, null_tail=null_tail)
     guarded = bool(seek_sql) or plan.tag is not None
     where_terms = [_beside_a_guard(predicate, inner_sql, guarded=guarded), seek_sql]
@@ -1245,7 +1262,7 @@ def _compile_tpcs_read(
             raise SqlGenError("table-per-concrete-subtype branches disagree on document ordinals")
         branch_ctx.bind_structural_all(proj_binds)
         parts = [f"select {proj_sql}", f"from {branch.table} {branch_scope.alias}"]
-        where_sql = _lower_predicate(predicate, branch_scope)
+        where_sql = _selection(predicate, branch_scope, parts)
         if where_sql:
             parts.append(f"where {where_sql}")
         branch_sql = " ".join(parts)
@@ -1389,7 +1406,7 @@ def _compile_tpcs_single(
         f"select {proj_sql}{_captured(terms, scope.subject_for, paging)}",
         f"from {plan.table} {scope.alias}",
     ]
-    where_sql = _lower_predicate(predicate, scope)
+    where_sql = _selection(predicate, scope, parts)
     seek_sql = _sought(terms, scope, scope.subject_for, paging, ctx, null_tail=null_tail)
     _append_where(parts, _beside_a_guard(predicate, where_sql, guarded=bool(seek_sql)), seek_sql)
     _append_result_shape(parts, scope, terms, scope.subject_for, limit, lock)

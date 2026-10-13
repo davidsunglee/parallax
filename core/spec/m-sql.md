@@ -484,6 +484,7 @@ left-to-right.
 | `all` over a to-many relationship | `not exists (select 1 from child t1 where t1.fk = t0.key and not (<where>) is true)` |
 | `exists` / `notExists` of a to-one relationship | `[not] exists (select 1 from target t1 where t1.key = t0.fk [and <where>])` |
 | a field through a to-one relationship | `(select t1.col from target t1 where t1.key = t0.fk) <op> ?` |
+| a field through a shared to-one relationship | `… left join target t1 on t1.key = t0.fk where t1.col <op> ?` |
 
 The operator rows show a field of the queried row (`t0.col`); every operation
 lowers identically over the subject its position supplies — a field of a related
@@ -746,7 +747,9 @@ own tag and temporal terms).
 A relationship match (`exists` / `notExists` of a to-one relationship with a
 `where`) lowers as `any` / `none` do: its complete `where`, resolved against the
 target, follows the candidate correlation, and a polymorphic target's branches
-are the grouped `or` of one `exists` each, which `notExists` negates whole:
+are the grouped `or` of one `exists` each, which `notExists` negates whole. Only
+a target another demand already joins is matched through that join instead
+(*Shared to-one joins*):
 
 ```text
 exists(OrderItem.order, eq(name, 'Ada'))
@@ -760,9 +763,82 @@ formulation that must return the same rows (`m-case-format`).
 
 ### Single-valued traversal
 
-A to-one hop never joins. Each operation that reads through one lowers to a
-**correlated scalar subquery** over the target, specific to that operation: a
-field's comparison selects the field (`(select t1.name from orders t1 where t1.id =
+An operation reading through a to-one hop either reads a **shared join** of a
+target proven to reach at most one row, or lowers to a **correlated scalar
+subquery** over the target's candidates.
+
+#### Shared to-one joins
+
+A hop is **proven unique** when it reads exactly one physical candidate table — a
+standalone target, a table-per-hierarchy family, or a table-per-concrete-subtype
+family with one effective concrete — of a non-temporal target, and its
+correlation equality fixes every Column of one of that table's unique keys
+(`m-storage-layout` *Physical indexes*). Strict equality matches no `NULL`, so a
+nullable unique Column qualifies. Declared cardinality, an authored field
+condition, and operand-local subtype selection prove nothing, and one concrete
+table's unique key proves nothing about another's rows.
+
+At the read's own row — the queried Entity, or one branch of a
+table-per-concrete-subtype union — a field operation or a presence test reached
+only through proven hops reads them as `left join`s following the read's `from`:
+
+```text
+eq(OrderStatus.orderItem.order.name, 'Ada')
+  → … from order_status t0
+      left join order_item t1 on t1.id = t0.order_item_id
+      left join orders t2 on t2.id = t1.order_id
+      where t2.name = ?
+```
+
+A join's `on` is its correlation, then its visibility terms, then its target's tag
+guard. Joins appear in the order their occurrences are first demanded, each after
+the join it is reached from, so they take their aliases (rule 1) and push their
+binds before anything in the `where`. Every demand reaching the same
+**occurrence** — the same relationship direction from the same source, with the
+same target family and visibility — reads the same join, so repeated fields and
+the common prefixes of multi-hop paths share it; another relationship to the same
+Entity opens its own. A `left join` keeps every row and supplies `NULL` for a
+missing target, so a field read past any missing hop is unknown and a null check
+over it is true, exactly as the scalar form answers, and a proven hop never
+multiplies the rows it is joined to.
+
+A presence test or relationship match reached through proven hops tests its own
+target at the joined prefix, without the scalar form's `coalesce`: a missing
+prefix correlates nothing, so the presence or match is false (`… left join
+basket_owner t1 on t1.id = t0.owner_id where not exists (select 1 from
+basket_owner t2 where t2.id = t1.manager_id and t2.name = ?)`). Where a field
+operation already joins the presence's own target, presence reads that join's
+first physical primary-key Column, which a present target never holds null —
+`not t1.id is null`, and `t1.id is null` for absence:
+
+```text
+and(exists(OrderItem.order), eq(OrderItem.order.name, 'Ada'))
+  → … from order_item t0 left join orders t1 on t1.id = t0.order_id
+      where not t1.id is null and t1.name = ?
+```
+
+A match then tests its complete `where` for truth beneath that presence,
+`case when t1.id is null then false else (<where>) is true end`, which
+`notExists` negates whole: a present target whose `where` is unknown does not
+match. Presence or matching alone opens no join for its own target.
+
+A comparison, range, or membership test of a document-resident member whose
+comparison casts to its declared type (`m-dialect`) keeps its scalar form even
+through proven hops: a term of the `where` may be evaluated over target rows the
+scalar form's candidate test excludes, and that conversion can fail on stored
+text. Every other demand keeps its scalar form as well: one crossing a hop that
+is not proven unique, a quantifier over a collection the target holds, a
+path-targeted `narrow`, every demand inside a quantifier's, a match's, or a
+`narrow`'s operand, a branch of a partitioned table-per-hierarchy read, and
+readless predicate DML, which has no `from` to join (`m-batch-write`). A locking
+read keeps its scalar forms on a dialect whose shared-row lock cannot be limited
+to the root alias (`m-dialect`).
+
+#### Correlated scalar subqueries
+
+An operation reading through a hop that is not shared lowers to a **correlated
+scalar subquery** over the target, specific to that operation: a field's
+comparison selects the field (`(select t1.name from orders t1 where t1.id =
 t0.order_id) = ?`), a presence test is a correlated `exists` (bare presence is not
 a value dereference and asserts nothing about cardinality), a relationship match
 is that `exists` with its complete `where` beside the candidate correlation, as a
@@ -770,12 +846,12 @@ quantifier's is (*Relationship predicates*), a quantifier over a
 collection the target holds selects the quantifier's Boolean, and a
 path-targeted `narrow` selects its subtype test. Each further hop nests another
 scalar subquery inside the one before it, its select list read through the inner
-hop:
+hop, as readless predicate DML renders the path above:
 
 ```text
 eq(OrderStatus.orderItem.order.name, 'Ada')
   → … where (select (select t1.name from orders t1 where t1.id = t2.order_id)
-             from order_item t2 where t2.id = t0.order_item_id) = ?
+             from order_item t2 where t2.id = order_item_id) = ?
 ```
 
 Aliases follow **source order** (rule 1): the inner hop's sub-select precedes the
