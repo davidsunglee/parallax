@@ -5,8 +5,8 @@ violates an `m-predicate` rule a model-aware resolver MUST apply before any SQL.
 This walk judges every node in tree order at the scope it is written in, each
 operation subject first: its path and scope, then the operator's applicability
 to the member reached, then each typed literal, then a range's bound order.
-Quantifiers bind the scope their ``where`` is judged in, and a ``narrow``
-narrows the position its operand is judged at. The first violation raises the
+Quantifiers and relationship matches bind the scope their ``where`` is judged
+in, and a ``narrow`` narrows the position its operand is judged at. The first violation raises the
 :class:`~reference_harness.value_object_resolve.RejectionError` naming its rule.
 """
 
@@ -71,22 +71,43 @@ def validate_predicate(family: Family, scope: Scope, node: Any) -> None:
     elif tag in ("any", "all", "none"):
         _quantifier(family, scope, body)
     elif tag in ("exists", "notExists"):
-        _presence(family, scope, body["path"])
+        _presence(family, scope, body)
     elif tag == "narrow":
         _narrow(family, scope, body)
 
 
-def _presence(family: Family, scope: Scope, path: str) -> None:
+def _presence(family: Family, scope: Scope, body: dict[str, Any]) -> None:
+    path = body["path"]
     terminal = resolve_path(family, scope, path)
-    single = (
+    if isinstance(terminal, RelationshipTerminal) and not terminal.many:
+        if "where" in body:
+            validate_predicate(family, _related_scope(family, terminal), body["where"])
+        return
+    single_value_object = (
         isinstance(terminal, ValueObjectTerminal)
         and terminal.value_object.get("multiplicity", "one") != "many"
-    ) or (isinstance(terminal, RelationshipTerminal) and not terminal.many)
-    if not single:
+    )
+    if not single_value_object:
         raise RejectionError(
             PATH_TARGET_KIND_MISMATCH,
             f"{path!r} names {terminal.kind}, which has no presence of its own",
         )
+    if "where" in body:
+        raise RejectionError(
+            PATH_TARGET_KIND_MISMATCH,
+            f"{path!r} names {terminal.kind}; only a to-one relationship's target is matched "
+            "against a predicate",
+        )
+
+
+def _related_scope(family: Family, terminal: RelationshipTerminal) -> EntityScope:
+    """The scope a quantifier or match over ``terminal``'s related Entity binds."""
+    return EntityScope(
+        terminal.target,
+        tuple(family.effective_concrete_set(terminal.target)),
+        bound=True,
+        outside_rule=NARROW_OUTSIDE_RELATIONSHIP_TARGET,
+    )
 
 
 def _subject(
@@ -164,12 +185,7 @@ def _quantifier(family: Family, scope: Scope, body: dict[str, Any]) -> None:
     ):
         inner = ElementScope(terminal.value_object)
     elif isinstance(terminal, RelationshipTerminal) and terminal.many:
-        inner = EntityScope(
-            terminal.target,
-            tuple(family.effective_concrete_set(terminal.target)),
-            bound=True,
-            outside_rule=NARROW_OUTSIDE_RELATIONSHIP_TARGET,
-        )
+        inner = _related_scope(family, terminal)
     else:
         raise RejectionError(
             PATH_TARGET_KIND_MISMATCH,

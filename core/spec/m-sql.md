@@ -482,7 +482,7 @@ left-to-right.
 | `any` over a to-many relationship | `exists (select 1 from child t1 where t1.fk = t0.key [and <where>])` |
 | `none` over a to-many relationship | `not exists (select 1 from child t1 where t1.fk = t0.key [and <where>])` |
 | `all` over a to-many relationship | `not exists (select 1 from child t1 where t1.fk = t0.key and not (<where>) is true)` |
-| `exists` / `notExists` of a to-one relationship | `[not] exists (select 1 from target t1 where t1.key = t0.fk)` |
+| `exists` / `notExists` of a to-one relationship | `[not] exists (select 1 from target t1 where t1.key = t0.fk [and <where>])` |
 | a field through a to-one relationship | `(select t1.col from target t1 where t1.key = t0.fk) <op> ?` |
 
 The operator rows show a field of the queried row (`t0.col`); every operation
@@ -743,6 +743,17 @@ the truth test wraps the whole predicate, never a leaf:
 A bare quantifier carries no interior beyond the correlation (and the target's
 own tag and temporal terms).
 
+A relationship match (`exists` / `notExists` of a to-one relationship with a
+`where`) lowers as `any` / `none` do: its complete `where`, resolved against the
+target, follows the candidate correlation, and a polymorphic target's branches
+are the grouped `or` of one `exists` each, which `notExists` negates whole:
+
+```text
+exists(OrderItem.order, eq(name, 'Ada'))
+  → select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0
+    where exists (select 1 from orders t1 where t1.id = t0.order_id and t1.name = ?)
+```
+
 The independent `then.referenceSql` oracle for a relationship predicate is the
 naive `id in (select fk from child where <where>)` subquery form — a different
 formulation that must return the same rows (`m-case-format`).
@@ -753,7 +764,9 @@ A to-one hop never joins. Each operation that reads through one lowers to a
 **correlated scalar subquery** over the target, specific to that operation: a
 field's comparison selects the field (`(select t1.name from orders t1 where t1.id =
 t0.order_id) = ?`), a presence test is a correlated `exists` (bare presence is not
-a value dereference and asserts nothing about cardinality), a quantifier over a
+a value dereference and asserts nothing about cardinality), a relationship match
+is that `exists` with its complete `where` beside the candidate correlation, as a
+quantifier's is (*Relationship predicates*), a quantifier over a
 collection the target holds selects the quantifier's Boolean, and a
 path-targeted `narrow` selects its subtype test. Each further hop nests another
 scalar subquery inside the one before it, its select list read through the inner

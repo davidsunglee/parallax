@@ -286,10 +286,12 @@ class AuthoredQuantifier:
 
 @dataclass(frozen=True, slots=True)
 class AuthoredPresence:
-    """Whether the single object ``target`` names is present (or absent)."""
+    """Whether the single object ``target`` names is present (or absent); with
+    ``where``, whether its to-one target makes ``where`` true (or none does)."""
 
     negated: bool
     target: AuthoredPath
+    where: AuthoredPredicate | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -360,7 +362,7 @@ def _unbound_elements(authored: AuthoredPredicate) -> Iterator[AuthoredElement]:
             yield from _unbound_elements(operand)
         case _:
             # A quantifier's own `where` admits only elements of its collection,
-            # so nothing inside one is unbound.
+            # and a matching operand none, so nothing inside either is unbound.
             return
 
 
@@ -832,6 +834,26 @@ def _quantified(
                     ),
                 )
     return Predicate(AuthoredQuantifier(kind, collection, where, binds))
+
+
+def _presence(
+    negated: bool, target: AuthoredPath, predicate: Predicate[Any] | None
+) -> Predicate[Any]:
+    """The presence of ``target``, or with ``predicate`` whether its related
+    Entity makes that predicate true; the operand binds that Entity, so it reads
+    no collection element from outside."""
+    where = None if predicate is None else predicate.authored
+    if where is not None:
+        for element in _unbound_elements(where):
+            raise QueryDefinitionError(
+                code="query-path-invalid",
+                message=(
+                    f"{_subject_described(element)}: a collection element is read only inside "
+                    f"a quantifier over {element.collection.described()}, not inside a match "
+                    f"of {target.described()}"
+                ),
+            )
+    return Predicate(AuthoredPresence(negated, target, where))
 
 
 class _NotOneValue:
@@ -1350,13 +1372,15 @@ class RelationshipExpr[E, R](IncludePath[E, R]):
             raise AttributeError(name)
         return DeferredExpr(self._hop, (name,))
 
-    def exists(self) -> Predicate[Any]:
-        """Whether this relationship reaches an Entity."""
-        return Predicate(AuthoredPresence(False, self._hop.path()))
+    def exists(self, predicate: Predicate[R] | None = None) -> Predicate[Any]:
+        """Whether this relationship reaches an Entity; with ``predicate``,
+        whether a reached Entity makes it true. False and unknown do not match."""
+        return _presence(False, self._hop.path(), predicate)
 
-    def not_exists(self) -> Predicate[Any]:
-        """Whether this relationship reaches no Entity."""
-        return Predicate(AuthoredPresence(True, self._hop.path()))
+    def not_exists(self, predicate: Predicate[R] | None = None) -> Predicate[Any]:
+        """Whether this relationship reaches no Entity; with ``predicate``,
+        whether no reached Entity makes it true."""
+        return _presence(True, self._hop.path(), predicate)
 
     def is_a[S](self, *subtypes: type[S], where: Predicate[S] | None = None) -> Predicate[Any]:
         """Whether the reached Entity belongs to ``subtypes`` and, with
@@ -1457,11 +1481,11 @@ class DeferredExpr[E](_ScalarAuthoring[E], IncludePath[E, Any]):
     def none(self, predicate: Predicate[Any] | None = None) -> Predicate[E]:
         return _quantified("none", self._path(), predicate, binds=None)
 
-    def exists(self) -> Predicate[E]:
-        return Predicate(AuthoredPresence(False, self._path()))
+    def exists(self, predicate: Predicate[Any] | None = None) -> Predicate[E]:
+        return _presence(False, self._path(), predicate)
 
-    def not_exists(self) -> Predicate[E]:
-        return Predicate(AuthoredPresence(True, self._path()))
+    def not_exists(self, predicate: Predicate[Any] | None = None) -> Predicate[E]:
+        return _presence(True, self._path(), predicate)
 
     def is_a[S](self, *subtypes: type[S], where: Predicate[S] | None = None) -> Predicate[E]:
         return _narrowed(self._path(), subtypes, where)

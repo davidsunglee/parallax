@@ -1004,19 +1004,21 @@ def _lower_relationship_quantifier(
 
 def _lower_presence(presence: ResolvedPresence, scope: ResolutionScope) -> str:
     """Whether a single object is present, two-valued: an absent target at any
-    preceding hop reads as absent."""
+    preceding hop reads as absent. A matching operand is evaluated whole in
+    each candidate's own scope, so only a candidate making it true matches."""
     target = presence.target
+    where = presence.where
     if isinstance(presence.position, CurrentObject):
         if isinstance(target, ResolvedRelationship):
             if not isinstance(scope, EntityScope):  # pragma: no cover - validated scopes
                 raise SqlGenError("a relationship is reached only from an Entity position")
-            return _relationship_presence(target, scope, negate=presence.negated)
+            return _relationship_presence(target, scope, where, negate=presence.negated)
         sql = _object_presence(target, scope)
         return f"not {sql}" if presence.negated else sql
 
     def present(reached: ResolutionScope) -> str:
         if isinstance(target, ResolvedRelationship):
-            return _relationship_presence(target, _entity_scope(reached), negate=False)
+            return _relationship_presence(target, _entity_scope(reached), where, negate=False)
         return _object_presence(target, reached)
 
     sql = _at(presence.position, scope, present, "false")
@@ -1024,14 +1026,24 @@ def _lower_presence(presence: ResolvedPresence, scope: ResolutionScope) -> str:
 
 
 def _relationship_presence(
-    relationship: ResolvedRelationship, scope: EntityScope, *, negate: bool
+    relationship: ResolvedRelationship,
+    scope: EntityScope,
+    where: ResolvedPredicate | None,
+    *,
+    negate: bool,
 ) -> str:
     if _reaches_nothing(relationship, scope):
         return "1 = 1" if negate else "1 = 0"
     plan = _hop_plan(relationship, scope, position=None, negate=negate)
     fragments = [
         f"{opened.keyword} (select 1 from {opened.table} {opened.alias} where "
-        f"{_candidate_where(relationship, branch_scope, opened, None)})"
+        + _candidate_where(
+            relationship,
+            branch_scope,
+            opened,
+            None if where is None else _conjunct(where, branch_scope),
+        )
+        + ")"
         for opened, branch_scope in _opened_branches(plan, relationship, scope)
     ]
     return plan.combine(fragments)

@@ -374,12 +374,13 @@ def _predicate_key(predicate: ResolvedPredicate) -> object:  # noqa: C901 - exha
                 None if where is None else _predicate_key(where),
                 _position_key(position),
             )
-        case ResolvedPresence(negated=negated, target=target, position=position):
+        case ResolvedPresence(negated=negated, target=target, position=position, where=where):
             return (
                 ResolvedPresence,
                 negated,
                 target.identity,
                 _position_key(position),
+                None if where is None else _predicate_key(where),
             )
         case _:  # pragma: no cover - exhaustiveness guard
             assert_never(predicate)

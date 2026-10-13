@@ -242,7 +242,8 @@ def _quantifier(tag: str, body: Mapping[str, object]) -> PredicateNode:
 
 
 def _presence(tag: str, body: Mapping[str, object]) -> PredicateNode:
-    return Presence(op=cast("PresenceOp", tag), path=_path(body, tag))
+    where = deserialize(body["where"]) if "where" in body else None
+    return Presence(op=cast("PresenceOp", tag), path=_path(body, tag), where=where)
 
 
 def _true(_tag: str, _body: Mapping[str, object]) -> PredicateNode:
@@ -268,7 +269,7 @@ _GRAMMAR: dict[str, _Grammar] = {
     "narrow": (_shape(("to", "operand"), ("path",)), _narrow),
     "all": (_shape(("path", "where")), _quantifier),
     **_family(_QUANTIFIERS - {"all"}, _shape(("path",), ("where",)), _quantifier),
-    **_family(_PRESENCE, _shape(("path",)), _presence),
+    **_family(_PRESENCE, _shape(("path",), ("where",)), _presence),
     **_family(_COMPARISONS, _shape(("value",), ("path",)), _comparison),
     **_family(_NULLS, _shape(("path",)), _null_check),
     **_family(_STRINGS, _shape(("value",), ("path", "caseInsensitive")), _string_match),
@@ -297,13 +298,13 @@ def serialize(op: PredicateNode) -> dict[str, object]:  # noqa: C901 - exhaustiv
             return {"not": {"operand": serialize(operand)}}
         case Group(operand=operand):
             return {"group": {"operand": serialize(operand)}}
-        case Quantifier(kind=kind, path=path, where=where):
+        case (
+            Quantifier(kind=tag, path=path, where=where) | Presence(op=tag, path=path, where=where)
+        ):
             body: dict[str, object] = {"path": path}
             if where is not None:
                 body["where"] = serialize(where)
-            return {kind: body}
-        case Presence(op=tag, path=path):
-            return {tag: {"path": path}}
+            return {tag: body}
         case Narrow(to=to, operand=operand, path=path):
             narrow: dict[str, object] = {} if path is None else {"path": path}
             narrow.update({"to": list(to), "operand": serialize(operand)})

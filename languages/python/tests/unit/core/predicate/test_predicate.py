@@ -248,6 +248,12 @@ def test_quantifiers_presence_and_a_target_local_narrow_round_trip() -> None:
                 {"any": {"path": "Customer.orders"}},
                 {"exists": {"path": "Customer.address.geo"}},
                 {
+                    "notExists": {
+                        "path": "Customer.favorite",
+                        "where": {"or": {"operands": [{"true": {}}, {"false": {}}]}},
+                    }
+                },
+                {
                     "narrow": {
                         "path": "Customer.favorite",
                         "to": ["Dog"],
@@ -258,6 +264,17 @@ def test_quantifiers_presence_and_a_target_local_narrow_round_trip() -> None:
         }
     }
     assert predicate.serialize(predicate.deserialize(doc)) == doc
+
+
+def test_bare_presence_keeps_its_positional_constructor_and_omits_where() -> None:
+    bare = predicate.Presence("exists", "Order.customer")
+    assert bare.where is None
+    assert predicate.serialize(bare) == {"exists": {"path": "Order.customer"}}
+    matched = predicate.Presence("notExists", "Order.customer", predicate.TrueNode())
+    assert predicate.serialize(matched) == {
+        "notExists": {"path": "Order.customer", "where": {"true": {}}}
+    }
+    assert predicate.deserialize(predicate.serialize(matched)) == matched
 
 
 def test_negated_membership_keeps_its_own_tag_through_serialization() -> None:
@@ -337,9 +354,10 @@ def test_a_code_outside_the_closed_query_set_cannot_be_raised() -> None:
             ({"exists": {"path": "Order.Customer"}}, "not a valid predicate path"),
             ({"all": {"path": "Order.items"}}, r"all: missing required key\(s\) \['where'\]"),
             (
-                {"exists": {"path": "Order.items", "where": {"true": {}}}},
-                r"exists: unexpected key\(s\) \['where'\]",
+                {"exists": {"path": "Order.customer", "where": {"true": {}}, "to": ["Vip"]}},
+                r"exists: unexpected key\(s\) \['to'\]",
             ),
+            ({"notExists": {"path": "Order.customer", "where": "x"}}, "must be a mapping"),
             ({"isNull": {}}, r"isNull: missing required key\(s\) \['path'\]"),
             ({"true": {"value": True}}, r"true: unexpected key\(s\) \['value'\]"),
             ({"eq": {"attr": "Order.id", "value": 1}}, r"eq: unexpected key\(s\) \['attr'\]"),

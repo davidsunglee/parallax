@@ -1,0 +1,16 @@
+# Negative (m-predicate relationship matching): a match binds the related Entity, so
+# its operand's paths are relative to it; an Entity-qualified path does not reach
+# back to the queried basket.
+model: models/predicate-collections.yaml
+tags: [m-predicate, rejected, negative, matching, scope, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  objectQuery:
+    target: parallax.compatibility.Basket
+    predicate:
+      exists:
+        path: parallax.compatibility.Basket.owner
+        where:
+          eq: {path: parallax.compatibility.Basket.label, value: one}
+then:
+  rejectedRule: predicate-subject-outside-scope

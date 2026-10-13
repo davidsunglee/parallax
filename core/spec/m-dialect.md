@@ -394,7 +394,8 @@ element is extracted only after the outermost hop.
 MariaDB executes an exact bounded subset of the algebra: scalar operations through
 any number of single value-object and to-one relationship hops (the nested
 extraction and typed cast forms above, inside the scalar subqueries `m-sql` emits),
-bare path-targeted subtype tests, bare scalar-collection and value-object occupancy
+to-one relationship presence and matching whose `where` holds only forms this lane
+executes, bare path-targeted subtype tests, bare scalar-collection and value-object occupancy
 (`any` / `none` with no `where`) under the `<g>` guard, and the value-object
 containment forms the containment golden covers. A MariaDB implementation **MUST
 reject**, with a capability diagnostic naming the unsupported form, a filtered

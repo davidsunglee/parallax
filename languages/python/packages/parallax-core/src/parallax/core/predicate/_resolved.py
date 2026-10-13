@@ -195,11 +195,16 @@ class ResolvedQuantifier:
 class ResolvedPresence:
     """Whether the single object ``target`` names at ``position`` is present,
     complemented when ``negated``: a ``one`` Value Object occurrence, or the
-    Entity a to-one relationship reaches."""
+    Entity a to-one relationship reaches.
+
+    ``where`` is resolved at the relationship's target: some visible candidate
+    must make it true, so a false or unknown one does not match.
+    """
 
     negated: bool
     target: OccurrenceMetadata | ResolvedRelationship
     position: ObjectPosition = CURRENT
+    where: ResolvedPredicate | None = None
 
 
 type ResolvedPredicate = (

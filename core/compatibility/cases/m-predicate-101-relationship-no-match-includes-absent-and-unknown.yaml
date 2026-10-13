@@ -1,0 +1,55 @@
+# Negated matching complements the complete match: no owner makes the operand true.
+# Unlike a negated dotted comparison (m-predicate-077), it includes the basket with
+# no owner and the one whose owner's operand is unknown.
+model: models/predicate-collections.yaml
+tags: [m-predicate, relationship, to-one, notExists, matching, negation, m-dialect, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  objectQuery:
+    target: parallax.compatibility.Basket
+    predicate:
+      notExists:
+        path: parallax.compatibility.Basket.owner
+        where:
+          eq: {path: active, value: true}
+then:
+  statements:
+  - sql: {postgres: 'select t0.id, t0.label, t0.owner_id, not t0.tags is null, t0.tags, not t0.scores is null, t0.scores, not t0.prices is null, t0.prices, not t0.flags is null, t0.flags, not t0.parcels is null, t0.parcels, not t0.meta is null, t0.meta from basket t0 where not exists (select 1 from basket_owner t1 where t1.id = t0.owner_id and t1.active = ?)', mariadb: 'select t0.id, t0.label, t0.owner_id, not t0.tags is null, t0.tags, not t0.scores is null, t0.scores, not t0.prices is null, t0.prices, not t0.flags is null, t0.flags, not t0.parcels is null, t0.parcels, not t0.meta is null, t0.meta from basket t0 where not exists (select 1 from basket_owner t1 where t1.id = t0.owner_id and t1.active = ?)'}
+    binds: [true]
+  graph:
+    Basket:
+    - id: 2
+      label: two
+      ownerId: null
+      tags: []
+      scores: []
+      prices: []
+      flags: []
+      parcels: []
+      meta: null
+    - id: 3
+      label: three
+      ownerId: 2
+      tags: [gift]
+      scores: [15]
+      prices: ['2.00', '3.00']
+      flags: [false]
+      parcels:
+      - sku: c
+        qty: 5
+        notes: [urgent]
+      meta:
+        labels: []
+    - id: 4
+      label: four
+      ownerId: 3
+      tags: [urgent]
+      scores: [0]
+      prices: []
+      flags: [true, false]
+      parcels:
+      - sku: d
+        qty: 1
+        notes: [urgent, x]
+      meta: null
+  roundTrips: 1

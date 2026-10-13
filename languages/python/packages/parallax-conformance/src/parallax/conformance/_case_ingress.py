@@ -352,7 +352,10 @@ def _normalize_predicate(
                 if inner is None
                 else replace(node, operand=_normalize_predicate(operand, model, inner))
             )
-        case predicate.Quantifier(path=path, where=where) if where is not None:
+        case (
+            predicate.Quantifier(path=path, where=where)
+            | predicate.Presence(path=path, where=where)
+        ) if where is not None:
             inner = _reach(model, at, path)
             return (
                 node

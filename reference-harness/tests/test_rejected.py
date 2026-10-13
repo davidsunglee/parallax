@@ -758,6 +758,10 @@ def _order(predicate: dict[str, Any]) -> None:
     _validate("models/orders.yaml", "parallax.compatibility.Order", predicate)
 
 
+def _item(predicate: dict[str, Any]) -> None:
+    _validate("models/orders.yaml", "parallax.compatibility.OrderItem", predicate)
+
+
 def _collection(predicate: dict[str, Any]) -> None:
     _validate(
         "models/scalar-collection-layout-twin-columns.yaml",
@@ -774,6 +778,17 @@ def _rule(check: Any, predicate: dict[str, Any]) -> str:
 
 def _phones(where: dict[str, Any]) -> dict[str, Any]:
     return {"any": {"path": "parallax.compatibility.Customer.address.phones", "where": where}}
+
+
+def test_validate_predicate_accepts_a_relationship_match_in_its_target_scope() -> None:
+    _item(
+        {
+            "notExists": {
+                "path": "parallax.compatibility.OrderItem.order",
+                "where": {"any": {"path": "items", "where": {"eq": {"path": "sku", "value": "x"}}}},
+            }
+        }
+    )
 
 
 def test_validate_predicate_accepts_valid_paths_and_scopes() -> None:
@@ -977,6 +992,14 @@ def test_a_path_through_a_many_member_rejected() -> None:
         (_customer, {"none": {"path": "parallax.compatibility.Customer.name"}}),
         (_customer, {"exists": {"path": "parallax.compatibility.Customer.address.phones"}}),
         (_order, {"notExists": {"path": "parallax.compatibility.Order.items"}}),
+        (
+            _customer,
+            {"exists": {"path": "parallax.compatibility.Customer.address", "where": {"true": {}}}},
+        ),
+        (
+            _order,
+            {"exists": {"path": "parallax.compatibility.Order.items", "where": {"true": {}}}},
+        ),
         (_customer, {"eq": {"path": "parallax.compatibility.Customer.address", "value": "x"}}),
         (
             _order,
@@ -994,6 +1017,8 @@ def test_a_path_through_a_many_member_rejected() -> None:
         "none-scalar",
         "exists-many-vo",
         "not-exists-to-many",
+        "match-single-vo",
+        "match-to-many",
         "field-on-vo",
         "narrow-to-many",
     ],
@@ -1026,6 +1051,15 @@ def test_a_path_ending_on_the_wrong_kind_rejected(check: Any, predicate: dict[st
                 {"narrow": {"to": ["parallax.compatibility.Customer"], "operand": {"true": {}}}}
             ),
         ),
+        (
+            _item,
+            {
+                "exists": {
+                    "path": "parallax.compatibility.OrderItem.order",
+                    "where": {"eq": {"path": "parallax.compatibility.OrderItem.sku", "value": "x"}},
+                }
+            },
+        ),
     ],
     ids=[
         "subjectless-at-root",
@@ -1033,6 +1067,7 @@ def test_a_path_ending_on_the_wrong_kind_rejected(check: Any, predicate: dict[st
         "qualified-in-element",
         "field-in-scalar-scope",
         "narrow-of-element",
+        "qualified-in-match",
     ],
 )
 def test_a_subject_outside_its_scope_rejected(check: Any, predicate: dict[str, Any]) -> None:
@@ -1833,7 +1868,7 @@ def test_schema_requires_a_universal_predicate_and_retires_the_old_grammar() -> 
     assert not _predicate_valid({"all": {}})
     assert not _predicate_valid({"nestedEq": {"path": "Customer.address.city", "value": "x"}})
     assert not _predicate_valid({"navigate": {"rel": "Customer.orders"}})
-    assert not _predicate_valid({"exists": {"path": "Customer.orders", "where": {"true": {}}}})
+    assert not _predicate_valid({"exists": {"rel": "Customer.orders", "op": {"true": {}}}})
 
 
 def test_schema_rejects_a_value_object_in_an_entity_position() -> None:

@@ -412,6 +412,42 @@ def test_presence_two_hops_away_nests_inside_the_first_hop() -> None:
     )
 
 
+_SEATS = oa.Comparison(op="greaterThan", subject=oa.FieldSubject("seats"), value=2)
+
+
+def test_a_match_tests_its_whole_operand_in_every_candidate_branch() -> None:
+    narrowed = oa.Narrow(to=("Car",), operand=oa.Or(operands=(_SEATS, _title("maker", "Saab"))))
+    parking = target(TRAVERSAL, "Parking")
+    positive = compile_read(
+        oa.Presence("exists", "Parking.vehicle", narrowed), TRAVERSAL, POSTGRES, parking
+    )
+    negative = compile_read(
+        oa.Presence("notExists", "Parking.vehicle", narrowed), TRAVERSAL, POSTGRES, parking
+    )
+    branches = (
+        "exists (select 1 from traversal_bike t1 where t1.id = t0.vehicle_id and 1 = 0) "
+        "or exists (select 1 from traversal_car t2 where t2.id = t0.vehicle_id "
+        "and (t2.seats > ? or t2.maker = ?))"
+    )
+    assert positive.statement.sql.endswith(f"where ({branches})")
+    assert negative.statement.sql.endswith(f"where not ({branches})")
+    assert positive.statement.binds == negative.statement.binds == (2, "Saab")
+
+
+def test_a_match_past_a_dotted_prefix_is_false_where_the_prefix_reaches_nothing() -> None:
+    compiled = compile_read(
+        oa.Presence("notExists", "Leash.collar.pet", _title("name", "Rex")),
+        TRAVERSAL,
+        POSTGRES,
+        target(TRAVERSAL, "Leash"),
+    )
+    assert compiled.statement.sql.endswith(
+        "where not coalesce((select exists (select 1 from traversal_pet t1 where "
+        "t1.id = t2.pet_id and t1.name = ?) from traversal_collar t2 where t2.id = t0.collar_id), "
+        "false)"
+    )
+
+
 def test_a_narrow_over_a_monomorphic_target_tests_presence_and_its_operand() -> None:
     bare = compile_read(
         oa.Narrow(path="Claim.coverage", to=("Coverage",), operand=oa.TrueNode()),
@@ -555,6 +591,8 @@ def _title(path: str, value: str = "x") -> oa.Comparison:
         (oa.Quantifier("all", "Holder.empties", _title("title")), "1 = 1"),
         (oa.Presence("exists", "Holder.empty"), "1 = 0"),
         (oa.Presence("notExists", "Holder.empty"), "1 = 1"),
+        (oa.Presence("exists", "Holder.empty", _title("title")), "1 = 0"),
+        (oa.Presence("notExists", "Holder.empty", _title("title")), "1 = 1"),
         (_title("Holder.empty.title"), "cast(null as boolean)"),
         (oa.NullCheck(op="isNull", subject=oa.FieldSubject("Holder.empty.holderId")), "1 = 1"),
         (oa.NullCheck(op="isNotNull", subject=oa.FieldSubject("Holder.empty.holderId")), "1 = 0"),

@@ -269,3 +269,19 @@ def test_a_to_one_hop_reaching_two_candidates_fails_through_the_database(
         execution.query(sql, binds)
     assert provider.native_error_code(raised.value) == _DUPLICATE_CANDIDATE_CODE[provider.dialect]
     assert provider.classify_error(raised.value) == errors.UNKNOWN
+
+
+# A relationship match is existential over the same declared candidates: two
+# concrete tables keying the same id are two candidates to match, not an
+# ambiguity, so the statement answers rather than failing (m-predicate
+# *Presence*). The parking whose car matches is selected beside the twin bike.
+def test_a_relationship_match_over_two_candidates_answers(provider) -> None:
+    case = _damaged("m-predicate-105-relationship-match-narrows-its-own-candidate")
+    provision(case, provider)
+    execution = CaseExecution(case, provider)
+    execution.execute(
+        "insert into traversal_bike (id, maker, gears) values (?, ?, ?)", [5, "Twin", 3]
+    )
+    (statement,) = _statements(case)
+    sql, binds = statement["sql"][provider.dialect], statement.get("binds", [])
+    assert [row["id"] for row in execution.query(sql, binds)] == [30]

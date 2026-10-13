@@ -97,6 +97,14 @@ def test_relationships_are_include_paths_and_quantify_their_target() -> None:
     assert include is not None and narrowed is not None
     assert_type(Carrier.routes.any(Route.id > 1), Predicate[Any])
     assert_type(Route.carrier.exists(), Predicate[Any])
+    assert_type(Route.carrier.exists(Carrier.name == "x"), Predicate[Any])
+    assert_type(Route.carrier.not_exists(Carrier.name == "x"), Predicate[Any])
+
+
+def test_a_match_reads_its_operand_from_the_target_class() -> None:
+    Route.carrier.exists(Route.id == 1)  # pyright: ignore[reportArgumentType]
+    with pytest.raises(TypeError):
+        Route.leg.exists(Leg.origin.city == "Oslo")  # pyright: ignore[reportCallIssue]
 
 
 def test_collections_refuse_single_value_operations_statically() -> None:
