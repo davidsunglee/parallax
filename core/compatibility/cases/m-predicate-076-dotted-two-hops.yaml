@@ -1,4 +1,3 @@
-# Two unique to-one hops join in order: the basket whose owner's manager is Bob.
 model: models/predicate-collections.yaml
 tags: [m-predicate, relationship, to-one, traversal, m-dialect, slice-snapshot-1, slice-managed-1]
 shape: read

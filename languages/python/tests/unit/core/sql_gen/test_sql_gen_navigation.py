@@ -822,6 +822,21 @@ def test_a_match_reuses_a_shared_target_beneath_its_presence() -> None:
     assert compiled.statement.binds == ("X", True)
 
 
+def test_a_compound_match_reading_its_target_row_reuses_the_shared_target() -> None:
+    operand = oa.Or(
+        operands=(
+            oa.Not(oa.NullCheck(op="isNull", subject=oa.FieldSubject("sku"))),
+            oa.StringMatch(op="startsWith", subject=oa.FieldSubject("name"), value="A"),
+        )
+    )
+    op = oa.And(operands=(_ADA, oa.Presence("exists", "OrderItem.order", operand)))
+    compiled = compile_read(op, ORDERS, POSTGRES, target(ORDERS, "OrderItem"))
+    assert compiled.statement.sql.endswith(
+        "left join orders t1 on t1.id = t0.order_id where t1.name = ? and case when t1.id "
+        "is null then false else (not t1.sku is null or t1.name like ?) is true end"
+    )
+
+
 def test_a_match_alone_opens_no_join() -> None:
     op = oa.Presence(
         "exists",
@@ -876,9 +891,9 @@ def test_a_text_compared_document_member_reads_the_shared_join() -> None:
     )
 
 
-def test_the_same_conversion_inside_a_match_reads_the_shared_join() -> None:
-    # A match's operand is already a filter of its candidate test, so evaluating it
-    # beneath the shared target's presence guard exposes it to nothing new.
+def test_the_same_conversion_inside_a_match_keeps_its_correlated_exists() -> None:
+    # The presence guard excludes only a missing customer, not customers no
+    # location reaches, which a joined-row filter may also be tested against.
     assert _location_where(
         _CUSTOMER_NAMED,
         oa.Presence(
@@ -890,8 +905,50 @@ def test_the_same_conversion_inside_a_match_reads_the_shared_join() -> None:
         ),
     ) == (
         "left join customer t1 on t1.id = t0.customer_id where t1.name = ? and "
-        "case when t1.id is null then false else "
-        "(cast(jsonb_extract_path_text(t1.address, ?, ?) as double precision) > ?) is true end"
+        "exists (select 1 from customer t2 where t2.id = t0.customer_id and "
+        "cast(jsonb_extract_path_text(t2.address, ?, ?) as double precision) > ?)"
+    )
+
+
+def test_a_match_reading_through_a_further_hop_keeps_its_correlated_exists() -> None:
+    op = oa.And(
+        operands=(
+            oa.Comparison(op="eq", subject=oa.FieldSubject("OrderStatus.orderItem.sku"), value="S"),
+            oa.Presence(
+                "exists",
+                "OrderStatus.orderItem",
+                oa.Comparison(op="eq", subject=oa.FieldSubject("order.name"), value="Ada"),
+            ),
+        )
+    )
+    compiled = compile_read(op, ORDERS, POSTGRES, target(ORDERS, "OrderStatus"))
+    assert compiled.statement.sql.endswith(
+        "left join order_item t1 on t1.id = t0.order_item_id where t1.sku = ? and "
+        "exists (select 1 from order_item t2 where t2.id = t0.order_item_id and "
+        "(select t3.name from orders t3 where t3.id = t2.order_id) = ?)"
+    )
+
+
+def test_a_match_past_a_dotted_prefix_keeps_its_scalar_form_when_its_operand_quantifies() -> None:
+    compiled = compile_read(
+        oa.Presence(
+            "notExists",
+            "OrderStatus.orderItem.order",
+            oa.Quantifier(
+                "any",
+                "items",
+                oa.Comparison(op="eq", subject=oa.FieldSubject("sku"), value="S"),
+            ),
+        ),
+        ORDERS,
+        POSTGRES,
+        target(ORDERS, "OrderStatus"),
+    )
+    assert compiled.statement.sql.endswith(
+        "from order_status t0 where not coalesce((select exists (select 1 from orders t1 "
+        "where t1.id = t3.order_id and exists (select 1 from order_item t2 "
+        "where t2.order_id = t1.id and t2.sku = ?)) "
+        "from order_item t3 where t3.id = t0.order_item_id), false)"
     )
 
 
