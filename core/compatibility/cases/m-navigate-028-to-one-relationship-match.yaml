@@ -1,6 +1,3 @@
-# Relationship matching on each child's to-one parent: a parent named 'Ada'. The
-# match is one existential test of the parent's complete operand, two-valued
-# without a separate presence guard (contrast m-navigate-007's guarded comparison).
 model: models/orders.yaml
 tags: [m-navigate, navigate, relationship, to-one, matching, m-dialect, slice-snapshot-1, slice-managed-1]
 shape: read

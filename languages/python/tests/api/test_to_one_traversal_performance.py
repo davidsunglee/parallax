@@ -223,14 +223,15 @@ class Scale:
     """One seeded population: ``orders`` parents each referenced by
     ``items_per_order`` roots, one parent in ``match_every`` named ``Ada``, one
     root in ``absent_every`` (0 for none) with no parent, ``tags`` scalar
-    elements and up to four parcels per order, and ``notes`` related notes on
-    two of every three orders."""
+    elements and ``parcels`` Value Objects per order, and ``notes`` related
+    notes on two of every three orders."""
 
     orders: int
     items_per_order: int
     match_every: int
     absent_every: int
     tags: int
+    parcels: int
     notes: int
     rationale: str
 
@@ -245,6 +246,7 @@ class Scale:
             "matchEvery": self.match_every,
             "absentEvery": self.absent_every,
             "tags": self.tags,
+            "parcels": self.parcels,
             "notes": self.notes,
             "customers": _customers(self),
             "vehicles": _vehicles(self),
@@ -256,24 +258,24 @@ class Scale:
 
 
 SCALES: Final[Mapping[str, Scale]] = {
-    "smoke": Scale(24, 3, 4, 5, 3, 2, "bounded semantic smoke data, not a measurement"),
+    "smoke": Scale(24, 3, 4, 5, 3, 3, 2, "bounded semantic smoke data, not a measurement"),
     "focused": Scale(
-        20_000, 10, 100, 1_000, 8, 2, "200,000 roots: iteration-sized, absences included"
+        20_000, 10, 100, 1_000, 8, 4, 2, "200,000 roots: iteration-sized, absences included"
     ),
     "ticket": Scale(
-        100_000, 10, 100, 0, 8, 2, "COR-211: 100,000 parents, 1,000,000 roots, 1% matching"
+        100_000, 10, 100, 0, 8, 4, 2, "COR-211: 100,000 parents, 1,000,000 roots, 1% matching"
     ),
     "ticket-selective": Scale(
-        100_000, 10, 4, 0, 8, 2, "the ticket population with 25% of parents matching"
+        100_000, 10, 4, 0, 8, 4, 2, "the ticket population with 25% of parents matching"
     ),
     "ticket-unshared": Scale(
-        1_000_000, 1, 100, 0, 8, 2, "1,000,000 roots each reaching its own parent"
+        1_000_000, 1, 100, 0, 8, 4, 2, "1,000,000 roots each reaching its own parent"
     ),
     "collections-empty": Scale(
-        100_000, 10, 100, 0, 0, 0, "the ticket population with empty target collections"
+        100_000, 10, 100, 0, 0, 0, 0, "the ticket population with empty target collections"
     ),
     "collections-large": Scale(
-        100_000, 10, 100, 0, 64, 16, "the ticket population with larger target collections"
+        100_000, 10, 100, 0, 64, 16, 16, "the ticket population with larger target collections"
     ),
 }
 
@@ -328,9 +330,9 @@ def seed_statements(scale: Scale) -> list[str]:
     )
     parcels = (
         "'[]'::jsonb"
-        if scale.tags == 0
+        if scale.parcels == 0
         else "(select jsonb_agg(jsonb_build_object('sku', 's' || e, 'qty', mod(g + e, 7)) "
-        f"order by e) from generate_series(1, {min(scale.tags, 4)}) e)"
+        f"order by e) from generate_series(1, {scale.parcels}) e)"
     )
     absent = "false" if a == 0 else f"mod(g, {a}) = 0"
     return [
@@ -1324,6 +1326,9 @@ def test_workload_inventory(capsys: pytest.CaptureFixture[str]) -> None:
     assert len({workload.id for workload in WORKLOADS}) == len(WORKLOADS)
     assert {workload.suite for workload in WORKLOADS} == set(evidence.SUITES)
     assert {scale for _, scale in FINAL_MATRIX} <= set(SCALES)
+    for population in ("tags", "parcels", "notes"):
+        sizes = {getattr(SCALES[name], population) for name in _COLLECTION_SCALES}
+        assert 0 in sizes and len(sizes) >= 3, (population, sizes)
     if evidence.selected_mode() == "list":
         with capsys.disabled():
             print("\n".join(listing))
@@ -1340,17 +1345,16 @@ def _listing() -> Iterator[str]:
         )
 
 
+# Admitted before fixture setup, so an unselected capture never starts a container.
+@pytest.mark.skipif(
+    evidence.environment("MODE") != "compare",
+    reason="diagnostic: set PARALLAX_TO_ONE_PERFORMANCE_MODE=compare to run",
+)
 def test_diagnostic_capture(profile_run: Any) -> None:
-    _require_mode("compare")
     selection = evidence.select(CLASSIFICATIONS, tuple(SCALES), default_scale="focused")
-    needs_baseline = any(_BY_ID[name].pairing == "paired" for name in selection.workloads)
-    baseline = evidence.environment("BASELINE")
-    if needs_baseline and baseline is None:
-        raise evidence.EvidenceError(
-            "a paired workload replays PARALLAX_TO_ONE_PERFORMANCE_BASELINE"
-        )
-    baseline_path = None if baseline is None else Path(baseline)
-    if baseline_path is not None:
+    baseline_path = None
+    if any(_BY_ID[name].pairing == "paired" for name in selection.workloads):
+        baseline_path = evidence.required_path("BASELINE")
         evidence.assert_valid(evidence.validate_inventory(baseline_path, CLASSIFICATIONS))
     stamp = dt.datetime.now(dt.UTC).strftime("%Y%m%dt%H%M%S")
     capture_id = "final" if selection.campaign == "final" else f"{selection.suite}-{stamp}"
@@ -1484,6 +1488,77 @@ def test_a_bounded_capture_replays_and_validates(profile_run: Any, tmp_path: Pat
     samples.write_text(samples.read_text(encoding="utf-8").replace('"ordinaryNs"', '"lost"'))
     problems = evidence.validate_capture(damaged / manifest.name, CLASSIFICATIONS, FINAL_MATRIX)
     assert any("does not match its digest" in problem for problem in problems)
+    _a_damaged_capture_names_every_defect(manifest, tmp_path / "contradicted")
+    _a_current_only_capture_never_reads_its_baseline(manifest, tmp_path / "current-only")
+
+
+def _copied(manifest: Path, directory: Path) -> Path:
+    directory.mkdir()
+    for path in manifest.parent.glob(manifest.name.removesuffix("manifest.json") + "*"):
+        (directory / path.name).write_bytes(path.read_bytes())
+    return directory / manifest.name
+
+
+def _a_damaged_capture_names_every_defect(manifest: Path, directory: Path) -> None:
+    copy = _copied(manifest, directory)
+    workloads = evidence.load(copy)["workloads"]
+    contradicted, unobserved = workloads[0], workloads[1]
+    measured = next(entry for entry in workloads if entry["pairing"] == "current-only")
+    variant = measured["variants"][0]
+    samples, statement = directory / variant["samples"], directory / variant["statement"]
+    content = evidence.load(samples)
+    content["ordinaryNs"] = [None for _ in content["ordinaryNs"]]
+    content["explain"] = [{"Plan": {}, "Execution Time": None} for _ in content["explain"]]
+    samples.write_text(evidence.dumps(content), encoding="utf-8")
+    content = evidence.load(statement)
+    content["binds"] = []
+    statement.write_text(evidence.dumps(content), encoding="utf-8")
+
+    def damage(document: dict[str, Any]) -> None:
+        _redigested(document, directory)
+        del document["driver"]["files"]
+        del document["command"]["environment"]
+        del document["protocol"]["order"]
+        del document["seed"]["scales"]["smoke"]["distributions"]
+        document["selection"].update(campaign="final", suite="nonexistent")
+        observations = document["workloads"][0]["observations"]
+        observations["public"].update(count=observations["public"]["count"] + 1)
+        del document["workloads"][1]["observations"]["statements"]["current"]
+
+    problems = evidence.validate_capture(_rewritten(copy, damage), CLASSIFICATIONS, FINAL_MATRIX)
+    label = f"{measured['id']}/smoke/current"
+    expected = (
+        "the driver files are not recorded",
+        "the command environment is not recorded",
+        "the protocol order is not recorded",
+        "scale smoke records no seeded counts, distributions, and parameters",
+        "the selected suite 'nonexistent' is unknown",
+        "the selected points are not those of its workloads",
+        f"{contradicted['id']}/smoke lacks semantic parity",
+        f"{unobserved['id']}/smoke does not observe every variant",
+        f"{label} lacks ordinary samples",
+        f"{label} holds a sample that is not an executed plan",
+    )
+    for problem in expected:
+        assert problem in problems, problems
+    assert any(problem.startswith(f"{label} binds 0 values to ") for problem in problems)
+
+
+def _a_current_only_capture_never_reads_its_baseline(manifest: Path, directory: Path) -> None:
+    copy = _copied(manifest, directory)
+
+    def keep_current_only(document: dict[str, Any]) -> None:
+        kept = [entry for entry in document["workloads"] if entry["pairing"] == "current-only"]
+        document["workloads"] = kept
+        document["selection"]["workloads"] = [entry["id"] for entry in kept]
+        document["selection"]["points"] = [[entry["id"], entry["scale"]] for entry in kept]
+        document["baseline"] = {"manifest": str(directory / "absent.json"), "digest": "0" * 64}
+
+    evidence.assert_valid(
+        evidence.validate_capture(
+            _rewritten(copy, keep_current_only), CLASSIFICATIONS, FINAL_MATRIX
+        )
+    )
 
 
 def _rewritten(manifest: Path, change: Callable[[dict[str, Any]], None]) -> Path:
@@ -1493,19 +1568,26 @@ def _rewritten(manifest: Path, change: Callable[[dict[str, Any]], None]) -> Path
     return manifest
 
 
+def _redigested(document: dict[str, Any], directory: Path) -> None:
+    for file in document["files"]:
+        file["sha256"] = evidence.sha256_bytes((directory / file["path"]).read_bytes())
+
+
 def test_inventory_validation_names_every_defect(tmp_path: Path) -> None:
     manifest = write_inventory(tmp_path)
     statements = tmp_path / "evidence-baseline-reads-statements.json"
     content = evidence.load(statements)
     content["statements"]["reads.dotted-eq"]["binds"] = [{"t": "datetime", "v": "nope"}]
+    content["statements"]["reads.guarded-dotted-eq"]["binds"] = []
     del content["statements"]["reads.presence"]
     content["statements"]["reads.match"] = {"sql": "select 1", "binds": []}
+    content["parameters"]["reads.repeated-fields"]["objectQuery"] = {}
     statements.write_text(evidence.dumps(content), encoding="utf-8")
 
     def corrupt(document: dict[str, Any]) -> None:
-        for file in document["files"]:
-            file["sha256"] = evidence.sha256_bytes((tmp_path / file["path"]).read_bytes())
+        _redigested(document, tmp_path)
         document["compiler"]["sha"] = "HEAD"
+        del document["driver"]["files"]
         workloads = document["workloads"]
         workloads[:] = [entry for entry in workloads if entry["id"] != "writes.delete-dotted-eq"]
         workloads[0]["pairing"] = "current-only"
@@ -1515,6 +1597,9 @@ def test_inventory_validation_names_every_defect(tmp_path: Path) -> None:
         "the compiler SHA is not recorded",
         "reads.dotted-eq changed pairing",
         "reads.dotted-eq's binds are not losslessly replayable",
+        "reads.guarded-dotted-eq binds 0 values to 1 placeholders",
+        "reads.repeated-fields has no complete parameters",
+        "the driver files are not recorded",
         "reads.presence froze no statement",
         "reads.match is current-only but froze a statement",
         "paired workloads ['writes.delete-dotted-eq'] have no inventory entry",

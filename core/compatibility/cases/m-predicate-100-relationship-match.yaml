@@ -1,6 +1,3 @@
-# Relationship matching: some owner makes the complete operand true. Ada is active;
-# Bob's `active` is null, so his operand is unknown and he does not match; Cy is
-# inactive; basket 2 has no owner to match.
 model: models/predicate-collections.yaml
 tags: [m-predicate, relationship, to-one, exists, matching, m-dialect, slice-snapshot-1, slice-managed-1]
 shape: read
