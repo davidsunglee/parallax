@@ -12,6 +12,7 @@ from parallax.core.metamodel import (
     Column,
     EntityIdentity,
     FacetKey,
+    IndexMetadata,
     MemberIdentity,
     MemberShape,
     Metamodel,
@@ -32,6 +33,7 @@ __all__ = [
     "EntityLayoutView",
     "InheritanceDiscriminator",
     "MemberPlacement",
+    "PhysicalIndex",
     "PositionBranch",
     "PositionColumn",
     "PositionColumnFacts",
@@ -158,6 +160,19 @@ class DocumentResidentSelection:
             raise ValueError("document residency selects definitions from its effective selection")
 
 
+@dataclass(frozen=True, slots=True)
+class PhysicalIndex:
+    """One accepted Index as one Table carries it.
+
+    ``columns`` selects the Table's existing slots for ``declaration``'s
+    components in component order, naming a slot once even where two temporal
+    axes designate one end Attribute.
+    """
+
+    declaration: IndexMetadata
+    columns: tuple[ColumnSlot, ...]
+
+
 class TableLayout(Protocol):
     """The complete canonical physical shape of one structural Table."""
 
@@ -167,6 +182,12 @@ class TableLayout(Protocol):
     def columns(self) -> Sequence[ColumnSlot]: ...
     @property
     def physical_primary_key(self) -> Sequence[ColumnSlot]: ...
+    @property
+    def primary_key_index(self) -> PhysicalIndex | None: ...
+    @property
+    def indexes(self) -> Sequence[PhysicalIndex]: ...
+    @property
+    def unique_keys(self) -> Sequence[PhysicalIndex]: ...
     def column(self, column: Column) -> ColumnSlot | None: ...
     def column_position(self, column: Column) -> int | None: ...
     def contribution(self, contributor: ColumnContributor) -> ColumnSlot | None: ...
@@ -256,6 +277,9 @@ class _TableLayout:
     table: Table
     columns: tuple[ColumnSlot, ...]
     physical_primary_key: tuple[ColumnSlot, ...]
+    primary_key_index: PhysicalIndex | None
+    indexes: tuple[PhysicalIndex, ...]
+    unique_keys: tuple[PhysicalIndex, ...] = field(repr=False, compare=False)
     _placements: Mapping[MemberIdentity, MemberPlacement] = field(repr=False, compare=False)
     _column_positions: Mapping[Column, int] = field(init=False, repr=False, compare=False)
     _contributor_index: Mapping[ColumnContributor, ColumnSlot] = field(
@@ -291,20 +315,31 @@ class _TableLayout:
 def table_layout(
     table: Table,
     columns: Sequence[ColumnSlot],
-    physical_primary_key: Sequence[ColumnSlot],
+    primary_key_index: PhysicalIndex | None,
+    secondary_indexes: Sequence[PhysicalIndex],
     placements: Mapping[MemberIdentity, MemberPlacement],
 ) -> TableLayout:
     """Construct one immutable lookup-bearing Table Layout.
 
     This is the compiler-facing constructor. ``placements`` is the complete
     answer for every member applicable to ``table``, so the published lookup is
-    total rather than computed per call. Public consumers receive the protocol
-    and cannot mutate either index or ordered sequence.
+    total rather than computed per call. The physical primary key is the
+    primary-key Index's slot selection, and ``indexes`` leads with that Index.
+    Public consumers receive the protocol and cannot mutate either index or
+    ordered sequence.
     """
+    indexes = (
+        tuple(secondary_indexes)
+        if primary_key_index is None
+        else (primary_key_index, *secondary_indexes)
+    )
     return _TableLayout(
         table,
         tuple(columns),
-        tuple(physical_primary_key),
+        () if primary_key_index is None else primary_key_index.columns,
+        primary_key_index,
+        indexes,
+        tuple(index for index in indexes if index.declaration.unique),
         MappingProxyType(dict(placements)),
     )
 

@@ -20,6 +20,7 @@ from parallax.core.metamodel import (
     EntityIdentity,
     EntityMetadata,
     FacetKey,
+    IndexMetadata,
     MemberIdentity,
     MemberShape,
     Multiplicity,
@@ -45,6 +46,7 @@ from parallax.core.storage_layout._facet import (
     DocumentResidentSelection,
     InheritanceDiscriminator,
     MemberPlacement,
+    PhysicalIndex,
     PositionColumn,
     PositionColumnFacts,
     PositionMemberFacts,
@@ -94,6 +96,8 @@ class _CompilationIndex:
     entities: tuple[EntityMetadata, ...]
     roots: tuple[EntityIdentity, ...]
     joined: frozenset[AttributeIdentity]
+    primary_keys: Mapping[EntityIdentity, IndexMetadata]
+    family_indices: Mapping[EntityIdentity, tuple[IndexMetadata, ...]]
 
 
 def classify_attribute_tier(
@@ -163,21 +167,42 @@ def _compilation_index(
     inheritance: InheritanceFacet,
     relationship: RelationshipFacet,
 ) -> _CompilationIndex:
-    """Index accepted Entities, family roots, and join endpoints in one metadata visit.
+    """Index accepted Entities, family roots, join endpoints, and Indices in one metadata visit.
 
     Entity, view, and family declaration reads go to their owners rather than into
     copies here. Both endpoints of every direction are collected, because both
     stay direct Columns under Relational Document Layout. A reverse direction
     names the same pair its defining peer does, with the sides exchanged.
+
+    Each Entity's derived primary-key Index is retained apart, and every other
+    Index is grouped under its declaring Entity's family root in canonical Entity
+    order: an Index names only local Attributes, so only that family's Tables can
+    carry its components.
     """
     entities = tuple(metadata.entities)
     roots: list[EntityIdentity] = []
     addressed: list[AttributeIdentity] = []
+    primary_keys: dict[EntityIdentity, IndexMetadata] = {}
+    family_indices: dict[EntityIdentity, list[IndexMetadata]] = {}
     for entity in entities:
-        if _entity_view(inheritance, entity.identity).root == entity.identity:
+        root = _entity_view(inheritance, entity.identity).root
+        if root == entity.identity:
             roots.append(entity.identity)
         for direction in relationship.relationships(entity.identity) or ():
             addressed.extend((direction.join.source, direction.join.target))
+        derived = derive_primary_key_index(
+            entity=entity.identity,
+            container=entity.declared_container,
+            attributes=entity.declared_attributes,
+            as_of_axes=entity.declared_as_of_axes,
+        )
+        if derived is not None:
+            primary_keys[entity.identity] = derived
+        family_indices.setdefault(root, []).extend(
+            declared
+            for declared in entity.indices
+            if derived is None or declared.identity != derived.identity
+        )
     joined = {_declared_endpoint(endpoint, inheritance) for endpoint in addressed}
     return _CompilationIndex(
         metadata=metadata,
@@ -185,6 +210,8 @@ def _compilation_index(
         entities=entities,
         roots=tuple(roots),
         joined=frozenset(joined),
+        primary_keys=primary_keys,
+        family_indices={root: tuple(declared) for root, declared in family_indices.items()},
     )
 
 
@@ -282,21 +309,21 @@ def _temporal_designations(root: EntityMetadata) -> frozenset[AttributeIdentity]
     )
 
 
-def _key_contributors(root: EntityMetadata) -> tuple[AttributeIdentity, ...]:
-    """The derived primary-key Index's components, in its own order.
-
-    The family root declares both the key and the axes, so the Index it derives
-    is the whole physical key of every Table the family maps — a shared
-    table-per-hierarchy Table and each table-per-concrete-subtype concrete Table
-    alike.
-    """
-    derived = derive_primary_key_index(
-        entity=root.identity,
-        container=root.declared_container,
-        attributes=root.declared_attributes,
-        as_of_axes=root.declared_as_of_axes,
-    )
-    return () if derived is None else derived.attributes
+def _physical_index(
+    table: Table,
+    declaration: IndexMetadata,
+    by_contributor: Mapping[ColumnContributor, ColumnSlot],
+) -> PhysicalIndex | None:
+    """``declaration`` over ``table``'s slots, or absence where ``table`` carries none."""
+    slots = [by_contributor.get(component) for component in declaration.attributes]
+    present = [slot for slot in slots if slot is not None]
+    if not present:
+        return None
+    if len(present) != len(slots):  # pragma: no cover - validation keeps every component direct
+        raise RuntimeError(
+            f"Table {table.name!r} carries Index {declaration.identity.name!r} only partially"
+        )
+    return PhysicalIndex(declaration, tuple(dict.fromkeys(present)))
 
 
 def _applicability(
@@ -449,11 +476,19 @@ def _layout(
     audit_designations: frozenset[AttributeIdentity],
     applicability_intern: dict[frozenset[EntityIdentity], frozenset[EntityIdentity]],
 ) -> TableLayout:
-    root = _entity(index, group.root)
+    """``group``'s Table with its slots and every Index mapped onto them.
+
+    The family root declares both the key and the axes, so the Index it derives
+    is the whole physical key of every Table the family maps — a shared
+    table-per-hierarchy Table and each table-per-concrete-subtype concrete Table
+    alike.
+    """
     attribute_applicability, value_object_applicability = _applicability(index, group.row_owners)
     row_owners = _interned(set(group.row_owners), applicability_intern)
-    key_contributors = _key_contributors(root)
-    key_set: frozenset[ColumnContributor] = frozenset(key_contributors)
+    primary_key = index.primary_keys.get(group.root)
+    key_set: frozenset[ColumnContributor] = frozenset(
+        () if primary_key is None else primary_key.attributes
+    )
 
     drafts: list[_SlotDraft] = []
     for attribute in group.attributes:
@@ -530,17 +565,16 @@ def _layout(
             f"Table {group.table.name!r} retains a duplicate Column or contributor after validation"
         )
     by_contributor = {slot.contributor: slot for slot in columns}
-    physical_key: list[ColumnSlot] = []
-    for contributor in key_contributors:
-        slot = by_contributor.get(contributor)
-        if slot is None:  # pragma: no cover - resolution rejects an axis naming no Attribute
-            raise RuntimeError(
-                f"Table {group.table.name!r} has no slot for physical-key contributor {contributor}"
-            )
-        if slot not in physical_key:
-            physical_key.append(slot)
+    secondary = (
+        _physical_index(group.table, declaration, by_contributor)
+        for declaration in index.family_indices.get(group.root, ())
+    )
     return table_layout(
-        group.table, columns, physical_key, _placements(group, roles, by_contributor)
+        group.table,
+        columns,
+        None if primary_key is None else _physical_index(group.table, primary_key, by_contributor),
+        tuple(mapped for mapped in secondary if mapped is not None),
+        _placements(group, roles, by_contributor),
     )
 
 

@@ -12,12 +12,9 @@ from parallax.core.metamodel import (
     AttributeIdentity,
     AttributeMetadata,
     EntityIdentity,
-    EntityMetadata,
     IndexIdentity,
-    IndexMetadata,
     Metamodel,
     Table,
-    derive_primary_key_index,
     inheritance_parent,
 )
 from parallax.core.storage_layout import (
@@ -645,46 +642,19 @@ def _declared_attribute(model: Metamodel, contributor: AttributeIdentity) -> Att
 
 
 def _index_definitions(model: Metamodel, layout: TableLayout) -> Iterator[IndexDefinition]:
-    """Every authored Index this Table holds, in canonical declaration order.
+    """Every authored Index this Table holds, in the layout's canonical order.
 
-    A unique or non-unique Index may be declared on any Entity whose members
-    reach the Table — a standalone Entity, an ancestor of a
-    table-per-concrete-subtype concrete, or any table-per-hierarchy family
-    participant — so the layout's contributor lookup, not an ancestry walk,
-    decides membership.
+    The derived primary-key Index is emitted inline by ``create table`` as the
+    key itself, so a separate statement for it would be a second object over the
+    same columns.
     """
-    for entity in model.entities:
-        for index in _secondary_indices(entity):
-            slots = [layout.contribution(component) for component in index.attributes]
-            if all(slot is None for slot in slots):
-                continue
-            if any(slot is None for slot in slots):  # pragma: no cover - defensive
-                raise ValueError(
-                    f"index {index.identity.name!r} spans Table "
-                    f"{layout.table.name!r} only partially"
-                )
-            resolved = [slot for slot in slots if slot is not None]
-            yield IndexDefinition(
-                table=layout.table,
-                index=index.identity,
-                components=tuple(index.attributes),
-                columns=tuple(_physical_column(model, slot) for slot in resolved),
-                unique=index.unique,
-            )
-
-
-def _secondary_indices(entity: EntityMetadata) -> tuple[IndexMetadata, ...]:
-    """``entity``'s Indices without the derived primary-key one.
-
-    The derived Index is emitted inline by ``create table`` as the key itself, so
-    a separate statement for it would be a second object over the same columns.
-    """
-    derived = derive_primary_key_index(
-        entity=entity.identity,
-        container=entity.declared_container,
-        attributes=entity.declared_attributes,
-        as_of_axes=entity.declared_as_of_axes,
-    )
-    return tuple(
-        index for index in entity.indices if derived is None or index.identity != derived.identity
-    )
+    for physical in layout.indexes:
+        if physical == layout.primary_key_index:
+            continue
+        yield IndexDefinition(
+            table=layout.table,
+            index=physical.declaration.identity,
+            components=physical.declaration.attributes,
+            columns=tuple(_physical_column(model, slot) for slot in physical.columns),
+            unique=physical.declaration.unique,
+        )

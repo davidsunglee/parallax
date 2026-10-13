@@ -53,6 +53,13 @@ from parallax.core.storage_layout._compile import (
     _interned,  # pyright: ignore[reportPrivateUsage] - private allocation-policy regression only
     _interned_ordinal_selection,  # pyright: ignore[reportPrivateUsage] - private allocation-policy regression only
 )
+from parallax.descriptor._records import Attribute, Entity, Index
+from parallax.descriptor._records import Metamodel as DescriptorMetamodel
+from tests.unit._corpus_model_support import corpus, formed
+from tests.unit._inheritance_family_support import (
+    tpcs_family_with_indices_at_every_level,
+    tph_family_with_a_descendant_declared_value_object_and_index,
+)
 from tests.unit._metamodel_support import (
     Declaration,
     accepted,
@@ -510,6 +517,142 @@ def test_physical_key_deduplicates_an_end_designated_by_two_dimensions(
         AttributeIdentity(root, "id"),
         AttributeIdentity(root, "validEnd"),
     ]
+    primary = layout.primary_key_index
+    assert primary is not None
+    assert len(primary.declaration.attributes) == 3
+    assert primary.columns == tuple(layout.physical_primary_key)
+
+
+@pytest.mark.parametrize("mapping", ["standalone", "tph", "tpcs"])
+def test_the_primary_key_index_leads_the_indexes_over_the_physical_key(
+    mapping: Literal["standalone", "tph", "tpcs"],
+) -> None:
+    model, table, root = _ranked_temporal_model(mapping, duplicate_end=False)
+    layout = _require_layout(storage_layout.view(model), table)
+    primary = layout.primary_key_index
+    assert primary is not None
+    assert layout.indexes == (primary,)
+    assert layout.unique_keys == (primary,)
+    assert primary.declaration.identity.entity == root
+    assert primary.declaration.unique
+    assert primary.declaration.attributes == (
+        AttributeIdentity(root, "id"),
+        AttributeIdentity(root, "validEnd"),
+        AttributeIdentity(root, "txEnd"),
+    )
+    assert all(
+        mapped is key_slot
+        for mapped, key_slot in zip(primary.columns, layout.physical_primary_key, strict=True)
+    )
+
+
+def _require_index(layout: storage_layout.TableLayout, name: str) -> storage_layout.PhysicalIndex:
+    (mapped,) = [index for index in layout.indexes if index.declaration.identity.name == name]
+    return mapped
+
+
+def _index_names(layout: storage_layout.TableLayout) -> list[str]:
+    return [index.declaration.identity.name for index in layout.indexes]
+
+
+def test_indexes_map_each_declaration_onto_existing_slots_in_component_order() -> None:
+    model = formed(
+        DescriptorMetamodel(
+            entities=(
+                Entity(
+                    name="Widget",
+                    table="widget",
+                    attributes=(
+                        Attribute(name="id", type="int64", column="id", primary_key=True),
+                        Attribute(
+                            name="code",
+                            type="string",
+                            column="widget_code",
+                            max_length=8,
+                            nullable=True,
+                        ),
+                        Attribute(name="label", type="string", column="label", max_length=8),
+                        Attribute(name="rank", type="int32", column="rank"),
+                    ),
+                    indices=(
+                        Index(name="widget_rank_label", attributes=("rank", "label")),
+                        Index(name="widget_code_uq", attributes=("code",), unique=True),
+                    ),
+                ),
+            )
+        )
+    )
+    (widget,) = model.entities
+    layout = _require_layout(storage_layout.view(model), "widget")
+
+    assert _index_names(layout) == ["widget_pk", "widget_rank_label", "widget_code_uq"]
+    primary = layout.primary_key_index
+    assert primary is not None
+    assert primary.declaration == widget.index("widget_pk")
+    composite = _require_index(layout, "widget_rank_label")
+    unique = _require_index(layout, "widget_code_uq")
+    assert composite.declaration == widget.index("widget_rank_label")
+    assert unique.declaration == widget.index("widget_code_uq")
+    assert [slot.column.name for slot in composite.columns] == ["rank", "label"]
+    for mapped in layout.indexes:
+        assert all(
+            slot is layout.contribution(component)
+            for slot, component in zip(mapped.columns, mapped.declaration.attributes, strict=True)
+        )
+    (code,) = unique.columns
+    assert code.column == Column("widget_code")
+    assert code.effective_nullable
+    assert layout.unique_keys == (primary, unique)
+    assert all(
+        key_index is index
+        for key_index, index in zip(
+            layout.unique_keys, (layout.indexes[0], layout.indexes[2]), strict=True
+        )
+    )
+
+
+def test_a_tph_descendant_declared_index_maps_onto_the_shared_table() -> None:
+    model = tph_family_with_a_descendant_declared_value_object_and_index()
+    layout = _require_layout(storage_layout.view(model), "root_tbl")
+    assert _index_names(layout) == ["root_tbl_pk", "leaf_code_uq"]
+    (code,) = _require_index(layout, "leaf_code_uq").columns
+    assert code is layout.contribution(code.contributor)
+    assert code.declaring_owner.name == "Leaf"
+
+
+def test_tpcs_indexes_map_onto_every_concrete_table_carrying_their_components() -> None:
+    facet = storage_layout.view(tpcs_family_with_indices_at_every_level())
+    invoice = _require_layout(facet, "invoice")
+    memo = _require_layout(facet, "memo")
+    assert _index_names(invoice) == [
+        "doc_pk",
+        "doc_code_uq",
+        "financial_currency",
+        "invoice_number_uq",
+    ]
+    assert _index_names(memo) == ["doc_pk", "doc_code_uq"]
+    assert [index.declaration.identity.name for index in invoice.unique_keys] == [
+        "doc_pk",
+        "doc_code_uq",
+        "invoice_number_uq",
+    ]
+    # One root-declared declaration, one distinct slot per concrete Table.
+    invoice_code = _require_index(invoice, "doc_code_uq")
+    memo_code = _require_index(memo, "doc_code_uq")
+    assert invoice_code.declaration == memo_code.declaration
+    assert invoice_code.columns != memo_code.columns
+    assert invoice_code.columns[0] is invoice.contribution(invoice_code.declaration.attributes[0])
+    assert memo_code.columns[0] is memo.contribution(memo_code.declaration.attributes[0])
+
+
+def test_a_document_layout_index_maps_onto_its_direct_role_slot() -> None:
+    layout = _require_layout(storage_layout.view(corpus()["document-layout"]), "trip")
+    traveler = _require_index(layout, "trip_traveler_id")
+    (component,) = traveler.declaration.attributes
+    (slot,) = traveler.columns
+    assert slot.column == Column("traveler_id")
+    assert layout.placement(component) == storage_layout.DirectColumn(slot)
+    assert layout.contribution(component) is slot
 
 
 def test_an_independently_constructed_equal_slot_matches_by_structure() -> None:
@@ -1370,6 +1513,10 @@ def test_layout_values_and_sequences_are_immutable() -> None:
     assert isinstance(facet.tables, tuple)
     assert isinstance(layout.columns, tuple)
     assert isinstance(layout.physical_primary_key, tuple)
+    assert isinstance(layout.indexes, tuple)
+    assert isinstance(layout.unique_keys, tuple)
+    with pytest.raises(FrozenInstanceError):
+        cast(Any, layout.indexes[0]).columns = ()
     with pytest.raises(FrozenInstanceError):
         cast(Any, layout.columns[0]).effective_nullable = True
     with pytest.raises(FrozenInstanceError):

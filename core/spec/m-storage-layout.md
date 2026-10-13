@@ -306,10 +306,17 @@ MemberPlacement =
   | DocumentPath(slot: ColumnSlot,
                  path: nonempty sequence<MemberName>)
 
+PhysicalIndex
+  declaration: IndexMetadata
+  columns: immutable sequence<ColumnSlot>
+
 TableLayout
   table: Table
   columns: immutable sequence<ColumnSlot>
   physicalPrimaryKey: immutable sequence<ColumnSlot>
+  primaryKeyIndex: PhysicalIndex | absent
+  indexes: immutable sequence<PhysicalIndex>
+  uniqueKeys: immutable sequence<PhysicalIndex>
   column(Column) -> ColumnSlot | absent
   columnPosition(Column) -> integer | absent
   contribution(ColumnContributor) -> ColumnSlot | absent
@@ -594,21 +601,41 @@ concrete table use the same root axis designations — and, under
 `table-per-concrete-subtype`, the same root-declared Index, whose components
 each concrete table resolves through its own contributor lookup.
 
-Secondary Index Metadata remains an ordered declaration of Attribute
-Identities. A DDL consumer resolves each index component through the applicable
-layout's contributor lookup. An index does not create another layout-owned
-column sequence.
+## Physical indexes
 
-A DDL consumer creates **every** authored Index — unique and non-unique alike —
-as a separately named statement of its own, never as an inline table constraint
-and never suppressed for spanning Columns another Index already spans. Only the
-derived primary-key Index is inline, as the Table's key. That is what lets a
-uniqueness violation report a physical name the consumer can correlate with the
-Index it created; the naming rule is `m-schema-delta`'s.
+Index Metadata remains the owner of each Index's identity, ordered components,
+and uniqueness. The compiler maps every accepted Index once onto each Table
+carrying all of its components, and `indexes` publishes the result: the derived
+primary-key Index first, then every other Index in the accepted model's
+canonical Entity order and, within one Entity, declaration order. An entry
+references the accepted declaration and selects the Table's existing slots for
+its components in component order, naming a slot once where two temporal
+dimensions designate one end Attribute. It copies neither the declaration nor a
+slot, and creates no other layout-owned column sequence. `primaryKeyIndex` is
+that first entry, whose `columns` are exactly `physicalPrimaryKey`; `uniqueKeys`
+selects the unique entries of `indexes` in the same order.
+
+An Index names only local Attributes of its declaring Entity, so it reaches
+exactly the Tables carrying that Entity's members: a standalone Entity's own
+Table, a table-per-hierarchy family's shared Table for any participant, and
+every concrete Table descending from the declaring position under
+table-per-concrete-subtype. A root-declared Index therefore has one entry per
+concrete Table, each over that Table's own slots. An entry constrains rows of
+its own Table only; it is never a family-wide guarantee across concrete Tables.
+Each component slot keeps its own `effectiveNullable` answer. Consumers read
+these entries rather than resolving components themselves.
+
+A DDL consumer creates **every** entry of `indexes` except `primaryKeyIndex` —
+unique and non-unique alike — as a separately named statement of its own, never
+as an inline table constraint and never suppressed for spanning Columns another
+Index already spans. Only the derived primary-key Index is inline, as the
+Table's key. That is what lets a uniqueness violation report a physical name the
+consumer can correlate with the Index it created; the naming rule is
+`m-schema-delta`'s.
 
 Under `Document`, an Index may name only direct-role Attributes, so every
-component still resolves to a Column and the resolution above is unchanged. An
-Index naming a document-resident Attribute is rejected by the Rule Set below.
+component still has a direct slot and the mapping above is unchanged. An Index
+naming a document-resident Attribute is rejected by the Rule Set below.
 Document-path indexes, expression indexes, generated columns, and
 provider-native document indexes are outside this contract; adding one requires
 its own design rather than a looser index rule.
@@ -896,8 +923,9 @@ their spellings equals a physical Column.
   retain their semantic selection and map the selected identities to slots.
   Assignments to document-resident members compose against the one Structured
   Column slot their placements name, in canonical logical placement order.
-- DDL iterates `TableLayout.columns`, applies `effectiveNullable`, and selects
-  `physicalPrimaryKey`; dialects only render the already-selected values. Every
+- DDL iterates `TableLayout.columns`, applies `effectiveNullable`, selects
+  `physicalPrimaryKey`, and renders every other entry of `indexes` over its
+  selected slots; dialects only render the already-selected values. Every
   constraint it emits comes from an Index: the derived primary-key Index is
   rendered as the key constraint and each other unique Index as a unique
   constraint, and the two sets are disjoint because Model Formation refuses an

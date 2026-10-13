@@ -27,6 +27,7 @@ __all__ = [
     "tpcs_family_with_a_root_declared_unique_index",
     "tpcs_family_with_a_temporal_root",
     "tpcs_family_with_a_value_object",
+    "tpcs_family_with_indices_at_every_level",
     "tph_family_with_a_descendant_declared_value_object_and_index",
     "tph_family_with_a_value_object",
 ]
@@ -143,6 +144,42 @@ def tpcs_family_with_a_temporal_root() -> AcceptedMetamodel:
         attributes=(Attribute(name="x", type="int32", column="x"),),
     )
     return formed(Metamodel(entities=(root, leaf)))
+
+
+def tpcs_family_with_indices_at_every_level() -> AcceptedMetamodel:
+    # The root, an abstract subtype, and a concrete each declare an Index over
+    # their own member, so each reaches exactly the concrete Tables repeating
+    # that member: the root's every Table, the abstract subtype's only its own
+    # concrete descendant's, and the concrete's only its own.
+    root = Entity(
+        name="Doc",
+        inheritance=Inheritance(role="root", strategy="table-per-concrete-subtype"),
+        attributes=(
+            Attribute(name="id", type="int64", column="id", primary_key=True),
+            Attribute(name="code", type="string", column="code", max_length=8),
+        ),
+        indices=(Index(name="doc_code_uq", attributes=("code",), unique=True),),
+    )
+    financial = Entity(
+        name="Financial",
+        inheritance=Inheritance(role="abstract-subtype", parent="Doc"),
+        attributes=(Attribute(name="currency", type="string", column="currency", max_length=3),),
+        indices=(Index(name="financial_currency", attributes=("currency",)),),
+    )
+    invoice = Entity(
+        name="Invoice",
+        table="invoice",
+        inheritance=Inheritance(role="concrete-subtype", parent="Financial"),
+        attributes=(Attribute(name="number", type="string", column="invoice_no", max_length=8),),
+        indices=(Index(name="invoice_number_uq", attributes=("number",), unique=True),),
+    )
+    memo = Entity(
+        name="Memo",
+        table="memo",
+        inheritance=Inheritance(role="concrete-subtype", parent="Doc"),
+        attributes=(Attribute(name="topic", type="string", column="topic", max_length=8),),
+    )
+    return formed(Metamodel(entities=(root, financial, invoice, memo)))
 
 
 def entity_with_two_indices_over_one_column() -> AcceptedMetamodel:

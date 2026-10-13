@@ -469,6 +469,7 @@
     "ISSUE_CODES",
     "InheritanceDiscriminator",
     "MODEL_COMPILER",
+    "PhysicalIndex",
     "PositionBranch",
     "PositionLayoutView",
     "RULE_SET",

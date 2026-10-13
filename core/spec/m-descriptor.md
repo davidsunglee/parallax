@@ -385,9 +385,9 @@ triggers on the Entity that *declares* the key rather than the one that owns the
 table because every index component is a distinct local Attribute of the index's
 Entity and indices are not inherited (`m-metamodel`): under
 `table-per-concrete-subtype` the concrete subtype declares neither the key nor
-the axes, both being root-owned. A storage consumer resolves each component
-through the applicable layout's contributor lookup, which reaches a
-root-declared Attribute from every concrete table.
+the axes, both being root-owned. `m-storage-layout` maps each component onto
+every Table carrying it, which reaches a root-declared Attribute from every
+concrete table.
 
 `m-storage-layout` defines the Physical Primary Key as this index's slot
 selection, so the emitted key constraint and the index that declares it can
