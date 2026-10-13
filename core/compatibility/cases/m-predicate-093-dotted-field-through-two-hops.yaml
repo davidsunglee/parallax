@@ -1,4 +1,3 @@
-# A dotted field two hops away, each unique hop its own join.
 model: models/predicate-traversal.yaml
 tags: [m-predicate, relationship, to-one, traversal, m-dialect, slice-snapshot-1, slice-managed-1]
 shape: read

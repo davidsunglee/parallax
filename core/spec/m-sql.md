@@ -826,13 +826,17 @@ A comparison, range, or membership test of a document-resident member whose
 comparison casts to its declared type (`m-dialect`) keeps its scalar form even
 through proven hops: a term of the `where` may be evaluated over target rows the
 scalar form's candidate test excludes, and that conversion can fail on stored
-text. Every other demand keeps its scalar form as well: one crossing a hop that
-is not proven unique, a quantifier over a collection the target holds, a
-path-targeted `narrow`, every demand inside a quantifier's, a match's, or a
-`narrow`'s operand, a branch of a partitioned table-per-hierarchy read, and
-readless predicate DML, which has no `from` to join (`m-batch-write`). A locking
-read keeps its scalar forms on a dialect whose shared-row lock cannot be limited
-to the root alias (`m-dialect`).
+text. A match tested over a joined row — at a joined prefix, or beneath a shared
+target's presence guard, which excludes only a missing target — likewise keeps
+its scalar form when its `where` holds such a conversion or reads beyond its
+target's own row: through a further hop, a quantifier, a `narrow` with an
+operand, or another match. Every other demand keeps its scalar form as well: one
+crossing a hop that is not proven unique, a quantifier over a collection the
+target holds, a path-targeted `narrow`, every demand inside a quantifier's, a
+match's, or a `narrow`'s operand, a branch of a partitioned table-per-hierarchy
+read, and readless predicate DML, which has no `from` to join (`m-batch-write`).
+A locking read keeps its scalar forms on a dialect whose shared-row lock cannot
+be limited to the root alias (`m-dialect`).
 
 #### Correlated scalar subqueries
 

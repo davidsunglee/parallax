@@ -1249,14 +1249,6 @@ def _resolved_vo_path(
 # Shared relationship sources: SQL demand planning                             #
 # --------------------------------------------------------------------------- #
 
-type _Exposure = Literal["joined-row", "guarded-match"]
-"""Where a planned demand would be evaluated instead of its local form.
-
-``joined-row`` is a filter over a shared target's joined row, which a database
-may test against any target row it scans. ``guarded-match`` is a matching
-operand beneath a shared target's presence guard.
-"""
-
 
 def plan_shared_sources(predicate: ResolvedPredicate, scope: EntityScope) -> EntityScope:
     """``scope`` owning the shared relationship sources ``predicate`` reads through.
@@ -1329,7 +1321,7 @@ def _plan_reached(
             return None
         branches.append(candidates.branches[0])
     target = _table_layout(scope.storage, scope.facet, branches[-1].entity.identity)
-    if not _evaluation_is_safe(demand, target, "joined-row"):
+    if not _evaluation_is_safe(demand, target, scope):
         return None
     reached: _SharedSource | None = None
     for hop, branch in zip(hops, branches, strict=True):
@@ -1354,7 +1346,7 @@ def _plan_reuse(
         return
     where = presence.where
     layout = _table_layout(scope.storage, scope.facet, shared.candidate.entity.identity)
-    if where is None or _evaluation_is_safe(where, layout, "guarded-match"):
+    if where is None or _operand_is_safe(where, layout):
         plan.place(presence, DemandPlacement(reached, shared))
 
 
@@ -1368,32 +1360,69 @@ def _hops(position: RelatedObject) -> list[ResolvedRelationship]:
     return hops
 
 
-def _evaluation_is_safe(
-    demand: ResolvedPredicate, target: TableLayout, exposure: _Exposure
-) -> bool:
-    """Whether evaluating ``demand`` at ``exposure`` evaluates nothing that can
-    fail where its local form would not have evaluated it.
+def _evaluation_is_safe(demand: ResolvedPredicate, target: TableLayout, scope: EntityScope) -> bool:
+    """Whether evaluating ``demand`` over ``target``'s joined row evaluates
+    nothing that can fail where its local form would not have.
 
     Uniqueness says how many rows a target has, not what a demand evaluates
     over them; this is the one place that second question is answered. A local
-    value demand reads its member in a scalar subquery's select list, only
-    over the candidates that subquery admitted. A joined row's terms are
-    filters instead, so a projection that can fail on stored data — a
-    document-resident member converted to its declared type — keeps its local
-    form there; a direct Column, extracted text, and a presence or existential
-    test cannot fail. A matching operand is already a filter beside its
-    candidate correlation, so beneath the target's presence guard it evaluates
-    nothing new.
+    demand reads its target inside a correlated subquery, over only the
+    candidates that subquery admitted. A term over a joined row is a filter
+    instead, which a database may test against any target row it scans —
+    including rows no source row reaches, which a presence guard does not
+    exclude. So a projection that can fail on stored data keeps its local form
+    there: a document-resident member converted to its declared type, and a
+    presence's or match's operand that evaluates anything
+    :func:`_operand_is_safe` cannot establish. A direct Column, extracted text,
+    and a presence or null test cannot fail.
     """
-    if exposure == "guarded-match":
-        return True
     match demand:
         case ResolvedComparison(member=member) | ResolvedRange(member=member):
             return not _converts(member, target)
         case ResolvedMembership(member=member):
             return not _converts(member, target)
+        case ResolvedPresence(target=ResolvedRelationship() as relationship, where=where) if (
+            where is not None
+        ):
+            return all(
+                _operand_is_safe(
+                    where, _table_layout(scope.storage, scope.facet, branch.entity.identity)
+                )
+                for branch in _candidates(relationship, scope).branches
+            )
         case _:
             return True
+
+
+def _operand_is_safe(operand: ResolvedPredicate, target: TableLayout) -> bool:
+    """Whether a presence's or match's ``operand``, resolved at ``target``,
+    reads only that target's own row without a projection that can fail.
+
+    A further hop's scalar subquery asserts its cardinality and a quantifier,
+    narrowing, or match evaluates an operand of its own over other rows, so an
+    operand reaching any of them keeps its local form.
+    """
+    match operand:
+        case ResolvedAnd(operands=operands) | ResolvedOr(operands=operands):
+            return all(_operand_is_safe(inner, target) for inner in operands)
+        case ResolvedNot(operand=inner) | ResolvedGroup(operand=inner):
+            return _operand_is_safe(inner, target)
+        case (
+            ResolvedComparison(member=member, position=CurrentObject())
+            | ResolvedRange(member=member, position=CurrentObject())
+            | ResolvedMembership(member=member, position=CurrentObject())
+        ):
+            return not _converts(member, target)
+        case (
+            ResolvedConstant()
+            | ResolvedStringMatch(position=CurrentObject())
+            | ResolvedNullCheck(position=CurrentObject())
+            | ResolvedPresence(position=CurrentObject(), where=None)
+            | ResolvedNarrow(target=CurrentObject(), operand=None)
+        ):
+            return True
+        case _:
+            return False
 
 
 def _converts(member: ResolvedPredicateMember, layout: TableLayout) -> bool:

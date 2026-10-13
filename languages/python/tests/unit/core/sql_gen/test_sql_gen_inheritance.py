@@ -876,16 +876,15 @@ def test_tpcs_single_concrete_projects_its_own_table_layout_tier_order() -> None
 
 def test_tpcs_union_restarts_aliases_per_branch_and_concatenates_binds() -> None:
     # The state invariant behind the union lane: each `union all` branch gets its
-    # OWN lowering context, so a branch's shared join and its correlated subquery
-    # restart at `t1` rather than continuing the previous branch's sequence, and
-    # the branch bind lists concatenate in the branches' canonical alphabetical
-    # order.
+    # OWN lowering context, so a branch's shared join restarts at `t1` rather than
+    # continuing the previous branch's sequence, and the branch bind lists
+    # concatenate in the branches' canonical alphabetical order.
     #
     # No corpus table-per-concrete-subtype family declares a relationship on its
-    # abstract root, so no goldened case puts a join or a SUBQUERY inside a union
-    # branch — this synthetic family is the general witness. (The corpus case
-    # above proves only the `t0` base-alias restart, which cannot distinguish a
-    # per-branch context from a per-branch alias reset.)
+    # abstract root, so no goldened case puts a join inside a union branch — this
+    # synthetic family is the general witness. (The corpus case above proves only
+    # the `t0` base-alias restart, which cannot distinguish a per-branch context
+    # from a per-branch alias reset.)
     from parallax.descriptor._records import (
         Attribute,
         DefiningRelationship,
