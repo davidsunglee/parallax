@@ -64,6 +64,7 @@ from tests.unit._inheritance_family_support import (
     tpcs_family_with_a_root_declared_unique_index,
     tpcs_family_with_a_temporal_root,
     tpcs_family_with_a_value_object,
+    tpcs_family_with_indices_at_every_level,
     tph_family_with_a_descendant_declared_value_object_and_index,
     tph_family_with_a_value_object,
 )
@@ -331,6 +332,29 @@ def test_provisioning_tpcs_surfaces_a_root_declared_unique_index() -> None:
     assert created.physical_table.name == "leaf"
 
 
+def test_provisioning_tpcs_creates_each_index_on_every_table_carrying_its_member() -> None:
+    # The root's Index reaches both concrete Tables, the abstract subtype's only
+    # the Table of its one concrete descendant, and the concrete's only its own;
+    # each Table creates them in canonical declaring-Entity order.
+    delta = _delta(tpcs_family_with_indices_at_every_level())
+    assert [
+        (index.physical_table.name, index.logical_index_identity.name, index.unique)
+        for index in delta.created_indices
+    ] == [
+        ("invoice", "doc_code_uq", True),
+        ("invoice", "financial_currency", False),
+        ("invoice", "invoice_number_uq", True),
+        ("memo", "doc_code_uq", True),
+    ]
+    assert [text.split(" on ")[1] for text in delta.statements if " index " in text] == [
+        "invoice (code)",
+        "invoice (currency)",
+        "invoice (invoice_no)",
+        "memo (code)",
+    ]
+    assert "unique" not in _tables(tpcs_family_with_indices_at_every_level())["memo"]
+
+
 def test_provisioning_tpcs_key_comes_from_the_tableless_root_derived_index() -> None:
     # The tableless root declares both the key and the axes, so it is the Entity
     # that derives the Index; the concrete table it maps carries those components
@@ -356,9 +380,9 @@ def test_provisioning_creates_every_unique_index_over_one_column() -> None:
 
 def test_an_index_naming_an_undeclared_attribute_never_reaches_provisioning() -> None:
     # An accepted model's every Index names a declared Attribute (the resolver's
-    # `metamodel-index-attribute-missing`), so provisioning's own unresolvable-
-    # column guard is unreachable defensive code — the defect is caught before a
-    # model can form.
+    # `metamodel-index-attribute-missing`), so the layout's partial-mapping guard
+    # is unreachable defensive code — the defect is caught before a model can
+    # form.
     broken = dataclasses.replace(
         _RECORDS["error-cases"],
         entities=tuple(
