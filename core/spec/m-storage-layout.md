@@ -607,11 +607,14 @@ Index Metadata remains the owner of each Index's identity, ordered components,
 and uniqueness. The compiler maps every accepted Index once onto each Table
 carrying all of its components, and `indexes` publishes the result: the derived
 primary-key Index first, then every other Index in the accepted model's
-canonical Entity order and, within one Entity, declaration order. An entry
-references the accepted declaration and selects the Table's existing slots for
-its components in component order, naming a slot once where two temporal
-dimensions designate one end Attribute. It copies neither the declaration nor a
-slot, and creates no other layout-owned column sequence. `primaryKeyIndex` is
+canonical Entity order and, within one Entity, declaration order. Every other
+entry references its accepted declaration without copying it; the primary-key
+entry's declaration is instead derived from the declaring Entity's key and axes
+by `m-descriptor`'s rule, so it equals that Entity's derived Index without being
+looked up among its accepted Indices. Each entry selects the Table's existing
+slots for its components in component order, naming a slot once where two
+temporal dimensions designate one end Attribute. It copies no slot and creates
+no other layout-owned column sequence. `primaryKeyIndex` is
 that first entry, whose `columns` are exactly `physicalPrimaryKey`; `uniqueKeys`
 selects the unique entries of `indexes` in the same order.
 
