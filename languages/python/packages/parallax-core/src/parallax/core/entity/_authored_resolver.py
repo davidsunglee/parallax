@@ -206,9 +206,13 @@ class _Resolver:
                     frame=frame,
                     where=None if where is None else lambda inner: self.walk(where, inner),
                 )
-            case AuthoredPresence(negated=negated, target=target):
+            case AuthoredPresence(negated=negated, target=target, where=where):
                 return resolve_presence(
-                    negated, self._spelled(target, frame), model=model, frame=frame
+                    negated,
+                    self._spelled(target, frame),
+                    model=model,
+                    frame=frame,
+                    where=None if where is None else lambda inner: self.walk(where, inner),
                 )
             case AuthoredNarrow(to=to, operand=operand, receiver=receiver, target=target):
                 if target is None and receiver is not None:
@@ -247,10 +251,13 @@ class _Resolver:
                 exported, inner = self._exported_within(where)
                 resolve_quantifier(kind, path, model=model, frame=frame, where=inner)
                 return Quantifier(kind, path, exported[0] if exported else None)
-            case AuthoredPresence(negated=negated, target=target):
+            case AuthoredPresence(negated=negated, target=target, where=where):
                 path = self._spelled(target, frame)
-                resolve_presence(negated, path, model=model, frame=frame)
-                return Presence("notExists" if negated else "exists", path)
+                exported, inner = self._exported_within(where)
+                resolve_presence(negated, path, model=model, frame=frame, where=inner)
+                return Presence(
+                    "notExists" if negated else "exists", path, exported[0] if exported else None
+                )
             case AuthoredNarrow(to=to, operand=operand, receiver=receiver, target=target):
                 if target is None and receiver is not None:
                     check_receiver(receiver, frame, model)

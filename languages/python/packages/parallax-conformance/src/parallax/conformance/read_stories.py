@@ -225,6 +225,13 @@ READ_STORIES: Final[tuple[ReadStory, ...]] = (
         'query = OrderItem.where(OrderItem.order.exists() & (OrderItem.order.name == "Ada"))',
     ),
     ReadStory(
+        "m-navigate-028",
+        "A to-one relationship matching a predicate",
+        "orders",
+        lambda: OrderItem.where(OrderItem.order.exists(Order.name == "Ada")),
+        'query = OrderItem.where(OrderItem.order.exists(Order.name == "Ada"))',
+    ),
+    ReadStory(
         "m-navigate-009",
         "Existence over a to-one (nullable) relationship",
         "orders",

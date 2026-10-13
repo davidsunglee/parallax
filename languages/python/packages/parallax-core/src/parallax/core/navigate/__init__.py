@@ -101,16 +101,17 @@ class _Propagation:
                 if reached is collection and inner is where and at is position:
                     return predicate
                 return replace(predicate, collection=reached, where=inner, position=at)
-            case ResolvedPresence(target=target, position=position):
+            case ResolvedPresence(target=target, position=position, where=where):
                 reached = (
                     self._relationship(target)
                     if isinstance(target, ResolvedRelationship)
                     else target
                 )
+                inner = None if where is None else self.predicate(where)
                 at = self._position(position)
-                if reached is target and at is position:
+                if reached is target and inner is where and at is position:
                     return predicate
-                return replace(predicate, target=reached, position=at)
+                return replace(predicate, target=reached, position=at, where=inner)
             case ResolvedNarrow(operand=operand, target=target):
                 inner = None if operand is None else self.predicate(operand)
                 at = self._position(target)

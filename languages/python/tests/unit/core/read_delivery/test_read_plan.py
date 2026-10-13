@@ -123,6 +123,37 @@ def test_equal_query_values_share_one_read_plan_but_result_forms_do_not() -> Non
     assert planner._statistics() == _read_plan._ReadPlanCacheStatistics(16, 2, 1, 2, 0)
 
 
+def _match_query(name: str) -> ResolvedObjectQuery:
+    return preflight(
+        deserialize(
+            {
+                "target": "OrderItem",
+                "predicate": {
+                    "exists": {
+                        "path": "OrderItem.order",
+                        "where": {"eq": {"path": "name", "value": name}},
+                    }
+                },
+            }
+        ),
+        model=_META,
+        form="graph",
+    )
+
+
+def test_matches_with_different_operands_on_one_relationship_plan_apart() -> None:
+    planner = ReadPlanCache()
+
+    ada = _plan(planner, _match_query("Ada"))
+    bob = _plan(planner, _match_query("Bob"))
+
+    assert _plan(planner, _match_query("Ada")) is ada
+    assert bob is not ada
+    (ada_read, _), (bob_read, _) = ada.root_read(), bob.root_read()
+    assert ada_read.statement.sql == bob_read.statement.sql
+    assert (ada_read.statement.binds, bob_read.statement.binds) == (("Ada",), ("Bob",))
+
+
 def test_equal_dialect_values_with_distinct_identities_do_not_share_a_read_plan() -> None:
     planner = ReadPlanCache()
     equivalent_dialect = replace(POSTGRES)
@@ -177,6 +208,8 @@ def _balance_query(temporal: Mapping[str, object]) -> dict[str, object]:
 _PHONE_HOME = {"eq": {"path": "type", "value": "home"}}
 _ID_ONE = {"eq": {"path": "Order.id", "value": 1}}
 _NAMED_A = {"eq": {"path": "Order.name", "value": "A"}}
+_NAMED_LOCAL_A = {"eq": {"path": "name", "value": "A"}}
+_ACTIVE_LOCAL = {"eq": {"path": "active", "value": True}}
 
 # Pairs of resolved queries that compile to different SQL or binds: each pair
 # differs in exactly one SQL-relevant fact, so a key that ignored it would share
@@ -273,6 +306,27 @@ _DISTINCT_QUERIES: tuple[tuple[str, Metamodel, dict[str, object], dict[str, obje
         _CUSTOMER,
         _customer_query({"exists": {"path": "Customer.address.geo"}}),
         _customer_query({"notExists": {"path": "Customer.address.geo"}}),
+    ),
+    (
+        "match-operand",
+        _ORDERS,
+        {
+            "target": "OrderItem",
+            "predicate": {"exists": {"path": "OrderItem.order", "where": _NAMED_LOCAL_A}},
+        },
+        {
+            "target": "OrderItem",
+            "predicate": {"exists": {"path": "OrderItem.order", "where": _ACTIVE_LOCAL}},
+        },
+    ),
+    (
+        "match-versus-presence",
+        _ORDERS,
+        {"target": "OrderItem", "predicate": {"exists": {"path": "OrderItem.order"}}},
+        {
+            "target": "OrderItem",
+            "predicate": {"exists": {"path": "OrderItem.order", "where": _NAMED_LOCAL_A}},
+        },
     ),
     (
         "reached-position",

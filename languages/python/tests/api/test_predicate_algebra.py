@@ -1,5 +1,6 @@
 """The explicit predicate algebra, executed: quantifiers over every collection
-kind, single-valued traversal, and target-local subtype tests.
+kind, single-valued traversal, relationship matching, and target-local subtype
+tests.
 
 Each expectation is the set of roots an independent reading of the stored rows
 selects. Stored carriers the Typed write path never produces — JSON null, a
@@ -67,6 +68,8 @@ class Basket(Entity, table="pa_basket", namespace=_NS):
 class Vehicle(Entity, namespace=_NS, inheritance=AbstractRoot(TablePerConcreteSubtype())):
     id: Attr[int] = attr(primary_key=True)
     maker: Attr[str] = attr(max_length=16)
+    owner_id: Attr[int | None]
+    owner: Rel[Owner | None] = rel(cardinality=MANY_TO_ONE, join=("owner_id", "id"))
 
 
 class Car(Vehicle, table="pa_car", namespace=_NS, inheritance=ConcreteSubtype()):
@@ -236,9 +239,10 @@ def test_single_valued_traversal_reads_one_related_object(profile_run: Any) -> N
 def _seed_parking(profile_run: Any, db: ScopedDatabase) -> None:
     db.transact(
         lambda tx: [
-            tx.insert(Car(id=5, maker="Volvo", seats=4)),
-            tx.insert(Car(id=7, maker="Saab", seats=None)),
-            tx.insert(Bike(id=6, maker="Trek", gears=21)),
+            tx.insert(Owner(id=1, active=True, nickname="ace")),
+            tx.insert(Car(id=5, maker="Volvo", seats=4, owner_id=1)),
+            tx.insert(Car(id=7, maker="Saab", seats=None, owner_id=None)),
+            tx.insert(Bike(id=6, maker="Trek", gears=21, owner_id=1)),
             tx.insert(Parking(id=30, vehicle_id=5)),
             tx.insert(Parking(id=31, vehicle_id=6)),
             tx.insert(Parking(id=32, vehicle_id=None)),
@@ -262,11 +266,59 @@ def test_a_target_local_subtype_test_reads_the_reached_target(profile_run: Any) 
 def test_a_to_one_hop_reaching_two_candidates_fails_in_the_database(profile_run: Any) -> None:
     db = _served(profile_run)
     _seed_parking(profile_run, db)
-    db.transact(lambda tx: tx.insert(Bike(id=5, maker="Twin", gears=3)))
+    db.transact(lambda tx: tx.insert(Bike(id=5, maker="Twin", gears=3, owner_id=None)))
+    _assert_ambiguous(db, Parking.vehicle.maker == "Volvo")
+
+
+def _assert_ambiguous(db: ScopedDatabase, predicate: Predicate[Any]) -> None:
     with pytest.raises(Exception) as raised:
-        db.find(Parking.where(Parking.vehicle.maker == "Volvo")).results()
+        db.find(Parking.where(predicate)).results()
     cause: BaseException | None = raised.value
     while cause is not None and not isinstance(cause, DatabaseError):
         cause = cause.__cause__ or getattr(cause, "cause", None)
     assert isinstance(cause, DatabaseError)
     assert (cause.category, cause.native_code) == (None, "21000")
+
+
+def test_a_relationship_match_tests_its_complete_operand_for_truth(profile_run: Any) -> None:
+    db = _served(profile_run)
+    _seed_baskets(db)
+    active = Owner.active.is_(True)
+    assert _ids(db, Basket, Basket.owner.exists(active)) == {1}
+    # Owner 2's unknown and basket 3's absent owner match nothing.
+    assert _ids(db, Basket, Basket.owner.not_exists(active)) == {2, 3}
+    assert _ids(db, Basket, ~Basket.owner.exists(active)) == {2, 3}
+    # A negated dotted comparison keeps both unknowns instead.
+    assert _ids(db, Basket, ~Basket.owner.active.is_(True)) == set()
+    either = active | Owner.nickname.is_null()
+    assert _ids(db, Basket, Basket.owner.exists(either)) == {1, 2}
+    assert _ids(db, Basket, Basket.owner.exists(~active)) == set()
+    assert _ids(db, Basket, Basket.owner.exists() & ~Basket.owner.exists(active)) == {2}
+
+
+def test_typed_and_wire_matches_select_the_same_roots(profile_run: Any) -> None:
+    db = _served(profile_run)
+    _seed_baskets(db)
+    owner = f"{Basket.identity.canonical}.owner"
+    document = {
+        "target": Basket.identity.canonical,
+        "predicate": {
+            "notExists": {"path": owner, "where": {"eq": {"path": "active", "value": True}}}
+        },
+    }
+    wire = {cast("Any", node)["id"] for node in db.wire.find(document).results()}
+    assert wire == _ids(db, Basket, Basket.owner.not_exists(Owner.active.is_(True))) == {2, 3}
+
+
+def test_a_relationship_match_is_existential_over_every_candidate(profile_run: Any) -> None:
+    db = _served(profile_run)
+    _seed_parking(profile_run, db)
+    db.transact(lambda tx: tx.insert(Bike(id=5, maker="Twin", gears=3, owner_id=None)))
+    # Parking 30 reaches both car 5 and bike 5: two candidates to match, not an ambiguity.
+    assert _ids(db, Parking, Parking.vehicle.exists(Vehicle.maker == "Twin")) == {30}
+    assert _ids(db, Parking, Parking.vehicle.not_exists(Vehicle.maker == "Twin")) == {31, 32, 33}
+    roomy = Vehicle.is_a(Car, where=Car.seats > 2)
+    assert _ids(db, Parking, Parking.vehicle.exists(roomy)) == {30}
+    assert _ids(db, Parking, Parking.vehicle.exists(Vehicle.owner.active.is_(True))) == {30, 31}
+    # A dotted prefix before the matched relationship still demands one candidate.
+    _assert_ambiguous(db, Parking.vehicle.owner.exists(Owner.active.is_(True)))

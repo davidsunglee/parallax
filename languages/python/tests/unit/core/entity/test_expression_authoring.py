@@ -30,8 +30,9 @@ from parallax.core.entity import model_of
 from parallax.core.entity._authored_resolver import object_query_node
 from parallax.core.entity._expressions import AuthoredQuantifier
 from parallax.core.execution._preflight import preflight
-from parallax.core.predicate import Presence, Quantifier, serialize
+from parallax.core.predicate import Comparison, FieldSubject, Presence, Quantifier, serialize
 from parallax.core.predicate._resolved import (
+    CURRENT,
     RelatedObject,
     ResolvedComparison,
     ResolvedNarrow,
@@ -163,6 +164,65 @@ def test_a_to_one_relationship_tests_presence() -> None:
     assert predicate_node(Basket.where(Basket.owner.not_exists()), MODEL) == Presence(
         "notExists", f"{_BASKET}.owner"
     )
+
+
+def test_a_to_one_relationship_matches_its_target_against_one_predicate() -> None:
+    matched = Basket.where(Basket.owner.exists(Owner.name == "Ada"))
+    assert predicate_node(matched, MODEL) == Presence(
+        "exists", f"{_BASKET}.owner", Comparison("eq", FieldSubject("name"), "Ada")
+    )
+    resolved = _resolved(matched)
+    assert isinstance(resolved, ResolvedPresence) and resolved.negated is False
+    assert isinstance(resolved.where, ResolvedComparison)
+    assert resolved.where.position == CURRENT
+    unmatched = _resolved(Basket.where(Basket.owner.not_exists(Owner.name == "Ada")))
+    assert isinstance(unmatched, ResolvedPresence) and unmatched.negated is True
+    assert unmatched.where == resolved.where
+
+
+def test_a_match_nests_and_reads_its_own_targets_collections() -> None:
+    nested = Basket.where(
+        Basket.owner.exists(Owner.manager.exists(Owner.tags.any(Owner.tags.element == "vip")))
+    )
+    assert serialize(predicate_node(nested, MODEL)) == {
+        "exists": {
+            "path": f"{_BASKET}.owner",
+            "where": {
+                "exists": {
+                    "path": "manager",
+                    "where": {"any": {"path": "tags", "where": {"eq": {"value": "vip"}}}},
+                }
+            },
+        }
+    }
+    resolved = _resolved(nested)
+    assert isinstance(resolved, ResolvedPresence)
+    assert isinstance(resolved.where, ResolvedPresence)
+    assert isinstance(resolved.where.where, ResolvedQuantifier)
+
+
+def test_a_match_reads_no_collection_element_from_outside() -> None:
+    with pytest.raises(QueryDefinitionError, match="not inside a match") as caught:
+        Basket.owner.exists(cast("Any", Basket.tags.element == "a"))
+    assert caught.value.code == "query-path-invalid"
+    with pytest.raises(QueryDefinitionError, match="not inside a match"):
+        Basket.owner.manager.not_exists(cast("Any", Basket.tags.element == "a"))
+
+
+def test_a_deferred_match_resolves_at_the_reached_target() -> None:
+    matched = _resolved(Basket.where(Basket.owner.manager.exists(Owner.name == "Ada")))
+    assert isinstance(matched, ResolvedPresence)
+    assert isinstance(matched.position, RelatedObject)
+    assert isinstance(matched.where, ResolvedComparison)
+    assert matched.where.position == CURRENT
+
+
+def test_a_deferred_value_object_presence_takes_no_operand() -> None:
+    with pytest.raises(ModelRejectedError) as caught:
+        _resolved(Basket.where(Basket.owner.address.exists(Address.city == "Oslo")))
+    assert caught.value.rule == "path-target-kind-mismatch"
+    with pytest.raises(TypeError):
+        Owner.address.exists(Address.city == "Oslo")  # pyright: ignore[reportCallIssue]
 
 
 def test_a_deferred_continuation_offers_every_candidate_operation() -> None:

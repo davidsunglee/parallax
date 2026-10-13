@@ -47,7 +47,7 @@ _INHERITANCE_CONCRETE_TARGET_TEMPORAL_READS: Final[frozenset[str]] = frozenset(
     {"m-inheritance-100", "m-inheritance-101"}
 )
 _NAVIGATE_READS: Final[frozenset[str]] = frozenset(
-    {f"m-navigate-{n:03d}" for n in (*range(1, 12), 18, 23, 26, 27)}
+    {f"m-navigate-{n:03d}" for n in (*range(1, 12), 18, 23, 26, 27, 28)}
 )
 _NAVIGATE_INHERITANCE_READS: Final[frozenset[str]] = frozenset(
     {"m-inheritance-060", "m-inheritance-061", "m-inheritance-062", "m-inheritance-063"}
@@ -102,7 +102,7 @@ _STORAGE_LAYOUT_DOCUMENT_AND_TWIN_READS: Final[frozenset[str]] = frozenset(
     }
 )
 _PATH_AND_QUANTIFIER_READS: Final[frozenset[str]] = frozenset(
-    f"m-predicate-{n:03d}" for n in range(59, 100)
+    f"m-predicate-{n:03d}" for n in range(59, 107)
 )
 _CANONICAL_ENTITY_SPELLING_READS: Final[frozenset[str]] = frozenset({"m-predicate-051"})
 _EXECUTION_LIFECYCLE_READS: Final[frozenset[str]] = frozenset(

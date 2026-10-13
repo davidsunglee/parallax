@@ -378,6 +378,38 @@ def test_presence_of_a_to_one_target_tests_only_its_visible_candidate() -> None:
     )
 
 
+def test_a_match_and_every_hop_its_operand_reaches_carry_their_terms() -> None:
+    op = oa.Presence(
+        "exists",
+        "Claim.coverage",
+        oa.Presence(
+            "exists",
+            "policy",
+            oa.Comparison(op="eq", subject=oa.FieldSubject("name"), value="Auto"),
+        ),
+    )
+    where, binds = _where(op, POLICY, "Claim", temporal=_PINNED)
+    policy_visible = "t2.from_z <= ? and t2.thru_z > ? and t2.in_z <= ? and t2.out_z > ?"
+    assert where == (
+        "exists (select 1 from coverage t1 where t1.id = t0.coverage_id and exists "
+        f"(select 1 from policy t2 where t2.id = t1.policy_id and t2.name = ? and "
+        f"{policy_visible}) and {_COVERAGE_VISIBLE}) and {_CLAIM_VISIBLE}"
+    )
+    assert binds[0] == "Auto"
+    assert binds[1:5] == (_B_MANAGED, _B_MANAGED, _P_MANAGED, _P_MANAGED)
+
+
+def test_a_match_over_non_temporal_targets_is_retained_as_resolved() -> None:
+    item = target(ORDERS, "OrderItem")
+    op = oa.Presence(
+        "notExists",
+        "OrderItem.order",
+        oa.Comparison(op="eq", subject=oa.FieldSubject("name"), value="Ada"),
+    )
+    product = oa.validate_predicate(item, op, ORDERS)
+    assert propagate_hop_terms(product, ORDERS) is product
+
+
 def test_a_negated_hop_and_a_narrowed_target_carry_the_hops_terms() -> None:
     claim = target(POLICY, "Claim")
     for op in (

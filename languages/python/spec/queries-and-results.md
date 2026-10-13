@@ -48,9 +48,13 @@ elements, and from the collection's `.element` for scalar elements
 (`Order.tags.any(Order.tags.element == "urgent")`). A collection offers no
 comparison, ordering, null check, or traversal of its own, and comparing one with
 `==` raises `QueryDefinitionError`. Single Value Objects and to-one relationships
-offer `.exists()` / `.not_exists()` and dotted field access; a to-one
-relationship also offers `.is_a(*subtypes, where=p)` for a subtype test of the
-target it reaches, and `Entity.is_a(...)` tests the current position. An
+offer `.exists()` / `.not_exists()` and dotted field access. A to-one
+relationship's `.exists(p)` / `.not_exists(p)` match its target against one
+predicate `p` built from the target Entity Class
+(`OrderItem.order.exists(Order.name == "Ada")`), while a single Value Object's
+presence methods take no operand. A to-one relationship also offers
+`.is_a(*subtypes, where=p)` for a subtype test of the target it reaches, and
+`Entity.is_a(...)` tests the current position. An
 `Entity.is_a(...)` that is a query's whole filter fills the result narrowing
 instead.
 

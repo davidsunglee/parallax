@@ -1,0 +1,25 @@
+# The operand narrows the candidate it binds: a car with more than two seats. Every
+# concrete table of the table-per-concrete-subtype target is a candidate, and the
+# bike's branch cannot satisfy the narrowing. Car 7's seats are unknown.
+model: models/predicate-traversal.yaml
+tags: [m-predicate, relationship, to-one, exists, matching, narrow, m-inheritance, table-per-concrete-subtype, m-dialect, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  objectQuery:
+    target: parallax.compatibility.Parking
+    predicate:
+      exists:
+        path: parallax.compatibility.Parking.vehicle
+        where:
+          narrow:
+            to: [parallax.compatibility.Car]
+            operand:
+              greaterThan: {path: seats, value: 2}
+then:
+  statements:
+  - sql: {postgres: 'select t0.id, t0.vehicle_id from traversal_parking t0 where (exists (select 1 from traversal_bike t1 where t1.id = t0.vehicle_id and 1 = 0) or exists (select 1 from traversal_car t2 where t2.id = t0.vehicle_id and t2.seats > ?))', mariadb: 'select t0.id, t0.vehicle_id from traversal_parking t0 where (exists (select 1 from traversal_bike t1 where t1.id = t0.vehicle_id and 1 = 0) or exists (select 1 from traversal_car t2 where t2.id = t0.vehicle_id and t2.seats > ?))'}
+    binds: [2]
+  referenceSql: select id, vehicle_id from traversal_parking where vehicle_id in (select id from traversal_car where seats > 2)
+  rows:
+  - {id: 30, vehicle_id: 5}
+  roundTrips: 1

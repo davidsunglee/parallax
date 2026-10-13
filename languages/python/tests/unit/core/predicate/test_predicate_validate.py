@@ -105,12 +105,14 @@ _CUSTOMER = records("customer")
 _ORDERS = records("orders")
 _POSITION = records("position")
 _SHARED_LOCAL_NAME = records("shared-local-name")
+_TRAVERSAL = records("predicate-traversal")
 _TWIN = records("scalar-collection-layout-twin-columns")
 _MODEL_BY_FILE: Mapping[str, Metamodel] = {
     "animal.yaml": _ANIMAL,
     "contact.yaml": _CONTACT,
     "customer.yaml": _CUSTOMER,
     "orders.yaml": _ORDERS,
+    "predicate-collections.yaml": _COLLECTIONS,
     "scalar-collection-layout-twin-columns.yaml": _TWIN,
     "shared-local-name.yaml": _SHARED_LOCAL_NAME,
 }
@@ -368,6 +370,8 @@ _REJECTED_CASE_IDS = (
     "m-predicate-056",
     "m-predicate-057",
     "m-predicate-058",
+    "m-predicate-107",
+    "m-predicate-108",
     "m-value-object-034",
     "m-value-object-035",
     "m-value-object-036",
@@ -872,6 +876,8 @@ def test_a_path_follows_a_to_one_relationship_and_refuses_a_to_many_one() -> Non
         (Presence("exists", "Customer.address.phones"), "Customer", _CUSTOMER),
         (Presence("notExists", "Order.items"), "Order", _ORDERS),
         (Presence("exists", "Order.name"), "Order", _ORDERS),
+        (Presence("exists", "Customer.address.geo", TrueNode()), "Customer", _CUSTOMER),
+        (Presence("notExists", "Order.items", _eq("sku", "A")), "Order", _ORDERS),
         (Narrow(path="Person.pets", to=("Dog",), operand=TrueNode()), "Person", _ANIMAL),
         (
             Narrow(path="Customer.address", to=("Customer",), operand=TrueNode()),
@@ -886,6 +892,8 @@ def test_a_path_follows_a_to_one_relationship_and_refuses_a_to_many_one() -> Non
         "exists-many-value-object",
         "not-exists-to-many",
         "exists-scalar",
+        "match-single-value-object",
+        "match-to-many",
         "narrow-to-many",
         "narrow-value-object",
     ],
@@ -1217,6 +1225,55 @@ def test_presence_resolves_to_its_single_object() -> None:
     assert related.negated is True
     assert isinstance(related.target, ResolvedRelationship)
     assert related.target.identity.name == "order"
+
+
+def test_a_relationship_match_resolves_its_operand_at_the_related_entity() -> None:
+    matched = _resolved(
+        "OrderItem", Presence("exists", "OrderItem.order", _eq("name", "A")), _ORDERS
+    )
+    assert isinstance(matched, ResolvedPresence)
+    assert isinstance(matched.target, ResolvedRelationship)
+    assert isinstance(matched.where, ResolvedComparison)
+    assert isinstance(matched.where.member, AttributeMetadata)
+    assert matched.where.member.identity.entity.name == "Order"
+    assert matched.where.position == CURRENT
+
+    through = _resolved(
+        "OrderStatus",
+        Presence("notExists", "OrderStatus.orderItem.order", _eq("name", "A")),
+        _ORDERS,
+    )
+    assert isinstance(through, ResolvedPresence) and through.negated
+    assert isinstance(through.position, RelatedObject)
+    assert through.position.relationship.identity.name == "orderItem"
+
+
+@pytest.mark.parametrize(
+    "operand",
+    [
+        pytest.param(_eq("OrderItem.sku", "A"), id="qualified-path"),
+        pytest.param(Comparison(op="eq", subject=CURRENT_SCALAR_ELEMENT, value="a"), id="element"),
+    ],
+)
+def test_a_relationship_match_binds_only_its_related_entity(operand: PredicateNode) -> None:
+    exc = _rejects(Presence("exists", "OrderItem.order", operand), _ORDERS, "OrderItem")
+    assert exc.rule == "predicate-subject-outside-scope"
+
+
+def test_a_relationship_match_narrows_within_the_targets_family() -> None:
+    matched = _resolved(
+        "Collar",
+        Presence("exists", "Collar.pet", Narrow(to=("Dog",), operand=_eq("barkVolume", 1))),
+        _TRAVERSAL,
+    )
+    assert isinstance(matched, ResolvedPresence)
+    assert isinstance(matched.where, ResolvedNarrow)
+    exc = _rejects(
+        Presence("exists", "Collar.pet", Narrow(to=("Collar",), operand=TrueNode())),
+        _TRAVERSAL,
+        "Collar",
+    )
+    assert exc.rule == "narrow-outside-relationship-target"
 
 
 def test_a_target_local_narrow_resolves_at_the_reached_target() -> None:

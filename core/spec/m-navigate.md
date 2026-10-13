@@ -34,8 +34,13 @@ a dotted path or a target-local `narrow` — which lowers to a correlated **scal
 subquery** over the target's candidates (`m-sql`): zero candidates supply no
 value, one supplies the result, and more than one fail the statement where it is
 evaluated. A presence test of the relationship itself is not a value dereference:
-it lowers to a correlated `EXISTS` and asserts nothing about cardinality. No form
-fetches the related object or marks a relationship loaded.
+it lowers to a correlated `EXISTS` and asserts nothing about cardinality. A
+relationship match (`m-predicate` `exists` / `notExists` with `where`) is the same
+existential test with its complete operand evaluated in each candidate's own
+scope, so several candidates are inputs to match rather than a failure; a dotted
+prefix before the matched relationship, or a dotted path inside the operand, is
+still single-valued traversal. No form fetches the related object or marks a
+relationship loaded.
 
 An Include path segment names a **relationship**; a **value-object segment is
 invalid** there and MUST be rejected (`m-deep-fetch`). A value object has no
@@ -52,8 +57,8 @@ different formulation that the harness asserts returns the same rows
 
 `m-navigate` owns cross-entity as-of propagation. When a read pins an as-of value
 on a temporal source entity (`m-temporal-read`), relationship predicates — the
-quantifiers, presence tests, dotted to-one paths, and target-local narrowings that
-reach a related entity — and eager-loading paths (`m-deep-fetch`) **MUST propagate
+quantifiers, presence tests and matches, dotted to-one paths, and target-local
+narrowings that reach a related entity — and eager-loading paths (`m-deep-fetch`) **MUST propagate
 that value per hop, matched by axis, to every temporal entity reached along the
 path.** The propagated value is auto-injected from the as-of model and **never
 written by the user**. It is part of the SQL for that hop: inside the correlated

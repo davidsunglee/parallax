@@ -654,7 +654,7 @@
       }
     },
     "presenceBody": {
-      "description": "The single object at `path` — a `one` value object or the Entity a to-one relationship reaches; a presence test carries no predicate.",
+      "description": "The single object at `path` — a `one` value object or the Entity a to-one relationship reaches — and, for a relationship only, an optional `where` binding that related Entity. Without `where` the node tests presence alone.",
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -663,11 +663,14 @@
       "properties": {
         "path": {
           "$ref": "#/$defs/path"
+        },
+        "where": {
+          "$ref": "#/$defs/predicate"
         }
       }
     },
     "exists": {
-      "description": "exists(path): the single object is present.",
+      "description": "exists(path[, where]): the single object is present; with `where`, some visible related candidate makes `where` true.",
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -680,7 +683,7 @@
       }
     },
     "notExists": {
-      "description": "notExists(path): the single object is absent.",
+      "description": "notExists(path[, where]): the single object is absent; with `where`, no visible related candidate makes `where` true.",
       "type": "object",
       "additionalProperties": false,
       "required": [

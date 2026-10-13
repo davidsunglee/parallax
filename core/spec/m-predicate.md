@@ -78,8 +78,8 @@ grammar is checked after member resolution.
 
 `m-predicate` is the canonical Predicate algebra. Its schema covers Boolean
 constants and composition, scalar operations over a field or a bound scalar
-element, explicit quantifiers over every collection kind, single-object presence,
-and Predicate-scoped subtype narrowing. Aggregation is a separate query form owned
+element, explicit quantifiers over every collection kind, single-object presence
+and relationship matching, and Predicate-scoped subtype narrowing. Aggregation is a separate query form owned
 by `m-agg`; its interchange schema does not extend this Predicate union. Each node
 below carries a single canonical serialization; a conforming Predicate serde
 implementation **MUST** validate and round-trip every node in
@@ -147,7 +147,7 @@ Every operation reads its subject from a **scope**, and the scope decides how a
 | Scope | Opened by | Path spelling |
 |---|---|---|
 | the queried Entity position | the query (or predicate-selected write) itself | **Entity-qualified** (`Order.status`) |
-| a related Entity | a quantifier over a to-many relationship, or a path-targeted `narrow` | **relative** to the bound Entity (`sku`) |
+| a related Entity | a quantifier over a to-many relationship, a relationship match (`exists` / `notExists` with `where`), or a path-targeted `narrow` | **relative** to the bound Entity (`sku`) |
 | a Value Object element | a quantifier over a `many` value object | **relative** to the element (`type`, `geo.country`) |
 | a scalar element | a quantifier over a scalar collection | **none** — the operation omits `path` |
 
@@ -163,8 +163,8 @@ resolver **MUST** reject a path that
   path continues relative to the element it binds;
 - ends on a member the operation cannot address (`path-target-kind-mismatch`): a
   scalar operation needs a field, a quantifier a collection, a presence test a
-  single value object or to-one relationship, and a path-targeted `narrow` a
-  to-one relationship;
+  single value object or to-one relationship, a relationship match a to-one
+  relationship, and a path-targeted `narrow` a to-one relationship;
 - is spelled for another scope (`predicate-subject-outside-scope`): a relative
   path at the queried position, an Entity-qualified one inside a bound scope, a
   field inside a scalar-element scope, a subjectless operation outside one, or a
@@ -446,14 +446,39 @@ integer collection   any(eq 42)   none(eq 42)   all(eq 42)
 
 | Predicate | Encoding | Meaning |
 |---|---|---|
-| `exists` | `{ "exists": { "path" } }` | the single value object or to-one related Entity at `path` is present |
-| `notExists` | `{ "notExists": { "path" } }` | it is absent |
+| `exists` | `{ "exists": { "path", "where"? } }` | the single value object or to-one related Entity at `path` is present; with `where`, some visible candidate of the related Entity makes `where` true |
+| `notExists` | `{ "notExists": { "path", "where"? } }` | the complement: it is absent, or with `where`, no visible candidate makes `where` true |
 
-A presence test carries no predicate and is always true or false. Presence of a
-value object is an object at its path — SQL `NULL`, a missing key, JSON `null`, and
-a non-object are all absent. Presence of a related Entity is a visible candidate
-target at the read's temporal coordinates (`m-navigate`). A collection has no
-presence of its own: bare `any` / `none` test its occupancy.
+A presence test is always true or false. Presence of a value object is an object
+at its path — SQL `NULL`, a missing key, JSON `null`, and a non-object are all
+absent; a value object's presence carries no `where`. Presence of a related
+Entity is a visible candidate target at the read's temporal coordinates
+(`m-navigate`). A collection has no presence of its own: bare `any` / `none` test
+its occupancy.
+
+**Relationship matching.** With `where`, `exists` matches a to-one relationship's
+target against **one complete predicate**, as `any` matches one element: `where`
+binds the related Entity, its paths are relative to it, and it is tested whole
+for **true** — false and unknown do not match. The match is existential over the
+visible candidates the relationship declares (correlation, propagated temporal
+visibility, and the target's family), so several candidates are inputs to match,
+not an error, and an operand-local `narrow` may decide which candidates match.
+`notExists` is the complement of the complete match:
+
+```text
+visible candidates                                exists(p)   notExists(p)
+none                                              false       true
+at least one makes the complete p true            true        false
+every one makes the complete p false or unknown   false       true
+```
+
+Matching is not a dotted comparison guarded by presence. `exists(p)` over a
+present target whose `p` is unknown is false, so `notExists(p)` admits it, as it
+admits an absent target; the negation of a dotted comparison stays unknown for
+both (*Single-valued traversal*). A dotted path inside `where`, and a dotted prefix
+before the matched relationship, remain single-valued traversals with their own
+cardinality rule; an absent prefix reaches nothing to match, so `exists` is false
+and `notExists` true.
 
 ### Single-valued traversal
 
@@ -502,7 +527,8 @@ user-written join. A to-many relationship is a collection and is reached only
 through a quantifier, whose `where` resolves **against the related Entity**: its
 paths are relative to the bound Entity (`sku`, `product.category`). A to-one
 relationship is a single member: dotted paths continue through it, `exists` /
-`notExists` test its presence, and a path-targeted `narrow` tests its subtype.
+`notExists` test its presence or match its target against a `where` resolved
+**against the related Entity**, and a path-targeted `narrow` tests its subtype.
 `m-navigate` owns relationship behavior over the compiled `m-relationship` facet,
 and `m-sql` lowers quantifiers to correlated sub-selects and to-one hops to scalar
 subqueries, so a to-many traversal never multiplies the queried entity's rows.
@@ -648,7 +674,8 @@ A quantifier retains its kind, the collection it ranges over — a scalar
 collection, a value-object occurrence, or a resolved relationship — the position
 that collection is read at, and its `where` resolved in the scope of the element
 it binds. A presence test retains its polarity, its single value-object occurrence
-or resolved relationship, and its position. A narrowing retains its accepted
+or resolved relationship, its position, and for a relationship match its `where`
+resolved in the scope of the related Entity. A narrowing retains its accepted
 selection, the position it tests — the current object or a reached target — and
 its operand resolved there, or no operand for subtype membership alone; the
 constant `true` operand elaborates to that same absent operand. Elaboration never

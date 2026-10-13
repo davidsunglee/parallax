@@ -256,10 +256,15 @@ class Quantifier:
 
 @dataclass(frozen=True, slots=True)
 class Presence:
-    """Whether the single object at ``path`` is present (``exists``) or absent."""
+    """Whether the single object at ``path`` is present (``exists``) or absent.
+
+    With ``where``, ``exists`` asks whether a to-one target makes that complete
+    predicate true and ``notExists`` is its complement.
+    """
 
     op: PresenceOp
     path: str
+    where: PredicateNode | None = None
 
 
 @dataclass(frozen=True, slots=True)

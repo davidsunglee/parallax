@@ -208,8 +208,14 @@ def _walk(op: PredicateNode, model: Metamodel, frame: PredicateFrame) -> Resolve
                 frame=frame,
                 where=None if where is None else lambda inner: _walk(where, model, inner),
             )
-        case Presence(op=tag, path=path):
-            return resolve_presence(tag == "notExists", path, model=model, frame=frame)
+        case Presence(op=tag, path=path, where=where):
+            return resolve_presence(
+                tag == "notExists",
+                path,
+                model=model,
+                frame=frame,
+                where=None if where is None else lambda inner: _walk(where, model, inner),
+            )
         case Narrow(to=to, operand=operand, path=path):
             return resolve_narrow(
                 to,
@@ -306,15 +312,7 @@ def resolve_quantifier(
             inner = ObjectElementFrame(occurrence)
         case _RelationshipTerminal(relationship=relationship, many=True):
             collection = relationship
-            target = relationship.target
-            inner = EntityFrame(
-                target,
-                PositionScope(
-                    effective=effective_set(model, target),
-                    relationship_target=target.identity.canonical,
-                ),
-                bound=True,
-            )
+            inner = _related_frame(model, relationship.target)
         case _:
             raise ModelRejectedError(
                 "path-target-kind-mismatch",
@@ -327,23 +325,52 @@ def resolve_quantifier(
 
 
 def resolve_presence(
-    negated: bool, path: str, *, model: Metamodel, frame: PredicateFrame
+    negated: bool,
+    path: str,
+    *,
+    model: Metamodel,
+    frame: PredicateFrame,
+    where: Callable[[PredicateFrame], ResolvedPredicate] | None = None,
 ) -> ResolvedPresence:
-    """Whether the single object ``path`` names in ``frame`` is present."""
+    """Whether the single object ``path`` names in ``frame`` is present; with
+    ``where``, whether a to-one target makes it true, ``where`` resolved in the
+    frame of that target."""
     terminal = _resolve_path(path, frame, model)
     match terminal:
+        case _RelationshipTerminal(relationship=relationship, many=False):
+            return ResolvedPresence(
+                negated,
+                relationship,
+                terminal.position,
+                None if where is None else where(_related_frame(model, relationship.target)),
+            )
         case _OccurrenceTerminal(occurrence=occurrence) if (
             occurrence.multiplicity is Multiplicity.ONE
         ):
+            if where is not None:
+                raise ModelRejectedError(
+                    "path-target-kind-mismatch",
+                    f"{path!r} names {terminal.kind}, whose presence takes no predicate; "
+                    "only a to-one relationship's target is matched against one",
+                )
             return ResolvedPresence(negated, occurrence, terminal.position)
-        case _RelationshipTerminal(relationship=relationship, many=False):
-            return ResolvedPresence(negated, relationship, terminal.position)
         case _:
             raise ModelRejectedError(
                 "path-target-kind-mismatch",
                 f"{path!r} names {terminal.kind}, which has no presence of its own; "
                 "exists/notExists test a single object, any/none a collection",
             )
+
+
+def _related_frame(model: Metamodel, target: EntityMetadata) -> EntityFrame:
+    """The frame a scope binding one of ``target``'s related Entities opens."""
+    return EntityFrame(
+        target,
+        PositionScope(
+            effective=effective_set(model, target), relationship_target=target.identity.canonical
+        ),
+        bound=True,
+    )
 
 
 def resolve_narrow(
