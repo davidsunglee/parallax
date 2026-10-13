@@ -1,0 +1,44 @@
+# Negating presence and two fields of one owner admits an absent owner but keeps
+# an unknown conjunction unknown.
+model: models/predicate-collections.yaml
+tags: [m-predicate, relationship, to-one, traversal, exists, negation, m-dialect, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  objectQuery:
+    target: parallax.compatibility.Basket
+    predicate:
+      not:
+        operand:
+          and:
+            operands:
+              - exists: {path: parallax.compatibility.Basket.owner}
+              - eq: {path: parallax.compatibility.Basket.owner.active, value: true}
+              - notEq: {path: parallax.compatibility.Basket.owner.name, value: Cy}
+then:
+  statements:
+  - sql: {postgres: 'select t0.id, t0.label, t0.owner_id, not t0.tags is null, t0.tags, not t0.scores is null, t0.scores, not t0.prices is null, t0.prices, not t0.flags is null, t0.flags, not t0.parcels is null, t0.parcels, not t0.meta is null, t0.meta from basket t0 left join basket_owner t1 on t1.id = t0.owner_id where not (not t1.id is null and t1.active = ? and t1.name <> ?)', mariadb: 'select t0.id, t0.label, t0.owner_id, not t0.tags is null, t0.tags, not t0.scores is null, t0.scores, not t0.prices is null, t0.prices, not t0.flags is null, t0.flags, not t0.parcels is null, t0.parcels, not t0.meta is null, t0.meta from basket t0 left join basket_owner t1 on t1.id = t0.owner_id where not (not t1.id is null and t1.active = ? and t1.name <> ?)'}
+    binds: [true, Cy]
+  graph:
+    Basket:
+    - id: 2
+      label: two
+      ownerId: null
+      tags: []
+      scores: []
+      prices: []
+      flags: []
+      parcels: []
+      meta: null
+    - id: 4
+      label: four
+      ownerId: 3
+      tags: [urgent]
+      scores: [0]
+      prices: []
+      flags: [true, false]
+      parcels:
+      - sku: d
+        qty: 1
+        notes: [urgent, x]
+      meta: null
+  roundTrips: 1

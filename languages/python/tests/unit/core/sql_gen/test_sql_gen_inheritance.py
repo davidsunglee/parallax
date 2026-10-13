@@ -876,15 +876,16 @@ def test_tpcs_single_concrete_projects_its_own_table_layout_tier_order() -> None
 
 def test_tpcs_union_restarts_aliases_per_branch_and_concatenates_binds() -> None:
     # The state invariant behind the union lane: each `union all` branch gets its
-    # OWN lowering context, so a branch's nested correlated subquery restarts at
-    # `t1` rather than continuing the previous branch's sequence, and the branch
-    # bind lists concatenate in the branches' canonical alphabetical order.
+    # OWN lowering context, so a branch's shared join and its correlated subquery
+    # restart at `t1` rather than continuing the previous branch's sequence, and
+    # the branch bind lists concatenate in the branches' canonical alphabetical
+    # order.
     #
     # No corpus table-per-concrete-subtype family declares a relationship on its
-    # abstract root, so no goldened case puts a SUBQUERY inside a union branch —
-    # this synthetic family is the general witness. (The corpus case above proves
-    # only the `t0` base-alias restart, which cannot distinguish a per-branch
-    # context from a per-branch alias reset.)
+    # abstract root, so no goldened case puts a join or a SUBQUERY inside a union
+    # branch — this synthetic family is the general witness. (The corpus case
+    # above proves only the `t0` base-alias restart, which cannot distinguish a
+    # per-branch context from a per-branch alias reset.)
     from parallax.descriptor._records import (
         Attribute,
         DefiningRelationship,
@@ -939,24 +940,33 @@ def test_tpcs_union_restarts_aliases_per_branch_and_concatenates_binds() -> None
         operands=(
             oa.Comparison(op="eq", subject=oa.FieldSubject("Doc.title"), value="T"),
             oa.Comparison(op="eq", subject=oa.FieldSubject("Doc.owner.name"), value="N"),
+            oa.Presence(
+                "exists",
+                "Doc.owner",
+                oa.Comparison(op="eq", subject=oa.FieldSubject("name"), value="M"),
+            ),
         )
     )
     compiled = compile_read(op, meta, POSTGRES, target(meta, "Doc"))
     branches = compiled.statement.sql.split(" union all ")
     assert len(branches) == 2
-    # BOTH branches restart the whole sequence: base `t0`, hop alias `t1`.
-    hop = "(select t1.name from owner t1 where t1.id = t0.owner_id) = ?"
+    # BOTH branches restart the whole sequence: base `t0`, join alias `t1`, and a
+    # match reusing that join with no alias of its own.
+    joined = (
+        "left join owner t1 on t1.id = t0.owner_id where t0.title = ? and t1.name = ? "
+        "and case when t1.id is null then false else (t1.name = ?) is true end"
+    )
     assert branches[0] == (
         "select t0.id, t0.title, t0.owner_id, t0.due, cast(null as integer) paid, "
-        f"'Inv' family_variant from inv t0 where t0.title = ? and {hop}"
+        f"'Inv' family_variant from inv t0 {joined}"
     )
     assert branches[1] == (
         "select t0.id, t0.title, t0.owner_id, cast(null as integer) due, t0.paid, "
-        f"'Rec' family_variant from rec t0 where t0.title = ? and {hop}"
+        f"'Rec' family_variant from rec t0 {joined}"
     )
     # Per-branch binds, concatenated in alphabetical branch order — never merged,
     # deduplicated, or reordered.
-    assert compiled.statement.binds == ("T", "N", "T", "N")
+    assert compiled.statement.binds == ("T", "N", "M", "T", "N", "M")
 
 
 def test_tpcs_string_cast_placeholder_diverges_by_declared_length() -> None:

@@ -531,7 +531,8 @@ relationship is a single member: dotted paths continue through it, `exists` /
 **against the related Entity**, and a path-targeted `narrow` tests its subtype.
 `m-navigate` owns relationship behavior over the compiled `m-relationship` facet,
 and `m-sql` lowers quantifiers to correlated sub-selects and to-one hops to scalar
-subqueries, so a to-many traversal never multiplies the queried entity's rows.
+subqueries or, where a target is proven unique, shared joins, so no traversal
+multiplies the queried entity's rows.
 
 ## Subtype narrowing
 

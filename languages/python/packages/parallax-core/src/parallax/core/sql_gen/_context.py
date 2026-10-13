@@ -19,7 +19,7 @@ from parallax.core.db_port import JsonDocument
 from parallax.core.dialect import Dialect
 from parallax.core.inheritance import InheritanceFacet
 from parallax.core.metamodel import AttributeMetadata, EntityIdentity, EntityMetadata, Metamodel
-from parallax.core.predicate._resolved import DeferredKeySet
+from parallax.core.predicate._resolved import DeferredKeySet, ResolvedRelationship
 from parallax.core.storage_layout import StorageLayoutFacet, TableLayout
 from parallax.core.wire import (
     WireDecodingError,
@@ -257,11 +257,11 @@ class PlanScope(ColumnScope, Protocol):
     """What a plan-only module may do: resolve against the model, render its own
     and its children's columns, and ALLOCATE an alias — nothing else.
 
-    Alias allocation is deliberately included: a hop plan must take its child
-    alias at the point the hop opens, before anything descends into the hop's
-    interior, which is what keeps the `t0, t1, …` sequence depth-first in source
-    order (m-sql rule 1). Allocation is order-visible but not order-FRAGILE — an
-    alias is consumed by the very fragment that took it.
+    Alias allocation is deliberately included: a relationship candidate takes its
+    alias at the point it renders, before anything descends into its interior,
+    which is what keeps the `t0, t1, …` sequence depth-first in source order
+    (m-sql rule 1). Allocation is order-visible but not order-FRAGILE — an alias
+    is consumed by the very fragment that took it.
 
     Binding is the opposite, and is deliberately absent: `bind` / `binds` appear
     nowhere here, so a planner cannot push a bind even by accident. Guard binds
@@ -293,6 +293,100 @@ class PlanScope(ColumnScope, Protocol):
     def child(self, entity: EntityMetadata, alias: str) -> PlanScope: ...
 
 
+@dataclass(eq=False, slots=True)
+class SharedSource[Candidate, Scope]:
+    """One relationship occurrence its lexical scope reads through one join.
+
+    ``candidate`` is the occurrence's one physical candidate branch and
+    ``parent`` the shared source it is reached from, or ``None`` where the
+    scope's own row reaches it. ``scope`` resolves the target's members once the
+    join has rendered and taken its alias.
+    """
+
+    relationship: ResolvedRelationship
+    candidate: Candidate
+    parent: SharedSource[Candidate, Scope] | None
+    scope: Scope | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class DemandPlacement[Candidate, Scope]:
+    """Where one planned demand is evaluated: at ``reached``, or at its scope's
+    own row where that is ``None``. A presence whose target is itself shared
+    reads that target's join, ``reuses``, instead of opening a candidate."""
+
+    reached: SharedSource[Candidate, Scope] | None
+    reuses: SharedSource[Candidate, Scope] | None = None
+
+
+class _RenderedPlan(Protocol):
+    def rendered(self) -> bool: ...
+
+
+class SourcePlan[Candidate, Scope]:
+    """One lexical scope's shared relationship sources and its planned demands.
+
+    Sources are kept in the order their joins render, each after the source it
+    is reached from. A demand is identified by its resolved node object, which
+    the plan neither copies nor hashes; the plan lives only while its statement
+    compiles.
+    """
+
+    __slots__ = ("_placements", "sources")
+
+    def __init__(self) -> None:
+        self.sources: list[SharedSource[Candidate, Scope]] = []
+        self._placements: dict[int, DemandPlacement[Candidate, Scope]] = {}
+
+    def find(
+        self, parent: SharedSource[Candidate, Scope] | None, relationship: ResolvedRelationship
+    ) -> SharedSource[Candidate, Scope] | None:
+        """The source already reaching ``relationship``'s occurrence from ``parent``."""
+        return next(
+            (
+                source
+                for source in self.sources
+                if source.parent is parent and _same_occurrence(source.relationship, relationship)
+            ),
+            None,
+        )
+
+    def adopt(
+        self,
+        parent: SharedSource[Candidate, Scope] | None,
+        relationship: ResolvedRelationship,
+        candidate: Candidate,
+    ) -> SharedSource[Candidate, Scope]:
+        """The source reaching ``relationship`` from ``parent``, opened if new."""
+        found = self.find(parent, relationship)
+        if found is not None:
+            return found
+        source: SharedSource[Candidate, Scope] = SharedSource(relationship, candidate, parent)
+        self.sources.append(source)
+        return source
+
+    def place(self, demand: object, placement: DemandPlacement[Candidate, Scope]) -> None:
+        self._placements[id(demand)] = placement
+
+    def placement(self, demand: object) -> DemandPlacement[Candidate, Scope] | None:
+        return self._placements.get(id(demand))
+
+    def rendered(self) -> bool:
+        """Whether every planned source has rendered its join."""
+        return all(source.scope is not None for source in self.sources)
+
+
+def _same_occurrence(first: ResolvedRelationship, second: ResolvedRelationship) -> bool:
+    """One direction, endpoints, target family, and generated visibility."""
+    return (
+        first.identity == second.identity
+        and first.source.identity == second.source.identity
+        and first.related.identity == second.related.identity
+        and first.target.identity == second.target.identity
+        and first.visibility == second.visibility
+    )
+
+
 class StatementBuilder:
     """One statement's aliases and role-classified bind sequence."""
 
@@ -303,6 +397,7 @@ class StatementBuilder:
         "_row_count",
         "_row_signature",
         "_row_start",
+        "_source_plans",
         "_typed_spans",
         "_wire_overrides",
         "dialect",
@@ -332,11 +427,17 @@ class StatementBuilder:
         self._row_count = 0
         self.requires_variant_partition = False
         self._next_alias_index = 1
+        self._source_plans: list[_RenderedPlan] = []
 
     def next_alias(self) -> str:
         index = self._next_alias_index
         self._next_alias_index = index + 1
         return f"t{index}"
+
+    def own_source_plan(self, plan: _RenderedPlan) -> None:
+        """Hold a lexical scope's source plan for this statement's lifetime;
+        :meth:`finish` refuses the statement unless every planned join rendered."""
+        self._source_plans.append(plan)
 
     def bind_structural(self, value: object) -> None:
         self._append(value)
@@ -467,6 +568,9 @@ class StatementBuilder:
         self._seal_typed_rows()
         if self._classified != len(self._binds):
             raise SqlGenError("every compiler bind must be supplied through one role-specific API")
+        rendered = all(plan.rendered() for plan in self._source_plans)
+        if not rendered:  # pragma: no cover - a compiler renders every source it plans
+            raise SqlGenError("a planned shared source was never rendered")
         occupied: set[int] = set()
         spans = tuple(sorted(self._typed_spans, key=lambda span: span.start))
         for span in spans:

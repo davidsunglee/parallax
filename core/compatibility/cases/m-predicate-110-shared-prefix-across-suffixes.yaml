@@ -1,0 +1,37 @@
+# A null check past a missing manager sees the missing value.
+model: models/predicate-collections.yaml
+tags: [m-predicate, relationship, to-one, traversal, isNull, m-dialect, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  objectQuery:
+    target: parallax.compatibility.Basket
+    predicate:
+      and:
+        operands:
+          - notEq: {path: parallax.compatibility.Basket.owner.name, value: Ada}
+          - group:
+              operand:
+                or:
+                  operands:
+                    - eq: {path: parallax.compatibility.Basket.owner.manager.name, value: Bob}
+                    - isNull: {path: parallax.compatibility.Basket.owner.manager.active}
+then:
+  statements:
+  - sql: {postgres: 'select t0.id, t0.label, t0.owner_id, not t0.tags is null, t0.tags, not t0.scores is null, t0.scores, not t0.prices is null, t0.prices, not t0.flags is null, t0.flags, not t0.parcels is null, t0.parcels, not t0.meta is null, t0.meta from basket t0 left join basket_owner t1 on t1.id = t0.owner_id left join basket_owner t2 on t2.id = t1.manager_id where t1.name <> ? and (t2.name = ? or t2.active is null)', mariadb: 'select t0.id, t0.label, t0.owner_id, not t0.tags is null, t0.tags, not t0.scores is null, t0.scores, not t0.prices is null, t0.prices, not t0.flags is null, t0.flags, not t0.parcels is null, t0.parcels, not t0.meta is null, t0.meta from basket t0 left join basket_owner t1 on t1.id = t0.owner_id left join basket_owner t2 on t2.id = t1.manager_id where t1.name <> ? and (t2.name = ? or t2.active is null)'}
+    binds: [Ada, Bob]
+  graph:
+    Basket:
+    - id: 3
+      label: three
+      ownerId: 2
+      tags: [gift]
+      scores: [15]
+      prices: ['2.00', '3.00']
+      flags: [false]
+      parcels:
+      - sku: c
+        qty: 5
+        notes: [urgent]
+      meta:
+        labels: []
+  roundTrips: 1

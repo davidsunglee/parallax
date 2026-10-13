@@ -33,7 +33,7 @@ from parallax.core.db_error import DatabaseError
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import TablePerConcreteSubtype
 from parallax.core.read_delivery import InvalidData
-from parallax.snapshot import ScopedDatabase, connect
+from parallax.snapshot import ScopedDatabase, Transaction, connect, is_view_loaded
 from tests._support.root_ownership import own_root
 
 _NS = "predicate.algebra"
@@ -86,7 +86,14 @@ class Parking(Entity, table="pa_parking", namespace=_NS):
     vehicle: Rel[Vehicle | None] = rel(cardinality=MANY_TO_ONE, join=("vehicle_id", "id"))
 
 
-_MODEL = DomainModel(Owner, Basket, Vehicle, Car, Bike, Parking)
+class Lease(Entity, table="pa_lease", namespace=_NS):
+    id: Attr[int] = attr(primary_key=True)
+    version: Attr[int] = attr(type=Int32, optimistic_locking=True)
+    owner_id: Attr[int | None]
+    owner: Rel[Owner | None] = rel(cardinality=MANY_TO_ONE, join=("owner_id", "id"))
+
+
+_MODEL = DomainModel(Owner, Basket, Vehicle, Car, Bike, Parking, Lease)
 
 
 def _served(profile_run: Any) -> ScopedDatabase:
@@ -234,6 +241,69 @@ def test_single_valued_traversal_reads_one_related_object(profile_run: Any) -> N
     assert _ids(db, Basket, Basket.owner.not_exists()) == {3}
     assert _ids(db, Basket, Basket.owner.nickname == "ace") == {1}
     assert _ids(db, Basket, Basket.owner.nickname.is_null()) == {2, 3}
+
+
+def test_shared_to_one_joins_keep_three_valued_truth(profile_run: Any) -> None:
+    db = _served(profile_run)
+    _seed_baskets(db)
+    owner = Basket.owner
+    active = owner.active.is_(True)
+    # Owner 2's unknown conjunction stays unknown under negation; the absent owner
+    # makes it false, so its negation selects basket 3.
+    assert _ids(db, Basket, ~(owner.exists() & active & (owner.nickname == "ace"))) == {3}
+    assert _ids(db, Basket, owner.not_exists() | (owner.nickname == "ace")) == {1, 3}
+    assert _ids(db, Basket, owner.nickname.is_null() | active) == {1, 2, 3}
+    assert _ids(db, Basket, (owner.nickname != "zed") & ~(active | owner.active.is_null())) == set()
+    # Matching beside a dotted field reads the shared owner: owner 2's unknown and
+    # the absent owner do not match, unlike the negated dotted comparison.
+    matched = owner.nickname.is_null() & owner.not_exists(Owner.active.is_(True))
+    assert _ids(db, Basket, matched) == {2, 3}
+    assert _ids(db, Basket, owner.nickname.is_null() & ~active) == set()
+    assert _ids(db, Basket, (owner.nickname == "ace") & owner.exists(Owner.active.is_(True))) == {1}
+
+
+def test_a_materializing_predicate_write_selects_through_shared_joins(profile_run: Any) -> None:
+    db = _served(profile_run)
+    _seed_baskets(db)
+    db.transact(
+        lambda tx: [
+            tx.insert(Lease(id=lease, owner_id=owner))
+            for lease, owner in ((1, 1), (2, 2), (3, None))
+        ]
+    )
+    owner = Lease.owner
+    # Owner 2's unknown nickname keeps lease 2 unselected; the absent owner selects 3.
+    db.transact(
+        lambda tx: tx.delete_where(Lease.where(~(owner.exists() & (owner.nickname == "ace"))))
+    )
+    assert _ids(db, Lease, owner.exists() | owner.not_exists()) == {1, 2}
+
+
+def test_shared_joins_page_stream_and_lock_only_their_roots(profile_run: Any) -> None:
+    db = _served(profile_run)
+    _seed_baskets(db)
+    db.transact(lambda tx: tx.insert(Basket(id=4, owner_id=1, tags=(), scores=(), parcels=())))
+    query = Basket.where(Basket.owner.nickname.is_null() | Basket.owner.active.is_(True))
+    ordered = query.order_by(Basket.owner_id.asc(), Basket.id.asc())
+    eager = [basket.id for basket in db.find(ordered).results()]
+    assert eager == [1, 4, 2, 3]
+    with db.stream(ordered, batch_size=1) as streamed:
+        assert [basket.id for basket in streamed] == eager
+    assert [basket.id for basket in db.find(ordered.limit(2)).results()] == [1, 4]
+    assert not any(is_view_loaded(basket, Basket.owner) for basket in db.find(query).results())
+
+    def locked(tx: Transaction) -> list[int]:
+        found = [basket.id for basket in tx.find(query.order_by(Basket.id.asc())).results()]
+        control = profile_run.control()
+        try:
+            control.execute("select id from pa_owner where id = 1 for update nowait", [])
+            with pytest.raises(Exception, match="could not obtain lock"):
+                control.execute("select id from pa_basket where id = 1 for update nowait", [])
+        finally:
+            control.close()
+        return found
+
+    assert db.transact(locked, concurrency="locking") == [1, 2, 3, 4]
 
 
 def _seed_parking(profile_run: Any, db: ScopedDatabase) -> None:

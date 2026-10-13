@@ -22,7 +22,7 @@ from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import Metamodel
 from parallax.core.object_query import AsOf
 from parallax.core.predicate import ModelRejectedError
-from tests._support.sql import compile_read
+from tests._support.sql import compile_read, compile_write_predicate
 from tests.unit._corpus_model_support import formed, model, target
 
 ORDERS = model("orders")
@@ -131,33 +131,45 @@ def test_a_negated_conjunction_is_negated_whole() -> None:
     )
 
 
-def test_a_field_past_a_reverse_to_one_hop_reads_a_correlated_scalar() -> None:
+def test_a_field_past_a_primary_key_hop_reads_a_shared_join() -> None:
     op = oa.Comparison(op="eq", subject=oa.FieldSubject("OrderItem.order.name"), value="Ada")
     compiled = compile_read(op, ORDERS, POSTGRES, target(ORDERS, "OrderItem"))
     assert compiled.statement.sql.endswith(
-        "where (select t1.name from orders t1 where t1.id = t0.order_id) = ?"
+        "from order_item t0 left join orders t1 on t1.id = t0.order_id where t1.name = ?"
     )
     assert compiled.statement.binds == ("Ada",)
 
 
-def test_a_field_past_a_one_to_one_hop_reads_like_any_to_one_hop() -> None:
+def test_a_field_past_a_unique_foreign_key_hop_reads_a_shared_join() -> None:
+    # The passport's unique `person_id` index is the key the correlation fixes.
     op = oa.Comparison(op="eq", subject=oa.FieldSubject("Person.passport.number"), value="P-AAA")
     compiled = compile_read(op, PERSON, POSTGRES, target(PERSON, "Person"))
     assert compiled.statement.sql.endswith(
-        "where (select t1.number from passport t1 where t1.person_id = t0.id) = ?"
+        "from person t0 left join passport t1 on t1.person_id = t0.id where t1.number = ?"
     )
 
 
-def test_a_field_two_hops_away_nests_the_scalars_in_source_alias_order() -> None:
-    # The inner hop's subquery precedes the outer one's FROM in the statement
-    # text, so it takes the lower alias (m-sql source-order allocation).
+def test_a_field_two_hops_away_joins_each_hop_in_source_alias_order() -> None:
     op = oa.Comparison(
         op="eq", subject=oa.FieldSubject("OrderStatus.orderItem.order.name"), value="Ada"
     )
     compiled = compile_read(op, ORDERS, POSTGRES, target(ORDERS, "OrderStatus"))
     assert compiled.statement.sql.endswith(
-        "where (select (select t1.name from orders t1 where t1.id = t2.order_id) "
-        "from order_item t2 where t2.id = t0.order_item_id) = ?"
+        "from order_status t0 left join order_item t1 on t1.id = t0.order_item_id "
+        "left join orders t2 on t2.id = t1.order_id where t2.name = ?"
+    )
+
+
+def test_readless_predicate_dml_nests_the_scalars_in_source_alias_order() -> None:
+    # The inner hop's subquery precedes the outer one's FROM in the statement
+    # text, so it takes the lower alias (m-sql source-order allocation).
+    op = oa.Comparison(
+        op="eq", subject=oa.FieldSubject("OrderStatus.orderItem.order.name"), value="Ada"
+    )
+    compiled = compile_write_predicate(op, ORDERS, POSTGRES, target(ORDERS, "OrderStatus"))
+    assert compiled.sql == (
+        "(select (select t1.name from orders t1 where t1.id = t2.order_id) "
+        "from order_item t2 where t2.id = order_item_id) = ?"
     )
 
 
@@ -402,13 +414,14 @@ POLICY = model("policy")
 TWIN = model("scalar-collection-layout-twin-columns")
 
 
-def test_presence_two_hops_away_nests_inside_the_first_hop() -> None:
+def test_presence_two_hops_away_tests_its_target_at_the_joined_prefix() -> None:
+    # Presence alone opens no join for its own target: only the dotted prefix joins.
     compiled = compile_read(
         oa.Presence("exists", "Leash.collar.pet"), TRAVERSAL, POSTGRES, target(TRAVERSAL, "Leash")
     )
     assert compiled.statement.sql.endswith(
-        "where coalesce((select exists (select 1 from traversal_pet t1 where t1.id = t2.pet_id) "
-        "from traversal_collar t2 where t2.id = t0.collar_id), false)"
+        "left join traversal_collar t1 on t1.id = t0.collar_id "
+        "where exists (select 1 from traversal_pet t2 where t2.id = t1.pet_id)"
     )
 
 
@@ -442,9 +455,8 @@ def test_a_match_past_a_dotted_prefix_is_false_where_the_prefix_reaches_nothing(
         target(TRAVERSAL, "Leash"),
     )
     assert compiled.statement.sql.endswith(
-        "where not coalesce((select exists (select 1 from traversal_pet t1 where "
-        "t1.id = t2.pet_id and t1.name = ?) from traversal_collar t2 where t2.id = t0.collar_id), "
-        "false)"
+        "left join traversal_collar t1 on t1.id = t0.collar_id where not exists "
+        "(select 1 from traversal_pet t2 where t2.id = t1.pet_id and t2.name = ?)"
     )
 
 
@@ -665,3 +677,372 @@ def test_a_target_without_candidates_answers_inside_every_preceding_hop(
     compiled = compile_read(predicate, model, POSTGRES, target(model, "Holder"))
     assert compiled.statement.sql.endswith(f"from holder t0 where {expected}")
     assert compiled.statement.binds == ()
+
+
+# --------------------------------------------------------------------------- #
+# Shared to-one joins (m-sql "Shared to-one joins").                           #
+# --------------------------------------------------------------------------- #
+CUSTOMER = model("customer")
+_ORDER_ITEM_ROW = "select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0"
+_ADA = oa.Comparison(op="eq", subject=oa.FieldSubject("OrderItem.order.name"), value="Ada")
+_ACTIVE = oa.Comparison(op="eq", subject=oa.FieldSubject("OrderItem.order.active"), value=True)
+
+
+def test_fields_and_presence_of_one_target_share_its_join_under_negation() -> None:
+    op = oa.Not(oa.And(operands=(oa.Presence("exists", "OrderItem.order"), _ADA, _ACTIVE)))
+    compiled = compile_read(op, ORDERS, POSTGRES, target(ORDERS, "OrderItem"))
+    assert compiled.statement.sql == (
+        f"{_ORDER_ITEM_ROW} left join orders t1 on t1.id = t0.order_id "
+        "where not (not t1.id is null and t1.name = ? and t1.active = ?)"
+    )
+    assert compiled.statement.binds == ("Ada", True)
+
+
+def test_absence_of_a_shared_target_reads_its_primary_key() -> None:
+    op = oa.Or(operands=(oa.Presence("notExists", "OrderItem.order"), _ADA))
+    compiled = compile_read(op, ORDERS, POSTGRES, target(ORDERS, "OrderItem"))
+    assert compiled.statement.sql.endswith(
+        "left join orders t1 on t1.id = t0.order_id where t1.id is null or t1.name = ?"
+    )
+
+
+def test_a_common_prefix_is_joined_once_beneath_every_suffix() -> None:
+    op = oa.Or(
+        operands=(
+            oa.Comparison(op="eq", subject=oa.FieldSubject("OrderStatus.orderItem.sku"), value="S"),
+            oa.Group(
+                oa.And(
+                    operands=(
+                        oa.Comparison(
+                            op="eq",
+                            subject=oa.FieldSubject("OrderStatus.orderItem.order.name"),
+                            value="Ada",
+                        ),
+                        oa.NullCheck(
+                            op="isNull", subject=oa.FieldSubject("OrderStatus.orderItem.shippedOn")
+                        ),
+                    )
+                )
+            ),
+        )
+    )
+    compiled = compile_read(op, ORDERS, POSTGRES, target(ORDERS, "OrderStatus"))
+    assert compiled.statement.sql.endswith(
+        "from order_status t0 left join order_item t1 on t1.id = t0.order_item_id "
+        "left join orders t2 on t2.id = t1.order_id "
+        "where t1.sku = ? or (t2.name = ? and t1.shipped_on is null)"
+    )
+    assert compiled.statement.binds == ("S", "Ada")
+
+
+def test_every_scalar_operation_reads_a_shared_join() -> None:
+    def item(member: str) -> oa.FieldSubject:
+        return oa.FieldSubject(f"OrderStatus.orderItem.{member}")
+
+    op = oa.And(
+        operands=(
+            oa.Membership(op="in", subject=item("sku"), values=("A",)),
+            oa.Range(subject=item("quantity"), lower=1, upper=9),
+            oa.StringMatch(op="startsWith", subject=item("sku"), value="S"),
+            oa.NullCheck(op="isNotNull", subject=item("shippedOn")),
+        )
+    )
+    compiled = compile_read(op, ORDERS, POSTGRES, target(ORDERS, "OrderStatus"))
+    assert compiled.statement.sql.endswith(
+        "left join order_item t1 on t1.id = t0.order_item_id where t1.sku in (?) and "
+        "t1.quantity between ? and ? and t1.sku like ? and not t1.shipped_on is null"
+    )
+    assert compiled.statement.binds == ("A", 1, 9, "S%")
+
+
+def test_distinct_relationships_to_one_entity_open_their_own_joins() -> None:
+    op = oa.And(
+        operands=(
+            oa.Comparison(op="eq", subject=oa.FieldSubject("OrderStatus.order.name"), value="A"),
+            oa.Comparison(
+                op="eq", subject=oa.FieldSubject("OrderStatus.orderItem.order.name"), value="B"
+            ),
+        )
+    )
+    compiled = compile_read(op, ORDERS, POSTGRES, target(ORDERS, "OrderStatus"))
+    assert compiled.statement.sql.endswith(
+        "from order_status t0 left join orders t1 on t1.id = t0.order_id "
+        "left join order_item t2 on t2.id = t0.order_item_id "
+        "left join orders t3 on t3.id = t2.order_id where t1.name = ? and t3.name = ?"
+    )
+
+
+def test_joins_take_their_aliases_and_binds_before_the_predicate() -> None:
+    # The quantifier's subquery is earlier in the predicate than the dotted field,
+    # but the field's join precedes the whole `where`.
+    op = oa.And(
+        operands=(
+            oa.Quantifier(
+                "any",
+                "OrderItem.statuses",
+                oa.Comparison(op="eq", subject=oa.FieldSubject("code"), value="PACKED"),
+            ),
+            _ADA,
+        )
+    )
+    compiled = compile_read(op, ORDERS, POSTGRES, target(ORDERS, "OrderItem"))
+    assert compiled.statement.sql.endswith(
+        "left join orders t1 on t1.id = t0.order_id where exists (select 1 from order_status t2 "
+        "where t2.order_item_id = t0.id and t2.code = ?) and t1.name = ?"
+    )
+    assert compiled.statement.binds == ("PACKED", "Ada")
+
+
+def test_a_tag_guard_binds_in_its_join_ahead_of_the_predicate() -> None:
+    family = _tph_owner_model()
+    op = oa.Comparison(op="eq", subject=oa.FieldSubject("Leash.dog.name"), value="Rex")
+    compiled = compile_read(op, family, POSTGRES, target(family, "Leash"))
+    assert compiled.statement.sql.endswith(
+        "from leash t0 left join pet t1 on t1.id = t0.dog_id and t1.kind = ? where t1.name = ?"
+    )
+    assert compiled.statement.binds == ("dog", "Rex")
+
+
+def test_a_match_reuses_a_shared_target_beneath_its_presence() -> None:
+    op = oa.And(
+        operands=(
+            oa.Comparison(op="notEq", subject=oa.FieldSubject("OrderItem.order.name"), value="X"),
+            oa.Presence(
+                "notExists",
+                "OrderItem.order",
+                oa.Comparison(op="eq", subject=oa.FieldSubject("active"), value=True),
+            ),
+        )
+    )
+    compiled = compile_read(op, ORDERS, POSTGRES, target(ORDERS, "OrderItem"))
+    assert compiled.statement.sql.endswith(
+        "left join orders t1 on t1.id = t0.order_id where t1.name <> ? "
+        "and not case when t1.id is null then false else (t1.active = ?) is true end"
+    )
+    assert compiled.statement.binds == ("X", True)
+
+
+def test_a_match_alone_opens_no_join() -> None:
+    op = oa.Presence(
+        "exists",
+        "OrderItem.order",
+        oa.Comparison(op="eq", subject=oa.FieldSubject("name"), value="Ada"),
+    )
+    compiled = compile_read(op, ORDERS, POSTGRES, target(ORDERS, "OrderItem"))
+    assert compiled.statement.sql == (
+        f"{_ORDER_ITEM_ROW} where exists "
+        "(select 1 from orders t1 where t1.id = t0.order_id and t1.name = ?)"
+    )
+
+
+def _location_where(*operands: oa.PredicateNode) -> str:
+    compiled = compile_read(
+        oa.And(operands=operands), CUSTOMER, POSTGRES, target(CUSTOMER, "Location")
+    )
+    return compiled.statement.sql.partition(" from location t0 ")[2]
+
+
+_CUSTOMER_NAMED = oa.Comparison(
+    op="eq", subject=oa.FieldSubject("Location.customer.name"), value="Ada"
+)
+
+
+def test_a_converted_document_member_keeps_its_scalar_form_beside_a_shared_join() -> None:
+    # Uniqueness is not evaluation safety: the elevation's cast stays inside the
+    # candidate subquery while the name, on the same eligible target, joins.
+    assert _location_where(
+        _CUSTOMER_NAMED,
+        oa.Comparison(
+            op="greaterThan",
+            subject=oa.FieldSubject("Location.customer.address.geo.elevation"),
+            value=5.0,
+        ),
+    ) == (
+        "left join customer t1 on t1.id = t0.customer_id where t1.name = ? and "
+        "(select cast(jsonb_extract_path_text(t2.address, ?, ?) as double precision) "
+        "from customer t2 where t2.id = t0.customer_id) > ?"
+    )
+
+
+def test_a_text_compared_document_member_reads_the_shared_join() -> None:
+    assert _location_where(
+        _CUSTOMER_NAMED,
+        oa.Comparison(
+            op="eq", subject=oa.FieldSubject("Location.customer.address.city"), value="Oslo"
+        ),
+    ) == (
+        "left join customer t1 on t1.id = t0.customer_id "
+        "where t1.name = ? and jsonb_extract_path_text(t1.address, ?) = ?"
+    )
+
+
+def test_the_same_conversion_inside_a_match_reads_the_shared_join() -> None:
+    # A match's operand is already a filter of its candidate test, so evaluating it
+    # beneath the shared target's presence guard exposes it to nothing new.
+    assert _location_where(
+        _CUSTOMER_NAMED,
+        oa.Presence(
+            "exists",
+            "Location.customer",
+            oa.Comparison(
+                op="greaterThan", subject=oa.FieldSubject("address.geo.elevation"), value=5.0
+            ),
+        ),
+    ) == (
+        "left join customer t1 on t1.id = t0.customer_id where t1.name = ? and "
+        "case when t1.id is null then false else "
+        "(cast(jsonb_extract_path_text(t1.address, ?, ?) as double precision) > ?) is true end"
+    )
+
+
+def test_a_multi_table_target_keeps_its_full_candidate_assertion() -> None:
+    op = oa.And(
+        operands=(
+            oa.Comparison(op="eq", subject=oa.FieldSubject("Parking.vehicle.maker"), value="Saab"),
+            oa.Presence("exists", "Parking.vehicle"),
+        )
+    )
+    compiled = compile_read(op, TRAVERSAL, POSTGRES, target(TRAVERSAL, "Parking"))
+    assert compiled.statement.sql.endswith(
+        "where (select t1.maker from traversal_bike t1 where t1.id = t0.vehicle_id union all "
+        "select t2.maker from traversal_car t2 where t2.id = t0.vehicle_id) = ? and "
+        "(exists (select 1 from traversal_bike t3 where t3.id = t0.vehicle_id) "
+        "or exists (select 1 from traversal_car t4 where t4.id = t0.vehicle_id))"
+    )
+
+
+def test_a_temporal_target_keeps_its_scalar_candidate_assertion() -> None:
+    compiled = compile_read(
+        oa.Comparison(
+            op="greaterThan", subject=oa.FieldSubject("Claim.coverage.amount"), value="1.00"
+        ),
+        POLICY,
+        POSTGRES,
+        target(POLICY, "Claim"),
+        temporal={"valid-time": AsOf("latest"), "transaction-time": AsOf("latest")},
+    )
+    assert "left join" not in compiled.statement.sql
+    assert "(select t1.amount from coverage t1 where t1.id = t0.coverage_id" in (
+        compiled.statement.sql
+    )
+
+
+@pytest.mark.parametrize(
+    ("unique", "expected"),
+    [
+        (True, "left join badge t1 on t1.holder_id = t0.id where t1.code = ?"),
+        (False, "where (select t1.code from badge t1 where t1.holder_id = t0.id) = ?"),
+    ],
+)
+def test_only_a_unique_key_proves_a_declared_one_to_one_target(unique: bool, expected: str) -> None:
+    # The nullable `holder_id` is the correlated Column: strict equality never
+    # matches its null, so a unique index over it proves at most one badge, and
+    # the declared one-to-one cardinality alone proves nothing.
+    family = _badge_model(unique=unique)
+    op = oa.Comparison(op="eq", subject=oa.FieldSubject("Holder.badge.code"), value="B")
+    compiled = compile_read(op, family, POSTGRES, target(family, "Holder"))
+    assert compiled.statement.sql.endswith(expected)
+
+
+def test_a_locking_read_locks_only_its_root_beside_a_shared_join() -> None:
+    compiled = compile_read(
+        _ADA, ORDERS, POSTGRES, target(ORDERS, "OrderItem"), limit=5, preference="locking"
+    )
+    assert compiled.statement.sql == (
+        f"{_ORDER_ITEM_ROW} left join orders t1 on t1.id = t0.order_id where t1.name = ? "
+        "limit ? for share of t0"
+    )
+    assert compiled.statement.binds == ("Ada", 5)
+
+
+def test_readless_predicate_dml_keeps_every_scalar_form() -> None:
+    op = oa.And(operands=(oa.Presence("exists", "OrderItem.order"), _ADA))
+    compiled = compile_write_predicate(op, ORDERS, POSTGRES, target(ORDERS, "OrderItem"))
+    assert compiled.sql == (
+        "exists (select 1 from orders t1 where t1.id = order_id) "
+        "and (select t2.name from orders t2 where t2.id = order_id) = ?"
+    )
+
+
+def _tph_owner_model() -> Metamodel:
+    from parallax.descriptor._records import (
+        Attribute,
+        DefiningRelationship,
+        Entity,
+        Inheritance,
+        RelationshipJoin,
+        RelationshipTarget,
+    )
+    from parallax.descriptor._records import Metamodel as Records
+
+    pet = Entity(
+        name="Pet",
+        table="pet",
+        inheritance=Inheritance(role="root", strategy="table-per-hierarchy", tag_column="kind"),
+        attributes=(
+            Attribute(name="id", type="int64", column="id", primary_key=True),
+            Attribute(name="name", type="string", column="name", max_length=32),
+        ),
+    )
+    dog = Entity(
+        name="Dog", inheritance=Inheritance(role="concrete-subtype", parent="Pet", tag_value="dog")
+    )
+    cat = Entity(
+        name="Cat", inheritance=Inheritance(role="concrete-subtype", parent="Pet", tag_value="cat")
+    )
+    leash = Entity(
+        name="Leash",
+        table="leash",
+        attributes=(
+            Attribute(name="id", type="int64", column="id", primary_key=True),
+            Attribute(name="dogId", type="int64", column="dog_id", nullable=True),
+        ),
+        relationships=(
+            DefiningRelationship(
+                name="dog",
+                cardinality="many-to-one",
+                join=RelationshipJoin(
+                    source="dogId", target=RelationshipTarget(entity="Dog", attribute="id")
+                ),
+            ),
+        ),
+    )
+    return formed(Records(entities=(pet, dog, cat, leash)))
+
+
+def _badge_model(*, unique: bool) -> Metamodel:
+    from parallax.descriptor._records import (
+        Attribute,
+        DefiningRelationship,
+        Entity,
+        Index,
+        RelationshipJoin,
+        RelationshipTarget,
+    )
+    from parallax.descriptor._records import Metamodel as Records
+
+    holder = Entity(
+        name="Holder",
+        table="holder",
+        attributes=(Attribute(name="id", type="int64", column="id", primary_key=True),),
+        relationships=(
+            DefiningRelationship(
+                name="badge",
+                cardinality="one-to-one",
+                join=RelationshipJoin(
+                    source="id", target=RelationshipTarget(entity="Badge", attribute="holderId")
+                ),
+            ),
+        ),
+    )
+    badge = Entity(
+        name="Badge",
+        table="badge",
+        attributes=(
+            Attribute(name="id", type="int64", column="id", primary_key=True),
+            Attribute(name="holderId", type="int64", column="holder_id", nullable=True),
+            Attribute(name="code", type="string", column="code", max_length=8),
+        ),
+        indices=(Index(name="badge_holder", attributes=("holderId",), unique=unique),),
+    )
+    return formed(Records(entities=(holder, badge)))

@@ -811,6 +811,6 @@ def test_presence_of_a_value_object_past_a_to_one_hop_reads_the_related_document
         target(CUSTOMER, "Location"),
     )
     assert compiled.statement.sql.endswith(
-        "where coalesce((select coalesce(jsonb_typeof(t1.address) = ?, false) "
-        "from customer t1 where t1.id = t0.customer_id), false)"
+        "left join customer t1 on t1.id = t0.customer_id "
+        "where coalesce(jsonb_typeof(t1.address) = ?, false)"
     )

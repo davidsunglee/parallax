@@ -18,7 +18,7 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where exists (select 1 from orders t1 where t1.id = t0.order_id) and (select t2.name from orders t2 where t2.id = t0.order_id) = ?
+        postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 left join orders t1 on t1.id = t0.order_id where not t1.id is null and t1.name = ?
       binds: [Ada]
   referenceSql: select id, order_id, sku, quantity, shipped_on from order_item where order_id in (select id from orders where name = 'Ada')
   rows:

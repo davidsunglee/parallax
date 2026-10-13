@@ -600,6 +600,21 @@ def _workloads() -> tuple[Workload, ...]:
             "join top_customer c on c.id = o.customer_id where c.tier = 'gold')",
         ),
         Workload(
+            "reads.match-reuse",
+            "current-only",
+            "an open parent match beside a dotted field of the same parent",
+            _item(lambda: (Item.order.qty >= 10) & Item.order.exists(Order.status == "open")),
+            _ids("o.qty >= 10 and o.status = 'open'"),
+        ),
+        Workload(
+            "reads.match-reuse-negated",
+            "current-only",
+            "no parent named Ada, or a parent without a status",
+            _item(lambda: Item.order.status.is_null() | Item.order.not_exists(Order.name == "Ada")),
+            "select i.id from top_item i left join top_order o on o.id = i.order_id "
+            "where o.status is null or o.id is null or o.name <> 'Ada'",
+        ),
+        Workload(
             "mixed.temporal-latest-dotted",
             "paired",
             "a dotted field across a bitemporal hop at Latest",

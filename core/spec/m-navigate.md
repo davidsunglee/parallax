@@ -33,8 +33,13 @@ entity's rows. A **to-one** relationship is reached by single-valued traversal â
 a dotted path or a target-local `narrow` â€” which lowers to a correlated **scalar
 subquery** over the target's candidates (`m-sql`): zero candidates supply no
 value, one supplies the result, and more than one fail the statement where it is
-evaluated. A presence test of the relationship itself is not a value dereference:
-it lowers to a correlated `EXISTS` and asserts nothing about cardinality. A
+evaluated. Where the target's physical keys prove at most one candidate, the
+traversal may instead read a shared `left join` (`m-sql` *Shared to-one joins*),
+which supplies no value for a missing target and cannot multiply the queried
+entity's rows; an unproven hop always keeps its scalar subquery. A presence test
+of the relationship itself is not a value dereference: it lowers to a correlated
+`EXISTS`, or reads a join another demand already shares, and asserts nothing
+about cardinality. A
 relationship match (`m-predicate` `exists` / `notExists` with `where`) is the same
 existential test with its complete operand evaluated in each candidate's own
 scope, so several candidates are inputs to match rather than a failure; a dotted
