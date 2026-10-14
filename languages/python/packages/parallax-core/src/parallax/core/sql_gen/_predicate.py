@@ -49,6 +49,7 @@ from parallax.core.predicate._resolved import (
 )
 from parallax.core.sql_gen._context import (
     DemandPlacement,
+    OwnerResults,
     SharedSource,
     SourcePlan,
     SqlGenError,
@@ -99,6 +100,7 @@ from parallax.core.wire._codec import encoded_json_kind
 type _SourcePlan = SourcePlan[_RelationshipCandidateBranch, EntityScope]
 type _SharedSource = SharedSource[_RelationshipCandidateBranch, EntityScope]
 type _DemandPlacement = DemandPlacement[_RelationshipCandidateBranch, EntityScope]
+type _OwnerResults = OwnerResults[_RelationshipCandidateBranch, EntityScope]
 
 _HOP_TOKENS: Final = itertools.count()
 # Typed, because an untyped null a scalar subquery selects reads as text.
@@ -469,12 +471,7 @@ def lower_predicate(predicate: ResolvedPredicate, scope: ResolutionScope) -> str
         ):
             return _lower_operation(predicate, scope)
         case ResolvedQuantifier():
-            return _at(
-                predicate.position,
-                scope,
-                lambda reached: _lower_quantifier(predicate, reached),
-                "false" if predicate.kind == "any" else "true",
-            )
+            return _lower_reached_quantifier(predicate, scope)
         case ResolvedPresence():
             return _lower_presence(predicate, scope)
         case ResolvedNarrow():
@@ -983,6 +980,28 @@ def _join_terms(
     return " and ".join(terms)
 
 
+def _lower_reached_quantifier(quantifier: ResolvedQuantifier, scope: ResolutionScope) -> str:
+    """A quantifier at its position: read from its owner results, evaluated at
+    its shared owner's joined row, continued through the confined hops past a
+    shared prefix, or evaluated through its own hops. A missing owner holds no
+    element: owner results and hops default to the empty collection's answer,
+    and a missing joined owner correlates no element."""
+    default = "false" if quantifier.kind == "any" else "true"
+    placement = _placement(quantifier, scope)
+    if placement is None:
+        return _at(
+            quantifier.position,
+            scope,
+            lambda reached: _lower_quantifier(quantifier, reached),
+            default,
+        )
+    if placement.results is not None:
+        return f"coalesce({placement.results.column(quantifier)}, {default})"
+    if placement.hops:
+        return _confined(placement, lambda reached: _lower_quantifier(quantifier, reached), default)
+    return _lower_quantifier(quantifier, _reached(placement))
+
+
 def _lower_quantifier(quantifier: ResolvedQuantifier, scope: ResolutionScope) -> str:
     """A quantifier at the current object of ``scope``.
 
@@ -1363,12 +1382,13 @@ def _resolved_vo_path(
 def plan_shared_sources(predicate: ResolvedPredicate, scope: EntityScope) -> EntityScope:
     """``scope`` owning the shared relationship sources ``predicate`` reads through.
 
-    Scalar operations, presence tests, and target narrowings reached through
-    to-one hops at this scope, and those in the operand of a narrowing of the
-    scope's own row, plan sources (:func:`_plan_reached`); a quantifier's,
-    match's, or narrowing's operand evaluated in a subquery plans its own when
-    it renders. A presence whose target another demand shares reads that
-    target's join. Planning allocates no alias and pushes no bind.
+    Scalar operations, presence tests, target narrowings, and collection
+    quantifiers reached through to-one hops at this scope, and those in the
+    operand of a narrowing of the scope's own row, plan sources
+    (:func:`_plan_reached`); a quantifier's, match's, or narrowing's operand
+    evaluated in a subquery plans its own when it renders. A presence whose
+    target another demand shares reads that target's join. Planning allocates
+    no alias and pushes no bind.
     """
     plan: _SourcePlan = SourcePlan()
     scope.ctx.own_source_plan(plan)
@@ -1398,9 +1418,9 @@ def _plan_demands(
             | ResolvedMembership()
             | ResolvedStringMatch()
             | ResolvedNullCheck()
+            | ResolvedQuantifier()
         ):
-            if isinstance(predicate.position, RelatedObject):
-                _plan_reached(predicate, tuple(_hops(predicate.position)), scope, plan)
+            _plan_positioned(predicate, scope, plan)
         case ResolvedPresence():
             _plan_presence(predicate, scope, plan, presences)
         case ResolvedNarrow(target=RelatedObject() as target):
@@ -1430,6 +1450,48 @@ def _plan_presence(
         reached = None
     if isinstance(presence.target, ResolvedRelationship):
         presences.append((presence, reached))
+
+
+def _plan_positioned(
+    demand: _Operation | ResolvedQuantifier, scope: EntityScope, plan: _SourcePlan
+) -> None:
+    """Place a scalar operation or a quantifier reached through to-one hops."""
+    position = demand.position
+    if not isinstance(position, RelatedObject):
+        return
+    hops = tuple(_hops(position))
+    if isinstance(demand, ResolvedQuantifier):
+        _plan_collection(demand, hops, scope, plan)
+    else:
+        _plan_reached(demand, hops, scope, plan)
+
+
+def _plan_collection(
+    quantifier: ResolvedQuantifier,
+    hops: tuple[ResolvedRelationship, ...],
+    scope: EntityScope,
+    plan: _SourcePlan,
+) -> None:
+    """Place a quantifier over a collection its shared owner holds.
+
+    A related Entity collection is quantified at the owner's joined row, its
+    correlated `exists` one a database can evaluate set-wise. A document
+    collection — a scalar collection or a ``many`` Value Object — reads the
+    owner's results instead: its elements come from the owner row itself, so
+    the quantifier is evaluated once per owner row the result relation reads
+    rather than once per row of the scope. A relationship with no candidate
+    answers inside its hops.
+    """
+    collection = quantifier.collection
+    if isinstance(collection, ResolvedRelationship) and _reaches_nothing(collection, scope):
+        return
+    placement = _plan_reached(quantifier, hops, scope, plan)
+    if placement is None or placement.hops or isinstance(collection, ResolvedRelationship):
+        return
+    owner = placement.reached
+    if owner is None:  # pragma: no cover - a placement past every hop reaches its owner
+        raise SqlGenError("a collection quantifier reaches no shared owner")
+    plan.place(quantifier, replace(placement, results=plan.collect(owner, quantifier)))
 
 
 def _narrow_lowers_operand(narrow: ResolvedNarrow, scope: EntityScope) -> bool:
@@ -1530,11 +1592,15 @@ def _evaluation_is_safe(
     A ``"joined-row"`` demand is a term over ``target``'s joined row instead: a
     filter a database may test against any target row it scans — including
     rows no source row reaches, which neither a presence guard nor a `case`
-    excludes. So a projection that can fail on stored data keeps its local form
-    there: a document-resident member converted to its declared type, and a
-    presence's, match's, or narrowing's operand that evaluates anything
-    :func:`_operand_is_safe` cannot establish. A direct Column, extracted text,
-    and a presence or null test cannot fail.
+    excludes. A collection quantifier there, or in the owner results that read
+    every row of ``target``'s table they are joined to, has its operand tested
+    against every element of any such row. So a projection that can fail on
+    stored data keeps its local form there: a document-resident member
+    converted to its declared type, a scalar element projected to a type its
+    comparison casts to, and a presence's, match's, narrowing's, or
+    quantifier's operand that evaluates anything :func:`_operand_is_safe`
+    cannot establish. A direct Column, extracted text, and a presence or null
+    test cannot fail.
 
     A ``"confined"`` demand continues from a joined row through its own scalar
     subqueries, the first of which repeats the join terms of every shared
@@ -1564,13 +1630,25 @@ def _evaluation_is_safe(
             )
         case ResolvedNarrow(operand=operand) if operand is not None:
             return _operand_is_safe(operand, target)
+        case ResolvedQuantifier(collection=ResolvedRelationship() as collection, where=where) if (
+            where is not None
+        ):
+            return all(
+                _operand_is_safe(
+                    where, _table_layout(scope.storage, scope.facet, branch.entity.identity)
+                )
+                for branch in _candidates(collection, scope).branches
+            )
+        case ResolvedQuantifier(where=where) if where is not None:
+            return _operand_is_safe(where, target)
         case _:
             return True
 
 
 def _operand_is_safe(operand: ResolvedPredicate, target: TableLayout) -> bool:
-    """Whether a match's or narrowing's ``operand``, resolved at ``target``,
-    reads only that target's own row without a projection that can fail.
+    """Whether a match's, narrowing's, or quantifier's ``operand``, resolved at
+    ``target`` or at an element of a collection it holds, reads only that row
+    or element without a projection that can fail.
 
     A further hop's scalar subquery asserts its cardinality and a quantifier,
     narrowing, or match evaluates an operand of its own over other rows, so an
@@ -1588,9 +1666,15 @@ def _operand_is_safe(operand: ResolvedPredicate, target: TableLayout) -> bool:
         ):
             return not _converts(member, target)
         case (
+            ResolvedComparison(member=member, position=ScalarElement())
+            | ResolvedRange(member=member, position=ScalarElement())
+            | ResolvedMembership(member=member, position=ScalarElement())
+        ):
+            return is_text_compared(member.type)
+        case (
             ResolvedConstant()
-            | ResolvedStringMatch(position=CurrentObject())
-            | ResolvedNullCheck(position=CurrentObject())
+            | ResolvedStringMatch(position=CurrentObject() | ScalarElement())
+            | ResolvedNullCheck(position=CurrentObject() | ScalarElement())
             | ResolvedPresence(position=CurrentObject(), where=None)
             | ResolvedNarrow(target=CurrentObject(), operand=None)
         ):
@@ -1600,7 +1684,8 @@ def _operand_is_safe(operand: ResolvedPredicate, target: TableLayout) -> bool:
 
 
 def _converts(member: ResolvedPredicateMember, layout: TableLayout) -> bool:
-    """Whether comparing ``member`` converts extracted document text to its type."""
+    """Whether comparing ``member`` read from a row of ``layout``, or from a
+    Value Object element, converts extracted document text to its type."""
     if is_text_compared(member.type):
         return False
     if isinstance(member, AttributeMetadata):
@@ -1609,7 +1694,8 @@ def _converts(member: ResolvedPredicateMember, layout: TableLayout) -> bool:
 
 
 def render_shared_sources(scope: EntityScope) -> str:
-    """The joins of ``scope``'s planned sources, in plan order.
+    """The joins of ``scope``'s planned sources, in plan order, then its owner
+    results.
 
     Each source takes the next alias and pushes its `on` binds as it renders,
     so a join's aliases and binds precede the predicate beside it: its
@@ -1627,7 +1713,55 @@ def render_shared_sources(scope: EntityScope) -> str:
         source.scope, source.origin = target, parent
         terms = _join_terms(source.relationship, target, rendered)
         joins.append(f"left join {rendered.table} {rendered.alias} on {terms}")
+    joins.extend(_owner_results(results) for results in plan.results)
     return " ".join(joins)
+
+
+def _owner_results(results: _OwnerResults) -> str:
+    """One owner's results: a relation reading the owner's Table again, one
+    row per physical row, projecting every physical primary-key Column and
+    each quantifier evaluated over that row, left joined to the owner's join
+    on the complete key. A missing owner then reads no result.
+
+    Each quantifier is rendered as it is at its own owner row, the relation's
+    table alias taken after the aliases its select list declares (m-sql rule
+    1), and is evaluated once per row the relation reads; the owner join's own
+    terms need not repeat, because a row's collection is that row's alone.
+    """
+    owner = _rendered_scope(results.owner)
+    token = _hop_token()
+    row = EntityScope(
+        ctx=owner.ctx,
+        entity=owner.entity,
+        layout=owner.layout,
+        alias=token,
+        variant=owner.variant,
+        local=True,
+    )
+    keys = [slot.column.name for slot in owner.layout.physical_primary_key]
+    names = _result_columns(keys, len(results.demands))
+    cells = [row.own_column(key) for key in keys]
+    cells.extend(
+        f"{_lower_quantifier(demand, row)} {name}"
+        for demand, name in zip(results.demands, names, strict=True)
+    )
+    alias = owner.next_alias()
+    relation = owner.ctx.next_relation_alias()
+    results.alias, results.columns = relation, names
+    dialect = owner.dialect
+    on = " and ".join(
+        f"{dialect.qualified(relation, key)} = {owner.own_column(key)}" for key in keys
+    )
+    selected = f"select {', '.join(cells)} from {owner.layout.table.name} {token}"
+    return f"left join ({selected}) {relation} on {on}".replace(token, alias)
+
+
+def _result_columns(keys: Sequence[str], count: int) -> list[str]:
+    """``count`` result Column names, `q0`, `q1`, …, skipping any a key
+    Column of the same relation already spells."""
+    taken = set(keys)
+    names = (f"q{index}" for index in itertools.count())
+    return list(itertools.islice((name for name in names if name not in taken), count))
 
 
 def _confined(placement: _DemandPlacement, demand: _Demand, default: str | None) -> str:

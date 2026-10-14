@@ -961,11 +961,10 @@ def test_a_quantifier_past_a_dotted_prefix_joins_nothing_inside_its_scalar_subqu
         target(ORDERS, "OrderStatus"),
     )
     assert compiled.statement.sql.endswith(
-        "from order_status t0 where coalesce((select coalesce((select exists (select 1 "
-        "from order_item t1 where t1.order_id = t3.id and "
-        "(select t2.name from orders t2 where t2.id = t1.order_id) = ?) "
-        "from orders t3 where t3.id = t4.order_id), false) "
-        "from order_item t4 where t4.id = t0.order_item_id), false)"
+        "from order_status t0 left join order_item t1 on t1.id = t0.order_item_id "
+        "where coalesce((select exists (select 1 from order_item t2 where t2.order_id = t4.id "
+        "and (select t3.name from orders t3 where t3.id = t2.order_id) = ?) "
+        "from orders t4 where t4.id = t1.order_id and t1.id = t0.order_item_id), false)"
     )
 
 
@@ -1502,3 +1501,327 @@ def _badge_model(*, unique: bool) -> Metamodel:
         indices=(Index(name="badge_holder", attributes=("holderId",), unique=unique),),
     )
     return formed(Records(entities=(holder, badge)))
+
+
+_TAGS: dict[str, object] = {"name": "tags", "type": "string", "multiplicity": "many"}
+_SCORES: dict[str, object] = {"name": "scores", "type": "int32", "multiplicity": "many"}
+_PARCELS: dict[str, object] = {
+    "name": "parcels",
+    "multiplicity": "many",
+    "attributes": [{"name": "sku", "type": "string"}, {"name": "qty", "type": "int32"}],
+}
+
+
+def _element(op: oa.ComparisonOp, value: oa.ScalarLiteral) -> oa.Comparison:
+    return oa.Comparison(op=op, subject=oa.CURRENT_SCALAR_ELEMENT, value=value)
+
+
+def _crate_model() -> Metamodel:
+    return _document_model(
+        _entity("Shelf", "boxId", relationships=[_rel("box", "boxId", "Box")]),
+        _entity("Box", "crateId", relationships=[_rel("crate", "crateId", "Crate")]),
+        _entity("Crate", members=[_TAGS, _SCORES], valueObjects=[_PARCELS]),
+    )
+
+
+_CRATE_JOINS = (
+    "from shelf t0 left join box t1 on t1.id = t0.box_id left join crate t2 on t2.id = t1.crate_id"
+)
+
+
+def test_document_collections_of_a_shared_target_read_one_owner_result_relation() -> None:
+    # One relation per owner; each quantifier, of either collection, keeps its column.
+    family = _crate_model()
+    sku = oa.Comparison(op="eq", subject=oa.FieldSubject("sku"), value="s")
+    op = oa.And(
+        operands=(
+            oa.Quantifier("any", "Shelf.box.crate.tags", _element("eq", "a")),
+            oa.Quantifier("none", "Shelf.box.crate.parcels", sku),
+        )
+    )
+    compiled = compile_read(op, family, POSTGRES, target(family, "Shelf"))
+    assert compiled.statement.sql.endswith(
+        f"{_CRATE_JOINS} left join (select t5.id, exists (select 1 from jsonb_array_elements("
+        "case when jsonb_typeof(t5.tags) = ? then t5.tags else cast(? as jsonb) end) t3 where "
+        "case when jsonb_typeof(t3.value) = ? then t3.value #>> ? end = ?) q0, not exists "
+        "(select 1 from jsonb_array_elements(case when jsonb_typeof(t5.parcels) = ? then "
+        "t5.parcels else cast(? as jsonb) end) t4 where jsonb_extract_path_text(t4.value, ?) = ?) "
+        "q1 from crate t5) r0 on r0.id = t2.id where coalesce(r0.q0, false) and "
+        "coalesce(r0.q1, true)"
+    )
+    assert compiled.statement.binds == (
+        *("array", "[]", "string", "{}", "a"),
+        *("array", "[]", "sku", "s"),
+    )
+
+
+def test_owner_results_are_keyed_by_every_physical_primary_key_column() -> None:
+    family = _document_model(
+        _entity("Desk", "spanId", relationships=[_rel("span", "spanId", "Span")]),
+        _entity("Span", temporality="bitemporal", members=[_TAGS]),
+    )
+    op = oa.Quantifier("any", "Desk.span.tags", _element("eq", "a"))
+    compiled = compile_read(op, family, POSTGRES, target(family, "Desk"))
+    assert compiled.statement.sql.endswith(
+        "left join span t1 on t1.id = t0.span_id and t1.thru_z = ? and t1.out_z = ? "
+        "left join (select t3.id, t3.thru_z, t3.out_z, exists (select 1 from "
+        "jsonb_array_elements(case when jsonb_typeof(t3.tags) = ? then t3.tags else "
+        "cast(? as jsonb) end) t2 where case when jsonb_typeof(t2.value) = ? then "
+        "t2.value #>> ? end = ?) q0 from span t3) r0 on r0.id = t1.id and r0.thru_z = t1.thru_z "
+        "and r0.out_z = t1.out_z where coalesce(r0.q0, false)"
+    )
+
+
+def test_owner_results_read_a_document_resident_collection_at_its_placed_path() -> None:
+    family = _document_model(
+        _entity("Desk", "spanId", relationships=[_rel("span", "spanId", "Span")]),
+        _entity("Span", layout={"document": {"column": "payload"}}, members=[_TAGS]),
+    )
+    compiled = compile_read(
+        oa.Quantifier("none", "Desk.span.tags"), family, POSTGRES, target(family, "Desk")
+    )
+    assert compiled.statement.sql.endswith(
+        "left join span t1 on t1.id = t0.span_id left join (select t3.id, not exists (select 1 "
+        "from jsonb_array_elements(case when jsonb_typeof(jsonb_extract_path(t3.payload, ?)) = ? "
+        "then jsonb_extract_path(t3.payload, ?) else cast(? as jsonb) end) t2) q0 from span t3) "
+        "r0 on r0.id = t1.id where coalesce(r0.q0, true)"
+    )
+    assert compiled.statement.binds == ("tags", "array", "tags", "[]")
+
+
+def test_a_result_column_takes_no_name_a_key_column_spells() -> None:
+    family = _document_model(
+        _entity("Desk", "spanId", relationships=[_rel("span", "spanId", "Span", "q0")]),
+        {
+            "name": "Span",
+            "table": "span",
+            "attributes": [{"name": "q0", "type": "int64", "primaryKey": True}, _TAGS],
+        },
+    )
+    compiled = compile_read(
+        oa.Quantifier("any", "Desk.span.tags"), family, POSTGRES, target(family, "Desk")
+    )
+    assert compiled.statement.sql.endswith(
+        "(select t3.q0, exists (select 1 from jsonb_array_elements(case when jsonb_typeof(t3.tags) "
+        "= ? then t3.tags else cast(? as jsonb) end) t2) q1 from span t3) r0 on r0.q0 = t1.q0 "
+        "where coalesce(r0.q1, false)"
+    )
+
+
+@pytest.mark.parametrize(
+    ("op", "evaluated"),
+    [
+        pytest.param(
+            oa.Quantifier("any", "Shelf.box.crate.scores", _element("greaterThan", 3)),
+            "coalesce((select exists (select 1 from jsonb_array_elements(case when "
+            "jsonb_typeof(t3.scores) = ? then t3.scores else cast(? as jsonb) end) t2 where "
+            "case when jsonb_typeof(t2.value) = ? then cast(t2.value #>> ? as bigint) end > ?)",
+            id="scalar-element-cast",
+        ),
+        pytest.param(
+            oa.Quantifier(
+                "all",
+                "Shelf.box.crate.parcels",
+                oa.Comparison(op="greaterThan", subject=oa.FieldSubject("qty"), value=3),
+            ),
+            "coalesce((select not exists (select 1 from jsonb_array_elements(case when "
+            "jsonb_typeof(t3.parcels) = ? then t3.parcels else cast(? as jsonb) end) t2 where "
+            "not (cast(jsonb_extract_path_text(t2.value, ?) as bigint) > ?) is true)",
+            id="value-object-member-cast",
+        ),
+    ],
+)
+def test_a_quantifier_whose_element_projection_can_fail_is_confined_past_the_shared_prefix(
+    op: oa.Quantifier, evaluated: str
+) -> None:
+    # Owner results would test the cast on every crate's elements; confined to
+    # the joined box, the quantifier reads only the crate the shelf reaches.
+    family = _crate_model()
+    compiled = compile_read(op, family, POSTGRES, target(family, "Shelf"))
+    assert compiled.statement.sql.endswith(
+        "from shelf t0 left join box t1 on t1.id = t0.box_id where "
+        f"{evaluated} from crate t3 where t3.id = t1.crate_id and t1.id = t0.box_id), "
+        f"{'false' if op.kind == 'any' else 'true'})"
+    )
+
+
+def test_a_failing_projection_one_proven_hop_away_keeps_its_scalar_form() -> None:
+    family = _crate_model()
+    op = oa.Quantifier("any", "Box.crate.scores", _element("greaterThan", 3))
+    compiled = compile_read(op, family, POSTGRES, target(family, "Box"))
+    assert compiled.statement.sql.endswith(
+        "from box t0 where coalesce((select exists (select 1 from jsonb_array_elements(case when "
+        "jsonb_typeof(t2.scores) = ? then t2.scores else cast(? as jsonb) end) t1 where case when "
+        "jsonb_typeof(t1.value) = ? then cast(t1.value #>> ? as bigint) end > ?) from crate t2 "
+        "where t2.id = t0.crate_id), false)"
+    )
+
+
+def _lot_model() -> Metamodel:
+    return _document_model(
+        _entity("Lot", "dealerId", relationships=[_rel("dealer", "dealerId", "Dealer")]),
+        _entity(
+            "Dealer",
+            members=[_TAGS],
+            relationships=[{"name": "vehicles", "reverseOf": "Vehicle.dealer"}],
+        ),
+        {
+            "name": "Vehicle",
+            "inheritance": {"role": "root", "strategy": "table-per-concrete-subtype"},
+            "attributes": [
+                _KEY,
+                _reference("dealerId"),
+                {"name": "maker", "type": "string", "maxLength": 8},
+            ],
+            "relationships": [_rel("dealer", "dealerId", "Dealer")],
+        },
+        _concrete(
+            "Car",
+            "Vehicle",
+            table="car",
+            attributes=[{"name": "seats", "type": "int32", "nullable": True}],
+        ),
+        _concrete("Bike", "Vehicle", table="bike"),
+    )
+
+
+_MAKER = oa.Comparison(op="eq", subject=oa.FieldSubject("maker"), value="x")
+_CAR = oa.Narrow(to=("Car",), operand=oa.TrueNode())
+_DEALER_JOIN = "from lot t0 left join dealer t1 on t1.id = t0.dealer_id where "
+
+
+@pytest.mark.parametrize(
+    ("op", "where"),
+    [
+        pytest.param(
+            oa.Quantifier("any", "Lot.dealer.vehicles", _MAKER),
+            "(exists (select 1 from bike t2 where t2.dealer_id = t1.id and t2.maker = ?) or "
+            "exists (select 1 from car t3 where t3.dealer_id = t1.id and t3.maker = ?))",
+            id="every-branch",
+        ),
+        pytest.param(
+            oa.Quantifier("any", "Lot.dealer.vehicles", _CAR),
+            "exists (select 1 from car t2 where t2.dealer_id = t1.id)",
+            id="selected-branch",
+        ),
+        pytest.param(
+            oa.Quantifier("all", "Lot.dealer.vehicles", _CAR),
+            "not (exists (select 1 from bike t2 where t2.dealer_id = t1.id and not (1 = 0) is "
+            "true) or exists (select 1 from car t3 where t3.dealer_id = t1.id and not (1 = 1) "
+            "is true))",
+            id="unselected-counterexample",
+        ),
+    ],
+)
+def test_a_related_collection_of_a_shared_target_is_quantified_at_its_joined_row(
+    op: oa.Quantifier, where: str
+) -> None:
+    family = _lot_model()
+    compiled = compile_read(op, family, POSTGRES, target(family, "Lot"))
+    assert compiled.statement.sql.endswith(_DEALER_JOIN + where)
+
+
+def test_a_related_quantifier_narrowing_with_an_operand_stays_in_its_hop() -> None:
+    family = _lot_model()
+    roomy = oa.Narrow(
+        to=("Car",),
+        operand=oa.Comparison(op="greaterThan", subject=oa.FieldSubject("seats"), value=2),
+    )
+    compiled = compile_read(
+        oa.Quantifier("any", "Lot.dealer.vehicles", roomy), family, POSTGRES, target(family, "Lot")
+    )
+    assert compiled.statement.sql.endswith(
+        "from lot t0 where coalesce((select exists (select 1 from car t1 "
+        "where t1.dealer_id = t2.id and t1.seats > ?) from dealer t2 "
+        "where t2.id = t0.dealer_id), false)"
+    )
+
+
+def test_each_union_branch_reads_its_own_owner_results() -> None:
+    family = _lot_model()
+    op = oa.Quantifier("any", "Vehicle.dealer.tags", _element("eq", "a"))
+    compiled = compile_read(op, family, POSTGRES, target(family, "Vehicle"))
+    branch = (
+        "left join dealer t1 on t1.id = t0.dealer_id left join (select t3.id, exists (select 1 "
+        "from jsonb_array_elements(case when jsonb_typeof(t3.tags) = ? then t3.tags else "
+        "cast(? as jsonb) end) t2 where case when jsonb_typeof(t2.value) = ? then t2.value #>> ? "
+        "end = ?) q0 from dealer t3) r0 on r0.id = t1.id where coalesce(r0.q0, false)"
+    )
+    assert compiled.statement.sql.count(branch) == 2
+    assert compiled.statement.binds == ("array", "[]", "string", "{}", "a") * 2
+
+
+def test_a_match_body_reads_its_own_owner_results() -> None:
+    family = _crate_model()
+    op = oa.Presence("exists", "Shelf.box", oa.Quantifier("any", "crate.tags", _element("eq", "a")))
+    compiled = compile_read(op, family, POSTGRES, target(family, "Shelf"))
+    assert compiled.statement.sql.endswith(
+        "from shelf t0 where exists (select 1 from box t1 left join crate t2 "
+        "on t2.id = t1.crate_id left join (select t4.id, exists (select 1 from "
+        "jsonb_array_elements(case when "
+        "jsonb_typeof(t4.tags) = ? then t4.tags else cast(? as jsonb) end) t3 where case when "
+        "jsonb_typeof(t3.value) = ? then t3.value #>> ? end = ?) q0 from crate t4) r0 on "
+        "r0.id = t2.id where t1.id = t0.box_id and coalesce(r0.q0, false))"
+    )
+
+
+def test_a_collection_past_an_unproven_hop_is_confined_and_reads_no_owner_results() -> None:
+    family = _document_model(
+        _entity("Desk", "spanId", relationships=[_rel("span", "spanId", "Span")]),
+        _entity(
+            "Span",
+            "vehicleId",
+            temporality="bitemporal",
+            relationships=[_rel("vehicle", "vehicleId", "Vehicle")],
+        ),
+        {
+            "name": "Vehicle",
+            "inheritance": {"role": "root", "strategy": "table-per-concrete-subtype"},
+            "attributes": [_KEY, _reference("dealerId")],
+            "relationships": [_rel("dealer", "dealerId", "Dealer")],
+        },
+        _concrete("Car", "Vehicle", table="car"),
+        _concrete("Bike", "Vehicle", table="bike"),
+        _entity("Dealer", members=[_TAGS]),
+    )
+    op = oa.Quantifier("none", "Desk.span.vehicle.dealer.tags", _element("eq", "a"))
+    compiled = compile_read(op, family, POSTGRES, target(family, "Desk"))
+    dealer = (
+        "select coalesce((select not exists (select 1 from jsonb_array_elements(case when "
+        "jsonb_typeof(t{tags}.tags) = ? then t{tags}.tags else cast(? as jsonb) end) t{element} "
+        "where case when jsonb_typeof(t{element}.value) = ? then t{element}.value #>> ? end = ?) "
+        "from dealer t{tags} where t{tags}.id = t{vehicle}.dealer_id), true) "
+    )
+    assert compiled.statement.sql.endswith(
+        f"from desk t0 left join span t1 on {_SPAN_REACHED} where coalesce(("
+        + dealer.format(element=2, tags=3, vehicle=4)
+        + f"from bike t4 where t4.id = t1.vehicle_id and {_SPAN_REACHED} union all "
+        + dealer.format(element=5, tags=6, vehicle=7)
+        + f"from car t7 where t7.id = t1.vehicle_id and {_SPAN_REACHED}), true)"
+    )
+
+
+def test_a_locking_read_locks_only_its_root_beside_owner_results() -> None:
+    family = _crate_model()
+    op = oa.Quantifier("any", "Shelf.box.crate.tags", _element("eq", "a"))
+    compiled = compile_read(
+        op, family, POSTGRES, target(family, "Shelf"), limit=3, preference="locking"
+    )
+    assert compiled.statement.sql.endswith(
+        f"{_CRATE_JOINS} left join (select t4.id, exists (select 1 from jsonb_array_elements("
+        "case when jsonb_typeof(t4.tags) = ? then t4.tags else cast(? as jsonb) end) t3 where "
+        "case when jsonb_typeof(t3.value) = ? then t3.value #>> ? end = ?) q0 from crate t4) r0 "
+        "on r0.id = t2.id where coalesce(r0.q0, false) limit ? for share of t0"
+    )
+
+
+def test_readless_predicate_dml_keeps_a_collection_quantifier_s_scalar_hops() -> None:
+    family = _crate_model()
+    op = oa.Quantifier("any", "Shelf.box.crate.tags", _element("eq", "a"))
+    compiled = compile_write_predicate(op, family, POSTGRES, target(family, "Shelf"))
+    assert compiled.sql == (
+        "coalesce((select coalesce((select exists (select 1 from jsonb_array_elements(case when "
+        "jsonb_typeof(t2.tags) = ? then t2.tags else cast(? as jsonb) end) t1 where case when "
+        "jsonb_typeof(t1.value) = ? then t1.value #>> ? end = ?) from crate t2 where "
+        "t2.id = t3.crate_id), false) from box t3 where t3.id = box_id), false)"
+    )

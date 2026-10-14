@@ -13,7 +13,7 @@ when:
           eq: {value: vip}
 then:
   statements:
-  - sql: {postgres: 'select t0.id, t0.label, t0.owner_id, not t0.tags is null, t0.tags, not t0.scores is null, t0.scores, not t0.prices is null, t0.prices, not t0.flags is null, t0.flags, not t0.parcels is null, t0.parcels, not t0.meta is null, t0.meta from basket t0 where coalesce((select exists (select 1 from jsonb_array_elements(case when jsonb_typeof(t2.tags) = ? then t2.tags else cast(? as jsonb) end) t1 where case when jsonb_typeof(t1.value) = ? then t1.value #>> ? end = ?) from basket_owner t2 where t2.id = t0.owner_id), false)'}
+  - sql: {postgres: 'select t0.id, t0.label, t0.owner_id, not t0.tags is null, t0.tags, not t0.scores is null, t0.scores, not t0.prices is null, t0.prices, not t0.flags is null, t0.flags, not t0.parcels is null, t0.parcels, not t0.meta is null, t0.meta from basket t0 left join basket_owner t1 on t1.id = t0.owner_id left join (select t3.id, exists (select 1 from jsonb_array_elements(case when jsonb_typeof(t3.tags) = ? then t3.tags else cast(? as jsonb) end) t2 where case when jsonb_typeof(t2.value) = ? then t2.value #>> ? end = ?) q0 from basket_owner t3) r0 on r0.id = t1.id where coalesce(r0.q0, false)'}
     binds: [array, '[]', string, '{}', vip]
   graph:
     Basket:

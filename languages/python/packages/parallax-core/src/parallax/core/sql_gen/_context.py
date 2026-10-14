@@ -19,7 +19,11 @@ from parallax.core.db_port import JsonDocument
 from parallax.core.dialect import Dialect
 from parallax.core.inheritance import InheritanceFacet
 from parallax.core.metamodel import AttributeMetadata, EntityIdentity, EntityMetadata, Metamodel
-from parallax.core.predicate._resolved import DeferredKeySet, ResolvedRelationship
+from parallax.core.predicate._resolved import (
+    DeferredKeySet,
+    ResolvedQuantifier,
+    ResolvedRelationship,
+)
 from parallax.core.storage_layout import StorageLayoutFacet, TableLayout
 from parallax.core.wire import (
     WireDecodingError,
@@ -311,11 +315,33 @@ class SharedSource[Candidate, Scope]:
     origin: Scope | None = None
 
 
+@dataclass(eq=False, slots=True)
+class OwnerResults[Candidate, Scope]:
+    """The collection quantifiers its lexical scope evaluates once per row of
+    one shared ``owner``, each its own result column.
+
+    ``demands`` are in first-demand order. Once rendered, ``alias`` names the
+    result relation and ``columns`` holds each demand's result column, in the
+    same order.
+    """
+
+    owner: SharedSource[Candidate, Scope]
+    demands: list[ResolvedQuantifier] = field(default_factory=list[ResolvedQuantifier])
+    alias: str | None = None
+    columns: list[str] = field(default_factory=list[str])
+
+    def column(self, demand: ResolvedQuantifier) -> str:
+        """``demand``'s result column, qualified by the relation's alias."""
+        index = next(index for index, held in enumerate(self.demands) if held is demand)
+        return f"{self.alias}.{self.columns[index]}"
+
+
 @dataclass(frozen=True, slots=True)
 class DemandPlacement[Candidate, Scope]:
     """Where one planned demand is evaluated: at ``reached``, or at its scope's
     own row where that is ``None``. A presence whose target is itself shared
-    reads that target's join, ``reuses``, instead of opening a candidate.
+    reads that target's join, ``reuses``, instead of opening a candidate, and a
+    collection quantifier of ``reached`` may read its column of ``results``.
 
     ``hops`` continue past ``reached`` in the demand's own correlated scalar
     subqueries, each candidate test confined to the row ``reached`` joined for
@@ -324,6 +350,7 @@ class DemandPlacement[Candidate, Scope]:
     reached: SharedSource[Candidate, Scope] | None
     reuses: SharedSource[Candidate, Scope] | None = None
     hops: tuple[ResolvedRelationship, ...] = ()
+    results: OwnerResults[Candidate, Scope] | None = None
 
 
 class _RenderedPlan(Protocol):
@@ -334,15 +361,17 @@ class SourcePlan[Candidate, Scope]:
     """One lexical scope's shared relationship sources and its planned demands.
 
     Sources are kept in the order their joins render, each after the source it
-    is reached from. A demand is identified by its resolved node object, which
-    the plan neither copies nor hashes; the plan lives only while its statement
+    is reached from, and owner results in the order their owners are first
+    quantified. A demand is identified by its resolved node object, which the
+    plan neither copies nor hashes; the plan lives only while its statement
     compiles.
     """
 
-    __slots__ = ("_placements", "sources")
+    __slots__ = ("_placements", "results", "sources")
 
     def __init__(self) -> None:
         self.sources: list[SharedSource[Candidate, Scope]] = []
+        self.results: list[OwnerResults[Candidate, Scope]] = []
         self._placements: dict[int, DemandPlacement[Candidate, Scope]] = {}
 
     def find(
@@ -372,6 +401,17 @@ class SourcePlan[Candidate, Scope]:
         self.sources.append(source)
         return source
 
+    def collect(
+        self, owner: SharedSource[Candidate, Scope], demand: ResolvedQuantifier
+    ) -> OwnerResults[Candidate, Scope]:
+        """``owner``'s results, opened if new, with ``demand`` among them."""
+        results = next((entry for entry in self.results if entry.owner is owner), None)
+        if results is None:
+            results = OwnerResults(owner)
+            self.results.append(results)
+        results.demands.append(demand)
+        return results
+
     def place(self, demand: object, placement: DemandPlacement[Candidate, Scope]) -> None:
         self._placements[id(demand)] = placement
 
@@ -379,8 +419,10 @@ class SourcePlan[Candidate, Scope]:
         return self._placements.get(id(demand))
 
     def rendered(self) -> bool:
-        """Whether every planned source has rendered its join."""
-        return all(source.scope is not None for source in self.sources)
+        """Whether every planned source and owner result has rendered."""
+        return all(source.scope is not None for source in self.sources) and all(
+            results.alias is not None for results in self.results
+        )
 
 
 def _same_occurrence(first: ResolvedRelationship, second: ResolvedRelationship) -> bool:
@@ -401,6 +443,7 @@ class StatementBuilder:
         "_binds",
         "_classified",
         "_next_alias_index",
+        "_next_relation_index",
         "_row_count",
         "_row_signature",
         "_row_start",
@@ -434,12 +477,20 @@ class StatementBuilder:
         self._row_count = 0
         self.requires_variant_partition = False
         self._next_alias_index = 1
+        self._next_relation_index = 0
         self._source_plans: list[_RenderedPlan] = []
 
     def next_alias(self) -> str:
         index = self._next_alias_index
         self._next_alias_index = index + 1
         return f"t{index}"
+
+    def next_relation_alias(self) -> str:
+        """The next derived result relation's alias, `r0`, `r1`, …: a relation
+        is no table source, so it takes no place in the `t<n>` sequence."""
+        index = self._next_relation_index
+        self._next_relation_index = index + 1
+        return f"r{index}"
 
     def own_source_plan(self, plan: _RenderedPlan) -> None:
         """Hold a lexical scope's source plan for this statement's lifetime;

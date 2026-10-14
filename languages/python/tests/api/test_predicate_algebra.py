@@ -56,6 +56,7 @@ class Owner(Entity, table="pa_owner", namespace=_NS):
     id: Attr[int] = attr(primary_key=True)
     active: Attr[bool | None]
     nickname: Attr[str | None] = attr(name="alias", max_length=16)
+    vehicles: Rel[tuple[Vehicle, ...]] = rel(reverse_of="owner")
 
 
 class Basket(Entity, table="pa_basket", namespace=_NS):
@@ -120,7 +121,55 @@ class Desk(Entity, table="pa_desk", namespace=_NS):
     plan: Rel[Plan | None] = rel(cardinality=MANY_TO_ONE, join=("plan_id", "id"))
 
 
-_MODEL = DomainModel(Owner, Basket, Vehicle, Car, Bike, Parking, Lease, Ticket, Plan, Policy, Desk)
+class Shelf(Entity, table="pa_shelf", namespace=_NS):
+    id: Attr[int] = attr(primary_key=True)
+    tags: Attr[tuple[str, ...]]
+    scores: Attr[tuple[int, ...]] = attr(type=Int32)
+    parcels: Attr[tuple[Parcel, ...]]
+
+
+class Crate(Entity, table="pa_crate", namespace=_NS):
+    id: Attr[int] = attr(primary_key=True)
+    shelf_id: Attr[int | None]
+    shelf: Rel[Shelf | None] = rel(cardinality=MANY_TO_ONE, join=("shelf_id", "id"))
+
+
+class Bin(Entity, table="pa_bin", namespace=_NS):
+    id: Attr[int] = attr(primary_key=True)
+    version: Attr[int] = attr(type=Int32, optimistic_locking=True)
+    shelf_id: Attr[int | None]
+    shelf: Rel[Shelf | None] = rel(cardinality=MANY_TO_ONE, join=("shelf_id", "id"))
+
+
+class Tariff(Bitemporal, table="pa_tariff", namespace=_NS):
+    id: Attr[int] = attr(primary_key=True)
+    codes: Attr[tuple[str, ...]]
+
+
+class Counter(Entity, table="pa_counter", namespace=_NS):
+    id: Attr[int] = attr(primary_key=True)
+    tariff_id: Attr[int | None]
+    tariff: Rel[Tariff | None] = rel(cardinality=MANY_TO_ONE, join=("tariff_id", "id"))
+
+
+_MODEL = DomainModel(
+    Owner,
+    Basket,
+    Vehicle,
+    Car,
+    Bike,
+    Parking,
+    Lease,
+    Ticket,
+    Plan,
+    Policy,
+    Desk,
+    Shelf,
+    Crate,
+    Bin,
+    Tariff,
+    Counter,
+)
 
 
 def _served(profile_run: Any) -> ScopedDatabase:
@@ -591,3 +640,174 @@ def test_a_temporal_predicate_write_acquires_through_the_temporal_join(profile_r
         Policy.where(Policy.note == "top").as_of(tx_time=LATEST, valid_time=_JULY)
     ).results()
     assert [policy.id for policy in found] == [1]
+
+
+def _seed_shelves(profile_run: Any, db: ScopedDatabase) -> None:
+    """Shelf 1 holds `a` and `b`, shelf 2 nothing; shelves 3 to 5, written out of
+    band, hold a JSON null carrier, a non-array, and `a` beside a wrong-kind
+    and a null element. Crates 1 and 2 share shelf 1; crate 7 has no shelf."""
+    db.transact(
+        lambda tx: [
+            tx.insert(
+                Shelf(
+                    id=1,
+                    tags=("a", "b"),
+                    scores=(1, 2),
+                    parcels=(Parcel(sku="p", qty=2, notes=()),),
+                )
+            ),
+            tx.insert(Shelf(id=2, tags=(), scores=(), parcels=())),
+        ]
+    )
+    _write(
+        profile_run,
+        [
+            "insert into pa_shelf (id, tags, scores, parcels) values (3, 'null', '[]', '[]'), "
+            "(4, '\"a\"', '[]', '[]'), (5, '[\"a\", 7, null]', '[]', '[]')",
+            "insert into pa_crate (id, shelf_id) values "
+            "(1, 1), (2, 1), (3, 2), (4, 3), (5, 4), (6, 5), (7, null)",
+        ],
+    )
+
+
+def test_a_collection_an_owner_holds_answers_for_every_root_reaching_it(
+    profile_run: Any,
+) -> None:
+    db = _served(profile_run)
+    _seed_shelves(profile_run, db)
+    tags = Crate.shelf.tags
+    a, b = tags.element == "a", tags.element == "b"
+    assert _ids(db, Crate, tags.any()) == {1, 2, 6}
+    assert _ids(db, Crate, tags.none()) == {3, 4, 5, 7}
+    assert _ids(db, Crate, tags.any(a)) == {1, 2, 6}
+    assert _ids(db, Crate, tags.none(a)) == {3, 4, 5, 7}
+    # A wrong-kind and a null element are candidates whose test is unknown.
+    assert _ids(db, Crate, tags.all(tags.element.in_(["a", "b"]))) == {1, 2, 3, 4, 5, 7}
+    assert _ids(db, Crate, tags.any(a) & tags.any(b)) == {1, 2}
+    assert _ids(db, Crate, tags.any(a & b)) == set()
+    assert _ids(db, Crate, tags.any(a) & ~Crate.shelf.exists()) == set()
+    assert _ids(db, Crate, Crate.shelf.exists() & tags.none()) == {3, 4, 5}
+
+
+def test_owner_results_deliver_wire_streamed_paged_and_root_locked_roots_alike(
+    profile_run: Any,
+) -> None:
+    db = _served(profile_run)
+    _seed_shelves(profile_run, db)
+    query = Crate.where(Crate.shelf.tags.any(Crate.shelf.tags.element == "a"))
+    ordered = query.order_by(Crate.id.asc())
+    eager = [crate.id for crate in db.find(ordered).results()]
+    assert eager == [1, 2, 6]
+    with db.stream(ordered, batch_size=1) as streamed:
+        assert [crate.id for crate in streamed] == eager
+    assert [crate.id for crate in db.find(ordered.limit(2)).results()] == [1, 2]
+    assert not any(is_view_loaded(crate, Crate.shelf) for crate in db.find(query).results())
+    path = f"{Crate.identity.canonical}.shelf.tags"
+    document = {
+        "target": Crate.identity.canonical,
+        "predicate": {"any": {"path": path, "where": {"eq": {"value": "a"}}}},
+    }
+    assert sorted(cast("Any", node)["id"] for node in db.wire.find(document).results()) == eager
+
+    def locked(tx: Transaction) -> list[int]:
+        found = [crate.id for crate in tx.find(ordered).results()]
+        control = profile_run.control()
+        try:
+            control.execute("select id from pa_shelf where id = 1 for update nowait", [])
+            with pytest.raises(Exception, match="could not obtain lock"):
+                control.execute("select id from pa_crate where id = 1 for update nowait", [])
+        finally:
+            control.close()
+        return found
+
+    assert db.transact(locked, concurrency="locking") == eager
+
+
+def test_a_cast_that_can_fail_reads_only_the_owners_a_root_reaches(profile_run: Any) -> None:
+    db = _served(profile_run)
+    _seed_shelves(profile_run, db)
+    # Shelf 9's element and parcel quantity cannot convert to integers, and no
+    # crate reaches it: the conversions stay with the crates that do.
+    _write(
+        profile_run,
+        [
+            "insert into pa_shelf (id, tags, scores, parcels) values "
+            '(9, \'["a"]\', \'[1.5]\', \'[{"sku": "p", "qty": "x", "notes": []}]\')'
+        ],
+    )
+    scores, parcels = Crate.shelf.scores, Crate.shelf.parcels
+    assert _ids(db, Crate, scores.any(scores.element > 1)) == {1, 2}
+    assert _ids(db, Crate, parcels.all(Parcel.qty > 1)) == {1, 2, 3, 4, 5, 6, 7}
+    assert _ids(db, Crate, Crate.shelf.tags.any(Crate.shelf.tags.element == "a")) == {1, 2, 6}
+    _write(profile_run, ["insert into pa_crate (id, shelf_id) values (8, 9)"])
+    for failing in (scores.any(scores.element > 1), parcels.all(Parcel.qty > 1)):
+        with pytest.raises(Exception) as raised:
+            db.find(Crate.where(failing)).results()
+        cause: BaseException | None = raised.value
+        while cause is not None and not isinstance(cause, DatabaseError):
+            cause = cause.__cause__ or getattr(cause, "cause", None)
+        assert isinstance(cause, DatabaseError)
+        assert cause.native_code == "22P02"
+
+
+def test_a_related_collection_an_owner_holds_answers_at_the_joined_owner(
+    profile_run: Any,
+) -> None:
+    db = _served(profile_run)
+    _seed_parking(profile_run, db)
+    db.transact(
+        lambda tx: [
+            tx.insert(Owner(id=2, active=None, nickname=None)),
+            *(
+                tx.insert(Lease(id=lease, owner_id=owner))
+                for lease, owner in ((1, 1), (2, 2), (3, None))
+            ),
+        ]
+    )
+    vehicles = Lease.owner.vehicles
+    assert _ids(db, Lease, vehicles.any(Vehicle.maker == "Trek")) == {1}
+    assert _ids(db, Lease, vehicles.none()) == {2, 3}
+    # The bike is outside the selection, so it is the universal's counterexample.
+    assert _ids(db, Lease, vehicles.all(Vehicle.is_a(Car))) == {2, 3}
+    assert _ids(db, Lease, vehicles.any(Vehicle.is_a(Car, where=Car.seats > 2))) == {1}
+    assert _ids(db, Lease, vehicles.all(Vehicle.maker != "Saab")) == {1, 2, 3}
+
+
+def test_owner_results_read_the_one_milestone_a_temporal_owner_joins(profile_run: Any) -> None:
+    db = _served(profile_run)
+    _write(
+        profile_run,
+        [
+            "insert into pa_tariff (id, codes, from_z, thru_z, in_z, out_z) values "
+            "(1, '[\"z\"]', '2024-01-01', 'infinity', '2024-01-01', '2024-04-01'), "
+            "(1, '[\"a\"]', '2024-01-01', '2024-06-01', '2024-04-01', 'infinity'), "
+            "(1, '[\"b\"]', '2024-06-01', 'infinity', '2024-04-01', 'infinity'), "
+            "(2, '[]', '2024-01-01', 'infinity', '2024-01-01', 'infinity')",
+            "insert into pa_counter (id, tariff_id) values (1, 1), (2, 1), (3, 2), (4, null)",
+        ],
+    )
+    codes = Counter.tariff.codes
+
+    def counters(predicate: Predicate[Any]) -> list[int]:
+        found = db.find(Counter.where(predicate).order_by(Counter.id.asc())).results()
+        return [counter.id for counter in found]
+
+    # Each milestone keeps its own result row, so a counter reads its tariff's
+    # Latest codes once.
+    assert counters(codes.any(codes.element == "b")) == [1, 2]
+    assert counters(codes.any(codes.element.in_(["a", "z"]))) == []
+    assert counters(codes.none()) == [3, 4]
+    assert counters(codes.all(codes.element == "b")) == [1, 2, 3, 4]
+
+
+def test_a_materializing_predicate_write_selects_through_owner_results(profile_run: Any) -> None:
+    db = _served(profile_run)
+    _seed_shelves(profile_run, db)
+    db.transact(
+        lambda tx: [
+            tx.insert(Bin(id=bin_id, shelf_id=shelf))
+            for bin_id, shelf in ((1, 1), (2, 2), (3, None))
+        ]
+    )
+    db.transact(lambda tx: tx.delete_where(Bin.where(Bin.shelf.tags.none())))
+    assert _ids(db, Bin, Bin.shelf.exists() | Bin.shelf.not_exists()) == {1}
