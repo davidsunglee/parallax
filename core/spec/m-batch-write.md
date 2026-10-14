@@ -127,14 +127,18 @@ t0.<key> from <table> t0 <joins> where <predicate>)`, inside the same statement:
 the write still reads nothing back and returns no key, and the selection's binds
 still follow the assignment binds.
 
-The selection reads the target's rows as the statement's snapshot holds them.
-Under Read Committed (`m-db-port`), a key-selecting write is therefore not
-re-evaluated against a version of a target row that a concurrent transaction
-committed after that snapshot: it writes the row even where that version's own
-columns, the correlation columns its joins read included, no longer match.
-Read Committed permits that outcome. Under PostgreSQL's Repeatable Read the same
-race raises the snapshot conflict `m-db-error` classifies as retryable, whichever
-form the write takes.
+The selection is part of the statement's own read, not a re-test of each target
+row as it is written. Under Read Committed (`m-db-port`), a target row that a
+concurrent transaction changes and commits while the statement waits for it may
+therefore still be written even where the committed version's own columns, the
+correlation columns its joins read included, no longer match. Read Committed
+permits that outcome without requiring it, so nothing may depend on either
+result. Which one occurs is engine behavior: PostgreSQL writes the row, because
+it re-tests the newer version only for key membership in the selection its
+snapshot already read; MariaDB reads a `delete`'s selection with a locking read
+that waits for the concurrent commit and then excludes the row. Under
+PostgreSQL's Repeatable Read the same race raises the snapshot conflict
+`m-db-error` classifies as retryable, whichever form the write takes.
 
 `m-batch-write-005` pins readless predicate delete and
 `m-batch-write-006` pins the update's layout-order SQL and bind determinism.
