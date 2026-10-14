@@ -1,0 +1,27 @@
+model: models/lease.yaml
+tags: [m-batch-write, m-sql, m-navigate, m-unit-work, m-dialect, m-temporal-read, predicate-write, readless, relationship, to-one, traversal, temporal, propagation, mixed, scenario, delete, slice-snapshot-1]
+shape: scenario
+given:
+  fixtures: true
+when:
+  scenario:
+    - write:
+        mutation: delete
+        target:
+          entity: parallax.compatibility.LeaseNote
+          predicate:
+            and:
+              operands:
+                - eq: {path: parallax.compatibility.LeaseNote.lease.term, value: 24mo}
+                - eq: {path: parallax.compatibility.LeaseNote.text, value: signed}
+      roundTrips: 1
+      statements:
+        - sql:
+            postgres: delete from lease_note where id in (select t0.id from lease_note t0 left join lease t1 on t1.id = t0.lease_id and t1.out_z = ? where t1.term = ? and t0.note_text = ?)
+            mariadb: delete from lease_note where id in (select t0.id from lease_note t0 left join lease t1 on t1.id = t0.lease_id and t1.out_z = ? where t1.term = ? and t0.note_text = ?)
+          binds: [infinity, 24mo, signed]
+then:
+  roundTrips: 1
+  tableState:
+    lease_note:
+      - { id: 101, lease_id: 10, note_text: renewed }

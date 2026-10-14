@@ -39,6 +39,7 @@ ACCOUNT = model("account")
 CUSTOMER = model("customer")
 PAYMENT = model("payment")
 POLICY = model("policy")
+LEASE = model("lease")
 POSITION = model("position")
 
 
@@ -269,6 +270,42 @@ def test_a_key_selection_projects_every_physical_key_column() -> None:
         "where t1.name = ? and t0.thru_z = ? and t0.out_z = ?"
     )
     assert predicate.binds == (INFINITY, INFINITY, "P", INFINITY, INFINITY)
+
+
+def test_a_temporal_target_joins_at_latest_in_the_key_selection() -> None:
+    predicate = compile_write_predicate(
+        oa.Comparison(op="eq", subject=oa.FieldSubject("LeaseNote.lease.term"), value="24mo"),
+        LEASE,
+        POSTGRES,
+        target(LEASE, "LeaseNote"),
+    )
+
+    assert predicate.selection
+    assert predicate.sql == (
+        "select t0.id from lease_note t0 left join lease t1 on t1.id = t0.lease_id "
+        "and t1.out_z = ? where t1.term = ?"
+    )
+    assert predicate.binds == (INFINITY, "24mo")
+
+
+def test_a_match_through_a_temporal_target_tests_its_latest_milestone_in_place() -> None:
+    predicate = compile_write_predicate(
+        oa.Presence(
+            "notExists",
+            "LeaseNote.lease",
+            oa.Comparison(op="eq", subject=oa.FieldSubject("term"), value="12mo"),
+        ),
+        LEASE,
+        POSTGRES,
+        target(LEASE, "LeaseNote"),
+    )
+
+    assert not predicate.selection
+    assert predicate.sql == (
+        "not exists (select 1 from lease t1 where t1.id = lease_id and t1.term = ? "
+        "and t1.out_z = ?)"
+    )
+    assert predicate.binds == ("12mo", INFINITY)
 
 
 def test_value_object_document_column_renders_unaliased() -> None:

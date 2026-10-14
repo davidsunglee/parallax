@@ -173,6 +173,9 @@ class Item(Entity, table="top_item", namespace=_NS, indices=(index("top_item_ord
     quantity: Attr[int] = attr(type=Int32)
     flagged: Attr[bool]
     order: Rel[Order | None] = rel(cardinality=MANY_TO_ONE, join=("order_id", "id"))
+    # A temporal target reached through `order_id`, so the item's columns, and
+    # every retained statement projecting them, stay as they were.
+    coverage: Rel[Coverage | None] = rel(cardinality=MANY_TO_ONE, join=("order_id", "id"))
 
 
 class Coverage(Bitemporal, table="top_coverage", namespace=_NS):
@@ -407,6 +410,10 @@ _DISTRIBUTIONS: Final[Mapping[str, str]] = {
     "distinctTagCollections": "select count(distinct tags) from top_order",
     "distinctParcelCollections": "select count(distinct parcels) from top_order",
     "notes": "select count(*) from top_order_note",
+    "rootsOfMatchingLatestCoverages": (
+        "select count(*) from top_item i join top_coverage v on v.id = i.order_id "
+        "where v.amount = 700 and v.thru_z = 'infinity' and v.out_z = 'infinity'"
+    ),
 }
 
 
@@ -600,6 +607,7 @@ _GUARDED_NEGATION: Final = (
     "(select 1 from top_order o where o.id = i.order_id and o.name = 'Ada')"
 )
 _VIP: Final = "select o.id from top_order o where o.tags @> '[\"vip\"]'"
+_LATEST_700: Final = f"select v.id from top_coverage v where v.amount = 700 and {_LATEST_COVERAGE}"
 
 
 def _workloads() -> tuple[Workload, ...]:
@@ -1030,6 +1038,24 @@ def _workloads() -> tuple[Workload, ...]:
             "readless UPDATE selected by relationship matching",
             _item(lambda: Item.order.exists(Order.name == "Ada")),
             f"select i.id from top_item i where i.order_id in ({_ADA_ORDERS})",
+            kind="update",
+            observation="affected",
+        ),
+        Workload(
+            "writes.update-temporal-dotted-eq",
+            "current-only",
+            "readless UPDATE selected by dotted equality across a temporal hop at Latest",
+            _item(lambda: Item.coverage.amount == 700),
+            f"select i.id from top_item i where i.order_id in ({_LATEST_700})",
+            kind="update",
+            observation="affected",
+        ),
+        Workload(
+            "writes.update-temporal-match",
+            "current-only",
+            "readless UPDATE selected by matching across a temporal hop at Latest",
+            _item(lambda: Item.coverage.exists(Coverage.amount == 700)),
+            f"select i.id from top_item i where i.order_id in ({_LATEST_700})",
             kind="update",
             observation="affected",
         ),
@@ -1682,6 +1708,8 @@ _SMOKE_WORKLOADS: Final = (
     "collections.value-object-text-any",
     "writes.delete-dotted-eq",
     "writes.update-match",
+    "writes.update-temporal-dotted-eq",
+    "writes.update-temporal-match",
 )
 
 
@@ -1732,7 +1760,7 @@ def test_a_bounded_capture_replays_and_validates(profile_run: Any, tmp_path: Pat
     document = evidence.load(manifest)
     paired = [entry for entry in document["workloads"] if entry["pairing"] == "paired"]
     assert paired and all(entry["comparison"] for entry in paired)
-    assert Counter(entry["pairing"] for entry in document["workloads"])["current-only"] == 3
+    assert Counter(entry["pairing"] for entry in document["workloads"])["current-only"] == 5
     measured = {entry["id"] for entry in document["workloads"] if entry["placements"]}
     assert measured == {
         "collections.scalar-all",

@@ -5,6 +5,7 @@ from dataclasses import dataclass, field, replace
 from itertools import chain
 from typing import Literal, assert_never
 
+from parallax.core import navigate
 from parallax.core.base import (
     Bytes,
     DocumentReadOrdinals,
@@ -755,7 +756,12 @@ def compile_write_predicate(
     """Render an already-validated write predicate: unaliased, every demand in
     its local form, unless a demand reads through a shared source; then the
     selection of the target's physical key from the rows it matches, planned
-    and rendered as a read of the target's own Table selects them."""
+    and rendered as a read of the target's own Table selects them.
+
+    A readless target pins no temporal coordinate, so every temporal Entity the
+    predicate reaches is visible at Latest on each of its axes (`m-navigate`).
+    """
+    op = navigate.propagate_hop_terms(op, model)
     facet = _inheritance_view(model)
     storage = _storage_view(model)
     layout = _table_layout(storage, facet, target.identity)

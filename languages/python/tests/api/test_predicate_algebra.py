@@ -773,8 +773,10 @@ def test_a_related_collection_an_owner_holds_answers_at_the_joined_owner(
     assert _ids(db, Lease, vehicles.all(Vehicle.maker != "Saab")) == {1, 2, 3}
 
 
-def test_owner_results_read_the_one_milestone_a_temporal_owner_joins(profile_run: Any) -> None:
-    db = _served(profile_run)
+def _seed_tariffs(profile_run: Any) -> None:
+    """Tariff 1 holds three milestones, only the last of them, coding `b`, at
+    Latest; tariff 2 holds nothing. Counters 1 and 2 share tariff 1, and counter
+    4 has none."""
     _write(
         profile_run,
         [
@@ -786,6 +788,11 @@ def test_owner_results_read_the_one_milestone_a_temporal_owner_joins(profile_run
             "insert into pa_counter (id, tariff_id) values (1, 1), (2, 1), (3, 2), (4, null)",
         ],
     )
+
+
+def test_owner_results_read_the_one_milestone_a_temporal_owner_joins(profile_run: Any) -> None:
+    db = _served(profile_run)
+    _seed_tariffs(profile_run)
     codes = Counter.tariff.codes
 
     def counters(predicate: Predicate[Any]) -> list[int]:
@@ -904,3 +911,49 @@ def test_a_key_selecting_readless_write_stays_a_barrier(profile_run: Any) -> Non
 
     db.transact(fn)
     assert _ids(db, Basket, Basket.owner.nickname == "new") == {5}
+
+
+def _desks(db: ScopedDatabase) -> set[int]:
+    return _ids(db, Desk, Desk.plan.exists() | Desk.plan.not_exists())
+
+
+def test_a_readless_write_selects_through_a_temporal_target_s_latest_milestone(
+    profile_run: Any,
+) -> None:
+    db = _served(profile_run)
+    _seed_plans(profile_run)
+    premium = Desk.plan.premium
+    # Plan 1's premiums 10 and 20 belong to milestones that are not Latest.
+    db.transact(lambda tx: tx.amend_where(Desk.where(premium == 10), Desk.plan_id.set(None)))
+    db.transact(lambda tx: tx.delete_where(Desk.where(premium == 30)))
+    assert _desks(db) == {2, 3, 4}
+    document = {
+        "entity": Desk.identity.canonical,
+        "predicate": {"eq": {"path": f"{Desk.identity.canonical}.plan.premium", "value": 20}},
+    }
+    db.transact(lambda tx: tx.wire.delete_where(document))
+    assert _desks(db) == {3, 4}
+    assert _ids(db, Desk, Desk.plan_id.is_null()) == {4}
+
+
+def test_a_readless_write_matches_a_temporal_target_s_latest_milestone_in_place(
+    profile_run: Any,
+) -> None:
+    db = _served(profile_run)
+    _seed_plans(profile_run)
+    plan = Desk.plan
+    db.transact(lambda tx: tx.delete_where(Desk.where(plan.exists(Plan.premium == 10))))
+    assert _desks(db) == {1, 2, 3, 4}
+    # Desk 1's plan matches 20 only in a milestone that is not Latest; desk 3's
+    # plan is absent and desk 4 has none.
+    db.transact(lambda tx: tx.delete_where(Desk.where(plan.not_exists(Plan.premium == 20))))
+    assert _desks(db) == {2}
+
+
+def test_a_readless_write_reads_a_temporal_owner_s_latest_collection(profile_run: Any) -> None:
+    db = _served(profile_run)
+    _seed_tariffs(profile_run)
+    codes = Counter.tariff.codes
+    db.transact(lambda tx: tx.delete_where(Counter.where(codes.any(codes.element == "a"))))
+    db.transact(lambda tx: tx.delete_where(Counter.where(codes.any(codes.element == "b"))))
+    assert _ids(db, Counter, Counter.tariff.exists() | Counter.tariff.not_exists()) == {3, 4}
