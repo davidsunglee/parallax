@@ -9,6 +9,9 @@ from libc.math cimport floor, fmod, frexp, ldexp
 from libc.stdint cimport uint64_t
 from libc.string cimport memcmp, memcpy
 
+from datetime import UTC
+
+from psycopg import DataError
 from psycopg.pq import Format
 
 from parallax.core.base import INFINITY, nearest_binary32_of_spelling
@@ -21,6 +24,7 @@ cdef extern from "Python.h":
 
 
 cdef object _INFINITY = INFINITY
+cdef object _UTC = UTC
 
 
 cdef inline bint _is_binary32_midpoint(double value) noexcept:
@@ -67,12 +71,16 @@ cdef class ExactFloat4Loader(CLoader):
 
 @cython.final
 cdef class InfinityTimestamptzLoader(CLoader):
-    """Decode a ``timestamptz`` cell, reading native ``infinity`` as the
-    neutral unbounded instant.
+    """Decode a ``timestamptz`` cell to a ``datetime`` in ``datetime.UTC``,
+    reading native ``infinity`` as the neutral unbounded instant.
 
     A temporal interval's open upper bound is stored as ``infinity``, which is
     outside ``datetime``'s range, so psycopg's own loader refuses it. Every
-    other cell is decoded by that loader, called through its vtable.
+    other cell is decoded by that loader, called through its vtable. Built
+    without the connection, it converts to UTC rather than to the session's
+    time zone, which stays as the application configured it. Where the UTC
+    instant is not representable, psycopg keeps the spelled offset instead;
+    that instant is outside the Timestamp value space, so it is refused.
     """
 
     format = Format.TEXT
@@ -80,9 +88,16 @@ cdef class InfinityTimestamptzLoader(CLoader):
     cdef CLoader _finite
 
     def __cinit__(self, oid, context=None):
-        self._finite = DriverTimestamptzLoader(oid, context)
+        self._finite = DriverTimestamptzLoader(oid)
 
     cdef object cload(self, const char *data, size_t length):
+        cdef object value
         if length == 8 and memcmp(data, b"infinity", 8) == 0:
             return _INFINITY
-        return self._finite.cload(data, length)
+        value = self._finite.cload(data, length)
+        if value.tzinfo is not _UTC:
+            raise DataError(
+                f"timestamp outside the supported UTC range: "
+                f"{data[:length].decode('ascii', 'replace')!r}"
+            )
+        return value

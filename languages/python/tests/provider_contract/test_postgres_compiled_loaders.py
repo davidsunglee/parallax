@@ -6,8 +6,9 @@ initialized exactly as an owned connection is, so the loader under test is the
 one the adapter registered; a spelling no stored value produces is handed to
 that loader directly. A ``real`` is graded against PostgreSQL's own binary-format
 result and against exact rational rounding of the text the server sent; a
-``timestamptz`` against psycopg's own C text loader over the same bytes, apart
-from the one cell the adapter reads differently.
+finite ``timestamptz`` against an independently stated UTC instant, under
+session zones that spell it differently, and a spelling psycopg cannot read
+against its own C text loader's refusal of the same bytes.
 """
 
 from __future__ import annotations
@@ -16,8 +17,9 @@ import math
 import random
 import struct
 import sys
-from collections.abc import Callable, Iterator
-from datetime import datetime
+from collections.abc import Callable, Generator, Iterator
+from contextlib import contextmanager
+from datetime import UTC, datetime
 from typing import Any, cast
 
 import psycopg
@@ -217,6 +219,97 @@ def test_native_infinity_reads_as_the_neutral_unbounded_instant(session: Session
     assert loaded is INFINITY
 
 
+_ZONES = ["UTC", "Etc/UTC", "Asia/Kathmandu", "America/St_Johns", "America/New_York"]
+_ORDINARY_INSTANTS = [
+    ("2024-02-29 12:34:56.789012+00", datetime(2024, 2, 29, 12, 34, 56, 789012, tzinfo=UTC)),
+    ("1999-12-31 23:59:59.999999-08", datetime(2000, 1, 1, 7, 59, 59, 999999, tzinfo=UTC)),
+    ("2038-01-19 03:14:07.5+05:45", datetime(2038, 1, 18, 21, 29, 7, 500000, tzinfo=UTC)),
+    ("1900-06-01 00:00:00+01:30", datetime(1900, 5, 31, 22, 30, tzinfo=UTC)),
+]
+_MINIMUM = ("0001-01-01 00:00:00+00", datetime(1, 1, 1, tzinfo=UTC))
+_MAXIMUM = ("9999-12-31 23:59:59.999999+00", datetime(9999, 12, 31, 23, 59, 59, 999999, tzinfo=UTC))
+
+
+@contextmanager
+def _zone(session: Session, zone: str) -> Generator[None]:
+    session.execute(f"set time zone '{zone}'".encode())
+    try:
+        assert session.info.parameter_status("TimeZone") == zone
+        yield
+    finally:
+        session.execute(b"reset time zone")
+
+
+def _read(session: Session, instant: str) -> object:
+    ((loaded,),) = _rows(session, f"select '{instant}'::timestamptz".encode())
+    return loaded
+
+
+@pytest.mark.parametrize(
+    ("zone", "instant", "expected"),
+    [
+        *(
+            pytest.param(zone, instant, expected, id=f"{zone}-{instant}")
+            for zone in _ZONES
+            for instant, expected in _ORDINARY_INSTANTS
+        ),
+        # Each edge under every zone that spells it within years 1 to 9999, the
+        # years psycopg's text parser reads.
+        *(
+            pytest.param(zone, *_MINIMUM, id=f"{zone}-minimum")
+            for zone in ("UTC", "Etc/UTC", "Asia/Kathmandu")
+        ),
+        *(
+            pytest.param(zone, *_MAXIMUM, id=f"{zone}-maximum")
+            for zone in ("UTC", "Etc/UTC", "America/St_Johns", "America/New_York")
+        ),
+    ],
+)
+def test_a_finite_timestamptz_reads_as_its_utc_instant_whatever_the_session_zone(
+    session: Session, zone: str, instant: str, expected: datetime
+) -> None:
+    with _zone(session, zone):
+        loaded = _read(session, instant)
+
+    assert type(loaded) is datetime
+    assert loaded.tzinfo is UTC
+    assert loaded == expected
+
+
+@pytest.mark.parametrize("zone", _ZONES)
+@pytest.mark.parametrize(
+    "instant",
+    ["0001-01-01 00:30:00+01", "9999-12-31 23:59:59.999999-01"],
+    ids=["before-the-minimum", "after-the-maximum"],
+)
+def test_an_instant_outside_the_utc_range_is_refused_whatever_the_session_zone(
+    session: Session, zone: str, instant: str
+) -> None:
+    with _zone(session, zone), pytest.raises(psycopg.DataError):
+        _read(session, instant)
+
+
+@pytest.mark.parametrize(
+    "spelling",
+    [
+        "0001-01-01 00:00:00+01",
+        "0001-01-01 00:59:59.999999+01",
+        "0001-01-01 00:00:00+00:00:01",
+        "9999-12-31 23:59:59.999999-01",
+        "9999-12-31 23:00:00-01:00:01",
+    ],
+)
+def test_a_local_reading_whose_utc_instant_overflows_is_refused(
+    session: Session, spelling: str
+) -> None:
+    # A session spells an instant in its own zone; this offset leaves the
+    # reading in range and its UTC instant out of it.
+    loader = _LOADERS.timestamptz(_TIMESTAMPTZ_OID, session)
+
+    with pytest.raises(psycopg.DataError):
+        loader.load(spelling.encode())
+
+
 def _outcome(load: Callable[[], object]) -> object:
     """What ``load`` returns, or the refusal it raises as its class and text."""
     try:
@@ -225,39 +318,35 @@ def _outcome(load: Callable[[], object]) -> object:
         return (type(refusal), str(refusal))
 
 
-@pytest.mark.parametrize("zone", ["UTC", "Asia/Kathmandu", "America/St_Johns"])
-@pytest.mark.parametrize(
-    "instant",
-    [
-        "2024-02-29 12:34:56.789012+00",
-        "1999-12-31 23:59:59.999999-08",
-        "2038-01-19 03:14:07.5+05:45",
-        "1900-06-01 00:00:00+01:30",
-        "0001-01-01 00:00:00+00",
-        "9999-12-31 23:59:59.999999+00",
-        "-infinity",
-    ],
-)
-def test_every_other_timestamptz_reads_as_psycopgs_own_loader_reads_it(
-    session: Session, zone: str, instant: str
+@pytest.mark.parametrize("spelling", ["2024-02-30 00:00:00+00", "not a timestamp"])
+def test_a_spelling_psycopg_cannot_read_is_refused_as_psycopg_refuses_it(
+    session: Session, spelling: str
 ) -> None:
     driver_loader = _driver_loader(_TIMESTAMPTZ_OID)
-    session.execute(f"set time zone '{zone}'".encode())
-    try:
-        ((spelling,),) = _rows(session, f"select '{instant}'::timestamptz::text".encode())
+
+    expected = _outcome(lambda: driver_loader(_TIMESTAMPTZ_OID, session).load(spelling.encode()))
+    loaded = _outcome(
+        lambda: _LOADERS.timestamptz(_TIMESTAMPTZ_OID, session).load(spelling.encode())
+    )
+
+    assert isinstance(expected, tuple)
+    assert loaded == expected
+
+
+@pytest.mark.parametrize("zone", _ZONES)
+def test_native_negative_infinity_is_refused_as_psycopg_refuses_it(
+    session: Session, zone: str
+) -> None:
+    driver_loader = _driver_loader(_TIMESTAMPTZ_OID)
+    with _zone(session, zone):
+        ((spelling,),) = _rows(session, b"select '-infinity'::timestamptz::text")
         expected = _outcome(
             lambda: driver_loader(_TIMESTAMPTZ_OID, session).load(cast("str", spelling).encode())
         )
-        loaded = _outcome(lambda: _rows(session, f"select '{instant}'::timestamptz".encode())[0][0])
-    finally:
-        session.execute(b"reset time zone")
+        loaded = _outcome(lambda: _read(session, "-infinity"))
 
-    assert type(loaded) is type(expected)
+    assert isinstance(expected, tuple)
     assert loaded == expected
-    if isinstance(expected, datetime):
-        assert isinstance(loaded, datetime)
-        assert loaded.utcoffset() == expected.utcoffset()
-        assert loaded.microsecond == expected.microsecond
 
 
 def test_the_session_reads_through_the_compiled_loaders(session: Session) -> None:
