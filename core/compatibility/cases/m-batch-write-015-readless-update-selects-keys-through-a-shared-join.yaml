@@ -1,0 +1,35 @@
+model: models/orders.yaml
+tags: [m-batch-write, m-sql, m-unit-work, m-dialect, predicate-write, readless, relationship, to-one, traversal, negation, scenario, update, slice-snapshot-1]
+shape: scenario
+given:
+  fixtures: true
+when:
+  scenario:
+    - write:
+        mutation: amend
+        target:
+          entity: parallax.compatibility.OrderItem
+          predicate:
+            not:
+              operand:
+                and:
+                  operands:
+                    - exists: {path: parallax.compatibility.OrderItem.order}
+                    - eq: {path: parallax.compatibility.OrderItem.order.name, value: Ada}
+        assignments:
+          - { attr: parallax.compatibility.OrderItem.sku, value: Z }
+      roundTrips: 1
+      statements:
+        - sql:
+            postgres: update order_item set sku = ? where id in (select t0.id from order_item t0 left join orders t1 on t1.id = t0.order_id where not (not t1.id is null and t1.name = ?))
+            mariadb: update order_item set sku = ? where id in (select t0.id from order_item t0 left join orders t1 on t1.id = t0.order_id where not (not t1.id is null and t1.name = ?))
+          binds: [Z, Ada]
+then:
+  roundTrips: 1
+  tableState:
+    order_item:
+      - { id: 11, order_id: 1, sku: A-100, quantity: 2, shipped_on: null }
+      - { id: 12, order_id: 1, sku: B-200, quantity: 1, shipped_on: 2024-02-15 }
+      - { id: 21, order_id: 2, sku: Z, quantity: 4, shipped_on: 2024-02-20 }
+      - { id: 421, order_id: 42, sku: Z, quantity: 3, shipped_on: 2024-03-10 }
+      - { id: 422, order_id: 42, sku: Z, quantity: 5, shipped_on: 2024-02-05 }

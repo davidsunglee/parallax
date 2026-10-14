@@ -1,0 +1,35 @@
+model: models/orders.yaml
+tags: [m-batch-write, m-sql, m-unit-work, m-dialect, predicate-write, readless, relationship, to-one, traversal, exists, matching, scenario, delete, slice-snapshot-1]
+shape: scenario
+given:
+  fixtures: true
+when:
+  scenario:
+    - write:
+        mutation: delete
+        target:
+          entity: parallax.compatibility.OrderStatus
+          predicate:
+            and:
+              operands:
+                - eq: {path: parallax.compatibility.OrderStatus.orderItem.order.name, value: Ada}
+                - exists:
+                    path: parallax.compatibility.OrderStatus.orderItem
+                    where:
+                      lessThan: {path: quantity, value: 2}
+      roundTrips: 1
+      statements:
+        - sql:
+            postgres: delete from order_status where id in (select t0.id from order_status t0 left join order_item t1 on t1.id = t0.order_item_id left join orders t2 on t2.id = t1.order_id where t2.name = ? and case when t1.id is null then false else (t1.quantity < ?) is true end)
+            mariadb: delete from order_status where id in (select t0.id from order_status t0 left join order_item t1 on t1.id = t0.order_item_id left join orders t2 on t2.id = t1.order_id where t2.name = ? and case when t1.id is null then false else (t1.quantity < ?) is true end)
+          binds: [Ada, 2]
+then:
+  roundTrips: 1
+  tableState:
+    order_status:
+      - { id: 101, order_id: 1, order_item_id: null, code: NEW }
+      - { id: 102, order_id: 2, order_item_id: null, code: SHIPPED }
+      - { id: 142, order_id: 42, order_item_id: null, code: NEW }
+      - { id: 201, order_id: 1, order_item_id: 11, code: PICKED }
+      - { id: 202, order_id: 1, order_item_id: 11, code: PACKED }
+      - { id: 204, order_id: 42, order_item_id: 421, code: PICKED }

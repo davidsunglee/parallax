@@ -816,7 +816,7 @@ def test_presence_of_a_value_object_past_a_to_one_hop_reads_the_related_document
     )
 
 
-def test_readless_dml_tests_a_value_object_past_a_to_one_hop_in_its_scalar_hop() -> None:
+def test_readless_dml_selects_a_value_object_past_a_to_one_hop_through_its_join() -> None:
     compiled = compile_write_predicate(
         oa.Presence("exists", "Location.customer.address"),
         CUSTOMER,
@@ -824,6 +824,20 @@ def test_readless_dml_tests_a_value_object_past_a_to_one_hop_in_its_scalar_hop()
         target(CUSTOMER, "Location"),
     )
     assert compiled.sql == (
-        "coalesce((select coalesce(jsonb_typeof(t1.address) = ?, false) "
-        "from customer t1 where t1.id = customer_id), false)"
+        "select t0.id from location t0 left join customer t1 on t1.id = t0.customer_id "
+        "where coalesce(jsonb_typeof(t1.address) = ?, false)"
+    )
+
+
+def test_readless_dml_in_place_tests_a_value_object_past_a_hop_in_its_scalar_hop() -> None:
+    compiled = compile_write_predicate(
+        oa.Quantifier("any", "Customer.locations", oa.Presence("exists", "customer.address")),
+        CUSTOMER,
+        POSTGRES,
+        target(CUSTOMER, "Customer"),
+    )
+    assert compiled.sql == (
+        "exists (select 1 from location t1 where t1.customer_id = id and "
+        "coalesce((select coalesce(jsonb_typeof(t2.address) = ?, false) "
+        "from customer t2 where t2.id = t1.customer_id), false))"
     )

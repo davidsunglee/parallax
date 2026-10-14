@@ -321,8 +321,10 @@ def seed_statements(scale: Scale) -> list[str]:
     m, a = scale.match_every, scale.absent_every
     p, customers, vehicles, pets = scale.orders, _customers(scale), _vehicles(scale), _pets(scale)
     coverages, claims = _coverages(scale), _claims(scale)
-    # The last tag and every parcel sku carry the order's own id, so no two
-    # orders hold equal collections and no plan can cache one unnest for many.
+    # Where an order holds at least two tags and parcels, its last tag and its
+    # last parcel's sku carry its own id, so no two orders hold equal nonempty
+    # collections and no plan can cache one unnest for many; an empty
+    # population's collections are all equal.
     tags = (
         "'[]'::jsonb"
         if scale.tags == 0
@@ -357,7 +359,8 @@ def seed_statements(scale: Scale) -> list[str]:
         f"from generate_series(1, {pets}) g",
         "insert into top_order (id, name, status, qty, customer_id, vehicle_id, pet_id, tags, "
         f"parcels) select g, case when mod(g, {m}) = 0 then 'Ada' else 'N' || g end, "
-        "case mod(g, 7) when 0 then null when 1 then 'open' else 'closed' end, mod(g, 20), "
+        "case mod(g, 7) when 0 then null when 1 then 'open' else 'closed' end, "
+        f"case when mod(g, {m}) = 0 then mod(7 * (g / {m}), 20) else mod(g, 20) end, "
         f"case when mod(g, 97) = 0 then null else mod(g, {customers}) + 1 end, "
         f"case when mod(g, 89) = 0 then null else mod(g, {vehicles}) + 1 end, "
         f"case when mod(g, 11) = 0 then null else mod(g, {pets}) + 1 end, {tags}, {parcels} "
@@ -593,8 +596,8 @@ _LATEST_CLAIM: Final = "c.thru_z = 'infinity' and c.out_z = 'infinity'"
 _MARCH_VALID: Final = "{0}.from_z <= '2024-03-01' and {0}.thru_z > '2024-03-01'"
 _MARCH_TX: Final = "{0}.in_z <= '2024-03-01' and {0}.out_z > '2024-03-01'"
 _GUARDED_NEGATION: Final = (
-    "select i.id from top_item i where i.order_id is null or i.order_id in "
-    "(select o.id from top_order o where o.name <> 'Ada')"
+    "select i.id from top_item i where not exists "
+    "(select 1 from top_order o where o.id = i.order_id and o.name = 'Ada')"
 )
 _VIP: Final = "select o.id from top_order o where o.tags @> '[\"vip\"]'"
 
@@ -967,8 +970,8 @@ def _workloads() -> tuple[Workload, ...]:
             "paired",
             "a parent has no related notes, or there is no parent",
             _item(lambda: Item.order.notes.none()),
-            "select i.id from top_item i where i.order_id is null or i.order_id not in "
-            "(select n.order_id from top_order_note n)",
+            "select i.id from top_item i where not exists "
+            "(select 1 from top_order_note n where n.order_id = i.order_id)",
             final_scales=_COLLECTION_SCALES,
             placements=_Placements(_RELATED_PLACEMENTS, (_Quantified("notes", False),)),
         ),
@@ -1268,6 +1271,14 @@ def _restore(server: _Server, workload: Workload) -> None:
     server.write("vacuum analyze top_item")
 
 
+def _compact(server: _Server) -> None:
+    """Rewrite the mutated table in key order and refresh its statistics, so
+    each mutation workload starts from the physical layout seeding left rather
+    than the dead space and appended rows an earlier one did."""
+    server.write("cluster top_item using top_item_pkey")
+    server.write("analyze top_item")
+
+
 def _seeded(profile_run: Any, scale: Scale) -> tuple[ScopedDatabase, _Server, Any]:
     profile_run.reset(META, {})
     db = own_root(connect(profile_run.port, MODEL)).using_database_login()
@@ -1418,6 +1429,8 @@ def capture(
                     continue
                 workload = _BY_ID[workload_id]
                 statements = _variant_statements(workload, selection, frozen)
+                if workload.kind != "read":
+                    _compact(server)
                 files: dict[str, str] = {}
                 for variant, statement in statements.items():
                     suffix = f"{workload.id}-{variant}-statement"
@@ -1501,8 +1514,9 @@ def capture(
                 "samples": selection.samples,
                 "explains": selection.explains,
                 "order": "variants alternate first place each round; ordinary rounds precede "
-                "EXPLAIN rounds; a mutation runs in a rolled-back transaction and its table is "
-                "vacuumed after every execution",
+                "EXPLAIN rounds; a mutation workload starts from its table clustered on the "
+                "primary key and analyzed, and each of its executions runs in a rolled-back "
+                "transaction after which the table is vacuumed",
                 "ordinaryTiming": "client wall clock of execution plus full result transfer",
                 "explainTiming": "server-reported planning and execution time",
             },

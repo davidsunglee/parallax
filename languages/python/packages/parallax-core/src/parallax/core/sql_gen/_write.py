@@ -526,7 +526,10 @@ def _target_predicate(
     two renderings of one selection, chosen by cardinality alone. Either way the
     table-per-hierarchy tag guard follows the key, because every addressed row of
     one step is the same concrete subtype. A Milestone Target adds its axis upper
-    bounds after that guard, so the whole address renders before any gate.
+    bounds after that guard, so the whole address renders before any gate. A
+    Resolved Mutation Selection renders its predicate in place, or tests the
+    membership of the Table's physical key in the key selection its compiled
+    predicate is, inside this one statement.
     """
     match target:
         case ResolvedMutationSelection(predicate=predicate):
@@ -534,6 +537,8 @@ def _target_predicate(
             if compiled.lowered is None:  # pragma: no cover - compiler always retains proof
                 raise SqlGenError("compiled predicate carries no lowered statement")
             ctx.append_fragment(compiled.lowered)
+            if compiled.selection:
+                return f"{_physical_key(view, dialect)} in ({compiled.sql})"
             return compiled.sql
         case KeyTarget():
             key_sql = _key_predicate(ctx, view, target, entity, meta, dialect)
@@ -547,6 +552,13 @@ def _target_predicate(
             tag_sql = _tag_guard(ctx, view, dialect)
             end_sql = _axis_ends(ctx, view, target, entity, meta, dialect)
             return f"{key_sql}{tag_sql}{end_sql}"
+
+
+def _physical_key(view: EntityLayoutView, dialect: Dialect) -> str:
+    """The Table's physical primary-key Columns in key order, as one membership
+    operand: the Column itself, or the row of them."""
+    columns = [dialect.quote(slot.column.name) for slot in view.layout.physical_primary_key]
+    return columns[0] if len(columns) == 1 else f"({', '.join(columns)})"
 
 
 def _axis_ends(

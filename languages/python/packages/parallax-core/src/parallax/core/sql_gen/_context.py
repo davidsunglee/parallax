@@ -418,6 +418,10 @@ class SourcePlan[Candidate, Scope]:
     def placement(self, demand: object) -> DemandPlacement[Candidate, Scope] | None:
         return self._placements.get(id(demand))
 
+    def shares(self) -> bool:
+        """Whether any demand reads through a shared source."""
+        return bool(self.sources)
+
     def rendered(self) -> bool:
         """Whether every planned source and owner result has rendered."""
         return all(source.scope is not None for source in self.sources) and all(

@@ -120,6 +120,13 @@ Predicate binds come after those assignment binds. `delete` is exactly:
 delete from <table> where <predicate>
 ```
 
+Where a demand of the predicate reads a shared to-one join (`m-sql` *Shared
+to-one joins*), the `where` instead tests the membership of the target's physical
+primary key in a selection of the rows the predicate matches, `<key> in (select
+t0.<key> from <table> t0 <joins> where <predicate>)`, inside the same statement:
+the write still reads nothing back and returns no key, and the selection's binds
+still follow the assignment binds.
+
 `m-batch-write-005` pins readless predicate delete and
 `m-batch-write-006` pins the update's layout-order SQL and bind determinism.
 Reladomo's transaction behavior remains prior art for the materializing branch:

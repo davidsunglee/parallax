@@ -192,7 +192,7 @@ Three literals are *not* parameters and remain canonical: the `1 = 0`
 `none`-identity, the `select 1` `EXISTS` probe, and the optimizer-fence
 `offset 0`. DML keeps its own canonical shape — an **unaliased** target table with
 **bare** columns (`update balance set out_z = ? where bal_id = ?`) — so rule 1
-applies to reads only.
+applies to reads only, the key selection a readless write nests among them.
 
 ## What is normative vs. dialect-local
 
@@ -913,13 +913,31 @@ eq(Ticket.parking.vehicle.dealer.name, 'Nordic')
              from traversal_car t5 where t5.id = t1.vehicle_id and t1.id = t0.parking_id) = ?
 ```
 
+A readless predicate write (`m-batch-write`) has no `from` of its own to join.
+Where a demand of its predicate reads a shared join at the target's own row, the
+write instead **selects its keys**: a read of the target's Table, aliased `t0`,
+projecting every Column of its physical primary key in key order, followed by
+the joins and `where` a read of the same predicate renders — every demand
+planned, placed, and guarded as there — and the write tests its own key's
+membership in it, the key a parenthesized row where it has several Columns.
+The selection follows the `set` assignments, so its binds follow theirs:
+
+```text
+amend(OrderItem, sku = 'Z') where not(and(exists(OrderItem.order), eq(OrderItem.order.name, 'Ada')))
+  → update order_item set sku = ? where id in (select t0.id from order_item t0
+      left join orders t1 on t1.id = t0.order_id where not (not t1.id is null and t1.name = ?))
+```
+
+A readless write whose demands share nothing keeps its predicate in place,
+unaliased, as the `where` of its `update` or `delete`.
+
 Every other demand keeps its scalar form: one left with no proven hop to share,
 a quantifier over a relationship with no candidate, which answers inside its
 hops, every demand of a path-targeted `narrow`'s operand, which its target's
-joined row or subquery evaluates, and every demand of readless predicate DML,
-whose statement has no `from` to join (`m-batch-write`). A locking read keeps its
-scalar forms on a dialect whose shared-row lock cannot be limited to the root
-alias (`m-dialect`).
+joined row or subquery evaluates, and every demand of a readless write's
+predicate rendered in place, those of a match's or quantifier's operand
+included. A locking read keeps its scalar forms on a dialect whose shared-row
+lock cannot be limited to the root alias (`m-dialect`).
 
 #### Correlated scalar subqueries
 
@@ -935,12 +953,16 @@ path-targeted `narrow` selects its subtype test. Each further hop nests another
 scalar subquery inside the one before it, its select list read through the inner
 hop, whether or not that hop is proven: a subquery the database evaluates once per
 row joins nothing of its own, nor does a correlated `exists` nested inside it.
-Readless predicate DML renders the path above so:
+A readless write rendering its predicate in place reaches past a hop that is not
+proven so:
 
 ```text
-eq(OrderStatus.orderItem.order.name, 'Ada')
-  → … where (select (select t1.name from orders t1 where t1.id = t2.order_id)
-             from order_item t2 where t2.id = order_item_id) = ?
+eq(Parking.vehicle.dealer.name, 'Nordic')
+  → … where (select (select t1.name from traversal_dealer t1 where t1.id = t2.dealer_id)
+             from traversal_bike t2 where t2.id = vehicle_id
+             union all
+             select (select t3.name from traversal_dealer t3 where t3.id = t4.dealer_id)
+             from traversal_car t4 where t4.id = vehicle_id) = ?
 ```
 
 Aliases follow **source order** (rule 1): the inner hop's sub-select precedes the

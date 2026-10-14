@@ -407,6 +407,11 @@ lowering an approximation. MariaDB's native cardinality failure (errno `1242`) f
 a to-one hop reaching several candidates follows the execution error route as
 Postgres's `21000` does (`m-db-error`).
 
+A readless write's key selection (`m-sql` *Shared to-one joins*) reads the very
+Table its `update` or `delete` modifies. MariaDB admits that subquery and
+evaluates it completely before modifying a row, so both dialects spell the same
+membership; its affected-row count keeps the *Unchanged-row count* rule below.
+
 ### Document mutation-expression form (`m-storage-layout`)
 
 A Relational Document Layout `UPDATE` assigns one or more logical paths inside
