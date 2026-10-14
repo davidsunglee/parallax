@@ -1,7 +1,8 @@
 # Tenant / Lease / LeaseNote: the MIXED-temporality chain. A single path crosses
 # both mixed directions: Tenant.leases is non-temporal -> temporal (the child
 # Lease defaults every axis to LATEST), and Lease.notes is temporal ->
-# non-temporal (the child LeaseNote carries NO as-of term). Proves the two mixed
+# non-temporal (the child LeaseNote carries NO as-of term); its reverse,
+# LeaseNote.lease, is non-temporal -> temporal again. Proves the two mixed
 # rules of m-navigate's as-of-propagation section. Row data lives in fixtures/lease.yaml.
 entities:
   - name: Tenant
@@ -40,5 +41,7 @@ entities:
       - { name: id, type: int64, primaryKey: true }
       - { name: leaseId, type: int64 }
       - { name: text, type: string, column: note_text, maxLength: 64 }
+    relationships:
+      - { name: lease, reverseOf: parallax.compatibility.Lease.notes }
     indices:
       - { name: lease_note_lease, attributes: [leaseId] }

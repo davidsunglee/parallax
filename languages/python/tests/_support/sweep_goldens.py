@@ -151,6 +151,8 @@ _READLESS_PREDICATE_WRITE_SCENARIOS: Final[frozenset[str]] = frozenset(
         "m-batch-write-015",
         "m-batch-write-016",
         "m-batch-write-017",
+        "m-batch-write-018",
+        "m-batch-write-019",
     }
 )
 _READLESS_BARRIER_SCENARIOS: Final[frozenset[str]] = frozenset({"m-batch-write-011"})

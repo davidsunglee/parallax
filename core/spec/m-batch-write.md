@@ -127,6 +127,15 @@ t0.<key> from <table> t0 <joins> where <predicate>)`, inside the same statement:
 the write still reads nothing back and returns no key, and the selection's binds
 still follow the assignment binds.
 
+The selection reads the target's rows as the statement's snapshot holds them.
+Under Read Committed (`m-db-port`), a key-selecting write is therefore not
+re-evaluated against a version of a target row that a concurrent transaction
+committed after that snapshot: it writes the row even where that version's own
+columns, the correlation columns its joins read included, no longer match.
+Read Committed permits that outcome. Under PostgreSQL's Repeatable Read the same
+race raises the snapshot conflict `m-db-error` classifies as retryable, whichever
+form the write takes.
+
 `m-batch-write-005` pins readless predicate delete and
 `m-batch-write-006` pins the update's layout-order SQL and bind determinism.
 Reladomo's transaction behavior remains prior art for the materializing branch:

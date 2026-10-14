@@ -1,0 +1,30 @@
+model: models/lease.yaml
+tags: [m-batch-write, m-sql, m-navigate, m-unit-work, m-dialect, m-temporal-read, predicate-write, readless, relationship, to-one, exists, matching, negation, temporal, propagation, mixed, scenario, update, slice-snapshot-1]
+shape: scenario
+given:
+  fixtures: true
+when:
+  scenario:
+    - write:
+        mutation: amend
+        target:
+          entity: parallax.compatibility.LeaseNote
+          predicate:
+            notExists:
+              path: parallax.compatibility.LeaseNote.lease
+              where:
+                eq: {path: term, value: 12mo}
+        assignments:
+          - { attr: parallax.compatibility.LeaseNote.text, value: lapsed }
+      roundTrips: 1
+      statements:
+        - sql:
+            postgres: update lease_note set note_text = ? where not exists (select 1 from lease t1 where t1.id = lease_id and t1.term = ? and t1.out_z = ?)
+            mariadb: update lease_note set note_text = ? where not exists (select 1 from lease t1 where t1.id = lease_id and t1.term = ? and t1.out_z = ?)
+          binds: [lapsed, 12mo, infinity]
+then:
+  roundTrips: 1
+  tableState:
+    lease_note:
+      - { id: 100, lease_id: 10, note_text: lapsed }
+      - { id: 101, lease_id: 10, note_text: lapsed }
