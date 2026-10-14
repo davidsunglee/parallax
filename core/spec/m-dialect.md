@@ -397,7 +397,7 @@ extraction and typed cast forms above, inside the shared joins and scalar
 subqueries `m-sql` emits),
 to-one relationship presence and matching whose `where` holds only forms this lane
 executes, bare path-targeted subtype tests, bare scalar-collection and value-object occupancy
-(`any` / `none` with no `where`) under the `<g>` guard, and the value-object
+(`any` / `none` with no `where`) under the `<g>` guard, in owner results too, and the value-object
 containment forms the containment golden covers. A MariaDB implementation **MUST
 reject**, with a capability diagnostic naming the unsupported form, a filtered
 scalar quantifier (`any` / `none` with a `where`), every `all`, a path-targeted
@@ -773,10 +773,10 @@ placement-free spelling `m-deep-fetch-012` already witnesses).
     unchanged (`m-opt-lock` takes no lock).
 
   Only the root alias's rows are locked. Postgres's qualified form names the root
-  alias, so a locking read may join shared to-one targets (`m-sql` *Shared to-one
-  joins*); MariaDB's unqualified form would also lock every joined target row, so
-  a locking MariaDB read joins nothing beside its root and keeps its to-one
-  demands in their correlated subqueries.
+  alias, so a locking read may join shared to-one targets and their owner results
+  (`m-sql` *Shared to-one joins*); MariaDB's unqualified form would also lock
+  every joined row, so a locking MariaDB read joins nothing beside its root and
+  keeps its to-one demands in their correlated subqueries.
 
   This decision point specifies object-find locking only; it defines no lock
   behavior for any other read shape. Prior art: Reladomo keeps aggregated-data

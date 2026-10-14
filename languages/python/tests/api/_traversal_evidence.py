@@ -450,6 +450,25 @@ def compare_summaries(baseline: Mapping[str, Any], current: Mapping[str, Any]) -
     }
 
 
+def compare_variants(summaries: Mapping[str, Mapping[str, Any]]) -> dict[str, object]:
+    """Every measured variant's server median and per-relation work, side by
+    side, for a bake-off that measured more than its production statements."""
+    names = sorted({name for summary in summaries.values() for name in summary["relations"]})
+    empty = {"nodes": 0, "loops": 0, "rows": 0, "sharedHit": 0}
+    return {
+        "executionMedianMs": {
+            variant: summary["executionMs"]["median"] for variant, summary in summaries.items()
+        },
+        "relations": {
+            name: {
+                variant: summary["relations"].get(name, empty)
+                for variant, summary in summaries.items()
+            }
+            for name in names
+        },
+    }
+
+
 def _spread(samples: Sequence[float]) -> dict[str, float]:
     return {
         "median": statistics.median(samples),
@@ -705,7 +724,9 @@ def validate_capture(
             f"{label} measures variants other than its selected ones",
         )
         if known.pairing == "current-only":
-            check.expect(set(variants) == {"current"}, f"{label} is current-only")
+            check.expect(
+                "current" in variants and "baseline" not in variants, f"{label} is current-only"
+            )
         else:
             check.expect(baseline is not None, f"{label} is paired but references no baseline")
             check.expect(

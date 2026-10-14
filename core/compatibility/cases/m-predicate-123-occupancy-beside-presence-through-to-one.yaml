@@ -1,0 +1,48 @@
+model: models/predicate-collections.yaml
+tags: [m-predicate, quantifier, scalar-collection, relationship, to-one, exists, m-dialect, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  objectQuery:
+    target: parallax.compatibility.Basket
+    predicate:
+      and:
+        operands:
+        - exists: {path: parallax.compatibility.Basket.owner}
+        - any: {path: parallax.compatibility.Basket.owner.tags}
+then:
+  statements:
+  - sql: {postgres: 'select t0.id, t0.label, t0.owner_id, not t0.tags is null, t0.tags, not t0.scores is null, t0.scores, not t0.prices is null, t0.prices, not t0.flags is null, t0.flags, not t0.parcels is null, t0.parcels, not t0.meta is null, t0.meta from basket t0 left join basket_owner t1 on t1.id = t0.owner_id left join (select t3.id, exists (select 1 from jsonb_array_elements(case when jsonb_typeof(t3.tags) = ? then t3.tags else cast(? as jsonb) end) t2) q0 from basket_owner t3) r0 on r0.id = t1.id where not t1.id is null and coalesce(r0.q0, false)', mariadb: 'select t0.id, t0.label, t0.owner_id, not t0.tags is null, t0.tags, not t0.scores is null, t0.scores, not t0.prices is null, t0.prices, not t0.flags is null, t0.flags, not t0.parcels is null, t0.parcels, not t0.meta is null, t0.meta from basket t0 left join basket_owner t1 on t1.id = t0.owner_id left join (select t2.id, json_type(json_extract(t2.tags, ?)) = ? and json_length(t2.tags, ?) > ? q0 from basket_owner t2) r0 on r0.id = t1.id where not t1.id is null and coalesce(r0.q0, false)'}
+    binds:
+      postgres: [array, '[]']
+      mariadb: [$, ARRAY, $, 0]
+  graph:
+    Basket:
+    - id: 1
+      label: one
+      ownerId: 1
+      tags: [urgent, gift]
+      scores: [5, 25]
+      prices: ['1.50']
+      flags: [true]
+      parcels:
+      - sku: a
+        qty: 2
+        notes: [x]
+      - sku: b
+        qty: 0
+        notes: []
+      meta:
+        labels: [m]
+    - id: 4
+      label: four
+      ownerId: 3
+      tags: [urgent]
+      scores: [0]
+      prices: []
+      flags: [true, false]
+      parcels:
+      - sku: d
+        qty: 1
+        notes: [urgent, x]
+      meta: null
+  roundTrips: 1

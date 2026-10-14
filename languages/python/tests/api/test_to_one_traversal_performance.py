@@ -25,9 +25,9 @@ import sys
 import time
 from collections import Counter
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Final, cast
+from typing import Any, Final, Literal, cast
 
 import pytest
 
@@ -258,7 +258,7 @@ class Scale:
 
 
 SCALES: Final[Mapping[str, Scale]] = {
-    "smoke": Scale(24, 3, 4, 5, 3, 3, 2, "bounded semantic smoke data, not a measurement"),
+    "smoke": Scale(24, 3, 4, 5, 4, 3, 2, "bounded semantic smoke data, not a measurement"),
     "focused": Scale(
         20_000, 10, 100, 1_000, 8, 4, 2, "200,000 roots: iteration-sized, absences included"
     ),
@@ -321,17 +321,20 @@ def seed_statements(scale: Scale) -> list[str]:
     m, a = scale.match_every, scale.absent_every
     p, customers, vehicles, pets = scale.orders, _customers(scale), _vehicles(scale), _pets(scale)
     coverages, claims = _coverages(scale), _claims(scale)
+    # The last tag and every parcel sku carry the order's own id, so no two
+    # orders hold equal collections and no plan can cache one unnest for many.
     tags = (
         "'[]'::jsonb"
         if scale.tags == 0
-        else "(select jsonb_agg(case when e > 1 then 't' || mod(g + e, 10) when mod(g, "
-        f"{m}) = 0 then 'vip' else 't0' end order by e) "
-        f"from generate_series(1, {scale.tags}) e)"
+        else f"(select jsonb_agg(case when e > 1 and e = {scale.tags} then 't' || g "
+        f"when e > 1 then 't' || mod(g + e, 10) when mod(g, {m}) = 0 then 'vip' "
+        f"else 't0' end order by e) from generate_series(1, {scale.tags}) e)"
     )
     parcels = (
         "'[]'::jsonb"
         if scale.parcels == 0
-        else "(select jsonb_agg(jsonb_build_object('sku', 's' || e, 'qty', mod(g + e, 7)) "
+        else "(select jsonb_agg(jsonb_build_object('sku', case when e = 1 and mod(g, "
+        f"{m}) = 0 then 'gift' else 's' || e || '-' || g end, 'qty', mod(g + e, 7)) "
         f"order by e) from generate_series(1, {scale.parcels}) e)"
     )
     absent = "false" if a == 0 else f"mod(g, {a}) = 0"
@@ -398,6 +401,8 @@ _DISTRIBUTIONS: Final[Mapping[str, str]] = {
         "where order_id is not null group by order_id) r"
     ),
     "tagElements": "select coalesce(sum(jsonb_array_length(tags)), 0) from top_order",
+    "distinctTagCollections": "select count(distinct tags) from top_order",
+    "distinctParcelCollections": "select count(distinct parcels) from top_order",
     "notes": "select count(*) from top_order_note",
 }
 
@@ -412,11 +417,39 @@ _HEADLINE: Final = ("ticket", "ticket-selective", "ticket-unshared")
 _COLLECTION_SCALES: Final = ("ticket", "collections-empty", "collections-large", "ticket-unshared")
 
 
+type _Collection = Literal["tags", "parcels", "notes"]
+type _Placement = Literal["per-owner", "local-exists", "global", "reachable", "matching-key"]
+
+
+@dataclass(frozen=True, slots=True)
+class _Quantified:
+    """One quantifier of an order's collection, spelled for a candidate
+    placement: whether an element passing ``test`` exists — any element where
+    ``test`` is ``None`` — or, unless ``exists``, whether none does. ``test``
+    reads the element as `e` and takes ``binds`` in order."""
+
+    collection: _Collection
+    exists: bool
+    test: str | None = None
+    binds: tuple[object, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class _Placements:
+    """Test-owned alternatives to a collection workload's production SQL: each
+    named placement answers ``demands`` through the item's order `o`, and
+    ``combined`` joins their answers."""
+
+    names: tuple[_Placement, ...]
+    demands: tuple[_Quantified, ...]
+    combined: str = "{0}"
+
+
 @dataclass(frozen=True, slots=True)
 class Workload:
     """One measured query shape: the Typed query authoring it, the independent
-    SQL reading of the roots it selects (or the rows it writes), and where it
-    runs in the final campaign."""
+    SQL reading of the roots it selects (or the rows it writes), where it runs
+    in the final campaign, and any candidate placements a bake-off may select."""
 
     id: str
     pairing: evidence.Pairing
@@ -426,17 +459,118 @@ class Workload:
     kind: evidence.Kind = "read"
     observation: evidence.Observation = "multiset"
     final_scales: tuple[str, ...] = ("ticket",)
-    variants: tuple[str, ...] = field(default=evidence.PRODUCTION_VARIANTS)
+    placements: _Placements | None = None
 
     @property
     def suite(self) -> evidence.Suite:
         return cast("evidence.Suite", self.id.partition(".")[0])
 
     def classification(self) -> evidence.Classification:
-        variants = ("current",) if self.pairing == "current-only" else self.variants
-        return evidence.Classification(
-            self.id, self.suite, self.pairing, self.kind, self.observation, variants
+        production = (
+            ("current",) if self.pairing == "current-only" else evidence.PRODUCTION_VARIANTS
         )
+        candidates = () if self.placements is None else self.placements.names
+        return evidence.Classification(
+            self.id,
+            self.suite,
+            self.pairing,
+            self.kind,
+            self.observation,
+            (*production, *candidates),
+        )
+
+
+_ROW: Final = "select i.id, i.order_id, i.sku, i.quantity, i.flagged from top_item i"
+_TAG: Final = "case when jsonb_typeof(e.value) = 'string' then e.value #>> '{}' end"
+
+
+def _elements(collection: _Collection, owner: str) -> tuple[str, str | None]:
+    """The source of ``owner``'s elements, and the correlation a related
+    collection needs beside it."""
+    if collection == "notes":
+        return "top_order_note e", f"e.order_id = {owner}.id"
+    carrier = f"{owner}.{collection}"
+    guarded = f"case when jsonb_typeof({carrier}) = 'array' then {carrier} else '[]'::jsonb end"
+    return f"jsonb_array_elements({guarded}) e", None
+
+
+def _some(demand: _Quantified, owner: str) -> str:
+    """Whether some element of ``owner`` passes ``demand``'s test."""
+    source, correlation = _elements(demand.collection, owner)
+    terms = [term for term in (correlation, demand.test) if term is not None]
+    where = f" where {' and '.join(terms)}" if terms else ""
+    return f"exists (select 1 from {source}{where})"
+
+
+def _grouped(demands: Sequence[_Quantified], *, reachable: bool) -> str:
+    """Every order's elements grouped by order, one `bool_or` per demand of
+    its one collection."""
+    source, correlation = _elements(demands[0].collection, "g")
+    joined = f"join {source} on {correlation}" if correlation else f"cross join {source}"
+    cells = ", ".join(
+        f"bool_or(({demand.test or 'true'}) is true) d{index}"
+        for index, demand in enumerate(demands)
+    )
+    restricted = (
+        " where exists (select 1 from top_item x where x.order_id = g.id)" if reachable else ""
+    )
+    return f"select g.id, {cells} from top_order g {joined}{restricted} group by g.id"
+
+
+def placement_statement(placements: _Placements, name: _Placement) -> LoweredStatement:
+    """``name``'s spelling of a collection workload's read."""
+    demands = placements.demands
+    joins = ["left join top_order o on o.id = i.order_id"]
+    answers: list[str] = []
+    if name == "local-exists":
+        answers = [
+            _some(demand, "o") if demand.exists else f"not {_some(demand, 'o')}"
+            for demand in demands
+        ]
+    elif name == "per-owner":
+        cells = ", ".join(
+            f"{'' if demand.exists else 'not '}{_some(demand, 'g')} d{index}"
+            for index, demand in enumerate(demands)
+        )
+        joins.append(f"left join (select g.id, {cells} from top_order g) r on r.id = o.id")
+        answers = [
+            f"coalesce(r.d{index}, {'false' if demand.exists else 'true'})"
+            for index, demand in enumerate(demands)
+        ]
+    elif name == "matching-key":
+        for index, demand in enumerate(demands):
+            source, correlation = _elements(demand.collection, "g")
+            joined = f"join {source} on {correlation}" if correlation else f"cross join {source}"
+            where = f" where {demand.test}" if demand.test else ""
+            joins.append(
+                f"left join (select g.id from top_order g {joined}{where} group by g.id) "
+                f"m{index} on m{index}.id = o.id"
+            )
+            answers.append(f"{'not ' if demand.exists else ''}m{index}.id is null")
+    else:
+        relation = _grouped(demands, reachable=name == "reachable")
+        joins.append(f"left join ({relation}) r on r.id = o.id")
+        answers = [
+            f"{'' if demand.exists else 'not '}coalesce(r.d{index}, false)"
+            for index, demand in enumerate(demands)
+        ]
+    where = placements.combined.format(*answers)
+    binds = tuple(bind for demand in demands for bind in demand.binds)
+    return LoweredStatement(f"{_ROW} {' '.join(joins)} where {where}", binds)
+
+
+_DOCUMENT_PLACEMENTS: Final[tuple[_Placement, ...]] = (
+    "local-exists",
+    "global",
+    "reachable",
+    "matching-key",
+)
+_RELATED_PLACEMENTS: Final[tuple[_Placement, ...]] = (
+    "per-owner",
+    "global",
+    "reachable",
+    "matching-key",
+)
 
 
 def _item(predicate: Callable[[], Predicate[Any]]) -> Callable[[], ObjectQuery[Any, Any]]:
@@ -695,6 +829,24 @@ def _workloads() -> tuple[Workload, ...]:
             _item(lambda: Item.order.tags.any(Item.order.tags.element == "vip")),
             f"select i.id from top_item i where i.order_id in ({_VIP})",
             final_scales=_COLLECTION_SCALES,
+            placements=_Placements(
+                _DOCUMENT_PLACEMENTS, (_Quantified("tags", True, f"{_TAG} = ?", ("vip",)),)
+            ),
+        ),
+        Workload(
+            "collections.scalar-any-few-roots",
+            "current-only",
+            "a thousand roots whose parent's scalar collection holds vip",
+            _item(
+                lambda: (Item.id <= 1_000) & Item.order.tags.any(Item.order.tags.element == "vip")
+            ),
+            f"select i.id from top_item i where i.id <= 1000 and i.order_id in ({_VIP})",
+            final_scales=("ticket", "ticket-unshared"),
+            placements=_Placements(
+                _DOCUMENT_PLACEMENTS,
+                (_Quantified("tags", True, f"{_TAG} = ?", ("vip",)),),
+                "i.id <= 1000 and {0}",
+            ),
         ),
         Workload(
             "collections.scalar-none-bare",
@@ -704,6 +856,7 @@ def _workloads() -> tuple[Workload, ...]:
             "select i.id from top_item i left join top_order o on o.id = i.order_id "
             "where o.id is null or jsonb_array_length(o.tags) = 0",
             final_scales=_COLLECTION_SCALES,
+            placements=_Placements(_DOCUMENT_PLACEMENTS, (_Quantified("tags", False),)),
         ),
         Workload(
             "collections.scalar-all",
@@ -714,6 +867,10 @@ def _workloads() -> tuple[Workload, ...]:
             "where o.id is null or not exists (select 1 from jsonb_array_elements_text(o.tags) "
             "e(v) where left(v, 1) <> 't')",
             final_scales=_COLLECTION_SCALES,
+            placements=_Placements(
+                _DOCUMENT_PLACEMENTS,
+                (_Quantified("tags", False, f"not ({_TAG} like ?) is true", ("t%",)),),
+            ),
         ),
         Workload(
             "collections.scalar-independent-any",
@@ -728,6 +885,14 @@ def _workloads() -> tuple[Workload, ...]:
             "select i.id from top_item i where i.order_id in (select o.id from top_order o "
             "where o.tags @> '[\"vip\"]' and o.tags @> '[\"t3\"]')",
             final_scales=_COLLECTION_SCALES,
+            placements=_Placements(
+                _DOCUMENT_PLACEMENTS,
+                (
+                    _Quantified("tags", True, f"{_TAG} = ?", ("vip",)),
+                    _Quantified("tags", True, f"{_TAG} = ?", ("t3",)),
+                ),
+                "{0} and {1}",
+            ),
         ),
         Workload(
             "collections.scalar-same-element",
@@ -742,6 +907,10 @@ def _workloads() -> tuple[Workload, ...]:
             "where exists (select 1 from jsonb_array_elements_text(o.tags) e(v) "
             "where v >= 't1' and v < 't2'))",
             final_scales=_COLLECTION_SCALES,
+            placements=_Placements(
+                _DOCUMENT_PLACEMENTS,
+                (_Quantified("tags", True, f"{_TAG} >= ? and {_TAG} < ?", ("t1", "t2")),),
+            ),
         ),
         Workload(
             "collections.value-object-any",
@@ -752,6 +921,34 @@ def _workloads() -> tuple[Workload, ...]:
             "where exists (select 1 from jsonb_array_elements(o.parcels) e "
             "where (e ->> 'qty')::int > 3))",
             final_scales=_COLLECTION_SCALES,
+            placements=_Placements(
+                ("per-owner", *_DOCUMENT_PLACEMENTS),
+                (
+                    _Quantified(
+                        "parcels",
+                        True,
+                        "cast(jsonb_extract_path_text(e.value, 'qty') as bigint) > ?",
+                        (3,),
+                    ),
+                ),
+            ),
+        ),
+        Workload(
+            "collections.value-object-text-any",
+            "current-only",
+            "a parent's many Value Object holds a gift parcel, compared as text",
+            _item(lambda: Item.order.parcels.any(Parcel.sku == "gift")),
+            "select i.id from top_item i where i.order_id in (select o.id from top_order o "
+            'where o.parcels @> \'[{"sku": "gift"}]\')',
+            final_scales=_COLLECTION_SCALES,
+            placements=_Placements(
+                _DOCUMENT_PLACEMENTS,
+                (
+                    _Quantified(
+                        "parcels", True, "jsonb_extract_path_text(e.value, 'sku') = ?", ("gift",)
+                    ),
+                ),
+            ),
         ),
         Workload(
             "collections.related-any",
@@ -761,6 +958,9 @@ def _workloads() -> tuple[Workload, ...]:
             "select i.id from top_item i where i.order_id in "
             "(select n.order_id from top_order_note n where n.kind = 'urgent')",
             final_scales=_COLLECTION_SCALES,
+            placements=_Placements(
+                _RELATED_PLACEMENTS, (_Quantified("notes", True, "e.kind = ?", ("urgent",)),)
+            ),
         ),
         Workload(
             "collections.related-none-bare",
@@ -770,6 +970,7 @@ def _workloads() -> tuple[Workload, ...]:
             "select i.id from top_item i where i.order_id is null or i.order_id not in "
             "(select n.order_id from top_order_note n)",
             final_scales=_COLLECTION_SCALES,
+            placements=_Placements(_RELATED_PLACEMENTS, (_Quantified("notes", False),)),
         ),
         Workload(
             "collections.guarded-occupancy",
@@ -779,6 +980,9 @@ def _workloads() -> tuple[Workload, ...]:
             "select i.id from top_item i where i.order_id in "
             "(select o.id from top_order o where jsonb_array_length(o.tags) > 0)",
             final_scales=_COLLECTION_SCALES,
+            placements=_Placements(
+                _DOCUMENT_PLACEMENTS, (_Quantified("tags", True),), "not o.id is null and {0}"
+            ),
         ),
         Workload(
             "writes.update-dotted-eq",
@@ -1242,6 +1446,16 @@ def capture(
                     if set(measured) >= set(evidence.PRODUCTION_VARIANTS)
                     else None
                 )
+                placements = (
+                    evidence.compare_variants(
+                        {
+                            variant: cast("Mapping[str, Any]", samples["summary"])
+                            for variant, samples in measured.items()
+                        }
+                    )
+                    if set(measured) - set(evidence.PRODUCTION_VARIANTS)
+                    else None
+                )
                 entries.append(
                     {
                         "id": workload.id,
@@ -1250,6 +1464,7 @@ def capture(
                         "kind": workload.kind,
                         "variants": variants,
                         "comparison": comparison,
+                        "placements": placements,
                         "observations": {
                             "parity": observed.parity,
                             "reference": observed.reference,
@@ -1315,6 +1530,8 @@ def _variant_statements(
             statements[variant] = frozen[workload.id]
         elif variant == "current":
             statements[variant] = compile_statement(workload)
+        elif workload.placements is not None and variant in workload.placements.names:
+            statements[variant] = placement_statement(workload.placements, variant)
         else:
             raise evidence.EvidenceError(f"{workload.id} renders no {variant!r} statement")
     return statements
@@ -1448,6 +1665,7 @@ _SMOKE_WORKLOADS: Final = (
     "mixed.unsafe-middle-hop",
     "collections.scalar-all",
     "collections.value-object-any",
+    "collections.value-object-text-any",
     "writes.delete-dotted-eq",
     "writes.update-match",
 )
@@ -1457,14 +1675,20 @@ def test_every_workload_agrees_with_its_reference_on_smoke_data(profile_run: Any
     db, server, control = _seeded(profile_run, SCALES["smoke"])
     try:
         stored = db.find(Order.where(Order.id == 4)).result()
-        assert stored.tags == ("vip", "t6", "t7")
+        assert stored.tags == ("vip", "t6", "t7", "t4")
         assert stored.parcels == (
-            Parcel(sku="s1", qty=5),
-            Parcel(sku="s2", qty=6),
-            Parcel(sku="s3", qty=0),
+            Parcel(sku="gift", qty=5),
+            Parcel(sku="s2-4", qty=6),
+            Parcel(sku="s3-4", qty=0),
         )
         for workload in WORKLOADS:
-            observed = observe(db, server, workload, {"current": compile_statement(workload)})
+            statements = {"current": compile_statement(workload)}
+            if workload.placements is not None:
+                statements |= {
+                    name: placement_statement(workload.placements, name)
+                    for name in workload.placements.names
+                }
+            observed = observe(db, server, workload, statements)
             assert observed.parity, (workload.id, observed)
             assert observed.reference["count"], workload.id
     finally:
@@ -1481,6 +1705,7 @@ def test_a_bounded_capture_replays_and_validates(profile_run: Any, tmp_path: Pat
         {
             f"{evidence.ENVIRONMENT_PREFIX}SUITE": "all",
             f"{evidence.ENVIRONMENT_PREFIX}WORKLOADS": ",".join(_SMOKE_WORKLOADS),
+            f"{evidence.ENVIRONMENT_PREFIX}VARIANTS": "baseline,current,global",
             f"{evidence.ENVIRONMENT_PREFIX}SCALE": "smoke",
             f"{evidence.ENVIRONMENT_PREFIX}WARMUPS": "0",
             f"{evidence.ENVIRONMENT_PREFIX}SAMPLES": "2",
@@ -1493,7 +1718,13 @@ def test_a_bounded_capture_replays_and_validates(profile_run: Any, tmp_path: Pat
     document = evidence.load(manifest)
     paired = [entry for entry in document["workloads"] if entry["pairing"] == "paired"]
     assert paired and all(entry["comparison"] for entry in paired)
-    assert Counter(entry["pairing"] for entry in document["workloads"])["current-only"] == 2
+    assert Counter(entry["pairing"] for entry in document["workloads"])["current-only"] == 3
+    measured = {entry["id"] for entry in document["workloads"] if entry["placements"]}
+    assert measured == {
+        "collections.scalar-all",
+        "collections.value-object-any",
+        "collections.value-object-text-any",
+    }
     damaged = tmp_path / "damaged"
     damaged.mkdir()
     for path in tmp_path.glob("evidence-smoke-*"):

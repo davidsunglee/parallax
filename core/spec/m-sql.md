@@ -486,6 +486,8 @@ left-to-right.
 | a field through a to-one relationship | `(select t1.col from target t1 where t1.key = t0.fk) <op> ?` |
 | a field through a shared to-one relationship | `… left join target t1 on t1.key = t0.fk where t1.col <op> ?` |
 | a `narrow` of a shared to-one relationship's target | `… left join target t1 on t1.key = t0.fk where (not t1.pk is null and t1.tag = ?)` |
+| a quantifier over a related collection of a shared target | `… left join target t1 on t1.key = t0.fk where exists (select 1 from child t2 where t2.fk = t1.key [and <where>])` |
+| a quantifier over a document collection of a shared target | `… left join target t1 on t1.key = t0.fk left join (select t3.pk, <quantifier over t3> q0 from target t3) r0 on r0.pk = t1.pk where coalesce(r0.q0, false)` |
 
 The operator rows show a field of the queried row (`t0.col`); every operation
 lowers identically over the subject its position supplies — a field of a related
@@ -795,9 +797,9 @@ fail.
 At a lexical scope's own row — the queried Entity, one branch of a
 table-per-concrete-subtype union, one partition of a table-per-hierarchy read, or
 the candidate of a correlated `exists` that tests a relationship match's or a
-relationship quantifier's operand — a field operation, a presence test, or a
-path-targeted `narrow` reached only through proven hops reads them as `left
-join`s following that row's own table:
+relationship quantifier's operand — a field operation, a presence test, a
+path-targeted `narrow`, or a quantifier over a collection reached only through
+proven hops reads them as `left join`s following that row's own table:
 
 ```text
 eq(OrderStatus.orderItem.order.name, 'Ada')
@@ -847,14 +849,49 @@ With an operand it keeps a selected target's unknown, without the scalar form's
 envelope: `case when not t1.id is null and t1.kind = ? then <operand> else false
 end`.
 
+A quantifier over a collection a joined target holds is evaluated at that target.
+Over a related Entity collection it is the quantifier's own correlated `exists`
+(*Relationship predicates*), correlated to the joined row; a missing target
+correlates no element, so the empty collection's answer stands. A scalar
+collection or a `many` Value Object is held in the target's row itself, so the
+scope reads it from that target's **owner results**: a derived relation that
+reads the target's Table again, one row per stored row, projecting every Column
+of its physical primary key in key order and then each quantifier the scope
+reaches there, evaluated over that row exactly as over a queried row (*Scalar
+collection quantifiers*, *Quantifiers over a many value object*). Each quantifier
+takes its own result Column, `q0`, `q1`, … in first-demand order, skipping any
+name a key Column spells, so separate quantifiers keep separate answers and
+`and(any(p), any(q))` may be answered by two elements where `any(and(p, q))`
+needs one. The relation is `left join`ed on the complete physical key after
+every join of the scope, one per joined target in the order its collections are
+first quantified, and aliased `r0`, `r1`, …, a sequence of its own beside rule
+1's table aliases; its table's alias follows the aliases its select list
+declares. A quantifier reads `coalesce(r0.q0, <default>)`, defaulting to the
+absent target's answer — `false` for `any`, `true` for `none` and `all`:
+
+```text
+and(any(Basket.owner.tags, startsWith(n)), any(Basket.owner.tags, endsWith(p)))
+  → … from basket t0
+      left join basket_owner t1 on t1.id = t0.owner_id
+      left join (select t4.id,
+                   exists (select 1 from jsonb_array_elements(<arr over t4.tags>) t2
+                           where <t2 element> like ?) q0,
+                   exists (select 1 from jsonb_array_elements(<arr over t4.tags>) t3
+                           where <t3 element> like ?) q1
+                 from basket_owner t4) r0 on r0.id = t1.id
+      where coalesce(r0.q0, false) and coalesce(r0.q1, false)
+```
+
 A term of a scope's `where` may be evaluated over joined target rows that no row
-of the scope reaches. So a comparison, range, or membership test of a
-document-resident member whose comparison casts to its declared type
-(`m-dialect`) does not read a joined row: that conversion can fail on stored text
-the scalar form's candidate test excludes. A match or a `narrow` tested over a
-joined row likewise does not when its operand holds such a conversion or reads
-beyond its target's own row: through a further hop, a quantifier, a `narrow` with
-an operand, or another match.
+of the scope reaches, and owner results read every row of their table. So a
+comparison, range, or membership test of a document-resident member whose
+comparison casts to its declared type (`m-dialect`) does not read a joined row:
+that conversion can fail on stored text the scalar form's candidate test
+excludes. A match, a `narrow`, or a quantifier tested over a joined row or in
+owner results likewise does not when its operand holds such a conversion — for a
+quantifier, over any element, a scalar element's projection included — or reads
+beyond its target's own row or element: through a further hop, a quantifier, a
+`narrow` with an operand, or another match.
 
 Such a demand, and one crossing a hop that is not proven unique, shares the
 proven hops it starts with — every hop but its last where all are proven — and
@@ -877,11 +914,12 @@ eq(Ticket.parking.vehicle.dealer.name, 'Nordic')
 ```
 
 Every other demand keeps its scalar form: one left with no proven hop to share,
-a quantifier over a collection the target holds, every demand of a path-targeted
-`narrow`'s operand, which its target's joined row or subquery evaluates, and
-every demand of readless predicate DML, whose statement has no `from` to join
-(`m-batch-write`). A locking read keeps its scalar forms on a dialect whose
-shared-row lock cannot be limited to the root alias (`m-dialect`).
+a quantifier over a relationship with no candidate, which answers inside its
+hops, every demand of a path-targeted `narrow`'s operand, which its target's
+joined row or subquery evaluates, and every demand of readless predicate DML,
+whose statement has no `from` to join (`m-batch-write`). A locking read keeps its
+scalar forms on a dialect whose shared-row lock cannot be limited to the root
+alias (`m-dialect`).
 
 #### Correlated scalar subqueries
 
@@ -2221,9 +2259,9 @@ candidate rather than a coerced value:
 
 The binds run guard first, then each operation's kind and empty-path binds before
 its own operands. A collection read through a single value object or a to-one
-relationship lowers inside that hop (*Single-valued traversal*), its Boolean
-defaulting to the empty collection's answer. Only bare occupancy has a MariaDB form
-(`m-dialect`, *The MariaDB lane*).
+relationship lowers inside that hop, or in the owner results of a joined target
+(*Single-valued traversal*), its Boolean defaulting to the empty collection's
+answer. Only bare occupancy has a MariaDB form (`m-dialect`, *The MariaDB lane*).
 
 #### valueObject — atomic document write
 

@@ -1,0 +1,36 @@
+model: models/predicate-collections.yaml
+tags: [m-predicate, quantifier, scalar-collection, relationship, to-one, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  objectQuery:
+    target: parallax.compatibility.Basket
+    predicate:
+      and:
+        operands:
+        - any:
+            path: parallax.compatibility.Basket.owner.tags
+            where:
+              startsWith: {value: n}
+        - any:
+            path: parallax.compatibility.Basket.owner.tags
+            where:
+              endsWith: {value: p}
+then:
+  statements:
+  - sql: {postgres: 'select t0.id, t0.label, t0.owner_id, not t0.tags is null, t0.tags, not t0.scores is null, t0.scores, not t0.prices is null, t0.prices, not t0.flags is null, t0.flags, not t0.parcels is null, t0.parcels, not t0.meta is null, t0.meta from basket t0 left join basket_owner t1 on t1.id = t0.owner_id left join (select t4.id, exists (select 1 from jsonb_array_elements(case when jsonb_typeof(t4.tags) = ? then t4.tags else cast(? as jsonb) end) t2 where case when jsonb_typeof(t2.value) = ? then t2.value #>> ? end like ?) q0, exists (select 1 from jsonb_array_elements(case when jsonb_typeof(t4.tags) = ? then t4.tags else cast(? as jsonb) end) t3 where case when jsonb_typeof(t3.value) = ? then t3.value #>> ? end like ?) q1 from basket_owner t4) r0 on r0.id = t1.id where coalesce(r0.q0, false) and coalesce(r0.q1, false)'}
+    binds: [array, '[]', string, '{}', n%, array, '[]', string, '{}', '%p']
+  graph:
+    Basket:
+    - id: 4
+      label: four
+      ownerId: 3
+      tags: [urgent]
+      scores: [0]
+      prices: []
+      flags: [true, false]
+      parcels:
+      - sku: d
+        qty: 1
+        notes: [urgent, x]
+      meta: null
+  roundTrips: 1
