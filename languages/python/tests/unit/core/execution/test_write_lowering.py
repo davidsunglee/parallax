@@ -1040,6 +1040,33 @@ def test_readless_predicate_update_follows_the_entity_layout_order() -> None:
     assert statement.binds == ("Updated", 150.00, 200.00)
 
 
+def test_a_readless_predicate_update_through_a_shared_join_is_one_key_selecting_statement() -> None:
+    # The selection's join and predicate binds follow the assignment's, in text order.
+    predicate = PredicateWrite(
+        "amend",
+        PredicateSelection(
+            "OrderItem",
+            oa.And(
+                operands=(
+                    oa.Comparison(
+                        op="eq", subject=oa.FieldSubject("OrderItem.order.name"), value="Ada"
+                    ),
+                    oa.Comparison(
+                        op="lessThan", subject=oa.FieldSubject("OrderItem.quantity"), value=3
+                    ),
+                )
+            ),
+        ),
+        assignments=(WriteAssignment(attr="OrderItem.sku", value="Z"),),
+    )
+    (statement,) = _lower(predicate, ORDERS)
+    assert statement.sql == (
+        "update order_item set sku = ? where id in (select t0.id from order_item t0 "
+        "left join orders t1 on t1.id = t0.order_id where t1.name = ? and t0.quantity < ?)"
+    )
+    assert statement.binds == ("Z", "Ada", 3)
+
+
 def test_value_object_document_is_not_mistaken_for_a_marker() -> None:
     # A DB-computed marker is a SCALAR cell's shape. A value-object member
     # resolves to its own Value Object identity, so its whole-document mapping is

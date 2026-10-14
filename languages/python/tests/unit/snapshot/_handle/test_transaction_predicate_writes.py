@@ -33,7 +33,7 @@ from parallax.conformance._lanes import scenario
 from parallax.conformance._lifecycle_recording import RecordingLifecycleProvider
 from parallax.conformance.graph_models import POLICY_MODEL, Policy
 from parallax.conformance.scripted_clock import FixedClock
-from parallax.conformance.story_models import Order
+from parallax.conformance.story_models import Order, OrderItem
 from parallax.core import (
     TX_TIME,
     Attr,
@@ -487,6 +487,28 @@ def test_readless_delete_where_buffers_one_statement_no_read() -> None:
     assert port.calls == [
         BeginCall(),
         WriteCall(POSTGRES.to_driver_sql("delete from person where id = ?"), (1,)),
+        CommitCall(),
+    ]
+
+
+def test_readless_update_where_through_a_shared_join_buffers_one_statement_no_read() -> None:
+    port = ScriptedAdapter(Transact(Write()))
+
+    def fn(tx: Transaction) -> None:
+        tx.amend_where(OrderItem.where(OrderItem.order.name == "Ada"), OrderItem.sku.set("Z"))
+
+    own_root(
+        Database.connect(port, ORDERS, clock=FixedClock(FIXED))
+    ).using_database_login().transact(fn)
+    assert port.calls == [
+        BeginCall(),
+        WriteCall(
+            POSTGRES.to_driver_sql(
+                "update order_item set sku = ? where id in (select t0.id from order_item t0 "
+                "left join orders t1 on t1.id = t0.order_id where t1.name = ?)"
+            ),
+            ("Z", "Ada"),
+        ),
         CommitCall(),
     ]
 

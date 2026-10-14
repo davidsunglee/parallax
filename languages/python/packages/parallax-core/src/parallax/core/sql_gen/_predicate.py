@@ -179,7 +179,8 @@ class EntityScope:
     without one evaluates every demand in its local form.
 
     ``local`` marks a scope a database evaluates once per row of an enclosing
-    correlated scalar subquery, or one of readless predicate DML. It travels to
+    correlated scalar subquery, or the predicate readless DML evaluates in
+    place because none of its demands shares a source. It travels to
     every nested scope, none of which plans shared sources, so a correlated
     `exists` opened there keeps its operand's local form.
     """

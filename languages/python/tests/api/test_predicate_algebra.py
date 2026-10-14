@@ -811,3 +811,96 @@ def test_a_materializing_predicate_write_selects_through_owner_results(profile_r
     )
     db.transact(lambda tx: tx.delete_where(Bin.where(Bin.shelf.tags.none())))
     assert _ids(db, Bin, Bin.shelf.exists() | Bin.shelf.not_exists()) == {1}
+
+
+def test_a_readless_write_selects_its_rows_through_shared_joins(profile_run: Any) -> None:
+    db = _served(profile_run)
+    _seed_baskets(db)
+    owner = Basket.owner
+    # Owner 2's unknown conjunction stays unknown under negation, so only the
+    # basket with no owner is amended.
+    negated = ~(owner.exists() & owner.active.is_(True) & (owner.nickname == "ace"))
+    db.transact(lambda tx: tx.amend_where(Basket.where(negated), Basket.tags.set(("z",))))
+    assert _ids(db, Basket, Basket.tags.any(Basket.tags.element == "z")) == {3}
+    path = f"{Basket.identity.canonical}.owner"
+    matched = {
+        "and": {
+            "operands": [
+                {"isNull": {"path": f"{path}.alias"}},
+                {"notExists": {"path": path, "where": {"eq": {"path": "active", "value": True}}}},
+            ]
+        }
+    }
+    db.transact(
+        lambda tx: tx.wire.delete_where({"entity": Basket.identity.canonical, "predicate": matched})
+    )
+    assert _ids(db, Basket, owner.exists() | owner.not_exists()) == {1}
+
+
+def test_a_readless_write_keeps_its_unproven_hop_s_cardinality_failure(profile_run: Any) -> None:
+    db = _served(profile_run)
+    _seed_tickets(profile_run, db)
+    db.transact(
+        lambda tx: [
+            tx.insert(Car(id=9, maker="Volvo", seats=2, owner_id=None)),
+            tx.insert(Bike(id=9, maker="Twin", gears=3, owner_id=None)),
+            tx.insert(Parking(id=34, vehicle_id=9)),
+        ]
+    )
+    # Parking 34's ambiguous vehicle is reached by no ticket, so the write never
+    # evaluates it.
+    reached = (Ticket.parking.id > 0) & (Ticket.parking.vehicle.maker == "Volvo")
+    db.transact(lambda tx: tx.delete_where(Ticket.where(reached)))
+    assert _ids(db, Ticket, Ticket.parking.exists() | Ticket.parking.not_exists()) == {
+        51,
+        52,
+        53,
+        54,
+    }
+    db.transact(lambda tx: tx.insert(Ticket(id=55, parking_id=34)))
+    with pytest.raises(Exception) as raised:
+        db.transact(lambda tx: tx.delete_where(Ticket.where(reached)))
+    cause: BaseException | None = raised.value
+    while cause is not None and not isinstance(cause, DatabaseError):
+        cause = cause.__cause__ or getattr(cause, "cause", None)
+    assert isinstance(cause, DatabaseError)
+    assert (cause.category, cause.native_code) == (None, "21000")
+
+
+def test_a_readless_write_converts_only_the_elements_of_owners_its_rows_reach(
+    profile_run: Any,
+) -> None:
+    db = _served(profile_run)
+    _seed_shelves(profile_run, db)
+    _write(
+        profile_run,
+        ["insert into pa_shelf (id, tags, scores, parcels) values (9, '[\"a\"]', '[1.5]', '[]')"],
+    )
+    scores = Crate.shelf.scores
+    # The occupancy test shares the shelf, so the write selects its keys; the
+    # cast stays in its own hop, evaluated only for the shelf a crate reaches.
+    failing = Crate.shelf.tags.any() & scores.any(scores.element > 1)
+    db.transact(lambda tx: tx.delete_where(Crate.where(failing)))
+    assert _ids(db, Crate, Crate.shelf.exists() | Crate.shelf.not_exists()) == {3, 4, 5, 6, 7}
+    _write(profile_run, ["insert into pa_crate (id, shelf_id) values (8, 9)"])
+    with pytest.raises(Exception) as raised:
+        db.transact(lambda tx: tx.delete_where(Crate.where(failing)))
+    cause: BaseException | None = raised.value
+    while cause is not None and not isinstance(cause, DatabaseError):
+        cause = cause.__cause__ or getattr(cause, "cause", None)
+    assert isinstance(cause, DatabaseError)
+    assert cause.native_code == "22P02"
+
+
+def test_a_key_selecting_readless_write_stays_a_barrier(profile_run: Any) -> None:
+    db = _served(profile_run)
+    _seed_baskets(db)
+
+    def fn(tx: Transaction) -> None:
+        tx.insert(Owner(id=3, active=False, nickname="new"))
+        tx.insert(Basket(id=4, owner_id=3, tags=(), scores=(), parcels=()))
+        tx.delete_where(Basket.where(Basket.owner.nickname == "new"))
+        tx.insert(Basket(id=5, owner_id=3, tags=(), scores=(), parcels=()))
+
+    db.transact(fn)
+    assert _ids(db, Basket, Basket.owner.nickname == "new") == {5}

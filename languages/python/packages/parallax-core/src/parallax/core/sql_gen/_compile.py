@@ -114,11 +114,16 @@ _ResultForm = Literal["row", "instance"]
 
 @dataclass(frozen=True, slots=True)
 class CompiledPredicate:
-    """A compiled write predicate: an UNALIASED `where`-clause fragment
-    (`balance < ?`, never `t0.balance < ?`) and its ordered binds.
+    """A compiled write predicate and its ordered binds.
 
-    Deliberately NOT a :class:`LoweredStatement`: this is a predicate fragment,
-    not a complete statement — the caller splices it into its own `update … where` /
+    Unless it is a ``selection``, ``sql`` is an UNALIASED `where`-clause
+    fragment (`balance < ?`, never `t0.balance < ?`). A ``selection`` is
+    instead a `select` of the target's physical primary-key Columns, in key
+    order, from the rows the predicate matches through the shared sources a
+    read of it joins; the write tests its own key's membership in it.
+
+    Deliberately NOT a :class:`LoweredStatement`: either form is part of a
+    statement — the caller splices it into its own `update … where` /
     `delete from … where` template (`m-batch-write.md` "Predicate-selected
     readless forms").
     """
@@ -126,6 +131,7 @@ class CompiledPredicate:
     sql: str
     binds: tuple[object, ...] = ()
     lowered: LoweredStatement | None = field(default=None, repr=False, compare=False)
+    selection: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -746,20 +752,25 @@ def _compile_read_arm(
 def compile_write_predicate(
     op: ResolvedPredicate, model: Metamodel, dialect: Dialect, target: EntityMetadata
 ) -> CompiledPredicate:
-    """Render an unaliased, already-validated write predicate."""
+    """Render an already-validated write predicate: unaliased, every demand in
+    its local form, unless a demand reads through a shared source; then the
+    selection of the target's physical key from the rows it matches, planned
+    and rendered as a read of the target's own Table selects them."""
     facet = _inheritance_view(model)
     storage = _storage_view(model)
+    layout = _table_layout(storage, facet, target.identity)
     ctx = StatementBuilder(model, facet, storage, dialect)
-    scope = _EntityScope(
-        ctx, target, _table_layout(storage, facet, target.identity), unaliased=True, local=True
-    )
-    where_sql = _lower_predicate(op, scope)
-    statement = ctx.finish(where_sql)
-    return CompiledPredicate(
-        statement.sql,
-        statement.binds,
-        statement,
-    )
+    planned = _plan_shared_sources(op, _EntityScope(ctx, target, layout))
+    if planned.sources is None or not planned.sources.shares():
+        scope = _EntityScope(ctx, target, layout, unaliased=True, local=True)
+        statement = ctx.finish(_lower_predicate(op, scope))
+        return CompiledPredicate(statement.sql, statement.binds, statement)
+    keys = ", ".join(planned.own_column(slot.column.name) for slot in layout.physical_primary_key)
+    parts = [f"select {keys}", f"from {layout.table.name} {planned.alias}"]
+    where_sql = _planned_selection(op, planned, parts)
+    _append_where(parts, where_sql)
+    statement = _normalize(ctx.finish(" ".join(parts)))
+    return CompiledPredicate(statement.sql, statement.binds, statement, selection=True)
 
 
 def _selection(predicate: ResolvedPredicate, scope: _EntityScope, parts: list[str]) -> str:
@@ -767,10 +778,15 @@ def _selection(predicate: ResolvedPredicate, scope: _EntityScope, parts: list[st
     ``predicate`` beside them, so every alias and bind follows the text.
 
     The read forms selecting from one physical Table or one of its partitions
-    share this seam; a write's bare predicate keeps every demand in its local
-    form.
+    share this seam with a readless write's key selection.
     """
-    planned = _plan_shared_sources(predicate, scope)
+    return _planned_selection(predicate, _plan_shared_sources(predicate, scope), parts)
+
+
+def _planned_selection(
+    predicate: ResolvedPredicate, planned: _EntityScope, parts: list[str]
+) -> str:
+    """:func:`_selection` over a scope that already planned ``predicate``."""
     joins = _render_shared_sources(planned)
     if joins:
         parts.append(joins)

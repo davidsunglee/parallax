@@ -2,7 +2,8 @@
 
 `compile_write_predicate` renders a BARE, UNALIASED where-clause fragment —
 `balance < ?`, never the resolving read's `t0.balance < ?` — for the readless
-`update`/`delete` templates.
+`update`/`delete` templates, unless a demand reads through a shared source:
+then it renders the aliased selection of the target's physical keys.
 
 Its production caller (`sql_gen._write`'s Predicate Target arm) is
 exercised indirectly
@@ -23,6 +24,7 @@ import pytest
 from parallax.core import predicate as oa
 from parallax.core.base import INFINITY
 from parallax.core.dialect import POSTGRES
+from parallax.core.navigate import propagate_hop_terms
 from parallax.core.object_query import AsOf, object_query, validate_object_query
 from parallax.core.sql_gen._compile import CompiledPredicate
 from parallax.core.sql_gen._compile import (
@@ -36,6 +38,7 @@ ORDERS = model("orders")
 ACCOUNT = model("account")
 CUSTOMER = model("customer")
 PAYMENT = model("payment")
+POLICY = model("policy")
 POSITION = model("position")
 
 
@@ -225,15 +228,47 @@ def test_navigation_correlates_an_aliased_subquery_against_the_unaliased_owner()
     assert binds == ()
 
 
-def test_a_to_one_hop_correlates_its_scalar_subquery_against_the_unaliased_owner() -> None:
+def test_a_shared_to_one_hop_selects_the_target_s_keys_instead() -> None:
+    # The selection is a complete read of the target's own Table, so its
+    # columns are aliased; the write tests its key's membership in it.
     predicate = compile_write_predicate(
         oa.Comparison(op="eq", subject=oa.FieldSubject("OrderItem.order.name"), value="Ada"),
         ORDERS,
         POSTGRES,
         target(ORDERS, "OrderItem"),
     )
-    assert predicate.sql == "(select t1.name from orders t1 where t1.id = order_id) = ?"
+    assert predicate.selection
+    assert predicate.sql == (
+        "select t0.id from order_item t0 left join orders t1 on t1.id = t0.order_id "
+        "where t1.name = ?"
+    )
     assert predicate.binds == ("Ada",)
+
+
+def test_a_key_selection_projects_every_physical_key_column() -> None:
+    coverage = target(POLICY, "Coverage")
+    query = validate_object_query(
+        coverage,
+        object_query(
+            coverage.identity,
+            oa.Comparison(op="eq", subject=oa.FieldSubject("Coverage.policy.name"), value="P"),
+            temporal={"valid-time": AsOf("latest"), "transaction-time": AsOf("latest")},
+        ),
+        POLICY,
+    )
+    current = propagate_hop_terms(
+        inject_resolved_as_of(query.predicate, query.temporal, coverage), POLICY
+    )
+
+    predicate = compile_validated_write_predicate(current, POLICY, POSTGRES, coverage)
+
+    assert predicate.selection
+    assert predicate.sql == (
+        "select t0.id, t0.thru_z, t0.out_z from coverage t0 left join policy t1 "
+        "on t1.id = t0.policy_id and t1.thru_z = ? and t1.out_z = ? "
+        "where t1.name = ? and t0.thru_z = ? and t0.out_z = ?"
+    )
+    assert predicate.binds == (INFINITY, INFINITY, "P", INFINITY, INFINITY)
 
 
 def test_value_object_document_column_renders_unaliased() -> None:

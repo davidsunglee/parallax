@@ -167,14 +167,28 @@ def test_a_field_two_hops_away_joins_each_hop_in_source_alias_order() -> None:
 def test_readless_predicate_dml_nests_the_scalars_in_source_alias_order() -> None:
     # The inner hop's subquery precedes the outer one's FROM in the statement
     # text, so it takes the lower alias (m-sql source-order allocation).
+    op = oa.Comparison(op="eq", subject=oa.FieldSubject("Parking.vehicle.dealer.name"), value="N")
+    compiled = compile_write_predicate(op, TRAVERSAL, POSTGRES, target(TRAVERSAL, "Parking"))
+    assert not compiled.selection
+    assert compiled.sql == (
+        "(select (select t1.name from traversal_dealer t1 where t1.id = t2.dealer_id) "
+        "from traversal_bike t2 where t2.id = vehicle_id union all "
+        "select (select t3.name from traversal_dealer t3 where t3.id = t4.dealer_id) "
+        "from traversal_car t4 where t4.id = vehicle_id) = ?"
+    )
+
+
+def test_readless_predicate_dml_selects_its_keys_through_a_shared_prefix() -> None:
     op = oa.Comparison(
         op="eq", subject=oa.FieldSubject("OrderStatus.orderItem.order.name"), value="Ada"
     )
     compiled = compile_write_predicate(op, ORDERS, POSTGRES, target(ORDERS, "OrderStatus"))
+    assert compiled.selection
     assert compiled.sql == (
-        "(select (select t1.name from orders t1 where t1.id = t2.order_id) "
-        "from order_item t2 where t2.id = order_item_id) = ?"
+        "select t0.id from order_status t0 left join order_item t1 on t1.id = t0.order_item_id "
+        "left join orders t2 on t2.id = t1.order_id where t2.name = ?"
     )
+    assert compiled.binds == ("Ada",)
 
 
 def test_presence_of_a_nullable_many_to_one_correlates_on_the_owned_fk() -> None:
@@ -1106,13 +1120,49 @@ def test_a_locking_read_locks_only_its_root_beside_a_shared_join() -> None:
     assert compiled.statement.binds == ("Ada", 5)
 
 
-def test_readless_predicate_dml_keeps_every_scalar_form() -> None:
-    op = oa.And(operands=(oa.Presence("exists", "OrderItem.order"), _ADA))
+def test_readless_predicate_dml_reads_a_presence_through_its_key_selection_s_join() -> None:
+    op = oa.Not(oa.And(operands=(oa.Presence("exists", "OrderItem.order"), _ADA)))
     compiled = compile_write_predicate(op, ORDERS, POSTGRES, target(ORDERS, "OrderItem"))
+    assert compiled.selection
     assert compiled.sql == (
-        "exists (select 1 from orders t1 where t1.id = order_id) "
-        "and (select t2.name from orders t2 where t2.id = order_id) = ?"
+        "select t0.id from order_item t0 left join orders t1 on t1.id = t0.order_id "
+        "where not (not t1.id is null and t1.name = ?)"
     )
+
+
+def test_readless_predicate_dml_keeps_a_match_alone_in_place() -> None:
+    # Matching alone opens no join, so nothing is shared and the operand's own
+    # further hop stays in its local form.
+    ada = oa.Comparison(op="eq", subject=oa.FieldSubject("order.name"), value="Ada")
+    op = oa.Presence("exists", "OrderStatus.orderItem", ada)
+    compiled = compile_write_predicate(op, ORDERS, POSTGRES, target(ORDERS, "OrderStatus"))
+    assert not compiled.selection
+    assert compiled.sql == (
+        "exists (select 1 from order_item t1 where t1.id = order_item_id "
+        "and (select t2.name from orders t2 where t2.id = t1.order_id) = ?)"
+    )
+
+
+def test_a_key_selection_joins_inside_a_match_its_shared_target_cannot_answer() -> None:
+    # The match's operand reads past its target, so it keeps its own `exists`;
+    # the selection is a set-level scope, so that body joins its proven hop.
+    order = oa.Comparison(op="eq", subject=oa.FieldSubject("order.name"), value="Ada")
+    op = oa.And(
+        operands=(
+            oa.Comparison(
+                op="lessThan", subject=oa.FieldSubject("OrderStatus.orderItem.quantity"), value=3
+            ),
+            oa.Presence("exists", "OrderStatus.orderItem", order),
+        )
+    )
+    compiled = compile_write_predicate(op, ORDERS, POSTGRES, target(ORDERS, "OrderStatus"))
+    read = compile_read(op, ORDERS, POSTGRES, target(ORDERS, "OrderStatus"))
+    assert compiled.sql == (
+        "select t0.id from order_status t0 left join order_item t1 on t1.id = t0.order_item_id "
+        "where t1.quantity < ? and exists (select 1 from order_item t2 left join orders t3 "
+        "on t3.id = t2.order_id where t2.id = t0.order_item_id and t3.name = ?)"
+    )
+    assert read.statement.sql.endswith(compiled.sql.removeprefix("select t0.id"))
 
 
 def test_readless_predicate_dml_keeps_a_quantifier_operand_s_scalar_form() -> None:
@@ -1815,13 +1865,79 @@ def test_a_locking_read_locks_only_its_root_beside_owner_results() -> None:
     )
 
 
-def test_readless_predicate_dml_keeps_a_collection_quantifier_s_scalar_hops() -> None:
+def test_readless_predicate_dml_selects_its_keys_through_owner_results() -> None:
     family = _crate_model()
     op = oa.Quantifier("any", "Shelf.box.crate.tags", _element("eq", "a"))
     compiled = compile_write_predicate(op, family, POSTGRES, target(family, "Shelf"))
+    assert compiled.selection
     assert compiled.sql == (
-        "coalesce((select coalesce((select exists (select 1 from jsonb_array_elements(case when "
-        "jsonb_typeof(t2.tags) = ? then t2.tags else cast(? as jsonb) end) t1 where case when "
-        "jsonb_typeof(t1.value) = ? then t1.value #>> ? end = ?) from crate t2 where "
-        "t2.id = t3.crate_id), false) from box t3 where t3.id = box_id), false)"
+        f"select t0.id {_CRATE_JOINS} left join (select t4.id, exists (select 1 from "
+        "jsonb_array_elements(case when jsonb_typeof(t4.tags) = ? then t4.tags else "
+        "cast(? as jsonb) end) t3 where case when jsonb_typeof(t3.value) = ? then "
+        "t3.value #>> ? end = ?) q0 from crate t4) r0 on r0.id = t2.id where coalesce(r0.q0, false)"
+    )
+
+
+_ELEVATION = oa.Comparison(
+    op="greaterThan", subject=oa.FieldSubject("address.geo.elevation"), value=5.0
+)
+
+
+@pytest.mark.parametrize(
+    ("op", "family", "root"),
+    [
+        pytest.param(
+            oa.And(
+                operands=(
+                    _CUSTOMER_NAMED,
+                    oa.Comparison(
+                        op="greaterThan",
+                        subject=oa.FieldSubject("Location.customer.address.geo.elevation"),
+                        value=5.0,
+                    ),
+                )
+            ),
+            CUSTOMER,
+            "Location",
+            id="conversion-kept-local",
+        ),
+        pytest.param(
+            oa.And(
+                operands=(
+                    _CUSTOMER_NAMED,
+                    oa.Presence("exists", "Location.customer", _ELEVATION),
+                )
+            ),
+            CUSTOMER,
+            "Location",
+            id="conversion-in-a-match",
+        ),
+        pytest.param(
+            oa.Quantifier("any", "Shelf.box.crate.scores", _element("greaterThan", 3)),
+            _crate_model(),
+            "Shelf",
+            id="failing-element-confined",
+        ),
+        pytest.param(
+            oa.Comparison(
+                op="eq", subject=oa.FieldSubject("Ticket.parking.vehicle.maker"), value="Saab"
+            ),
+            TRAVERSAL,
+            "Ticket",
+            id="unproven-hop-confined",
+        ),
+    ],
+)
+def test_a_key_selection_evaluates_every_demand_where_a_read_does(
+    op: oa.PredicateNode, family: Metamodel, root: str
+) -> None:
+    # The write selection is planned by the read's own demand planner, so a
+    # demand unsafe over a joined row keeps the guard or confinement it keeps
+    # in the read rather than a placement of the write's own.
+    compiled = compile_write_predicate(op, family, POSTGRES, target(family, root))
+    read = compile_read(op, family, POSTGRES, target(family, root))
+    assert compiled.selection
+    assert compiled.sql.partition(" from ")[2] == read.statement.sql.partition(" from ")[2]
+    assert read.statement.binds[len(read.statement.binds) - len(compiled.binds) :] == (
+        compiled.binds
     )
