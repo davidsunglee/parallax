@@ -127,11 +127,11 @@ def encode_managed_wire(neutral_type: NeutralType, value: ManagedValue) -> WireV
         case Boolean():
             return bool(value)
         case Int32() | Int64():
-            return int(cast("int", value))
+            return int.__int__(cast("int", value))
         case String():
             return str.__str__(cast("str", value))
         case Float64():
-            float_value = float(cast("float", value))
+            float_value = float.__float__(cast("float", value))
             return 0.0 if float_value == 0.0 else float_value
         case _:
             pass
