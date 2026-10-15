@@ -1,10 +1,4 @@
-"""A read case's `given.provisioningModel` provisions; its `model` reads.
-
-`m-case-format` *Provisioning through another model*: the setup model owns DDL,
-fixtures, and corruption addressing, while the top-level model owns the query
-and every expectation. These DB-free probes record what provisioning hands a
-provider, so a setup step resolved through the wrong model is seen directly.
-"""
+"""DB-free probes of what provisioning through `given.provisioningModel` hands a provider."""
 
 from __future__ import annotations
 

@@ -1,11 +1,3 @@
-# A broad Include keeps its declared abstract-root target even when the reader
-# composes a single concrete leaf under it (m-sql, m-inheritance *Partially
-# composed families*). `Keeper.beasts` targets Beast; the reader composes only
-# Wolf, yet the child level reads the shared table with no tag predicate and
-# projects the raw tag, exactly as a root read of Beast would. Bagheera's one
-# beast is a provisioned Bear the reader cannot represent: that child is
-# unavailable, so the root reaching it is unavailable too and carries the
-# diagnosis, while Kaa keeps a loaded-empty view and Mowgli both wolves.
 model: models/composed-beast-reader.yaml
 tags: [m-inheritance, m-deep-fetch, m-sql, m-read-delivery, m-snapshot-read, table-per-hierarchy, stored-data, deep-fetch, graph, partial-composition, slice-snapshot-1]
 shape: read

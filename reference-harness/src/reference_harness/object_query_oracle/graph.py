@@ -106,8 +106,8 @@ class ClassifiedGraph(NamedTuple):
     """An assembled graph and the unknown-family-tag diagnoses of each root.
 
     ``issues`` is positionally aligned with the graph's roots: each entry is the
-    `then.storedDataIssues` vocabulary for every unknown-tag occurrence that root
-    reaches, itself included, and is empty for a root reaching none.
+    `then.storedDataIssues` vocabulary for every distinct unknown-tag diagnosis
+    that root reaches, itself included, and is empty for a root reaching none.
     """
 
     graph: dict[str, list[dict[str, Any] | None]]
@@ -149,8 +149,9 @@ def assemble_classified_graph(
 
     Classification is root-local (`m-read-delivery`): a root reaching an
     unhydratable node is itself unavailable and publishes ``null``, and every
-    unknown-tag occurrence it reaches is reported against it — once per root,
-    however many paths reach the occurrence. An unhydratable child is never
+    unknown-tag diagnosis it reaches is reported against it once per root. A
+    diagnosis is identified by its family and rejected tag, so equal diagnoses
+    collapse however many rows or paths reach them. An unhydratable child is never
     silently dropped from a root that otherwise publishes.
 
     The roots are what the read PUBLISHED, so they arrive from the materialization
@@ -198,7 +199,7 @@ class _GraphAssembly:
         self.root_nodes = [self._node_for("", root_entity, row) for row in root_rows]
         self.issues = root_issues(root_rows)
         self._unavailable: set[int] = set()
-        self._reached: list[set[tuple[str, str, Any]]] = [set() for _ in root_rows]
+        self._reached: list[set[materialize.UnknownFamilyTag]] = [set() for _ in root_rows]
 
     def _key(
         self, view: str, entity: Entity, row: materialize.PublishedRow
@@ -265,9 +266,9 @@ class _GraphAssembly:
                 children.append(node)
                 continue
             self._unavailable.add(ordinal)
-            occurrence = self._key(step.view_key, step.child_entity, row)
-            if occurrence not in self._reached[ordinal]:
-                self._reached[ordinal].add(occurrence)
+            tag = row.get("familyVariant")
+            if isinstance(tag, materialize.UnknownFamilyTag) and tag not in self._reached[ordinal]:
+                self._reached[ordinal].add(tag)
                 self.issues[ordinal].extend(materialize.family_tag_issues(row))
         if step.to_many:
             parent[step.view_key] = children

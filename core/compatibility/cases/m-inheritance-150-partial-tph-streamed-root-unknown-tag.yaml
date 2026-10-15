@@ -1,8 +1,3 @@
-# The streamed peer of m-inheritance-147 (m-inheritance *Partially composed
-# families*, m-case-format *Streamed reads*). Pages read the unfiltered shared
-# table; Baloo's 'bear' row is the last root page 1 delivers, so it is diagnosed
-# at its own ordinal and its primary key is the coordinate page 2 continues from.
-# A page size decides nothing about which positions are unrepresentable.
 model: models/composed-beast-reader.yaml
 tags: [m-inheritance, m-snapshot-read, m-sql, m-read-delivery, table-per-hierarchy, stored-data, stream, streamed-delivery, familyVariant, graph, partial-composition, slice-snapshot-1]
 shape: read

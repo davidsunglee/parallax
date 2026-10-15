@@ -1,9 +1,3 @@
-# The Relational Document Layout peer of m-inheritance-147 (m-inheritance
-# *Partially composed families*, m-storage-layout). The reader composes Fox and
-# Wolf over a shared document table the provisioning model also wrote a Bear
-# into. The plain abstract-root read is unpartitioned and unfiltered, so the
-# 'bear' row is returned, its document is never decoded at a variant the reader
-# lacks, and its position publishes null with the unknown-tag diagnosis.
 model: models/composed-beast-document-reader.yaml
 tags: [m-inheritance, m-storage-layout, m-sql, m-read-delivery, m-document-codec, table-per-hierarchy, document-layout, stored-data, familyVariant, graph, instance-form, partial-composition, slice-snapshot-1]
 shape: read

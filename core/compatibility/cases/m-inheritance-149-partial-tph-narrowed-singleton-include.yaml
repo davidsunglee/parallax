@@ -1,10 +1,3 @@
-# An authored narrowing keeps its guard even when it resolves to every composed
-# concrete leaf (m-sql *Tag-predicate selection*, m-inheritance *Partially
-# composed families*). Against the same provisioned storage as m-inheritance-148,
-# `Keeper.beasts` narrowed to Wolf targets Wolf itself: its child level filters
-# the shared table by Wolf's tag, so Baloo's 'bear' row never qualifies, no
-# position is diagnosed, and Bagheera's narrowed view is loaded-empty. A composed
-# set equal to the family's never stands in for the unnarrowed root.
 model: models/composed-beast-reader.yaml
 tags: [m-inheritance, m-deep-fetch, m-sql, m-object-query, table-per-hierarchy, narrow, deep-fetch, graph, partial-composition, slice-snapshot-1]
 shape: read

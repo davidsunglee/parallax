@@ -1,14 +1,3 @@
-# Composed document beasts, reader side: the `beast_document`
-# table-per-hierarchy family composed WITHOUT Bear (m-inheritance *Partially
-# composed families*).
-#
-#   Beast (root, ABSTRACT)  — id, name, leaderId; followers -> Beast
-#     Fox  (concrete)       — tagValue 'fox';  brush
-#     Wolf (concrete)       — tagValue 'wolf'; howl
-#
-# Its cases provision through `models/composed-beast-document-provisioning.yaml`
-# (m-case-format *Provisioning through another model*); this model has no
-# fixtures of its own.
 entities:
   - name: Beast
     namespace: parallax.compatibility

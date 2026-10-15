@@ -1,11 +1,5 @@
-# The protected Document filter's known limitation (m-sql *Variant partitioning
-# for a non-uniform path*). The reader composes Fox and Wolf; `howl` applies to
-# Wolf alone, so a predicate reading it partitions the read into one
-# tag-filtered branch per composed variant. The `name` disjunct applies to every
-# variant and admits both rows named Bruno wherever it is evaluated, but the
-# provisioned Bear matches no branch: Fox 2 is returned, Bear 3 is neither
-# returned nor diagnosed. An unpartitioned abstract-root read of the same storage
-# diagnoses that row instead (m-inheritance-151).
+# The unreturned, undiagnosed Bear is the known limitation of variant
+# partitioning (m-sql), not an eligibility rule other reads share.
 model: models/composed-beast-document-reader.yaml
 tags: [m-inheritance, m-storage-layout, m-sql, m-dialect, m-document-codec, m-predicate, table-per-hierarchy, document-layout, narrow, predicate, familyVariant, graph, instance-form, partial-composition, slice-snapshot-1]
 shape: read

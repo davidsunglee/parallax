@@ -1,7 +1,3 @@
-"""``models/composed-beast-document-reader.yaml``: a partially composed
-table-per-hierarchy family under a Relational Document Layout, whose shared
-table also holds rows of a concrete subtype this model omits."""
-
 from parallax.core import (
     ONE_TO_MANY,
     AbstractRoot,

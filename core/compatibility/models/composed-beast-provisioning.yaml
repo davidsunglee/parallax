@@ -1,19 +1,5 @@
-# Composed beasts, provisioning side: the newer model a partially composed reader
-# is graded against (m-inheritance *Partially composed families*, m-case-format
-# *Provisioning through another model*).
-#
-# One TABLE-PER-HIERARCHY family on the shared `beast` table, discriminated by
-# `kind`, composed here with BOTH concrete leaves:
-#
-#   Beast (root, ABSTRACT)  — id, name, keeperId
-#     Wolf (concrete)       — tagValue 'wolf'; howl
-#     Bear (concrete)       — tagValue 'bear'; roar
-#
-# `models/composed-beast-reader.yaml` composes the same family WITHOUT Bear, so a
-# canonical Bear row provisioned from this model is a stored tag the reader's
-# family names no concrete subtype for. Keeper's `badge` and the standalone Den
-# exist only here: provisioning that resolved its DDL or fixtures through the
-# reader would refuse them rather than pass unnoticed.
+# Keeper.badge and Den exist only in this provisioning model, so provisioning
+# resolved through the reader would refuse them rather than pass unnoticed.
 entities:
   - name: Beast
     namespace: parallax.compatibility

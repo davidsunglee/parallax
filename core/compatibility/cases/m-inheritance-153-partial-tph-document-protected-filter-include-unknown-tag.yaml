@@ -1,11 +1,3 @@
-# A protected Document filter is not a child-level eligibility rule (m-sql
-# *Variant partitioning for a non-uniform path*, m-inheritance *Partially
-# composed families*). The root predicate partitions the root read into the
-# reader's composed Fox and Wolf branches, so the provisioned Bear named Bruno is
-# not a root. The query's predicate is never copied into its Include levels: the
-# broad `followers` level reads the shared table by correlation alone, reaches
-# that same Bear as Akela's follower, and diagnoses it. Akela's position is
-# therefore unavailable, while Bruno the fox keeps a loaded-empty view.
 model: models/composed-beast-document-reader.yaml
 tags: [m-inheritance, m-deep-fetch, m-storage-layout, m-sql, m-read-delivery, m-document-codec, m-predicate, table-per-hierarchy, document-layout, stored-data, narrow, predicate, deep-fetch, graph, partial-composition, slice-snapshot-1]
 shape: read
