@@ -793,6 +793,130 @@
       "valueObject": {}
     }
   },
+  "models/dormant-position-layout-twin-columns.yaml": {
+    "parallax.compatibility.Concept": {
+      "attribute": {
+        "sketch": "sketch"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Craft": {
+      "attribute": {
+        "id": "id",
+        "label": "label",
+        "workbenchId": "workbench_id"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Gadget": {
+      "attribute": {
+        "id": "id",
+        "label": "label",
+        "workbenchId": "workbench_id"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Prototype": {
+      "attribute": {
+        "draft": "draft"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Sloop": {
+      "attribute": {
+        "hull": "hull"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Widget": {
+      "attribute": {
+        "spin": "spin"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Workbench": {
+      "attribute": {
+        "conceptId": "concept_id",
+        "id": "id",
+        "name": "name",
+        "prototypeId": "prototype_id"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    }
+  },
+  "models/dormant-position-layout-twin-document.yaml": {
+    "parallax.compatibility.Concept": {
+      "attribute": {
+        "sketch": "sketch"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Craft": {
+      "attribute": {
+        "id": "id",
+        "label": "label",
+        "workbenchId": "workbench_id"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Gadget": {
+      "attribute": {
+        "id": "id",
+        "label": "label",
+        "workbenchId": "workbench_id"
+      },
+      "documentPath": {
+        "label": "payload:label"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.Prototype": {
+      "attribute": {
+        "draft": "draft"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Sloop": {
+      "attribute": {
+        "hull": "hull"
+      },
+      "documentPath": {
+        "hull": "payload:hull"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.Widget": {
+      "attribute": {
+        "spin": "spin"
+      },
+      "documentPath": {
+        "spin": "payload:spin"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.Workbench": {
+      "attribute": {
+        "conceptId": "concept_id",
+        "id": "id",
+        "name": "name",
+        "prototypeId": "prototype_id"
+      },
+      "documentPath": {
+        "name": "payload:name"
+      },
+      "valueObject": {}
+    }
+  },
   "models/error-cases.yaml": {
     "parallax.compatibility.Gauge": {
       "attribute": {

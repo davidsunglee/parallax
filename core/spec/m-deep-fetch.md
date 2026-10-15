@@ -30,17 +30,23 @@ consumes that canonical set and owns its level planning. The normative guarantee
 
 > The number of SQL statements is **at most `1 + L`**, where `L` is the number
 > of **distinct relationship hops** across all declared paths. A level whose
-> parent-key set is empty issues **no** child SQL. A non-empty level issues
-> **one** child statement — **never** one query per parent row.
+> parent-key set is empty, or whose target position has no concrete subtype,
+> issues **no** child SQL. Every other level issues **one** child statement —
+> **never** one query per parent row.
 
 Concretely, for each relationship level:
 
 1. Gather the **distinct key values** of the already-fetched parent rows for that
    relationship's correlation column — of the root objects a path-root guard
    admits, when the level is a guarded path's first one.
-2. If the gathered set is empty, issue **no** child query for that level; attach
-   the empty/null relationship result and let downstream levels see an empty
-   parent set.
+2. If the gathered set is empty, or the level's target position resolves to no
+   concrete subtype (`m-inheritance` *Positions with no composed concrete
+   subtype*), issue **no** child query for that level; attach the empty/null
+   relationship result to each admitted parent and let downstream levels see an
+   empty parent set. The two causes are distinct — an empty target attaches
+   empty however many keys its parents carry — but load the view the same way:
+   a to-many view is loaded empty and a to-one view loaded null, never left
+   unloaded.
 3. Otherwise, issue **one** query against the child entity constrained by
    `fk in (…)` over those distinct keys.
 4. Fan the returned child rows back to their parents **in memory**, attaching
@@ -325,7 +331,8 @@ For each deep-fetch case the compatibility harness (`m-case-format`) asserts, in
 addition to the standard layers: the golden SQL statement count equals the
 declared `then.roundTrips`; each non-empty child level executes keyed by the parents
 gathered from the previous level (with the authored `IN` binds matching the
-gathered keys); empty parent-key levels execute no child SQL; and the
+gathered keys); empty parent-key levels, and levels whose target position has no
+concrete subtype, execute no child SQL; and the
 in-memory-assembled object graph equals the case's `then.graph`. Additionally,
 for each to-many level whose relationship declares `orderBy`, the harness derives
 the expected child order from the declared keys/directions (an independent oracle)

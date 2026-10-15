@@ -1744,6 +1744,9 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-snapshot-read-048": _STREAMED_DELIVERY_REASON,
     # -- m-inheritance: a partially composed family's streamed delivery ------ #
     "m-inheritance-150": _STREAMED_DELIVERY_REASON,
+    # -- m-inheritance: a position with no concrete subtype, streamed -------- #
+    "m-inheritance-158": _STREAMED_DELIVERY_REASON,
+    "m-inheritance-159": _STREAMED_DELIVERY_REASON,
     # -- m-snapshot-read: the corrupt-stored-state lane ---------------------- #
     "m-snapshot-read-049": _CORRUPT_STORED_STATE_REASON,
     "m-snapshot-read-050": _SHARED_STATE_ROOT_AUTHORITY_REASON,

@@ -1,0 +1,17 @@
+model: models/dormant-position-layout-twin-document.yaml
+tags: [m-inheritance, m-sql, m-deep-fetch, m-read-delivery, m-snapshot-read, table-per-hierarchy, dormant-position, deep-fetch, back-reference, graph, layout-twin, document-layout, slice-snapshot-1]
+shape: read
+when:
+  objectQuery:
+    target: parallax.compatibility.Prototype
+    predicate:
+      "true": {}
+    includes:
+      - segments:
+          - rel: parallax.compatibility.Prototype.workbenches
+          - rel: parallax.compatibility.Workbench.prototype
+then:
+  statements: []
+  graph:
+    Prototype: []
+  roundTrips: 0

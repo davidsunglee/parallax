@@ -561,6 +561,16 @@ def test_profile_gate_fails_on_a_missing_postgres_golden(tmp_path: Path) -> None
     assert any("m-predicate-002.yaml" in e and "Postgres golden" in e for e in errors)
 
 
+def test_profile_gate_accepts_a_read_stating_it_issues_no_statement(tmp_path: Path) -> None:
+    cases = tmp_path / "cases"
+    _write_case(cases, "m-predicate-001.yaml", _clean_read_case(["m-core", "slice-example-1"]))
+    statementless = _clean_read_case(["m-predicate", "slice-example-1"])
+    statementless["then"] = {"statements": [], "rows": [], "roundTrips": 0}
+    _write_case(cases, "m-predicate-002.yaml", statementless)
+    errors = profile_errors(_synthetic_slices(), tmp_path)
+    assert not any("m-predicate-002.yaml" in e for e in errors)
+
+
 def test_profile_gate_fails_on_an_excluded_tag_when_the_claim_lists_exclude(
     tmp_path: Path,
 ) -> None:
@@ -662,7 +672,7 @@ def test_real_corpus_declares_the_two_lifecycle_slices() -> None:
 @pytest.mark.parametrize(
     ("slice_tag", "expected"),
     [
-        ("slice-snapshot-1", 806),
+        ("slice-snapshot-1", 816),
         ("slice-managed-1", 635),
     ],
 )

@@ -396,7 +396,7 @@ in decimal space under any authored `tolerance`.
 | `when.uow.isolation` | `when.uow` | no | the portable Isolation Level (`m-db-port`) every held session or `uow` group the case opens is opened at — `read-committed` \| `repeatable-read` \| `serializable`, the core serialized values. **Prescriptive**: the harness opens each held session at it through the provider seam, and an API Conformance Suite passes it to each group's own transaction. Omitted means the invocation requests the Database Root's configured default (`given.databaseOptions.isolation`, built-in `read-committed`), which the harness resolves the same way for the sessions it holds. A case never names an engine's own level or a session variable |
 | `when.stream` | `when` or a scenario read step | no | the streamed delivery of a `read` case (`{batchSize}`) — its presence makes the read streamed rather than eager, and its `batchSize` is the page size in ROOT positions; admitted only beside `then.graph`, and in its second placement on a `uow`-grouped scenario read step whose own `statements` are the delivery's pages (see *Streamed reads* and *Streamed read steps*, below) |
 | `when.equivalentEncodings` | `when` or a scenario read step | no | alternate authoring encodings of the sibling `objectQuery`; each MUST normalize and canonicalize to it |
-| `then.statements` | `then` | yes* | the golden SQL an impl must emit — an ordered list of `{sql, binds}` statement entries (dialect-keyed map form), one per deep-fetch level or write-sequence DML step. *Absent for scenario / attempts cases, whose golden SQL lives per step; disallowed on boundary and edit cases |
+| `then.statements` | `then` | yes* | the golden SQL an impl must emit — an ordered list of `{sql, binds}` statement entries (dialect-keyed map form), one per deep-fetch level or write-sequence DML step; empty only for a read whose result position has no concrete subtype (see *Structurally empty reads*, below). *Absent for scenario / attempts cases, whose golden SQL lives per step; disallowed on boundary and edit cases |
 | `then.referenceSql` | `then` | conditional | an independent naive oracle (see below) — a plain string, OR a dialect-keyed map where the naive spelling is dialect-specific; for a deep fetch it is the naive single-statement oracle for the **root** row set |
 | `then.rows` | `then` | read | the rows the query must return (single-statement / flat-result cases) |
 | `then.graph` | `then` | read | the assembled object graph a deep fetch must produce (one of `then.rows` / `then.graph` / `then.graphs` is REQUIRED for a read case) |
@@ -415,7 +415,7 @@ in decimal space under any authored `tolerance`.
 | `then.evolution` | `then` | evolution | the COMPLETE Evolution `evolve` returns for the two endpoints — its `kind`, `operations`, `behavioralImpacts`, `overlapVisibleOperations`, and `coordinationRequirements`, every member authored even when empty (see *Evolution cases*, below) |
 | `then.schema` | `then` | unilateral evolution | the Schema Delta expectation for every supported Dialect, keyed by Dialect Identity; each cell is exactly one of `delta` (that dialect's ordered `statements` and `createdIndices`) or `unsupported` (the complete ordered physical operations it cannot render). REQUIRED of a UNILATERAL `evolution` expectation, which is exactly what schema generation accepts, and FORBIDDEN on a coordinated one: a Coordinated Evolution is not an accepted input, so a coordinated expectation is dialect-independent |
 | `then.executionLifecycle` | `then` | no | the transient execution-lifecycle oracle (`m-execution-lifecycle`) — normalized Root Executions and their ordered Started and Finished events (see *The execution lifecycle oracle*, below); disallowed on a `rejected` case, which reaches no database |
-| `then.roundTrips` | `then` | no | the DATABASE CALLS the case costs — every statement presented to the port, a FAILED, not-executed, or unconfirmed one included, with transaction demarcation (begin, commit, rollback) counting none, exactly as `m-execution-lifecycle` counts them, so a case authoring both this and `then.executionLifecycle` states one number twice and the two MUST agree. Default `1` for the shapes that reach the database, `0` for a `rejected` case and for an `evolution` case. For a deep-fetch case it MUST equal the authored/executed `then.statements` count (child SQL is omitted after an empty parent-key level); for a write sequence it MUST equal the ordered DML statement count PLUS the resolving reads the sequence owes (see *Resolving reads a write owes*, below); for a scenario the SUM of per-step round trips — `0` where every step costs none; for a RETRY-shaped case (a `when.attempts` conflict, or a `boundary` case whose fault is retried) the sum across EVERY attempt, not the last one's alone, each attempt's own resolving read included. A `rejected` case is refused pre-SQL and an `evolution` case describes two accepted models without executing anything, so each costs `0` declared or not: the count a consumer derives for one that omits the field is `0`, not the global default, which is why every such case in the corpus omits it. Those three shapes and one outcome are the whole of the relaxation — a case whose `then.outcome` is `boundary-failed` costs `0` too, its boundary having never opened and its callback never run, in either form that outcome may be stated in: directly, or as a dialect-keyed map whose EVERY named dialect fails to open, since one count answers for every dialect the case claims anything about — and every other case asserts one operation that reaches the database |
+| `then.roundTrips` | `then` | no | the DATABASE CALLS the case costs — every statement presented to the port, a FAILED, not-executed, or unconfirmed one included, with transaction demarcation (begin, commit, rollback) counting none, exactly as `m-execution-lifecycle` counts them, so a case authoring both this and `then.executionLifecycle` states one number twice and the two MUST agree. Default `1` for the shapes that reach the database, `0` for a `rejected` case and for an `evolution` case. For a deep-fetch case it MUST equal the authored/executed `then.statements` count (child SQL is omitted after an empty parent-key level and at a level whose target position has no concrete subtype); for a write sequence it MUST equal the ordered DML statement count PLUS the resolving reads the sequence owes (see *Resolving reads a write owes*, below); for a scenario the SUM of per-step round trips — `0` where every step costs none; for a RETRY-shaped case (a `when.attempts` conflict, or a `boundary` case whose fault is retried) the sum across EVERY attempt, not the last one's alone, each attempt's own resolving read included. A `rejected` case is refused pre-SQL and an `evolution` case describes two accepted models without executing anything, so each costs `0` declared or not: the count a consumer derives for one that omits the field is `0`, not the global default, which is why every such case in the corpus omits it. Those three shapes, one outcome, and one read are the whole of the relaxation — a case whose `then.outcome` is `boundary-failed` costs `0` too, its boundary having never opened and its callback never run, in either form that outcome may be stated in: directly, or as a dialect-keyed map whose EVERY named dialect fails to open, since one count answers for every dialect the case claims anything about; and a read whose result position has no concrete subtype declares `0` beside its empty `then.statements` (see *Structurally empty reads*, below) — and every other case asserts one operation that reaches the database |
 | `then.tolerance` | `then` | no | absolute numeric comparison tolerance; omit for exact comparison (the default). Declare ONLY for inherently inexact results (stddev/variance, repeating-decimal avg) |
 
 #### How a case spells an Entity
@@ -553,6 +553,43 @@ separately), while a Value Object occurrence with `multiplicity: many` and a
 scalar collection — an Attribute or Value Object Attribute with
 `multiplicity: many` — compare positionally because their order is semantic.
 Duplicate Value Object elements and duplicate scalar elements remain distinct.
+
+#### Structurally empty reads
+
+A read whose result position resolves to **no** concrete subtype — an
+unnarrowed abstract target with no composed concrete descendant (`m-inheritance`
+*Positions with no composed concrete subtype*) — issues no statement (`m-sql`
+*Inheritance — a position with no concrete subtype*). Its case authors that
+observation rather than omitting it:
+
+```yaml
+shape: read
+when:
+  objectQuery:
+    target: parallax.compatibility.Concept   # composes no concrete subtype
+    predicate: { "true": {} }
+then:
+  statements: []
+  rows: []
+  roundTrips: 0
+```
+
+`then.statements` stays required and is empty, `then.roundTrips` is required and
+`0`, and the result member is the empty observation its result form already has:
+`then.rows: []`, a `then.graph` whose root list is empty, or `then.graphs: []`.
+The case carries no `referenceSql`, since no naive statement can read a position
+no table describes, and no `storedDataIssues`, since no row reaches delivery.
+Includes and a `when.stream` member change none of this: there are no root rows
+to fetch beneath, and a delivery ends at its first page.
+
+The relaxation is the ordinary `read` shape's alone, and the schema can only
+admit it. Model-aware validation decides it: an empty statement list is valid
+exactly where the reader's result position is empty, a position that is empty
+authors no statement, and a live position authors and executes its statement
+even when no stored row matches. A live root whose Include targets an empty
+position needs nothing new: the root and every live level author their
+statements, the empty level authors none, and `then.graph` shows the requested
+view loaded empty (`[]`) or null.
 
 #### Read result form (row-form vs instance-form)
 
@@ -1042,11 +1079,13 @@ distinct parent keys gathered from the previous level (an **unordered set** — 
 children match, and child result order is fixed by the level's own `orderBy`; the
 harness therefore compares each level's binds order-insensitively, consistent with
 the order-insensitive row comparison of layer 2, and an implementation MUST NOT
-sort these keys at runtime to match the fixture), empty parent-key levels execute
-no child SQL, and the in-memory-assembled object graph equals the case's
+sort these keys at runtime to match the fixture), empty parent-key levels and
+levels whose target position has no concrete subtype execute no child SQL, and
+the in-memory-assembled object graph equals the case's
 `then.graph`. This is what proves N+1 elimination automatically (a 1 → N → N
 deep fetch with non-empty levels must run in exactly 3 statements, not 1 + N +
-N; a deep fetch whose root is empty runs only the root statement). For these
+N; a deep fetch whose root is empty runs only the root statement, and one whose
+root position has no concrete subtype runs none). For these
 cases `then.statements` is an **ordered list** of statement entries (root plus
 the child levels that execute) rather than a single entry, and `then.graph`
 replaces (or accompanies) `then.rows`.

@@ -561,6 +561,20 @@ def query_position(query: Any, entity_defs: list[dict[str, Any]]) -> QueryPositi
     return QueryPosition(family, target, family.strategy_of(target))
 
 
+def reads_no_concrete(query: Any, entity_defs: list[dict[str, Any]]) -> bool:
+    """Whether *query*'s result position resolves to no concrete subtype.
+
+    Only an unnarrowed abstract target can: a family composes a concrete
+    somewhere, and an authored narrowing to the empty set is refused. Such a
+    read issues no statement and returns no root (`m-sql`, `m-case-format`
+    *Structurally empty reads*).
+    """
+    position = query_position(query, entity_defs)
+    if position is None or query.get("narrowTo") is not None:
+        return False
+    return not position.family.effective_concrete_set(position.target)
+
+
 def _entity_defs(descriptor: dict[str, Any]) -> list[dict[str, Any]]:
     """Lift a descriptor (single ``entity`` or ``entities`` list) to a flat list."""
     if "entities" in descriptor:

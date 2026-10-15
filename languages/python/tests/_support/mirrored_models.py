@@ -29,6 +29,8 @@ from types import MappingProxyType
 from parallax.conformance.animal_owner import ANIMAL_MODEL
 from parallax.conformance.composed_beast_document_models import COMPOSED_BEAST_DOCUMENT_READER
 from parallax.conformance.composed_beast_models import COMPOSED_BEAST_READER
+from parallax.conformance.dormant_position_document_models import DORMANT_POSITION_DOCUMENT
+from parallax.conformance.dormant_position_models import DORMANT_POSITION_COLUMNS
 from parallax.conformance.edit_models import NOTE_MODEL
 from parallax.conformance.graph_models import POLICY_MODEL
 from parallax.conformance.identifier_models import (
@@ -619,6 +621,8 @@ MIRRORED: list[tuple[str, DomainModel]] = [
     ("note", NOTE_MODEL),
     ("composed-beast-reader", COMPOSED_BEAST_READER),
     ("composed-beast-document-reader", COMPOSED_BEAST_DOCUMENT_READER),
+    ("dormant-position-layout-twin-columns", DORMANT_POSITION_COLUMNS),
+    ("dormant-position-layout-twin-document", DORMANT_POSITION_DOCUMENT),
 ]
 """Corpus model stem -> the Domain Model the idiomatic classes for it compose into."""
 

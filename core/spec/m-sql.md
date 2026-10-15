@@ -1117,7 +1117,8 @@ single **`union all`** statement whose branches — one per effective concrete
 subtype in canonical alphabetical order (`m-inheritance`) — share the **same**
 parent-id `IN` list (the stable superset projection + per-branch `familyVariant`
 literal of the abstract-read lowering below); the hop remains one statement,
-preserving `1 + L`.
+preserving `1 + L`. A hop whose target position has no concrete subtype issues
+none (*Inheritance — a position with no concrete subtype*).
 
 ## Temporal predicates and write sequences
 
@@ -1799,6 +1800,31 @@ later ungated write (`m-read-lock`). A table-per-concrete-subtype union read tha
 genuinely requests a shared row lock is therefore **refused**. The `optimistic`
 Effective Concurrency Strategy emits no suffix and is not such a request, so a
 participating read carrying it is ordered, capped, and executed like any other.
+
+### Inheritance — a position with no concrete subtype
+
+A read position whose effective concrete-subtype set is empty (`m-inheritance`
+*Positions with no composed concrete subtype*) has no table, `union all`
+branch, or tag list to select from, so it lowers to **no statement**. Nothing
+stands in for one: no `where 1 = 0` read, no probe of the database, and no
+statement with an empty select list or an empty `in ()`.
+
+- A query whose result position is empty issues no root statement and,
+  having no root rows, no child statement either. Streamed, its first page
+  ends the delivery without a page statement.
+- An Include level whose target position is empty issues no child statement
+  even when its admitted parents gathered non-null keys, and attaches the
+  loaded-empty or loaded-null view instead (`m-deep-fetch`). A level beneath it
+  has no parent rows and issues none. Every other level issues its statement
+  exactly as it would without the empty one.
+
+This is a different fact from a statement that returns nothing. A query whose
+predicate matches no stored row still issues its root statement, and a level
+whose admitted parents gathered no key is skipped by the runtime (*Deep fetch*,
+above); here the position itself is empty, before any statement or key exists.
+A relationship predicate whose hop reaches an empty target reads no position
+either: it lowers, inside its enclosing statement, to that hop's absent-candidate
+answer (*Correlated scalar subqueries*).
 
 ### Inheritance — concrete-subtype DML
 

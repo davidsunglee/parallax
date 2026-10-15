@@ -416,6 +416,30 @@ diagnosed (`m-sql` *Polymorphic relationship quantifiers*), and a read
 partitioned by variant excludes the row as a known limitation of that shape
 (`m-sql` *Variant partitioning for a non-uniform path*).
 
+### Positions with no composed concrete subtype
+
+A family composes at least one concrete subtype (*Family invariants*), but an
+abstract subtype may still have none beneath it in this model. Such a position
+is **dormant**: its effective concrete-subtype set is empty. Reading it is valid,
+not a refusal, and no stored row can occupy it — not even one in the shared
+table, because only the unnarrowed root admits the shared table's other tags.
+
+| Read targeting the dormant position | Result |
+|---|---|
+| a query's own `target` | no roots, eager or streamed |
+| a to-many Include hop, for each admitted parent | the requested view loaded empty |
+| a to-one Include hop, for each admitted parent | the requested view loaded null |
+
+Each holds under both strategies and both Storage Layouts. An Include hop
+beneath a dormant one has no parent and attaches nothing, and an independent
+hop beside it is unaffected. The result follows from the position alone: it
+depends on no stored row and on no parent key a hop gathered, so reading the
+position issues no statement (`m-sql` *A position with no concrete subtype*).
+An authored Subtype
+Selection resolving to the empty set is still `narrow-empty-effective-set`, and
+a predicate whose relationship reaches a dormant position keeps its
+absent-candidate answers (`m-sql` *Correlated scalar subqueries*).
+
 ### The path root as a resolvable position
 
 A deep-fetch path's **root** is a resolvable position of exactly the kind above:

@@ -13,11 +13,14 @@ from __future__ import annotations
 
 import datetime as dt
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import replace
 from decimal import Decimal
-from typing import Any, cast
+from typing import Any, Final, cast
 
 import pytest
 
+from parallax.conformance import dormant_position_document_models as dormant_document
+from parallax.conformance import dormant_position_models as dormant
 from parallax.conformance import models, read_models
 from parallax.conformance import vo_models as vo
 from parallax.conformance.composed_beast_models import COMPOSED_BEAST_READER
@@ -27,10 +30,14 @@ from parallax.core import (
     LATEST,
     ONE_TO_MANY,
     TX_TIME,
+    AbstractRoot,
+    AbstractSubtype,
     Attr,
+    ConcreteSubtype,
     DomainModel,
     Entity,
     Rel,
+    TablePerHierarchy,
     ValueObject,
     attr,
     deep_fetch,
@@ -70,6 +77,7 @@ from parallax.core.metamodel import (
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.object_query._fluent import ObjectQuery, typed_read_query
+from parallax.core.predicate import ModelRejectedError
 from parallax.core.read_delivery import InvalidData, InvalidDataError, PublishedRow, StoredDataIssue
 from parallax.core.read_delivery._delivery import find, find_history
 from parallax.core.read_delivery._fetch import slot_table
@@ -99,6 +107,7 @@ from parallax.snapshot import (
     Snapshot,
     SnapshotMaterializationError,
     TooManyResultsFound,
+    WireEntity,
 )
 from parallax.snapshot._handle import _database, _read
 from parallax.snapshot._publication._classify import ClassifiedRoot, classify_roots
@@ -108,13 +117,14 @@ from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
     ConnectsAsItself,
     Read,
+    ReadCall,
     RefusingAdapter,
     ScriptedAdapter,
     Transact,
 )
 from tests._support.document_reads import fold_mapping_rows
 from tests._support.root_ownership import own_root
-from tests.unit._corpus_model_support import formed
+from tests.unit._corpus_model_support import formed, records
 from tests.unit._transact_support import ACCOUNT, NEW_ROW, PERSON
 from tests.unit.snapshot._snapshot_page_support import (
     ConversionCalls,
@@ -1729,6 +1739,312 @@ def test_a_back_reference_over_a_null_correlation_key_attaches_none() -> None:
         if layout.concrete == EntityIdentity("parallax.compatibility", "OrderItem")
     )
     assert _view(rows, item, "order") is None
+
+
+# --------------------------------------------------------------------------- #
+# Structurally empty positions: no statement, and loaded views where requested. #
+# --------------------------------------------------------------------------- #
+_DORMANT_ROOTS: Final = pytest.mark.parametrize(
+    ("model", "query"),
+    [
+        pytest.param(
+            dormant.DORMANT_POSITION_COLUMNS,
+            dormant.Prototype.where(dormant.Prototype.all).include(
+                dormant.Prototype.workbenches.prototype
+            ),
+            id="tph-columns",
+        ),
+        pytest.param(
+            dormant_document.DORMANT_POSITION_DOCUMENT,
+            dormant_document.Prototype.where(dormant_document.Prototype.all).include(
+                dormant_document.Prototype.workbenches.prototype
+            ),
+            id="tph-document",
+        ),
+        pytest.param(
+            dormant.DORMANT_POSITION_COLUMNS,
+            dormant.Concept.where(dormant.Concept.all).include(dormant.Concept.workbenches),
+            id="tpcs-columns",
+        ),
+        pytest.param(
+            dormant_document.DORMANT_POSITION_DOCUMENT,
+            dormant_document.Concept.where(dormant_document.Concept.all),
+            id="tpcs-document",
+        ),
+    ],
+)
+
+
+@_DORMANT_ROOTS
+def test_a_dormant_root_publishes_no_roots_and_issues_no_statement(
+    model: DomainModel, query: ObjectQuery[Any, Any]
+) -> None:
+    port = ScriptedAdapter()
+    db = own_root(Database.connect(port, model)).using_database_login()
+
+    snapshot = db.find(query)
+    direct = db.wire.find(query)
+
+    assert snapshot.results() == []
+    assert snapshot.wire().results() == []
+    assert direct.results() == []
+    assert direct.edition == snapshot.edition
+    assert port.calls == []
+
+
+def test_a_dormant_root_prepares_its_levels_but_renders_and_executes_nothing() -> None:
+    observer = RecordingObserver()
+    meta = model_of(dormant.DORMANT_POSITION_COLUMNS)
+    query = deserialize_query(
+        {
+            "target": "Prototype",
+            "predicate": {"true": {}},
+            "includes": [
+                {"segments": [{"rel": "Prototype.workbenches"}, {"rel": "Workbench.prototype"}]}
+            ],
+        }
+    )
+
+    result = find(
+        preflight(query, model=meta, form="graph"),
+        _cataloged(meta),
+        QueuePort([]),
+        origins=ObservedPageProjections(meta, ledger=None, scanned=False),
+        observer=observer,
+    )
+
+    assert _rows(result.page).roots == ()
+    assert observer.events == [("prepared", 3)]
+
+
+def _reads(port: ScriptedAdapter) -> list[ReadCall]:
+    return [call for call in port.calls if isinstance(call, ReadCall)]
+
+
+def _wire_entity(published: object) -> WireEntity:
+    assert isinstance(published, WireEntity), published
+    return published
+
+
+_COG: Final[MappingRow] = {"id": 1, "kind": "widget", "label": "Cog", "workbench_id": 1, "spin": 3}
+_WORKBENCH_ROWS: Final[list[MappingRow]] = [
+    {"id": 1, "name": "Bench", "prototype_id": 7, "concept_id": 8},
+    {"id": 2, "name": "Shed", "prototype_id": 9, "concept_id": None},
+]
+
+
+def test_an_include_of_a_dormant_target_loads_empty_and_null_without_a_child_statement() -> None:
+    port = ScriptedAdapter(Read(rows=list(_WORKBENCH_ROWS)), Read(rows=[_COG]))
+    db = own_root(Database.connect(port, dormant.DORMANT_POSITION_COLUMNS)).using_database_login()
+    query = (
+        dormant.Workbench.where(dormant.Workbench.all)
+        .order_by(dormant.Workbench.id.asc())
+        .include(dormant.Workbench.prototypes.workbenches)
+        .include(dormant.Workbench.prototype)
+        .include(dormant.Workbench.gadgets)
+    )
+
+    with port:
+        snapshot = db.find(query)
+
+    (_root_read, gadgets) = _reads(port)
+    assert gadgets.sql == (
+        "select t0.id, t0.kind, t0.label, t0.workbench_id, t0.spin from dormant_gadget t0 "
+        "where t0.workbench_id = any(%s) order by t0.id asc"
+    )
+    assert gadgets.binds == ([1, 2],)
+    bench, shed = snapshot.results()
+    assert (bench.prototypes, bench.prototype) == ((), None)
+    assert (shed.prototypes, shed.prototype) == ((), None)
+    assert [gadget.label for gadget in bench.gadgets] == ["Cog"]
+    assert shed.gadgets == ()
+    wired = snapshot.wire().results()
+    assert [
+        (entity["prototypes"], entity["prototype"], "concepts" in entity)
+        for entity in map(_wire_entity, wired)
+    ] == [([], None, False), ([], None, False)]
+
+
+def test_an_include_of_a_dormant_tpcs_target_loads_empty_and_null_without_a_child_statement() -> (
+    None
+):
+    port = ScriptedAdapter(Read(rows=list(_WORKBENCH_ROWS)), Read(rows=[_COG]))
+    db = own_root(Database.connect(port, dormant.DORMANT_POSITION_COLUMNS)).using_database_login()
+    query = (
+        dormant.Workbench.where(dormant.Workbench.all)
+        .order_by(dormant.Workbench.id.asc())
+        .include(dormant.Workbench.concepts)
+        .include(dormant.Workbench.concept)
+        .include(dormant.Workbench.gadgets)
+    )
+
+    with port:
+        direct = db.wire.find(query).results()
+
+    assert len(_reads(port)) == 2
+    assert [
+        (entity["concepts"], entity["concept"], len(cast("tuple[object, ...]", entity["gadgets"])))
+        for entity in map(_wire_entity, direct)
+    ] == [([], None, 1), ([], None, 0)]
+
+
+_GUARDED_NS: Final = "parallax.compatibility"
+
+
+class Shelf(
+    Entity,
+    table="guard_shelf",
+    namespace=_GUARDED_NS,
+    inheritance=AbstractRoot(TablePerHierarchy(tag_column="kind")),
+):
+    id: Attr[int] = attr(primary_key=True)
+    drafts: Rel[tuple[Draft, ...]] = rel(
+        cardinality=ONE_TO_MANY, join=("id", "shelf_id"), order_by=("id",)
+    )
+
+
+class Bookshelf(Shelf, namespace=_GUARDED_NS, inheritance=ConcreteSubtype(tag_value="book")):
+    pass
+
+
+class Spiceshelf(Shelf, namespace=_GUARDED_NS, inheritance=ConcreteSubtype(tag_value="spice")):
+    pass
+
+
+class Sketch(
+    Entity,
+    table="guard_sketch",
+    namespace=_GUARDED_NS,
+    inheritance=AbstractRoot(TablePerHierarchy(tag_column="kind")),
+):
+    id: Attr[int] = attr(primary_key=True)
+    shelf_id: Attr[int | None]
+
+
+class Finished(Sketch, namespace=_GUARDED_NS, inheritance=ConcreteSubtype(tag_value="finished")):
+    pass
+
+
+class Draft(Sketch, namespace=_GUARDED_NS, inheritance=AbstractSubtype()):
+    pass
+
+
+_GUARDED_SHELVES: Final = model_of(
+    DomainModel(Shelf, Bookshelf, Spiceshelf, Sketch, Finished, Draft)
+)
+
+
+def test_a_guarded_include_of_a_dormant_target_loads_only_its_admitted_parents() -> None:
+    port = QueuePort([[{"id": 1, "kind": "book"}, {"id": 2, "kind": "spice"}]])
+    query = deserialize_query(
+        {
+            "target": "Shelf",
+            "predicate": {"true": {}},
+            "includes": [{"appliesTo": ["Bookshelf"], "segments": [{"rel": "Shelf.drafts"}]}],
+        }
+    )
+
+    result = _find(query, _GUARDED_SHELVES, port)
+
+    rows = _rows(result.page)
+    book, spice = (_valid_root(rows, index) for index in range(2))
+    assert len(port.executed) == 1
+    assert _view(rows, book, "drafts") == ()
+    assert _view(rows, spice, "drafts") is ABSENT
+
+
+def _dormant_rate_history(port: DatabaseConnection) -> HistoryPageResult:
+    rate = records("rate")
+    dormant_rate = DescriptorEntity(
+        name="DormantRate",
+        namespace="parallax.compatibility",
+        inheritance=Inheritance(role="abstract-subtype", parent="parallax.compatibility.Rate"),
+    )
+    model = formed(replace(rate, entities=(*rate.entities, dormant_rate)))
+    query = deserialize_query(
+        {
+            "target": "DormantRate",
+            "predicate": {"true": {}},
+            "temporal": {"transaction-time": {"history": {}}, "valid-time": {"asOf": "latest"}},
+        }
+    )
+    return _find_history(query, model, port)
+
+
+def test_a_dormant_milestone_set_keeps_its_family_temporal_shape_without_a_statement() -> None:
+    port = QueuePort([])
+
+    result = _dormant_rate_history(port)
+
+    assert _rows(result.page).roots == ()
+    assert (
+        result.milestones
+        == _find_history(
+            deserialize_query(
+                {
+                    "target": "DepositRate",
+                    "predicate": {"true": {}},
+                    "temporal": {
+                        "transaction-time": {"history": {}},
+                        "valid-time": {"asOf": "latest"},
+                    },
+                }
+            ),
+            RATE,
+            QueuePort([[]]),
+        ).milestones
+    )
+    assert port.executed == []
+
+
+def test_a_dormant_row_form_read_publishes_no_rows_without_a_statement() -> None:
+    port = ScriptedAdapter()
+    db = own_root(Database.connect(port, dormant.DORMANT_POSITION_COLUMNS)).using_database_login()
+
+    result = db.read_rows(
+        object_query_node(
+            dormant.Concept.where(dormant.Concept.all), dormant.DORMANT_POSITION_COLUMNS
+        )
+    )
+
+    assert result.rows == ()
+    assert result.edition == db.find(dormant.Concept.where(dormant.Concept.all)).edition
+    assert port.calls == []
+
+
+@pytest.mark.parametrize(
+    ("document", "rule"),
+    [
+        (
+            {"target": "Gadget", "predicate": {"true": {}}, "narrowTo": ["Prototype"]},
+            "narrow-empty-effective-set",
+        ),
+        (
+            {"target": "Prototype", "predicate": {"true": {}}, "narrowTo": ["Widget"]},
+            "narrow-outside-position",
+        ),
+    ],
+)
+def test_an_invalid_query_over_a_dormant_position_is_still_refused(
+    document: dict[str, object], rule: str
+) -> None:
+    port = QueuePort([])
+
+    with pytest.raises(ModelRejectedError) as refused:
+        _find(deserialize_query(document), model_of(dormant.DORMANT_POSITION_COLUMNS), port)
+
+    assert refused.value.rule == rule
+    assert port.executed == []
+
+
+def test_an_executable_read_matching_no_rows_still_issues_its_statement() -> None:
+    port = ScriptedAdapter(Read(rows=[]))
+    db = own_root(Database.connect(port, dormant.DORMANT_POSITION_COLUMNS)).using_database_login()
+
+    with port:
+        assert db.find(dormant.Widget.where(dormant.Widget.label == "none")).results() == []
+
+    assert len(_reads(port)) == 1
 
 
 # --------------------------------------------------------------------------- #

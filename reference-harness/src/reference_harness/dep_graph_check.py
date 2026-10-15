@@ -840,13 +840,16 @@ def _tagged_case_errors(
     # reaches SQL), and an `evolution` case asserts a pure description of two
     # accepted models, so neither reaches a database and neither carries a
     # golden. A state-graded scenario states the rows its writes leave rather
-    # than the statements that leave them, so it carries none either. Every
+    # than the statements that leave them, so it carries none either, and a read
+    # of a position with no concrete subtype states that it issues none. Every
     # other harness-lane case must carry one.
+    then = doc.get("then")
     if (
         shape is not None
         and shape not in _NO_GOLDEN_SHAPES
         and doc.get("lane") != "api-conformance"
         and doc.get("grading") != "state"
+        and not (shape == "read" and isinstance(then, dict) and then.get("statements") == [])
         and not _has_postgres_golden(doc, shape)
     ):
         errors.append(f"{name}: tagged case has no Postgres golden SQL")

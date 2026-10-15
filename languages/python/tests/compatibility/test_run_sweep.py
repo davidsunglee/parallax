@@ -195,6 +195,10 @@ def _stream_root_positions(case: case_format.Case, statements: Sequence[str]) ->
     a delivery that ran a different number of them fails here rather than being
     graded against the wrong statements.
     """
+    if not statements:
+        # A position with no concrete subtype ends its delivery with no page
+        # statement at all (m-case-format *Structurally empty reads*).
+        return set()
     doc = case_document(case)
     query = cast("dict[str, Any]", doc["when"]["objectQuery"])
     size = cast("int", cast("dict[str, Any]", doc["when"]["stream"])["batchSize"])

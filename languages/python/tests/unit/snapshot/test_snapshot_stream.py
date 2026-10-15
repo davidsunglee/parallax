@@ -33,6 +33,7 @@ from typing import Any, Final, cast
 
 import pytest
 
+from parallax.conformance import dormant_position_models as dormant
 from parallax.conformance import vo_models as vo
 from parallax.conformance.composed_beast_models import COMPOSED_BEAST_READER, Keeper
 from parallax.conformance.graph_models import POLICY_MODEL, Policy
@@ -43,6 +44,7 @@ from parallax.conformance.story_models import (
     OrderStatus,
     Position,
 )
+from parallax.core import DomainModel
 from parallax.core.base import ManagedValue, NeutralType
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import DatabaseAdapter, MappingRow
@@ -526,6 +528,39 @@ def test_a_streamed_unknown_child_tag_arrives_as_a_record_in_both_namespaces() -
         assert isinstance(record, InvalidData)
         assert record.data is None
         assert {issue.code for issue in record.issues} == {"stored-data-family-tag-unknown"}
+
+
+@pytest.mark.parametrize(
+    ("model", "query"),
+    [
+        pytest.param(
+            dormant.DORMANT_POSITION_COLUMNS,
+            dormant.Prototype.where(dormant.Prototype.all).include(
+                dormant.Prototype.workbenches.prototype
+            ),
+            id="tph",
+        ),
+        pytest.param(
+            dormant.DORMANT_POSITION_COLUMNS,
+            dormant.Concept.where(dormant.Concept.all),
+            id="tpcs",
+        ),
+    ],
+)
+def test_a_dormant_root_streams_to_exhaustion_without_a_statement(
+    model: DomainModel, query: ObjectQuery[Any, Any]
+) -> None:
+    port = ScriptedAdapter()
+    db = db_for(model, port)
+
+    with db.stream(query, batch_size=2) as stream:
+        typed = list(stream)
+    with db.wire.stream(query, batch_size=2) as stream:
+        wired = list(stream.checked())
+
+    assert (typed, wired) == ([], [])
+    assert port.calls == []
+    assert port.acquisitions == 2
 
 
 # --------------------------------------------------------------------------- #

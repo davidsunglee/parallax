@@ -1302,3 +1302,16 @@ def test_a_driver_exception_from_a_page_propagates_unchanged(corpus_case: CaseLo
 
     with pytest.raises(RuntimeError, match="connection reset"):
         assert_case_read(case, reads)
+
+
+def test_a_streamed_position_with_no_concrete_ends_without_a_page_statement(
+    corpus_case: CaseLoader,
+) -> None:
+    reads = ScriptedReads()
+
+    assert_case_read(
+        corpus_case("m-inheritance-158-dormant-tpcs-streamed-root-layout-twin-columns.yaml"),
+        reads,
+    )
+
+    assert reads.calls == []

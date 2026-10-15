@@ -1,0 +1,8 @@
+parallax.compatibility.Workbench:
+  - { id: 1, name: Bench, prototypeId: 7, conceptId: 8 }
+  - { id: 2, name: Shed, prototypeId: 9, conceptId: null }
+parallax.compatibility.Widget:
+  - { id: 1, label: Cog, workbenchId: 1, spin: 3 }
+  - { id: 2, label: Gear, workbenchId: 1, spin: null }
+parallax.compatibility.Sloop:
+  - { id: 1, label: Wren, workbenchId: 2, hull: oak }

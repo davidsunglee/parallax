@@ -545,7 +545,7 @@ class _PlanBuilder:
         parent_position = 0 if parent_id == _ROOT_ID else parent_id + 1
 
         if is_back_reference:
-            target_view = _entity_view(self.families, position[0])
+            target_view = _entity_view(self.families, related_entity.identity)
             step: FetchStep = BackReferenceFetchStep(
                 position=position_id,
                 parent=parent_ref,

@@ -1,0 +1,51 @@
+model: models/dormant-position-layout-twin-columns.yaml
+tags: [m-inheritance, m-deep-fetch, m-sql, m-read-delivery, m-snapshot-read, table-per-concrete-subtype, dormant-position, deep-fetch, to-one, to-many, graph, layout-twin, columns, slice-snapshot-1]
+shape: read
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "deep-fetch child level - the Workbench.gadgets key-set binds are the workbench ids gathered from the root query result"
+when:
+  objectQuery:
+    target: parallax.compatibility.Workbench
+    predicate:
+      "true": {}
+    orderBy:
+      - attr: parallax.compatibility.Workbench.id
+        direction: asc
+    includes:
+      - segments:
+          - rel: parallax.compatibility.Workbench.concept
+      - segments:
+          - rel: parallax.compatibility.Workbench.concepts
+      - segments:
+          - rel: parallax.compatibility.Workbench.gadgets
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name, t0.prototype_id, t0.concept_id from dormant_workbench t0 order by t0.id asc
+        mariadb: select t0.id, t0.name, t0.prototype_id, t0.concept_id from dormant_workbench t0 order by t0.id asc
+    - sql:
+        postgres: select t0.id, t0.kind, t0.label, t0.workbench_id, t0.spin from dormant_gadget t0 where t0.workbench_id = any(?) order by t0.id asc
+        mariadb: select t0.id, t0.kind, t0.label, t0.workbench_id, t0.spin from dormant_gadget t0 where t0.workbench_id in (?, ?) order by t0.id asc
+      binds: { postgres: [[1, 2]], mariadb: [1, 2] }
+  referenceSql: select id, name, prototype_id, concept_id from dormant_workbench
+  graph:
+    Workbench:
+      - id: 1
+        name: Bench
+        prototypeId: 7
+        conceptId: 8
+        concept: null
+        concepts: []
+        gadgets:
+          - { id: 1, label: Cog, workbenchId: 1, spin: 3, familyVariant: Widget }
+          - { id: 2, label: Gear, workbenchId: 1, spin: null, familyVariant: Widget }
+      - id: 2
+        name: Shed
+        prototypeId: 9
+        conceptId: null
+        concept: null
+        concepts: []
+        gadgets: []
+  roundTrips: 2

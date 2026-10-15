@@ -528,8 +528,8 @@ def refuse_unused_levels(
         raise CaseFailure(
             f"{case.path.name}: {source} ({dialect}) lists "
             f"{listed - executed.consumed} unused deep-fetch child "
-            f"statement(s). Child SQL MUST be omitted after a level gathers no "
-            f"parent keys."
+            f"statement(s). Child SQL MUST be omitted for a level that gathers no "
+            f"parent keys or targets a position with no concrete subtype."
         )
 
 
@@ -579,7 +579,10 @@ def execute_fetch_levels(
             }
         )
 
-        if not parent_keys:
+        # A hop whose target position has no concrete subtype reaches no row
+        # however many keys its parents gathered, so it elides its child SQL
+        # exactly as an empty parent key set does, and so does every hop below it.
+        if not parent_keys or step.effective_set == []:
             rows_by_hop[step.hop_key] = []
             children_by_step[step.hop_key] = {}
             continue

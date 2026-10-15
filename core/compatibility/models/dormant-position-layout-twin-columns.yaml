@@ -1,0 +1,83 @@
+entities:
+  - name: Workbench
+    namespace: parallax.compatibility
+    table: dormant_workbench
+    attributes:
+      - {name: id, type: int64, primaryKey: true}
+      - {name: name, type: string, maxLength: 32}
+      - {name: prototypeId, type: int64, nullable: true}
+      - {name: conceptId, type: int64, nullable: true}
+    relationships:
+      - name: prototypes
+        cardinality: one-to-many
+        join:
+          source: id
+          target: {entity: parallax.compatibility.Prototype, attribute: workbenchId}
+        orderBy:
+          - {attribute: id}
+      - name: prototype
+        cardinality: many-to-one
+        join:
+          source: prototypeId
+          target: {entity: parallax.compatibility.Prototype, attribute: id}
+      - name: gadgets
+        cardinality: one-to-many
+        join:
+          source: id
+          target: {entity: parallax.compatibility.Gadget, attribute: workbenchId}
+        orderBy:
+          - {attribute: id}
+      - name: concepts
+        cardinality: one-to-many
+        join:
+          source: id
+          target: {entity: parallax.compatibility.Concept, attribute: workbenchId}
+        orderBy:
+          - {attribute: id}
+      - name: concept
+        cardinality: many-to-one
+        join:
+          source: conceptId
+          target: {entity: parallax.compatibility.Concept, attribute: id}
+  - name: Gadget
+    namespace: parallax.compatibility
+    table: dormant_gadget
+    inheritance: {role: root, strategy: table-per-hierarchy, tag: {column: kind}}
+    attributes:
+      - {name: id, type: int64, primaryKey: true}
+      - {name: label, type: string, maxLength: 32}
+      - {name: workbenchId, type: int64, nullable: true}
+  - name: Widget
+    namespace: parallax.compatibility
+    inheritance: {role: concrete-subtype, parent: parallax.compatibility.Gadget, tagValue: widget}
+    attributes:
+      - {name: spin, type: int32, nullable: true}
+  - name: Prototype
+    namespace: parallax.compatibility
+    inheritance: {role: abstract-subtype, parent: parallax.compatibility.Gadget}
+    attributes:
+      - {name: draft, type: string, maxLength: 16, nullable: true}
+    relationships:
+      - name: workbenches
+        reverseOf: parallax.compatibility.Workbench.prototype
+  - name: Craft
+    namespace: parallax.compatibility
+    inheritance: {role: root, strategy: table-per-concrete-subtype}
+    attributes:
+      - {name: id, type: int64, primaryKey: true}
+      - {name: label, type: string, maxLength: 32}
+      - {name: workbenchId, type: int64, nullable: true}
+  - name: Sloop
+    namespace: parallax.compatibility
+    table: dormant_sloop
+    inheritance: {role: concrete-subtype, parent: parallax.compatibility.Craft}
+    attributes:
+      - {name: hull, type: string, maxLength: 16, nullable: true}
+  - name: Concept
+    namespace: parallax.compatibility
+    inheritance: {role: abstract-subtype, parent: parallax.compatibility.Craft}
+    attributes:
+      - {name: sketch, type: string, maxLength: 16, nullable: true}
+    relationships:
+      - name: workbenches
+        reverseOf: parallax.compatibility.Workbench.concept

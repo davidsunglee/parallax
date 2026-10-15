@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING
 from parallax.conformance.animal_owner import ANIMAL_MODEL
 from parallax.conformance.composed_beast_document_models import COMPOSED_BEAST_DOCUMENT_READER
 from parallax.conformance.composed_beast_models import COMPOSED_BEAST_READER
+from parallax.conformance.dormant_position_document_models import DORMANT_POSITION_DOCUMENT
+from parallax.conformance.dormant_position_models import DORMANT_POSITION_COLUMNS
 from parallax.conformance.edit_models import NOTE_MODEL
 from parallax.conformance.graph_models import POLICY_MODEL
 from parallax.conformance.identifier_models import (
@@ -52,6 +54,8 @@ MODELS: Mapping[str, DomainModel] = MappingProxyType(
         "contact": CONTACT_MODEL,
         "customer": CUSTOMER_MODEL,
         "document": DOCUMENT_MODEL,
+        "dormant-position-layout-twin-columns": DORMANT_POSITION_COLUMNS,
+        "dormant-position-layout-twin-document": DORMANT_POSITION_DOCUMENT,
         "identifier-types": IDENTIFIER_TYPES,
         "identifier-tph-document": IDENTIFIER_TPH_DOCUMENT,
         "identifier-tpcs-document": IDENTIFIER_TPCS_DOCUMENT,

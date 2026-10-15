@@ -24,6 +24,7 @@ from parallax.conformance.class_models import MODELS
 from parallax.conformance.composed_beast_document_models import Fox as DocumentFox
 from parallax.conformance.composed_beast_document_models import Wolf as DocumentWolf
 from parallax.conformance.composed_beast_models import Beast, Keeper, Wolf
+from parallax.conformance.dormant_position_models import Prototype, Workbench
 from parallax.conformance.graph_stories import (
     GRAPH_STORIES,
     a_finite_transaction_time_pinned_view_is_read_only,
@@ -923,6 +924,57 @@ def test_a_subtype_document_filter_leaves_its_include_levels_unfiltered(
     _unknown_tag(akela, "bear")
     assert isinstance(bruno, DocumentFox)
     assert bruno.followers == ()
+    assert db.round_trips == [2]
+
+
+def test_a_subtype_with_no_composed_concrete_reads_no_roots_without_a_statement(
+    profile_run: Any,
+) -> None:
+    story = _GRAPH_STORIES_BY_ID["m-inheritance-154"]
+    db = _counting_connect(profile_run.port, _reset_for(story.case_id, profile_run))
+    snapshot = story.run(db)
+
+    assert snapshot.results() == []
+    assert snapshot.wire().results() == []
+    assert db.round_trips == [0]
+    query = Prototype.where(Prototype.all)
+    assert db.wire.find(query).results() == []
+    with db.stream(query, batch_size=2) as stream:
+        assert list(stream) == []
+    with db.wire.stream(query, batch_size=2) as wire_stream:
+        assert list(wire_stream) == []
+    assert db.observation.round_trips == 0
+
+
+def test_includes_of_a_subtype_with_no_composed_concrete_load_without_a_statement(
+    profile_run: Any,
+) -> None:
+    story = _GRAPH_STORIES_BY_ID["m-inheritance-160"]
+    db = _counting_connect(profile_run.port, _reset_for(story.case_id, profile_run))
+    snapshot = story.run(db)
+
+    bench, shed = snapshot.results()
+    for workbench in (bench, shed):
+        assert workbench.prototype_id is not None
+        assert is_view_loaded(workbench, Workbench.prototype)
+        assert is_view_loaded(workbench, Workbench.prototypes)
+        assert (workbench.prototype, workbench.prototypes) == (None, ())
+        assert is_view_loaded(workbench, Workbench.concepts) is False
+    assert [gadget.label for gadget in bench.gadgets] == ["Cog", "Gear"]
+    assert db.round_trips == [2]
+
+
+def test_includes_of_a_tpcs_position_with_no_concrete_load_without_a_statement(
+    profile_run: Any,
+) -> None:
+    story = _GRAPH_STORIES_BY_ID["m-inheritance-162"]
+    db = _counting_connect(profile_run.port, _reset_for(story.case_id, profile_run))
+    snapshot = story.run(db)
+
+    bench, shed = snapshot.wire().results()
+    assert (bench["conceptId"], bench["concept"], bench["concepts"]) == (8, None, [])
+    assert (shed["concept"], shed["concepts"], shed["gadgets"]) == (None, [], [])
+    assert "prototypes" not in bench
     assert db.round_trips == [2]
 
 
