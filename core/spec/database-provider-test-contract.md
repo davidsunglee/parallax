@@ -248,6 +248,13 @@ A provider contract suite must exercise these operations:
   owns connection lifetimes, this is a **separately owned** session the caller
   closes — never a connection borrowed from what serves application work, and
   never a raw accessor on a Database Root
+- `session`: open a manual-commit held session at the level a case resolves,
+  one context per attempt of a two-session choreography. Where the engine needs
+  session state for that level, the provider owns it as an adapter does
+  (`m-db-port` *Mapping obligations*): each context saves the state before
+  configuring the level and, on exit, rolls back an unfinished transaction,
+  restores the saved state, and closes the connection. A cleanup failure never
+  replaces the body's own failure
 - `catalog`: report what the database itself holds for a named set of tables —
   each table's columns with their types and nullability, and each index with its
   ordered columns and its uniqueness. Column ordinal position is deliberately
@@ -257,6 +264,16 @@ A provider contract suite must exercise these operations:
   Schema Delta can be compared against independently derived provisioning DDL:
   what is compared is the schema each really produced, never the statements
   either authored
+
+A provider whose `session` owns engine session state owes the two session-state
+proofs section 2 asks of an adapter, against that session owner: the restored
+value read back from the real server over repeated contexts, and, at the driver
+seam, a failed setup that runs no body and a failed restore that keeps the
+outcome already reached, fails the run visibly, and closes the connection.
+Where `m-db-port` *Adapter profile* grades an engine release
+floor, the provider pins that engine's image by digest and asserts the release
+the booted server reports against the floor, because a digest names an image
+rather than a release.
 
 The provider matrix must be declared with named profiles. A profile records:
 

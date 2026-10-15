@@ -19,7 +19,7 @@ What belongs here is what THIS module still owns; every accepted-read refusal is
 exercised against the read oracle's own seam under ``tests/oracle/``.
 
 The graded MariaDB release floor is asserted here for the same reason: only a
-live provider can report which server a floating image tag resolved to, and so is
+live provider can report which release the pinned image actually runs, and so is
 the provider's isolation seam, whose whole claim is what a real server reports the
 session running at.
 """
@@ -37,7 +37,7 @@ from reference_harness._case_execution import CaseExecution
 from reference_harness.case import Case, dialect_executed_cases, discover_cases
 from reference_harness.case_assertions import CaseFailure
 from reference_harness.case_runner import run_case
-from reference_harness.providers import available_dialects
+from reference_harness.providers import available_dialects, mariadb
 from reference_harness.provisioning import provision
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -48,13 +48,6 @@ COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
 # is the sole runner for the `rejected` shape and pins the partition.
 ALL_CASES = discover_cases(COMPATIBILITY_ROOT)
 CASES = dialect_executed_cases(COMPATIBILITY_ROOT)
-
-# The graded MariaDB floor: 11.4.2, the first release of the 11.4 series carrying
-# `innodb_snapshot_isolation`, without which the server has no setting under which
-# Repeatable Read forbids the lost update. Grading from the 11.4 long-term-support
-# series is a deliberate choice, so a release below this floor fails it whether or not
-# it carries the variable.
-_MARIADB_SNAPSHOT_ISOLATION_FLOOR = (11, 4, 2)
 
 # Each engine's own way of reporting the level the session is running at, and what
 # it answers for each portable level a case may declare (m-db-port). The provider
@@ -111,18 +104,17 @@ def test_a_dialect_is_available() -> None:
 
 
 def test_the_booted_mariadb_meets_the_graded_isolation_floor(provider) -> None:
-    # MariaDB's Repeatable Read forbids the lost update only with
-    # `innodb_snapshot_isolation`, which no 11.4-series release below 11.4.2 has. The image
-    # pin is a floating major.minor tag, so which server a run actually boots is
-    # asserted here rather than remembered from the tag.
+    # Below the floor MariaDB's snapshot isolation can refuse a row an uncommitted
+    # writer holds, or let a waiting write overwrite that writer's commit. A digest
+    # names an image rather than a release, so the release a run actually boots is
+    # asserted here rather than remembered from the pin.
     if provider.dialect != "mariadb":
         pytest.skip("the snapshot-isolation floor is a MariaDB fact")
     reported = provider.query("select version() as version")[0]["version"]
     release = tuple(int(part) for part in reported.split("-")[0].split(".")[:3])
-    assert release >= _MARIADB_SNAPSHOT_ISOLATION_FLOOR, (
-        f"MariaDB {reported} is below the graded floor {_MARIADB_SNAPSHOT_ISOLATION_FLOOR}, the "
-        "first 11.4-series release carrying innodb_snapshot_isolation; the graded Repeatable "
-        "Read promise is not underwritten below it"
+    assert release >= mariadb.MARIADB_RELEASE_FLOOR, (
+        f"MariaDB {reported} is below the graded floor {mariadb.MARIADB_RELEASE_FLOOR}; the "
+        "graded Repeatable Read promise is not underwritten below it"
     )
 
 
@@ -160,6 +152,46 @@ def test_mariadb_runs_repeatable_read_with_snapshot_isolation_on(provider) -> No
         assert session.query(probe)[0]["flag"] == 1
     with provider.open_session("serializable") as session:
         assert session.query(probe)[0]["flag"] == default
+
+
+def test_mariadb_restores_snapshot_isolation_after_every_attempt(provider, monkeypatch) -> None:
+    # The session owner saves `innodb_snapshot_isolation` before configuring an
+    # attempt and restores it once the attempt's transaction settles. Each connection
+    # here starts with the setting OFF, as state some earlier user of the connection
+    # left, so a restore that wrote anything else would show; it is read back from
+    # the real server just before the owner closes the connection. Two attempts per
+    # level prove the choreography repeats rather than holding for the first only.
+    if provider.dialect != "mariadb":
+        pytest.skip("innodb_snapshot_isolation is a MariaDB setting")
+    probe = "select @@session.innodb_snapshot_isolation"
+    connect = mariadb.pymysql.connect
+    restored: list[int] = []
+
+    def connect_with_prior_state(**params):
+        connection = connect(**params)
+        with connection.cursor() as cur:
+            cur.execute("set session innodb_snapshot_isolation = OFF")
+        close = connection.close
+
+        def read_back_then_close() -> None:
+            with connection.cursor() as cur:
+                cur.execute(probe)
+                ((value,),) = cur.fetchall()
+            restored.append(value)
+            close()
+
+        connection.close = read_back_then_close
+        return connection
+
+    monkeypatch.setattr(mariadb.pymysql, "connect", connect_with_prior_state)
+    during: dict[str, list[int]] = {}
+    for level in ("repeatable-read", "serializable"):
+        for _ in range(2):
+            with provider.open_session(level) as session:
+                during.setdefault(level, []).append(session.query(f"{probe} as flag")[0]["flag"])
+                session.commit()
+    assert during == {"repeatable-read": [1, 1], "serializable": [0, 0]}
+    assert restored == [0, 0, 0, 0]
 
 
 @pytest.mark.parametrize("case", CASES, ids=[_case_id(c) for c in CASES])
