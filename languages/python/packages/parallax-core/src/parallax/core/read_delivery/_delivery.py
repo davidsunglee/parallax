@@ -85,7 +85,7 @@ def find_history(
     """The flat milestone-set read.
 
     ``history`` and ``asOfRange`` return the full matching milestone sequence in
-    one statement and one Page. Continuation order is authored before SQL
+    at most one statement and one Page. Continuation order is authored before SQL
     compilation, so the flat roots already rank by logical key and canonical axis
     starts. A milestone-set query carries no includes, so the Page schema is
     root-only, and it observes no origin.
