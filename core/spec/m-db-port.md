@@ -561,9 +561,15 @@ this table lists.
 | Repeatable Read | transaction-stable snapshot; no phantoms on supported versions; write skew possible | transaction-stable snapshot with `innodb_snapshot_isolation` on; no phantoms on the supported floor; conflict raises `1020`, which retries |
 | Serializable / conflict behavior | SSI; conflict raises `40001`, which retries | shared locking reads and range protection; conflict raises `1213`, which retries |
 
-The graded MariaDB floor is **11.4.2+**, the first release of the 11.4
-long-term-support series carrying `innodb_snapshot_isolation`; below it no
-conforming Repeatable Read mapping exists. Both engines' native codes classify
+The graded MariaDB floor is **12.3.2+**, one floor for every supported release
+rather than one per series. Carrying `innodb_snapshot_isolation` is not enough:
+before [MDEV-36639](https://jira.mariadb.org/browse/MDEV-36639) a locking read or
+write of a row that a still-active transaction had modified raised `1020` at
+once rather than waiting for that transaction to finish, and before
+[MDEV-39263](https://jira.mariadb.org/browse/MDEV-39263) the wait that replaced
+it could let the write succeed over a change committed during the wait — the
+lost update Repeatable Read forbids. 12.3.2 carries both fixes; below it no
+conforming Repeatable Read mapping is graded. Both engines' native codes classify
 through `m-db-error`'s per-dialect table into the neutral categories, so a
 snapshot conflict is a `deadlock` on either engine and retries on the same terms.
 

@@ -26,10 +26,10 @@ import datetime as _dt
 import json
 import time
 import uuid
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from types import TracebackType
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import pymysql
 from pymysql.constants import FIELD_TYPE
@@ -45,13 +45,19 @@ from ._binds import adapt_document_scalar_binds
 if TYPE_CHECKING:
     from . import Node
 
-# The provisioning seam pins a MariaDB long-term-support series (m-case-format/DQ15).
-# This pin must stay at or above 11.4.2, the first release of the 11.4 series carrying
-# `innodb_snapshot_isolation`, without which Repeatable Read cannot forbid the lost
-# update. Grading from the 11.4 long-term-support series is the deliberate floor, so an
-# earlier series is below it whether or not it carries the variable; the compatibility
-# suite asserts the booted server against that floor.
-MARIADB_IMAGE = "mariadb:12.3"
+# The graded MariaDB floor (m-db-port *Adapter profile*). Below it
+# `innodb_snapshot_isolation` either refuses a row an uncommitted writer holds before
+# that writer finishes (MDEV-36639) or lets a write that waited on such a writer
+# overwrite its commit (MDEV-39263), the lost update Repeatable Read forbids.
+MARIADB_RELEASE_FLOOR = (12, 3, 2)
+
+# The provisioning seam pins the current MariaDB long-term-support series
+# (m-case-format/DQ15), by digest so every run boots the same release. That release
+# must stay at or above `MARIADB_RELEASE_FLOOR`; the compatibility suite asserts the
+# booted server against it.
+MARIADB_IMAGE = (
+    "mariadb:12.3.3@sha256:2bdff1534a7e569fecaf4b10b66ad0d410806e382d9db29ba305448addda97c4"
+)
 
 # MariaDB keys on the vendor errno rather than on SQLSTATE, because the states are
 # not discriminating: every duplicate-key errno below reports `23000` and both
@@ -77,7 +83,7 @@ _CODES: dict[int, str] = {
 # two: without `innodb_snapshot_isolation` InnoDB lets a locking read or a write see
 # the current row rather than the read view's, which is the lost update the level
 # forbids. It is set explicitly whatever the server defaults to, so the promise is a
-# property of the session rather than of whichever release the image tag resolves to.
+# property of the session rather than of the booted release's default.
 # Serializable never sets it: that level forbids the anomaly through shared locking
 # reads and range protection instead, and the read view is not what it works from.
 # The omission is load-bearing rather than merely redundant, because the variable also
@@ -91,6 +97,21 @@ _ISOLATION: dict[str, tuple[str, ...]] = {
         "set session innodb_snapshot_isolation = ON",
     ),
     "serializable": ("set session transaction isolation level serializable",),
+}
+
+# The session state a Repeatable Read mapping changes, saved before a held session is
+# configured and written back after its transaction settles (m-db-port *Mapping
+# obligations*).
+_SAVE_SNAPSHOT_ISOLATION = "select @@session.innodb_snapshot_isolation"
+_RESTORE_SNAPSHOT_ISOLATION = "set session innodb_snapshot_isolation = %s"
+
+# What a held session's native transaction has reached, as cleanup diagnostics state it.
+type _SessionState = Literal["idle", "open", "committed", "rolled back"]
+_SESSION_OUTCOMES: dict[_SessionState, str] = {
+    "idle": "the session ran no transaction",
+    "open": "the session's last transaction never reported a commit",
+    "committed": "the session's last transaction committed",
+    "rolled back": "the session's last transaction rolled back",
 }
 
 # `COLUMN_TYPE` rather than `DATA_TYPE`: only the former carries the declared
@@ -335,30 +356,35 @@ class MariaDbProvider:
         is lowered to 1s on open; a blocked lock then raises errno 1205 quickly.
         InnoDB detects deadlocks immediately (no timeout knob needed).
 
-        A declared ``isolation`` is applied first, at SESSION scope, because a
-        case's whole choreography is one transaction on this connection and
-        MariaDB's per-next-transaction form is neither readable back nor legal
-        once that transaction has begun. Session scope is right here and wrong for
-        a real adapter: this provider creates and closes the connection itself, so
-        the setting outlives no caller's transaction and there is nothing to
-        restore.
+        A declared ``isolation`` is applied at SESSION scope, because a case's
+        whole choreography is one transaction on this connection and MariaDB's
+        per-next-transaction form is neither readable back nor legal once that
+        transaction has begun.
+
+        Each context is one attempt over its own connection, and it owns the
+        session state that attempt's level needs for the attempt's whole life
+        (m-db-port *Mapping obligations*): ``innodb_snapshot_isolation`` is saved
+        before the level is applied, and on exit any unfinished transaction is
+        rolled back, the saved value restored, and the connection closed. A setup
+        failure closes the connection before the body runs. A cleanup failure
+        never replaces the body's own failure, which carries it as a note; with
+        no body failure the first cleanup failure is raised, noting its phase and
+        the outcome the session's transaction had already reached.
         """
         params = {**self._connect_params, "autocommit": False}
         conn = pymysql.connect(database=self._dbname, **params)
         try:
-            with conn.cursor() as cur:
-                for statement in _ISOLATION[isolation] if isolation is not None else ():
-                    cur.execute(statement)
-                cur.execute("set innodb_lock_wait_timeout = 1")
-            conn.commit()
-        except BaseException:
-            conn.close()
+            saved = _configure_session(conn, isolation)
+        except BaseException as failure:
+            _close_after_failed_setup(conn, failure)
             raise
         session = _MariaTxSession(conn)
         try:
             yield session
-        finally:
-            session.close()
+        except BaseException as failure:
+            session.end(saved, failure)
+            raise
+        session.end(saved)
 
     @contextmanager
     def open_peer(self) -> Iterator[Node]:
@@ -394,14 +420,21 @@ class MariaDbProvider:
 
 
 class _MariaTxSession:
-    """A manual-commit MariaDB connection for two-node lock-contention cases."""
+    """A manual-commit MariaDB connection for two-node lock-contention cases.
+
+    Its state describes the native transaction the connection holds now: a
+    statement after a commit or rollback opens another transaction, which the
+    owning context must still settle.
+    """
 
     dialect = "mariadb"
 
     def __init__(self, conn: pymysql.connections.Connection) -> None:
         self._conn = conn
+        self._state: _SessionState = "idle"
 
     def execute(self, sql: str, binds: Sequence[Any] = ()) -> int:
+        self._state = "open"
         with self._conn.cursor() as cur:
             if binds:
                 cur.execute(
@@ -413,6 +446,7 @@ class _MariaTxSession:
             return cur.rowcount
 
     def query(self, sql: str, binds: Sequence[Any] = ()) -> list[dict[str, Any]]:
+        self._state = "open"
         with self._conn.cursor() as cur:
             if binds:
                 cur.execute(
@@ -425,13 +459,83 @@ class _MariaTxSession:
 
     def commit(self) -> None:
         self._conn.commit()
+        self._state = "committed"
 
     def rollback(self) -> None:
         self._conn.rollback()
+        self._state = "rolled back"
 
-    def close(self) -> None:
-        if self._conn is not None and self._conn.open:
-            self._conn.close()
+    def end(self, saved: int, primary: BaseException | None = None) -> None:
+        """Settle, restore *saved*, and close, attempting every step.
+
+        Each cleanup failure becomes a note on *primary* when there is one;
+        otherwise the first is raised, noting its phase and what the session's
+        transaction had reached, with any later ones noted on it.
+        """
+        failures = self._clean_up(saved)
+        if primary is not None:
+            for phase, failure in failures:
+                primary.add_note(f"MariaDB session cleanup also failed while {phase}: {failure!r}")
+            return
+        if not failures:
+            return
+        (phase, first), *later = failures
+        first.add_note(
+            f"MariaDB session cleanup failed while {phase}; {_SESSION_OUTCOMES[self._state]}"
+        )
+        for phase, failure in later:
+            first.add_note(f"MariaDB session cleanup also failed while {phase}: {failure!r}")
+        raise first
+
+    def _clean_up(self, saved: int) -> list[tuple[str, Exception]]:
+        failures: list[tuple[str, Exception]] = []
+        steps: tuple[tuple[str, Callable[[], None]], ...] = (
+            ("settling its unfinished transaction", self._settle),
+            ("restoring innodb_snapshot_isolation", lambda: self._restore(saved)),
+        )
+        try:
+            for phase, step in steps:
+                try:
+                    step()
+                except Exception as failure:
+                    failures.append((phase, failure))
+        finally:
+            try:
+                if self._conn.open:
+                    self._conn.close()
+            except Exception as failure:
+                failures.append(("closing the connection", failure))
+        return failures
+
+    def _settle(self) -> None:
+        if self._state == "open":
+            self.rollback()
+
+    def _restore(self, saved: int) -> None:
+        with self._conn.cursor() as cur:
+            cur.execute(_RESTORE_SNAPSHOT_ISOLATION, (saved,))
+
+
+def _configure_session(conn: pymysql.connections.Connection, isolation: str | None) -> int:
+    """Save ``innodb_snapshot_isolation``, then apply *isolation* and lock tuning."""
+    with conn.cursor() as cur:
+        cur.execute(_SAVE_SNAPSHOT_ISOLATION)
+        ((saved,),) = cur.fetchall()
+        for statement in _ISOLATION[isolation] if isolation is not None else ():
+            cur.execute(statement)
+        cur.execute("set innodb_lock_wait_timeout = 1")
+    conn.commit()
+    return saved
+
+
+def _close_after_failed_setup(conn: pymysql.connections.Connection, failure: BaseException) -> None:
+    try:
+        if conn.open:
+            conn.close()
+    except Exception as close_failure:
+        failure.add_note(
+            f"MariaDB session cleanup also failed while closing the connection: {close_failure!r}"
+        )
 
 
 def _to_pymysql(sql: str, *, escape_percent: bool = False) -> str:
