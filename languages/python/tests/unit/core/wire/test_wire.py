@@ -10,7 +10,7 @@ import json
 import math
 import sys
 import uuid
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from fractions import Fraction
 from typing import cast
 
@@ -709,14 +709,20 @@ _HOOKED_CARRIERS: tuple[tuple[NeutralType, ManagedValue, wire.WireValue], ...] =
 
 
 @pytest.mark.parametrize(
+    "encode", [wire.encode_wire, wire_codec.encode_managed_wire], ids=["checked", "managed"]
+)
+@pytest.mark.parametrize(
     ("neutral_type", "value", "canonical"),
     _HOOKED_CARRIERS,
     ids=[str(row[0]) for row in _HOOKED_CARRIERS],
 )
 def test_encoding_reads_immutable_carrier_payloads_without_subclass_hooks(
-    neutral_type: NeutralType, value: ManagedValue, canonical: wire.WireValue
+    encode: Callable[[NeutralType, ManagedValue], wire.WireValue],
+    neutral_type: NeutralType,
+    value: ManagedValue,
+    canonical: wire.WireValue,
 ) -> None:
-    assert wire.encode_wire(neutral_type, value) == canonical
+    assert encode(neutral_type, value) == canonical
 
 
 class _Level(enum.IntEnum):
