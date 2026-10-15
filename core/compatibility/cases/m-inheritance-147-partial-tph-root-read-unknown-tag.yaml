@@ -1,0 +1,39 @@
+# A partially composed table-per-hierarchy family keeps the unnarrowed abstract-root
+# read unfiltered and diagnoses the stored tag it does not compose (m-inheritance
+# *Partially composed families*, m-sql *Tag-predicate selection*,
+# m-read-delivery). The reader composes Beast and Wolf; the database was
+# provisioned by a model that also composes Bear. The root read selects the whole
+# shared table, so Baloo's 'bear' row is returned rather than filtered, and the
+# reader can neither represent nor skip it: its position publishes null with the
+# unknown-tag diagnosis while both wolves materialize.
+model: models/composed-beast-reader.yaml
+tags: [m-inheritance, m-sql, m-read-delivery, m-snapshot-read, table-per-hierarchy, stored-data, familyVariant, graph, partial-composition, slice-snapshot-1]
+shape: read
+given:
+  provisioningModel: models/composed-beast-provisioning.yaml
+when:
+  objectQuery:
+    target: parallax.compatibility.Beast
+    predicate:
+      "true": {}
+    orderBy:
+      - attr: parallax.compatibility.Beast.id
+        direction: asc
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.kind, t0.name, t0.keeper_id, t0.howl from beast t0 order by t0.id asc
+        mariadb: select t0.id, t0.kind, t0.name, t0.keeper_id, t0.howl from beast t0 order by t0.id asc
+  referenceSql: select id, kind, name, keeper_id, howl from beast
+  graph:
+    Beast:
+      - { id: 1, name: Akela, keeperId: 10, howl: aroo, familyVariant: Wolf }
+      - null
+      - { id: 3, name: Raksha, keeperId: 10, howl: yip, familyVariant: Wolf }
+  storedDataIssues:
+    - ordinal: 1
+      hydrated: false
+      issues:
+        - code: stored-data-family-tag-unknown
+          entity: parallax.compatibility.Beast
+  roundTrips: 1

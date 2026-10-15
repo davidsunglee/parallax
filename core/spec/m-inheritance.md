@@ -384,6 +384,32 @@ variant's own declared shape. This is the read-side counterpart of *Concrete-
 subtype writes*, below: a discriminated union at both boundaries, with family
 semantics retained here and result projection retained by SQL.
 
+### Partially composed families
+
+Positions resolve against the family **as composed**. A model that composes only
+some of a family's concrete leaves knows nothing of the others: its tag
+vocabulary names exactly its composed concrete subtypes, and no external subtype
+registry supplements it. The model therefore cannot tell a stored tag another
+model composes from a corrupt one.
+
+Under `table-per-hierarchy`, an unnarrowed abstract-**root** read spans the whole
+shared table (`m-sql` *Tag-predicate selection*) however many of the family's
+leaves the model composes, so it can return a row whose stored tag names no
+composed concrete subtype. That row is **unrepresentable** in this model: it is
+neither skipped nor materialized as the abstract root, and no other model
+supplies its variant. Read delivery classifies it
+`stored-data-family-tag-unknown`, which is non-hydrating (`m-read-delivery`).
+Every other position — an abstract subtype, a concrete subtype, or an authored
+Subtype Selection, including one that resolves to every composed leaf — selects
+its own effective set's tags, so a composed equal set never stands in for the
+unnarrowed root. Under `table-per-concrete-subtype` a read selects the composed
+concrete subtypes' own tables, and an omitted leaf's table is never read.
+
+The same eligibility holds wherever a read reaches the family: a query's own
+target, an Include hop's target (`m-deep-fetch`), and a relationship candidate in
+a predicate (`m-navigate`). Introducing a concrete subtype is consequently
+visible to a model composed without it: its rows are diagnosed, not hidden.
+
 ### The path root as a resolvable position
 
 A deep-fetch path's **root** is a resolvable position of exactly the kind above:

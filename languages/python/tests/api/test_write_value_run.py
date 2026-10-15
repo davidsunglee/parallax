@@ -39,7 +39,7 @@ _CASE_IDS = [case.case_id for case in _CASES]
 def test_write_value_case_runs_through_the_shipped_verbs(
     case: case_format.Case, profile_run: Any
 ) -> None:
-    profile_run.reset(engine.load_case_metamodel(case), case_fixtures(case))
+    profile_run.reset(engine.load_case_setup_metamodel(case), case_fixtures(case))
     model = MODELS[Path(case.model).stem]
     observed = LifecycleObservation()
     db = own_root(

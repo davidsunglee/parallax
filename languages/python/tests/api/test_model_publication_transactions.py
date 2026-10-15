@@ -30,7 +30,7 @@ _CASE_ID = "m-execution-lifecycle-004"
 
 def _seeded(profile_run: Any) -> Any:
     case = next(case for case in case_format.load_cases() if case.case_id == _CASE_ID)
-    profile_run.reset(engine.load_case_metamodel(case), case_fixtures(case))
+    profile_run.reset(engine.load_case_setup_metamodel(case), case_fixtures(case))
     return profile_run.port
 
 

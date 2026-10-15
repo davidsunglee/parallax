@@ -19,10 +19,22 @@ from typing import cast
 import pytest
 
 from parallax.conformance import models
-from parallax.core import deep_fetch, inheritance, relationship
+from parallax.conformance.animal_owner import Person as AnimalOwner
+from parallax.conformance.read_models import (
+    Animal,
+    Document,
+    Dog,
+    FinancialDocument,
+    Folder,
+    Invoice,
+    Pet,
+    WildBoar,
+)
+from parallax.core import DomainModel, deep_fetch, inheritance, relationship
 from parallax.core.base import INFINITY, ManagedValue
 from parallax.core.deep_fetch._include_tree import EMPTY_RENDER, IncludePosition
 from parallax.core.dialect import POSTGRES
+from parallax.core.entity._model import model_of
 from parallax.core.metamodel import (
     AttributeIdentity,
     AttributeMetadata,
@@ -68,6 +80,7 @@ ORDERS = accepted_model("orders")
 ANIMAL = accepted_model("animal")
 POLICY = accepted_model("policy")
 RATE = accepted_model("rate")
+BEAST = accepted_model("composed-beast-reader")
 
 
 def _rate(name: str) -> AttributeMetadata:
@@ -505,6 +518,64 @@ def test_broad_polymorphic_hop_targets_the_relationship_position_no_narrow() -> 
     level = _query_step(plan)
     assert level.child_target == EntityIdentity("parallax.compatibility", "Animal")
     assert level.narrow_to is None
+
+
+def _child_sql(
+    model: Metamodel, level: deep_fetch.QueryFetchStep
+) -> tuple[str, tuple[object, ...]]:
+    template = compile_template(level.query_template(), model, POSTGRES, result_form="instance")
+    statement = template.compiled.statement
+    return statement.sql, tuple(
+        "<keys>" if isinstance(bind, DeferredKeySet) else bind for bind in statement.binds
+    )
+
+
+def test_a_broad_hop_keeps_its_abstract_root_target_over_one_composed_concrete() -> None:
+    # Retargeting the hop to Wolf would add Wolf's tag guard and hide every stored
+    # row the reader does not compose, unlike a root read of Beast (m-sql).
+    plan = _plan(BEAST, "Keeper", (_path(_seg("Keeper.beasts")),))
+    level = _query_step(plan)
+    assert level.child_target == EntityIdentity("parallax.compatibility", "Beast")
+    assert level.narrow_to is None
+    assert _child_sql(BEAST, level) == (
+        "select t0.id, t0.kind, t0.name, t0.keeper_id, t0.howl from beast t0 "
+        "where t0.keeper_id = any(?) order by t0.id asc",
+        ("<keys>",),
+    )
+
+
+def test_a_singleton_narrow_keeps_its_guard_over_every_composed_concrete() -> None:
+    plan = _plan(BEAST, "Keeper", (_path(_seg("Keeper.beasts", ("Wolf",))),))
+    level = _query_step(plan)
+    assert level.child_target == EntityIdentity("parallax.compatibility", "Wolf")
+    assert level.narrow_to is None
+    assert _child_sql(BEAST, level) == (
+        "select t0.id, t0.name, t0.keeper_id, t0.howl from beast t0 "
+        "where t0.keeper_id = any(?) and t0.kind = ? order by t0.id asc",
+        ("<keys>", "wolf"),
+    )
+
+
+def test_a_broad_hop_keeps_an_abstract_subtype_target_and_its_guard() -> None:
+    model = model_of(DomainModel(AnimalOwner, Animal, Pet, Dog, WildBoar))
+    level = _query_step(_plan(model, "Person", (_path(_seg("Person.pets")),)))
+    assert level.child_target == EntityIdentity("parallax.compatibility", "Pet")
+    assert _child_sql(model, level) == (
+        "select t0.id, t0.kind, t0.name, t0.owner_id, t0.license_id, t0.bark_volume "
+        "from animal t0 where t0.owner_id = any(?) and t0.kind = ?",
+        ("<keys>", "dog"),
+    )
+
+
+def test_a_broad_tpcs_hop_over_one_composed_concrete_reads_its_one_table() -> None:
+    model = model_of(DomainModel(Document, FinancialDocument, Invoice, Folder))
+    level = _query_step(_plan(model, "Folder", (_path(_seg("Folder.documents")),)))
+    assert level.child_target == EntityIdentity("parallax.compatibility", "Document")
+    assert _child_sql(model, level) == (
+        "select t0.id, t0.title, t0.folder_id, t0.currency, t0.amount_due from invoice t0 "
+        "where t0.folder_id = any(?)",
+        ("<keys>",),
+    )
 
 
 def test_non_polymorphic_child_target_is_the_related_entity_itself() -> None:

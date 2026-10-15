@@ -166,7 +166,7 @@ def test_boundary_case_runs_through_the_shipped_surface(
         # about (`m-case-format`), so there is nothing here to grade — the same
         # rule a dialect-keyed `then.sql` already carries.
         pytest.skip(f"{case.case_id} states no outcome for {dialect.name}")
-    profile_run.reset(engine.load_case_metamodel(case), case_fixtures(case))
+    profile_run.reset(engine.load_case_setup_metamodel(case), case_fixtures(case))
     meta = MODELS[Path(case.model).stem]
     target = boundary_runner.boundary_target(case)
 

@@ -1046,10 +1046,23 @@ def _case_model(case: Any) -> str | None:
     return later if isinstance(later, str) else None
 
 
+def _provisioning_model(case: Any) -> str | None:
+    """A read case's ``given.provisioningModel``, absent where it provisions through
+    its own model."""
+    given = case.get("given") if isinstance(case, dict) else None
+    named = given.get("provisioningModel") if isinstance(given, dict) else None
+    return named if isinstance(named, str) else None
+
+
 def _case_models(case: dict[str, Any]) -> list[str]:
     """Every model path a case names, in the order it names them."""
     evolve = _evolve(case)
-    named = [case.get("model"), evolve.get("earlier"), evolve.get("later")]
+    named = [
+        case.get("model"),
+        evolve.get("earlier"),
+        evolve.get("later"),
+        _provisioning_model(case),
+    ]
     return [path for path in named if isinstance(path, str)]
 
 
@@ -1111,10 +1124,13 @@ def validate_tree(compatibility_root: Path) -> list[str]:
         case = _load_yaml(case_path)
         model_rel = _case_model(case)
         model_name = Path(model_rel).name if isinstance(model_rel, str) else None
+        setup_rel = _provisioning_model(case)
+        setup_name = Path(setup_rel).name if setup_rel is not None else model_name
         scope = _CaseScope(
             label=f"case {case_path.name}",
             family=families.get(model_name) if model_name is not None else None,
             entities=model_entities.get(model_name or "", []),
+            setup_entities=model_entities.get(setup_name or "", []),
             case_schema=case_schema,
             object_query_schema=object_query_schema,
             predicate_schema=predicate_schema,
@@ -1151,6 +1167,7 @@ class _CaseScope:
     label: str
     family: Family | None
     entities: list[dict[str, Any]]
+    setup_entities: list[dict[str, Any]]
     case_schema: dict[str, Any]
     object_query_schema: dict[str, Any]
     predicate_schema: dict[str, Any]
@@ -1301,12 +1318,14 @@ def _validate_scenario_step(
 def _validate_case_model_references(
     compatibility_root: Path, case: dict[str, Any], scope: _CaseScope, errors: list[str]
 ) -> None:
-    # A corruption's address is judged against the model it names, which JSON
-    # Schema cannot see: `given.corrupt` addresses a non-temporal Entity.
-    _validate_corruptions(case.get("given"), scope.entities, scope.label, errors)
+    # A corruption's address is judged against the model that provisions the
+    # rows it rewrites, which JSON Schema cannot see: `given.corrupt` addresses a
+    # non-temporal Entity.
+    _validate_corruptions(case.get("given"), scope.setup_entities, scope.label, errors)
     # Every model a case names must exist — the one model most shapes carry,
-    # and BOTH endpoints an evolution case names, since an unreadable earlier
-    # endpoint would otherwise read as the provisioning sentinel.
+    # BOTH endpoints an evolution case names, since an unreadable earlier
+    # endpoint would otherwise read as the provisioning sentinel, and a read
+    # case's separate provisioning model.
     for named in _case_models(case):
         if not (compatibility_root / named).is_file():
             errors.append(f"{scope.label}: model {named} does not exist")

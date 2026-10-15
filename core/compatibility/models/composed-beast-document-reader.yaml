@@ -1,0 +1,61 @@
+# Composed document beasts, reader side: the `beast_document`
+# table-per-hierarchy family composed WITHOUT Bear (m-inheritance *Partially
+# composed families*).
+#
+#   Beast (root, ABSTRACT)  — id, name, leaderId; followers -> Beast
+#     Fox  (concrete)       — tagValue 'fox';  brush
+#     Wolf (concrete)       — tagValue 'wolf'; howl
+#
+# Its cases provision through `models/composed-beast-document-provisioning.yaml`
+# (m-case-format *Provisioning through another model*); this model has no
+# fixtures of its own.
+entities:
+  - name: Beast
+    namespace: parallax.compatibility
+    table: beast_document
+    layout:
+      document:
+        column: payload
+    inheritance:
+      role: root
+      strategy: table-per-hierarchy
+      tag:
+        column: kind
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+      - name: name
+        type: string
+        maxLength: 32
+      - name: leaderId
+        type: int64
+        nullable: true
+    relationships:
+      - name: followers
+        cardinality: one-to-many
+        join:
+          source: id
+          target: { entity: parallax.compatibility.Beast, attribute: leaderId }
+        orderBy:
+          - { attribute: id }
+  - name: Fox
+    namespace: parallax.compatibility
+    inheritance:
+      role: concrete-subtype
+      parent: parallax.compatibility.Beast
+      tagValue: fox
+    attributes:
+      - name: brush
+        type: string
+        maxLength: 16
+  - name: Wolf
+    namespace: parallax.compatibility
+    inheritance:
+      role: concrete-subtype
+      parent: parallax.compatibility.Beast
+      tagValue: wolf
+    attributes:
+      - name: howl
+        type: string
+        maxLength: 16

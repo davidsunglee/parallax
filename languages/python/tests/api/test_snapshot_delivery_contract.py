@@ -15,7 +15,8 @@ from parallax.snapshot import connect
 def _seeded(profile_run: Any) -> None:
     case = case_format.load_case(default_cases_dir() / "m-object-query-001-order-by-limit.yaml")
     profile_run.reset(
-        engine.load_case_metamodel(case), provision.load_fixtures(str(case.document["model"]))
+        engine.load_case_setup_metamodel(case),
+        provision.load_fixtures(engine.case_setup_model_ref(case)),
     )
 
 

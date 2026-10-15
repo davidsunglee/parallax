@@ -27,6 +27,8 @@ from decimal import Decimal
 from types import MappingProxyType
 
 from parallax.conformance.animal_owner import ANIMAL_MODEL
+from parallax.conformance.composed_beast_document_models import COMPOSED_BEAST_DOCUMENT_READER
+from parallax.conformance.composed_beast_models import COMPOSED_BEAST_READER
 from parallax.conformance.edit_models import NOTE_MODEL
 from parallax.conformance.graph_models import POLICY_MODEL
 from parallax.conformance.identifier_models import (
@@ -615,8 +617,15 @@ MIRRORED: list[tuple[str, DomainModel]] = [
     ("scalar-collection-layout-twin-document", SCALAR_COLLECTION_DOCUMENT_MODEL),
     ("document-layout", DOCUMENT_LAYOUT_MODEL),
     ("note", NOTE_MODEL),
+    ("composed-beast-reader", COMPOSED_BEAST_READER),
+    ("composed-beast-document-reader", COMPOSED_BEAST_DOCUMENT_READER),
 ]
 """Corpus model stem -> the Domain Model the idiomatic classes for it compose into."""
+
+_PROVISIONING_ONLY = (
+    "provisioning-only model: it establishes stored state for read cases that execute "
+    "through the mirrored reader model beside it, and no developer surface connects with it"
+)
 
 _EVOLUTION_ENDPOINT = (
     "endpoint-only model: it exists as one end of a described evolution, a pure comparison of "
@@ -653,6 +662,8 @@ UNMIRRORED: Mapping[str, str] = MappingProxyType(
             "`account` already proves"
         ),
         "buffered-sequence-layout-twin-columns": _BUFFERED_SEQUENCE_TWIN,
+        "composed-beast-document-provisioning": _PROVISIONING_ONLY,
+        "composed-beast-provisioning": _PROVISIONING_ONLY,
         "buffered-sequence-layout-twin-document": _BUFFERED_SEQUENCE_TWIN,
         "document-layout-nested-many": (
             "no mirror authored; its nested one/one/many declaration is exercised by the "

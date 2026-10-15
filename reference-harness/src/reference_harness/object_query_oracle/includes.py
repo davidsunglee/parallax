@@ -30,6 +30,7 @@ from ..inheritance import (
     STRATEGY_TPH,
     Family,
     inheritance_of,
+    is_abstract,
     narrowed_view_key,
     resolve_hop_effective_set,
     resolve_root_source_set,
@@ -315,23 +316,30 @@ def _step_of(
     rel_name = rel_ref.rpartition(".")[2]
 
     if hop.effective_set is not None and hop.target is not None:
-        # The shared table holds the WHOLE family's concretes (the root's
-        # descendants), not just the relationship target's — so a hop targeting an
-        # abstract SUBTYPE still needs a tag predicate to exclude sibling branches in
-        # the same table. No tag predicate when the hop spans the whole shared table;
-        # otherwise a tag `=`/`in` over the effective set's tagValues.
-        root = family.root_of(hop.target)
-        whole = family.effective_concrete_set(root) if root is not None else hop.effective_set
-        tag_column = family.tag_column_of(hop.target)
+        # The shared table holds the WHOLE family's concretes, as composed and as
+        # anything else wrote them, so only an unnarrowed hop at the family ROOT
+        # reads it unguarded; every other hop — an abstract subtype, a concrete
+        # target, any authored narrowing, even one resolving to every composed
+        # concrete — filters by its effective set's tagValues (m-sql).
+        target = family.defs.canonical_key(hop.target)
+        tag_column = family.tag_column_of(target)
         tag_binds: list[Any] = (
             []
-            if set(hop.effective_set) == set(whole)
+            if not hop.is_narrowed and family.root_of(target) == target
             else _hop_tag_binds(family, hop.effective_set)
         )
         view_key = (
             narrowed_view_key(family, rel_ref, hop.effective_set) if hop.is_narrowed else rel_name
         )
-        polymorphic = len(hop.effective_set) > 1 and family.strategy_of(hop.target) == STRATEGY_TPH
+        # Only an authored narrowing to one concrete retargets the child level; an
+        # unnarrowed hop keeps its declared target whatever it composes, so an
+        # abstract one projects and dispatches the raw tag (m-sql).
+        child_target = (
+            hop.effective_set[0] if hop.is_narrowed and len(hop.effective_set) == 1 else target
+        )
+        polymorphic = family.strategy_of(target) == STRATEGY_TPH and is_abstract(
+            family.defs[child_target]
+        )
     else:
         tag_column, tag_binds, polymorphic = None, [], False
         view_key = rel_name
@@ -610,9 +618,9 @@ def execute_fetch_levels(
             raise CaseFailure(
                 f"{case.path.name}: {source} ({dialect}) level {statement_index + 1} "
                 f"({step.view_key}) tag binds {tag_slice!r} != the effective-set tag "
-                f"values {step.tag_binds!r}. A polymorphic table-per-hierarchy hop over a "
-                f"proper subset MUST filter its shared-table read by the effective set's "
-                f"tag values (m-navigate / m-inheritance)."
+                f"values {step.tag_binds!r}. Every table-per-hierarchy hop but an "
+                f"unnarrowed one at the family root MUST filter its shared-table read by "
+                f"the effective set's tag values (m-sql / m-inheritance)."
             )
 
         # As-of propagation oracle: the root pin propagates per-hop, matched by
@@ -654,10 +662,11 @@ def execute_fetch_levels(
         )
         # The level is materialized WHOLE by the seam that owns its kind of
         # position, which it states its own facts to: the raw tag column a
-        # polymorphic (multi-concrete, table-per-hierarchy) hop projects, and the
-        # family's tag map. Every other hop names none — it resolves one concrete,
-        # targets no family, or is table-per-concrete-subtype, whose multi-concrete
-        # hop this planner reads as a single table and so cannot name a carrier for.
+        # polymorphic (abstract-target, table-per-hierarchy) hop projects, and the
+        # family's tag map. Every other hop names none — it is narrowed to one
+        # concrete, targets a concrete or no family, or is
+        # table-per-concrete-subtype, whose multi-concrete hop this planner reads as
+        # a single table and so cannot name a carrier for.
         published = materialize.materialize_hop_level(
             case,
             step.child_entity,

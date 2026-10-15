@@ -1,0 +1,88 @@
+# Composed beasts, provisioning side: the newer model a partially composed reader
+# is graded against (m-inheritance *Partially composed families*, m-case-format
+# *Provisioning through another model*).
+#
+# One TABLE-PER-HIERARCHY family on the shared `beast` table, discriminated by
+# `kind`, composed here with BOTH concrete leaves:
+#
+#   Beast (root, ABSTRACT)  — id, name, keeperId
+#     Wolf (concrete)       — tagValue 'wolf'; howl
+#     Bear (concrete)       — tagValue 'bear'; roar
+#
+# `models/composed-beast-reader.yaml` composes the same family WITHOUT Bear, so a
+# canonical Bear row provisioned from this model is a stored tag the reader's
+# family names no concrete subtype for. Keeper's `badge` and the standalone Den
+# exist only here: provisioning that resolved its DDL or fixtures through the
+# reader would refuse them rather than pass unnoticed.
+entities:
+  - name: Beast
+    namespace: parallax.compatibility
+    table: beast
+    inheritance:
+      role: root
+      strategy: table-per-hierarchy
+      tag:
+        column: kind
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+      - name: name
+        type: string
+        maxLength: 32
+      - name: keeperId
+        type: int64
+        nullable: true
+  - name: Wolf
+    namespace: parallax.compatibility
+    inheritance:
+      role: concrete-subtype
+      parent: parallax.compatibility.Beast
+      tagValue: wolf
+    attributes:
+      - name: howl
+        type: string
+        maxLength: 16
+        nullable: true
+  - name: Bear
+    namespace: parallax.compatibility
+    inheritance:
+      role: concrete-subtype
+      parent: parallax.compatibility.Beast
+      tagValue: bear
+    attributes:
+      - name: roar
+        type: string
+        maxLength: 16
+        nullable: true
+  - name: Keeper
+    namespace: parallax.compatibility
+    table: keeper
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+      - name: name
+        type: string
+        maxLength: 32
+      - name: badge
+        type: string
+        maxLength: 16
+    relationships:
+      - name: beasts
+        cardinality: one-to-many
+        join:
+          source: id
+          target: { entity: parallax.compatibility.Beast, attribute: keeperId }
+        orderBy:
+          - { attribute: id }
+  - name: Den
+    namespace: parallax.compatibility
+    table: den
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+      - name: name
+        type: string
+        maxLength: 32

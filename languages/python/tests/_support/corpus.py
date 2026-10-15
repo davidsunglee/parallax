@@ -28,7 +28,8 @@ def case_document(case: Any) -> dict[str, Any]:
 
 
 def case_fixtures(case: Any) -> dict[str, Any]:
-    """The fixtures the case's lifecycle loads before its action (m-case-format).
+    """The fixtures the case's lifecycle loads before its action (m-case-format),
+    read from the model that provisions it.
 
     A writeSequence case starts from an EMPTY schema and builds its own state
     unless it opts in with `given.fixtures: true`; every other shape starts from
@@ -38,9 +39,9 @@ def case_fixtures(case: Any) -> dict[str, Any]:
     given = cast("dict[str, Any]", doc.get("given") or {})
     if case.shape == "writeSequence" and not given.get("fixtures"):
         return {}
-    from parallax.conformance import provision
+    from parallax.conformance import engine, provision
 
-    return provision.load_fixtures(str(doc["model"]))
+    return provision.load_fixtures(engine.case_setup_model_ref(case))
 
 
 def _wire_row(row: dict[str, Any]) -> dict[str, Any]:

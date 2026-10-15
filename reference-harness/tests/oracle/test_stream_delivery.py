@@ -47,6 +47,7 @@ _TABLELESS_POSITION = "m-inheritance-136-tpcs-union-vo-projection.yaml"
 _LOCKING_CONTINUATION = "m-read-lock-016-locking-stream-two-arm-continuation.yaml"
 _ROOT_LOCKING_CONTINUATION = "m-read-lock-017-locking-root-stream-inherits-the-shared-lock.yaml"
 _ROOT_OVERRIDDEN_CONTINUATION = "m-read-lock-018-explicit-optimistic-overrides-a-locking-root.yaml"
+_PARTIAL_TPH_STREAM = "m-inheritance-150-partial-tph-streamed-root-unknown-tag.yaml"
 
 _TYPED_COORDINATES = (
     (
@@ -434,6 +435,41 @@ def test_a_result_filling_its_final_page_exactly_costs_no_terminal_statement(
     assert reads.calls[2][1] == (1, 2, 3, 42, 2, 2, 3, 1, 2, 3, 42, 3, 3)
 
 
+_BEASTS: dict[int, dict[str, Any]] = {
+    1: {"id": 1, "kind": "wolf", "name": "Akela", "keeper_id": 10, "howl": "aroo"},
+    2: {"id": 2, "kind": "bear", "name": "Baloo", "keeper_id": 11, "howl": None},
+    3: {"id": 3, "kind": "wolf", "name": "Raksha", "keeper_id": 10, "howl": "yip"},
+}
+
+
+def test_a_streamed_unknown_tag_keeps_the_ordinal_its_delivery_published(
+    corpus_case: CaseLoader,
+) -> None:
+    """An unrepresentable root is diagnosed at its own delivered position, and its
+    primary key is still the coordinate the next page continues from."""
+    case = corpus_case(_PARTIAL_TPH_STREAM)
+    reads = ScriptedReads(
+        results=[_rows(_BEASTS, 1, 2, 3), _rows(_BEASTS, 3), _rows(_BEASTS, 1, 2, 3)]
+    )
+
+    assert_case_read(case, reads)
+
+    assert reads.calls[1][1] == (2, 2, 3, 3, 3)
+
+
+def test_a_streamed_unknown_tag_diagnosed_at_another_ordinal_is_refused(
+    damaged_case: CaseLoader,
+) -> None:
+    case = damaged_case(_PARTIAL_TPH_STREAM)
+    case.then["storedDataIssues"][0]["ordinal"] = 0
+    reads = ScriptedReads(
+        results=[_rows(_BEASTS, 1, 2, 3), _rows(_BEASTS, 3), _rows(_BEASTS, 1, 2, 3)]
+    )
+
+    with pytest.raises(CaseFailure, match="stored-data-family-tag-unknown diagnoses"):
+        assert_case_read(case, reads)
+
+
 def test_the_same_delivery_at_two_batch_sizes_publishes_the_same_roots(
     corpus_case: CaseLoader,
 ) -> None:
@@ -566,8 +602,8 @@ def test_an_encoded_locking_continuation_grades_join_binds_after_both_arms(
     ]
     pages = iter(
         [
-            stream_oracle._StreamPage([], [], [(b"\x02",)], 0, 3),
-            stream_oracle._StreamPage([], [], [], 0, 1),
+            stream_oracle._StreamPage([], [], [], [(b"\x02",)], 0, 3),
+            stream_oracle._StreamPage([], [], [], [], 0, 1),
         ]
     )
     monkeypatch.setattr(stream_oracle, "_stream_page", lambda *_args, **_kwargs: next(pages))

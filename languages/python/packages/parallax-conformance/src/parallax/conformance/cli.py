@@ -75,8 +75,8 @@ def _run_self_managed(
     from parallax.conformance import engine, provision
 
     with profile.provisioned() as run:
-        meta = engine.load_case_metamodel(case)
-        run.reset(meta, provision.load_fixtures(str(case.document["model"])))
+        meta = engine.load_case_setup_metamodel(case)
+        run.reset(meta, provision.load_fixtures(engine.case_setup_model_ref(case)))
         return adapter.run_case(case_path, run)
 
 

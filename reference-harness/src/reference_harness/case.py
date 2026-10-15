@@ -701,12 +701,24 @@ class Case:
     the LATER endpoint, so every check written against it holds without knowing
     the shape. ``earlier_model`` is that case's earlier endpoint, absent both for
     every other shape and for the fresh-provisioning evolution from no model.
+    ``provisioning_model`` is a read case's ``given.provisioningModel``, absent
+    wherever the case provisions through ``model`` itself.
     """
 
     path: Path
     raw: dict[str, Any]
     model: Model
     earlier_model: Model | None = None
+    provisioning_model: Model | None = None
+
+    @property
+    def setup_model(self) -> Model:
+        """The model whose DDL, fixtures, and corruption addressing provision the case.
+
+        Everything else — the query, its execution, and every expectation — stays
+        :attr:`model`'s (`m-case-format` *Provisioning through another model*).
+        """
+        return self.provisioning_model or self.model
 
     # --- groups (given / when / then) --------------------------------------
 
@@ -1451,11 +1463,15 @@ def load_case(compatibility_root: Path, case_path: Path) -> Case:
     # written against `case.model` keeps holding without knowing the shape.
     model = load_model(root, evolve.get("later") or raw["model"])
     earlier = evolve.get("earlier")
+    provisioning = raw.get("given", {}).get("provisioningModel")
     case = Case(
         path=resolved_case_path,
         raw=raw,
         model=model,
         earlier_model=load_model(root, earlier) if isinstance(earlier, str) else None,
+        provisioning_model=(
+            load_model(root, provisioning) if isinstance(provisioning, str) else None
+        ),
     )
     _CASE_CACHE[key] = case
     return case

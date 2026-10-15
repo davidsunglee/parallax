@@ -6,7 +6,11 @@ from typing import Any, cast
 
 from parallax.conformance import _case_ingress, case_format, provision
 from parallax.conformance._mechanism.envelope import EngineError, driver_binds
-from parallax.conformance._mechanism.model_facts import case_entity, family_declarer
+from parallax.conformance._mechanism.model_facts import (
+    case_entity,
+    case_setup_model_ref,
+    family_declarer,
+)
 from parallax.conformance.temporal_state import TemporalShadow
 from parallax.core import inheritance, storage_layout
 from parallax.core.db_port import DatabaseConnection, JsonDocument
@@ -25,10 +29,12 @@ def apply_given_corrupt(
 
     Applied where every read lane already stands — after provisioning, before the
     action — so a case states the stored value once and every read form observes
-    the same storage. Each entry addresses a Structured Column and a path inside
-    it, and the value is stored exactly as authored: it is what the model
-    contradicts, so passing it back through the codec that spells a conforming
-    one would refuse it.
+    the same storage. ``model`` is the one that provisioned the rows
+    (:func:`~parallax.conformance._mechanism.model_facts.load_case_setup_metamodel`),
+    which is what every address resolves through. Each entry addresses a
+    Structured Column and a path inside it, and the value is stored exactly as
+    authored: it is what the model contradicts, so passing it back through the
+    codec that spells a conforming one would refuse it.
 
     Every entry's Entity is judged for temporality before any entry applies, as
     the reference harness judges it before any row lands: that refusal is about
@@ -242,7 +248,7 @@ def seed_shadow_from_fixtures(
     )
     if case.shape == "writeSequence" and not fixtures_flag:
         return
-    fixtures = provision.load_fixtures(cast("str", case.document["model"]))
+    fixtures = provision.load_fixtures(case_setup_model_ref(case))
     for entity_name, rows in fixtures.items():
         entity = case_entity(model, entity_name)
         if not family_declarer(model, entity).declared_as_of_axes:

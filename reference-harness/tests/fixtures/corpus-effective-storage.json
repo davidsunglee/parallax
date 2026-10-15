@@ -266,6 +266,155 @@
       }
     }
   },
+  "models/composed-beast-document-provisioning.yaml": {
+    "parallax.compatibility.Bear": {
+      "attribute": {
+        "roar": "roar"
+      },
+      "documentPath": {
+        "roar": "payload:roar"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.Beast": {
+      "attribute": {
+        "id": "id",
+        "leaderId": "leader_id",
+        "name": "name"
+      },
+      "documentPath": {
+        "name": "payload:name"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.Den": {
+      "attribute": {
+        "id": "id",
+        "name": "name"
+      },
+      "documentPath": {
+        "name": "payload:name"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.Fox": {
+      "attribute": {
+        "brush": "brush"
+      },
+      "documentPath": {
+        "brush": "payload:brush"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.Wolf": {
+      "attribute": {
+        "howl": "howl"
+      },
+      "documentPath": {
+        "howl": "payload:howl"
+      },
+      "valueObject": {}
+    }
+  },
+  "models/composed-beast-document-reader.yaml": {
+    "parallax.compatibility.Beast": {
+      "attribute": {
+        "id": "id",
+        "leaderId": "leader_id",
+        "name": "name"
+      },
+      "documentPath": {
+        "name": "payload:name"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.Fox": {
+      "attribute": {
+        "brush": "brush"
+      },
+      "documentPath": {
+        "brush": "payload:brush"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.Wolf": {
+      "attribute": {
+        "howl": "howl"
+      },
+      "documentPath": {
+        "howl": "payload:howl"
+      },
+      "valueObject": {}
+    }
+  },
+  "models/composed-beast-provisioning.yaml": {
+    "parallax.compatibility.Bear": {
+      "attribute": {
+        "roar": "roar"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Beast": {
+      "attribute": {
+        "id": "id",
+        "keeperId": "keeper_id",
+        "name": "name"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Den": {
+      "attribute": {
+        "id": "id",
+        "name": "name"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Keeper": {
+      "attribute": {
+        "badge": "badge",
+        "id": "id",
+        "name": "name"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Wolf": {
+      "attribute": {
+        "howl": "howl"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    }
+  },
+  "models/composed-beast-reader.yaml": {
+    "parallax.compatibility.Beast": {
+      "attribute": {
+        "id": "id",
+        "keeperId": "keeper_id",
+        "name": "name"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Keeper": {
+      "attribute": {
+        "id": "id",
+        "name": "name"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Wolf": {
+      "attribute": {
+        "howl": "howl"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    }
+  },
   "models/contact.yaml": {
     "parallax.compatibility.Contact": {
       "attribute": {

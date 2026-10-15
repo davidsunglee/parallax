@@ -43,7 +43,7 @@ def _case(case_id: str) -> case_format.Case:
 
 def _seeded(profile_run: Any, case_id: str = _CASE_ID) -> Any:
     case = _case(case_id)
-    profile_run.reset(engine.load_case_metamodel(case), case_fixtures(case))
+    profile_run.reset(engine.load_case_setup_metamodel(case), case_fixtures(case))
     return profile_run.port
 
 

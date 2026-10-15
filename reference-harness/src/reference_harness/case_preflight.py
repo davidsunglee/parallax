@@ -49,8 +49,12 @@ __all__ = ["preflight_case_literals"]
 
 
 def preflight_case_literals(case: Case) -> None:
-    """Validate every model-resolved ingress and oracle literal before database setup."""
-    for entity in case.model.entities:
+    """Validate every model-resolved ingress and oracle literal before database setup.
+
+    Fixture rows are judged by the model that provisions them, and every other
+    literal by the model the case reads through.
+    """
+    for entity in case.setup_model.entities:
         for index, row in enumerate(entity.rows):
             _entity_row(
                 case,

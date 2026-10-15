@@ -30,3 +30,30 @@ def test_load_case_metamodel_rejects_a_non_string_model() -> None:
     case = _synthetic({"model": 42})
     with pytest.raises(EngineError, match="`model` must be a string"):
         model_facts.load_case_metamodel(case)
+
+
+def test_the_setup_model_is_the_provisioning_model_a_read_case_names() -> None:
+    case = _synthetic(
+        {
+            "model": "models/composed-beast-reader.yaml",
+            "given": {"provisioningModel": "models/composed-beast-provisioning.yaml"},
+        }
+    )
+
+    assert model_facts.case_setup_model_ref(case) == "models/composed-beast-provisioning.yaml"
+    setup = {
+        entity.identity.name for entity in model_facts.load_case_setup_metamodel(case).entities
+    }
+    reader = {entity.identity.name for entity in model_facts.load_case_metamodel(case).entities}
+    assert setup - reader == {"Bear", "Den"}
+
+
+def test_the_setup_model_defaults_to_the_case_model() -> None:
+    case = _synthetic({"model": "models/orders.yaml", "given": {"fixtures": True}})
+
+    assert model_facts.case_setup_model_ref(case) == "models/orders.yaml"
+
+
+def test_the_setup_model_rejects_a_non_string_model() -> None:
+    with pytest.raises(EngineError, match="`model` must be a string"):
+        model_facts.case_setup_model_ref(_synthetic({"model": 42}))

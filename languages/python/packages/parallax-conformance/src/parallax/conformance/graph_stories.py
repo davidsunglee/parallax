@@ -8,6 +8,9 @@ from decimal import Decimal
 from typing import Any
 
 from parallax.conformance.animal_owner import Person as AnimalOwnerPerson
+from parallax.conformance.composed_beast_document_models import Beast as DocumentBeast
+from parallax.conformance.composed_beast_document_models import Wolf as DocumentWolf
+from parallax.conformance.composed_beast_models import Beast, Keeper, Wolf
 from parallax.conformance.graph_models import Coverage, Policy
 from parallax.conformance.identifier_models import (
     Int32Parent,
@@ -490,6 +493,50 @@ def inherited_uuid_document(db: ScopedDatabase) -> Snapshot[Any]:
     return db.find(UuidLeaf.where(UuidLeaf.all).include(UuidLeaf.children.parent))
 
 
+def an_older_reader_diagnoses_a_subtype_it_does_not_compose(db: ScopedDatabase) -> Snapshot[Any]:
+    return db.find(Beast.where(Beast.all).order_by(Beast.id.asc()))
+
+
+def a_broad_include_diagnoses_a_child_subtype_it_does_not_compose(
+    db: ScopedDatabase,
+) -> Snapshot[Any]:
+    return db.find(Keeper.where(Keeper.all).order_by(Keeper.id.asc()).include(Keeper.beasts))
+
+
+def a_narrowed_include_reads_only_its_own_subtype(db: ScopedDatabase) -> Snapshot[Any]:
+    return db.find(
+        Keeper.where(Keeper.all).order_by(Keeper.id.asc()).include(Keeper.beasts.narrow(Wolf))
+    )
+
+
+def a_document_reader_diagnoses_a_subtype_it_does_not_compose(
+    db: ScopedDatabase,
+) -> Snapshot[Any]:
+    return db.find(DocumentBeast.where(DocumentBeast.all).order_by(DocumentBeast.id.asc()))
+
+
+def a_subtype_document_filter_reads_only_composed_subtypes(db: ScopedDatabase) -> Snapshot[Any]:
+    return db.find(
+        DocumentBeast.where(
+            DocumentBeast.is_a(DocumentWolf, where=DocumentWolf.howl == "aroo")
+            | (DocumentBeast.name == "Bruno")
+        )
+    )
+
+
+def a_subtype_document_filter_leaves_its_includes_unfiltered(
+    db: ScopedDatabase,
+) -> Snapshot[Any]:
+    return db.find(
+        DocumentBeast.where(
+            DocumentBeast.is_a(DocumentWolf, where=DocumentWolf.howl == "aroo")
+            | (DocumentBeast.name == "Bruno")
+        )
+        .order_by(DocumentBeast.id.asc())
+        .include(DocumentBeast.followers)
+    )
+
+
 GRAPH_STORIES: tuple[GraphStory, ...] = (
     GraphStory(
         "m-relationship-008",
@@ -705,6 +752,42 @@ GRAPH_STORIES: tuple[GraphStory, ...] = (
         "A bitemporal audit read reconstructs the originally-believed document",
         "branch",
         bitemporal_vo_owner_as_of_a_past_audit_point,
+    ),
+    GraphStory(
+        "m-inheritance-147",
+        "A reader composing part of a family diagnoses a stored subtype it does not compose",
+        "composed-beast-reader",
+        an_older_reader_diagnoses_a_subtype_it_does_not_compose,
+    ),
+    GraphStory(
+        "m-inheritance-148",
+        "A broad include keeps its abstract target and diagnoses an uncomposed child",
+        "composed-beast-reader",
+        a_broad_include_diagnoses_a_child_subtype_it_does_not_compose,
+    ),
+    GraphStory(
+        "m-inheritance-149",
+        "A narrowed include reads only its own subtype, even when it is the only one composed",
+        "composed-beast-reader",
+        a_narrowed_include_reads_only_its_own_subtype,
+    ),
+    GraphStory(
+        "m-inheritance-151",
+        "A document reader diagnoses a stored subtype it does not compose",
+        "composed-beast-document-reader",
+        a_document_reader_diagnoses_a_subtype_it_does_not_compose,
+    ),
+    GraphStory(
+        "m-inheritance-152",
+        "A subtype-specific document filter reads only the subtypes the reader composes",
+        "composed-beast-document-reader",
+        a_subtype_document_filter_reads_only_composed_subtypes,
+    ),
+    GraphStory(
+        "m-inheritance-153",
+        "A subtype-specific document filter does not filter the levels it includes",
+        "composed-beast-document-reader",
+        a_subtype_document_filter_leaves_its_includes_unfiltered,
     ),
     GraphStory(
         "m-inheritance-106",

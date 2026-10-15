@@ -20,6 +20,8 @@ import pytest
 
 from parallax.conformance import models, read_models
 from parallax.conformance import vo_models as vo
+from parallax.conformance.composed_beast_models import COMPOSED_BEAST_READER
+from parallax.conformance.composed_beast_models import Keeper as BeastKeeper
 from parallax.conformance.graph_models import POLICY_MODEL, Policy
 from parallax.core import (
     LATEST,
@@ -622,6 +624,65 @@ def test_find_materializes_family_variant_on_child_level_rows() -> None:
     assert rows.layouts[animal].concrete == EntityIdentity("parallax.compatibility", "Dog")
     # The synthetic tag is nobody's member, so no row position stands for it.
     assert all(attribute.identity.name != "kind" for attribute in rows.layouts[animal].attributes)
+
+
+def _partially_composed_keepers() -> QueuePort:
+    return QueuePort(
+        [
+            [{"id": 10, "name": "Mowgli"}, {"id": 11, "name": "Bagheera"}],
+            [
+                {"id": 1, "kind": "wolf", "name": "Akela", "keeper_id": 10, "howl": "aroo"},
+                {"id": 2, "kind": "bear", "name": "Baloo", "keeper_id": 11, "howl": None},
+            ],
+        ]
+    )
+
+
+def test_a_broad_include_over_a_partial_family_diagnoses_its_unknown_child_at_the_root() -> None:
+    # Keeper.beasts targets the abstract root and the reader composes Wolf alone:
+    # the child level keeps Beast as its target, so it reads the shared table
+    # unguarded and Bagheera's bear reaches classification rather than vanishing.
+    port = _partially_composed_keepers()
+    db = own_root(Database.connect(port, COMPOSED_BEAST_READER)).using_database_login()
+    query = (
+        BeastKeeper.where(BeastKeeper.all)
+        .order_by(BeastKeeper.id.asc())
+        .include(BeastKeeper.beasts)
+    )
+
+    snapshot = db.find(query)
+
+    child_sql, child_binds = port.executed[1]
+    assert child_sql == (
+        "select t0.id, t0.kind, t0.name, t0.keeper_id, t0.howl from beast t0 "
+        "where t0.keeper_id = any(%s) order by t0.id asc"
+    )
+    assert child_binds == [[10, 11]]
+    with pytest.raises(InvalidDataError) as refused:
+        snapshot.results()
+    mowgli, bagheera = snapshot.checked().results()
+    assert [beast.name for beast in cast("Any", mowgli).beasts] == ["Akela"]
+    assert refused.value.invalid_data == (bagheera,)
+    record = cast("InvalidData[object]", bagheera)
+    assert record.data is None
+    assert record.object_key is not None
+    (issue,) = record.issues
+    assert (issue.code, issue.entity, issue.member, issue.object_key, issue.path) == (
+        "stored-data-family-tag-unknown",
+        EntityIdentity("parallax.compatibility", "Beast"),
+        None,
+        None,
+        (),
+    )
+    assert issue.stored_value == "bear"
+    projected = snapshot.wire().checked().results()
+    assert projected[1] == bagheera
+    direct = (
+        own_root(Database.connect(_partially_composed_keepers(), COMPOSED_BEAST_READER))
+        .using_database_login()
+        .wire.find(query)
+    )
+    assert direct.checked().results() == projected
 
 
 def test_find_threads_a_root_narrow_to_a_single_tpcs_concrete() -> None:

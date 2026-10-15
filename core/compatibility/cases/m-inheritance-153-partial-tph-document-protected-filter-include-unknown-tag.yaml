@@ -1,0 +1,59 @@
+# A protected Document filter is not a child-level eligibility rule (m-sql
+# *Variant partitioning for a non-uniform path*, m-inheritance *Partially
+# composed families*). The root predicate partitions the root read into the
+# reader's composed Fox and Wolf branches, so the provisioned Bear named Bruno is
+# not a root. The query's predicate is never copied into its Include levels: the
+# broad `followers` level reads the shared table by correlation alone, reaches
+# that same Bear as Akela's follower, and diagnoses it. Akela's position is
+# therefore unavailable, while Bruno the fox keeps a loaded-empty view.
+model: models/composed-beast-document-reader.yaml
+tags: [m-inheritance, m-deep-fetch, m-storage-layout, m-sql, m-read-delivery, m-document-codec, m-predicate, table-per-hierarchy, document-layout, stored-data, narrow, predicate, deep-fetch, graph, partial-composition, slice-snapshot-1]
+shape: read
+given:
+  provisioningModel: models/composed-beast-document-provisioning.yaml
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "deep-fetch child level - the Beast.followers key-set binds are the beast ids gathered from the root query result"
+when:
+  objectQuery:
+    target: parallax.compatibility.Beast
+    predicate:
+      or:
+        operands:
+          - narrow:
+              to:
+                - parallax.compatibility.Wolf
+              operand:
+                eq:
+                  path: parallax.compatibility.Wolf.howl
+                  value: aroo
+          - eq:
+              path: parallax.compatibility.Beast.name
+              value: Bruno
+    orderBy:
+      - attr: parallax.compatibility.Beast.id
+        direction: asc
+    includes:
+      - segments:
+          - rel: parallax.compatibility.Beast.followers
+then:
+  statements:
+    - sql:
+        postgres: select u.id, u.kind, u.leader_id, not u.payload is null, u.payload from (select p1.id, p1.kind, p1.leader_id, p1.payload from (select * from beast_document t0 where t0.kind = ? offset 0) p1 where 1 = 0 or jsonb_extract_path_text(p1.payload, ?) = ? union all select p2.id, p2.kind, p2.leader_id, p2.payload from (select * from beast_document t0 where t0.kind = ? offset 0) p2 where jsonb_extract_path_text(p2.payload, ?) = ? or jsonb_extract_path_text(p2.payload, ?) = ?) u order by u.id asc
+      binds: [fox, name, Bruno, wolf, howl, aroo, name, Bruno]
+    - sql:
+        postgres: select t0.id, t0.kind, t0.leader_id, not t0.payload is null, t0.payload from beast_document t0 where t0.leader_id = any(?) order by t0.id asc
+      binds: [[1, 2]]
+  referenceSql: select id, kind, leader_id, payload from beast_document where (kind = 'fox' and payload ->> 'name' = 'Bruno') or (kind = 'wolf' and (payload ->> 'howl' = 'aroo' or payload ->> 'name' = 'Bruno')) order by id
+  graph:
+    Beast:
+      - null
+      - { id: 2, name: Bruno, leaderId: null, brush: red, familyVariant: Fox, followers: [] }
+  storedDataIssues:
+    - ordinal: 0
+      hydrated: false
+      issues:
+        - code: stored-data-family-tag-unknown
+          entity: parallax.compatibility.Beast
+  roundTrips: 2

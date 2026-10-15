@@ -36,6 +36,7 @@ class _StreamPage:
 
     root_rows: list[materialize.PublishedRow]
     nodes: list[dict[str, Any] | None]
+    issues: list[list[dict[str, Any]]]
     coordinates: list[tuple[Any, ...]]
     consumed: int
     returned: int
@@ -86,17 +87,21 @@ def _stream_page(
         return _StreamPage(
             root_rows=root_rows,
             nodes=kept,
+            issues=graph.root_issues(root_rows),
             coordinates=coordinates,
             consumed=0,
             returned=len(returned),
         )
 
     executed = includes.execute_fetch_levels(case, reader, source, query, steps, root_rows, levels)
-    assembled = graph.assemble_graph(case, query, steps, root_rows, executed.children_by_hop)
-    nodes: list[dict[str, Any] | None] = list(assembled.get(root_entity.name, []))
+    classified = graph.assemble_classified_graph(
+        case, query, steps, root_rows, executed.children_by_hop
+    )
+    nodes: list[dict[str, Any] | None] = list(classified.graph.get(root_entity.name, []))
     return _StreamPage(
         root_rows=root_rows,
         nodes=nodes,
+        issues=classified.issues,
         coordinates=coordinates,
         consumed=executed.consumed,
         returned=len(returned),
@@ -121,11 +126,13 @@ def _binds_equal(
 
 @dataclass(frozen=True, slots=True)
 class StreamDelivery:
-    """What one streamed delivery published: its root rows, and the graph nodes
-    assembled from them, concatenated across every page in delivery order."""
+    """What one streamed delivery published: its root rows, the graph nodes
+    assembled from them, and each root's unknown-family-tag diagnoses, concatenated
+    across every page in delivery order."""
 
     root_rows: list[materialize.PublishedRow]
     nodes: list[dict[str, Any] | None]
+    issues: list[list[dict[str, Any]]]
 
 
 def _continuing_page_binds(
@@ -252,6 +259,7 @@ def deliver_stream(case: Case, reader: ReadExecutor, source: str) -> StreamDeliv
     limit = query.get("limit")
 
     nodes: list[dict[str, Any] | None] = []
+    issues: list[list[dict[str, Any]]] = []
     root_rows: list[materialize.PublishedRow] = []
     carried_binds: list[Any] = []
     first_root_sql = ""
@@ -371,6 +379,7 @@ def deliver_stream(case: Case, reader: ReadExecutor, source: str) -> StreamDeliv
                 f"bounds what its statement may answer."
             )
         nodes.extend(executed.nodes)
+        issues.extend(executed.issues)
         root_rows.extend(executed.root_rows)
         if executed.coordinates:
             cursor = tuple(coerce_identity_key(carrier) for carrier in executed.coordinates[-1])
@@ -385,4 +394,4 @@ def deliver_stream(case: Case, reader: ReadExecutor, source: str) -> StreamDeliv
             f"short of what it asked for, so nothing follows it."
         )
 
-    return StreamDelivery(root_rows=root_rows, nodes=nodes)
+    return StreamDelivery(root_rows=root_rows, nodes=nodes, issues=issues)

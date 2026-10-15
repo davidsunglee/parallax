@@ -1,0 +1,44 @@
+# The streamed peer of m-inheritance-147 (m-inheritance *Partially composed
+# families*, m-case-format *Streamed reads*). Pages read the unfiltered shared
+# table; Baloo's 'bear' row is the last root page 1 delivers, so it is diagnosed
+# at its own ordinal and its primary key is the coordinate page 2 continues from.
+# A page size decides nothing about which positions are unrepresentable.
+model: models/composed-beast-reader.yaml
+tags: [m-inheritance, m-snapshot-read, m-sql, m-read-delivery, table-per-hierarchy, stored-data, stream, streamed-delivery, familyVariant, graph, partial-composition, slice-snapshot-1]
+shape: read
+given:
+  provisioningModel: models/composed-beast-provisioning.yaml
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "a streamed read's keyset seek - page 2's root statement binds the primary key of the root page 1 delivered last"
+when:
+  objectQuery:
+    target: parallax.compatibility.Beast
+    predicate:
+      "true": {}
+  stream:
+    batchSize: 2
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.kind, t0.name, t0.keeper_id, t0.howl, t0.id parallax_seek_0 from beast t0 order by t0.id asc limit ?
+        mariadb: select t0.id, t0.kind, t0.name, t0.keeper_id, t0.howl, t0.id parallax_seek_0 from beast t0 order by t0.id asc limit ?
+      binds: [3]
+    - sql:
+        postgres: select u.id, u.kind, u.name, u.keeper_id, u.howl, u.parallax_seek_0 from ((select t0.id, t0.kind, t0.name, t0.keeper_id, t0.howl, t0.id parallax_seek_0 from beast t0 where t0.id >= ? and (t0.id > ? or t0.id is null) order by t0.id asc limit ?) union all (select t0.id, t0.kind, t0.name, t0.keeper_id, t0.howl, t0.id parallax_seek_0 from beast t0 where t0.id is null order by t0.id asc limit ?)) u order by u.parallax_seek_0 asc limit ?
+        mariadb: select t0.id, t0.kind, t0.name, t0.keeper_id, t0.howl, t0.id parallax_seek_0 from beast t0 where t0.id >= ? and t0.id > ? order by t0.id asc limit ?
+      binds: { postgres: [2, 2, 3, 3, 3], mariadb: [2, 2, 3] }
+  referenceSql: select id, kind, name, keeper_id, howl from beast
+  graph:
+    Beast:
+      - { id: 1, name: Akela, keeperId: 10, howl: aroo, familyVariant: Wolf }
+      - null
+      - { id: 3, name: Raksha, keeperId: 10, howl: yip, familyVariant: Wolf }
+  storedDataIssues:
+    - ordinal: 1
+      hydrated: false
+      issues:
+        - code: stored-data-family-tag-unknown
+          entity: parallax.compatibility.Beast
+  roundTrips: 2

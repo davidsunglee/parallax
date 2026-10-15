@@ -422,11 +422,13 @@ def project_like(row: dict[str, Any], template_rows: Sequence[dict[str, Any]]) -
 
     An independent oracle states its own naive SELECT, so it may project more than
     the golden read's roots do; what it is graded on is the root set the golden
-    published, not the columns a second formulation chose to carry.
+    published, not the columns a second formulation chose to carry. The roots of a
+    heterogeneous document read carry each variant's own members, so the columns
+    kept are every published root's, not the first one's.
     """
     if not template_rows:
         return row
-    keep = set(template_rows[0])
+    keep = {key for template in template_rows for key in template}
     return {key: value for key, value in row.items() if key in keep}
 
 

@@ -40,6 +40,8 @@ DOCUMENT_LAYOUT = model("document-layout")
 INSTRUMENT = model("instrument")
 RATE = model("rate")
 MATERIALIZATION_KEYS = model("materialization-key-compatibility")
+COMPOSED_BEAST = model("composed-beast-reader")
+COMPOSED_DOCUMENT_BEAST = model("composed-beast-document-reader")
 
 
 def _narrow(model_: Any, *names: str) -> tuple[Any, ...]:
@@ -1158,6 +1160,78 @@ def test_tph_tag_identity_holds_regardless_of_narrow_cardinality() -> None:
     assert set(compiled.resolvable) == {
         target(ANIMAL, name).identity for name in ("Animal", "Cat", "Dog", "WildBoar")
     }
+
+
+def test_a_narrow_to_every_composed_concrete_keeps_its_tag_guard() -> None:
+    # A composed set equal to the family's never stands in for the unnarrowed
+    # root, whose read alone spans the whole shared table (m-sql).
+    broad = compile_read(oa.TrueNode(), COMPOSED_BEAST, POSTGRES, target(COMPOSED_BEAST, "Beast"))
+    narrowed = compile_read(
+        oa.TrueNode(),
+        COMPOSED_BEAST,
+        POSTGRES,
+        target(COMPOSED_BEAST, "Beast"),
+        narrow_to=_narrow(COMPOSED_BEAST, "Wolf"),
+    )
+
+    assert (
+        broad.statement.sql == "select t0.id, t0.kind, t0.name, t0.keeper_id, t0.howl from beast t0"
+    )
+    assert narrowed.statement.sql.endswith("from beast t0 where t0.kind = ?")
+    assert narrowed.statement.binds == ("wolf",)
+
+
+def test_a_partially_composed_document_root_read_stays_unpartitioned_and_unfiltered() -> None:
+    compiled = compile_read(
+        oa.TrueNode(),
+        COMPOSED_DOCUMENT_BEAST,
+        POSTGRES,
+        target(COMPOSED_DOCUMENT_BEAST, "Beast"),
+        result_form="instance",
+    )
+
+    assert compiled.statement.sql == (
+        "select t0.id, t0.kind, t0.leader_id, not t0.payload is null, t0.payload "
+        "from beast_document t0"
+    )
+    resolved, _variant, unknown, _document = compiled.row_identity(
+        {"id": 3, "kind": "bear", "leader_id": 1, "payload": PresentDocument({"name": "Bruno"})}
+    )
+    assert unknown is not None
+    assert resolved == target(COMPOSED_DOCUMENT_BEAST, "Beast").identity
+
+
+def test_a_protected_document_filter_partitions_into_composed_variants_alone() -> None:
+    # A stored tag the reader does not compose matches no branch, even though the
+    # `name` disjunct would admit its row; no remainder branch is added (m-sql).
+    predicate = oa.Or(
+        operands=(
+            oa.Narrow(
+                to=("Wolf",),
+                operand=oa.Comparison(op="eq", subject=oa.FieldSubject("Wolf.howl"), value="aroo"),
+            ),
+            oa.Comparison(op="eq", subject=oa.FieldSubject("Beast.name"), value="Bruno"),
+        )
+    )
+    compiled = compile_read(
+        predicate,
+        COMPOSED_DOCUMENT_BEAST,
+        POSTGRES,
+        target(COMPOSED_DOCUMENT_BEAST, "Beast"),
+        result_form="instance",
+    )
+
+    assert compiled.statement.sql.count(" union all ") == 1
+    assert compiled.statement.binds == (
+        "fox",
+        "name",
+        "Bruno",
+        "wolf",
+        "howl",
+        "aroo",
+        "name",
+        "Bruno",
+    )
 
 
 def test_tph_row_tagged_outside_the_composed_family_is_refused_by_name() -> None:

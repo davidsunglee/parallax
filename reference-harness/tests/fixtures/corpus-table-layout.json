@@ -852,6 +852,366 @@
       ]
     }
   },
+  "models/composed-beast-document-provisioning.yaml": {
+    "beast_document": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Bear",
+            "parallax.compatibility.Fox",
+            "parallax.compatibility.Wolf"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Beast.id",
+          "declaringOwner": "parallax.compatibility.Beast",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Bear",
+            "parallax.compatibility.Fox",
+            "parallax.compatibility.Wolf"
+          ],
+          "column": "kind",
+          "contributor": "discriminator:parallax.compatibility.Beast",
+          "declaringOwner": "parallax.compatibility.Beast",
+          "effectiveNullable": false,
+          "tier": "discriminator"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Bear",
+            "parallax.compatibility.Fox",
+            "parallax.compatibility.Wolf"
+          ],
+          "column": "leader_id",
+          "contributor": "attribute:parallax.compatibility.Beast.leaderId",
+          "declaringOwner": "parallax.compatibility.Beast",
+          "effectiveNullable": true,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Bear",
+            "parallax.compatibility.Fox",
+            "parallax.compatibility.Wolf"
+          ],
+          "column": "payload",
+          "contributor": "relationalDocument:parallax.compatibility.Beast",
+          "declaringOwner": "parallax.compatibility.Beast",
+          "effectiveNullable": false,
+          "tier": "document"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    },
+    "den_document": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Den"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Den.id",
+          "declaringOwner": "parallax.compatibility.Den",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Den"
+          ],
+          "column": "payload",
+          "contributor": "relationalDocument:parallax.compatibility.Den",
+          "declaringOwner": "parallax.compatibility.Den",
+          "effectiveNullable": false,
+          "tier": "document"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    }
+  },
+  "models/composed-beast-document-reader.yaml": {
+    "beast_document": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Fox",
+            "parallax.compatibility.Wolf"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Beast.id",
+          "declaringOwner": "parallax.compatibility.Beast",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Fox",
+            "parallax.compatibility.Wolf"
+          ],
+          "column": "kind",
+          "contributor": "discriminator:parallax.compatibility.Beast",
+          "declaringOwner": "parallax.compatibility.Beast",
+          "effectiveNullable": false,
+          "tier": "discriminator"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Fox",
+            "parallax.compatibility.Wolf"
+          ],
+          "column": "leader_id",
+          "contributor": "attribute:parallax.compatibility.Beast.leaderId",
+          "declaringOwner": "parallax.compatibility.Beast",
+          "effectiveNullable": true,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Fox",
+            "parallax.compatibility.Wolf"
+          ],
+          "column": "payload",
+          "contributor": "relationalDocument:parallax.compatibility.Beast",
+          "declaringOwner": "parallax.compatibility.Beast",
+          "effectiveNullable": false,
+          "tier": "document"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    }
+  },
+  "models/composed-beast-provisioning.yaml": {
+    "beast": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Bear",
+            "parallax.compatibility.Wolf"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Beast.id",
+          "declaringOwner": "parallax.compatibility.Beast",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Bear",
+            "parallax.compatibility.Wolf"
+          ],
+          "column": "kind",
+          "contributor": "discriminator:parallax.compatibility.Beast",
+          "declaringOwner": "parallax.compatibility.Beast",
+          "effectiveNullable": false,
+          "tier": "discriminator"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Bear",
+            "parallax.compatibility.Wolf"
+          ],
+          "column": "name",
+          "contributor": "attribute:parallax.compatibility.Beast.name",
+          "declaringOwner": "parallax.compatibility.Beast",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Bear",
+            "parallax.compatibility.Wolf"
+          ],
+          "column": "keeper_id",
+          "contributor": "attribute:parallax.compatibility.Beast.keeperId",
+          "declaringOwner": "parallax.compatibility.Beast",
+          "effectiveNullable": true,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Bear"
+          ],
+          "column": "roar",
+          "contributor": "attribute:parallax.compatibility.Bear.roar",
+          "declaringOwner": "parallax.compatibility.Bear",
+          "effectiveNullable": true,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Wolf"
+          ],
+          "column": "howl",
+          "contributor": "attribute:parallax.compatibility.Wolf.howl",
+          "declaringOwner": "parallax.compatibility.Wolf",
+          "effectiveNullable": true,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    },
+    "den": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Den"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Den.id",
+          "declaringOwner": "parallax.compatibility.Den",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Den"
+          ],
+          "column": "name",
+          "contributor": "attribute:parallax.compatibility.Den.name",
+          "declaringOwner": "parallax.compatibility.Den",
+          "effectiveNullable": false,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    },
+    "keeper": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Keeper"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Keeper.id",
+          "declaringOwner": "parallax.compatibility.Keeper",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Keeper"
+          ],
+          "column": "name",
+          "contributor": "attribute:parallax.compatibility.Keeper.name",
+          "declaringOwner": "parallax.compatibility.Keeper",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Keeper"
+          ],
+          "column": "badge",
+          "contributor": "attribute:parallax.compatibility.Keeper.badge",
+          "declaringOwner": "parallax.compatibility.Keeper",
+          "effectiveNullable": false,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    }
+  },
+  "models/composed-beast-reader.yaml": {
+    "beast": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Wolf"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Beast.id",
+          "declaringOwner": "parallax.compatibility.Beast",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Wolf"
+          ],
+          "column": "kind",
+          "contributor": "discriminator:parallax.compatibility.Beast",
+          "declaringOwner": "parallax.compatibility.Beast",
+          "effectiveNullable": false,
+          "tier": "discriminator"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Wolf"
+          ],
+          "column": "name",
+          "contributor": "attribute:parallax.compatibility.Beast.name",
+          "declaringOwner": "parallax.compatibility.Beast",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Wolf"
+          ],
+          "column": "keeper_id",
+          "contributor": "attribute:parallax.compatibility.Beast.keeperId",
+          "declaringOwner": "parallax.compatibility.Beast",
+          "effectiveNullable": true,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Wolf"
+          ],
+          "column": "howl",
+          "contributor": "attribute:parallax.compatibility.Wolf.howl",
+          "declaringOwner": "parallax.compatibility.Wolf",
+          "effectiveNullable": true,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    },
+    "keeper": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Keeper"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Keeper.id",
+          "declaringOwner": "parallax.compatibility.Keeper",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Keeper"
+          ],
+          "column": "name",
+          "contributor": "attribute:parallax.compatibility.Keeper.name",
+          "declaringOwner": "parallax.compatibility.Keeper",
+          "effectiveNullable": false,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    }
+  },
   "models/contact.yaml": {
     "contact": {
       "columns": [

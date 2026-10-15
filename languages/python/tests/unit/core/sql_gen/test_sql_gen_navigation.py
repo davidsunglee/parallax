@@ -33,6 +33,7 @@ PERSON = model("person")
 TRAVERSAL = model("predicate-traversal")
 POLICY = model("policy")
 TWIN = model("scalar-collection-layout-twin-columns")
+BEAST = model("composed-beast-reader")
 
 
 def test_an_unknown_relationship_is_rejected() -> None:
@@ -1281,6 +1282,99 @@ def _pet_owner_model() -> Metamodel:
         _concrete("Cat", "Pet", tagValue="cat"),
         _entity("Owner", members=[{"name": "name", "type": "string", "maxLength": 8}]),
     )
+
+
+def _partial_pet_owner_model() -> Metamodel:
+    """``_pet_owner_model``'s family composed without ``Cat``: the shared ``pet``
+    table may hold rows this model's tag vocabulary does not name."""
+    return _document_model(
+        _entity("Leash", "collarId", relationships=[_rel("collar", "collarId", "Collar")]),
+        _entity("Collar", "petId", relationships=[_rel("pet", "petId", "Pet")]),
+        {
+            "name": "Pet",
+            "table": "pet",
+            "inheritance": {
+                "role": "root",
+                "strategy": "table-per-hierarchy",
+                "tag": {"column": "kind"},
+            },
+            "attributes": [_KEY, {"name": "name", "type": "string", "maxLength": 8}],
+        },
+        {
+            **_concrete("Dog", "Pet", tagValue="dog"),
+            "attributes": [_reference("ownerId")],
+            "relationships": [_rel("owner", "ownerId", "Owner")],
+        },
+        _entity("Owner", members=[{"name": "name", "type": "string", "maxLength": 8}]),
+    )
+
+
+def test_a_partially_composed_root_quantifier_candidate_carries_no_tag_guard() -> None:
+    compiled = compile_read(
+        oa.Quantifier("any", "Keeper.beasts"), BEAST, POSTGRES, target(BEAST, "Keeper")
+    )
+    assert compiled.statement.sql.endswith(
+        "where exists (select 1 from beast t1 where t1.keeper_id = t0.id)"
+    )
+    narrowed = compile_read(
+        oa.Quantifier("any", "Keeper.beasts", oa.Narrow(to=("Wolf",), operand=oa.TrueNode())),
+        BEAST,
+        POSTGRES,
+        target(BEAST, "Keeper"),
+    )
+    assert narrowed.statement.sql.endswith(
+        "where exists (select 1 from beast t1 where t1.keeper_id = t0.id and t1.kind = ?)"
+    )
+    assert narrowed.statement.binds == ("wolf",)
+
+
+def test_a_partially_composed_root_shares_its_to_one_source_unguarded() -> None:
+    family = _partial_pet_owner_model()
+    compiled = compile_read(
+        oa.Comparison(op="eq", subject=oa.FieldSubject("Leash.collar.pet.name"), value="Rex"),
+        family,
+        POSTGRES,
+        target(family, "Leash"),
+    )
+    assert compiled.statement.sql.endswith(
+        "from leash t0 left join collar t1 on t1.id = t0.collar_id "
+        "left join pet t2 on t2.id = t1.pet_id where t2.name = ?"
+    )
+    narrowed = compile_read(
+        oa.Narrow(path="Collar.pet", to=("Dog",), operand=oa.TrueNode()),
+        family,
+        POSTGRES,
+        target(family, "Collar"),
+    )
+    assert narrowed.statement.sql.endswith(
+        "left join pet t1 on t1.id = t0.pet_id where (not t1.id is null and t1.kind = ?)"
+    )
+    assert narrowed.statement.binds == ("dog",)
+
+
+def test_a_partially_composed_root_correlated_candidate_carries_no_tag_guard() -> None:
+    # Only the narrowing's own membership test reads the tag; the candidate
+    # subquery itself ranges over the whole shared table.
+    family = _partial_pet_owner_model()
+    op = oa.Narrow(
+        path="Leash.collar.pet",
+        to=("Dog",),
+        operand=oa.Comparison(op="eq", subject=oa.FieldSubject("owner.name"), value="Ann"),
+    )
+    compiled = compile_read(op, family, POSTGRES, target(family, "Leash"))
+    assert compiled.statement.sql.endswith(
+        "where (coalesce((select array [ case when t3.kind = ? then (select t2.name from owner "
+        "t2 where t2.id = t3.owner_id) = ? else false end ] from pet t3 where t3.id = t1.pet_id "
+        "and t1.id = t0.collar_id), array [ false ])) [ 1 ]"
+    )
+
+
+def test_a_predicate_write_keeps_the_partially_composed_root_candidate_unguarded() -> None:
+    compiled = compile_write_predicate(
+        oa.Quantifier("any", "Keeper.beasts"), BEAST, POSTGRES, target(BEAST, "Keeper")
+    )
+    assert compiled.sql == "exists (select 1 from beast t1 where t1.keeper_id = id)"
+    assert compiled.binds == ()
 
 
 def test_a_joined_narrow_stays_one_term_under_negation_and_disjunction() -> None:

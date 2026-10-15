@@ -34,6 +34,7 @@ from typing import Any, Final, cast
 import pytest
 
 from parallax.conformance import vo_models as vo
+from parallax.conformance.composed_beast_models import COMPOSED_BEAST_READER, Keeper
 from parallax.conformance.graph_models import POLICY_MODEL, Policy
 from parallax.conformance.story_models import (
     ORDERS_MODEL,
@@ -57,6 +58,7 @@ from parallax.core.object_query import TX_TIME, VALID_TIME
 from parallax.core.object_query._fluent import ObjectQuery
 from parallax.core.read_delivery import (
     InvalidData,
+    InvalidDataError,
     StreamContinuationError,
     StreamStateError,
     _read_plan,
@@ -450,6 +452,80 @@ def test_each_nonempty_page_costs_one_plus_l_and_a_short_page_ends_the_stream() 
     with _orders(port).stream(_all_orders().include(Order.items), batch_size=2) as stream:
         assert _ids(iter(stream)) == [1, 2, 3]
     assert len(_reads(port)) == 4
+
+
+_KEEPERS: Final[tuple[MappingRow, ...]] = (
+    {"id": 10, "name": "Mowgli"},
+    {"id": 11, "name": "Bagheera"},
+)
+_AKELA: Final[MappingRow] = {
+    "id": 1,
+    "kind": "wolf",
+    "name": "Akela",
+    "keeper_id": 10,
+    "howl": "aroo",
+}
+_BALOO: Final[MappingRow] = {
+    "id": 2,
+    "kind": "bear",
+    "name": "Baloo",
+    "keeper_id": 11,
+    "howl": None,
+}
+
+
+def _partially_composed_keepers() -> ScriptedAdapter:
+    """Two one-root pages: Mowgli's wolf, then Bagheera's bear, a subtype the
+    reader does not compose."""
+    return ScriptedAdapter(
+        Read(rows=list(_KEEPERS)),
+        Read(rows=[_AKELA]),
+        Read(rows=[_KEEPERS[1]]),
+        Read(rows=[_BALOO]),
+    )
+
+
+def _keepers_with_beasts() -> ObjectQuery[Keeper, Keeper]:
+    return Keeper.where(Keeper.all).order_by(Keeper.id.asc()).include(Keeper.beasts)
+
+
+def test_a_streamed_unknown_child_tag_fails_its_root_after_the_published_prefix() -> None:
+    port = _partially_composed_keepers()
+    with db_for(COMPOSED_BEAST_READER, port).stream(_keepers_with_beasts(), batch_size=1) as stream:
+        delivered: list[Keeper] = []
+        with raises_contextualized(InvalidDataError) as refused:
+            delivered.extend(stream)
+    assert [keeper.name for keeper in delivered] == ["Mowgli"]
+    (record,) = refused.value.invalid_data
+    assert (record.ordinal, record.data) == (1, None)
+    (issue,) = record.issues
+    assert (issue.code, issue.object_key, issue.stored_value) == (
+        "stored-data-family-tag-unknown",
+        None,
+        "bear",
+    )
+    child_sql = _reads(port)[1].sql
+    assert " where t0.keeper_id = any(%s) order by" in child_sql
+
+
+def test_a_streamed_unknown_child_tag_arrives_as_a_record_in_both_namespaces() -> None:
+    with db_for(COMPOSED_BEAST_READER, _partially_composed_keepers()).stream(
+        _keepers_with_beasts(), batch_size=1
+    ) as stream:
+        typed = list(stream.checked())
+    with db_for(COMPOSED_BEAST_READER, _partially_composed_keepers()).wire.stream(
+        _keepers_with_beasts(), batch_size=1
+    ) as stream:
+        wired = list(stream.checked())
+
+    assert isinstance(typed[0], Keeper)
+    assert [beast.name for beast in typed[0].beasts] == ["Akela"]
+    (akela,) = cast("tuple[WireEntity, ...]", _entity(wired[0])["beasts"])
+    assert akela["familyVariant"] == "Wolf"
+    for record in (typed[1], wired[1]):
+        assert isinstance(record, InvalidData)
+        assert record.data is None
+        assert {issue.code for issue in record.issues} == {"stored-data-family-tag-unknown"}
 
 
 # --------------------------------------------------------------------------- #

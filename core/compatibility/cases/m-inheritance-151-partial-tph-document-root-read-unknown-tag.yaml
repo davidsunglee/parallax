@@ -1,0 +1,36 @@
+# The Relational Document Layout peer of m-inheritance-147 (m-inheritance
+# *Partially composed families*, m-storage-layout). The reader composes Fox and
+# Wolf over a shared document table the provisioning model also wrote a Bear
+# into. The plain abstract-root read is unpartitioned and unfiltered, so the
+# 'bear' row is returned, its document is never decoded at a variant the reader
+# lacks, and its position publishes null with the unknown-tag diagnosis.
+model: models/composed-beast-document-reader.yaml
+tags: [m-inheritance, m-storage-layout, m-sql, m-read-delivery, m-document-codec, table-per-hierarchy, document-layout, stored-data, familyVariant, graph, instance-form, partial-composition, slice-snapshot-1]
+shape: read
+given:
+  provisioningModel: models/composed-beast-document-provisioning.yaml
+when:
+  objectQuery:
+    target: parallax.compatibility.Beast
+    predicate:
+      "true": {}
+    orderBy:
+      - attr: parallax.compatibility.Beast.id
+        direction: asc
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.kind, t0.leader_id, not t0.payload is null, t0.payload from beast_document t0 order by t0.id asc
+        mariadb: select t0.id, t0.kind, t0.leader_id, not t0.payload is null, t0.payload from beast_document t0 order by t0.id asc
+  graph:
+    Beast:
+      - { id: 1, name: Akela, leaderId: null, howl: aroo, familyVariant: Wolf }
+      - { id: 2, name: Bruno, leaderId: null, brush: red, familyVariant: Fox }
+      - null
+  storedDataIssues:
+    - ordinal: 2
+      hydrated: false
+      issues:
+        - code: stored-data-family-tag-unknown
+          entity: parallax.compatibility.Beast
+  roundTrips: 1
