@@ -125,7 +125,9 @@ and routing (`model`, `tags`, `lane`) plus the explicit `shape` discriminator st
 - **`given`** — the world-state established BEFORE the action: `fixtures` (whether
   the model's rows are pre-loaded), `apply` (out-of-band naive SQL run verbatim),
   `corrupt` (stored state the model contradicts, written over the loaded fixtures),
-  `fault` (an injected fault kind), and `databaseOptions` (the transaction option
+  `provisioningModel` (the model a read case's database is provisioned from, when
+  it is not the model the read executes through), `fault` (an injected fault
+  kind), and `databaseOptions` (the transaction option
   defaults the Database Root the case runs through is configured with). Optional
   — a case that starts from the model's default fixtures, injects nothing, and
   configures no root omits `given` entirely.
@@ -374,6 +376,7 @@ in decimal space under any authored `tolerance`.
 | `given.fixtures` | `given` | no | load the model's fixtures BEFORE the action (default `false`), so a sequence can mutate pre-existing persisted rows |
 | `given.apply` | `given` | no | an ordered list of out-of-band **naive statement entries** (`sql` a plain string) the harness applies verbatim after the case's own provisioning and before its lane's first golden statement or step; admitted on `conflict`, `writeSequence`, and `scenario` cases. What the entries stand for is the lane's: a concurrent transaction's stale-version mutation or row removal on a conflict case, and otherwise state no authored member of the model could produce |
 | `given.corrupt` | `given` | no | an ordered list of stored-state corruptions applied after the model's conforming fixtures load and before the action, admitted on `read` cases; each entry addresses one occurrence by `entity` + primary `key` + logical `member` path and states the raw stored `value` that replaces it (see *Corrupting stored state*, below) |
+| `given.provisioningModel` | `given` | no | a `read` case only: the path (relative to `core/compatibility/`) of the model descriptor whose DDL and fixtures provision the database and against which `given.corrupt` resolves; the top-level `model` still owns the query, its execution, and every expectation. Absent, the top-level `model` provisions too (see *Provisioning through another model*, below) |
 | `given.fault` | `given` | boundary | an injected portable fault kind (`serialization-failure` / `deadlock` / `lock-wait-timeout` / `optimistic-lock-conflict`) driving the retry loop, or one of the three that are not failures of the work: `isolation-setup-failure` — the session setup opening the boundary at its requested level failing, so the boundary never opens and the one attempt that adopted before it finishes `beginFailed`; `connection-acquisition-failure` — the attempt's Acquisition granting no connection, so the attempt finishes `beginFailed` caused by it; `connection-cleanup-failure` — the attempt's Release reaching `release-unconfirmed`, which is diagnostic and leaves the boundary committed |
 | `given.sessionDefault` | `given` | boundary | the Isolation Level the connection ALREADY defaults to when the adapter takes it (`read-uncommitted`), established before intake — the seam `m-db-port` puts the once-per-connection floor check at |
 | `given.databaseOptions` | `given` | no | the transaction option defaults the Database Root every unit of work of the case runs through is CONFIGURED with at connect — the same four fields as `when.uow` (`maxRetries`, `concurrency`, `retryOptimisticConflicts`, `isolation`) under the same definitions; a field the case omits is the root's built-in default (`10` / `optimistic` / `false` / `read-committed`), and no field may be `null`. Configuration, not a request: an outer invocation resolves each option as its explicit `when.uow` value, else this root value, and a joining call compares against the ACTIVE transaction's resolved values, never against this record (see *Root configuration*, below) |
@@ -909,8 +912,11 @@ consequences are deliberate and permanent: `stored-data-primary-key-null` and
 primary key holds a direct-column role under either Storage Layout
 (`m-storage-layout` *Direct roles and document residency*), and neither does a
 `stored-data-family-tag-unknown`, whose discriminator is framework-owned and names
-no declared member. Those three stay graded per language, against rows built
-directly, and the corpus grades the six a document can carry.
+no declared member. The two primary-key codes stay graded per language, against
+rows built directly, and the corpus grades the six a document can carry. An
+unknown family tag reaches the corpus another way, without corruption: a canonical
+row of a concrete subtype the reading model does not compose (*Provisioning
+through another model*, below).
 
 **A corrupted Continuation Order member stays reportable.** A streamed page rebinds
 each coordinate carrier in the form its own expression compares (`m-sql`
@@ -921,6 +927,55 @@ a member the Continuation Order names and still author that page's binds — and
 two values it then shows are deliberately different things: `given.corrupt` states
 the logical value the read rejects, and the page's coordinate bind states what the
 database's own `ORDER BY` expression evaluated.
+
+#### Provisioning through another model
+
+A read case normally provisions its database from the model it reads through.
+**`given.provisioningModel`** separates the two roles: it names a second model
+descriptor, by the same path convention as `model`, whose derived DDL and
+canonical fixtures establish the stored state, while the top-level `model` forms
+the query and executes it. This is how a case observes storage another accepted
+model legitimately wrote — such as rows of a concrete subtype a newer model
+composes and the reading model omits — rather than storage corrupted in place:
+
+```yaml
+model: models/composed-beast-reader.yaml        # Beast + Wolf: the reader
+given:
+  provisioningModel: models/composed-beast-provisioning.yaml  # Beast + Wolf + Bear
+```
+
+The roles do not overlap:
+
+| Role | Model | Owns |
+|---|---|---|
+| setup | `given.provisioningModel`, else `model` | DDL, fixture validation and loading, `given.corrupt` addressing |
+| reader | `model` | query validation and execution, projection, discriminator interpretation, every `then` observation |
+
+Both descriptors are independently accepted models, and the pair is otherwise
+unconstrained: a provisioning model may add Entities, members, or concrete
+subtypes, and nothing requires the pair to be an evolution `m-model-evolution`
+classifies one way or another. The field states a freshly provisioned starting
+state, not a migration between the two, and no setup statement counts toward the
+read's statements or round trips. Storage the reader cannot execute against fails
+the case visibly; nothing repairs it. Expectations stay the reader's: an expected
+issue names the reader's Entities, never a subtype only the provisioning model
+declares, so an unknown tag is reported at the reader's family root:
+
+```yaml
+then:
+  graph:
+    Beast: [null]
+  storedDataIssues:
+    - ordinal: 0
+      hydrated: false
+      issues:
+        - code: stored-data-family-tag-unknown
+          entity: parallax.compatibility.Beast
+```
+
+An unknown tag names no member and no object key: the row resolved to no concrete
+identity. The member is admitted on `read` cases alone, the one shape whose
+observation is what the reader makes of stored state.
 
 ### `then.statements`, `then.referenceSql`, `then.rows` (the oracle question)
 

@@ -1,0 +1,89 @@
+# Composed document beasts, provisioning side (m-inheritance *Partially composed
+# families*, m-case-format *Provisioning through another model*).
+#
+# One TABLE-PER-HIERARCHY family on the shared `beast_document` table under a
+# Relational Document Layout: every member but the key and the `leaderId` join
+# Column lives in the `payload` document, discriminated by `kind`:
+#
+#   Beast (root, ABSTRACT)  — id, name, leaderId; followers -> Beast
+#     Fox  (concrete)       — tagValue 'fox';  brush
+#     Wolf (concrete)       — tagValue 'wolf'; howl
+#     Bear (concrete)       — tagValue 'bear'; roar
+#
+# `models/composed-beast-document-reader.yaml` composes Fox and Wolf only. Because
+# `howl` applies to Wolf alone, a reader predicate on it partitions the read into
+# known-variant branches (m-sql *Variant partitioning for a non-uniform path*), and
+# Bear's rows match none of them. The standalone Den exists only here.
+entities:
+  - name: Beast
+    namespace: parallax.compatibility
+    table: beast_document
+    layout:
+      document:
+        column: payload
+    inheritance:
+      role: root
+      strategy: table-per-hierarchy
+      tag:
+        column: kind
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+      - name: name
+        type: string
+        maxLength: 32
+      - name: leaderId
+        type: int64
+        nullable: true
+    relationships:
+      - name: followers
+        cardinality: one-to-many
+        join:
+          source: id
+          target: { entity: parallax.compatibility.Beast, attribute: leaderId }
+        orderBy:
+          - { attribute: id }
+  - name: Fox
+    namespace: parallax.compatibility
+    inheritance:
+      role: concrete-subtype
+      parent: parallax.compatibility.Beast
+      tagValue: fox
+    attributes:
+      - name: brush
+        type: string
+        maxLength: 16
+  - name: Wolf
+    namespace: parallax.compatibility
+    inheritance:
+      role: concrete-subtype
+      parent: parallax.compatibility.Beast
+      tagValue: wolf
+    attributes:
+      - name: howl
+        type: string
+        maxLength: 16
+  - name: Bear
+    namespace: parallax.compatibility
+    inheritance:
+      role: concrete-subtype
+      parent: parallax.compatibility.Beast
+      tagValue: bear
+    attributes:
+      - name: roar
+        type: string
+        maxLength: 16
+  - name: Den
+    namespace: parallax.compatibility
+    table: den_document
+    layout:
+      document:
+        column: payload
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+      - name: name
+        type: string
+        maxLength: 32

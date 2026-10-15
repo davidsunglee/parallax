@@ -29,6 +29,13 @@ _DOCUMENT_LAYOUT = "m-storage-layout-017-document-layout-provisioned-read.yaml"
 _TPH_ABSTRACT_ROOT = "m-inheritance-003-tph-abstract-root-read.yaml"
 _TPCS_ABSTRACT_ROOT = "m-inheritance-050-tpcs-abstract-root-read.yaml"
 _TPH_DOCUMENT_UNION = "m-inheritance-124-document-layout-tph-sibling-path-reuse.yaml"
+_PARTIAL_TPH_ROOT = "m-inheritance-147-partial-tph-root-read-unknown-tag.yaml"
+
+_BEASTS: list[dict[str, Any]] = [
+    {"id": 1, "kind": "wolf", "name": "Akela", "keeper_id": 10, "howl": "aroo"},
+    {"id": 2, "kind": "bear", "name": "Baloo", "keeper_id": 11, "howl": None},
+    {"id": 3, "kind": "wolf", "name": "Raksha", "keeper_id": 10, "howl": "yip"},
+]
 
 # `m-object-query-001` projects plain Columns of a non-inheritance entity, so its
 # physical row and its logical row are the same document.
@@ -229,13 +236,41 @@ def test_an_abstract_target_read_materializes_family_variant_from_the_raw_tag(
     assert_case_read(case, reads)
 
 
-def test_a_tag_value_naming_no_concrete_subtype_fails(corpus_case: CaseLoader) -> None:
-    case = corpus_case(_TPH_ABSTRACT_ROOT)
-    stray = [dict(_PAYMENT_ROWS[0]) | {"kind": "cheque"}, *_PAYMENT_ROWS[1:]]
-    reads = ScriptedReads(results=[stray])
+def test_a_tag_value_naming_no_composed_subtype_publishes_an_unavailable_root(
+    corpus_case: CaseLoader,
+) -> None:
+    # The provisioning model composes Bear, the reader does not: the stored tag is
+    # classified against the reader alone, so the position is null and diagnosed.
+    case = corpus_case(_PARTIAL_TPH_ROOT)
+    assert case.setup_model.entity("Bear").canonical_name == "parallax.compatibility.Bear"
 
-    with pytest.raises(CaseFailure, match="maps to no concrete subtype"):
-        assert_case_read(case, reads)
+    assert_case_read(case, ScriptedReads(results=[_BEASTS, _BEASTS]))
+
+
+def test_an_unknown_tag_left_undiagnosed_fails(damaged_case: CaseLoader) -> None:
+    case = damaged_case(_PARTIAL_TPH_ROOT)
+    del case.then["storedDataIssues"]
+
+    with pytest.raises(CaseFailure, match="stored-data-family-tag-unknown diagnoses"):
+        assert_case_read(case, ScriptedReads(results=[_BEASTS, _BEASTS]))
+
+
+def test_an_unknown_tag_diagnosed_at_a_member_fails(damaged_case: CaseLoader) -> None:
+    case = damaged_case(_PARTIAL_TPH_ROOT)
+    case.then["storedDataIssues"][0]["issues"][0]["member"] = "parallax.compatibility.Beast.name"
+
+    with pytest.raises(CaseFailure, match="stored-data-family-tag-unknown diagnoses"):
+        assert_case_read(case, ScriptedReads(results=[_BEASTS, _BEASTS]))
+
+
+def test_an_unknown_tag_diagnosis_authored_where_none_is_stored_fails(
+    corpus_case: CaseLoader,
+) -> None:
+    case = corpus_case(_PARTIAL_TPH_ROOT)
+    wolves = [_BEASTS[0], dict(_BEASTS[1]) | {"kind": "wolf", "howl": None}, _BEASTS[2]]
+
+    with pytest.raises(CaseFailure, match="materialized graph"):
+        assert_case_read(case, ScriptedReads(results=[wolves, wolves]))
 
 
 def test_an_abstract_read_dropping_the_tag_column_from_its_golden_fails(

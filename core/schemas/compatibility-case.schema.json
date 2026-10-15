@@ -526,6 +526,16 @@
       }
     },
     {
+      "description": "`given.provisioningModel` belongs to the `read` shape alone (m-case-format *Provisioning through another model*). It separates the model a database is provisioned from and the model a READ executes through, and only a read's observation is what its model makes of stored state: every other shape's executor builds, mutates, or grades state through its one model, so a second descriptor there would provision storage no executor's oracle is stated against.",
+      "if": {
+        "required": ["given"],
+        "properties": { "given": { "required": ["provisioningModel"] } }
+      },
+      "then": {
+        "properties": { "shape": { "const": "read" } }
+      }
+    },
+    {
       "description": "`given.fault` belongs to the `boundary` shape alone (m-case-format field table). A fault is INJECTED at the database-port seam by the API Conformance Suite, which executes no other shape: every other shape's executor walks past the member, so a case declaring it elsewhere would name a failure its own run never provoked and would still be reported as satisfied. Confining the member confines its whole vocabulary with it — the `isolation-setup-failure` and `connection-acquisition-failure` that stop a boundary from opening no more belong to a read than the transients do.",
       "if": {
         "required": ["given"],
@@ -639,7 +649,7 @@
       "const": "state"
     },
     "given": {
-      "description": "Ambient world-state established BEFORE the action under test: the model fixtures to load, out-of-band SQL to apply verbatim, the stored state to corrupt once they are loaded, the Isolation Level the connection already defaults to, any injected fault, and the transaction option defaults the Database Root the case runs through is configured with. Optional — a case that starts from the model's default fixtures, injects nothing, and configures no root omits `given` entirely.",
+      "description": "Ambient world-state established BEFORE the action under test: the model fixtures to load, the model a read case is provisioned from when it is not the one it reads through, out-of-band SQL to apply verbatim, the stored state to corrupt once they are loaded, the Isolation Level the connection already defaults to, any injected fault, and the transaction option defaults the Database Root the case runs through is configured with. Optional — a case that starts from the model's default fixtures, injects nothing, and configures no root omits `given` entirely.",
       "type": "object",
       "additionalProperties": false,
       "properties": {
@@ -674,6 +684,11 @@
         "apply": {
           "description": "conflict cases (m-opt-lock). An ordered list of out-of-band naive statement entries the harness applies verbatim AFTER the fixtures load and BEFORE the golden write, simulating a concurrent transaction that mutated or removed the row so the golden write reaches fewer rows than it addressed — the shortfall the rendered optimistic gate detects as a conflict. Each entry is a `{sql, binds}` statement whose `sql` is a plain string (dialect-agnostic naive SQL, run on every dialect). Absent for the success case (nothing intervened, so the write affects the row it addressed).",
           "$ref": "#/$defs/naiveStatements"
+        },
+        "provisioningModel": {
+          "description": "read cases only. The model descriptor whose derived DDL and canonical fixtures provision the database, and against which `given.corrupt` resolves, when it is not the top-level `model` (m-case-format *Provisioning through another model*). The top-level `model` keeps every other role: it forms and executes the query, interprets what the database returns, and owns every `then` observation, so an expected issue names the reader's Entities and never a subtype only this model declares. Both descriptors are independently accepted models; the pair is otherwise unconstrained, and no setup statement counts toward the read. Absent, the top-level `model` provisions the database too.",
+          "type": "string",
+          "pattern": "^models/.+\\.ya?ml$"
         },
         "corrupt": {
           "description": "read cases only. An ordered list of stored-state corruptions applied AFTER the model's conforming fixtures load and BEFORE the action, so the read observes storage its own model contradicts (m-read-delivery *Invalid stored data*). Each entry addresses one occurrence with the vocabulary `StoredDataIssue.path` reports it in — the row by its model primary key, then the member as a path of declared member names with integers for array positions — and states the raw stored `value` that replaces it. The corrupt value is stored as authored and never encoded, so it bypasses the canonical-literal oracle a fixture leaf passes; canonical fixtures and ordinary writes therefore stay conforming by construction. An addressed member MUST be document-resident, because a Structured Column holds any JSON value while a typed, constrained Column can be made to hold a non-conforming one only by first removing the constraint that forbids it — which is a schema change, and a case that changed its schema would no longer be reading the model it declares. An addressed Entity MUST be non-temporal, because a temporal Entity's rows are keyed by the model key together with each As-Of Axis's end instant, so one `key` value there addresses a milestone CHAIN and names no single row in it; the corpus's static validation and every adapter refuse such an entry in the same terms (m-case-format *Corrupting stored state*).",

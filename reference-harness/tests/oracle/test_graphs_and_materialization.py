@@ -36,6 +36,8 @@ _ORDERED_ITEMS = "m-deep-fetch-009-ordered-items-desc.yaml"
 _EMPTY_ROOT = "m-deep-fetch-006-empty-root.yaml"
 _NARROWED_PETS = "m-inheritance-065-tph-deepfetch-narrowed-pets-dog.yaml"
 _BROAD_AND_NARROWED_PETS = "m-inheritance-068-tph-deepfetch-broad-and-redundant-narrow.yaml"
+_PARTIAL_TPH_INCLUDE = "m-inheritance-148-partial-tph-broad-singleton-include-unknown-tag.yaml"
+_PARTIAL_TPH_NARROWED_INCLUDE = "m-inheritance-149-partial-tph-narrowed-singleton-include.yaml"
 _GUARDED_BRANCHES = "m-inheritance-078-tph-deepfetch-guarded-branches-diverge.yaml"
 _TEMPORAL_DEEP_FETCH = "m-navigate-012-deepfetch-temporal-both-latest.yaml"
 _HISTORY_GRAPHS = "m-snapshot-read-013-history-edge-pinned-graphs.yaml"
@@ -92,6 +94,16 @@ _DOGS: list[dict[str, Any]] = [
 
 # A polymorphic hop projects the raw `kind` column instead; `familyVariant` is
 # materialized from the tag metadata map.
+_KEEPERS: list[dict[str, Any]] = [
+    {"id": 10, "name": "Mowgli"},
+    {"id": 11, "name": "Bagheera"},
+    {"id": 12, "name": "Kaa"},
+]
+_KEPT_BEASTS: list[dict[str, Any]] = [
+    {"id": 1, "kind": "wolf", "name": "Akela", "keeper_id": 10, "howl": "aroo"},
+    {"id": 2, "kind": "bear", "name": "Baloo", "keeper_id": 11, "howl": None},
+    {"id": 3, "kind": "wolf", "name": "Raksha", "keeper_id": 10, "howl": "yip"},
+]
 _PETS: list[dict[str, Any]] = [
     {
         "id": 1,
@@ -515,15 +527,61 @@ def test_two_parent_branches_reaching_one_relationship_are_two_levels(
     ]
 
 
-def test_a_polymorphic_hop_tag_value_naming_no_subtype_is_refused(
+def test_an_unknown_child_tag_makes_the_root_reaching_it_unavailable(
+    corpus_case: CaseLoader,
+) -> None:
+    # A root that reaches an unrepresentable child is unavailable itself and
+    # carries the child's diagnosis; its siblings, including a loaded-empty one,
+    # publish as ordinary.
+    case = corpus_case(_PARTIAL_TPH_INCLUDE)
+    reads = ScriptedReads(results=[_KEEPERS, _KEPT_BEASTS, _KEEPERS])
+
+    assert_case_read(case, reads)
+
+    assert reads.calls[1][1] == ([10, 11, 12],)
+
+
+def test_an_unknown_child_tag_is_never_dropped_from_a_published_root(
     corpus_case: CaseLoader,
 ) -> None:
     case = corpus_case(_BROAD_AND_NARROWED_PETS)
     stray = [dict(_PETS[0]) | {"kind": "sturgeon"}, *_PETS[1:]]
     reads = ScriptedReads(results=[_PEOPLE, stray, _PETS, _PEOPLE])
 
-    with pytest.raises(CaseFailure, match="maps to no concrete subtype"):
+    with pytest.raises(CaseFailure, match="assembled graph != then.graph"):
         assert_case_read(case, reads)
+
+
+def test_a_broad_singleton_hop_keeps_the_unguarded_root_target(
+    damaged_case: CaseLoader,
+) -> None:
+    # The reader composes one Beast leaf, yet the broad hop is not retargeted to
+    # it: a level authoring Wolf's tag guard binds more than the broad read does.
+    case = damaged_case(_PARTIAL_TPH_INCLUDE)
+    child = case.then["statements"][1]
+    child["sql"]["postgres"] = child["sql"]["postgres"].replace(
+        "= any(?)", "= any(?) and t0.kind = ?"
+    )
+    child["binds"]["postgres"] = [[10, 11, 12], "wolf"]
+
+    with pytest.raises(CaseFailure, match=r"level 1 \(beasts\) as-of suffix \['wolf'\]"):
+        assert_case_read(case, ScriptedReads(results=[_KEEPERS, _KEPT_BEASTS, _KEEPERS]))
+
+
+def test_a_narrowed_singleton_hop_keeps_its_guard_over_the_whole_composed_family(
+    corpus_case: CaseLoader,
+) -> None:
+    case = corpus_case(_PARTIAL_TPH_NARROWED_INCLUDE)
+    wolves = [
+        {key: value for key, value in row.items() if key != "kind"}
+        for row in _KEPT_BEASTS
+        if row["kind"] == "wolf"
+    ]
+    reads = ScriptedReads(results=[_KEEPERS, wolves, _KEEPERS])
+
+    assert_case_read(case, reads)
+
+    assert reads.calls[1][1] == ([10, 11, 12], "wolf")
 
 
 def test_a_hop_that_drops_a_tag_bind_is_refused(damaged_case: CaseLoader) -> None:

@@ -19,6 +19,9 @@ from parallax.conformance import case_format
 from parallax.conformance.animal_owner import ANIMAL_MODEL as ANIMAL_OWNER_MODEL
 from parallax.conformance.animal_owner import Person as AnimalOwnerPerson
 from parallax.conformance.class_models import MODELS as CLASS_MODELS
+from parallax.conformance.composed_beast_document_models import Beast as DocumentBeast
+from parallax.conformance.composed_beast_document_models import Wolf as DocumentWolf
+from parallax.conformance.composed_beast_models import Beast, Keeper, Wolf
 from parallax.conformance.edit_models import Note
 from parallax.conformance.graph_models import Policy
 from parallax.conformance.models import load_domain_models
@@ -168,6 +171,30 @@ BUILDERS: dict[str, Callable[[], ObjectQuery[Any, Any]]] = {
         | AnimalRoot.is_a(Cat, where=Cat.indoor.is_(True))
     ),
     "m-inheritance-109": lambda: Document.where(Document.all).narrow(FinancialDocument),
+    # Partially composed families: the executable graph stories read through the
+    # older reader model while the database holds a subtype it does not compose.
+    "m-inheritance-147": lambda: Beast.where(Beast.all).order_by(Beast.id.asc()),
+    "m-inheritance-148": lambda: (
+        Keeper.where(Keeper.all).order_by(Keeper.id.asc()).include(Keeper.beasts)
+    ),
+    "m-inheritance-149": lambda: (
+        Keeper.where(Keeper.all).order_by(Keeper.id.asc()).include(Keeper.beasts.narrow(Wolf))
+    ),
+    "m-inheritance-151": lambda: DocumentBeast.where(DocumentBeast.all).order_by(
+        DocumentBeast.id.asc()
+    ),
+    "m-inheritance-152": lambda: DocumentBeast.where(
+        DocumentBeast.is_a(DocumentWolf, where=DocumentWolf.howl == "aroo")
+        | (DocumentBeast.name == "Bruno")
+    ),
+    "m-inheritance-153": lambda: (
+        DocumentBeast.where(
+            DocumentBeast.is_a(DocumentWolf, where=DocumentWolf.howl == "aroo")
+            | (DocumentBeast.name == "Bruno")
+        )
+        .order_by(DocumentBeast.id.asc())
+        .include(DocumentBeast.followers)
+    ),
     # Read-produced edit sources: the same public query `test_edit_run.py`
     # executes before targeting either the Entity or its `tag` occurrence.
     "m-edit-005": lambda: Note.where(Note.id == 1),

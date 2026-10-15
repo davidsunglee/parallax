@@ -1,0 +1,56 @@
+# A broad Include keeps its declared abstract-root target even when the reader
+# composes a single concrete leaf under it (m-sql, m-inheritance *Partially
+# composed families*). `Keeper.beasts` targets Beast; the reader composes only
+# Wolf, yet the child level reads the shared table with no tag predicate and
+# projects the raw tag, exactly as a root read of Beast would. Bagheera's one
+# beast is a provisioned Bear the reader cannot represent: that child is
+# unavailable, so the root reaching it is unavailable too and carries the
+# diagnosis, while Kaa keeps a loaded-empty view and Mowgli both wolves.
+model: models/composed-beast-reader.yaml
+tags: [m-inheritance, m-deep-fetch, m-sql, m-read-delivery, m-snapshot-read, table-per-hierarchy, stored-data, deep-fetch, graph, partial-composition, slice-snapshot-1]
+shape: read
+given:
+  provisioningModel: models/composed-beast-provisioning.yaml
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "deep-fetch child level - the Keeper.beasts key-set binds are the keeper ids gathered from the root query result"
+when:
+  objectQuery:
+    target: parallax.compatibility.Keeper
+    predicate:
+      "true": {}
+    orderBy:
+      - attr: parallax.compatibility.Keeper.id
+        direction: asc
+    includes:
+      - segments:
+          - rel: parallax.compatibility.Keeper.beasts
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from keeper t0 order by t0.id asc
+        mariadb: select t0.id, t0.name from keeper t0 order by t0.id asc
+    - sql:
+        postgres: select t0.id, t0.kind, t0.name, t0.keeper_id, t0.howl from beast t0 where t0.keeper_id = any(?) order by t0.id asc
+        mariadb: select t0.id, t0.kind, t0.name, t0.keeper_id, t0.howl from beast t0 where t0.keeper_id in (?, ?, ?) order by t0.id asc
+      binds: { postgres: [[10, 11, 12]], mariadb: [10, 11, 12] }
+  referenceSql: select id, name from keeper
+  graph:
+    Keeper:
+      - id: 10
+        name: Mowgli
+        beasts:
+          - { id: 1, name: Akela, keeperId: 10, howl: aroo, familyVariant: Wolf }
+          - { id: 3, name: Raksha, keeperId: 10, howl: yip, familyVariant: Wolf }
+      - null
+      - id: 12
+        name: Kaa
+        beasts: []
+  storedDataIssues:
+    - ordinal: 1
+      hydrated: false
+      issues:
+        - code: stored-data-family-tag-unknown
+          entity: parallax.compatibility.Beast
+  roundTrips: 2

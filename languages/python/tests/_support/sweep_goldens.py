@@ -109,6 +109,9 @@ _EXECUTION_LIFECYCLE_READS: Final[frozenset[str]] = frozenset(
     {"m-execution-lifecycle-001", "m-read-delivery-001"}
 )
 _CORRUPT_STORED_STATE_READS: Final[frozenset[str]] = frozenset({"m-snapshot-read-049"})
+_PARTIAL_COMPOSITION_READS: Final[frozenset[str]] = frozenset(
+    {"m-inheritance-147", "m-inheritance-151", "m-inheritance-152"}
+)
 COMPILE_EXERCISED: Final[frozenset[str]] = (
     _SCALAR_READS
     | _DOCUMENT_CODEC_READS
@@ -136,6 +139,7 @@ COMPILE_EXERCISED: Final[frozenset[str]] = (
     | _CANONICAL_ENTITY_SPELLING_READS
     | _EXECUTION_LIFECYCLE_READS
     | _CORRUPT_STORED_STATE_READS
+    | _PARTIAL_COMPOSITION_READS
 )
 
 _WRITE_SCENARIOS: Final[frozenset[str]] = frozenset(f"m-unit-work-{n:03d}" for n in (1, 8, 10, 11))

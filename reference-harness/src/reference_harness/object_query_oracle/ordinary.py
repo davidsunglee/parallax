@@ -131,6 +131,7 @@ def _assert_stream(case: Case, reader: ReadExecutor) -> None:
                 f"  delivered: {assembled!r}\n"
                 f"  expected:  {expected!r}"
             )
+    graph.assert_family_tag_issues(case, delivered.issues)
 
     reference_sql = case.reference_sql_for(dialect)
     if reference_sql is not None:
@@ -185,7 +186,10 @@ def _assert_deep_fetch(case: Case, reader: ReadExecutor) -> None:
     )
     includes.refuse_unused_levels(case, "then.statements", dialect, executed, len(levels))
 
-    assembled = graph.assemble_graph(case, query, steps, root_rows, executed.children_by_hop)
+    classified = graph.assemble_classified_graph(
+        case, query, steps, root_rows, executed.children_by_hop
+    )
+    assembled = classified.graph
     expected = case.expected_graph or {}
     if not graph.graphs_equal(assembled, expected, case.model):
         raise CaseFailure(
@@ -193,6 +197,7 @@ def _assert_deep_fetch(case: Case, reader: ReadExecutor) -> None:
             f"  assembled: {assembled!r}\n"
             f"  expected:  {expected!r}"
         )
+    graph.assert_family_tag_issues(case, classified.issues)
 
     reference_sql = case.reference_sql_for(dialect)
     if reference_sql is not None:
@@ -279,6 +284,7 @@ def _assert_graphs(case: Case, reader: ReadExecutor) -> None:
         [graph.graph_node(case, root_entity, row) for row in narrowed],
         graph_specs,
     )
+    graph.assert_family_tag_issues(case, graph.root_issues(root_rows))
 
 
 def _assert_single_statement_graph(case: Case, reader: ReadExecutor) -> None:
@@ -325,6 +331,7 @@ def _assert_single_statement_graph(case: Case, reader: ReadExecutor) -> None:
             f"  assembled: {assembled!r}\n"
             f"  expected:  {expected!r}"
         )
+    graph.assert_family_tag_issues(case, graph.root_issues(rows))
 
     reference_sql = case.reference_sql_for(dialect)
     if reference_sql is not None:

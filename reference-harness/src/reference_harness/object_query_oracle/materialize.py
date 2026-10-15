@@ -81,9 +81,36 @@ class UnavailableLeaf(NamedTuple):
     stored: Any
 
 
+class UnknownFamilyTag(NamedTuple):
+    """A stored table-per-hierarchy tag the reading model composes no concrete for.
+
+    It stands where the row's ``familyVariant`` would, so the row keeps its place
+    in the result and its correlation columns while claiming no concrete
+    identity. The position is unhydratable (`m-read-delivery`), and
+    :func:`family_tag_issues` reports it at *family*, the canonical spelling of
+    the reader's family root — never at a variant another model composes.
+    """
+
+    stored: Any
+    family: str
+
+
+FAMILY_TAG_UNKNOWN = "stored-data-family-tag-unknown"
+
+
 def is_unavailable(row: Mapping[str, Any]) -> bool:
     """Whether *row*'s stored state left its result position unhydratable."""
-    return any(isinstance(value, UnavailableLeaf) for value in row.values())
+    return any(isinstance(value, UnavailableLeaf | UnknownFamilyTag) for value in row.values())
+
+
+def family_tag_issues(row: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """The unknown-family-tag diagnosis *row* carries, in `then.storedDataIssues`
+    vocabulary: a code and the family root, with no member and no object key,
+    since the row resolved to no concrete identity."""
+    variant = row.get("familyVariant")
+    if not isinstance(variant, UnknownFamilyTag):
+        return []
+    return [{"code": FAMILY_TAG_UNKNOWN, "entity": variant.family}]
 
 
 # --- materialized rows ------------------------------------------------------
@@ -328,8 +355,10 @@ def materialize_hop_level(
     the projection shape. What it does carry, and a navigated position does not, is
     a RESOLVED concrete set: *tag_column* is the shared-table discriminator a
     polymorphic table-per-hierarchy hop projects, stated beside the family's
-    *variant_map* rather than re-derived here, and is ``None`` for a hop that
-    resolves to one concrete or to a non-inheritance target. The hop states those
+    *variant_map* rather than re-derived here, and is ``None`` for a hop whose
+    child level targets one concrete or a non-inheritance entity. A row whose tag
+    the reader composes no concrete for keeps its place carrying an
+    :class:`UnknownFamilyTag` and is decoded at no variant. The hop states those
     facts because they are the level's own; the derivation over them is this
     module's, which is why the level is materialized here rather than assembled
     step by step by the caller that planned it.
@@ -347,14 +376,22 @@ def materialize_hop_level(
             _published(_with_direct_collections_decoded(case.model, entity, row))
             for row in _materialize_document_layout(case, entity, rows, include_value_objects=True)
         ]
+    family_root = _family_root(case, entity.canonical_name)
     at_their_variant = [
         _materialize_hop_variant(
-            case, row, view_key=view_key, tag_column=tag_column, variant_map=variant_map
+            case,
+            row,
+            view_key=view_key,
+            tag_column=tag_column,
+            variant_map=variant_map,
+            family_root=family_root,
         )
         for row in rows
     ]
     return [
-        _published(
+        _published(row)
+        if isinstance(row["familyVariant"], UnknownFamilyTag)
+        else _published(
             _with_direct_collections_decoded(
                 case.model,
                 entity,
@@ -711,16 +748,23 @@ def _materialize_tph_family_variant(
     if rows and all("familyVariant" in row and tag_column not in row for row in rows):
         return rows
     variant_map = tag_value_to_subtype(case.model.entity_defs)
+    family_root = _family_root(case, target_name)
     return [
         _with_family_variant(
             case,
             _materialized_row(row),
             tag_column=tag_column,
             variant_map=variant_map,
+            family_root=family_root,
             subject="abstract-target read",
         )
         for row in rows
     ]
+
+
+def _family_root(case: Case, name: str) -> str:
+    """The canonical spelling of the reader's family root above *name*."""
+    return Family(case.model.entity_defs).root_of(name) or case.model.entity(name).canonical_name
 
 
 def _with_family_variant(
@@ -729,6 +773,7 @@ def _with_family_variant(
     *,
     tag_column: str,
     variant_map: Mapping[Any, str],
+    family_root: str,
     subject: str,
 ) -> dict[str, Any]:
     """*row* with its raw tag column replaced by the ``familyVariant`` the tag names.
@@ -736,9 +781,15 @@ def _with_family_variant(
     The one tag-to-variant transformation, applied wherever a row arrives carrying a
     table-per-hierarchy discriminator. *row* is transformed IN PLACE, so a caller hands
     over a private copy and chooses its form — a :class:`_MaterializedRow` whose Value
-    Object bookkeeping must survive, or a plain row. *subject* names the read in both
-    diagnostics, since a whole-read tag failure and a deep-fetch hop's are the same
+    Object bookkeeping must survive, or a plain row. *subject* names the read in the
+    diagnostic, since a whole-read tag failure and a deep-fetch hop's are the same
     defect reported against different reads.
+
+    A tag the reader's composed family names no concrete subtype for is stored
+    data the read classifies rather than a defect of the case: the row carries an
+    :class:`UnknownFamilyTag` at *family_root* in place of its variant
+    (`m-inheritance` *Partially composed families*). A missing tag column is a
+    projection defect and still fails the case.
     """
     if tag_column not in row:
         raise CaseFailure(
@@ -747,14 +798,9 @@ def _with_family_variant(
         )
     tag_value = row.pop(tag_column)
     variant = variant_map.get(tag_value)
-    if variant is None:
-        raise CaseFailure(
-            f"{case.path.name}: {subject} tag value {tag_value!r} maps to no concrete "
-            f"subtype (tag metadata {sorted(variant_map)})."
-        )
     if isinstance(row, _MaterializedRow) and "familyVariant" in row:
         row.consumed_value_object_columns.add("familyVariant")
-    row["familyVariant"] = variant
+    row["familyVariant"] = UnknownFamilyTag(tag_value, family_root) if variant is None else variant
     return row
 
 
@@ -765,6 +811,7 @@ def _materialize_hop_variant(
     view_key: str,
     tag_column: str,
     variant_map: Mapping[Any, str],
+    family_root: str,
 ) -> dict[str, Any]:
     """Replace a polymorphic deep-fetch child row's raw tag column with ``familyVariant``.
 
@@ -779,6 +826,7 @@ def _materialize_hop_variant(
         dict(row),
         tag_column=tag_column,
         variant_map=variant_map,
+        family_root=family_root,
         subject=f"polymorphic hop {view_key}",
     )
 
@@ -830,12 +878,14 @@ def _materialize_navigated_family_variant(
     if tag_column is None:
         return rows
     variant_map = tag_value_to_subtype(case.model.entity_defs)
+    family_root = _family_root(case, target)
     return [
         _with_family_variant(
             case,
             dict(row),
             tag_column=tag_column,
             variant_map=variant_map,
+            family_root=family_root,
             subject=f"navigated position {target}",
         )
         if tag_column in row

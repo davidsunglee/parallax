@@ -920,7 +920,7 @@ def _assert_authored_observation(
 
 def _reset_audit_story(story: graph_stories.GraphStory, profile_run: Any) -> None:
     case = _CASES[story.case_id]
-    profile_run.reset(engine.load_case_metamodel(case), case_fixtures(case))
+    profile_run.reset(engine.load_case_setup_metamodel(case), case_fixtures(case))
     apply_given_apply(case, profile_run.port, TemporalShadow())
 
 

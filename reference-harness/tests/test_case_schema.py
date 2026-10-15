@@ -790,6 +790,13 @@ def _stored_data_issues_read_case() -> dict[str, Any]:
     }
 
 
+def _provisioned_read_case() -> dict[str, Any]:
+    """A read case provisioned through a second model it does not read through."""
+    doc = _read_case()
+    doc["given"] = {"provisioningModel": "models/orders.yaml"}
+    return doc
+
+
 def _streamed_milestone_graphs_case() -> dict[str, Any]:
     """A streamed milestone-set read: `when.stream` beside `then.graphs`.
 
@@ -831,6 +838,7 @@ VALID_CASES = {
     "read-graphs": _graphs_read_case,
     "read-streamed-graphs": _streamed_milestone_graphs_case,
     "read-stored-data-issues": _stored_data_issues_read_case,
+    "read-provisioned-through-another-model": _provisioned_read_case,
     "rejected-query": _rejected_query_case,
     "rejected-declaring-its-zero-cost": _rejected_case_declaring_zero_round_trips,
     "rejected-write": _rejected_write_case,
@@ -1531,6 +1539,20 @@ def _corrupt_on_a_scenario() -> dict[str, Any]:
     return doc
 
 
+def _provisioning_model_on_a_write_sequence() -> dict[str, Any]:
+    # Only a read's observation is what its model makes of stored state; every
+    # other shape builds, mutates, or grades state through its one model.
+    doc = _write_sequence_case()
+    doc["given"] = {"provisioningModel": "models/orders.yaml"}
+    return doc
+
+
+def _provisioning_model_outside_the_model_directory() -> dict[str, Any]:
+    doc = _read_case()
+    doc["given"] = {"provisioningModel": "fixtures/orders.yaml"}
+    return doc
+
+
 def _fault_on_a_read() -> dict[str, Any]:
     # A fault is injected at the database-port seam by the API Conformance
     # Suite, which executes no shape but `boundary`: a read declaring one names
@@ -1803,6 +1825,10 @@ REJECTED_CASES = {
     "streamed-step-naming-a-representation": _streamed_step_naming_a_representation,
     "corrupt-on-a-write-sequence": _corrupt_on_a_write_sequence,
     "corrupt-on-a-scenario": _corrupt_on_a_scenario,
+    "provisioning-model-on-a-write-sequence": _provisioning_model_on_a_write_sequence,
+    "provisioning-model-outside-the-model-directory": (
+        _provisioning_model_outside_the_model_directory
+    ),
     "fault-on-a-read": _fault_on_a_read,
     "isolation-setup-failure-on-a-read": _isolation_setup_failure_on_a_read,
     "session-default-on-a-read": _session_default_on_a_read,

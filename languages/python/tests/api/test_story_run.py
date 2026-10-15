@@ -21,6 +21,9 @@ from parallax.conformance._mechanism import envelope
 from parallax.conformance._mechanism.given_state import apply_given_apply
 from parallax.conformance.animal_owner import Person as AnimalOwnerPerson
 from parallax.conformance.class_models import MODELS
+from parallax.conformance.composed_beast_document_models import Fox as DocumentFox
+from parallax.conformance.composed_beast_document_models import Wolf as DocumentWolf
+from parallax.conformance.composed_beast_models import Beast, Keeper, Wolf
 from parallax.conformance.graph_stories import (
     GRAPH_STORIES,
     a_finite_transaction_time_pinned_view_is_read_only,
@@ -41,12 +44,15 @@ from parallax.core.execution._options import (
     OMITTED,
     Omitted,
 )
+from parallax.core.metamodel import EntityIdentity
+from parallax.core.read_delivery import InvalidData, InvalidDataError
 from parallax.core.unit_work import Concurrency
 from parallax.snapshot import (
     Database,
     ScopedDatabase,
     Snapshot,
     Transaction,
+    WireEntity,
     connect,
     edge_of,
     is_view_loaded,
@@ -96,7 +102,7 @@ def _reset_for(case_id: str, profile_run: Any) -> DomainModel:
     typed instances.
     """
     case = _CASES[case_id]
-    profile_run.reset(engine.load_case_metamodel(case), case_fixtures(case))
+    profile_run.reset(engine.load_case_setup_metamodel(case), case_fixtures(case))
     apply_given_apply(case, profile_run.port, TemporalShadow())
     return MODELS[Path(case.model).stem]
 
@@ -778,6 +784,152 @@ def test_animal_owner_reaches_root_and_narrowed_subtype_view(profile_run: Any) -
     dogs = view(alice, AnimalOwnerPerson.pets.narrow(Dog))
     assert [dog.name for dog in cast("tuple[Any, ...]", dogs)] == ["Rex"]
     assert db.round_trips == [3]
+
+
+# --------------------------------------------------------------------------- #
+# Partially composed families (`m-inheritance` *Partially composed families*):  #
+# each case provisions storage through a model composing one more subtype than #
+# the reader its story connects with, so the stored tag the reader does not    #
+# compose reaches the public diagnosis rather than being filtered or invented. #
+# --------------------------------------------------------------------------- #
+_BEAST = EntityIdentity("parallax.compatibility", "Beast")
+
+
+def _unknown_tag(record: object, stored: object) -> None:
+    """``record`` is an unavailable position diagnosed only by ``stored``'s tag."""
+    assert isinstance(record, InvalidData)
+    typed = cast("InvalidData[object]", record)
+    assert typed.data is None
+    (issue,) = typed.issues
+    assert (issue.code, issue.entity, issue.member, issue.object_key, issue.path) == (
+        "stored-data-family-tag-unknown",
+        _BEAST,
+        None,
+        None,
+        (),
+    )
+    assert issue.stored_value == stored
+
+
+def test_an_older_reader_diagnoses_a_stored_subtype_it_does_not_compose(
+    profile_run: Any,
+) -> None:
+    story = _GRAPH_STORIES_BY_ID["m-inheritance-147"]
+    db = _counting_connect(profile_run.port, _reset_for(story.case_id, profile_run))
+    snapshot = story.run(db)
+
+    with pytest.raises(InvalidDataError) as refused:
+        snapshot.results()
+    assert [record.ordinal for record in refused.value.invalid_data] == [1]
+    akela, baloo, raksha = snapshot.checked().results()
+    assert isinstance(akela, Wolf)
+    assert isinstance(raksha, Wolf)
+    assert (akela.howl, raksha.howl) == ("aroo", "yip")
+    _unknown_tag(baloo, "bear")
+    assert cast("InvalidData[object]", baloo).object_key is None
+    assert db.round_trips == [1]
+
+    query = Beast.where(Beast.all).order_by(Beast.id.asc())
+    with db.stream(query, batch_size=2) as stream:
+        delivered: list[Any] = []
+        with raises_contextualized(InvalidDataError):
+            delivered.extend(stream)
+    assert [beast.name for beast in delivered] == ["Akela"]
+    with db.wire.stream(query, batch_size=2) as wire_stream:
+        streamed = list(wire_stream.checked())
+    _unknown_tag(streamed[1], "bear")
+    assert [cast("WireEntity", streamed[index])["name"] for index in (0, 2)] == [
+        "Akela",
+        "Raksha",
+    ]
+
+
+def test_a_broad_include_diagnoses_a_child_subtype_its_reader_does_not_compose(
+    profile_run: Any,
+) -> None:
+    story = _GRAPH_STORIES_BY_ID["m-inheritance-148"]
+    db = _counting_connect(profile_run.port, _reset_for(story.case_id, profile_run))
+    snapshot = story.run(db)
+
+    mowgli, bagheera, kaa = snapshot.checked().results()
+    assert isinstance(mowgli, Keeper)
+    assert [beast.name for beast in mowgli.beasts] == ["Akela", "Raksha"]
+    assert all(isinstance(beast, Wolf) for beast in mowgli.beasts)
+    # The root reaching the unrepresentable child is unavailable itself; its own
+    # key decoded, so the record still names it.
+    _unknown_tag(bagheera, "bear")
+    assert cast("InvalidData[object]", bagheera).object_key is not None
+    assert isinstance(kaa, Keeper)
+    assert kaa.beasts == ()
+    assert db.round_trips == [2]
+
+    query = Keeper.where(Keeper.all).order_by(Keeper.id.asc()).include(Keeper.beasts)
+    with db.stream(query, batch_size=1) as stream:
+        streamed = list(stream.checked())
+    assert [type(root).__name__ for root in streamed] == ["Keeper", "InvalidData", "Keeper"]
+    _unknown_tag(streamed[1], "bear")
+    with db.wire.stream(query, batch_size=1) as wire_stream:
+        wired = list(wire_stream.checked())
+    _unknown_tag(wired[1], "bear")
+
+
+def test_a_narrowed_include_keeps_its_guard_over_the_only_composed_subtype(
+    profile_run: Any,
+) -> None:
+    story = _GRAPH_STORIES_BY_ID["m-inheritance-149"]
+    db = _counting_connect(profile_run.port, _reset_for(story.case_id, profile_run))
+    snapshot = story.run(db)
+
+    by_name = {keeper.name: keeper for keeper in snapshot.results()}
+    wolves = view(by_name["Mowgli"], Keeper.beasts.narrow(Wolf))
+    assert [wolf.name for wolf in cast("tuple[Any, ...]", wolves)] == ["Akela", "Raksha"]
+    assert view(by_name["Bagheera"], Keeper.beasts.narrow(Wolf)) == ()
+    assert is_view_loaded(by_name["Bagheera"], Keeper.beasts) is False
+    assert db.round_trips == [2]
+
+
+def test_a_document_reader_diagnoses_a_stored_subtype_it_does_not_compose(
+    profile_run: Any,
+) -> None:
+    story = _GRAPH_STORIES_BY_ID["m-inheritance-151"]
+    db = _counting_connect(profile_run.port, _reset_for(story.case_id, profile_run))
+    snapshot = story.run(db)
+
+    akela, bruno, bear = snapshot.checked().results()
+    assert isinstance(akela, DocumentWolf)
+    assert isinstance(bruno, DocumentFox)
+    assert (akela.howl, bruno.brush) == ("aroo", "red")
+    _unknown_tag(bear, "bear")
+    assert db.round_trips == [1]
+
+
+def test_a_subtype_document_filter_reads_only_the_composed_subtypes(profile_run: Any) -> None:
+    # The `name` disjunct admits the stored bear too, but the protected filter's
+    # branches are the reader's composed subtypes alone, so it is neither
+    # returned nor diagnosed.
+    story = _GRAPH_STORIES_BY_ID["m-inheritance-152"]
+    db = _counting_connect(profile_run.port, _reset_for(story.case_id, profile_run))
+    snapshot = story.run(db)
+
+    assert sorted((type(beast).__name__, beast.name) for beast in snapshot.results()) == [
+        ("Fox", "Bruno"),
+        ("Wolf", "Akela"),
+    ]
+    assert db.round_trips == [1]
+
+
+def test_a_subtype_document_filter_leaves_its_include_levels_unfiltered(
+    profile_run: Any,
+) -> None:
+    story = _GRAPH_STORIES_BY_ID["m-inheritance-153"]
+    db = _counting_connect(profile_run.port, _reset_for(story.case_id, profile_run))
+    snapshot = story.run(db)
+
+    akela, bruno = snapshot.checked().results()
+    _unknown_tag(akela, "bear")
+    assert isinstance(bruno, DocumentFox)
+    assert bruno.followers == ()
+    assert db.round_trips == [2]
 
 
 def test_narrowed_pets_view_populates_per_owner(profile_run: Any) -> None:

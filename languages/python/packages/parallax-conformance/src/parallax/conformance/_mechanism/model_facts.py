@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
+from typing import cast
 
 from parallax.conformance import case_format, models
 from parallax.conformance._mechanism.envelope import EngineError
@@ -20,6 +22,7 @@ __all__ = [
     "case_edition",
     "case_entity",
     "case_serving_model",
+    "case_setup_model_ref",
     "declaring_metadata",
     "default_family_root",
     "family_declarer",
@@ -27,6 +30,7 @@ __all__ = [
     "gate_read",
     "load_case_domain_model",
     "load_case_metamodel",
+    "load_case_setup_metamodel",
     "model_path",
     "read_scans",
 ]
@@ -47,6 +51,33 @@ def model_path(model_ref: str) -> Path:
 def load_case_metamodel(case: case_format.Case) -> AcceptedMetamodel:
     """The accepted Metamodel the case's model descriptor forms into."""
     return models.load_model(_case_model_path(case))
+
+
+def case_setup_model_ref(case: case_format.Case) -> str:
+    """The model reference whose DDL, fixtures, and corruption addressing provision
+    ``case``: a read case's ``given.provisioningModel``, else its own ``model``.
+
+    Every other role — the query, its execution, and each expectation — stays the
+    top-level model's (`m-case-format` *Provisioning through another model*), so a
+    reset, its fixtures, and ``given.corrupt`` all resolve through this one rule.
+    """
+    given = case.document.get("given")
+    provisioning = (
+        cast("Mapping[str, object]", given).get("provisioningModel")
+        if isinstance(given, Mapping)
+        else None
+    )
+    if isinstance(provisioning, str):
+        return provisioning
+    model_ref = case.document.get("model")
+    if not isinstance(model_ref, str):
+        raise EngineError(f"{case.path.name}: `model` must be a string path")
+    return model_ref
+
+
+def load_case_setup_metamodel(case: case_format.Case) -> AcceptedMetamodel:
+    """The accepted Metamodel :func:`case_setup_model_ref` names."""
+    return models.load_model(model_path(case_setup_model_ref(case)))
 
 
 def load_case_domain_model(case: case_format.Case) -> DomainModel:

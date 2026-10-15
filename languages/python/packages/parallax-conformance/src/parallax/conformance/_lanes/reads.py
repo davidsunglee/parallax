@@ -20,6 +20,7 @@ from parallax.conformance._mechanism.model_facts import (
     case_serving_model,
     declaring_metadata,
     load_case_metamodel,
+    load_case_setup_metamodel,
     read_scans,
 )
 from parallax.conformance._mechanism.planned_reads import planned_read
@@ -194,7 +195,7 @@ def run_read_case(
     model = load_case_metamodel(case)
     query = _read_query(case, model)
     observed = lifecycle_run(lifecycle).observation()
-    apply_given_corrupt(case, model, port)
+    apply_given_corrupt(case, load_case_setup_metamodel(case), port)
     with case_database(case, port, observed.provider) as root:
         db = root.using_database_login()
         try:
@@ -258,7 +259,7 @@ def _wire_read(
     retains nothing about the execution that produced it.
     """
     observed = lifecycle.observation()
-    apply_given_corrupt(case, model, port)
+    apply_given_corrupt(case, load_case_setup_metamodel(case), port)
     with case_database(case, port, observed.provider) as root:
         db = root.using_database_login()
         try:
@@ -407,7 +408,7 @@ def _wire_delivery(
     delivery published, and that needs the whole delivery in hand.
     """
     observed = lifecycle_run(lifecycle).observation()
-    apply_given_corrupt(case, model, port)
+    apply_given_corrupt(case, load_case_setup_metamodel(case), port)
     with case_database(case, port, observed.provider) as root:
         db = root.using_database_login()
         roots: list[object] = []

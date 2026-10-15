@@ -61,7 +61,7 @@ from tests.compatibility._float_zero_support import (
 # reached the node, and one logical row rendered twice with different values when
 # two views reach it. Production materializes one MERGED, per-variant-narrowed
 # node per logical row, which is what `then.graph` now grades through, so these
-# eleven disagree with it structurally rather than by any defect on either side.
+# cases disagree with it structurally rather than by any defect on either side.
 #
 # `m-case-format` *Read targeting* states the gap itself: the per-variant node
 # shape "is scoped, for now, to a read case's own top-level `then.graph` leaves",
@@ -76,9 +76,9 @@ from tests.compatibility._float_zero_support import (
 # binds (the N+1-elimination proof they exist for) and the round-trip count. Exact
 # `then.graph` equality is withheld only for this child-shape partition; this audit
 # derives which recorded structural residuals explain the observed difference and
-# fails if any other mismatch remains. Nine of the eleven also carry a graph story
-# whose projected and direct Wire publications undergo the same classification against
-# the authored graph. `m-inheritance-073` and `-077` have no idiomatic story
+# fails if any other mismatch remains. All but `m-inheritance-073` and `-077` also
+# carry a graph story whose projected and direct Wire publications undergo the same
+# classification against the authored graph; those two have no idiomatic story
 # spelling, so this compatibility audit is their graph-shape evidence.
 
 # The reachable read cases whose fixtures + observation this file runs end-to-
@@ -232,7 +232,10 @@ def test_run_sweep(case: case_format.Case, profile: Profile, profile_run: Any) -
     model = engine.load_case_metamodel(case)
     from parallax.conformance import provision
 
-    profile_run.reset(model, provision.load_fixtures(str(case_document(case)["model"])))
+    profile_run.reset(
+        engine.load_case_setup_metamodel(case),
+        provision.load_fixtures(engine.case_setup_model_ref(case)),
+    )
 
     envelope = adapter.run_case(case.path, profile_run)
     validate_adapter_envelope(envelope)
@@ -531,7 +534,7 @@ def test_write_run_sweep(case: case_format.Case, profile: Profile, profile_run: 
     (:func:`_grade_write_run`).
     """
     model = engine.load_case_metamodel(case)
-    profile_run.reset(model, case_fixtures(case))
+    profile_run.reset(engine.load_case_setup_metamodel(case), case_fixtures(case))
     _grade_write_run(case, model, *_run_recording_writes(case, profile, profile_run))
 
 
@@ -716,14 +719,14 @@ def test_write_run_grading_rejects_a_float_zero_turned_negative(
     """
     case = _write_case(case_id)
     model = engine.load_case_metamodel(case)
-    profile_run.reset(model, case_fixtures(case))
+    profile_run.reset(engine.load_case_setup_metamodel(case), case_fixtures(case))
     fault(monkeypatch)
     envelope, port = _run_recording_writes(case, profile, profile_run)
     monkeypatch.undo()
     with pytest.raises(AssertionError, match=refusal):
         _grade_write_run(case, model, envelope, port)
 
-    profile_run.reset(model, case_fixtures(case))
+    profile_run.reset(engine.load_case_setup_metamodel(case), case_fixtures(case))
     _grade_write_run(case, model, *_run_recording_writes(case, profile, profile_run))
 
 
@@ -1011,8 +1014,7 @@ def test_run_scenario_case_pairs_a_materializing_write_spelled_bare(profile_run:
     second time, which the round-trip count and the pointer list both state.
     """
     case = next(c for c in _WRITE_CASES if c.case_id == _STEP_ROWS_ORACLE_CASE)
-    model = engine.load_case_metamodel(case)
-    profile_run.reset(model, case_fixtures(case))
+    profile_run.reset(engine.load_case_setup_metamodel(case), case_fixtures(case))
     document = deepcopy(dict(case.document))
     steps = cast("list[dict[str, Any]]", cast("dict[str, Any]", document["when"])["scenario"])
     canonical = cast("str", steps[1]["objectQuery"]["target"])
@@ -1122,7 +1124,7 @@ def test_interleaved_uow_group_run_sweep(case: case_format.Case, profile_run: An
     can hold the roots fixed.
     """
     model = engine.load_case_metamodel(case)
-    profile_run.reset(model, case_fixtures(case))
+    profile_run.reset(engine.load_case_setup_metamodel(case), case_fixtures(case))
 
     run = engine.run_interleaved_scenario_case(
         case, profile_run.port, profile_run.interleaved_execution
@@ -1169,7 +1171,7 @@ def test_edit_occurrence_run_grades_each_derived_copy(
 
     (case,) = [c for c in sweep.reachable_cases() if c.case_id == case_id]
     model = engine.load_case_metamodel(case)
-    profile_run.reset(model, case_fixtures(case))
+    profile_run.reset(engine.load_case_setup_metamodel(case), case_fixtures(case))
 
     envelope = adapter.run_case(case.path, profile_run)
 
@@ -1204,13 +1206,14 @@ def test_error_run_sweep(case: case_format.Case, profile: Profile, profile_run: 
     per-dialect `then.nativeCode`. Fixtures load only when the case declares
     `given.fixtures` (the unique-violation cases self-seed via their own trigger).
     """
-    model = engine.load_case_metamodel(case)
     from parallax.conformance import provision
 
     doc = case_document(case)
     given = cast("dict[str, Any]", doc.get("given") or {})
-    fixtures = provision.load_fixtures(str(doc["model"])) if given.get("fixtures") else {}
-    profile_run.reset(model, fixtures)
+    fixtures = (
+        provision.load_fixtures(engine.case_setup_model_ref(case)) if given.get("fixtures") else {}
+    )
+    profile_run.reset(engine.load_case_setup_metamodel(case), fixtures)
 
     envelope = adapter.run_case(case.path, profile_run)
     validate_adapter_envelope(envelope)
@@ -1304,7 +1307,7 @@ def test_conflict_run_sweep(case: case_format.Case, profile: Profile, profile_ru
     whose write is refused authors none, since the unit of work rolls back.
     """
     model = engine.load_case_metamodel(case)
-    profile_run.reset(model, case_fixtures(case))
+    profile_run.reset(engine.load_case_setup_metamodel(case), case_fixtures(case))
 
     envelope = adapter.run_case(case.path, profile_run)
     validate_adapter_envelope(envelope)
@@ -1391,7 +1394,7 @@ def test_run_only_write_sequence_run_sweep(
     (`test_write_run_sweep`'s `WRITE_EXERCISED` set couples compile-time grading in
     too, which a run-only member would fail)."""
     model = engine.load_case_metamodel(case)
-    profile_run.reset(model, case_fixtures(case))
+    profile_run.reset(engine.load_case_setup_metamodel(case), case_fixtures(case))
 
     envelope = adapter.run_case(case.path, profile_run)
     validate_adapter_envelope(envelope)
@@ -1460,10 +1463,12 @@ def test_concurrency_rounds(case: case_format.Case, profile: Profile, profile_ru
     insensitive, `compare_rows`); a `kind: "write"` step asserts only that it
     reached this point at all (no block/no raise).
     """
-    model = engine.load_case_metamodel(case)
     from parallax.conformance import provision
 
-    profile_run.reset(model, provision.load_fixtures(str(case_document(case)["model"])))
+    profile_run.reset(
+        engine.load_case_setup_metamodel(case),
+        provision.load_fixtures(engine.case_setup_model_ref(case)),
+    )
 
     rounds = concurrency_runner.parse_rounds(case, profile.dialect.name)
     # Two raw held sessions stand in for the transactions a Database would open,

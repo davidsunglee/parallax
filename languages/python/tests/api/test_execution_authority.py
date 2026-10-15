@@ -52,7 +52,7 @@ def test_the_scoped_authority_usage_guide_story_runs_against_a_real_database(
     profile_run: Any,
 ) -> None:
     case = _authority_case()
-    profile_run.reset(engine.load_case_metamodel(case), case_fixtures(case))
+    profile_run.reset(engine.load_case_setup_metamodel(case), case_fixtures(case))
 
     shape = execution_authority_stories.scopes_capture_authority_and_share_the_root_lifetime(
         profile_run.port,
@@ -71,7 +71,7 @@ def test_every_public_execution_path_runs_under_the_selected_authority(
     profile_run: Any, mode: _AuthorityMode
 ) -> None:
     case = _authority_case()
-    profile_run.reset(engine.load_case_metamodel(case), case_fixtures(case))
+    profile_run.reset(engine.load_case_setup_metamodel(case), case_fixtures(case))
     observed = LifecycleObservation()
     adapter = fault_injecting_adapter(
         profile_run.port,

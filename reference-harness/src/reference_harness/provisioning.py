@@ -24,9 +24,11 @@ __all__ = ["apply_given", "provision", "provision_empty"]
 def provision(case: Case, db: DatabaseProvider) -> None:
     """Put *db* into *case*'s declared starting state, discarding whatever it held.
 
-    Destructive and complete: the database is reset, the model's derived DDL is
-    applied to the empty schema, the model's fixtures are loaded, and the case's
-    own ``given.corrupt`` entries are written over them. A lane whose case builds
+    Destructive and complete: the database is reset, the setup model's derived DDL
+    is applied to the empty schema, its fixtures are loaded, and the case's own
+    ``given.corrupt`` entries are written over them. The setup model is the case's
+    ``given.provisioningModel`` where it names one and its read model otherwise
+    (:attr:`~reference_harness.case.Case.setup_model`). A lane whose case builds
     its own history from its own ordered DML wants :func:`provision_empty`
     instead.
 
@@ -36,8 +38,8 @@ def provision(case: Case, db: DatabaseProvider) -> None:
     document update (`m-case-format` *Corrupting stored state*).
     """
     db.reset()
-    db.apply_ddl(ddl_for(case.model, db.dialect))
-    load_model(case.model, db, case.corrupt)
+    db.apply_ddl(ddl_for(case.setup_model, db.dialect))
+    load_model(case.setup_model, db, case.corrupt)
 
 
 def provision_empty(case: Case, db: DatabaseProvider) -> None:
@@ -50,9 +52,9 @@ def provision_empty(case: Case, db: DatabaseProvider) -> None:
     a pre-existing persisted row.
     """
     db.reset()
-    db.apply_ddl(ddl_for(case.model, db.dialect))
+    db.apply_ddl(ddl_for(case.setup_model, db.dialect))
     if case.load_fixtures:
-        load_model(case.model, db)
+        load_model(case.setup_model, db)
 
 
 def apply_given(case: Case, db: DatabaseProvider) -> None:

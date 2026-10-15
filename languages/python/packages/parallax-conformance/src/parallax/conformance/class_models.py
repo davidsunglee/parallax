@@ -4,6 +4,8 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 from parallax.conformance.animal_owner import ANIMAL_MODEL
+from parallax.conformance.composed_beast_document_models import COMPOSED_BEAST_DOCUMENT_READER
+from parallax.conformance.composed_beast_models import COMPOSED_BEAST_READER
 from parallax.conformance.edit_models import NOTE_MODEL
 from parallax.conformance.graph_models import POLICY_MODEL
 from parallax.conformance.identifier_models import (
@@ -45,6 +47,8 @@ MODELS: Mapping[str, DomainModel] = MappingProxyType(
         "animal": ANIMAL_MODEL,
         "balance": BALANCE_MODEL,
         "branch": BRANCH_MODEL,
+        "composed-beast-document-reader": COMPOSED_BEAST_DOCUMENT_READER,
+        "composed-beast-reader": COMPOSED_BEAST_READER,
         "contact": CONTACT_MODEL,
         "customer": CUSTOMER_MODEL,
         "document": DOCUMENT_MODEL,

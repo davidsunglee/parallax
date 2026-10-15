@@ -29,8 +29,10 @@ from parallax.conformance._mechanism.envelope import Emission, EngineError, Scen
 from parallax.conformance._mechanism.model_facts import (
     case_edition,
     case_serving_model,
+    case_setup_model_ref,
     load_case_domain_model,
     load_case_metamodel,
+    load_case_setup_metamodel,
 )
 
 __all__ = [
@@ -41,12 +43,14 @@ __all__ = [
     "case_database",
     "case_edition",
     "case_serving_model",
+    "case_setup_model_ref",
     "compile_read_case",
     "compile_scenario_case",
     "compile_write_sequence_case",
     "eligibility",
     "load_case_domain_model",
     "load_case_metamodel",
+    "load_case_setup_metamodel",
     "read_table_state",
     "run_conflict_case",
     "run_error_case",

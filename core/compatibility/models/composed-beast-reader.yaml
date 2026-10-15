@@ -1,0 +1,59 @@
+# Composed beasts, reader side: the older model that composes the `beast`
+# table-per-hierarchy family PARTIALLY (m-inheritance *Partially composed
+# families*).
+#
+#   Beast (root, ABSTRACT)  — id, name, keeperId
+#     Wolf (concrete)       — tagValue 'wolf'; howl
+#
+# Its cases provision through `models/composed-beast-provisioning.yaml`, which also
+# composes Bear (m-case-format *Provisioning through another model*). This model
+# has no fixtures of its own: every row it reads was written by that model, and a
+# stored 'bear' tag names no concrete subtype here.
+entities:
+  - name: Beast
+    namespace: parallax.compatibility
+    table: beast
+    inheritance:
+      role: root
+      strategy: table-per-hierarchy
+      tag:
+        column: kind
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+      - name: name
+        type: string
+        maxLength: 32
+      - name: keeperId
+        type: int64
+        nullable: true
+  - name: Wolf
+    namespace: parallax.compatibility
+    inheritance:
+      role: concrete-subtype
+      parent: parallax.compatibility.Beast
+      tagValue: wolf
+    attributes:
+      - name: howl
+        type: string
+        maxLength: 16
+        nullable: true
+  - name: Keeper
+    namespace: parallax.compatibility
+    table: keeper
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+      - name: name
+        type: string
+        maxLength: 32
+    relationships:
+      - name: beasts
+        cardinality: one-to-many
+        join:
+          source: id
+          target: { entity: parallax.compatibility.Beast, attribute: keeperId }
+        orderBy:
+          - { attribute: id }

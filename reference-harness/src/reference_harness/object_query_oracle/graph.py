@@ -19,6 +19,7 @@ per milestone and the streamed delivery that publishes each root at its own edge
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping, Sequence
 from functools import partial
 from typing import Any, NamedTuple
@@ -101,6 +102,23 @@ def graph_node(case: Case, entity: Entity, row: materialize.PublishedRow) -> dic
     return {names.get(key, key): value for key, value in node.items()}
 
 
+class ClassifiedGraph(NamedTuple):
+    """An assembled graph and the unknown-family-tag diagnoses of each root.
+
+    ``issues`` is positionally aligned with the graph's roots: each entry is the
+    `then.storedDataIssues` vocabulary for every unknown-tag occurrence that root
+    reaches, itself included, and is empty for a root reaching none.
+    """
+
+    graph: dict[str, list[dict[str, Any] | None]]
+    issues: list[list[dict[str, Any]]]
+
+
+def root_issues(rows: Sequence[materialize.PublishedRow]) -> list[list[dict[str, Any]]]:
+    """The unknown-family-tag diagnoses of include-free roots, one entry per root."""
+    return [materialize.family_tag_issues(row) for row in rows]
+
+
 def assemble_graph(
     case: Case,
     query: dict[str, Any],
@@ -108,6 +126,17 @@ def assemble_graph(
     root_rows: Sequence[materialize.PublishedRow],
     children_by_step: dict[includes.HopKey, dict[Any, list[materialize.PublishedRow]]],
 ) -> dict[str, list[dict[str, Any] | None]]:
+    """The root-keyed object graph :func:`assemble_classified_graph` builds."""
+    return assemble_classified_graph(case, query, steps, root_rows, children_by_step).graph
+
+
+def assemble_classified_graph(
+    case: Case,
+    query: dict[str, Any],
+    steps: list[includes.FetchStep],
+    root_rows: Sequence[materialize.PublishedRow],
+    children_by_step: dict[includes.HopKey, dict[Any, list[materialize.PublishedRow]]],
+) -> ClassifiedGraph:
     """Build the root-keyed object graph following the deep-fetch paths.
 
     Each path is walked hop by hop; at each hop the child rows for a given parent are
@@ -118,79 +147,175 @@ def assemble_graph(
     UNSET rather than empty — the observable difference between "no such related row"
     and "this object never participated".
 
+    Classification is root-local (`m-read-delivery`): a root reaching an
+    unhydratable node is itself unavailable and publishes ``null``, and every
+    unknown-tag occurrence it reaches is reported against it — once per root,
+    however many paths reach the occurrence. An unhydratable child is never
+    silently dropped from a root that otherwise publishes.
+
     The roots are what the read PUBLISHED, so they arrive from the materialization
     seam; the child rows are the levels' own and are materialized by
     :mod:`.includes` as each level is executed.
     """
     _refuse_unpublished_roots(case, root_rows)
     root_entity = includes.deepfetch_root_entity(case.model, query)
+    assembly = _GraphAssembly(case, steps, children_by_step, root_entity, root_rows)
     family = Family(case.model.entity_defs)
     root_position = includes.deepfetch_root_position(query)
-    step_by_hopkey = {step.hop_key: step for step in steps}
+    for path in includes.deepfetch_paths_raw(query):
+        assembly.walk(family, resolve_root_source_set(family, root_position, path), path)
+    return ClassifiedGraph({root_entity.name: assembly.published()}, assembly.issues)
 
-    # Build per-view row registries keyed by primary key so a shared hop (e.g.
-    # Order.items consumed by two paths) reuses the same child objects, while two
-    # DISTINCT views over one relationship (a broad and a narrowed hop, or two
-    # narrowed hops) keep independent node sets. Nodes key by (view, entity, pk).
-    def pk_attr(entity: Entity) -> str:
-        for attribute in entity.attributes:
-            if attribute.get("primaryKey"):
-                return attribute["name"]
-        return entity.attributes[0]["name"]
 
-    registry: dict[tuple[str, str, Any], dict[str, Any] | None] = {}
+def _pk_attr(entity: Entity) -> str:
+    for attribute in entity.attributes:
+        if attribute.get("primaryKey"):
+            return attribute["name"]
+    return entity.attributes[0]["name"]
 
-    def node_for(
-        view: str, entity: Entity, raw_row: materialize.PublishedRow
+
+class _GraphAssembly:
+    """One graph's node registry and root-local classification, filled path by path.
+
+    Per-view row registries are keyed by primary key so a shared hop (e.g.
+    Order.items consumed by two paths) reuses the same child objects, while two
+    DISTINCT views over one relationship (a broad and a narrowed hop, or two
+    narrowed hops) keep independent node sets. Nodes key by (view, entity, pk).
+    """
+
+    def __init__(
+        self,
+        case: Case,
+        steps: list[includes.FetchStep],
+        children_by_step: dict[includes.HopKey, dict[Any, list[materialize.PublishedRow]]],
+        root_entity: Entity,
+        root_rows: Sequence[materialize.PublishedRow],
+    ) -> None:
+        self._case = case
+        self._step_by_hopkey = {step.hop_key: step for step in steps}
+        self._children_by_step = children_by_step
+        self._registry: dict[tuple[str, str, Any], dict[str, Any] | None] = {}
+        self.root_nodes = [self._node_for("", root_entity, row) for row in root_rows]
+        self.issues = root_issues(root_rows)
+        self._unavailable: set[int] = set()
+        self._reached: list[set[tuple[str, str, Any]]] = [set() for _ in root_rows]
+
+    def _key(
+        self, view: str, entity: Entity, row: materialize.PublishedRow
+    ) -> tuple[str, str, Any]:
+        pk_col = includes.column_of(entity, _pk_attr(entity))
+        return (view, entity.name, coerce_identity_key(row[pk_col]))
+
+    def _node_for(
+        self, view: str, entity: Entity, row: materialize.PublishedRow
     ) -> dict[str, Any] | None:
-        pk_col = includes.column_of(entity, pk_attr(entity))
-        key = (view, entity.name, coerce_identity_key(raw_row[pk_col]))
-        if key not in registry:
+        key = self._key(view, entity, row)
+        if key not in self._registry:
             # Instance-form graph node: decode + project each top-level value-object
             # document column into its declared composite, at EVERY level (root AND
             # child), so a VO-bearing deep-fetch child materializes its document with
             # the owner exactly as a root value-object read does (m-value-object /
             # m-sql "Read projection", slot 4).
-            registry[key] = graph_node(case, entity, raw_row)
-        return registry[key]
+            self._registry[key] = graph_node(self._case, entity, row)
+        return self._registry[key]
 
-    root_nodes = [node_for("", root_entity, row) for row in root_rows]
+    def walk(
+        self, family: Family, root_source: tuple[str, ...] | None, path: dict[str, Any]
+    ) -> None:
+        """Attach one Include Path's levels beneath every root it starts from.
 
-    for path in includes.deepfetch_paths_raw(query):
-        root_source = resolve_root_source_set(family, root_position, path)
-        # A position whose stored state left it unhydratable publishes no value, so
-        # it carries no relationship view either: it holds its place in the ordered
-        # result and nothing hangs off it (m-snapshot-read *Invalid stored data*).
-        parent_nodes = [node for node in root_nodes if node is not None]
+        A position whose stored state left it unhydratable publishes no value, so it
+        carries no relationship view either: it holds its place in the ordered
+        result and nothing hangs off it (m-snapshot-read *Invalid stored data*).
+        Each parent travels with the ordinal of the root it was reached from.
+        """
+        parents = [(ordinal, node) for ordinal, node in enumerate(self.root_nodes) if node]
         parent_hop: includes.HopKey | None = None
         for index, segment in enumerate(path["segments"]):
             hop = includes.resolve_hop(
                 family, segment, parent=parent_hop, root_source=root_source if index == 0 else None
             )
-            step = step_by_hopkey[hop.key]
-            admitted = includes.guarded_parents(case, step, parent_nodes)
-            bucket = children_by_step[step.hop_key]
-
-            next_nodes: list[dict[str, Any]] = []
-            for parent_node in admitted:
-                # A materialized node is keyed by declared member name, so the
-                # correlation member is addressed by name rather than by column.
-                parent_key = coerce_identity_key(parent_node.get(step.parent_attr))
-                matched = bucket.get(parent_key, [])
-                child_nodes = [
-                    node
-                    for row in matched
-                    if (node := node_for(step.view_key, step.child_entity, row)) is not None
-                ]
-                if step.to_many:
-                    parent_node[step.view_key] = child_nodes
-                else:
-                    parent_node[step.view_key] = child_nodes[0] if child_nodes else None
-                next_nodes.extend(child_nodes)
-            parent_nodes = next_nodes
+            step = self._step_by_hopkey[hop.key]
+            admitted = {
+                id(node)
+                for node in includes.guarded_parents(self._case, step, [n for _, n in parents])
+            }
+            parents = [
+                (ordinal, child)
+                for ordinal, parent in parents
+                if id(parent) in admitted
+                for child in self._attach(step, ordinal, parent)
+            ]
             parent_hop = hop.key
 
-    return {root_entity.name: root_nodes}
+    def _attach(
+        self, step: includes.FetchStep, ordinal: int, parent: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        """Attach *step*'s children to *parent* under its view key, and return them.
+
+        A materialized node is keyed by declared member name, so the correlation
+        member is addressed by name rather than by column. An unhydratable child
+        makes the root at *ordinal* unavailable and reports its diagnosis there.
+        """
+        bucket = self._children_by_step[step.hop_key]
+        children: list[dict[str, Any]] = []
+        for row in bucket.get(coerce_identity_key(parent.get(step.parent_attr)), []):
+            node = self._node_for(step.view_key, step.child_entity, row)
+            if node is not None:
+                children.append(node)
+                continue
+            self._unavailable.add(ordinal)
+            occurrence = self._key(step.view_key, step.child_entity, row)
+            if occurrence not in self._reached[ordinal]:
+                self._reached[ordinal].add(occurrence)
+                self.issues[ordinal].extend(materialize.family_tag_issues(row))
+        if step.to_many:
+            parent[step.view_key] = children
+        else:
+            parent[step.view_key] = children[0] if children else None
+        return children
+
+    def published(self) -> list[dict[str, Any] | None]:
+        """The root nodes as published: ``null`` wherever a root reached an
+        unhydratable node."""
+        return [
+            None if ordinal in self._unavailable else node
+            for ordinal, node in enumerate(self.root_nodes)
+        ]
+
+
+def assert_family_tag_issues(case: Case, observed: Sequence[Sequence[dict[str, Any]]]) -> None:
+    """Grade the unknown-family-tag diagnoses a read derived against the authored ones.
+
+    The oracle classifies stored tags itself, so it grades exactly that code:
+    every position *observed* reports one at must be authored as unhydrated with
+    the same issues, and no other position may author one. Diagnoses of other
+    codes in `then.storedDataIssues` are graded per language, against the same
+    stored states.
+    """
+    authored: dict[int, tuple[bool, list[str]]] = {}
+    for entry in case.then.get("storedDataIssues", []):
+        tagged = [
+            issue for issue in entry["issues"] if issue["code"] == materialize.FAMILY_TAG_UNKNOWN
+        ]
+        if tagged:
+            authored[entry["ordinal"]] = (entry["hydrated"], _issue_multiset(tagged))
+    derived = {
+        ordinal: (False, _issue_multiset(issues))
+        for ordinal, issues in enumerate(observed)
+        if issues
+    }
+    if authored != derived:
+        raise CaseFailure(
+            f"{case.path.name}: the {materialize.FAMILY_TAG_UNKNOWN} diagnoses the read "
+            f"classified != then.storedDataIssues.\n"
+            f"  derived:  {derived!r}\n"
+            f"  authored: {authored!r}"
+        )
+
+
+def _issue_multiset(issues: Sequence[Mapping[str, Any]]) -> list[str]:
+    return sorted(json.dumps(dict(issue), sort_keys=True, default=str) for issue in issues)
 
 
 # --- comparison --------------------------------------------------------------

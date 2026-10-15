@@ -1,0 +1,20 @@
+# Fixture rows for models/composed-beast-provisioning.yaml.
+#
+#   Wolf 1 Akela   howl aroo  keeper 10   (kind=wolf)
+#   Bear 2 Baloo   roar grr   keeper 11   (kind=bear — unknown to the reader)
+#   Wolf 3 Raksha  howl yip   keeper 10   (kind=wolf)
+#
+#   Keeper 10 Mowgli    keeps Akela + Raksha
+#   Keeper 11 Bagheera  keeps Baloo only
+#   Keeper 12 Kaa       keeps nothing
+parallax.compatibility.Wolf:
+  - { id: 1, name: Akela, keeperId: 10, howl: aroo }
+  - { id: 3, name: Raksha, keeperId: 10, howl: yip }
+parallax.compatibility.Bear:
+  - { id: 2, name: Baloo, keeperId: 11, roar: grr }
+parallax.compatibility.Keeper:
+  - { id: 10, name: Mowgli, badge: K-10 }
+  - { id: 11, name: Bagheera, badge: K-11 }
+  - { id: 12, name: Kaa, badge: K-12 }
+parallax.compatibility.Den:
+  - { id: 1, name: Council Rock }

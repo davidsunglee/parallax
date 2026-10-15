@@ -1020,7 +1020,9 @@ target's **effective concrete-subtype set**. The shape depends on the strategy:
 - **`table-per-hierarchy`** — one shared child table, so the hop is a **single**
   correlated `EXISTS` with the **interior tag predicate** over the effective set,
   appended after the correlation predicate. An abstract-**root** target spans the
-  whole shared table and injects **no** tag predicate; an abstract-**subtype**
+  whole shared table and injects **no** tag predicate, so a candidate whose stored
+  tag no composed subtype carries takes part in the predicate's answer; a
+  predicate materializes no candidate and so classifies none. An abstract-**subtype**
   target injects `t1.kind in (?, …)` (or `t1.kind = ?` for one concrete), in the
   family's canonical alphabetical order (`m-inheritance`), excluding sibling
   branches:
@@ -1105,7 +1107,12 @@ per level**. Under
 effective set's tag predicate appended after the `IN` list (`… where t0.owner_id in
 (?, …) and t0.kind in (?, …)`); a polymorphic view projects the raw tag column so
 `familyVariant` can be materialized, a single-concrete narrowed view projects only
-that concrete's columns. Under `table-per-concrete-subtype` the child level is a
+that concrete's columns. Only an authored narrowing that resolves to one concrete
+subtype makes that subtype the child level's target. An unnarrowed hop keeps its
+declared target even when its effective set holds a single composed concrete: an
+abstract-root target still injects no tag predicate and projects the raw tag
+column, so the child level admits and classifies exactly the rows a root read of
+that target would. Under `table-per-concrete-subtype` the child level is a
 single **`union all`** statement whose branches — one per effective concrete
 subtype in canonical alphabetical order (`m-inheritance`) — share the **same**
 parent-id `IN` list (the stable superset projection + per-branch `familyVariant`
@@ -1575,16 +1582,22 @@ user-first then tag):
 
 | Position resolves to | Canonical tag fragment | Binds |
 |---|---|---|
-| the whole family (abstract root, no narrow) | *(no tag predicate)* | — |
+| the abstract root, no narrow | *(no tag predicate)* | — |
 | one concrete subtype | `t0.kind = ?` | `[<tagValue>]` |
 | several concrete subtypes (abstract subtype, or a narrow) | `t0.kind in (?, …)` | `[<tagValue>, …]` (canonical alphabetical order) |
 
-An abstract **root** read spans the whole shared table, so it injects **no** tag
-predicate; the *absence* is the contract. An abstract **subtype** read (or any
-narrow) that resolves to a **proper subset** of the table's concretes injects the
-`in (…)` list of exactly those `tagValue`s, in the family's canonical alphabetical
-order (`m-inheritance`), so a sibling branch in the same table is excluded. A single
-concrete subtype lowers to `t0.kind = ?`.
+An unnarrowed abstract **root** read spans the whole shared table, so it injects
+**no** tag predicate; the *absence* is the contract. It holds however many of the
+family's concrete subtypes the model composes, including one: a returned tag no
+composed subtype carries is classified at row construction rather than filtered
+(`m-inheritance` *Partially composed families*). An abstract **subtype** read, a
+concrete read, and any narrow inject the tag predicate of their effective set, in
+the family's canonical alphabetical order (`m-inheritance`), even when that set is
+every composed concrete subtype, so a sibling branch in the same table is
+excluded. A single concrete subtype lowers to `t0.kind = ?`. The rule is the same
+for every position that reads the family: a root read, an Include child level, and
+a relationship candidate under shared to-one traversal, correlated scalar
+fallback, or a quantifier.
 
 #### Grouped branch predicates
 
@@ -2404,6 +2417,16 @@ the read is partitioned by variant** as one `union all` of tag-filtered branches
 so each branch's extraction and cast see only rows of its concrete variant. The
 branches retain canonical concrete order and branch-local bind order; the read
 remains one statement and one round trip.
+
+The branches are exactly the statement's selected composed variants, so a row
+whose stored tag names no composed concrete subtype matches no branch. It never
+reaches row construction — it is neither returned nor diagnosed — even where a
+disjunct applicable to every variant would otherwise admit it. This exclusion is
+a known limitation of the partitioned shape, not an eligibility rule other
+statements share: an unpartitioned abstract-root read still admits and diagnoses
+such a row (`m-inheritance` *Partially composed families*), and the query's
+predicate is never copied into its Include child levels, which keep their own
+eligibility.
 
 Each tag-filtered branch is an optimizer barrier, not a flattenable derived
 table. PostgreSQL appends `offset 0` to the inner tag-filtered SELECT; MariaDB

@@ -43,6 +43,10 @@ _CORPUS: Final[tuple[str, ...]] = tuple(sorted(corpus()))
 _FAMILIES: Final[tuple[str, ...]] = (
     "animal",
     "appliance",
+    "composed-beast-document-provisioning",
+    "composed-beast-document-reader",
+    "composed-beast-provisioning",
+    "composed-beast-reader",
     "document",
     "document-layout",
     "evolution-branch-move-v1",

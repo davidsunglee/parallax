@@ -553,7 +553,9 @@ class _PlanBuilder:
                 family=target_view.root,
             )
         else:
-            child_target = position[0] if len(position) == 1 else direction.join.target.entity
+            child_target = (
+                position[0] if narrowed and len(position) == 1 else direction.join.target.entity
+            )
             narrow_to = position if len(position) > 1 and narrowed else None
             child = _entity(self.model, child_target)
             step = QueryFetchStep(

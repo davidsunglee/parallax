@@ -1,0 +1,45 @@
+# The protected Document filter's known limitation (m-sql *Variant partitioning
+# for a non-uniform path*). The reader composes Fox and Wolf; `howl` applies to
+# Wolf alone, so a predicate reading it partitions the read into one
+# tag-filtered branch per composed variant. The `name` disjunct applies to every
+# variant and admits both rows named Bruno wherever it is evaluated, but the
+# provisioned Bear matches no branch: Fox 2 is returned, Bear 3 is neither
+# returned nor diagnosed. An unpartitioned abstract-root read of the same storage
+# diagnoses that row instead (m-inheritance-151).
+model: models/composed-beast-document-reader.yaml
+tags: [m-inheritance, m-storage-layout, m-sql, m-dialect, m-document-codec, m-predicate, table-per-hierarchy, document-layout, narrow, predicate, familyVariant, graph, instance-form, partial-composition, slice-snapshot-1]
+shape: read
+given:
+  provisioningModel: models/composed-beast-document-provisioning.yaml
+when:
+  objectQuery:
+    target: parallax.compatibility.Beast
+    predicate:
+      or:
+        operands:
+          - narrow:
+              to:
+                - parallax.compatibility.Wolf
+              operand:
+                eq:
+                  path: parallax.compatibility.Wolf.howl
+                  value: aroo
+          - eq:
+              path: parallax.compatibility.Beast.name
+              value: Bruno
+then:
+  statements:
+    - sql:
+        postgres: select p1.id, p1.kind, p1.leader_id, not p1.payload is null, p1.payload from (select * from beast_document t0 where t0.kind = ? offset 0) p1 where 1 = 0 or jsonb_extract_path_text(p1.payload, ?) = ? union all select p2.id, p2.kind, p2.leader_id, not p2.payload is null, p2.payload from (select * from beast_document t0 where t0.kind = ? offset 0) p2 where jsonb_extract_path_text(p2.payload, ?) = ? or jsonb_extract_path_text(p2.payload, ?) = ?
+        mariadb: select p1.id, p1.kind, p1.leader_id, not p1.payload is null, p1.payload from (select * from beast_document t0 where t0.kind = ? limit ?) p1 where 1 = 0 or json_value(p1.payload, ?) = ? union all select p2.id, p2.kind, p2.leader_id, not p2.payload is null, p2.payload from (select * from beast_document t0 where t0.kind = ? limit ?) p2 where json_value(p2.payload, ?) = ? or json_value(p2.payload, ?) = ?
+      binds:
+        postgres: [fox, name, Bruno, wolf, howl, aroo, name, Bruno]
+        mariadb: [fox, 18446744073709551615, '$.name', Bruno, wolf, 18446744073709551615, '$.howl', aroo, '$.name', Bruno]
+  referenceSql:
+    postgres: select id, kind, leader_id, payload from beast_document where kind = 'fox' and payload ->> 'name' = 'Bruno' union all select id, kind, leader_id, payload from beast_document where kind = 'wolf' and (payload ->> 'howl' = 'aroo' or payload ->> 'name' = 'Bruno')
+    mariadb: select id, kind, leader_id, payload from beast_document where kind = 'fox' and json_value(payload, '$.name') = 'Bruno' union all select id, kind, leader_id, payload from beast_document where kind = 'wolf' and (json_value(payload, '$.howl') = 'aroo' or json_value(payload, '$.name') = 'Bruno')
+  graph:
+    Beast:
+      - { id: 1, name: Akela, leaderId: null, howl: aroo, familyVariant: Wolf }
+      - { id: 2, name: Bruno, leaderId: null, brush: red, familyVariant: Fox }
+  roundTrips: 1

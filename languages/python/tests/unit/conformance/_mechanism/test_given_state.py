@@ -30,6 +30,7 @@ from parallax.conformance._mechanism.model_facts import (
     case_entity,
     load_case_domain_model,
     load_case_metamodel,
+    load_case_setup_metamodel,
 )
 from parallax.conformance.temporal_state import TemporalShadow
 from parallax.core.base import INFINITY
@@ -304,6 +305,28 @@ def test_given_corrupt_descends_a_nested_occurrence_path() -> None:
     )
     written = cast("dict[str, Any]", cast("JsonDocument", port.writes[0][1][0]).value)
     assert written["address"] == {"city": "Oslo", "geo": {"country": 7}}
+
+
+def test_given_corrupt_addresses_a_row_only_the_provisioning_model_declares() -> None:
+    # The read lanes hand corruption the model that provisioned the rows, so an
+    # Entity the reader omits is still addressable.
+    case = _load_case("m-inheritance-151")
+    document = dict(case.document)
+    document["given"] = {
+        **cast("Mapping[str, object]", document["given"]),
+        "corrupt": [
+            {"entity": "parallax.compatibility.Den", "key": 1, "member": ["name"], "value": 7}
+        ],
+    }
+    case = dataclasses.replace(case, document=document)
+    port = _CorruptionPort({"name": "Council Rock"})
+
+    apply_given_corrupt(case, load_case_setup_metamodel(case), port)
+
+    assert [cast("JsonDocument", binds[0]).value for _sql, binds in port.writes] == [{"name": 7}]
+    assert port.writes[0][0] == "update den_document set payload = %s where id = %s"
+    with pytest.raises(KeyError, match="Den"):
+        apply_given_corrupt(case, load_case_metamodel(case), _CorruptionPort({}))
 
 
 def test_a_case_declaring_no_corruption_writes_nothing() -> None:

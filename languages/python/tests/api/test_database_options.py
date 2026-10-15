@@ -164,7 +164,8 @@ def _show(conn: DatabaseConnection, setting: str) -> str:
 def _seeded(profile_run: Any) -> None:
     case = load_case(default_cases_dir() / "m-unit-work-001-read-your-own-writes.yaml")
     profile_run.reset(
-        engine.load_case_metamodel(case), provision.load_fixtures(str(case.document["model"]))
+        engine.load_case_setup_metamodel(case),
+        provision.load_fixtures(engine.case_setup_model_ref(case)),
     )
 
 
