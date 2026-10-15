@@ -541,6 +541,26 @@ def test_an_unknown_child_tag_makes_the_root_reaching_it_unavailable(
     assert reads.calls[1][1] == ([10, 11, 12],)
 
 
+def test_equal_unknown_tag_diagnoses_collapse_within_a_root(corpus_case: CaseLoader) -> None:
+    case = corpus_case(_PARTIAL_TPH_INCLUDE)
+    second_bear = {"id": 4, "kind": "bear", "name": "Bhalu", "keeper_id": 11, "howl": None}
+    reads = ScriptedReads(results=[_KEEPERS, [*_KEPT_BEASTS, second_bear], _KEEPERS])
+
+    assert_case_read(case, reads)
+
+
+def test_unknown_tag_diagnoses_with_different_stored_tags_stay_distinct(
+    damaged_case: CaseLoader,
+) -> None:
+    case = damaged_case(_PARTIAL_TPH_INCLUDE)
+    (entry,) = case.then["storedDataIssues"]
+    entry["issues"] = [*entry["issues"], *entry["issues"]]
+    lion = {"id": 4, "kind": "lion", "name": "Shere", "keeper_id": 11, "howl": None}
+    reads = ScriptedReads(results=[_KEEPERS, [*_KEPT_BEASTS, lion], _KEEPERS])
+
+    assert_case_read(case, reads)
+
+
 def test_an_unknown_child_tag_is_never_dropped_from_a_published_root(
     corpus_case: CaseLoader,
 ) -> None:

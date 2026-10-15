@@ -1,11 +1,3 @@
-# A partially composed table-per-hierarchy family keeps the unnarrowed abstract-root
-# read unfiltered and diagnoses the stored tag it does not compose (m-inheritance
-# *Partially composed families*, m-sql *Tag-predicate selection*,
-# m-read-delivery). The reader composes Beast and Wolf; the database was
-# provisioned by a model that also composes Bear. The root read selects the whole
-# shared table, so Baloo's 'bear' row is returned rather than filtered, and the
-# reader can neither represent nor skip it: its position publishes null with the
-# unknown-tag diagnosis while both wolves materialize.
 model: models/composed-beast-reader.yaml
 tags: [m-inheritance, m-sql, m-read-delivery, m-snapshot-read, table-per-hierarchy, stored-data, familyVariant, graph, partial-composition, slice-snapshot-1]
 shape: read

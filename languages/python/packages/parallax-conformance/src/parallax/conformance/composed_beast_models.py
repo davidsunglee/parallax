@@ -1,7 +1,3 @@
-"""``models/composed-beast-reader.yaml``: a table-per-hierarchy family composed
-PARTIALLY. The shared ``beast`` table also holds rows of a concrete subtype this
-model omits, which an unnarrowed ``Beast`` read returns and diagnoses."""
-
 from parallax.core import (
     ONE_TO_MANY,
     AbstractRoot,

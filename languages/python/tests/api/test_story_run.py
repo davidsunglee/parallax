@@ -786,12 +786,6 @@ def test_animal_owner_reaches_root_and_narrowed_subtype_view(profile_run: Any) -
     assert db.round_trips == [3]
 
 
-# --------------------------------------------------------------------------- #
-# Partially composed families (`m-inheritance` *Partially composed families*):  #
-# each case provisions storage through a model composing one more subtype than #
-# the reader its story connects with, so the stored tag the reader does not    #
-# compose reaches the public diagnosis rather than being filtered or invented. #
-# --------------------------------------------------------------------------- #
 _BEAST = EntityIdentity("parallax.compatibility", "Beast")
 
 

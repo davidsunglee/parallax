@@ -395,9 +395,9 @@ model composes from a corrupt one.
 Under `table-per-hierarchy`, an unnarrowed abstract-**root** read spans the whole
 shared table (`m-sql` *Tag-predicate selection*) however many of the family's
 leaves the model composes, so it can return a row whose stored tag names no
-composed concrete subtype. That row is **unrepresentable** in this model: it is
-neither skipped nor materialized as the abstract root, and no other model
-supplies its variant. Read delivery classifies it
+composed concrete subtype. That row is **unrepresentable** in this model: once
+returned, it is neither skipped nor materialized as the abstract root, and no
+other model supplies its variant. Read delivery classifies it
 `stored-data-family-tag-unknown`, which is non-hydrating (`m-read-delivery`).
 Every other position — an abstract subtype, a concrete subtype, or an authored
 Subtype Selection, including one that resolves to every composed leaf — selects
@@ -407,8 +407,14 @@ concrete subtypes' own tables, and an omitted leaf's table is never read.
 
 The same eligibility holds wherever a read reaches the family: a query's own
 target, an Include hop's target (`m-deep-fetch`), and a relationship candidate in
-a predicate (`m-navigate`). Introducing a concrete subtype is consequently
-visible to a model composed without it: its rows are diagnosed, not hidden.
+a predicate (`m-navigate`). Eligibility decides which rows a position admits;
+diagnosis happens only where an admitted row reaches delivery. A query target or
+Include hop that delivers such a row diagnoses it, so introducing a concrete
+subtype is visible to a model composed without it rather than hidden. A
+predicate's candidate takes part in its answer without being materialized or
+diagnosed (`m-sql` *Polymorphic relationship quantifiers*), and a read
+partitioned by variant excludes the row as a known limitation of that shape
+(`m-sql` *Variant partitioning for a non-uniform path*).
 
 ### The path root as a resolvable position
 

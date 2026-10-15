@@ -171,8 +171,7 @@ BUILDERS: dict[str, Callable[[], ObjectQuery[Any, Any]]] = {
         | AnimalRoot.is_a(Cat, where=Cat.indoor.is_(True))
     ),
     "m-inheritance-109": lambda: Document.where(Document.all).narrow(FinancialDocument),
-    # Partially composed families: the executable graph stories read through the
-    # older reader model while the database holds a subtype it does not compose.
+    # Partially composed families.
     "m-inheritance-147": lambda: Beast.where(Beast.all).order_by(Beast.id.asc()),
     "m-inheritance-148": lambda: (
         Keeper.where(Keeper.all).order_by(Keeper.id.asc()).include(Keeper.beasts)
