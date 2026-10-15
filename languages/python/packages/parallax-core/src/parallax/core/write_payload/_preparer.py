@@ -5,7 +5,7 @@ from itertools import chain
 from typing import Final, cast
 
 from parallax.core import storage_layout
-from parallax.core.base import Json, NeutralType
+from parallax.core.base import Json, ManagedValue, NeutralType
 from parallax.core.document_codec import (
     NULL,
     DocumentPatch,
@@ -13,11 +13,11 @@ from parallax.core.document_codec import (
     SetScalar,
     SetValueObject,
     apply_prepared_patches,
-    encode_scalar_many,
     persisted_document_equal,
     prepare_patches,
 )
 from parallax.core.document_codec._document import encode_managed_document, encode_managed_many
+from parallax.core.document_codec._leaf import encode_managed_scalar_many
 from parallax.core.metamodel import (
     AttributeIdentity,
     AttributeMetadata,
@@ -512,9 +512,13 @@ def _occurrence_document(occurrence: ValueObjectMetadata, value: object) -> obje
 
 def _collection_cell(element_type: NeutralType, value: object) -> object:
     """A scalar collection's own structured Column: its encoded array, with the
-    null a stored row may carry read as the empty collection it denotes."""
-    elements = () if value is None else cast("Sequence[object]", value)
-    return encode_scalar_many(element_type, elements)
+    null a stored row may carry read as the empty collection it denotes.
+
+    Final write preparation or stored-value judgement admitted every element
+    under ``element_type`` before planning placed it here.
+    """
+    elements = () if value is None else cast("Sequence[ManagedValue]", value)
+    return encode_managed_scalar_many(element_type, elements)
 
 
 def _residents(view: EntityLayoutView, resident: _Residence | None) -> _Residence:

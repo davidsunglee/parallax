@@ -469,6 +469,67 @@ def test_an_equal_collection_with_a_changed_milestone_still_executes(
     ]
 
 
+_MERGED: list[tuple[object, ...]] = [
+    (_S1, _TA, _JAN, _MAY, 1, ["a", "b", "a"]),
+    (_TA, None, _JAN, _MAR, 1, ["a", "b", "a"]),
+    (_TA, None, _MAR, _JUL, 9, ["a", "b", "a"]),
+    (_S2, _TA, _MAY, None, 2, ["a", "b", "a"]),
+    (_TA, None, _JUL, None, 2, ["a", "b", "a"]),
+]
+_UNMERGED: list[tuple[object, ...]] = [
+    (_S1, _TA, _JAN, _MAY, 1, ["a", "b", "a"]),
+    (_TA, None, _JAN, _MAR, 1, ["a", "b", "a"]),
+    (_TA, None, _MAR, _MAY, 9, ["a", "b", "a"]),
+    (_S2, _TA, _MAY, None, 2, ["b", "a"]),
+    (_TA, None, _MAY, _JUL, 9, ["b", "a"]),
+    (_TA, None, _JUL, None, 2, ["b", "a"]),
+]
+
+
+@_REPRESENTATIONS
+@pytest.mark.parametrize(
+    ("later", "expected"),
+    [(("a", "b", "a"), _MERGED), (("b", "a"), _UNMERGED)],
+    ids=["equal-collections", "reordered-collection"],
+)
+def test_columns_successors_across_two_predecessors_merge_where_their_collections_are_equal(
+    profile_run: Any,
+    representation: _Representation,
+    later: tuple[str, ...],
+    expected: list[tuple[object, ...]],
+) -> None:
+    # Each collection lives in its own structured Column, so whether the two
+    # amended parts merge is decided by their carried encoded arrays.
+    _reset(profile_run)
+    _db(profile_run, _S1).transact(
+        lambda tx: tx.insert(
+            ColumnsSpan(id=1, amount=1, tags=("a", "b", "a")), valid_from=_JAN, until=_MAY
+        )
+    )
+    _db(profile_run, _S2).transact(
+        lambda tx: tx.insert(ColumnsSpan(id=1, amount=2, tags=later), valid_from=_MAY)
+    )
+
+    def fn(tx: Transaction) -> None:
+        if representation == "typed":
+            query = ColumnsSpan.where(ColumnsSpan.id == 1).as_of(valid_time=_MAR)
+            tx.amend(tx.find(query).result().edit(amount=9), until=_JUL)
+        else:
+            source = tx.wire.find(
+                {
+                    **_by_id(ColumnsSpan, 1),
+                    "temporal": {
+                        "transaction-time": {"asOf": "latest"},
+                        "valid-time": {"asOf": "2024-03-01T00:00:00.000000Z"},
+                    },
+                }
+            ).result()
+            tx.wire.amend(source, {"amount": 9}, until=_JUL)
+
+    _db(profile_run, _TA).transact(fn)
+    assert _span_rows(profile_run, ColumnsSpan) == expected
+
+
 @_LOGS
 def test_a_transaction_time_owner_chains_a_changed_collection_and_keeps_an_equal_one(
     profile_run: Any, entity: type[Any]

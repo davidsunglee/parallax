@@ -10,20 +10,32 @@ from __future__ import annotations
 
 import datetime as dt
 import decimal
+import math
+import uuid
 from collections.abc import Iterable, Mapping
 from typing import cast
 
 import pytest
 
+from parallax.core import document_codec
 from parallax.core.base import (
+    BOOLEAN,
+    BYTES,
+    DATE,
     FLOAT32,
+    FLOAT64,
     INT32,
+    INT64,
     SQL_NULL,
     STRING,
+    TIME,
     TIMESTAMP,
+    UUID,
     Decimal,
     DocumentValue,
     FrozenMap,
+    ManagedValue,
+    NeutralType,
     PresentDocument,
     coerce_neutral_input,
     matches_neutral_type,
@@ -60,7 +72,7 @@ from parallax.core.document_codec._authoring import (
     validate_member_authoring,
 )
 from parallax.core.document_codec._document import encode_managed_document
-from parallax.core.document_codec._leaf import LeafEncodingError
+from parallax.core.document_codec._leaf import LeafEncodingError, encode_managed_scalar_many
 from parallax.core.metamodel import AuthoringViolation, Multiplicity
 
 _MANY = Multiplicity.MANY
@@ -209,6 +221,79 @@ def test_a_collection_encodes_as_its_ordered_canonical_array() -> None:
 def test_an_element_outside_the_value_space_names_its_position() -> None:
     with pytest.raises(LeafEncodingError, match="element 1"):
         encode_scalar_many(INT32, (1, 2**40))
+
+
+_KEY = uuid.UUID("0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0")
+_ADMITTED_COLLECTIONS: Mapping[str, tuple[NeutralType, tuple[object, ...], tuple[object, ...]]] = {
+    "boolean": (BOOLEAN, (True, False, True), (True, False, True)),
+    "int32": (INT32, (-2147483648, 7, 7), (-2147483648, 7, 7)),
+    "int64": (INT64, (2**40, -1, 2**40), (2**40, -1, 2**40)),
+    "float32": (FLOAT32, (1.2000000476837158, 0.5, 1.2000000476837158), (1.2, 0.5, 1.2)),
+    "float64": (FLOAT64, (0.1, 2.5, 0.1), (0.1, 2.5, 0.1)),
+    "decimal": (
+        Decimal(6, 2),
+        (decimal.Decimal("1.5"), decimal.Decimal(7), decimal.Decimal("1.50")),
+        ("1.50", "7.00", "1.50"),
+    ),
+    "string": (STRING, ("b", "", "b"), ("b", "", "b")),
+    "bytes": (BYTES, (b"\x0a\x1b", b"", b"\x0a\x1b"), ("0a1b", "", "0a1b")),
+    "date": (DATE, (dt.date(2024, 2, 29), dt.date(1, 1, 1)), ("2024-02-29", "0001-01-01")),
+    "time": (
+        TIME,
+        (dt.time(9, 30), dt.time(9, 30, 0, 120000), dt.time(9, 30)),
+        ("09:30:00", "09:30:00.120000", "09:30:00"),
+    ),
+    "timestamp": (
+        TIMESTAMP,
+        (
+            dt.datetime(2024, 6, 1, 10, tzinfo=dt.UTC),
+            dt.datetime(9999, 12, 31, 23, 59, 59, 999999, tzinfo=dt.UTC),
+            dt.datetime(2024, 6, 1, 10, tzinfo=dt.UTC),
+        ),
+        (
+            "2024-06-01T10:00:00.000000Z",
+            "9999-12-31T23:59:59.999999Z",
+            "2024-06-01T10:00:00.000000Z",
+        ),
+    ),
+    "uuid": (UUID, (_KEY, _KEY), ("0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0",) * 2),
+}
+"""Per declarable element type: admitted elements in order with a duplicate,
+and their canonical Wire spellings stated independently of the encoders."""
+
+
+@pytest.mark.parametrize(
+    ("element_type", "elements", "spelled"),
+    list(_ADMITTED_COLLECTIONS.values()),
+    ids=list(_ADMITTED_COLLECTIONS),
+)
+def test_an_admitted_collection_encodes_as_its_ordered_canonical_array(
+    element_type: NeutralType, elements: tuple[object, ...], spelled: tuple[object, ...]
+) -> None:
+    encoded = encode_managed_scalar_many(
+        element_type, iter(cast("tuple[ManagedValue, ...]", elements))
+    )
+
+    assert type(encoded) is tuple
+    assert encoded == spelled
+    assert [type(item) for item in encoded] == [type(item) for item in spelled]
+    assert encoded == encode_scalar_many(element_type, elements)
+
+
+def test_an_admitted_float_zero_encodes_positive() -> None:
+    for element_type in (FLOAT32, FLOAT64):
+        (zero,) = encode_managed_scalar_many(element_type, (-0.0,))
+        assert zero == 0.0 and math.copysign(1.0, cast("float", zero)) == 1.0
+
+
+def test_an_empty_admitted_collection_encodes_as_the_empty_array() -> None:
+    assert encode_managed_scalar_many(TIMESTAMP, iter(())) == ()
+    assert encode_managed_scalar_many(STRING, ()) == ()
+
+
+def test_the_admitted_collection_encoder_is_not_a_package_export() -> None:
+    assert "encode_managed_scalar_many" not in document_codec.__all__
+    assert not hasattr(document_codec, "encode_managed_scalar_many")
 
 
 def test_a_managed_document_encodes_every_collection_omitted_or_null_as_empty() -> None:
