@@ -14,7 +14,7 @@ from parallax.core.entity._model import model_of
 from parallax.core.execution._preflight import preflight
 from parallax.core.object_query import deserialize
 from parallax.core.object_query._resolved import ResolvedObjectQuery
-from parallax.core.read_delivery._read_plan import ReadPlan
+from parallax.core.read_delivery._read_plan import EmptyRead, ReadPlan
 from tests.unit import _feature_boundary_support as support
 
 
@@ -113,8 +113,10 @@ def test_cold_plan_compiles_literals_and_resets_the_cache(shape: str) -> None:
         first = cast("ReadPlan", driver.run())
         driver.prepare()
         second = cast("ReadPlan", driver.run())
-    first_read, _rows = first.root_read()
-    second_read, _rows = second.root_read()
+    first_root, second_root = first.root_read(), second.root_read()
+    assert not isinstance(first_root, EmptyRead)
+    assert not isinstance(second_root, EmptyRead)
+    first_read, second_read = first_root[0], second_root[0]
     assert first_read is not second_read
     assert first_read.statement == second_read.statement
     assert expected_value in first_read.statement.binds

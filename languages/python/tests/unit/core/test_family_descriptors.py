@@ -49,6 +49,8 @@ _FAMILIES: Final[tuple[str, ...]] = (
     "composed-beast-reader",
     "document",
     "document-layout",
+    "dormant-position-layout-twin-columns",
+    "dormant-position-layout-twin-document",
     "evolution-branch-move-v1",
     "evolution-branch-move-v2",
     "evolution-collection-tables-v2",

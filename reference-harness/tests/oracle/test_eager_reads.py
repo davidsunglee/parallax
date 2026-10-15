@@ -382,3 +382,34 @@ def test_a_read_stating_no_result_member_is_refused(damaged_case: CaseLoader) ->
 
     with pytest.raises(CaseFailure, match="states no result member"):
         assert_case_read(case, reads)
+
+
+_DORMANT_TPH_ROOT = "m-inheritance-154-dormant-tph-root-read-layout-twin-columns.yaml"
+_DORMANT_TPCS_ROWS = "m-inheritance-157-dormant-tpcs-root-row-read-layout-twin-document.yaml"
+
+
+@pytest.mark.parametrize("name", [_DORMANT_TPH_ROOT, _DORMANT_TPCS_ROWS])
+def test_a_position_with_no_concrete_is_graded_without_a_statement(
+    corpus_case: CaseLoader, name: str
+) -> None:
+    reads = ScriptedReads()
+
+    assert_case_read(corpus_case(name), reads)
+
+    assert reads.calls == []
+
+
+def test_a_position_with_no_concrete_returns_no_row(damaged_case: CaseLoader) -> None:
+    case = damaged_case(_DORMANT_TPCS_ROWS)
+    case.then["rows"] = [{"id": 1}]
+
+    with pytest.raises(CaseFailure, match="returns no row"):
+        assert_case_read(case, ScriptedReads())
+
+
+def test_a_position_with_no_concrete_delivers_no_root(damaged_case: CaseLoader) -> None:
+    case = damaged_case(_DORMANT_TPH_ROOT)
+    case.then["graph"] = {"Prototype": [None]}
+
+    with pytest.raises(CaseFailure, match="delivers no root"):
+        assert_case_read(case, ScriptedReads())

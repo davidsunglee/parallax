@@ -64,17 +64,20 @@ class _RefusingPort(ConnectsAsItself):
         raise AssertionError("a lane-dispatched run must not open a transaction")
 
 
-def golden(case: case_format.Case) -> tuple[str, list[object]]:
+def golden(case: case_format.Case) -> list[tuple[str, list[object]]]:
+    """The case's ordered ``postgres`` golden statements, which a read of a
+    position with no concrete subtype authors none of."""
     then = cast("dict[str, Any]", case_document(case).get("then", {}))
     statements = cast("list[dict[str, Any]]", then.get("statements", []))
-    assert len(statements) == 1, case.case_id
-    entry = statements[0]
-    sql: Any = entry["sql"]
-    text: str = cast("dict[str, str]", sql)["postgres"] if isinstance(sql, dict) else sql
-    binds: Any = entry.get("binds", [])
-    if isinstance(binds, dict):
-        binds = cast("dict[str, list[object]]", binds)["postgres"]
-    return text, list(cast("list[object]", binds))
+    ordered: list[tuple[str, list[object]]] = []
+    for entry in statements:
+        sql: Any = entry["sql"]
+        text: str = cast("dict[str, str]", sql)["postgres"] if isinstance(sql, dict) else sql
+        binds: Any = entry.get("binds", [])
+        if isinstance(binds, dict):
+            binds = cast("dict[str, list[object]]", binds)["postgres"]
+        ordered.append((text, list(cast("list[object]", binds))))
+    return ordered
 
 
 def _skip_reason(case: case_format.Case, envelope: dict[str, Any]) -> str:
@@ -199,14 +202,14 @@ def test_compile_sweep(case: case_format.Case) -> None:
         pytest.skip(_skip_reason(case, envelope))
 
     assert envelope["status"] == "ok", envelope
-    assert envelope["roundTrips"] == 1
+    goldens = golden(case)
     emissions = envelope["emissions"]
-    assert len(emissions) == 1
-    emission = emissions[0]
-    assert emission["casePointer"] == "/objectQuery"
-    golden_sql, golden_binds = golden(case)
-    assert emission["sql"] == golden_sql
-    assert_wire_binds(engine.load_case_metamodel(case), golden_sql, golden_binds, emission["binds"])
+    assert envelope["roundTrips"] == len(goldens)
+    assert [emission["sql"] for emission in emissions] == [sql for sql, _binds in goldens]
+    model = engine.load_case_metamodel(case)
+    for emission, (golden_sql, golden_binds) in zip(emissions, goldens, strict=True):
+        assert emission["casePointer"] == "/objectQuery"
+        assert_wire_binds(model, golden_sql, golden_binds, emission["binds"])
 
 
 def test_exercised_set_is_a_subset_of_the_reachable_reads() -> None:

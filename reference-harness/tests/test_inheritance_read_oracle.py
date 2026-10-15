@@ -43,11 +43,13 @@ from reference_harness.inheritance import (
     SUBTYPE_SELECTION_OVERLAPPING_ALTERNATIVES,
     Family,
     query_position,
+    reads_no_concrete,
     tag_value_to_subtype,
     validate_query_inheritance,
 )
 from reference_harness.object_query_oracle import assert_case_read
 from reference_harness.predicate_validate import validate_query_predicate
+from reference_harness.schema_validate import _structurally_empty_read_problems
 from reference_harness.storage_layout import compile_storage_layout, position_projection
 from reference_harness.value_object_resolve import (
     PREDICATE_SUBJECT_OUTSIDE_SCOPE,
@@ -1451,3 +1453,61 @@ def test_empty_include_segment_selection_keeps_the_shared_empty_rule() -> None:
     with pytest.raises(RejectionError) as exc:
         _judge(_animal_defs(), "Person", includes=_include("Person.pets", ["Bogus"]))
     assert exc.value.rule == NARROW_EMPTY_EFFECTIVE_SET
+
+
+# --- a position with no concrete subtype ------------------------------------
+
+
+def _dormant_defs() -> list[dict[str, Any]]:
+    return load_model(
+        _COMPATIBILITY_ROOT, "models/dormant-position-layout-twin-columns.yaml"
+    ).entity_defs
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        ({"target": "Prototype"}, True),
+        ({"target": "Concept"}, True),
+        ({"target": "Gadget"}, False),
+        ({"target": "Widget"}, False),
+        ({"target": "Workbench"}, False),
+        ({"target": "Gadget", "narrowTo": ["Widget"]}, False),
+    ],
+)
+def test_only_an_unnarrowed_position_with_no_concrete_reads_nothing(
+    query: dict[str, Any], expected: bool
+) -> None:
+    assert reads_no_concrete({**query, "predicate": {"true": {}}}, _dormant_defs()) is expected
+
+
+def _empty_read_problems(target: str, then: dict[str, Any]) -> list[str]:
+    case = {
+        "shape": "read",
+        "when": {"objectQuery": {"target": target, "predicate": {"true": {}}}},
+        "then": then,
+    }
+    return _structurally_empty_read_problems(case, Family(_dormant_defs()))
+
+
+def test_a_live_position_matching_no_row_still_authors_its_statement() -> None:
+    (problem,) = _empty_read_problems("Widget", {"statements": [], "rows": []})
+
+    assert "issues its statement even when no stored row matches" in problem
+
+
+def test_a_position_with_no_concrete_authors_no_statement() -> None:
+    statement = {"sql": {"postgres": "select t0.id from dormant_gadget t0"}}
+
+    (problem,) = _empty_read_problems("Prototype", {"statements": [statement], "rows": []})
+
+    assert "then.statements must be empty" in problem
+
+
+def test_a_position_with_no_concrete_observes_no_root() -> None:
+    assert _empty_read_problems("Prototype", {"statements": [], "graph": {"Prototype": []}}) == []
+    (problem,) = _empty_read_problems(
+        "Prototype", {"statements": [], "graph": {"Prototype": [{"id": 1}]}}
+    )
+
+    assert "graph.Prototype must observe no root" in problem

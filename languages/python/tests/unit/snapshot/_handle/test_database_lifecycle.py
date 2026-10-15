@@ -23,6 +23,12 @@ from typing import Any
 
 import pytest
 
+from parallax.conformance._lifecycle_recording import RecordingLifecycleProvider
+from parallax.conformance.dormant_position_models import (
+    DORMANT_POSITION_COLUMNS,
+    Prototype,
+    Workbench,
+)
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.conformance.story_models import ORDERS_MODEL, Account, Order
 from parallax.core.db_error import DatabaseError
@@ -47,6 +53,7 @@ from tests._support.db_port import (
     ScriptedAdapter,
     Transact,
     Write,
+    WriteCall,
 )
 from tests.unit._transact_support import ACCOUNT, FIXED, deadlock
 
@@ -246,6 +253,83 @@ def test_a_failed_stream_releases_where_it_failed() -> None:
         with db.stream(_orders_query(), batch_size=2) as roots:
             list(roots)
     assert adapter.cleanups == [Returned()]
+
+
+# --------------------------------------------------------------------------- #
+# A structurally empty read keeps the operation's resource obligations.        #
+# --------------------------------------------------------------------------- #
+
+
+def _prototypes() -> Any:
+    return Prototype.where(Prototype.all)
+
+
+def test_an_empty_read_still_holds_and_returns_one_connection_without_a_call() -> None:
+    provider = RecordingLifecycleProvider()
+    adapter = ScriptedAdapter()
+    with connect(
+        adapter, DORMANT_POSITION_COLUMNS, clock=FixedClock(FIXED), lifecycle_provider=provider
+    ) as _root_db:
+        assert _root_db.using_database_login().find(_prototypes()).results() == []
+
+    assert (adapter.acquisitions, adapter.cleanups, adapter.calls) == (1, [Returned()], [])
+    (root,) = provider.roots
+    assert [type(event).__name__ for event in root.events] == [
+        "ReadStarted",
+        "AcquisitionStarted",
+        "AcquisitionFinished",
+        "ReleaseStarted",
+        "ReleaseFinished",
+        "ReadFinished",
+    ]
+
+
+def test_an_empty_read_that_cannot_acquire_fails_with_the_reason_acquisition_gave() -> None:
+    refusal = _unacquirable("timeout")
+    adapter = ScriptedAdapter(acquisition_failures=[refusal])
+
+    with (
+        _db(adapter, DORMANT_POSITION_COLUMNS) as _root_db,
+        pytest.raises(ExecutionFailure) as raised,
+    ):
+        _root_db.using_database_login().find(_prototypes())
+
+    assert raised.value.__cause__ is refusal
+
+
+def test_an_empty_stream_leases_only_the_page_it_consumes() -> None:
+    adapter = ScriptedAdapter()
+    with _db(adapter, DORMANT_POSITION_COLUMNS) as _root_db:
+        db = _root_db.using_database_login()
+        with db.stream(_prototypes(), batch_size=2):
+            pass
+        assert adapter.acquisitions == 0
+        with db.stream(_prototypes(), batch_size=2) as roots:
+            assert list(roots) == []
+            assert adapter.cleanups == [Returned()]
+
+    assert (adapter.acquisitions, adapter.calls) == (1, [])
+
+
+def test_a_participating_empty_read_flushes_the_work_buffered_before_it() -> None:
+    adapter = ScriptedAdapter(Transact(Write()))
+    written_by_the_read: list[int] = []
+    with _db(adapter, DORMANT_POSITION_COLUMNS) as _root_db:
+
+        def body(tx: Transaction) -> None:
+            tx.insert(Workbench(id=3, name="Loft", prototype_id=None, concept_id=None))
+            assert tx.find(_prototypes()).results() == []
+            written_by_the_read.append(sum(isinstance(call, WriteCall) for call in adapter.calls))
+
+        with adapter:
+            _root_db.using_database_login().transact(body)
+
+    assert written_by_the_read == [1]
+    assert [type(call).__name__ for call in adapter.calls] == [
+        "BeginCall",
+        "WriteCall",
+        "CommitCall",
+    ]
 
 
 # --------------------------------------------------------------------------- #

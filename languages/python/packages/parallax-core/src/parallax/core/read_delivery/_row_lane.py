@@ -13,7 +13,6 @@ from parallax.core.execution_lifecycle._activity import INERT, DatabaseCallScope
 from parallax.core.metamodel import Metamodel
 from parallax.core.object_query._resolved import ResolvedObjectQuery
 from parallax.core.read_delivery._convert import complete_occurrences
-from parallax.core.read_delivery._fetch import execute_read
 from parallax.core.read_delivery._page import (
     INERT_OBSERVER,
     EntityState,
@@ -35,8 +34,12 @@ from parallax.core.read_delivery._page import (
     state_for,
     stored_data_refusal,
 )
-from parallax.core.read_delivery._page_reader import FlatPageRequest, FlatPageResult, PageReader
-from parallax.core.read_delivery._read_plan import UNCACHED_READ_PLANNER, ReadPlanner
+from parallax.core.read_delivery._page_reader import (
+    FlatPageResult,
+    PageReader,
+    PlannedFlatPageRequest,
+)
+from parallax.core.read_delivery._read_plan import UNCACHED_READ_PLANNER, EmptyRead, ReadPlanner
 from parallax.core.read_delivery._row_converter import RowPublisher
 from parallax.core.temporal_read import resolved_query_pin
 from parallax.core.unit_work import Concurrency
@@ -87,7 +90,7 @@ def find_rows(
     observer: MaterializationObserver = INERT_OBSERVER,
     planner: ReadPlanner = UNCACHED_READ_PLANNER,
 ) -> RowsResult:
-    """The row-form read: one statement and one Page of transformed roots.
+    """The row-form read: at most one statement and one Page of transformed roots.
 
     The transformed row is the returned representation, so the values lane builds
     no object graph. It does build a Page, whose judged states are what each
@@ -111,19 +114,14 @@ def find_rows(
         result_form="row",
         preference=preference,
     )
-    compiled, converter = plan.root_read()
-
     stage = PageReader(observer).read_page(
-        FlatPageRequest(
-            model,
-            compiled,
-            lambda: execute_read(port, compiled, read),
-            resolved_query_pin(query.temporal),
-            converter,
-        )
+        PlannedFlatPageRequest(model, plan, port, read, resolved_query_pin(query.temporal))
     )
+    root = plan.root_read()
+    if isinstance(root, EmptyRead):
+        return RowsResult(rows=(), edition=edition)
     return RowsResult(
-        rows=_published_rows(stage, meta, versions, converter.row_publisher()), edition=edition
+        rows=_published_rows(stage, meta, versions, root[1].row_publisher()), edition=edition
     )
 
 

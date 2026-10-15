@@ -82,6 +82,7 @@ from .inheritance import (
     PREDICATE_REJECTED_RULES,
     WRITE_REJECTED_RULES,
     Family,
+    reads_no_concrete,
     validate_family,
     validate_query_inheritance,
 )
@@ -3240,12 +3241,18 @@ def _run_executed(case: Case, db: DatabaseProvider | None) -> None:
         _run_error(case, db, dialect)
     elif case.is_concurrency_success:
         _run_concurrency_success(case, db, dialect)
-    elif dialect not in case.golden_dialects:
+    elif dialect in case.golden_dialects or _reads_no_concrete(case):
+        # A read of a position with no concrete subtype authors no statement in
+        # any dialect, and its empty observation is graded like any other read's.
+        _run_statement_golden(case, db, dialect)
+    else:
         # No golden SQL for this dialect: nothing to execute against it. The
         # serde + (dialect-agnostic) checks still run so coverage is not skipped.
         _assert_dialect_agnostic_layers(case)
-    else:
-        _run_statement_golden(case, db, dialect)
+
+
+def _reads_no_concrete(case: Case) -> bool:
+    return case.shape == "read" and reads_no_concrete(case.object_query, case.model.entity_defs)
 
 
 def _assert_dialect_agnostic_layers(case: Case) -> None:

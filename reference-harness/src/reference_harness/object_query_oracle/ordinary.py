@@ -9,7 +9,7 @@ from sqlglot import exp
 
 from ..case import Case, Entity
 from ..case_assertions import CaseFailure
-from ..inheritance import STRATEGY_TPCS, STRATEGY_TPH, query_position
+from ..inheritance import STRATEGY_TPCS, STRATEGY_TPH, query_position, reads_no_concrete
 from ..sql_canonical import sqlglot_dialect
 from . import execute, graph, includes, materialize, row, stream
 from .executor import ReadExecutor
@@ -35,6 +35,9 @@ def assert_case_read(case: Case, reader: ReadExecutor) -> None:
     # Includes over milestone sets, milestone sets over single graphs, and everything
     # over flat rows. Delivery precedes every result member because the delivery, not
     # the member, decides how `then.statements` reads.
+    if reads_no_concrete(case.object_query, case.model.entity_defs):
+        _assert_no_concrete_read(case)
+        return
     if case.is_streamed:
         _assert_stream(case, reader)
         return
@@ -48,6 +51,32 @@ def assert_case_read(case: Case, reader: ReadExecutor) -> None:
         _assert_single_statement_graph(case, reader)
         return
     _assert_flat_equivalence(case, reader)
+
+
+def _assert_no_concrete_read(case: Case) -> None:
+    """Assert a read of a position with no concrete subtype: nothing delivered.
+
+    No table describes the position, so there is no statement to execute — eager,
+    streamed, or with Includes beneath it — and the authored observation is
+    compared against the empty delivery each result member's own oracle grades.
+    """
+    root_entity = _graphs_root_entity(case)
+    graph_specs = case.expected_graphs
+    if graph_specs is not None:
+        graph.assert_milestone_partition(case, root_entity, [], [], graph_specs)
+    elif case.expected_graph is not None:
+        delivered: dict[str, list[Any]] = {root_entity.name: []}
+        if not graph.graphs_equal(delivered, case.expected_graph, case.model):
+            raise CaseFailure(
+                f"{case.path.name}: a position with no concrete subtype delivers no root, "
+                f"but then.graph is {case.expected_graph!r}"
+            )
+    elif not row.rows_equal([], case.expected_rows, case.model, root_entity, case.tolerance):
+        raise CaseFailure(
+            f"{case.path.name}: a position with no concrete subtype returns no row, "
+            f"but then.rows is {case.expected_rows!r}"
+        )
+    graph.assert_family_tag_issues(case, [])
 
 
 def _assert_flat_equivalence(case: Case, reader: ReadExecutor) -> None:

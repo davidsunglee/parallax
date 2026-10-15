@@ -96,7 +96,7 @@ from parallax.core.read_delivery._page_reader import (
     PageReader,
     _RootRead,  # pyright: ignore[reportPrivateUsage]
 )
-from parallax.core.read_delivery._read_plan import UNCACHED_READ_PLANNER, ReadPlan
+from parallax.core.read_delivery._read_plan import UNCACHED_READ_PLANNER, EmptyRead, ReadPlan
 from parallax.core.sql_gen._compile import CompiledRead
 from parallax.core.storage_layout import DirectColumn, TableLayout
 from parallax.core.storage_layout import view as storage_layout_view
@@ -280,15 +280,18 @@ def compiled_levels(layout: Layout, plan: ReadPlan) -> tuple[CompiledRead | None
     Each fetch template is rendered with the keys this module's fixture supplies,
     which are the keys the Page build gathers from the fixture's root rows.
     """
-    root, _prepared = plan.root_read()
-    reads: list[CompiledRead | None] = [root]
+    root = plan.root_read()
+    assert not isinstance(root, EmptyRead)
+    reads: list[CompiledRead | None] = [root[0]]
     for index in range(plan.fetch_count):
         step = plan.fetch_step(index)
-        if isinstance(step, deep_fetch.BackReferenceFetchStep):
+        prepared = plan.prepared_fetch(index)
+        if prepared is None:
             reads.append(None)
             continue
-        compiled, _prepared = plan.fetch_read(index, _level_keys(layout, _attach_key(plan, step)))
-        reads.append(compiled)
+        assert not isinstance(prepared, EmptyRead)
+        template, _rows = prepared
+        reads.append(template.render(_level_keys(layout, _attach_key(plan, step))))
     return tuple(reads)
 
 
@@ -567,13 +570,10 @@ def read_root(
     model: CatalogedModel, validated: ResolvedObjectQuery, plan: ReadPlan, port: StressPort
 ) -> _RootRead:
     """``plan``'s root statement executed on ``port`` and held for one Page build."""
+    root = plan.root_read()
+    assert not isinstance(root, EmptyRead)
     return _MATERIALIZER._read_root(  # pyright: ignore[reportPrivateUsage]
-        validated,
-        model,
-        port,
-        calls=INERT,
-        planner=UNCACHED_READ_PLANNER,
-        plan=plan,
+        plan, root, validated, port, INERT
     )
 
 

@@ -11,6 +11,13 @@ from parallax.conformance.animal_owner import Person as AnimalOwnerPerson
 from parallax.conformance.composed_beast_document_models import Beast as DocumentBeast
 from parallax.conformance.composed_beast_document_models import Wolf as DocumentWolf
 from parallax.conformance.composed_beast_models import Beast, Keeper, Wolf
+from parallax.conformance.dormant_position_document_models import (
+    Prototype as DocumentPrototype,
+)
+from parallax.conformance.dormant_position_document_models import (
+    Workbench as DocumentWorkbench,
+)
+from parallax.conformance.dormant_position_models import Prototype, Workbench
 from parallax.conformance.graph_models import Coverage, Policy
 from parallax.conformance.identifier_models import (
     Int32Parent,
@@ -537,6 +544,64 @@ def a_subtype_document_filter_leaves_its_includes_unfiltered(
     )
 
 
+def a_subtype_with_no_composed_concrete_reads_no_roots(db: ScopedDatabase) -> Snapshot[Any]:
+    return db.find(Prototype.where(Prototype.all).include(Prototype.workbenches.prototype))
+
+
+def a_document_subtype_with_no_composed_concrete_reads_no_roots(
+    db: ScopedDatabase,
+) -> Snapshot[Any]:
+    return db.find(
+        DocumentPrototype.where(DocumentPrototype.all).include(
+            DocumentPrototype.workbenches.prototype
+        )
+    )
+
+
+def includes_of_a_subtype_with_no_composed_concrete_load_empty(
+    db: ScopedDatabase,
+) -> Snapshot[Any]:
+    return db.find(
+        Workbench.where(Workbench.all)
+        .order_by(Workbench.id.asc())
+        .include(Workbench.prototype, Workbench.prototypes.workbenches, Workbench.gadgets)
+    )
+
+
+def document_includes_of_a_subtype_with_no_composed_concrete_load_empty(
+    db: ScopedDatabase,
+) -> Snapshot[Any]:
+    return db.find(
+        DocumentWorkbench.where(DocumentWorkbench.all)
+        .order_by(DocumentWorkbench.id.asc())
+        .include(
+            DocumentWorkbench.prototype,
+            DocumentWorkbench.prototypes.workbenches,
+            DocumentWorkbench.gadgets,
+        )
+    )
+
+
+def includes_of_a_tpcs_subtype_with_no_composed_concrete_load_empty(
+    db: ScopedDatabase,
+) -> Snapshot[Any]:
+    return db.find(
+        Workbench.where(Workbench.all)
+        .order_by(Workbench.id.asc())
+        .include(Workbench.concept, Workbench.concepts, Workbench.gadgets)
+    )
+
+
+def document_includes_of_a_tpcs_subtype_with_no_composed_concrete_load_empty(
+    db: ScopedDatabase,
+) -> Snapshot[Any]:
+    return db.find(
+        DocumentWorkbench.where(DocumentWorkbench.all)
+        .order_by(DocumentWorkbench.id.asc())
+        .include(DocumentWorkbench.concept, DocumentWorkbench.concepts, DocumentWorkbench.gadgets)
+    )
+
+
 GRAPH_STORIES: tuple[GraphStory, ...] = (
     GraphStory(
         "m-relationship-008",
@@ -782,6 +847,42 @@ GRAPH_STORIES: tuple[GraphStory, ...] = (
         "A subtype-specific document filter reads only the subtypes the reader composes",
         "composed-beast-document-reader",
         a_subtype_document_filter_reads_only_composed_subtypes,
+    ),
+    GraphStory(
+        "m-inheritance-154",
+        "A subtype with no composed concrete reads no roots and issues no statement",
+        "dormant-position-layout-twin-columns",
+        a_subtype_with_no_composed_concrete_reads_no_roots,
+    ),
+    GraphStory(
+        "m-inheritance-155",
+        "A document subtype with no composed concrete reads no roots and issues no statement",
+        "dormant-position-layout-twin-document",
+        a_document_subtype_with_no_composed_concrete_reads_no_roots,
+    ),
+    GraphStory(
+        "m-inheritance-160",
+        "Includes of a subtype with no composed concrete load empty or null without a statement",
+        "dormant-position-layout-twin-columns",
+        includes_of_a_subtype_with_no_composed_concrete_load_empty,
+    ),
+    GraphStory(
+        "m-inheritance-161",
+        "Document includes of a subtype with no composed concrete load empty or null",
+        "dormant-position-layout-twin-document",
+        document_includes_of_a_subtype_with_no_composed_concrete_load_empty,
+    ),
+    GraphStory(
+        "m-inheritance-162",
+        "Includes of a table-per-concrete-subtype position with no concrete load empty or null",
+        "dormant-position-layout-twin-columns",
+        includes_of_a_tpcs_subtype_with_no_composed_concrete_load_empty,
+    ),
+    GraphStory(
+        "m-inheritance-163",
+        "Document includes of a table-per-concrete-subtype position with no concrete load empty",
+        "dormant-position-layout-twin-document",
+        document_includes_of_a_tpcs_subtype_with_no_composed_concrete_load_empty,
     ),
     GraphStory(
         "m-inheritance-153",

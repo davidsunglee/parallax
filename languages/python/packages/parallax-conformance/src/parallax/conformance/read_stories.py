@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any, Final
 
+from parallax.conformance.dormant_position_document_models import Concept as DocumentConcept
+from parallax.conformance.dormant_position_models import Concept
 from parallax.conformance.graph_models import Coverage, Policy
 from parallax.conformance.read_models import (
     Animal,
@@ -339,6 +341,20 @@ READ_STORIES: Final[tuple[ReadStory, ...]] = (
         "query = DepositRate.where(DepositRate.all).as_of(\n"
         "    valid_time=LATEST, tx_time=datetime(2024, 1, 15, tzinfo=UTC)\n"
         ")",
+    ),
+    ReadStory(
+        "m-inheritance-156",
+        "A table-per-concrete-subtype position with no composed concrete reads no rows",
+        "dormant-position-layout-twin-columns",
+        lambda: Concept.where(Concept.all),
+        "query = Concept.where(Concept.all)",
+    ),
+    ReadStory(
+        "m-inheritance-157",
+        "The same position under Relational Document Layout",
+        "dormant-position-layout-twin-document",
+        lambda: DocumentConcept.where(DocumentConcept.all),
+        "query = Concept.where(Concept.all)",
     ),
     # -- m-read-delivery (whole-result delivery), account.yaml --------------- #
     ReadStory(

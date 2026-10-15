@@ -6,9 +6,8 @@ from dataclasses import dataclass, replace
 from decimal import Decimal
 from typing import Final, Literal, NamedTuple, Protocol, assert_never, cast
 
-from parallax.core import deep_fetch
-from parallax.core.base import ManagedValue
-from parallax.core.dialect import Dialect, LockMode
+from parallax.core import deep_fetch, inheritance
+from parallax.core.dialect import Dialect
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.metamodel import AttributeIdentity
 from parallax.core.object_query._resolved import (
@@ -57,7 +56,9 @@ from parallax.core.unit_work import Concurrency
 
 __all__ = [
     "DEFAULT_READ_PLAN_CACHE_CAPACITY",
+    "EMPTY_READ",
     "UNCACHED_READ_PLANNER",
+    "EmptyRead",
     "ReadPlan",
     "ReadPlanCache",
     "ReadPlanner",
@@ -87,9 +88,14 @@ class _ReadPlanCacheStatistics:
 
 
 @dataclass(frozen=True, slots=True)
-class _PreparedFetch:
-    template: CompiledTemplate
-    rows: ReadRowConverter
+class EmptyRead:
+    """A read position no stored row can occupy: its effective concrete set is
+    empty, so it has no statement to execute and no rows to convert."""
+
+
+EMPTY_READ: Final = EmptyRead()
+
+type _FetchWork = CompiledTemplate | EmptyRead | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,18 +103,23 @@ class ReadPlan:
     """An immutable read plan consumed through behavioral accessors."""
 
     _query_plan: deep_fetch.ObjectQueryPlan
-    _root: CompiledRead
-    _root_rows: ReadRowConverter
+    _root: CompiledRead | EmptyRead
+    _root_rows: ReadRowConverter | None
     _schema: ViewSchema
     _correlations: tuple[tuple[AttributeIdentity, ...], ...]
-    _fetches: tuple[_PreparedFetch | None, ...]
+    _fetches: tuple[_FetchWork, ...]
+    _fetch_rows: tuple[ReadRowConverter | None, ...]
 
     @property
     def fetch_count(self) -> int:
         return len(self._query_plan.fetch_steps)
 
-    def root_read(self) -> tuple[CompiledRead, ReadRowConverter]:
-        return self._root, self._root_rows
+    def root_read(self) -> tuple[CompiledRead, ReadRowConverter] | EmptyRead:
+        root = self._root
+        if isinstance(root, EmptyRead):
+            return root
+        assert self._root_rows is not None
+        return root, self._root_rows
 
     def page_builder(self, observer: object | None) -> PageBuilder:
         return PageBuilder(self._schema, observer)
@@ -124,13 +135,19 @@ class ReadPlan:
     def fetch_step(self, index: int) -> deep_fetch.FetchStep:
         return self._query_plan.fetch_steps[index]
 
-    def fetch_read(
-        self, index: int, keys: list[ManagedValue]
-    ) -> tuple[CompiledRead, ReadRowConverter]:
+    def prepared_fetch(
+        self, index: int
+    ) -> tuple[CompiledTemplate, ReadRowConverter] | EmptyRead | None:
+        """Fetch step ``index``'s executable template and converter, or
+        :class:`EmptyRead` for a level at or beneath an empty position, or
+        ``None`` for a reachable back-reference, which attaches from rows
+        already converted."""
         fetch = self._fetches[index]
-        if fetch is None:
-            raise ValueError("an executable fetch step requires a prepared template")
-        return fetch.template.render(keys), fetch.rows
+        if fetch is None or isinstance(fetch, EmptyRead):
+            return fetch
+        rows = self._fetch_rows[index]
+        assert rows is not None
+        return fetch, rows
 
     def include_tree(self) -> deep_fetch.IncludeTree:
         return self._query_plan.includes
@@ -171,7 +188,10 @@ class _CachedDelivery:
             paging is None or paging.seek is None
         ):  # pragma: no cover - constructor invariant
             raise ValueError("a continuing read plan requires a seek coordinate")
-        compiled, _ = self.plan.root_read()
+        root = self.plan.root_read()
+        if isinstance(root, EmptyRead):  # pragma: no cover - an empty root retains no positions
+            raise ValueError("an empty read plan carries no paging binds")
+        compiled, _ = root
         binds = list(compiled.statement.binds)
         for bind_index, carrier_index in self.coordinate_positions:
             assert paging is not None and paging.seek is not None
@@ -448,7 +468,10 @@ def _plan_uncached(
     preference: Concurrency | None,
     reusable: ReadPlan | None = None,
 ) -> _CachedDelivery:
-    compiled_query, markers, limit_marker = _template_query(query)
+    empty_root = _empty_root(model, query)
+    compiled_query, markers, limit_marker = (
+        (query, (), None) if empty_root else _template_query(query)
+    )
     planned = deep_fetch.plan(
         compiled_query,
         model.meta,
@@ -457,67 +480,60 @@ def _plan_uncached(
             result_form == "instance",
         ),
     )
-    locks = cast(
-        "tuple[LockMode | None, ...]",
-        (
-            entity_read_lock(model.meta, query.root.identity, preference),
-            *(
-                None
-                if isinstance(step, deep_fetch.BackReferenceFetchStep)
-                else entity_read_lock(model.meta, step.query_template().target, preference)
-                for step in planned.fetch_steps
-            ),
-        ),
-    )
-    correlations = (
-        reusable._correlations  # pyright: ignore[reportPrivateUsage] - same-module plan reuse
-        if reusable is not None
-        else correlation_table(planned, model.meta)
-    )
-    root = compile_read(
-        planned.root,
-        model.meta,
-        dialect,
-        result_form=result_form,
-        lock=locks[0],
-    )
-    fetches: tuple[_PreparedFetch | None, ...] = (
-        reusable._fetches  # pyright: ignore[reportPrivateUsage] - same-module plan reuse
-        if reusable is not None
-        else tuple(
-            None
-            if isinstance(step, deep_fetch.BackReferenceFetchStep)
-            else _prepared_level(
-                model,
-                compile_template(
-                    step.query_template(),
-                    model.meta,
-                    dialect,
-                    result_form=result_form,
-                    lock=locks[index + 1],
-                ),
-                correlations[index + 1],
-            )
-            for index, step in enumerate(planned.fetch_steps)
+    root: CompiledRead | EmptyRead = (
+        EMPTY_READ
+        if empty_root
+        else compile_read(
+            planned.root,
+            model.meta,
+            dialect,
+            result_form=result_form,
+            lock=entity_read_lock(model.meta, query.root.identity, preference),
         )
     )
-    prepared = ReadPlan(
-        planned,
-        root,
-        bind(model, root, correlation_members=correlations[0]),
-        reusable._schema  # pyright: ignore[reportPrivateUsage] - same-module plan reuse
-        if reusable is not None
-        else (
+    if reusable is None:
+        fetches = _fetch_work(
+            planned, model, dialect, result_form, preference, empty_root=empty_root
+        )
+        correlations = correlation_table(
+            planned,
+            model.meta,
+            (index for index, work in enumerate(fetches) if not isinstance(work, EmptyRead)),
+        )
+        fetch_rows = tuple(
+            bind(model, work.compiled, correlation_members=correlations[index + 1])
+            if isinstance(work, CompiledTemplate)
+            else None
+            for index, work in enumerate(fetches)
+        )
+        schema = (
             ViewSchema.prepared(
                 slot_table(planned),
                 (model.layouts.entity(entity.identity) for entity in model.meta.entities),
             )
             if result_form == "instance" and not scans_resolved_axis(query.temporal)
             else ViewSchema.of()
-        ),
+        )
+    else:
+        fetches, correlations, fetch_rows, schema = (
+            reusable._fetches,  # pyright: ignore[reportPrivateUsage] - same-module plan reuse
+            reusable._correlations,  # pyright: ignore[reportPrivateUsage] - same-module plan reuse
+            reusable._fetch_rows,  # pyright: ignore[reportPrivateUsage] - same-module plan reuse
+            reusable._schema,  # pyright: ignore[reportPrivateUsage] - same-module plan reuse
+        )
+    prepared = ReadPlan(
+        planned,
+        root,
+        None
+        if isinstance(root, EmptyRead)
+        else bind(model, root, correlation_members=correlations[0]),
+        schema,
         correlations,
         fetches,
+        fetch_rows,
     )
+    if isinstance(root, EmptyRead):
+        return _CachedDelivery(prepared)
     positions = tuple(
         (bind_index, carrier_index)
         for bind_index, bind_value in enumerate(root.statement.binds)
@@ -539,6 +555,56 @@ def _plan_uncached(
     if limit_marker is not None and not limit_positions:
         raise ValueError("compiled continuation lost its page limit bind")
     return _CachedDelivery(prepared, positions, limit_positions)
+
+
+def _empty_root(model: CatalogedModel, query: ResolvedObjectQuery) -> bool:
+    """Whether ``query``'s result position has no concrete inhabitant.
+
+    Validation refuses an authored narrowing to the empty set, so only an
+    unnarrowed dormant abstract target qualifies; a standalone Entity's view is
+    its own concrete.
+    """
+    if query.narrow_to is not None:
+        return False
+    view = inheritance.view(model.meta).entity(query.root.identity)
+    return view is not None and not view.concrete_subtypes
+
+
+def _fetch_work(
+    planned: deep_fetch.ObjectQueryPlan,
+    model: CatalogedModel,
+    dialect: Dialect,
+    result_form: ResultForm,
+    preference: Concurrency | None,
+    *,
+    empty_root: bool,
+) -> tuple[_FetchWork, ...]:
+    """Each fetch step's retained work, in the dependency order steps are
+    planned in: a level whose parent or own target position is empty has no
+    occurrences to fetch."""
+    work: list[_FetchWork] = []
+    for step in planned.fetch_steps:
+        parent_empty = (
+            empty_root
+            if isinstance(step.parent, deep_fetch.RootRef)
+            else isinstance(work[step.parent.index], EmptyRead)
+        )
+        if parent_empty or not planned.includes.position(step.position).target:
+            work.append(EMPTY_READ)
+        elif isinstance(step, deep_fetch.BackReferenceFetchStep):
+            work.append(None)
+        else:
+            template = step.query_template()
+            work.append(
+                compile_template(
+                    template,
+                    model.meta,
+                    dialect,
+                    result_form=result_form,
+                    lock=entity_read_lock(model.meta, template.target, preference),
+                )
+            )
+    return tuple(work)
 
 
 class ReadPlanCache:
@@ -664,14 +730,3 @@ class ReadPlanCache:
 
 
 UNCACHED_READ_PLANNER: ReadPlanner = ReadPlanCache(0)
-
-
-def _prepared_level(
-    model: CatalogedModel,
-    template: CompiledTemplate,
-    correlations: tuple[AttributeIdentity, ...],
-) -> _PreparedFetch:
-    return _PreparedFetch(
-        template,
-        bind(model, template.compiled, correlation_members=correlations),
-    )

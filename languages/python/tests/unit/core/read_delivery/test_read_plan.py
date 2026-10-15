@@ -12,27 +12,33 @@ from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from decimal import Decimal
-from typing import Any, Literal, cast
+from typing import Any, Final, Literal, cast
 
 import pytest
 
+from parallax.conformance.dormant_position_models import DORMANT_POSITION_COLUMNS
 from parallax.conformance.story_models import ORDERS_MODEL, Order
-from parallax.core import continuation
+from parallax.core import continuation, deep_fetch
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
 from parallax.core.execution._page_origins import ObservedPageProjections
 from parallax.core.execution._preflight import preflight
-from parallax.core.metamodel import Metamodel
+from parallax.core.metamodel import AttributeIdentity, EntityIdentity, Metamodel
 from parallax.core.object_query import deserialize
 from parallax.core.object_query._resolved import ContinuationCoordinate, ResolvedObjectQuery
 from parallax.core.predicate._resolved import ResolvedComparison
 from parallax.core.read_delivery import _read_plan
 from parallax.core.read_delivery._delivery import find
-from parallax.core.read_delivery._read_plan import ReadPlanCache
+from parallax.core.read_delivery._read_plan import EMPTY_READ, EmptyRead, ReadPlanCache
+from parallax.core.read_delivery._row_converter import ReadRowConverter
+from parallax.core.sql_gen._compile import CompiledRead
 from parallax.core.unit_work import Concurrency
+from parallax.descriptor._records import Entity as DescriptorEntity
+from parallax.descriptor._records import Inheritance
 from parallax.snapshot import Database
 from tests._support.db_port import Read, ScriptedAdapter, Transact
+from tests.unit._corpus_model_support import formed, records
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._transact_support import db_for
 
@@ -111,6 +117,12 @@ def _plan(
     )
 
 
+def _root(plan: _read_plan.ReadPlan) -> tuple[CompiledRead, ReadRowConverter]:
+    root = plan.root_read()
+    assert not isinstance(root, EmptyRead)
+    return root
+
+
 def test_equal_query_values_share_one_read_plan_but_result_forms_do_not() -> None:
     planner = ReadPlanCache()
 
@@ -149,7 +161,7 @@ def test_matches_with_different_operands_on_one_relationship_plan_apart() -> Non
 
     assert _plan(planner, _match_query("Ada")) is ada
     assert bob is not ada
-    (ada_read, _), (bob_read, _) = ada.root_read(), bob.root_read()
+    (ada_read, _), (bob_read, _) = _root(ada), _root(bob)
     assert ada_read.statement.sql == bob_read.statement.sql
     assert (ada_read.statement.binds, bob_read.statement.binds) == (("Ada",), ("Bob",))
 
@@ -585,7 +597,7 @@ def test_only_an_elected_builder_scans_for_its_family_most_recent_first(
     after = _plan(cache, pages.after(ContinuationCoordinate((1,)), limit=3))
 
     assert verdicts == [False, False, True]
-    assert after.root_read()[1] is not first.root_read()[1]
+    assert _root(after)[1] is not _root(first)[1]
     assert after._schema is first._schema
     assert after._fetches is first._fetches
 
@@ -635,8 +647,8 @@ def test_equal_coordinate_values_of_distinct_exact_types_keep_cold_and_warm_bind
     warm = _plan(cache, with_integer)
 
     assert warm is not cold
-    cold_root, cold_rows = cold.root_read()
-    warm_root, warm_rows = warm.root_read()
+    cold_root, cold_rows = _root(cold)
+    warm_root, warm_rows = _root(warm)
     assert warm_rows is cold_rows
     assert any(type(value) is bool and value is True for value in cold_root.statement.binds)
     assert any(type(value) is int and value == 1 for value in warm_root.statement.binds)
@@ -666,7 +678,7 @@ def test_capacity_zero_uses_the_uncached_read_planning_seam() -> None:
     )
 
     assert second is not first
-    assert second.root_read()[0].statement == first.root_read()[0].statement
+    assert _root(second)[0].statement == _root(first)[0].statement
     assert planner._statistics() == _read_plan._ReadPlanCacheStatistics(0, 0, 0, 0, 0)
 
 
@@ -706,7 +718,7 @@ def test_capacity_zero_does_no_key_work(monkeypatch: pytest.MonkeyPatch) -> None
 
     planned = _plan(planner, continued)
 
-    assert 1 in planned.root_read()[0].statement.binds
+    assert 1 in _root(planned)[0].statement.binds
     assert received == [
         frozenset({"model", "dialect", "query", "result_form", "preference"}),
     ]
@@ -732,9 +744,9 @@ def test_continuation_values_share_one_null_pattern_template_without_stale_binds
     after_one = _plan(cache, pages.after(ContinuationCoordinate((1,)), limit=3))
     after_two = _plan(cache, pages.after(ContinuationCoordinate((2,)), limit=3))
 
-    after_one_root, after_one_rows = after_one.root_read()
-    after_two_root, after_two_rows = after_two.root_read()
-    assert first.root_read()[1] is not after_one_rows
+    after_one_root, after_one_rows = _root(after_one)
+    after_two_root, after_two_rows = _root(after_two)
+    assert _root(first)[1] is not after_one_rows
     assert after_two_rows is after_one_rows
     assert after_two_root.statement.binds != after_one_root.statement.binds
     assert 1 in after_one_root.statement.binds
@@ -751,8 +763,8 @@ def test_first_page_limits_share_one_template_without_stale_binds() -> None:
     three = _plan(cache, pages.first(limit=3))
     five = _plan(cache, pages.first(limit=5))
 
-    three_root, _ = three.root_read()
-    five_root, _ = five.root_read()
+    three_root, _ = _root(three)
+    five_root, _ = _root(five)
     assert three_root.statement.binds != five_root.statement.binds
     assert 3 in three_root.statement.binds
     assert 5 in five_root.statement.binds
@@ -779,8 +791,8 @@ def test_a_continuation_replans_its_template_for_a_new_effective_lock_variant() 
     locking = _plan(cache, continued, preference="locking")
 
     assert standalone is not locking
-    assert 1 in standalone.root_read()[0].statement.binds
-    assert 1 in locking.root_read()[0].statement.binds
+    assert 1 in _root(standalone)[0].statement.binds
+    assert 1 in _root(locking)[0].statement.binds
     assert cache._statistics().misses == 2
 
 
@@ -886,10 +898,9 @@ def test_concurrent_cold_callers_plan_one_shared_value(
 
 
 def test_a_back_reference_has_no_executable_child_read() -> None:
-    plan = replace(_plan(ReadPlanCache(), _query()), _fetches=(None,))
+    plan = replace(_plan(ReadPlanCache(), _query()), _fetches=(None,), _fetch_rows=(None,))
 
-    with pytest.raises(ValueError, match="executable fetch step"):
-        plan.fetch_read(0, [])
+    assert plan.prepared_fetch(0) is None
 
 
 def test_mixed_cold_keys_and_editions_build_without_global_lock_contention(
@@ -1168,3 +1179,161 @@ def test_cached_query_literals_are_collectable_after_cache_closure_or_eviction(
 def test_capacity_requires_a_nonnegative_built_in_integer(capacity: object) -> None:
     with pytest.raises(ValueError, match="nonnegative built-in int"):
         ReadPlanCache(cast("int", capacity))
+
+
+_DORMANT_META = model_of(DORMANT_POSITION_COLUMNS)
+_DORMANT = CatalogedModel(_DORMANT_META)
+_TO_EMPTY_ANCESTRY: Final[Mapping[str, object]] = {
+    "target": "Prototype",
+    "predicate": {"true": {}},
+    "includes": [{"segments": [{"rel": "Prototype.workbenches"}, {"rel": "Workbench.prototype"}]}],
+}
+_WORKBENCHES: Final[Mapping[str, object]] = {
+    "target": "Workbench",
+    "predicate": {"true": {}},
+    "includes": [
+        {"segments": [{"rel": "Workbench.prototypes"}]},
+        {"segments": [{"rel": "Workbench.prototype"}]},
+        {"segments": [{"rel": "Workbench.gadgets"}]},
+    ],
+}
+
+
+def _dormant_query(
+    document: Mapping[str, object], meta: Metamodel = _DORMANT_META
+) -> ResolvedObjectQuery:
+    return preflight(deserialize(document), model=meta, form="graph")
+
+
+def _recording_preparation(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Record every statement compilation and converter binding the planner runs."""
+    prepared: list[str] = []
+    for name in ("compile_read", "compile_template", "bind"):
+        original = cast("Callable[..., Any]", vars(_read_plan)[name])
+
+        def recording(*args: Any, _name: str = name, _run: Any = original, **kwargs: Any) -> Any:
+            prepared.append(_name)
+            return _run(*args, **kwargs)
+
+        monkeypatch.setattr(_read_plan, name, recording)
+    return prepared
+
+
+def _gadget_member(name: str) -> AttributeIdentity:
+    return AttributeIdentity(EntityIdentity("parallax.compatibility", "Gadget"), name)
+
+
+def test_a_dormant_root_prepares_no_statement_converter_or_child_work(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepared = _recording_preparation(monkeypatch)
+
+    plan = _plan(ReadPlanCache(), _dormant_query(_TO_EMPTY_ANCESTRY), model=_DORMANT)
+
+    assert isinstance(plan.root_read(), EmptyRead)
+    # The back-reference beneath the empty level is empty work too, not the
+    # reachable-reference state that would attach from converted rows.
+    assert [plan.prepared_fetch(index) for index in range(plan.fetch_count)] == [
+        EMPTY_READ,
+        EMPTY_READ,
+    ]
+    assert isinstance(plan.fetch_step(1), deep_fetch.BackReferenceFetchStep)
+    assert plan._correlations == ((), (), ())
+    assert prepared == []
+
+
+def test_an_empty_include_target_prepares_no_child_work_or_routing_demand(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepared = _recording_preparation(monkeypatch)
+
+    plan = _plan(ReadPlanCache(), _dormant_query(_WORKBENCHES), model=_DORMANT)
+
+    root, _rows = _root(plan)
+    # The to-one's owner key stays an ordinary projected member, judged at
+    # publication; only its routing demand is gone.
+    assert "t0.prototype_id" in root.statement.sql
+    by_view = {
+        _view_name(plan, index): (plan.prepared_fetch(index), plan._correlations[index + 1])
+        for index in range(plan.fetch_count)
+    }
+    assert by_view.keys() == {"gadgets", "prototype", "prototypes"}
+    assert by_view["prototypes"] == (EMPTY_READ, ())
+    assert by_view["prototype"] == (EMPTY_READ, ())
+    live, live_correlations = by_view["gadgets"]
+    assert isinstance(live, tuple)
+    assert live_correlations == (_gadget_member("workbenchId"),)
+    workbench_id = AttributeIdentity(EntityIdentity("parallax.compatibility", "Workbench"), "id")
+    assert plan._correlations[0] == (workbench_id,)
+    assert sorted(prepared) == ["bind", "bind", "compile_read", "compile_template"]
+
+
+def _view_name(plan: _read_plan.ReadPlan, index: int) -> str:
+    view = plan.include_tree().position(plan.fetch_step(index).position).view
+    assert view is not None
+    return view.relationship.name
+
+
+def test_a_dormant_page_carries_no_paging_marker_positions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def refuse(_query: object) -> object:
+        raise AssertionError("an empty root created paging markers")
+
+    monkeypatch.setattr(_read_plan, "_template_query", refuse)
+    cache = ReadPlanCache()
+    pages = continuation.plan(_dormant_query(_TO_EMPTY_ANCESTRY), _DORMANT_META)
+
+    first = _plan(cache, pages.first(limit=3), model=_DORMANT)
+    after = _plan(cache, pages.after(ContinuationCoordinate((1,)), limit=3), model=_DORMANT)
+
+    assert isinstance(first.root_read(), EmptyRead)
+    assert isinstance(after.root_read(), EmptyRead)
+    assert after is not first
+    assert after._fetches is first._fetches
+    assert after._fetch_rows is first._fetch_rows
+    assert after._correlations is first._correlations
+    assert after._schema is first._schema
+    assert [
+        (entry.coordinate_positions, entry.limit_positions) for entry in cache._entries.values()
+    ] == [((), ()), ((), ())]
+    assert _plan(cache, pages.first(limit=5), model=_DORMANT) is first
+
+
+def test_cached_and_uncached_dormant_plans_agree() -> None:
+    query = _dormant_query(_WORKBENCHES)
+
+    cached = _plan(ReadPlanCache(), query, model=_DORMANT)
+    uncached = _plan(ReadPlanCache(0), query, model=_DORMANT)
+
+    assert uncached is not cached
+    assert _root(uncached)[0].statement == _root(cached)[0].statement
+    assert [uncached.fetch_step(index) for index in range(uncached.fetch_count)] == [
+        cached.fetch_step(index) for index in range(cached.fetch_count)
+    ]
+    assert uncached._correlations == cached._correlations
+    assert [type(uncached.prepared_fetch(index)) for index in range(uncached.fetch_count)] == [
+        type(cached.prepared_fetch(index)) for index in range(cached.fetch_count)
+    ]
+
+
+def test_a_model_composing_a_concrete_under_the_position_plans_it_apart() -> None:
+    dormant = records("dormant-position-layout-twin-columns")
+    mockup = DescriptorEntity(
+        name="Mockup",
+        namespace="parallax.compatibility",
+        inheritance=Inheritance(
+            role="concrete-subtype", parent="parallax.compatibility.Prototype", tag_value="mockup"
+        ),
+    )
+    later_meta = formed(replace(dormant, entities=(*dormant.entities, mockup)))
+    later = CatalogedModel(later_meta)
+    document: Mapping[str, object] = {"target": "Prototype", "predicate": {"true": {}}}
+    cache = ReadPlanCache()
+
+    earlier_plan = _plan(cache, _dormant_query(document), model=_DORMANT)
+    later_plan = _plan(cache, _dormant_query(document, later_meta), model=later)
+
+    assert isinstance(earlier_plan.root_read(), EmptyRead)
+    assert "where t0.kind = ?" in _root(later_plan)[0].statement.sql
+    assert cache._statistics().size == 2

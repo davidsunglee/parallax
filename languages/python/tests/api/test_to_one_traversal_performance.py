@@ -58,7 +58,7 @@ from parallax.core.dialect import POSTGRES
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import TablePerConcreteSubtype
-from parallax.core.read_delivery._read_plan import UNCACHED_READ_PLANNER
+from parallax.core.read_delivery._read_plan import UNCACHED_READ_PLANNER, EmptyRead
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.unit_work import PredicateSelection, PredicateWrite, WriteAssignment
 from parallax.snapshot import ScopedDatabase, connect
@@ -1085,7 +1085,9 @@ def compile_statement(workload: Workload) -> LoweredStatement:
             result_form="instance",
             preference=None,
         )
-        return plan.root_read()[0].statement
+        root = plan.root_read()
+        assert not isinstance(root, EmptyRead)
+        return root[0].statement
     write = PredicateWrite(
         "amend" if workload.kind == "update" else "delete",
         PredicateSelection(Item.identity.canonical, predicate_node(query, MODEL)),

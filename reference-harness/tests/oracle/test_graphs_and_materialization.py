@@ -1091,3 +1091,38 @@ def test_per_variant_narrowing_refuses_rows_that_skipped_the_seam(
 
     with pytest.raises(CaseFailure, match="per-variant column narrowing projects a row"):
         assert_case_read(case, reads)
+
+
+_DORMANT_TPH_INCLUDE = "m-inheritance-160-dormant-tph-include-layout-twin-columns.yaml"
+_WORKBENCHES: list[dict[str, Any]] = [
+    {"id": 1, "name": "Bench", "prototype_id": 7, "concept_id": 8},
+    {"id": 2, "name": "Shed", "prototype_id": 9, "concept_id": None},
+]
+_GADGETS: list[dict[str, Any]] = [
+    {"id": 1, "kind": "widget", "label": "Cog", "workbench_id": 1, "spin": 3},
+    {"id": 2, "kind": "widget", "label": "Gear", "workbench_id": 1, "spin": None},
+]
+
+
+def test_a_hop_to_a_position_with_no_concrete_issues_no_child_statement(
+    corpus_case: CaseLoader,
+) -> None:
+    # Both workbenches gather a non-null key for the to-one and to-many hops to
+    # the empty position, and the hop continued past the empty one has no parent
+    # at all; only the live sibling hop reads.
+    reads = ScriptedReads(results=[_WORKBENCHES, _GADGETS, _WORKBENCHES])
+
+    assert_case_read(corpus_case(_DORMANT_TPH_INCLUDE), reads)
+
+    assert len(reads.calls) == 3
+    assert reads.calls[1][1] == ([1, 2],)
+
+
+def test_a_child_statement_for_a_position_with_no_concrete_is_refused(
+    damaged_case: CaseLoader,
+) -> None:
+    case = damaged_case(_DORMANT_TPH_INCLUDE)
+    case.then["statements"].append(copy.deepcopy(case.then["statements"][1]))
+
+    with pytest.raises(CaseFailure, match="1 unused deep-fetch child statement"):
+        assert_case_read(case, ScriptedReads(results=[_WORKBENCHES, _GADGETS, _WORKBENCHES]))

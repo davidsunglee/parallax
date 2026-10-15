@@ -1,0 +1,23 @@
+model: models/dormant-position-layout-twin-document.yaml
+tags: [m-inheritance, m-sql, m-deep-fetch, m-read-delivery, m-snapshot-read, table-per-concrete-subtype, dormant-position, stream, streamed-delivery, deep-fetch, back-reference, graph, layout-twin, document-layout, slice-snapshot-1]
+shape: read
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "a streamed read's keyset seek - every case carrying a stream member is run-only, including this one, whose position has no concrete subtype and so issues no page statement"
+when:
+  objectQuery:
+    target: parallax.compatibility.Concept
+    predicate:
+      "true": {}
+    includes:
+      - segments:
+          - rel: parallax.compatibility.Concept.workbenches
+          - rel: parallax.compatibility.Workbench.concept
+  stream:
+    batchSize: 2
+then:
+  statements: []
+  graph:
+    Concept: []
+  roundTrips: 0

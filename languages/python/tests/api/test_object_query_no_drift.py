@@ -22,6 +22,14 @@ from parallax.conformance.class_models import MODELS as CLASS_MODELS
 from parallax.conformance.composed_beast_document_models import Beast as DocumentBeast
 from parallax.conformance.composed_beast_document_models import Wolf as DocumentWolf
 from parallax.conformance.composed_beast_models import Beast, Keeper, Wolf
+from parallax.conformance.dormant_position_document_models import Concept as DocumentConcept
+from parallax.conformance.dormant_position_document_models import (
+    Prototype as DocumentPrototype,
+)
+from parallax.conformance.dormant_position_document_models import (
+    Workbench as DocumentWorkbench,
+)
+from parallax.conformance.dormant_position_models import Concept, Prototype, Workbench
 from parallax.conformance.edit_models import Note
 from parallax.conformance.graph_models import Policy
 from parallax.conformance.models import load_domain_models
@@ -193,6 +201,43 @@ BUILDERS: dict[str, Callable[[], ObjectQuery[Any, Any]]] = {
         )
         .order_by(DocumentBeast.id.asc())
         .include(DocumentBeast.followers)
+    ),
+    # Positions with no composed concrete subtype, read at the root and included.
+    "m-inheritance-154": lambda: Prototype.where(Prototype.all).include(
+        Prototype.workbenches.prototype
+    ),
+    "m-inheritance-155": lambda: DocumentPrototype.where(DocumentPrototype.all).include(
+        DocumentPrototype.workbenches.prototype
+    ),
+    "m-inheritance-156": lambda: Concept.where(Concept.all),
+    "m-inheritance-157": lambda: DocumentConcept.where(DocumentConcept.all),
+    "m-inheritance-158": lambda: Concept.where(Concept.all).include(Concept.workbenches.concept),
+    "m-inheritance-159": lambda: DocumentConcept.where(DocumentConcept.all).include(
+        DocumentConcept.workbenches.concept
+    ),
+    "m-inheritance-160": lambda: (
+        Workbench.where(Workbench.all)
+        .order_by(Workbench.id.asc())
+        .include(Workbench.prototype, Workbench.prototypes.workbenches, Workbench.gadgets)
+    ),
+    "m-inheritance-161": lambda: (
+        DocumentWorkbench.where(DocumentWorkbench.all)
+        .order_by(DocumentWorkbench.id.asc())
+        .include(
+            DocumentWorkbench.prototype,
+            DocumentWorkbench.prototypes.workbenches,
+            DocumentWorkbench.gadgets,
+        )
+    ),
+    "m-inheritance-162": lambda: (
+        Workbench.where(Workbench.all)
+        .order_by(Workbench.id.asc())
+        .include(Workbench.concept, Workbench.concepts, Workbench.gadgets)
+    ),
+    "m-inheritance-163": lambda: (
+        DocumentWorkbench.where(DocumentWorkbench.all)
+        .order_by(DocumentWorkbench.id.asc())
+        .include(DocumentWorkbench.concept, DocumentWorkbench.concepts, DocumentWorkbench.gadgets)
     ),
     # Read-produced edit sources: the same public query `test_edit_run.py`
     # executes before targeting either the Entity or its `tag` occurrence.

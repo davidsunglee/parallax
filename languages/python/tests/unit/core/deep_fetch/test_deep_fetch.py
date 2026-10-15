@@ -81,6 +81,7 @@ ANIMAL = accepted_model("animal")
 POLICY = accepted_model("policy")
 RATE = accepted_model("rate")
 BEAST = accepted_model("composed-beast-reader")
+DORMANT = accepted_model("dormant-position-layout-twin-columns")
 
 
 def _rate(name: str) -> AttributeMetadata:
@@ -1330,3 +1331,23 @@ def test_concrete_target_root_query_injects_a_pinned_axis() -> None:
             managed_comparison(op="greaterThan", member=_rate("txEnd"), value=pin),
         )
     )
+
+
+@pytest.mark.parametrize(
+    ("relationships", "expected_family"),
+    [
+        (("Prototype.workbenches", "Workbench.prototype"), "Gadget"),
+        (("Concept.workbenches", "Workbench.concept"), "Craft"),
+    ],
+)
+def test_a_back_reference_to_an_empty_position_names_its_declared_targets_family(
+    relationships: tuple[str, str], expected_family: str
+) -> None:
+    # The revisited position has no concrete witness to read a family from.
+    target = relationships[0].partition(".")[0]
+    plan = _plan(DORMANT, target, (_path(*(_seg(name) for name in relationships)),))
+    back_reference = _back_reference_step(plan, 1)
+
+    assert back_reference.family == EntityIdentity("parallax.compatibility", expected_family)
+    assert _position(plan, back_reference).target == ()
+    assert _position(plan, plan.fetch_steps[0]).source == ()

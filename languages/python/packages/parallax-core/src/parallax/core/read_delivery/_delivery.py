@@ -6,15 +6,14 @@ from parallax.core.entity._layout import CatalogedModel
 from parallax.core.execution_lifecycle._activity import INERT, DatabaseCallScope
 from parallax.core.metamodel import EntityMetadata, Metamodel
 from parallax.core.object_query._resolved import ResolvedObjectQuery
-from parallax.core.read_delivery._fetch import execute_read
 from parallax.core.read_delivery._page import INERT_OBSERVER, MaterializationObserver
 from parallax.core.read_delivery._page_reader import (
     EagerPageRequest,
     EagerPageResult,
-    FlatPageRequest,
     HistoryPageResult,
     PageOrigins,
     PageReader,
+    PlannedFlatPageRequest,
 )
 from parallax.core.read_delivery._publication import Publication
 from parallax.core.read_delivery._read_plan import UNCACHED_READ_PLANNER, ReadPlanner
@@ -104,13 +103,7 @@ def find_history(
     if plan.fetch_count:  # pragma: no cover - validated milestone queries cannot include
         # m-case-format: a v1 milestone-set read carries no includes.
         raise ValueError("a milestone-set (history / asOfRange) read carries no fetch steps")
-    compiled, converter = plan.root_read()
-
-    stage = PageReader(observer).read_page(
-        FlatPageRequest(
-            model, compiled, lambda: execute_read(port, compiled, read), Pin(), converter
-        )
-    )
+    stage = PageReader(observer).read_page(PlannedFlatPageRequest(model, plan, port, read, Pin()))
     return HistoryPageResult(
         page=stage.page, milestones=temporal_shape(meta, query.root), includes=plan.include_tree()
     )

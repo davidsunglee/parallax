@@ -735,6 +735,55 @@ def _query_position(query: dict[str, Any], family: Family | None) -> _Position |
     return tuple(family.canonical_concrete_order(narrowed))
 
 
+def _structurally_empty_read_problems(case: dict[str, Any], family: Family | None) -> list[str]:
+    """Whether a read's empty statement list and its result position agree.
+
+    A position with no concrete subtype issues no statement and returns nothing
+    (`m-case-format` *Structurally empty reads*), while every other position
+    issues its statement even when no stored row matches. The schema admits the
+    empty list on any read; only the model says which position is empty.
+    """
+    when, then = case.get("when"), case.get("then")
+    query = when.get("objectQuery") if isinstance(when, dict) else None
+    if case.get("shape") != "read" or not isinstance(query, dict) or not isinstance(then, dict):
+        return []
+    position = _query_position(query, family)
+    statements = then.get("statements")
+    if position is None or not isinstance(statements, list):
+        return []
+    target = query.get("target")
+    if position and not statements:
+        return [
+            f"then.statements is empty, but {target!r} resolves to the concrete "
+            f"subtype(s) {list(position)}; a read of a position with a concrete subtype "
+            f"issues its statement even when no stored row matches"
+        ]
+    if position:
+        return []
+    if statements:
+        return [
+            f"{target!r} resolves to no concrete subtype, so the read issues no statement "
+            f"and then.statements must be empty"
+        ]
+    graph = then.get("graph")
+    nonempty = [
+        member
+        for member, observed in (
+            ("rows", then.get("rows", [])),
+            ("graphs", then.get("graphs", [])),
+            *(
+                (f"graph.{name}", roots)
+                for name, roots in (graph.items() if isinstance(graph, dict) else ())
+            ),
+        )
+        if observed != []
+    ]
+    return [
+        f"{target!r} resolves to no concrete subtype, so {member} must observe no root"
+        for member in nonempty
+    ]
+
+
 def _navigated_position(source: _Position, path: str, family: Family | None) -> _Position | None:
     """Where a `load` / `access` of *path* from *source* lands, or ``None``.
 
@@ -1243,6 +1292,10 @@ def _validate_case(
         _validate_coherence_queries(when["coherence"], scope, errors)
     if isinstance(case, dict):
         _validate_case_model_references(compatibility_root, case, scope, errors)
+        errors.extend(
+            f"{scope.label}: {problem}"
+            for problem in _structurally_empty_read_problems(case, scope.family)
+        )
 
 
 def _validate_coherence_queries(coherence: list[Any], scope: _CaseScope, errors: list[str]) -> None:

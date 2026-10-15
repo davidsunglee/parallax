@@ -392,6 +392,9 @@ short of what it asked for proves exhaustion; one that came back full proves
 another page follows. Exhaustion therefore costs no terminal statement of its own,
 not even where the result fills its final page exactly: the root-statement count is
 `1` where no root is delivered and `ceil(N / B)` for `N` roots at page size `B`.
+A delivery whose root position has no concrete subtype is the one exception: its
+first page proves exhaustion without a statement (`m-sql` *Inheritance — a
+position with no concrete subtype*), so it costs none.
 
 The lookahead root is **not** delivered by the page that read it. It is not
 deep-fetched, converted, classified, or published there, and it is never paired
@@ -669,17 +672,26 @@ A **participating** delivery — one inside a transaction — acquires nothing a
 all: it runs on the attempt's connection, and it is one more thing running on
 that connection rather than a second borrower of it.
 
+A read or page that issues no statement because its position has no concrete
+subtype keeps every one of these obligations. A standalone one still takes and
+returns its lease, and fails if acquisition does; a participating one still
+forces out the writes its unit of work buffered before it reads. Issuing no
+statement is not connection-free execution.
+
 ## Round trips
 
 Delivery is `m-deep-fetch`'s contract observed through the Page: **at most
 `1 + L` statements** for `L` distinct relationship hops, one statement per
-non-empty level, empty parent-key levels issuing no child SQL. Constructing the
+non-empty level, empty parent-key levels and levels at a position with no
+concrete subtype issuing no child SQL. A read whose root position has no concrete
+subtype issues none at all and delivers a Page with no roots. Constructing the
 query is side-effect-free; the single explicit execution is the only moment the
 database is touched.
 
 When an Execution Lifecycle Provider accepts the Root Execution, the read
 publishes one transient Read activity containing its Database Call children
-(`m-execution-lifecycle`). The delivered result retains no trace or lifecycle
+(`m-execution-lifecycle`). A statement a read does not issue is no Database Call,
+and nothing stands in for one. The delivered result retains no trace or lifecycle
 record. The portable `then.roundTrips` oracle and authored statements continue
 to pin the `1 + L` ceiling independently of whether observation is installed.
 

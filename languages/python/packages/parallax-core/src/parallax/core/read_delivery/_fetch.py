@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from typing import cast
 
 from parallax.core import deep_fetch, inheritance, opt_lock, read_lock
@@ -54,11 +54,19 @@ def entity_read_lock(
 
 
 def correlation_table(
-    plan: deep_fetch.ObjectQueryPlan, meta: Metamodel
+    plan: deep_fetch.ObjectQueryPlan, meta: Metamodel, demanded: Iterable[int]
 ) -> tuple[tuple[AttributeIdentity, ...], ...]:
-    """Correlation members decoded during the identity pass for each source level."""
+    """Correlation members decoded during the identity pass for each source level.
+
+    Only the ``demanded`` fetch steps — those that execute or attach by
+    reference — route parents or children by a correlation member. A step with
+    no occurrences to fetch demands neither endpoint, though another demanded
+    step may still demand the same member. The table stays dense over every
+    source level.
+    """
     table: list[list[AttributeIdentity]] = [[] for _ in range(len(plan.fetch_steps) + 1)]
-    for index, step in enumerate(plan.fetch_steps):
+    for index in demanded:
+        step = plan.fetch_steps[index]
         parent_source = (
             ROOT_LEVEL if isinstance(step.parent, deep_fetch.RootRef) else step.parent.index + 1
         )
@@ -131,14 +139,15 @@ def attach_children(
 def attach_empty(
     builder: PageBuilder,
     tree: deep_fetch.IncludeTree,
-    step: deep_fetch.QueryFetchStep,
+    step: deep_fetch.FetchStep,
     parents: tuple[int, ...],
 ) -> None:
     """Attach the empty/null relationship result to every admitted parent.
 
-    m-deep-fetch: an empty gathered parent-key set issues no child query at all,
-    and every parent still gets a LOADED view — empty or null — rather than an
-    unset one.
+    m-deep-fetch: a level that can fetch no child — its target position is
+    empty, or its admitted parents gathered no key — issues no child query at
+    all, and every admitted parent still gets a LOADED view — empty or null —
+    rather than an unset one.
     """
     position = tree.position(step.position)
     assert position.view is not None

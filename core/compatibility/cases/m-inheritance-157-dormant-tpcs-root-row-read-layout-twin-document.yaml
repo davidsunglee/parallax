@@ -1,0 +1,12 @@
+model: models/dormant-position-layout-twin-document.yaml
+tags: [m-inheritance, m-sql, m-read-delivery, table-per-concrete-subtype, dormant-position, read, row-form, layout-twin, document-layout, slice-snapshot-1]
+shape: read
+when:
+  objectQuery:
+    target: parallax.compatibility.Concept
+    predicate:
+      "true": {}
+then:
+  statements: []
+  rows: []
+  roundTrips: 0

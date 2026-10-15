@@ -18,7 +18,7 @@ from parallax.core.object_query import (
 from parallax.core.object_query._nodes import TemporalDimension
 from parallax.core.object_query._resolved import ResolvedObjectQuery
 from parallax.core.predicate import PredicateNode, validate_predicate
-from parallax.core.read_delivery._read_plan import UNCACHED_READ_PLANNER
+from parallax.core.read_delivery._read_plan import UNCACHED_READ_PLANNER, EmptyRead
 from parallax.core.sql_gen._compile import CompiledPredicate, CompiledRead
 from parallax.core.sql_gen._compile import compile_read as compile_entity_query
 from parallax.core.sql_gen._compile import (
@@ -42,7 +42,7 @@ def compile_read(
 ) -> CompiledRead:
     """Compile ``predicate`` as the predicate of ``target``'s Entity Query,
     planned as production plans every read."""
-    compiled, _rows = UNCACHED_READ_PLANNER.plan(
+    root = UNCACHED_READ_PLANNER.plan(
         edition="test",
         model=CatalogedModel(model),
         dialect=dialect,
@@ -58,7 +58,8 @@ def compile_read(
         result_form=result_form,
         preference=preference,
     ).root_read()
-    return compiled
+    assert not isinstance(root, EmptyRead)
+    return root[0]
 
 
 def compile_projected_read(

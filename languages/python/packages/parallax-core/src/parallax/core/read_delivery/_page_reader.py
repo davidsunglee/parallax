@@ -39,7 +39,7 @@ from parallax.core.read_delivery._page import (
     ViewSchema,
 )
 from parallax.core.read_delivery._paging import At, PagingPlan, TieFound, page_decision
-from parallax.core.read_delivery._read_plan import ReadPlan, ReadPlanner
+from parallax.core.read_delivery._read_plan import EmptyRead, ReadPlan, ReadPlanner
 from parallax.core.read_delivery._row_converter import ReadRowConverter, bind
 from parallax.core.sql_gen import SqlGenError
 from parallax.core.sql_gen._compile import CompiledRead
@@ -55,6 +55,7 @@ __all__ = [
     "PageOrigins",
     "PageProjectionObserver",
     "PageReader",
+    "PlannedFlatPageRequest",
     "StreamPageRequest",
     "StreamPageResult",
     "convert_rows",
@@ -134,6 +135,18 @@ class FlatPageRequest:
     read: Callable[[], Sequence[Row]]
     pin: Pin
     converter: ReadRowConverter | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class PlannedFlatPageRequest:
+    """Inputs for one planned root-only read, whose root may be structurally
+    empty."""
+
+    model: CatalogedModel
+    plan: ReadPlan
+    port: DatabaseConnection
+    calls: DatabaseCallScope
+    pin: Pin
 
 
 @dataclass(frozen=True, slots=True)
@@ -288,71 +301,123 @@ class PageReader:
     def read_page[Origin](self, request: EagerPageRequest[Origin]) -> EagerPageResult[Origin]: ...
 
     @overload
-    def read_page(self, request: FlatPageRequest) -> FlatPageResult: ...
+    def read_page(self, request: FlatPageRequest | PlannedFlatPageRequest) -> FlatPageResult: ...
 
     @overload
     def read_page[Origin](self, request: StreamPageRequest[Origin]) -> StreamPageResult[Origin]: ...
 
     def read_page(
         self,
-        request: EagerPageRequest[Any] | FlatPageRequest | StreamPageRequest[Any],
+        request: EagerPageRequest[Any]
+        | FlatPageRequest
+        | PlannedFlatPageRequest
+        | StreamPageRequest[Any],
     ) -> EagerPageResult[Any] | FlatPageResult | StreamPageResult[Any]:
         """Plan, execute, and assemble one Page from typed inputs."""
         if isinstance(request, EagerPageRequest):
-            roots = self._read_root(
+            plan = self._plan(
                 request.query,
                 request.model,
                 request.port,
                 preference=request.preference,
-                calls=request.calls,
                 edition=request.edition,
                 planner=request.planner,
             )
+            root = plan.root_read()
+            if isinstance(root, EmptyRead):
+                return self._empty_page(plan, request.query, request.origins)
+            roots = self._read_root(plan, root, request.query, request.port, request.calls)
             return self._build_page(
                 roots, request.model, request.port, origins=request.origins, calls=request.calls
             )
-        if isinstance(request, FlatPageRequest):
-            self.observer.prepared(1)
-            self.observer.statement_rendered(ROOT_LEVEL)
-            rows = request.read()
-            self.observer.statement_executed(ROOT_LEVEL, len(rows))
-            converter = request.converter or bind(request.model, request.compiled)
-            builder = PageBuilder(ViewSchema.of(), _page_observer(self.observer))
-            converted = tuple(
-                converter.convert_row(row, builder, source=ROOT_LEVEL) for row in rows
+        if isinstance(request, PlannedFlatPageRequest):
+            root = request.plan.root_read()
+            if isinstance(root, EmptyRead):
+                self.observer.prepared(1)
+                builder = PageBuilder(ViewSchema.of(), _page_observer(self.observer))
+                return FlatPageResult((), (), builder.finish((), request.pin))
+            compiled, converter = root
+            port, calls = request.port, request.calls
+            return self._read_flat(
+                request.model,
+                compiled,
+                lambda: execute_read(port, compiled, calls),
+                request.pin,
+                converter,
             )
-            return FlatPageResult(
-                tuple(item[3] for item in converted),
-                tuple(item[2] for item in converted),
-                builder.finish(tuple(item[0] for item in converted), request.pin),
+        if isinstance(request, FlatPageRequest):
+            return self._read_flat(
+                request.model, request.compiled, request.read, request.pin, request.converter
             )
 
         return self._read_stream_page(request)
 
-    def _read_root(
+    def _read_flat(
+        self,
+        model: CatalogedModel,
+        compiled: CompiledRead,
+        read: Callable[[], Sequence[Row]],
+        pin: Pin,
+        converter: ReadRowConverter | None,
+    ) -> FlatPageResult:
+        """Execute one statement and convert its rows into a root-only Page."""
+        self.observer.prepared(1)
+        self.observer.statement_rendered(ROOT_LEVEL)
+        rows = read()
+        self.observer.statement_executed(ROOT_LEVEL, len(rows))
+        converter = converter or bind(model, compiled)
+        builder = PageBuilder(ViewSchema.of(), _page_observer(self.observer))
+        converted = tuple(converter.convert_row(row, builder, source=ROOT_LEVEL) for row in rows)
+        return FlatPageResult(
+            tuple(item[3] for item in converted),
+            tuple(item[2] for item in converted),
+            builder.finish(tuple(item[0] for item in converted), pin),
+        )
+
+    def _plan(
         self,
         query: ResolvedObjectQuery,
         model: CatalogedModel,
         port: DatabaseConnection,
         *,
-        preference: Concurrency | None = None,
-        calls: DatabaseCallScope,
-        edition: str = "",
+        preference: Concurrency | None,
+        edition: str,
         planner: ReadPlanner,
-        plan: ReadPlan | None = None,
-    ) -> _RootRead:
-        """Plan and execute the root statement for one Page."""
-        if plan is None:
-            plan = planner.plan(
-                edition=edition,
-                model=model,
-                dialect=port.dialect,
-                query=query,
-                result_form="instance",
-                preference=preference,
-            )
-        compiled_read, converter = plan.root_read()
+    ) -> ReadPlan:
+        """Plan one instance-form Page, announcing every level it prepared."""
+        plan = planner.plan(
+            edition=edition,
+            model=model,
+            dialect=port.dialect,
+            query=query,
+            result_form="instance",
+            preference=preference,
+        )
         self.observer.prepared(plan.fetch_count + 1)
+        return plan
+
+    def _empty_page[Origin](
+        self, plan: ReadPlan, query: ResolvedObjectQuery, origins: PageOrigins[Origin]
+    ) -> EagerPageResult[Origin]:
+        """Seal the zero-root Page of a structurally empty root, without
+        executing or converting anything."""
+        page = plan.page_builder(_page_observer(self.observer)).finish(
+            (), resolved_query_pin(query.temporal)
+        )
+        return EagerPageResult(
+            page=page, includes=plan.include_tree(), sources=origins.origins_for(page)
+        )
+
+    def _read_root(
+        self,
+        plan: ReadPlan,
+        root: tuple[CompiledRead, ReadRowConverter],
+        query: ResolvedObjectQuery,
+        port: DatabaseConnection,
+        calls: DatabaseCallScope,
+    ) -> _RootRead:
+        """Execute the root statement for one Page."""
+        compiled_read, converter = root
         self.observer.statement_rendered(ROOT_LEVEL)
         driver_rows = execute_read(port, compiled_read, calls)
         self.observer.statement_executed(ROOT_LEVEL, len(driver_rows))
@@ -405,10 +470,18 @@ class PageReader:
                     step,
                     parent_refs(step.parent, root_refs, fetch_refs),
                 )
-                if isinstance(step, deep_fetch.BackReferenceFetchStep):
-                    attach_back_reference(builder, meta, includes, step, parents)
-                    completed.add(index)
+                completed.add(index)
+                if not parents:
                     continue
+                prepared = plan.prepared_fetch(index)
+                if isinstance(prepared, EmptyRead):
+                    attach_empty(builder, includes, step, parents)
+                    continue
+                if prepared is None:
+                    assert isinstance(step, deep_fetch.BackReferenceFetchStep)
+                    attach_back_reference(builder, meta, includes, step, parents)
+                    continue
+                assert isinstance(step, deep_fetch.QueryFetchStep)
                 keys = gather_keys(
                     builder,
                     parents,
@@ -416,11 +489,12 @@ class PageReader:
                 )
                 if not keys:
                     attach_empty(builder, includes, step, parents)
-                    completed.add(index)
                     continue
-                compiled, converter = plan.fetch_read(index, keys)
+                template, converter = prepared
                 root_read.observer.statement_rendered(index + 1)
-                pending.append(_PendingFetch(index, step, parents, compiled, converter))
+                pending.append(
+                    _PendingFetch(index, step, parents, template.render(keys), converter)
+                )
 
             if len(pending) == 1:
                 batches = [execute_read(port, pending[0].compiled, calls)]
@@ -431,7 +505,6 @@ class PageReader:
                 child_refs = convert_rows(builder, fetch.index + 1, fetch.converter, rows, origins)
                 attach_children(builder, meta, includes, fetch.step, fetch.parents, child_refs)
                 fetch_refs[fetch.index] = child_refs
-                completed.add(fetch.index)
 
         page = builder.finish(root_refs, resolved_query_pin(root_read.temporal))
         return EagerPageResult(page=page, includes=includes, sources=origins.origins_for(page))
@@ -447,15 +520,27 @@ class PageReader:
             if request.at.coordinate is None
             else paging.plan.after(request.at.coordinate, limit=parameters.size)
         )
-        root_read = self._read_root(
+        plan = self._plan(
             query,
             request.model,
             request.port,
             preference=request.preference,
-            calls=request.calls,
             edition=request.edition,
             planner=request.planner,
         )
+        root = plan.root_read()
+        if isinstance(root, EmptyRead):
+            empty = self._empty_page(plan, query, request.origins)
+            return StreamPageResult(
+                page=empty.page,
+                includes=empty.includes,
+                sources=empty.sources,
+                delivered=0,
+                resume_from=None,
+                exhausted=True,
+                tie=None,
+            )
+        root_read = self._read_root(plan, root, query, request.port, request.calls)
         coordinates = self._coordinates(root_read)
         terms = tuple(term.member.identity for term in query.order_by)
         verdict = page_decision(parameters, terms, coordinates)

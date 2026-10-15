@@ -797,6 +797,19 @@ def _provisioned_read_case() -> dict[str, Any]:
     return doc
 
 
+def _statementless_read_case() -> dict[str, Any]:
+    doc = _read_case()
+    doc["then"] = {"statements": [], "rows": [], "roundTrips": 0}
+    return doc
+
+
+def _streamed_statementless_read_case() -> dict[str, Any]:
+    doc = _read_case()
+    doc["when"]["stream"] = {"batchSize": 2}
+    doc["then"] = {"statements": [], "graph": {"Order": []}, "roundTrips": 0}
+    return doc
+
+
 def _streamed_milestone_graphs_case() -> dict[str, Any]:
     """A streamed milestone-set read: `when.stream` beside `then.graphs`.
 
@@ -839,6 +852,8 @@ VALID_CASES = {
     "read-streamed-graphs": _streamed_milestone_graphs_case,
     "read-stored-data-issues": _stored_data_issues_read_case,
     "read-provisioned-through-another-model": _provisioned_read_case,
+    "read-issuing-no-statement": _statementless_read_case,
+    "read-streaming-no-statement": _streamed_statementless_read_case,
     "rejected-query": _rejected_query_case,
     "rejected-declaring-its-zero-cost": _rejected_case_declaring_zero_round_trips,
     "rejected-write": _rejected_write_case,
@@ -1553,6 +1568,49 @@ def _provisioning_model_outside_the_model_directory() -> dict[str, Any]:
     return doc
 
 
+def _statementless_read_without_round_trips() -> dict[str, Any]:
+    doc = _statementless_read_case()
+    del doc["then"]["roundTrips"]
+    return doc
+
+
+def _statementless_read_costing_a_round_trip() -> dict[str, Any]:
+    doc = _statementless_read_case()
+    doc["then"]["roundTrips"] = 1
+    return doc
+
+
+def _statementless_read_with_reference_sql() -> dict[str, Any]:
+    doc = _statementless_read_case()
+    doc["then"]["referenceSql"] = "select id from orders"
+    return doc
+
+
+def _statementless_read_with_stored_data_issues() -> dict[str, Any]:
+    doc = _statementless_read_case()
+    doc["then"]["storedDataIssues"] = [
+        {
+            "ordinal": 0,
+            "hydrated": False,
+            "issues": [{"code": "stored-data-family-tag-unknown", "entity": "Order"}],
+        }
+    ]
+    return doc
+
+
+def _statementless_write_sequence() -> dict[str, Any]:
+    doc = _write_sequence_case()
+    doc["then"]["statements"] = []
+    doc["then"]["roundTrips"] = 0
+    return doc
+
+
+def _read_costing_nothing_beside_a_statement() -> dict[str, Any]:
+    doc = _read_case()
+    doc["then"]["roundTrips"] = 0
+    return doc
+
+
 def _fault_on_a_read() -> dict[str, Any]:
     # A fault is injected at the database-port seam by the API Conformance
     # Suite, which executes no shape but `boundary`: a read declaring one names
@@ -1829,6 +1887,12 @@ REJECTED_CASES = {
     "provisioning-model-outside-the-model-directory": (
         _provisioning_model_outside_the_model_directory
     ),
+    "statementless-read-without-round-trips": _statementless_read_without_round_trips,
+    "statementless-read-costing-a-round-trip": _statementless_read_costing_a_round_trip,
+    "statementless-read-with-reference-sql": _statementless_read_with_reference_sql,
+    "statementless-read-with-stored-data-issues": _statementless_read_with_stored_data_issues,
+    "statementless-write-sequence": _statementless_write_sequence,
+    "read-costing-nothing-beside-a-statement": _read_costing_nothing_beside_a_statement,
     "fault-on-a-read": _fault_on_a_read,
     "isolation-setup-failure-on-a-read": _isolation_setup_failure_on_a_read,
     "session-default-on-a-read": _session_default_on_a_read,
