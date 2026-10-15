@@ -20,11 +20,13 @@ from parallax.core.wire import (
     decode_canonical_wire,
     encode_wire,
 )
+from parallax.core.wire._codec import encode_managed_wire
 
 __all__ = [
     "LeafEncodingError",
     "decode_leaf",
     "encode_leaf",
+    "encode_managed_scalar_many",
     "encode_scalar_many",
     "is_text_compared",
 ]
@@ -98,6 +100,19 @@ def encode_scalar_many(element_type: NeutralType, values: Iterable[object]) -> t
         except WireEncodingError as exc:
             raise LeafEncodingError(f"element {index}: {exc}") from exc
     return tuple(encoded)
+
+
+def encode_managed_scalar_many(
+    element_type: NeutralType, values: Iterable[ManagedValue]
+) -> tuple[object, ...]:
+    """:func:`encode_scalar_many`'s array for elements already admitted.
+
+    Every element must already be admitted under exactly ``element_type``: a
+    final write preparation or a stored-value judgement established it. Nothing
+    here checks membership, so an element outside that space has no defined
+    result rather than an indexed refusal.
+    """
+    return tuple(encode_managed_wire(element_type, value) for value in values)
 
 
 def decode_leaf(neutral_type: NeutralType, value: object) -> object:

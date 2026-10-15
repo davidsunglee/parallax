@@ -517,6 +517,16 @@ def test_a_collections_own_column_stores_its_encoded_array_and_empty_when_unname
     assert cells[_TAGS] == ()
 
 
+def test_a_complete_row_stores_a_null_collection_as_the_empty_array() -> None:
+    payload = LayoutPayloadPreparer(_COLLECTIONS).row(
+        _ITEM, _collection_row(tags=None, amounts=(Decimal(7), Decimal("1.5"), Decimal(7)))
+    )
+
+    cells = dict(zip(payload.contributors, payload.values, strict=True))
+    assert cells[_TAGS] == ()
+    assert cells[_AMOUNTS] == ("7.00", "1.50", "7.00")
+
+
 def test_an_assignment_encodes_a_whole_collection_and_reads_null_as_empty() -> None:
     payload = LayoutPayloadPreparer(_COLLECTIONS).assignments(
         _ITEM,

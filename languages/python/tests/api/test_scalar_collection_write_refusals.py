@@ -5,9 +5,9 @@ that binds anything else is refused by the existing write vocabulary, at the
 collection or at the failing element's position: a non-sequence or a null
 element is a value-type mismatch, a null collection a missing required value,
 and an element its type cannot decode the Wire literal rule. A Typed write
-accepts only a tuple, even where no ``.set(...)`` judged the assignment first. The scripted port
-is given no statement to answer, so a refusal that reached the database would
-fail the script instead.
+accepts only a tuple of member elements, even where no ``.set(...)`` judged the
+assignment first. The scripted port is given no statement to answer, so a
+refusal that reached the database would fail the script instead.
 """
 
 from __future__ import annotations
@@ -22,6 +22,8 @@ from parallax.core import Attr, DomainModel, Entity, attr
 from parallax.core.entity import AttributeAssignment
 from parallax.core.entity._expressions import AttributeRef
 from parallax.core.execution import ExecutionFailure
+from parallax.core.metamodel import WriteAssignmentError
+from parallax.core.unit_work import WriteInstructionError
 from parallax.snapshot import Transaction, connect
 from tests._support.db_port import ScriptedAdapter, Transact
 from tests._support.root_ownership import own_root
@@ -91,3 +93,15 @@ def test_a_typed_assignment_no_set_judged_refuses_any_carrier_but_a_tuple(tags: 
 
     assert "tags: value" in str(refusal)
     assert "a `many` attribute must bind" in str(refusal)
+
+
+def test_a_typed_assignment_no_set_judged_refuses_an_invalid_element_at_its_position() -> None:
+    unjudged: AttributeAssignment[Any] = AttributeAssignment(
+        AttributeRef(_ORDER, "tags"), ("urgent", 3)
+    )
+    refusal = _refusal(lambda tx: tx.amend_where(Order.where(Order.id == 1), unjudged))
+
+    assert isinstance(refusal, WriteInstructionError)
+    assert isinstance(refusal.__cause__, WriteAssignmentError)
+    assert refusal.__cause__.rule == "value-type-mismatch"
+    assert str(refusal.__cause__) == "tags[1]: value 3 does not match the declared type String()"
