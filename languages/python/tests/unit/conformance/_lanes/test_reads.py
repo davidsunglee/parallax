@@ -652,8 +652,8 @@ def test_render_value_recurses_into_a_nested_value_object_document() -> None:
 # streamed run lane refuses before or during the delivery.                      #
 # --------------------------------------------------------------------------- #
 def _doctored(case_id: str, **members: Any) -> case_format.Case:
-    """*case_id*'s case with its `when` members replaced — a document no schema
-    admits, reaching the engine entry point the way a mis-authored corpus would."""
+    """*case_id*'s case with its `when` members replaced, reaching the engine
+    entry point as a document the corpus does not carry."""
     case = _load_case(case_id)
     document = dict(case.document)
     document["when"] = {**cast("Mapping[str, Any]", document["when"]), **members}
@@ -820,6 +820,54 @@ def test_a_read_only_case_plans_and_runs_in_a_read_only_boundary_taking_no_lock(
     assert "for share" not in emissions[0].sql
     compiled, _trips = reads.compile_read_case(case, "postgres")
     assert compiled[0].sql == emissions[0].sql
+
+
+_GRAPH_RUNS: Final = [
+    pytest.param(reads.run_graph_case, "m-snapshot-read-001", {}, id="graph"),
+    pytest.param(reads.run_graphs_case, "m-snapshot-read-013", {}, id="graphs"),
+    pytest.param(reads.run_stream_case, _STREAM_CASE_ID, {}, id="stream"),
+    pytest.param(
+        reads.run_streamed_graphs_case,
+        "m-snapshot-read-013",
+        {"stream": {"batchSize": 2}},
+        id="streamed-graphs",
+    ),
+]
+
+
+@pytest.mark.parametrize(("run", "case_id", "members"), _GRAPH_RUNS)
+@pytest.mark.parametrize(
+    ("uow", "mode", "level"),
+    [
+        (
+            {"accessMode": "read-only", "isolation": "repeatable-read"},
+            "read_only",
+            "repeatable_read",
+        ),
+        ({"isolation": "serializable"}, "read_write", "serializable"),
+    ],
+)
+def test_a_graph_case_runs_in_the_boundary_its_uow_requests(
+    run: Any,
+    case_id: str,
+    members: dict[str, object],
+    uow: dict[str, object],
+    mode: str,
+    level: str,
+) -> None:
+    port = FakeDbPort([])
+    run(_doctored(case_id, uow=uow, **members), port)
+    assert port.modes == [mode]
+    assert port.levels == [level]
+
+
+@pytest.mark.parametrize(("run", "case_id", "members"), _GRAPH_RUNS)
+def test_a_graph_case_without_uow_opens_no_boundary(
+    run: Any, case_id: str, members: dict[str, object]
+) -> None:
+    port = FakeDbPort([])
+    run(_doctored(case_id, **members), port)
+    assert port.modes == []
 
 
 def test_a_writable_case_runs_in_a_read_write_boundary() -> None:

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Literal, cast
 
 from parallax.conformance import _case_ingress, case_format
@@ -43,7 +43,14 @@ from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.temporal_read import Pin
 from parallax.core.unit_work import Clock
-from parallax.snapshot import Database, ScopedDatabase, Snapshot, WireEntity
+from parallax.snapshot import (
+    Database,
+    ReadOnlyTxnContext,
+    ScopedDatabase,
+    Snapshot,
+    TxnContext,
+    WireEntity,
+)
 
 __all__ = [
     "case_database",
@@ -200,11 +207,7 @@ def run_read_case(
     with case_database(case, port, observed.provider) as root:
         db = root.using_database_login()
         try:
-            result = (
-                _transactional_rows(case, db, query)
-                if _is_transactional(case)
-                else underlying(lambda: db.read_rows(query))
-            )
+            result = _case_read(case, db, lambda reader: reader.read_rows(query))
         except READ_ERRORS as exc:
             raise EngineError(f"{case.path.name}: {exc}") from exc
         return (
@@ -217,19 +220,23 @@ def run_read_case(
         )
 
 
-def _transactional_rows(
-    case: case_format.Case, db: ScopedDatabase, query: ObjectQueryNode
-) -> read_delivery.RowsResult:
-    """The case's row-form read inside the transaction its `when.uow` requests,
-    opened through the entrypoint its access mode selects."""
+type _Reader = ScopedDatabase | TxnContext | ReadOnlyTxnContext
+
+
+def _case_read[T](case: case_format.Case, db: ScopedDatabase, read: Callable[[_Reader], T]) -> T:
+    """``read`` through the surface the case's outer invocation names: the
+    standalone ``db`` without `when.uow`, else the transaction that block
+    requests, opened through the entrypoint its access mode selects."""
+    if not _is_transactional(case):
+        return underlying(lambda: read(db))
     keywords = case_format.transaction_keywords(case)
     if case_format.access_mode(case) == "read_only":
         return read_only(
             db,
-            lambda rtx: rtx.read_rows(query),
+            read,
             **case_format.read_only_keywords(keywords, where=f"{case.path.name}: when.uow"),
         )
-    return transact(db, lambda tx: tx.read_rows(query), **keywords)
+    return transact(db, read, **keywords)
 
 
 def _conforming_row(
@@ -264,20 +271,21 @@ def _wire_read(
 ) -> tuple[Snapshot[WireEntity], LifecycleObservation]:
     """One graph-form Wire read of the case's own Object Query, and what it ran.
 
-    The whole lane is ``db.wire.find``: target resolution, validation, deep-fetch
-    planning, per-level compilation and execution, row conversion, projection
-    merging, root classification, and the finite include-tree unwind are
-    production's, and a scanning read answers the milestone-set form from the
-    same call, exactly as ``db.find`` does. The statements and the round-trip
-    count come back beside the result rather than on it, because a Snapshot
-    retains nothing about the execution that produced it.
+    The whole lane is ``wire.find`` on the surface :func:`_case_read` selects:
+    target resolution, validation, deep-fetch planning, per-level compilation
+    and execution, row conversion, projection merging, root classification, and
+    the finite include-tree unwind are production's, and a scanning read answers
+    the milestone-set form from the same call, exactly as ``find`` does. The
+    statements and the round-trip count come back beside the result rather than
+    on it, because a Snapshot retains nothing about the execution that produced
+    it.
     """
     observed = lifecycle.observation()
     apply_given_corrupt(case, load_case_setup_metamodel(case), port)
     with case_database(case, port, observed.provider) as root:
         db = root.using_database_login()
         try:
-            return underlying(lambda: db.wire.find(query)), observed
+            return _case_read(case, db, lambda reader: reader.wire.find(query)), observed
         except READ_ERRORS as exc:
             raise EngineError(f"{case.path.name}: {exc}") from exc
 
@@ -335,7 +343,7 @@ def run_stream_case(
     port: CaseDatabase,
     lifecycle: LifecycleRun | None = None,
 ) -> tuple[list[Emission], dict[str, list[MappingRow | None]], int, list[dict[str, object]] | None]:
-    """Run a streamed read through ``db.wire.stream`` and report what it delivered.
+    """Run a streamed read through ``wire.stream`` and report what it delivered.
 
     The whole lane is production's streamed read at the case's own declared page
     size: the page plan, each page's `1 + L` execution, per-root publication, and
@@ -415,7 +423,8 @@ def _wire_delivery(
     port: CaseDatabase,
     lifecycle: LifecycleRun | None,
 ) -> tuple[list[object], LifecycleObservation]:
-    """One streamed Wire delivery of ``query``, drained, and what it ran.
+    """One streamed Wire delivery of ``query`` on the surface :func:`_case_read`
+    selects, drained, and what it ran.
 
     The roots are accumulated for reporting, which is the harness's memory rather
     than a claim about production's: what the caller grades is the roots the
@@ -427,12 +436,12 @@ def _wire_delivery(
         db = root.using_database_login()
         roots: list[object] = []
 
-        def drained() -> None:
-            with db.wire.stream(query, batch_size=_stream_batch_size(case)) as delivery:
+        def drained(reader: _Reader) -> None:
+            with reader.wire.stream(query, batch_size=_stream_batch_size(case)) as delivery:
                 roots.extend(delivery.checked())
 
         try:
-            underlying(drained)
+            _case_read(case, db, drained)
         except _STREAM_ERRORS as exc:
             raise EngineError(f"{case.path.name}: {exc}") from exc
         return roots, observed
