@@ -1,14 +1,3 @@
-# Boundary case (m-temporal-read, m-opt-lock retry contract): an optimistic-lock
-# conflict on a Transaction-Time-Only milestone write is retried by default — the
-# temporal analogue of `m-opt-lock-011` — `api-conformance` lane.
-#
-# It carries the retry the conflict form pinned: the gated close of the observed
-# milestone conflicts once, and the retry re-reads and closes it, so the temporal
-# write re-runs through the real retry loop and commits on its second attempt. The
-# stale gate itself is `m-temporal-read-010`'s race. That the retried close gates on
-# the Transaction-Time start its retry re-read is no observable a boundary case
-# carries (it states no golden SQL), so it rests with each binding's own
-# unit-of-work tests.
 model: models/balance.yaml
 tags: [m-temporal-read, m-opt-lock, m-auto-retry, m-temporal-write, m-api-conformance, temporal, audit-only, conflict, success, slice-snapshot-1, slice-managed-1]
 lane: api-conformance

@@ -62,7 +62,14 @@ from parallax.core.execution import (
     TxnOptions,
     prepare_model,
 )
-from parallax.core.execution_lifecycle import AttemptRolledBack, TransactionAttemptFinished
+from parallax.core.execution_lifecycle import (
+    AttemptRolledBack,
+    ExecutionEvent,
+    ExecutionLifecycleHandler,
+    ExecutionLifecycleHandlerError,
+    RootExecution,
+    TransactionAttemptFinished,
+)
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.unit_work import (
@@ -1115,6 +1122,34 @@ def test_a_release_that_fails_after_an_eligible_failure_ends_the_invocation() ->
     (released_after,) = port.released_after
     assert excinfo.value.__context__ is released_after
     assert not any(isinstance(link, RetryCandidate) for link in _chain(excinfo.value))
+
+
+class _FailingOnAttemptFinished:
+    """Fails delivering the first attempt's Finished event and keeps the
+    diagnostic it is then reported."""
+
+    def __init__(self) -> None:
+        self.reported: list[ExecutionLifecycleHandlerError] = []
+
+    def open(self, execution: RootExecution, /) -> ExecutionLifecycleHandler:
+        del execution
+        return self
+
+    def handle(self, event: ExecutionEvent, /) -> None:
+        if isinstance(event, TransactionAttemptFinished):
+            raise RuntimeError("handler failed")
+
+    def report_handler_error(self, error: ExecutionLifecycleHandlerError, /) -> None:
+        self.reported.append(error)
+
+
+def test_a_handler_failing_after_an_eligible_failure_is_reported_against_it() -> None:
+    provider = _FailingOnAttemptFinished()
+    port = ScriptedAdapter(Transact(commit=deadlock()), Transact())
+    assert scope(port, provider=provider).transact(lambda _tx: "ok", itself) == "ok"
+    (reported,) = provider.reported
+    assert "deadlock detected" in reported.diagnostic.stack
+    assert "RetryCandidate" not in reported.diagnostic.stack
 
 
 class _AtTheCeiling(random.Random):
