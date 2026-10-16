@@ -1,0 +1,770 @@
+{
+  "conditions": {
+    "cpython": "3.14.8",
+    "image": "postgres:18.6-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2",
+    "isolation": "read_committed",
+    "settings": {
+      "autovacuum": "on",
+      "deadlock_timeout": "1s",
+      "default_transaction_isolation": "read committed",
+      "lock_timeout": "0",
+      "max_connections": "100",
+      "server_version": "18.6",
+      "shared_buffers": "128MB",
+      "synchronous_commit": "on",
+      "wal_level": "replica"
+    },
+    "version": "PostgreSQL 18.6 on aarch64-unknown-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit",
+    "workload": {
+      "backoffGrid": [
+        [
+          0.0005,
+          0.025
+        ],
+        [
+          0.0005,
+          0.1
+        ],
+        [
+          0.0005,
+          0.4
+        ],
+        [
+          0.002,
+          0.025
+        ],
+        [
+          0.002,
+          0.1
+        ],
+        [
+          0.002,
+          0.4
+        ],
+        [
+          0.008,
+          0.025
+        ],
+        [
+          0.008,
+          0.1
+        ],
+        [
+          0.008,
+          0.4
+        ]
+      ],
+      "body": "read one account in the attempt, then amend its balance",
+      "invocationsPerWorker": 200,
+      "pool": {
+        "maxSize": 8,
+        "minSize": 8
+      },
+      "retry": "the arm's own replay policy",
+      "workers": 8
+    }
+  },
+  "driver": "contention",
+  "runs": [
+    {
+      "backoff": {
+        "baseS": 0.002,
+        "capS": 0.1
+      },
+      "elapsedS": 0.835481250018347,
+      "keys": "hot",
+      "maxRetries": 0,
+      "summary": {
+        "attempts": 1600,
+        "attemptsPerSuccess": 4.610951008645533,
+        "committed": 347,
+        "committedLatencyMs": {
+          "p50": 3.987375006545335,
+          "p95": 5.51184190553613,
+          "p99": 6.562695011962205
+        },
+        "committedThroughputPerS": 415.32948823493035,
+        "completionRate": 0.216875,
+        "invocations": 1600,
+        "latencyMs": {
+          "p50": 4.070249997312203,
+          "p95": 5.832369418931194,
+          "p99": 6.764297999907285
+        },
+        "p99ToSuccessMs": null,
+        "surfacedFailureAttempts": {
+          "max": 1,
+          "min": 1
+        },
+        "surfacedFailureLatencyMs": {
+          "max": 19.549874996300787,
+          "min": 1.4353329897858202
+        },
+        "surfacedFailures": {
+          "OptimisticLockConflictError:None:None": 1253
+        }
+      }
+    },
+    {
+      "backoff": {
+        "baseS": 0.002,
+        "capS": 0.1
+      },
+      "elapsedS": 0.8173746250104159,
+      "keys": "disjoint",
+      "maxRetries": 0,
+      "summary": {
+        "attempts": 1600,
+        "attemptsPerSuccess": 1.0,
+        "committed": 1600,
+        "committedLatencyMs": {
+          "p50": 3.9957715052878484,
+          "p95": 5.318547587376088,
+          "p99": 6.235415241681039
+        },
+        "committedThroughputPerS": 1957.48675214821,
+        "completionRate": 1.0,
+        "invocations": 1600,
+        "latencyMs": {
+          "p50": 3.9957715052878484,
+          "p95": 5.318547587376088,
+          "p99": 6.235415241681039
+        },
+        "p99ToSuccessMs": 6.2350840016733855,
+        "surfacedFailureAttempts": null,
+        "surfacedFailureLatencyMs": null,
+        "surfacedFailures": {}
+      }
+    },
+    {
+      "backoff": {
+        "baseS": 0.0005,
+        "capS": 0.025
+      },
+      "elapsedS": 2.3591462500044145,
+      "keys": "hot",
+      "maxRetries": "default",
+      "summary": {
+        "attempts": 4639,
+        "attemptsPerSuccess": 2.952896244430299,
+        "committed": 1571,
+        "committedLatencyMs": {
+          "p50": 4.563416005112231,
+          "p95": 38.98231251514517,
+          "p99": 91.0076002124697
+        },
+        "committedThroughputPerS": 665.9188678942903,
+        "completionRate": 0.981875,
+        "invocations": 1600,
+        "latencyMs": {
+          "p50": 4.645333508960903,
+          "p95": 56.873491646547336,
+          "p99": 104.20193300378742
+        },
+        "p99ToSuccessMs": null,
+        "surfacedFailureAttempts": {
+          "max": 11,
+          "min": 11
+        },
+        "surfacedFailureLatencyMs": {
+          "max": 138.1012079946231,
+          "min": 67.20679099089466
+        },
+        "surfacedFailures": {
+          "OptimisticLockConflictError:None:None": 29
+        }
+      }
+    },
+    {
+      "backoff": {
+        "baseS": 0.0005,
+        "capS": 0.025
+      },
+      "elapsedS": 0.8321981249901,
+      "keys": "disjoint",
+      "maxRetries": "default",
+      "summary": {
+        "attempts": 1600,
+        "attemptsPerSuccess": 1.0,
+        "committed": 1600,
+        "committedLatencyMs": {
+          "p50": 4.076395998708904,
+          "p95": 5.507316341390833,
+          "p99": 6.623038575053215
+        },
+        "committedThroughputPerS": 1922.6190878752986,
+        "completionRate": 1.0,
+        "invocations": 1600,
+        "latencyMs": {
+          "p50": 4.076395998708904,
+          "p95": 5.507316341390833,
+          "p99": 6.623038575053215
+        },
+        "p99ToSuccessMs": 6.621584005188197,
+        "surfacedFailureAttempts": null,
+        "surfacedFailureLatencyMs": null,
+        "surfacedFailures": {}
+      }
+    },
+    {
+      "backoff": {
+        "baseS": 0.0005,
+        "capS": 0.1
+      },
+      "elapsedS": 2.104698249982903,
+      "keys": "hot",
+      "maxRetries": "default",
+      "summary": {
+        "attempts": 3347,
+        "attemptsPerSuccess": 2.117014547754586,
+        "committed": 1581,
+        "committedLatencyMs": {
+          "p50": 1.4601250004488975,
+          "p95": 23.777416994562373,
+          "p99": 82.42258338723332
+        },
+        "committedThroughputPerS": 751.1765641525302,
+        "completionRate": 0.988125,
+        "invocations": 1600,
+        "latencyMs": {
+          "p50": 1.4739795005880296,
+          "p95": 31.17091457679635,
+          "p99": 180.82443833263824
+        },
+        "p99ToSuccessMs": null,
+        "surfacedFailureAttempts": {
+          "max": 11,
+          "min": 11
+        },
+        "surfacedFailureLatencyMs": {
+          "max": 265.5642089957837,
+          "min": 72.10320900776424
+        },
+        "surfacedFailures": {
+          "OptimisticLockConflictError:None:None": 19
+        }
+      }
+    },
+    {
+      "backoff": {
+        "baseS": 0.0005,
+        "capS": 0.1
+      },
+      "elapsedS": 0.8398902920016553,
+      "keys": "disjoint",
+      "maxRetries": "default",
+      "summary": {
+        "attempts": 1600,
+        "attemptsPerSuccess": 1.0,
+        "committed": 1600,
+        "committedLatencyMs": {
+          "p50": 4.114479510462843,
+          "p95": 5.496133348788135,
+          "p99": 6.373592271993402
+        },
+        "committedThroughputPerS": 1905.010708228125,
+        "completionRate": 1.0,
+        "invocations": 1600,
+        "latencyMs": {
+          "p50": 4.114479510462843,
+          "p95": 5.496133348788135,
+          "p99": 6.373592271993402
+        },
+        "p99ToSuccessMs": 6.373541022185236,
+        "surfacedFailureAttempts": null,
+        "surfacedFailureLatencyMs": null,
+        "surfacedFailures": {}
+      }
+    },
+    {
+      "backoff": {
+        "baseS": 0.0005,
+        "capS": 0.4
+      },
+      "elapsedS": 2.0865553750190884,
+      "keys": "hot",
+      "maxRetries": "default",
+      "summary": {
+        "attempts": 3142,
+        "attemptsPerSuccess": 1.9873497786211258,
+        "committed": 1581,
+        "committedLatencyMs": {
+          "p50": 1.287459017476067,
+          "p95": 20.652667008107528,
+          "p99": 86.30838319077156
+        },
+        "committedThroughputPerS": 757.7081437321243,
+        "completionRate": 0.988125,
+        "invocations": 1600,
+        "latencyMs": {
+          "p50": 1.2923960020998493,
+          "p95": 26.548274357628543,
+          "p99": 253.25995764753316
+        },
+        "p99ToSuccessMs": null,
+        "surfacedFailureAttempts": {
+          "max": 11,
+          "min": 11
+        },
+        "surfacedFailureLatencyMs": {
+          "max": 363.4840000013355,
+          "min": 153.5183749801945
+        },
+        "surfacedFailures": {
+          "OptimisticLockConflictError:None:None": 19
+        }
+      }
+    },
+    {
+      "backoff": {
+        "baseS": 0.0005,
+        "capS": 0.4
+      },
+      "elapsedS": 0.8447919169848319,
+      "keys": "disjoint",
+      "maxRetries": "default",
+      "summary": {
+        "attempts": 1600,
+        "attemptsPerSuccess": 1.0,
+        "committed": 1600,
+        "committedLatencyMs": {
+          "p50": 4.098478995729238,
+          "p95": 5.6372222999925725,
+          "p99": 7.308111721649766
+        },
+        "committedThroughputPerS": 1893.957515254881,
+        "completionRate": 1.0,
+        "invocations": 1600,
+        "latencyMs": {
+          "p50": 4.098478995729238,
+          "p95": 5.6372222999925725,
+          "p99": 7.308111721649766
+        },
+        "p99ToSuccessMs": 7.307582971407101,
+        "surfacedFailureAttempts": null,
+        "surfacedFailureLatencyMs": null,
+        "surfacedFailures": {}
+      }
+    },
+    {
+      "backoff": {
+        "baseS": 0.002,
+        "capS": 0.025
+      },
+      "elapsedS": 2.0620222500001546,
+      "keys": "hot",
+      "maxRetries": "default",
+      "summary": {
+        "attempts": 3431,
+        "attemptsPerSuccess": 2.1646687697160885,
+        "committed": 1585,
+        "committedLatencyMs": {
+          "p50": 1.4345410163514316,
+          "p95": 51.52571661747061,
+          "p99": 98.58941399143077
+        },
+        "committedThroughputPerS": 768.6628987635227,
+        "completionRate": 0.990625,
+        "invocations": 1600,
+        "latencyMs": {
+          "p50": 1.4475630014203489,
+          "p95": 54.710566358699,
+          "p99": 113.40112342120847
+        },
+        "p99ToSuccessMs": 133.45629099057987,
+        "surfacedFailureAttempts": {
+          "max": 11,
+          "min": 11
+        },
+        "surfacedFailureLatencyMs": {
+          "max": 160.4928330052644,
+          "min": 91.66245799860917
+        },
+        "surfacedFailures": {
+          "OptimisticLockConflictError:None:None": 15
+        }
+      }
+    },
+    {
+      "backoff": {
+        "baseS": 0.002,
+        "capS": 0.025
+      },
+      "elapsedS": 0.8390169579943176,
+      "keys": "disjoint",
+      "maxRetries": "default",
+      "summary": {
+        "attempts": 1600,
+        "attemptsPerSuccess": 1.0,
+        "committed": 1600,
+        "committedLatencyMs": {
+          "p50": 4.141416502534412,
+          "p95": 5.568241348373704,
+          "p99": 6.201084925851319
+        },
+        "committedThroughputPerS": 1906.9936367255598,
+        "completionRate": 1.0,
+        "invocations": 1600,
+        "latencyMs": {
+          "p50": 4.141416502534412,
+          "p95": 5.568241348373704,
+          "p99": 6.201084925851319
+        },
+        "p99ToSuccessMs": 6.200792005984113,
+        "surfacedFailureAttempts": null,
+        "surfacedFailureLatencyMs": null,
+        "surfacedFailures": {}
+      }
+    },
+    {
+      "backoff": {
+        "baseS": 0.002,
+        "capS": 0.1
+      },
+      "elapsedS": 2.0121321660117246,
+      "keys": "hot",
+      "maxRetries": "default",
+      "summary": {
+        "attempts": 2343,
+        "attemptsPerSuccess": 1.4726587052168447,
+        "committed": 1591,
+        "committedLatencyMs": {
+          "p50": 1.1316250020172447,
+          "p95": 17.060729514923878,
+          "p99": 153.77059969468974
+        },
+        "committedThroughputPerS": 790.7035267735635,
+        "completionRate": 0.994375,
+        "invocations": 1600,
+        "latencyMs": {
+          "p50": 1.1327710089972243,
+          "p95": 19.449671141046565,
+          "p99": 207.77170167915756
+        },
+        "p99ToSuccessMs": 217.76591701200232,
+        "surfacedFailureAttempts": {
+          "max": 11,
+          "min": 11
+        },
+        "surfacedFailureLatencyMs": {
+          "max": 336.24495897674933,
+          "min": 170.69654099759646
+        },
+        "surfacedFailures": {
+          "OptimisticLockConflictError:None:None": 9
+        }
+      }
+    },
+    {
+      "backoff": {
+        "baseS": 0.002,
+        "capS": 0.1
+      },
+      "elapsedS": 0.8449666670057923,
+      "keys": "disjoint",
+      "maxRetries": "default",
+      "summary": {
+        "attempts": 1600,
+        "attemptsPerSuccess": 1.0,
+        "committed": 1600,
+        "committedLatencyMs": {
+          "p50": 4.1006249957717955,
+          "p95": 5.615510424831882,
+          "p99": 6.708249131916091
+        },
+        "committedThroughputPerS": 1893.56582037695,
+        "completionRate": 1.0,
+        "invocations": 1600,
+        "latencyMs": {
+          "p50": 4.1006249957717955,
+          "p95": 5.615510424831882,
+          "p99": 6.708249131916091
+        },
+        "p99ToSuccessMs": 6.707999971695244,
+        "surfacedFailureAttempts": null,
+        "surfacedFailureLatencyMs": null,
+        "surfacedFailures": {}
+      }
+    },
+    {
+      "backoff": {
+        "baseS": 0.002,
+        "capS": 0.4
+      },
+      "elapsedS": 2.4328385409899056,
+      "keys": "hot",
+      "maxRetries": "default",
+      "summary": {
+        "attempts": 1998,
+        "attemptsPerSuccess": 1.2542372881355932,
+        "committed": 1593,
+        "committedLatencyMs": {
+          "p50": 1.1388330021873116,
+          "p95": 5.573058180743828,
+          "p99": 55.06614770041779
+        },
+        "committedThroughputPerS": 654.79067893746,
+        "completionRate": 0.995625,
+        "invocations": 1600,
+        "latencyMs": {
+          "p50": 1.139228988904506,
+          "p95": 6.989500294730533,
+          "p99": 248.44104241405148
+        },
+        "p99ToSuccessMs": 248.2007920043543,
+        "surfacedFailureAttempts": {
+          "max": 11,
+          "min": 11
+        },
+        "surfacedFailureLatencyMs": {
+          "max": 969.4610419974197,
+          "min": 496.24083397793584
+        },
+        "surfacedFailures": {
+          "OptimisticLockConflictError:None:None": 7
+        }
+      }
+    },
+    {
+      "backoff": {
+        "baseS": 0.002,
+        "capS": 0.4
+      },
+      "elapsedS": 0.8556607089994941,
+      "keys": "disjoint",
+      "maxRetries": "default",
+      "summary": {
+        "attempts": 1600,
+        "attemptsPerSuccess": 1.0,
+        "committed": 1600,
+        "committedLatencyMs": {
+          "p50": 4.0540624904679134,
+          "p95": 5.86057020991575,
+          "p99": 9.28061291197082
+        },
+        "committedThroughputPerS": 1869.9000470301435,
+        "completionRate": 1.0,
+        "invocations": 1600,
+        "latencyMs": {
+          "p50": 4.0540624904679134,
+          "p95": 5.86057020991575,
+          "p99": 9.28061291197082
+        },
+        "p99ToSuccessMs": 9.279124991735443,
+        "surfacedFailureAttempts": null,
+        "surfacedFailureLatencyMs": null,
+        "surfacedFailures": {}
+      }
+    },
+    {
+      "backoff": {
+        "baseS": 0.008,
+        "capS": 0.025
+      },
+      "elapsedS": 1.9108097499993164,
+      "keys": "hot",
+      "maxRetries": "default",
+      "summary": {
+        "attempts": 2573,
+        "attemptsPerSuccess": 1.6223203026481714,
+        "committed": 1586,
+        "committedLatencyMs": {
+          "p50": 1.1480624816613272,
+          "p95": 45.158822744269855,
+          "p99": 109.80378119274974
+        },
+        "committedThroughputPerS": 830.0146050649822,
+        "completionRate": 0.99125,
+        "invocations": 1600,
+        "latencyMs": {
+          "p50": 1.1490415054140612,
+          "p95": 52.225674348301254,
+          "p99": 132.37562300113495
+        },
+        "p99ToSuccessMs": 149.60391700151376,
+        "surfacedFailureAttempts": {
+          "max": 11,
+          "min": 11
+        },
+        "surfacedFailureLatencyMs": {
+          "max": 176.87912497785874,
+          "min": 126.53216597391292
+        },
+        "surfacedFailures": {
+          "OptimisticLockConflictError:None:None": 14
+        }
+      }
+    },
+    {
+      "backoff": {
+        "baseS": 0.008,
+        "capS": 0.025
+      },
+      "elapsedS": 0.8562539590056986,
+      "keys": "disjoint",
+      "maxRetries": "default",
+      "summary": {
+        "attempts": 1600,
+        "attemptsPerSuccess": 1.0,
+        "committed": 1600,
+        "committedLatencyMs": {
+          "p50": 4.1745000053197145,
+          "p95": 5.7415979041252285,
+          "p99": 7.098248234833591
+        },
+        "committedThroughputPerS": 1868.604498901186,
+        "completionRate": 1.0,
+        "invocations": 1600,
+        "latencyMs": {
+          "p50": 4.1745000053197145,
+          "p95": 5.7415979041252285,
+          "p99": 7.098248234833591
+        },
+        "p99ToSuccessMs": 7.097541994880885,
+        "surfacedFailureAttempts": null,
+        "surfacedFailureLatencyMs": null,
+        "surfacedFailures": {}
+      }
+    },
+    {
+      "backoff": {
+        "baseS": 0.008,
+        "capS": 0.1
+      },
+      "elapsedS": 2.196282707998762,
+      "keys": "hot",
+      "maxRetries": "default",
+      "summary": {
+        "attempts": 1978,
+        "attemptsPerSuccess": 1.2409033877038895,
+        "committed": 1594,
+        "committedLatencyMs": {
+          "p50": 1.180833496619016,
+          "p95": 7.306004504789598,
+          "p99": 178.60519562236732
+        },
+        "committedThroughputPerS": 725.7717752795322,
+        "completionRate": 0.99625,
+        "invocations": 1600,
+        "latencyMs": {
+          "p50": 1.1827079870272428,
+          "p95": 9.272087506542448,
+          "p99": 270.7018983317539
+        },
+        "p99ToSuccessMs": 270.6997499917634,
+        "surfacedFailureAttempts": {
+          "max": 11,
+          "min": 11
+        },
+        "surfacedFailureLatencyMs": {
+          "max": 512.629165983526,
+          "min": 270.914583990816
+        },
+        "surfacedFailures": {
+          "OptimisticLockConflictError:None:None": 6
+        }
+      }
+    },
+    {
+      "backoff": {
+        "baseS": 0.008,
+        "capS": 0.1
+      },
+      "elapsedS": 0.8419425419997424,
+      "keys": "disjoint",
+      "maxRetries": "default",
+      "summary": {
+        "attempts": 1600,
+        "attemptsPerSuccess": 1.0,
+        "committed": 1600,
+        "committedLatencyMs": {
+          "p50": 4.076854500453919,
+          "p95": 5.4958892476861365,
+          "p99": 6.976141835330054
+        },
+        "committedThroughputPerS": 1900.3672105696846,
+        "completionRate": 1.0,
+        "invocations": 1600,
+        "latencyMs": {
+          "p50": 4.076854500453919,
+          "p95": 5.4958892476861365,
+          "p99": 6.976141835330054
+        },
+        "p99ToSuccessMs": 6.973915995331481,
+        "surfacedFailureAttempts": null,
+        "surfacedFailureLatencyMs": null,
+        "surfacedFailures": {}
+      }
+    },
+    {
+      "backoff": {
+        "baseS": 0.008,
+        "capS": 0.4
+      },
+      "elapsedS": 3.2159994580142666,
+      "keys": "hot",
+      "maxRetries": "default",
+      "summary": {
+        "attempts": 1840,
+        "attemptsPerSuccess": 1.1507191994996873,
+        "committed": 1599,
+        "committedLatencyMs": {
+          "p50": 1.3352090027183294,
+          "p95": 4.9227166920900345,
+          "p99": 149.0786453097826
+        },
+        "committedThroughputPerS": 497.201576329652,
+        "completionRate": 0.999375,
+        "invocations": 1600,
+        "latencyMs": {
+          "p50": 1.3360005104914308,
+          "p95": 4.973235764191486,
+          "p99": 168.05012342258124
+        },
+        "p99ToSuccessMs": 167.9915830027312,
+        "surfacedFailureAttempts": {
+          "max": 11,
+          "min": 11
+        },
+        "surfacedFailureLatencyMs": {
+          "max": 642.4595419957768,
+          "min": 642.4595419957768
+        },
+        "surfacedFailures": {
+          "OptimisticLockConflictError:None:None": 1
+        }
+      }
+    },
+    {
+      "backoff": {
+        "baseS": 0.008,
+        "capS": 0.4
+      },
+      "elapsedS": 0.8697134999965783,
+      "keys": "disjoint",
+      "maxRetries": "default",
+      "summary": {
+        "attempts": 1600,
+        "attemptsPerSuccess": 1.0,
+        "committed": 1600,
+        "committedLatencyMs": {
+          "p50": 4.15672900271602,
+          "p95": 5.854939621349331,
+          "p99": 8.480005002347752
+        },
+        "committedThroughputPerS": 1839.6862875030627,
+        "completionRate": 1.0,
+        "invocations": 1600,
+        "latencyMs": {
+          "p50": 4.15672900271602,
+          "p95": 5.854939621349331,
+          "p99": 8.480005002347752
+        },
+        "p99ToSuccessMs": 8.477875002427027,
+        "surfacedFailureAttempts": null,
+        "surfacedFailureLatencyMs": null,
+        "surfacedFailures": {}
+      }
+    }
+  ]
+}
