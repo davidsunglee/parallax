@@ -2197,7 +2197,9 @@ statement never reaches the round's end. The runner lifts the session's lowered
 lock-wait budget for that statement, issues it, and ends the round only once the
 engine's own lock-wait view reports a transaction of the case's database
 waiting; a statement that finishes without ever being seen waiting fails the
-case. The statement finishes when a later round's peer step — typically the
+case. That view is the database's rather than the statement's, so a blocking
+step waits alone: its round carries no peer step, and it does not come between
+a peer's blocking step and that peer's next step. The statement finishes when a later round's peer step — typically the
 peer's commit — releases the lock, and its rows, counts, or error are graded as
 that step's own. The node's next step waits for it, so a peer step MUST come
 between the blocking step and the node's next one. This is how a schedule states
