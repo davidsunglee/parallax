@@ -68,7 +68,8 @@ corpus and by the two scripts below that read statements off the real API.
 
 Every driver takes `--isolation`, `--smoke`, and `--out`, and runs under the
 Python environment of the arm `capture.py` checks out. The measured work uses
-only the public Snapshot API present in every arm; provisioning and statement
+only the public Snapshot API present in every arm of the checkpoints that run
+it; provisioning and statement
 recording use the conformance tooling the corpus runners already rely on.
 `_support.py` declares the drivers' own model, so a corpus model change cannot
 move a workload.
@@ -76,7 +77,7 @@ move a workload.
 | Driver | Workload |
 |---|---|
 | `contention.py` | Hot and disjoint keyed writers, each invocation reading its account inside the attempt; `max_retries=0` first, then the default bound |
-| `stream_churn.py` | A transaction-held or standalone stream with fast or slow consumption beside writers; client memory, oldest snapshot age, dead and live tuples, relation and index size, and cleanup after release |
+| `stream_churn.py` | A transaction-held or standalone stream with fast or slow consumption beside writers; client memory, oldest snapshot age, dead and live tuples, relation and index size, and cleanup after release. With `--read-only`, which C1 and C5 pass, a read-only transaction-held stream as well, so one arm reports writable and read-only reads at one level |
 | `end_to_end_writes.py` | Keyed, conditional, and predicate amendments over non-temporal, Transaction-Time-Only, and bitemporal targets, each window a whole `db.transact` call with any licensing read inside it |
 | `lock_snapshot_trace.py`, `guard_wal.py` | As above, captured per arm |
 | Arm tool `tools/snapshot_delivery_overhead.py` | The committed delivery instrument, run from each arm's own tree |
@@ -88,13 +89,18 @@ digests a capture actually ran.
 | File | SHA-256 |
 |---|---|
 | `scripts/_support.py` | `c41ef7b63439739b1f659a2e8d9ce3930f13310832726689e159360b12ea0605` |
-| `scripts/capture.py` | `9645d95e76e0b882d702c04111fc32df91f97ce453a4404040585c65b1e644bd` |
+| `scripts/capture.py` | `64fad0df7e3b098c873021ceabca6a65ff54671b7864cea5ac25ec8bafd5a138` |
 | `scripts/contention.py` | `e14f457f71e7e276fdc77ded16c8b9d9f0563939c6d67f688b0fb5e3c9ad7baa` |
 | `scripts/end_to_end_writes.py` | `015d7dc667a50fad1b6f63059755ee9ec82e0413352dd178684cced2b22f8963` |
 | `scripts/guard_wal.py` | `3eaed87f4999e964e1d984983134ad30942bb0f2033a22ba08d203cadefe0d79` |
 | `scripts/lock_snapshot_trace.py` | `a06a14359b95c45b1e5b5b890394d7bbbff9300aac7dd215fcb260937832fc18` |
 | `scripts/predicate_in_place.py` | `9cd1a7fb74edd7aaa40f132996ea6525151032146c233a97c2bbc90cf751b810` |
-| `scripts/stream_churn.py` | `e5a26290dfa587223db3142e5fc8dae9df2f1e7b8d1cd77df91c68094764bcca` |
+| `scripts/stream_churn.py` | `16a2f0747f7f36cf965379f3a2e84497309214aa48ddff7ebd5255aa01dcfc0d` |
+
+Read-only transactions re-froze two of them: `stream_churn.py` gained the
+`--read-only` placement C1 compares against the writable one, and `capture.py`
+runs it for C1 and C5. The placements every other checkpoint runs, and the
+other drivers, are unchanged.
 
 ## Checkpoints
 
