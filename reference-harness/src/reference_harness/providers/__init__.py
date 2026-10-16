@@ -17,8 +17,9 @@ Each provider exposes:
 * ``load(table, columns, rows)`` — bulk-insert fixture rows.
 * ``query(sql, binds)`` — execute a read and return rows as ordered dicts.
 * ``execute(sql, binds)`` — execute a write (DML) and return the affected count.
-* ``open_session(isolation)`` — a manual-commit :class:`Session`, opened at a
-  portable Isolation Level when a case declares one.
+* ``open_session(isolation, access_mode)`` — a manual-commit :class:`Session`,
+  opened at a portable Isolation Level when a case declares one, and in a
+  portable Access Mode when one is requested.
 * ``lock_waits()`` — how many transactions of the provider's database are
   waiting for a lock right now, read from the engine's own lock-wait view.
 
@@ -251,7 +252,7 @@ class DatabaseProvider(Protocol):
         ...
 
     def open_session(
-        self, isolation: str | None = None
+        self, isolation: str | None = None, access_mode: str | None = None
     ) -> AbstractContextManager[Session]:  # pragma: no cover - protocol stub
         """Context-manage a manual-commit session for lock-contention cases.
 
@@ -259,9 +260,11 @@ class DatabaseProvider(Protocol):
         (``Case.isolation``: its explicit ``when.uow.isolation``, else its root's
         ``given.databaseOptions.isolation``, else the built-in Read Committed),
         in the core serialized spelling, or ``None`` for the server's default.
-        The provider is the harness's adapter for the sessions it owns, so
-        whatever its engine needs to forbid the level's anomalies happens here
-        and nowhere a runner or a case can see.
+        ``access_mode`` is a portable Access Mode in the same spelling, or
+        ``None`` for the server's default. The provider is the harness's adapter for the sessions
+        it owns, so whatever its engine needs to forbid the level's anomalies, or
+        to keep the session in the mode, happens here and nowhere a runner or a
+        case can see.
         """
         ...
 

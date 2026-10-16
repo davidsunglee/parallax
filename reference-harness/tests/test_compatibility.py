@@ -58,6 +58,14 @@ _ISOLATION_READBACK = {
     "postgres": "show transaction_isolation",
     "mariadb": "select @@transaction_isolation as transaction_isolation",
 }
+_ACCESS_MODE_READBACK = {
+    "postgres": "show transaction_read_only",
+    "mariadb": "select @@transaction_read_only as transaction_read_only",
+}
+_REPORTED_READ_ONLY = {
+    "postgres": {"read-only": "on", "read-write": "off"},
+    "mariadb": {"read-only": 1, "read-write": 0},
+}
 _REPORTED_ISOLATION = {
     "postgres": {
         "read-committed": "read committed",
@@ -131,6 +139,67 @@ def test_a_held_session_opens_at_each_declared_isolation(provider) -> None:
         with provider.open_session(level) as session:
             observed = session.query(read_back)[0]["transaction_isolation"]
         assert observed == expected, f"{provider.dialect} session at {level} reported {observed!r}"
+
+
+def test_a_held_session_opens_in_each_declared_access_mode_at_each_level(provider) -> None:
+    # The access mode is requested independently of the level, so every pair is
+    # read back from the server: the mode the session runs in, and the level it
+    # runs at, each the one the case declared.
+    modes = _REPORTED_READ_ONLY[provider.dialect]
+    levels = _REPORTED_ISOLATION[provider.dialect]
+    for mode, expected_mode in modes.items():
+        for level, expected_level in levels.items():
+            with provider.open_session(level, mode) as session:
+                observed_mode = session.query(_ACCESS_MODE_READBACK[provider.dialect])[0][
+                    "transaction_read_only"
+                ]
+                observed_level = session.query(_ISOLATION_READBACK[provider.dialect])[0][
+                    "transaction_isolation"
+                ]
+            assert (observed_mode, observed_level) == (expected_mode, expected_level), (
+                provider.dialect,
+                mode,
+                level,
+            )
+
+
+def test_mariadb_restores_the_access_mode_after_every_attempt(provider, monkeypatch) -> None:
+    # As `innodb_snapshot_isolation` is: each connection starts in the mode
+    # opposite to the one its attempt requests, as state an earlier user left,
+    # and the value read back just before the owner closes it is that prior one.
+    if provider.dialect != "mariadb":
+        pytest.skip("the held session's saved access mode is MariaDB session state")
+    probe = "select @@session.transaction_read_only"
+    connect = mariadb.pymysql.connect
+    prior = {"read-only": "0", "read-write": "1"}
+    mode = ""
+    restored: list[int] = []
+
+    def connect_with_prior_state(**params):
+        connection = connect(**params)
+        with connection.cursor() as cur:
+            cur.execute(f"set session transaction_read_only = {prior[mode]}")
+        close = connection.close
+
+        def read_back_then_close() -> None:
+            with connection.cursor() as cur:
+                cur.execute(probe)
+                ((value,),) = cur.fetchall()
+            restored.append(value)
+            close()
+
+        connection.close = read_back_then_close
+        return connection
+
+    monkeypatch.setattr(mariadb.pymysql, "connect", connect_with_prior_state)
+    during: dict[str, list[int]] = {}
+    for mode in prior:
+        for _ in range(2):
+            with provider.open_session("repeatable-read", mode) as session:
+                during.setdefault(mode, []).append(session.query(f"{probe} as flag")[0]["flag"])
+                session.commit()
+    assert during == {"read-only": [1, 1], "read-write": [0, 0]}
+    assert restored == [0, 0, 1, 1]
 
 
 def test_mariadb_runs_each_level_with_its_snapshot_isolation(provider) -> None:

@@ -92,6 +92,14 @@ _ISOLATION: dict[str, tuple[str, ...]] = {
 }
 
 
+# Each portable Access Mode (m-db-port), keyed by its core serialized value, as the
+# statement that opens a session in it.
+_ACCESS_MODE: dict[str, str] = {
+    "read-only": "set session characteristics as transaction read only",
+    "read-write": "set session characteristics as transaction read write",
+}
+
+
 def _adapt(value: Any) -> Any:
     """Adapt a fixture / bind value for binding.
 
@@ -334,7 +342,9 @@ class PostgresProvider:
         return 0 if row is None else int(row[0])
 
     @contextmanager
-    def open_session(self, isolation: str | None = None) -> Iterator[_PgTxSession]:
+    def open_session(
+        self, isolation: str | None = None, access_mode: str | None = None
+    ) -> Iterator[_PgTxSession]:
         """A second connection in MANUAL-commit mode, for lock contention.
 
         Deadlock / lock-wait-timeout cases need two connections each holding a row
@@ -344,9 +354,10 @@ class PostgresProvider:
         hanging the suite: ``deadlock_timeout`` shortens PG's cycle-detector delay
         and ``lock_timeout`` bounds a plain lock wait.
 
-        A declared ``isolation`` is applied first, as the session's own default,
-        because a case's whole choreography is one transaction on this connection
-        and Postgres accepts a level only before that transaction's first query.
+        A declared ``isolation`` and ``access_mode`` are applied first, as the
+        session's own defaults, because a case's whole choreography is one
+        transaction on this connection and Postgres accepts either only before
+        that transaction's first query.
         Session scope is right here and wrong for a real adapter: this provider
         creates and closes the connection itself, so the setting outlives no
         caller's transaction and there is nothing to restore.
@@ -357,6 +368,8 @@ class PostgresProvider:
             with conn.cursor() as cur:
                 for statement in _ISOLATION[isolation] if isolation is not None else ():
                     cur.execute(_trusted_query(statement))
+                if access_mode is not None:
+                    cur.execute(_trusted_query(_ACCESS_MODE[access_mode]))
                 cur.execute(_trusted_query("set deadlock_timeout = '100ms'"))
                 cur.execute(_trusted_query("set lock_timeout = '250ms'"))
             conn.commit()  # persist the SETs beyond this implicit transaction

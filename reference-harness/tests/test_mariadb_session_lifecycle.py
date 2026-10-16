@@ -1,11 +1,13 @@
 """The MariaDB held session's per-attempt lifecycle, driven over a substituted driver.
 
-``MariaDbProvider.open_session`` owns the session state its level needs for one
-attempt (m-db-port *Mapping obligations*): it saves ``innodb_snapshot_isolation``,
-configures the level, settles an unfinished transaction, restores the saved value,
-and closes. The failures a live server will not produce on demand — a refused
-setup, a restore or close that raises — are scripted here at the driver seam; the
-live read-back of the restored value is in ``test_compatibility.py``.
+``MariaDbProvider.open_session`` owns the session state its level and access mode
+need for one attempt (m-db-port *Mapping obligations*): it saves
+``innodb_snapshot_isolation`` — and ``transaction_read_only`` where a mode is
+requested — configures the level and the mode, settles an unfinished
+transaction, restores the saved values, and closes. The failures a live server
+will not produce on demand — a refused setup, a restore or close that raises —
+are scripted here at the driver seam; the live read-back of the restored values
+is in ``test_compatibility.py``.
 """
 
 from __future__ import annotations
@@ -17,8 +19,11 @@ import pytest
 
 from reference_harness.providers import mariadb
 from reference_harness.providers.mariadb import (
+    _ACCESS_MODE,
     _ISOLATION,
+    _RESTORE_ACCESS_MODE,
     _RESTORE_SNAPSHOT_ISOLATION,
+    _SAVE_ACCESS_MODE,
     _SAVE_SNAPSHOT_ISOLATION,
     MariaDbProvider,
 )
@@ -298,3 +303,55 @@ def test_the_first_cleanup_failure_surfaces_with_later_ones_noted(
         "_DriverError('close failed')",
     ]
     assert driver.calls[-4:] == [_WORK, "rollback", _restore(0), "close"]
+
+
+@pytest.mark.parametrize("mode", list(_ACCESS_MODE))
+@pytest.mark.parametrize("level", [*_ISOLATION, None])
+def test_an_access_mode_is_saved_applied_after_the_level_and_restored(
+    driver: _Driver, owner: MariaDbProvider, level: str | None, mode: str
+) -> None:
+    with owner.open_session(level, mode) as session:
+        session.execute(_WORK)
+        session.commit()
+    assert driver.calls == [
+        _SAVE_SNAPSHOT_ISOLATION,
+        _SAVE_ACCESS_MODE,
+        *(_ISOLATION[level] if level else ()),
+        _ACCESS_MODE[mode],
+        _LOCK_TUNING,
+        "commit",
+        _WORK,
+        "commit",
+        _restore(0),
+        _RESTORE_ACCESS_MODE % 0,
+        "close",
+    ]
+
+
+def test_a_failed_access_mode_setup_runs_no_body_and_closes_without_restoring(
+    driver: _Driver, owner: MariaDbProvider
+) -> None:
+    refusal = driver.failures[_ACCESS_MODE["read-only"]] = _DriverError("refused")
+    entered = False
+    with pytest.raises(_DriverError) as raised:
+        with owner.open_session("repeatable-read", "read-only"):
+            entered = True
+    assert raised.value is refusal
+    assert not entered
+    assert driver.calls[-2:] == [_ACCESS_MODE["read-only"], "close"]
+
+
+def test_a_failed_access_mode_restore_surfaces_the_reached_outcome_and_closes(
+    driver: _Driver, owner: MariaDbProvider
+) -> None:
+    failure = driver.failures[_RESTORE_ACCESS_MODE % 0] = _DriverError("restore failed")
+    with pytest.raises(_DriverError) as raised:
+        with owner.open_session("read-committed", "read-only") as session:
+            session.query("select 1")
+            session.commit()
+    assert raised.value is failure
+    assert raised.value.__notes__ == [
+        "MariaDB session cleanup failed while restoring transaction_read_only; "
+        "the session's last transaction committed"
+    ]
+    assert driver.calls[-3:] == [_restore(0), _RESTORE_ACCESS_MODE % 0, "close"]
