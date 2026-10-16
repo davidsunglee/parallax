@@ -135,6 +135,7 @@ def _unobserved_transaction(sample: Callable[[], None]) -> None:
     with (
         open_transaction_root(
             None,
+            access_mode="read_write",
             concurrency="optimistic",
             retries=10,
             retry_optimistic_conflicts=False,

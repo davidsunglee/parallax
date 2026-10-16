@@ -10,7 +10,7 @@ from parallax.snapshot._handle._read import (
     TooManyResultsFound,
 )
 from parallax.snapshot._handle._stream import SnapshotStream
-from parallax.snapshot._handle._transaction import TxnContext
+from parallax.snapshot._handle._transaction import ReadOnlyTxnContext, TxnContext
 from parallax.snapshot._handle._wire import (
     WireDatabaseView,
     WireQuery,
@@ -31,6 +31,7 @@ __all__ = [
     "CheckedSnapshot",
     "Database",
     "NoResultFound",
+    "ReadOnlyTxnContext",
     "ScopedDatabase",
     "Snapshot",
     "SnapshotConnectionError",

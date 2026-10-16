@@ -316,9 +316,13 @@ class _KeyedSeedPort(ConnectsAsItself):
         return 1
 
     def transaction[T](
-        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
+        self,
+        body: Callable[[DatabaseConnection], T],
+        *,
+        isolation: str | None = None,
+        access_mode: str | None = None,
     ) -> TransactionOutcome[T]:
-        del isolation
+        del isolation, access_mode
         self.calls.append(BeginCall())
         outcome = body_outcome(cast("DatabaseConnection", self), body)
         self.calls.append(CommitCall() if isinstance(outcome, Committed) else RollbackCall())

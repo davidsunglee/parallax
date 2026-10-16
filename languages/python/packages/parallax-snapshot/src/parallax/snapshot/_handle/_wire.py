@@ -8,7 +8,7 @@ from parallax.core._execution._keyed_writes import target_condition, window_muta
 from parallax.core._execution._options import OMITTED, Omitted
 from parallax.core._execution._read_policy import ReadQuery
 from parallax.core._execution._scope import ExecutionScope
-from parallax.core._execution._transaction._attempt import TxnAttempt
+from parallax.core._execution._transaction._attempt import ReadOnlyTxnAttempt, TxnAttempt
 from parallax.core.object_query import ObjectQueryNode, deserialize
 from parallax.core.object_query._fluent import ObjectQuery, typed_read_query
 from parallax.snapshot._handle._read import Snapshot, wire_publication_for
@@ -61,16 +61,20 @@ def wire_read_query(query: WireQuery) -> ReadQuery:
 
 
 class WireDatabaseView:
-    """``db.wire`` — the Wire read interface outside any transaction.
+    """The Wire read interface: ``db.wire`` outside any transaction, and
+    ``rtx.wire`` inside a read-only one.
 
-    Non-transactional exactly as ``db.find`` is: no read lock, no Concurrency
-    Preference, and no participation stamped on the values it publishes — whose
-    own retained evidence an effective-Optimistic write may still settle against.
+    It reads exactly as the Typed reads beside it do. Standalone, as ``db.find``
+    is: no transaction, read lock, or Concurrency Preference. Inside a read-only
+    transaction, as ``rtx.find`` is: on that transaction's attempt and
+    connection, taking no participation lock. Either way it stamps no
+    participation on the values it publishes — whose own retained evidence an
+    effective-Optimistic write may still settle against.
     """
 
     __slots__ = ("_reads",)
 
-    def __init__(self, reads: ExecutionScope | TxnAttempt) -> None:
+    def __init__(self, reads: ExecutionScope | ReadOnlyTxnAttempt | TxnAttempt) -> None:
         self._reads = reads
 
     def find(self, query: WireQuery) -> Snapshot[WireEntity]:

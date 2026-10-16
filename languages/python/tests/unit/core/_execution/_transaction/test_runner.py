@@ -1,12 +1,13 @@
 """The transaction runner (`execution.md`, Docker-free fake ports).
 
 The observable behavior of `parallax.core._execution._transaction._runner`, driven through the
-neutral Execution Scope a root's scope factory answers, with a transaction
-factory that hands each callback the actual Attempt: commit and abort wiring,
-join semantics (the same transaction, option conflicts, rollback-only
-foreclosure), resolution of omitted options against the root's
-`TxnOptions` and inspection of the resolved record, withheld values on
-abort, escaped attempt references, the retry classification matrix, including
+neutral Execution Scope a root's scope factory answers, with a context
+factory that hands each callback the actual attempt — writable or read-only:
+commit and abort wiring, the access mode each entrypoint requests, join
+semantics (the same attempt, the admission order, cross-mode and option
+refusals, rollback-only foreclosure), resolution of omitted options against
+the root's `TxnOptions` and inspection of the resolved record, withheld
+values on abort, escaped attempt references, the retry classification matrix, including
 the requirement that a rollback-only commit refusal keeps its original cause's
 retriability, and the adoption every attempt makes from the Serving Model:
 which edition an attempt, a join, a retry, and a failure report, and what stays
@@ -27,15 +28,14 @@ from typing import Any, Final, cast
 
 import pytest
 
-from parallax.conformance.scripted_clock import FixedClock
-from parallax.core import Attr, DomainModel, Entity, Int32, attr, index, opt_lock
-from parallax.core._execution._planning import build_write_planner
+from parallax.core import Attr, DomainModel, Entity, Int32, attr, index
 from parallax.core._execution._scope import ExecutionScope
-from parallax.core._execution._transaction._attempt import TxnAttempt
+from parallax.core._execution._transaction._attempt import ReadOnlyTxnAttempt, TxnAttempt
 from parallax.core._execution._unit_work.uow import EscapedTransactionError
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
     ISOLATION_LEVELS,
+    AccessMode,
     DatabaseAdapter,
     DatabaseConnection,
     IsolationLevel,
@@ -47,7 +47,9 @@ from parallax.core.entity._authored_resolver import object_query_node
 from parallax.core.entity._model import model_of
 from parallax.core.execution import (
     ExecutionFailure,
+    ReadOnlyTxnOptions,
     ServingModel,
+    TransactionAccessModeError,
     TransactionAuthorityError,
     TransactionOptionConflictError,
     TransactionOwnershipError,
@@ -60,14 +62,8 @@ from parallax.core.unit_work import (
     DatabaseLoginActor,
     RollbackOnlyError,
     SubjectActor,
-    TransactionSettings,
-    UnitOfWork,
-    UnitOfWorkError,
-    WriteBatchReason,
     WritePlanner,
-    run_unit_of_work,
 )
-from parallax.core.write_plan import WritePlan
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
@@ -81,10 +77,8 @@ from tests._support.db_port import (
     Write,
     body_outcome,
 )
-from tests._support.planner_probes import NO_ROW_READS, TEST_ACTOR_IDENTITY
 from tests.unit.core._execution._execution_support import (
     ACCOUNT,
-    FIXED,
     account_insert,
     itself,
     scope,
@@ -161,7 +155,7 @@ def test_join_with_equal_or_omitted_options_inherits() -> None:
     assert db.transact(outer, itself) == "joined"
 
 
-def _must_not_run(_tx: TxnAttempt) -> None:  # pragma: no cover - conflict forecloses it
+def _must_not_run(_tx: object) -> None:  # pragma: no cover - a refusal forecloses it
     raise AssertionError("the joined closure must not run on an option conflict")
 
 
@@ -441,7 +435,7 @@ def test_joining_a_doomed_transaction_is_foreclosed_before_its_closure_runs() ->
     assert port.calls == [BeginCall(), RollbackCall()]
 
 
-def _raise_inner(_tx: TxnAttempt) -> None:
+def _raise_inner(_tx: object) -> None:
     raise RuntimeError("inner failure")
 
 
@@ -455,33 +449,6 @@ def test_a_non_transactional_find_opens_no_unit_of_work_to_participate_in() -> N
     port = ScriptedAdapter(Read(rows=[_NEW_ROW]))
     assert scope(port).read_rows(_account_seven()).rows == (_NEW_ROW,)
     assert [type(op) for op in port.calls] == [ReadCall]
-
-
-def test_bare_unit_of_work_on_the_thread_is_refused() -> None:
-    port = ScriptedAdapter()
-    db = scope(port)
-
-    def executor(  # pragma: no cover - never flushed
-        _plan: WritePlan, *, trigger: WriteBatchReason, bind_deferred: object, completed: object
-    ) -> None:
-        raise AssertionError("no flush expected")
-
-    def body(_uow: UnitOfWork) -> None:
-        with pytest.raises(UnitOfWorkError, match="bare unit of work"):
-            db.transact(lambda _tx: None, itself)
-
-    model = model_of(ACCOUNT)
-    run_unit_of_work(
-        body,
-        settings=TransactionSettings(),
-        clock=FixedClock(FIXED),
-        meta=model,
-        flush_executor=executor,
-        acquire_rows=NO_ROW_READS,
-        planner=build_write_planner(model),
-        actor_identity=TEST_ACTOR_IDENTITY,
-        evidence_policy_for=opt_lock.view(model).required_key,
-    )
 
 
 # --------------------------------------------------------------------------- #
@@ -767,9 +734,10 @@ class _RollbackFailingPort(ScriptedAdapter):
         body: Callable[[DatabaseConnection], T],
         *,
         isolation: IsolationLevel | None = None,
+        access_mode: AccessMode | None = None,
         on: DatabaseConnection | None = None,
     ) -> TransactionOutcome[T]:
-        del isolation
+        del isolation, access_mode
         self.calls.append(BeginCall())
         outcome = body_outcome(on if on is not None else self, body)
         if isinstance(outcome, RolledBack):
@@ -1211,3 +1179,213 @@ def test_a_zero_root_bound_means_one_attempt_and_an_explicit_bound_retries() -> 
     port = ScriptedAdapter(Transact(commit=deadlock()), Transact())
     assert _configured_db(port, zero).transact(lambda _tx: "ok", itself, max_retries=1) == "ok"
     assert port.calls.count(BeginCall()) == 2
+
+
+# --------------------------------------------------------------------------- #
+# Read-only invocations: the same path with a read-only attempt.              #
+# --------------------------------------------------------------------------- #
+def test_each_entrypoint_asks_the_port_for_its_own_access_mode_on_every_attempt() -> None:
+    port = ScriptedAdapter(Transact(commit=deadlock()), Transact(), Transact())
+    db = scope(port)
+    assert db.read_only(lambda _rtx: "read", itself) == "read"
+    assert db.transact(lambda _tx: "written", itself) == "written"
+    assert port.calls == [
+        BeginCall("read_committed", "read_only"),
+        RollbackCall(),
+        BeginCall("read_committed", "read_only"),
+        CommitCall(),
+        BeginCall("read_committed", "read_write"),
+        CommitCall(),
+    ]
+
+
+def test_a_read_only_attempt_owns_no_unit_of_work() -> None:
+    port = ScriptedAdapter(Transact())
+    attempts: list[ReadOnlyTxnAttempt] = []
+    scope(port).read_only(attempts.append, itself)
+    (attempt,) = attempts
+    assert isinstance(attempt, ReadOnlyTxnAttempt)
+    assert not hasattr(attempt, "uow")
+
+
+def test_a_read_only_read_takes_no_lock_even_under_a_locking_root() -> None:
+    port = ScriptedAdapter(Transact(Read(rows=[_NEW_ROW])))
+    db = scope(port, options=TxnOptions(concurrency="locking"))
+    result = db.read_only(lambda rtx: rtx.read_rows(_account_seven()), itself)
+    assert result.rows == (_NEW_ROW,)
+    (read,) = [call for call in port.calls if isinstance(call, ReadCall)]
+    assert "for share" not in read.sql
+
+
+def test_read_only_options_resolve_the_bound_and_level_alone() -> None:
+    port = ScriptedAdapter(Transact(), Transact())
+    db = scope(
+        port, options=TxnOptions(max_retries=2, concurrency="locking", isolation="serializable")
+    )
+    inherited = db.read_only(lambda rtx: rtx.options, itself)
+    overridden = db.read_only(lambda rtx: rtx.options, itself, isolation="repeatable_read")
+    assert inherited == ReadOnlyTxnOptions(max_retries=2, isolation="serializable")
+    assert overridden == ReadOnlyTxnOptions(max_retries=2, isolation="repeatable_read")
+    assert not hasattr(inherited, "concurrency")
+    assert port.calls[0] == BeginCall("serializable", "read_only")
+
+
+@pytest.mark.parametrize(
+    ("keyword", "value", "message"),
+    [
+        ("max_retries", -1, "max_retries must be >= 0"),
+        ("max_retries", True, "max_retries must be a nonnegative int"),
+        ("isolation", "repeatable read", "isolation must be one of"),
+        ("isolation", None, "isolation must be one of"),
+    ],
+)
+def test_a_read_only_value_outside_its_fields_contract_is_refused_before_the_port(
+    keyword: str, value: object, message: str
+) -> None:
+    port = ScriptedAdapter()
+    with pytest.raises(ValueError, match=message):
+        scope(port).read_only(_must_not_run, itself, **{keyword: value})  # pyright: ignore[reportArgumentType]
+    assert port.calls == []
+
+
+def test_a_read_only_join_receives_the_same_attempt_and_inherits_its_options() -> None:
+    port = ScriptedAdapter(Transact())
+    db = scope(port)
+
+    def outer(rtx: ReadOnlyTxnAttempt) -> tuple[bool, bool]:
+        omitted = db.read_only(lambda joined: joined is rtx, itself)
+        repeated = db.read_only(
+            lambda joined: joined is rtx, itself, max_retries=10, isolation="read_committed"
+        )
+        return omitted, repeated
+
+    assert db.read_only(outer, itself) == (True, True)
+    assert port.calls == [BeginCall("read_committed", "read_only"), CommitCall()]
+
+
+_CONFLICTING_READ_ONLY_JOINS: list[tuple[str, Callable[[ExecutionScope], object]]] = [
+    ("max_retries", lambda db: db.read_only(_must_not_run, itself, max_retries=3)),
+    ("isolation", lambda db: db.read_only(_must_not_run, itself, isolation="serializable")),
+]
+
+
+@pytest.mark.parametrize(("option", "join"), _CONFLICTING_READ_ONLY_JOINS)
+def test_a_read_only_join_naming_a_conflicting_option_is_refused(
+    option: str, join: Callable[[ExecutionScope], object]
+) -> None:
+    port = ScriptedAdapter(Transact())
+    db = scope(port)
+
+    def outer(_rtx: ReadOnlyTxnAttempt) -> str:
+        with pytest.raises(TransactionOptionConflictError, match=option):
+            join(db)
+        return "survived"
+
+    assert db.read_only(outer, itself) == "survived"
+
+
+def test_a_writable_join_into_a_read_only_transaction_is_refused_before_its_callback() -> None:
+    port = ScriptedAdapter(Transact())
+    db = scope(port)
+
+    def outer(_rtx: ReadOnlyTxnAttempt) -> str:
+        with pytest.raises(TransactionAccessModeError) as refused:
+            db.transact(_must_not_run, itself)
+        assert refused.value.code == "transaction-access-mode-mismatch"
+        assert "writable invocation cannot join the active read-only" in str(refused.value)
+        return "survived"
+
+    # A refusal before admission dooms nothing: the outer attempt still commits.
+    assert db.read_only(outer, itself) == "survived"
+    assert port.calls == [BeginCall("read_committed", "read_only"), CommitCall()]
+
+
+def test_a_read_only_join_into_a_writable_transaction_is_refused_before_its_callback() -> None:
+    port = ScriptedAdapter(Transact())
+    db = scope(port)
+
+    def outer(_tx: TxnAttempt) -> str:
+        with pytest.raises(TransactionAccessModeError) as refused:
+            db.read_only(_must_not_run, itself)
+        assert "read-only invocation cannot join the active writable" in str(refused.value)
+        return "survived"
+
+    assert db.transact(outer, itself) == "survived"
+    assert port.calls == [BeginCall(), CommitCall()]
+
+
+def test_join_admission_runs_ownership_rollback_only_authority_access_mode_then_options() -> None:
+    port = ScriptedAdapter(Transact())
+    root = owned_root(port)
+    owner = root.using_principal(_Principal("alice", _Authorization("role-a")))
+    mismatched = root.using_principal(_Principal("bob", _Authorization("role-b")))
+    foreign = owned_root(ScriptedAdapter()).using_database_login()
+
+    def outer(_rtx: ReadOnlyTxnAttempt) -> str:
+        # Authority outranks the access mode, and the access mode an option.
+        with pytest.raises(TransactionAuthorityError):
+            mismatched.transact(_must_not_run, itself, max_retries=3)
+        with pytest.raises(TransactionAccessModeError):
+            owner.transact(_must_not_run, itself, max_retries=3)
+        with pytest.raises(RuntimeError, match="inner failure"):
+            owner.read_only(_raise_inner, itself)
+        # Ownership outranks rollback-only, which outranks everything after it.
+        with pytest.raises(TransactionOwnershipError):
+            foreign.transact(_must_not_run, itself)
+        with pytest.raises(RollbackOnlyError):
+            mismatched.transact(_must_not_run, itself, max_retries=3)
+        return "withheld"
+
+    with raises_contextualized(RollbackOnlyError) as refused_commit:
+        owner.read_only(outer, itself)
+    assert isinstance(refused_commit.value.__cause__, RuntimeError)
+    assert port.calls == [BeginCall("read_committed", "read_only"), RollbackCall()]
+
+
+def test_a_failed_read_only_join_dooms_the_attempt_even_when_the_outer_callback_catches_it() -> (
+    None
+):
+    port = ScriptedAdapter(Transact())
+    db = scope(port)
+    ran: list[bool] = []
+
+    def outer(_rtx: ReadOnlyTxnAttempt) -> str:
+        with contextlib.suppress(RuntimeError):
+            db.read_only(_raise_inner, itself)
+        with pytest.raises(RollbackOnlyError):
+            db.read_only(lambda _joined: ran.append(True), itself)
+        return "withheld"
+
+    with raises_contextualized(RollbackOnlyError) as excinfo:
+        db.read_only(outer, itself)
+    assert isinstance(excinfo.value.__cause__, RuntimeError)
+    assert ran == []
+    assert port.calls == [BeginCall("read_committed", "read_only"), RollbackCall()]
+
+
+def test_an_escaped_read_only_attempt_refuses_every_read_after_it_ended() -> None:
+    port = ScriptedAdapter(Transact())
+    escaped: list[ReadOnlyTxnAttempt] = []
+    scope(port).read_only(escaped.append, itself)
+    with pytest.raises(EscapedTransactionError):
+        escaped[0].read_rows(_account_seven())
+    assert port.calls == [BeginCall("read_committed", "read_only"), CommitCall()]
+
+
+def test_a_standalone_read_inside_a_read_only_callback_keeps_its_own_connection() -> None:
+    port = ScriptedAdapter(Transact(Read(rows=[_NEW_ROW])))
+    db = scope(port, options=TxnOptions(concurrency="locking"))
+
+    def outer(_rtx: ReadOnlyTxnAttempt) -> int:
+        return len(db.read_rows(_account_seven()).rows)
+
+    assert db.read_only(outer, itself) == 1
+    # Two acquisitions: the attempt's, and the standalone read's own, which
+    # the active transaction never redirects onto its connection.
+    assert port.acquisitions == 2
+
+
+def test_a_read_only_attempt_replays_a_deadlocked_commit() -> None:
+    port = ScriptedAdapter(Transact(commit=deadlock()), Transact())
+    assert scope(port).read_only(lambda _rtx: "ok", itself) == "ok"
+    assert port.calls.count(BeginCall("read_committed", "read_only")) == 2

@@ -1,0 +1,26 @@
+# A read-only transaction takes no participation lock, the unversioned fallback
+# included (m-read-lock; m-unit-work *Strategy selection*; m-execution
+# *Read-only transactions*): an unversioned Non-Temporal Entity read in a
+# writable transaction under the default preference takes the shared row lock
+# (`m-opt-lock-023`), while the same read in a read-only invocation renders none.
+model: models/wallet.yaml
+tags: [m-read-lock, m-execution, m-dialect, slice-snapshot-1]
+shape: read
+when:
+  uow:
+    accessMode: read-only
+  objectQuery:
+    target: parallax.compatibility.Wallet
+    predicate:
+      eq:
+        path: parallax.compatibility.Wallet.id
+        value: 1
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.owner, t0.balance from wallet t0 where t0.id = ?
+      binds: [1]
+  referenceSql: select id, owner, balance from wallet where id = 1
+  rows:
+    - { id: 1, owner: Ada, balance: "100.00" }
+  roundTrips: 1

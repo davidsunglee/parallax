@@ -19,6 +19,7 @@ from collections.abc import Callable, Sequence
 
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
+    AccessMode,
     Committed,
     DatabaseConnection,
     DocumentReadOrdinals,
@@ -36,8 +37,9 @@ __all__ = ["FakeDbPort", "FakeWritePort", "QueueDbPort"]
 
 class FakeDbPort(ConnectsAsItself):
     """An in-memory port that records executed SQL and returns canned rows,
-    and the level each boundary opened through it was asked for — which is
-    how a lane's routing between a standalone and a transactional read shows."""
+    and the level and access mode each boundary opened through it was asked
+    for — which is how a lane's routing between a standalone and a
+    transactional read shows."""
 
     dialect: Dialect = POSTGRES
 
@@ -45,6 +47,7 @@ class FakeDbPort(ConnectsAsItself):
         self.rows = rows
         self.executed: list[tuple[str, list[object]]] = []
         self.levels: list[IsolationLevel | None] = []
+        self.modes: list[AccessMode | None] = []
 
     def execute(
         self,
@@ -59,9 +62,14 @@ class FakeDbPort(ConnectsAsItself):
         raise NotImplementedError
 
     def transaction[T](
-        self, body: Callable[[DatabaseConnection], T], *, isolation: IsolationLevel | None = None
+        self,
+        body: Callable[[DatabaseConnection], T],
+        *,
+        isolation: IsolationLevel | None = None,
+        access_mode: AccessMode | None = None,
     ) -> TransactionOutcome[T]:
         self.levels.append(isolation)
+        self.modes.append(access_mode)
         return body_outcome(self, body)
 
 
@@ -124,7 +132,11 @@ class FakeWritePort(ConnectsAsItself):
         return 0 if sql.startswith(self._zero_affected_for) else 1
 
     def transaction[T](
-        self, body: Callable[[DatabaseConnection], T], *, isolation: IsolationLevel | None = None
+        self,
+        body: Callable[[DatabaseConnection], T],
+        *,
+        isolation: IsolationLevel | None = None,
+        access_mode: AccessMode | None = None,
     ) -> TransactionOutcome[T]:
         self.levels.append(isolation)
         outcome = body_outcome(self, body)
@@ -160,6 +172,10 @@ class QueueDbPort(ConnectsAsItself):
         return 1
 
     def transaction[T](
-        self, body: Callable[[DatabaseConnection], T], *, isolation: IsolationLevel | None = None
+        self,
+        body: Callable[[DatabaseConnection], T],
+        *,
+        isolation: IsolationLevel | None = None,
+        access_mode: AccessMode | None = None,
     ) -> TransactionOutcome[T]:  # pragma: no cover
         raise NotImplementedError

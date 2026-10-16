@@ -33,6 +33,7 @@ from parallax.core.base import SQL_NULL, PresentDocument, retain_document_value
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
     ISOLATION_LEVELS,
+    AccessMode,
     BeginFailed,
     CallbackRaised,
     CommitFailed,
@@ -48,7 +49,7 @@ from parallax.core.wire import loads
 from parallax.core.wire._json import authored_token
 from parallax.evolution.model_evolution import ABSENT, evolve
 from parallax.evolution.schema_delta import schema_delta
-from parallax.postgres import isolation_spelling
+from parallax.postgres import PoolOptions, isolation_spelling
 
 
 def _grade_case() -> Any:
@@ -262,6 +263,79 @@ def test_every_portable_level_opens_the_boundary_at_its_spelling(profile_run: An
         *(isolation_spelling(isolation_level(level)) for level in sorted(ISOLATION_LEVELS)),
         "read committed",
     ]
+
+
+@pytest.mark.parametrize("mode", ["read_only", "read_write"])
+def test_every_access_mode_opens_the_boundary_at_every_level(
+    profile_run: Any, mode: AccessMode
+) -> None:
+    # The access mode crosses the port independently of the level: under each
+    # requested level the transaction the callback runs in reports the mode it
+    # was asked for and the level it was asked for, and a boundary asking for
+    # neither reports the connection's own defaults afterwards.
+    observed: list[tuple[str, str]] = []
+
+    def body(port: Any) -> None:
+        (read_only,) = port.execute("show transaction_read_only", [])
+        (level,) = port.execute("show transaction_isolation", [])
+        observed.append((str(read_only[0]), str(level[0])))
+
+    for level in sorted(ISOLATION_LEVELS):
+        outcome = profile_run.port.transaction(
+            body, isolation=isolation_level(level), access_mode=mode
+        )
+        assert outcome == Committed(None)
+    assert profile_run.port.transaction(body) == Committed(None)
+    expected = "on" if mode == "read_only" else "off"
+    assert observed == [
+        *(
+            (expected, isolation_spelling(isolation_level(level)))
+            for level in sorted(ISOLATION_LEVELS)
+        ),
+        ("off", "read committed"),
+    ]
+
+
+def test_a_level_and_a_mode_open_every_boundary_under_immediate_preparation(
+    profile_run: Any,
+) -> None:
+    # A driver configured to prepare every statement on its first run would
+    # prepare the one request carrying both settings, and a prepared statement
+    # holds a single command: the boundary must still open, attempt after attempt.
+    runtime = profile_run.configured(
+        pool=PoolOptions(min_size=1, max_size=1), prepare_threshold=0
+    ).open()
+    observed: list[str] = []
+
+    def body(port: Any) -> None:
+        (row,) = port.execute("show transaction_read_only", [])
+        observed.append(str(row[0]))
+
+    try:
+        for _ in range(3):
+            with runtime.login_execution().new_context() as connection:
+                outcome = connection.transaction(
+                    body, isolation="repeatable_read", access_mode="read_only"
+                )
+            assert outcome == Committed(None)
+    finally:
+        runtime.close()
+    assert observed == ["on", "on", "on"]
+
+
+def test_a_read_only_boundary_refuses_a_write_natively(profile_run: Any) -> None:
+    case = _grade_case()
+    meta = engine.load_case_metamodel(case)
+    profile_run.reset(meta, provision.load_fixtures(str(case.document["model"])))
+
+    def body(port: Any) -> None:
+        port.execute_write("update grade set label = %s where id = %s", ["refused", 1])
+
+    outcome = profile_run.port.transaction(body, access_mode="read_only")
+    assert isinstance(outcome, RolledBack)
+    error = outcome.trigger.error
+    assert isinstance(error, DatabaseError)
+    assert error.native_code == "25006"
 
 
 def test_exec_rolled_back_leaves_no_effect(profile_run: Any) -> None:

@@ -78,7 +78,11 @@ class ScriptedPort(ConnectsAsItself):
         return self._write_affected.pop(0) if self._write_affected else 1
 
     def transaction[T](
-        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
+        self,
+        body: Callable[[DatabaseConnection], T],
+        *,
+        isolation: str | None = None,
+        access_mode: str | None = None,
     ) -> TransactionOutcome[T]:
         self.levels.append(isolation)
         return body_outcome(self, body)

@@ -42,7 +42,11 @@ class _AccountPort(ConnectsAsItself):
         raise AssertionError("the story writes nothing")
 
     def transaction[T](
-        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
+        self,
+        body: Callable[[DatabaseConnection], T],
+        *,
+        isolation: str | None = None,
+        access_mode: str | None = None,
     ) -> TransactionOutcome[T]:
         self.levels.append(isolation)
         return body_outcome(self, body)

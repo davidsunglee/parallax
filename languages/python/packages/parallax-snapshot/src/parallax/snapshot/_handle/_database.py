@@ -24,7 +24,12 @@ from parallax.core.read_delivery._read_plan import (
 from parallax.snapshot._handle._errors import SnapshotConnectionError
 from parallax.snapshot._handle._read import Snapshot, typed_publication_for
 from parallax.snapshot._handle._stream import SnapshotStream
-from parallax.snapshot._handle._transaction import TxnContext, transaction_for
+from parallax.snapshot._handle._transaction import (
+    ReadOnlyTxnContext,
+    TxnContext,
+    read_only_context_for,
+    transaction_for,
+)
 from parallax.snapshot._handle._wire import WireDatabaseView
 
 __all__ = ["Database", "ScopedDatabase", "connect"]
@@ -131,6 +136,18 @@ class ScopedDatabase:
             concurrency=concurrency,
             retry_optimistic_conflicts=retry_optimistic_conflicts,
             isolation=isolation,
+        )
+
+    def read_only[T](
+        self,
+        fn: Callable[[ReadOnlyTxnContext], T],
+        /,
+        *,
+        max_retries: int | Omitted = OMITTED,
+        isolation: IsolationLevel | Omitted = OMITTED,
+    ) -> T:
+        return self._execution.read_only(
+            fn, read_only_context_for, max_retries=max_retries, isolation=isolation
         )
 
 

@@ -52,7 +52,11 @@ class _RefusingPort(ConnectsAsItself):
         raise AssertionError(f"an evolution-case run must not execute SQL: {sql!r}")
 
     def transaction[T](
-        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
+        self,
+        body: Callable[[DatabaseConnection], T],
+        *,
+        isolation: str | None = None,
+        access_mode: str | None = None,
     ) -> TransactionOutcome[T]:
         raise AssertionError("an evolution-case run must not open a transaction")
 

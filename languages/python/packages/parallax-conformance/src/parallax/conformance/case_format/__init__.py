@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, Final, TypedDict, cast
 
 import yaml
 
-from parallax.core.db_port import IsolationLevel
+from parallax.core.db_port import AccessMode, IsolationLevel
 from parallax.core.execution import TxnOptions
 from parallax.core.unit_work import Concurrency, concurrency_preference
 from parallax.core.wire._json import authored_number
@@ -19,9 +19,12 @@ __all__ = [
     "ActorSelection",
     "Case",
     "DatabaseLoginSelection",
+    "ReadOnlyKeywords",
     "SelectionFilter",
     "SubjectSelection",
     "TransactionKeywords",
+    "access_mode",
+    "access_mode_literal",
     "actor_selection",
     "database_options",
     "default_cases_dir",
@@ -32,10 +35,13 @@ __all__ = [
     "isolation_literal",
     "load_case",
     "load_cases",
+    "read_only_keywords",
     "request_keywords",
     "safe_load_yaml",
     "select",
+    "serialized_access_mode",
     "serialized_isolation",
+    "step_access_mode",
     "step_actor_selection",
     "transaction_keywords",
 ]
@@ -348,6 +354,61 @@ def serialized_isolation(level: IsolationLevel) -> str:
     return _SERIALIZED_ISOLATION[level]
 
 
+_SERIALIZED_ACCESS_MODE: Final[Mapping[AccessMode, str]] = {
+    "read_only": "read-only",
+    "read_write": "read-write",
+}
+"""The `m-case-format` access-mode token each Python mode is named by, stated
+on both sides for the reason :data:`_SERIALIZED_ISOLATION` is."""
+
+_ACCESS_MODE_LITERALS: Final[Mapping[str, AccessMode]] = {
+    serialized: mode for mode, serialized in _SERIALIZED_ACCESS_MODE.items()
+}
+
+
+def access_mode_literal(value: str) -> AccessMode:
+    """The Python access mode a case's core serialized token names, refusing any
+    other spelling as :func:`isolation_literal` refuses a level."""
+    mode = _ACCESS_MODE_LITERALS.get(value)
+    if mode is None:
+        raise ValueError(
+            f"accessMode must be one of {sorted(_ACCESS_MODE_LITERALS)}, got {value!r}"
+        )
+    return mode
+
+
+def serialized_access_mode(mode: AccessMode) -> str:
+    """The core serialized spelling of ``mode`` — the inverse of
+    :func:`access_mode_literal`."""
+    return _SERIALIZED_ACCESS_MODE[mode]
+
+
+def access_mode(case: Case) -> AccessMode:
+    """The access mode a case's outer invocation selects: its `when.uow`
+    `accessMode`, else read/write.
+
+    Not an option resolved against the root: the mode names the entrypoint the
+    outer invocation is made through (`m-case-format`)."""
+    when = case.document.get("when")
+    block = cast("Mapping[str, object]", when).get("uow") if isinstance(when, Mapping) else None
+    if not isinstance(block, Mapping) or "accessMode" not in block:
+        return "read_write"
+    authored = cast("Mapping[str, object]", block)["accessMode"]
+    return _vocabulary_member(
+        access_mode_literal, authored, f"{case.path.name}: when.uow.accessMode"
+    )
+
+
+def step_access_mode(step: Mapping[str, object], *, where: str) -> AccessMode | None:
+    """The access mode a `join` step's joining call selects, or ``None`` where
+    the step names none and joins through the outer invocation's entrypoint."""
+    if "accessMode" not in step:
+        return None
+    if step.get("action") != "join":
+        raise ValueError(f"{where}.accessMode is legal only on a join action")
+    return _vocabulary_member(access_mode_literal, step["accessMode"], f"{where}.accessMode")
+
+
 class TransactionKeywords(TypedDict, total=False):
     """The four option fields one option block AUTHORS, and no others.
 
@@ -367,6 +428,29 @@ class TransactionKeywords(TypedDict, total=False):
     concurrency: Concurrency
     retry_optimistic_conflicts: bool
     isolation: IsolationLevel
+
+
+class ReadOnlyKeywords(TypedDict, total=False):
+    """The two option fields a read-only invocation's request may author: a
+    read-only transaction resolves no Concurrency Preference and no
+    optimistic-conflict opt-in."""
+
+    max_retries: int
+    isolation: IsolationLevel
+
+
+def read_only_keywords(keywords: TransactionKeywords, *, where: str) -> ReadOnlyKeywords:
+    """``keywords`` as a read-only invocation's request, refusing a field only
+    a writable invocation takes."""
+    writable = sorted(set(keywords) - {"max_retries", "isolation"})
+    if writable:
+        raise ValueError(f"{where} names writable-only options {writable} on a read-only call")
+    projected: ReadOnlyKeywords = {}
+    if "max_retries" in keywords:
+        projected["max_retries"] = keywords["max_retries"]
+    if "isolation" in keywords:
+        projected["isolation"] = keywords["isolation"]
+    return projected
 
 
 _REQUEST_KEYS: Final[tuple[str, ...]] = (
@@ -413,10 +497,11 @@ def transaction_keywords(case: Case) -> TransactionKeywords:
     """The ``db.transact`` keywords a case's `when.uow` authors for its outer
     invocation — every authored field and nothing else.
 
-    A `when.uow` naming a key outside the four request keys is refused here, so
-    a retired spelling reports the case rather than silently requesting nothing.
+    A `when.uow` naming a key outside the four request keys and the access mode
+    :func:`access_mode` reads is refused here, so a retired spelling reports the
+    case rather than silently requesting nothing.
     """
-    return _option_block_keywords(case, "when", "uow")
+    return _option_block_keywords(case, "when", "uow", entrypoint=("accessMode",))
 
 
 def database_options(case: Case) -> TxnOptions:
@@ -446,9 +531,12 @@ def effective_options(case: Case) -> TxnOptions:
     return dataclasses.replace(database_options(case), **transaction_keywords(case))
 
 
-def _option_block_keywords(case: Case, group: str, member: str) -> TransactionKeywords:
+def _option_block_keywords(
+    case: Case, group: str, member: str, *, entrypoint: tuple[str, ...] = ()
+) -> TransactionKeywords:
     """The option fields one option block of ``case`` authors — its
-    ``group.member`` mapping — refusing a key outside the four option keys."""
+    ``group.member`` mapping — refusing a key outside the four option keys and
+    the ``entrypoint`` keys another reader owns."""
     container = case.document.get(group)
     block = (
         cast("Mapping[str, object]", container).get(member)
@@ -461,7 +549,7 @@ def _option_block_keywords(case: Case, group: str, member: str) -> TransactionKe
     if not isinstance(block, Mapping):
         raise ValueError(f"{where} must be a mapping, got {block!r}")
     request = cast("Mapping[str, object]", block)
-    unknown = sorted(set(request) - set(_REQUEST_KEYS))
+    unknown = sorted(set(request) - set(_REQUEST_KEYS) - set(entrypoint))
     if unknown:
         raise ValueError(
             f"{where} names no option key {unknown}; the option keys are {list(_REQUEST_KEYS)}"

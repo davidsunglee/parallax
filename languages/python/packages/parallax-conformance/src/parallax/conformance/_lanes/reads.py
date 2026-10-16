@@ -24,7 +24,7 @@ from parallax.conformance._mechanism.model_facts import (
     read_scans,
 )
 from parallax.conformance._mechanism.planned_reads import planned_read
-from parallax.conformance._mechanism.transaction_control import transact, underlying
+from parallax.conformance._mechanism.transaction_control import read_only, transact, underlying
 from parallax.core import read_delivery
 from parallax.core.base import normalize_instant
 from parallax.core.continuation import ContinuationError
@@ -43,7 +43,7 @@ from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.temporal_read import Pin
 from parallax.core.unit_work import Clock
-from parallax.snapshot import Database, Snapshot, WireEntity
+from parallax.snapshot import Database, ScopedDatabase, Snapshot, WireEntity
 
 __all__ = [
     "case_database",
@@ -148,6 +148,7 @@ def compile_read_case(case: case_format.Case, dialect_name: str) -> tuple[list[E
             query,
             form="graph" if _result_form(case) == "instance" else "rows",
             transaction=case_format.transaction_keywords(case) if _is_transactional(case) else None,
+            access_mode=case_format.access_mode(case),
         )
     except READ_ERRORS as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
@@ -200,9 +201,7 @@ def run_read_case(
         db = root.using_database_login()
         try:
             result = (
-                transact(
-                    db, lambda tx: tx.read_rows(query), **case_format.transaction_keywords(case)
-                )
+                _transactional_rows(case, db, query)
                 if _is_transactional(case)
                 else underlying(lambda: db.read_rows(query))
             )
@@ -216,6 +215,21 @@ def run_read_case(
             ],
             observed.round_trips,
         )
+
+
+def _transactional_rows(
+    case: case_format.Case, db: ScopedDatabase, query: ObjectQueryNode
+) -> read_delivery.RowsResult:
+    """The case's row-form read inside the transaction its `when.uow` requests,
+    opened through the entrypoint its access mode selects."""
+    keywords = case_format.transaction_keywords(case)
+    if case_format.access_mode(case) == "read_only":
+        return read_only(
+            db,
+            lambda rtx: rtx.read_rows(query),
+            **case_format.read_only_keywords(keywords, where=f"{case.path.name}: when.uow"),
+        )
+    return transact(db, lambda tx: tx.read_rows(query), **keywords)
 
 
 def _conforming_row(

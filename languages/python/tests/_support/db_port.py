@@ -51,6 +51,7 @@ from parallax.conformance._mechanism.sole_connection import (
 )
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
+    AccessMode,
     BeginFailed,
     Bind,
     CanonicalWriteStatement,
@@ -149,15 +150,17 @@ class OrderedCall:
 
 @dataclass(frozen=True, slots=True)
 class BeginCall:
-    """A transaction boundary opened, carrying the isolation the caller asked for.
+    """A transaction boundary opened, carrying the isolation and access mode
+    the caller asked for.
 
-    The default is the level an unconfigured Database Root resolves every
-    transaction to, so a test about anything but isolation spells nothing;
+    The defaults are what an unconfigured Database Root's writable transaction
+    requests on every attempt, so a test about neither spells nothing;
     ``None`` is the port-level request for nothing, which only a caller below
     the handle makes.
     """
 
     isolation: IsolationLevel | None = "read_committed"
+    access_mode: AccessMode | None = "read_write"
 
 
 @dataclass(frozen=True, slots=True)
@@ -346,10 +349,14 @@ class _ScriptedConnection:
         return self._script().execute_pipeline(statements)
 
     def transaction[T](
-        self, body: Callable[[DatabaseConnection], T], *, isolation: IsolationLevel | None = None
+        self,
+        body: Callable[[DatabaseConnection], T],
+        *,
+        isolation: IsolationLevel | None = None,
+        access_mode: AccessMode | None = None,
     ) -> TransactionOutcome[T]:
         adapter = self._script()
-        return adapter.transaction(body, isolation=isolation, on=self)
+        return adapter.transaction(body, isolation=isolation, access_mode=access_mode, on=self)
 
 
 class ScriptedContext:
@@ -586,6 +593,7 @@ class ScriptedAdapter:
         body: Callable[[DatabaseConnection], T],
         *,
         isolation: IsolationLevel | None = None,
+        access_mode: AccessMode | None = None,
         on: DatabaseConnection | None = None,
     ) -> TransactionOutcome[T]:
         """``on`` is the connection the body is handed, defaulting to this adapter.
@@ -594,8 +602,10 @@ class ScriptedAdapter:
         attempt acquired, so an acquisition passes its own facade here and the
         direct-execution convenience passes nothing.
         """
-        entry = self._scopes[-1].take(Transact, f"isolation={isolation!r}")
-        self.calls.append(BeginCall(isolation))
+        entry = self._scopes[-1].take(
+            Transact, f"isolation={isolation!r}, access_mode={access_mode!r}"
+        )
+        self.calls.append(BeginCall(isolation, access_mode))
         if entry.begin is not None:
             return BeginFailed(entry.begin)
         scope = _Scope(entry.body)
@@ -701,7 +711,11 @@ class RefusingAdapter:
         raise AssertionError("no pipeline expected — this port refuses the database")
 
     def transaction[T](
-        self, body: Callable[[DatabaseConnection], T], *, isolation: IsolationLevel | None = None
+        self,
+        body: Callable[[DatabaseConnection], T],
+        *,
+        isolation: IsolationLevel | None = None,
+        access_mode: AccessMode | None = None,
     ) -> TransactionOutcome[T]:
-        del body, isolation
+        del body, isolation, access_mode
         raise AssertionError("no transaction expected — this port refuses the database")

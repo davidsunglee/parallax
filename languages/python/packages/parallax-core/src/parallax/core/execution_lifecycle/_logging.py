@@ -278,21 +278,30 @@ def _database_call_started_fields(
 def _invocation_started_fields(
     event: TransactionInvocationStarted, _detail: LifecycleLogDetail
 ) -> dict[str, object]:
-    """An invocation's own resolved policy, and the isolation it asked for.
+    """An invocation's own resolved policy, and the access mode and isolation
+    it asked for.
 
-    ``isolation`` is omitted rather than nulled when none was requested, for the
-    reason ``cause_activity`` is: its PRESENCE asserts that this invocation named
-    a level, and a null would read as "the boundary ran at no isolation" — which
-    no boundary does, since one requesting none runs at the adapter's own default.
+    ``access_mode`` and ``isolation`` are omitted rather than nulled when none
+    was requested, for the reason ``cause_activity`` is: PRESENCE asserts that
+    this invocation named one, and a null would read as "the boundary ran in no
+    mode" — which no boundary does, since one requesting none runs at the
+    adapter's own default. ``concurrency`` is omitted for a read-only
+    invocation, which resolves no preference.
     """
     match event.invocation:
-        case OuterInvocation(concurrency=concurrency, retry_policy=policy, isolation=isolation):
-            fields: dict[str, object] = {
-                "invocation": "outer",
-                "concurrency": concurrency,
-                "retries": policy.retries,
-                "retry_optimistic_conflicts": policy.retry_optimistic_conflicts,
-            }
+        case OuterInvocation(
+            access_mode=access_mode,
+            concurrency=concurrency,
+            retry_policy=policy,
+            isolation=isolation,
+        ):
+            fields: dict[str, object] = {"invocation": "outer"}
+            if access_mode is not None:
+                fields["access_mode"] = access_mode
+            if concurrency is not None:
+                fields["concurrency"] = concurrency
+            fields["retries"] = policy.retries
+            fields["retry_optimistic_conflicts"] = policy.retry_optimistic_conflicts
             if isolation is not None:
                 fields["isolation"] = isolation
             return fields

@@ -39,6 +39,7 @@ from parallax.core import (
 from parallax.core import predicate as predicate_algebra
 from parallax.core._execution._concurrency import CONCURRENCY
 from parallax.core._execution._planning import build_write_planner
+from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
 from parallax.core._execution._unit_work.instructions import (
     PreparedPredicateWrite,
     prepare_typed_write,
@@ -70,7 +71,6 @@ from parallax.core.unit_work import (
     WriteBatchReason,
     WritePlanningRequest,
     object_key,
-    run_unit_of_work,
 )
 from parallax.core.write_payload import LayoutPayloadPreparer
 from parallax.core.write_plan import (
@@ -626,16 +626,18 @@ def test_retaining_read_evidence_reads_each_familys_locator_from_its_owner(
         return retained_sources(meta, judged, evidence_context=evidence_context)[0].observation
 
     retained = (
-        run_unit_of_work(
-            retain,
-            settings=TransactionSettings(),
-            clock=FixedClock(_OPENED),
-            meta=meta,
-            flush_executor=_no_flush,
-            acquire_rows=NO_ROW_READS,
-            planner=planner,
-            actor_identity=TEST_ACTOR_IDENTITY,
-            evidence_policy_for=opt_lock.view(meta).required_key,
+        retain(
+            UnitOfWork(
+                lifetime=TxnAttemptLifetime(),
+                settings=TransactionSettings(),
+                clock=FixedClock(_OPENED),
+                meta=meta,
+                flush_executor=_no_flush,
+                acquire_rows=NO_ROW_READS,
+                planner=planner,
+                actor_identity=TEST_ACTOR_IDENTITY,
+                evidence_policy_for=opt_lock.view(meta).required_key,
+            )
         )
         if participating
         else retain(None)

@@ -26,6 +26,7 @@ from parallax.core.base import INFINITY
 
 if TYPE_CHECKING:
     from parallax.core.db_port import (
+        AccessMode,
         DatabaseConnection,
         DocumentReadOrdinals,
         IsolationLevel,
@@ -198,13 +199,14 @@ class CountingConnection:
         body: Callable[[DatabaseConnection], T],
         *,
         isolation: IsolationLevel | None = None,
+        access_mode: AccessMode | None = None,
     ) -> TransactionOutcome[T]:
         tally = self._tally
 
         def forwarded(connection: DatabaseConnection) -> T:
             return body(cast("DatabaseConnection", CountingConnection(connection, tally)))
 
-        return self._inner.transaction(forwarded, isolation=isolation)
+        return self._inner.transaction(forwarded, isolation=isolation, access_mode=access_mode)
 
 
 # --------------------------------------------------------------------------- #

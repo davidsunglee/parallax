@@ -78,8 +78,6 @@ from parallax.core._execution._unit_work.uow import (
     WriteBatchReason,
     WriteEvidenceError,
     WriteEvidenceErrorCode,
-    active_unit_of_work,
-    run_unit_of_work,
 )
 from parallax.core._execution._unit_work.write_planner import (
     WritePlanner,
@@ -145,7 +143,6 @@ __all__ = [
     "WritePreconditionError",
     "WriteRejectedError",
     "WriteResultError",
-    "active_unit_of_work",
     "allocated_keys",
     "buffered_write",
     "claim_scope",
@@ -155,5 +152,4 @@ __all__ = [
     "keyed_intent",
     "object_key",
     "returns_rows",
-    "run_unit_of_work",
 ]

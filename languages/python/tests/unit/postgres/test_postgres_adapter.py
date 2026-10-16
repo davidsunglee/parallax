@@ -43,6 +43,7 @@ from parallax.core.base import (
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
     ISOLATION_LEVELS,
+    AccessMode,
     BeginFailed,
     CallbackRaised,
     CanonicalWriteStatement,
@@ -277,7 +278,10 @@ class _FakeCursor:
     def __exit__(self, *_: object) -> bool:
         return False
 
-    def execute(self, sql: bytes | Composable, _binds: object = None) -> None:
+    def execute(
+        self, sql: bytes | Composable, _binds: object = None, *, prepare: bool | None = None
+    ) -> None:
+        del prepare
         self._executed.append(sql)
         if self._error is not None:
             raise self._error
@@ -565,7 +569,10 @@ class _ResultCursor(_FakeCursor):
         self._event("exit")
         return False
 
-    def execute(self, sql: bytes | Composable, binds: object = None) -> None:
+    def execute(
+        self, sql: bytes | Composable, binds: object = None, *, prepare: bool | None = None
+    ) -> None:
+        del prepare
         self._event(f"execute:{sql!r}:{binds!r}")
         if self._connection.in_pipeline:
             self._connection.unsynced.append(self)
@@ -1413,6 +1420,51 @@ def test_each_portable_level_opens_the_boundary_at_its_postgres_spelling(level: 
         f"set local transaction_isolation = '{isolation_spelling(requested)}'",
         "select 1",
     ]
+
+
+@pytest.mark.parametrize(("mode", "value"), [("read_only", "on"), ("read_write", "off")])
+def test_each_access_mode_opens_the_boundary_with_its_read_only_setting(
+    mode: AccessMode, value: str
+) -> None:
+    # An access mode is asked for on the same terms as a level: the transaction
+    # just begun is set as the setting's value, independently of any level.
+    connection = _FakeConnection()
+    outcome = _adapter(connection).transaction(
+        lambda port: port.execute("select 1", []), access_mode=mode
+    )
+    assert isinstance(outcome, Committed)
+    assert _sent(connection) == [f"set local transaction_read_only = '{value}'", "select 1"]
+
+
+def test_a_level_and_a_mode_travel_in_one_request_before_the_body() -> None:
+    # Asking for both costs the round trip asking for one does, and the level
+    # precedes the mode, so neither is a query that could take a snapshot first.
+    connection = _FakeConnection()
+    outcome = _adapter(connection).transaction(
+        lambda port: port.execute("select 1", []),
+        isolation="repeatable_read",
+        access_mode="read_only",
+    )
+    assert isinstance(outcome, Committed)
+    assert _sent(connection) == [
+        "set local transaction_isolation = 'repeatable read'; "
+        "set local transaction_read_only = 'on'",
+        "select 1",
+    ]
+
+
+def test_a_refused_access_mode_reports_a_boundary_that_never_opened() -> None:
+    connection = _FakeConnection(
+        cursor_error=errors.ReadOnlySqlTransaction("cannot set transaction read-write mode")
+    )
+    ran: list[str] = []
+    outcome = _adapter(connection).transaction(
+        lambda _port: ran.append("body"), access_mode="read_write"
+    )
+    assert isinstance(outcome, BeginFailed)
+    assert _translated(outcome.error).native_code == "25006"
+    assert ran == []
+    assert connection.rollbacks == 1
 
 
 def test_a_refused_isolation_reports_a_boundary_that_never_opened() -> None:

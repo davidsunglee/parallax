@@ -9,24 +9,26 @@ from parallax.core._execution._connection_lifecycle import enter_connection, exi
 from parallax.core._execution._options import (
     OMITTED,
     Omitted,
+    ReadOnlyTxnOptions,
     TxnOptions,
     check_max_retries,
     check_retry_optimistic_conflicts,
 )
-from parallax.core._execution._publication import ServingModel, read_projection, write_projection
-from parallax.core._execution._transaction._attempt import TxnAttempt
+from parallax.core._execution._publication import (
+    ModelSelection,
+    ServingModel,
+    read_projection,
+    write_projection,
+)
+from parallax.core._execution._transaction._attempt import ReadOnlyTxnAttempt, TxnAttempt
+from parallax.core._execution._transaction._lifetime import ActiveBinding, TxnAttemptLifetime
 from parallax.core._execution._unit_work.clock import Clock
 from parallax.core._execution._unit_work.effects import OptimisticLockConflictError
 from parallax.core._execution._unit_work.strategy import concurrency_preference
-from parallax.core._execution._unit_work.uow import (
-    Concurrency,
-    RollbackOnlyError,
-    UnitOfWork,
-    UnitOfWorkError,
-    active_unit_of_work,
-)
+from parallax.core._execution._unit_work.uow import Concurrency, RollbackOnlyError
 from parallax.core.auto_retry import run_with_retry
 from parallax.core.db_port import (
+    AccessMode,
     BeginFailed,
     Committed,
     DatabaseConnection,
@@ -40,12 +42,14 @@ from parallax.core.execution_authority._authority import ExecutionCapture, same_
 from parallax.core.execution_lifecycle._activity import (
     InstalledLifecycle,
     TransactionAttemptActivity,
+    TransactionInvocationActivity,
     open_transaction_root,
     refuse_reentry,
 )
 from parallax.core.read_delivery._read_plan import ReadPlanner
 
 __all__ = [
+    "TransactionAccessModeError",
     "TransactionAuthorityError",
     "TransactionOptionConflictError",
     "TransactionOwnershipError",
@@ -55,7 +59,7 @@ __all__ = [
 
 
 class TransactionOptionConflictError(ValueError):
-    """A joining ``db.transact`` call tried to re-negotiate the boundary.
+    """A joining invocation tried to re-negotiate the boundary.
 
     A joining call may not change the active transaction's settings: an explicit
     option whose value conflicts with the active transaction's resolved
@@ -65,7 +69,7 @@ class TransactionOptionConflictError(ValueError):
 
 
 class TransactionOwnershipError(RuntimeError):
-    """A nested ``db.transact`` call was made through a foreign resource root.
+    """A nested invocation was made through a foreign resource root.
 
     The active transaction records the shared resource identity behind the
     Database Root that opened it. Scopes derived from that root or any root alias
@@ -73,10 +77,10 @@ class TransactionOwnershipError(RuntimeError):
     root is refused even when it carries the same model, adapter, clock, or
     otherwise equivalent configuration.
 
-    The refusal precedes rollback-only joining, the option-conflict check,
-    closure execution, Unit of Work mutation, SQL, and adapter access, and
-    retains neither scope — :data:`code` and the message are its whole public
-    state.
+    The refusal precedes rollback-only joining, the authority, access-mode, and
+    option checks, closure execution, Unit of Work mutation, SQL, and adapter
+    access, and retains neither scope — :data:`code` and the message are its
+    whole public state.
     """
 
     code: Final[str] = "transaction-owner-mismatch"
@@ -86,6 +90,19 @@ class TransactionAuthorityError(RuntimeError):
     """A joining scope carries a different captured execution authority."""
 
     code: Final[str] = "transaction-authority-mismatch"
+
+
+class TransactionAccessModeError(RuntimeError):
+    """A nested invocation's entrypoint selects the other access mode.
+
+    A read-only transaction admits only read-only joins and a writable one only
+    writable joins, because joining reuses the active attempt and the native
+    transaction it opened in its mode. Refused after ownership, rollback-only,
+    and authority, and before the explicit options are compared or the joined
+    callback runs.
+    """
+
+    code: Final[str] = "transaction-access-mode-mismatch"
 
 
 class TransactionRollbackError(RuntimeError):
@@ -122,9 +139,9 @@ class _BeginFailure(Exception):
     error's own category is — but ``m-auto-retry`` classifies by the exception
     it catches, and a begin failure is an ordinary
     :class:`~parallax.core.db_error.DatabaseError` like any other. Travelling
-    as a type the loop does not catch is what makes it terminal;
-    :meth:`TransactionRunner.transact` unwraps it immediately outside the loop,
-    so nothing above ever sees this class.
+    as a type the loop does not catch is what makes it terminal; the runner
+    unwraps it immediately outside the loop, so nothing above ever sees this
+    class.
     """
 
     def __init__(self, error: Exception) -> None:
@@ -134,23 +151,34 @@ class _BeginFailure(Exception):
 
 @dataclass(frozen=True, slots=True)
 class _ActiveTransaction:
-    """What the outermost attempt publishes on the unit of work's ``companion``.
+    """What the outermost attempt binds for joining invocations.
 
-    A joining ``transact`` call needs the same lifecycle ``transaction`` to hand
-    its callback, the shared resource ``root`` that opened it so ownership can
-    be settled first, the ``capture`` that fixes execution authority, and the
-    ``attempt`` currently running — whose resolved options the join is compared
-    against and whose activity a joined invocation is a child OF. All four ride
-    core's single per-thread active binding, so their visibility ends exactly
-    when it does (nothing to clean up). ``root`` is a strong reference
-    deliberately: it is resource-scoped state whose lifetime is the
-    transaction's, not a registry entry.
+    A joining call needs the ``context`` the outer attempt's callback was
+    handed, the shared resource ``root`` that opened it so ownership can be
+    settled first, the ``capture`` that fixes execution authority, and the
+    ``attempt`` currently running — whose mode, lifetime, and resolved options
+    the join is admitted against and whose activity a joined invocation is a
+    child of. All four are visible exactly while the binding is, so their
+    visibility ends with the attempt's callback and completion. ``root`` is a
+    strong reference deliberately: it is resource-scoped state whose lifetime
+    is the transaction's, not a registry entry.
     """
 
-    transaction: object
+    attempt: TxnAttempt | ReadOnlyTxnAttempt
+    context: object
     root: object
     capture: ExecutionCapture
-    attempt: TxnAttempt
+
+
+_ACTIVE: Final = ActiveBinding[_ActiveTransaction]()
+"""The one active-transaction binding of every runner: a join through another
+resource root must find the active transaction to be refused by it."""
+
+type _AttemptFactory[A] = Callable[
+    [DatabaseConnection, TransactionAttemptActivity, TxnAttemptLifetime], A
+]
+"""How one invocation constructs each of its attempts once the connection, the
+attempt activity, and the attempt's lifetime exist."""
 
 
 class TransactionRunner:
@@ -164,7 +192,12 @@ class TransactionRunner:
     a connection, nor the active transaction is held here — that is
     what makes the first two per attempt, so a retry adopts afresh and acquires
     afresh rather than replaying over what its predecessor left, and what keeps
-    the active transaction on core's per-thread binding alone.
+    the active transaction on the one per-thread binding alone.
+
+    Writable and read-only invocations take one path: the same refusals, the
+    same admission sequence when joining, and the same attempt lifecycle when
+    outermost. They differ in the attempt each constructs, the options each
+    resolves, and the access mode each asks the port for.
     """
 
     __slots__ = ("_clock", "_lifecycle", "_planner", "_root", "_serving")
@@ -186,7 +219,7 @@ class TransactionRunner:
     def transact[Tx, T](
         self,
         fn: Callable[[Tx], T],
-        transaction_for: Callable[[TxnAttempt], Tx],
+        context_for: Callable[[TxnAttempt], Tx],
         *,
         capture: ExecutionCapture,
         defaults: TxnOptions,
@@ -195,7 +228,8 @@ class TransactionRunner:
         retry_optimistic_conflicts: bool | Omitted,
         isolation: IsolationLevel | Omitted,
     ) -> T:
-        """Run ``fn`` under ``capture``, returning its value after commit.
+        """Run ``fn`` in a writable transaction under ``capture``, returning its
+        value after commit.
 
         The public contract is the lifecycle scope's ``transact``. What is
         decided here: the deterministic refusals run first and keep their own
@@ -204,10 +238,10 @@ class TransactionRunner:
         root, runs the retry loop with one adoption per attempt, and is
         contextualized as a whole once the loop has resolved.
 
-        Each attempt is constructed fully wired before ``transaction_for``
+        Each attempt is constructed fully wired before ``context_for``
         receives it, and ``fn`` is handed what that factory answered. A retry
         constructs a fresh attempt and asks the factory again; a join reuses the
-        active transaction and asks nothing.
+        active context and asks nothing.
         """
         refuse_reentry(self._lifecycle)
         # Every explicit value is validated ahead of the join comparison below,
@@ -227,17 +261,17 @@ class TransactionRunner:
             else check_retry_optimistic_conflicts(retry_optimistic_conflicts)
         )
         level = isolation if isinstance(isolation, Omitted) else isolation_level(isolation)
-        active = active_unit_of_work()
+        active = _ACTIVE.active()
         if active is not None:
-            return self._join(
-                active,
-                fn,
-                capture,
+            joined = self._admitted(active, capture, TxnAttempt)
+            _check_join_options(
+                joined.options,
                 max_retries=bound,
                 concurrency=preference,
                 retry_optimistic_conflicts=opt_in,
                 isolation=level,
             )
+            return _joined(joined, cast("Tx", active.context), fn)
         options = _resolved(
             defaults,
             max_retries=bound,
@@ -245,7 +279,6 @@ class TransactionRunner:
             retry_optimistic_conflicts=opt_in,
             isolation=level,
         )
-
         extra_retriable = (
             _optimistic_conflict_retriable if options.retry_optimistic_conflicts else None
         )
@@ -255,12 +288,150 @@ class TransactionRunner:
         # edition has been taken that a failure could be reported under.
         root = open_transaction_root(
             self._lifecycle,
+            access_mode="read_write",
             concurrency=options.concurrency,
             retries=options.max_retries,
             retry_optimistic_conflicts=options.retry_optimistic_conflicts,
             isolation=options.isolation,
             extra_retriable=extra_retriable,
         )
+
+        def attempt_for(selection: ModelSelection) -> _AttemptFactory[TxnAttempt]:
+            read = read_projection(selection)
+            write = write_projection(selection)
+            return lambda conn, physical, lifetime: TxnAttempt(
+                conn,
+                read,
+                write,
+                physical,
+                lifecycle=self._lifecycle,
+                planner=self._planner,
+                options=options,
+                clock=self._clock,
+                actor=capture.actor,
+                lifetime=lifetime,
+            )
+
+        return self._invoke(
+            fn,
+            context_for,
+            attempt_for,
+            root=root,
+            capture=capture,
+            retries=options.max_retries,
+            isolation=options.isolation,
+            access_mode="read_write",
+            extra_retriable=extra_retriable,
+        )
+
+    def read_only[Tx, T](
+        self,
+        fn: Callable[[Tx], T],
+        context_for: Callable[[ReadOnlyTxnAttempt], Tx],
+        *,
+        capture: ExecutionCapture,
+        defaults: TxnOptions,
+        max_retries: int | Omitted,
+        isolation: IsolationLevel | Omitted,
+    ) -> T:
+        """Run ``fn`` in a read-only transaction under ``capture``, returning
+        its value after commit.
+
+        :meth:`transact`'s path with a read-only attempt: the same refusals and
+        join admission, a :class:`ReadOnlyTxnOptions` record resolved from the
+        retry bound and isolation alone, and a boundary every attempt asks the
+        port to open read-only.
+        """
+        refuse_reentry(self._lifecycle)
+        bound = max_retries if isinstance(max_retries, Omitted) else check_max_retries(max_retries)
+        level = isolation if isinstance(isolation, Omitted) else isolation_level(isolation)
+        active = _ACTIVE.active()
+        if active is not None:
+            joined = self._admitted(active, capture, ReadOnlyTxnAttempt)
+            _refuse_conflict("max_retries", bound, joined.options.max_retries)
+            _refuse_conflict("isolation", level, joined.options.isolation)
+            return _joined(joined, cast("Tx", active.context), fn)
+        options = ReadOnlyTxnOptions(
+            max_retries=defaults.max_retries if isinstance(bound, Omitted) else bound,
+            isolation=defaults.isolation if isinstance(level, Omitted) else level,
+        )
+        root = open_transaction_root(
+            self._lifecycle,
+            access_mode="read_only",
+            concurrency=None,
+            retries=options.max_retries,
+            retry_optimistic_conflicts=False,
+            isolation=options.isolation,
+            extra_retriable=None,
+        )
+
+        def attempt_for(selection: ModelSelection) -> _AttemptFactory[ReadOnlyTxnAttempt]:
+            read = read_projection(selection)
+            return lambda conn, physical, lifetime: ReadOnlyTxnAttempt(
+                conn,
+                read,
+                physical,
+                lifecycle=self._lifecycle,
+                planner=self._planner,
+                options=options,
+                lifetime=lifetime,
+            )
+
+        return self._invoke(
+            fn,
+            context_for,
+            attempt_for,
+            root=root,
+            capture=capture,
+            retries=options.max_retries,
+            isolation=options.isolation,
+            access_mode="read_only",
+            extra_retriable=None,
+        )
+
+    def _admitted[A: (TxnAttempt, ReadOnlyTxnAttempt)](
+        self, active: _ActiveTransaction, capture: ExecutionCapture, mode: type[A]
+    ) -> A:
+        """The active attempt, once a joining invocation of ``mode`` is admitted
+        to it, in this order: a transaction this resource root opened, not
+        rollback-only, under the same execution authority, and in the joining
+        entrypoint's access mode. Explicit options are the caller's to compare
+        next."""
+        if active.root is not self._root:
+            raise TransactionOwnershipError(
+                "this scope does not belong to the runtime that opened the active "
+                "transaction (transaction-owner-mismatch)"
+            )
+        attempt = active.attempt
+        attempt.lifetime.refuse_join()
+        if not same_execution(active.capture, capture):
+            raise TransactionAuthorityError(
+                "the joining scope carries different execution authority "
+                "(transaction-authority-mismatch)"
+            )
+        if not isinstance(attempt, mode):
+            raise TransactionAccessModeError(
+                f"a {_mode_name(mode)} invocation cannot join the active "
+                f"{_mode_name(type(attempt))} transaction (transaction-access-mode-mismatch)"
+            )
+        return attempt
+
+    def _invoke[A: (TxnAttempt, ReadOnlyTxnAttempt), Tx, T](
+        self,
+        fn: Callable[[Tx], T],
+        context_for: Callable[[A], Tx],
+        attempt_for: Callable[[ModelSelection], _AttemptFactory[A]],
+        *,
+        root: TransactionInvocationActivity,
+        capture: ExecutionCapture,
+        retries: int,
+        isolation: IsolationLevel,
+        access_mode: AccessMode,
+        extra_retriable: Callable[[BaseException], bool] | None,
+    ) -> T:
+        """Run one outermost invocation: the retry loop over physical attempts,
+        each adopting, acquiring, and opening its boundary afresh, the whole
+        contextualized once the loop has resolved."""
         execution = AdoptedExecution(self._serving)
 
         def invoke() -> T:
@@ -272,37 +443,14 @@ class TransactionRunner:
                     # then asked to begin under — and a retry, re-entering
                     # here, adopts whatever is serving by then.
                     selection = execution.adopt()
-                    read = read_projection(selection)
-                    write = write_projection(selection)
+                    construct = attempt_for(selection)
                     with invocation.attempt(selection.edition) as physical:
 
                         def in_txn(conn: DatabaseConnection) -> T:
-                            attempt = TxnAttempt(
-                                conn,
-                                read,
-                                write,
-                                physical,
-                                lifecycle=self._lifecycle,
-                                planner=self._planner,
-                                options=options,
-                                clock=self._clock,
-                                actor=capture.actor,
-                            )
-
-                            def body(uow: UnitOfWork) -> T:
-                                transaction = transaction_for(attempt)
-                                # Published for joining calls; visible only
-                                # while core's active-transaction binding is,
-                                # so it needs no cleanup.
-                                uow.companion = _ActiveTransaction(
-                                    transaction=transaction,
-                                    root=self._root,
-                                    capture=capture,
-                                    attempt=attempt,
-                                )
-                                return fn(transaction)
-
-                            return attempt.uow.run_outermost(body)
+                            attempted = construct(conn, physical, TxnAttemptLifetime())
+                            context = context_for(attempted)
+                            active = _ActiveTransaction(attempted, context, self._root, capture)
+                            return _completed(attempted, active, fn, context)
 
                         # One connection for this attempt and everything inside
                         # it — the boundary, the reads, the write batches, the
@@ -332,7 +480,10 @@ class TransactionRunner:
                             raise _BeginFailure(unacquired) from unacquired
                         try:
                             settled = _attempted(
-                                conn.transaction(in_txn, isolation=options.isolation), physical
+                                conn.transaction(
+                                    in_txn, isolation=isolation, access_mode=access_mode
+                                ),
+                                physical,
                             )
                         except BaseException as failure:
                             exit_connection(resource, physical, held_since_ns, failure)
@@ -341,9 +492,7 @@ class TransactionRunner:
                         return settled
 
                 try:
-                    return run_with_retry(
-                        attempt, retries=options.max_retries, extra_retriable=extra_retriable
-                    )
+                    return run_with_retry(attempt, retries=retries, extra_retriable=extra_retriable)
                 except _BeginFailure as failed:
                     # Unwrapped here rather than at the port, so the loop sees a
                     # type it does not retry.
@@ -362,57 +511,60 @@ class TransactionRunner:
         # the edition of the attempt that failed last.
         return execution.contextualized(invoke)
 
-    def _join[Tx, T](
-        self,
-        active: UnitOfWork,
-        fn: Callable[[Tx], T],
-        capture: ExecutionCapture,
-        *,
-        max_retries: int | Omitted,
-        concurrency: Concurrency | Omitted,
-        retry_optimistic_conflicts: bool | Omitted,
-        isolation: IsolationLevel | Omitted,
-    ) -> T:
-        """Run ``fn`` inside ``active``'s transaction once the join is proven, in
-        this order: a transaction this resource root opened, not rollback-only,
-        under the same execution authority, and with no explicit option in
-        conflict."""
-        joined = active.companion
-        if not isinstance(joined, _ActiveTransaction):
-            raise UnitOfWorkError(
-                "a bare unit of work is active on this thread; db.transact can "
-                "only join a transaction it opened"
-            )
-        if joined.root is not self._root:
-            raise TransactionOwnershipError(
-                "this scope does not belong to the runtime that opened the active "
-                "transaction (transaction-owner-mismatch)"
-            )
-        active.ensure_not_rollback_only()
-        if not same_execution(joined.capture, capture):
-            raise TransactionAuthorityError(
-                "the joining scope carries different execution authority "
-                "(transaction-authority-mismatch)"
-            )
-        _check_join_options(
-            joined.attempt.options,
-            max_retries=max_retries,
-            concurrency=concurrency,
-            retry_optimistic_conflicts=retry_optimistic_conflicts,
-            isolation=isolation,
-        )
-        # The join runs in the active unit of work under its own settings and
-        # returns immediately (m-unit-work); rollback-only foreclosure happens
-        # before the closure runs, and the lifecycle transaction it is handed is
-        # the one the outer attempt's factory answered. The joined activity is
-        # a child of the attempt currently running rather than a root of its
-        # own, and it opens after the deterministic refusals above precisely
-        # because those refusals reach no transaction at all. Nothing is
-        # adopted and nothing is wrapped: the selection and the failure
-        # contract are the outer invocation's.
-        transaction = cast("Tx", joined.transaction)
-        with joined.attempt.joined_invocation():
-            return active.run_joined(lambda _: fn(transaction))
+
+def _completed[Tx, T](
+    attempt: TxnAttempt | ReadOnlyTxnAttempt,
+    active: _ActiveTransaction,
+    fn: Callable[[Tx], T],
+    context: Tx,
+) -> T:
+    """Run the outermost callback with ``active`` bound for joining calls, then
+    complete the attempt's work, answering the callback's value only once the
+    attempt may commit.
+
+    A callback that returned normally still refuses the commit when a failure it
+    caught made the attempt rollback-only; otherwise the attempt completes its
+    own work — a writable attempt's pre-commit flush — while its lifetime still
+    admits work. Anything escaping withholds the value and discards what the
+    attempt held. Either way every handle and stream of the attempt is fenced
+    and the binding cleared before the port settles the native transaction.
+    """
+    lifetime = attempt.lifetime
+    with _ACTIVE.bound(active):
+        try:
+            result = fn(context)
+            lifetime.refuse_commit()
+            attempt.complete()
+            return result
+        except BaseException:
+            attempt.discard()
+            raise
+        finally:
+            lifetime.close()
+
+
+def _joined[Tx, T](
+    attempt: TxnAttempt | ReadOnlyTxnAttempt, context: Tx, fn: Callable[[Tx], T]
+) -> T:
+    """Run an admitted joining callback on the active ``context``.
+
+    The join returns immediately; commit, abort, and retry belong to the
+    outermost attempt, whose activity the joined one is a child of. A failure
+    escaping the joined callback dooms the shared lifetime, keeping the first
+    cause, before it propagates, so an outer callback that catches it still
+    cannot commit. Nothing is adopted and nothing is wrapped: the selection and
+    the failure contract are the outer invocation's.
+    """
+    with attempt.joined_invocation():
+        try:
+            return fn(context)
+        except BaseException as failure:
+            attempt.lifetime.doom(failure)
+            raise
+
+
+def _mode_name(kind: type[TxnAttempt | ReadOnlyTxnAttempt]) -> str:
+    return "read-only" if kind is ReadOnlyTxnAttempt else "writable"
 
 
 def _attempted[T](outcome: TransactionOutcome[T], attempt: TransactionAttemptActivity) -> T:

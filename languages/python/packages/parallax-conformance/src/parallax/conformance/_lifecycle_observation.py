@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Final, Literal, assert_never
 
 from parallax.conformance._lifecycle_recording import RecordedRoot, RecordingLifecycleProvider
-from parallax.conformance.case_format import serialized_isolation
+from parallax.conformance.case_format import serialized_access_mode, serialized_isolation
 from parallax.core.db_port import (
     AcquisitionReason,
     CleanupCode,
@@ -637,13 +637,19 @@ def _diagnosed(outcome: str, diagnostic: DatabaseFailureDiagnostic) -> dict[str,
 
 def _invocation(invocation: OuterInvocation | JoinedInvocation) -> dict[str, object]:
     match invocation:
-        case OuterInvocation(concurrency=concurrency, retry_policy=policy, isolation=isolation):
-            observed: dict[str, object] = {
-                "invocation": "outer",
-                "concurrency": concurrency,
-                "retries": policy.retries,
-                "retryOptimisticConflicts": policy.retry_optimistic_conflicts,
-            }
+        case OuterInvocation(
+            access_mode=access_mode,
+            concurrency=concurrency,
+            retry_policy=policy,
+            isolation=isolation,
+        ):
+            observed: dict[str, object] = {"invocation": "outer"}
+            if access_mode is not None:
+                observed["accessMode"] = serialized_access_mode(access_mode)
+            if concurrency is not None:
+                observed["concurrency"] = concurrency
+            observed["retries"] = policy.retries
+            observed["retryOptimisticConflicts"] = policy.retry_optimistic_conflicts
             if isolation is not None:
                 observed["isolation"] = serialized_isolation(isolation)
             return observed

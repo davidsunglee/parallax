@@ -34,6 +34,7 @@ from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import opt_lock
 from parallax.core import predicate as predicate_algebra
 from parallax.core._execution._planning import build_write_planner
+from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
 from parallax.core._execution._unit_work.instructions import prepare_typed_write
 from parallax.core.unit_work import (
     KeyedMutation,
@@ -109,6 +110,7 @@ def test_materialization_constructs_no_keyed_write_regardless_of_row_count(
         constructed.clear()
         selected = HeldRows(_ACCOUNT, _selected_rows(row_count))
         uow = UnitOfWork(
+            lifetime=TxnAttemptLifetime(),
             settings=TransactionSettings(concurrency="optimistic"),
             clock=FixedClock(dt.datetime(2024, 6, 1, tzinfo=dt.UTC)),
             meta=_ACCOUNT,

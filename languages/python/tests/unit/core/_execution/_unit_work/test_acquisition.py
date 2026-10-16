@@ -17,6 +17,7 @@ from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import inheritance, opt_lock
 from parallax.core import predicate as predicate_algebra
 from parallax.core._execution._planning import build_write_planner
+from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
 from parallax.core._execution._unit_work.acquisition import (
     RowConsumer,
     RowRequest,
@@ -108,6 +109,7 @@ def _uow(
 ) -> tuple[UnitOfWork, _Flushes]:
     flushes = _Flushes([] if log is None else log)
     uow = UnitOfWork(
+        lifetime=TxnAttemptLifetime(),
         settings=TransactionSettings(concurrency=concurrency),
         clock=FixedClock(dt.datetime(2024, 6, 1, tzinfo=dt.UTC)),
         meta=meta,

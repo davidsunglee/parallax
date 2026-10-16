@@ -23,6 +23,7 @@ from parallax.conformance.case_format import default_cases_dir, load_case
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.story_models import Account
 from parallax.core.db_port import (
+    AccessMode,
     DatabaseConnection,
     DocumentReadOrdinals,
     IsolationLevel,
@@ -139,7 +140,11 @@ class _IsolationProbe:
         return self._inner.ordered_write_transport
 
     def transaction[T](
-        self, body: Callable[[DatabaseConnection], T], *, isolation: IsolationLevel | None = None
+        self,
+        body: Callable[[DatabaseConnection], T],
+        *,
+        isolation: IsolationLevel | None = None,
+        access_mode: AccessMode | None = None,
     ) -> TransactionOutcome[T]:
         seen = self._seen
 
@@ -153,7 +158,7 @@ class _IsolationProbe:
             )
             return body(conn)
 
-        return self._inner.transaction(probing, isolation=isolation)
+        return self._inner.transaction(probing, isolation=isolation, access_mode=access_mode)
 
 
 def _show(conn: DatabaseConnection, setting: str) -> str:

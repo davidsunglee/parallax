@@ -79,9 +79,11 @@ class ReadInputs:
     """What the executor triad takes that varies by lane, as one value.
 
     A standalone read carries the connection its own operation acquired, no
-    Concurrency Preference, and no evidence context; a participating one carries the
-    attempt's connection, the unit of work's preference, and the unit of work
-    itself as the evidence context retained evidence indexes into. Either way the
+    Concurrency Preference, and no evidence context; a read-only transaction's
+    read carries its attempt's connection and neither of the other two; a
+    writable one carries the attempt's connection, the unit of work's
+    preference, and the unit of work itself as the evidence context retained
+    evidence indexes into. Either way the
     connection is the one the operation currently holds rather than anything a
     scope retains, which is what makes an operation's statements provably run
     on the connection that operation acquired.

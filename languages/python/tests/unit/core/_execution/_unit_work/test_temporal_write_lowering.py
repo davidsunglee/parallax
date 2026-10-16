@@ -43,6 +43,7 @@ from parallax.core import (
     temporal_read,
 )
 from parallax.core._execution._planning import build_write_planner
+from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
 from parallax.core._execution._write_lowering import lowered
 from parallax.core.base import INFINITY as OPEN_BOUND
 from parallax.core.db_port import JsonDocument
@@ -59,7 +60,6 @@ from parallax.core.unit_work import (
     TransactionSettings,
     UnitOfWork,
     WriteBatchReason,
-    run_unit_of_work,
 )
 from parallax.core.write_payload import LayoutPayloadPreparer
 from parallax.core.write_plan import (
@@ -918,16 +918,18 @@ def test_a_temporal_concrete_observes_its_own_declared_members_not_the_roots() -
     def observe(uow: UnitOfWork) -> WriteObservation | None:
         return _retained(model, uow, entity.identity)
 
-    observation = run_unit_of_work(
-        observe,
-        settings=TransactionSettings(),
-        clock=FixedClock(dt.datetime(2024, 6, 1, tzinfo=dt.UTC)),
-        meta=model,
-        flush_executor=_no_flush,
-        acquire_rows=NO_ROW_READS,
-        planner=build_write_planner(model),
-        actor_identity=TEST_ACTOR_IDENTITY,
-        evidence_policy_for=opt_lock.view(model).required_key,
+    observation = observe(
+        UnitOfWork(
+            lifetime=TxnAttemptLifetime(),
+            settings=TransactionSettings(),
+            clock=FixedClock(dt.datetime(2024, 6, 1, tzinfo=dt.UTC)),
+            meta=model,
+            flush_executor=_no_flush,
+            acquire_rows=NO_ROW_READS,
+            planner=build_write_planner(model),
+            actor_identity=TEST_ACTOR_IDENTITY,
+            evidence_policy_for=opt_lock.view(model).required_key,
+        )
     )
     assert isinstance(observation, TemporalObservation)
     assert dict(observation.predecessor.members) == {
@@ -959,16 +961,18 @@ def test_a_real_find_retains_the_rows_raw_structured_column_for_its_observation(
     def observe(uow: UnitOfWork) -> WriteObservation | None:
         return _retained(model, uow, entity.identity, stored)
 
-    observation = run_unit_of_work(
-        observe,
-        settings=TransactionSettings(),
-        clock=FixedClock(dt.datetime(2024, 6, 1, tzinfo=dt.UTC)),
-        meta=model,
-        flush_executor=_no_flush,
-        acquire_rows=NO_ROW_READS,
-        planner=build_write_planner(model),
-        actor_identity=TEST_ACTOR_IDENTITY,
-        evidence_policy_for=opt_lock.view(model).required_key,
+    observation = observe(
+        UnitOfWork(
+            lifetime=TxnAttemptLifetime(),
+            settings=TransactionSettings(),
+            clock=FixedClock(dt.datetime(2024, 6, 1, tzinfo=dt.UTC)),
+            meta=model,
+            flush_executor=_no_flush,
+            acquire_rows=NO_ROW_READS,
+            planner=build_write_planner(model),
+            actor_identity=TEST_ACTOR_IDENTITY,
+            evidence_policy_for=opt_lock.view(model).required_key,
+        )
     )
     assert isinstance(observation, TemporalObservation)
     assert observation.predecessor.document == stored

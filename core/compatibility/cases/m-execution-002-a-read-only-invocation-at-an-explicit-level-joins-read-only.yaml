@@ -1,0 +1,50 @@
+# A read-only invocation (m-execution *Read-only transactions*): the outer call
+# names Repeatable Read, every attempt asks the port for a read-only boundary at
+# that level, a read-only joining call reuses the same attempt, and nothing is
+# flushed before the commit, because a read-only attempt buffers nothing. The
+# invocation states its access mode and no Concurrency Preference.
+model: models/account.yaml
+tags: [m-execution, m-execution-lifecycle, m-api-conformance, isolation, join, slice-snapshot-1]
+lane: api-conformance
+shape: boundary
+compileEligibility:
+  mode: run-only
+  reason: single-connection
+  note: "single-connection read-only boundary intent (shape:boundary)"
+when:
+  uow:
+    accessMode: read-only
+    isolation: repeatable-read
+  boundary:
+    - action: read
+      note: the outer read-only callback observes the row
+    - action: join
+      note: a joining read-only call names nothing and reuses the outer attempt
+    - action: read
+      note: the joined callback reads on the same connection and transaction
+then:
+  outcome: committed
+  roundTrips: 2
+  executionLifecycle:
+    roots:
+      - execution: 1
+        kind: transaction-invocation
+        events:
+          - { sequence: 1, activity: 1, parent: null, transactionInvocationStarted: { invocation: outer, accessMode: read-only, retries: 10, retryOptimisticConflicts: false, isolation: repeatable-read } }
+          - { sequence: 2, activity: 2, parent: 1, transactionAttemptStarted: { edition: account } }
+          - { sequence: 3, activity: 3, parent: 2, acquisitionStarted: {} }
+          - { sequence: 4, activity: 3, parent: 2, acquisitionFinished: { outcome: acquired } }
+          - { sequence: 5, activity: 4, parent: 2, readStarted: { target: parallax.compatibility.Account, interface: typed } }
+          - { sequence: 6, activity: 5, parent: 4, databaseCallStarted: { target: parallax.compatibility.Account, kind: read } }
+          - { sequence: 7, activity: 5, parent: 4, databaseCallFinished: { outcome: readCompleted, returnedRows: 1 } }
+          - { sequence: 8, activity: 4, parent: 2, readFinished: { outcome: completed } }
+          - { sequence: 9, activity: 6, parent: 2, transactionInvocationStarted: { invocation: joined } }
+          - { sequence: 10, activity: 7, parent: 2, readStarted: { target: parallax.compatibility.Account, interface: typed } }
+          - { sequence: 11, activity: 8, parent: 7, databaseCallStarted: { target: parallax.compatibility.Account, kind: read } }
+          - { sequence: 12, activity: 8, parent: 7, databaseCallFinished: { outcome: readCompleted, returnedRows: 1 } }
+          - { sequence: 13, activity: 7, parent: 2, readFinished: { outcome: completed } }
+          - { sequence: 14, activity: 6, parent: 2, transactionInvocationFinished: { outcome: returned } }
+          - { sequence: 15, activity: 9, parent: 2, releaseStarted: {} }
+          - { sequence: 16, activity: 9, parent: 2, releaseFinished: { cleanup: returned } }
+          - { sequence: 17, activity: 2, parent: 1, transactionAttemptFinished: { outcome: committed } }
+          - { sequence: 18, activity: 1, parent: null, transactionInvocationFinished: { outcome: committed } }

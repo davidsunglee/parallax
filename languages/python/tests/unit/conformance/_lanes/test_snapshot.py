@@ -1042,7 +1042,11 @@ class _QueueWritePort(QueueDbPort):
         return 1
 
     def transaction[T](
-        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
+        self,
+        body: Callable[[DatabaseConnection], T],
+        *,
+        isolation: str | None = None,
+        access_mode: str | None = None,
     ) -> TransactionOutcome[T]:
         return body_outcome(self, body)
 

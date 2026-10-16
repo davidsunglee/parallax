@@ -16,7 +16,9 @@ correct without the caller writing locking SQL. An in-transaction **object
 find** governed by the effective Locking strategy acquires a **shared row lock**.
 That strategy applies when the caller explicitly selects the `locking`
 preference and as the mandatory fallback for an unversioned Non-Temporal Entity
-under the default `optimistic` preference.
+under the default `optimistic` preference. A read-only transaction intends no
+write, resolves no preference, and takes no shared row lock for any Entity, the
+fallback included (`m-execution` *Read-only transactions*).
 
 **Whether and where to attach the lock is a `m-dialect` decision**, not
 `m-unit-work`'s: the unit of work asks the dialect to apply the Entity's effective

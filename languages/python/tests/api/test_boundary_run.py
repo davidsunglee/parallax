@@ -35,13 +35,14 @@ from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import ConnectionAcquisitionError
 from parallax.core.execution import (
     ServingModel,
+    TransactionAccessModeError,
     TransactionAuthorityError,
     TransactionOptionConflictError,
     prepare_model,
 )
 from parallax.core.execution_lifecycle import TransactionAttemptStarted
 from parallax.core.unit_work import OptimisticLockConflictError
-from parallax.snapshot import ScopedDatabase, TxnContext, connect
+from parallax.snapshot import ReadOnlyTxnContext, ScopedDatabase, TxnContext, connect
 from tests._support.adoption import raises_contextualized
 from tests._support.corpus import case_document, case_fixtures
 
@@ -72,7 +73,7 @@ def _make_body(
     db: ScopedDatabase,
     scope_for: Callable[[case_format.ActorSelection], ScopedDatabase],
 ) -> Any:  # Callable[[Transaction], Entity | None]
-    def body(tx: TxnContext) -> Entity | None:
+    def body(tx: TxnContext | ReadOnlyTxnContext) -> Entity | None:
         result = boundary_runner.run_boundary_actions(
             tx, steps, target, database=db, scope_for=scope_for
         )
@@ -123,6 +124,13 @@ def _assert_outcome(
     elif outcome == "authority-mismatch":
         with raises_contextualized(TransactionAuthorityError):
             run()
+    elif outcome == "access-mode-mismatch":
+        with raises_contextualized(TransactionAccessModeError) as refused:
+            run()
+        assert refused.value.code == "transaction-access-mode-mismatch"
+        assert _persisted_amount(verify_db, target) == target.baseline, (
+            "a refused joining access mode leaves nothing persisted"
+        )
     elif outcome == "boundary-failed":
         # The boundary never opened, so what surfaces is the error the port made
         # rather than a classified failure of the work. WHICH error is the fault's
@@ -238,6 +246,10 @@ def test_boundary_case_runs_through_the_shipped_surface(
     body = _make_body(steps, target, raise_after=raise_after, db=db, scope_for=scope_for)
 
     def run() -> Entity | None:
+        if case_format.access_mode(case) == "read_only":
+            return db.read_only(
+                body, **case_format.read_only_keywords(requests, where=f"{case.case_id}: when.uow")
+            )
         return db.transact(body, **requests)
 
     _assert_outcome(
@@ -287,7 +299,8 @@ def test_reachable_boundary_cases_cover_the_expected_population() -> None:
     # Transaction-Time-Only analogue `m-temporal-read-011`,
     # `m-unit-work-004`, the isolation pair `m-unit-work-035/036`, the five
     # root-configured join cases `m-unit-work-037..041`, the root-default
-    # resolution case `m-execution-001`, and the six
+    # resolution case `m-execution-001`, the four read-only and access-mode
+    # cases `m-execution-002..005`, and the six
     # `m-execution-lifecycle` spine cases whose observables need an injected
     # fault or a joined boundary — never a hand list at the RUNNER level (the
     # corpus itself drives `_CASES` above); this is a coverage assertion only.
@@ -305,6 +318,10 @@ def test_reachable_boundary_cases_cover_the_expected_population() -> None:
         "m-auto-retry-010",
         "m-auto-retry-011",
         "m-execution-001",
+        "m-execution-002",
+        "m-execution-003",
+        "m-execution-004",
+        "m-execution-005",
         "m-execution-lifecycle-004",
         "m-execution-lifecycle-005",
         "m-execution-lifecycle-006",

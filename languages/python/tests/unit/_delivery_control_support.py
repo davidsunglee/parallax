@@ -198,8 +198,9 @@ class GuardedPort(ConnectsAsItself):
         body: Callable[[Any], T],
         *,
         isolation: str | None = None,
+        access_mode: str | None = None,
     ) -> Any:
-        del body, isolation
+        del body, isolation, access_mode
         raise NotImplementedError
 
     def execute_pipeline(self, statements: Sequence[PipelineStatement]) -> list[list[Row]]:

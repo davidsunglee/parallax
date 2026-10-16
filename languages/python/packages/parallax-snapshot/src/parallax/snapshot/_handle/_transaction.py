@@ -4,8 +4,8 @@ import datetime as dt
 from typing import Any
 
 from parallax.core._execution._keyed_writes import target_condition, window_mutation
-from parallax.core._execution._options import OMITTED, Omitted, TxnOptions
-from parallax.core._execution._transaction._attempt import TxnAttempt
+from parallax.core._execution._options import OMITTED, Omitted, ReadOnlyTxnOptions, TxnOptions
+from parallax.core._execution._transaction._attempt import ReadOnlyTxnAttempt, TxnAttempt
 from parallax.core.entity import AttributeAssignment, EntityRowCodec
 from parallax.core.entity import Entity as EntityBase
 from parallax.core.object_query import ObjectQueryNode
@@ -20,7 +20,7 @@ from parallax.snapshot._handle._typed_writes import (
     typed_predicate_write,
     typed_target_write,
 )
-from parallax.snapshot._handle._wire import WireTransactionView
+from parallax.snapshot._handle._wire import WireDatabaseView, WireTransactionView
 
 # Sibling implementation modules. None of these names carries a leading
 # underscore, precisely because it crosses a module boundary: privacy is carried
@@ -29,11 +29,11 @@ from parallax.snapshot._handle._wire import WireTransactionView
 # import a reportPrivateUsage error.
 from parallax.snapshot._inspection import bind_insertion
 
-__all__ = ["TxnContext", "transaction_for"]
+__all__ = ["ReadOnlyTxnContext", "TxnContext", "read_only_context_for", "transaction_for"]
 
 
 class TxnContext:
-    """The developer transaction handed to a ``db.transact`` closure.
+    """The writable transaction context handed to a ``db.transact`` callback.
 
     A facade over one transaction attempt: its unit of work, its connection, and
     the selection it adopted.
@@ -54,10 +54,9 @@ class TxnContext:
     otherwise (ADR 0014, which those verbs reach through the Typed predicate
     ingress). Every windowed verb selects its bounded form with keyword-only
     ``until``, and a stated ``valid_from`` or ``until`` of ``None`` is refused
-    rather than read as omission. A reference used after
-    its owning scope ends raises
-    :class:`~parallax.core.unit_work.EscapedTransactionError` (every verb
-    delegates to the unit of work, which fences use-after-scope).
+    rather than read as omission. A reference used after its attempt ended
+    raises ``EscapedTransactionError``: the attempt's lifetime fences every
+    verb.
 
     :attr:`wire` is the Wire read AND write interface over this same transaction
     — a view, not a second lifecycle, so a Wire read participates exactly as
@@ -500,3 +499,79 @@ def transaction_for(attempt: TxnAttempt) -> TxnContext:
     """The Snapshot transaction one fully constructed attempt is handed to its
     callback as, deriving rows through the codec that attempt adopted."""
     return TxnContext(attempt, attempt.codec)
+
+
+class ReadOnlyTxnContext:
+    """The read-only transaction context handed to a ``db.read_only`` callback.
+
+    A facade over one read-only transaction attempt: its connection, the
+    selection it adopted, and a native transaction opened read-only. It reads
+    exactly as :class:`TxnContext` does — :meth:`find`, :meth:`stream`,
+    :meth:`read_rows`, and :attr:`wire` — except that no read takes a
+    participation lock, the unversioned fallback included, and it has no verb
+    that writes. A reference used after its attempt ended raises
+    ``EscapedTransactionError``, a live stream included.
+    """
+
+    __slots__ = ("_attempt",)
+
+    def __init__(self, attempt: ReadOnlyTxnAttempt) -> None:
+        self._attempt = attempt
+
+    @property
+    def edition(self) -> str:
+        """The Model Edition this attempt adopted before its boundary opened,
+        retained for the attempt's life as :attr:`TxnContext.edition` is."""
+        return self._attempt.edition
+
+    @property
+    def options(self) -> ReadOnlyTxnOptions:
+        """The resolved options this read-only invocation runs under: each
+        explicit ``db.read_only`` keyword, else the Database Root's default.
+
+        One record for the whole invocation, shared by every retried attempt
+        and every joining call, which compares its explicit keywords against
+        exactly this. It has no Concurrency Preference: a read-only transaction
+        takes no participation lock.
+        """
+        return self._attempt.options
+
+    def find[S](self, query: ObjectQuery[Any, S]) -> Snapshot[S]:
+        """Run ``query`` inside this transaction and return ``Snapshot[S]``,
+        taking no participation lock. Otherwise identical to
+        :meth:`TxnContext.find`; a milestone-set read retains no evidence."""
+        return self._attempt.read(
+            query, convert_query=typed_read_query, build_publication=typed_publication_for
+        )
+
+    def stream[S](self, query: ObjectQuery[Any, S], *, batch_size: int = 1000) -> SnapshotStream[S]:
+        """Deliver ``query``'s roots one at a time inside this transaction.
+
+        Delivery is attempt-local: a retried callback opens a fresh stream and
+        may observe roots already consumed, and a stream outliving its attempt
+        reads no further page.
+        """
+        return SnapshotStream(
+            self._attempt,
+            query,
+            batch_size,
+            convert_query=typed_read_query,
+            build_publication=typed_publication_for,
+        )
+
+    def read_rows(self, query: ObjectQueryNode) -> RowsResult:
+        """Run a row-form read inside this transaction; it records no
+        observation and takes no participation lock."""
+        return self._attempt.read_rows(query)
+
+    @property
+    def wire(self) -> WireDatabaseView:
+        """This transaction's Wire read interface: the same reads, Wire-spelled,
+        over the same attempt."""
+        return WireDatabaseView(self._attempt)
+
+
+def read_only_context_for(attempt: ReadOnlyTxnAttempt) -> ReadOnlyTxnContext:
+    """The context one fully constructed read-only attempt is handed to its
+    callback as."""
+    return ReadOnlyTxnContext(attempt)

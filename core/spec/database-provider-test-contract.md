@@ -78,7 +78,14 @@ For every supported adapter, the smoke suite covers:
   level after those reports the connection's own default rather than the last
   request. The whole vocabulary rather than one level, because a mapping that
   crossed two levels or dropped one is exactly what a single-level proof admits
-- a **session setup that fails**, which reports `BeginFailed`, runs no callback,
+- a boundary opened in **each Access Mode at each portable Isolation Level**,
+  which the callback observes as the mode and the level the database reports
+  for its own transaction, and a boundary asking for neither afterwards, which
+  reports the connection's own defaults. Every pair rather than each request
+  alone, because the two are independent requests that one boundary applies
+  together; and a write in a read-only boundary refused by the database itself
+- a **session setup that fails**, for a level or for an access mode, which
+  reports `BeginFailed`, runs no callback,
   and leaves the port usable for the next boundary; and a connection that also
   fails to undo the empty transaction, which is discarded. Proved against the
   driver seam rather than against a real refusal, because a conforming mapping
@@ -249,10 +256,11 @@ A provider contract suite must exercise these operations:
   closes — never a connection borrowed from what serves application work, and
   never a raw accessor on a Database Root
 - `session`: open a manual-commit held session at the level a case resolves,
-  one context per attempt of a two-session choreography. Where the engine needs
-  session state for that level, the provider owns it as an adapter does
+  and in an access mode where one is requested, one context per attempt of a
+  two-session choreography. Where the engine needs session state for that level or mode,
+  the provider owns it as an adapter does
   (`m-db-port` *Mapping obligations*): each context saves the state before
-  configuring the level and, on exit, rolls back an unfinished transaction,
+  configuring the level or mode and, on exit, rolls back an unfinished transaction,
   restores the saved state, and closes the connection. A cleanup failure never
   replaces the body's own failure. A session also lifts its lowered lock-wait
   budget on request, for a statement a choreography expects to wait on its peer

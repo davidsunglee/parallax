@@ -327,7 +327,11 @@ class _CannedPort(ConnectsAsItself):
         raise AssertionError("a read recipe issues no DML")
 
     def transaction[T](
-        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
+        self,
+        body: Callable[[DatabaseConnection], T],
+        *,
+        isolation: str | None = None,
+        access_mode: str | None = None,
     ) -> TransactionOutcome[T]:  # pragma: no cover
         raise AssertionError("a read recipe opens no transaction")
 
@@ -358,7 +362,11 @@ class _CannedAccountPort(ConnectsAsItself):
         return 1
 
     def transaction[T](
-        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
+        self,
+        body: Callable[[DatabaseConnection], T],
+        *,
+        isolation: str | None = None,
+        access_mode: str | None = None,
     ) -> TransactionOutcome[T]:
         return Committed(body(cast("DatabaseConnection", self)))
 
@@ -408,7 +416,11 @@ class _CannedOrderPort(ConnectsAsItself):
         raise AssertionError("a read recipe issues no DML")
 
     def transaction[T](
-        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
+        self,
+        body: Callable[[DatabaseConnection], T],
+        *,
+        isolation: str | None = None,
+        access_mode: str | None = None,
     ) -> TransactionOutcome[T]:  # pragma: no cover
         raise AssertionError("a read recipe opens no transaction")
 

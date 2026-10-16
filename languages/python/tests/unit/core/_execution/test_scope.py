@@ -17,6 +17,7 @@ from typing import Any, cast
 from parallax.core._execution._scope import ExecutionScope
 from parallax.core._execution._transaction._attempt import TxnAttempt
 from parallax.core.db_port import (
+    AccessMode,
     Committed,
     ConnectionAcquisitionError,
     DatabaseConnection,
@@ -102,8 +103,9 @@ class _InterleavingPort(ConnectsAsItself):
         body: Callable[[DatabaseConnection], T],
         *,
         isolation: IsolationLevel | None = None,
+        access_mode: AccessMode | None = None,
     ) -> TransactionOutcome[T]:
-        del isolation
+        del isolation, access_mode
         self._entered.wait(timeout=5)
         return Committed(body(cast("DatabaseConnection", self)))
 

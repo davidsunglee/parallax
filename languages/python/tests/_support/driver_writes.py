@@ -21,6 +21,7 @@ from typing import cast
 
 from parallax.conformance._database_control import CaseDatabase
 from parallax.core.db_port import (
+    AccessMode,
     Bind,
     CanonicalWriteStatement,
     CleanupResult,
@@ -144,11 +145,17 @@ class _RecordingConnection:
         return cast("OrderedWriteTransport", self._inner.ordered_write_transport)(statements)
 
     def transaction[T](
-        self, body: Callable[[DatabaseConnection], T], *, isolation: IsolationLevel | None = None
+        self,
+        body: Callable[[DatabaseConnection], T],
+        *,
+        isolation: IsolationLevel | None = None,
+        access_mode: AccessMode | None = None,
     ) -> TransactionOutcome[T]:
         writes = self._writes
         return self._inner.transaction(
-            lambda connection: body(_RecordingConnection(connection, writes)), isolation=isolation
+            lambda connection: body(_RecordingConnection(connection, writes)),
+            isolation=isolation,
+            access_mode=access_mode,
         )
 
 

@@ -59,7 +59,11 @@ class _RefusingPort(ConnectsAsItself):
         raise AssertionError(f"a lane-dispatched run must not execute SQL: {sql!r}")
 
     def transaction[T](
-        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
+        self,
+        body: Callable[[DatabaseConnection], T],
+        *,
+        isolation: str | None = None,
+        access_mode: str | None = None,
     ) -> TransactionOutcome[T]:
         raise AssertionError("a lane-dispatched run must not open a transaction")
 

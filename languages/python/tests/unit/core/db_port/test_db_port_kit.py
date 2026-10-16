@@ -147,7 +147,7 @@ def test_the_recording_stays_flat_where_the_script_nests() -> None:
 
     assert port.calls == [
         ReadCall("select 1", (7,)),
-        BeginCall("serializable"),
+        BeginCall("serializable", None),
         WriteCall("update", ("Ada",)),
         CommitCall(),
     ]
@@ -163,7 +163,7 @@ def test_a_begin_clause_never_opens_and_runs_no_body() -> None:
     outcome = port.transaction(_read)
 
     assert outcome == BeginFailed(failure)
-    assert port.calls == [BeginCall(None)]
+    assert port.calls == [BeginCall(None, None)]
 
 
 def test_a_boundary_that_never_opens_cannot_be_given_a_body() -> None:
@@ -179,7 +179,7 @@ def test_a_commit_clause_fails_after_a_body_that_returned() -> None:
 
     assert isinstance(outcome, RolledBack)
     assert outcome.trigger.error is failure
-    assert port.calls == [BeginCall(None), WriteCall("update", ()), RollbackCall()]
+    assert port.calls == [BeginCall(None, None), WriteCall("update", ()), RollbackCall()]
 
 
 def test_a_rollback_clause_fails_the_undo_whatever_triggered_it() -> None:

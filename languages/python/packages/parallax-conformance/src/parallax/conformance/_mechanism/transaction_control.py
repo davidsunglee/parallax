@@ -6,8 +6,9 @@ from typing import Unpack
 
 from parallax.conformance._database_control import CaseDatabase
 from parallax.conformance._decoration import DecoratingAdapter
-from parallax.conformance.case_format import TransactionKeywords
+from parallax.conformance.case_format import ReadOnlyKeywords, TransactionKeywords
 from parallax.core.db_port import (
+    AccessMode,
     BeginFailed,
     CallbackRaised,
     CommitFailed,
@@ -25,11 +26,12 @@ from parallax.core.db_port import (
 )
 from parallax.core.dialect import Dialect
 from parallax.core.execution import ExecutionFailure
-from parallax.snapshot import ScopedDatabase, TxnContext
+from parallax.snapshot import ReadOnlyTxnContext, ScopedDatabase, TxnContext
 
 __all__ = [
     "absorbing_rollback",
     "committed",
+    "read_only",
     "transact",
     "underlying",
     "write_adapter",
@@ -78,6 +80,16 @@ def transact[T](
     it.
     """
     return underlying(lambda: database.transact(body, **keywords))
+
+
+def read_only[T](
+    database: ScopedDatabase,
+    body: Callable[[ReadOnlyTxnContext], T],
+    **keywords: Unpack[ReadOnlyKeywords],
+) -> T:
+    """``db.read_only`` as every lane drives it, through :func:`underlying`, on
+    the terms :func:`transact` drives ``db.transact``."""
+    return underlying(lambda: database.read_only(body, **keywords))
 
 
 class _AbortingPort:
@@ -136,13 +148,17 @@ class _AbortingPort:
         return self._inner.ordered_write_transport
 
     def transaction[T](
-        self, body: Callable[[DatabaseConnection], T], *, isolation: IsolationLevel | None = None
+        self,
+        body: Callable[[DatabaseConnection], T],
+        *,
+        isolation: IsolationLevel | None = None,
+        access_mode: AccessMode | None = None,
     ) -> TransactionOutcome[T]:
         def aborting(conn: DatabaseConnection) -> T:
             body(conn)
             raise _RollbackStep
 
-        return self._inner.transaction(aborting, isolation=isolation)
+        return self._inner.transaction(aborting, isolation=isolation, access_mode=access_mode)
 
 
 def write_connection(port: DatabaseConnection, *, rollback: bool) -> DatabaseConnection:

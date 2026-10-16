@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, Final
 
 from parallax.conformance.provision import Provisioner
 from parallax.core.db_port import (
+    AccessMode,
     DatabaseConnection,
     DeclaresDialect,
     DocumentReadOrdinals,
@@ -87,7 +88,11 @@ class _NoProvisioningPort:
         raise AssertionError("a rejected-case run must not execute a pipeline")
 
     def transaction[T](
-        self, body: Callable[[DatabaseConnection], T], *, isolation: IsolationLevel | None = None
+        self,
+        body: Callable[[DatabaseConnection], T],
+        *,
+        isolation: IsolationLevel | None = None,
+        access_mode: AccessMode | None = None,
     ) -> TransactionOutcome[T]:  # pragma: no cover
         raise AssertionError("a rejected-case run must not open a transaction")
 
