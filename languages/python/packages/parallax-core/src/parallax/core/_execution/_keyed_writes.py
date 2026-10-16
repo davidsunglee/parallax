@@ -539,16 +539,10 @@ class TargetCondition:
 
     if_version: int | None
     if_tx_start: dt.datetime | None
-    unversioned: bool
     stated: tuple[str, ...]
 
 
-def target_condition(
-    *,
-    version: object = OMITTED,
-    tx_start: object = OMITTED,
-    unversioned: object = OMITTED,
-) -> TargetCondition:
+def target_condition(*, version: object = OMITTED, tx_start: object = OMITTED) -> TargetCondition:
     """The condition a ``_if`` write's keywords state, unjudged.
 
     Omission is the one absence: a keyword stated as ``None`` or as any other
@@ -561,12 +555,9 @@ def target_condition(
         stated += ("version",)
     if not isinstance(tx_start, Omitted):
         stated += ("tx_start",)
-    if not isinstance(unversioned, Omitted):
-        stated += ("unversioned",)
     return TargetCondition(
         if_version=None if isinstance(version, Omitted) else cast("int", version),
         if_tx_start=None if isinstance(tx_start, Omitted) else cast("dt.datetime", tx_start),
-        unversioned=False if isinstance(unversioned, Omitted) else cast("bool", unversioned),
         stated=stated,
     )
 

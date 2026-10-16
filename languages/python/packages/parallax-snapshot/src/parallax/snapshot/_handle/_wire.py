@@ -145,9 +145,10 @@ class WireTransactionView(WireDatabaseView):
     an insert answered observed nothing, and the write off it resolves no
     evidence at all: the buffered insert licenses it, and it starts where that
     insert was authored to. A mapping a caller built carries neither, so it is
-    no source. The caller-conditioned verbs :meth:`amend_if` and
-    :meth:`replace_if` address an object by Entity spelling and key instead,
-    under the one condition their caller states.
+    no source. The caller-conditioned verbs :meth:`amend_if`,
+    :meth:`replace_if`, :meth:`delete_if`, and :meth:`terminate_if` address an
+    object by Entity spelling and key instead, under the one revision their
+    caller states.
     """
 
     __slots__ = ("_attempt",)
@@ -236,12 +237,11 @@ class WireTransactionView(WireDatabaseView):
         *,
         version: int | Omitted = OMITTED,
         tx_start: dt.datetime | Omitted = OMITTED,
-        unversioned: bool | Omitted = OMITTED,
         valid_from: dt.datetime | Omitted = OMITTED,
         until: dt.datetime | Omitted = OMITTED,
     ) -> None:
         """Buffer an amendment of the existing ``entity_name`` object
-        ``changes``'s primary-key entries name, under the one condition its
+        ``changes``'s primary-key entries name, under the one revision its
         caller states, exactly as ``tx.amend_if`` does.
 
         Every entry but the key is assigned, a value equal to the stored one
@@ -252,7 +252,7 @@ class WireTransactionView(WireDatabaseView):
         gaps and coverage after a scheduled termination absent.
         """
         mutation, bound = window_mutation("amend", "amendUntil", until)
-        condition = target_condition(version=version, tx_start=tx_start, unversioned=unversioned)
+        condition = target_condition(version=version, tx_start=tx_start)
         wire_target_write(
             self._attempt,
             mutation,
@@ -296,27 +296,71 @@ class WireTransactionView(WireDatabaseView):
         *,
         version: int | Omitted = OMITTED,
         tx_start: dt.datetime | Omitted = OMITTED,
-        unversioned: bool | Omitted = OMITTED,
         valid_from: dt.datetime | Omitted = OMITTED,
         until: dt.datetime | Omitted = OMITTED,
     ) -> None:
         """Buffer a complete replacement of an existing object under the one
-        condition its caller states, exactly as ``tx.replace_if`` does.
+        revision its caller states, exactly as ``tx.replace_if`` does.
 
         Handed an Entity spelling, ``data`` is required and its primary-key
         entries name the object; it is completed as :meth:`replace` completes
         it. Handed a node Parallax published instead — current or historical —
         the node's own Entity, key, and published writable state are the
         replacement, and ``data`` is not taken. Nothing the node carries stands
-        in for the condition, and its provenance licenses nothing.
+        in for the revision, and its provenance licenses nothing.
         """
         mutation, bound = window_mutation("replace", "replaceUntil", until)
-        condition = target_condition(version=version, tx_start=tx_start, unversioned=unversioned)
+        condition = target_condition(version=version, tx_start=tx_start)
         wire_target_write(
             self._attempt,
             mutation,
             target,
             data,
+            condition,
+            valid_from=valid_from,
+            until=bound,
+        )
+
+    def delete_if(
+        self,
+        entity_name: str,
+        key: Mapping[str, object],
+        /,
+        *,
+        version: int | Omitted = OMITTED,
+        tx_start: dt.datetime | Omitted = OMITTED,
+    ) -> None:
+        """Buffer a deletion of the existing ``entity_name`` object ``key``'s
+        primary-key entries name, under the one revision its caller states,
+        exactly as ``tx.delete_if`` does. ``key`` states the primary key alone;
+        any other member is refused."""
+        condition = target_condition(version=version, tx_start=tx_start)
+        wire_target_write(
+            self._attempt, "delete", entity_name, key, condition, valid_from=OMITTED, until=None
+        )
+
+    def terminate_if(
+        self,
+        entity_name: str,
+        key: Mapping[str, object],
+        /,
+        *,
+        version: int | Omitted = OMITTED,
+        tx_start: dt.datetime | Omitted = OMITTED,
+        valid_from: dt.datetime | Omitted = OMITTED,
+        until: dt.datetime | Omitted = OMITTED,
+    ) -> None:
+        """Buffer a termination of the existing temporal ``entity_name`` object
+        ``key``'s primary-key entries name, under the one revision its caller
+        states, exactly as ``tx.terminate_if`` does. ``key`` states the primary
+        key alone; any other member is refused."""
+        mutation, bound = window_mutation("terminate", "terminateUntil", until)
+        condition = target_condition(version=version, tx_start=tx_start)
+        wire_target_write(
+            self._attempt,
+            mutation,
+            entity_name,
+            key,
             condition,
             valid_from=valid_from,
             until=bound,

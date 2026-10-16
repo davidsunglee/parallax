@@ -1174,14 +1174,16 @@ like a marker; the two are disambiguated by the field's declared metamodel role
 (`m-value-object`, `m-storage-layout`).
 
 A step MAY instead be a **caller-addressed** (target) write: it carries one `row`
-rather than `rows`, a `mutation` of `amend` / `amendUntil` (an amendment) or
-`replace` / `replaceUntil` (a complete replacement), and the caller's own revision
-member — `ifVersion` or `ifTxStart` — exactly as `write-instruction.schema.json`'s
-target instruction does (`m-unit-work` *Write instruction vocabulary*). Its row
-carries no `observedVersion`: the stated revision is the step's whole condition,
-and its golden gate binds that revision. A replacement's ① names the members the
-caller states; the members it omits are written empty in the golden, which is
-what distinguishes it from a patch of the same row. A temporal target step
+rather than `rows`, a `mutation` of `amend` / `amendUntil` (an amendment),
+`replace` / `replaceUntil` (a complete replacement), `delete` (a deletion), or
+`terminate` / `terminateUntil` (a termination), and exactly one caller's
+revision member — `ifVersion` or `ifTxStart` — exactly as
+`write-instruction.schema.json`'s target instruction does (`m-unit-work` *Write
+instruction vocabulary*). Its row carries no `observedVersion`: the stated
+revision is the step's whole condition, and its golden gate binds that
+revision. A replacement's ① names the members the caller states; the members it
+omits are written empty in the golden, which is what distinguishes it from a
+patch of the same row. A deletion's or termination's ① names the key alone. A temporal target step
 carries its window as a keyed temporal step does — `validFrom` and, when
 bounded, `until` on a Bitemporal Entity, neither on a Transaction-Time-Only one —
 beside `at`; its starting inactivation's gate binds `ifTxStart`, which the
@@ -1634,7 +1636,8 @@ write-instruction `$defs` rather than redefining them, layering only the `at` /
 never a source-authorized `replace` / `replaceUntil`. A state-graded case's
 buffer MAY also carry such a replacement, whose coverage depends on what its
 flush reads, a **caller-addressed** submission
-(`row` with `ifVersion` or `ifTxStart`, the `targetWriteInstruction`) and a
+(`row` with exactly one of `ifVersion` and `ifTxStart`, the
+`targetWriteInstruction`) and a
 **predicate** write (*State-graded scenarios*, below). A readless predicate
 write is an ordering barrier inside the buffer. A materializing one's verb
 flushes every submission of its unit of work still pending — those before it in

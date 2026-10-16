@@ -222,15 +222,17 @@ A **caller-addressed** write (`m-unit-work` *Caller-addressed writes*) is the on
 exception, and it is not a version value in a row: its caller states, as an
 argument of its own, the version an earlier query returned, as a **precondition**
 on the state the write starts from. Under Optimistic the gate binds that stated
-version; under Locking the version a locked read of the row holds is compared
-with it before the write is admitted, and the write is ungated. Either way the
-new version is still the framework's own (`stated + 1`), and nothing in the
-payload, a read's evidence, or the stored row ever stands in for the statement.
-A versioned caller-addressed write that states no version is refused before any
-database access, as is a version stated for an unversioned or temporal target,
-and as is a caller's assertion that a versioned or temporal target has no
-revision: that assertion belongs to an unversioned Non-Temporal target alone,
-and it never disables the effective Locking strategy that protects one.
+version — an amendment's or replacement's `UPDATE` and a deletion's `DELETE`
+alike; under Locking the version a locked read of the row holds is compared
+with it before the write is admitted, and the write is ungated. An amendment or
+replacement advances to the framework's own new version (`stated + 1`), and
+nothing in the payload, a read's evidence, or the stored row ever stands in for
+the statement. A versioned caller-addressed write that states no version is
+refused before any database access, as is a version stated for a temporal
+target. An unversioned Non-Temporal target has no revision to state, so every
+caller-addressed write of one is refused before any database access, whatever
+it states: its caller writes it through a read of the writing attempt instead,
+under the effective Locking strategy that protects it.
 A temporal caller-addressed write states the Transaction-Time start of the
 milestone it starts from instead (`ifTxStart`): the starting inactivation's gate
 binds it under Optimistic, and under Locking the locked read's `in_z` is compared

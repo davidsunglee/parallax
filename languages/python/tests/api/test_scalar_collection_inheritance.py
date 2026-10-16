@@ -232,7 +232,7 @@ def test_writes_through_each_concrete_assign_inherited_and_own_collections(
         tx.amend(
             tx.find(desk.where(desk.id == 3)).result(), desk.legs.set(()), desk.tags.set(("e", "d"))
         )
-        tx.replace_if(tablet(id=2, label="u"), unversioned=True)
+        tx.wire.replace(tx.wire.find(tablet.where(tablet.id == 2)).result(), {"label": "u"})
 
     db.transact(fn)
     rows = db.find(root.where(root.id >= 1).order_by(root.id.asc())).results()

@@ -1,0 +1,125 @@
+model: models/buffered-sequence-layout-twin-document.yaml
+tags: [m-temporal-write, m-opt-lock, m-unit-work, m-storage-layout, scenario, target-write, abort, layout-twin, document-layout, slice-snapshot-1, slice-managed-1]
+shape: scenario
+grading: state
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "state-graded: each termination ends the coverage its flush reads at its own start, so no golden statement is stated to compile against (m-case-format 'State-graded scenarios')"
+given:
+  fixtures: true
+when:
+  uow:
+    concurrency: optimistic
+  scenario:
+    - uow: unbounded
+      write:
+        - mutation: terminate
+          entity: parallax.compatibility.SequenceSpan
+          row: { id: 1 }
+          ifTxStart: "2023-12-01T00:00:00.000000Z"
+          validFrom: "2024-03-01T00:00:00.000000Z"
+          at: "2024-11-01T00:00:00.000000Z"
+      note: "end span 1 from March through infinity under the milestone its caller observed; its coverage before March reopens"
+    - uow: bounded
+      write:
+        - mutation: terminateUntil
+          entity: parallax.compatibility.SequenceSpan
+          row: { id: 2 }
+          ifTxStart: "2023-12-01T00:00:00.000000Z"
+          validFrom: "2024-03-01T00:00:00.000000Z"
+          until: "2024-05-01T00:00:00.000000Z"
+          at: "2024-11-02T00:00:00.000000Z"
+      note: "end span 2 over [March, May) alone; its coverage on either side reopens"
+    - uow: revised
+      write:
+        - mutation: terminate
+          entity: parallax.compatibility.SequenceSpan
+          row: { id: 4 }
+          ifTxStart: "2023-12-01T00:00:00.000000Z"
+          validFrom: "2024-03-01T00:00:00.000000Z"
+          at: "2024-11-02T00:00:00.000000Z"
+      note: "span 4's coverage at March stands at T1, so a caller stating T0 states a revision that no longer holds: the termination fails rather than ending nothing"
+    - uow: missing
+      write:
+        - mutation: terminate
+          entity: parallax.compatibility.SequenceSpan
+          row: { id: 9 }
+          ifTxStart: "2023-12-01T00:00:00.000000Z"
+          validFrom: "2024-03-01T00:00:00.000000Z"
+          at: "2024-11-02T00:00:00.000000Z"
+      note: "no span 9 covers March at all, so its termination fails the same precondition"
+then:
+  units:
+    unbounded: { outcome: committed }
+    bounded: { outcome: committed }
+    revised:
+      outcome: rolledBack
+      flushFailure:
+        at: commit
+        entity: parallax.compatibility.SequenceSpan
+        key: { id: 4 }
+        shortfall: failedPrecondition
+    missing:
+      outcome: rolledBack
+      flushFailure:
+        at: commit
+        entity: parallax.compatibility.SequenceSpan
+        key: { id: 9 }
+        shortfall: failedPrecondition
+  tableState:
+    sequence_span:
+      - id: 1
+        from_z: "2024-01-01T00:00:00.000000Z"
+        thru_z: infinity
+        in_z: "2023-12-01T00:00:00.000000Z"
+        out_z: "2024-11-01T00:00:00.000000Z"
+        payload: { amount: 100, label: a, memo: { note: n1 } }
+      - id: 1
+        from_z: "2024-01-01T00:00:00.000000Z"
+        thru_z: "2024-03-01T00:00:00.000000Z"
+        in_z: "2024-11-01T00:00:00.000000Z"
+        out_z: infinity
+        payload: { amount: 100, label: a, memo: { note: n1 } }
+      - id: 2
+        from_z: "2024-01-01T00:00:00.000000Z"
+        thru_z: infinity
+        in_z: "2023-12-01T00:00:00.000000Z"
+        out_z: "2024-11-02T00:00:00.000000Z"
+        payload: { amount: 100, label: b, memo: { note: n2 } }
+      - id: 2
+        from_z: "2024-01-01T00:00:00.000000Z"
+        thru_z: "2024-03-01T00:00:00.000000Z"
+        in_z: "2024-11-02T00:00:00.000000Z"
+        out_z: infinity
+        payload: { amount: 100, label: b, memo: { note: n2 } }
+      - id: 2
+        from_z: "2024-05-01T00:00:00.000000Z"
+        thru_z: infinity
+        in_z: "2024-11-02T00:00:00.000000Z"
+        out_z: infinity
+        payload: { amount: 100, label: b, memo: { note: n2 } }
+      - id: 3
+        from_z: "2024-01-01T00:00:00.000000Z"
+        thru_z: "2024-06-01T00:00:00.000000Z"
+        in_z: "2023-12-01T00:00:00.000000Z"
+        out_z: infinity
+        payload: { amount: 100, label: c, memo: { note: n3 } }
+      - id: 3
+        from_z: "2024-06-01T00:00:00.000000Z"
+        thru_z: infinity
+        in_z: "2023-12-15T00:00:00.000000Z"
+        out_z: infinity
+        payload: { amount: 200, label: c, memo: { note: n3 } }
+      - id: 4
+        from_z: "2024-01-01T00:00:00.000000Z"
+        thru_z: infinity
+        in_z: "2023-12-01T00:00:00.000000Z"
+        out_z: "2023-12-15T00:00:00.000000Z"
+        payload: { amount: 90, label: d, memo: { note: n4 } }
+      - id: 4
+        from_z: "2024-01-01T00:00:00.000000Z"
+        thru_z: infinity
+        in_z: "2023-12-15T00:00:00.000000Z"
+        out_z: infinity
+        payload: { amount: 100, label: d, memo: { note: n4 } }

@@ -92,7 +92,7 @@
       ]
     },
     "targetWriteInstruction": {
-      "description": "A caller-addressed (target) write: an amendment (`amend` / `amendUntil`) or a complete replacement (`replace` / `replaceUntil`) of the one existing `entity` object its `row` names by primary key, under the starting revision its caller states. The row's primary-key members address the object and are no assignment; an amendment's other members are its assignments, and a replacement's are the object's complete writable state. The revision is a member of its own, never a row member: `ifVersion` for a versioned target, `ifTxStart` — the observed milestone's Transaction-Time start, never the writing transaction's own instant — for a temporal one, and neither for an unversioned target, whose caller asserts that it has none. Which revision a target takes, and whether it requires `validFrom`, depends on the model and is judged when the write is prepared.",
+      "description": "A caller-addressed (target) write of the one existing `entity` object its `row` names by primary key, under the starting revision its caller states: an amendment (`amend` / `amendUntil`), a complete replacement (`replace` / `replaceUntil`), a deletion (`delete`), or a termination (`terminate` / `terminateUntil`). The row's primary-key members address the object and are no assignment; an amendment's other members are its assignments, a replacement's are the object's complete writable state, and a destructive write's row names the key alone. The revision is a member of its own, never a row member, and every target write states exactly one: `ifVersion` for a versioned target, or `ifTxStart` — the observed milestone's Transaction-Time start, never the writing transaction's own instant — for a temporal one. An unversioned Non-Temporal target has no revision to state, so it takes no caller-addressed write. Which revision a target takes, whether it admits the verb, and whether it requires `validFrom` depend on the model and are judged when the write is prepared.",
       "type": "object",
       "additionalProperties": false,
       "required": ["mutation", "entity", "row"],
@@ -117,15 +117,23 @@
           "$ref": "#/$defs/instant"
         }
       },
-      "not": {
-        "description": "A target has one revision kind, so a write states at most one revision.",
-        "required": ["ifVersion", "ifTxStart"]
-      },
+      "oneOf": [
+        {
+          "description": "A versioned target's stated starting version.",
+          "required": ["ifVersion"]
+        },
+        {
+          "description": "A temporal target's stated starting milestone.",
+          "required": ["ifTxStart"]
+        }
+      ],
       "allOf": [
         {
           "description": "A bounded target write is over `[validFrom, until)`, so it must carry both Valid-Time bounds; unbounded forms must omit `until`.",
           "if": {
-            "properties": { "mutation": { "enum": ["amendUntil", "replaceUntil"] } },
+            "properties": {
+              "mutation": { "enum": ["amendUntil", "replaceUntil", "terminateUntil"] }
+            },
             "required": ["mutation"]
           },
           "then": { "required": ["validFrom", "until"] },
@@ -219,8 +227,8 @@
       ]
     },
     "targetMutation": {
-      "description": "The caller-addressed (target) write mutation surface: the amendment `amend` and the complete `replace`, each with its bounded `*Until` form.",
-      "enum": ["amend", "amendUntil", "replace", "replaceUntil"]
+      "description": "The caller-addressed (target) write mutation surface: the amendment `amend`, the complete `replace`, the physical `delete` of a Non-Temporal object, and the milestone-closing `terminate` of a temporal one, each with its bounded `*Until` form where one exists. `compatibility-case.schema.json`'s caller-addressed entries reference this enum rather than redefining it.",
+      "enum": ["amend", "amendUntil", "replace", "replaceUntil", "delete", "terminate", "terminateUntil"]
     },
     "predicateMutation": {
       "description": "The predicate-selected (set-based) write mutation surface: the amend / delete / terminate verbs plus the bounded `amendUntil` / `terminateUntil` (a set-based write has no `insert` form — there is no predicate to select rows that do not yet exist — and no replacement). `compatibility-case.schema.json`'s `predicateWrite` references this enum rather than redefining it.",

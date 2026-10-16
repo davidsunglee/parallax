@@ -46,7 +46,7 @@ from parallax.core.temporal_read import TimeInterval
 from parallax.core.wire import WireDecodingError, WireValue, decode_wire, encode_wire
 from parallax.core.write_plan.columns import freeze_retained_value
 from parallax.core.write_plan.planned_rows import PreparedAssignment
-from parallax.core.write_plan.steps import UNVERSIONED, ResolvedMutationSelection, Unversioned
+from parallax.core.write_plan.steps import ResolvedMutationSelection
 
 __all__ = [
     "AMEND_MUTATIONS",
@@ -102,15 +102,19 @@ KeyedMutation = Literal[
 # The predicate-selected (set-based) mutation surface: there is no `insert` — a
 # predicate cannot select rows that do not yet exist — and no replacement.
 PredicateMutation = Literal["amend", "delete", "terminate", "amendUntil", "terminateUntil"]
-# The caller-addressed (target) mutation surface: an amendment or a complete
-# replacement of one existing object, each with its bounded form.
-TargetMutation = Literal["amend", "amendUntil", "replace", "replaceUntil"]
+# The caller-addressed (target) mutation surface: an amendment, a complete
+# replacement, a deletion, or a termination of one existing object, each with
+# its bounded form where one exists.
+TargetMutation = Literal[
+    "amend", "amendUntil", "replace", "replaceUntil", "delete", "terminate", "terminateUntil"
+]
 
-# Which of the keyed and predicate verb surfaces a mutation arrived through. Carried only
-# so a refusal can name methods the caller can act on: one mutation token is
-# spelled by two methods, and answering a `terminate_where` call with "use
-# `delete`" names the addressed verb, which selects nothing.
-type _WriteSurface = Literal["keyed", "predicate"]
+# Which of the keyed, predicate, and caller-addressed verb surfaces a mutation
+# arrived through. Carried only so a refusal can name methods the caller can act
+# on: one mutation token is spelled by three methods, and answering a
+# `terminate_where` call with "use `delete`" names the addressed verb, which
+# selects nothing.
+type _WriteSurface = Literal["keyed", "predicate", "target"]
 
 INSERT_MUTATIONS: Final[frozenset[str]] = frozenset({"insert", "insertUntil"})
 """The keyed mutations that OPEN a row rather than write against an existing
@@ -146,7 +150,7 @@ _KEYED_MUTATIONS: Final[frozenset[str]] = (
     INSERT_MUTATIONS | ASSIGNMENT_MUTATIONS | DESTRUCTIVE_MUTATIONS
 )
 _PREDICATE_MUTATIONS: Final[frozenset[str]] = AMEND_MUTATIONS | DESTRUCTIVE_MUTATIONS
-_TARGET_MUTATIONS: Final[frozenset[str]] = ASSIGNMENT_MUTATIONS
+_TARGET_MUTATIONS: Final[frozenset[str]] = ASSIGNMENT_MUTATIONS | DESTRUCTIVE_MUTATIONS
 
 BOUNDED_MUTATIONS: Final[frozenset[str]] = frozenset(
     {"insertUntil", "amendUntil", "terminateUntil", "replaceUntil"}
@@ -276,16 +280,14 @@ class TargetWrite:
     """An authored caller-addressed write of one existing ``entity`` object.
 
     ``row`` names the object by its primary key beside the members the write
-    states: the assignments of an ``amend``, or the complete writable state of
-    a ``replace``. ``if_version`` and ``if_tx_start`` are the caller's revision
-    condition exactly as stated, judged by preparation against the target's own
-    revision kind; neither is ever read off the row or off any read's evidence.
-    ``unversioned`` is a caller's explicit assertion that the target has no
-    revision to state, which the canonical instruction spells by stating
-    neither condition; preparation refuses it for a versioned or temporal
-    target. ``stated`` names the conditions a caller named, where its
-    interface tells naming a condition — even as ``None`` — from omitting it;
-    ``None`` reads every condition carrying a value as stated.
+    states: the assignments of an ``amend``, the complete writable state of a
+    ``replace``, and nothing for a deletion or termination. ``if_version`` and
+    ``if_tx_start`` are the caller's revision condition exactly as stated,
+    judged by preparation against the target's own revision kind; neither is
+    ever read off the row or off any read's evidence. ``stated`` names the
+    conditions a caller named, where its interface tells naming a condition —
+    even as ``None`` — from omitting it; ``None`` reads every condition
+    carrying a value as stated.
     """
 
     mutation: TargetMutation
@@ -295,7 +297,6 @@ class TargetWrite:
     if_tx_start: dt.datetime | None = None
     valid_from: dt.datetime | None = None
     until: dt.datetime | None = None
-    unversioned: bool = False
     stated: tuple[str, ...] | None = None
 
     def __post_init__(self) -> None:
@@ -358,10 +359,8 @@ class ExpectedTxStart:
     instant: dt.datetime
 
 
-type TargetExpectation = ExpectedVersion | ExpectedTxStart | Unversioned
-"""What a target write's caller requires of the state it starts from. An
-unversioned target has no revision to state, which is its own answer rather
-than a missing one."""
+type TargetExpectation = ExpectedVersion | ExpectedTxStart
+"""What a target write's caller requires of the state it starts from."""
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -370,14 +369,14 @@ class PreparedTargetWrite:
     row, its judged Valid-Time window — ``None`` for a target without Valid
     Time — and its validated starting expectation.
 
-    ``replaces`` distinguishes a complete replacement, whose row states every
-    writable member, from a sparse patch, whose row states only the members it
-    assigns; ``assigns`` is whether the row states any member beside the key.
-    Only this module's producers construct one, so holding one means the write
-    was judged admissible against its target.
+    ``mutation`` is the exact verb, kept so a deletion or termination, whose row
+    states nothing beside the key, never reads as an empty patch. ``assigns``
+    is whether the row states any member beside the key. Only this module's
+    producers construct one, so holding one means the write was judged
+    admissible against its target.
     """
 
-    replaces: bool
+    mutation: TargetMutation
     assigns: bool
     target: EntityMetadata
     row: Mapping[str, object]
@@ -418,7 +417,7 @@ def _prepared_predicate_write(
 
 
 def _prepared_target_write(
-    replaces: bool,
+    mutation: TargetMutation,
     assigns: bool,
     target: EntityMetadata,
     row: Mapping[str, object],
@@ -426,7 +425,7 @@ def _prepared_target_write(
     expectation: TargetExpectation,
 ) -> PreparedTargetWrite:
     prepared = object.__new__(PreparedTargetWrite)
-    object.__setattr__(prepared, "replaces", replaces)
+    object.__setattr__(prepared, "mutation", mutation)
     object.__setattr__(prepared, "assigns", assigns)
     object.__setattr__(prepared, "target", target)
     object.__setattr__(prepared, "row", row)
@@ -436,21 +435,16 @@ def _prepared_target_write(
 
 
 def target_instruction(prepared: PreparedTargetWrite) -> PreparedKeyedWrite:
-    """The keyed amendment or replacement a prepared target write executes as:
-    its row, written against the object its key names, over its window.
+    """The keyed write a prepared target write executes as: its own verb and
+    row, written against the object its key names, over its window.
 
-    The verb carries the replacement intent, so every carrier and composition
-    the write later travels through keeps it whatever authorized the write;
-    nothing is judged again.
+    The verb carries the replacement or destructive intent, so every carrier
+    and composition the write later travels through keeps it whatever
+    authorized the write; nothing is judged again.
     """
-    window = prepared.valid_time_window
-    unbounded = window is None or window.end is INFINITY
-    mutation: KeyedMutation = (
-        ("replace" if unbounded else "replaceUntil")
-        if prepared.replaces
-        else ("amend" if unbounded else "amendUntil")
+    return _prepared_keyed_write(
+        prepared.mutation, prepared.target, (prepared.row,), prepared.valid_time_window
     )
-    return _prepared_keyed_write(mutation, prepared.target, (prepared.row,), window)
 
 
 @dataclass(frozen=True, slots=True)
@@ -492,8 +486,9 @@ def deserialize(doc: object) -> WriteInstruction:
     ``target`` -> predicate, ``row`` -> caller-addressed), validates the closed
     shape, the mutation enum, the
     Valid-Time-bound pairing rules (a bounded ``*Until`` carries both bounds, every
-    other form carries no ``until``), and — for a keyed write — that no row
-    carries a forbidden observation control key or a smuggled Transaction-Time instant.
+    other form carries no ``until``), that a caller-addressed write states exactly
+    one revision, and — for a keyed write — that no row carries a forbidden
+    observation control key or a smuggled Transaction-Time instant.
 
     Each bound is a finite canonical ``timestamp`` decoded by the Wire codec, whose
     refusals keep their ``neutral-literal-*`` classification; ``infinity`` is no
@@ -721,7 +716,7 @@ def _target_write(node: Mapping[str, object]) -> TargetWrite:
     valid_from = _bound(node, "validFrom", "target write")
     until = _bound(node, "until", "target write")
     _check_valid_time_bounds(mutation, valid_from, until, "target write")
-    return TargetWrite(
+    instruction = TargetWrite(
         mutation=cast("TargetMutation", mutation),
         entity=entity,
         row=row,
@@ -730,6 +725,12 @@ def _target_write(node: Mapping[str, object]) -> TargetWrite:
         valid_from=valid_from,
         until=until,
     )
+    if instruction.if_version is None and instruction.if_tx_start is None:
+        raise WriteInstructionError(
+            "target write: states no revision, and a caller-addressed write states exactly one "
+            "of `ifVersion` and `ifTxStart`"
+        )
+    return instruction
 
 
 def serialize(instruction: WriteInstruction) -> dict[str, object]:
@@ -797,7 +798,9 @@ def _spelled(mutation: str, surface: _WriteSurface) -> str:
     caller can act on. Scoped to the two applicability refusals below, whose
     verbs state no window; every other message in this module still names the
     token it was given."""
-    return mutation if surface == "keyed" else f"{mutation}_where"
+    if surface == "keyed":
+        return mutation
+    return f"{mutation}_where" if surface == "predicate" else f"{mutation}_if"
 
 
 def _temporal_delete_refusal(
@@ -1159,20 +1162,33 @@ def _prepare_target_write(
     authored_members: Set[str] | None,
     members: Callable[[], Mapping[str, object]] | None,
 ) -> PreparedTargetWrite:
-    """Judge a caller-addressed write: its target and window, then its revision
-    arguments, then its payload.
+    """Judge a caller-addressed write: its target, verb, and window, then its
+    revision arguments, then its payload.
 
-    The revision arguments are judged ahead of the payload because they decide
-    what the write may be at all — a target whose revision kind the caller
-    misstated, or whose required revision is missing, is refused before any
-    member it names is weighed.
+    The verb's applicability follows the keyed rule, a temporal ``delete``
+    heard before the window and a non-temporal ``terminate`` after it
+    (:func:`_judge_target`). The revision arguments are judged ahead of the
+    payload because they decide what the write may be at all — a target with
+    no revision, one whose revision kind the caller misstated, or one whose
+    required revision is missing is refused before any member it names is
+    weighed.
     """
     entity = resolve_target(model, instruction.entity)
     shape = temporal_read.view(model).shape(entity.identity)
     root = _family_root(model, entity)
+    name = entity.identity.name
+    temporal = isinstance(shape, temporal_read.TransactionTimeOnly | temporal_read.Bitemporal)
+    if temporal:
+        refusal = _temporal_delete_refusal(name, instruction.mutation, surface="target")
+        if refusal is not None:
+            raise WriteInstructionError(refusal)
     window = _judge_window(
         root, shape, instruction.mutation, instruction.valid_from, instruction.until
     )
+    if not temporal:
+        refusal = _non_temporal_milestone_refusal(name, instruction.mutation, surface="target")
+        if refusal is not None:
+            raise WriteInstructionError(refusal)
     position = _family_position(model, entity)
     expectation = _judge_expectation(root, shape, position, instruction)
     if members is not None:
@@ -1186,9 +1202,7 @@ def _prepare_target_write(
         source_access=source_access,
         authored_members=authored_members,
     )
-    return _prepared_target_write(
-        instruction.mutation in REPLACE_MUTATIONS, assigns, entity, row, window, expectation
-    )
+    return _prepared_target_write(instruction.mutation, assigns, entity, row, window, expectation)
 
 
 def _judge_expectation(
@@ -1199,47 +1213,41 @@ def _judge_expectation(
 ) -> TargetExpectation:
     """The starting condition a target write states, judged against the
     family's own revision kind (`m-opt-lock`): a versioned family takes
-    ``version``, a temporal one ``tx_start``, and an unversioned Non-Temporal
-    one the ``unversioned`` assertion, which the canonical instruction spells
-    by stating neither revision.
+    ``version`` and a temporal one ``tx_start``.
 
-    Stating more than one is refused first, because no family has two
-    revisions; then a misstated kind, then a missing one, then the value
-    itself — a stated ``None`` included. The assertion never stands in for a
-    revision a family requires.
+    An unversioned Non-Temporal family has no revision a caller could state,
+    so it is refused before any argument is weighed. Otherwise stating more
+    than one is refused first, because no family has two revisions; then a
+    misstated kind, then a missing one, then the value itself — a stated
+    ``None`` included.
     """
     mutation = instruction.mutation
+    versioned = any(attribute.optimistic_locking for attribute in position.applicable_attributes)
+    temporal = isinstance(shape, temporal_read.TransactionTimeOnly | temporal_read.Bitemporal)
+    if not (versioned or temporal):
+        raise WriteInstructionError(
+            f"{root.name}: {mutation!r} states a revision its caller observed, and "
+            f"{root.name!r} is unversioned and non-temporal, so it has none to state and no "
+            "write could detect a change since that observation; read it in the writing "
+            "transaction and write through that read instead"
+        )
     stated = _stated_conditions(instruction)
     if len(stated) > 1:
         raise WriteInstructionError(
             f"{root.name}: {mutation!r} states {list(stated)}, and a target has one condition "
             "to state"
         )
-    versioned = any(attribute.optimistic_locking for attribute in position.applicable_attributes)
-    temporal = isinstance(shape, temporal_read.TransactionTimeOnly | temporal_read.Bitemporal)
-    required = "version" if versioned else "tx_start" if temporal else "unversioned"
+    required = "version" if versioned else "tx_start"
     if stated and required not in stated:
         (misstated,) = stated
         raise WriteInstructionError(_misstated(root, mutation, misstated, required))
-    if not stated and (required != "unversioned" or instruction.stated is not None):
+    if not stated:
         raise WriteInstructionError(_missing(root, mutation, required))
     # A runtime caller may state a condition as any value, whatever the
     # annotation promises, so each is judged as the object it is.
     value = cast(
-        "object",
-        instruction.if_version
-        if required == "version"
-        else instruction.if_tx_start
-        if required == "tx_start"
-        else instruction.unversioned,
+        "object", instruction.if_version if required == "version" else instruction.if_tx_start
     )
-    if required == "unversioned":
-        if stated and value is not True:
-            raise WriteInstructionError(
-                f"{root.name}: unversioned asserts that the target has no revision and accepts "
-                f"only True, not {value!r}"
-            )
-        return UNVERSIONED
     if value is None:
         raise WriteInstructionError(
             f"{root.name}: {mutation!r} states {required}=None, which names no revision; state "
@@ -1266,8 +1274,6 @@ def _stated_conditions(instruction: TargetWrite) -> tuple[str, ...]:
         stated += ("version",)
     if instruction.if_tx_start is not None:
         stated += ("tx_start",)
-    if instruction.unversioned:
-        stated += ("unversioned",)
     return stated
 
 
@@ -1276,7 +1282,6 @@ _REVISIONS: Final[Mapping[str, str]] = MappingProxyType(
         "version": "the version of the state the write starts from as its caller last observed it",
         "tx_start": "the Transaction-Time start of the milestone the write starts from as its "
         "caller last observed it",
-        "unversioned": "the assertion unversioned=True that it has no revision to state",
     }
 )
 
@@ -1285,7 +1290,6 @@ def _misstated(root: EntityIdentity, mutation: str, stated: str, required: str) 
     kind = {
         "version": "versioned, so its revision is its version",
         "tx_start": "temporal, so its revision is its milestone's Transaction-Time start",
-        "unversioned": "unversioned, so it has no revision for a caller to state",
     }[required]
     return f"{root.name}: {mutation!r} takes {required}, not {stated} — {root.name!r} is {kind}"
 
@@ -1306,11 +1310,14 @@ def _prepare_target_payload(
 ) -> tuple[Mapping[str, object], bool]:
     """A target write's row, judged, and whether it assigns any member.
 
-    The primary key names the object and is no assignment. Every other member
-    the row states is judged as an assignment, whatever produced the row — so a
-    framework-owned, read-only, or ill-typed member is refused as it is for an
-    amendment. A replacement completes the object's writable state exactly as a
-    source-authorized one does (:func:`_assigned_row`).
+    The primary key names the object and is no assignment. A deletion or
+    termination names nothing else, so any other member it states is refused,
+    and its key is judged as a keyed destruction's identity row is. Every other
+    member an amendment or replacement states is judged as an assignment,
+    whatever produced the row — so a framework-owned, read-only, or ill-typed
+    member is refused as it is for an amendment. A replacement completes the
+    object's writable state exactly as a source-authorized one does
+    (:func:`_assigned_row`).
     """
     row = instruction.row
     key = position.primary_key.identity.name
@@ -1320,6 +1327,29 @@ def _prepare_target_payload(
             f"{entity.identity.name}: a target write names the object it writes by its primary "
             f"key, and this row states no {key!r}"
         )
+    if instruction.mutation in DESTRUCTIVE_MUTATIONS:
+        stated = sorted(name for name in row if name != key)
+        if stated:
+            raise WriteInstructionError(
+                f"{entity.identity.name}: a caller-addressed {instruction.mutation!r} names its "
+                f"object by its primary key alone, and this row also states {stated}"
+            )
+        identity = _transform_row(
+            position.member_selection,
+            entity,
+            row,
+            converter=converter,
+            source_access=source_access,
+            fill_missing_many=False,
+        )
+        validate_write(
+            entity,
+            identity.row,
+            model,
+            mutation=instruction.mutation,
+            known_failures=identity.failures,
+        )
+        return identity.row, False
     prepared = _assigned_row(
         model,
         entity,

@@ -1,17 +1,19 @@
 """Authority selection on the public verbs (scripted port).
 
 The method names a write's authority: ``amend`` and ``replace`` take a source,
-while ``amend_if`` and ``replace_if`` take exactly one condition their caller
-states. These tests grade the condition rules in their fixed order, the Typed
-conditional amendment's class-and-key addressing and assignment judgment, the
-Typed source amendment's two exclusive authoring forms, the stated-``None``
-refusals of every start, and the retired spellings — each against what the
-call puts on the wire, which for a refusal is nothing.
+while ``amend_if``, ``replace_if``, ``delete_if``, and ``terminate_if`` take
+exactly one revision their caller states. These tests grade the revision rules
+in their fixed order, the refusal of a target with no revision, each verb's
+temporal applicability, the Typed conditional verbs' class-and-key addressing
+and assignment judgment, the Typed source amendment's two exclusive authoring
+forms, the stated-``None`` refusals of every start, and the retired spellings —
+each against what the call puts on the wire, which for a refusal is nothing.
 """
 
 from __future__ import annotations
 
 import datetime as dt
+import inspect
 from collections.abc import Callable
 from decimal import Decimal
 from typing import Any, cast
@@ -19,16 +21,18 @@ from typing import Any, cast
 import pytest
 
 from parallax.conformance.class_models import MODELS
-from parallax.conformance.read_models import CardPayment, CashPayment, Payment
 from parallax.conformance.story_models import Wallet
-from parallax.core import Attr, Entity, attr
-from parallax.core._execution._unit_work.instructions import deserialize, prepare_typed_write
+from parallax.core import Attr, Entity, Int32, attr
+from parallax.core._execution._unit_work.instructions import (
+    deserialize,
+    prepare_typed_write,
+    serialize,
+)
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity import AttributeAssignment, DomainModel
 from parallax.core.entity._expressions import AttributeRef
 from parallax.core.entity._model import model_of
 from parallax.core.unit_work import TargetWrite, WriteInstructionError, WriteRejectedError
-from parallax.core.write_plan.steps import UNVERSIONED
 from parallax.snapshot import TxnContext, WireEntity
 from parallax.snapshot._handle._wire import WireTransactionView
 from tests._support import mirrored_models as mm
@@ -44,13 +48,14 @@ from tests._support.db_port import (
     WriteCall,
 )
 from tests.unit._transact_support import (
+    BALANCE,
     FIND_SQL_UNLOCKED,
     FIXED,
-    PAYMENT,
     account_db,
     db_for,
 )
 from tests.unit._where_position_model import WHERE_POSITION_META
+from tests.unit.snapshot._handle._vessel_model import VESSEL, Ferry, Tug, Vessel
 
 _GATED_BALANCE = POSTGRES.to_driver_sql(
     "update account set balance = ?, version = ? where id = ? and version = ?"
@@ -71,7 +76,7 @@ def _row(version: int = 3) -> dict[str, object]:
 def _refused(
     call: Callable[[TxnContext], object],
     match: str,
-    error: type[Exception] = WriteInstructionError,
+    error: type[Exception] | tuple[type[Exception], ...] = WriteInstructionError,
 ) -> None:
     port = ScriptedAdapter(Transact())
 
@@ -84,65 +89,93 @@ def _refused(
 
 
 # --------------------------------------------------------------------------- #
-# Exactly one applicable condition, judged after the window and before the     #
+# Exactly one applicable revision, judged after the window and before the      #
 # payload; nothing falls back on a source's authority.                         #
 # --------------------------------------------------------------------------- #
 _CONDITIONS: list[tuple[dict[str, object], str]] = [
     ({}, "requires version"),
     ({"version": 3, "tx_start": FIXED}, "one condition to state"),
-    ({"version": 3, "unversioned": True}, "one condition to state"),
     ({"version": None}, r"version=None"),
     ({"version": True}, "integer version"),
     ({"tx_start": FIXED}, "takes version, not tx_start"),
-    ({"unversioned": True}, "takes version, not unversioned"),
     ({"tx_start": None}, "takes version, not tx_start"),
 ]
 
+_VERBS = [
+    "typed-amend",
+    "wire-amend",
+    "typed-replace",
+    "wire-replace",
+    "typed-delete",
+    "wire-delete",
+]
 
-@pytest.mark.parametrize(("condition", "match"), _CONDITIONS)
-@pytest.mark.parametrize("verb", ["typed-amend", "wire-amend", "typed-replace", "wire-replace"])
-def test_a_conditional_write_states_exactly_the_one_condition_its_entity_takes(
-    verb: str, condition: dict[str, object], match: str
-) -> None:
-    stated = cast("dict[str, Any]", condition)
+
+def _conditional(verb: str, entity: type[Entity], **stated: Any) -> Callable[[TxnContext], None]:
+    """``verb`` over the object id 1 of ``entity``, an Account or a Wallet, which
+    share the members each verb writes."""
+    name = entity.__name__
 
     def call(tx: TxnContext) -> None:
+        typed = cast("type[mm.Account]", entity)
         if verb == "typed-amend":
-            tx.amend_if(mm.Account, mm.Account.owner.set("Bo"), key=1, **stated)
+            tx.amend_if(typed, typed.owner.set("Bo"), key=1, **stated)
         elif verb == "wire-amend":
-            tx.wire.amend_if("Account", {"id": 1, "owner": "Bo"}, **stated)
+            tx.wire.amend_if(name, {"id": 1, "owner": "Bo"}, **stated)
         elif verb == "typed-replace":
-            tx.replace_if(mm.Account(id=1, owner="Bo", balance=Decimal(1)), **stated)
+            tx.replace_if(typed(id=1, owner="Bo", balance=Decimal(1)), **stated)
+        elif verb == "wire-replace":
+            tx.wire.replace_if(name, {"id": 1, "owner": "Bo", "balance": "1"}, **stated)
+        elif verb == "typed-delete":
+            tx.delete_if(typed, key=1, **stated)
         else:
-            tx.wire.replace_if("Account", {"id": 1, "owner": "Bo", "balance": "1"}, **stated)
+            tx.wire.delete_if(name, {"id": 1}, **stated)
 
-    _refused(call, match)
+    return call
+
+
+@pytest.mark.parametrize(("condition", "match"), _CONDITIONS)
+@pytest.mark.parametrize("verb", _VERBS)
+def test_a_conditional_write_states_exactly_the_one_revision_its_entity_takes(
+    verb: str, condition: dict[str, object], match: str
+) -> None:
+    _refused(_conditional(verb, mm.Account, **condition), match)
 
 
 @pytest.mark.parametrize(
-    ("condition", "match"),
-    [
-        ({}, "requires unversioned"),
-        ({"unversioned": False}, "accepts only True"),
-        ({"unversioned": 1}, "accepts only True"),
-        ({"unversioned": None}, "accepts only True"),
-        ({"version": 1}, "takes unversioned, not version"),
-    ],
+    "condition",
+    [{}, {"version": 1}, {"tx_start": FIXED}, {"version": 1, "tx_start": FIXED}],
+    ids=["none", "version", "tx-start", "both"],
 )
-def test_an_unversioned_target_requires_the_assertion_itself(
-    condition: dict[str, object], match: str
+@pytest.mark.parametrize("verb", _VERBS)
+def test_an_unversioned_target_takes_no_conditional_write(
+    verb: str, condition: dict[str, object]
 ) -> None:
     port = ScriptedAdapter(Transact())
-    stated = cast("dict[str, Any]", condition)
 
     def fn(tx: TxnContext) -> None:
-        with pytest.raises(WriteInstructionError, match=match):
-            tx.wire.amend_if("Wallet", {"id": 5, "balance": "2.00"}, **stated)
-        with pytest.raises(WriteInstructionError, match=match):
-            tx.amend_if(Wallet, Wallet.balance.set(Decimal(2)), key=5, **stated)
+        with pytest.raises(WriteInstructionError, match="has none to state"):
+            _conditional(verb, Wallet, **condition)(tx)
 
     db_for(MODELS["wallet"], port).transact(fn)
     assert _calls(port) == []
+
+
+@pytest.mark.parametrize(
+    "method",
+    [
+        TxnContext.amend_if,
+        TxnContext.replace_if,
+        TxnContext.delete_if,
+        TxnContext.terminate_if,
+        WireTransactionView.amend_if,
+        WireTransactionView.replace_if,
+        WireTransactionView.delete_if,
+        WireTransactionView.terminate_if,
+    ],
+)
+def test_no_conditional_verb_takes_an_unversioned_assertion(method: Callable[..., None]) -> None:
+    assert "unversioned" not in inspect.signature(method).parameters
 
 
 def test_a_window_is_refused_before_a_missing_condition() -> None:
@@ -153,8 +186,12 @@ def test_a_temporal_target_requires_its_start_condition() -> None:
     port = ScriptedAdapter(Transact())
 
     def fn(tx: TxnContext) -> None:
-        with pytest.raises(WriteInstructionError, match="takes tx_start, not unversioned"):
-            tx.wire.amend_if("WherePosition", {"id": 1}, unversioned=True, valid_from=FIXED)
+        with pytest.raises(WriteInstructionError, match="takes tx_start, not version"):
+            tx.wire.amend_if("WherePosition", {"id": 1}, version=1, valid_from=FIXED)
+        with pytest.raises(WriteInstructionError, match="takes tx_start, not version"):
+            tx.wire.terminate_if("WherePosition", {"id": 1}, version=1, valid_from=FIXED)
+        with pytest.raises(WriteInstructionError, match="requires tx_start"):
+            tx.wire.terminate_if("WherePosition", {"id": 1}, valid_from=FIXED)
         with pytest.raises(WriteInstructionError, match=r"tx_start=None"):
             tx.wire.amend_if(
                 "WherePosition", {"id": 1}, tx_start=cast("Any", None), valid_from=FIXED
@@ -162,6 +199,56 @@ def test_a_temporal_target_requires_its_start_condition() -> None:
 
     db_for(WHERE_POSITION_META, port).transact(fn)
     assert _calls(port) == []
+
+
+# --------------------------------------------------------------------------- #
+# A destructive verb names its object's history: `delete_if` removes a         #
+# non-temporal object and `terminate_if` ends a temporal one's coverage.       #
+# --------------------------------------------------------------------------- #
+def test_a_temporal_target_refuses_a_conditional_deletion_before_its_window() -> None:
+    port = ScriptedAdapter(Transact())
+
+    def fn(tx: TxnContext) -> None:
+        with pytest.raises(WriteInstructionError, match="Use 'terminate_if' instead"):
+            tx.wire.delete_if("Balance", {"id": 1}, tx_start=FIXED)
+        with pytest.raises(WriteInstructionError, match="Use 'terminate_if' instead"):
+            tx.delete_if(mm.Balance, key=1)
+
+    db_for(BALANCE, port).transact(fn)
+    assert _calls(port) == []
+
+
+def test_a_non_temporal_target_refuses_a_conditional_termination_after_its_window() -> None:
+    port = ScriptedAdapter(Transact())
+
+    def fn(tx: TxnContext) -> None:
+        with pytest.raises(WriteInstructionError, match="Use 'delete_if' instead"):
+            tx.terminate_if(mm.Account, key=1, version=3)
+        with pytest.raises(WriteInstructionError, match="takes no until"):
+            tx.wire.terminate_if("Account", {"id": 1}, version=3, until=FIXED)
+
+    account_db(port).transact(fn)
+    assert _calls(port) == []
+
+
+@pytest.mark.parametrize(
+    ("document", "match"),
+    [
+        ({"id": 1, "owner": "Bo"}, "primary key alone"),
+        ({"owner": "Bo"}, "states no 'id'"),
+        ({"id": 1, "nickname": "Bo"}, "undeclared"),
+        ({"id": "one"}, "id"),
+    ],
+    ids=["member", "no-key", "undeclared", "ill-typed-key"],
+)
+def test_a_conditional_deletion_states_its_key_alone(
+    document: dict[str, object], match: str
+) -> None:
+    _refused(
+        lambda tx: tx.wire.delete_if("Account", document, version=3),
+        match,
+        (WriteInstructionError, WriteRejectedError),
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -188,23 +275,26 @@ def test_an_equal_conditional_assignment_is_still_written() -> None:
     assert _calls(port) == [WriteCall(_GATED_BALANCE, (Decimal("100.00"), 4, 1, 3))]
 
 
+_TYPED_KEYED: dict[str, Callable[[TxnContext, object], None]] = {
+    "amend": lambda tx, key: tx.amend_if(
+        mm.Account, mm.Account.owner.set("Bo"), key=key, version=3
+    ),
+    "delete": lambda tx, key: tx.delete_if(mm.Account, key=key, version=3),
+}
+
+
+@pytest.mark.parametrize("verb", list(_TYPED_KEYED))
 @pytest.mark.parametrize(
     "key", [(1,), {"id": 1}, [1], {1}], ids=["tuple", "mapping", "list", "set"]
 )
-def test_a_conditional_key_is_one_scalar_value(key: object) -> None:
-    _refused(
-        lambda tx: tx.amend_if(mm.Account, mm.Account.owner.set("Bo"), key=key, version=3),
-        "one scalar primary-key value",
-    )
+def test_a_conditional_key_is_one_scalar_value(verb: str, key: object) -> None:
+    _refused(lambda tx: _TYPED_KEYED[verb](tx, key), "one scalar primary-key value")
 
 
+@pytest.mark.parametrize("verb", list(_TYPED_KEYED))
 @pytest.mark.parametrize("key", ["one", True, 1.5], ids=["string", "boolean", "fraction"])
-def test_a_conditional_key_is_judged_against_the_key_type(key: object) -> None:
-    _refused(
-        lambda tx: tx.amend_if(mm.Account, mm.Account.owner.set("Bo"), key=key, version=3),
-        "declared type",
-        WriteRejectedError,
-    )
+def test_a_conditional_key_is_judged_against_the_key_type(verb: str, key: object) -> None:
+    _refused(lambda tx: _TYPED_KEYED[verb](tx, key), "declared type", WriteRejectedError)
 
 
 @pytest.mark.parametrize(
@@ -242,64 +332,74 @@ def test_an_assignment_is_judged_before_anything_is_buffered(
 
 
 def test_an_inherited_assignment_applies_to_a_concrete_target() -> None:
-    port = ScriptedAdapter(Transact(Read(rows=[{"id": 4, "amount": Decimal(1)}]), Write()))
+    port = ScriptedAdapter(Transact(Write()))
 
     def fn(tx: TxnContext) -> None:
-        tx.amend_if(
-            CardPayment,
-            Payment.amount.set(Decimal("2.00")),
-            CardPayment.card_network.set("amex"),
-            key=4,
-            unversioned=True,
-        )
+        tx.amend_if(Ferry, Vessel.name.set("Skua"), Ferry.berths.set(8), key=4, version=3)
 
-    db_for(PAYMENT, port).transact(fn)
-    read, write = _calls(port)
-    assert isinstance(read, ReadCall) and "for share" in read.sql
-    assert isinstance(write, WriteCall) and write.sql.endswith("where id = %s and kind = %s")
-    assert write.binds == (Decimal("2.00"), "amex", 4, "card")
+    db_for(VESSEL, port).transact(fn)
+    (write,) = _calls(port)
+    assert isinstance(write, WriteCall)
+    assert write.sql.endswith("where id = %s and kind = %s and version = %s")
+    assert write.binds == ("Skua", 8, 4, 4, "ferry", 3)
+
+
+def test_a_conditional_deletion_of_a_concrete_target_is_guarded_by_its_tag() -> None:
+    port = ScriptedAdapter(Transact(Write()))
+    db_for(VESSEL, port).transact(lambda tx: tx.delete_if(Ferry, key=4, version=3))
+    assert _calls(port) == [
+        WriteCall(
+            POSTGRES.to_driver_sql("delete from vessel where id = ? and kind = ? and version = ?"),
+            (4, "ferry", 3),
+        )
+    ]
 
 
 def test_a_sibling_member_and_an_abstract_target_are_refused() -> None:
     port = ScriptedAdapter(Transact())
-    ancestor = Payment.amount.set(Decimal(1)).attr.entity
+    ancestor = Vessel.name.set("Skua").attr.entity
 
     def fn(tx: TxnContext) -> None:
         with pytest.raises(WriteInstructionError, match="declares or inherits"):
-            tx.amend_if(
-                CardPayment,
-                cast("Any", CashPayment.tendered.set(Decimal(1))),
-                key=4,
-                unversioned=True,
-            )
+            tx.amend_if(Ferry, cast("Any", Tug.pull.set(1)), key=4, version=3)
         with pytest.raises(WriteInstructionError, match="declares or inherits"):
             tx.amend_if(
-                CardPayment,
-                AttributeAssignment(AttributeRef(ancestor, "cardNetwork"), "amex"),
-                key=4,
-                unversioned=True,
+                Ferry, AttributeAssignment(AttributeRef(ancestor, "berths"), 8), key=4, version=3
             )
         with pytest.raises(WriteRejectedError, match="concrete"):
-            tx.amend_if(Payment, Payment.amount.set(Decimal(1)), key=4, unversioned=True)
+            tx.amend_if(Vessel, Vessel.name.set("Skua"), key=4, version=3)
+        with pytest.raises(WriteRejectedError, match="concrete"):
+            tx.delete_if(Vessel, key=4, version=3)
 
-    db_for(PAYMENT, port).transact(fn)
+    db_for(VESSEL, port).transact(fn)
     assert _calls(port) == []
 
 
 class Locker(Entity, table="locker", namespace="parallax.conditional"):
     code: Attr[str] = attr(primary_key=True, max_length=8)
     holder: Attr[str | None] = attr(max_length=16)
+    version: Attr[int] = attr(type=Int32, optimistic_locking=True)
 
 
 def test_a_conditional_key_addresses_the_key_attribute_whatever_its_name() -> None:
-    port = ScriptedAdapter(Transact(Read(rows=[{"code": "A1", "holder": "Ada"}]), Write()))
-    db_for(DomainModel(Locker), port).transact(
-        lambda tx: tx.amend_if(Locker, Locker.holder.set("Bo"), key="A1", unversioned=True)
-    )
-    write = _calls(port)[-1]
-    assert write == WriteCall(
-        POSTGRES.to_driver_sql("update locker set holder = ? where code = ?"), ("Bo", "A1")
-    )
+    port = ScriptedAdapter(Transact(Write(), Write()))
+
+    def fn(tx: TxnContext) -> None:
+        tx.amend_if(Locker, Locker.holder.set("Bo"), key="A1", version=2)
+        tx.delete_if(Locker, key="B2", version=5)
+
+    db_for(DomainModel(Locker), port).transact(fn)
+    assert _calls(port) == [
+        WriteCall(
+            POSTGRES.to_driver_sql(
+                "update locker set holder = ?, version = ? where code = ? and version = ?"
+            ),
+            ("Bo", 3, "A1", 2),
+        ),
+        WriteCall(
+            POSTGRES.to_driver_sql("delete from locker where code = ? and version = ?"), ("B2", 5)
+        ),
+    ]
 
 
 # --------------------------------------------------------------------------- #
@@ -567,22 +667,42 @@ def test_no_retired_instruction_token_is_accepted(document: dict[str, object]) -
 @pytest.mark.parametrize(
     ("entity", "row", "outcome"),
     [
-        ("Wallet", {"id": 5, "balance": 2}, None),
-        ("Account", {"id": 1, "owner": "Bo"}, "takes version, not unversioned"),
+        ("Wallet", {"id": 5, "balance": 2}, "has none to state"),
+        ("Account", {"id": 1, "owner": "Bo"}, "requires version"),
     ],
     ids=["unversioned", "versioned"],
 )
-def test_an_instruction_carrying_the_assertion_alone_is_judged_like_a_stated_one(
-    entity: str, row: dict[str, object], outcome: str | None
+def test_an_instruction_stating_no_revision_is_refused_for_every_target(
+    entity: str, row: dict[str, object], outcome: str
 ) -> None:
-
     model = model_of(MODELS["wallet"] if entity == "Wallet" else MODELS["account"])
-    instruction = TargetWrite("amend", entity, row, unversioned=True)
-    if outcome is None:
-        assert prepare_typed_write(instruction, model).expectation is UNVERSIONED
-    else:
-        with pytest.raises(WriteInstructionError, match=outcome):
-            prepare_typed_write(instruction, model)
+    with pytest.raises(WriteInstructionError, match=outcome):
+        prepare_typed_write(TargetWrite("amend", entity, row), model)
+
+
+@pytest.mark.parametrize("mutation", ["amend", "delete"])
+def test_a_target_document_states_exactly_one_revision(mutation: str) -> None:
+    with pytest.raises(WriteInstructionError, match="states no revision"):
+        deserialize({"mutation": mutation, "entity": "Account", "row": {"id": 1}})
+
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        {"mutation": "delete", "entity": "Account", "row": {"id": 1}, "ifVersion": 3},
+        {
+            "mutation": "terminateUntil",
+            "entity": "WherePosition",
+            "row": {"id": 1},
+            "ifTxStart": "2023-12-01T00:00:00.000000Z",
+            "validFrom": "2024-01-01T00:00:00.000000Z",
+            "until": "2024-02-01T00:00:00.000000Z",
+        },
+    ],
+    ids=["delete", "terminate-until"],
+)
+def test_a_destructive_target_document_round_trips(document: dict[str, object]) -> None:
+    assert serialize(deserialize(document)) == document
 
 
 def test_a_source_write_and_a_keyed_replacement_are_canonical_tokens() -> None:

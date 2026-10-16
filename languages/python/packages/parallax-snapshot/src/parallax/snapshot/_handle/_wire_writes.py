@@ -228,12 +228,13 @@ def wire_target_write(
     ``target`` is an Entity spelling, or — for a replacement alone — a node
     Parallax published, whose own Entity and published writable state,
     historical or current, are the write's target and data. ``document`` is an
-    amendment's change set or a replacement's complete data, in accepted wire
-    spellings, and its own shape is judged first; it must be omitted when a
-    published node states the data. Its primary-key entries name the object and
-    are no assignment; every other entry is assigned, a framework-owned one
-    refused. ``condition`` is the write's whole condition: nothing ``document``
-    or ``target`` carries, and no read's evidence, stands in for it.
+    amendment's change set, a replacement's complete data, or a destructive
+    write's key, in accepted wire spellings, and its own shape is judged first;
+    it must be omitted when a published node states the data. Its primary-key
+    entries name the object and are no assignment; every other entry is
+    assigned, a framework-owned one refused, and a destructive write states
+    none. ``condition`` is the write's whole condition: nothing ``document`` or
+    ``target`` carries, and no read's evidence, stands in for it.
     """
     refuse_reentry(attempt.lifecycle)
     start = stated_valid_from(valid_from)
@@ -243,9 +244,7 @@ def wire_target_write(
             raise instructions.WriteInstructionError(
                 f"a Wire `{mutation}` of an Entity spelling states the data it writes"
             )
-        described = (
-            f"a Wire `{mutation}`'s {'change set' if mutation in AMEND_MUTATIONS else 'data'}"
-        )
+        described = f"a Wire `{mutation}`'s {_target_document(mutation)}"
         entity_name = target
         row = _authored_document(document, described)
     elif isinstance(target, WireEntity) and mutation in REPLACE_MUTATIONS:
@@ -271,12 +270,17 @@ def wire_target_write(
         condition.if_tx_start,
         start,
         until,
-        condition.unversioned,
         condition.stated,
     )
     attempt.target_write(
         instructions.prepare_wire_write(instruction, meta, authored_members=row.keys())
     )
+
+
+def _target_document(mutation: TargetMutation) -> str:
+    if mutation in AMEND_MUTATIONS:
+        return "change set"
+    return "data" if mutation in REPLACE_MUTATIONS else "key"
 
 
 def editable_wire_data(attempt: TxnAttempt, source: object) -> dict[str, object]:

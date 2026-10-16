@@ -1,11 +1,14 @@
-"""Caller-addressed patch and replacement of Non-Temporal rows, against real Postgres.
+"""Caller-addressed patch, replacement, and deletion of Non-Temporal rows, against
+real Postgres.
 
 A web client holds a key and the version an earlier query returned. Each case
 commits a starting row in one transaction, writes it from the caller's own
 revision in a second, and reads back the stored row under both storage layouts:
-what was assigned, what survived, what a replacement reset, and the version the
-write advanced to — or, when the caller's revision no longer holds, that
-nothing changed and nothing retried.
+what was assigned, what survived, what a replacement reset, the version the
+write advanced to, and the row a deletion removed — or, when the caller's
+revision no longer holds, that nothing changed and nothing retried. An
+unversioned row has no revision to state, so it is written through a read of
+the writing transaction instead.
 
 Standalone Docker-backed proofs, like `test_insertion_authority.py`: each is a
 developer choreography rather than a case's authored observation.
@@ -22,7 +25,11 @@ from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import Attr, Document, DomainModel, Entity, ValueObject, attr
 from parallax.core.entity._model import model_of
 from parallax.core.execution import ExecutionFailure
-from parallax.core.unit_work import MissingTargetError, WriteEvidenceError, WritePreconditionError
+from parallax.core.unit_work import (
+    WriteEvidenceError,
+    WriteInstructionError,
+    WritePreconditionError,
+)
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.root_ownership import own_root
 from tests.api._peer_commit import commit_as_a_peer
@@ -122,16 +129,6 @@ def _seed(entity: type[Any]) -> dict[str, object]:
     return _SEED if entity in _ACCOUNTS else _WALLET_SEED
 
 
-def _stated(entity: type[Any], version: int) -> int | None:
-    """The revision a caller states for ``entity``: its version, or none at all
-    for an unversioned Entity."""
-    return version if entity in _ACCOUNTS else None
-
-
-def _stored(profile_run: Any, entity: type[Any]) -> list[tuple[object, ...]]:
-    return (_accounts if entity in _ACCOUNTS else _wallets)(profile_run, entity)
-
-
 def _accounts(profile_run: Any, entity: type[Any]) -> list[tuple[object, ...]]:
     members = ", ".join(_member(entity, name) for name in ("label", "note", "spec", "marks"))
     sql = f"select id, {members}, version from {_TABLES[entity]} order by id"
@@ -146,25 +143,30 @@ def _wallets(profile_run: Any, entity: type[Any]) -> list[tuple[object, ...]]:
     return [tuple(row) for row in profile_run.port.execute(sql, [])]
 
 
-def _condition(version: int | None) -> dict[str, Any]:
-    return {"unversioned": True} if version is None else {"version": version}
-
-
-def _patch(tx: TxnContext, entity: type[Any], version: int | None = 1, **changes: object) -> None:
-    tx.wire.amend_if(_name(entity), {"id": 1, **changes}, **_condition(version))
+def _patch(tx: TxnContext, entity: type[Any], version: int = 1, **changes: object) -> None:
+    tx.wire.amend_if(_name(entity), {"id": 1, **changes}, version=version)
 
 
 def _replace(
     tx: TxnContext,
     entity: type[Any],
     representation: _Representation,
-    version: int | None = 1,
+    version: int = 1,
     **data: object,
 ) -> None:
     if representation == "typed":
-        tx.replace_if(entity(id=1, **data), **_condition(version))
+        tx.replace_if(entity(id=1, **data), version=version)
     else:
-        tx.wire.replace_if(_name(entity), {"id": 1, **data}, **_condition(version))
+        tx.wire.replace_if(_name(entity), {"id": 1, **data}, version=version)
+
+
+def _delete(
+    tx: TxnContext, entity: type[Any], representation: _Representation, version: int = 1
+) -> None:
+    if representation == "typed":
+        tx.delete_if(entity, key=1, version=version)
+    else:
+        tx.wire.delete_if(_name(entity), {"id": 1}, version=version)
 
 
 def _read(tx: TxnContext, entity: type[Any]) -> Any:
@@ -226,9 +228,27 @@ def test_an_equal_valued_target_write_still_advances_the_version(
 
 @_ACCOUNT_AXES
 @_STRATEGIES
+@_REPRESENTATIONS
+def test_a_deletion_removes_the_row_its_callers_revision_names(
+    profile_run: Any,
+    entity: type[Any],
+    concurrency: _Concurrency,
+    representation: _Representation,
+) -> None:
+    db = _seeded(profile_run, entity)
+    db.transact(
+        lambda tx: tx.wire.insert(_name(entity), {"id": 2, **_seed(entity)}),
+    )
+    db.transact(lambda tx: _delete(tx, entity, representation), concurrency=concurrency)
+    assert [row[0] for row in _accounts(profile_run, entity)] == [2]
+
+
+@_ACCOUNT_AXES
+@_STRATEGIES
+@pytest.mark.parametrize("verb", ["patch", "delete"])
 @pytest.mark.parametrize("peer", ["revised", "deleted"])
 def test_a_revision_that_no_longer_holds_fails_without_retry_and_changes_nothing(
-    profile_run: Any, entity: type[Any], concurrency: _Concurrency, peer: str
+    profile_run: Any, entity: type[Any], concurrency: _Concurrency, verb: str, peer: str
 ) -> None:
     db = _seeded(profile_run, entity)
 
@@ -246,7 +266,10 @@ def test_a_revision_that_no_longer_holds_fails_without_retry_and_changes_nothing
     def stale(tx: TxnContext) -> None:
         nonlocal attempts
         attempts += 1
-        _patch(tx, entity, label="stale")
+        if verb == "patch":
+            _patch(tx, entity, label="stale")
+        else:
+            _delete(tx, entity, "wire")
 
     with pytest.raises(ExecutionFailure) as failed:
         db.transact(stale, concurrency=concurrency, retry_optimistic_conflicts=True)
@@ -257,22 +280,23 @@ def test_a_revision_that_no_longer_holds_fails_without_retry_and_changes_nothing
 
 
 @_WALLET_AXES
-def test_an_unversioned_target_writes_under_the_locking_fallback_and_misses_as_a_missing_target(
+def test_an_unversioned_row_takes_no_conditional_write_and_is_written_through_a_read(
     profile_run: Any, entity: type[Any]
 ) -> None:
     db = _seeded(profile_run, entity)
-    db.transact(lambda tx: _patch(tx, entity, version=None, label="patched"))
+
+    def fn(tx: TxnContext) -> None:
+        for conditional in (
+            lambda: tx.wire.amend_if(_name(entity), {"id": 1, "label": "patched"}, version=1),
+            lambda: tx.wire.replace_if(_name(entity), {"id": 1, "label": "replaced"}, version=1),
+            lambda: tx.wire.delete_if(_name(entity), {"id": 1}, version=1),
+        ):
+            with pytest.raises(WriteInstructionError, match="has none to state"):
+                conditional()
+        tx.amend(_read(tx, entity).edit(label="patched"))
+
+    db.transact(fn)
     assert _wallets(profile_run, entity) == [(1, "patched", "kept")]
-    db.transact(lambda tx: _replace(tx, entity, "wire", version=None, label="replaced"))
-    assert _wallets(profile_run, entity) == [(1, "replaced", None)]
-
-    def missing(tx: TxnContext) -> None:
-        tx.wire.amend_if(_name(entity), {"id": 2, "label": "nobody"}, unversioned=True)
-
-    with pytest.raises(ExecutionFailure) as failed:
-        db.transact(missing)
-    assert isinstance(failed.value.cause, MissingTargetError)
-    assert _wallets(profile_run, entity) == [(1, "replaced", None)]
 
 
 # --------------------------------------------------------------------------- #
@@ -346,51 +370,10 @@ def test_a_stale_observed_source_a_replacement_overwrote_still_fails_the_write(
     assert _accounts(profile_run, entity)[0][1:3] == ("seed", "peer")
 
 
-@_WALLET_AXES
-@pytest.mark.parametrize(
-    "sequence, stored",
-    [
-        pytest.param("O-P", (1, "patched", "observed")),
-        pytest.param("P-O", (1, "patched", "observed")),
-        pytest.param("R-O", (1, "replaced", "observed")),
-        pytest.param("P-D", None),
-    ],
-)
-def test_an_unversioned_target_and_observed_writes_of_one_object_compose(
-    profile_run: Any, entity: type[Any], sequence: str, stored: tuple[object, ...] | None
-) -> None:
-    db = _seeded(profile_run, entity)
-
-    def fn(tx: TxnContext) -> None:
-        source = _read(tx, entity)
-        for step in sequence.split("-"):
-            if step == "P":
-                _patch(tx, entity, version=None, label="patched")
-            elif step == "R":
-                _replace(tx, entity, "wire", version=None, label="replaced")
-            elif step == "D":
-                tx.delete(source)
-            else:
-                tx.amend(source.edit(note="observed"))
-        _read_other(tx, entity)
-        with pytest.raises(WriteEvidenceError, match="write-evidence-consumed"):
-            tx.amend(source.edit(label="again"))
-
-    db.transact(fn)
-    assert _wallets(profile_run, entity) == ([] if stored is None else [stored])
-
-
 # --------------------------------------------------------------------------- #
 # An object the attempt inserted is the insertion's to write until commit.    #
 # --------------------------------------------------------------------------- #
-_ENTITY_AXES = pytest.mark.parametrize(
-    "entity",
-    (*_ACCOUNTS, *_WALLETS),
-    ids=["versioned-columns", "versioned-document", "unversioned-columns", "unversioned-document"],
-)
-
-
-@_ENTITY_AXES
+@_ACCOUNT_AXES
 @_STRATEGIES
 @_REPRESENTATIONS
 def test_a_target_write_of_an_object_this_attempt_inserted_is_refused_until_commit(
@@ -400,7 +383,6 @@ def test_a_target_write_of_an_object_this_attempt_inserted_is_refused_until_comm
     representation: _Representation,
 ) -> None:
     db = _db(profile_run)
-    stated = _stated(entity, 1)
 
     def fn(tx: TxnContext) -> None:
         inserted = tx.wire.insert(_name(entity), {"id": 1, **_seed(entity)})
@@ -410,23 +392,25 @@ def test_a_target_write_of_an_object_this_attempt_inserted_is_refused_until_comm
                 # A read of the row itself flushes the insertion and supplies the
                 # actual stored revision under this attempt's participation.
                 fresh = _read(tx, entity)
-                assert getattr(fresh, "version", None) == stated
-            with pytest.raises(WriteEvidenceError, match="write-evidence-inserted"):
-                if representation == "typed":
-                    _replace(tx, entity, "typed", version=stated, label="target")
-                else:
-                    _patch(tx, entity, version=stated, label="target")
-            _patch(tx, entity, version=stated)
+                assert fresh.version == 1
+            for refused in (
+                lambda: (
+                    _replace(tx, entity, "typed", label="target")
+                    if representation == "typed"
+                    else _patch(tx, entity, label="target")
+                ),
+                lambda: _delete(tx, entity, representation),
+            ):
+                with pytest.raises(WriteEvidenceError, match="write-evidence-inserted"):
+                    refused()
+            _patch(tx, entity)
         tx.amend(fresh.edit(note="observed"))
         tx.wire.amend(inserted, {"label": "authored"})
 
     db.transact(fn, concurrency=concurrency)
-    assert _stored(profile_run, entity)[0][1:3] == ("authored", "observed")
-    db.transact(
-        lambda tx: _patch(tx, entity, version=_stated(entity, 2), label="later"),
-        concurrency=concurrency,
-    )
-    assert _stored(profile_run, entity)[0][1:3] == ("later", "observed")
+    assert _accounts(profile_run, entity)[0][1:3] == ("authored", "observed")
+    db.transact(lambda tx: _patch(tx, entity, version=2, label="later"), concurrency=concurrency)
+    assert _accounts(profile_run, entity)[0][1:3] == ("later", "observed")
 
 
 @_ACCOUNT_AXES

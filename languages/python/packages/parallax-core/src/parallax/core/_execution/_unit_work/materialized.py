@@ -312,9 +312,9 @@ class TargetKeyedWrite:
 
     ``scope`` is the claim scope that condition names — the exact version a
     versioned object is required to stand at, or the object itself when it is
-    unversioned or temporal — which is the scope an observed write of the same
-    state takes, so the two compose there; a temporal object's writes compose by
-    object instead. ``claims`` are the retained observations of observed writes
+    temporal — which is the scope an observed write of the same state takes, so
+    the two compose there; a temporal object's writes compose by object
+    instead. ``claims`` are the retained observations of observed writes
     composed into a Non-Temporal one, which its completion spends; the caller's
     condition stays whatever values survive, and a destruction superseding the
     write keeps it too. ``retained`` is the starting row a Locking temporal
@@ -340,8 +340,7 @@ def target_write(
     prepared: PreparedTargetWrite, families: inheritance.InheritanceFacet
 ) -> TargetKeyedWrite:
     """``prepared`` as the buffer item that carries its caller's condition: the
-    keyed amendment or replacement it executes as, claimed at the scope its
-    expectation names."""
+    keyed write it executes as, claimed at the scope its expectation names."""
     instruction = target_instruction(prepared)
     key = resolve_object_key(instruction, families)
     assert key is not None  # preparation required the key

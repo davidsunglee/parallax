@@ -360,8 +360,33 @@ _BALANCE_TARGET = {"mutation": "amend", "entity": "Balance", "row": {"id": 1, "v
     ("entry", "entity_defs"),
     [
         pytest.param({**_ACCOUNT_TARGET, "ifVersion": 1}, _SEQUENCE, id="versioned"),
-        pytest.param(_TAG_TARGET, _SEQUENCE, id="unversioned"),
         pytest.param({**_SPAN_TARGET, "ifTxStart": _T0}, _SEQUENCE, id="bitemporal"),
+        pytest.param(
+            {"mutation": "delete", "entity": "SequenceAccount", "row": {"id": 1}, "ifVersion": 1},
+            _SEQUENCE,
+            id="a-versioned-deletion",
+        ),
+        pytest.param(
+            {**_SPAN_TARGET, "mutation": "terminate", "row": {"id": 1}, "ifTxStart": _T0},
+            _SEQUENCE,
+            id="a-bitemporal-termination",
+        ),
+        pytest.param(
+            {
+                **_SPAN_TARGET,
+                "mutation": "terminateUntil",
+                "row": {"id": 1},
+                "ifTxStart": _T0,
+                "until": "2024-01-01T00:00:00.000000Z",
+            },
+            _SEQUENCE,
+            id="a-bounded-bitemporal-termination",
+        ),
+        pytest.param(
+            {**_BALANCE_TARGET, "mutation": "terminate", "row": {"id": 1}, "ifTxStart": _T0},
+            _BALANCE,
+            id="a-transaction-time-only-termination",
+        ),
         pytest.param({**_BALANCE_TARGET, "ifTxStart": _T0}, _BALANCE, id="transaction-time-only"),
         pytest.param(
             {**_ACCOUNT_TARGET, "mutation": "replace", "ifVersion": 1},
@@ -413,7 +438,23 @@ def test_a_target_submission_states_the_condition_its_target_takes(
         pytest.param(
             {**_ACCOUNT_TARGET, "ifTxStart": _T0}, _SEQUENCE, id="a-versioned-target-by-its-start"
         ),
+        pytest.param(_TAG_TARGET, _SEQUENCE, id="an-unversioned-target"),
         pytest.param({**_TAG_TARGET, "ifVersion": 1}, _SEQUENCE, id="an-unversioned-revision"),
+        pytest.param(
+            {**_SPAN_TARGET, "mutation": "delete", "row": {"id": 1}, "ifTxStart": _T0},
+            _SEQUENCE,
+            id="a-temporal-deletion",
+        ),
+        pytest.param(
+            {**_ACCOUNT_TARGET, "mutation": "terminate", "row": {"id": 1}, "ifVersion": 1},
+            _SEQUENCE,
+            id="a-non-temporal-termination",
+        ),
+        pytest.param(
+            {**_ACCOUNT_TARGET, "mutation": "delete", "ifVersion": 1},
+            _SEQUENCE,
+            id="a-deletion-assigning-a-member",
+        ),
         pytest.param(
             {**_SPAN_TARGET, "ifVersion": 1}, _SEQUENCE, id="a-temporal-target-by-a-version"
         ),

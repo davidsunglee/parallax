@@ -3958,6 +3958,63 @@ def test_a_target_step_is_written_from_its_callers_revision_with_no_source_read(
     assert [e.case_pointer for e in emissions] == ["/writeSequence/0"]
 
 
+def test_a_target_deletion_step_is_written_through_its_conditional_verb() -> None:
+    port = FakeWritePort()
+    _emissions, _table_state, round_trips = scenario.run_write_sequence_case(
+        _load_case("m-opt-lock-039"), port
+    )
+    assert round_trips == 1
+    assert port.writes == [
+        (POSTGRES.to_driver_sql("delete from account where id = ? and version = ?"), [2, 1])
+    ]
+
+
+def test_a_target_termination_step_reads_its_row_then_closes_it_and_chains_nothing() -> None:
+    jan = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+    port = FakeWritePort(
+        find_rows=[
+            {
+                "bal_id": 1,
+                "acct_num": "A",
+                "val": decimal.Decimal("100.00"),
+                "in_z": jan,
+                "out_z": INFINITY,
+            }
+        ]
+    )
+    _emissions, _table_state, round_trips = scenario.run_write_sequence_case(
+        _load_case("m-temporal-write-069"), port
+    )
+    assert round_trips == 3
+    insert, close = port.writes
+    assert insert[0].startswith("insert into balance")
+    assert close == (
+        POSTGRES.to_driver_sql(
+            "update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?"
+        ),
+        [dt.datetime(2024, 6, 1, tzinfo=dt.UTC), 1, "infinity", jan],
+    )
+
+
+def test_a_target_replacement_step_completes_what_its_row_omits() -> None:
+    since = dt.datetime(2026, 1, 1, tzinfo=dt.UTC)
+    port = FakeWritePort(
+        find_rows=[
+            {
+                "id": 5,
+                "label": "voyager",
+                "spec": {"title": "Ore Run", "origin": {"country": "NO"}},
+                "marks": [{"code": "X"}],
+                "in_z": since,
+                "out_z": INFINITY,
+            }
+        ]
+    )
+    scenario.run_write_sequence_case(_load_case("m-unit-work-043"), port)
+    _close, successor = port.writes
+    assert successor[1][-2:] == [JsonDocument(None), JsonDocument(())]
+
+
 def test_a_locking_target_step_acquires_its_row_before_it_writes() -> None:
     port = FakeWritePort(
         find_rows=[{"id": 1, "owner": "Ada", "balance": decimal.Decimal("100.00"), "version": 1}]

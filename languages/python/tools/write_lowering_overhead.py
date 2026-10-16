@@ -120,9 +120,8 @@ WINDOW_DESCRIPTIONS: Final[Mapping[str, str]] = {
         "or one caller-addressed target write over a row its transaction never read, "
         "until transact returns: preparation, buffering, the pre-commit flush's "
         "settlement and SQL lowering, production bind adaptation, psycopg's document "
-        "serialization, and the commit; a target's own reads over provider-free rows "
-        "(an unversioned target's acquisition, a temporal target's coverage read at "
-        "flush), but no earlier read and no database execution"
+        "serialization, and the commit; a target's own coverage read at flush over "
+        "provider-free rows, but no earlier read and no database execution"
     ),
     ACQUISITION_WINDOW: (
         "one public tx.wire.amend_where bounded by until over a Bitemporal target, from the "

@@ -60,7 +60,6 @@ from parallax.core._execution._keyed_writes import validate_source_pin
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work import instructions
 from parallax.core._execution._unit_work.instructions import (
-    ExpectedTxStart,
     ExpectedVersion,
     PreparedKeyedWrite,
     PreparedPredicateWrite,
@@ -3036,14 +3035,19 @@ def _buffer_wire_target(
         {"version": expectation.version}
         if isinstance(expectation, ExpectedVersion)
         else {"tx_start": expectation.instant}
-        if isinstance(expectation, ExpectedTxStart)
-        else {"unversioned": True}
     )
     bounds: dict[str, Any] = {**_stated_start(valid_from)}
     if until is not None:
         bounds["until"] = until
-    verb = tx.wire.replace_if if instruction.replaces else tx.wire.amend_if
-    verb(entity_name, document, **condition, **bounds)
+    match instruction.mutation:
+        case "amend" | "amendUntil":
+            tx.wire.amend_if(entity_name, document, **condition, **bounds)
+        case "replace" | "replaceUntil":
+            tx.wire.replace_if(entity_name, document, **condition, **bounds)
+        case "delete":
+            tx.wire.delete_if(entity_name, document, **condition)
+        case _:
+            tx.wire.terminate_if(entity_name, document, **condition, **bounds)
 
 
 def _stated_start(valid_from: dt.datetime | None) -> dict[str, dt.datetime]:

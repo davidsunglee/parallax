@@ -151,16 +151,17 @@ revised or removed as above (`m-unit-work` *Insertion authority*).
 
 ### A caller-addressed write
 
-A caller-addressed amendment or replacement (`m-unit-work` *Caller-addressed
-writes*) observed no row either: it states the `in_z` of the current row its
-caller last observed as `ifTxStart`, and takes no Valid-Time bound. The current
-row is read inside the flush that writes it, and is closed and chained as an
-`amend` is — an amendment's chained row keeps every member it does not assign, a
-replacement's states the complete writable state — or kept unchanged where every
-value it assigns is one the row already holds, exactly as a source-authorized
-write's is
+A caller-addressed amendment, replacement, or termination (`m-unit-work`
+*Caller-addressed writes*) observed no row either: it states the `in_z` of the
+current row its caller last observed as `ifTxStart`, and takes no Valid-Time
+bound. The current row is read inside the flush that writes it. An amendment or
+replacement closes and chains it as an `amend` does — an amendment's chained
+row keeps every member it does not assign, a replacement's states the complete
+writable state — or keeps it unchanged where every value it assigns is one the
+row already holds, exactly as a source-authorized write's is
 (*Unchanged milestones*): the caller's condition establishes the write's
-authority, not a demand for new history. Where that read finds no
+authority, not a demand for new history. A termination closes it and chains
+nothing, as a keyed `terminate` does. Where that read finds no
 current row, or one at another `in_z`, the write is its caller's failed
 precondition before any statement executes; where it finds more than one current
 row, the write fails sooner, as Cardinality Corruption (`m-unit-work`). Under
@@ -354,19 +355,24 @@ earlier composed write destroyed is not reopened.
 
 ## Caller-addressed writes span their requested extent
 
-A caller-addressed amendment or replacement (`m-unit-work` *Caller-addressed
-writes*) states its own `validFrom`, any instant inside a current rectangle, and
-its requested extent is `[validFrom, until)`, through infinity when unbounded.
-It requires a current rectangle containing `validFrom` whose `in_z` is the
-caller's stated `ifTxStart`. That point condition describes the starting
-rectangle alone, not the earlier state of every rectangle the extent reaches:
-later rectangles are read inside the flush that writes them, including any
-changed since the caller's query, and each is inactivated under its own `in_z`.
+A caller-addressed amendment, replacement, or termination (`m-unit-work`
+*Caller-addressed writes*) states its own `validFrom`, any instant inside a
+current rectangle, and its requested extent is `[validFrom, until)`, through
+infinity when unbounded. It requires a current rectangle containing `validFrom`
+whose `in_z` is the caller's stated `ifTxStart`. That point condition describes
+the starting rectangle alone, not the earlier state of every rectangle the
+extent reaches: later rectangles are read inside the flush that writes them,
+including any changed since the caller's query, and each is inactivated under
+its own `in_z`. A caller who reviewed January's state and states its start
+therefore still amends, replaces, or ends a February rectangle another writer
+changed after that review; protecting the whole reviewed window is a separate
+capability no caller-addressed write offers.
 
 | Mutation | Inside its requested extent |
 |---|---|
 | Amendment | Each overlapping rectangle the write holds or reads takes the assigned members over its own unassigned values, exactly as an observed write's does; a gap and the coverage after a scheduled termination stay absent. |
 | Replacement | Each overlapping rectangle the write holds or reads takes the complete stated state, and every part of the extent no current rectangle covers — a gap, or the coverage after a scheduled termination — is opened with that state too, once. |
+| Termination | Each overlapping rectangle the write holds or reads is inactivated, and only its parts outside the extent are opened again, exactly as a keyed `terminate` does; a gap stays a gap. |
 
 A rectangle the write leaves unchanged is kept rather than inactivated
 (*Unchanged milestones*), the starting rectangle included: each rectangle is

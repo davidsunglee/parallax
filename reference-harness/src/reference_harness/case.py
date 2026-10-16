@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from functools import cached_property
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, NoReturn, cast
+from typing import TYPE_CHECKING, Any, Final, NoReturn, cast
 
 from .corpus_yaml import read_corpus_yaml
 from .naming import default_column_name
@@ -904,9 +904,10 @@ class Case:
         identity for every check that locates it among the others.
 
         A target step's gate binds its caller's revision exactly where a keyed
-        update's binds the version its source observed, so it is graded as that
-        update with ``observedVersion`` set to ``ifVersion``; a temporal one
-        keeps its ``ifTxStart`` for the close that gates on it. A replacement
+        write's binds the version its source observed, so it is graded as that
+        keyed update, deletion, or termination with ``observedVersion`` set to
+        ``ifVersion``; a temporal one keeps its ``ifTxStart`` for the close that
+        gates on it. A replacement
         states every writable member: those its ``row`` omits are written empty
         — ``null``, or ``[]`` for a ``many`` value object — while a read-only
         member, immutable after insert, is no part of it. The keyed form keeps
@@ -937,7 +938,7 @@ class Case:
         if "ifVersion" in step:
             stated["observedVersion"] = step["ifVersion"]
         keyed = {name: value for name, value in step.items() if name not in ("row", "ifVersion")}
-        keyed["mutation"] = "amend" if mutation in ("amend", "replace") else "amendUntil"
+        keyed["mutation"] = _TARGET_STEP_MUTATIONS[mutation]
         keyed["rows"] = [stated]
         keyed["target"] = True
         return keyed
@@ -1512,6 +1513,19 @@ def discover_cases(compatibility_root: Path) -> list[Case]:
 # The shapes whose whole observable is reached without a database, and which are
 # therefore graded once rather than once per dialect.
 _DIALECT_FREE_SHAPES = frozenset({"rejected", "evolution"})
+
+# The keyed mutation each caller-addressed writeSequence mutation is graded as:
+# a replacement's golden states its completed row, so it grades as the update of
+# its bounded or unbounded form, and every other verb as itself.
+_TARGET_STEP_MUTATIONS: Final[Mapping[str, str]] = {
+    "amend": "amend",
+    "replace": "amend",
+    "amendUntil": "amendUntil",
+    "replaceUntil": "amendUntil",
+    "delete": "delete",
+    "terminate": "terminate",
+    "terminateUntil": "terminateUntil",
+}
 
 
 def dialect_executed_cases(compatibility_root: Path) -> list[Case]:
