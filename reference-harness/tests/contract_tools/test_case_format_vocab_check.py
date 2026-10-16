@@ -133,6 +133,7 @@ _EXPECT_ERRORS = {
     "write-value-not-stored",
     "write-value-already-stored",
     "write-value-foreign-lifecycle",
+    "write-evidence-unavailable",
 }
 
 _FOREIGN_LIFECYCLE_BULLET = (

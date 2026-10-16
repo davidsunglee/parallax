@@ -1113,8 +1113,8 @@ class UnitOfWork:
         self._reporting: tuple[ExecutionUnit, ...] = ()
         self._reported = 0
         # This scope's participation identity: what a read of THIS unit of work
-        # stamps on the values it produces, and what an effective-Locking write
-        # tests its source against.
+        # stamps on the values it produces, and what a keyed write tests its
+        # source against.
         self._participation = ParticipationToken()
         # One attempt, one lazy instant: constructing it reads no clock, and
         # every flush this scope plans carries the SAME holder, so all
@@ -1125,8 +1125,7 @@ class UnitOfWork:
     @property
     def participation(self) -> ParticipationToken:
         """This scope's participation identity — what its own reads stamp on the
-        values they produce, and what an effective-Locking keyed write proves its
-        source against."""
+        values they produce, and what a keyed write proves its source against."""
         self._ensure_open()
         return self._participation
 
@@ -1648,17 +1647,19 @@ class UnitOfWork:
         where this unit of work cannot use it.
 
         One resolution serves the address, the gate, the version advance, and
-        the claim, so they cannot disagree. It follows ``target``'s Effective
-        Concurrency Strategy (`m-opt-lock`), not the preference alone:
+        the claim, so they cannot disagree. Under either Effective Concurrency
+        Strategy (`m-opt-lock`) the source must have been read in THIS unit of
+        work: a standalone read, a read-only transaction's read, and an earlier
+        attempt's read participated in nothing this attempt can stand on,
+        whatever key or revision they share with it. The strategy then decides
+        what that participating read proves:
 
-        * **Locking** — the license is the shared row lock, so the source read
-          must have run in THIS unit of work. A source from another scope, or
-          none at all, proves no held lock. That holds for unversioned
-          Non-Temporal targets too: the lock is the whole of their evidence, and
-          unconditional intent has its own predicate-selected spelling.
-        * **Optimistic** — the license is the database gate, so the retained
-          observation IS the evidence, and a standalone read's source carries it
-          exactly as a participating read's does.
+        * **Locking** — the license is the shared row lock the read holds. That
+          holds for unversioned Non-Temporal targets too: the lock is the whole
+          of their evidence, and unconditional intent has its own
+          predicate-selected spelling.
+        * **Optimistic** — the license is the database gate, so the read must
+          also have retained the observation the gate binds.
 
         Evidence a successful flush already spent, or describing a state a
         later successful change of this transaction replaced, is refused under
@@ -1669,23 +1670,25 @@ class UnitOfWork:
         observation it does not have.
         """
         self._ensure_open()
-        policy = self._evidence_policy_for(target.identity)
-        observation = None if read_evidence is None else read_evidence.observation
-        settled = policy.settled_evidence(mutation, object_key=object_key, observation=observation)
         identity = target.identity.canonical
-        if policy.effective_strategy(self.settings.concurrency) == "locking":
-            if read_evidence is None or read_evidence.participation is not self._participation:
-                raise WriteEvidenceError(
-                    code="write-evidence-unavailable",
-                    message=(
-                        f"{identity}: the Locking strategy licenses this write through the "
-                        "shared row lock a read of THIS transaction holds, and the value handed "
-                        "to the verb came from no such read; read the row through this "
-                        "transaction and write what that read returned"
-                    ),
-                    object_key=object_key,
-                )
-        elif observation is None:
+        if read_evidence is None or read_evidence.participation is not self._participation:
+            raise WriteEvidenceError(
+                code="write-evidence-unavailable",
+                message=(
+                    f"{identity}: a keyed write is licensed only by a read of THIS transaction "
+                    "attempt, and the value handed to the verb came from no such read — a "
+                    "standalone read, a read-only transaction, and an earlier attempt license "
+                    "nothing here; read the row through this transaction and write what that "
+                    "read returned, or state the revision you observed through the `*_if` verb"
+                ),
+                object_key=object_key,
+            )
+        policy = self._evidence_policy_for(target.identity)
+        observation = read_evidence.observation
+        settled = policy.settled_evidence(mutation, object_key=object_key, observation=observation)
+        if policy.effective_strategy(self.settings.concurrency) == "optimistic" and (
+            observation is None
+        ):
             raise WriteEvidenceError(
                 code="write-evidence-unavailable",
                 message=(
@@ -1695,7 +1698,7 @@ class UnitOfWork:
                 ),
                 object_key=object_key,
             )
-        if read_evidence is not None and read_evidence.consumed:
+        if read_evidence.consumed:
             raise WriteEvidenceError(
                 code="write-evidence-consumed",
                 message=(

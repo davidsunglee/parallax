@@ -42,7 +42,7 @@ from parallax.core.execution import (
 )
 from parallax.core.predicate import CanonicalDocumentError, ModelRejectedError
 from parallax.core.read_delivery import InvalidData
-from parallax.core.unit_work import WriteEvidenceError, WriteRejectedError
+from parallax.core.unit_work import Concurrency, WriteEvidenceError, WriteRejectedError
 from parallax.snapshot import Database, ScopedDatabase, Snapshot, TxnContext, WireEntity, connect
 from parallax.snapshot._publication._wire import authoring_of, read_evidence_of
 from tests._support import mirrored_models as mm
@@ -1037,28 +1037,29 @@ def test_a_standalone_unversioned_wire_source_has_no_usable_evidence() -> None:
     assert _writes(port) == []
 
 
-def test_a_standalone_versioned_wire_source_supplies_its_own_gate() -> None:
-    port = ScriptedAdapter(_ACCOUNT_READ, Transact(Write()))
+@pytest.mark.parametrize("concurrency", ["optimistic", "locking"])
+def test_a_standalone_versioned_wire_source_licenses_no_write(concurrency: Concurrency) -> None:
+    port = ScriptedAdapter(_ACCOUNT_READ, Transact())
     db = db_for(ACCOUNT, port)
     standalone = _standalone(db, _ACCOUNT_QUERY)
 
-    db.transact(lambda tx: tx.wire.amend(standalone, {"balance": "125.00"}))
+    def fn(tx: TxnContext) -> None:
+        with pytest.raises(WriteEvidenceError) as exc_info:
+            tx.wire.amend(standalone, {"balance": "125.00"})
+        assert exc_info.value.code == "write-evidence-unavailable"
 
-    assert len(_reads(port)) == 1
-    assert _writes(port) == [
-        WriteCall(
-            "update account set balance = %s, version = %s where id = %s and version = %s",
-            (Decimal("125.00"), 5, 1, 4),
-        )
-    ]
+    db.transact(fn, concurrency=concurrency)
+    assert _writes(port) == []
 
 
-def test_a_projected_standalone_source_uses_the_existing_wire_write_ingress() -> None:
-    port = ScriptedAdapter(_ACCOUNT_READ, Transact(Write()))
-    db = db_for(ACCOUNT, port)
-    projected = db.find(mm.Account.where(mm.Account.id == 1)).wire().result()
+def test_a_projected_source_uses_the_existing_wire_write_ingress() -> None:
+    port = ScriptedAdapter(Transact(_ACCOUNT_READ, Write()))
 
-    db.transact(lambda tx: tx.wire.amend(projected, {"balance": "125.00"}))
+    def fn(tx: TxnContext) -> None:
+        projected = tx.find(mm.Account.where(mm.Account.id == 1)).wire().result()
+        tx.wire.amend(projected, {"balance": "125.00"})
+
+    db_for(ACCOUNT, port).transact(fn)
 
     assert len(_reads(port)) == 1
     assert _writes(port) == [
@@ -1087,20 +1088,6 @@ def test_typed_update_does_not_detour_through_wire_projection(
     assert len(_writes(port)) == 1
 
 
-def test_explicit_locking_refuses_a_standalone_versioned_wire_source() -> None:
-    port = ScriptedAdapter(_ACCOUNT_READ, Transact())
-    db = db_for(ACCOUNT, port)
-    standalone = _standalone(db, _ACCOUNT_QUERY)
-
-    def fn(tx: TxnContext) -> None:
-        with pytest.raises(WriteEvidenceError) as exc_info:
-            tx.wire.amend(standalone, {"balance": "125.00"})
-        assert exc_info.value.code == "write-evidence-unavailable"
-
-    db.transact(fn, concurrency="locking")
-    assert _writes(port) == []
-
-
 def test_a_wire_source_whose_evidence_a_flush_spent_is_refused() -> None:
     port = ScriptedAdapter(Transact(_ACCOUNT_READ, Write(), _ACCOUNT_READ))
 
@@ -1121,17 +1108,13 @@ def test_a_wire_source_whose_evidence_a_flush_spent_is_refused() -> None:
     [("amend", "amend"), ("amend", "delete"), ("delete", "delete")],
     ids=["coalesced", "superseded", "deduplicated"],
 )
-def test_independent_standalone_sources_of_one_version_are_both_spent(
-    first_verb: str, second_verb: str
-) -> None:
+def test_two_sources_of_one_version_are_both_spent(first_verb: str, second_verb: str) -> None:
     deletes = second_verb == "delete"
     port = ScriptedAdapter(
-        _ACCOUNT_READ,
-        _ACCOUNT_READ,
-        Transact(Write(), Read(rows=[] if deletes else [_ACCOUNT_ROW])),
+        Transact(
+            _ACCOUNT_READ, _ACCOUNT_READ, Write(), Read(rows=[] if deletes else [_ACCOUNT_ROW])
+        )
     )
-    db = db_for(ACCOUNT, port)
-    sources = (_standalone(db, _ACCOUNT_QUERY), _standalone(db, _ACCOUNT_QUERY))
 
     def write(tx: TxnContext, verb: str, source: WireEntity, owner: str) -> None:
         if verb == "amend":
@@ -1140,6 +1123,7 @@ def test_independent_standalone_sources_of_one_version_are_both_spent(
             tx.wire.delete(source)
 
     def fn(tx: TxnContext) -> None:
+        sources = (_node(tx, _ACCOUNT_QUERY), _node(tx, _ACCOUNT_QUERY))
         write(tx, first_verb, sources[0], "Lin")
         write(tx, second_verb, sources[1], "Ana")
         tx.wire.find(_ACCOUNT_QUERY).results()
@@ -1148,17 +1132,16 @@ def test_independent_standalone_sources_of_one_version_are_both_spent(
                 tx.wire.amend(source, {"balance": "150.00"})
             assert exc_info.value.code == "write-evidence-consumed"
 
-    db.transact(fn)
+    db_for(ACCOUNT, port).transact(fn)
     assert len(_writes(port)) == 1
 
 
-def test_independent_standalone_sources_of_one_milestone_are_both_spent() -> None:
+def test_two_sources_of_one_milestone_are_both_spent() -> None:
     row = balance_row(in_z=_TX_START)
-    port = ScriptedAdapter(Read(rows=[row]), Read(rows=[row]), Transact(Write(times=2), Read()))
-    db = db_for(BALANCE, port)
-    sources = (_standalone(db, _BALANCE_QUERY), _standalone(db, _BALANCE_QUERY))
+    port = ScriptedAdapter(Transact(Read(rows=[row]), Read(rows=[row]), Write(times=2), Read()))
 
     def fn(tx: TxnContext) -> None:
+        sources = (_node(tx, _BALANCE_QUERY), _node(tx, _BALANCE_QUERY))
         tx.wire.amend(sources[0], {"value": "6.00"})
         tx.wire.amend(sources[1], {"acctNum": "A-2"})
         tx.wire.find(_BALANCE_QUERY).results()
@@ -1167,7 +1150,7 @@ def test_independent_standalone_sources_of_one_milestone_are_both_spent() -> Non
                 tx.wire.amend(source, {"value": "7.00"})
             assert exc_info.value.code == "write-evidence-consumed"
 
-    db.transact(fn)
+    db_for(BALANCE, port).transact(fn)
     assert len(_writes(port)) == 2
 
 

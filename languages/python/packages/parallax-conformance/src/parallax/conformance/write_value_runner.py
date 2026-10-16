@@ -10,16 +10,19 @@ from parallax.conformance.another_source import AnotherSource
 from parallax.conformance.story_models import Account
 from parallax.core.entity import Entity
 from parallax.core.execution import KeyedWriteValueError
-from parallax.snapshot import TxnContext
+from parallax.core.unit_work import WriteEvidenceError
+from parallax.snapshot import ReadOnlyTxnContext, ScopedDatabase, TxnContext, WireEntity
 
 __all__ = [
     "TARGET_ID",
     "UNMANAGED_ID",
+    "OutsideReads",
     "WriteValueStep",
     "declared_round_trips",
     "grade_step",
     "graded_outcomes",
     "reachable_write_value_cases",
+    "read_outside_the_attempt",
     "value_of",
     "write_value_steps",
 ]
@@ -40,13 +43,20 @@ UNMANAGED_ID: Final[int] = 91
 
 @dataclass(frozen=True, slots=True)
 class WriteValueStep:
-    """One keyed write action step: the verb, its value's stated provenance, and
-    the refusal the case declares — ``None`` where the case declares the value
-    accepted."""
+    """One keyed write action step: the verb, its value's stated provenance, the
+    read outside the writing attempt that published it — ``None`` where the
+    writing attempt read it — and the refusal the case declares — ``None`` where
+    the case declares the value accepted."""
 
     action: str
     provenance: str
     expect_error: str | None
+    source_read: str | None = None
+
+
+type OutsideReads = dict[int, tuple[Entity, WireEntity]]
+"""The Typed value and Wire node each ``sourceRead`` step is handed, by step
+index."""
 
 
 def reachable_write_value_cases(
@@ -112,9 +122,39 @@ def write_value_steps(case: case_format.Case) -> list[WriteValueStep]:
             action=cast("str", step["action"]),
             provenance=cast("str", step["value"]),
             expect_error=cast("str | None", step.get("expectError")),
+            source_read=cast("str | None", step.get("sourceRead")),
         )
         for step in _scenario_steps(case)
     ]
+
+
+def read_outside_the_attempt(db: ScopedDatabase, steps: Sequence[WriteValueStep]) -> OutsideReads:
+    """Arrange, before the writing transaction opens, the value each step stating
+    ``sourceRead`` is handed (`m-case-format` *Keyed write action steps*).
+
+    Each read runs where its token says — standalone, in a read-only
+    transaction, or in an earlier writable transaction that commits without
+    writing — through the source the verb writes through, once per
+    representation, so the step is graded through the Typed and the Wire verb
+    alike.
+    """
+    arranged: OutsideReads = {}
+    for index, step in enumerate(steps):
+        if step.source_read == "standalone":
+            arranged[index] = _both(db)
+        elif step.source_read == "readOnlyTransaction":
+            arranged[index] = db.read_only(_both)
+        elif step.source_read == "earlierAttempt":
+            arranged[index] = db.transact(_both)
+        elif step.source_read is not None:
+            raise ValueError(f"unrecognized source read {step.source_read!r}")
+    return arranged
+
+
+def _both(reader: ScopedDatabase | ReadOnlyTxnContext | TxnContext) -> tuple[Entity, WireEntity]:
+    typed = reader.find(Account.where(Account.id == TARGET_ID)).result()
+    wire = reader.wire.find(Account.where(Account.id == TARGET_ID)).result()
+    return typed, wire
 
 
 def declared_round_trips(case: case_format.Case) -> int:
@@ -183,19 +223,34 @@ def grade_step(
     step: WriteValueStep,
     another: AnotherSource,
     invalid_root: Callable[[], Entity] | None = None,
+    outside: tuple[Entity, WireEntity] | None = None,
 ) -> str | None:
     """Drive ``step``'s verb over a value of its stated provenance and grade what
     the verb answered.
+
+    A step stating ``sourceRead`` is handed ``outside``, the values a read
+    outside this attempt published, and its verb is driven through the Typed and
+    the Wire ingress in turn: both must answer what the case declares.
 
     Returns the raised refusal's code when the step declared it, and ``None`` for
     an accepted value. A mismatch in either direction — an undeclared refusal, or
     a declared expectation the verb never raised — is loud, never a silently
     dropped observation.
     """
+    if step.source_read is not None:
+        if outside is None:
+            raise ValueError(f"a {step.source_read!r} step needs its outside read arranged")
+        typed, wire = outside
+        _graded(step, lambda: _apply(tx, step.action, typed))
+        return _graded(step, lambda: tx.wire.amend(wire, {}))
     value = value_of(step.provenance, tx, another, invalid_root)
+    return _graded(step, lambda: _apply(tx, step.action, value))
+
+
+def _graded(step: WriteValueStep, verb: Callable[[], object]) -> str | None:
     try:
-        _apply(tx, step.action, value)
-    except KeyedWriteValueError as refusal:
+        verb()
+    except (KeyedWriteValueError, WriteEvidenceError) as refusal:
         if step.expect_error != refusal.code:
             declared = (
                 f"expectError {step.expect_error!r}"
@@ -226,7 +281,13 @@ def graded_outcomes(
     steps: Sequence[WriteValueStep],
     another: AnotherSource,
     invalid_root: Callable[[], Entity] | None = None,
+    outside: OutsideReads | None = None,
 ) -> list[str | None]:
     """Every step's graded outcome, in authored order — the observation a case
-    run reports."""
-    return [grade_step(tx, step, another, invalid_root) for step in steps]
+    run reports. ``outside`` is what :func:`read_outside_the_attempt` arranged
+    for the same steps before this transaction opened."""
+    arranged = outside or {}
+    return [
+        grade_step(tx, step, another, invalid_root, arranged.get(index))
+        for index, step in enumerate(steps)
+    ]

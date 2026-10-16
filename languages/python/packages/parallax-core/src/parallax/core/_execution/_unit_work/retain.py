@@ -40,9 +40,9 @@ class ParticipationToken:
 
     Handed out by the unit of work and compared by identity alone, which is the
     whole of what it is for: a source value carries the token of the unit of work
-    whose read produced it, and an effective-Locking write asks whether that
-    token is the writing transaction's own — the proof that the shared row lock
-    this write relies on is still held.
+    whose read produced it, and a keyed write asks whether that token is the
+    writing attempt's own — the proof that its source was read in this attempt,
+    and under Locking that the shared row lock the write relies on is still held.
 
     It is a token rather than the unit of work itself so that evidence outliving
     a transaction keeps no reference to the transaction's buffer, planner, or

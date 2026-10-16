@@ -614,11 +614,13 @@ def keyed_write(
     A source-backed write states no start of its own: a Bitemporal one starts
     at its source's finite Valid-Time pin, or at the anchor its insertion was
     admitted with (:func:`source_start`). Preparation then judges that start
-    and ``until`` together, before an amendment that expresses no member is
-    dropped as the empty set it is. A replacement is never empty: it states the
-    object's complete writable state, completed from whatever it omits. A
-    refused write leaves the admissions as it found them, because the buffer
-    admits all or nothing.
+    and ``until`` together, and the source is admitted — by that standing
+    authority, or by read evidence of this attempt — before an amendment that
+    expresses no member is dropped as the empty set it is, so stating nothing
+    never lets an ineligible source pass. Dropping it buffers nothing and spends
+    no evidence. A replacement is never empty: it states the object's complete
+    writable state, completed from whatever it omits. A refused write leaves the
+    admissions as it found them, because the buffer admits all or nothing.
     """
     refuse_reentry(lifecycle)
     source.capture(mutation)
@@ -641,15 +643,19 @@ def keyed_write(
     validate_source_pin(resolved.entity.identity, resolved.pin)
     valid_from = source_start(meta, resolved, mutation, anchor)
     prepared = source.prepare(resolved, valid_from=valid_from, until=until)
+    if authorized:
+        item = buffered_write(prepared.instruction, None, authority=authoring)
+    else:
+        evidence = uow.resolve_read_evidence(
+            resolved.entity,
+            resolved.read_evidence,
+            mutation=mutation,
+            object_key=prepared.object_key,
+        )
+        item = buffered_write(prepared.instruction, evidence, source=resolved.read_evidence)
     if mutation in AMEND_MUTATIONS and not prepared.assigned:
         return
-    if authorized:
-        uow.buffer(buffered_write(prepared.instruction, None, authority=authoring))
-        return
-    evidence = uow.resolve_read_evidence(
-        resolved.entity, resolved.read_evidence, mutation=mutation, object_key=prepared.object_key
-    )
-    uow.buffer(buffered_write(prepared.instruction, evidence, source=resolved.read_evidence))
+    uow.buffer(item)
 
 
 def source_start(

@@ -13,6 +13,7 @@ from parallax.conformance import (
     execution_lifecycle_stories,
     read_only_stories,
     snapshot_recipes,
+    source_admission_stories,
 )
 from parallax.conformance.claim import SNAPSHOT_CLAIM, Claim
 from parallax.conformance.graph_stories import GRAPH_STORIES, graph_story_snippet
@@ -322,6 +323,17 @@ EXAMPLES: Final[list[Example]] = [
         "m-execution-002",
         "Reads run in one read-only transaction at a chosen isolation",
         read_only_stories.read_only_snippet(),
+    ),
+    # Current-attempt source admission (m-unit-work): the case's own oracle
+    # states the refusal of a value a read-only transaction read, and the
+    # write-value runner grades it. What this executable story adds is the
+    # MIGRATION — a value read before the writing transaction states the version
+    # it saw through `amend_if` instead of handing itself to `amend`. Executed
+    # against real Postgres by `tests/api/test_source_admission.py`.
+    Example(
+        "m-unit-work-056",
+        "A value read before the transaction is written under the version it showed",
+        source_admission_stories.source_admission_snippet(),
     ),
 ]
 
@@ -1291,10 +1303,21 @@ _RESTATED_MEMBER_WITNESS_REASON: Final[str] = (
     "and the committed table state"
 )
 
+_SOURCE_ADMISSION_REASON: Final[str] = (
+    "a current-attempt source-admission witness (m-unit-work *Current-attempt source "
+    "admission*, m-case-format *Keyed write action steps*): graded end-to-end by the "
+    "case-driven write-value runner (`tests/api/test_write_value_run.py` against real "
+    "Postgres and `tests/unit/conformance/test_write_value_runner.py` Docker-free), which "
+    "reads the value where its `sourceRead` says — standalone, in a read-only transaction, or "
+    "in an earlier transaction — before the writing one opens, and drives the real "
+    "`tx.amend` and `tx.wire.amend` over it. The migration a caller holding such a value "
+    "makes is the `amend_if` usage-guide example (`m-unit-work-056`)"
+)
+
 _SHARED_STATE_ROOT_AUTHORITY_REASON: Final[str] = (
     "the root-local authority sibling of the corrupt-storage lane: the run sweep "
     "grades this case's two-root graph and stored-data diagnosis against the real "
-    "provider, while `tests/unit/snapshot/test_read_origin.py` proves the additional "
+    "provider, while `tests/unit/snapshot/test_read_evidence.py` proves the additional "
     "authority claim the graph cannot render — two root-local Customer nodes may borrow "
     "one page-owned Entity State, but only the node reached through the valid root "
     "carries Read Evidence. m-unit-work-028 separately grades the invalid node's "
@@ -1511,6 +1534,8 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-unit-work-019": _WRITE_VALUE_PROVENANCE_REASON,
     "m-unit-work-020": _WRITE_VALUE_PROVENANCE_REASON,
     "m-unit-work-028": _INVALID_ROOT_WRITE_VALUE_REASON,
+    "m-unit-work-055": _SOURCE_ADMISSION_REASON,
+    "m-unit-work-057": _SOURCE_ADMISSION_REASON,
     "m-unit-work-016": _TEMPORAL_KEYED_SINGLETON_UNREACHABLE_REASON,
     "m-unit-work-042": _RESTATED_MEMBER_WITNESS_REASON,
     "m-unit-work-043": _TARGET_REPLACEMENT_TWIN_REASON,

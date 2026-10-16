@@ -1,0 +1,14 @@
+model: models/account.yaml
+lane: api-conformance
+tags: [m-unit-work, write-value, write-evidence, scenario, slice-snapshot-1]
+shape: scenario
+when:
+  scenario:
+    - action: amend
+      value: thisSource
+      sourceRead: standalone
+      roundTrips: 0
+      expectError: write-evidence-unavailable
+      note: a standalone read participated in no attempt, so the unchanged value is refused rather than dropped
+then:
+  roundTrips: 0

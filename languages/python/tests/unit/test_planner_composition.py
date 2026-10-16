@@ -403,8 +403,12 @@ def test_the_conformance_conflict_lane_plans_through_planners_the_factory_built(
     emissions, _affected, _state, _round_trips = engine.run_conflict_case(
         case,
         ScriptedAdapter(
-            Read(rows=[{"id": 2, "owner": "Linus", "balance": Decimal("250.00"), "version": 1}]),
-            Transact(Write()),
+            Transact(
+                Read(
+                    rows=[{"id": 2, "owner": "Linus", "balance": Decimal("250.00"), "version": 1}]
+                ),
+                Write(),
+            ),
             Read(rows=[{"id": 2, "owner": "Linus", "balance": Decimal("250.00"), "version": 1}]),
         ),
     )

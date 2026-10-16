@@ -44,6 +44,7 @@ from parallax.core.execution import (
 )
 from parallax.core.read_delivery import InvalidData
 from parallax.core.unit_work import (
+    Concurrency,
     OptimisticLockConflictError,
     StaleWriteError,
     WriteEvidenceError,
@@ -136,9 +137,8 @@ def test_update_lowers_to_its_keyed_dml() -> None:
     # m-unit-work-005, migrated to the m-opt-lock observation flow: a keyed
     # update (SET the non-PK members, WHERE the key, version advanced from the
     # observation the source value itself retained). The edited copy is built
-    # from a row `tx.find` fetches INSIDE this transaction, which is what an
-    # effective-Locking target requires; an effective-Optimistic one may import
-    # a standalone source's own observation instead.
+    # from a row `tx.find` fetches INSIDE this transaction, which every source
+    # write requires.
     #
     # `Account` declares an explicit version, so the default `optimistic`
     # preference resolves it to the Optimistic strategy: the find takes no
@@ -1100,40 +1100,14 @@ def test_a_temporal_close_of_a_value_no_read_produced_raises_before_any_dml(
     assert not any(isinstance(op, WriteCall) for op in port.calls)
 
 
-def test_a_standalone_temporal_source_is_accepted_without_an_in_transaction_reread() -> None:
-    # The ownership inversion, at the temporal verb: the evidence belongs to the
-    # VALUE, so a node a plain `db.find` materialized carries the milestone it
-    # observed into a later transaction. Under the default preference `Balance`
-    # resolves to Optimistic, where the database gate is the authority, so the
-    # close binds that retained `in_z` and no reread is issued.
-    port = ScriptedAdapter(
-        Read(rows=[balance_row(in_z=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))]),
-        Transact(Write(times=2)),
-    )
-    db = db_for(BALANCE, port)
-    node = db.find(mm.Balance.where(mm.Balance.id == 1)).result()
-
-    def fn(tx: TxnContext) -> None:
-        tx.amend(node.edit(value=Decimal("9.00")))
-
-    db.transact(fn)
-    # One read (the standalone find), then the close and its chained successor —
-    # no second read of any kind.
-    assert [type(op) for op in port.calls] == [
-        ReadCall,
-        BeginCall,
-        WriteCall,
-        WriteCall,
-        CommitCall,
-    ]
-    close, _chained = (call for call in port.calls if isinstance(call, WriteCall))
-    assert "in_z = " in close.sql
-
-
-def test_a_standalone_temporal_source_is_refused_under_an_explicit_locking_preference() -> None:
-    # The Locking strategy's license is the shared row lock a read of THIS
-    # transaction holds, and a standalone source proves no such lock however
-    # authentic its evidence is. The refusal is at the verb, before any DML.
+@pytest.mark.parametrize("concurrency", ["optimistic", "locking"])
+def test_a_standalone_temporal_source_is_refused_under_either_preference(
+    concurrency: Concurrency,
+) -> None:
+    # A plain `db.find` carries the milestone it observed, but no read of the
+    # writing attempt produced it: under Optimistic the gate would bind a revision
+    # this attempt never read, and under Locking no shared row lock is held. The
+    # refusal is at the verb, before any DML.
     port = ScriptedAdapter(
         Read(rows=[balance_row(in_z=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))]), Transact()
     )
@@ -1144,7 +1118,7 @@ def test_a_standalone_temporal_source_is_refused_under_an_explicit_locking_prefe
         tx.amend(node.edit(value=Decimal("9.00")))
 
     with raises_contextualized(WriteEvidenceError) as refusal:
-        db.transact(fn, concurrency="locking")
+        db.transact(fn, concurrency=concurrency)
     assert refusal.value.code == "write-evidence-unavailable"
     assert not any(isinstance(op, WriteCall) for op in port.calls)
 

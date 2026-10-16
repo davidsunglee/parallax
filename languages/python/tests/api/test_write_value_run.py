@@ -52,10 +52,13 @@ def test_write_value_case_runs_through_the_shipped_verbs(
         prepare_model(model, edition=engine.case_edition(case)), profile_run.port
     )
     steps = write_value_runner.write_value_steps(case)
+    # A `sourceRead` step's value is read outside the writing transaction, so
+    # it is arranged before that transaction opens.
+    outside = write_value_runner.read_outside_the_attempt(db, steps)
 
     def fn(tx: TxnContext) -> list[str | None]:
         return write_value_runner.graded_outcomes(
-            tx, steps, another, lambda: invalid_customer_root(model)
+            tx, steps, another, lambda: invalid_customer_root(model), outside
         )
 
     outcomes = db.transact(fn)
@@ -99,12 +102,16 @@ def test_write_value_case_runs_through_the_shipped_verbs(
 
 def test_reachable_write_value_cases_cover_the_closed_vocabulary() -> None:
     # Never a hand list at the RUNNER level (the corpus itself drives `_CASES`);
-    # this is a coverage assertion that the three codes each have a witness and
-    # that the accepted half is witnessed beside them.
+    # this is a coverage assertion that each refusal has a witness — the three
+    # provenance codes and a source read in each bracket outside the attempt —
+    # and that the accepted half is witnessed beside them.
     assert set(_CASE_IDS) == {
         "m-unit-work-017",
         "m-unit-work-018",
         "m-unit-work-019",
         "m-unit-work-020",
         "m-unit-work-028",
+        "m-unit-work-055",
+        "m-unit-work-056",
+        "m-unit-work-057",
     }

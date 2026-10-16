@@ -45,7 +45,7 @@ from parallax.core.db_port import MappingRow
 from parallax.core.entity import Entity as EntityBase
 from parallax.core.execution import ExecutionFailure
 from parallax.core.object_query._fluent import ObjectQuery
-from parallax.snapshot import ScopedDatabase, TxnContext, WireEntity
+from parallax.snapshot import ReadOnlyTxnContext, ScopedDatabase, TxnContext, WireEntity
 from tests._support import mirrored_models as mm
 from tests._support.db_port import (
     PortCall,
@@ -79,6 +79,7 @@ __all__ = [
     "CONCURRENCIES",
     "CONTACT_TARGET",
     "DOCUMENT_TARGETS",
+    "OUTSIDE_SOURCES",
     "PERSON_TARGET",
     "POSITION_TARGET",
     "REPRESENTATIONS",
@@ -120,14 +121,24 @@ type Verb = Literal[
 type Representation = Literal["typed", "wire"]
 type Concurrency = Literal["locking", "optimistic"]
 
-type Source = Literal["participating", "standalone", "pinned", "reread"]
+type Source = Literal[
+    "participating", "standalone", "read_only", "earlier_attempt", "pinned", "reread"
+]
 """How the source value the verb writes was obtained.
+
+``standalone``, ``read_only``, and ``earlier_attempt`` read the row before the
+writing transaction opens — standalone, inside a read-only transaction, and
+inside an earlier writable transaction that committed — so each publishes a
+value no read of the writing attempt produced.
 
 ``reread`` follows a same-transaction insert with a read of the row it opened,
 which is the only route by which a Wire keyed verb can write a row a TYPED
 insert opened — and, because a participating read force-flushes, the route on
 which the pair no longer coalesces.
 """
+
+OUTSIDE_SOURCES: Final[tuple[Source, ...]] = ("standalone", "read_only", "earlier_attempt")
+"""The sources read outside the writing attempt."""
 
 type Change = Literal["ordinary", "net_zero", "untouched"]
 """What the caller authored over that source, for the two update verbs."""
@@ -633,7 +644,7 @@ def _refused(raised: Exception, phase: Phase, port: ScriptedAdapter) -> Refused:
 
     A refusal escaping the transaction arrives as the cause of an
     ``ExecutionFailure``; what the order judged is that cause, so it is
-    reported unwrapped, exactly as a refusal the standalone source raised is.
+    reported unwrapped, exactly as a refusal raised obtaining an outside source is.
     """
     return Refused(
         type(raised),
@@ -662,7 +673,7 @@ def outcome(scenario: Scenario, representation: Representation) -> Outcome:
         phase = "flush"
 
     try:
-        prior = _standalone_source(db, scenario, representation)
+        prior = _outside_source(db, scenario, representation)
         phase = "verb"
         db.transact(body, concurrency=scenario.concurrency)
     except AssertionError:
@@ -729,17 +740,30 @@ def _port(scenario: Scenario) -> ScriptedAdapter:
         return ScriptedAdapter(Transact(writes))
     if scenario.source == "standalone":
         return ScriptedAdapter(read, Transact(writes))
+    if scenario.source in OUTSIDE_SOURCES:
+        return ScriptedAdapter(Transact(read), Transact(writes))
     return ScriptedAdapter(Transact(read, writes))
 
 
-def _standalone_source(
+def _outside_source(
     db: ScopedDatabase, scenario: Scenario, representation: Representation
 ) -> object | None:
-    if scenario.source != "standalone" or scenario.verb in _INSERT_VERBS:
+    """The value a read outside the writing attempt published, or ``None`` for a
+    scenario whose source the attempt obtains itself."""
+    if scenario.source not in OUTSIDE_SOURCES or scenario.verb in _INSERT_VERBS:
         return None
-    if representation == "typed":
-        return db.find(scenario.target.typed_query).result()
-    return db.wire.find(scenario.target.wire_query).result()
+    target = scenario.target
+
+    def read(reader: ReadOnlyTxnContext | TxnContext | ScopedDatabase) -> object:
+        if representation == "typed":
+            return reader.find(target.typed_query).result()
+        return reader.wire.find(target.wire_query).result()
+
+    if scenario.source == "read_only":
+        return db.read_only(read)
+    if scenario.source == "earlier_attempt":
+        return db.transact(read)
+    return read(db)
 
 
 def _body(

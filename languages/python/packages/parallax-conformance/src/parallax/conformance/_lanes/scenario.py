@@ -4064,60 +4064,35 @@ def _conflict_key_predicate(
 
 
 def _conflict_source_nodes(
-    port: CaseDatabase,
-    serving: ServingModel,
+    tx: TxnContext,
     model: AcceptedMetamodel,
-    options: TxnOptions,
     target: str,
     resolved: Sequence[_ConflictWrite],
-    lifecycle: LifecycleRun,
-) -> tuple[dict[ObjectKey, WireEntity], int]:
+    observed: LifecycleObservation,
+) -> dict[ObjectKey, WireEntity]:
     """The published rows one NON-TEMPORAL conflict attempt's keyed writes are
-    addressed and licensed by, read through a real ``db.wire.find``, beside the
-    round trips that read cost.
-
-    STANDALONE rather than participating, because the read has to happen where
-    the case says it does: a conflict case's ``given.apply`` is a concurrent
-    writer that commits BETWEEN the read and the write it invalidates, and a
-    read inside the attempt's own transaction could only observe the state that
-    writer already left. An effective-Optimistic target licenses exactly this —
-    the retained observation IS the evidence, and a standalone source carries it
-    as a participating read's does (`m-opt-lock`), which is also why every
-    conflict shape reachable through public verbs is an optimistic one.
+    addressed and licensed by, read through a real ``tx.wire.find`` inside the
+    attempt whose writes they license — the only read a source write can be
+    licensed by (`m-unit-work` *Current-attempt source admission*).
 
     A row the read does not answer is absent from the mapping; the write that
     wanted it is refused where its diagnosis can name the key
     (:func:`_conflict_source_node`).
 
-    It observes like every other Handle this engine builds. The read is one
-    outermost public operation, so it opens a Root Execution of its own, that
-    root belongs to the run's delivered stream, and the calls it makes are round
-    trips the case counts like any other — a keyed write's resolving read is
-    work the framework genuinely does, whether it stands inside the transaction
-    it licenses or, as here, outside it (`m-case-format` "Resolving reads a
-    write owes"). What it authors no golden for is the SQL, so the read is
-    charged to the observation's resolving reads and names no statement index.
+    The read is charged to the observation's resolving reads: a case counts it in
+    `then.roundTrips` and authors no golden for it, so it names no statement
+    index (`m-case-format` "Resolving reads a write owes").
     """
-    instant = normalize_instant(dt.datetime.fromisoformat(INERT_CLOCK_INSTANT))
-    observed = lifecycle.observation()
-    with Database.connect(
-        port,
-        serving,
-        options=options,
-        clock=FixedClock(instant),
-        lifecycle_provider=observed.provider,
-    ) as _root_database:
-        database = _root_database.using_database_login()
-        nodes: dict[ObjectKey, WireEntity] = {}
-        with observed.resolving_reads():
-            snapshot = database.wire.find(
-                {"target": target, "predicate": _conflict_key_predicate(model, target, resolved)}
-            )
-            for root in snapshot.results():
-                hint = read_evidence_of(root)
-                assert hint is not None  # a Wire read files a hint on every published Entity node
-                nodes[hint.object_key] = root
-        return nodes, observed.round_trips
+    nodes: dict[ObjectKey, WireEntity] = {}
+    with observed.resolving_reads():
+        snapshot = tx.wire.find(
+            {"target": target, "predicate": _conflict_key_predicate(model, target, resolved)}
+        )
+        for root in snapshot.results():
+            hint = read_evidence_of(root)
+            assert hint is not None  # a Wire read files a hint on every published Entity node
+            nodes[hint.object_key] = root
+    return nodes
 
 
 def _conflict_source_node(
@@ -4176,25 +4151,28 @@ def _run_conflict_write(
     requests: case_format.TransactionKeywords,
     write_rows: Sequence[Mapping[str, object]],
     mutation: Literal["amend", "delete"],
-    nodes: Mapping[ObjectKey, WireEntity],
+    interfere: Callable[[], None],
     lifecycle: LifecycleRun,
 ) -> tuple[tuple[LoweredStatement, ...], int, int]:
-    """Execute one NON-TEMPORAL conflict attempt's write through
-    ``db.transact`` — ONE transaction over a root connected with ``options``,
-    an inert Clock (never consumed by a non-temporal write), and exactly the
-    options the attempt requests (``requests``); ``concurrency`` is the
-    planning value the implied shortfall is classified under.
+    """Execute one NON-TEMPORAL conflict attempt through ``db.transact`` — ONE
+    transaction over a root connected with ``options``, an inert Clock (never
+    consumed by a non-temporal write), and exactly the options the attempt
+    requests (``requests``); ``concurrency`` is the planning value the implied
+    shortfall is classified under.
 
-    Every row is written through the PUBLIC keyed Wire verb its mutation names,
-    against the node ``nodes`` published for its key, so a MULTI-KEY attempt
-    reaches the flush exactly as that many developer calls would and the batching
-    rule — not this function — decides how many statements they become. The
-    PRODUCTION flush executor's OWN affected-row enforcer raises on a violation,
-    and this lane admits only the class the case's own declared facts imply
-    (:func:`_implied_shortfall_error`), rendering it as the ``affectedRows``
-    observation the case asserts. A failure classified any other way — a gated
-    shortfall surfacing as a stale write, or the reverse — propagates and fails
-    the case.
+    Inside that transaction the attempt reads its sources
+    (:func:`_conflict_source_nodes`), lets ``interfere`` commit whatever
+    concurrent writer the case stages between that read and the write it
+    invalidates, and then writes every row through the PUBLIC keyed Wire verb its
+    mutation names, against the node the read published for its key. A MULTI-KEY
+    attempt therefore reaches the flush exactly as that many developer calls
+    would, and the batching rule — not this function — decides how many
+    statements they become. The PRODUCTION flush executor's OWN affected-row
+    enforcer raises on a violation, and this lane admits only the class the
+    case's own declared facts imply (:func:`_implied_shortfall_error`),
+    rendering it as the ``affectedRows`` observation the case asserts. A failure
+    classified any other way — a gated shortfall surfacing as a stale write, or
+    the reverse — propagates and fails the case.
 
     The reported golden-comparable emission is the DML the lifecycle delivered,
     each statement in the canonical Lowered Statement form its Database Call
@@ -4202,6 +4180,7 @@ def _run_conflict_write(
     canonical Wire observation.
     """
     resolved = _resolve_conflict_writes(model, target, mutation, write_rows)
+    _refuse_a_locking_conflict_target(model, target, concurrency)
     instant = normalize_instant(dt.datetime.fromisoformat(INERT_CLOCK_INSTANT))
     observed = lifecycle.observation()
     with Database.connect(
@@ -4213,11 +4192,13 @@ def _run_conflict_write(
     ) as _root_database:
         database = _root_database.using_database_login()
         landed = _landed_conflict_rows(resolved)
-        sources = [_conflict_source_node(target, write, nodes) for write in resolved]
-        for write, node in zip(resolved, sources, strict=True):
-            _refuse_unobserved_conflict_version(target, write, node)
 
         def body(tx: TxnContext) -> int:
+            nodes = _conflict_source_nodes(tx, model, target, resolved, observed)
+            sources = [_conflict_source_node(target, write, nodes) for write in resolved]
+            for write, node in zip(resolved, sources, strict=True):
+                _refuse_unobserved_conflict_version(target, write, node)
+            interfere()
             for write, node in zip(resolved, sources, strict=True):
                 if mutation == "delete":
                     tx.wire.delete(node)
@@ -4229,6 +4210,26 @@ def _run_conflict_write(
         implied = _implied_shortfall_error(observation_requiring, concurrency, model, target)
         affected = _conflict_attempt_affected(database, requests, implied, body)
         return observed.writes, affected, observed.round_trips
+
+
+def _refuse_a_locking_conflict_target(
+    model: AcceptedMetamodel, target: str, concurrency: Concurrency
+) -> None:
+    """Refuse a conflict case whose target's Effective Concurrency Strategy is
+    Locking, before any read.
+
+    Its source read would take the shared row lock, so the concurrent writer the
+    case stages could not commit between that read and the write: the case
+    describes interference no client can meet (`m-case-format` "Conflict cases").
+    """
+    key = opt_lock.view(model).key(case_entity(model, target).identity)
+    if opt_lock.effective_strategy(concurrency, key) == "locking":
+        raise EngineError(
+            f"{target!r}: a conflict case stages a writer that commits between the attempt's "
+            "source read and its write, which only the Optimistic strategy leaves room for — "
+            "under Locking that read holds the shared row lock the writer would wait on "
+            "(m-case-format 'Conflict cases')"
+        )
 
 
 def _conflict_changes(model: AcceptedMetamodel, write: _ConflictWrite) -> dict[str, object]:
@@ -4271,11 +4272,12 @@ def run_conflict_case(
     is refused: the conflict shape is non-temporal (`m-case-format`).
 
     Loads no fixtures itself (the caller's own lifecycle does, per
-    `m-case-format`'s conflict-shape default). `given.apply`'s concurrent writer
-    commits BETWEEN the FIRST attempt's source read and the write that read
-    licenses (:func:`~parallax.conformance._mechanism.given_state.apply_given_apply`),
+    `m-case-format`'s conflict-shape default). Each attempt reads its source
+    inside its own transaction, and `given.apply`'s concurrent writer commits
+    BETWEEN the FIRST attempt's source read and the write that read licenses
+    (:func:`~parallax.conformance._mechanism.given_state.apply_given_apply`),
     which is the ordering a conflict case describes: the state its write settles
-    against is one a real read of this lane observed, and the writer that
+    against is one a real read of that attempt observed, and the writer that
     invalidated it committed afterwards. A retry attempt reads again, after the
     attempt before it ran, so it observes the state that writer left.
 
@@ -4303,6 +4305,17 @@ def run_conflict_case(
     emissions: list[Emission] = []
     affected = 0
     round_trips = 0
+    interfered = False
+
+    def interfere() -> None:
+        # The concurrent writer commits once, between the FIRST attempt's source
+        # read and its write; a later attempt — and any replay of the first —
+        # reads the state that writer left.
+        nonlocal interfered
+        if not interfered:
+            interfered = True
+            apply_given_apply(case, port, None)
+
     try:
         raw_attempts = when.get("attempts")
         attempts: list[tuple[str, Mapping[str, object]]] = (
@@ -4313,25 +4326,6 @@ def run_conflict_case(
             if isinstance(raw_attempts, list)
             else [("/when/write", when)]
         )
-
-        def sources_for(attempt: Mapping[str, object]) -> dict[ObjectKey, WireEntity]:
-            nonlocal round_trips
-            nodes, source_trips = _conflict_source_nodes(
-                port,
-                serving,
-                model,
-                options,
-                target,
-                _resolve_conflict_writes(model, target, mutation, _conflict_write_rows(attempt)),
-                lifecycle,
-            )
-            round_trips += source_trips
-            return nodes
-
-        # Taken before the concurrent writer commits, and spent by the first
-        # attempt; every later attempt reads again, after the one before it ran.
-        sources: dict[ObjectKey, WireEntity] | None = sources_for(attempts[0][1])
-        apply_given_apply(case, port, None)
         for pointer, attempt in attempts:
             statements, affected, attempt_trips = _run_conflict_write(
                 port,
@@ -4343,10 +4337,9 @@ def run_conflict_case(
                 requests,
                 _conflict_write_rows(attempt),
                 mutation,
-                sources_for(attempt) if sources is None else sources,
+                interfere,
                 lifecycle,
             )
-            sources = None
             emissions.extend(Emission(pointer, statement) for statement in statements)
             round_trips += attempt_trips
     except LOWERING_ERRORS as exc:

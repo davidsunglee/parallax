@@ -54,6 +54,7 @@ from parallax.core.unit_work import (
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.root_ownership import own_root
 from tests.api._coverage_interleaving import AfterCoverageRead
+from tests.api._peer_commit import commit_as_a_peer
 
 _NAMESPACE = "temporal.target"
 
@@ -592,11 +593,18 @@ def test_a_stale_observed_source_composed_with_a_replacement_fails_as_its_precon
     profile_run: Any, entity: type[Any]
 ) -> None:
     db = _single(profile_run, entity, _T1, _TA)
-    stale = db.find(entity.where(entity.id == 1).as_of(valid_time=_MAR)).result()
-    db.transact(lambda tx: tx.amend(_span_find(tx, entity, _FEB).edit(label="peer"), until=_APR))
-    before = _span_rows(profile_run, entity)
+    before: list[_SpanRow] = []
 
     def fn(tx: TxnContext) -> None:
+        stale = _span_find(tx, entity, _MAR)
+        commit_as_a_peer(
+            lambda: db.transact(
+                lambda peer: peer.amend(
+                    _span_find(peer, entity, _FEB).edit(label="peer"), until=_APR
+                )
+            )
+        )
+        before.extend(_span_rows(profile_run, entity))
         tx.amend(stale.edit(amount=1), until=_SEP)
         _span_replace(tx, entity, "wire", until=_SEP)
 
@@ -1014,10 +1022,18 @@ def test_a_source_replacement_whose_evidence_fails_opens_nothing(
     profile_run: Any, entity: type[Any]
 ) -> None:
     db = _seeded_spans(profile_run, entity, _TP, _TA)
-    found = db.find(entity.where(entity.id == 1).as_of(valid_time=_MAR)).result()
-    db.transact(lambda peer: peer.amend(_span_find(peer, entity, _MAR).edit(label="p")))
+
+    def fn(tx: TxnContext) -> None:
+        found = _span_find(tx, entity, _MAR)
+        commit_as_a_peer(
+            lambda: db.transact(
+                lambda peer: peer.amend(_span_find(peer, entity, _MAR).edit(label="p"))
+            )
+        )
+        tx.replace(found.edit(amount=300), until=_SEP)
+
     with pytest.raises(ExecutionFailure) as failed:
-        db.transact(lambda tx: tx.replace(found.edit(amount=300), until=_SEP))
+        db.transact(fn)
     assert isinstance(failed.value.cause, OptimisticLockConflictError)
     rows = _span_rows(profile_run, entity)
     assert all(row[4] != 300 for row in rows)

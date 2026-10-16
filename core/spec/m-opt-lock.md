@@ -182,10 +182,12 @@ that lock on exactly the row it closes, because the two derive from one value:
 the write's address is the milestone its own written value came from, and the
 observation the address comes from is the record of the read that locked that
 milestone (`m-write-plan` *Write Observation*). There is no separate license to
-check. Under Locking, a write whose value names a milestone the current unit of
-work never observed is already refused because no participating read proves the
-lock is held; under Optimistic, an authentic standalone observation may supply
-the gate instead. A write over a view pinned at a
+check. A write whose value names a milestone the current unit of work never
+observed is already refused under **both** strategies, because only a read of
+the current attempt admits a source write (`m-unit-work` *Current-attempt source
+admission*): under Locking no participating read proves the lock is held, and
+under Optimistic no observation of this attempt supplies the gate. A write over
+a view pinned at a
 finite Transaction-Time instant is already refused by the pin rule
 (`m-identity-map`), under **both** strategies, before any planning.
 
@@ -199,11 +201,13 @@ another observation of that same milestone.
 ### Version values are framework-owned
 
 The version an implementation binds in the gate **MUST** be one Parallax
-authentically observed for that row. Under the Locking strategy it must come from
-a current-transaction participating read, because that read is what acquired the
-shared lock. Under the Optimistic strategy it may instead be retained by an
-authentic Typed or Wire source produced by a standalone Parallax read; the
-database gate remains the concurrency authority. An implementation **MUST NOT**
+authentically observed for that row in a read of the current attempt, under
+either strategy (`m-unit-work` *Current-attempt source admission*). Under the
+Locking strategy that read is also what acquired the shared lock; under the
+Optimistic strategy the database gate remains the concurrency authority. A
+version a standalone read, a read-only transaction, or an earlier attempt
+observed is no such version, however authentic: its caller states it through a
+caller-addressed write instead (below). An implementation **MUST NOT**
 accept a caller-authored or reconstructed version value as the gate or as
 the new version; the new version is always runtime-computed (`observed + 1`).
 "Caller-driven" refers to conflict *handling* only, never to the version *value*.
@@ -211,7 +215,8 @@ A keyed `UPDATE` or `DELETE` with no authentic observation is a
 **read-before-write** error under either strategy: there is nothing from which to
 advance the version and, when Optimistic, nothing to gate on. A `DELETE` writes no
 version, but still requires the same evidence: current lock participation under
-Locking or retained observed-version evidence under Optimistic.
+Locking, or observed-version evidence a read of the current attempt retained under
+Optimistic.
 
 A **caller-addressed** write (`m-unit-work` *Caller-addressed writes*) is the one
 exception, and it is not a version value in a row: its caller states, as an

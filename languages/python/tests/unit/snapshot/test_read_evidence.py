@@ -17,6 +17,7 @@ import gc
 import io
 import pickle
 import weakref
+from collections.abc import Callable
 from decimal import Decimal
 from typing import Any, ClassVar, Final, cast
 
@@ -39,7 +40,7 @@ from parallax.core.entity._model import DomainModel
 from parallax.core.execution import KeyedWriteValueError
 from parallax.core.read_delivery import InvalidData
 from parallax.core.unit_work import (
-    OptimisticLockConflictError,
+    Concurrency,
     ParticipationToken,
     ReadEvidence,
     RetainedObservation,
@@ -57,7 +58,6 @@ from tests._support.db_port import (
     BeginCall,
     CommitCall,
     Read,
-    ReadCall,
     ScriptedAdapter,
     Transact,
     Write,
@@ -72,6 +72,7 @@ from tests.unit._transact_support import (
     account_db,
     balance_row,
     db_for,
+    deadlock,
     new_account,
 )
 
@@ -709,22 +710,18 @@ def test_a_successful_flush_consumes_the_evidence_its_write_used() -> None:
 def test_reusing_a_consumed_source_after_the_flush_is_refused() -> None:
     # A consumed source stays an ordinary readable value; what it no longer
     # carries is authority, because the state it observed is not the stored state
-    # any more. The refusal is at the second verb, before any DML of its own.
-    port = ScriptedAdapter(Transact(_ACCOUNT_READ, Write()), Transact())
-    db = account_db(port)
+    # any more. The dependent read in the middle forces the first write out, and
+    # the refusal is at the second verb, before any DML of its own.
+    port = ScriptedAdapter(Transact(_ACCOUNT_READ, Write(), _ACCOUNT_READ))
 
-    def fn(tx: TxnContext) -> mm.Account:
+    def fn(tx: TxnContext) -> None:
         node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         tx.amend(node.edit(balance=Decimal("125.00")))
-        return node
-
-    stale = db.transact(fn)
-
-    def second(tx: TxnContext) -> None:
-        tx.amend(stale.edit(balance=Decimal("150.00")))
+        tx.find(mm.Account.where(mm.Account.id == 1))
+        tx.amend(node.edit(balance=Decimal("150.00")))
 
     with raises_contextualized(WriteEvidenceError) as refusal:
-        db.transact(second)
+        account_db(port).transact(fn)
     assert refusal.value.code == "write-evidence-consumed"
     assert [type(op) for op in port.calls].count(WriteCall) == 1
 
@@ -752,20 +749,20 @@ def test_a_locking_source_consumed_by_a_flush_cannot_drive_a_second_write() -> N
 
 
 def test_an_intent_eliminated_before_dml_consumes_nothing() -> None:
-    # An edited copy expressing no member buffers nothing and issues no
-    # statement, so the evidence its source carries is still about the stored
-    # state and still licenses a later write.
-    port = ScriptedAdapter(Transact(_ACCOUNT_READ))
-    db = account_db(port)
+    # An edited copy expressing no member is admitted and then buffers nothing
+    # and issues no statement, so the evidence its source carries is still about
+    # the stored state and still licenses a later write of the same attempt.
+    port = ScriptedAdapter(Transact(_ACCOUNT_READ, Write()))
 
-    def fn(tx: TxnContext) -> mm.Account:
+    def fn(tx: TxnContext) -> None:
         node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         tx.amend(node.edit())
-        return node
+        assert cast("Any", _typed_hint(node)).observation.consumed is False
+        tx.amend(node.edit(balance=Decimal("125.00")))
 
-    unchanged = db.transact(fn)
-    assert cast("Any", _typed_hint(unchanged)).observation.consumed is False
-    assert not any(isinstance(op, WriteCall) for op in port.calls)
+    account_db(port).transact(fn)
+    (update,) = (call for call in port.calls if isinstance(call, WriteCall))
+    assert update.binds[-1] == 4
 
 
 def test_an_aborted_flush_spends_no_evidence() -> None:
@@ -827,80 +824,132 @@ def test_a_reread_of_one_state_answers_the_evidence_the_first_read_retained() ->
 
 
 # --------------------------------------------------------------------------- #
-# The standalone optimistic source.                                           #
+# Sources read outside the writing attempt. Whatever key and revision such a   #
+# value carries, no read of the writing attempt produced it, so it licenses no #
+# ordinary write under either strategy — the refusal precedes any DML.        #
 # --------------------------------------------------------------------------- #
-def test_a_standalone_versioned_source_gates_a_later_transactions_write() -> None:
-    # The default preference resolves `Account` to Optimistic, where the database
-    # gate is the authority — so a value a plain `db.find` produced carries the
-    # version it observed into a later transaction and no reread is issued.
-    port = ScriptedAdapter(_ACCOUNT_READ, Transact(Write()))
-    db = account_db(port)
-    node = db.find(mm.Account.where(mm.Account.id == 1)).result()
-
-    db.transact(lambda tx: tx.amend(node.edit(balance=Decimal("125.00"))))
-    assert [type(op) for op in port.calls] == [ReadCall, BeginCall, WriteCall, CommitCall]
-    (update,) = (call for call in port.calls if isinstance(call, WriteCall))
-    assert update.binds[-1] == 4
+def _refused_outside_the_attempt(port: ScriptedAdapter, transact: Callable[[], object]) -> None:
+    with raises_contextualized(WriteEvidenceError) as refusal:
+        transact()
+    assert refusal.value.code == "write-evidence-unavailable"
+    assert not any(isinstance(op, WriteCall) for op in port.calls)
 
 
-def test_a_standalone_versioned_source_meeting_an_intervening_writer_conflicts() -> None:
-    # The gate is the concurrency authority, so a stale standalone source is not
-    # refused at the verb — it is admitted, and its zero-row gated UPDATE raises
-    # the ordinary optimistic conflict the database discovered.
-    port = ScriptedAdapter(_ACCOUNT_READ, Transact(Write(affected=0)))
-    db = account_db(port)
-    node = db.find(mm.Account.where(mm.Account.id == 1)).result()
-
-    with raises_contextualized(OptimisticLockConflictError):
-        db.transact(lambda tx: tx.amend(node.edit(balance=Decimal("125.00"))))
-
-
-def test_a_standalone_temporal_source_carries_its_milestone_into_a_transaction() -> None:
-    port = ScriptedAdapter(Read(rows=[balance_row(in_z=_TX_START)]), Transact(Write(times=2)))
-    db = db_for(BALANCE, port)
-    node = db.find(mm.Balance.where(mm.Balance.id == 1)).result()
-
-    db.transact(lambda tx: tx.amend(node.edit(value=Decimal("9.00"))))
-    assert [type(op) for op in port.calls] == [
-        ReadCall,
-        BeginCall,
-        WriteCall,
-        WriteCall,
-        CommitCall,
-    ]
-
-
-def test_a_standalone_versioned_source_is_refused_under_an_explicit_locking_preference() -> None:
-    # `locking` forces the Locking strategy onto every Entity, and its license is
-    # the shared row lock a read of the writing transaction holds. A standalone
-    # `db.find` acquired none, so its retained version buys nothing here: the
-    # verb refuses before buffering and before any statement is emitted.
+@pytest.mark.parametrize("concurrency", ["optimistic", "locking"])
+def test_a_standalone_versioned_source_licenses_no_write(concurrency: Concurrency) -> None:
+    # Under Optimistic the gate would bind a version this attempt never read, and
+    # under Locking a standalone `db.find` holds no shared row lock.
     port = ScriptedAdapter(_ACCOUNT_READ, Transact())
     db = account_db(port)
     node = db.find(mm.Account.where(mm.Account.id == 1)).result()
 
-    with raises_contextualized(WriteEvidenceError) as refusal:
-        db.transact(
-            lambda tx: tx.amend(node.edit(balance=Decimal("125.00"))), concurrency="locking"
-        )
-    assert refusal.value.code == "write-evidence-unavailable"
-    assert not any(isinstance(op, WriteCall) for op in port.calls)
+    _refused_outside_the_attempt(
+        port,
+        lambda: db.transact(
+            lambda tx: tx.amend(node.edit(balance=Decimal("125.00"))), concurrency=concurrency
+        ),
+    )
 
 
-def test_a_standalone_unversioned_source_is_refused_under_the_default_preference() -> None:
-    # An unversioned Non-Temporal Entity has no optimistic gate, so the default
-    # `optimistic` preference resolves it to the Locking fallback and the shared
-    # row lock is the whole of its evidence. A standalone `db.find` holds none,
-    # and there is no version for the database to settle the write against, so
-    # the refusal is the only honest answer.
+@pytest.mark.parametrize("verb", ["replace", "delete"])
+def test_a_standalone_source_licenses_no_replacement_or_deletion(verb: str) -> None:
+    port = ScriptedAdapter(_ACCOUNT_READ, Transact())
+    db = account_db(port)
+    node = db.find(mm.Account.where(mm.Account.id == 1)).result()
+
+    def fn(tx: TxnContext) -> None:
+        if verb == "replace":
+            tx.replace(node.edit(balance=Decimal("125.00")))
+        else:
+            tx.delete(node)
+
+    _refused_outside_the_attempt(port, lambda: db.transact(fn))
+
+
+def test_a_standalone_temporal_source_licenses_no_write() -> None:
+    port = ScriptedAdapter(Read(rows=[balance_row(in_z=_TX_START)]), Transact())
+    db = db_for(BALANCE, port)
+    node = db.find(mm.Balance.where(mm.Balance.id == 1)).result()
+
+    _refused_outside_the_attempt(
+        port, lambda: db.transact(lambda tx: tx.amend(node.edit(value=Decimal("9.00"))))
+    )
+
+
+def test_a_standalone_unversioned_source_licenses_no_write() -> None:
     port = ScriptedAdapter(Read(rows=[{"id": 1, "name": "Ada"}]), Transact())
     db = db_for(PERSON, port)
     node = db.find(Person.where(Person.id == 1)).result()
 
-    with raises_contextualized(WriteEvidenceError) as refusal:
-        db.transact(lambda tx: tx.amend(node.edit(name="Grace")))
-    assert refusal.value.code == "write-evidence-unavailable"
-    assert not any(isinstance(op, WriteCall) for op in port.calls)
+    _refused_outside_the_attempt(
+        port, lambda: db.transact(lambda tx: tx.amend(node.edit(name="Grace")))
+    )
+
+
+def test_a_read_only_transactions_typed_result_licenses_no_write() -> None:
+    # A read-only transaction's result stays readable after it commits, but it
+    # was read under no writable attempt, so a later one cannot write through it.
+    port = ScriptedAdapter(Transact(_ACCOUNT_READ), Transact())
+    db = account_db(port)
+    node = db.read_only(lambda rtx: rtx.find(mm.Account.where(mm.Account.id == 1)).result())
+
+    _refused_outside_the_attempt(
+        port, lambda: db.transact(lambda tx: tx.amend(node.edit(balance=Decimal("125.00"))))
+    )
+
+
+def test_a_read_only_transactions_wire_result_licenses_no_write() -> None:
+    port = ScriptedAdapter(Transact(_ACCOUNT_READ), Transact())
+    db = account_db(port)
+    node = db.read_only(lambda rtx: rtx.wire.find(mm.Account.where(mm.Account.id == 1)).result())
+
+    _refused_outside_the_attempt(
+        port, lambda: db.transact(lambda tx: tx.wire.amend(node, {"balance": "125.00"}))
+    )
+
+
+def test_an_earlier_transactions_unspent_source_licenses_no_write() -> None:
+    # The earlier transaction committed without writing, so its evidence is
+    # neither spent nor invalidated: what refuses it is only that it was read in
+    # another attempt.
+    port = ScriptedAdapter(Transact(_ACCOUNT_READ), Transact())
+    db = account_db(port)
+    node = db.transact(lambda tx: tx.find(mm.Account.where(mm.Account.id == 1)).result())
+
+    _refused_outside_the_attempt(
+        port, lambda: db.transact(lambda tx: tx.amend(node.edit(balance=Decimal("125.00"))))
+    )
+
+
+def test_a_replayed_attempt_cannot_write_through_the_attempt_before_it() -> None:
+    # A source captured from the first attempt outlives its rollback, and the
+    # replay that receives it never read it: replay rereads rather than refreshing
+    # captured values.
+    port = ScriptedAdapter(Transact(_ACCOUNT_READ, commit=deadlock()), Transact())
+    db = account_db(port)
+    captured: list[mm.Account] = []
+
+    def fn(tx: TxnContext) -> None:
+        if not captured:
+            captured.append(tx.find(mm.Account.where(mm.Account.id == 1)).result())
+            return
+        tx.amend(captured[0].edit(balance=Decimal("125.00")))
+
+    _refused_outside_the_attempt(port, lambda: db.transact(fn))
+    assert port.calls.count(BeginCall()) == 2
+
+
+def test_a_joined_callback_writes_through_the_attempt_it_shares() -> None:
+    port = ScriptedAdapter(Transact(_ACCOUNT_READ, Write()))
+    db = account_db(port)
+
+    def fn(tx: TxnContext) -> None:
+        node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
+        db.transact(lambda joined: joined.amend(node.edit(balance=Decimal("125.00"))))
+
+    db.transact(fn)
+    (update,) = (call for call in port.calls if isinstance(call, WriteCall))
+    assert update.binds[-1] == 4
 
 
 def test_an_unconditional_delete_is_spelled_through_the_predicate_verb() -> None:

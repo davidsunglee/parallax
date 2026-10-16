@@ -66,22 +66,20 @@ def test_every_write_value_case_is_graded_through_the_shipped_verbs(
     case: case_format.Case,
 ) -> None:
     steps = write_value_runner.write_value_steps(case)
-    arranged_reads = sum(step.provenance in {"thisSource", "anotherSource"} for step in steps)
-    transaction = (
-        Transact(Read(rows=[_TARGET_ROW], times=arranged_reads)) if arranged_reads else Transact()
-    )
-    port = ScriptedAdapter(transaction)
+    port = ScriptedAdapter(*_outside_reads(steps), _writing_transaction(steps))
     another = AnotherSource(prepare_model(ACCOUNT_MODEL, edition=engine.case_edition(case)), port)
-
-    def fn(tx: TxnContext) -> list[str | None]:
-        return write_value_runner.graded_outcomes(
-            tx, steps, another, lambda: invalid_customer_root(vo_models.CUSTOMER_MODEL)
-        )
-
     domain_model = (
         vo_models.CUSTOMER_MODEL if Path(case.model).stem == "customer" else ACCOUNT_MODEL
     )
-    outcomes = _db(port, domain_model).transact(fn)
+    db = _db(port, domain_model)
+    outside = write_value_runner.read_outside_the_attempt(db, steps)
+
+    def fn(tx: TxnContext) -> list[str | None]:
+        return write_value_runner.graded_outcomes(
+            tx, steps, another, lambda: invalid_customer_root(vo_models.CUSTOMER_MODEL), outside
+        )
+
+    outcomes = db.transact(fn)
     assert outcomes == [step.expect_error for step in steps]
     # The case's own round-trip oracle, graded against the DML the enclosing
     # transaction actually flushed: a refusal reaches no statement and an
@@ -91,6 +89,28 @@ def test_every_write_value_case_is_graded_through_the_shipped_verbs(
     # all.
     flushed = [op for op in port.calls if isinstance(op, WriteCall)]
     assert len(flushed) == write_value_runner.declared_round_trips(case)
+
+
+def _outside_reads(steps: list[write_value_runner.WriteValueStep]) -> list[Read | Transact]:
+    """The script of the Typed and the Wire read each ``sourceRead`` step runs
+    before the writing transaction, in the bracket its token names."""
+    script: list[Read | Transact] = []
+    for step in steps:
+        if step.source_read == "standalone":
+            script.extend((Read(rows=[_TARGET_ROW]), Read(rows=[_TARGET_ROW])))
+        elif step.source_read is not None:
+            script.append(Transact(Read(rows=[_TARGET_ROW], times=2)))
+    return script
+
+
+def _writing_transaction(steps: list[write_value_runner.WriteValueStep]) -> Transact:
+    arranged_reads = sum(
+        step.source_read is None and step.provenance in {"thisSource", "anotherSource"}
+        for step in steps
+    )
+    return (
+        Transact(Read(rows=[_TARGET_ROW], times=arranged_reads)) if arranged_reads else Transact()
+    )
 
 
 def test_the_corpus_witnesses_every_code_of_the_closed_vocabulary() -> None:
@@ -104,7 +124,39 @@ def test_the_corpus_witnesses_every_code_of_the_closed_vocabulary() -> None:
         "write-value-not-stored",
         "write-value-already-stored",
         "write-value-foreign-lifecycle",
+        "write-evidence-unavailable",
     }
+
+
+def test_the_corpus_reads_a_source_in_every_bracket_outside_the_attempt() -> None:
+    assert {
+        step.source_read
+        for case in _CASES
+        for step in write_value_runner.write_value_steps(case)
+        if step.source_read is not None
+    } == {"standalone", "readOnlyTransaction", "earlierAttempt"}
+
+
+def test_an_unrecognized_source_read_is_loud() -> None:
+    step = write_value_runner.WriteValueStep(
+        "amend", "thisSource", "write-evidence-unavailable", "invented"
+    )
+    with pytest.raises(ValueError, match="unrecognized source read"):
+        write_value_runner.read_outside_the_attempt(_db(RefusingAdapter()), [step])
+
+
+def test_a_source_read_step_needs_its_outside_read_arranged() -> None:
+    step = write_value_runner.WriteValueStep(
+        "amend", "thisSource", "write-evidence-unavailable", "standalone"
+    )
+    port = ScriptedAdapter(Transact())
+    another = AnotherSource(_ACCOUNT, port)
+
+    def fn(tx: TxnContext) -> str | None:
+        return write_value_runner.grade_step(tx, step, another)
+
+    with raises_contextualized(ValueError, match="needs its outside read arranged"):
+        _db(port).transact(fn)
 
 
 def test_the_value_no_read_produced_is_arranged_without_touching_the_adapter() -> None:

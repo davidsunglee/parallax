@@ -25,6 +25,7 @@ from parallax.core.execution import ExecutionFailure
 from parallax.core.unit_work import MissingTargetError, WriteEvidenceError, WritePreconditionError
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.root_ownership import own_root
+from tests.api._peer_commit import commit_as_a_peer
 
 _NAMESPACE = "target.writes"
 _AT = dt.datetime(2024, 6, 15, tzinfo=dt.UTC)
@@ -330,10 +331,12 @@ def test_a_stale_observed_source_a_replacement_overwrote_still_fails_the_write(
     profile_run: Any, entity: type[Any]
 ) -> None:
     db = _seeded(profile_run, entity)
-    stale = db.find(entity.where(entity.id == 1)).result()
-    db.transact(lambda tx: tx.amend(_read(tx, entity).edit(note="peer")))
 
     def fn(tx: TxnContext) -> None:
+        stale = _read(tx, entity)
+        commit_as_a_peer(
+            lambda: db.transact(lambda peer: peer.amend(_read(peer, entity).edit(note="peer")))
+        )
         tx.amend(stale.edit(label="stale"))
         _replace(tx, entity, "wire", label="replaced")
 

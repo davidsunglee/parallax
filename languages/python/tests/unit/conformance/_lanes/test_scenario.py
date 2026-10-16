@@ -2763,19 +2763,32 @@ def test_a_conflict_attempt_row_authoring_an_unobservable_observed_version_is_re
         scenario.run_conflict_case(case, FakeWritePort())
 
 
-def test_an_unversioned_conflict_target_is_refused_for_want_of_a_participating_read() -> None:
-    # An unversioned Non-Temporal target resolves to the Locking strategy under
-    # either preference, and Locking licenses a keyed write only through a read
-    # of the writing transaction. This lane's source read is standalone — it has
-    # to be, because the concurrent writer commits after it — so an unversioned
-    # conflict case is inexpressible, whatever state it would assert.
-    port = FakeWritePort(
-        find_rows=[{"id": 1, "owner": "Ada", "balance": decimal.Decimal("100.00")}]
-    )
-    with pytest.raises(WriteEvidenceError, match="write-evidence-unavailable"):
-        scenario.run_conflict_case(
-            _unversioned_conflict_case([{"id": 1, "balance": "500.00"}]), port
-        )
+@pytest.mark.parametrize(
+    "case",
+    [
+        _unversioned_conflict_case([{"id": 1, "balance": "500.00"}]),
+        _synthetic_write(
+            "conflict",
+            {
+                "when": {
+                    "uow": {"concurrency": "locking"},
+                    "write": {"id": 2, "balance": "500.00", "observedVersion": 1},
+                }
+            },
+        ),
+    ],
+    ids=["unversioned", "locking-preference"],
+)
+def test_a_locking_conflict_target_is_refused_before_any_read(case: case_format.Case) -> None:
+    # The lane reads its source inside the attempt, and under the Locking strategy
+    # that read holds the shared row lock the staged concurrent writer would wait
+    # on, so a Locking conflict case describes interference no client can meet. An
+    # unversioned Non-Temporal target is Locking under either preference.
+    port = FakeWritePort()
+    with pytest.raises(EngineError, match="only the Optimistic strategy leaves room for"):
+        scenario.run_conflict_case(case, port)
+    assert port.reads == []
+    assert port.writes == []
 
 
 def _always_implying(
