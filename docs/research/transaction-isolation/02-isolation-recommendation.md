@@ -1,6 +1,6 @@
 ---
 date: 2026-10-16
-git_commit: 649d6abb5876f240eeb59a6dfed7b85e46b18455
+git_commit: 64b662d9198d349bf92e2a15cf939eb962935cba
 topic: "Whether the built-in transaction isolation should stay Read Committed or become Repeatable Read"
 type: research
 tags: [research, isolation, repeatable-read, read-committed, postgres, mariadb, recommendation]
@@ -215,7 +215,7 @@ Either is a product decision about default semantics, not a measured cost.
 ## If the default were switched
 
 The follow-up decision needs this inventory whichever way it goes. It is
-accurate at `649d6abb5`.
+accurate at `64b662d91`.
 
 **Contracts, schemas, and decision records.**
 
