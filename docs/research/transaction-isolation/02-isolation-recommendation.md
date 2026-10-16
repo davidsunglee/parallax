@@ -68,7 +68,8 @@ the default:
   engines share `m-batch-write-024`. The engines still differ at Read
   Committed where MariaDB re-reads the changed row and excludes it: the
   correlation-change DELETE and both own-column-change writes above, and the
-  joined-row schedules tabulated in [`00-index.md`](00-index.md#compatibility-cases).
+  joined-row DELETE tabulated in [`00-index.md`](00-index.md#compatibility-cases)
+  (`m-batch-write-036`, `-037`).
   Repeatable Read keeps the variable on.
 - **Dependency locks keep protecting unwritten rows at Repeatable Read**
   (`m-read-lock-023`). The level does not replace them.
