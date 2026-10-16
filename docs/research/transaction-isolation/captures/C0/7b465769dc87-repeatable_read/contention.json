@@ -1,0 +1,160 @@
+{
+  "conditions": {
+    "cpython": "3.14.8",
+    "image": "postgres:18.6-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2",
+    "isolation": "repeatable_read",
+    "settings": {
+      "autovacuum": "on",
+      "deadlock_timeout": "1s",
+      "default_transaction_isolation": "read committed",
+      "lock_timeout": "0",
+      "max_connections": "100",
+      "server_version": "18.6",
+      "shared_buffers": "128MB",
+      "synchronous_commit": "on",
+      "wal_level": "replica"
+    },
+    "version": "PostgreSQL 18.6 on aarch64-unknown-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit",
+    "workload": {
+      "body": "read one account in the attempt, then amend its balance",
+      "invocationsPerWorker": 200,
+      "pool": {
+        "maxSize": 8,
+        "minSize": 8
+      },
+      "retry": "the arm's own replay policy",
+      "workers": 8
+    }
+  },
+  "driver": "contention",
+  "runs": [
+    {
+      "backoff": "immediate",
+      "elapsedS": 0.8389024579955731,
+      "keys": "hot",
+      "maxRetries": 0,
+      "summary": {
+        "attempts": 1600,
+        "attemptsPerSuccess": 4.244031830238727,
+        "committed": 377,
+        "committedLatencyMs": {
+          "p50": 3.9864580030553043,
+          "p95": 5.331042193574831,
+          "p99": 6.564970173640177
+        },
+        "committedThroughputPerS": 449.39670447596836,
+        "completionRate": 0.235625,
+        "invocations": 1600,
+        "latencyMs": {
+          "p50": 4.023832996608689,
+          "p95": 5.716177083377261,
+          "p99": 7.296790826367214
+        },
+        "p99ToSuccessMs": null,
+        "surfacedFailureAttempts": {
+          "max": 1,
+          "min": 1
+        },
+        "surfacedFailureLatencyMs": {
+          "max": 19.14279200718738,
+          "min": 1.1190420191269368
+        },
+        "surfacedFailures": {
+          "DatabaseError:deadlock:40001": 1223
+        }
+      }
+    },
+    {
+      "backoff": "immediate",
+      "elapsedS": 0.8274439999950118,
+      "keys": "disjoint",
+      "maxRetries": 0,
+      "summary": {
+        "attempts": 1600,
+        "attemptsPerSuccess": 1.0,
+        "committed": 1600,
+        "committedLatencyMs": {
+          "p50": 4.045375506393611,
+          "p95": 5.512370508222375,
+          "p99": 6.572400435688905
+        },
+        "committedThroughputPerS": 1933.6656015508547,
+        "completionRate": 1.0,
+        "invocations": 1600,
+        "latencyMs": {
+          "p50": 4.045375506393611,
+          "p95": 5.512370508222375,
+          "p99": 6.572400435688905
+        },
+        "p99ToSuccessMs": 6.572375015821308,
+        "surfacedFailureAttempts": null,
+        "surfacedFailureLatencyMs": null,
+        "surfacedFailures": {}
+      }
+    },
+    {
+      "backoff": "immediate",
+      "elapsedS": 3.1747820829914417,
+      "keys": "hot",
+      "maxRetries": "default",
+      "summary": {
+        "attempts": 6316,
+        "attemptsPerSuccess": 4.224749163879599,
+        "committed": 1495,
+        "committedLatencyMs": {
+          "p50": 10.013207996962592,
+          "p95": 36.3265919033438,
+          "p99": 43.800223949947394
+        },
+        "committedThroughputPerS": 470.8984619792659,
+        "completionRate": 0.934375,
+        "invocations": 1600,
+        "latencyMs": {
+          "p50": 11.23864550027065,
+          "p95": 43.348952033557,
+          "p99": 47.38746541959699
+        },
+        "p99ToSuccessMs": null,
+        "surfacedFailureAttempts": {
+          "max": 11,
+          "min": 11
+        },
+        "surfacedFailureLatencyMs": {
+          "max": 61.93950001033954,
+          "min": 19.05187501688488
+        },
+        "surfacedFailures": {
+          "DatabaseError:deadlock:40001": 105
+        }
+      }
+    },
+    {
+      "backoff": "immediate",
+      "elapsedS": 0.8122299590031616,
+      "keys": "disjoint",
+      "maxRetries": "default",
+      "summary": {
+        "attempts": 1600,
+        "attemptsPerSuccess": 1.0,
+        "committed": 1600,
+        "committedLatencyMs": {
+          "p50": 3.996437502792105,
+          "p95": 5.229646150837652,
+          "p99": 6.152642342494801
+        },
+        "committedThroughputPerS": 1969.885476723436,
+        "completionRate": 1.0,
+        "invocations": 1600,
+        "latencyMs": {
+          "p50": 3.996437502792105,
+          "p95": 5.229646150837652,
+          "p99": 6.152642342494801
+        },
+        "p99ToSuccessMs": 6.152459012810141,
+        "surfacedFailureAttempts": null,
+        "surfacedFailureLatencyMs": null,
+        "surfacedFailures": {}
+      }
+    }
+  ]
+}
