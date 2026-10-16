@@ -39,15 +39,26 @@ class FakeDbPort(ConnectsAsItself):
     """An in-memory port that records executed SQL and returns canned rows,
     and the level and access mode each boundary opened through it was asked
     for — which is how a lane's routing between a standalone and a
-    transactional read shows."""
+    transactional read shows.
+
+    ``rows`` is what every read answers unless ``read_script`` is given: then
+    each read takes the script's next entry, raising it when it is a
+    :class:`DatabaseError`, so a retried read observes a failed attempt's
+    pages followed by the next attempt's."""
 
     dialect: Dialect = POSTGRES
 
-    def __init__(self, rows: list[MappingRow]) -> None:
+    def __init__(
+        self,
+        rows: list[MappingRow],
+        *,
+        read_script: Sequence[list[MappingRow] | DatabaseError] | None = None,
+    ) -> None:
         self.rows = rows
         self.executed: list[tuple[str, list[object]]] = []
         self.levels: list[IsolationLevel | None] = []
         self.modes: list[AccessMode | None] = []
+        self._read_script = None if read_script is None else list(read_script)
 
     def execute(
         self,
@@ -56,7 +67,12 @@ class FakeDbPort(ConnectsAsItself):
         document_reads: Sequence[DocumentReadOrdinals] = (),
     ) -> list[Row]:
         self.executed.append((sql, list(binds)))
-        return fold_mapping_rows(self.rows, document_reads, sql)
+        if self._read_script is None:
+            return fold_mapping_rows(self.rows, document_reads, sql)
+        entry = self._read_script.pop(0)
+        if isinstance(entry, DatabaseError):
+            raise entry
+        return fold_mapping_rows(entry, document_reads, sql)
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover
         raise NotImplementedError
