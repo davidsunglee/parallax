@@ -40,7 +40,7 @@ from parallax.core._execution._unit_work.materialized import (
     ObservedKeyedWrite,
     readless_write,
 )
-from parallax.core._execution._unit_work.retain import InsertionIdentity
+from parallax.core._execution._unit_work.retain import InsertionIdentity, ReadEvidence
 from parallax.core._execution._unit_work.uow import (
     NO_INSERTION_AUTHORITY,
     BindDeferredRange,
@@ -464,6 +464,22 @@ def test_a_write_carrying_an_authority_no_standing_insertion_granted_is_refused(
         # A standing insertion of an object without Valid Time has no window,
         # which is not the absence of its authority.
         assert tx.insertion_authority(standing) is None
+
+    _run(body)
+
+
+def test_evidence_of_this_attempt_carrying_no_observation_licenses_no_gated_write() -> None:
+    # Every read the Optimistic strategy answers retains the observation its gate
+    # binds, so evidence of this attempt carrying none has nothing to gate on and
+    # is refused at the verb rather than settled against nothing.
+    account = _ACCOUNT.entities[0]
+    key = corpus_object_key("Account", ("id", 1))
+
+    def body(tx: UnitOfWork) -> None:
+        evidence = ReadEvidence(account.identity, key, tx.participation, None)
+        with pytest.raises(WriteEvidenceError) as refusal:
+            tx.resolve_read_evidence(account, evidence, mutation="amend", object_key=key)
+        assert refusal.value.code == "write-evidence-unavailable"
 
     _run(body)
 

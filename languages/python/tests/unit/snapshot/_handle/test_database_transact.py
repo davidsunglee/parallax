@@ -15,7 +15,6 @@ Typed keyed write under.
 from __future__ import annotations
 
 import contextlib
-import re
 from collections.abc import Callable
 from decimal import Decimal
 
@@ -31,7 +30,6 @@ from parallax.core.unit_work import (
     OptimisticLockConflictError,
     RollbackOnlyError,
     StaleWriteError,
-    WriteEvidenceError,
 )
 from parallax.snapshot import Database, ScopedDatabase, TxnContext
 from tests._support import mirrored_models as mm
@@ -55,7 +53,6 @@ from tests.unit._transact_support import (
     account_db,
     db_for,
     deadlock,
-    grace,
 )
 
 _A = prepare_model(ACCOUNT, edition="a")
@@ -89,34 +86,36 @@ class _UnversionedAccount(
 _UNVERSIONED = prepare_model(DomainModel(_UnversionedAccount), edition="unversioned")
 
 
-def _refusing_strategy(delete: Callable[[], object]) -> str:
-    """The strategy named by the refusal of a keyed delete whose value no read produced."""
-    with pytest.raises(WriteEvidenceError) as refusal:
-        delete()
-    assert refusal.value.code == "write-evidence-unavailable"
-    named = re.search(r"the (\w+) strategy", refusal.value.message)
-    assert named is not None
-    return named.group(1)
-
-
 def test_each_attempt_settles_write_evidence_under_its_adopted_selection() -> None:
+    # The first attempt adopted the versioned selection, so its write gates on the
+    # version its read observed — a joined call included, after a newer selection
+    # was published. The replay adopts the unversioned one, whose Locking strategy
+    # takes the shared lock at the read and leaves the write ungated.
+    versioned = {"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}
+    unversioned = {"id": 3, "owner": "Grace", "balance": Decimal("10.00")}
     serving = ServingModel(_A)
-    port = ScriptedAdapter(Transact(commit=deadlock()), Transact())
+    port = ScriptedAdapter(
+        Transact(Read(rows=[versioned]), Write(), commit=deadlock()),
+        Transact(Read(rows=[unversioned]), Write()),
+    )
     db = _serving_db(port, serving)
-    seen: list[str] = []
+    attempts: list[str] = []
 
     def body(tx: TxnContext) -> None:
-        if seen:
-            unread = _UnversionedAccount(id=3, owner="Grace", balance=Decimal("10.00"))
-            seen.append(_refusing_strategy(lambda: tx.delete(unread)))
-            return
-        seen.append(_refusing_strategy(lambda: tx.delete(grace())))
-        serving.publish(_UNVERSIONED, expected=_A)
-        db.transact(lambda inner: seen.append(_refusing_strategy(lambda: inner.delete(grace()))))
+        attempts.append(tx.edition)
+        if len(attempts) == 1:
+            current: Entity = tx.find(mm.Account.where(mm.Account.id == 3)).result()
+            serving.publish(_UNVERSIONED, expected=_A)
+        else:
+            current = tx.find(_UnversionedAccount.where(_UnversionedAccount.id == 3)).result()
+        db.transact(lambda inner: inner.amend(current.edit(balance=Decimal("20.00"))))
 
     db.transact(body)
-    assert seen == ["Optimistic", "Optimistic", "Locking"]
-    assert not any(isinstance(op, WriteCall) for op in port.calls)
+    assert attempts == ["a", "unversioned"]
+    reads = [op.sql for op in port.calls if isinstance(op, ReadCall)]
+    writes = [op.sql for op in port.calls if isinstance(op, WriteCall)]
+    assert ["for share" in sql for sql in reads] == [False, True]
+    assert ["and version" in sql for sql in writes] == [True, False]
 
 
 def _observe_and_update(tx: TxnContext) -> None:

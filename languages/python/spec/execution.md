@@ -154,11 +154,17 @@ Evidence is never a caller-supplied address. Set-based writes take an Object
 Query; amendment verbs also take Assignments.
 
 The method names the authority. `amend`, `replace`, `delete`, and `terminate`
-take a source — a value this store published, or the value or node an insertion
+take a source — a value a read of the writing transaction attempt published, a
+joined callback's included, or the value or node an insertion of that attempt
 took or answered — and state no condition and no `valid_from`: a Bitemporal one
 starts at its source's finite Valid-Time pin, or where the insertion that
 produced its source was authored to start, and a source read at Valid-Time
-`LATEST` is refused. `amend_if` and `replace_if` address an object themselves
+`LATEST` is refused. A value a standalone read, a read-only transaction, or an
+earlier attempt published raises `WriteEvidenceError(write-evidence-unavailable)`
+at the call under either concurrency preference, an amendment naming nothing
+included (`m-unit-work` *Current-attempt source admission*); its caller states
+the revision that value carries through `amend_if` or `replace_if` instead.
+`amend_if` and `replace_if` address an object themselves
 and require exactly one keyword-only condition: `version` for a versioned
 Entity, `tx_start` for a temporal one, or `unversioned=True` for an unversioned
 Non-Temporal one. Presence is counted before any value is judged: none, more

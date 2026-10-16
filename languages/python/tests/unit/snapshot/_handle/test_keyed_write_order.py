@@ -46,6 +46,7 @@ from tests.unit.snapshot._handle._keyed_write_drivers import (
     CONCURRENCIES,
     CONTACT_TARGET,
     DOCUMENT_TARGETS,
+    OUTSIDE_SOURCES,
     PERSON_TARGET,
     POSITION_TARGET,
     REPRESENTATIONS,
@@ -281,35 +282,35 @@ def test_a_net_zero_chain_writes_its_member_and_keeps_a_milestone_that_holds_it(
 
 
 # --------------------------------------------------------------------------- #
-# The source axis: a standalone read, whose evidence a participating read's    #
-# shared lock would have supplied. Under an effective Locking strategy it      #
-# licenses nothing; where the target supplies its own gate and the preference  #
-# is Optimistic, the retained observation is the evidence and the write runs.  #
+# The source axis: a read outside the writing attempt — standalone, inside a   #
+# read-only transaction, or inside an earlier transaction. Whatever key and    #
+# revision it carries, it participated in nothing this attempt can stand on,  #
+# so it licenses no write under either strategy: neither the shared lock a     #
+# Locking write needs nor the observation an Optimistic gate binds.            #
 # --------------------------------------------------------------------------- #
 def _unusable_evidence(target: Target) -> Answer:
     return _refused(
         WriteEvidenceError,
-        f"write-evidence-unavailable: {target.entity}: the Locking strategy licenses this "
-        "write through the shared row lock a read of THIS transaction holds, and the value "
-        "handed to the verb came from no such read; read the row through this transaction "
-        "and write what that read returned",
+        f"write-evidence-unavailable: {target.entity}: a keyed write is licensed only by a "
+        "read of THIS transaction attempt, and the value handed to the verb came from no such "
+        "read — a standalone read, a read-only transaction, and an earlier attempt license "
+        "nothing here; read the row through this transaction and write what that read "
+        "returned, or state the revision you observed through the `*_if` verb",
         code="write-evidence-unavailable",
     )
 
 
-@pytest.mark.parametrize("scenario", _grid(verbs=_SOURCE_VERBS, source="standalone"), ids=str)
-def test_a_standalone_source_answers_the_strategy_its_target_derives(scenario: Scenario) -> None:
-    target = scenario.target
-    locking = scenario.concurrency == "locking" or target.gate == "none"
-    _answers(
-        scenario,
-        _applicability_refusal(scenario)
-        or (
-            _unusable_evidence(target)
-            if locking
-            else _wrote(_STATEMENTS[target.profile, scenario.verb])
-        ),
-    )
+@pytest.mark.parametrize(
+    "scenario",
+    tuple(
+        scenario
+        for source in OUTSIDE_SOURCES
+        for scenario in _grid(verbs=_SOURCE_VERBS, source=source)
+    ),
+    ids=str,
+)
+def test_a_source_read_outside_the_attempt_licenses_no_write(scenario: Scenario) -> None:
+    _answers(scenario, _applicability_refusal(scenario) or _unusable_evidence(scenario.target))
 
 
 # --------------------------------------------------------------------------- #
@@ -567,50 +568,26 @@ def test_a_pinned_source_beats_the_window_it_stated() -> None:
 
 @pytest.mark.parametrize(
     "scenario",
-    (
-        Scenario(
-            target=ACCOUNT_TARGET,
-            verb="amend",
-            source="standalone",
-            concurrency="locking",
-            change="untouched",
-            label="an-empty-write-needs-no-evidence",
-        ),
-        Scenario(
-            target=CONTACT_TARGET,
-            verb="amend",
-            source="standalone",
-            concurrency="locking",
-            change="untouched",
-            label="an-empty-document-write-needs-no-evidence",
-        ),
-    ),
-    ids=str,
-)
-def test_an_empty_set_is_dropped_before_evidence_is_asked_for(scenario: Scenario) -> None:
-    # The source could license nothing, and the write asks it for nothing: an
-    # update expressing no member is dropped before the evidence question, so it
-    # is silence over an unusable source rather than a refusal.
-    _answers(scenario, _wrote(0))
-
-
-@pytest.mark.parametrize(
-    "scenario",
     tuple(
         Scenario(
             target=target,
             verb="amend",
-            source="standalone",
-            concurrency="locking",
-            change="net_zero",
+            source=source,
+            concurrency=concurrency,
+            change=change,
         )
         for target in (ACCOUNT_TARGET, CONTACT_TARGET)
+        for source in OUTSIDE_SOURCES
+        for concurrency in CONCURRENCIES
+        for change in ("untouched", "net_zero")
     ),
     ids=str,
 )
-def test_a_net_zero_chain_over_an_unusable_source_asks_for_evidence(scenario: Scenario) -> None:
-    # A net-zero chain expresses its member, so it is a write like any other and
-    # needs the evidence its target's strategy demands.
+def test_stating_nothing_does_not_admit_an_unusable_source(scenario: Scenario) -> None:
+    # The source is admitted before an update expressing no member is dropped,
+    # so an empty amendment over a source that licenses nothing is refused like
+    # any write over it rather than passing in silence; a net-zero chain
+    # expresses its member and is refused the same way.
     _answers(scenario, _unusable_evidence(scenario.target))
 
 

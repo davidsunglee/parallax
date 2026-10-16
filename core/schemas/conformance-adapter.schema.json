@@ -243,6 +243,7 @@
             "write-value-not-stored",
             "write-value-already-stored",
             "write-value-foreign-lifecycle",
+            "write-evidence-unavailable",
             "write-evidence-already-claimed",
             "write-evidence-inserted"
           ]

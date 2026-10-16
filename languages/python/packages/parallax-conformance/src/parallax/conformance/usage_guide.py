@@ -19,6 +19,7 @@ _GUIDE_CASE_IDS = (
     "m-unit-work-001",
     "m-unit-work-005",
     "m-unit-work-006",
+    "m-unit-work-056",
     "m-opt-lock-027",
     "m-opt-lock-028",
     "m-temporal-write-017",

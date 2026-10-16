@@ -379,10 +379,11 @@ work's insertion lifts anything.
 Three consequences are normative:
 
 - A value this verb's own source produced that no author has changed is **not** a
-  refusal for an `amend` verb. It assigns nothing, so it buffers nothing, issues
-  no statement, and raises nothing. Requiring an author to
-  test each value before writing it would defeat the change tracking the framework
-  performs on the author's behalf.
+  provenance refusal for an `amend` verb. Once its source is admitted
+  (*Current-attempt source admission*) it assigns nothing, so it buffers nothing,
+  spends no evidence, issues no statement, and raises nothing. Requiring an
+  author to test each value before writing it would defeat the change tracking
+  the framework performs on the author's behalf.
 - Every refusal is decided from provenance **before** the row is derived, so a
   value a verb does not accept reaches no row derivation, no buffer, no plan, no
   SQL, and no database. A refusal is never a translation of a lower-level failure
@@ -448,13 +449,39 @@ removal or insertion dooms the attempt. Removing only part of the coverage, or
 an interior gap, removes nothing in this sense. None of this permits removing
 and re-inserting state that existed before the attempt.
 
+### Current-attempt source admission
+
+An ordinary source mutation — `amend`, `amendUntil`, `replace`, `replaceUntil`,
+`delete`, `terminate`, and `terminateUntil` handed a value whose provenance the
+verb accepts — is **admitted** only by Read Evidence a read of the **current
+writable transaction attempt** produced, under either Effective Concurrency
+Strategy, or by the standing authority of an insertion that attempt admitted
+(*Insertion authority*). A joined callback shares its attempt, so a value either
+of them read is current for both. A value a standalone read, a read-only
+transaction, or an earlier attempt produced is refused at the verb as a
+write-evidence failure tagged **`write-evidence-unavailable`**, before anything
+is buffered and before any database access, whatever key or revision it shares
+with the stored row: it participated in nothing the writing attempt can stand
+on. The strategy then decides what the participating read must also prove —
+under Locking, the shared lock it holds; under Optimistic, the observation the
+gate binds (`m-opt-lock`) — and consumed or invalidated evidence is refused as
+*Observation ownership and lifetime* states.
+
+Admission precedes the empty amendment's elimination: an amendment that assigns
+nothing is dropped only once its source is admitted, so stating nothing never
+lets an ineligible source pass. Replay re-runs the callback's reads rather than
+refreshing a captured value, so a value an earlier attempt published licenses
+nothing in the attempt that replays it. A caller holding an earlier observation
+states the revision it observed through a caller-addressed write instead
+(*Caller-addressed writes*).
+
 ### Source-authorized replacement
 
 A keyed `replace` / `replaceUntil` states the complete writable state of the
 object its source addresses, under exactly the authority an amendment of that
-source would have: the source's retained evidence, or the standing authority of
-an insertion it carries (*Insertion authority*), and on a Bitemporal object the
-start that source names. Provenance, pins, evidence, consumption, and
+source would have: the source's current-attempt read evidence, or the standing
+authority of an insertion it carries (*Current-attempt source admission*), and
+on a Bitemporal object the start that source names. Provenance, pins, evidence, consumption, and
 invalidation follow the amendment's rules unchanged; the write takes no
 condition or start of its own.
 
@@ -932,12 +959,13 @@ settles, and owns how long that evidence stays eligible.
 ### Observation ownership and lifetime
 
 A retained observation belongs to the **source values that observed it**, not to
-the transaction that ran the read. A read outside any transaction still produces
-values a later effective-Optimistic write may settle against, so an
-implementation **MUST** make the evidence reachable from the source value and
-**MUST NOT** make eligibility depend on a transaction-scoped store. A
-transaction retains only a **weak index** of the states its own reads have seen,
-plus the **participation** those reads license.
+the transaction that ran the read. An implementation **MUST** make the evidence
+reachable from the source value and **MUST NOT** make eligibility depend on a
+transaction-scoped store. A transaction retains only a **weak index** of the
+states its own reads have seen, plus the **participation** those reads license.
+Only a value a read of the writing attempt produced is eligible at all
+(*Current-attempt source admission*); among those, eligibility follows the rules
+below.
 
 Three rules follow, and an implementation **MUST** exhibit all three:
 
@@ -1579,10 +1607,11 @@ use its optimistic key in one workflow and a shared lock in another.
 An object read resolves the strategy of the Entity it materializes. Separate
 deep-fetch levels resolve independently, so one transaction may read a versioned
 root optimistically and an unversioned included Entity under a shared lock. The
-Effective Concurrency Strategy also determines write evidence: Locking requires
-current-transaction read participation proving that the lock is held, while
-Optimistic may use authentic retained version or milestone evidence and lets the
-database gate detect an intervening write (`m-opt-lock`).
+Effective Concurrency Strategy also determines write evidence. Both strategies
+require a read of the current attempt (*Current-attempt source admission*):
+under Locking that read's participation proves the lock is held, while under
+Optimistic the version or milestone evidence it retained becomes the gate that
+lets the database detect an intervening write (`m-opt-lock`).
 
 Reladomo is prior art for mixed participation, but exposes the choice per
 transaction and object portal/class. Parallax deliberately keeps one ergonomic

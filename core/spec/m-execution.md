@@ -168,7 +168,9 @@ never by an option, a join, or a read:
   read-only transaction is active, or a read-only call while a writable one is,
   is an **access-mode mismatch**, refused before its callback runs;
 - immutable results remain readable after commit, while a live stream cannot
-  outlive its attempt.
+  outlive its attempt; no result licenses a source mutation in a later writable
+  attempt, though the revisions it carries can state a caller-addressed write's
+  condition (`m-unit-work` *Current-attempt source admission*).
 
 Read-only prohibits modeled mutations. It promises nothing about external
 effects of the callback's own code, and what the native transaction refuses or

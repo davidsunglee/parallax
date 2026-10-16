@@ -1,0 +1,14 @@
+model: models/account.yaml
+lane: api-conformance
+tags: [m-unit-work, write-value, write-evidence, scenario, slice-snapshot-1]
+shape: scenario
+when:
+  scenario:
+    - action: amend
+      value: thisSource
+      sourceRead: earlierAttempt
+      roundTrips: 0
+      expectError: write-evidence-unavailable
+      note: the earlier attempt committed without writing, so its evidence is unspent yet still not this attempt's
+then:
+  roundTrips: 0

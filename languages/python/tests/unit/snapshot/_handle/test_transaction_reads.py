@@ -56,7 +56,7 @@ from parallax.core.unit_work import (
     StaleWriteError,
 )
 from parallax.core.write_plan import TemporalObservation
-from parallax.snapshot import Database, ScopedDatabase, TxnContext, WireEntity
+from parallax.snapshot import Database, TxnContext, WireEntity
 from parallax.snapshot._inspection import snapshot_state_of
 from parallax.snapshot._publication._wire import read_evidence_of
 from tests._support import inheritance_models as im
@@ -138,7 +138,7 @@ def test_a_standalone_find_stamps_no_participation_on_the_evidence_it_retains() 
     # A standalone read has no unit of work to file into, so it hands the
     # executor no evidence context — and still retains what its rows observed, because a
     # value's write evidence belongs to the value. What its sources lack is
-    # participation, which is exactly what an effective-Locking write asks for.
+    # participation, which is exactly what every source write asks for.
     calls: list[_RecordedFind] = []
     port = ScriptedAdapter(Read(rows=[balance_row(in_z=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))]))
     db = db_for(BALANCE, port)
@@ -653,7 +653,7 @@ def _present(stored: object) -> PresentDocument:
     return PresentDocument(cast("DocumentValue", copy.deepcopy(stored)))
 
 
-def _owned_find(reader: TxnContext | ScopedDatabase, layout: str) -> Entity:
+def _owned_find(reader: TxnContext, layout: str) -> Entity:
     if layout == "document":
         document_query = OwnedDocumentCharter.where(OwnedDocumentCharter.id == 1)
         return reader.find(document_query.as_of(valid_time=_OWNED_SPLIT)).result()
@@ -694,15 +694,13 @@ def _as_json(value: object) -> object:
 
 @pytest.mark.parametrize("layout", ["document", "columns"])
 @pytest.mark.parametrize("access", ["typed", "wire"])
-@pytest.mark.parametrize("standalone", [False, True], ids=["participating", "standalone"])
 def test_what_a_read_publishes_never_reaches_its_retained_evidence(
-    layout: str, access: str, standalone: bool
+    layout: str, access: str
 ) -> None:
     # A temporal read retains the raw document the dialect transferred to it by
     # reference, unfrozen, so that ownership must hold through everything the
     # read publishes. Every container a caller can reach is mutated before the
-    # write, a standalone read's evidence outliving the read that produced it.
-    # The carried head then binds one recursively immutable copy of the retained
+    # write. The carried head then binds one recursively immutable copy of the retained
     # document and the changed tail patches only `title` into another, both
     # keeping the unknown keys the model declares nowhere; a Handler can mutate
     # nothing either bind reaches. Under Columns layout the retained document
@@ -710,11 +708,7 @@ def test_what_a_read_publishes_never_reaches_its_retained_evidence(
     entity = OwnedDocumentCharter if layout == "document" else OwnedColumnsCharter
     table = "owned_document_charter" if layout == "document" else "owned_columns_charter"
     row = _owned_row(layout)
-    port = (
-        ScriptedAdapter(Read(rows=[row]), Transact(Write(times=2)))
-        if standalone
-        else ScriptedAdapter(Transact(Read(rows=[row]), Write(times=2)))
-    )
+    port = ScriptedAdapter(Transact(Read(rows=[row]), Write(times=2)))
     handler = WriteDocumentBinds()
     db = db_for(DomainModel(entity), port, lifecycle_provider=handler)
     target = f"parallax.compatibility.{entity.__name__}"
@@ -728,7 +722,7 @@ def test_what_a_read_publishes_never_reaches_its_retained_evidence(
     }
     published: list[Entity | WireEntity] = []
 
-    def find(reader: TxnContext | ScopedDatabase) -> Entity | WireEntity:
+    def find(reader: TxnContext) -> Entity | WireEntity:
         node = (
             _owned_find(reader, layout)
             if access == "typed"
@@ -745,11 +739,7 @@ def test_what_a_read_publishes_never_reaches_its_retained_evidence(
             assert _mutate_everything(node) > 0
             tx.wire.amend(node, {"title": "Southbound"})
 
-    if standalone:
-        node = find(db)
-        db.transact(lambda tx: write(tx, node))
-    else:
-        db.transact(lambda tx: write(tx, find(tx)))
+    db.transact(lambda tx: write(tx, find(tx)))
 
     (node,) = published
     origin = _retained_evidence(node) if isinstance(node, Entity) else read_evidence_of(node)

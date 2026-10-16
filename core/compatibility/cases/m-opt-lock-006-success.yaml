@@ -20,41 +20,6 @@ then:
   executionLifecycle:
     roots:
       - execution: 1
-        kind: read
-        events:
-          - sequence: 1
-            activity: 1
-            parent: null
-            readStarted: { target: parallax.compatibility.Account, interface: wire, edition: account }
-          - sequence: 2
-            activity: 2
-            parent: 1
-            acquisitionStarted: {}
-          - sequence: 3
-            activity: 2
-            parent: 1
-            acquisitionFinished: { outcome: acquired }
-          - sequence: 4
-            activity: 3
-            parent: 1
-            databaseCallStarted: { target: parallax.compatibility.Account, kind: read }
-          - sequence: 5
-            activity: 3
-            parent: 1
-            databaseCallFinished: { outcome: readCompleted, returnedRows: 1 }
-          - sequence: 6
-            activity: 4
-            parent: 1
-            releaseStarted: {}
-          - sequence: 7
-            activity: 4
-            parent: 1
-            releaseFinished: { cleanup: returned }
-          - sequence: 8
-            activity: 1
-            parent: null
-            readFinished: { outcome: completed }
-      - execution: 2
         kind: transaction-invocation
         events:
           - sequence: 1
@@ -82,35 +47,51 @@ then:
           - sequence: 5
             activity: 4
             parent: 2
-            writeBatchStarted: { trigger: pre-commit }
+            readStarted: { target: parallax.compatibility.Account, interface: wire }
           - sequence: 6
             activity: 5
             parent: 4
+            databaseCallStarted: { target: parallax.compatibility.Account, kind: read }
+          - sequence: 7
+            activity: 5
+            parent: 4
+            databaseCallFinished: { outcome: readCompleted, returnedRows: 1 }
+          - sequence: 8
+            activity: 4
+            parent: 2
+            readFinished: { outcome: completed }
+          - sequence: 9
+            activity: 6
+            parent: 2
+            writeBatchStarted: { trigger: pre-commit }
+          - sequence: 10
+            activity: 7
+            parent: 6
             databaseCallStarted:
               target: parallax.compatibility.Account
               kind: write
               statement: 0
-          - sequence: 7
-            activity: 5
-            parent: 4
+          - sequence: 11
+            activity: 7
+            parent: 6
             databaseCallFinished: { outcome: writeCompleted, affectedRows: 1 }
-          - sequence: 8
-            activity: 4
+          - sequence: 12
+            activity: 6
             parent: 2
             writeBatchFinished: { outcome: completed }
-          - sequence: 9
-            activity: 6
+          - sequence: 13
+            activity: 8
             parent: 2
             releaseStarted: {}
-          - sequence: 10
-            activity: 6
+          - sequence: 14
+            activity: 8
             parent: 2
             releaseFinished: { cleanup: returned }
-          - sequence: 11
+          - sequence: 15
             activity: 2
             parent: 1
             transactionAttemptFinished: { outcome: committed }
-          - sequence: 12
+          - sequence: 16
             activity: 1
             parent: null
             transactionInvocationFinished: { outcome: committed }

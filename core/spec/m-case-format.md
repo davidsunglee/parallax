@@ -1206,9 +1206,9 @@ write against existing state retains,
 which is what `delete`, `terminate`, and `terminateUntil` answer to — those
 verbs take no position on provenance at all.
 
-A source is **not** a transaction, so a resolving read need not run inside the
-unit that writes; *where* it runs is settled per shape below and never decides
-whether it is owed.
+A source is **not** a transaction, but a source write is admitted only by a read
+of its own attempt (`m-unit-work` *Current-attempt source admission*), so every
+resolving read a unit owes runs inside the transaction of the unit that writes.
 
 The count is structural, derivable from the case document and its model alone.
 For each choreography unit — one `writeSequence` entry, or one ungrouped scenario
@@ -1253,8 +1253,7 @@ no round trip.
 
 A **conflict attempt** owes one, and a `when.attempts` sequence owes one PER
 attempt, because every attempt settles against a state of its own (*Conflict
-cases*). That read stands OUTSIDE the transaction whose attempt it feeds instead
-of inside it, which decides WHERE it happens and not whether it counts.
+cases*).
 
 A Bitemporal entry's resolving read is pinned at the Valid-Time instant the
 entry's `validFrom` states, because a source-backed write starts where its source
@@ -1286,18 +1285,18 @@ only the descriptor serde round-trip and the golden-SQL normalization layers
 apply (there is no `when.objectQuery`).
 
 **The interference a conflict case describes must be one a correct client can
-meet.** A conflict write is settled against a value a real read published —
-one of the calls `then.roundTrips` counts (*Resolving reads a write owes*) — and
-`given.apply`'s concurrent writer commits BETWEEN that read and the write it
-invalidates — which is why `when.write`'s `observedVersion` is a
+meet.** A conflict write is settled against a value a real read of its own
+attempt published — one of the calls `then.roundTrips` counts (*Resolving reads
+a write owes*) — and `given.apply`'s concurrent writer commits, on another
+session, BETWEEN that read and the write it invalidates; a later attempt reads
+the state that writer left. That is why `when.write`'s `observedVersion` is a
 declared fact cross-checked against the read rather than evidence handed to the
 write. That ordering is reachable only under the **Optimistic** strategy, whose
-evidence is the retained observation and which therefore admits a source read
-outside the writing transaction. A Locking target's keyed write is licensed by
-the shared row lock a read of its OWN transaction holds, so nothing can commit
-against it in between: a case that stages one is describing a write no client
-can issue, and the zero-row outcome it would grade says only that the framework's
-own locking failed. The conflict shape is therefore Optimistic-only, and the
+read takes no lock. A Locking target's read holds the shared row lock its keyed
+write is licensed by, so nothing can commit against it in between: a case that
+stages one is describing interference no client can meet, and the zero-row
+outcome it would grade says only that the framework's own locking failed. The
+conflict shape is therefore Optimistic-only, and the
 Locking arm of the zero-row classification — the non-retriable stale
 write, and the never-retriable missing target an unversioned target earns — is a
 language-internal claim about the planner, the affected-row enforcer, and the
@@ -1879,6 +1878,18 @@ provenance* fixes:
 - **`invalidRoot`** — this source published the value only as diagnostic data
   inside a hydratable invalid root and did not admit it as a keyed source.
 
+A `thisSource` value handed to `amend` MAY also state **`sourceRead`**, the
+read that published it when that read ran outside the writing attempt:
+`standalone` (a read in no transaction), `readOnlyTransaction` (a read of a
+read-only transaction that committed before the writing one began), or
+`earlierAttempt` (a read of an earlier writable attempt). Omitted, the read ran
+in the writing attempt itself. Provenance is unchanged — the same source
+produced the value — but the value licenses no write (`m-unit-work`
+*Current-attempt source admission*), so such a step declares
+`expectError: write-evidence-unavailable`, and the schema requires it. Because
+the value is unchanged, every such step is also the empty amendment that
+admission precedes.
+
 A case states the provenance and never how to obtain it. How an implementation
 retains which source produced a value is its own affair, so an adapter arranges a
 value of the stated provenance through its own managed reads — the same reason
@@ -2046,6 +2057,9 @@ verifies them (`m-conformance-adapter`, `m-api-conformance`):
   - `write-value-foreign-lifecycle` — a write verb handed a value produced by a
     read through some other framework-managed source than the one it writes
     through, the same store or not (`m-unit-work`).
+  - `write-evidence-unavailable` — an `amend` verb handed a value this source
+    produced outside the writing attempt, which therefore licenses no write
+    (`m-unit-work` *Current-attempt source admission*).
 
 ##### Relationship contents at a step (`expectGraph`)
 

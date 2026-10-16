@@ -1,0 +1,14 @@
+model: models/account.yaml
+lane: api-conformance
+tags: [m-unit-work, write-value, write-evidence, scenario, slice-snapshot-1]
+shape: scenario
+when:
+  scenario:
+    - action: amend
+      value: thisSource
+      sourceRead: readOnlyTransaction
+      roundTrips: 0
+      expectError: write-evidence-unavailable
+      note: a committed read-only transaction's result stays readable but licenses no later write
+then:
+  roundTrips: 0

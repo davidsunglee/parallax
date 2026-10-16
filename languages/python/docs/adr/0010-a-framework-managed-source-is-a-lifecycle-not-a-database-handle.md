@@ -152,3 +152,9 @@ verb too. The identity of the two arrangements the ADR is about is untouched:
 `dbA.find(...)` then `dbB.transact(...)` still reaches the identical outcome as
 `db.find(...)` then `db.transact(...)`, because neither the strategy nor the
 retained observation is a fact about a handle.
+
+*Superseded in part (2026-10, [ADR 0072](../../../../docs/adr/0072-source-writes-are-admitted-only-by-a-read-of-the-current-attempt.md)):*
+a standalone source no longer licenses a write under either strategy. Every
+source write is admitted only by a read of the writing attempt, so the
+Optimistic outcome above is now the refusal the Locking one always was. The
+lifecycle decision and the identity of the two arrangements stand.

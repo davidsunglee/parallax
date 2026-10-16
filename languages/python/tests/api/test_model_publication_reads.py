@@ -5,16 +5,18 @@ The Docker-free suites grade adoption and the stamp over fake ports. What only a
 real database shows is that a delivery keeps reading under the selection it
 entered with while a publication lands between its pages, that a refusal a
 result under A delays until an accessor inside a transaction under B keeps A
-while the transaction reports B, that a result read under A still licenses a
-keyed write validated under B — Typed and Wire alike, through the shared
-ingress, on the evidence the earlier read retained — and that the committed row
-is what B's transaction wrote.
+while the transaction reports B, that a result read under A licenses no source
+write in a transaction under B yet still states the revision a conditional
+write validated under B is checked against — Typed and Wire alike — and that
+the committed row is what B's transaction wrote.
 """
 
 from __future__ import annotations
 
 from decimal import Decimal
-from typing import Any
+from typing import Any, cast
+
+import pytest
 
 from parallax.conformance import case_format, engine
 from parallax.conformance.boundary_runner import TARGET_ID
@@ -26,6 +28,7 @@ from parallax.core.execution import (
 )
 from parallax.core.object_query import deserialize
 from parallax.core.read_delivery import InvalidDataError
+from parallax.core.unit_work import WriteEvidenceError
 from parallax.snapshot import TxnContext, connect
 from tests._support.adoption import raises_contextualized
 from tests._support.corpus import case_fixtures
@@ -129,7 +132,7 @@ def test_a_delayed_refusal_from_a_reports_a_inside_an_execution_failure_under_b(
     assert failed.value.invalid_data
 
 
-def test_a_typed_value_read_under_a_licenses_a_keyed_write_validated_under_b(
+def test_a_typed_value_read_under_a_states_the_revision_a_write_under_b_is_checked_against(
     profile_run: Any,
 ) -> None:
     a, b, serving = _editions()
@@ -139,16 +142,24 @@ def test_a_typed_value_read_under_a_licenses_a_keyed_write_validated_under_b(
     serving.publish(b, expected=a)
 
     def body(tx: TxnContext) -> str:
-        # Validated under B's model, licensed by the observation A's read
-        # retained on the value: no reread, no evidence upgrade, no refusal.
-        tx.amend(account.edit(balance=account.balance + Decimal("1.00")))
+        # No read of this attempt produced the value, so it licenses no source
+        # write; the version it published is what the conditional write states.
+        with pytest.raises(WriteEvidenceError) as refused:
+            tx.amend(account.edit(balance=account.balance + Decimal("1.00")))
+        assert refused.value.code == "write-evidence-unavailable"
+        tx.amend_if(
+            Account,
+            Account.balance.set(account.balance + Decimal("1.00")),
+            key=account.id,
+            version=account.version,
+        )
         return tx.edition
 
     assert db.transact(body) == "2026-09-b"
     assert _balance_of(profile_run) == Decimal("251.00")
 
 
-def test_a_wire_value_read_under_a_licenses_a_keyed_write_validated_under_b(
+def test_a_wire_value_read_under_a_states_the_revision_a_write_under_b_is_checked_against(
     profile_run: Any,
 ) -> None:
     a, b, serving = _editions()
@@ -158,7 +169,14 @@ def test_a_wire_value_read_under_a_licenses_a_keyed_write_validated_under_b(
     serving.publish(b, expected=a)
 
     def body(tx: TxnContext) -> str:
-        tx.wire.amend(node, {"balance": "260.00"})
+        with pytest.raises(WriteEvidenceError) as refused:
+            tx.wire.amend(node, {"balance": "260.00"})
+        assert refused.value.code == "write-evidence-unavailable"
+        tx.wire.amend_if(
+            _ACCOUNT,
+            {"id": node["id"], "balance": "260.00"},
+            version=cast("int", node["version"]),
+        )
         return tx.edition
 
     assert db.transact(body) == "2026-09-b"

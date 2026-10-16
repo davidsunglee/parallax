@@ -443,25 +443,27 @@ def _deposit_rate_row(id_: int) -> Mapping[str, object]:
     }
 
 
-def test_keyed_temporal_writes_settle_standalone_evidence_from_the_family_shape(
+def test_keyed_temporal_writes_settle_read_evidence_from_the_family_shape(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     port = ScriptedAdapter(
-        Read(rows=[_deposit_rate_row(1)]),
-        Read(rows=[_deposit_rate_row(2)]),
-        Transact(Write(times=5)),
+        Transact(
+            Read(rows=[_deposit_rate_row(1)]),
+            Read(rows=[_deposit_rate_row(2)]),
+            Write(times=5),
+        )
     )
     database = db_for(RATE, port)
 
-    def pinned(id_: int) -> DepositRate:
-        return database.find(
+    def pinned(tx: TxnContext, id_: int) -> DepositRate:
+        return tx.find(
             DepositRate.where(DepositRate.id == id_).as_of(valid_time=_VALID_FROM)
         ).result()
 
     callers = _trace_declarations(monkeypatch, _TEMPORAL_MODEL)
-    updated, terminated = pinned(1), pinned(2)
 
     def write(tx: TxnContext) -> None:
+        updated, terminated = pinned(tx, 1), pinned(tx, 2)
         tx.amend(updated.edit(amount=Decimal("2.00")))
         tx.terminate(terminated)
 
