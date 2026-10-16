@@ -21,6 +21,7 @@ lifecycle Attempt does is its own suites'.
 from __future__ import annotations
 
 import contextlib
+import itertools
 import random
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -1160,6 +1161,9 @@ class _AtTheCeiling(random.Random):
         return b
 
 
+_TICK_S = 0.004
+
+
 @dataclass(frozen=True, slots=True)
 class _Wait:
     """What had happened when the loop slept: the delay, the lifecycle
@@ -1174,7 +1178,8 @@ def _waits_recorded(
     monkeypatch: pytest.MonkeyPatch, recorder: RecordingLifecycleProvider, port: ScriptedAdapter
 ) -> list[_Wait]:
     """Substitute the loop's sleep, recording each wait against ``recorder``'s
-    one root and ``port``'s releases, and draw every delay at its ceiling."""
+    one root and ``port``'s releases, draw every delay at its ceiling, and
+    advance the loop's clock by ``_TICK_S`` per reading."""
     waits: list[_Wait] = []
 
     def sleep(seconds: float) -> None:
@@ -1182,8 +1187,10 @@ def _waits_recorded(
         transitions = tuple(type(event).__name__ for event in root.events)
         waits.append(_Wait(seconds, transitions, len(port.cleanups)))
 
+    ticks = itertools.count()
     monkeypatch.setattr(auto_retry, "_sleep", sleep)
     monkeypatch.setattr(auto_retry, "_rng", _AtTheCeiling(0))
+    monkeypatch.setattr(auto_retry, "_clock", lambda: next(ticks) * _TICK_S)
     return waits
 
 
@@ -1221,7 +1228,7 @@ def test_a_replay_waits_only_after_the_failed_attempt_released_and_finished(
     assert scope(port, provider=recorder).transact(body([]), itself) == "ok"
 
     (wait,) = waits
-    assert wait.seconds == auto_retry._delay(1, _AtTheCeiling(0))  # pyright: ignore[reportPrivateUsage] - the first attempt's ceiling
+    assert wait.seconds == auto_retry._window(1, _TICK_S)  # pyright: ignore[reportPrivateUsage] - the first attempt's window over one reading
     assert wait.released == 1
     assert wait.transitions[-3:] == (
         "ReleaseStarted",

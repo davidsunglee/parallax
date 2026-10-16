@@ -88,9 +88,15 @@ delay**, so that conflicting invocations replaying at once spread out rather tha
 collide again. The wait begins only once the failed attempt has rolled back,
 released its connection, and finished reporting, so no connection or attempt is
 held while it lasts. Nothing waits before a first attempt, after the last one,
-or after a terminal failure, and a bound of `0` never waits. The delay's
-distribution and its bound are internal policy, chosen from contention evidence
-rather than offered as an option.
+or after a terminal failure, and a bound of `0` never waits.
+
+The delay's scale **SHOULD** follow the measured duration of the attempt that
+just failed. How long a conflicting writer holds what it wrote depends on round
+trips, statement count, and work inside the transaction, all of which differ by
+deployment, so a delay fixed in absolute time suits only the environment it was
+measured in. The delay keeps absolute bounds whatever the attempt took. Its
+distribution, its scale, and its bounds are internal policy, chosen from
+contention evidence rather than offered as an option.
 
 ## Recognizing the conflict
 
