@@ -89,7 +89,7 @@ total of what the window allocated.
 
 | Window | Member | Contains | Excludes |
 |---|---|---|---|
-| `keyed-write` | write-lowering | one public keyed verb (`tx.insert`, `tx.update`, a bounded `tx.update`, or its `tx.wire` peer), or one caller-addressed target write (`tx.wire.update` naming the Entity, `tx.replace`, `tx.wire.replace`), until `transact` returns: Typed row serialization or the caller's Wire document; preparation; effective-change classification and buffering; a target's own reads — the point read under the shared lock an unversioned Non-Temporal target acquires its row with at the call, and the coverage read a temporal target's flush makes — with their planning, compilation, and row conversion over provider-free rows; the pre-commit flush's planning, settlement, and SQL lowering; production PostgreSQL bind adaptation; psycopg's own transformer dump of every bind, document binds included; the commit | the read of the row an observed write revises, earlier in the same transaction, and the Typed `edit` or Wire changes document authored against it; a target's caller-authored instance or document; database execution and network time |
+| `keyed-write` | write-lowering | one public keyed verb (`tx.insert`, `tx.update`, a bounded `tx.update`, or its `tx.wire` peer), or one caller-addressed target write (`tx.wire.update` naming the Entity, `tx.replace`, `tx.wire.replace`), until `transact` returns: Typed row serialization or the caller's Wire document; preparation; effective-change classification and buffering; a target's own coverage read at flush, with its planning, compilation, and row conversion over provider-free rows; the pre-commit flush's planning, settlement, and SQL lowering; production PostgreSQL bind adaptation; psycopg's own transformer dump of every bind, document binds included; the commit | the read of the row an observed write revises, earlier in the same transaction, and the Typed `edit` or Wire changes document authored against it; a target's caller-authored instance or document; database execution and network time |
 | `predicate-acquisition` | write-lowering | one public `tx.wire.amend_where` bounded by `until`, a Bitemporal `amendUntil`, over the caller's target and changes documents: document capture, instruction deserialization and preparation; the resolving read's planning and compilation, as of `valid_from`; row publication and materialization; predecessor ownership establishment from freshly composed mutable rows; aligned column construction; buffering of the Materialized Write Group | the flush and driver serialization — the transaction is abandoned after the checkpoint |
 | `predicate-flush` | write-lowering | the same verb from the caller's documents until `transact` returns: selection and buffering as above, then the pre-commit flush's batches — each batch's coverage reads, settlement, and SQL lowering — and the commit, over provider-free rows; the retained checkpoint is the first write naming the last selected object | production bind adaptation and driver serialization, which the port's write observation omits; database execution and network time |
 | `model-preparation` | write-lowering | one `prepare_model` over the whole structural write model: formation from the declared Entity Classes, layouts, row codec, graph construction, and write planner | the Entity Class declarations themselves, which are retained by the importing module |
@@ -105,9 +105,8 @@ total of what the window allocated.
 Retained checkpoints: `keyed-write` reads what the verb kept — the difference
 between a sample taken after the read and one taken once the verb has buffered,
 both inside the transaction body and before the flush; a target reads nothing
-before its verb, so its first sample opens the transaction body and its
-increment includes what an unversioned target's acquisition keeps, but not its
-coverage read, which runs at flush; `predicate-acquisition`
+before its verb, so its first sample opens the transaction body, and its
+coverage read runs at flush, after the checkpoint; `predicate-acquisition`
 samples inside the transaction body with the group buffered, before any flush;
 `model-preparation` samples with the prepared selection alive; a geometry or
 leaf-type read samples with the delivered results alive;
@@ -187,7 +186,7 @@ layout, twelve Transaction-Time-Only cases and eight others. The Typed and Wire
 twins of a case lower to identical statements and binds, which the fixture
 suite proves.
 
-### Caller-addressed target writes — 18 cases per runtime
+### Caller-addressed target writes — 12 cases per runtime
 
 The same categorical Entities and stored rows, revised by a target write over a
 row the transaction never read (`<family>.target-patch.<layout>.wire` and
@@ -196,12 +195,12 @@ row the transaction never read (`<family>.target-patch.<layout>.wire` and
 replacement is a Typed `tx.replace` or a Wire `tx.wire.replace`. Each target
 assigns every writable member the values its observed twin assigns, at the
 twin's key, and states the revision a caller last observed: the stored
-milestone's Transaction-Time start for a temporal Entity, and none for the
-unversioned Non-Temporal one. Every transaction is Optimistic.
+milestone's Transaction-Time start. The unversioned `plain` family states no
+revision a caller could observe, so it has no target write. Every transaction
+is Optimistic.
 
 | Family | Observed twin | Window `[from, until)` | Reads inside the window | Statements |
 |---|---|---|---|---:|
-| `plain` | `plain.changed` | — | the shared-lock point read an unversioned target acquires its row with at the call | 1 |
 | `txtime` | `txtime.changed` | — | the coverage read at flush | 2 |
 | `bitemporal` | `bitemporal.interior` | `[2026-03-01, 2026-09-01)` | the coverage read at flush, from `from` | 4 |
 
@@ -419,13 +418,13 @@ once when a handle connects rather than per delivery.
 
 `../../spec/memory-gates.yaml` is the blocking half of this evidence: one
 ceiling per byte-unit reading address of the structural windows — the retained
-checkpoint and the high-water mark of each of the 64 keyed-write cases (the 46
-categorical, geometry, and changed-ancestor cases and the 18 target writes), the
+checkpoint and the high-water mark of each of the 58 keyed-write cases (the 46
+categorical, geometry, and changed-ancestor cases and the 12 target writes), the
 six acquisition levels, the two model-preparation checkpoints, and the leaf-type
-families' 46 keyed inserts and 24 acquisitions (284 gates, in bytes per row or
+families' 46 keyed inserts and 24 acquisitions (272 gates, in bytes per row or
 bytes), and the retained and peak readings of the eighteen geometry reads, nine
 cold plan compilations, and twenty-two leaf-type reads (98 gates, in KiB
-converted to bytes) — 382 in all, beside the scaling domains and the advisory
+converted to bytes) — 370 in all, beside the scaling domains and the advisory
 allowances. The cost
 class grades them, under both layouts and through the same reading children the
 capture uses, in `tests/unit/tools/test_write_lowering_reading_gates.py` and
@@ -442,7 +441,7 @@ Every ceiling is the rule's output, not an edit: the largest reading of the
 address on either runtime in the capture the file names as its basis —
 `recovered/portfolio.json` — scaled by **1.10** and rounded up to a whole byte, and
 `test_every_memory_gate_is_the_basis_reading_under_the_stated_rule`
-recomputes all 382 from it. The headroom is the Budget Contract's own
+recomputes all 370 from it. The headroom is the Budget Contract's own
 `individualMax` for a memory cell; the run-to-run agreement recorded under
 *Measured noise floor* — retained checkpoints within 2.8% and high-water marks
 within 1% on this runner, and a further 1–3% between the two runtimes, which
@@ -457,51 +456,30 @@ ceiling to relax.
 The gates were first derived from `before/` and have since been re-derived
 under the same rule whenever a verified capture became canonical. Git history
 keeps the earlier derivations beside their captures. The present basis is
-*Current HEAD capture*: all **580 runtime readings at 382 gated addresses**
-were first graded against the outgoing ceilings. 560 passed; the closest was
-`ancestor.sparse-64.document.typed.transientBytes` on 3.14 at 8,987 B/row
-against 9,257, **97.1%** of its outgoing ceiling.
+*Current HEAD capture*: all **556 runtime readings at 370 gated addresses**
+were first graded against the outgoing ceilings, and all passed. The closest
+was `acquisition.rows-8.columns.retainedBytes` on 3.14 at 1,965 B/row against
+1,980, **99.2%** of its outgoing ceiling; *Comparisons and limits* under the
+current capture attributes its rise.
 
-The other 20 readings exceed their outgoing ceilings by design. They are the
-`transientBytes` high-water marks, on both runtimes, of the ten bitemporal
-writes that open more than one successor row:
-`bitemporal.interior.{columns,document}.{typed,wire}`,
-`bitemporal.target-patch.{columns,document}.wire`, and
-`bitemporal.target-replace.{columns,document}.{typed,wire}`. Contiguous
-compatible temporal openings lower to one multi-row insert of up to 64 entries,
-so a write that opens three successor rows holds all three rows' binds live in
-one statement rather than releasing each row's before forming the next.
+Re-derivation keeps the **1.10** factor. It drops the twelve gates of the six
+retired `plain.target-*` writes, leaving 370 addresses: 121 ceilings fell, 85
+rose, and 164 stayed identical. Every rise passed its outgoing ceiling:
 
-| Addresses | Readings, B/row | Outgoing ceilings, B/row | Over the ceiling | Against the outgoing readings |
-|---|---:|---:|---:|---:|
-| `bitemporal.interior.*`, four | 17,838–20,123 | 15,549–17,408 | +5.2% to +25.3% | +21.2% to +37.8% |
-| `bitemporal.target-*`, six | 24,038–24,591 | 21,753–23,071 | +4.3% to +12.9% | +15.7% to +26.1% |
+- The cold plan peaks rose 6.4%, and the guarded-include cold plan peaks
+  2.4–4.9%, nine ceilings; their retained ceilings, six, rose under 0.1%.
+- The acquisition and leaf-type acquisition checkpoints, 30 ceilings, rose
+  0.3–9.2%, most at eight rows; their high-water marks, 30 ceilings, rose
+  under 0.6%.
+- The two model-preparation addresses, four ceilings, rose 1.4–2.3%.
+- The `txtime.target-*` high-water marks, six ceilings, rose 0.26%.
 
-Their retained checkpoints are unchanged to the byte, as is every keyed-write
-retained checkpoint in the capture. A diagnostic reading of the same ten cases
-at the producing tree, outside this capture, with grouped openings limited to
-one entry, read high-water marks 2,878–4,998 B/row lower, every one under its
-outgoing ceiling, and identical retained bytes. The repository owner authorized
-re-basing these ten addresses on the grouped readings, and their ceilings were
-re-derived with every other one under the unchanged rule.
-
-Re-derivation preserves all 382 addresses and the **1.10** factor: 16 ceilings
-fell, 116 rose, and 250 stayed identical. Those ten rose 16.4–37.8%. The other
-106 rises passed their outgoing ceilings:
-
-- `txtime.changed` and the changed-ancestor updates' high-water marks, twelve
-  ceilings, rose 2.4–6.8%. This capture does not attribute the rise.
-- The typed geometry, leaf-type and `txtime.opening` insert high-water marks,
-  65 ceilings, rose 0.07–1.30%.
-- The `rows-8` acquisition and leaf-type acquisition checkpoints, 26 ceilings,
-  rose 1–2 B.
-- Three `leaf-timestamp` read ceilings rose 0.11–0.21%.
-
-The falls are all within 1.8%: `plain.changed`, `txtime.target-*`, and
-`geometry.depth-8` high-water marks, two cold plans, one guarded plan, and the
-`leaf-timestamp.document` peak. These are the owner's mechanical outputs from
-the new basis, after the old-ceiling check; no ceiling was edited individually.
-Cross-day changes in a ceiling alone do not identify a code cause.
+The falls are the geometry and leaf-type read checkpoints and peaks, 80
+ceilings, by 0.3–12.3%; the 16 observed-update checkpoints of
+`txtime.changed`, `bitemporal.interior`, and the changed-ancestor updates, by
+8–9 B each; the three guarded-include plan checkpoints, within 0.5%; and 22
+keyed-write high-water marks, within 2.6%. These are mechanical outputs from the new basis,
+after the old-ceiling check; no ceiling was edited individually.
 
 A gate's
 sensitivity is therefore the headroom alone at every address: a retained
@@ -552,7 +530,7 @@ worth less than the headroom is invisible to its gate.
 
 `tests/unit/_memory_gate_support.py` names the cost item owning each gate;
 `tests/unit/test_memory_gate_ownership.py` grades that every named item is
-collected in the cost class and that the owners partition the 382 gates, so a
+collected in the cost class and that the owners partition the 370 gates, so a
 gate is never owned by a report member's registration. The prepared-model owner
 claims both preparation cases, `model.prepared` and `model.prepared.family`; the
 cold-plan owner claims the geometry levels under `plan-` and the guarded include
@@ -1263,6 +1241,126 @@ delivery and stress ceiling other than the seventeen timing cells, the one
 memory cell, and the two scaling arms named above is within its limit.
 
 ## Current HEAD capture — `recovered/`
+
+One complete capture from the clean head of a published pull-request branch,
+`d125a65958c86cc0912d0498c01699d89c109659`, on **2026-10-16
+09:53:29–10:52:58 EDT** (13:53:29–14:52:58 UTC). The collector exited **0**,
+taking **59m29s wall clock** and 3,568.116 s in its recorded collection span,
+against about 3,552 s projected from the outgoing capture's retained durations
+less the 10.8 s its six retired cases took. No workload levels, supported
+runtimes, warm-ups, or samples were reduced. The canonical collector,
+`tools/cost_report.py --out` as `just python-report-cost` runs it, wrote
+outside the checkout under `caffeinate -i` and nice 5; its original output,
+collector log, preflight logs, and load samples are retained outside Git.
+
+The runner was the outgoing capture's: Mac17,4, Apple M5, 10 cores, 32 GiB,
+arm64, macOS 27.0.1 build 26A434, on AC power. CPython **3.13.16** ran in
+per-member temporary environments and **3.14.8** in the checkout environment.
+OrbStack was stopped and started before capture, and the `postgres:18.6-alpine`
+server was verified as 18.6. Before collection, `cost_report.preflight()`
+passed, one actual reading child of every member completed on both minors, and
+the compiled PostgreSQL loaders passed their unit and provider tests on both
+minors under the binary psycopg 3.3.6 implementation and libpq 180006, 95
+tests each. No competing tests or measurements ran, but the machine was not
+idle. An operating-system package install and Spotlight indexing finished in
+the minutes before the run, so the 1-, 5- and 15-minute load averages were
+3.11, 4.06 and 5.18 at the start; they were 1.48, 1.83 and 2.10 at the end, and
+the per-minute 1-minute figure had a median of 2.26 and a maximum of 5.03. The
+HumanLayer app's daemon stayed active throughout, and this run's record does
+not establish whether the Backblaze backup workers were paused. Runtime
+identities, instrument source hashes and durations are in
+[conditions.json](recovered/conditions.json) and
+[durations.json](recovered/durations.json).
+
+| Member | Authority | Runtimes | Readings | Collection seconds |
+|---|---|---|---:|---:|
+| snapshot-delivery | authoritative | 3.13, 3.14; leaf types on 3.14 | 596 | 2,970.471 |
+| lifecycle-overhead | non-authoritative | 3.14 | 87 | 12.331 |
+| instance-state | non-authoritative | 3.13, 3.14 | 696 | 14.012 |
+| write-lowering | non-authoritative | 3.13, 3.14; leaf types on 3.14 | 1,446 | 549.874 |
+| feature-boundary | non-authoritative | 3.13, 3.14 | 180 | 21.335 |
+
+All five members name the same clean producing commit. There are **3,005
+readings**, no errors, no incomplete cells, and no collector failures. Authority
+labels follow the existing contract; provider-free members remain
+non-authoritative. No post-capture re-classification was needed. Portfolio
+SHA-256 is `1b476bc83215561580416d258179bdf63c1e095f61a0579c336beaa42f4a51ef`.
+
+Exact-current verification requiring snapshot, write, instance-state and
+feature-boundary passed, as did lock freshness. Recorded and inspected lock
+digests are `ba94b858fe8d97e5b38e66362623f67e2e6634515530972af4459e0dcee51334`.
+Against the outgoing and the re-derived gates alike, two advisories remain,
+distinct from integrity failures and blocking memory gates:
+
+```text
+advisory: document-heavy.streamedMemory.page128PeakKiB grows 72.192 KiB between memory arms
+advisory: bitemporal-current.streamedMemory.page128PeakKiB grows 26.030 KiB between memory arms
+```
+
+No timing ceiling is exceeded, and no reading exceeds its outgoing memory gate.
+
+### Comparisons and limits
+
+[comparison-previous.md](recovered/comparison-previous.md) pairs this capture
+with the outgoing canonical portfolio, the October 11 capture retained at
+`3535d3e0f` in Git. All 3,005 readings pair. The 96 outgoing readings missing
+on head are the six `plain.target-*` writes, retired because an unversioned
+family states no revision a caller could observe. Seventy instance-state pairs
+have zero bases and are reported incomparable. No count changed.
+
+Hardware, OS, PostgreSQL, interpreter patch versions and embedded Budget
+Contract match the outgoing capture. The lock differs, as do the write-lowering
+and feature-boundary workload digests and instrument or control sources of every
+member; the Snapshot workload digest does not. Consequently
+`--require-compatible` rejects the pair; these are descriptive comparisons
+across days, not isolated causal trials. Two bodies of change lie between the
+captures: main-line changes merged before `7b465769` and after the outgoing
+capture, and the branch `7b465769..d125a6595`. Diagnostic readings on 3.14,
+taken after this run through the same reading children at the intermediate
+commits named, place every byte change outside the 3% allowance:
+
+| Change in this capture | Introduced at |
+|---|---|
+| Standalone delivery keeps less: control-delivery retained median −17.6% on both runtimes, peak −7.6% and −11.1%; live retained −6% to −55%; geometry-read checkpoints −3% to −12%, 2.7–3.0 KiB per 32 roots; positional-materialization retained −7.2% and −8.9% per projection, with its transient share shifting −18% to +22%; result-held metadata −4.6% to −17.7% | `e3785f21a..7ab69577a`, which retains no read evidence outside a writable attempt; spot readings at `7b465769` equal the outgoing capture's |
+| A Typed node state's lifecycle 136 → 144 B in every instance-state scenario; a compact projection +24 B | `e3785f21a..7ab69577a`: the root-conformance slot and the Wire node's provenance slots |
+| A fixed 1.1–1.3 KB more retained inside the transaction by `wire-insert-response` (+13.8%, +14.4%) and every predicate acquisition (`rows-8` +8.7%, +9.2% per row; leaf-type acquisitions up to +5.2%) | +827 B by `3850203e9`, read-only transactions on a shared attempt lifetime; +498 B by `e3785f21a`, uniform replay; +24 B for the insert response's node by `98816ebcc` |
+| Observed-update checkpoints −8 B per row | `98816ebcc`, which drops twinned observations |
+| Cold plan peaks: `plan-*` +6.4%, guarded includes +2.4–4.9%, Typed predicate cold plans +6.0% to +18.7%, retained plans within 0.1% | main line: `47c3ea96d`, `1c842b371` and `24b1f8028`; readings at `7b465769` equal this capture's |
+| Instance-state construction ratios +36%; the shallow legacy transient −98 B | main-line dependency updates `ca7156c3b..947a62eaa`; `e3785f21a..7ab69577a` moves the 3.14 ratio from 0.695 to 0.719 |
+
+The `bitemporal-current` streamed page-128 arms both fall, to 159.3 and
+185.3 KiB on 3.14 from 196.4 and 201.8, while their growth widens from 5.4 to
+26.0 KiB. The arms read 201.4 and 218.9 at `7b465769`, 197.4 and 212.3 at
+`e3785f21a`, and 159.3 and 187.1 at `62a0b787f`, so evidence removal lowers
+the 200-root arm by 38 KiB and the 2,000-root arm by 25 KiB. Repeated drains at
+the producing commit read 25.0–27.9 KiB of growth. This capture does not
+attribute the difference further.
+
+Every other keyed-write checkpoint is unchanged to the byte, and keyed-write
+high-water marks move −2.6% to +0.3%. The keyed-write elapsed medians move
++0.37% on 3.13 and +0.82% on 3.14; live delivery `maxMs` −6.3% and −5.9%;
+control delivery −3.0% and −5.3%; cold plan compilation +5.0% and +3.3%; and
+Typed predicate cold plans +11.3% and +6.0%. These are medians of individual
+cell ratios, not ratios of pooled samples or total collection durations, and do
+not support a timing claim beyond the cells named.
+
+[comparison-before.md](recovered/comparison-before.md) and
+[comparison-after.md](recovered/comparison-after.md) compare the fixed bases;
+each has 1,196 missing-base and 368 missing-head readings. Their runtime and
+source identity limitations remain as described in their historical accounts.
+[comparison-cor-191.md](recovered/comparison-cor-191.md) uses the exact Git
+portfolio and conditions at **`dc65ef88`**, with 216 missing-base and zero
+missing-head readings. None of these historical pairs passes strict
+compatibility.
+
+## Historical October 11 recovered capture — superseded
+
+This account is a frozen observation of the October 11 capture. Every
+`recovered/` file reference in this section refers to the version retained at
+**`3535d3e0f` in Git**, before the current capture replaced it, and every
+*Memory gates* › *Basis* reference to that commit's account. Its provenance,
+verification, grading and comparisons are historical, rather than claims about
+the current files or memory basis.
 
 One complete capture from the clean head of a published pull-request branch,
 `609980718cbf3bcfaf3448fb6642a329b754fe87`, on **2026-10-11

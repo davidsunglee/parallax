@@ -9,14 +9,14 @@
           "version": "3.13.16"
         },
         "3.14": {
-          "executable": "/Users/david/.humanlayer/workspaces/cor-201-reduce-temporal-range-write-round-trips-qwqfrc/parallax/languages/python/.venv/bin/python",
+          "executable": "/Users/david/.humanlayer/workspaces/cor-214-simplify-transactions-and-repeatable-read-7bk9nl/parallax/languages/python/.venv/bin/python",
           "implementation": "CPython",
           "status": "available",
           "version": "3.14.8"
         }
       },
       "sources": {
-        "tests/unit/_feature_boundary_support.py": "a287828066005fc15475bed825c9a0a6204351401277dffa2c789496b9ea5f30",
+        "tests/unit/_feature_boundary_support.py": "64f02a60d9403ea6621963a7652dc847b5e321551e0a0697d8d060b120320f1b",
         "tests/unit/memory_instruments.py": "cc1c8140dd4a66aa886b9d014ec10adebb9a8dbfac23a3cd73d2bf837723894a",
         "tools/feature_boundary_overhead.py": "d7268ae2198a6778d654e3814e67cd8cea14ee544dc683af8f9bb01a841af45e",
         "tools/feature_boundary_reading.py": "8d879c4af9590a661f50dca39a8e8667f62a3dc7ffbc631550db862e7e68688f"
@@ -31,17 +31,17 @@
           "version": "3.13.16"
         },
         "3.14": {
-          "executable": "/Users/david/.humanlayer/workspaces/cor-201-reduce-temporal-range-write-round-trips-qwqfrc/parallax/languages/python/.venv/bin/python",
+          "executable": "/Users/david/.humanlayer/workspaces/cor-214-simplify-transactions-and-repeatable-read-7bk9nl/parallax/languages/python/.venv/bin/python",
           "implementation": "CPython",
           "status": "available",
           "version": "3.14.8"
         }
       },
       "sources": {
-        "tests/unit/_instance_state_support.py": "d3fc71ec93ba09ddaaa702863d9ffdacee7f4e8ab4f2a0477b31462978c19c5a",
+        "tests/unit/_instance_state_support.py": "0ea62e8a1de5a4a76541f91936eab7fc20e81262f36b02a367bbc7a6410d0e3b",
         "tests/unit/memory_instruments.py": "cc1c8140dd4a66aa886b9d014ec10adebb9a8dbfac23a3cd73d2bf837723894a",
         "tools/instance_state_overhead.py": "ad3b102f2dc61fd589243bb50d4d4af19b271c0c5423f7e61b625b59604870fc",
-        "tools/instance_state_reading.py": "7e99d835c1cb2a3a32e24e3bd0f6e23b4911d5eb529eec1b03d75bdc7fa05f75"
+        "tools/instance_state_reading.py": "3f25f428052e40de7726b2448a34927394bd7adcf1a9fa1b0a7d964b70e6ce14"
       }
     },
     "lifecycle-overhead": {
@@ -51,14 +51,14 @@
           "status": "unavailable"
         },
         "3.14": {
-          "executable": "/Users/david/.humanlayer/workspaces/cor-201-reduce-temporal-range-write-round-trips-qwqfrc/parallax/languages/python/.venv/bin/python",
+          "executable": "/Users/david/.humanlayer/workspaces/cor-214-simplify-transactions-and-repeatable-read-7bk9nl/parallax/languages/python/.venv/bin/python",
           "implementation": "CPython",
           "status": "available",
           "version": "3.14.8"
         }
       },
       "sources": {
-        "tools/lifecycle_overhead.py": "958e780dc76008bc5ac9cb8363c5de38d0e7a0e745fcde294d470fab187762d3"
+        "tools/lifecycle_overhead.py": "8aaa723d1d56ba968ad1fcba2bcf6ac02b8efc3312be9763e0cfaa2f416e68f0"
       }
     },
     "snapshot-delivery": {
@@ -70,21 +70,21 @@
           "version": "3.13.16"
         },
         "3.14": {
-          "executable": "/Users/david/.humanlayer/workspaces/cor-201-reduce-temporal-range-write-round-trips-qwqfrc/parallax/languages/python/.venv/bin/python",
+          "executable": "/Users/david/.humanlayer/workspaces/cor-214-simplify-transactions-and-repeatable-read-7bk9nl/parallax/languages/python/.venv/bin/python",
           "implementation": "CPython",
           "status": "available",
           "version": "3.14.8"
         }
       },
       "sources": {
-        "tests/unit/_delivery_control_support.py": "0ecc84095d7bef7051a6a7e103683130b355bd769fcffa3bd46ec0dc813144db",
-        "tests/unit/_leaf_type_support.py": "3236a2c55f73ca00b8a8a45a9637a019b592c6bdccb6ccff9b94fc10cc1fe5aa",
-        "tests/unit/_snapshot_materialization_support.py": "d697e8e1ce04de2d4e52e03769e3b4e64ed31dbf375dd020131a3761af0eb144",
-        "tests/unit/_structural_geometry_support.py": "d8f5eafd4cd8cfc4069fc169243fde4b936c692cb8aac4a4761829b1754a1bf1",
+        "tests/unit/_delivery_control_support.py": "deb006e98068a7f059c2771500d378cf6757dcaa37baf84feec1beab37e9f115",
+        "tests/unit/_leaf_type_support.py": "b54e7354d7896e549a6dc14268fd5a5ec4189f0cd071f3c896305c2795d5731e",
+        "tests/unit/_snapshot_materialization_support.py": "419afb567aba7c12a64d0ab924349724bac2ff5b805b7f410906d46eff6a4495",
+        "tests/unit/_structural_geometry_support.py": "41673306e078cb7e920bbf5c11d348bfe68da531a4abef21d9f653cb3ae99dd3",
         "tests/unit/_workload_spelling_support.py": "c84e87a236d549df8423293c7b05cf5a5ebb6c5a20149ffa1b9abe57527d8636",
         "tests/unit/memory_instruments.py": "cc1c8140dd4a66aa886b9d014ec10adebb9a8dbfac23a3cd73d2bf837723894a",
         "tools/snapshot_delivery_overhead.py": "f20a3d3740f0c5ebd0fa1b403e0a898fdd131178e635f80377d9db56ba946d7c",
-        "tools/snapshot_delivery_reading.py": "6ac0aeb0409c086f2a7ac9c9b142db056f0a9f8c3d54b5b8b1944980aeff5aaa"
+        "tools/snapshot_delivery_reading.py": "9867ebdad58b156ac307272ef84a889ddfc07dabcc08de6a77c110dffc2c40b3"
       }
     },
     "write-lowering": {
@@ -96,21 +96,21 @@
           "version": "3.13.16"
         },
         "3.14": {
-          "executable": "/Users/david/.humanlayer/workspaces/cor-201-reduce-temporal-range-write-round-trips-qwqfrc/parallax/languages/python/.venv/bin/python",
+          "executable": "/Users/david/.humanlayer/workspaces/cor-214-simplify-transactions-and-repeatable-read-7bk9nl/parallax/languages/python/.venv/bin/python",
           "implementation": "CPython",
           "status": "available",
           "version": "3.14.8"
         }
       },
       "sources": {
-        "tests/unit/_leaf_type_support.py": "3236a2c55f73ca00b8a8a45a9637a019b592c6bdccb6ccff9b94fc10cc1fe5aa",
-        "tests/unit/_predicate_acquisition_support.py": "d2cad746701931c54a21d8db9844c39ba08a4107d4cf02e7b78d2c712c252aac",
-        "tests/unit/_structural_geometry_support.py": "d8f5eafd4cd8cfc4069fc169243fde4b936c692cb8aac4a4761829b1754a1bf1",
+        "tests/unit/_leaf_type_support.py": "b54e7354d7896e549a6dc14268fd5a5ec4189f0cd071f3c896305c2795d5731e",
+        "tests/unit/_predicate_acquisition_support.py": "798ffbf251e2b92040804ac5797e104fe66247a71c9223f1d1f5ba934320d0d7",
+        "tests/unit/_structural_geometry_support.py": "41673306e078cb7e920bbf5c11d348bfe68da531a4abef21d9f653cb3ae99dd3",
         "tests/unit/_workload_spelling_support.py": "c84e87a236d549df8423293c7b05cf5a5ebb6c5a20149ffa1b9abe57527d8636",
-        "tests/unit/_write_lowering_support.py": "9f578c88a7659b4971d2f817ddb057aaa247b7a77de41137d13cd61252db9861",
+        "tests/unit/_write_lowering_support.py": "52d7f08c809d6274b299e65e1b695497b8166f32d32e00098dcebe1a5e574d36",
         "tests/unit/memory_instruments.py": "cc1c8140dd4a66aa886b9d014ec10adebb9a8dbfac23a3cd73d2bf837723894a",
-        "tools/write_lowering_overhead.py": "aaf6a65b71c1113e5f18ec718b54c85444c741879e3101caf7b2591236f00019",
-        "tools/write_lowering_reading.py": "209c9a25b8549adc453a34709a6fdf530253d32575ffc5a1cbedebded121cdf4"
+        "tools/write_lowering_overhead.py": "6c43b4601b816b8dceb5de068eb6c02c70c2a075e7d8ab8623f3d54b9723254a",
+        "tools/write_lowering_reading.py": "05061134e2dc7d4ee528c03fd7a55f5534b654ce814a41c381b9fa40fcd873e5"
       }
     }
   },
