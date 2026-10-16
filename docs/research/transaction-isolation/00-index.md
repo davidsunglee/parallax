@@ -76,7 +76,7 @@ move a workload.
 
 | Driver | Workload |
 |---|---|
-| `contention.py` | Hot and disjoint keyed writers, each invocation reading its account inside the attempt; `max_retries=0` first, then the default bound |
+| `contention.py` | Hot and disjoint keyed writers, each invocation reading its account inside the attempt; `max_retries=0` first, then the default bound. With `--backoff-grid`, which C4 passes, the default bound once per `(base, cap)` candidate of the full-jitter backoff grid |
 | `stream_churn.py` | A transaction-held or standalone stream with fast or slow consumption beside writers; client memory, oldest snapshot age, dead and live tuples, relation and index size, and cleanup after release. With `--read-only`, which C1 and C5 pass, a read-only transaction-held stream as well, so one arm reports writable and read-only reads at one level |
 | `end_to_end_writes.py` | Keyed, conditional, and predicate amendments over non-temporal, Transaction-Time-Only, and bitemporal targets, each window a whole `db.transact` call with any licensing read inside it |
 | `lock_snapshot_trace.py`, `guard_wal.py` | As above, captured per arm |
@@ -89,8 +89,8 @@ digests a capture actually ran.
 | File | SHA-256 |
 |---|---|
 | `scripts/_support.py` | `c41ef7b63439739b1f659a2e8d9ce3930f13310832726689e159360b12ea0605` |
-| `scripts/capture.py` | `64fad0df7e3b098c873021ceabca6a65ff54671b7864cea5ac25ec8bafd5a138` |
-| `scripts/contention.py` | `e14f457f71e7e276fdc77ded16c8b9d9f0563939c6d67f688b0fb5e3c9ad7baa` |
+| `scripts/capture.py` | `f878ceac3857728288bd311c0fe61b331c329578331a1a1757fca34a0a645a6d` |
+| `scripts/contention.py` | `91fd3a2cbccd171779f6b9c9e149aa2141cb134241ff04d327bb8d7cd1b220ce` |
 | `scripts/end_to_end_writes.py` | `015d7dc667a50fad1b6f63059755ee9ec82e0413352dd178684cced2b22f8963` |
 | `scripts/guard_wal.py` | `3eaed87f4999e964e1d984983134ad30942bb0f2033a22ba08d203cadefe0d79` |
 | `scripts/lock_snapshot_trace.py` | `a06a14359b95c45b1e5b5b890394d7bbbff9300aac7dd215fcb260937832fc18` |
@@ -101,6 +101,14 @@ Read-only transactions re-froze two of them: `stream_churn.py` gained the
 `--read-only` placement C1 compares against the writable one, and `capture.py`
 runs it for C1 and C5. The placements every other checkpoint runs, and the
 other drivers, are unchanged.
+
+Bounded randomized backoff re-froze `contention.py` and `capture.py` again.
+The driver fixes the `(base, cap)` candidate grid C4 selects from, whose middle
+cell is the provisional backoff, and its `--backoff-grid` repeats the
+default-bound runs once per candidate with the arm's internal constants
+substituted, recording the backoff each run measured. An arm without the backoff
+replays immediately and runs the default bound once. `capture.py` passes the
+option for C4 alone.
 
 ## Checkpoints
 

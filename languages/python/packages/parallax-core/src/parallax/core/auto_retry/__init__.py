@@ -9,13 +9,25 @@ their first attempt whatever their underlying error is."""
 
 from __future__ import annotations
 
+import random
+import time
 from collections.abc import Callable
+from typing import Final
 
 from parallax.core._execution._unit_work.effects import OptimisticLockConflictError
 from parallax.core._execution._unit_work.uow import RollbackOnlyError
 from parallax.core.db_error import DatabaseError
 
 __all__ = ["RetryCandidate", "check_retry_bound", "retry_eligible", "run_with_retry"]
+
+_BASE_S: Final = 0.002
+_CAP_S: Final = 0.1
+"""The full-jitter backoff's first ceiling and its bound, in seconds:
+provisional, the middle of the candidate grid the contention capture compares,
+until that capture selects measured values."""
+
+_rng = random.Random()
+_sleep: Callable[[float], None] = time.sleep
 
 
 def check_retry_bound(retries: int, /) -> None:
@@ -55,7 +67,9 @@ class RetryCandidate(Exception):
 def run_with_retry[T](attempt: Callable[[], T], *, retries: int) -> T:
     """``retries`` counts re-executions after the first attempt.
 
-    Exhaustion re-raises the original failure with the attempt count in a note.
+    Before each re-execution the loop sleeps a full-jitter delay, which grows
+    with the attempts already made up to a bound. Exhaustion re-raises the
+    original failure with the attempt count in a note, and sleeps no more.
     """
     check_retry_bound(retries)
     attempts = 0
@@ -70,3 +84,12 @@ def run_with_retry[T](attempt: Callable[[], T], *, retries: int) -> T:
                 f"bounded retry exhausted after {attempts} attempts (retries={retries})"
             )
             raise failure
+        _sleep(_delay(attempts, _rng))
+
+
+def _delay(attempt: int, rng: random.Random) -> float:
+    """The wait after ``attempt`` failed: uniform below a ceiling that doubles
+    from ``_BASE_S`` with each attempt and never passes ``_CAP_S``."""
+    # Doubling stops long past any cap, so a large bound never overflows a float.
+    doublings = min(attempt - 1, 32)
+    return rng.uniform(0.0, min(_CAP_S, _BASE_S * 2**doublings))

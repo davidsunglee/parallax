@@ -21,6 +21,7 @@ lifecycle Attempt does is its own suites'.
 from __future__ import annotations
 
 import contextlib
+import random
 from collections.abc import Callable
 from dataclasses import dataclass
 from decimal import Decimal
@@ -29,7 +30,8 @@ from typing import Any, Final, cast
 
 import pytest
 
-from parallax.core import Attr, DomainModel, Entity, Int32, attr, index
+from parallax.conformance._lifecycle_recording import RecordingLifecycleProvider
+from parallax.core import Attr, DomainModel, Entity, Int32, attr, auto_retry, index
 from parallax.core._execution._scope import ExecutionScope
 from parallax.core._execution._transaction._attempt import ReadOnlyTxnAttempt, TxnAttempt
 from parallax.core._execution._unit_work.uow import EscapedTransactionError
@@ -60,6 +62,7 @@ from parallax.core.execution import (
     TxnOptions,
     prepare_model,
 )
+from parallax.core.execution_lifecycle import AttemptRolledBack, TransactionAttemptFinished
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.unit_work import (
@@ -1112,6 +1115,109 @@ def test_a_release_that_fails_after_an_eligible_failure_ends_the_invocation() ->
     (released_after,) = port.released_after
     assert excinfo.value.__context__ is released_after
     assert not any(isinstance(link, RetryCandidate) for link in _chain(excinfo.value))
+
+
+class _AtTheCeiling(random.Random):
+    """Draws every delay at the top of its range."""
+
+    def uniform(self, a: float, b: float) -> float:
+        del a
+        return b
+
+
+@dataclass(frozen=True, slots=True)
+class _Wait:
+    """What had happened when the loop slept: the delay, the lifecycle
+    transitions delivered so far, and the connections already released."""
+
+    seconds: float
+    transitions: tuple[str, ...]
+    released: int
+
+
+def _waits_recorded(
+    monkeypatch: pytest.MonkeyPatch, recorder: RecordingLifecycleProvider, port: ScriptedAdapter
+) -> list[_Wait]:
+    """Substitute the loop's sleep, recording each wait against ``recorder``'s
+    one root and ``port``'s releases, and draw every delay at its ceiling."""
+    waits: list[_Wait] = []
+
+    def sleep(seconds: float) -> None:
+        (root,) = recorder.roots
+        transitions = tuple(type(event).__name__ for event in root.events)
+        waits.append(_Wait(seconds, transitions, len(port.cleanups)))
+
+    monkeypatch.setattr(auto_retry, "_sleep", sleep)
+    monkeypatch.setattr(auto_retry, "_rng", _AtTheCeiling(0))
+    return waits
+
+
+def _committing(_attempts: list[int]) -> Callable[[TxnAttempt], str]:
+    return lambda _tx: "ok"
+
+
+def _conflicting_once(attempts: list[int]) -> Callable[[TxnAttempt], str]:
+    def body(_tx: TxnAttempt) -> str:
+        attempts.append(len(attempts))
+        if len(attempts) == 1:
+            raise _conflict()
+        return "ok"
+
+    return body
+
+
+@pytest.mark.parametrize(
+    ("script", "body"),
+    [
+        ((Transact(commit=deadlock()), Transact()), _committing),
+        ((Transact(), Transact()), _conflicting_once),
+    ],
+    ids=["deadlock-at-commit", "conflict-in-the-callback"],
+)
+def test_a_replay_waits_only_after_the_failed_attempt_released_and_finished(
+    monkeypatch: pytest.MonkeyPatch,
+    script: tuple[Transact, ...],
+    body: Callable[[list[int]], Callable[[TxnAttempt], str]],
+) -> None:
+    recorder = RecordingLifecycleProvider()
+    port = ScriptedAdapter(*script)
+    waits = _waits_recorded(monkeypatch, recorder, port)
+
+    assert scope(port, provider=recorder).transact(body([]), itself) == "ok"
+
+    (wait,) = waits
+    assert wait.seconds == auto_retry._delay(1, _AtTheCeiling(0))  # pyright: ignore[reportPrivateUsage] - the first attempt's ceiling
+    assert wait.released == 1
+    assert wait.transitions[-3:] == (
+        "ReleaseStarted",
+        "ReleaseFinished",
+        "TransactionAttemptFinished",
+    )
+    (root,) = recorder.roots
+    after = [type(event).__name__ for event in root.events[len(wait.transitions) :]]
+    assert after[0] == "TransactionAttemptStarted"
+    finished = root.events[len(wait.transitions) - 1]
+    assert isinstance(finished, TransactionAttemptFinished)
+    assert isinstance(finished.outcome, AttemptRolledBack)
+    assert finished.outcome.failure.retry_eligible
+
+
+def test_nothing_that_ends_the_invocation_waits(monkeypatch: pytest.MonkeyPatch) -> None:
+    recorder = RecordingLifecycleProvider()
+    port = ScriptedAdapter(
+        Transact(begin=deadlock()),
+        Transact(commit=DatabaseError(category="uniqueViolation", native_code="23505", message="")),
+        Transact(commit=deadlock()),
+    )
+    waits = _waits_recorded(monkeypatch, recorder, port)
+    db = scope(port)
+    with raises_contextualized(DatabaseError):
+        db.transact(_must_not_run_callback, itself)
+    with raises_contextualized(DatabaseError):
+        db.transact(lambda _tx: "ok", itself)
+    with raises_contextualized(DatabaseError):
+        db.transact(lambda _tx: "ok", itself, max_retries=0)
+    assert waits == []
 
 
 def _chain(failure: BaseException) -> list[BaseException]:
