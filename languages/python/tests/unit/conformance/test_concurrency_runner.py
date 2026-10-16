@@ -756,6 +756,41 @@ def _blocking_write(sql: str) -> ConcurrencyStep:
     return ConcurrencyStep(statements=((sql, ()),), kind="write", expect_rows=None, blocks=True)
 
 
+@pytest.mark.parametrize(
+    ("rounds", "crowded"),
+    [
+        (
+            (
+                {"A": _blocking_write("update t set x = 1")},
+                {"B": _blocking_write("update t set y = 1")},
+                {"A": _commit(), "B": _commit()},
+            ),
+            1,
+        ),
+        (
+            (
+                {
+                    "A": ConcurrencyStep(
+                        statements=(("update t set y = 1", ()),), kind="write", expect_rows=None
+                    ),
+                    "B": _blocking_write("update t set x = 1"),
+                },
+                {"A": _commit()},
+                {"B": _commit()},
+            ),
+            0,
+        ),
+    ],
+    ids=["peer-still-blocked", "peer-in-the-same-round"],
+)
+def test_run_rounds_refuses_a_blocking_step_that_does_not_wait_alone(
+    rounds: tuple[dict[str, ConcurrencyStep], ...], crowded: int
+) -> None:
+    peers = iter([_FakeSession(), _FakeSession()])
+    with pytest.raises(ValueError, match=f"round {crowded}: a blocking step must wait alone"):
+        concurrency_runner.run_rounds(rounds, lambda: next(peers), lock_waits=lambda: 1)
+
+
 def test_run_rounds_reraises_a_blocking_statements_unexpected_failure() -> None:
     class _Broken(_FakeSession):
         def execute_write(self, sql: str, binds: Sequence[Any]) -> int:

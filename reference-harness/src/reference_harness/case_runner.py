@@ -271,6 +271,7 @@ def _assert_error_shape(case: Case) -> None:
         )
     _assert_commit_is_a_nodes_last_step(case)
     _assert_blocking_steps_are_released(case)
+    _assert_blocking_steps_wait_alone(case)
 
 
 def _assert_concurrency_success_shape(case: Case) -> None:
@@ -286,6 +287,7 @@ def _assert_concurrency_success_shape(case: Case) -> None:
     _assert_concurrency_success_step_kinds(case)
     _assert_commit_is_a_nodes_last_step(case)
     _assert_blocking_steps_are_released(case)
+    _assert_blocking_steps_wait_alone(case)
 
 
 def _assert_boundary_shape(case: Case) -> None:
@@ -2635,6 +2637,33 @@ def _assert_blocking_steps_are_released(case: Case) -> None:
                     f"needs a later step of node {peer}, no later than node {node}'s next "
                     f"step, to release the lock it waits on"
                 )
+
+
+def _assert_blocking_steps_wait_alone(case: Case) -> None:
+    """Guard: nothing else can wait while a blocking step's wait is observed.
+
+    The engine's lock-wait view counts every waiting transaction of the case's
+    database, so it proves the blocking step's own statement waits only when no
+    peer statement can be waiting beside it: none in the same round, and no
+    peer blocking step still outstanding.
+    """
+    rounds = (case.concurrency or {}).get("rounds", [])
+    outstanding: set[str] = set()
+    for index, rnd in enumerate(rounds):
+        acting = [node for node in _CONCURRENCY_NODES if rnd.get(node) is not None]
+        outstanding.difference_update(acting)
+        for node in acting:
+            step = rnd[node]
+            if not (isinstance(step, dict) and step.get("blocks")):
+                continue
+            peer = "B" if node == "A" else "A"
+            if peer in acting or peer in outstanding:
+                raise CaseFailure(
+                    f"{case.path.name}: /concurrency/rounds/{index}/{node}: a blocking step "
+                    f"must wait alone; node {peer} "
+                    + ("acts in the same round" if peer in acting else "is still blocked")
+                )
+            outstanding.add(node)
 
 
 def _assert_error_normalization(case: Case, dialect: str) -> None:

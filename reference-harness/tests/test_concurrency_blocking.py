@@ -164,6 +164,27 @@ def test_runner_accepts_a_release_in_the_round_of_the_nodes_next_step() -> None:
     _assert_schema(_case(_success(rounds)))  # must not raise
 
 
+def test_runner_refuses_a_blocking_step_while_its_peers_blocking_step_is_outstanding() -> None:
+    rounds = _blocking_rounds()
+    rounds[2:] = [
+        {"A": {"kind": "write", "blocks": True, "statements": [_entry(_UPDATE, [2, 2])]}},
+        {"A": {"kind": "commit"}, "B": {"kind": "commit"}},
+    ]
+    with pytest.raises(
+        CaseFailure, match=r"/concurrency/rounds/2/A: a blocking step must wait alone; node B is"
+    ):
+        _assert_schema(_case(_success(rounds)))
+
+
+def test_runner_refuses_a_peer_step_in_a_blocking_steps_round() -> None:
+    rounds = _blocking_rounds()
+    rounds[1]["A"] = {"kind": "write", "statements": [_entry(_UPDATE, [2, 2])]}
+    with pytest.raises(
+        CaseFailure, match=r"/concurrency/rounds/1/B: a blocking step must wait alone; node A acts"
+    ):
+        _assert_schema(_case(_success(rounds)))
+
+
 def test_runner_refuses_affected_rows_that_miscount_the_statements() -> None:
     rounds = _blocking_rounds()
     rounds[0]["A"]["affectedRows"] = [1, 1]

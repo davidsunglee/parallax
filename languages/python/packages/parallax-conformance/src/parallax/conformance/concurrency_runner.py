@@ -433,6 +433,19 @@ def _walk_rounds(
         _finish(blocked, result)
 
 
+def _crowded_blocking_round(rounds: Sequence[Mapping[str, ConcurrencyStep]]) -> int | None:
+    """The first round whose blocking step a peer statement could wait beside."""
+    outstanding: set[str] = set()
+    for index, round_steps in enumerate(rounds):
+        outstanding.difference_update(round_steps)
+        for node, step in round_steps.items():
+            if step.blocks and (len(round_steps) > 1 or outstanding):
+                return index
+            if step.blocks:
+                outstanding.add(node)
+    return None
+
+
 def run_rounds(
     rounds: Sequence[Mapping[str, ConcurrencyStep]],
     control_factory: Callable[[], RoundsSession],
@@ -492,12 +505,21 @@ def run_rounds(
     lock-wait budget, issues its statement on a thread of its own, and ends
     its round once ``lock_waits`` — the count of this database's backends
     waiting for a lock, which a choreography with a blocking step requires —
-    reports the wait. The node's next step, and the end of the choreography,
-    wait for the statement to finish; its outcome lands on the round that
-    authored it, carrying whether the wait was seen.
+    reports the wait. Because that count is the database's, a blocking step
+    must wait alone: a choreography with a peer step in its round, or a peer
+    blocking step still outstanding, raises ``ValueError``. The node's next
+    step, and the end of the choreography, wait for the statement to finish;
+    its outcome lands on the round that authored it, carrying whether the wait
+    was seen.
     """
     if lock_waits is None and any(step.blocks for steps in rounds for step in steps.values()):
         raise ValueError("a choreography with a blocking step needs lock_waits to observe it")
+    crowded = _crowded_blocking_round(rounds)
+    if crowded is not None:
+        raise ValueError(
+            f"round {crowded}: a blocking step must wait alone — lock_waits counts every "
+            "waiting backend, so no peer step may share its round or still be blocked"
+        )
     with contextlib.ExitStack() as stack:
         sessions: dict[str, RoundsSession] = {}
         for node in _NODES:
