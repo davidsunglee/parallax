@@ -79,11 +79,16 @@ _CODES: dict[int, str] = {
 }
 
 # Each portable Isolation Level (m-db-port), keyed by the core serialized value a
-# case declares, as the statements that open a session at it. Repeatable Read takes
-# two: without `innodb_snapshot_isolation` InnoDB lets a locking read or a write see
-# the current row rather than the read view's, which is the lost update the level
-# forbids. It is set explicitly whatever the server defaults to, so the promise is a
-# property of the session rather than of the booted release's default.
+# case declares, as the statements that open a session at it. Read Committed and
+# Repeatable Read each take two, because `innodb_snapshot_isolation` decides what a
+# write meeting a row changed after its read view does, and each level needs the
+# opposite answer. Repeatable Read needs it ON: without it InnoDB lets a locking read
+# or a write see the current row rather than the read view's, which is the lost update
+# the level forbids. Read Committed needs it OFF: with it a write that waited on a row
+# another transaction changed is refused as `1020` instead of re-checking that row's
+# committed version, a snapshot conflict the level never asks for. Both are set
+# explicitly whatever the server defaults to, so the behavior is a property of the
+# session rather than of the booted release's default.
 # Serializable never sets it: that level forbids the anomaly through shared locking
 # reads and range protection instead, and the read view is not what it works from.
 # The omission is load-bearing rather than merely redundant, because the variable also
@@ -91,7 +96,10 @@ _CODES: dict[int, str] = {
 # have a conflict refused against that read view as `1020` before any lock wait forms,
 # in place of the `1213` its locking reads would otherwise deadlock on.
 _ISOLATION: dict[str, tuple[str, ...]] = {
-    "read-committed": ("set session transaction isolation level read committed",),
+    "read-committed": (
+        "set session transaction isolation level read committed",
+        "set session innodb_snapshot_isolation = OFF",
+    ),
     "repeatable-read": (
         "set session transaction isolation level repeatable read",
         "set session innodb_snapshot_isolation = ON",
@@ -99,9 +107,6 @@ _ISOLATION: dict[str, tuple[str, ...]] = {
     "serializable": ("set session transaction isolation level serializable",),
 }
 
-# The session state a Repeatable Read mapping changes, saved before a held session is
-# configured and written back after its transaction settles (m-db-port *Mapping
-# obligations*).
 # The lock-wait view reads `information_schema.innodb_trx`, which needs the
 # PROCESS privilege the provider grants its user at boot.
 _LOCK_WAITS = (
@@ -110,6 +115,10 @@ _LOCK_WAITS = (
     "(select id from information_schema.processlist where db = database())"
 )
 _EXTENDED_LOCK_WAIT_TIMEOUT = "set innodb_lock_wait_timeout = 10"
+
+# The session state the level mappings change, saved before a held session is
+# configured and written back after its transaction settles (m-db-port *Mapping
+# obligations*).
 _SAVE_SNAPSHOT_ISOLATION = "select @@session.innodb_snapshot_isolation"
 _RESTORE_SNAPSHOT_ISOLATION = "set session innodb_snapshot_isolation = %s"
 

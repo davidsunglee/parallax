@@ -133,11 +133,12 @@ def test_a_held_session_opens_at_each_declared_isolation(provider) -> None:
         assert observed == expected, f"{provider.dialect} session at {level} reported {observed!r}"
 
 
-def test_mariadb_runs_repeatable_read_with_snapshot_isolation_on(provider) -> None:
+def test_mariadb_runs_each_level_with_its_snapshot_isolation(provider) -> None:
     # MariaDB's Repeatable Read forbids the lost update only with
-    # `innodb_snapshot_isolation`, so what a session opened at that level is
-    # RUNNING with is asserted against a real server rather than inferred from the
-    # statements the provider issued.
+    # `innodb_snapshot_isolation` on, and its Read Committed re-checks a row changed
+    # during a write's wait only with it off, so what a session opened at each level
+    # is RUNNING with is asserted against a real server rather than inferred from
+    # the statements the provider issued.
     #
     # This half is live and image-dependent: on an image whose own default is ON,
     # a Repeatable Read session reports the flag on whether or not the provider
@@ -150,6 +151,8 @@ def test_mariadb_runs_repeatable_read_with_snapshot_isolation_on(provider) -> No
     probe = "select @@innodb_snapshot_isolation as flag"
     with provider.open_session() as session:
         default = session.query(probe)[0]["flag"]
+    with provider.open_session("read-committed") as session:
+        assert session.query(probe)[0]["flag"] == 0
     with provider.open_session("repeatable-read") as session:
         assert session.query(probe)[0]["flag"] == 1
     with provider.open_session("serializable") as session:
@@ -159,20 +162,23 @@ def test_mariadb_runs_repeatable_read_with_snapshot_isolation_on(provider) -> No
 def test_mariadb_restores_snapshot_isolation_after_every_attempt(provider, monkeypatch) -> None:
     # The session owner saves `innodb_snapshot_isolation` before configuring an
     # attempt and restores it once the attempt's transaction settles. Each connection
-    # here starts with the setting OFF, as state some earlier user of the connection
-    # left, so a restore that wrote anything else would show; it is read back from
-    # the real server just before the owner closes the connection. Two attempts per
-    # level prove the choreography repeats rather than holding for the first only.
+    # here starts with the setting opposite to the one its level applies, as state
+    # some earlier user of the connection left, so a restore that wrote anything else
+    # would show; it is read back from the real server just before the owner closes
+    # the connection. Two attempts per level prove the choreography repeats rather
+    # than holding for the first only.
     if provider.dialect != "mariadb":
         pytest.skip("innodb_snapshot_isolation is a MariaDB setting")
     probe = "select @@session.innodb_snapshot_isolation"
     connect = mariadb.pymysql.connect
+    prior = {"read-committed": "ON", "repeatable-read": "OFF", "serializable": "OFF"}
+    level = ""
     restored: list[int] = []
 
     def connect_with_prior_state(**params):
         connection = connect(**params)
         with connection.cursor() as cur:
-            cur.execute("set session innodb_snapshot_isolation = OFF")
+            cur.execute(f"set session innodb_snapshot_isolation = {prior[level]}")
         close = connection.close
 
         def read_back_then_close() -> None:
@@ -187,13 +193,13 @@ def test_mariadb_restores_snapshot_isolation_after_every_attempt(provider, monke
 
     monkeypatch.setattr(mariadb.pymysql, "connect", connect_with_prior_state)
     during: dict[str, list[int]] = {}
-    for level in ("repeatable-read", "serializable"):
+    for level in prior:
         for _ in range(2):
             with provider.open_session(level) as session:
                 during.setdefault(level, []).append(session.query(f"{probe} as flag")[0]["flag"])
                 session.commit()
-    assert during == {"repeatable-read": [1, 1], "serializable": [0, 0]}
-    assert restored == [0, 0, 0, 0]
+    assert during == {"read-committed": [0, 0], "repeatable-read": [1, 1], "serializable": [0, 0]}
+    assert restored == [1, 1, 0, 0, 0, 0]
 
 
 def test_lock_waits_reports_a_session_waiting_on_its_peers_row_lock(provider) -> None:

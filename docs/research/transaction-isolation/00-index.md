@@ -43,7 +43,7 @@ corpus and by the two scripts below that read statements off the real API.
 | Keyed optimistic gate race | `m-opt-lock-034`, `-035` | RC: 0 rows; RR: `40001` | RC: 0 rows; RR: `1020` |
 | Fixed-revision `*_if` after a peer change, snapshot taken first | `m-opt-lock-036`, `-037` | RC: 0 rows; RR: `40001` | RC: 0 rows; RR: `1020` |
 | Fixed revision older than the snapshot | `m-opt-lock-038` | RR: 0 rows | same |
-| Key-selecting DELETE/UPDATE after a correlation change | `m-batch-write-020`–`-027` | RC: waits, writes the moved target; RR: waits, `40001` | RC: delete waits and excludes the target, update waits and raises `1020`; RR: waits and excludes it |
+| Key-selecting DELETE/UPDATE after a correlation change | `m-batch-write-020`–`-027` | RC: waits, writes the moved target; RR: waits, `40001` | RC: delete waits and excludes the target, update waits and writes it; RR: waits and excludes it |
 | Key-selecting DELETE/UPDATE after a target-column change | `m-batch-write-028`–`-035` | RC: waits, writes the target; RR: waits, `40001` | waits and excludes it |
 | Key-selecting DELETE/UPDATE after a joined-row change | `m-batch-write-036`–`-042` | no wait; acts on the state its statement read | RC delete and both RR forms wait on the joined row and select nothing; RC update acts on the state it read |
 | Materialized versioned predicate delete | `m-batch-write-043`, `-044` | RC: 0 rows; RR: `40001` | RC: 0 rows; RR: `1020` |
@@ -141,12 +141,15 @@ outcomes through the public API.
   transaction that read before its peer committed gets `1020`. One whose first
   statement is the write has no read view yet: the key-selecting statements
   re-read the changed rows and exclude them without a conflict.
-- **MariaDB Read Committed can raise `1020`.** MariaDB 12.3 defaults
-  `innodb_snapshot_isolation` to on, and the harness's Read Committed mapping
-  leaves it as the server sets it. A key-selecting UPDATE whose target changed
-  during its wait therefore fails with `1020`, while the matching DELETE
-  excludes the target. The MariaDB Read Committed witnesses describe Read
-  Committed under that server default.
+- **MariaDB Read Committed runs with snapshot isolation off.** MariaDB 12.3
+  defaults `innodb_snapshot_isolation` to on. Under that default a
+  key-selecting UPDATE whose target changed during its wait failed with `1020`,
+  while the matching DELETE excluded the target. The harness's Read Committed
+  mapping now sets the variable off for each attempt
+  ([`m-db-port`](../../../core/spec/m-db-port.md) *Mapping obligations*), and
+  the UPDATE waits and writes the moved target, as on PostgreSQL, so the two
+  engines share `m-batch-write-024` and `-025` is retired. The DELETE still
+  excludes the target. No other MariaDB witness changed outcome.
 - **Repeatable Read stabilizes reads, not decisions.** Deep fetches, stream
   pages, and Valid-Time range reads see one snapshot on both engines, but write
   skew commits, a predicate need not hold at commit, a revision read before the

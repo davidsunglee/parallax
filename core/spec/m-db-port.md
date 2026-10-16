@@ -528,13 +528,18 @@ Read Committed meets the floor.
 Where a level needs session state rather than a boundary keyword, the adapter
 owns that state's whole life, because `m-db-port` makes the option
 boundary-scoped and an adapter may be handed a connection the application also
-uses. For MariaDB's Repeatable Read, which forbids the lost update only with
-`innodb_snapshot_isolation` on, that is four obligations per **physical attempt**:
+uses. MariaDB's `innodb_snapshot_isolation` is such state, and two levels need
+opposite values of it. Repeatable Read forbids the lost update only with it on.
+Read Committed needs it off: with it on, a write that waited on a row another
+transaction changed is refused with `1020` against the statement's read view
+instead of proceeding against that row's committed version, a snapshot conflict
+the level does not call for. For those two levels that is four obligations per
+**physical attempt**:
 
 1. read and save the session's current `innodb_snapshot_isolation`;
-2. set it `ON` before the attempt when it is not already on — for Repeatable Read
-   alone, never for Serializable, whose shared locking reads and range protection
-   forbid the same anomaly without it;
+2. set it before the attempt — `ON` for Repeatable Read, `OFF` for Read
+   Committed — whatever the server defaults to, and never for Serializable, whose
+   shared locking reads and range protection forbid the lost update without it;
 3. restore the saved value after the attempt commits or rolls back;
 4. repeat both for every retry attempt.
 
@@ -557,16 +562,16 @@ this table lists.
 
 | Decision point | Postgres | MariaDB |
 |---|---|---|
-| Read Committed | fresh statement snapshot; a statement that waited on a row another transaction changed re-evaluates its conditions against that row's new version while keeping the versions of every other row it read | fresh statement/read snapshot; the mapping leaves `innodb_snapshot_isolation` as the server sets it, and with it on a write over a row changed after the statement's read view can raise `1020` |
+| Read Committed | fresh statement snapshot; a statement that waited on a row another transaction changed re-evaluates its conditions against that row's new version while keeping the versions of every other row it read | fresh statement/read snapshot with `innodb_snapshot_isolation` off, so no snapshot conflict raises `1020`; a statement that waited on a row another transaction changed re-reads that row's committed version, and a key-selecting statement may then exclude a row Postgres would still write |
 | Repeatable Read | transaction-stable snapshot taken by the first statement; no phantoms on supported versions; write skew possible; writing or locking a row whose physical version changed after the snapshot raises `40001`, whether or not a modeled value changed | transaction-stable snapshot with `innodb_snapshot_isolation` on, taken by the first consistent read; no phantoms on the supported floor; write skew possible; a locking read or write of a row changed after that read view raises `1020`, which retries, while a transaction that writes before it reads anything has no read view yet and writes the latest committed row |
 | Serializable / conflict behavior | SSI; conflict raises `40001`, which retries | shared locking reads and range protection; conflict raises `1213`, which retries |
 
-These Repeatable Read rows are **qualified provider profiles**: two-session
-compatibility cases witness them per dialect, and they are stronger than the
-portable minimum without strengthening it. A stable snapshot still does not make
-a predicate true at commit, prevent write skew, validate a revision the caller
-read before the snapshot was taken, or coordinate concurrent creation in a
-temporal gap.
+The Read Committed and Repeatable Read rows are **qualified provider profiles**:
+two-session compatibility cases witness them per dialect, and they are stronger
+than the portable minimum without strengthening it. At Repeatable Read, a stable
+snapshot still does not make a predicate true at commit, prevent write skew,
+validate a revision the caller read before the snapshot was taken, or coordinate
+concurrent creation in a temporal gap.
 
 The graded MariaDB floor is **12.3.2+**, one floor for every supported release
 rather than one per series. Carrying `innodb_snapshot_isolation` is not enough:
