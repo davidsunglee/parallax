@@ -12,7 +12,7 @@ from parallax.core.read_delivery._page_reader import (
     EagerPageRequest,
     EagerPageResult,
     HistoryPageResult,
-    PageOrigins,
+    PageOriginCollector,
     PageReader,
     PlannedFlatPageRequest,
 )
@@ -34,7 +34,7 @@ def find[Origin](
     model: CatalogedModel,
     port: DatabaseConnection,
     *,
-    origins: PageOrigins[Origin],
+    origin_collector: PageOriginCollector[Origin],
     preference: Concurrency | None = None,
     calls: DatabaseCallScope = INERT,
     observer: MaterializationObserver = INERT_OBSERVER,
@@ -59,7 +59,7 @@ def find[Origin](
     included Entity in the same transaction takes the shared lock. Omitting it
     is how a non-transactional read locks nothing at all.
 
-    ``origins`` observes every converted projection and answers the sealed
+    ``origin_collector`` observes every converted projection and answers the sealed
     Page's origins, which the result carries by reference.
 
     ``calls`` is the scope this read brackets its Database Calls against: the
@@ -67,7 +67,7 @@ def find[Origin](
     the same code and emits nothing.
     """
     return PageReader(observer).read_page(
-        EagerPageRequest(query, model, port, preference, origins, calls, planner, edition)
+        EagerPageRequest(query, model, port, preference, origin_collector, calls, planner, edition)
     )
 
 

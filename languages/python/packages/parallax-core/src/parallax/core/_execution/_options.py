@@ -9,8 +9,8 @@ from parallax.core.db_port import IsolationLevel, isolation_level
 
 __all__ = [
     "OMITTED",
-    "DatabaseOptions",
     "Omitted",
+    "TxnOptions",
     "check_max_retries",
     "check_retry_optimistic_conflicts",
     "patch_options",
@@ -62,7 +62,7 @@ def check_retry_optimistic_conflicts(value: object) -> bool:
 
 
 @dataclass(frozen=True, slots=True)
-class DatabaseOptions:
+class TxnOptions:
     """The four transaction options a Database Root configures as defaults, and
     the resolved record every outer invocation runs under.
 
@@ -96,13 +96,13 @@ class DatabaseOptions:
 
 
 def patch_options(
-    options: DatabaseOptions,
+    options: TxnOptions,
     *,
     max_retries: int | Omitted = OMITTED,
     concurrency: Concurrency | Omitted = OMITTED,
     retry_optimistic_conflicts: bool | Omitted = OMITTED,
     isolation: IsolationLevel | Omitted = OMITTED,
-) -> DatabaseOptions:
+) -> TxnOptions:
     """Apply one partial option patch, reusing ``options`` when unchanged."""
     bound = (
         options.max_retries if isinstance(max_retries, Omitted) else check_max_retries(max_retries)
@@ -125,7 +125,7 @@ def patch_options(
         and level == options.isolation
     ):
         return options
-    return DatabaseOptions(
+    return TxnOptions(
         max_retries=bound,
         concurrency=preference,
         retry_optimistic_conflicts=opt_in,

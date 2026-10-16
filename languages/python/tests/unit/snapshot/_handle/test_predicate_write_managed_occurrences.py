@@ -29,7 +29,7 @@ from parallax.core import (
     attr,
 )
 from parallax.core.entity._model import model_of
-from parallax.snapshot import ScopedDatabase, Transaction, connect
+from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.root_ownership import own_root
 from tests._support.write_bounds import stated_start
 
@@ -122,10 +122,10 @@ def _update_where(
     trail: tuple[Document, ...],
     *,
     month: int = 7,
-) -> Callable[[Transaction], None]:
+) -> Callable[[TxnContext], None]:
     valid_from = dt.datetime(2024, month, 1, tzinfo=dt.UTC) if entity is RectangleGauge else None
 
-    def update(tx: Transaction) -> None:
+    def update(tx: TxnContext) -> None:
         if representation == "typed":
             tx.amend_where(
                 entity.where(entity.id == 1),
@@ -225,7 +225,7 @@ def test_a_keyed_write_stores_widened_float32_occurrences(
     _seed(db, VersionedGauge)
     point = _document(_FRACTIONAL[0], _SUBNORMAL[0])
 
-    def update(tx: Transaction) -> None:
+    def update(tx: TxnContext) -> None:
         if representation == "typed":
             found = tx.find(VersionedGauge.where(VersionedGauge.id == 1)).result()
             tx.amend(found.edit(point=_typed_point(point), trail=(_typed_point(point),)))

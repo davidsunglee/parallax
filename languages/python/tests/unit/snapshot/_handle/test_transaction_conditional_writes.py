@@ -29,7 +29,7 @@ from parallax.core.entity._expressions import AttributeRef
 from parallax.core.entity._model import model_of
 from parallax.core.unit_work import TargetWrite, WriteInstructionError, WriteRejectedError
 from parallax.core.write_plan.steps import UNVERSIONED
-from parallax.snapshot import Transaction, WireEntity
+from parallax.snapshot import TxnContext, WireEntity
 from parallax.snapshot._handle._wire import WireTransactionView
 from tests._support import mirrored_models as mm
 from tests._support.db_port import (
@@ -69,13 +69,13 @@ def _row(version: int = 3) -> dict[str, object]:
 
 
 def _refused(
-    call: Callable[[Transaction], object],
+    call: Callable[[TxnContext], object],
     match: str,
     error: type[Exception] = WriteInstructionError,
 ) -> None:
     port = ScriptedAdapter(Transact())
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         with pytest.raises(error, match=match):
             call(tx)
 
@@ -106,7 +106,7 @@ def test_a_conditional_write_states_exactly_the_one_condition_its_entity_takes(
 ) -> None:
     stated = cast("dict[str, Any]", condition)
 
-    def call(tx: Transaction) -> None:
+    def call(tx: TxnContext) -> None:
         if verb == "typed-amend":
             tx.amend_if(mm.Account, mm.Account.owner.set("Bo"), key=1, **stated)
         elif verb == "wire-amend":
@@ -135,7 +135,7 @@ def test_an_unversioned_target_requires_the_assertion_itself(
     port = ScriptedAdapter(Transact())
     stated = cast("dict[str, Any]", condition)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         with pytest.raises(WriteInstructionError, match=match):
             tx.wire.amend_if("Wallet", {"id": 5, "balance": "2.00"}, **stated)
         with pytest.raises(WriteInstructionError, match=match):
@@ -152,7 +152,7 @@ def test_a_window_is_refused_before_a_missing_condition() -> None:
 def test_a_temporal_target_requires_its_start_condition() -> None:
     port = ScriptedAdapter(Transact())
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         with pytest.raises(WriteInstructionError, match="takes tx_start, not unversioned"):
             tx.wire.amend_if("WherePosition", {"id": 1}, unversioned=True, valid_from=FIXED)
         with pytest.raises(WriteInstructionError, match=r"tx_start=None"):
@@ -244,7 +244,7 @@ def test_an_assignment_is_judged_before_anything_is_buffered(
 def test_an_inherited_assignment_applies_to_a_concrete_target() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[{"id": 4, "amount": Decimal(1)}]), Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.amend_if(
             CardPayment,
             Payment.amount.set(Decimal("2.00")),
@@ -264,7 +264,7 @@ def test_a_sibling_member_and_an_abstract_target_are_refused() -> None:
     port = ScriptedAdapter(Transact())
     ancestor = Payment.amount.set(Decimal(1)).attr.entity
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         with pytest.raises(WriteInstructionError, match="declares or inherits"):
             tx.amend_if(
                 CardPayment,
@@ -305,10 +305,10 @@ def test_a_conditional_key_addresses_the_key_attribute_whatever_its_name() -> No
 # --------------------------------------------------------------------------- #
 # Typed source amendment: an edited value or explicit assignments, never both. #
 # --------------------------------------------------------------------------- #
-def _read_then(write: Callable[[Transaction, mm.Account], None]) -> list[PortCall]:
+def _read_then(write: Callable[[TxnContext, mm.Account], None]) -> list[PortCall]:
     port = ScriptedAdapter(Transact(Read(rows=[_row()]), Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         write(tx, tx.find(mm.Account.where(mm.Account.id == 1)).result())
 
     account_db(port).transact(fn)
@@ -355,7 +355,7 @@ def _restored(found: mm.Account) -> mm.Account:
 def test_assignments_beside_any_edit_history_are_refused(
     edit: Callable[[mm.Account], mm.Account],
 ) -> None:
-    def write(tx: Transaction, found: mm.Account) -> None:
+    def write(tx: TxnContext, found: mm.Account) -> None:
         with pytest.raises(WriteInstructionError, match="one write has one author"):
             tx.amend(edit(found), mm.Account.balance.set(Decimal("5.00")))
 
@@ -370,7 +370,7 @@ def test_a_source_replacement_writes_the_whole_state_of_an_unedited_value() -> N
 def test_a_wire_source_replacement_without_data_writes_what_the_node_published() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[_row()]), Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.wire.replace(tx.wire.find({"target": "Account", "predicate": _ONE}).result())
 
     account_db(port).transact(fn)
@@ -396,7 +396,7 @@ def test_wire_replacement_data_stands_alone(
 ) -> None:
     port = ScriptedAdapter(Transact(Read(rows=[_row()]), Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         node = tx.wire.find({"target": "Account", "predicate": _ONE}).result()
         if isinstance(outcome, str):
             with pytest.raises((WriteInstructionError, WriteRejectedError), match=outcome):
@@ -424,7 +424,7 @@ def test_a_wire_source_amendment_sets_a_matching_key_aside(
 ) -> None:
     port = ScriptedAdapter(Transact(Read(rows=[_row()]), Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.wire.amend(tx.wire.find({"target": "Account", "predicate": _ONE}).result(), changes)
 
     account_db(port).transact(fn)
@@ -437,7 +437,7 @@ def test_a_wire_source_amendment_sets_a_matching_key_aside(
 def test_a_wire_source_key_that_is_no_key_value_is_refused() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[_row()])))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         node = tx.wire.find({"target": "Account", "predicate": _ONE}).result()
         with pytest.raises(WriteInstructionError):
             tx.wire.amend(node, {"id": "one", "balance": "5.00"})
@@ -450,7 +450,7 @@ def test_a_wire_source_key_that_is_no_key_value_is_refused() -> None:
 # A payload is judged only after the window and the condition admit the write. #
 # --------------------------------------------------------------------------- #
 _DUPLICATED = (mm.Account.owner.set("Bo"), mm.Account.owner.set("Cy"))
-_CONDITIONAL_PAYLOADS: dict[str, tuple[Callable[[Transaction], object], str]] = {
+_CONDITIONAL_PAYLOADS: dict[str, tuple[Callable[[TxnContext], object], str]] = {
     "missing-condition": (
         lambda tx: tx.amend_if(mm.Account, *_DUPLICATED, key=1),
         "requires version",
@@ -472,7 +472,7 @@ def test_a_conditional_payload_is_judged_after_its_window_and_condition(payload:
     _refused(call, match)
 
 
-_SOURCE_PAYLOADS: dict[str, Callable[[Transaction, WireEntity, mm.Account], object]] = {
+_SOURCE_PAYLOADS: dict[str, Callable[[TxnContext, WireEntity, mm.Account], object]] = {
     "wire-mismatching-key": lambda tx, node, found: tx.wire.amend(node, {"id": 2}, until=FIXED),
     "typed-undeclared-assignment": lambda tx, node, found: tx.amend(
         found, _raw("nickname", "x"), until=FIXED
@@ -485,7 +485,7 @@ def test_a_source_payload_is_judged_after_its_window(payload: str) -> None:
     write = _SOURCE_PAYLOADS[payload]
     port = ScriptedAdapter(Transact(Read(rows=[_row()]), Read(rows=[_row()])))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         node = tx.wire.find({"target": "Account", "predicate": _ONE}).result()
         found = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         with pytest.raises(WriteInstructionError, match="takes no until"):
@@ -499,7 +499,7 @@ def test_a_source_payload_is_judged_after_its_window(payload: str) -> None:
 # A stated start of None is refused wherever a start is taken.                 #
 # --------------------------------------------------------------------------- #
 _NONE = cast("dt.datetime", None)
-_STARTS: dict[str, Callable[[Transaction], object]] = {
+_STARTS: dict[str, Callable[[TxnContext], object]] = {
     "insert": lambda tx: tx.insert(
         mm.Account(id=7, owner="N", balance=Decimal(1)), valid_from=_NONE
     ),
@@ -539,7 +539,7 @@ def test_a_stated_none_start_is_refused_rather_than_read_as_omission(verb: str) 
 # --------------------------------------------------------------------------- #
 # The retired logical spellings are gone, not aliased.                         #
 # --------------------------------------------------------------------------- #
-@pytest.mark.parametrize("owner", [Transaction, WireTransactionView], ids=["typed", "wire"])
+@pytest.mark.parametrize("owner", [TxnContext, WireTransactionView], ids=["typed", "wire"])
 @pytest.mark.parametrize("name", ["update", "update_where", "amend_target", "replace_target"])
 def test_no_retired_method_remains(owner: type[object], name: str) -> None:
     assert not hasattr(owner, name)

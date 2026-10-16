@@ -8,10 +8,10 @@ from parallax.core.write_plan.observe import TemporalObservation, WriteObservati
 
 __all__ = [
     "ObjectKey",
-    "ObservedStateKey",
-    "TemporalStateKey",
-    "VersionedStateKey",
-    "observed_state_key",
+    "ObjectStateKey",
+    "TemporalObjectStateKey",
+    "VersionedObjectStateKey",
+    "object_state_key_from_observation",
 ]
 
 
@@ -19,7 +19,7 @@ __all__ = [
 class ObjectKey:
     """One object's identity: its Entity and its ordered
     ``(pk-attribute-name, value)`` pairs. The coalescing scope is keyed by it,
-    and it is the identity half of every :data:`ObservedStateKey`.
+    and it is the identity half of every :data:`ObjectStateKey`.
 
     It is deliberately STATE-independent — no version, no milestone — so it
     addresses the object across its states, which is what write coalescing,
@@ -36,7 +36,7 @@ class ObjectKey:
 
 
 @dataclass(frozen=True, slots=True)
-class VersionedStateKey:
+class VersionedObjectStateKey:
     """One exact observed state of a versioned Non-Temporal object: the object,
     and the optimistic-lock version the read saw it at.
 
@@ -50,7 +50,7 @@ class VersionedStateKey:
 
 
 @dataclass(frozen=True, slots=True)
-class TemporalStateKey:
+class TemporalObjectStateKey:
     """One exact observed state of a temporal object: the object, and the
     milestone the read saw it at.
 
@@ -65,18 +65,18 @@ class TemporalStateKey:
     milestone: Edge
 
 
-type ObservedStateKey = VersionedStateKey | TemporalStateKey
+type ObjectStateKey = VersionedObjectStateKey | TemporalObjectStateKey
 """What one Write Observation is evidence ABOUT: one exact observed state.
 
 Closed and structural. An insert and an unversioned Non-Temporal write observe
-no state and therefore have no Observed State Key at all — the absence is the
+no state and therefore have no Object State Key at all — the absence is the
 missing arm, never a key with an empty coordinate.
 """
 
 
-def observed_state_key(
+def object_state_key_from_observation(
     object_key: ObjectKey, observation: WriteObservation, shape: TemporalShape
-) -> ObservedStateKey:
+) -> ObjectStateKey:
     """The exact state ``observation`` is evidence about: ``object_key``
     qualified by the coordinate the observation itself carries.
 
@@ -89,5 +89,5 @@ def observed_state_key(
     Attributes name the members a temporal coordinate is read from.
     """
     if not isinstance(observation, TemporalObservation):
-        return VersionedStateKey(object_key, observation.observed_version)
-    return TemporalStateKey(object_key, milestone_edge(shape, observation.predecessor, None))
+        return VersionedObjectStateKey(object_key, observation.observed_version)
+    return TemporalObjectStateKey(object_key, milestone_edge(shape, observation.predecessor, None))

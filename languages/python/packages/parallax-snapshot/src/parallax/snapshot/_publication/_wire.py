@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Final, Protocol, Self, SupportsIndex, cast
 
-from parallax.core._execution._unit_work.retain import InsertionIdentity, ReadOrigin
+from parallax.core._execution._unit_work.retain import InsertionIdentity, ReadEvidence
 from parallax.core.base import INFINITY_LITERAL, ManagedValue, NeutralType, TemporalBound
 from parallax.core.deep_fetch import IncludeTree, RelationshipViewKey, RenderToken
 from parallax.core.document_codec import (
@@ -40,7 +40,7 @@ from parallax.core.read_delivery._page import ABSENT, InvalidData, VersionAttrib
 from parallax.core.wire import encode_wire
 from parallax.core.wire._codec import encode_managed_wire
 from parallax.snapshot._inspection import SnapshotInspectionError, snapshot_state_of
-from parallax.snapshot._publication._classify import ClassifiedRoot, classify_roots
+from parallax.snapshot._publication._classify import NonConformingRoot, classify_roots
 from parallax.snapshot._publication._root import RootView
 from parallax.snapshot._publication._wire_memo import IndexMemo, WireMemo
 
@@ -53,7 +53,7 @@ __all__ = [
     "authoring_of",
     "opened_wire_entity",
     "projection_entity",
-    "read_origin_of",
+    "read_evidence_of",
     "shared_wire_encoder",
     "wire_roots",
 ]
@@ -250,7 +250,7 @@ class _WireEntityNode(_FrozenMapping, WireEntity):
     ENTITY node alone: a nested Value Object mapping is structurally identical
     and must answer ``isinstance(value, WireEntity)`` with false, which is what
     lets a caller ask of any mapping in the result whether the read published it
-    as an Entity. It is also the only node that can carry a Read Origin, and the
+    as an Entity. It is also the only node that can carry Read Evidence, and the
     slot is why: a nested Value Object mapping has no slot to put one in.
 
     The hint rides a slot rather than a mapping entry, so it is not a key, not
@@ -259,17 +259,17 @@ class _WireEntityNode(_FrozenMapping, WireEntity):
     status, which is exactly what it is.
     """
 
-    __slots__ = ("_source",)
+    __slots__ = ("_read_evidence",)
 
-    _source: ReadOrigin | None
+    _read_evidence: ReadEvidence | None
 
 
 class _WireAuthoringNode(_WireEntityNode):
-    """The node a Wire insert answers: no read published it, so its Read Origin
+    """The node a Wire insert answers: no read published it, so its Read Evidence
     slot stays empty, and the authority the insertion's admission granted rides
     a slot of its own.
 
-    The authority is private exactly as a Read Origin is — not a key, not
+    The authority is private exactly as Read Evidence is — not a key, not
     iterated, not compared, not serialized, and not carried by ``dict(value)``
     — and a subclass carries it, so a node a read publishes pays nothing for a
     slot it could never fill.
@@ -308,15 +308,15 @@ def authoring_of(entity: WireEntity) -> InsertionIdentity | None:
     return getattr(entity, "_authoring", None)
 
 
-def read_origin_of(entity: WireEntity) -> ReadOrigin | None:
-    """The private Read Origin ``entity`` carries, or ``None`` for a mapping no
+def read_evidence_of(entity: WireEntity) -> ReadEvidence | None:
+    """The private Read Evidence ``entity`` carries, or ``None`` for a mapping no
     Wire read published.
 
     The one reader of the slot. A hint is never authority of its own — it names
     the exact state its read observed and nothing about what may be written —
     so this answers a fact and the write side draws the conclusion.
     """
-    return getattr(entity, "_source", None)
+    return getattr(entity, "_read_evidence", None)
 
 
 type _WireRoot = WireEntity | InvalidData[WireEntity]
@@ -335,7 +335,7 @@ def wire_roots(
     includes: IncludeTree,
     *,
     ordinal_offset: int = 0,
-    sources: Mapping[int, ReadOrigin] = MappingProxyType({}),
+    origins: Mapping[int, ReadEvidence] = MappingProxyType({}),
     encode: _Encoder = encode_managed_wire,
 ) -> tuple[WireEntity | InvalidData[WireEntity], ...]:
     """``root_view``'s roots as Wire values, in result order.
@@ -347,19 +347,19 @@ def wire_roots(
     Attribute a record publishes. ``ordinal_offset`` is where this Root View's
     roots start in the ordered result, including a later streamed Page.
 
-    ``sources`` is the Read Origin the read retained per projection index, which
+    ``origins`` is the Read Evidence the read retained per projection index, which
     each published Entity node carries privately — the same evidence the typed
     materializer attaches to the node of the same row, so the two representations
     license exactly the same writes.
     """
     classification = classify_roots(root_view, model, versions, ordinal_offset=ordinal_offset)
-    retained: Mapping[int, ReadOrigin] = (
-        sources if classification.conforming else MappingProxyType({})
+    retained: Mapping[int, ReadEvidence] = (
+        origins if classification.conforming else MappingProxyType({})
     )
     walk = WireWalk(RootViewReader(root_view, retained), includes, encode)
     published: list[_WireRoot] = []
     for verdict in classification.roots:
-        if not isinstance(verdict, ClassifiedRoot):
+        if not isinstance(verdict, NonConformingRoot):
             published.append(walk.position(verdict.node, includes.root))
             continue
         data = None if verdict.node is None else walk.position(verdict.node, includes.root)
@@ -373,7 +373,7 @@ class NodeReader[Node](Protocol):
     The walk is generic over the native reference a representation addresses a
     node by — an allocation index into a Root View — and asks a reader four
     things of one: the layout its state is read against, its positional member
-    values, one requested relationship view's raw arm, and the Read Origin it
+    values, one requested relationship view's raw arm, and the Read Evidence it
     carries. Everything about what those answers BECOME — declared-name keys,
     canonical leaves, the variant the layout fixed, occurrence rendering, finite
     descent, aliasing — belongs to the walk, so a reader exposes storage and
@@ -397,7 +397,7 @@ class NodeReader[Node](Protocol):
 
     def relationship(self, node: Node, view: RelationshipViewKey) -> object: ...
 
-    def origin(self, node: Node) -> ReadOrigin | None: ...
+    def origin(self, node: Node) -> ReadEvidence | None: ...
 
     def occurrence_carrier(self) -> OccurrenceCarrier: ...
 
@@ -408,17 +408,17 @@ class RootViewReader:
     """The :class:`NodeReader` over one Root View: a node is its allocation
     index, and every answer borrows the Root View's own indexed state.
 
-    ``sources`` is the Read Origin the read retained per projection index,
+    ``origins`` is the Read Evidence the read retained per projection index,
     resolved through the Root View's canonical projection for each node; it is
     empty for a root that does not conform, so a hydrated invalid graph carries
     none.
     """
 
-    __slots__ = ("_root", "_sources")
+    __slots__ = ("_origins", "_root")
 
-    def __init__(self, root: RootView, sources: Mapping[int, ReadOrigin]) -> None:
+    def __init__(self, root: RootView, origins: Mapping[int, ReadEvidence]) -> None:
         self._root = root
-        self._sources = sources
+        self._origins = origins
 
     def layout(self, node: int) -> EntityLayout:
         return self._root.layout(node)
@@ -439,8 +439,8 @@ class RootViewReader:
         slot = self._root.view_layout(node).index_of.get(view)
         return ABSENT if slot is None else self._root.view(node, slot)
 
-    def origin(self, node: int) -> ReadOrigin | None:
-        return self._root.projection_value(node, self._sources)
+    def origin(self, node: int) -> ReadEvidence | None:
+        return self._root.projection_value(node, self._origins)
 
     def occurrence_carrier(self) -> OccurrenceCarrier:
         return _STORED
@@ -519,8 +519,8 @@ class EntityReader:
         value = relationship_state(cast("Any", node), py_name)
         return ABSENT if value is UNLOADED else value
 
-    def origin(self, node: object) -> ReadOrigin | None:
-        return self._required(node).source
+    def origin(self, node: object) -> ReadEvidence | None:
+        return self._required(node).read_evidence
 
     def occurrence_carrier(self) -> OccurrenceCarrier:
         return _LIVE
@@ -607,7 +607,7 @@ class WireWalk[Node]:
         if cached is not None:
             return cast("_WireEntityNode", cached)
         entity = self._build(node, token, layout)
-        object.__setattr__(entity, "_source", self._reader.origin(node))
+        object.__setattr__(entity, "_read_evidence", self._reader.origin(node))
         self._memo.put(node, token, entity)
         return entity
 
@@ -853,7 +853,7 @@ def opened_wire_entity(
     caller holding the instance it passed — so the verb answers the row it
     buffered, in the one representation that can be handed straight back to a
     keyed verb. The node carries the insertion's ``authority``, which is what
-    makes it a keyed source at all, and no Read Origin, since no read published
+    makes it a keyed source at all, and no Read Evidence, since no read published
     it; the values are the payload's own, rendered through the SAME canonical
     encoding a read publishes.
 
@@ -890,6 +890,6 @@ def opened_wire_entity(
     if layout.family_variant is not None:
         _put(rendered, FAMILY_VARIANT_KEY, layout.family_variant)
     node = _frozen_mapping(_WireAuthoringNode, rendered)
-    object.__setattr__(node, "_source", None)
+    object.__setattr__(node, "_read_evidence", None)
     object.__setattr__(node, "_authoring", authority)
     return node

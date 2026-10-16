@@ -22,13 +22,14 @@ contract owners; this index does not add requirements.
 | Attempt | The execution state of one physical transaction attempt, wired before any callback sees it | [Execution](core/spec/m-execution.md) |
 | Principal / Execution Actor | Application input versus captured execution authority | [Execution authority](core/spec/m-execution-authority.md) |
 | Unit of Work | Transactional buffering and settlement boundary | [Unit of work](core/spec/m-unit-work.md) |
+| Read Evidence | Read-derived identity, participation, and state facts evaluated for source-write admission, distinct from general publication provenance | [Unit of work](core/spec/m-unit-work.md) |
 | Row Acquisition | A write's read of the existing rows it needs, described by the unit of work and executed by the runtime | [Unit of work](core/spec/m-unit-work.md) |
 | Retained Starting Row | The row a Locking target write's acquisition read whole, kept as pending data its range reuses while no earlier unit changed it | [Unit of work](core/spec/m-unit-work.md) |
 | Deferred Group / Continuation | A Bitemporal predicate amendment's objects settled at execution in batches of complete objects, versus the execution-scoped preparation that answers each batch's writes | [Unit of work](core/spec/m-unit-work.md) |
 | Observed / Insertion-Authoring Write | A write authorized by genuine read provenance versus one authorized by an admitted insertion's own source | [Unit of work](core/spec/m-unit-work.md) |
 | Target Write | A caller-addressed patch or replacement, conditioned by the revision its caller states rather than by any source | [Unit of work](core/spec/m-unit-work.md) |
 | Planned Write | One finalized semantic execution step, distinct from the SQL that lowers it | [Write plan](core/spec/m-write-plan.md) |
-| Object Key / Observed State Key | An object across its states versus one exact state a read observed | [Write plan](core/spec/m-write-plan.md) |
+| Object Key / Object State Key | A logical object across its states versus one version or temporal milestone of that object | [Write plan](core/spec/m-write-plan.md) |
 | Write Observation / Predecessor Row | The evidence a write against existing state retains, and the complete observed row a temporal one carries | [Write plan](core/spec/m-write-plan.md) |
 | Write Row / executed assignments | One represented row before its realization is chosen, and the members it states explicitly rather than carries | [Write plan](core/spec/m-write-plan.md) |
 | Write payload | What a planned write persists, prepared once and rendered by SQL lowering | [Write payload](core/spec/m-write-payload.md) |

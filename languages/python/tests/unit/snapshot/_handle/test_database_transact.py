@@ -24,7 +24,7 @@ import pytest
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import Attr, DomainModel, Entity, attr, index
 from parallax.core.db_port import DatabaseAdapter
-from parallax.core.execution import DatabaseOptions, ServingModel, prepare_model
+from parallax.core.execution import ServingModel, TxnOptions, prepare_model
 from parallax.core.unit_work import (
     CardinalityCorruptionError,
     MissingTargetError,
@@ -33,7 +33,7 @@ from parallax.core.unit_work import (
     StaleWriteError,
     WriteEvidenceError,
 )
-from parallax.snapshot import Database, ScopedDatabase, Transaction
+from parallax.snapshot import Database, ScopedDatabase, TxnContext
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
@@ -65,7 +65,7 @@ def _serving_db(port: DatabaseAdapter, serving: ServingModel) -> ScopedDatabase:
     return own_root(Database.connect(port, serving, clock=FixedClock(FIXED))).using_database_login()
 
 
-def _configured_db(port: DatabaseAdapter, options: DatabaseOptions) -> ScopedDatabase:
+def _configured_db(port: DatabaseAdapter, options: TxnOptions) -> ScopedDatabase:
     return own_root(
         Database.connect(port, ACCOUNT, options=options, clock=FixedClock(FIXED))
     ).using_database_login()
@@ -105,7 +105,7 @@ def test_each_attempt_settles_write_evidence_under_its_adopted_selection() -> No
     db = _serving_db(port, serving)
     seen: list[str] = []
 
-    def body(tx: Transaction) -> None:
+    def body(tx: TxnContext) -> None:
         if seen:
             unread = _UnversionedAccount(id=3, owner="Grace", balance=Decimal("10.00"))
             seen.append(_refusing_strategy(lambda: tx.delete(unread)))
@@ -119,7 +119,7 @@ def test_each_attempt_settles_write_evidence_under_its_adopted_selection() -> No
     assert not any(isinstance(op, WriteCall) for op in port.calls)
 
 
-def _observe_and_update(tx: Transaction) -> None:
+def _observe_and_update(tx: TxnContext) -> None:
     current = tx.find(mm.Account.where(mm.Account.id == 3)).result()
     tx.amend(current.edit(balance=Decimal("20.00")))
 
@@ -204,7 +204,7 @@ def test_stale_write_is_never_retried_even_with_the_opt_in() -> None:
     assert port.calls.count(BeginCall()) == 1
 
 
-def _rename_person(tx: Transaction) -> None:
+def _rename_person(tx: TxnContext) -> None:
     fetched = tx.find(mm.Person.where(mm.Person.id == 1)).result()
     tx.amend(fetched.edit(name="Grace"))
 
@@ -238,7 +238,7 @@ def test_cardinality_corruption_is_never_retried_even_with_the_opt_in() -> None:
     assert port.calls.count(BeginCall()) == 1
 
 
-def _observe_update_then_force_flush(tx: Transaction) -> None:
+def _observe_update_then_force_flush(tx: TxnContext) -> None:
     current = tx.find(mm.Account.where(mm.Account.id == 3)).result()
     tx.amend(current.edit(balance=Decimal("20.00")))
     tx.find(mm.Account.where(mm.Account.id == 3))  # forces the flush inside THIS (joined) scope
@@ -259,7 +259,7 @@ def test_optimistic_conflict_rollback_only_cause_is_retried_with_the_opt_in() ->
     )
     db = account_db(port)
 
-    def outer(_tx: Transaction) -> str:
+    def outer(_tx: TxnContext) -> str:
         with contextlib.suppress(OptimisticLockConflictError):
             db.transact(_observe_update_then_force_flush)  # joins; conflicts mid-scope
         return "caught"
@@ -270,8 +270,8 @@ def test_optimistic_conflict_rollback_only_cause_is_retried_with_the_opt_in() ->
     )  # the conflicting attempt, then the retried (successful) attempt
 
 
-def _update_force_flush_and_catch(refusals: list[BaseException]) -> Callable[[Transaction], str]:
-    def callback(tx: Transaction) -> str:
+def _update_force_flush_and_catch(refusals: list[BaseException]) -> Callable[[TxnContext], str]:
+    def callback(tx: TxnContext) -> str:
         _observe_and_update(tx)
         with contextlib.suppress(OptimisticLockConflictError):
             tx.find(mm.Account.where(mm.Account.id == 3))  # the flush this forces conflicts
@@ -308,7 +308,7 @@ def test_a_caught_flush_conflict_keeps_its_retriability_through_the_doom() -> No
     )
     refusals: list[BaseException] = []
 
-    def callback(tx: Transaction) -> str:
+    def callback(tx: TxnContext) -> str:
         if not refusals:
             return _update_force_flush_and_catch(refusals)(tx)
         _observe_and_update(tx)
@@ -330,7 +330,7 @@ def test_a_failed_unit_stops_the_flush_before_any_later_unit_executes() -> None:
     ]
     port = ScriptedAdapter(Transact(Read(rows=rows), Write(affected=0)))
 
-    def callback(tx: Transaction) -> None:
+    def callback(tx: TxnContext) -> None:
         for current in tx.find(mm.Account.where(mm.Account.id >= 3)).results():
             tx.amend(current.edit(balance=Decimal("30.00")))
 
@@ -344,14 +344,14 @@ def test_the_roots_conflict_opt_in_retries_an_eligible_conflict() -> None:
     port = ScriptedAdapter(
         Transact(Read(rows=grace), Write(affected=0)), Transact(Read(rows=grace), Write())
     )
-    opted_in = DatabaseOptions(retry_optimistic_conflicts=True)
+    opted_in = TxnOptions(retry_optimistic_conflicts=True)
     _configured_db(port, opted_in).transact(_observe_and_update)
     assert port.calls.count(BeginCall()) == 2
 
 
 def test_an_explicit_false_disables_the_roots_conflict_opt_in_but_not_transient_retry() -> None:
     grace = [{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]
-    opted_in = DatabaseOptions(retry_optimistic_conflicts=True)
+    opted_in = TxnOptions(retry_optimistic_conflicts=True)
     port = ScriptedAdapter(Transact(Read(rows=grace), Write(affected=0)))
     with raises_contextualized(OptimisticLockConflictError):
         _configured_db(port, opted_in).transact(
@@ -372,11 +372,11 @@ def test_the_roots_locking_preference_drives_the_participating_reads_lock() -> N
     # versioned target takes none.
     row = {"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}
     locking = ScriptedAdapter(Transact(Read(rows=[row])))
-    _configured_db(locking, DatabaseOptions(concurrency="locking")).transact(
+    _configured_db(locking, TxnOptions(concurrency="locking")).transact(
         lambda tx: tx.find(mm.Account.where(mm.Account.id == 3)).result()
     )
     optimistic = ScriptedAdapter(Transact(Read(rows=[row])))
-    _configured_db(optimistic, DatabaseOptions(concurrency="locking")).transact(
+    _configured_db(optimistic, TxnOptions(concurrency="locking")).transact(
         lambda tx: tx.find(mm.Account.where(mm.Account.id == 3)).result(),
         concurrency="optimistic",
     )

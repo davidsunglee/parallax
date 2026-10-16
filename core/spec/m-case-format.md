@@ -1442,7 +1442,7 @@ coordinates that resolve to milestones of any age, so a group that reads such a
 key's current milestone and then reads the same key as of an earlier instant holds
 two. A **versioned Non-Temporal** key holds one row, but a group that observes it,
 writes it, and reads it again holds one observed **generation** per read, and the
-Observed State Key `m-unit-work` files evidence under distinguishes them by the
+Object State Key `m-unit-work` files evidence under distinguishes them by the
 observed version. Naming the find is what says which of them the write was handed.
 
 An implementation keying by identity alone answers only one of the several, and

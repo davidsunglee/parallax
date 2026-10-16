@@ -41,7 +41,7 @@ from parallax.core.db_port import (
 )
 from parallax.core.diagnostics import diagnostic_for
 from parallax.core.dialect import Dialect
-from parallax.snapshot import ScopedDatabase, Transaction
+from parallax.snapshot import ScopedDatabase, TxnContext
 
 __all__ = [
     "TARGET_ID",
@@ -84,7 +84,7 @@ class BoundaryTarget[E: Entity]:
     ``baseline``, the fixture value.
     """
 
-    find: Callable[[Transaction], E]
+    find: Callable[[TxnContext], E]
     edit: Callable[[E], E]
     amount: Callable[[E], Decimal]
     baseline: Decimal
@@ -212,7 +212,7 @@ def outcome(case: case_format.Case, dialect: Dialect) -> str | None:
 
 
 def run_boundary_actions[E: Entity](
-    tx: Transaction,
+    tx: TxnContext,
     steps: Sequence[BoundaryStep],
     target: BoundaryTarget[E],
     *,
@@ -237,7 +237,7 @@ def run_boundary_actions[E: Entity](
     - ``join`` opens a joined unit of work through the enclosing scope, naming exactly
       the options the step authors, and runs every REMAINING action inside it,
       carrying the row already observed. A joined call shares the outer transaction
-      (`m-unit-work`), so its closure receives the same :class:`Transaction` and
+      (`m-unit-work`), so its closure receives the same :class:`TxnContext` and
       its buffered writes reach the database in the OUTER boundary's own
       pre-commit batch — which is exactly what `m-execution-lifecycle-006`
       asserts. An unqualified join reuses that scope; a qualified join derives
@@ -258,7 +258,7 @@ def run_boundary_actions[E: Entity](
 
 
 def _run_actions(
-    tx: Transaction,
+    tx: TxnContext,
     steps: list[BoundaryStep],
     target: BoundaryTarget[Any],
     current: Entity | None,

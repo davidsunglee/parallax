@@ -1,6 +1,6 @@
 """Participating-read unit tests for `parallax.snapshot._handle` (Docker-free fake ports).
 
-`Transaction.find` and `ScopedDatabase.find`: force-flush before a read
+`TxnContext.find` and `ScopedDatabase.find`: force-flush before a read
 (read-your-own-writes), the lock suffix each materialized level's own Effective
 Concurrency Strategy calls for, statement and
 milestone pin derivation, history statements, which of the two entry points
@@ -37,7 +37,7 @@ from parallax.core import (
     attr,
 )
 from parallax.core._execution import _read_policy as read_policy_module
-from parallax.core._execution._retention import ObservationLedger
+from parallax.core._execution._retention import ReadEvidenceContext
 from parallax.core.base import SQL_NULL, DocumentValue, FrozenMap, PresentDocument
 from parallax.core.db_port import JsonDocument, MappingRow
 from parallax.core.dialect import POSTGRES
@@ -52,13 +52,13 @@ from parallax.core.read_delivery._publication import Publication
 from parallax.core.unit_work import (
     Concurrency,
     OptimisticLockConflictError,
-    ReadOrigin,
+    ReadEvidence,
     StaleWriteError,
 )
 from parallax.core.write_plan import TemporalObservation
-from parallax.snapshot import Database, ScopedDatabase, Transaction, WireEntity
+from parallax.snapshot import Database, ScopedDatabase, TxnContext, WireEntity
 from parallax.snapshot._inspection import snapshot_state_of
-from parallax.snapshot._publication._wire import read_origin_of
+from parallax.snapshot._publication._wire import read_evidence_of
 from tests._support import inheritance_models as im
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
@@ -97,8 +97,8 @@ from tests.unit.snapshot._handle import observation_models as om
 
 @dataclass(frozen=True, slots=True)
 class _RecordedFind:
-    """One executor call: whether it was handed a ledger, the participation that
-    ledger answered while its scope was open, and the result the call produced.
+    """One executor call: whether it was handed an evidence context, the participation that
+    evidence_context answered while its scope was open, and the result the call produced.
 
     The participation is read inside the call rather than kept as the unit of
     work itself, because a unit of work fences every access once its scope ends —
@@ -111,7 +111,7 @@ class _RecordedFind:
 
 
 def _recording_find(recorded: list[_RecordedFind]) -> Callable[..., object]:
-    """A whole-result delivery stand-in recording the ledger each Page read's
+    """A whole-result delivery stand-in recording the evidence context each Page read's
     projection collector was built over.
 
     Spelled with the delivery's full signature rather than ``*args`` so the
@@ -120,9 +120,15 @@ def _recording_find(recorded: list[_RecordedFind]) -> Callable[..., object]:
     """
 
     def recording(request: EagerPageRequest[Any], publication: Publication[Any, Any]) -> object:
-        ledger: ObservationLedger | None = cast("Any", request.origins)._ledger
+        evidence_context: ReadEvidenceContext | None = cast(
+            "Any", request.origin_collector
+        )._evidence_context
         result = PageReader().read_page(request)
-        recorded.append(_RecordedFind(None if ledger is None else ledger.participation, result))
+        recorded.append(
+            _RecordedFind(
+                None if evidence_context is None else evidence_context.participation, result
+            )
+        )
         return publication.from_find(result)
 
     return recording
@@ -130,7 +136,7 @@ def _recording_find(recorded: list[_RecordedFind]) -> Callable[..., object]:
 
 def test_a_standalone_find_stamps_no_participation_on_the_evidence_it_retains() -> None:
     # A standalone read has no unit of work to file into, so it hands the
-    # executor no ledger — and still retains what its rows observed, because a
+    # executor no evidence context — and still retains what its rows observed, because a
     # value's write evidence belongs to the value. What its sources lack is
     # participation, which is exactly what an effective-Locking write asks for.
     calls: list[_RecordedFind] = []
@@ -141,15 +147,15 @@ def test_a_standalone_find_stamps_no_participation_on_the_evidence_it_retains() 
         db.find(mm.Balance.where(mm.Balance.id == 1)).result()
     (call,) = calls
     assert call.participation is None
-    assert len(call.result.sources) == 1
-    (hint,) = call.result.sources.values()
+    assert len(call.result.origins) == 1
+    (hint,) = call.result.origins.values()
     assert hint.participation is None
     assert hint.observation is not None
 
 
 def test_a_participating_find_stamps_its_transactions_own_participation() -> None:
-    # The other side of the same decision: `Transaction.find` has a unit of work
-    # behind it, so it hands the executor that unit of work as the ledger and
+    # The other side of the same decision: `TxnContext.find` has a unit of work
+    # behind it, so it hands the executor that unit of work as the evidence context and
     # every source it produces carries that transaction's participation.
     calls: list[_RecordedFind] = []
     port = ScriptedAdapter(
@@ -160,7 +166,7 @@ def test_a_participating_find_stamps_its_transactions_own_participation() -> Non
         patch.setattr(read_policy_module, "deliver_find", _recording_find(calls))
         db.transact(lambda tx: tx.find(mm.Balance.where(mm.Balance.id == 1)).result())
     (call,) = calls
-    (hint,) = call.result.sources.values()
+    (hint,) = call.result.origins.values()
     assert call.participation is not None
     assert hint.participation is call.participation
 
@@ -198,7 +204,7 @@ def test_every_attached_level_row_retains_its_own_evidence() -> None:
             ).result()
         )
     (call,) = calls
-    assert [hint.object_key.primary_key for hint in call.result.sources.values()] == [
+    assert [hint.object_key.primary_key for hint in call.result.origins.values()] == [
         (("id", 1),),
         (("id", 10),),
     ]
@@ -213,7 +219,7 @@ def test_find_on_a_non_versioned_entity_retains_no_observed_state() -> None:
         Transact(Read(rows=[{"id": 1, "amount": Decimal("100.00"), "card_network": "Visa"}]))
     )
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.find(im.CardPayment.where(im.CardPayment.id == 1)).result()
 
     db_for(PAYMENT, port).transact(fn)
@@ -225,7 +231,7 @@ def test_find_force_flushes_pending_writes_first() -> None:
     # read, inside the same still-open transaction (m-unit-work-001's shape).
     port = ScriptedAdapter(Transact(Write(), Read(rows=[NEW_ROW])))
 
-    def fn(tx: Transaction) -> list[mm.Account]:
+    def fn(tx: TxnContext) -> list[mm.Account]:
         tx.insert(new_account())
         return tx.find(mm.Account.where(mm.Account.id == 7)).results()
 
@@ -421,7 +427,7 @@ def test_a_temporal_write_after_an_as_of_find_is_refused_in_either_mode(
     )
     db = db_for(BALANCE, port)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         fetched = tx.find(
             mm.Balance.where(mm.Balance.id == 1).as_of(
                 tx_time=dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
@@ -445,7 +451,7 @@ def test_locking_mode_temporal_write_after_a_latest_find_is_licensed() -> None:
     )
     db = db_for(BALANCE, port)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         fetched = tx.find(mm.Balance.where(mm.Balance.id == 1)).result()
         tx.terminate(fetched)
 
@@ -470,7 +476,7 @@ def test_transaction_time_only_update_via_a_sparse_copy_carries_untouched_fields
     )
     db = db_for(BALANCE, port)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         fetched = tx.find(mm.Balance.where(mm.Balance.id == 1)).result()
         tx.amend(fetched.edit(value=Decimal("150.00")))
 
@@ -512,7 +518,7 @@ def test_bitemporal_update_after_a_find_carries_observed_valid_time_bounds() -> 
     port = ScriptedAdapter(Transact(Read(rows=[_branch_row(address=None)]), Write(times=2)))
     db = db_for(MODELS["branch"], port)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         fetched = tx.find(
             mm.Branch.where(mm.Branch.id == 1).as_of(
                 valid_time=dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
@@ -552,7 +558,7 @@ def test_bitemporal_update_after_a_find_keeps_the_observed_value_object_document
     port = ScriptedAdapter(Transact(Read(rows=[_branch_row(address=address)]), Write(times=2)))
     db = db_for(MODELS["branch"], port)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         fetched = tx.find(
             mm.Branch.where(mm.Branch.id == 1).as_of(
                 valid_time=dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
@@ -647,7 +653,7 @@ def _present(stored: object) -> PresentDocument:
     return PresentDocument(cast("DocumentValue", copy.deepcopy(stored)))
 
 
-def _owned_find(reader: Transaction | ScopedDatabase, layout: str) -> Entity:
+def _owned_find(reader: TxnContext | ScopedDatabase, layout: str) -> Entity:
     if layout == "document":
         document_query = OwnedDocumentCharter.where(OwnedDocumentCharter.id == 1)
         return reader.find(document_query.as_of(valid_time=_OWNED_SPLIT)).result()
@@ -722,7 +728,7 @@ def test_what_a_read_publishes_never_reaches_its_retained_evidence(
     }
     published: list[Entity | WireEntity] = []
 
-    def find(reader: Transaction | ScopedDatabase) -> Entity | WireEntity:
+    def find(reader: TxnContext | ScopedDatabase) -> Entity | WireEntity:
         node = (
             _owned_find(reader, layout)
             if access == "typed"
@@ -731,7 +737,7 @@ def test_what_a_read_publishes_never_reaches_its_retained_evidence(
         published.append(node)
         return node
 
-    def write(tx: Transaction, node: Entity | WireEntity) -> None:
+    def write(tx: TxnContext, node: Entity | WireEntity) -> None:
         if isinstance(node, Entity):
             assert _mutate_everything(node) + _mutate_everything(node.model_dump()) > 0
             tx.amend(node.edit(title="Southbound"))
@@ -746,8 +752,8 @@ def test_what_a_read_publishes_never_reaches_its_retained_evidence(
         db.transact(lambda tx: write(tx, find(tx)))
 
     (node,) = published
-    origin = _retained_evidence(node) if isinstance(node, Entity) else read_origin_of(node)
-    assert isinstance(origin, ReadOrigin)
+    origin = _retained_evidence(node) if isinstance(node, Entity) else read_evidence_of(node)
+    assert isinstance(origin, ReadEvidence)
     assert origin.observation is not None
     observation = origin.observation.evidence
     assert isinstance(observation, TemporalObservation)
@@ -831,20 +837,20 @@ def test_tx_find_returns_one_snapshot_root_per_milestone_for_a_history_statement
 
 
 def _retained_evidence(node: object) -> object | None:
-    """The Read Origin ``node`` carries, read off its own lifecycle state.
+    """The Read Evidence ``node`` carries, read off its own lifecycle state.
 
     Read through the node-inspection surface rather than the keyed verbs' own
     private reader, because the claim is about what the READ left on the value.
     """
     state = snapshot_state_of(node)
     assert state is not None, "a published root always carries lifecycle state"
-    return state.source
+    return state.read_evidence
 
 
 def test_a_milestone_set_read_publishes_roots_no_keyed_write_can_address() -> None:
     # The write-side consequence of "a milestone-set read retains no evidence",
     # asserted rather than read off `HistoryFindResult`'s missing sources field.
-    # A pinned participating read of the same row leaves a Read Origin on its
+    # A pinned participating read of the same row leaves Read Evidence on its
     # root; every root of the `.history()` read carries none, and each stands at
     # its own milestone's from-instant — a finite Transaction-Time coordinate the
     # keyed verbs refuse to write through, so no DML is derived at all.
@@ -856,7 +862,7 @@ def test_a_milestone_set_read_publishes_roots_no_keyed_write_can_address() -> No
     pinned = db.transact(lambda tx: tx.find(mm.Balance.where(mm.Balance.id == 1)).result())
     assert _retained_evidence(pinned) is not None
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         statement = mm.Balance.where(mm.Balance.id == 1).history(TX_TIME)
         milestones = tx.find(statement).results()
         assert [_retained_evidence(root) for root in milestones] == [None, None]
@@ -944,7 +950,7 @@ def test_stale_web_edit_balance_submit_conflict_raises_optimistic_lock_conflict(
         stale_web_edit.submit_balance_edit(db, id=1, edge=edge, fields={"value": Decimal("9.00")})
 
 
-def _terminate_balance_1(tx: Transaction) -> None:
+def _terminate_balance_1(tx: TxnContext) -> None:
     tx.terminate(tx.find(mm.Balance.where(mm.Balance.id == 1)).result())
 
 
@@ -1076,7 +1082,7 @@ def test_stale_web_edit_branch_submit_refuses_a_rectangle_superseded_before_the_
 # write.                                                                       #
 # --------------------------------------------------------------------------- #
 def test_tx_find_refuses_a_foreign_target_with_no_adapter_activity() -> None:
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.find(mm.Person.where(mm.Person.id == 1))
 
     with raises_contextualized(QueryTargetError) as caught:
@@ -1090,7 +1096,7 @@ def test_tx_find_refuses_a_deferred_execution_feature_with_no_adapter_activity()
     # The participating path classifies through the SAME seam, so a deferred
     # Feature is refused there too — and before `uow.read`, which is what keeps
     # The boundary's own script stays empty: a refused read never force-flushes.
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.find(
             Policy.where(Policy.all)
             .history(TX_TIME)
@@ -1109,7 +1115,7 @@ def test_tx_find_refuses_a_deferred_execution_feature_with_no_adapter_activity()
 def test_tx_find_preflight_rejects_before_a_pending_write_can_flush() -> None:
     port = ScriptedAdapter(Transact(Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.insert(new_account())
         with pytest.raises(QueryTargetError):
             tx.find(mm.Person.where(mm.Person.id == 1))
@@ -1168,7 +1174,7 @@ def test_an_included_temporal_nodes_own_observation_licenses_its_keyed_close() -
         )
     )
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         policy = tx.find(
             Policy.where(Policy.id == 1)
             .as_of(valid_time=dt.datetime(2024, 6, 1, tzinfo=dt.UTC))
@@ -1195,7 +1201,7 @@ def test_an_included_versioned_nodes_own_observation_licenses_its_keyed_update()
         )
     )
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         vault = tx.find(om.Vault.where(om.Vault.id == 1).include(om.Vault.slips)).result()
         tx.amend(vault.slips[0].edit(memo="after"))
 
@@ -1244,7 +1250,7 @@ def test_an_included_polymorphic_levels_concrete_is_reachable_by_a_keyed_write()
         )
     )
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         fleet = tx.find(om.Fleet.where(om.Fleet.id == 1).include(om.Fleet.vessels)).result()
         tug = next(vessel for vessel in fleet.vessels if isinstance(vessel, om.Tug))
         tx.terminate(tug)
@@ -1283,7 +1289,7 @@ def test_an_abstract_target_roots_concrete_is_reachable_by_a_keyed_write() -> No
         )
     )
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         barge = tx.find(om.Vessel.where(om.Vessel.id == 11)).result()
         tx.terminate(barge)
 

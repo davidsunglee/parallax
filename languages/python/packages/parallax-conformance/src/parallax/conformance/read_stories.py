@@ -49,7 +49,7 @@ class ReadStory:
     ``db.transact(lambda tx: tx.find(build()), concurrency=...)`` — a
     participating `tx.find`, whose emitted SQL carries (or, `optimistic`,
     omits) the dialect's shared read-lock suffix per the SAME `m-read-lock`
-    policy `Transaction.find` derives production-side
+    policy `TxnContext.find` derives production-side
     (`parallax.core.read_lock.mode_for`). `test_story_run.py`'s own generic
     runner branches on this SAME field to build the executed callable — the
     ONE place the mode is authored, flowing into both the rendered snippet

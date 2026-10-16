@@ -1,11 +1,11 @@
 """Participating-stream unit tests for `parallax.snapshot._handle` (Docker-free fake ports).
 
-`Transaction.stream` and `tx.wire.stream`: what participation adds to a delivery
+`TxnContext.stream` and `tx.wire.stream`: what participation adds to a delivery
 whose own contract — the state table, statement accounting, root-local identity,
 and continuation past invalid stored data — is graded in `test_snapshot_stream.py`.
 
 Four claims bound this suite. Participation is per PAGE, so the force-flush
-`Transaction.find` performs once happens once per page and read-your-own-writes
+`TxnContext.find` performs once happens once per page and read-your-own-writes
 holds at every one of them; the write buffer a consuming loop fills is therefore
 bounded by a page rather than by the result, which is the same unbounded growth
 a stream exists to remove, measured on the buffer itself. Each materialized
@@ -43,9 +43,9 @@ from parallax.core.execution import (
 from parallax.core.object_query import TX_TIME, VALID_TIME
 from parallax.core.read_delivery import StreamStateError
 from parallax.core.unit_work import WriteEvidenceError
-from parallax.snapshot import Database, ScopedDatabase, SnapshotStream, Transaction
+from parallax.snapshot import Database, ScopedDatabase, SnapshotStream, TxnContext
 from parallax.snapshot._inspection import snapshot_state_of
-from parallax.snapshot._publication._wire import read_origin_of
+from parallax.snapshot._publication._wire import read_evidence_of
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
@@ -117,7 +117,7 @@ def _sql(port: ScriptedAdapter, position: int) -> str:
     return call.sql
 
 
-def _pending_writes(tx: Transaction) -> int:
+def _pending_writes(tx: TxnContext) -> int:
     """How many writes this transaction is still holding, read off the buffer.
 
     The claim is about the buffer rather than about the statements it eventually
@@ -131,7 +131,7 @@ def _pending_writes(tx: Transaction) -> int:
 def _observation(node: object) -> Any:
     state = snapshot_state_of(node)
     assert state is not None
-    return cast("Any", state.source)
+    return cast("Any", state.read_evidence)
 
 
 # --------------------------------------------------------------------------- #
@@ -145,7 +145,7 @@ def test_a_write_buffered_before_the_delivery_flushes_on_its_first_page() -> Non
     # second, without a flush at entry to arrange it.
     port = ScriptedAdapter(Transact(Write(), Read(rows=[_account_row(2)])))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.insert(new_account())
         with tx.stream(_accounts(), batch_size=1) as stream:
             assert [account.id for account in stream] == [2]
@@ -167,7 +167,7 @@ def test_a_write_buffered_mid_delivery_reaches_the_database_before_the_next_page
         )
     )
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         with tx.stream(_accounts(), batch_size=1) as stream:
             for account in stream:
                 if account.id == 1:
@@ -193,7 +193,7 @@ def test_a_root_its_page_fetched_before_an_own_change_cannot_write_from_that_sta
     )
     refusals: list[str] = []
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         with tx.stream(_accounts(), batch_size=2) as stream:
             for account in stream:
                 if account.id == 1:
@@ -217,7 +217,7 @@ def test_a_read_only_delivery_emits_no_dml_at_all() -> None:
         Transact(*paged_reads([_account_row(index) for index in (1, 2, 3)], size=2))
     )
 
-    def fn(tx: Transaction) -> list[int]:
+    def fn(tx: TxnContext) -> list[int]:
         with tx.stream(_accounts(), batch_size=2) as stream:
             return [account.id for account in stream]
 
@@ -242,7 +242,7 @@ def test_a_writing_loop_never_holds_more_than_one_pages_writes(size: int) -> Non
     )
     held: list[int] = []
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         with tx.stream(_accounts(), batch_size=size) as stream:
             for account in stream:
                 tx.amend(account.edit(balance=Decimal("125.00")))
@@ -266,7 +266,7 @@ def test_a_streamed_page_locks_the_unversioned_level_and_not_the_versioned_root(
         )
     )
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         query = mx.Consignment.where(mx.Consignment.id == 1).include(mx.Consignment.legs)
         with tx.stream(query, batch_size=1) as stream:
             list(stream)
@@ -287,7 +287,7 @@ def test_the_locking_preference_locks_every_level_of_a_streamed_page() -> None:
         )
     )
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         query = mx.Consignment.where(mx.Consignment.id == 1).include(mx.Consignment.legs)
         with tx.stream(query, batch_size=1) as stream:
             list(stream)
@@ -309,7 +309,7 @@ def test_a_locking_delivery_keeps_its_second_page_and_outer_row_authority() -> N
         )
     )
 
-    def fn(tx: Transaction) -> list[int]:
+    def fn(tx: TxnContext) -> list[int]:
         with tx.stream(_accounts(), batch_size=1) as stream:
             return [account.id for account in stream]
 
@@ -334,7 +334,7 @@ def test_a_streamed_roots_own_observation_licenses_a_later_keyed_write() -> None
     # writes 2, both derived from the root the stream published.
     port = ScriptedAdapter(Transact(Read(rows=[_account_row(1)]), Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         with tx.stream(_accounts(), batch_size=1) as stream:
             accounts = list(stream)
         tx.amend(accounts[0].edit(balance=Decimal("125.00")))
@@ -350,7 +350,7 @@ _LOCKING_UPDATE_SQL = POSTGRES.to_driver_sql(
 )
 
 
-def _first_root(scope: Transaction | ScopedDatabase, representation: _Representation) -> Any:
+def _first_root(scope: TxnContext | ScopedDatabase, representation: _Representation) -> Any:
     """The first root a one-row-per-page delivery of Account 1 publishes."""
     query = mm.Account.where(mm.Account.id == 1)
     stream = (
@@ -362,14 +362,14 @@ def _first_root(scope: Transaction | ScopedDatabase, representation: _Representa
         return next(iter(delivered))
 
 
-def _update(tx: Transaction, representation: _Representation, root: Any, balance: str) -> None:
+def _update(tx: TxnContext, representation: _Representation, root: Any, balance: str) -> None:
     if representation == "typed":
         tx.amend(cast("mm.Account", root).edit(balance=Decimal(balance)))
     else:
         tx.wire.amend(root, {"balance": balance})
 
 
-def _restore(tx: Transaction, representation: _Representation, root: Any) -> None:
+def _restore(tx: TxnContext, representation: _Representation, root: Any) -> None:
     """A write whose authored change puts back the balance ``root`` observed."""
     if representation == "typed":
         account = cast("mm.Account", root)
@@ -378,7 +378,7 @@ def _restore(tx: Transaction, representation: _Representation, root: Any) -> Non
         tx.wire.amend(root, {"balance": "100.00"})
 
 
-def _delete(tx: Transaction, representation: _Representation, root: Any) -> None:
+def _delete(tx: TxnContext, representation: _Representation, root: Any) -> None:
     if representation == "typed":
         tx.delete(root)
     else:
@@ -391,7 +391,7 @@ def test_a_streamed_roots_claim_refuses_an_intent_it_cannot_join(
 ) -> None:
     port = ScriptedAdapter(Transact(Read(rows=[_account_row(1)])))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         root = _first_root(tx, representation)
         _delete(tx, representation, root)
         _update(tx, representation, root, "125.00")
@@ -414,7 +414,7 @@ def test_a_consumed_streamed_root_restores_silently_and_refuses_a_change(
         Transact(Read(rows=[_account_row(1)]), Write(), Read(rows=[_account_row(2)]))
     )
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         root = _first_root(tx, representation)
         _update(tx, representation, root, "125.00")
         tx.find(mm.Account.where(mm.Account.id == 2))
@@ -437,7 +437,7 @@ def test_only_a_participating_stream_licenses_a_locking_write(
     db = account_db(port)
     standalone = _first_root(db, representation)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         with pytest.raises(WriteEvidenceError) as refusal:
             _update(tx, representation, standalone, "150.00")
         assert refusal.value.code == "write-evidence-unavailable"
@@ -456,11 +456,11 @@ def test_a_wire_streamed_value_and_a_typed_find_of_one_row_carry_one_observation
     # receives one, which proves exhaustion, so the second belongs to the find.
     port = ScriptedAdapter(Transact(Read(rows=[_account_row(1)], times=2)))
 
-    def fn(tx: Transaction) -> tuple[Any, Any]:
+    def fn(tx: TxnContext) -> tuple[Any, Any]:
         with tx.wire.stream(mm.Account.where(mm.Account.id == 1), batch_size=1) as stream:
             streamed = next(iter(stream))
         found = tx.find(mm.Account.where(mm.Account.id == 1)).result()
-        return cast("Any", read_origin_of(streamed)), _observation(found)
+        return cast("Any", read_evidence_of(streamed)), _observation(found)
 
     streamed_hint, found_hint = account_db(port).transact(fn)
     assert streamed_hint is not None
@@ -474,7 +474,7 @@ def test_a_retained_streamed_child_outlives_its_released_root_and_page() -> None
     # delivered root keeps its own after the root and the page are gone.
     port = ScriptedAdapter(Transact(Read(rows=[_POLICY_ROW]), Read(rows=[_COVERAGE_ROW])))
 
-    def fn(tx: Transaction) -> Any:
+    def fn(tx: TxnContext) -> Any:
         with tx.stream(_POLICY_QUERY, batch_size=1) as stream:
             child = next(iter(stream)).coverages[0]
         gc.collect()
@@ -491,7 +491,7 @@ def test_releasing_every_streamed_source_makes_the_transactions_index_forget_it(
     # still reaches disappears from it with the last reference to that value.
     port = ScriptedAdapter(Transact(Read(rows=[_POLICY_ROW]), Read(rows=[_COVERAGE_ROW])))
 
-    def fn(tx: Transaction) -> bool:
+    def fn(tx: TxnContext) -> bool:
         with tx.stream(_POLICY_QUERY, batch_size=1) as stream:
             roots = list(stream)
         evidence = weakref.ref(_observation(roots[0]).observation)
@@ -519,7 +519,7 @@ def test_a_retried_callback_opens_a_fresh_stream_and_observes_the_roots_again() 
     attempts: list[list[int]] = []
     opened: list[SnapshotStream[Any]] = []
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         with tx.stream(_accounts(), batch_size=2) as stream:
             opened.append(stream)
             attempts.append([account.id for account in stream])
@@ -571,16 +571,16 @@ def test_a_streamed_milestone_root_is_read_only_in_both_namespaces() -> None:
     typed_port = ScriptedAdapter(Transact(Read(rows=list(_POSITION_MILESTONES))))
     wire_port = ScriptedAdapter(Transact(Read(rows=list(_POSITION_MILESTONES))))
 
-    def typed(tx: Transaction) -> None:
+    def typed(tx: TxnContext) -> None:
         with tx.stream(_milestone_query(), batch_size=2) as stream:
             root = next(iter(stream))
         with pytest.raises(KeyedWriteValueError, match="write-value-not-stored"):
             tx.amend(root.edit(value=Decimal("1.00")))
 
-    def wire(tx: Transaction) -> None:
+    def wire(tx: TxnContext) -> None:
         with tx.wire.stream(_milestone_query(), batch_size=2) as stream:
             root = next(iter(stream))
-        assert read_origin_of(root) is None
+        assert read_evidence_of(root) is None
         with pytest.raises(instructions.WriteInstructionError, match="no such provenance"):
             tx.wire.amend(root, {"value": "1.00"})
 
@@ -610,7 +610,7 @@ def test_a_participating_stream_inherits_the_attempts_edition_and_wraps_no_failu
     db = own_root(Database.connect(port, serving, clock=FixedClock(FIXED))).using_database_login()
     seen: list[int] = []
 
-    def body(tx: Transaction) -> None:
+    def body(tx: TxnContext) -> None:
         with tx.stream(_accounts(), batch_size=1) as stream:
             assert stream.edition == tx.edition == "ledger-a"
             try:
@@ -643,7 +643,7 @@ def test_a_retry_redelivers_the_prefix_published_by_the_failed_attempt() -> None
     attempts: list[list[int]] = []
     delivered: list[int] = []
 
-    def body(tx: Transaction) -> list[int]:
+    def body(tx: TxnContext) -> list[int]:
         current: list[int] = []
         try:
             with tx.stream(_accounts(), batch_size=1) as stream:

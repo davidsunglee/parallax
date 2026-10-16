@@ -6,7 +6,7 @@ from typing import Any
 
 from parallax.conformance.read_models import Document, Payment
 from parallax.conformance.story_models import Account, Order, OrderStatus
-from parallax.snapshot import ScopedDatabase, Snapshot, Transaction, WireEntity
+from parallax.snapshot import ScopedDatabase, Snapshot, TxnContext, WireEntity
 
 __all__ = [
     "publish_typed_read_as_wire",
@@ -77,7 +77,7 @@ def stream_and_write_inside_one_transaction(db: ScopedDatabase, page: int) -> li
     """Order by the immutable primary key so writes cannot move the next page's cursor."""
     written: list[Decimal] = []
 
-    def credit(tx: Transaction) -> None:
+    def credit(tx: TxnContext) -> None:
         with tx.stream(Account.where(Account.id >= 1), batch_size=page) as accounts:
             for account in accounts:
                 balance = account.balance + Decimal("10.00")

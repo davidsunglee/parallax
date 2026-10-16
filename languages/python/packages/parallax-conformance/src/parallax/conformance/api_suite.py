@@ -302,7 +302,7 @@ EXAMPLES: Final[list[Example]] = [
     # m-db-port, ADR 0065): the case's own oracle states what a joining call is
     # held to under an outer call that overrode the root, and the boundary
     # runner grades it. What this executable story adds is the SPELLING — one
-    # `DatabaseOptions` record at `connect`, a sparse keyword on the one call
+    # `TxnOptions` record at `connect`, a sparse keyword on the one call
     # that wants something else, and `tx.options` answering the resolved record
     # inside the work. Executed against real Postgres by
     # `tests/api/test_database_options.py`.
@@ -515,7 +515,7 @@ _OBJECT_CLAIM_COALESCING_REASON: Final[str] = (
 )
 
 _OBSERVED_GENERATION_REASON: Final[str] = (
-    "an observed-state KEYING witness: it grades which of a unit of work's several "
+    "an object-state KEYING witness: it grades which of a unit of work's several "
     "observed generations of one key a write settles against, which a case states by "
     "naming the find its value came from. A developer names it by holding the value that "
     "read returned, so there is nothing for an idiomatic story to spell — the reference "
@@ -860,7 +860,7 @@ _PK_GEN_TEMPORAL_INSERT_REASON: Final[str] = (
 )
 
 
-# `Transaction._buffer` calls (`test_transaction_writes.py`'s per-rule unit tests exercise#
+# `TxnContext._buffer` calls (`test_transaction_writes.py`'s per-rule unit tests exercise#
 
 
 _INHERITANCE_SIBLING_ATTRIBUTE_UNREACHABLE_REASON: Final[str] = (
@@ -871,9 +871,9 @@ _INHERITANCE_SIBLING_ATTRIBUTE_UNREACHABLE_REASON: Final[str] = (
     "`CardPayment(..., tendered=...)` constructs successfully but never carries `tendered`), "
     "so no single typed instance can reproduce this payload's cross-branch shape to drive "
     "`tx.insert`/`tx.amend` through it — `test_transaction_writes.py` exercises the "
-    "classified rule directly at the neutral seam (`Transaction._buffer`) instead. The same "
+    "classified rule directly at the neutral seam (`TxnContext._buffer`) instead. The same "
     "holds for the keyed-instruction twin (m-inheritance-131), whose row carries the sibling "
-    "column alone: the typed surface reaches `Transaction._buffer` only through an instance, "
+    "column alone: the typed surface reaches `TxnContext._buffer` only through an instance, "
     "and the instance cannot carry the field"
 )
 _INHERITANCE_METADATA_FIELD_UNREACHABLE_REASON: Final[str] = (
@@ -882,7 +882,7 @@ _INHERITANCE_METADATA_FIELD_UNREACHABLE_REASON: Final[str] = (
     "`inheritance=ConcreteSubtype(tag_value=...)` at CLASS-DEFINITION time, never a "
     "per-instance Pydantic field a caller can pass to `tx.insert`/`tx.amend` — "
     "`test_transaction_writes.py` exercises the classified rule directly at the neutral "
-    "seam (`Transaction._buffer`) instead"
+    "seam (`TxnContext._buffer`) instead"
 )
 _INHERITANCE_SET_BASED_UNSUPPORTED_UNREACHABLE_REASON: Final[str] = (
     "the idiomatic spelling EXISTS: `subtype-write-set-based-unsupported`'s natural "
@@ -1253,7 +1253,7 @@ _METAMODEL_MODEL_REJECT_UNREACHABLE_REASON: Final[str] = (
 
 _TEMPORAL_KEYED_SINGLETON_UNREACHABLE_REASON: Final[str] = (
     "the rule is live and enforced on the developer path — prepared-write production refuses a "
-    "plural keyed instruction on a temporal target before `Transaction._buffer` buffers it, "
+    "plural keyed instruction on a temporal target before `TxnContext._buffer` buffers it, "
     "and `WritePlanner._settle_temporal` refuses it again as the last structural check before "
     "SQL — but the CASE's own authored shape has no idiomatic spelling: every typed keyed verb "
     "(`tx.amend` / `tx.terminate` / their bounded siblings) takes ONE instance and emits an "
@@ -1285,7 +1285,7 @@ _SHARED_STATE_ROOT_AUTHORITY_REASON: Final[str] = (
     "provider, while `tests/unit/snapshot/test_read_origin.py` proves the additional "
     "authority claim the graph cannot render — two root-local Customer nodes may borrow "
     "one page-owned Entity State, but only the node reached through the valid root "
-    "carries a Read Origin. m-unit-work-028 separately grades the invalid node's "
+    "carries Read Evidence. m-unit-work-028 separately grades the invalid node's "
     "write-visible refusal"
 )
 
@@ -1363,7 +1363,7 @@ _ROOT_OPTIONS_BOUNDARY_RUNNER_REASON: Final[str] = (
     "root opt-in retrying a conflict, each one's explicit per-call override, and a "
     "joining call held to the outer call's resolved values rather than the root's — "
     "graded end-to-end by the case-driven boundary runner (`tests/api/test_boundary_run.py`), "
-    "which connects the REAL `db` with the case's own `DatabaseOptions` record and "
+    "which connects the REAL `db` with the case's own `TxnOptions` record and "
     "forwards only the fields the case authored; the developer spelling every one of "
     "these shares is the one root-options story the usage guide already shows "
     "(`m-unit-work-041`), so a second narrative per configured field would repeat it"
@@ -1373,7 +1373,7 @@ _ROOT_OPTIONS_BOUNDARY_RUNNER_REASON: Final[str] = (
 # root, the standalone read a locking root leaves untouched, and the
 # transactional read that inherits it. Each is a SQL shape the compile/run
 # sweeps grade byte-exact and the reference harness executes independently; the
-# developer spelling — `DatabaseOptions` at `connect` — is the root-options
+# developer spelling — `TxnOptions` at `connect` — is the root-options
 # story above.
 _READ_LOCK_ROOT_GOLDEN_REASON: Final[str] = (
     "a golden-SQL witness of a Database Root's configured `locking` preference — a "
@@ -1382,7 +1382,7 @@ _READ_LOCK_ROOT_GOLDEN_REASON: Final[str] = (
     "root's defaults never reach, and a transactional read requesting nothing that "
     "inherits the shared lock — graded end-to-end by the compile and run sweeps "
     "against the authored goldens and executed independently by the reference "
-    "harness; the developer spelling is `DatabaseOptions(concurrency=...)` at "
+    "harness; the developer spelling is `TxnOptions(concurrency=...)` at "
     "`connect`, which the root-options story already shows, and the SQL shape is "
     "what these cases isolate"
 )

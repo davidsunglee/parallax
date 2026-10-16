@@ -7,11 +7,11 @@ from typing import Protocol
 from parallax.core._execution._adoption import AdoptedExecution
 from parallax.core._execution._concurrency import CONCURRENCY
 from parallax.core._execution._connection_lifecycle import enter_connection, exit_connection
-from parallax.core._execution._page_origins import ObservedPageProjections
+from parallax.core._execution._page_origins import ReadEvidenceCollector
 from parallax.core._execution._preflight import preflight
 from parallax.core._execution._publication import SelectedReadModel
-from parallax.core._execution._retention import ObservationLedger
-from parallax.core._execution._unit_work.retain import ReadOrigin
+from parallax.core._execution._retention import ReadEvidenceContext
+from parallax.core._execution._unit_work.retain import ReadEvidence
 from parallax.core._execution._unit_work.uow import Concurrency
 from parallax.core.db_port import DatabaseConnection
 from parallax.core.entity._authored_resolver import typed_interpretation
@@ -79,9 +79,9 @@ class ReadInputs:
     """What the executor triad takes that varies by lane, as one value.
 
     A standalone read carries the connection its own operation acquired, no
-    Concurrency Preference, and no ledger; a participating one carries the
+    Concurrency Preference, and no evidence context; a participating one carries the
     attempt's connection, the unit of work's preference, and the unit of work
-    itself as the ledger retained evidence indexes into. Either way the
+    itself as the evidence context retained evidence indexes into. Either way the
     connection is the one the operation currently holds rather than anything a
     scope retains, which is what makes an operation's statements provably run
     on the connection that operation acquired.
@@ -89,7 +89,7 @@ class ReadInputs:
 
     connection: DatabaseConnection
     preference: Concurrency | None
-    ledger: ObservationLedger | None
+    evidence_context: ReadEvidenceContext | None
 
 
 class BegunRead(StreamRead[SelectedReadModel], Protocol):
@@ -126,7 +126,7 @@ class BegunRead(StreamRead[SelectedReadModel], Protocol):
 def read_graph[Eager](
     read: BegunRead,
     query: ReadQuery,
-    publication: Publication[ReadOrigin, Eager],
+    publication: Publication[ReadEvidence, Eager],
     planner: ReadPlanner,
 ) -> Eager:
     """The eager graph-form tail every representation and both lanes run.
@@ -159,7 +159,9 @@ def read_graph[Eager](
                 selected.model,
                 inputs.connection,
                 inputs.preference,
-                ObservedPageProjections(selected.model.meta, ledger=inputs.ledger, scanned=False),
+                ReadEvidenceCollector(
+                    selected.model.meta, evidence_context=inputs.evidence_context, scanned=False
+                ),
                 activity,
                 planner,
                 selected.edition,
@@ -174,7 +176,7 @@ def read_rows(read: BegunRead, node: ObjectQueryNode, planner: ReadPlanner) -> R
     """One row-form read, published as transformed rows and no graph.
 
     The values lane needs no materializer, so it crosses no classless refusal;
-    it records no observation either, which is why its body passes no ledger in
+    it records no observation either, which is why its body passes no evidence context in
     either lane. The gate precedes the bracket, so a refused read flushes
     nothing.
     """
@@ -210,11 +212,11 @@ def read_page(
     /,
     *,
     scanned: bool,
-) -> StreamPageResult[ReadOrigin]:
+) -> StreamPageResult[ReadEvidence]:
     """One page of a delivery, read inside its begun read's own bracket.
 
     A page IS an eager read of a bounded root query, so it threads the same
-    connection, Concurrency Preference, and observation ledger an eager graph
+    connection, Concurrency Preference, and evidence context an eager graph
     read does — and takes its model from the read the delivery was begun as,
     which holds the one selection it was opened under. A standalone page leases
     its own connection; a participating page uses the attempt's. The page's
@@ -223,7 +225,7 @@ def read_page(
     selected = read.selected
     model = selected.model
 
-    def body(calls: DatabaseCallScope, inputs: ReadInputs) -> StreamPageResult[ReadOrigin]:
+    def body(calls: DatabaseCallScope, inputs: ReadInputs) -> StreamPageResult[ReadEvidence]:
         return PageReader().read_page(
             StreamPageRequest(
                 paging,
@@ -231,7 +233,9 @@ def read_page(
                 model,
                 inputs.connection,
                 inputs.preference,
-                ObservedPageProjections(model.meta, ledger=inputs.ledger, scanned=scanned),
+                ReadEvidenceCollector(
+                    model.meta, evidence_context=inputs.evidence_context, scanned=scanned
+                ),
                 calls,
                 planner,
                 selected.edition,
@@ -247,7 +251,7 @@ class StandaloneRead:
     failure escapes it.
 
     Non-transactional in the three ways that reach the executor: no read lock,
-    no Concurrency Preference, and no ledger — which is what leaves the evidence
+    no Concurrency Preference, and no evidence context — which is what leaves the evidence
     a standalone read retains unstamped by any participation. Built per
     operation by its Execution Scope, over the selection that operation
     adopted, so everything done through it runs under that one selection

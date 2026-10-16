@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, Final, TypedDict, cast
 import yaml
 
 from parallax.core.db_port import IsolationLevel
-from parallax.core.execution import DatabaseOptions
+from parallax.core.execution import TxnOptions
 from parallax.core.unit_work import Concurrency, concurrency_preference
 from parallax.core.wire._json import authored_number
 
@@ -419,7 +419,7 @@ def transaction_keywords(case: Case) -> TransactionKeywords:
     return _option_block_keywords(case, "when", "uow")
 
 
-def database_options(case: Case) -> DatabaseOptions:
+def database_options(case: Case) -> TxnOptions:
     """The record the case's Database Root is CONNECTED with: its
     `given.databaseOptions`, decoded through the same field rules a request
     meets, with every field the case omits at the record's own built-in default.
@@ -428,10 +428,10 @@ def database_options(case: Case) -> DatabaseOptions:
     production's to resolve from this record and the sparse request
     :func:`transaction_keywords` projects, and a lane hands each to its own seam.
     """
-    return DatabaseOptions(**_option_block_keywords(case, "given", "databaseOptions"))
+    return TxnOptions(**_option_block_keywords(case, "given", "databaseOptions"))
 
 
-def effective_options(case: Case) -> DatabaseOptions:
+def effective_options(case: Case) -> TxnOptions:
     """The options the case's OUTER invocation resolves to — each authored
     `when.uow` field over the root record — calculated here, independently of
     production, for what a lane must know before or after the invocation runs:

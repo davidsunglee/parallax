@@ -37,7 +37,7 @@ from parallax.core.write_plan import (
     VersionObservation,
     WritePlanningError,
 )
-from parallax.core.write_plan.keys import TemporalStateKey
+from parallax.core.write_plan.keys import TemporalObjectStateKey
 from parallax.core.write_plan.plan import CombinedSourceAuthority, WritePlan
 from tests._support.clock_probes import instant_at
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
@@ -65,7 +65,7 @@ def _observation(tx_start: dt.datetime, value: str) -> RetainedObservation:
     )
     shape = temporal_read.view(_BALANCE).shape(_ENTITY)
     assert shape is not None
-    state = TemporalStateKey(
+    state = TemporalObjectStateKey(
         _OBJECT, temporal_read.milestone_edge(shape, observation.predecessor, None)
     )
     return RetainedObservation(state, observation, None)

@@ -22,7 +22,7 @@ from parallax.core.entity import _graph_construction as graph_construction_modul
 from parallax.core.entity import _layout as layout_module
 from parallax.core.entity import _row_codec as row_codec_module
 from parallax.core.metamodel import UnresolvedEntityDeclaration
-from parallax.snapshot import Database, SnapshotConnectionError, Transaction, connect
+from parallax.snapshot import Database, SnapshotConnectionError, TxnContext, connect
 from tests._support import mirrored_models as mm
 from tests._support.db_port import Read, ScriptedAdapter, Transact, Write
 from tests._support.root_ownership import own_root
@@ -62,7 +62,7 @@ def test_nothing_fallible_remains_after_preparation(monkeypatch: pytest.MonkeyPa
 
     assert db.find(mm.Account.where(mm.Account.id == 7)).result().owner == "Newton"
 
-    def insert(tx: Transaction) -> None:
+    def insert(tx: TxnContext) -> None:
         tx.insert(new_account())
 
     db.transact(insert)

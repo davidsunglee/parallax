@@ -103,7 +103,7 @@ from parallax.core.entity._model import model_of
 from parallax.core.storage_layout import view as storage_layout_view
 from parallax.core.unit_work import KeyedMutation, TargetMutation
 from parallax.postgres._connection import adapt_binds
-from parallax.snapshot import Database, ScopedDatabase, Transaction, WireEntity
+from parallax.snapshot import Database, ScopedDatabase, TxnContext, WireEntity
 from tests._support.db_port import ConnectsAsItself, body_outcome, projected_rows
 from tests.unit import _leaf_type_support as leaf_support
 from tests.unit import _predicate_acquisition_support as acquisition_support
@@ -764,7 +764,7 @@ def insert_response(
     ``tx.wire.insert`` receives the payload and ``closed`` the moment the frozen
     node it answers is held, with the commit that flushes the row outside both."""
 
-    def body(tx: Transaction) -> WireEntity:
+    def body(tx: TxnContext) -> WireEntity:
         if opened is not None:
             opened()
         node = tx.wire.insert(case.entity.identity.name, case.payload)
@@ -788,7 +788,7 @@ def database(case: Case, port: AcceptingPort | None = None) -> Generator[ScopedD
         yield root.using_database_login()
 
 
-def _source(tx: Transaction, case: Case) -> object:
+def _source(tx: TxnContext, case: Case) -> object:
     """What the verb revises: the node the case's read publishes, edited for a
     Typed case; nothing for an insert, which revises no row, or for a target,
     which addresses its row by key."""
@@ -803,7 +803,7 @@ def _source(tx: Transaction, case: Case) -> object:
     return tx.find(query).result().edit(**case.changes)
 
 
-def _address(tx: Transaction, case: Case) -> None:
+def _address(tx: TxnContext, case: Case) -> None:
     """Buffer ``case``'s target write through its public verb, conditioned on
     the stored milestone's Transaction-Time start where the Entity has one and
     asserted unversioned where it has none. Each branch states its keywords
@@ -831,7 +831,7 @@ def _address(tx: Transaction, case: Case) -> None:
         verb(name, case.changes, unversioned=True)
 
 
-def _buffer(tx: Transaction, case: Case, source: object) -> None:
+def _buffer(tx: TxnContext, case: Case, source: object) -> None:
     """Buffer ``case``'s keyed write through its public verb."""
     if case.addressed:
         _address(tx, case)
@@ -870,7 +870,7 @@ def write(
     verb kept between ``opened`` and ``buffered``.
     """
 
-    def body(tx: Transaction) -> None:
+    def body(tx: TxnContext) -> None:
         source = _source(tx, case)
         if opened is not None:
             opened()

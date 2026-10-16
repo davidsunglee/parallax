@@ -5,7 +5,7 @@ from typing import Any
 
 from parallax.core import deep_fetch
 from parallax.core._execution._adoption import AdoptedExecution
-from parallax.core._execution._options import OMITTED, DatabaseOptions, Omitted, patch_options
+from parallax.core._execution._options import OMITTED, Omitted, TxnOptions, patch_options
 from parallax.core._execution._publication import (
     SelectedReadModel,
     ServingModel,
@@ -19,9 +19,9 @@ from parallax.core._execution._read_policy import (
     read_rows,
     resolved,
 )
-from parallax.core._execution._transaction._attempt import Attempt
+from parallax.core._execution._transaction._attempt import TxnAttempt
 from parallax.core._execution._transaction._runner import TransactionRunner
-from parallax.core._execution._unit_work.retain import ReadOrigin
+from parallax.core._execution._unit_work.retain import ReadEvidence
 from parallax.core._execution._unit_work.uow import Concurrency
 from parallax.core.db_port import IsolationLevel
 from parallax.core.execution_authority._authority import ExecutionCapture
@@ -52,7 +52,7 @@ class ExecutionScope:
     spelling as the unresolved input the read resolves once it has adopted its
     selection, and the builder of the Publication its result is stated through —
     and a factory per transaction that turns each fully constructed
-    :class:`Attempt` into the transaction its callback is handed.
+    :class:`TxnAttempt` into the transaction its callback is handed.
 
     Each standalone operation adopts whatever selection is current when it
     begins, through an adoption of its own, and is served under that selection
@@ -68,7 +68,7 @@ class ExecutionScope:
         self,
         runner: TransactionRunner,
         capture: ExecutionCapture,
-        options: DatabaseOptions,
+        options: TxnOptions,
         *,
         lifecycle: InstalledLifecycle | None,
         serving: ServingModel,
@@ -111,7 +111,7 @@ class ExecutionScope:
         /,
         *,
         convert_query: Callable[[Q], ReadQuery],
-        build_publication: Callable[[SelectedReadModel], Publication[ReadOrigin, Eager]],
+        build_publication: Callable[[SelectedReadModel], Publication[ReadEvidence, Eager]],
     ) -> Eager:
         """One standalone whole-result read, published through
         ``build_publication``.
@@ -129,7 +129,7 @@ class ExecutionScope:
         publication = build_publication(read.selected)
         return read_graph(read, convert_query(query), publication, self._planner)
 
-    def stream[Q, P: Publication[ReadOrigin, Any]](
+    def stream[Q, P: Publication[ReadEvidence, Any]](
         self,
         query: Q,
         batch_size: int,
@@ -183,13 +183,13 @@ class ExecutionScope:
         /,
         *,
         scanned: bool,
-    ) -> StreamPageResult[ReadOrigin]:
+    ) -> StreamPageResult[ReadEvidence]:
         return read_page(read, paging, at, batch, self._planner, scanned=scanned)
 
     def transact[Tx, T](
         self,
         fn: Callable[[Tx], T],
-        transaction_for: Callable[[Attempt], Tx],
+        transaction_for: Callable[[TxnAttempt], Tx],
         /,
         *,
         max_retries: int | Omitted = OMITTED,

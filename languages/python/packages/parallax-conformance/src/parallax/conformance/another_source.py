@@ -100,7 +100,7 @@ class AnotherSource:
                 "a relationship level"
             )
         validated = preflight(node, model=self._model.meta, form="graph")
-        result = execute_read(validated, self._model, self._port, origins=_NO_ORIGINS)
+        result = execute_read(validated, self._model, self._port, origin_collector=_NO_ORIGINS)
         return cast("tuple[S, ...]", self._materialize(result.page))
 
     def produced(self, value: object) -> bool:

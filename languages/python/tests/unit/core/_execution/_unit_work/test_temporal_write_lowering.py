@@ -74,7 +74,7 @@ from parallax.core.write_plan import (
     WritePlan,
     WritePlanningError,
 )
-from parallax.core.write_plan.keys import TemporalStateKey
+from parallax.core.write_plan.keys import TemporalObjectStateKey
 from parallax.core.write_plan.plan import OwnedEndpoint
 from parallax.core.write_plan.steps import (
     INFINITY,
@@ -888,16 +888,20 @@ def _retained(
 ) -> WriteObservation | None:
     """The evidence a read of the SpotQuote row retained for its milestone.
 
-    Read off the read origin the retention answered, and cross-checked against a
+    Read off the read evidence the retention answered, and cross-checked against a
     reread of the same milestone: the two are one object, because the unit of
     work answers a state it already holds evidence for with that evidence rather
     than a second copy.
     """
-    hint = judged_evidence(model, entity, _SPOT_QUOTE_COLUMNS, document=document, ledger=uow)[0]
+    hint = judged_evidence(
+        model, entity, _SPOT_QUOTE_COLUMNS, document=document, evidence_context=uow
+    )[0]
     assert hint.observation is not None
-    state = TemporalStateKey(ObjectKey(entity, (("id", 1),)), _SPOT_QUOTE_EDGE)
+    state = TemporalObjectStateKey(ObjectKey(entity, (("id", 1),)), _SPOT_QUOTE_EDGE)
     assert hint.observation.key == state
-    reread = judged_evidence(model, entity, _SPOT_QUOTE_COLUMNS, document=document, ledger=uow)[0]
+    reread = judged_evidence(
+        model, entity, _SPOT_QUOTE_COLUMNS, document=document, evidence_context=uow
+    )[0]
     assert reread.observation is hint.observation
     return hint.observation.evidence
 

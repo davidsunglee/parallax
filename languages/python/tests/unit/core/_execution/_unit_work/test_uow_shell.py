@@ -83,16 +83,16 @@ from parallax.core.unit_work import (
 from parallax.core.write_plan import (
     SUPERSEDED,
     TERMINATED,
-    ObservedStateKey,
+    ObjectStateKey,
     PlannedInsert,
     PredecessorRow,
     TemporalObservation,
     VersionObservation,
     WritePlan,
     WritePlanningError,
-    observed_state_key,
+    object_state_key_from_observation,
 )
-from parallax.core.write_plan.keys import VersionedStateKey
+from parallax.core.write_plan.keys import VersionedObjectStateKey
 from parallax.core.write_plan.plan import (
     NO_OPENINGS,
     OPEN_BITEMPORAL_ENDS,
@@ -369,7 +369,7 @@ def test_an_observation_a_buffered_write_carries_binds_into_its_settled_step() -
     # write. `PlannedUpdate` carries no raw observation — the recorded version
     # survives only as the settled step's own advanced assignment.
     recorder = _Recorder()
-    state = VersionedStateKey(corpus_object_key("Account", ("id", 1)), 7)
+    state = VersionedObjectStateKey(corpus_object_key("Account", ("id", 1)), 7)
     retained = RetainedObservation(state, VersionObservation(observed_version=7), None)
 
     def body(tx: UnitOfWork) -> None:
@@ -488,7 +488,7 @@ def test_a_carrier_refuses_a_claim_naming_other_evidence() -> None:
     # the observation. Two different pieces of evidence in one carrier would let
     # a write gate on one state and retire another's claim, so the pairing is
     # refused where the carrier is built.
-    state = VersionedStateKey(corpus_object_key("Account", ("id", 1)), 7)
+    state = VersionedObjectStateKey(corpus_object_key("Account", ("id", 1)), 7)
     other = RetainedObservation(state, VersionObservation(observed_version=7), None)
     with pytest.raises(ValueError, match="the retained form of the observation"):
         ObservedKeyedWrite(
@@ -505,7 +505,7 @@ def test_two_writes_of_one_claim_merge_and_answer_it_once() -> None:
     # Coalescing makes them one write: the assignments merge in authored order,
     # the later value wins the member both name, and the merged write's one
     # execution unit keeps the identical retained observation both held.
-    state = VersionedStateKey(corpus_object_key("Account", ("id", 1)), 7)
+    state = VersionedObjectStateKey(corpus_object_key("Account", ("id", 1)), 7)
     retained = RetainedObservation(state, VersionObservation(observed_version=7), None)
     carriers = [
         buffered_write(
@@ -736,7 +736,7 @@ def test_escaped_reference_raises_on_every_use() -> None:
     with pytest.raises(EscapedTransactionError):
         tx.retain(
             RetainedObservation(
-                VersionedStateKey(corpus_object_key("Account", ("id", 1)), 1),
+                VersionedObjectStateKey(corpus_object_key("Account", ("id", 1)), 1),
                 VersionObservation(observed_version=1),
                 None,
             )
@@ -802,15 +802,15 @@ def _balance_group(*rows: dict[str, object]) -> MaterializedWriteGroup:
     )
 
 
-def _account_state(key: int, version: int) -> VersionedStateKey:
-    return VersionedStateKey(corpus_object_key("Account", ("id", key)), version)
+def _account_state(key: int, version: int) -> VersionedObjectStateKey:
+    return VersionedObjectStateKey(corpus_object_key("Account", ("id", key)), version)
 
 
-def _balance_state(key: int) -> ObservedStateKey:
+def _balance_state(key: int) -> ObjectStateKey:
     target = _balance_group(_balance_members(key)).mutation.selection.target
     shape = temporal_read.view(_BALANCE).shape(target.identity)
     assert shape is not None
-    return observed_state_key(
+    return object_state_key_from_observation(
         corpus_object_key("Balance", ("id", key)),
         TemporalObservation(predecessor=PredecessorRow(_balance_members(key))),
         shape,
@@ -1119,7 +1119,7 @@ def _balance_insert(key: int) -> PreparedKeyedWrite:
 def _balance_update_from(key: int, tx_start: object) -> BufferItem:
     members = _balance_members(key, tx_start)
     observation = TemporalObservation(predecessor=PredecessorRow(members))
-    state = observed_state_key(
+    state = object_state_key_from_observation(
         corpus_object_key("Balance", ("id", key)),
         observation,
         _balance_shape(),
@@ -1153,7 +1153,7 @@ def test_a_row_an_earlier_flush_opened_is_revised_rather_than_closed() -> None:
 def _balance_terminate_from(key: int, tx_start: object) -> BufferItem:
     members = _balance_members(key, tx_start)
     observation = TemporalObservation(predecessor=PredecessorRow(members))
-    state = observed_state_key(
+    state = object_state_key_from_observation(
         corpus_object_key("Balance", ("id", key)), observation, _balance_shape()
     )
     return buffered_write(
@@ -1378,7 +1378,9 @@ def test_a_unit_that_changes_nothing_spends_its_evidence_and_leaves_its_state_fr
     observation = TemporalObservation(predecessor=PredecessorRow(members))
     shape = temporal_read.view(_POSITION).shape(corpus_object_key("Position", ("id", 1)).entity)
     assert shape is not None
-    state = observed_state_key(corpus_object_key("Position", ("id", 1)), observation, shape)
+    state = object_state_key_from_observation(
+        corpus_object_key("Position", ("id", 1)), observation, shape
+    )
     recorder = _Recorder()
 
     def body(uow: UnitOfWork) -> None:
@@ -1432,7 +1434,7 @@ def test_a_guarded_unit_spends_its_source_and_leaves_an_unchanged_state_fresh(
     key = corpus_object_key("Balance", ("id", 1))
     shape = temporal_read.view(_BALANCE).shape(key.entity)
     assert shape is not None
-    state = observed_state_key(key, observation, shape)
+    state = object_state_key_from_observation(key, observation, shape)
     recorder = _Recorder()
 
     def body(uow: UnitOfWork) -> None:
@@ -1468,7 +1470,7 @@ def test_a_guarded_unit_spends_its_source_and_leaves_an_unchanged_state_fresh(
 
 def test_a_unit_names_its_sources_state_and_a_failed_unit_publishes_nothing() -> None:
     failure = RuntimeError("the second unit failed")
-    named: list[tuple[ObservedStateKey, ...]] = []
+    named: list[tuple[ObjectStateKey, ...]] = []
 
     def executor(
         plan: WritePlan,
@@ -1521,7 +1523,7 @@ def test_a_unit_with_no_step_spends_its_source_and_changes_nothing() -> None:
     }
     observation = TemporalObservation(predecessor=PredecessorRow(members))
     key = corpus_object_key("Balance", ("id", 1))
-    state = observed_state_key(key, observation, _balance_shape())
+    state = object_state_key_from_observation(key, observation, _balance_shape())
     recorder = _Recorder()
 
     def body(uow: UnitOfWork) -> None:
@@ -1582,7 +1584,7 @@ def test_a_row_a_unit_removes_and_reopens_at_one_address_stays_owned() -> None:
     key = corpus_object_key("Position", ("id", 1))
     shape = temporal_read.view(_POSITION).shape(key.entity)
     assert shape is not None
-    state = observed_state_key(key, observation, shape)
+    state = object_state_key_from_observation(key, observation, shape)
     endpoint = OwnedEndpoint(key.entity, (1,), (Finite(instant=_DEC), PLANNED_INFINITY))
     recorder = _Recorder()
 
@@ -1692,7 +1694,7 @@ def test_a_unit_a_barrier_kept_back_binds_on_what_the_earlier_unit_spent_and_pro
     key = corpus_object_key("WherePosition", ("id", 1))
     shape = temporal_read.view(_BARRIERED).shape(key.entity)
     assert shape is not None
-    state = observed_state_key(key, original, shape)
+    state = object_state_key_from_observation(key, original, shape)
     held: list[RetainedObservation] = []
     seen: list[tuple[bool, bool]] = []
 
@@ -1768,7 +1770,7 @@ def test_an_objects_proofs_end_when_its_last_following_unit_completes() -> None:
     key = corpus_object_key("WherePosition", ("id", 1))
     shape = temporal_read.view(_BARRIERED).shape(key.entity)
     assert shape is not None
-    state = observed_state_key(key, original, shape)
+    state = object_state_key_from_observation(key, original, shape)
 
     def executor(
         plan: WritePlan,
@@ -2003,7 +2005,7 @@ def test_a_stored_insertions_removal_window_is_kept_until_what_it_derives_from_c
 
 def test_a_proven_originals_descendants_are_exactly_those_overlapping_the_window() -> None:
     key = corpus_object_key("WherePosition", ("id", 1))
-    original = observed_state_key(
+    original = object_state_key_from_observation(
         key, TemporalObservation(predecessor=_position_row(_JAN, _T0)), _barriered_shape()
     )
     rows = (
@@ -2054,15 +2056,15 @@ def _barriered_shape() -> temporal_read.TemporalShape:
 _SECOND_START = dt.datetime(2023, 12, 15, tzinfo=dt.UTC)
 
 
-def _original(start: dt.datetime, tx_start: dt.datetime) -> ObservedStateKey:
+def _original(start: dt.datetime, tx_start: dt.datetime) -> ObjectStateKey:
     key = corpus_object_key("WherePosition", ("id", 1))
-    return observed_state_key(
+    return object_state_key_from_observation(
         key, TemporalObservation(predecessor=_position_row(start, tx_start)), _barriered_shape()
     )
 
 
 def _merged_derivations(
-    first: ObservedStateKey, second: ObservedStateKey, merged: OwnedEndpoint
+    first: ObjectStateKey, second: ObjectStateKey, merged: OwnedEndpoint
 ) -> tuple[Derivation, Derivation]:
     """P1 over [January, June) and P2 over [June, infinity), both amended from
     April through August into one row over [April, August)."""

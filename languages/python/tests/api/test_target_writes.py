@@ -23,7 +23,7 @@ from parallax.core import Attr, Document, DomainModel, Entity, ValueObject, attr
 from parallax.core.entity._model import model_of
 from parallax.core.execution import ExecutionFailure
 from parallax.core.unit_work import MissingTargetError, WriteEvidenceError, WritePreconditionError
-from parallax.snapshot import ScopedDatabase, Transaction, connect
+from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.root_ownership import own_root
 
 _NAMESPACE = "target.writes"
@@ -149,12 +149,12 @@ def _condition(version: int | None) -> dict[str, Any]:
     return {"unversioned": True} if version is None else {"version": version}
 
 
-def _patch(tx: Transaction, entity: type[Any], version: int | None = 1, **changes: object) -> None:
+def _patch(tx: TxnContext, entity: type[Any], version: int | None = 1, **changes: object) -> None:
     tx.wire.amend_if(_name(entity), {"id": 1, **changes}, **_condition(version))
 
 
 def _replace(
-    tx: Transaction,
+    tx: TxnContext,
     entity: type[Any],
     representation: _Representation,
     version: int | None = 1,
@@ -166,7 +166,7 @@ def _replace(
         tx.wire.replace_if(_name(entity), {"id": 1, **data}, **_condition(version))
 
 
-def _read(tx: Transaction, entity: type[Any]) -> Any:
+def _read(tx: TxnContext, entity: type[Any]) -> Any:
     return tx.find(entity.where(entity.id == 1)).result()
 
 
@@ -215,7 +215,7 @@ def test_an_equal_valued_target_write_still_advances_the_version(
 ) -> None:
     db = _seeded(profile_run, entity)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         _patch(tx, entity, label="other")
         _patch(tx, entity, label="seed")
 
@@ -231,7 +231,7 @@ def test_a_revision_that_no_longer_holds_fails_without_retry_and_changes_nothing
 ) -> None:
     db = _seeded(profile_run, entity)
 
-    def by_peer(tx: Transaction) -> None:
+    def by_peer(tx: TxnContext) -> None:
         source = _read(tx, entity)
         if peer == "revised":
             tx.amend(source.edit(label="peer"))
@@ -242,7 +242,7 @@ def test_a_revision_that_no_longer_holds_fails_without_retry_and_changes_nothing
     before = _accounts(profile_run, entity)
     attempts = 0
 
-    def stale(tx: Transaction) -> None:
+    def stale(tx: TxnContext) -> None:
         nonlocal attempts
         attempts += 1
         _patch(tx, entity, label="stale")
@@ -265,7 +265,7 @@ def test_an_unversioned_target_writes_under_the_locking_fallback_and_misses_as_a
     db.transact(lambda tx: _replace(tx, entity, "wire", version=None, label="replaced"))
     assert _wallets(profile_run, entity) == [(1, "replaced", None)]
 
-    def missing(tx: Transaction) -> None:
+    def missing(tx: TxnContext) -> None:
         tx.wire.amend_if(_name(entity), {"id": 2, "label": "nobody"}, unversioned=True)
 
     with pytest.raises(ExecutionFailure) as failed:
@@ -297,7 +297,7 @@ def test_target_and_observed_writes_of_one_state_compose_into_one_effect(
 ) -> None:
     db = _seeded(profile_run, entity)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         source = _read(tx, entity)
         for step in sequence.split("-"):
             if step == "P":
@@ -321,7 +321,7 @@ def test_target_and_observed_writes_of_one_state_compose_into_one_effect(
     assert _accounts(profile_run, entity) == ([] if stored is None else [stored])
 
 
-def _read_other(tx: Transaction, entity: type[Any]) -> None:
+def _read_other(tx: TxnContext, entity: type[Any]) -> None:
     tx.find(entity.where(entity.id == 2))
 
 
@@ -333,7 +333,7 @@ def test_a_stale_observed_source_a_replacement_overwrote_still_fails_the_write(
     stale = db.find(entity.where(entity.id == 1)).result()
     db.transact(lambda tx: tx.amend(_read(tx, entity).edit(note="peer")))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.amend(stale.edit(label="stale"))
         _replace(tx, entity, "wire", label="replaced")
 
@@ -358,7 +358,7 @@ def test_an_unversioned_target_and_observed_writes_of_one_object_compose(
 ) -> None:
     db = _seeded(profile_run, entity)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         source = _read(tx, entity)
         for step in sequence.split("-"):
             if step == "P":
@@ -399,7 +399,7 @@ def test_a_target_write_of_an_object_this_attempt_inserted_is_refused_until_comm
     db = _db(profile_run)
     stated = _stated(entity, 1)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         inserted = tx.wire.insert(_name(entity), {"id": 1, **_seed(entity)})
         fresh: Any = None
         for flushed in (False, True):
@@ -433,7 +433,7 @@ def test_a_committed_row_this_attempt_rewrote_takes_a_target_write_at_its_new_ve
 ) -> None:
     db = _seeded(profile_run, entity)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.amend(_read(tx, entity).edit(note="observed"))
         assert _read(tx, entity).version == 2
         _patch(tx, entity, version=2, label="patched")
@@ -450,7 +450,7 @@ def test_a_token_this_attempts_own_flush_outdated_fails_and_rolls_the_attempt_ba
     db = _seeded(profile_run, entity)
     before = _accounts(profile_run, entity)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.amend(_read(tx, entity).edit(note="observed"))
         _read_other(tx, entity)
         _patch(tx, entity, version=1, label="patched")

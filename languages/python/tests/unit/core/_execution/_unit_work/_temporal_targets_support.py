@@ -30,7 +30,7 @@ from parallax.core.write_plan import (
     PredecessorRow,
     TemporalObservation,
 )
-from parallax.core.write_plan.keys import TemporalStateKey
+from parallax.core.write_plan.keys import TemporalObjectStateKey
 from tests.unit._corpus_model_support import corpus_records, formed
 
 POSITION = formed(corpus_records()["position"])
@@ -62,7 +62,7 @@ def retained(predecessor: PredecessorRow) -> RetainedObservation:
     observation = TemporalObservation(predecessor=predecessor)
     shape = temporal_read.view(POSITION).shape(ENTITY)
     assert shape is not None
-    state = TemporalStateKey(OBJECT, temporal_read.milestone_edge(shape, predecessor, None))
+    state = TemporalObjectStateKey(OBJECT, temporal_read.milestone_edge(shape, predecessor, None))
     return RetainedObservation(state, observation, None)
 
 

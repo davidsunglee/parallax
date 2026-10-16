@@ -215,7 +215,7 @@ from parallax.core.execution_lifecycle._activity import (
     open_stream_root,
     open_transaction_root,
 )
-from parallax.snapshot import ScopedDatabase, Transaction, connect
+from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support import mirrored_models as mm
 from tests._support.db_port import (
     ConnectsAsItself,
@@ -1010,8 +1010,8 @@ def _threaded_roots(point: _Point, db: ScopedDatabase) -> Seam:
             signal, wait = arrived[index].release, parked[index].acquire
             deepest = False
 
-            def joining(remaining: int) -> Callable[[Transaction], None]:
-                def body(_tx: Transaction) -> None:
+            def joining(remaining: int) -> Callable[[TxnContext], None]:
+                def body(_tx: TxnContext) -> None:
                     nonlocal deepest
                     if remaining > 0:
                         db.transact(joining(remaining - 1))
@@ -1175,8 +1175,8 @@ def _joined_depth(depth: int, provider: ExecutionLifecycleProvider) -> Generator
     """
     with _public_db(_CountingPort(), provider) as database:
 
-        def joining(remaining: int, sample: Callable[[], None]) -> Callable[[Transaction], None]:
-            def body(_tx: Transaction) -> None:
+        def joining(remaining: int, sample: Callable[[], None]) -> Callable[[TxnContext], None]:
+            def body(_tx: TxnContext) -> None:
                 if remaining == 0:
                     sample()
                     return
@@ -1299,7 +1299,7 @@ def test_a_completed_transaction_leaves_no_lifecycle_object_alive() -> None:
     port = ScriptedAdapter(Transact(Write(), Read(rows=[NEW_ROW])))
     with _observed_db(port) as database:
 
-        def body(tx: Transaction) -> None:
+        def body(tx: TxnContext) -> None:
             tx.insert(new_account())
             tx.find(mm.Account.where(mm.Account.id == 7)).result()
 
@@ -1654,8 +1654,8 @@ def test_a_joining_call_nests_a_live_scope_the_correlation_tree_does_not_show() 
 
     with _public_db(port, _SharedProvider(transitions)) as database:
 
-        def joining(remaining: int) -> Callable[[Transaction], None]:
-            def body(_tx: Transaction) -> None:
+        def joining(remaining: int) -> Callable[[TxnContext], None]:
+            def body(_tx: TxnContext) -> None:
                 if remaining > 0:
                     database.transact(joining(remaining - 1))
 

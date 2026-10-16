@@ -8,7 +8,7 @@ from parallax.conformance.read_models import Balance
 from parallax.conformance.vo_models import Branch
 from parallax.core import LATEST, Edge
 from parallax.core.unit_work import Concurrency
-from parallax.snapshot import ScopedDatabase, Transaction, edge_of
+from parallax.snapshot import ScopedDatabase, TxnContext, edge_of
 
 __all__ = [
     "StaleMilestoneError",
@@ -52,7 +52,7 @@ def submit_balance_edit(
     observed-``in_z`` gate closes zero rows —
     ``OptimisticLockConflictError`` — if one is chained after it."""
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         current = tx.find(Balance.where(Balance.id == id)).result()
         current_edge = edge_of(current)
         if current_edge.tx_time != edge.tx_time:
@@ -97,7 +97,7 @@ def submit_branch_edit(
     the displayed rectangle by its own Valid-Time end, but its gate matches zero
     rows, ``OptimisticLockConflictError``."""
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         current = tx.find(Branch.where(Branch.id == id).as_of(valid_time=valid_from)).result()
         current_edge = edge_of(current)
         if current_edge != edge:

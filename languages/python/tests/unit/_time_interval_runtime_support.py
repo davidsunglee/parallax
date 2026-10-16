@@ -102,7 +102,7 @@ from parallax.core.execution import (
 )
 from parallax.core.read_delivery._read_plan import DEFAULT_READ_PLAN_CACHE_CAPACITY
 from parallax.postgres._connection import adapt_binds, initialize_connection
-from parallax.snapshot import Database, ScopedDatabase, Transaction
+from parallax.snapshot import Database, ScopedDatabase, TxnContext
 from tests._support.db_port import ConnectsAsItself, body_outcome, projected_rows
 from tests.unit import _predicate_acquisition_support as acquisition_support
 from tests.unit import _write_lowering_support as lowering_support
@@ -708,7 +708,7 @@ def _predicate_driver(cell: FlowCell) -> Generator[Driver]:
     ) as root:
         handle = root.using_database_login()
 
-        def body(tx: Transaction, stopwatch: Stopwatch) -> None:
+        def body(tx: TxnContext, stopwatch: Stopwatch) -> None:
             stopwatch.start()
             window = {
                 "valid_from": acquisition_support.INTERIOR_FROM,
@@ -838,7 +838,7 @@ def _replacement_driver(size: int) -> Generator[Driver]:
     ) as root:
         handle = root.using_database_login()
 
-        def body(tx: Transaction, stopwatch: Stopwatch) -> None:
+        def body(tx: TxnContext, stopwatch: Stopwatch) -> None:
             stopwatch.start()
             for index, instance in enumerate(replacements):
                 tx.replace_if(
@@ -866,7 +866,7 @@ class _Insertion:
     """One insertion of :data:`_KEY` over ``[origin, day(size))``, stored and
     split into ``size`` tagged rows, and the port answering its reads."""
 
-    tx: Transaction
+    tx: TxnContext
     port: _ScriptedPort
     size: int
     rows: tuple[dict[str, object], ...] = ()
@@ -938,7 +938,7 @@ class _Insertion:
         return refused
 
 
-def _barrier(tx: Transaction, index: int) -> None:
+def _barrier(tx: TxnContext, index: int) -> None:
     """A readless predicate write, which keeps the writes after it in a later
     barrier region."""
     entity = cast("Any", lowering_support.PlainColumns)
@@ -984,7 +984,7 @@ def _insertion_driver(cell: AlgorithmCell) -> Generator[Driver]:
     ) as root:
         handle = root.using_database_login()
 
-        def body(tx: Transaction, stopwatch: Stopwatch, answer: list[Outcome]) -> None:
+        def body(tx: TxnContext, stopwatch: Stopwatch, answer: list[Outcome]) -> None:
             answer.append(scenario(_Insertion(tx, port, cell.size), stopwatch))
             raise _Abandoned
 

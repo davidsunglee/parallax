@@ -8,7 +8,7 @@ from parallax.core._execution._keyed_writes import target_condition, window_muta
 from parallax.core._execution._options import OMITTED, Omitted
 from parallax.core._execution._read_policy import ReadQuery
 from parallax.core._execution._scope import ExecutionScope
-from parallax.core._execution._transaction._attempt import Attempt
+from parallax.core._execution._transaction._attempt import TxnAttempt
 from parallax.core.object_query import ObjectQueryNode, deserialize
 from parallax.core.object_query._fluent import ObjectQuery, typed_read_query
 from parallax.snapshot._handle._read import Snapshot, wire_publication_for
@@ -70,7 +70,7 @@ class WireDatabaseView:
 
     __slots__ = ("_reads",)
 
-    def __init__(self, reads: ExecutionScope | Attempt) -> None:
+    def __init__(self, reads: ExecutionScope | TxnAttempt) -> None:
         self._reads = reads
 
     def find(self, query: WireQuery) -> Snapshot[WireEntity]:
@@ -148,7 +148,7 @@ class WireTransactionView(WireDatabaseView):
 
     __slots__ = ("_attempt",)
 
-    def __init__(self, attempt: Attempt) -> None:
+    def __init__(self, attempt: TxnAttempt) -> None:
         super().__init__(attempt)
         self._attempt = attempt
 

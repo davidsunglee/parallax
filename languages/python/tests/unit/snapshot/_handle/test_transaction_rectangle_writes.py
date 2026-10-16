@@ -14,7 +14,7 @@ from parallax.core.dialect import POSTGRES
 from parallax.core.unit_work import (
     Concurrency,
 )
-from parallax.snapshot import Transaction
+from parallax.snapshot import TxnContext
 from tests._support.db_port import (
     Read,
     ScriptedAdapter,
@@ -88,7 +88,7 @@ def test_a_close_addresses_the_rectangle_the_written_value_came_from(
         )
     )
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         current = tx.find(
             WherePosition.where(WherePosition.id == 1).as_of(
                 valid_time=dt.datetime(2024, 8, 1, tzinfo=dt.UTC)

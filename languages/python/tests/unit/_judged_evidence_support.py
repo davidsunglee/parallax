@@ -1,4 +1,4 @@
-"""Read Origins retained from judged, Page-owned Entity State written by hand."""
+"""Read Evidence retained from judged, Page-owned Entity State written by hand."""
 
 from __future__ import annotations
 
@@ -6,10 +6,10 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from parallax.core._execution._retention import (
-    ObservationLedger,
-    ReadOrigins,
+    ReadEvidenceByProjection,
+    ReadEvidenceContext,
     RecordedProjections,
-    deferred_read_origins,
+    defer_read_evidence,
 )
 from parallax.core.entity._construction_input import ABSENT
 from parallax.core.entity._layout import EntityLayout, LayoutCatalog
@@ -43,8 +43,8 @@ def retained_sources(
     judged: JudgedRows,
     *,
     document: object | None = None,
-    ledger: ObservationLedger | None = None,
-) -> ReadOrigins:
+    evidence_context: ReadEvidenceContext | None = None,
+) -> ReadEvidenceByProjection:
     """The sources a graph-form read retains for one projection per judged
     row, each admitted with its positional state; ``document`` is the raw
     Structured Column every projection carries."""
@@ -53,13 +53,13 @@ def retained_sources(
     observations = RecordedProjections()
     for node in range(len(member_rows)):
         observations.observe_projection(node, entity, document)
-    return deferred_read_origins(
+    return defer_read_evidence(
         model,
         observations,
         lambda node: (layout, member_rows[node]),
         lambda _node: entity,
         lambda node: member_rows[node][layout.primary_key[0]],
-        ledger=ledger,
+        evidence_context=evidence_context,
         pin=Pin(),
     )
 
@@ -69,13 +69,16 @@ def judged_evidence(
     entity: EntityIdentity,
     *rows: Mapping[str, object],
     document: object | None = None,
-    ledger: ObservationLedger | None = None,
-) -> ReadOrigins:
+    evidence_context: ReadEvidenceContext | None = None,
+) -> ReadEvidenceByProjection:
     """The sources a graph-form read retains for one projection per ``rows``
     entry, as :func:`judged_rows` lays them out and :func:`retained_sources`
     admits them."""
     return retained_sources(
-        model, judged_rows(model, entity, *rows), document=document, ledger=ledger
+        model,
+        judged_rows(model, entity, *rows),
+        document=document,
+        evidence_context=evidence_context,
     )
 
 

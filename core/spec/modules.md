@@ -463,7 +463,7 @@ construction it may reference any behavioral module it harnesses.
   and two ports may report the same one.
 - **`m-write-plan --> m-temporal-read`; `m-unit-work --> m-temporal-read`.** A
   write-planning module depending on a read module is the surprise, and it is
-  load-bearing: a temporal Observed State Key addresses the object it observed
+  load-bearing: a temporal Object State Key addresses the object it observed
   **plus the observed milestone's own coordinate**, and that coordinate is
   `m-temporal-read`'s Edge. A milestone chain holds more than one row per primary
   key at a time, so identity alone cannot address the evidence a close needs —

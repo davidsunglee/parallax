@@ -38,7 +38,7 @@ from parallax.core.write_plan import (
     TemporalObservation,
     VersionObservation,
 )
-from parallax.core.write_plan.keys import VersionedStateKey
+from parallax.core.write_plan.keys import VersionedObjectStateKey
 
 _VERSION = AttributeIdentity(
     entity=EntityIdentity(namespace="parallax.compatibility", name="Account"), name="version"
@@ -129,7 +129,7 @@ _EXPLICIT_KEY = _compiled("account", "Account")
 _TT_DERIVED_KEY = _compiled("balance", "Balance")
 _OBJECT = ObjectKey(EntityIdentity("parallax.compatibility", "Account"), (("id", 1),))
 _RETAINED = RetainedObservation(
-    VersionedStateKey(_OBJECT, 4), VersionObservation(observed_version=4), None
+    VersionedObjectStateKey(_OBJECT, 4), VersionObservation(observed_version=4), None
 )
 _MUTATIONS: tuple[KeyedMutation, ...] = get_args(KeyedMutation)
 _PREFERENCES: tuple[Concurrency, ...] = ("locking", "optimistic")

@@ -30,7 +30,7 @@ from parallax.core import (
     attr,
 )
 from parallax.core.entity._model import model_of
-from parallax.snapshot import ScopedDatabase, Transaction, connect
+from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.root_ownership import own_root
 
 _NAMESPACE = "scalar.collection"
@@ -251,7 +251,7 @@ def test_edits_and_assignments_replace_and_clear_whole_collections(
     entity = _ENTITIES[layout]
     db.transact(lambda tx: tx.insert(entity(id=1, tags=("a",), counts=(1, 2))))
 
-    def edit(tx: Transaction) -> None:
+    def edit(tx: TxnContext) -> None:
         read = tx.find(entity.where(entity.id == 1)).result()
         tx.amend(read.edit(tags=("c", "b", "c"), counts=()))
 

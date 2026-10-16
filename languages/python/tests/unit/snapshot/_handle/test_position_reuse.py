@@ -38,7 +38,7 @@ from parallax.core.inheritance import InheritanceError
 from parallax.core.inheritance._facet import _InheritanceFacet
 from parallax.core.metamodel import EntityIdentity, TablePerConcreteSubtype
 from parallax.core.storage_layout._facet import _StorageLayoutFacet
-from parallax.snapshot import Database, ScopedDatabase, Transaction, connect
+from parallax.snapshot import Database, ScopedDatabase, TxnContext, connect
 from tests._support.root_ownership import own_root
 
 _NAMESPACE = "position.reuse"
@@ -147,7 +147,7 @@ def _note(text: str) -> Note:
     return Note(text=text)
 
 
-def _seed(tx: Transaction) -> None:
+def _seed(tx: TxnContext) -> None:
     tx.insert(Bird(id=1, name="wren", note=_note("small"), wingspan=20))
     tx.insert(Fish(id=2, name="pike", note=_note("fast"), fins=7))
     tx.insert(Car(id=1, name="coupe", note=_note("red"), doors=2))
@@ -351,7 +351,7 @@ def test_a_materializing_predicate_update_resolves_one_storage_position(
     db = served.db
     spies.clear()
 
-    def update(tx: Transaction) -> None:
+    def update(tx: TxnContext) -> None:
         if representation == "typed":
             tx.amend_where(Ledger.where(Ledger.id == 1), Ledger.balance.set(25))
         else:
@@ -372,7 +372,7 @@ def test_a_materializing_predicate_update_resolves_one_storage_position(
 
 
 _FAMILY_TARGETS: dict[
-    str, tuple[Callable[[Transaction], None], str, dict[str, object], dict[str, object]]
+    str, tuple[Callable[[TxnContext], None], str, dict[str, object], dict[str, object]]
 ] = {
     "tph-concrete": (
         lambda tx: tx.amend_where(Bird.where(Bird.id == 1), Bird.wingspan.set(30)),
@@ -404,7 +404,7 @@ def test_a_family_predicate_update_is_refused_before_any_position_is_resolved(
     spies.clear()
     refusals: list[InheritanceError] = []
 
-    def update(tx: Transaction) -> None:
+    def update(tx: TxnContext) -> None:
         with pytest.raises(InheritanceError) as caught:
             if representation == "typed":
                 typed(tx)

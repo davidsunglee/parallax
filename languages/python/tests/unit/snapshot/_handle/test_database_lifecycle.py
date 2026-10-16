@@ -42,8 +42,8 @@ from parallax.core.db_port import (
     report_resource_issues,
 )
 from parallax.core.diagnostics import diagnostic_for
-from parallax.core.execution import DatabaseOptions, ExecutionFailure
-from parallax.snapshot import Database, Transaction, connect
+from parallax.core.execution import ExecutionFailure, TxnOptions
+from parallax.snapshot import Database, TxnContext, connect
 from tests._support.db_port import (
     BeginCall,
     CommitCall,
@@ -191,7 +191,7 @@ def test_participating_work_inherits_the_attempts_connection_and_returns_nothing
     with _db(adapter) as _root_db:
         db = _root_db.using_database_login()
 
-        def body(tx: Transaction) -> None:
+        def body(tx: TxnContext) -> None:
             tx.find(_account_query()).result()
             tx.find(_account_query()).result()
 
@@ -316,7 +316,7 @@ def test_a_participating_empty_read_flushes_the_work_buffered_before_it() -> Non
     written_by_the_read: list[int] = []
     with _db(adapter, DORMANT_POSITION_COLUMNS) as _root_db:
 
-        def body(tx: Transaction) -> None:
+        def body(tx: TxnContext) -> None:
             tx.insert(Workbench(id=3, name="Loft", prototype_id=None, concept_id=None))
             assert tx.find(_prototypes()).results() == []
             written_by_the_read.append(sum(isinstance(call, WriteCall) for call in adapter.calls))
@@ -437,7 +437,7 @@ def test_a_committed_transaction_survives_a_cleanup_problem() -> None:
     with _db(adapter) as _root_db:
         db = _root_db.using_database_login()
 
-        def body(tx: Transaction) -> str:
+        def body(tx: TxnContext) -> str:
             tx.insert(Account(id=2, owner="Linus", balance=Decimal("1.00")))
             return "committed"
 
@@ -562,8 +562,8 @@ def test_a_composition_that_fails_after_the_runtime_opened_closes_it_again(
 def test_omitted_options_and_a_whole_record_none_are_the_built_in_record() -> None:
     omitted = _db(ScriptedAdapter(Transact()))
     explicit = connect(ScriptedAdapter(Transact()), ACCOUNT, options=None, clock=FixedClock(FIXED))
-    assert omitted.using_database_login().transact(lambda tx: tx.options) == DatabaseOptions()
-    assert explicit.using_database_login().transact(lambda tx: tx.options) == DatabaseOptions()
+    assert omitted.using_database_login().transact(lambda tx: tx.options) == TxnOptions()
+    assert explicit.using_database_login().transact(lambda tx: tx.options) == TxnOptions()
 
 
 def test_an_invalid_record_opens_no_runtime_at_all() -> None:
@@ -571,12 +571,12 @@ def test_an_invalid_record_opens_no_runtime_at_all() -> None:
     # what this pins is that a caller building the record beside the call
     # spends no runtime on it either.
     with pytest.raises(ValueError, match="max_retries"):
-        connect(_NeverAcquires(), ACCOUNT, options=DatabaseOptions(max_retries=-1))
+        connect(_NeverAcquires(), ACCOUNT, options=TxnOptions(max_retries=-1))
 
 
 def test_the_direct_constructor_takes_the_same_record() -> None:
     adapter = ScriptedAdapter(Transact())
-    options = DatabaseOptions(isolation="serializable")
+    options = TxnOptions(isolation="serializable")
     db = Database(adapter.open(), ACCOUNT, options=options, clock=FixedClock(FIXED))
     assert db.using_database_login().transact(lambda tx: tx.options) is options
     assert adapter.calls == [BeginCall("serializable"), CommitCall()]
@@ -590,7 +590,7 @@ def test_participating_work_answers_the_attempts_connection_without_acquiring() 
     with _db(adapter, ORDERS_MODEL) as _root_db:
         db = _root_db.using_database_login()
 
-        def body(tx: Transaction) -> list[object]:
+        def body(tx: TxnContext) -> list[object]:
             with tx.stream(_orders_query(), batch_size=2) as roots:
                 return list(roots)
 

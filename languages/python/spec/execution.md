@@ -66,7 +66,7 @@ propagate unchanged. `using_database_login()` explicitly captures the runtime's
 actual authenticated login without scope-time I/O. No ambient or default
 Principal exists.
 
-`DatabaseOptions` is a complete immutable record. `with_options` makes a
+`TxnOptions` is a complete immutable record. `with_options` makes a
 field-wise patch; omission preserves the previous value and later patches win.
 Authority selection preserves options, and option derivation preserves authority.
 `connect(options=None)` and omission both select the default record, but `None`
@@ -200,7 +200,7 @@ An insertion's authority (`m-unit-work` *Insertion authority*) rides its source
 privately. `tx.insert` binds it to the instance it took, beside any Snapshot
 state that instance already carries, and `edit` carries it to every value
 derived from that instance afterwards; `tx.wire.insert` answers a node carrying
-it in a slot of its own and no Read Origin. It is no member and no mapping key:
+it in a slot of its own and no Read Evidence. It is no member and no mapping key:
 `model_dump`, `dict(node)`, and JSON drop it, and a pickled inserted instance or
 node unpickles as plain domain data that authorizes nothing — so pickling an
 inserted instance succeeds, unlike a read's node. Inserting the same instance

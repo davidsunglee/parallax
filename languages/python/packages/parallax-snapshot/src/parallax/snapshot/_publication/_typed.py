@@ -5,7 +5,7 @@ from types import MappingProxyType
 from typing import cast
 
 from parallax.core import temporal_read
-from parallax.core._execution._unit_work.retain import ReadOrigin
+from parallax.core._execution._unit_work.retain import ReadEvidence
 from parallax.core.entity import (
     UNLOADED,
     EntityGraphConstruction,
@@ -19,8 +19,8 @@ from parallax.core.read_delivery._page import ABSENT, InvalidData, VersionAttrib
 from parallax.core.temporal_read import Edge, NonTemporal, TemporalFacet, milestone_edge
 from parallax.snapshot._inspection import SnapshotNodeState
 from parallax.snapshot._publication._classify import (
-    ClassifiedRoot,
     ConformingRoot,
+    NonConformingRoot,
     RootClassifications,
     classify_roots,
 )
@@ -36,7 +36,7 @@ def typed_root(
     construction: EntityGraphConstruction,
     *,
     ordinal_offset: int = 0,
-    sources: Mapping[int, ReadOrigin] = MappingProxyType({}),
+    origins: Mapping[int, ReadEvidence] = MappingProxyType({}),
 ) -> tuple[object | InvalidData[object], ...]:
     """Classify ``root`` and construct the nodes that hydrate.
 
@@ -46,14 +46,14 @@ def typed_root(
 
     ``versions`` names the explicit version Attribute a classified record
     publishes. ``ordinal_offset`` is where this Root View's roots start in the
-    ordered result the caller publishes, including a later root or streamed Page. ``sources`` is
-    the Read Origin the read retained per projection,
+    ordered result the caller publishes, including a later root or streamed Page. ``origins`` is
+    the Read Evidence the read retained per projection,
     which each node's own Snapshot state carries so a later keyed write reads its
     evidence off the value it was handed.
     """
     classification = classify_roots(root, model, versions, ordinal_offset=ordinal_offset)
-    retained: Mapping[int, ReadOrigin] = (
-        root.by_allocation(sources) if classification.conforming else MappingProxyType({})
+    retained: Mapping[int, ReadEvidence] = (
+        root.by_allocation(origins) if classification.conforming else MappingProxyType({})
     )
     return _Materialization(root, temporal_read.view(model), classification, retained).run(
         construction
@@ -73,10 +73,10 @@ class _Materialization:
     __slots__ = (
         "_classification",
         "_handles",
+        "_origins",
         "_pending",
         "_root",
         "_scope",
-        "_sources",
         "_temporal",
     )
 
@@ -85,12 +85,12 @@ class _Materialization:
         root: RootView,
         temporal: TemporalFacet,
         classification: RootClassifications,
-        sources: Mapping[int, ReadOrigin],
+        origins: Mapping[int, ReadEvidence],
     ) -> None:
         self._root = root
         self._temporal = temporal
         self._classification = classification
-        self._sources = sources
+        self._origins = origins
         self._scope = tuple(
             index for index in range(len(root.order)) if index not in classification.excluded
         )
@@ -186,7 +186,7 @@ class _Materialization:
             },
             pin=self._root.pin if edge is not None else None,
             edge=edge,
-            source=self._sources.get(index),
+            read_evidence=self._origins.get(index),
         )
 
     def _arm(self, value: object) -> object:
@@ -240,7 +240,7 @@ def _undeclared_direction(
     )
 
 
-def _record(root: ClassifiedRoot, instances: Iterator[object]) -> InvalidData[object]:
+def _record(root: NonConformingRoot, instances: Iterator[object]) -> InvalidData[object]:
     """One classified root's published record.
 
     A hydrating root takes the next constructed instance, in the same order its

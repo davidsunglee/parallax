@@ -141,8 +141,8 @@ def test_a_published_value_answers_the_facts_its_own_read_filed() -> None:
     assert resolved.entity.identity == mm.Account.identity
     assert resolved.provenance == "this"
     assert resolved.representation == "typed"
-    assert resolved.hint is not None
-    assert resolved.hint.object_key == ObjectKey(mm.Account.identity, (("id", 1),))
+    assert resolved.read_evidence is not None
+    assert resolved.read_evidence.object_key == ObjectKey(mm.Account.identity, (("id", 1),))
     assert resolved.pin is None  # an unpinned read stands at no instant
 
 
@@ -152,7 +152,7 @@ def test_a_plainly_constructed_value_answers_that_no_read_produced_it() -> None:
     resolved = TypedKeyedWriteSource(new_account(), codec).resolve(meta, "amend")
 
     assert resolved.provenance == "none"
-    assert resolved.hint is None
+    assert resolved.read_evidence is None
     assert resolved.pin is None
     assert resolved.authoring is None
 

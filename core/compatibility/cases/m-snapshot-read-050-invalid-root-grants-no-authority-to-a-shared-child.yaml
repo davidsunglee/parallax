@@ -3,7 +3,7 @@
 # Corrupting the first Location's required `address.street` leaf leaves that root
 # hydratable, while the second Location remains valid. Both result positions carry
 # a Customer node with the same values, but those nodes are distinct: the invalid
-# root suppresses Read Origins for its complete graph, and only the valid root's
+# root suppresses Read Evidence for its complete graph, and only the valid root's
 # Customer node may carry an origin. The m-unit-work-028 sibling proves the
 # observable write refusal for diagnostic data from the invalid graph.
 model: models/customer.yaml

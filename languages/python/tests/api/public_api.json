@@ -139,7 +139,6 @@
     "StreamStateError"
   ],
   "parallax.core.execution": [
-    "DatabaseOptions",
     "DeferredFeatureError",
     "ExecutionFailure",
     "InvalidPrincipalError",
@@ -155,6 +154,7 @@
     "TransactionOwnershipError",
     "TransactionRollbackError",
     "TransactionTimePinReadOnlyError",
+    "TxnOptions",
     "prepare_model"
   ],
   "parallax.core.diagnostics": [
@@ -507,7 +507,7 @@
     "SnapshotMaterializationError",
     "SnapshotStream",
     "TooManyResultsFound",
-    "Transaction",
+    "TxnContext",
     "WireChanges",
     "WireDatabaseView",
     "WireEntity",

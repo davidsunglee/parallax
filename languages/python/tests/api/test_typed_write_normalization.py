@@ -17,7 +17,7 @@ from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import Attr, DomainModel, Entity, Float32, Int32, ValueObject, attr
 from parallax.core.base import PresentDocument
 from parallax.core.db_port import JsonDocument
-from parallax.snapshot import Transaction, connect
+from parallax.snapshot import TxnContext, connect
 from tests._support.db_port import Read, ScriptedAdapter, Transact, Write, WriteCall
 from tests._support.root_ownership import own_root
 
@@ -57,7 +57,7 @@ _NEGATIVE_ZEROS = pytest.mark.parametrize(
 )
 
 
-def _write_calls(work: Callable[[Transaction], object], *script: Read | Write) -> list[WriteCall]:
+def _write_calls(work: Callable[[TxnContext], object], *script: Read | Write) -> list[WriteCall]:
     port = ScriptedAdapter(Transact(*script))
     database = own_root(
         connect(port, _MODEL, clock=FixedClock(dt.datetime(2024, 6, 1, tzinfo=dt.UTC)))

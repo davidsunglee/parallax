@@ -36,7 +36,7 @@ from parallax.core.db_error import DatabaseError
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import TablePerConcreteSubtype
 from parallax.core.read_delivery import InvalidData
-from parallax.snapshot import ScopedDatabase, Transaction, connect, is_view_loaded
+from parallax.snapshot import ScopedDatabase, TxnContext, connect, is_view_loaded
 from tests._support.root_ownership import own_root
 
 _NS = "predicate.algebra"
@@ -368,7 +368,7 @@ def test_shared_joins_page_stream_and_lock_only_their_roots(profile_run: Any) ->
     assert [basket.id for basket in db.find(ordered.limit(2)).results()] == [1, 4]
     assert not any(is_view_loaded(basket, Basket.owner) for basket in db.find(query).results())
 
-    def locked(tx: Transaction) -> list[int]:
+    def locked(tx: TxnContext) -> list[int]:
         found = [basket.id for basket in tx.find(query.order_by(Basket.id.asc())).results()]
         control = profile_run.control()
         try:
@@ -613,7 +613,7 @@ def test_a_locking_read_through_a_temporal_join_locks_only_its_roots(profile_run
     db = _served(profile_run)
     _seed_plans(profile_run)
 
-    def locked(tx: Transaction) -> list[int]:
+    def locked(tx: TxnContext) -> list[int]:
         query = Desk.where(Desk.plan.premium == 30).order_by(Desk.id.asc())
         found = [desk.id for desk in tx.find(query).results()]
         control = profile_run.control()
@@ -709,7 +709,7 @@ def test_owner_results_deliver_wire_streamed_paged_and_root_locked_roots_alike(
     }
     assert sorted(cast("Any", node)["id"] for node in db.wire.find(document).results()) == eager
 
-    def locked(tx: Transaction) -> list[int]:
+    def locked(tx: TxnContext) -> list[int]:
         found = [crate.id for crate in tx.find(ordered).results()]
         control = profile_run.control()
         try:
@@ -903,7 +903,7 @@ def test_a_key_selecting_readless_write_stays_a_barrier(profile_run: Any) -> Non
     db = _served(profile_run)
     _seed_baskets(db)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.insert(Owner(id=3, active=False, nickname="new"))
         tx.insert(Basket(id=4, owner_id=3, tags=(), scores=(), parcels=()))
         tx.delete_where(Basket.where(Basket.owner.nickname == "new"))

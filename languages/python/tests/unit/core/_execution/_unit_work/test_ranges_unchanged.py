@@ -24,7 +24,7 @@ from parallax.core.write_plan import (
     PlannedClose,
     PredecessorRow,
 )
-from parallax.core.write_plan.keys import TemporalStateKey
+from parallax.core.write_plan.keys import TemporalObjectStateKey
 from parallax.core.write_plan.observe import AssignedComparison
 from parallax.core.write_plan.plan import (
     OPEN_BITEMPORAL_ENDS,
@@ -110,7 +110,7 @@ def test_a_range_keeps_each_unchanged_original_and_transforms_only_the_changed_o
     assert opened_windows(bound.steps) == [(MAY, AUG, 100)]
     shape = temporal_read.view(SPANS).shape(SPAN)
     assert shape is not None
-    middle = TemporalStateKey(
+    middle = TemporalObjectStateKey(
         ObjectKey(SPAN, (("id", 1),)), temporal_read.milestone_edge(shape, _MIDDLE, None)
     )
     # The deferred unit's effects are the bound range's, never its plan entry's.

@@ -52,7 +52,7 @@ __all__ = [
     "FlatPageRequest",
     "FlatPageResult",
     "HistoryPageResult",
-    "PageOrigins",
+    "PageOriginCollector",
     "PageProjectionObserver",
     "PageReader",
     "PlannedFlatPageRequest",
@@ -70,7 +70,7 @@ class PageProjectionObserver(Protocol):
     ) -> None: ...
 
 
-class PageOrigins[Origin](PageProjectionObserver, Protocol):
+class PageOriginCollector[Origin](PageProjectionObserver, Protocol):
     """A projection observer that also answers the origins of a sealed Page.
 
     :meth:`origins_for` is asked once, after the Page it observed is sealed, and
@@ -88,7 +88,7 @@ class EagerPageRequest[Origin]:
     model: CatalogedModel
     port: DatabaseConnection
     preference: Concurrency | None
-    origins: PageOrigins[Origin]
+    origin_collector: PageOriginCollector[Origin]
     calls: DatabaseCallScope
     planner: ReadPlanner
     edition: str = ""
@@ -103,14 +103,14 @@ class EagerPageResult[Origin]:
     any level loaded onto a node, so a back-reference would revisit its target
     forever. The reader knows the plan, so it hands the tree on.
 
-    ``sources`` is the origin each observed projection's value will carry,
+    ``origins`` is the origin each observed projection's value will carry,
     keyed by that projection's own index in the Page, exactly as the request's
     origin capability answered it.
     """
 
     page: Page
     includes: deep_fetch.IncludeTree
-    sources: Mapping[int, Origin] = MappingProxyType({})
+    origins: Mapping[int, Origin] = MappingProxyType({})
 
 
 @dataclass(frozen=True, slots=True)
@@ -171,7 +171,7 @@ class StreamPageRequest[Origin]:
     model: CatalogedModel
     port: DatabaseConnection
     preference: Concurrency | None
-    origins: PageOrigins[Origin]
+    origin_collector: PageOriginCollector[Origin]
     calls: DatabaseCallScope
     planner: ReadPlanner
     edition: str = ""
@@ -183,7 +183,7 @@ class StreamPageResult[Origin]:
 
     page: Page
     includes: deep_fetch.IncludeTree
-    sources: Mapping[int, Origin]
+    origins: Mapping[int, Origin]
     delivered: int
     resume_from: ContinuationCoordinate | None
     exhausted: bool
@@ -325,10 +325,14 @@ class PageReader:
             )
             root = plan.root_read()
             if isinstance(root, EmptyRead):
-                return self._empty_page(plan, request.query, request.origins)
+                return self._empty_page(plan, request.query, request.origin_collector)
             roots = self._read_root(plan, root, request.query, request.port, request.calls)
             return self._build_page(
-                roots, request.model, request.port, origins=request.origins, calls=request.calls
+                roots,
+                request.model,
+                request.port,
+                origin_collector=request.origin_collector,
+                calls=request.calls,
             )
         if isinstance(request, PlannedFlatPageRequest):
             root = request.plan.root_read()
@@ -397,7 +401,10 @@ class PageReader:
         return plan
 
     def _empty_page[Origin](
-        self, plan: ReadPlan, query: ResolvedObjectQuery, origins: PageOrigins[Origin]
+        self,
+        plan: ReadPlan,
+        query: ResolvedObjectQuery,
+        origin_collector: PageOriginCollector[Origin],
     ) -> EagerPageResult[Origin]:
         """Seal the zero-root Page of a structurally empty root, without
         executing or converting anything."""
@@ -405,7 +412,7 @@ class PageReader:
             (), resolved_query_pin(query.temporal)
         )
         return EagerPageResult(
-            page=page, includes=plan.include_tree(), sources=origins.origins_for(page)
+            page=page, includes=plan.include_tree(), origins=origin_collector.origins_for(page)
         )
 
     def _read_root(
@@ -443,7 +450,7 @@ class PageReader:
         model: CatalogedModel,
         port: DatabaseConnection,
         *,
-        origins: PageOrigins[Origin],
+        origin_collector: PageOriginCollector[Origin],
         calls: DatabaseCallScope,
     ) -> EagerPageResult[Origin]:
         """Convert roots and execute every reachable fetch step into one Page."""
@@ -453,7 +460,7 @@ class PageReader:
         builder = plan.page_builder(_page_observer(root_read.observer))
         root_rows = root_read.take_rows()
         root_refs = convert_rows(
-            builder, ROOT_LEVEL, root_read.converter, _drain_rows(root_rows), origins
+            builder, ROOT_LEVEL, root_read.converter, _drain_rows(root_rows), origin_collector
         )
         del root_rows
 
@@ -502,12 +509,16 @@ class PageReader:
                 batches = _pipelined_rows(pending, port, calls)
             for fetch, rows in zip(pending, batches, strict=True):
                 root_read.observer.statement_executed(fetch.index + 1, len(rows))
-                child_refs = convert_rows(builder, fetch.index + 1, fetch.converter, rows, origins)
+                child_refs = convert_rows(
+                    builder, fetch.index + 1, fetch.converter, rows, origin_collector
+                )
                 attach_children(builder, meta, includes, fetch.step, fetch.parents, child_refs)
                 fetch_refs[fetch.index] = child_refs
 
         page = builder.finish(root_refs, resolved_query_pin(root_read.temporal))
-        return EagerPageResult(page=page, includes=includes, sources=origins.origins_for(page))
+        return EagerPageResult(
+            page=page, includes=includes, origins=origin_collector.origins_for(page)
+        )
 
     def _read_stream_page[Origin](
         self, request: StreamPageRequest[Origin]
@@ -530,11 +541,11 @@ class PageReader:
         )
         root = plan.root_read()
         if isinstance(root, EmptyRead):
-            empty = self._empty_page(plan, query, request.origins)
+            empty = self._empty_page(plan, query, request.origin_collector)
             return StreamPageResult(
                 page=empty.page,
                 includes=empty.includes,
-                sources=empty.sources,
+                origins=empty.origins,
                 delivered=0,
                 resume_from=None,
                 exhausted=True,
@@ -552,12 +563,16 @@ class PageReader:
         discarded_rows = root_read.take_rows()
         del discarded_rows, root_read
         result = self._build_page(
-            kept, request.model, request.port, origins=request.origins, calls=request.calls
+            kept,
+            request.model,
+            request.port,
+            origin_collector=request.origin_collector,
+            calls=request.calls,
         )
         return StreamPageResult(
             page=result.page,
             includes=result.includes,
-            sources=result.sources,
+            origins=result.origins,
             delivered=verdict.keep,
             resume_from=coordinates[verdict.keep - 1] if verdict.keep else None,
             exhausted=verdict.exhausted,

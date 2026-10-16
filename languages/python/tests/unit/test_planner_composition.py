@@ -79,7 +79,7 @@ from parallax.core.write_plan import WritePlan
 from parallax.core.write_plan.payload import WritePayloadPreparer
 from parallax.core.write_plan.plan import WriteStepView
 from parallax.core.write_plan.steps import PlannedWrite
-from parallax.snapshot import Transaction
+from parallax.snapshot import TxnContext
 from tests._support import mirrored_models as mm
 from tests._support.db_port import (
     Read,
@@ -300,7 +300,7 @@ def test_the_database_lane_plans_every_ingress_through_one_factory_planner(
     port = ScriptedAdapter(Transact(Write(), Read(rows=[NEW_ROW]), Write()))
     database = account_db(port)
 
-    def body(tx: Transaction) -> None:
+    def body(tx: TxnContext) -> None:
         tx.insert(new_account())
         # A participating read force-flushes the buffered Typed insert, so the
         # Wire insert below reaches a SECOND planning rather than being coalesced

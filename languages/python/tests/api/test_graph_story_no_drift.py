@@ -70,7 +70,7 @@ from parallax.core.execution import (
     prepare_model,
 )
 from parallax.core.unit_work import Clock, Concurrency
-from parallax.snapshot import Database, ScopedDatabase, Snapshot, Transaction, is_view_loaded
+from parallax.snapshot import Database, ScopedDatabase, Snapshot, TxnContext, is_view_loaded
 from tests._support.adoption import raises_contextualized
 from tests._support.corpus import (
     CollectionKinds,
@@ -698,7 +698,7 @@ class _CapturedRead:
 
 
 class _RecordingTransaction:
-    """A ``Transaction`` façade recording the Object Query each ``find`` receives.
+    """A ``TxnContext`` façade recording the Object Query each ``find`` receives.
 
     A GROUPED scenario's own find steps run inside the group's transaction, so
     the queries mirroring those steps are taken here rather than at the handle.
@@ -710,7 +710,7 @@ class _RecordingTransaction:
 
     __slots__ = ("_owner", "_tx")
 
-    def __init__(self, tx: Transaction, owner: _RecordingDatabase) -> None:
+    def __init__(self, tx: TxnContext, owner: _RecordingDatabase) -> None:
         self._tx = tx
         self._owner = owner
 
@@ -778,17 +778,17 @@ class _RecordingDatabase(ScopedDatabase):
 
     def transact[T](
         self,
-        fn: Callable[[Transaction], T],
+        fn: Callable[[TxnContext], T],
         *,
         max_retries: int | Omitted = OMITTED,
         concurrency: Concurrency | Omitted = OMITTED,
         retry_optimistic_conflicts: bool | Omitted = OMITTED,
         isolation: IsolationLevel | Omitted = OMITTED,
     ) -> T:
-        def recording(tx: Transaction) -> T:
-            return fn(cast("Transaction", _RecordingTransaction(tx, self)))
+        def recording(tx: TxnContext) -> T:
+            return fn(cast("TxnContext", _RecordingTransaction(tx, self)))
 
-        body: Callable[[Transaction], T] = recording if self._group_finds else fn
+        body: Callable[[TxnContext], T] = recording if self._group_finds else fn
         return super().transact(
             body,
             max_retries=max_retries,

@@ -41,7 +41,7 @@ from parallax.core.execution import (
 )
 from parallax.core.execution_lifecycle import TransactionAttemptStarted
 from parallax.core.unit_work import OptimisticLockConflictError
-from parallax.snapshot import ScopedDatabase, Transaction, connect
+from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.adoption import raises_contextualized
 from tests._support.corpus import case_document, case_fixtures
 
@@ -72,7 +72,7 @@ def _make_body(
     db: ScopedDatabase,
     scope_for: Callable[[case_format.ActorSelection], ScopedDatabase],
 ) -> Any:  # Callable[[Transaction], Entity | None]
-    def body(tx: Transaction) -> Entity | None:
+    def body(tx: TxnContext) -> Entity | None:
         result = boundary_runner.run_boundary_actions(
             tx, steps, target, database=db, scope_for=scope_for
         )

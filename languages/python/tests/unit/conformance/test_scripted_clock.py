@@ -22,7 +22,7 @@ from parallax.conformance.read_models import Balance
 from parallax.conformance.scripted_clock import ClockExhaustedError, FixedClock, ScriptedClock
 from parallax.conformance.story_models import Account
 from parallax.core.db_error import DatabaseError
-from parallax.snapshot import Database, Transaction
+from parallax.snapshot import Database, TxnContext
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
     Read,
@@ -108,7 +108,7 @@ def test_force_flush_and_commit_flush_share_one_instant_in_one_transaction() -> 
         Database.connect(port, _BALANCE, clock=ScriptedClock([_I1, _I2]))
     ).using_database_login()
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.insert(_balance(7))
         tx.find(Balance.where(Balance.id == 7))  # force-flushes the buffered insert
         tx.insert(_balance(8))  # the commit flush reuses the SAME captured instant
@@ -153,7 +153,7 @@ def test_a_nonempty_non_temporal_flush_consumes_no_scripted_instant() -> None:
     )
     account_db = own_root(Database.connect(port, _ACCOUNT, clock=clock)).using_database_login()
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.insert(_account(7))
         tx.find(Account.where(Account.id == 7))  # force-flushes the buffered insert
 
@@ -175,7 +175,7 @@ def test_a_coalesced_away_buffer_consumes_no_scripted_instant() -> None:
         Database.connect(port, _BALANCE, clock=ScriptedClock([_I1]))
     ).using_database_login()
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         fresh = _balance(1)
         tx.insert(fresh)
         tx.terminate(fresh)

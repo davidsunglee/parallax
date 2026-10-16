@@ -13,10 +13,10 @@ from parallax.conformance._lifecycle_observation import LifecycleObservation
 from parallax.conformance.boundary_runner import TARGET_ID, fault_injecting_adapter
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.story_models import Account
-from parallax.core.execution import DatabaseOptions
+from parallax.core.execution import TxnOptions
 from parallax.core.execution_lifecycle import TransactionAttemptStarted
 from parallax.core.object_query import deserialize
-from parallax.snapshot import ScopedDatabase, Transaction, connect
+from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.corpus import case_fixtures
 
 type _AuthorityMode = Literal["database-login", "principal"]
@@ -63,7 +63,7 @@ def test_the_scoped_authority_usage_guide_story_runs_against_a_real_database(
     assert shape.login_balance == Decimal("250.00")
     assert shape.principal_balance == Decimal("250.00")
     assert shape.joined_same_transaction
-    assert shape.options == DatabaseOptions(max_retries=1, isolation="serializable")
+    assert shape.options == TxnOptions(max_retries=1, isolation="serializable")
 
 
 @pytest.mark.parametrize("mode", ["database-login", "principal"])
@@ -91,7 +91,7 @@ def test_every_public_execution_path_runs_under_the_selected_authority(
         ) as stream:
             assert [account.id for account in stream] == [1, 2, 3]
 
-        def update(tx: Transaction) -> Decimal:
+        def update(tx: TxnContext) -> Decimal:
             account = tx.find(query).result()
             changed = account.edit(balance=account.balance + Decimal("1.00"))
             tx.amend(changed)

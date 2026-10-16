@@ -22,8 +22,8 @@ from parallax.core.write_plan import ObjectKey
 from parallax.snapshot._publication._root import RootView
 
 __all__ = [
-    "ClassifiedRoot",
     "ConformingRoot",
+    "NonConformingRoot",
     "RootClassifications",
     "classify_roots",
 ]
@@ -37,7 +37,7 @@ class ConformingRoot:
 
 
 @dataclass(frozen=True, slots=True)
-class ClassifiedRoot:
+class NonConformingRoot:
     """A root some stored state contradicted; it publishes as :class:`InvalidData`.
 
     ``node`` is the allocation index hydration constructs ``data`` from, and is
@@ -63,7 +63,7 @@ class ClassifiedRoot:
         )
 
 
-type RootClassification = ConformingRoot | ClassifiedRoot
+type RootClassification = ConformingRoot | NonConformingRoot
 """One result root's verdict, in the position the result orders it at."""
 
 
@@ -129,7 +129,7 @@ def classify_roots(
             continue
         hydrating = not any(blocking[node] for node in reachable)
         roots.append(
-            ClassifiedRoot(
+            NonConformingRoot(
                 ordinal=ordinal,
                 issues=issues,
                 object_key=keys[index],
@@ -150,14 +150,14 @@ def classify_roots(
     )
 
 
-def _keyless_root(record: InvalidRootInput, ordinal: int) -> ClassifiedRoot:
+def _keyless_root(record: InvalidRootInput, ordinal: int) -> NonConformingRoot:
     """One result root whose own identity never decoded.
 
     It has no converted node behind it, so it reaches nothing, hydrates nothing,
     and locates itself by result position alone — the ordinal is the only fact
     about it that survived.
     """
-    return ClassifiedRoot(
+    return NonConformingRoot(
         ordinal=ordinal,
         issues=frozenset(diagnosis(issue, None) for issue in record.issues),
         object_key=None,

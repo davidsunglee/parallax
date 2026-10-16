@@ -11,7 +11,7 @@ from parallax.conformance.story_models import Account, Wallet
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity import DomainModel
 from parallax.core.unit_work import Concurrency
-from parallax.snapshot import Transaction
+from parallax.snapshot import TxnContext
 from tests._support.db_port import (
     BeginCall,
     CommitCall,
@@ -50,7 +50,7 @@ def _calls(port: ScriptedAdapter) -> list[PortCall]:
     return [call for call in port.calls if not isinstance(call, BeginCall | CommitCall)]
 
 
-def _barrier(tx: Transaction) -> None:
+def _barrier(tx: TxnContext) -> None:
     tx.amend_where(Wallet.where(Wallet.balance < Decimal("2.00")), Wallet.owner.set("Low"))
 
 
@@ -61,7 +61,7 @@ _ACCOUNT = {"id": 1, "owner": "Ada", "balance": Decimal("5.00"), "version": 3}
 def test_a_write_of_one_state_on_each_side_of_a_barrier_executes_on_its_own_side() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[_WALLET]), Write(times=3)))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         wallet = tx.find(Wallet.where(Wallet.id == 1)).result()
         tx.amend(wallet.edit(balance=Decimal("1.00")))
         _barrier(tx)
@@ -79,7 +79,7 @@ def test_a_write_of_one_state_on_each_side_of_a_barrier_executes_on_its_own_side
 def test_writes_of_one_state_on_one_side_of_a_barrier_still_coalesce() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[_WALLET]), Write(times=2)))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         wallet = tx.find(Wallet.where(Wallet.id == 1)).result()
         _barrier(tx)
         tx.amend(wallet.edit(balance=Decimal("1.00")))
@@ -105,7 +105,7 @@ def test_a_versioned_write_after_a_barrier_starts_from_the_version_the_earlier_o
     port = ScriptedAdapter(Transact(Read(rows=[_ACCOUNT]), Write(times=3)))
     gated = concurrency == "optimistic"
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         account = tx.find(Account.where(Account.id == 1)).result()
         tx.amend(account.edit(balance=Decimal("1.00")))
         _barrier(tx)
@@ -128,7 +128,7 @@ def test_a_versioned_write_after_a_barrier_starts_from_the_version_the_earlier_o
 def test_a_destruction_after_a_barrier_removes_the_version_the_earlier_write_left() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[_ACCOUNT]), Write(times=3)))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         account = tx.find(Account.where(Account.id == 1)).result()
         tx.amend(account.edit(balance=Decimal("1.00")))
         _barrier(tx)
@@ -147,7 +147,7 @@ def test_a_destruction_after_a_barrier_removes_the_version_the_earlier_write_lef
 def test_a_chain_across_two_barriers_advances_once_per_side() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[_ACCOUNT]), Write(times=5)))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         account = tx.find(Account.where(Account.id == 1)).result()
         tx.amend(account.edit(balance=Decimal("1.00")))
         _barrier(tx)
@@ -170,7 +170,7 @@ def test_a_write_of_a_pending_insert_after_a_barrier_revises_the_row_it_opened(
 ) -> None:
     port = ScriptedAdapter(Transact(Write(times=3)))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         if representation == "typed":
             wallet = Wallet(id=9, owner="Eve", balance=Decimal("1.00"))
             tx.insert(wallet)
@@ -192,7 +192,7 @@ def test_a_write_of_a_pending_insert_after_a_barrier_revises_the_row_it_opened(
 def test_a_versioned_pending_insert_is_revised_after_a_barrier_from_its_first_version() -> None:
     port = ScriptedAdapter(Transact(Write(times=5)))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         account = Account(id=9, owner="Eve", balance=Decimal("1.00"))
         tx.insert(account)
         _barrier(tx)
@@ -220,7 +220,7 @@ def test_a_versioned_pending_insert_is_revised_after_a_barrier_from_its_first_ve
 def test_a_pending_insert_removed_after_a_barrier_executes_and_admits_a_reinsertion() -> None:
     port = ScriptedAdapter(Transact(Write(times=4)))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         wallet = Wallet(id=9, owner="Eve", balance=Decimal("1.00"))
         tx.insert(wallet)
         _barrier(tx)
@@ -239,7 +239,7 @@ def test_a_pending_insert_removed_after_a_barrier_executes_and_admits_a_reinsert
 def test_a_pending_insert_and_its_removal_before_a_barrier_still_cancel() -> None:
     port = ScriptedAdapter(Transact(Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         wallet = Wallet(id=9, owner="Eve", balance=Decimal("1.00"))
         tx.insert(wallet)
         tx.delete(wallet)
@@ -252,7 +252,7 @@ def test_a_pending_insert_and_its_removal_before_a_barrier_still_cancel() -> Non
 def test_a_target_write_after_a_barrier_states_the_version_the_earlier_one_left() -> None:
     port = ScriptedAdapter(Transact(Write(times=3)))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.wire.amend_if("Account", {"id": 1, "balance": "1.00"}, version=3)
         _barrier(tx)
         tx.wire.amend_if("Account", {"id": 1, "owner": "Bo"}, version=3)

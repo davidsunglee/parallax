@@ -38,7 +38,7 @@ from parallax.core.execution import (
     KeyedWriteValueError,
 )
 from parallax.core.unit_work import MissingTargetError
-from parallax.snapshot import ScopedDatabase, Transaction, connect
+from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.root_ownership import own_root
 
 _NAMESPACE = "insertion.authority"
@@ -163,7 +163,7 @@ class _Opened:
     """The source one insertion was stated through, in either representation,
     and the writes it authorizes spelled once for both."""
 
-    def __init__(self, tx: Transaction, representation: _Representation, source: Any) -> None:
+    def __init__(self, tx: TxnContext, representation: _Representation, source: Any) -> None:
         self._tx = tx
         self._representation = representation
         self.source = source
@@ -185,7 +185,7 @@ class _Opened:
 
 
 def _insert_span(
-    tx: Transaction,
+    tx: TxnContext,
     entity: type[Any],
     representation: _Representation,
     *,
@@ -208,7 +208,7 @@ def _insert_span(
 
 
 def _read_span(
-    tx: Transaction, entity: type[Any], representation: _Representation, at: dt.datetime
+    tx: TxnContext, entity: type[Any], representation: _Representation, at: dt.datetime
 ) -> _Opened:
     if representation == "typed":
         return _Opened(
@@ -226,7 +226,7 @@ def _read_span(
     return _Opened(tx, representation, node)
 
 
-def _read_log(tx: Transaction, entity: type[Any], representation: _Representation) -> None:
+def _read_log(tx: TxnContext, entity: type[Any], representation: _Representation) -> None:
     if representation == "typed":
         tx.find(entity.where(entity.id == 1)).result()
         return
@@ -286,7 +286,7 @@ def test_an_insertion_source_edits_only_the_coverage_its_opening_holds(
 ) -> None:
     db = _db(profile_run)
 
-    def edit(tx: Transaction) -> None:
+    def edit(tx: TxnContext) -> None:
         opened = _insert_span(tx, entity, representation, valid_from=_JAN, until=opening_end)
         if helper_read:
             _read_span(tx, entity, representation, _MAR)
@@ -307,7 +307,7 @@ def test_a_literal_reset_through_the_insertion_source_writes_the_reset_value(
     # change.
     db = _db(profile_run)
 
-    def edit(tx: Transaction) -> None:
+    def edit(tx: TxnContext) -> None:
         opened = _insert_span(tx, entity, representation, valid_from=_JAN)
         opened.update(until=_SEP, amount=150)
         if helper_read:
@@ -333,7 +333,7 @@ def test_a_resubmitted_draft_reasserts_its_whole_touched_set(
     # A Wire change document states one call's keys, so it has no counterpart.
     db = _db(profile_run)
 
-    def edit(tx: Transaction) -> None:
+    def edit(tx: TxnContext) -> None:
         opened = entity(id=1, amount=100, spec=_SPEC)
         tx.insert(opened, valid_from=_JAN)
         draft = opened.edit(amount=150)
@@ -364,7 +364,7 @@ def test_insertion_and_observed_assignments_compose_over_unequal_windows_after_a
     # they overlap, and the opening's own value survives beyond both.
     db = _db(profile_run)
 
-    def edit(tx: Transaction) -> None:
+    def edit(tx: TxnContext) -> None:
         opened = _insert_span(tx, entity, representation, valid_from=_MAR, until=_SEP)
         observed = _read_span(tx, entity, representation, _MAY)
         writes = [
@@ -390,7 +390,7 @@ def test_an_insertion_source_revises_its_transaction_time_row_across_helper_read
 ) -> None:
     db = _db(profile_run)
 
-    def edit(tx: Transaction) -> None:
+    def edit(tx: TxnContext) -> None:
         if representation == "typed":
             source: Any = entity(id=1, label="opened", spec=_SPEC)
             tx.insert(source)
@@ -418,7 +418,7 @@ def test_an_insertion_source_advances_its_version_across_helper_reads(
 ) -> None:
     db = _db(profile_run)
 
-    def edit(tx: Transaction) -> None:
+    def edit(tx: TxnContext) -> None:
         if representation == "typed":
             source: Any = entity(id=1, label="opened")
             tx.insert(source)
@@ -449,7 +449,7 @@ def test_a_completely_removed_insertion_admits_a_fresh_one_at_its_coordinates(
 ) -> None:
     db = _db(profile_run)
 
-    def edit(tx: Transaction) -> None:
+    def edit(tx: TxnContext) -> None:
         first = _insert_span(tx, entity, representation, valid_from=_JAN)
         first.update(until=_JUN, amount=150)
         _read_span(tx, entity, representation, _MAR)
@@ -475,7 +475,7 @@ def test_a_partial_removal_keeps_the_insertion_standing(
     # anchor, which the removal took, and so cannot be written either.
     db = _db(profile_run)
 
-    def edit(tx: Transaction) -> None:
+    def edit(tx: TxnContext) -> None:
         first = _insert_span(tx, entity, representation, valid_from=_JAN)
         _read_span(tx, entity, representation, _MAR)
         first.terminate(until=_MAY)
@@ -499,7 +499,7 @@ def test_a_removal_that_moves_an_openings_end_keeps_the_insertion_standing(
     # insertion's source still edits from its anchor.
     db = _db(profile_run)
 
-    def edit(tx: Transaction) -> None:
+    def edit(tx: TxnContext) -> None:
         first = _insert_span(tx, entity, representation, valid_from=_JAN)
         _read_span(tx, entity, representation, _MAY).terminate()
         if helper_read:
@@ -526,7 +526,7 @@ def test_an_insertion_source_edits_across_an_interior_gap_its_anchor_survives(
     # every surviving interval from January on and leaves the gap a gap.
     db = _db(profile_run)
 
-    def edit(tx: Transaction) -> None:
+    def edit(tx: TxnContext) -> None:
         opened = _insert_span(tx, entity, representation, valid_from=_JAN)
         _read_span(tx, entity, representation, _MAY).terminate(until=_JUN)
         _read_span(tx, entity, representation, _MAR)
@@ -546,7 +546,7 @@ def test_an_edit_through_an_insertion_whose_anchor_was_removed_rolls_back(
     # fails at the flush that executes it and the whole attempt rolls back.
     db = _db(profile_run)
 
-    def edit(tx: Transaction) -> None:
+    def edit(tx: TxnContext) -> None:
         first = _insert_span(tx, entity, representation, valid_from=_JAN)
         _read_span(tx, entity, representation, _JAN).terminate(until=_MAR)
         _read_span(tx, entity, representation, _MAR)
@@ -565,12 +565,12 @@ def test_an_insertion_authority_ends_with_its_attempt(
     db = _db(profile_run, _ATTEMPT, _LATER)
     opened: list[_Opened] = []
 
-    def insert(tx: Transaction) -> None:
+    def insert(tx: TxnContext) -> None:
         opened.append(_insert_span(tx, ColumnsSpan, representation, valid_from=_JAN))
 
     db.transact(insert)
 
-    def later(tx: Transaction) -> None:
+    def later(tx: TxnContext) -> None:
         source = opened[0]
         source._tx = tx  # pyright: ignore[reportPrivateUsage] - the held source, in a new attempt
         with pytest.raises(KeyedWriteValueError) as refused:
@@ -590,7 +590,7 @@ def test_rewritten_earlier_coverage_is_no_part_of_an_insertion_it_precedes(
     db = _db(profile_run, _EARLIER, _ATTEMPT)
     db.transact(lambda tx: _insert_span(tx, entity, representation, valid_from=_JAN, until=_MAR))
 
-    def edit(tx: Transaction) -> None:
+    def edit(tx: TxnContext) -> None:
         inserted = _insert_span(tx, entity, representation, valid_from=_MAY, amount=300)
         _read_span(tx, entity, representation, _JAN).update(until=_MAR, amount=150)
         _read_span(tx, entity, representation, _MAY)
@@ -615,7 +615,7 @@ def test_a_reinsertion_at_a_later_anchor_is_removed_from_its_own_anchor(
 ) -> None:
     db = _db(profile_run)
 
-    def edit(tx: Transaction) -> None:
+    def edit(tx: TxnContext) -> None:
         first = _insert_span(tx, entity, representation, valid_from=_JAN)
         _read_span(tx, entity, representation, _MAR)
         first.terminate()

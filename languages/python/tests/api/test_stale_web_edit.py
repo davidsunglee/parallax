@@ -28,7 +28,7 @@ from parallax.core import LATEST
 from parallax.core.entity._model import model_of
 from parallax.core.execution import TransactionTimePinReadOnlyError
 from parallax.core.unit_work import Concurrency
-from parallax.snapshot import ScopedDatabase, Transaction, connect
+from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.adoption import raises_contextualized
 from tests._support.root_ownership import own_root
 
@@ -106,7 +106,7 @@ def test_audit_only_stale_web_edit_refuses_a_superseded_milestone(
 
     _node, edge = render_balance_milestone(db, id=1)  # RENDER time -- the stale edge
 
-    def concurrent_write(tx: Transaction) -> None:
+    def concurrent_write(tx: TxnContext) -> None:
         current = tx.find(Balance.where(Balance.id == 1)).result()
         tx.amend(current.edit(value=Decimal("200.00")))
 
@@ -143,7 +143,7 @@ def test_a_submit_that_pins_the_transported_edge_is_read_only(
     _seed_balance(db)
     _node, edge = render_balance_milestone(db, id=1)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         current = tx.find(Balance.where(Balance.id == 1).as_of(tx_time=edge.tx_time)).result()
         tx.amend(current.edit(value=Decimal("150.00")))
 
@@ -205,7 +205,7 @@ def test_bitemporal_stale_web_edit_refuses_a_superseded_rectangle(
 
     _node, edge = render_branch_milestone(db, id=1)  # RENDER time — the stale edge
 
-    def concurrent_write(tx: Transaction) -> None:
+    def concurrent_write(tx: TxnContext) -> None:
         current = tx.find(Branch.where(Branch.id == 1).as_of(valid_time=_I2)).result()
         tx.amend(current.edit(name="Renamed By Someone Else"))
 

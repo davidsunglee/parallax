@@ -78,7 +78,7 @@ Corpus case: `m-unit-work-001`
 
 ```python
 def insert_then_read_your_own_write(db: ScopedDatabase) -> list[Entity]:
-    def fn(tx: Transaction) -> list[Entity]:
+    def fn(tx: TxnContext) -> list[Entity]:
         tx.insert(Account(id=7, owner="Newton", balance=Decimal("5.00")))
         return list(tx.find(Account.where(Account.id == 7)).results())
 
@@ -91,7 +91,7 @@ Corpus case: `m-unit-work-005`
 
 ```python
 def keyed_amendment_observed_in_transaction(db: ScopedDatabase) -> list[Entity]:
-    def fn(tx: Transaction) -> list[Entity]:
+    def fn(tx: TxnContext) -> list[Entity]:
         current = tx.find(Account.where(Account.id == 1)).result()
         tx.amend(current.edit(balance=Decimal("175.00")))
         return list(tx.find(Account.where(Account.id == 1)).results())
@@ -105,7 +105,7 @@ Corpus case: `m-unit-work-006`
 
 ```python
 def keyed_delete_observed_in_transaction(db: ScopedDatabase) -> list[Entity]:
-    def fn(tx: Transaction) -> list[Entity]:
+    def fn(tx: TxnContext) -> list[Entity]:
         current = tx.find(Account.where(Account.id == 3)).result()
         tx.delete(current)
         return list(tx.find(Account.where(Account.id == 3)).results())
@@ -119,7 +119,7 @@ Corpus case: `m-opt-lock-027`
 
 ```python
 def conditional_amendment_gates_on_the_callers_version(db: ScopedDatabase) -> None:
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.amend_if(Account, Account.balance.set(Decimal("250.00")), key=2, version=1)
 
     db.transact(fn)
@@ -131,7 +131,7 @@ Corpus case: `m-opt-lock-028`
 
 ```python
 def conditional_replacement_states_every_writable_member(db: ScopedDatabase) -> None:
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.replace_if(Account(id=3, owner="Hopper", balance=Decimal("12.00")), version=1)
 
     db.transact(fn)
@@ -143,13 +143,13 @@ Corpus case: `m-temporal-write-017`
 
 ```python
 def bitemporal_amend_until_splits_head_middle_tail(db: ScopedDatabase) -> None:
-    def insert(tx: Transaction) -> None:
+    def insert(tx: TxnContext) -> None:
         tx.insert(
             Position(id=1, acct_num="A", value=Decimal("100.00")),
             valid_from=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
         )
 
-    def split(tx: Transaction) -> None:
+    def split(tx: TxnContext) -> None:
         current = tx.find(
             Position.where(Position.id == 1).as_of(
                 valid_time=dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
@@ -170,13 +170,13 @@ Corpus case: `m-temporal-write-042`
 
 ```python
 def bitemporal_conditional_amendment_gates_on_the_callers_milestone(db: ScopedDatabase) -> None:
-    def insert(tx: Transaction) -> None:
+    def insert(tx: TxnContext) -> None:
         tx.insert(
             Position(id=1, acct_num="A", value=Decimal("100.00")),
             valid_from=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
         )
 
-    def patch(tx: Transaction) -> None:
+    def patch(tx: TxnContext) -> None:
         tx.wire.amend_if(
             "Position",
             {"id": 1, "value": "200.00"},
@@ -198,10 +198,10 @@ Corpus case: `m-unit-work-041`
 class ResolvedOptions:
     """What each transaction of the story ran under, read off ``tx.options``."""
 
-    inherited: DatabaseOptions
-    overridden: DatabaseOptions
-    joined: DatabaseOptions
-    repeated: DatabaseOptions
+    inherited: TxnOptions
+    overridden: TxnOptions
+    joined: TxnOptions
+    repeated: TxnOptions
     root_level_refused_on_join: bool
     balance: Decimal
 
@@ -221,15 +221,15 @@ def a_root_default_is_overridden_per_call_and_a_join_inherits_the_override(
     other value, the root's own included, is refused before the joined body
     runs. Nothing is passed as ``None``: only an omitted keyword inherits.
     """
-    root = DatabaseOptions(isolation="repeatable_read", max_retries=2)
+    root = TxnOptions(isolation="repeatable_read", max_retries=2)
     with connect(adapter, model, options=root) as database:
         db = database.using_database_login()
         inherited = db.transact(lambda tx: tx.options)
 
-        def outer(tx: Transaction) -> ResolvedOptions:
+        def outer(tx: TxnContext) -> ResolvedOptions:
             account = tx.find(Account.where(Account.id == _TARGET_ID)).result()
 
-            def joined_body(joined_tx: Transaction) -> DatabaseOptions:
+            def joined_body(joined_tx: TxnContext) -> TxnOptions:
                 return joined_tx.options
 
             joined = db.transact(joined_body)

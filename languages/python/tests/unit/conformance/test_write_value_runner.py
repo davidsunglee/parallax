@@ -25,7 +25,7 @@ from parallax.core.base import SQL_NULL, PresentDocument
 from parallax.core.db_port import DatabaseAdapter, MappingRow
 from parallax.core.entity import DomainModel, Entity
 from parallax.core.execution import prepare_model
-from parallax.snapshot import Database, ScopedDatabase, Transaction, connect
+from parallax.snapshot import Database, ScopedDatabase, TxnContext, connect
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
     Read,
@@ -73,7 +73,7 @@ def test_every_write_value_case_is_graded_through_the_shipped_verbs(
     port = ScriptedAdapter(transaction)
     another = AnotherSource(prepare_model(ACCOUNT_MODEL, edition=engine.case_edition(case)), port)
 
-    def fn(tx: Transaction) -> list[str | None]:
+    def fn(tx: TxnContext) -> list[str | None]:
         return write_value_runner.graded_outcomes(
             tx, steps, another, lambda: invalid_customer_root(vo_models.CUSTOMER_MODEL)
         )
@@ -113,7 +113,7 @@ def test_the_value_no_read_produced_is_arranged_without_touching_the_adapter() -
     # whose provenance the token names.
     unreachable = AnotherSource(_ACCOUNT, RefusingAdapter())
 
-    def fn(tx: Transaction) -> Entity:
+    def fn(tx: TxnContext) -> Entity:
         return write_value_runner.value_of("unmanaged", tx, unreachable)
 
     value = (
@@ -213,7 +213,7 @@ def test_an_unrecognized_provenance_token_is_loud() -> None:
     port = ScriptedAdapter(Transact())
     another = AnotherSource(_ACCOUNT, port)
 
-    def fn(tx: Transaction) -> Entity:
+    def fn(tx: TxnContext) -> Entity:
         return write_value_runner.value_of("invented", tx, another)
 
     with raises_contextualized(ValueError, match="unrecognized value provenance"):
@@ -224,7 +224,7 @@ def test_invalid_root_provenance_requires_its_adapter_arranger() -> None:
     port = ScriptedAdapter(Transact())
     another = AnotherSource(_ACCOUNT, port)
 
-    def fn(tx: Transaction) -> Entity:
+    def fn(tx: TxnContext) -> Entity:
         return write_value_runner.value_of("invalidRoot", tx, another)
 
     with raises_contextualized(ValueError, match="diagnostic-data arranger"):
@@ -251,7 +251,7 @@ def test_a_graded_mismatch_is_loud_in_either_direction(
     port = ScriptedAdapter(Transact(Read(rows=[_TARGET_ROW])))
     another = AnotherSource(_ACCOUNT, port)
 
-    def fn(tx: Transaction) -> str | None:
+    def fn(tx: TxnContext) -> str | None:
         return write_value_runner.grade_step(tx, step, another)
 
     with raises_contextualized(AssertionError, match=message):

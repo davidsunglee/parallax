@@ -8,13 +8,13 @@ from parallax.core._execution._adoption import AdoptedExecution
 from parallax.core._execution._connection_lifecycle import enter_connection, exit_connection
 from parallax.core._execution._options import (
     OMITTED,
-    DatabaseOptions,
     Omitted,
+    TxnOptions,
     check_max_retries,
     check_retry_optimistic_conflicts,
 )
 from parallax.core._execution._publication import ServingModel, read_projection, write_projection
-from parallax.core._execution._transaction._attempt import Attempt
+from parallax.core._execution._transaction._attempt import TxnAttempt
 from parallax.core._execution._unit_work.clock import Clock
 from parallax.core._execution._unit_work.effects import OptimisticLockConflictError
 from parallax.core._execution._unit_work.strategy import concurrency_preference
@@ -150,7 +150,7 @@ class _ActiveTransaction:
     transaction: object
     root: object
     capture: ExecutionCapture
-    attempt: Attempt
+    attempt: TxnAttempt
 
 
 class TransactionRunner:
@@ -186,10 +186,10 @@ class TransactionRunner:
     def transact[Tx, T](
         self,
         fn: Callable[[Tx], T],
-        transaction_for: Callable[[Attempt], Tx],
+        transaction_for: Callable[[TxnAttempt], Tx],
         *,
         capture: ExecutionCapture,
-        defaults: DatabaseOptions,
+        defaults: TxnOptions,
         max_retries: int | Omitted,
         concurrency: Concurrency | Omitted,
         retry_optimistic_conflicts: bool | Omitted,
@@ -277,7 +277,7 @@ class TransactionRunner:
                     with invocation.attempt(selection.edition) as physical:
 
                         def in_txn(conn: DatabaseConnection) -> T:
-                            attempt = Attempt(
+                            attempt = TxnAttempt(
                                 conn,
                                 read,
                                 write,
@@ -454,13 +454,13 @@ def _attempted[T](outcome: TransactionOutcome[T], attempt: TransactionAttemptAct
 
 
 def _resolved(
-    defaults: DatabaseOptions,
+    defaults: TxnOptions,
     *,
     max_retries: int | Omitted,
     concurrency: Concurrency | Omitted,
     retry_optimistic_conflicts: bool | Omitted,
     isolation: IsolationLevel | Omitted,
-) -> DatabaseOptions:
+) -> TxnOptions:
     """The options an outer invocation runs under: each explicit value, else
     the scope's default for that field.
 
@@ -485,7 +485,7 @@ def _resolved(
         and level == defaults.isolation
     ):
         return defaults
-    return DatabaseOptions(
+    return TxnOptions(
         max_retries=bound,
         concurrency=preference,
         retry_optimistic_conflicts=opt_in,
@@ -521,7 +521,7 @@ def _optimistic_conflict_retriable(exc: BaseException) -> bool:
 
 
 def _check_join_options(
-    active: DatabaseOptions,
+    active: TxnOptions,
     *,
     max_retries: int | Omitted,
     concurrency: Concurrency | Omitted,

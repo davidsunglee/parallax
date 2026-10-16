@@ -5,7 +5,7 @@ neutral Execution Scope a root's scope factory answers, with a transaction
 factory that hands each callback the actual Attempt: commit and abort wiring,
 join semantics (the same transaction, option conflicts, rollback-only
 foreclosure), resolution of omitted options against the root's
-`DatabaseOptions` and inspection of the resolved record, withheld values on
+`TxnOptions` and inspection of the resolved record, withheld values on
 abort, escaped attempt references, the retry classification matrix, including
 the requirement that a rollback-only commit refusal keeps its original cause's
 retriability, and the adoption every attempt makes from the Serving Model:
@@ -31,7 +31,7 @@ from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import Attr, DomainModel, Entity, Int32, attr, index, opt_lock
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._scope import ExecutionScope
-from parallax.core._execution._transaction._attempt import Attempt
+from parallax.core._execution._transaction._attempt import TxnAttempt
 from parallax.core._execution._unit_work.uow import EscapedTransactionError
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
@@ -46,13 +46,13 @@ from parallax.core.db_port import (
 from parallax.core.entity._authored_resolver import object_query_node
 from parallax.core.entity._model import model_of
 from parallax.core.execution import (
-    DatabaseOptions,
     ExecutionFailure,
     ServingModel,
     TransactionAuthorityError,
     TransactionOptionConflictError,
     TransactionOwnershipError,
     TransactionRollbackError,
+    TxnOptions,
     prepare_model,
 )
 from parallax.core.object_query import ObjectQueryNode
@@ -105,7 +105,7 @@ def _account_seven() -> ObjectQueryNode:
 def test_abort_discards_the_buffer_and_withholds_the_value() -> None:
     port = ScriptedAdapter(Transact())
 
-    def fn(tx: Attempt) -> str:
+    def fn(tx: TxnAttempt) -> str:
         tx.uow.buffer(account_insert())
         raise RuntimeError("boom")
 
@@ -117,9 +117,9 @@ def test_abort_discards_the_buffer_and_withholds_the_value() -> None:
 
 def test_an_escaped_transaction_reference_raises_after_the_scope_ends() -> None:
     port = ScriptedAdapter(Transact())
-    escaped: list[Attempt] = []
+    escaped: list[TxnAttempt] = []
 
-    def fn(tx: Attempt) -> None:
+    def fn(tx: TxnAttempt) -> None:
         escaped.append(tx)
 
     scope(port).transact(fn, itself)
@@ -134,7 +134,7 @@ def test_join_receives_the_same_transaction_and_returns_immediately() -> None:
     port = ScriptedAdapter(Transact())
     db = scope(port)
 
-    def outer(tx: Attempt) -> int:
+    def outer(tx: TxnAttempt) -> int:
         inner = db.transact(lambda inner_tx: (inner_tx is tx, 42), itself)
         assert inner == (True, 42)
         return inner[1]
@@ -147,7 +147,7 @@ def test_join_with_equal_or_omitted_options_inherits() -> None:
     port = ScriptedAdapter(Transact())
     db = scope(port)
 
-    def outer(_tx: Attempt) -> str:
+    def outer(_tx: TxnAttempt) -> str:
         # Explicit-and-equal to the resolved defaults: accepted, not a conflict.
         return db.transact(
             lambda _inner: "joined",
@@ -161,7 +161,7 @@ def test_join_with_equal_or_omitted_options_inherits() -> None:
     assert db.transact(outer, itself) == "joined"
 
 
-def _must_not_run(_tx: Attempt) -> None:  # pragma: no cover - conflict forecloses it
+def _must_not_run(_tx: TxnAttempt) -> None:  # pragma: no cover - conflict forecloses it
     raise AssertionError("the joined closure must not run on an option conflict")
 
 
@@ -182,7 +182,7 @@ def test_independently_captured_equal_principal_authority_joins_by_value() -> No
     first = root.using_principal(_Principal("alice", _Authorization("role-a")))
     second = root.using_principal(_Principal("alice", _Authorization("role-a")))
 
-    def outer(tx: Attempt) -> tuple[bool, str]:
+    def outer(tx: TxnAttempt) -> tuple[bool, str]:
         return second.transact(lambda joined: (joined is tx, "joined"), itself)
 
     assert first.transact(outer, itself) == (True, "joined")
@@ -206,7 +206,7 @@ def test_authority_mismatch_refuses_before_the_joining_body_and_leaves_outer_usa
     other = root.using_database_login() if joining is None else root.using_principal(joining)
     ran: list[bool] = []
 
-    def outer(_tx: Attempt) -> str:
+    def outer(_tx: TxnAttempt) -> str:
         with pytest.raises(TransactionAuthorityError) as refused:
             other.transact(lambda _joined: ran.append(True), itself)
         assert refused.value.code == "transaction-authority-mismatch"
@@ -226,7 +226,7 @@ def test_root_aliases_share_ownership_while_unrelated_roots_do_not() -> None:
     foreign_root = owned_root(ScriptedAdapter())
     foreign = foreign_root.using_database_login()
 
-    def outer(tx: Attempt) -> str:
+    def outer(tx: TxnAttempt) -> str:
         assert joining_alias.transact(lambda joined: joined is tx, itself)
         with pytest.raises(TransactionOwnershipError):
             foreign.transact(_must_not_run, itself)
@@ -243,7 +243,7 @@ def test_join_refusal_precedence_is_ownership_then_rollback_authority_then_optio
     foreign_root = owned_root(ScriptedAdapter())
     foreign = foreign_root.using_database_login()
 
-    def outer(_tx: Attempt) -> str:
+    def outer(_tx: TxnAttempt) -> str:
         with pytest.raises(TransactionAuthorityError):
             mismatched.transact(_must_not_run, itself, max_retries=3)
         with pytest.raises(RuntimeError, match="inner failure"):
@@ -318,7 +318,7 @@ def test_join_with_a_conflicting_explicit_option_raises(
     port = ScriptedAdapter(Transact())
     db = scope(port)
 
-    def outer(_tx: Attempt) -> str:
+    def outer(_tx: TxnAttempt) -> str:
         with pytest.raises(TransactionOptionConflictError, match=option):
             join(db)
         return "survived"
@@ -376,7 +376,7 @@ def test_a_joined_call_naming_a_level_outside_the_vocabulary_is_refused_as_inval
     port = ScriptedAdapter(Transact())
     db = scope(port)
 
-    def outer(_tx: Attempt) -> str:
+    def outer(_tx: TxnAttempt) -> str:
         with pytest.raises(ValueError, match="isolation must be one of") as refusal:
             db.transact(_must_not_run, itself, isolation=cast("Any", "repeatable read"))
         assert not isinstance(refusal.value, TransactionOptionConflictError)
@@ -399,7 +399,7 @@ def test_a_join_omitting_or_repeating_the_active_isolation_is_accepted() -> None
     port = ScriptedAdapter(Transact())
     db = scope(port)
 
-    def outer(_tx: Attempt) -> str:
+    def outer(_tx: TxnAttempt) -> str:
         assert db.transact(lambda _inner: "omitted", itself) == "omitted"
         return db.transact(lambda _inner: "repeated", itself, isolation="serializable")
 
@@ -412,7 +412,7 @@ def test_a_join_naming_a_different_isolation_raises_before_its_callback_runs() -
     port = ScriptedAdapter(Transact())
     db = scope(port)
 
-    def outer(_tx: Attempt) -> str:
+    def outer(_tx: TxnAttempt) -> str:
         with pytest.raises(TransactionOptionConflictError, match="isolation"):
             db.transact(_must_not_run, itself, isolation="repeatable_read")
         return "survived"
@@ -425,7 +425,7 @@ def test_joining_a_doomed_transaction_is_foreclosed_before_its_closure_runs() ->
     db = scope(port)
     ran: list[bool] = []
 
-    def outer(_tx: Attempt) -> str:
+    def outer(_tx: TxnAttempt) -> str:
         with pytest.raises(RuntimeError, match="inner failure"):
             db.transact(_raise_inner, itself)
         with pytest.raises(RollbackOnlyError):
@@ -441,7 +441,7 @@ def test_joining_a_doomed_transaction_is_foreclosed_before_its_closure_runs() ->
     assert port.calls == [BeginCall(), RollbackCall()]
 
 
-def _raise_inner(_tx: Attempt) -> None:
+def _raise_inner(_tx: TxnAttempt) -> None:
     raise RuntimeError("inner failure")
 
 
@@ -493,7 +493,7 @@ def test_an_alias_of_the_owner_joins_and_receives_the_identical_transaction() ->
     db = scope(port)
     alias = db  # a second name for one object — the only thing that ever joins
 
-    def outer(tx: Attempt) -> int:
+    def outer(tx: TxnAttempt) -> int:
         assert alias.transact(lambda inner_tx: (inner_tx is tx, 42), itself) == (True, 42)
         return 42
 
@@ -506,7 +506,7 @@ def test_a_different_database_over_the_same_model_and_adapter_is_refused() -> No
     owner = scope(port)
     foreign = scope(port)  # same model, same adapter, same clock; a different object
 
-    def outer(_tx: Attempt) -> str:
+    def outer(_tx: TxnAttempt) -> str:
         with pytest.raises(TransactionOwnershipError) as excinfo:
             foreign.transact(_must_not_run, itself)
         assert excinfo.value.code == "transaction-owner-mismatch"
@@ -551,7 +551,7 @@ def test_a_structurally_equal_model_establishes_no_ownership() -> None:
     # The two accepted models are equal entity for entity, and that buys nothing.
     assert list(model_of(ACCOUNT).entities) == list(model_of(_equal_account_model()).entities)
 
-    def outer(_tx: Attempt) -> str:
+    def outer(_tx: TxnAttempt) -> str:
         with pytest.raises(TransactionOwnershipError):
             foreign.transact(_must_not_run, itself)
         return "survived"
@@ -564,7 +564,7 @@ def test_the_ownership_refusal_reaches_no_adapter() -> None:
     owner = scope(port)
     foreign = scope(port)
 
-    def outer(_tx: Attempt) -> str:
+    def outer(_tx: TxnAttempt) -> str:
         # The boundary's script holds no statement, so returning at all is the
         # proof that the refusal performed none.
         with pytest.raises(TransactionOwnershipError):
@@ -579,7 +579,7 @@ def test_ownership_is_settled_before_rollback_only_before_option_conflicts() -> 
     owner = scope(port)
     foreign = scope(port)
 
-    def outer(_tx: Attempt) -> str:
+    def outer(_tx: TxnAttempt) -> str:
         # Doom the boundary, so rollback-only joining would refuse ANY join.
         with pytest.raises(RuntimeError, match="inner failure"):
             owner.transact(_raise_inner, itself)
@@ -702,7 +702,7 @@ def test_a_joining_call_with_an_invalid_explicit_value_is_refused_as_invalid(
     port = ScriptedAdapter(Transact())
     db = scope(port)
 
-    def outer(_tx: Attempt) -> str:
+    def outer(_tx: TxnAttempt) -> str:
         with pytest.raises(ValueError, match=message) as refusal:
             db.transact(_must_not_run, itself, **cast("dict[str, Any]", {keyword: value}))
         assert not isinstance(refusal.value, TransactionOptionConflictError)
@@ -729,7 +729,7 @@ def test_rollback_only_refusal_keeps_the_original_retriability() -> None:
     port = ScriptedAdapter(Transact(Read(raises=deadlock())), Transact(Read(rows=[_NEW_ROW])))
     db = scope(port)
 
-    def outer(_tx: Attempt) -> str:
+    def outer(_tx: TxnAttempt) -> str:
         with contextlib.suppress(DatabaseError):
             db.transact(lambda inner_tx: inner_tx.read_rows(_account_seven()), itself)
         return "caught"
@@ -743,7 +743,7 @@ def test_rollback_only_refusal_keeps_the_original_retriability() -> None:
 # transaction failed decides what the caller sees and whether anything is      #
 # re-executed, and only the composition root can reconcile the two.            #
 # --------------------------------------------------------------------------- #
-def _must_not_run_callback(_tx: Attempt) -> str:
+def _must_not_run_callback(_tx: TxnAttempt) -> str:
     raise AssertionError("the callback runs only inside a transaction that began")
 
 
@@ -803,7 +803,7 @@ def test_a_failed_rollback_reports_both_live_errors_and_is_never_retried() -> No
     # is unknown, so re-executing it could double the work it may have committed.
     triggering = deadlock()
 
-    def failing(_tx: Attempt) -> str:
+    def failing(_tx: TxnAttempt) -> str:
         raise triggering
 
     port = _RollbackFailingPort()
@@ -820,7 +820,7 @@ def test_a_failed_rollback_leaves_a_control_flow_trigger_primary() -> None:
     # stays what the caller receives, carrying the rollback failure as its cause.
     interrupt = KeyboardInterrupt()
 
-    def interrupted(_tx: Attempt) -> str:
+    def interrupted(_tx: TxnAttempt) -> str:
         raise interrupt
 
     port = _RollbackFailingPort()
@@ -836,7 +836,7 @@ def test_a_control_flow_exception_inside_the_callback_surfaces_as_itself() -> No
     # failure beside it, and the rollback still completes.
     interrupt = KeyboardInterrupt()
 
-    def interrupted(_tx: Attempt) -> str:
+    def interrupted(_tx: TxnAttempt) -> str:
         raise interrupt
 
     port = ScriptedAdapter(Transact())
@@ -861,7 +861,7 @@ def test_an_unpublished_serving_model_reports_one_edition_across_attempts_and_in
     db = scope(port)
     seen: list[str] = []
 
-    def body(tx: Attempt) -> str:
+    def body(tx: TxnAttempt) -> str:
         seen.append(tx.edition)
         return tx.edition
 
@@ -876,7 +876,7 @@ def test_a_transaction_retains_the_selection_it_adopted_across_a_publication() -
     port = ScriptedAdapter(Transact(), Transact())
     db = scope(port, serving)
 
-    def body(tx: Attempt) -> tuple[str, str]:
+    def body(tx: TxnAttempt) -> tuple[str, str]:
         before = tx.edition
         serving.publish(_B, expected=_A)
         return before, tx.edition
@@ -891,7 +891,7 @@ def test_a_join_inherits_the_outer_attempts_selection_without_adopting() -> None
     port = ScriptedAdapter(Transact())
     db = scope(port, serving)
 
-    def outer(tx: Attempt) -> tuple[str, bool]:
+    def outer(tx: TxnAttempt) -> tuple[str, bool]:
         serving.publish(_B, expected=_A)
         # Serving already holds B, and the join still reports A on the very
         # same Attempt object: it adopted nothing.
@@ -907,7 +907,7 @@ def test_a_retry_adopts_the_selection_published_since_the_failed_attempt() -> No
     db = scope(port, serving)
     seen: list[str] = []
 
-    def body(tx: Attempt) -> str:
+    def body(tx: TxnAttempt) -> str:
         seen.append(tx.edition)
         if len(seen) == 1:
             serving.publish(_B, expected=_A)
@@ -923,7 +923,7 @@ def test_terminal_exhaustion_reports_the_final_attempts_edition() -> None:
     port = ScriptedAdapter(Transact(commit=deadlock()), Transact(commit=deadlock()))
     db = scope(port, serving)
 
-    def body(tx: Attempt) -> None:
+    def body(tx: TxnAttempt) -> None:
         if tx.edition == "a":
             serving.publish(_B, expected=_A)
 
@@ -938,7 +938,7 @@ def test_a_callback_failure_reports_the_edition_the_attempt_adopted() -> None:
     port = ScriptedAdapter(Transact())
     db = scope(port, serving)
 
-    def body(_tx: Attempt) -> None:
+    def body(_tx: TxnAttempt) -> None:
         raise RuntimeError("the callback's own")
 
     with raises_contextualized(RuntimeError, match="the callback's own") as failed:
@@ -949,7 +949,7 @@ def test_a_callback_failure_reports_the_edition_the_attempt_adopted() -> None:
 def test_a_failed_rollback_keeps_both_errors_inside_the_contextualized_cause() -> None:
     triggering = deadlock()
 
-    def failing(_tx: Attempt) -> str:
+    def failing(_tx: TxnAttempt) -> str:
         raise triggering
 
     port = _RollbackFailingPort()
@@ -992,7 +992,7 @@ def test_the_deterministic_refusals_and_the_provider_opening_keep_their_own_type
         db.transact(_must_not_run, itself, isolation=cast("Any", "read uncommitted"))
     foreign = scope(ScriptedAdapter(), serving)
 
-    def outer(_tx: Attempt) -> str:
+    def outer(_tx: TxnAttempt) -> str:
         with pytest.raises(TransactionOwnershipError):
             foreign.transact(_must_not_run, itself)
         with pytest.raises(TransactionOptionConflictError):
@@ -1044,23 +1044,21 @@ def test_optimistic_conflict_opt_in_is_inert_for_a_non_retriable_database_error(
 
 # --------------------------------------------------------------------------- #
 # Root defaults: an outer invocation resolves each omitted keyword              #
-# against the root's DatabaseOptions, an explicit keyword overrides it, a join  #
+# against the root's TxnOptions, an explicit keyword overrides it, a join  #
 # inherits the invocation's resolved value, and `tx.options` is that record.    #
 # --------------------------------------------------------------------------- #
-_CONFIGURED = DatabaseOptions(
+_CONFIGURED = TxnOptions(
     max_retries=2, concurrency="locking", retry_optimistic_conflicts=True, isolation="serializable"
 )
 
 
-def _configured_db(
-    port: DatabaseAdapter[Any], options: DatabaseOptions = _CONFIGURED
-) -> ExecutionScope:
+def _configured_db(port: DatabaseAdapter[Any], options: TxnOptions = _CONFIGURED) -> ExecutionScope:
     return scope(port, options=options)
 
 
 def test_an_unconfigured_root_resolves_the_built_in_record() -> None:
     port = ScriptedAdapter(Transact())
-    assert scope(port).transact(lambda tx: tx.options, itself) == DatabaseOptions()
+    assert scope(port).transact(lambda tx: tx.options, itself) == TxnOptions()
 
 
 def test_omitted_keywords_resolve_to_the_roots_configured_defaults() -> None:
@@ -1087,13 +1085,13 @@ def test_an_explicit_keyword_overrides_only_its_own_field(keyword: str, value: o
     resolved = db.transact(
         lambda tx: tx.options, itself, **cast("dict[str, Any]", {keyword: value})
     )
-    assert resolved == DatabaseOptions(
+    assert resolved == TxnOptions(
         **cast("dict[str, Any]", {**_fields(_CONFIGURED), keyword: value})
     )
     assert resolved is not _CONFIGURED
 
 
-def _fields(options: DatabaseOptions) -> dict[str, object]:
+def _fields(options: TxnOptions) -> dict[str, object]:
     return {
         "max_retries": options.max_retries,
         "concurrency": options.concurrency,
@@ -1122,20 +1120,20 @@ def test_two_roots_resolve_independently() -> None:
     first = _configured_db(ScriptedAdapter(Transact()))
     second = scope(ScriptedAdapter(Transact()))
     assert first.transact(lambda tx: tx.options, itself) is _CONFIGURED
-    assert second.transact(lambda tx: tx.options, itself) == DatabaseOptions()
+    assert second.transact(lambda tx: tx.options, itself) == TxnOptions()
 
 
 def test_every_retry_of_one_invocation_shares_one_resolved_record() -> None:
     port = ScriptedAdapter(Transact(commit=deadlock()), Transact(commit=deadlock()), Transact())
-    seen: list[DatabaseOptions] = []
+    seen: list[TxnOptions] = []
 
-    def body(tx: Attempt) -> None:
+    def body(tx: TxnAttempt) -> None:
         seen.append(tx.options)
 
     scope(port).transact(body, itself, isolation="repeatable_read", max_retries=5)
     assert len(seen) == 3
     assert all(options is seen[0] for options in seen)
-    assert seen[0] == DatabaseOptions(max_retries=5, isolation="repeatable_read")
+    assert seen[0] == TxnOptions(max_retries=5, isolation="repeatable_read")
     assert port.calls.count(BeginCall("repeatable_read")) == 3
 
 
@@ -1143,7 +1141,7 @@ def test_a_join_reads_the_same_transaction_and_the_same_record() -> None:
     port = ScriptedAdapter(Transact())
     db = _configured_db(port)
 
-    def outer(tx: Attempt) -> tuple[bool, bool]:
+    def outer(tx: TxnAttempt) -> tuple[bool, bool]:
         return db.transact(lambda inner: (inner is tx, inner.options is tx.options), itself)
 
     assert db.transact(outer, itself) == (True, True)
@@ -1169,7 +1167,7 @@ def test_a_join_inherits_an_outer_override_rather_than_the_roots_default(
     db = _configured_db(port)
     root_value = _fields(_CONFIGURED)[keyword]
 
-    def outer(tx: Attempt) -> str:
+    def outer(tx: TxnAttempt) -> str:
         assert db.transact(lambda inner: inner.options, itself) is tx.options
         assert (
             db.transact(
@@ -1190,7 +1188,7 @@ def test_a_join_inherits_an_outer_override_rather_than_the_roots_default(
 
 def test_the_record_outlives_the_invocation_without_ambient_state() -> None:
     port = ScriptedAdapter(Transact())
-    escaped: list[Attempt] = []
+    escaped: list[TxnAttempt] = []
     _configured_db(port).transact(escaped.append, itself)
     # No transaction is active any more, and the record is still the one the
     # invocation resolved — read off the transaction, not off any active state.
@@ -1205,7 +1203,7 @@ def test_the_roots_bound_admits_at_most_one_more_attempt_than_it_names() -> None
 
 
 def test_a_zero_root_bound_means_one_attempt_and_an_explicit_bound_retries() -> None:
-    zero = DatabaseOptions(max_retries=0)
+    zero = TxnOptions(max_retries=0)
     port = ScriptedAdapter(Transact(commit=deadlock()))
     with raises_contextualized(DatabaseError):
         _configured_db(port, zero).transact(lambda _tx: "ok", itself)

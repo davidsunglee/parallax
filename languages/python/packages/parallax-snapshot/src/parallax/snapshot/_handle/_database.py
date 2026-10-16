@@ -4,7 +4,7 @@ from collections.abc import Callable
 from typing import Any, cast
 from uuid import uuid4
 
-from parallax.core._execution._options import OMITTED, DatabaseOptions, Omitted
+from parallax.core._execution._options import OMITTED, Omitted, TxnOptions
 from parallax.core._execution._planning import prepare_model
 from parallax.core._execution._publication import ServingModel
 from parallax.core._execution._root import DatabaseRoot
@@ -24,7 +24,7 @@ from parallax.core.read_delivery._read_plan import (
 from parallax.snapshot._handle._errors import SnapshotConnectionError
 from parallax.snapshot._handle._read import Snapshot, typed_publication_for
 from parallax.snapshot._handle._stream import SnapshotStream
-from parallax.snapshot._handle._transaction import Transaction, transaction_for
+from parallax.snapshot._handle._transaction import TxnContext, transaction_for
 from parallax.snapshot._handle._wire import WireDatabaseView
 
 __all__ = ["Database", "ScopedDatabase", "connect"]
@@ -116,7 +116,7 @@ class ScopedDatabase:
 
     def transact[T](
         self,
-        fn: Callable[[Transaction], T],
+        fn: Callable[[TxnContext], T],
         /,
         *,
         max_retries: int | Omitted = OMITTED,
@@ -148,7 +148,7 @@ class Database[Authorization](DatabaseRoot[Authorization, ScopedDatabase]):
         runtime: DatabaseRuntime[Authorization],
         model: DomainModel | ServingModel,
         *,
-        options: DatabaseOptions | None = None,
+        options: TxnOptions | None = None,
         read_plan_cache_capacity: int = DEFAULT_READ_PLAN_CACHE_CAPACITY,
         clock: Clock | None = None,
         lifecycle_provider: ExecutionLifecycleProvider | None = None,
@@ -170,14 +170,14 @@ class Database[Authorization](DatabaseRoot[Authorization, ScopedDatabase]):
         adapter: DatabaseAdapter[Auth],
         model: DomainModel | ServingModel,
         *,
-        options: DatabaseOptions | None = None,
+        options: TxnOptions | None = None,
         read_plan_cache_capacity: int = DEFAULT_READ_PLAN_CACHE_CAPACITY,
         clock: Clock | None = None,
         lifecycle_provider: ExecutionLifecycleProvider | None = None,
     ) -> Database[Auth]:
         capacity = check_read_plan_cache_capacity(read_plan_cache_capacity)
         serving = served_model(model, _CONNECT_REFUSAL)
-        defaults = options if options is not None else DatabaseOptions()
+        defaults = options if options is not None else TxnOptions()
         runtime = adapter.open()
         try:
             return Database(

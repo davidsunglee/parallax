@@ -23,7 +23,7 @@ from parallax.core._execution._unit_work.instructions import (
 )
 from parallax.core._execution._unit_work.keys import object_key
 from parallax.core._execution._unit_work.materialized import buffered_write
-from parallax.core._execution._unit_work.retain import InsertionIdentity, ReadOrigin
+from parallax.core._execution._unit_work.retain import InsertionIdentity, ReadEvidence
 from parallax.core._execution._unit_work.uow import (
     NO_INSERTION_AUTHORITY,
     NoInsertionAuthority,
@@ -115,7 +115,7 @@ type Provenance = Literal["none", "foreign", "this"]
 managed source did, or this store's own did — by a read, or, on the Wire door,
 by the insert that opened the row.
 
-Publication rather than read origin is the axis, which is what lets the three
+Publication rather than read evidence is the axis, which is what lets the three
 answers partition the values a keyed verb can be handed, makes
 :func:`validate_provenance` total over them, and lets each refusal name the verb
 that does accept the value. `m-unit-work` "Write value provenance" states its
@@ -124,7 +124,7 @@ whether a row exists for a write to address; the unit of work's admitted
 insertions do, and :func:`validate_provenance` takes that answer as its own
 argument. Deriving the answer
 is the REPRESENTATION's job — a Typed value carries a lifecycle to read it from
-and a Wire source carries a Read Origin — so this is a fact a caller states
+and a Wire source carries Read Evidence — so this is a fact a caller states
 rather than a value this module inspects."""
 
 
@@ -200,7 +200,7 @@ def validate_provenance(
     ``representation`` the call arrived through (:data:`WriteRepresentation`).
 
     On the amendment and replacement side this overlaps
-    :meth:`~parallax.core.unit_work.UnitOfWork.resolve_write_evidence`: a value no
+    :meth:`~parallax.core.unit_work.UnitOfWork.resolve_read_evidence`: a value no
     managed source published, and a value another source published, both carry no
     hint and so no usable evidence either. Provenance is asked first because it
     is the more specific diagnosis — it names the verb that DOES accept the
@@ -318,9 +318,10 @@ class ResolvedKeyedWriteSource:
     derived — so a value whose class can key no row reaches the provenance
     refusal that is the honest complaint about it, rather than a codec failure.
 
-    ``pin`` and ``hint`` are the source's own, never derived: a hintless source
-    is one no read of this store published, and a source pinned at a finite
-    Transaction-Time instant is read-only whatever else is true of it.
+    ``pin`` and ``read_evidence`` are the source's own, never derived: a source
+    without read evidence is one no read of this store published, and a source
+    pinned at a finite Transaction-Time instant is read-only whatever else is
+    true of it.
 
     ``representation`` is which interface stated the write, and is here for the
     one thing a refusal cannot state without it: the verb that DOES accept the
@@ -330,12 +331,12 @@ class ResolvedKeyedWriteSource:
     instance an insertion was admitted through, a value derived from it since,
     or the node a Wire insert answered — which licenses the write only while
     the unit of work still answers it as standing. A source no read published
-    carries no hint beside it, and a read's source carries no authority.
+    carries no read evidence beside it, and a read's source carries no authority.
     """
 
     entity: EntityMetadata
     pin: Pin | None
-    hint: ReadOrigin | None
+    read_evidence: ReadEvidence | None
     provenance: Provenance
     representation: WriteRepresentation
     authoring: InsertionIdentity | None = None
@@ -392,7 +393,7 @@ class OpenedKeyedWrite:
     caller has nothing else to hold, so it renders the frozen node it will
     revise the row through, carrying that authority. What the node publishes is
     the buffered ROW rather than the payload. No read published it, so it
-    carries no Read Origin: the writes that follow are licensed by the
+    carries no Read Evidence: the writes that follow are licensed by the
     insertion's authority instead.
     """
 
@@ -626,7 +627,7 @@ def keyed_write(
     authoring = resolved.authoring
     anchor = (
         NO_INSERTION_AUTHORITY
-        if authoring is None or resolved.hint is not None
+        if authoring is None or resolved.read_evidence is not None
         else uow.insertion_authority(authoring)
     )
     authorized = anchor is not NO_INSERTION_AUTHORITY
@@ -645,10 +646,10 @@ def keyed_write(
     if authorized:
         uow.buffer(buffered_write(prepared.instruction, None, authority=authoring))
         return
-    evidence = uow.resolve_write_evidence(
-        resolved.entity, resolved.hint, mutation=mutation, object_key=prepared.object_key
+    evidence = uow.resolve_read_evidence(
+        resolved.entity, resolved.read_evidence, mutation=mutation, object_key=prepared.object_key
     )
-    uow.buffer(buffered_write(prepared.instruction, evidence, source=resolved.hint))
+    uow.buffer(buffered_write(prepared.instruction, evidence, source=resolved.read_evidence))
 
 
 def source_start(

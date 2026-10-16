@@ -518,7 +518,7 @@ ACCEPTED_CONFORMANCE_PRIVATE_REACHES: dict[tuple[str, str], frozenset[str]] = {
         "parallax.core._execution._preflight",
     ): frozenset({"preflight"}),
     ("parallax.conformance._lanes.scenario", "parallax.snapshot._publication._wire"): frozenset(
-        {"authoring_of", "read_origin_of"}
+        {"authoring_of", "read_evidence_of"}
     ),
     # The conformance-only runtime names the scenario and snapshot lanes drive the
     # production planner, lowering, and source-pin check through, read from the

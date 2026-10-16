@@ -10,7 +10,7 @@ from parallax.conformance.another_source import AnotherSource
 from parallax.conformance.story_models import Account
 from parallax.core.entity import Entity
 from parallax.core.execution import KeyedWriteValueError
-from parallax.snapshot import Transaction
+from parallax.snapshot import TxnContext
 
 __all__ = [
     "TARGET_ID",
@@ -144,7 +144,7 @@ def declared_round_trips(case: case_format.Case) -> int:
 
 def value_of(
     provenance: str,
-    tx: Transaction,
+    tx: TxnContext,
     another: AnotherSource,
     invalid_root: Callable[[], Entity] | None = None,
 ) -> Entity:
@@ -179,7 +179,7 @@ def value_of(
 
 
 def grade_step(
-    tx: Transaction,
+    tx: TxnContext,
     step: WriteValueStep,
     another: AnotherSource,
     invalid_root: Callable[[], Entity] | None = None,
@@ -214,7 +214,7 @@ def grade_step(
     return None
 
 
-def _apply(tx: Transaction, action: str, value: Entity) -> None:
+def _apply(tx: TxnContext, action: str, value: Entity) -> None:
     if action == "insert":
         tx.insert(value)
     else:
@@ -222,7 +222,7 @@ def _apply(tx: Transaction, action: str, value: Entity) -> None:
 
 
 def graded_outcomes(
-    tx: Transaction,
+    tx: TxnContext,
     steps: Sequence[WriteValueStep],
     another: AnotherSource,
     invalid_root: Callable[[], Entity] | None = None,

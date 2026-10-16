@@ -59,7 +59,7 @@ from parallax.snapshot import (
 )
 from parallax.snapshot._inspection import snapshot_state_of
 from parallax.snapshot._publication import _wire as wire_materialize
-from parallax.snapshot._publication._wire import read_origin_of
+from parallax.snapshot._publication._wire import read_evidence_of
 from tests._support.db_port import Read, ScriptedAdapter
 
 
@@ -215,7 +215,7 @@ def test_whole_result_projection_preserves_envelope_and_origin_without_io() -> N
     }
     assert projected.pin == typed.pin
     assert projected.edition == typed.edition
-    assert read_origin_of(wire) is state.source
+    assert read_evidence_of(wire) is state.read_evidence
 
 
 def test_projection_does_not_serialize_or_reclassify(
@@ -289,7 +289,7 @@ def test_element_projection_accepts_an_external_published_node_without_membershi
     assert "locations" not in projected
     state = snapshot_state_of(external)
     assert state is not None
-    assert read_origin_of(projected) is state.source
+    assert read_evidence_of(projected) is state.read_evidence
 
 
 def test_element_projection_refuses_edited_and_unpublished_values() -> None:

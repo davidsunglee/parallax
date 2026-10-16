@@ -96,7 +96,7 @@ from parallax.core.db_port import (
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.object_query._fluent import ObjectQuery
 from parallax.core.read_delivery._page import Page, PageRows
-from parallax.snapshot import Database, ScopedDatabase, SnapshotStream, Transaction
+from parallax.snapshot import Database, ScopedDatabase, SnapshotStream, TxnContext
 from parallax.snapshot._publication._root import RootView
 from tests._support.db_port import ConnectsAsItself, body_outcome, projected_row
 from tests.unit.memory_instruments import (
@@ -517,7 +517,7 @@ def _writing(total: int, *, batch_size: int, at: int, writes: bool) -> Seam:
         with Database.connect(_WritingPort(total), ACCOUNT_MODEL) as root:
             database = root.using_database_login()
 
-            def body(tx: Transaction) -> None:
+            def body(tx: TxnContext) -> None:
                 with tx.stream(Account.where(Account.id >= 1), batch_size=batch_size) as stream:
                     for position, account in enumerate(stream):
                         if writes:

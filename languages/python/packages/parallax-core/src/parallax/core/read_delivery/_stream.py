@@ -529,7 +529,7 @@ class StreamDelivery[R: StreamRead[Any], Q: QueryClauses, P: Publication[Any, An
                 page.page,
                 includes,
                 ordinal_offset=emitted,
-                sources=page.sources,
+                origins=page.origins,
                 milestones=self._milestones,
             )
             for root in roots:

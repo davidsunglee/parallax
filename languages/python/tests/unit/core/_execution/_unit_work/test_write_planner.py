@@ -85,7 +85,7 @@ from parallax.core.write_plan import (
     WritePlan,
     WritePlanningError,
 )
-from parallax.core.write_plan.keys import VersionedStateKey
+from parallax.core.write_plan.keys import VersionedObjectStateKey
 from parallax.core.write_plan.steps import (
     ANY_COUNT,
     MAX_PLUS_ONE,
@@ -2071,11 +2071,13 @@ def test_only_surviving_writes_carry_claims_into_execution_units() -> None:
     # filter.
     observation = VersionObservation(observed_version=7)
     shared = RetainedObservation(
-        VersionedStateKey(corpus_object_key("Account", ("id", 1)), 7), observation, None
+        VersionedObjectStateKey(corpus_object_key("Account", ("id", 1)), 7), observation, None
     )
     retired_observation = VersionObservation(observed_version=4)
     retired = RetainedObservation(
-        VersionedStateKey(corpus_object_key("Account", ("id", 2)), 4), retired_observation, None
+        VersionedObjectStateKey(corpus_object_key("Account", ("id", 2)), 4),
+        retired_observation,
+        None,
     )
     buffer = [
         _observed(KeyedWrite("delete", "Account", ({"id": 1},)), observation, claim=shared),

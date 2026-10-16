@@ -4,7 +4,7 @@ from decimal import Decimal
 
 from parallax.conformance import execution_authority_stories as stories
 from parallax.conformance.story_models import ACCOUNT_MODEL
-from parallax.core.execution import DatabaseOptions
+from parallax.core.execution import TxnOptions
 from tests._support.db_port import Read, ScriptedAdapter, Transact
 
 _ROW = {"id": 2, "owner": "Bob", "balance": Decimal("250.00"), "version": 1}
@@ -26,6 +26,6 @@ def test_the_scoped_authority_guide_story_runs_without_a_database() -> None:
         login_balance=Decimal("250.00"),
         principal_balance=Decimal("250.00"),
         joined_same_transaction=True,
-        options=DatabaseOptions(max_retries=1, isolation="serializable"),
+        options=TxnOptions(max_retries=1, isolation="serializable"),
     )
     assert adapter.closes == 1

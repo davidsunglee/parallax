@@ -17,7 +17,7 @@ from parallax.conformance._lifecycle_recording import RecordingLifecycleProvider
 from parallax.conformance.class_models import MODELS
 from parallax.core import Attr, Bitemporal, Document, DomainModel, ValueObject, attr
 from parallax.core._execution._transaction import _attempt as attempt_module
-from parallax.core._execution._transaction._attempt import Attempt
+from parallax.core._execution._transaction._attempt import TxnAttempt
 from parallax.core._execution._unit_work.acquisition import (
     CompletionRequest,
     CoverageReadRequest,
@@ -182,7 +182,7 @@ def test_a_target_read_is_a_read_of_its_own_that_flushes_nothing_pending() -> No
     recorder = RecordingLifecycleProvider()
     port = ScriptedAdapter(Transact(Read(rows=[_account()]), Write(), Write()))
 
-    def fn(tx: Attempt) -> None:
+    def fn(tx: TxnAttempt) -> None:
         tx.uow.buffer(account_insert())
         tx.target_write(_patch())
 
@@ -275,7 +275,7 @@ def test_the_read_is_settled_however_its_consumer_leaves(
     port = ScriptedAdapter(Transact(Read(rows=[_account(1), _account(2)])))
     answers: list[int] = []
 
-    def fn(tx: Attempt) -> None:
+    def fn(tx: TxnAttempt) -> None:
         if answer is None:
             with pytest.raises(_Refused):
                 tx.uow.acquire_rows(_target_request(), consumer)
@@ -354,7 +354,7 @@ def test_each_deferred_range_reads_its_coverage_only_once_the_unit_before_it_ran
         for key in (1, 2)
     ]
 
-    def fn(tx: Attempt) -> None:
+    def fn(tx: TxnAttempt) -> None:
         for patch in patches:
             tx.target_write(patch)
 
@@ -491,7 +491,7 @@ def test_a_completed_retained_row_is_judged_as_a_coverage_read_judges_it(
     key_attribute = AttributeIdentity(metadata.identity, "id")
     seen: list[object] = []
 
-    def fn(tx: Attempt) -> None:
+    def fn(tx: TxnAttempt) -> None:
         coverage = CoverageReadRequest(
             metadata,
             key_attribute,
@@ -522,7 +522,7 @@ def test_a_non_object_structured_column_is_refused_alike_by_a_retaining_read() -
     key_attribute = AttributeIdentity(metadata.identity, "id")
     seen: list[object] = []
 
-    def fn(tx: Attempt) -> None:
+    def fn(tx: TxnAttempt) -> None:
         coverage = CoverageReadRequest(
             metadata,
             key_attribute,
@@ -557,7 +557,7 @@ def test_several_target_rows_with_invalid_collections_are_corruption_before_judg
     port = ScriptedAdapter(Transact(Read(rows=[row, row])))
     counts: list[int] = []
 
-    def fn(tx: Attempt) -> None:
+    def fn(tx: TxnAttempt) -> None:
         count, retained, _document = tx.uow.acquire_rows(
             TargetReadRequest(metadata, key, _MAR, retains=True), consume_target
         )
@@ -599,7 +599,7 @@ def test_a_write_reusing_a_pending_participation_reads_and_judges_nothing_again(
             model_of(_HULLS),
         )
 
-    def fn(tx: Attempt) -> None:
+    def fn(tx: TxnAttempt) -> None:
         tx.target_write(amend(["a"]))
         assert interpreted == ["tags"]
         tx.target_write(amend(["b", "b"]))
@@ -622,7 +622,7 @@ def test_an_optimistic_target_reads_no_collection_until_its_flush_covers_it(
     metadata, _key = _hull_keys(entity)
     called: list[str] = []
 
-    def fn(tx: Attempt) -> None:
+    def fn(tx: TxnAttempt) -> None:
         tx.target_write(
             prepare_wire_write(
                 TargetWrite(
@@ -663,7 +663,7 @@ def test_a_retaining_read_judges_a_top_level_collection_as_a_coverage_read_judge
     key_attribute = AttributeIdentity(metadata.identity, "id")
     seen: list[object] = []
 
-    def fn(tx: Attempt) -> None:
+    def fn(tx: TxnAttempt) -> None:
         coverage = CoverageReadRequest(
             metadata,
             key_attribute,
@@ -711,7 +711,7 @@ def test_a_retained_rows_invalid_occurrence_fails_at_its_flush_not_its_call(
     metadata, _key = _hull_keys(entity)
     called: list[str] = []
 
-    def fn(tx: Attempt) -> None:
+    def fn(tx: TxnAttempt) -> None:
         tx.target_write(
             prepare_wire_write(
                 TargetWrite(
@@ -758,7 +758,7 @@ def test_a_completion_reads_nothing_and_opens_no_activity(
     metadata, key = _hull_keys(DocumentHull)
     key_attribute = AttributeIdentity(metadata.identity, "id")
 
-    def fn(tx: Attempt) -> None:
+    def fn(tx: TxnAttempt) -> None:
         _count, retained, document = tx.uow.acquire_rows(
             TargetReadRequest(metadata, key, _MAR, retains=True), consume_target
         )
@@ -803,7 +803,7 @@ def test_a_retaining_reads_invalid_attribute_is_refused_at_its_call(
     metadata, _key = _hull_keys(entity)
     refused: list[StoredDataDecodingError] = []
 
-    def fn(tx: Attempt) -> None:
+    def fn(tx: TxnAttempt) -> None:
         with pytest.raises(StoredDataDecodingError) as caught:
             tx.target_write(
                 prepare_wire_write(

@@ -50,7 +50,7 @@ from parallax.core.unit_work import (
     WriteInstructionError,
 )
 from parallax.core.write_plan import ObjectKey
-from parallax.snapshot import Database, ScopedDatabase, Transaction
+from parallax.snapshot import Database, ScopedDatabase, TxnContext
 from parallax.snapshot._handle._wire import WireTransactionView
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
@@ -98,7 +98,7 @@ from tests.unit.snapshot._handle import _mixed_strategy_model as mx
 def test_commit_flushes_the_buffer_through_the_lowering_seam() -> None:
     port = ScriptedAdapter(Transact(Write()))
 
-    def fn(tx: Transaction) -> str:
+    def fn(tx: TxnContext) -> str:
         tx.insert(new_account())
         return "done"
 
@@ -150,7 +150,7 @@ def test_update_lowers_to_its_keyed_dml() -> None:
         )
     )
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         fetched = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         tx.amend(fetched.edit(balance=Decimal("175.00")))
 
@@ -183,7 +183,7 @@ def test_a_correction_authored_from_diagnostic_data_is_not_a_keyed_write_source(
         Transact(Read(rows=[{"id": 1, "name": "Ada", "address": PresentDocument(dict(stored))}]))
     )
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         published = tx.find(Contact.where(Contact.id == 1)).checked().result()
         assert isinstance(published, InvalidData)
         current = cast("Contact", published.data)
@@ -219,7 +219,7 @@ def test_delete_of_an_observed_versioned_row_is_ungated_in_locking_mode() -> Non
         )
     )
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         fetched = tx.find(mm.Account.where(mm.Account.id == 3)).result()
         tx.delete(fetched)
 
@@ -233,13 +233,13 @@ def test_delete_of_an_observed_versioned_row_is_ungated_in_locking_mode() -> Non
 
 
 def test_delete_of_a_versioned_row_no_read_produced_raises() -> None:
-    # A plainly constructed instance carries no Read Origin at all, so it
+    # A plainly constructed instance carries no Read Evidence at all, so it
     # observed no state and the Optimistic strategy has nothing to gate on — the
     # framework never issues an implicit resolving read on behalf of a keyed
     # write, so the delete raises at the verb, before any DML.
     port = ScriptedAdapter(Transact())
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.delete(grace())
 
     with raises_contextualized(WriteEvidenceError) as refusal:
@@ -263,7 +263,7 @@ def test_versioned_update_shortfall_in_locking_mode_is_a_stale_write() -> None:
         )
     )
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         fetched = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         tx.amend(fetched.edit(balance=Decimal("175.00")))
 
@@ -286,7 +286,7 @@ def test_versioned_update_shortfall_in_optimistic_mode_is_a_lock_conflict() -> N
         )
     )
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         fetched = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         tx.amend(fetched.edit(balance=Decimal("175.00")))
 
@@ -312,7 +312,7 @@ def _mixed_port() -> ScriptedAdapter:
     )
 
 
-def _mix_strategies(tx: Transaction) -> None:
+def _mix_strategies(tx: TxnContext) -> None:
     consignment = tx.find(
         mx.Consignment.where(mx.Consignment.id == 1).include(mx.Consignment.legs)
     ).result()
@@ -451,7 +451,7 @@ def test_update_of_a_copy_expressing_no_member_issues_no_dml() -> None:
         Transact(Read(rows=[{"id": 1, "owner": "Ada", "balance": Decimal("100.00"), "version": 1}]))
     )
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         fetched = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         tx.amend(fetched.edit())
 
@@ -471,7 +471,7 @@ def test_a_keyed_update_changing_one_member_writes_its_whole_literal_set(
         )
     )
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         if representation == "typed":
             fetched = tx.find(mm.Balance.where(mm.Balance.id == 1)).result()
             tx.amend(fetched.edit(acct_num="A-1", value=Decimal("150.00")))
@@ -526,7 +526,7 @@ def test_sparse_update_does_not_trip_required_attribute_missing_for_an_untouched
         )
     )
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         fetched = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         tx.amend(fetched.edit(balance=Decimal("175.00")))
 
@@ -570,7 +570,7 @@ def test_keyed_update_lowers_a_plain_bitemporal_correction() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[_position_row_dt()]), Write(times=2)))
     valid_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         fetched = tx.find(
             WherePosition.where(WherePosition.id == 1).as_of(valid_time=valid_from)
         ).result()
@@ -590,7 +590,7 @@ def test_keyed_terminate_lowers_a_plain_bitemporal_termination() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[_position_row_dt()]), Write(times=2)))
     valid_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         fetched = tx.find(
             WherePosition.where(WherePosition.id == 1).as_of(valid_time=valid_from)
         ).result()
@@ -610,7 +610,7 @@ def test_a_bounded_keyed_update_lowers_the_rectangle_split() -> None:
     valid_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
     until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         fetched = tx.find(
             WherePosition.where(WherePosition.id == 1).as_of(valid_time=valid_from)
         ).result()
@@ -634,7 +634,7 @@ def test_a_bounded_keyed_update_expressing_no_member_issues_no_dml() -> None:
     valid_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
     until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         fetched = tx.find(
             WherePosition.where(WherePosition.id == 1).as_of(valid_time=valid_from)
         ).result()
@@ -655,7 +655,7 @@ def test_a_bounded_keyed_update_expressing_no_member_still_rejects_equal_bounds(
     port = ScriptedAdapter(Transact(Read(rows=[_position_row_dt()])))
     valid_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         fetched = tx.find(
             WherePosition.where(WherePosition.id == 1).as_of(valid_time=valid_from)
         ).result()
@@ -678,7 +678,7 @@ def test_a_bounded_keyed_update_with_a_naive_until_raises_the_proper_value_error
     valid_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
     naive_until = dt.datetime(2024, 9, 1)  # NAIVE -- no tzinfo
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         fetched = tx.find(
             WherePosition.where(WherePosition.id == 1).as_of(valid_time=valid_from)
         ).result()
@@ -700,7 +700,7 @@ def test_a_bound_of_no_datetime_type_carries_the_same_refusal_a_naive_one_does()
     port = ScriptedAdapter(Transact(Read(rows=[_position_row_dt()])))
     valid_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         fetched = tx.find(
             WherePosition.where(WherePosition.id == 1).as_of(valid_time=valid_from)
         ).result()
@@ -731,12 +731,12 @@ def test_a_keyed_bounded_verb_states_its_window_as_a_pair() -> None:
     position = ScriptedAdapter(Transact(Read(rows=[_position_row_dt()])))
     until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
 
-    def non_temporal(tx: Transaction) -> None:
+    def non_temporal(tx: TxnContext) -> None:
         fetched = tx.find(mm.Account.where(mm.Account.id == 3)).result()
         with pytest.raises(WriteInstructionError, match="takes no until"):
             tx.amend(fetched.edit(balance=Decimal("20.00")), until=until)
 
-    def absent_until(tx: Transaction) -> None:
+    def absent_until(tx: TxnContext) -> None:
         fetched = tx.find(
             WherePosition.where(WherePosition.id == 1).as_of(valid_time=FIXED)
         ).result()
@@ -766,7 +766,7 @@ _UNIFIED_OPERATIONS = (
 
 
 @pytest.mark.parametrize("operation", _UNIFIED_OPERATIONS)
-@pytest.mark.parametrize("owner", [Transaction, WireTransactionView], ids=["typed", "wire"])
+@pytest.mark.parametrize("owner", [TxnContext, WireTransactionView], ids=["typed", "wire"])
 def test_one_method_per_operation_selects_its_bound_by_keyword(
     owner: type[object], operation: str
 ) -> None:
@@ -784,7 +784,7 @@ def test_a_bounded_predicate_write_states_its_window_as_a_pair() -> None:
     port = ScriptedAdapter(Transact())
     target = WherePosition.where(WherePosition.id == 1)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         with pytest.raises(WriteInstructionError, match="until is absent"):
             tx.amend_where(
                 target,
@@ -835,7 +835,7 @@ def test_an_update_beyond_its_observed_rectangle_reads_the_coverage_it_reaches(
     tail = _rectangle(jun, INFINITY_INSTANT, "200.00")
     port = ScriptedAdapter(Transact(Read(rows=[head]), Read(rows=[tail]), Write(times=3)))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         source = tx.find(WherePosition.where(WherePosition.id == 1).as_of(valid_time=mar)).result()
         tx.amend(source.edit(value=Decimal("150.00")))
 
@@ -865,7 +865,7 @@ def test_a_bounded_update_reads_coverage_only_up_to_its_bound() -> None:
     tail = _rectangle(jun, INFINITY_INSTANT, "200.00")
     port = ScriptedAdapter(Transact(Read(rows=[head]), Read(rows=[tail]), Write(times=3)))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         source = tx.find(WherePosition.where(WherePosition.id == 1).as_of(valid_time=mar)).result()
         tx.amend(source.edit(value=Decimal("150.00")), until=sep)
 
@@ -895,7 +895,7 @@ def test_a_source_keeps_its_pin_through_projection_and_streaming(delivery: str) 
     port = ScriptedAdapter(Transact(Read(rows=[_position_row_dt()]), Write(times=2)))
     query = WherePosition.where(WherePosition.id == 1).as_of(valid_time=mar)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         if delivery == "projected":
             tx.wire.amend(tx.find(query).wire().result(), {"value": "150.00"})
             return
@@ -921,7 +921,7 @@ def test_a_source_with_no_pin_and_no_standing_insertion_names_no_start() -> None
     # which takes no position on provenance, finds no start.
     port = ScriptedAdapter(Transact())
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         opened = tx.wire.insert(
             "WherePosition",
             {"id": 1, "acctNum": "A", "value": "1.00"},
@@ -947,7 +947,7 @@ def test_a_bounded_keyed_terminate_lowers_head_and_tail_only() -> None:
     valid_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
     until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         fetched = tx.find(
             WherePosition.where(WherePosition.id == 1).as_of(valid_time=valid_from)
         ).result()
@@ -966,7 +966,7 @@ def test_a_keyed_update_of_a_source_read_at_valid_time_latest_is_refused() -> No
     # instant, so a source read there states no start for an observed write.
     port = ScriptedAdapter(Transact(Read(rows=[_position_row_dt()])))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         fetched = tx.find(
             WherePosition.where(WherePosition.id == 1).as_of(valid_time=LATEST)
         ).result()
@@ -985,7 +985,7 @@ def test_a_bounded_keyed_terminate_on_a_non_temporal_target_takes_no_until() -> 
         )
     )
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         fetched = tx.find(mm.Account.where(mm.Account.id == 3)).result()
         tx.terminate(fetched, until=FIXED)
 
@@ -1022,7 +1022,7 @@ def test_an_inherited_positions_window_is_judged_by_its_family_shape(
     monkeypatch.setattr(entity_type, "declared_as_of_axes", property(undeclared))
     rate = DepositRate(id=1, amount=Decimal("1.00"), grade="A")
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         if "until" in window:
             tx.insert(rate, valid_from=window["valid_from"], until=window["until"])
         else:
@@ -1045,7 +1045,7 @@ def test_a_bounded_keyed_update_rejects_an_equal_window_bound() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[_position_row_dt()])))
     valid_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         fetched = tx.find(
             WherePosition.where(WherePosition.id == 1).as_of(valid_time=valid_from)
         ).result()
@@ -1062,7 +1062,7 @@ def test_a_bounded_keyed_terminate_rejects_a_reversed_window_bound() -> None:
     valid_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
     until = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)  # BEFORE the source's pin — reversed
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         fetched = tx.find(
             WherePosition.where(WherePosition.id == 1).as_of(valid_time=valid_from)
         ).result()
@@ -1087,11 +1087,11 @@ def test_a_temporal_close_of_a_value_no_read_produced_raises_before_any_dml(
     # read-before-write programming error under EITHER strategy: under Locking
     # the observing find's shared lock is the ungated close's ONLY protection,
     # and under Optimistic there is no observed `in_z` to gate on. A plainly
-    # constructed instance carries no Read Origin, so it proves neither.
+    # constructed instance carries no Read Evidence, so it proves neither.
     port = ScriptedAdapter(Transact())
     db = db_for(BALANCE, port)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.terminate(mm.Balance(id=1, acct_num="A-1", value=Decimal("5.00")))
 
     with raises_contextualized(WriteEvidenceError) as refusal:
@@ -1113,7 +1113,7 @@ def test_a_standalone_temporal_source_is_accepted_without_an_in_transaction_rere
     db = db_for(BALANCE, port)
     node = db.find(mm.Balance.where(mm.Balance.id == 1)).result()
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.amend(node.edit(value=Decimal("9.00")))
 
     db.transact(fn)
@@ -1140,7 +1140,7 @@ def test_a_standalone_temporal_source_is_refused_under_an_explicit_locking_prefe
     db = db_for(BALANCE, port)
     node = db.find(mm.Balance.where(mm.Balance.id == 1)).result()
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.amend(node.edit(value=Decimal("9.00")))
 
     with raises_contextualized(WriteEvidenceError) as refusal:
@@ -1158,7 +1158,7 @@ def test_same_transaction_insert_then_temporal_update_is_licensed() -> None:
     port = ScriptedAdapter(Transact(Write()))
     db = db_for(BALANCE, port)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         fresh = mm.Balance(id=9, acct_num="Z", value=Decimal("1.00"))
         tx.insert(fresh)
         tx.amend(fresh.edit(value=Decimal("2.00")))
@@ -1173,7 +1173,7 @@ def test_an_update_of_a_value_a_different_object_was_inserted_under_is_refused()
     # The exemption is keyed by the OBJECT this transaction inserted, not by the
     # verb having been called: a value naming a different primary key was never
     # inserted here, so it still addresses no stored row.
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.insert(mm.Balance(id=9, acct_num="Z", value=Decimal("1.00")))
         tx.amend(mm.Balance(id=10, acct_num="Z", value=Decimal("1.00")).edit(value=Decimal("2.00")))
 
@@ -1192,7 +1192,7 @@ def test_same_transaction_insert_then_terminate_is_licensed() -> None:
     port = ScriptedAdapter(Transact())
     db = db_for(BALANCE, port)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         fresh = mm.Balance(id=9, acct_num="Z", value=Decimal("1.00"))
         tx.insert(fresh)
         tx.terminate(fresh)
@@ -1229,7 +1229,7 @@ def test_a_temporal_update_after_an_audit_read_of_the_same_milestone_commits(
     )
     db = db_for(BALANCE, port)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         current = tx.find(mm.Balance.where(mm.Balance.id == 1)).result()
         tx.find(mm.Balance.where(mm.Balance.id == 1).as_of(tx_time=_AUDIT_INSTANT)).result()
         tx.amend(current.edit(value=Decimal("150.00")))
@@ -1257,7 +1257,7 @@ _CORRECTION_FROM = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 _CORRECTION_UNTIL = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
 
 
-def _find_pinned_position(tx: Transaction, **as_of: Any) -> Any:
+def _find_pinned_position(tx: TxnContext, **as_of: Any) -> Any:
     as_of.setdefault("valid_time", _CORRECTION_FROM)
     return tx.find(WherePosition.where(WherePosition.id == 1).as_of(**as_of)).result()
 
@@ -1265,7 +1265,7 @@ def _find_pinned_position(tx: Transaction, **as_of: Any) -> Any:
 def test_a_latest_transaction_time_pinned_source_stays_writable() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[_position_row_dt()]), Write(times=2)))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         node = _find_pinned_position(tx, tx_time=LATEST)
         tx.terminate(node)
 
@@ -1280,7 +1280,7 @@ def test_a_finite_valid_time_pinned_source_stays_writable() -> None:
     # finite Valid-Time pin is the retroactive correction, never read-only.
     port = ScriptedAdapter(Transact(Read(rows=[_position_row_dt()]), Write(times=2)))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         node = _find_pinned_position(tx, valid_time=_VALID_PIN)
         tx.terminate(node)
 
@@ -1299,7 +1299,7 @@ def test_an_edited_copy_of_a_finite_transaction_time_pinned_node_is_refused_too(
     # of its own, so this is the verb-time refusal answering on its own.
     port = ScriptedAdapter(Transact(Read(rows=[_position_row_dt()])))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         node = _find_pinned_position(tx, tx_time=_TX_PIN)
         tx.amend(node.edit(value=Decimal("200.00")))
 
@@ -1324,7 +1324,7 @@ def test_a_keyed_verb_refuses_an_instance_of_an_undeclared_class() -> None:
     class _Elsewhere(Entity, table="elsewhere", namespace="parallax.compatibility"):
         id: Attr[int] = attr(primary_key=True)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.delete(_Elsewhere(id=1))
 
     with raises_contextualized(TypeError, match="_Elsewhere is not an Entity Class of this model"):
@@ -1356,7 +1356,7 @@ _TWIN_RIGHT = DomainModel(_TwinRight)
 def test_a_foreign_twins_members_are_refused_when_the_row_is_derived() -> None:
     port = ScriptedAdapter(Transact())
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.insert(_TwinLeft(id=1, left_only="x"))
 
     # `full_row` selects what the instance populated and the connected model
@@ -1378,7 +1378,7 @@ def test_a_foreign_twins_row_refusal_precedes_a_window_its_target_does_not_admit
     def insert(instance: Entity) -> type[Exception]:
         port = ScriptedAdapter(Transact())
 
-        def fn(tx: Transaction) -> None:
+        def fn(tx: TxnContext) -> None:
             tx.insert(instance, valid_from=FIXED)
 
         with raises_contextualized(Exception) as refusal:
@@ -1393,7 +1393,7 @@ def test_a_foreign_twins_row_refusal_precedes_a_window_its_target_does_not_admit
 def test_the_keyed_entity_class_guard_still_accepts_its_own_models_instance() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[{"id": 1, "left_only": "x"}]), Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.delete(tx.find(_TwinLeft.where(_TwinLeft.id == 1)).result())
 
     db_for(_TWIN_LEFT, port).transact(fn)
@@ -1438,7 +1438,7 @@ class _OtherLifecycleState:
 
 
 def test_update_of_a_value_no_read_produced_names_the_insert_verb() -> None:
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.amend(new_account().edit(balance=Decimal("9.00")))
 
     with raises_contextualized(KeyedWriteValueError) as refusal:
@@ -1468,7 +1468,7 @@ def test_a_key_member_naming_no_object_reaches_the_provenance_refusal(key: objec
     # `write-value-not-stored` — the honest complaint about it — rather than a
     # bare `TypeError` raised on its behalf. The carriers are illustrative, not a
     # closed set.
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.amend(
             mm.Account.model_construct(id=key, owner="Ada", balance=Decimal("100.00"), version=1)
         )
@@ -1487,7 +1487,7 @@ def test_insert_of_a_value_this_store_produced_names_the_update_verb() -> None:
         Transact(Read(rows=[{"id": 1, "owner": "Ada", "balance": Decimal("100.00"), "version": 1}]))
     )
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.insert(tx.find(mm.Account.where(mm.Account.id == 1)).result())
 
     with raises_contextualized(KeyedWriteValueError) as refusal:
@@ -1505,7 +1505,7 @@ def test_a_second_insert_of_the_same_instance_is_refused_before_any_dml() -> Non
     # otherwise refuse the pair at commit as a primary-key violation.
     port = ScriptedAdapter(Transact())
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         fresh = new_account()
         tx.insert(fresh)
         tx.insert(fresh)
@@ -1525,7 +1525,7 @@ def test_a_second_insert_of_the_same_object_is_refused_whatever_instance_spells_
     # other members agree.
     port = ScriptedAdapter(Transact())
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.insert(mm.Person(id=9, name="Newton"))
         tx.insert(mm.Person(id=9, name="Grace"))
 
@@ -1544,7 +1544,7 @@ def test_the_repeated_insert_advice_carries_the_refused_values_into_the_opened_r
     # advice cannot be the already-stored refusal's.
     port = ScriptedAdapter(Transact(Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         inserted = mm.Person(id=9, name="Newton")
         tx.insert(inserted)
         with pytest.raises(KeyedWriteValueError):
@@ -1562,7 +1562,7 @@ def test_an_insert_then_an_update_of_one_object_still_coalesces_into_the_insert(
     # is licensed by the buffered insert and folds into its one statement.
     port = ScriptedAdapter(Transact(Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         fresh = mm.Person(id=9, name="Newton")
         tx.insert(fresh)
         tx.amend(fresh.edit(name="Grace"))
@@ -1580,7 +1580,7 @@ def test_an_insert_after_a_cancelled_insert_delete_pair_opens_the_row_again() ->
     # than a repeat: admitted, and the one INSERT the transaction commits.
     port = ScriptedAdapter(Transact(Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         fresh = mm.Person(id=9, name="Newton")
         tx.insert(fresh)
         tx.delete(fresh)
@@ -1599,7 +1599,7 @@ def test_an_update_after_a_cancelled_insert_delete_pair_addresses_no_stored_row(
     # admitted as an UPDATE of a row the store will never hold.
     port = ScriptedAdapter(Transact())
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         fresh = mm.Person(id=9, name="Newton")
         tx.insert(fresh)
         tx.delete(fresh)
@@ -1622,7 +1622,7 @@ def test_an_insert_after_a_delete_of_a_flushed_insert_executes_after_that_delete
         Transact(Write(), Read(rows=[{"id": 9, "name": "Newton"}]), Write(times=2))
     )
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         fresh = mm.Person(id=9, name="Newton")
         tx.insert(fresh)
         tx.find(Person.where(Person.id == 9)).result()
@@ -1645,7 +1645,7 @@ def test_a_bounded_terminate_of_a_pending_insert_leaves_its_tail_and_refuses_a_r
     until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
     opened_from = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         fresh = WherePosition(id=1, acct_num="A", value=Decimal("100.00"))
         tx.insert(fresh, valid_from=opened_from)
         tx.terminate(fresh, until=until)
@@ -1672,7 +1672,7 @@ def test_an_insert_after_a_bounded_terminate_of_a_flushed_insert_is_still_refuse
     until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
     opened_from = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         fresh = WherePosition(id=1, acct_num="A", value=Decimal("100.00"))
         tx.insert(fresh, valid_from=opened_from)
         tx.find(WherePosition.where(WherePosition.id == 1).as_of(valid_time=valid_from)).result()
@@ -1694,7 +1694,7 @@ def test_an_insert_after_a_cancelled_insert_terminate_pair_opens_the_milestone_a
     # rule — and so the retirement — is the same one keyed by the object.
     port = ScriptedAdapter(Transact(Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         fresh = mm.Balance(id=9, acct_num="Z", value=Decimal("1.00"))
         tx.insert(fresh)
         tx.terminate(fresh)
@@ -1713,7 +1713,7 @@ def test_a_value_carrying_another_sources_state_is_refused_by_both_families(verb
     # raising port proves the refusal precedes every adapter call.
     foreign = _foreign_lifecycle_account()
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         if verb == "insert":
             tx.insert(foreign)
         else:
@@ -1740,7 +1740,7 @@ def test_a_value_that_keys_no_row_is_still_refused_for_its_provenance() -> None:
     # `EntityRowError` reported on the value's behalf.
     port = ScriptedAdapter(Transact())
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.insert(_TwinRight(id=1, right_only="x"))
         tx.amend(_RekeyedTwin(id_elsewhere=1, right_only="y").edit(right_only="z"))
 
@@ -1760,7 +1760,7 @@ def test_a_value_short_of_its_own_key_is_still_refused_for_its_provenance() -> N
     # naming a framework attribute instead of the verb's own complaint.
     unkeyed = mm.Account.model_construct(owner="Ada", balance=Decimal("100.00"), version=1)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.amend(unkeyed)
 
     with raises_contextualized(KeyedWriteValueError) as refusal:
@@ -1828,7 +1828,7 @@ def test_an_unversioned_update_of_a_participating_read_is_addressed_by_its_key()
     # nothing.
     port = ScriptedAdapter(Transact(Read(rows=[{"id": 1, "name": "Ada"}]), Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         node = tx.find(Person.where(Person.id == 1)).result()
         tx.amend(node.edit(name="Grace"))
 
@@ -1847,7 +1847,7 @@ def test_update_of_an_unedited_node_buffers_nothing() -> None:
         Transact(Read(rows=[{"id": 1, "owner": "Ada", "balance": Decimal("100.00"), "version": 1}]))
     )
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.amend(tx.find(mm.Account.where(mm.Account.id == 1)).result())
 
     account_db(port).transact(fn)
@@ -1860,7 +1860,7 @@ def test_a_terminate_takes_no_position_on_a_values_provenance() -> None:
     # the evidence rule, which finds no observed state behind the value.
     port = ScriptedAdapter(Transact())
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.terminate(mm.Balance(id=9, acct_num="Z", value=Decimal("1.00")))
 
     with raises_contextualized(WriteEvidenceError) as refusal:

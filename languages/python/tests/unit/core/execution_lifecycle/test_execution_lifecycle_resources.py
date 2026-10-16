@@ -67,7 +67,7 @@ from parallax.core.execution_lifecycle import (
 )
 from parallax.core.execution_lifecycle import _activity as activity_module
 from parallax.core.execution_lifecycle import _fanout as fanout_module
-from parallax.snapshot import Database, ScopedDatabase, Transaction, connect
+from parallax.snapshot import Database, ScopedDatabase, TxnContext, connect
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
@@ -327,7 +327,7 @@ def test_participating_work_acquires_nothing_of_its_own() -> None:
     recorder = RecordingLifecycleProvider()
     adapter = ScriptedAdapter(Transact(Read(rows=[NEW_ROW]), Write()))
 
-    def body(tx: Transaction) -> None:
+    def body(tx: TxnContext) -> None:
         tx.find(mm.Account.where(mm.Account.id == 7)).result()
         tx.insert(mm.Account(id=8, owner="Bell", balance=Decimal("1.00")))
 

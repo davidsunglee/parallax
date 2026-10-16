@@ -8,7 +8,7 @@ from typing import Final, Protocol
 
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.temporal_read import TimeInterval
-from parallax.core.write_plan.keys import ObjectKey, ObservedStateKey
+from parallax.core.write_plan.keys import ObjectKey, ObjectStateKey
 from parallax.core.write_plan.steps import INFINITY, PlannedWrite, TemporalUpperBound
 
 __all__ = [
@@ -224,7 +224,7 @@ class Derivation:
     them, with the part of each the original contributed.
     """
 
-    original: ObservedStateKey
+    original: ObjectStateKey
     valid_time_coverage: TimeInterval | None
     owned: OwnedEndpoint | None
     rows: tuple[DerivedRow, ...]
@@ -241,9 +241,9 @@ class Descent:
     row."""
 
     valid_time_coverage: TimeInterval | None
-    contributions: tuple[tuple[ObservedStateKey, TimeInterval | None], ...]
+    contributions: tuple[tuple[ObjectStateKey, TimeInterval | None], ...]
 
-    def original_at(self, instant: dt.datetime | None) -> ObservedStateKey | None:
+    def original_at(self, instant: dt.datetime | None) -> ObjectStateKey | None:
         """The original whose contribution holds ``instant`` — ``None`` on a
         Transaction-Time-Only object, whose row has one — or ``None`` where
         none does."""
@@ -283,13 +283,13 @@ class TemporalWriteOwnership(Protocol):
         continue it. Empty where no insertion contributed any."""
         ...
 
-    def proven(self, original: ObservedStateKey, /) -> Derivation | None:
+    def proven(self, original: ObjectStateKey, /) -> Derivation | None:
         """How an earlier execution unit of the running flush transformed
         ``original``, if one did."""
         ...
 
     def descendants(
-        self, original: ObservedStateKey, valid_time_window: TimeInterval | None, /
+        self, original: ObjectStateKey, valid_time_window: TimeInterval | None, /
     ) -> Iterable[tuple[OwnedEndpoint, Descent]]:
         """The current rows the running flush derived from ``original``, which
         it proved (:meth:`proven`), whose part ``original`` contributed overlaps
@@ -323,12 +323,12 @@ class _NoTemporalWriteOwnership:
         del endpoint, valid_time_coverage
         return ()
 
-    def proven(self, original: ObservedStateKey, /) -> Derivation | None:
+    def proven(self, original: ObjectStateKey, /) -> Derivation | None:
         del original
         return None
 
     def descendants(
-        self, original: ObservedStateKey, valid_time_window: TimeInterval | None, /
+        self, original: ObjectStateKey, valid_time_window: TimeInterval | None, /
     ) -> Iterable[tuple[OwnedEndpoint, Descent]]:
         del original, valid_time_window
         return ()
@@ -403,7 +403,7 @@ class UnitEffects:
     earlier units proved about that object.
     """
 
-    changed: Iterable[ObservedStateKey] = ()
+    changed: Iterable[ObjectStateKey] = ()
     removed: Iterable[OwnedEndpoint] = ()
     opened: Openings = NO_OPENINGS
     derived: tuple[Derivation, ...] = ()

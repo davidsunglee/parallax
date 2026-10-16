@@ -66,7 +66,7 @@ from parallax.core.object_query._fluent import typed_read_query
 from parallax.core.predicate import ModelRejectedError, PredicateNode, validate
 from parallax.core.predicate._interpretation import COMPARE, MEMBER_OF, ScalarOperator
 from parallax.core.predicate._resolved import CURRENT, ResolvedComparison
-from parallax.snapshot import Database, ScopedDatabase, SnapshotConnectionError, Transaction
+from parallax.snapshot import Database, ScopedDatabase, SnapshotConnectionError, TxnContext
 from tests._support import snapshot_models as sm
 from tests._support import value_object_models as vm
 from tests._support.db_port import (
@@ -166,7 +166,7 @@ def test_one_entity_class_is_written_through_every_model_that_composed_it() -> N
     for model in (WIDGETS, WIDGETS_AND_GIZMOS):
         port = ScriptedAdapter(Transact(Write()))
 
-        def insert(tx: Transaction) -> None:
+        def insert(tx: TxnContext) -> None:
             tx.insert(Widget(id=1, label="x"))
 
         _db(model, port).transact(insert)
@@ -274,7 +274,7 @@ def test_a_classless_transaction_writes_and_refuses_a_read_before_it_can_force_f
         Database.connect(port, CLASSLESS, clock=FixedClock(FIXED))
     ).using_database_login()
 
-    def body(tx: Transaction) -> None:
+    def body(tx: TxnContext) -> None:
         tx.insert(Gizmo(id=1))
         with pytest.raises(SnapshotConnectionError):
             tx.find(Gizmo.where(Gizmo.id == 1))
@@ -308,7 +308,7 @@ def test_every_typed_read_door_states_one_classless_refusal() -> None:
         standalone.stream(query).__enter__()
     doors.append(streamed.value)
 
-    def read_inside(tx: Transaction) -> None:
+    def read_inside(tx: TxnContext) -> None:
         with pytest.raises(SnapshotConnectionError) as participating_eager:
             tx.find(query)
         doors.append(participating_eager.value)

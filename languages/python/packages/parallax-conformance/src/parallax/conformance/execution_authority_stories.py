@@ -7,8 +7,8 @@ from decimal import Decimal
 from parallax.conformance.story_models import Account
 from parallax.core.db_port import DatabaseAdapter
 from parallax.core.entity import DomainModel
-from parallax.core.execution import DatabaseOptions
-from parallax.snapshot import Transaction, connect
+from parallax.core.execution import TxnOptions
+from parallax.snapshot import TxnContext, connect
 
 __all__ = [
     "AuthorityPrincipal",
@@ -35,7 +35,7 @@ class ScopedAuthorityShape:
     login_balance: Decimal
     principal_balance: Decimal
     joined_same_transaction: bool
-    options: DatabaseOptions
+    options: TxnOptions
 
 
 def scopes_capture_authority_and_share_the_root_lifetime[Authorization](
@@ -52,7 +52,7 @@ def scopes_capture_authority_and_share_the_root_lifetime[Authorization](
     that capture. Two independently selected equal principal scopes can join
     because execution authority compares by value within the same root.
     """
-    defaults = DatabaseOptions(max_retries=1)
+    defaults = TxnOptions(max_retries=1)
     with connect(adapter, model, options=defaults) as root:
         login = root.using_database_login()
         principal_value = AuthorityPrincipal("authority-guide", authorization)
@@ -61,7 +61,7 @@ def scopes_capture_authority_and_share_the_root_lifetime[Authorization](
 
         login_balance = login.find(Account.where(Account.id == _TARGET_ID)).result().balance
 
-        def outer(tx: Transaction) -> tuple[Decimal, bool, DatabaseOptions]:
+        def outer(tx: TxnContext) -> tuple[Decimal, bool, TxnOptions]:
             account = tx.find(Account.where(Account.id == _TARGET_ID)).result()
             joined = independently_captured.transact(lambda joined_tx: joined_tx is tx)
             return account.balance, joined, tx.options

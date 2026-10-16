@@ -26,7 +26,7 @@ from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import Attr, Bitemporal, Document, DomainModel, ValueObject, attr
 from parallax.core.base import INFINITY
 from parallax.core.entity._model import model_of
-from parallax.snapshot import ScopedDatabase, Transaction, connect
+from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.root_ownership import own_root
 from tests._support.temporal_write_transport import (
     AMENDED_AT,
@@ -137,7 +137,7 @@ def _fixtures(cell: Cell) -> dict[str, object]:
     return {_ENTITIES[cell.workload].__name__: rows}
 
 
-def _write(cell: Cell) -> Callable[[Transaction], None]:
+def _write(cell: Cell) -> Callable[[TxnContext], None]:
     workload, size = cell.workload, cell.size
     start, end = window(milestones(workload, size))
     entity = _ENTITIES[workload]
@@ -145,7 +145,7 @@ def _write(cell: Cell) -> Callable[[Transaction], None]:
         case "keyed-amend" | "collection-amend":
             (key,) = objects(workload, size, 0)
 
-            def amend(tx: Transaction) -> None:
+            def amend(tx: TxnContext) -> None:
                 source = tx.find(entity.where(entity.id == key).as_of(valid_time=start)).result()
                 tx.amend(source.edit(amount=AMOUNT), until=end)
 
@@ -153,7 +153,7 @@ def _write(cell: Cell) -> Callable[[Transaction], None]:
         case "target-replace":
             (key,) = objects(workload, size, 0)
 
-            def replace(tx: Transaction) -> None:
+            def replace(tx: TxnContext) -> None:
                 tx.wire.replace_if(
                     entity.__name__,
                     {"id": key, "label": REPLACED_LABEL, "amount": AMOUNT},
@@ -165,7 +165,7 @@ def _write(cell: Cell) -> Callable[[Transaction], None]:
             return replace
         case "predicate-amend":
 
-            def amend_group(tx: Transaction) -> None:
+            def amend_group(tx: TxnContext) -> None:
                 tx.amend_where(
                     GroupSpan.where(GroupSpan.grp == group_of(0)),
                     GroupSpan.amount.set(AMOUNT),

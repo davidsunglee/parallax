@@ -28,7 +28,7 @@ from parallax.core.temporal_write.expansion import (
 )
 from parallax.core.write_payload import LayoutPayloadPreparer
 from parallax.core.write_plan import ObjectKey, PredecessorRow, observe
-from parallax.core.write_plan.keys import TemporalStateKey
+from parallax.core.write_plan.keys import TemporalObjectStateKey
 from parallax.core.write_plan.plan import (
     NO_TEMPORAL_WRITE_OWNERSHIP,
     OPEN_BITEMPORAL_ENDS,
@@ -154,8 +154,8 @@ def _expand(
     )
 
 
-def _state(facts: TemporalFacts, predecessor: PredecessorRow) -> TemporalStateKey:
-    return TemporalStateKey(
+def _state(facts: TemporalFacts, predecessor: PredecessorRow) -> TemporalObjectStateKey:
+    return TemporalObjectStateKey(
         ObjectKey(facts.entity.identity, (("id", 1),)),
         temporal_read.milestone_edge(facts.shape, predecessor, None),
     )

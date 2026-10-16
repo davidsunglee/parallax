@@ -52,7 +52,7 @@ from parallax.snapshot import (
     Database,
     ScopedDatabase,
     Snapshot,
-    Transaction,
+    TxnContext,
     WireEntity,
     connect,
     edge_of,
@@ -194,7 +194,7 @@ class _CountingDatabase(ScopedDatabase):
 
     def transact[T](
         self,
-        fn: Callable[[Transaction], T],
+        fn: Callable[[TxnContext], T],
         *,
         max_retries: int | Omitted = OMITTED,
         concurrency: Concurrency | Omitted = OMITTED,

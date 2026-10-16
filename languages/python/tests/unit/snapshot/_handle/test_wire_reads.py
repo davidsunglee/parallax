@@ -78,7 +78,7 @@ from parallax.snapshot._publication._root import RootView
 from parallax.snapshot._publication._wire import (
     _SharedWireEncoder,  # pyright: ignore[reportPrivateUsage] - the cache lifetime is under test
     _wire_scalar,  # pyright: ignore[reportPrivateUsage] - the scalar branch is under test
-    read_origin_of,
+    read_evidence_of,
     shared_wire_encoder,
     wire_roots,
 )
@@ -356,7 +356,7 @@ def test_two_stored_occurrences_short_and_null_publish_differently() -> None:
     }
 
 
-def test_only_an_entity_node_can_carry_a_read_origin() -> None:
+def test_only_an_entity_node_can_carry_a_read_evidence() -> None:
     # A nested Value Object mapping is structurally identical to an Entity node
     # and answers `isinstance(value, WireEntity)` with false — and it has no slot
     # to put a hint in, which is what makes "only an Entity node carries one"
@@ -385,8 +385,8 @@ def test_only_an_entity_node_can_carry_a_read_origin() -> None:
     )
     address = _mapping(root["address"])
     assert not isinstance(address, WireEntity)
-    assert read_origin_of(cast("Any", address)) is None
-    assert read_origin_of(root) is not None
+    assert read_evidence_of(cast("Any", address)) is None
+    assert read_evidence_of(root) is not None
 
 
 def test_an_absent_document_occurrence_reads_null_and_an_absent_many_reads_empty() -> None:

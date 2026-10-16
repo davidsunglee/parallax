@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Final, cast
 
-from parallax.core._execution._unit_work.retain import InsertionIdentity, ReadOrigin
+from parallax.core._execution._unit_work.retain import InsertionIdentity, ReadEvidence
 from parallax.core.entity import UNLOADED, Entity, IncludePath, UnloadedRelationshipError
 from parallax.core.entity import lifecycle_state_of as _lifecycle_state_of
 from parallax.core.entity import relationship_value_of as _relationship_value_of
@@ -82,7 +82,7 @@ class SnapshotNodeState:
     ``pin`` and ``edge`` are present exactly for a node whose family declares
     as-of axes.
 
-    ``source`` is the private Read Origin the read retained for this node — the
+    ``read_evidence`` is the private Read Evidence the read retained for this node — the
     object it denotes, the participation its read licensed, and the observation
     retained for the state it saw. It is how a Typed value reaches its own write
     evidence, and it is absent for a node no observation was taken of. Nothing
@@ -93,7 +93,7 @@ class SnapshotNodeState:
     views: Mapping[str, object]
     pin: Pin | None = None
     edge: Edge | None = None
-    source: ReadOrigin | None = None
+    read_evidence: ReadEvidence | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,7 +107,7 @@ class _InsertionAuthoring(DetachedLifecycleState):
 class _AuthoredNode:
     """The authority an admitted insertion granted a value that also carries a
     materialized node's state — diagnostic data a classified read exposed with
-    no Read Origin — which stays that node's own, untouched."""
+    no Read Evidence — which stays that node's own, untouched."""
 
     identity: InsertionIdentity
     node: SnapshotNodeState

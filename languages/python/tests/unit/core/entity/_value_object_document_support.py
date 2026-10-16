@@ -12,7 +12,7 @@ from typing import cast
 
 from parallax.core import DomainModel, Entity
 from parallax.core.db_port import JsonDocument
-from parallax.snapshot import Transaction
+from parallax.snapshot import TxnContext
 from tests._support.db_port import ScriptedAdapter, Transact, Write, WriteCall
 from tests.unit._transact_support import db_for
 
@@ -21,7 +21,7 @@ def inserted_document(model: DomainModel, entity: Entity) -> Mapping[str, object
     """The one Value Object document inserting ``entity`` binds."""
     port = ScriptedAdapter(Transact(Write()))
 
-    def insert(tx: Transaction) -> None:
+    def insert(tx: TxnContext) -> None:
         tx.insert(entity)
 
     db_for(model, port).transact(insert)

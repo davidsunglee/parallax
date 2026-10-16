@@ -68,7 +68,7 @@ from parallax.core.execution import (
 )
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.temporal_read import Pin
-from parallax.core.unit_work import ReadOrigin
+from parallax.core.unit_work import ReadEvidence
 from parallax.snapshot import Database, Snapshot
 from parallax.snapshot._inspection import SnapshotNodeState
 from tests.unit import _delivery_control_support as control_support
@@ -376,7 +376,7 @@ def test_a_closed_eager_typed_result_retains_only_projection_metadata_not_execut
         (Snapshot, "snapshot"),
         (Entity, "entity"),
         (SnapshotNodeState, "node-state"),
-        (ReadOrigin, "origin"),
+        (ReadEvidence, "origin"),
         (EntityIdentity, "entity-identity"),
         (Pin, "pin"),
         (type, "shared"),

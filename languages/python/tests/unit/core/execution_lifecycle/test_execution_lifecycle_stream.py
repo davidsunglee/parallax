@@ -57,7 +57,7 @@ from parallax.core.execution_lifecycle import (
     WriteBatchFinished,
     WriteBatchStarted,
 )
-from parallax.snapshot import ScopedDatabase, Transaction, connect
+from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
@@ -437,7 +437,7 @@ def test_a_transactional_stream_is_a_child_of_the_attempt() -> None:
         Transact(*paged_reads([_account_row(index) for index in (1, 2, 3)], size=2))
     )
 
-    def fn(tx: Transaction) -> list[int]:
+    def fn(tx: TxnContext) -> list[int]:
         with tx.stream(mm.Account.where(mm.Account.id >= 1), batch_size=2) as stream:
             return [account.id for account in stream]
 
@@ -498,7 +498,7 @@ def test_a_pages_dependency_write_batch_is_that_pages_ordered_sibling() -> None:
         )
     )
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         with tx.stream(mm.Account.where(mm.Account.id >= 1), batch_size=1) as stream:
             for account in stream:
                 if account.id == 1:
@@ -551,7 +551,7 @@ def test_a_participating_stream_that_the_callback_left_early_is_closed_early() -
     recorder = RecordingLifecycleProvider()
     port = ScriptedAdapter(Transact(Read(rows=[_account_row(1), _account_row(2)])))
 
-    def fn(tx: Transaction) -> int:
+    def fn(tx: TxnContext) -> int:
         with tx.stream(mm.Account.where(mm.Account.id >= 1), batch_size=2) as stream:
             for account in stream:
                 return account.id
@@ -605,7 +605,7 @@ def test_a_participating_stream_under_a_quarantined_root_opens_no_scope_of_its_o
     provider = _QuarantiningProvider(handler)
     port = ScriptedAdapter(Transact(Read(rows=[_account_row(1)])))
 
-    def fn(tx: Transaction) -> list[int]:
+    def fn(tx: TxnContext) -> list[int]:
         with tx.stream(mm.Account.where(mm.Account.id >= 1), batch_size=1) as stream:
             return [account.id for account in stream]
 

@@ -51,9 +51,9 @@ from parallax.core.db_port import (
     TransactionOutcome,
 )
 from parallax.core.dialect import POSTGRES, Dialect
-from parallax.core.execution import DatabaseOptions, TransactionOptionConflictError
+from parallax.core.execution import TransactionOptionConflictError, TxnOptions
 from parallax.core.sql_gen import LoweredStatement
-from parallax.snapshot import Database, ScopedDatabase, Transaction
+from parallax.snapshot import Database, ScopedDatabase, TxnContext
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
     ConnectsAsItself,
@@ -265,7 +265,7 @@ def _context(runtime: Any) -> Any:
 def test_run_boundary_actions_read_then_update() -> None:
     port = _FakePort(rows=[{"id": 2, "owner": "Linus", "balance": Decimal("250.00"), "version": 1}])
 
-    def fn(tx: Transaction) -> Any:
+    def fn(tx: TxnContext) -> Any:
         return boundary_runner.run_boundary_actions(tx, _steps("read", "amend"), _ACCOUNT_TARGET)
 
     result = _db(port).transact(fn)
@@ -285,7 +285,7 @@ def test_a_join_naming_a_second_level_is_refused_by_production() -> None:
         boundary_runner.BoundaryStep("join", {"isolation": "serializable"}),
     ]
 
-    def fn(tx: Transaction) -> Any:
+    def fn(tx: TxnContext) -> Any:
         return boundary_runner.run_boundary_actions(tx, steps, _ACCOUNT_TARGET, database=db)
 
     with raises_contextualized(TransactionOptionConflictError):
@@ -301,7 +301,7 @@ def test_a_join_repeating_the_boundarys_level_is_accepted() -> None:
         boundary_runner.BoundaryStep("amend", {}),
     ]
 
-    def fn(tx: Transaction) -> Any:
+    def fn(tx: TxnContext) -> Any:
         return boundary_runner.run_boundary_actions(tx, steps, _ACCOUNT_TARGET, database=db)
 
     result = db.transact(fn, isolation="repeatable_read")
@@ -317,7 +317,7 @@ def test_run_boundary_actions_join_runs_the_rest_inside_a_joined_unit_of_work() 
     port = _FakePort(rows=[{"id": 2, "owner": "Linus", "balance": Decimal("250.00"), "version": 1}])
     db = _db(port)
 
-    def fn(tx: Transaction) -> Any:
+    def fn(tx: TxnContext) -> Any:
         return boundary_runner.run_boundary_actions(
             tx, _steps("read", "join", "amend"), _ACCOUNT_TARGET, database=db
         )
@@ -335,7 +335,7 @@ def test_run_boundary_actions_join_runs_the_rest_inside_a_joined_unit_of_work() 
 def test_a_join_without_the_owning_database_is_refused() -> None:
     port = _FakePort(rows=[])
 
-    def fn(tx: Transaction) -> Any:
+    def fn(tx: TxnContext) -> Any:
         return boundary_runner.run_boundary_actions(tx, _steps("join"), _ACCOUNT_TARGET)
 
     with raises_contextualized(
@@ -351,7 +351,7 @@ def test_a_qualified_join_without_an_authority_scope_selector_is_refused() -> No
         boundary_runner.BoundaryStep("join", {}, case_format.DatabaseLoginSelection()),
     ]
 
-    def fn(tx: Transaction) -> Any:
+    def fn(tx: TxnContext) -> Any:
         return boundary_runner.run_boundary_actions(tx, steps, _ACCOUNT_TARGET, database=db)
 
     with raises_contextualized(AssertionError, match="needs an authority scope selector"):
@@ -372,7 +372,7 @@ def test_a_qualified_join_uses_the_independently_selected_scope() -> None:
         selected.append(actor)
         return db
 
-    def fn(tx: Transaction) -> Any:
+    def fn(tx: TxnContext) -> Any:
         return boundary_runner.run_boundary_actions(
             tx, steps, _ACCOUNT_TARGET, database=db, scope_for=scope_for
         )
@@ -386,7 +386,7 @@ def test_a_qualified_join_uses_the_independently_selected_scope() -> None:
 def test_run_boundary_actions_create() -> None:
     port = _FakePort(rows=[])
 
-    def fn(tx: Transaction) -> Any:
+    def fn(tx: TxnContext) -> Any:
         return boundary_runner.run_boundary_actions(tx, _steps("create"), _ACCOUNT_TARGET)
 
     result = _db(port).transact(fn)
@@ -398,7 +398,7 @@ def test_run_boundary_actions_create() -> None:
 def test_run_boundary_actions_read_then_delete() -> None:
     port = _FakePort(rows=[{"id": 2, "owner": "Linus", "balance": Decimal("250.00"), "version": 1}])
 
-    def fn(tx: Transaction) -> Any:
+    def fn(tx: TxnContext) -> Any:
         return boundary_runner.run_boundary_actions(tx, _steps("read", "delete"), _ACCOUNT_TARGET)
 
     result = _db(port).transact(fn)
@@ -409,7 +409,7 @@ def test_run_boundary_actions_read_then_delete() -> None:
 def test_run_boundary_actions_terminate_refuses() -> None:
     port = _FakePort(rows=[])
 
-    def fn(tx: Transaction) -> Any:
+    def fn(tx: TxnContext) -> Any:
         return boundary_runner.run_boundary_actions(tx, _steps("terminate"), _ACCOUNT_TARGET)
 
     with raises_contextualized(AssertionError, match="no legal target"):
@@ -422,7 +422,7 @@ def test_a_balance_case_reads_and_advances_the_current_milestone() -> None:
     in_z = dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
     port = _FakePort(rows=[{**balance_row(in_z=in_z), "bal_id": 2, "val": Decimal("200.00")}])
 
-    def fn(tx: Transaction) -> Any:
+    def fn(tx: TxnContext) -> Any:
         return boundary_runner.run_boundary_actions(tx, _steps("read", "amend"), _BALANCE_TARGET)
 
     result = _db(port, MODELS["balance"]).transact(fn)
@@ -440,7 +440,7 @@ def test_a_model_no_target_is_declared_for_is_refused() -> None:
 def test_an_account_only_action_on_another_target_is_refused(action: str) -> None:
     port = _FakePort(rows=[])
 
-    def fn(tx: Transaction) -> Any:
+    def fn(tx: TxnContext) -> Any:
         return boundary_runner.run_boundary_actions(tx, _steps(action), _BALANCE_TARGET)
 
     with raises_contextualized(AssertionError, match="declared only on the account.yaml target"):
@@ -451,7 +451,7 @@ def test_an_account_only_action_on_another_target_is_refused(action: str) -> Non
 def test_run_boundary_actions_update_without_a_prior_read_raises() -> None:
     port = _FakePort(rows=[])
 
-    def fn(tx: Transaction) -> Any:
+    def fn(tx: TxnContext) -> Any:
         return boundary_runner.run_boundary_actions(tx, _steps("amend"), _ACCOUNT_TARGET)
 
     with raises_contextualized(AssertionError, match="prior `read`"):
@@ -461,7 +461,7 @@ def test_run_boundary_actions_update_without_a_prior_read_raises() -> None:
 def test_run_boundary_actions_delete_without_a_prior_read_raises() -> None:
     port = _FakePort(rows=[])
 
-    def fn(tx: Transaction) -> Any:
+    def fn(tx: TxnContext) -> Any:
         return boundary_runner.run_boundary_actions(tx, _steps("delete"), _ACCOUNT_TARGET)
 
     with raises_contextualized(AssertionError, match="prior `read`"):
@@ -535,7 +535,7 @@ def test_a_setup_failure_surfaces_terminally_after_one_attempt() -> None:
     # configured.
     inner = _FakePort(rows=[])
 
-    def fn(tx: Transaction) -> Any:
+    def fn(tx: TxnContext) -> Any:
         return boundary_runner.run_boundary_actions(tx, _steps("read"), _ACCOUNT_TARGET)
 
     with raises_contextualized(DatabaseError) as unopened:
@@ -680,7 +680,7 @@ def test_fault_injecting_port_state_survives_nested_transaction_wrapping() -> No
     )
     db = _db(_faulted(inner, fault="deadlock", persistent=False))
 
-    def fn(tx: Transaction) -> Any:
+    def fn(tx: TxnContext) -> Any:
         return boundary_runner.run_boundary_actions(tx, _steps("read", "amend"), _ACCOUNT_TARGET)
 
     result = db.transact(fn)
@@ -785,7 +785,7 @@ def test_a_root_configured_witness_resolves_its_effective_options_and_attempts(
     case = next(c for c in case_format.load_cases() if c.case_id == case_id)
     max_retries, opt_in, concurrency, isolation, attempts = _ROOT_WITNESS_ATTEMPTS[case_id]
     effective = case_format.effective_options(case)
-    assert effective == DatabaseOptions(
+    assert effective == TxnOptions(
         max_retries=max_retries,
         concurrency=concurrency,  # pyright: ignore[reportArgumentType] - a corpus spelling
         retry_optimistic_conflicts=opt_in,
@@ -798,7 +798,7 @@ def test_a_root_configured_witness_resolves_its_effective_options_and_attempts(
     requests = case_format.transaction_keywords(case)
     given = cast("dict[str, Any]", case.document.get("given") or {})
     when = cast("dict[str, Any]", case.document.get("when") or {})
-    assert (root != DatabaseOptions()) == bool(given.get("databaseOptions"))
+    assert (root != TxnOptions()) == bool(given.get("databaseOptions"))
     assert bool(requests) == bool(when.get("uow"))
     outcome = boundary_runner.outcome(case, POSTGRES)
     assert outcome is not None
@@ -853,7 +853,7 @@ def test_every_attempt_of_a_root_configured_case_opens_at_the_resolved_level(
     steps = boundary_runner.boundary_steps(case)
     requests = case_format.transaction_keywords(case)
 
-    def fn(tx: Transaction) -> Any:
+    def fn(tx: TxnContext) -> Any:
         return boundary_runner.run_boundary_actions(tx, steps, _ACCOUNT_TARGET, database=db)
 
     if outcome == "committed":

@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 from parallax.core.write_plan.columns import ChunkedColumnBuilder, whole
-from parallax.core.write_plan.keys import ObjectKey, ObservedStateKey, observed_state_key
+from parallax.core.write_plan.keys import (
+    ObjectKey,
+    ObjectStateKey,
+    object_state_key_from_observation,
+)
 from parallax.core.write_plan.materialized import PredecessorRows, PredecessorRowsBuilder
 from parallax.core.write_plan.observe import (
     EntityStateRow,
@@ -20,7 +24,7 @@ __all__ = [
     "ChunkedColumnBuilder",
     "EntityStateRow",
     "ObjectKey",
-    "ObservedStateKey",
+    "ObjectStateKey",
     "PlannedClose",
     "PlannedInsert",
     "PredecessorRow",
@@ -31,6 +35,6 @@ __all__ = [
     "WriteObservation",
     "WritePlan",
     "WritePlanningError",
-    "observed_state_key",
+    "object_state_key_from_observation",
     "whole",
 ]

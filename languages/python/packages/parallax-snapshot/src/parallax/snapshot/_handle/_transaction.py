@@ -4,8 +4,8 @@ import datetime as dt
 from typing import Any
 
 from parallax.core._execution._keyed_writes import target_condition, window_mutation
-from parallax.core._execution._options import OMITTED, DatabaseOptions, Omitted
-from parallax.core._execution._transaction._attempt import Attempt
+from parallax.core._execution._options import OMITTED, Omitted, TxnOptions
+from parallax.core._execution._transaction._attempt import TxnAttempt
 from parallax.core.entity import AttributeAssignment, EntityRowCodec
 from parallax.core.entity import Entity as EntityBase
 from parallax.core.object_query import ObjectQueryNode
@@ -29,10 +29,10 @@ from parallax.snapshot._handle._wire import WireTransactionView
 # import a reportPrivateUsage error.
 from parallax.snapshot._inspection import bind_insertion
 
-__all__ = ["Transaction", "transaction_for"]
+__all__ = ["TxnContext", "transaction_for"]
 
 
-class Transaction:
+class TxnContext:
     """The developer transaction handed to a ``db.transact`` closure.
 
     A facade over one transaction attempt: its unit of work, its connection, and
@@ -76,7 +76,7 @@ class Transaction:
 
     __slots__ = ("_attempt", "_codec")
 
-    def __init__(self, attempt: Attempt, codec: EntityRowCodec) -> None:
+    def __init__(self, attempt: TxnAttempt, codec: EntityRowCodec) -> None:
         # The attempt is this transaction's every read and write: its reads
         # participate in its unit of work on its connection, its keyed,
         # predicate, and caller-addressed verbs admit into that unit of work,
@@ -97,7 +97,7 @@ class Transaction:
         return self._attempt.edition
 
     @property
-    def options(self) -> DatabaseOptions:
+    def options(self) -> TxnOptions:
         """The resolved options this transaction's invocation runs under: each
         explicit ``db.transact`` keyword, else the Database Root's default.
 
@@ -496,7 +496,7 @@ class Transaction:
         )
 
 
-def transaction_for(attempt: Attempt) -> Transaction:
+def transaction_for(attempt: TxnAttempt) -> TxnContext:
     """The Snapshot transaction one fully constructed attempt is handed to its
     callback as, deriving rows through the codec that attempt adopted."""
-    return Transaction(attempt, attempt.codec)
+    return TxnContext(attempt, attempt.codec)

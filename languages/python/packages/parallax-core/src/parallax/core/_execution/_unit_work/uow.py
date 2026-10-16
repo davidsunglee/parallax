@@ -67,7 +67,7 @@ from parallax.core._execution._unit_work.ranges import (
 from parallax.core._execution._unit_work.retain import (
     InsertionIdentity,
     ParticipationToken,
-    ReadOrigin,
+    ReadEvidence,
     RetainedObservation,
     RetainedTargetState,
 )
@@ -94,9 +94,9 @@ from parallax.core.temporal_read import (
 )
 from parallax.core.write_plan.keys import (
     ObjectKey,
-    ObservedStateKey,
-    TemporalStateKey,
-    VersionedStateKey,
+    ObjectStateKey,
+    TemporalObjectStateKey,
+    VersionedObjectStateKey,
 )
 from parallax.core.write_plan.materialized import PredecessorRows
 from parallax.core.write_plan.observe import PredecessorRow
@@ -335,7 +335,7 @@ class WriteEvidenceError(LookupError):
     and already spent, or still live but claimed by an intent this unit of work
     already buffered at the scope this write settles against, which this one
     cannot join. ``object_key`` is the object the write addressed, always
-    visible so a caller can say WHICH write was refused; the Read Origin and the
+    visible so a caller can say WHICH write was refused; the Read Evidence and the
     claim scope behind it stay implementation state.
 
     Raised synchronously at the verb, before any buffering and before any
@@ -537,13 +537,13 @@ class _TargetWriteState:
             if part is not None
         )
 
-    def proven(self, original: ObservedStateKey, /) -> Derivation | None:
+    def proven(self, original: ObjectStateKey, /) -> Derivation | None:
         continuity = self._continuity
         proofs = None if continuity is None else continuity.proofs.get(original.object)
         return None if proofs is None else proofs.get(original)
 
     def descendants(
-        self, original: ObservedStateKey, valid_time_window: TimeInterval | None, /
+        self, original: ObjectStateKey, valid_time_window: TimeInterval | None, /
     ) -> Iterator[tuple[OwnedEndpoint, Descent]]:
         continuity = self._continuity
         assert continuity is not None  # a proven original's rows are kept
@@ -646,7 +646,7 @@ class _TargetWriteState:
                 latest = instant
         return INFINITY if latest is None else latest
 
-    def advanced(self, state: VersionedStateKey) -> None:
+    def advanced(self, state: VersionedObjectStateKey) -> None:
         record = self._records.get(state.object)
         if record is not None:
             record.advanced_from = state.version
@@ -813,18 +813,18 @@ class _Continuity:
     __slots__ = ("descents", "lineage", "proofs")
 
     def __init__(self) -> None:
-        self.proofs: dict[ObjectKey, dict[ObservedStateKey, Derivation]] = {}
+        self.proofs: dict[ObjectKey, dict[ObjectStateKey, Derivation]] = {}
         self.descents: dict[OwnedEndpoint, Descent] = {}
-        self.lineage: dict[ObservedStateKey, _Lineage] = {}
+        self.lineage: dict[ObjectStateKey, _Lineage] = {}
 
     def inherited(
         self, derived: tuple[Derivation, ...]
-    ) -> tuple[tuple[tuple[ObservedStateKey, TimeInterval | None], ...] | None, ...]:
+    ) -> tuple[tuple[tuple[ObjectStateKey, TimeInterval | None], ...] | None, ...]:
         """The originals, each over its part, each one in ``derived`` was itself
         derived from earlier in the flush, if any, read before the unit's
         removals retire it."""
         descents = self.descents
-        inherited: list[tuple[tuple[ObservedStateKey, TimeInterval | None], ...] | None] = []
+        inherited: list[tuple[tuple[ObjectStateKey, TimeInterval | None], ...] | None] = []
         for derivation in derived:
             owned = derivation.owned
             descent = None if owned is None else descents.get(owned)
@@ -834,7 +834,7 @@ class _Continuity:
     def derive(
         self,
         derived: tuple[Derivation, ...],
-        inherited: tuple[tuple[tuple[ObservedStateKey, TimeInterval | None], ...] | None, ...],
+        inherited: tuple[tuple[tuple[ObjectStateKey, TimeInterval | None], ...] | None, ...],
     ) -> None:
         """Record each row ``derived`` names as descending from its originals.
 
@@ -848,7 +848,7 @@ class _Continuity:
         for derivation in derived:
             for row in derivation.rows:
                 self.forget(row.endpoint)
-        contributions: dict[OwnedEndpoint, list[tuple[ObservedStateKey, TimeInterval | None]]] = {}
+        contributions: dict[OwnedEndpoint, list[tuple[ObjectStateKey, TimeInterval | None]]] = {}
         coverages: dict[OwnedEndpoint, TimeInterval | None] = {}
         for derivation, earlier in zip(derived, inherited, strict=True):
             original = derivation.original
@@ -856,7 +856,7 @@ class _Continuity:
                 self.proofs.setdefault(original.object, {})[original] = derivation
                 if original not in self.lineage:  # kept even where it contributed no row
                     self.lineage[original] = _Lineage()
-                sources: tuple[tuple[ObservedStateKey, TimeInterval | None], ...] = (
+                sources: tuple[tuple[ObjectStateKey, TimeInterval | None], ...] = (
                     (original, derivation.valid_time_coverage),
                 )
             else:
@@ -888,9 +888,9 @@ class _Continuity:
 
 
 def _contribute(
-    parts: list[tuple[ObservedStateKey, TimeInterval | None]],
+    parts: list[tuple[ObjectStateKey, TimeInterval | None]],
     contributed: TimeInterval | None,
-    sources: tuple[tuple[ObservedStateKey, TimeInterval | None], ...],
+    sources: tuple[tuple[ObjectStateKey, TimeInterval | None], ...],
 ) -> None:
     """Add to ``parts`` each of ``sources`` over the part of ``contributed`` its
     own part shares — every one on a Transaction-Time-Only object, where both
@@ -905,13 +905,13 @@ def _contribute(
 
 
 def _joined(
-    parts: list[tuple[ObservedStateKey, TimeInterval | None]],
-) -> tuple[tuple[ObservedStateKey, TimeInterval | None], ...]:
+    parts: list[tuple[ObjectStateKey, TimeInterval | None]],
+) -> tuple[tuple[ObjectStateKey, TimeInterval | None], ...]:
     """``parts`` in Valid-Time order, each original's adjacent parts one."""
     if len(parts) < 2:
         return tuple(parts)
     parts.sort(key=_part_start)
-    joined: list[tuple[ObservedStateKey, TimeInterval | None]] = []
+    joined: list[tuple[ObjectStateKey, TimeInterval | None]] = []
     for original, contributed in parts:
         if joined:
             previous, earlier = joined[-1]
@@ -927,7 +927,7 @@ def _joined(
     return tuple(joined)
 
 
-def _part_start(part: tuple[ObservedStateKey, TimeInterval | None]) -> dt.datetime:
+def _part_start(part: tuple[ObjectStateKey, TimeInterval | None]) -> dt.datetime:
     return _lineage_key(part[1])
 
 
@@ -1000,7 +1000,7 @@ class UnitOfWork:
     Run it through :meth:`run_outermost` or :func:`run_unit_of_work`, which own
     the frame lifecycle; the body receives the unit of work and drives it with
     :meth:`buffer`, :meth:`buffer_predicate`, :meth:`buffer_target`,
-    :meth:`retain`, and :meth:`read`, asking :meth:`resolve_write_evidence`
+    :meth:`retain`, and :meth:`read`, asking :meth:`resolve_read_evidence`
     what a keyed write's source licenses here.
 
     Every row a write reads — a predicate's selection, a caller-addressed
@@ -1088,13 +1088,13 @@ class UnitOfWork:
         # insertion and the authority that grants, and the current temporal
         # rows it opened.
         self._targets = _TargetWriteState()
-        # The ledger is an INDEX, not an owner: a retained observation lives as
+        # This index is not an owner: a retained observation lives as
         # long as some source value or buffered write reaches it, and this entry
         # disappears with the last of them (`m-unit-work` "Observation lifetime").
         # What the index is for is recognizing a state this transaction has
         # already seen, so a reread of one state answers the evidence the earlier
         # read's values already carry rather than a second copy of it.
-        self._observations: WeakValueDictionary[ObservedStateKey, RetainedObservation] = (
+        self._observations: WeakValueDictionary[ObjectStateKey, RetainedObservation] = (
             WeakValueDictionary()
         )
         # How many execution units have changed an observed state so far, and
@@ -1102,7 +1102,7 @@ class UnitOfWork:
         # the count when it runs, so evidence it builds later, from rows it
         # already holds, is known to predate any change completed in between.
         self._freshness = 0
-        self._changed: dict[ObservedStateKey, int] = {}
+        self._changed: dict[ObjectStateKey, int] = {}
         self._reporting: tuple[ExecutionUnit, ...] = ()
         self._reported = 0
         # This scope's participation identity: what a read of THIS unit of work
@@ -1351,7 +1351,7 @@ class UnitOfWork:
             return item
         valid_from = _window_start(window)
         if self._participates(
-            TemporalStateKey(key, Edge(tx_time=expectation.instant, valid_time=valid_from))
+            TemporalObjectStateKey(key, Edge(tx_time=expectation.instant, valid_time=valid_from))
         ):
             return item
         target = item.instruction.target
@@ -1365,7 +1365,7 @@ class UnitOfWork:
         selection = self._family(target).member_selection
         shape = temporal_read.view(self.meta).shape(target.identity)
         assert isinstance(shape, TransactionTimeOnly | Bitemporal)  # a temporal target
-        state = TemporalStateKey(
+        state = TemporalObjectStateKey(
             key, milestone_edge(shape, PredecessorRow.over_row(selection, row, None, None), None)
         )
         return replace(item, retained=RetainedTargetState(state, read_at, row, document))
@@ -1414,7 +1414,7 @@ class UnitOfWork:
             raise ValueError(f"{entity.identity.canonical}: the model declares no such entity")
         return view
 
-    def _participates(self, scope: ObservedStateKey | ObjectKey) -> bool:
+    def _participates(self, scope: ObjectStateKey | ObjectKey) -> bool:
         """Whether a live read of exactly ``scope`` this attempt holds — under
         its shared lock, unspent, and describing the stored state — already
         proves it."""
@@ -1446,7 +1446,7 @@ class UnitOfWork:
         if self._pending.is_temporal(item):
             return item
         version = self._planner.inserted_version(instruction.target.identity, record.advanced_from)
-        scope = key if version is None else VersionedStateKey(key, version)
+        scope = key if version is None else VersionedObjectStateKey(key, version)
         return InsertionKeyedWrite(instruction=instruction, identity=item.identity, scope=scope)
 
     def _removed_whole(self, key: ObjectKey, record: _TargetRecord) -> bool:
@@ -1631,16 +1631,16 @@ class UnitOfWork:
             self._claims.release(islice(group_state_keys(group, self.meta), admitted))
             raise
 
-    def resolve_write_evidence(
+    def resolve_read_evidence(
         self,
         target: EntityMetadata,
-        origin: ReadOrigin | None,
+        read_evidence: ReadEvidence | None,
         *,
         mutation: KeyedMutation,
         object_key: ObjectKey,
     ) -> SettledEvidence | None:
         """What a keyed write of ``target`` against existing state settles
-        against, read off its source's ``origin``, or :class:`WriteEvidenceError`
+        against, read off its source's ``read_evidence``, or :class:`WriteEvidenceError`
         where this unit of work cannot use it.
 
         One resolution serves the address, the gate, the version advance, and
@@ -1661,16 +1661,16 @@ class UnitOfWork:
         BOTH strategies: either way the state the source observed is no longer
         the stored state, and a held lock does not restore it. A source with no
         observation — an unversioned Non-Temporal row's — is spent the same way
-        once a write through it completes, on its origin rather than on an
+        once a write through it completes, on its read evidence rather than on an
         observation it does not have.
         """
         self._ensure_open()
         policy = self._evidence_policy_for(target.identity)
-        observation = None if origin is None else origin.observation
+        observation = None if read_evidence is None else read_evidence.observation
         settled = policy.settled_evidence(mutation, object_key=object_key, observation=observation)
         identity = target.identity.canonical
         if policy.effective_strategy(self.settings.concurrency) == "locking":
-            if origin is None or origin.participation is not self._participation:
+            if read_evidence is None or read_evidence.participation is not self._participation:
                 raise WriteEvidenceError(
                     code="write-evidence-unavailable",
                     message=(
@@ -1691,7 +1691,7 @@ class UnitOfWork:
                 ),
                 object_key=object_key,
             )
-        if origin is not None and origin.consumed:
+        if read_evidence is not None and read_evidence.consumed:
             raise WriteEvidenceError(
                 code="write-evidence-consumed",
                 message=(
@@ -1750,7 +1750,7 @@ class UnitOfWork:
         self._observations[key] = observation
         return observation
 
-    def _current(self, state: ObservedStateKey, read_at: int) -> bool:
+    def _current(self, state: ObjectStateKey, read_at: int) -> bool:
         """Whether no execution unit that completed after a read capturing
         :attr:`freshness` ``read_at`` changed ``state``: what that read found
         of ``state`` is still what the attempt stores, whatever else changed.
@@ -1941,12 +1941,12 @@ class UnitOfWork:
             effects.concludes,
         )
 
-    def _invalidate(self, key: ObservedStateKey, stamp: int) -> None:
+    def _invalidate(self, key: ObjectStateKey, stamp: int) -> None:
         held = self._observations.get(key)
         if held is not None:
             held.invalidate()
         self._changed[key] = stamp
-        if isinstance(key, VersionedStateKey):
+        if isinstance(key, VersionedObjectStateKey):
             self._targets.advanced(key)
 
     def mark_rollback_only(self, cause: BaseException) -> None:
@@ -2031,7 +2031,7 @@ def bind_deferred_range(
     ownership: TemporalWriteOwnership,
     actor_identity: ActorIdentity,
     transaction_instant: TransactionInstant,
-    current: Callable[[ObservedStateKey, int], bool] | None = None,
+    current: Callable[[ObjectStateKey, int], bool] | None = None,
 ) -> BoundRange:
     """``description`` read and bound: the starting rows it retained that are
     still ``current`` completed through ``acquire_rows``, which reads nothing
@@ -2067,7 +2067,7 @@ def bind_deferred_range(
     )
 
 
-def _never_current(state: ObservedStateKey, read_at: int) -> bool:
+def _never_current(state: ObjectStateKey, read_at: int) -> bool:
     del state, read_at
     return False
 

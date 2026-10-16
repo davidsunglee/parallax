@@ -39,10 +39,10 @@ from parallax.core.unit_work import (
     WriteEvidenceError,
     WriteRejectedError,
 )
-from parallax.core.write_plan import ObjectKey, ObservedStateKey
-from parallax.core.write_plan.keys import TemporalStateKey, VersionedStateKey
-from parallax.snapshot import ScopedDatabase, Transaction, WireEntity
-from parallax.snapshot._handle._typed_writes import instance_read_origin
+from parallax.core.write_plan import ObjectKey, ObjectStateKey
+from parallax.core.write_plan.keys import TemporalObjectStateKey, VersionedObjectStateKey
+from parallax.snapshot import ScopedDatabase, TxnContext, WireEntity
+from parallax.snapshot._handle._typed_writes import instance_read_evidence
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
@@ -108,15 +108,15 @@ def _latest(*dimensions: str) -> dict[str, object]:
     return {dimension: {"asOf": "latest"} for dimension in dimensions}
 
 
-def _account_state() -> ObservedStateKey:
-    return VersionedStateKey(ObjectKey(_account(), (("id", 3),)), 1)
+def _account_state() -> ObjectStateKey:
+    return VersionedObjectStateKey(ObjectKey(_account(), (("id", 3),)), 1)
 
 
-def _node(tx: Transaction, query: ObjectQueryNode | None = None) -> WireEntity:
+def _node(tx: TxnContext, query: ObjectQueryNode | None = None) -> WireEntity:
     return tx.wire.find(query if query is not None else _account_query()).result()
 
 
-def _run[T](adapter: DatabaseAdapter, fn: Callable[[Transaction], T]) -> T:
+def _run[T](adapter: DatabaseAdapter, fn: Callable[[TxnContext], T]) -> T:
     return account_db(adapter).transact(fn)
 
 
@@ -149,7 +149,7 @@ def test_a_standalone_wire_read_takes_no_lock_and_files_no_record() -> None:
 def test_a_participating_wire_read_answers_the_state_the_unit_of_work_retained() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[ACCOUNT_ROW])))
 
-    def fn(tx: Transaction) -> object:
+    def fn(tx: TxnContext) -> object:
         claims = published_claims(tx.wire.find(_account_query()))
         assert len(claims) == 1
         # The state the read retained under is the one the unit of work answers
@@ -157,7 +157,7 @@ def test_a_participating_wire_read_answers_the_state_the_unit_of_work_retained()
         # reconstruction.
         return claims[0].key
 
-    assert cast("ObservedStateKey", _run(port, fn)) == _account_state()
+    assert cast("ObjectStateKey", _run(port, fn)) == _account_state()
     assert port.calls == [BeginCall(), ReadCall(FIND_SQL_UNLOCKED, (3,)), CommitCall()]
 
 
@@ -171,7 +171,7 @@ def test_a_wire_read_answers_the_claim_of_every_node_it_published() -> None:
         POLICY_MODEL,
     )
 
-    def fn(tx: Transaction) -> tuple[ObservedStateKey, ...]:
+    def fn(tx: TxnContext) -> tuple[ObjectStateKey, ...]:
         return tuple(claim.key for claim in published_claims(tx.wire.find(query)))
 
     keys = db_for(POLICY_MODEL, port).transact(fn)
@@ -182,7 +182,7 @@ def test_a_wire_read_answers_the_claim_of_every_node_it_published() -> None:
 def test_a_participating_row_read_force_flushes_a_pending_write_first() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[ACCOUNT_ROW]), Write(), Read(rows=[ACCOUNT_ROW])))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.wire.amend(_node(tx), {"balance": "11.00"})
         tx.read_rows(_account_query())
 
@@ -201,7 +201,7 @@ def test_a_baseline_equal_update_writes_literally_and_spends_its_claim() -> None
     # the wire under the version guard, and the claim it carried is spent.
     port = ScriptedAdapter(Transact(Read(rows=[ACCOUNT_ROW]), Write(times=2)))
 
-    def fn(tx: Transaction) -> RetainedObservation:
+    def fn(tx: TxnContext) -> RetainedObservation:
         snapshot = tx.wire.find(_account_query())
         claim = published_claims(snapshot)[0]
         node = snapshot.result()
@@ -227,7 +227,7 @@ def test_a_surviving_write_spends_its_own_claim() -> None:
     # evidence is refused rather than writing over what this one wrote.
     port = ScriptedAdapter(Transact(Read(rows=[ACCOUNT_ROW]), Write()))
 
-    def fn(tx: Transaction) -> RetainedObservation:
+    def fn(tx: TxnContext) -> RetainedObservation:
         snapshot = tx.wire.find(_account_query())
         claim = published_claims(snapshot)[0]
         tx.wire.amend(snapshot.result(), {"balance": "11.00"})
@@ -258,13 +258,13 @@ def _person_query() -> ObjectQueryNode:
     )
 
 
-def _read_person(tx: Transaction, representation: str) -> mm.Person | WireEntity:
+def _read_person(tx: TxnContext, representation: str) -> mm.Person | WireEntity:
     if representation == "typed":
         return tx.find(mm.Person.where(mm.Person.id == 1)).result()
     return tx.wire.find(_person_query()).result()
 
 
-def _rename(tx: Transaction, source: mm.Person | WireEntity, name: str) -> None:
+def _rename(tx: TxnContext, source: mm.Person | WireEntity, name: str) -> None:
     if isinstance(source, WireEntity):
         tx.wire.amend(source, {"name": name})
     else:
@@ -292,7 +292,7 @@ def test_a_completed_unversioned_write_spends_its_source(representation: str, na
         )
     )
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         source = _read_person(tx, representation)
         _rename(tx, source, name)
         fresh = _read_person(tx, representation)
@@ -313,7 +313,7 @@ def test_every_copy_derived_from_an_unversioned_source_shares_its_completion() -
     # copy derived from it, before or after, writes again.
     port = ScriptedAdapter(Transact(Read(rows=[_PERSON_ROW]), Write(), Read(rows=[_PERSON_ROW])))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         source = tx.find(mm.Person.where(mm.Person.id == 1)).result()
         early = source.edit(name="Grace")
         tx.amend(source.edit(name="Hopper"))
@@ -330,7 +330,7 @@ def test_every_copy_derived_from_an_unversioned_source_shares_its_completion() -
 def test_an_empty_unversioned_update_neither_writes_nor_spends_its_source() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[_PERSON_ROW]), Read(rows=[_PERSON_ROW]), Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         source = tx.wire.find(_person_query()).result()
         tx.wire.amend(source, {})
         tx.wire.find(_person_query())
@@ -347,7 +347,7 @@ def test_a_failed_unversioned_write_leaves_its_source_unspent() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[_PERSON_ROW]), Write(affected=0)))
     sources: list[mm.Person] = []
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         source = tx.find(mm.Person.where(mm.Person.id == 1)).result()
         sources.append(source)
         tx.amend(source.edit(name="Grace"))
@@ -355,7 +355,7 @@ def test_a_failed_unversioned_write_leaves_its_source_unspent() -> None:
     with raises_contextualized(MissingTargetError):
         db_for(PERSON, port).transact(fn)
     (source,) = sources
-    origin = instance_read_origin(source)
+    origin = instance_read_evidence(source)
     assert origin is not None
     assert origin.consumed is False
 
@@ -410,7 +410,7 @@ def test_a_refused_participating_read_flushes_nothing() -> None:
     port = ScriptedAdapter(Transact())
     query = _account_query("parallax.compatibility.NoSuchEntity")
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.wire.insert("parallax.compatibility.Account", {"id": 7, "owner": "N", "balance": "5.00"})
         tx.read_rows(query)
 
@@ -453,7 +453,7 @@ def test_a_deferred_participating_read_flushes_nothing() -> None:
         }
     )
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         _insert_policy(tx)
         tx.wire.find(query)
 
@@ -490,7 +490,7 @@ def test_a_refused_row_form_participating_read_flushes_nothing() -> None:
         }
     )
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.wire.insert("parallax.compatibility.Order", _ORDER_PAYLOAD)
         tx.read_rows(query)
 
@@ -518,7 +518,7 @@ def _policy_db(adapter: DatabaseAdapter) -> ScopedDatabase:
     return db_for(MODELS["policy"], adapter)
 
 
-def _insert_policy(tx: Transaction) -> None:
+def _insert_policy(tx: TxnContext) -> None:
     tx.wire.insert(
         "parallax.compatibility.Policy",
         {"id": 1, "name": "Fleet"},
@@ -530,7 +530,7 @@ def test_a_milestone_set_wire_read_retains_no_evidence() -> None:
     port = ScriptedAdapter(Transact(Read(rows=_balance_history_rows())))
     query = object_query_node(mm.Balance.where(mm.Balance.id == 1).history(TX_TIME), BALANCE)
 
-    def fn(tx: Transaction) -> object:
+    def fn(tx: TxnContext) -> object:
         return published_claims(tx.wire.find(query))
 
     # A milestone-set read retains no evidence at all, exactly as `tx.find`'s own
@@ -543,14 +543,14 @@ def test_a_temporal_record_names_the_state_its_own_milestone_qualifies() -> None
     port = ScriptedAdapter(Transact(Read(rows=[_balance_history_rows()[1]])))
     query = object_query_node(mm.Balance.where(mm.Balance.id == 1), BALANCE)
 
-    def fn(tx: Transaction) -> object:
+    def fn(tx: TxnContext) -> object:
         key = published_claims(tx.wire.find(query))[0].key
         # A milestone chain holds several rows per primary key, so the state the
         # retaining side addresses is qualified by the milestone the row names.
-        assert isinstance(key, TemporalStateKey)
+        assert isinstance(key, TemporalObjectStateKey)
         return key
 
-    key = cast("TemporalStateKey", _run_on(db_for(BALANCE, port), fn))
+    key = cast("TemporalObjectStateKey", _run_on(db_for(BALANCE, port), fn))
     assert key.object.primary_key == (("id", 1),)
 
 
@@ -558,13 +558,13 @@ def test_an_unversioned_non_temporal_read_retains_no_evidence() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[_ORDER_ROW])))
     query = object_query_node(Order.where(Order.id == 1), MODELS["orders"])
 
-    def fn(tx: Transaction) -> object:
+    def fn(tx: TxnContext) -> object:
         return published_claims(tx.wire.find(query))
 
     assert _run_on(db_for(MODELS["orders"], port), fn) == ()
 
 
-def _run_on[T](db: ScopedDatabase, fn: Callable[[Transaction], T]) -> T:
+def _run_on[T](db: ScopedDatabase, fn: Callable[[TxnContext], T]) -> T:
     return db.transact(fn)
 
 

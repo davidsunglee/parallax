@@ -27,7 +27,7 @@ from parallax.core.write_plan import (
     PredecessorRow,
     TemporalObservation,
 )
-from parallax.core.write_plan.keys import TemporalStateKey
+from parallax.core.write_plan.keys import TemporalObjectStateKey
 from parallax.core.write_plan.plan import (
     NO_TEMPORAL_WRITE_OWNERSHIP,
     BoundRange,
@@ -90,7 +90,7 @@ def retained_state(
     shape = temporal_read.view(meta).shape(entity)
     assert shape is not None
     key = ObjectKey(entity, (("id", 1),))
-    state = TemporalStateKey(key, temporal_read.milestone_edge(shape, row, None))
+    state = TemporalObjectStateKey(key, temporal_read.milestone_edge(shape, row, None))
     return RetainedObservation(state, TemporalObservation(predecessor=row), None)
 
 

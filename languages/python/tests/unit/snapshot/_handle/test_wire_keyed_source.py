@@ -83,7 +83,7 @@ def _query(entity: str, key: int, temporal: dict[str, object] | None = None) -> 
 
 def _published(model: DomainModel, row: MappingRow, query: dict[str, object]) -> WireEntity:
     """One frozen Entity mapping as a standalone Wire read of this store
-    publishes it, Read Origin and all."""
+    publishes it, Read Evidence and all."""
     port = ScriptedAdapter(Read(rows=[dict(row)]))
     return db_for(model, port).wire.find(query).result()
 
@@ -142,8 +142,8 @@ def test_a_published_node_answers_the_facts_its_own_read_filed() -> None:
     assert resolved.entity.identity == mm.Account.identity
     assert resolved.provenance == "this"
     assert resolved.representation == "wire"
-    assert resolved.hint is not None
-    assert resolved.hint.object_key == ObjectKey(mm.Account.identity, (("id", 1),))
+    assert resolved.read_evidence is not None
+    assert resolved.read_evidence.object_key == ObjectKey(mm.Account.identity, (("id", 1),))
     assert resolved.pin is None
 
 

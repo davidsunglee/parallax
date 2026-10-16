@@ -27,7 +27,7 @@ from parallax.core import (
     attr,
 )
 from parallax.core.entity._model import model_of
-from parallax.snapshot import ScopedDatabase, Transaction, connect
+from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.root_ownership import own_root
 
 _NAMESPACE = "scalar.collection.lifecycle"
@@ -168,7 +168,7 @@ def _by_id(entity: type[Any], key: int) -> dict[str, object]:
     return {"target": name, "predicate": {"eq": {"path": f"{name}.id", "value": key}}}
 
 
-def _find(tx: Transaction, entity: type[Any], representation: _Representation) -> Any:
+def _find(tx: TxnContext, entity: type[Any], representation: _Representation) -> Any:
     if representation == "typed":
         return tx.find(entity.where(entity.id == 1)).result()
     return tx.wire.find(_by_id(entity, 1)).result()
@@ -206,7 +206,7 @@ def test_a_keyed_amendment_assigns_a_collection_and_advances_the_version(
 ) -> None:
     db = _seed_ticket(profile_run, entity)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         source = _find(tx, entity, representation)
         if representation == "typed":
             tx.amend(source.edit(tags=("c", "c")))
@@ -224,7 +224,7 @@ def test_an_equal_collection_assignment_is_still_written(
 ) -> None:
     db = _seed_ticket(profile_run, entity)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         source = _find(tx, entity, representation)
         if representation == "typed":
             tx.amend(source, entity.tags.set(("a", "b", "a")))
@@ -242,7 +242,7 @@ def test_a_replacement_fills_every_omitted_collection_with_the_empty_collection(
 ) -> None:
     db = _seed_ticket(profile_run, entity)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         source = _find(tx, entity, representation)
         if representation == "typed":
             tx.replace(source.edit(label="whole", tags=(), amounts=(), route=None, legs=()))
@@ -266,7 +266,7 @@ def test_a_conditional_amendment_and_replacement_carry_collections(
 ) -> None:
     db = _seed_ticket(profile_run, entity)
 
-    def amend(tx: Transaction) -> None:
+    def amend(tx: TxnContext) -> None:
         if representation == "typed":
             tx.amend_if(entity, entity.tags.set(()), key=1, version=1)
         else:
@@ -275,7 +275,7 @@ def test_a_conditional_amendment_and_replacement_carry_collections(
     db.transact(amend, concurrency=concurrency)
     assert _stored(profile_run, entity, "tags", "amounts", "version") == [([], ["1.50"], 2)]
 
-    def replace(tx: Transaction) -> None:
+    def replace(tx: TxnContext) -> None:
         if representation == "typed":
             tx.replace_if(entity(id=1, label="r", amounts=(Decimal(2),)), version=2)
         else:
@@ -296,7 +296,7 @@ def test_a_predicate_amendment_of_a_versioned_owner_materializes_its_collections
 ) -> None:
     db = _seed_ticket(profile_run, entity)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         if representation == "typed":
             tx.amend_where(entity.where(entity.id == 1), entity.tags.set(("z",)))
         else:
@@ -333,7 +333,7 @@ def test_a_readless_predicate_amendment_replaces_collections_and_value_object_ar
         ]
     )
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         if representation == "typed":
             tx.amend_where(
                 entity.where(entity.id == 1),
@@ -401,7 +401,7 @@ def test_a_bitemporal_amendment_judges_each_predecessor_collection(
 ) -> None:
     _seed_spans(profile_run, entity)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         if representation == "typed":
             source = tx.find(entity.where(entity.id == 1).as_of(valid_time=_JAN)).result()
             tx.amend(source.edit(tags=("b", "a")))
@@ -510,7 +510,7 @@ def test_columns_successors_across_two_predecessors_merge_where_their_collection
         lambda tx: tx.insert(ColumnsSpan(id=1, amount=2, tags=later), valid_from=_MAY)
     )
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         if representation == "typed":
             query = ColumnsSpan.where(ColumnsSpan.id == 1).as_of(valid_time=_MAR)
             tx.amend(tx.find(query).result().edit(amount=9), until=_JUL)
@@ -537,12 +537,12 @@ def test_a_transaction_time_owner_chains_a_changed_collection_and_keeps_an_equal
     _reset(profile_run)
     _db(profile_run, _S1).transact(lambda tx: tx.insert(entity(id=1, tags=("a", "b"))))
 
-    def equal(tx: Transaction) -> None:
+    def equal(tx: TxnContext) -> None:
         tx.amend(tx.find(entity.where(entity.id == 1)).result().edit(tags=("a", "b")))
 
     _db(profile_run, _S2).transact(equal)
 
-    def changed(tx: Transaction) -> None:
+    def changed(tx: TxnContext) -> None:
         tx.amend(tx.find(entity.where(entity.id == 1)).result().edit(tags=("b", "a")))
 
     _db(profile_run, _TA).transact(changed)
@@ -575,7 +575,7 @@ def test_a_readless_predicate_amendment_selects_through_collection_quantifiers(
         ]
     )
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         if representation == "typed":
             selected = entity.tags.any(entity.tags.element == "c") | entity.legs.any(
                 Leg.stops.any(Leg.stops.element == "p")
@@ -614,7 +614,7 @@ def test_a_bitemporal_predicate_amendment_selects_by_the_collection_current_at_v
         lambda tx: tx.insert(entity(id=2, amount=5, tags=("b",)), valid_from=_JAN)
     )
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         if representation == "typed":
             tx.amend_where(
                 entity.where(entity.tags.none(entity.tags.element == "b")),

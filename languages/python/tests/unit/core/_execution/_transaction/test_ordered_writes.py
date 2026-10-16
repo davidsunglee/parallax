@@ -27,7 +27,7 @@ from parallax.conformance._lifecycle_recording import RecordingLifecycleProvider
 from parallax.conformance.class_models import MODELS
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._transaction._attempt import (
-    Attempt,
+    TxnAttempt,
     _LoweredWriteChunk,  # pyright: ignore[reportPrivateUsage] - the chunk is the presented sequence itself
 )
 from parallax.core._execution._unit_work.uow import DeferredWriteContinuation
@@ -252,7 +252,7 @@ def _flush(
         del bound, allocated
         flushed.reported.append(unit)
 
-    def body(attempt: Attempt) -> None:
+    def body(attempt: TxnAttempt) -> None:
         try:
             with attempt._open_write_batch("pre_commit"):  # pyright: ignore[reportPrivateUsage] - one batch around a hand-built plan
                 attempt._execute_flush(  # pyright: ignore[reportPrivateUsage] - drives the executor over a hand-built plan
@@ -420,7 +420,7 @@ def test_a_lone_effects_look_ahead_failing_runs_it_alone_only_for_an_ordinary_fa
     plan = WritePlan(steps=PlannedWrites((segment,)), units=(ExecutionUnit(end=2),))
     caught: list[BaseException] = []
 
-    def body(attempt: Attempt) -> None:
+    def body(attempt: TxnAttempt) -> None:
         try:
             attempt._execute_flush(  # pyright: ignore[reportPrivateUsage] - drives the executor over a hand-built plan
                 plan, trigger="pre_commit", bind_deferred=_unbound, completed=_never_completed
@@ -686,7 +686,7 @@ def test_the_attempt_reports_the_retry_verdict_of_the_failure_that_propagated(
     steps = (_close(1), _close(2))
     plan = WritePlan(steps=PlannedWrites((_Steps(port, steps),)), units=(ExecutionUnit(end=2),))
 
-    def body(attempt: Attempt) -> None:
+    def body(attempt: TxnAttempt) -> None:
         with attempt._open_write_batch("pre_commit"):  # pyright: ignore[reportPrivateUsage] - one batch around a hand-built plan
             attempt._execute_flush(  # pyright: ignore[reportPrivateUsage] - drives the executor over a hand-built plan
                 plan, trigger="pre_commit", bind_deferred=_unbound, completed=_never_completed
@@ -779,7 +779,7 @@ def test_a_later_effect_failing_to_be_taken_drains_only_an_ordinary_failures_pre
     plan = WritePlan(steps=PlannedWrites((segment,)), units=(ExecutionUnit(end=3),))
     raised: list[BaseException] = []
 
-    def body(attempt: Attempt) -> None:
+    def body(attempt: TxnAttempt) -> None:
         try:
             attempt._execute_flush(  # pyright: ignore[reportPrivateUsage] - drives the executor over a hand-built plan
                 plan, trigger="pre_commit", bind_deferred=_unbound, completed=_never_completed

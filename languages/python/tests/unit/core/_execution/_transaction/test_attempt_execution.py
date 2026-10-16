@@ -23,7 +23,7 @@ from parallax.conformance._lifecycle_recording import RecordingLifecycleProvider
 from parallax.conformance.class_models import MODELS
 from parallax.core import MAX, Attr, Bitemporal, DomainModel, attr
 from parallax.core._execution._planning import build_write_planner
-from parallax.core._execution._transaction._attempt import Attempt
+from parallax.core._execution._transaction._attempt import TxnAttempt
 from parallax.core._execution._unit_work.instructions import PreparedKeyedWrite, prepare_typed_write
 from parallax.core._execution._unit_work.uow import BindDeferredRange, DeferredWriteContinuation
 from parallax.core._execution._write_lowering import LoweringCursor, stream_physical
@@ -154,7 +154,7 @@ def _unbound(description: DeferredRange, /) -> BoundRange | DeferredWriteContinu
 
 
 def _flush(
-    attempt: Attempt,
+    attempt: TxnAttempt,
     plan: WritePlan,
     completed: _Reported,
     bind_deferred: BindDeferredRange = _unbound,
@@ -164,7 +164,7 @@ def _flush(
     )
 
 
-def _run(port: ScriptedAdapter, body: Callable[[Attempt], None]) -> None:
+def _run(port: ScriptedAdapter, body: Callable[[TxnAttempt], None]) -> None:
     scope(port).transact(body, itself, concurrency="locking")
 
 
@@ -190,7 +190,7 @@ def test_a_shortfall_takes_no_later_step_and_reports_no_unit() -> None:
     port = ScriptedAdapter(Transact(Write(affected=0)))
     reported = _Reported(port, (steps,))
 
-    def body(attempt: Attempt) -> None:
+    def body(attempt: TxnAttempt) -> None:
         with pytest.raises(MissingTargetError):
             _flush(attempt, plan, reported)
 
@@ -289,7 +289,7 @@ def test_a_failed_round_closes_its_continuation_once_and_pulls_nothing_more() ->
     rounds = _Rounds(port, iter([(1, 2), (3,)]))
     reported = _Reported(port, ())
 
-    def body(attempt: Attempt) -> None:
+    def body(attempt: TxnAttempt) -> None:
         with pytest.raises(MissingTargetError):
             _flush(attempt, plan, reported, lambda _description: rounds)
 
@@ -426,7 +426,7 @@ def _openings_run(
     Write Batch, answering the step after the run or what it raised."""
     answered: list[PlannedWrite | BaseException | None] = []
 
-    def body(attempt: Attempt) -> None:
+    def body(attempt: TxnAttempt) -> None:
         with attempt._open_write_batch("pre_commit"):  # pyright: ignore[reportPrivateUsage] - one batch around the operation
             cursor = LoweringCursor(
                 PlannedWrites((segment,)).view(0, len(segment)),
@@ -524,7 +524,7 @@ def test_a_control_flow_exception_taking_a_later_opening_inserts_none_of_the_run
     assert port.calls == [BeginCall(), CommitCall()]
 
 
-def _run_positions(port: ScriptedAdapter, body: Callable[[Attempt], None]) -> None:
+def _run_positions(port: ScriptedAdapter, body: Callable[[TxnAttempt], None]) -> None:
     scope(port, _POSITIONS).transact(body, itself, concurrency="locking")
 
 
@@ -555,7 +555,7 @@ def test_a_grouped_unit_reports_once_after_its_statement_and_a_failed_one_report
     failed_plan = WritePlan(steps=PlannedWrites((segment,)), units=plan.units)
     unreported = _Reported(failing, ())
 
-    def body(attempt: Attempt) -> None:
+    def body(attempt: TxnAttempt) -> None:
         with pytest.raises(DatabaseError) as raised:
             _flush(attempt, failed_plan, unreported)
         assert raised.value is violation
