@@ -108,6 +108,7 @@ metadata is exposed on the `RelatedFinder` and every `Attribute`.
 | [30-fixed-slot-data-objects.md](30-fixed-slot-data-objects.md) | A generated data object IS its layout — fixed Java fields, an out-of-band `isNullBitsN` mask covering nullable primitives alone, and a metadata-positioned hydration walk that can stop after the primary key |
 | [31-runtime-model-replacement-and-schema-evolution.md](31-runtime-model-replacement-and-schema-evolution.md) | The portal is a static slot per generated Finder that a repeat configuration read either leaves alone or, under a programmatic `destroyExistingPortal` flag, destroys and rebuilds with no transaction guard; DDL is full per-table `create table` scripts with no diff, alter, migration, or runtime schema check, and the only model version is a class-shape CRC checked against cache archives and remote peers; there is no inheritance discriminator — a table-per-class row with no subclass row silently hydrates as its root class, and `table-for-all-subclasses` delegates the choice to a hand-written hook |
 | [32-gap-starting-writes-and-insert-overlap.md](32-gap-starting-writes-and-insert-overlap.md) | Gap-starting writes and insert overlap validation: ordinary inserts check active starting state; compound range operations and database constraints have distinct safety limits |
+| [../transaction-isolation/03-reladomo-prior-art.md](../transaction-isolation/03-reladomo-prior-art.md) | Isolation is a per-dialect connection default (Serializable for most dialects, autocommit Read Committed outside a transaction); read-only is a class property, not a transaction mode; retries wait a flat randomized one to two seconds after rollback has released the connection |
 
 ## Research questions
 
@@ -205,6 +206,18 @@ follow-up in [10](10-object-lifecycle.md#detached-merge-version-checks-and-retri
 retry-dependent detached-version check separately from the live predecessor's SQL gate;
 [29](29-blind-write-prevention-for-deletes-and-terminates.md) links to that owner. Descriptive;
 it recommends no Parallax semantics. Test definitions were inspected, not executed.
+
+**Transaction-isolation prior-art pass (2026-10-16, same commit).** A task-directed source pass
+recorded the isolation level each dialect's bundled pool requests, the autocommit Read Committed
+route for reads before enlistment, the absence of a read-only transaction mode, what a
+non-transactional result retains, per-dialect retry classification, and the flat randomized wait
+that follows rollback. It lives beside the evaluation it informs, in
+[transaction-isolation/03](../transaction-isolation/03-reladomo-prior-art.md), and links back to
+[08](08-caching.md), [09](09-transactions-locking.md), [10](10-object-lifecycle.md),
+[21](21-bulk-data-operations.md), [23](23-transaction-integration.md),
+[27](27-read-enrollment-and-write-licensing.md), [28](28-transaction-participation-mode-scope.md),
+and [29](29-blind-write-prevention-for-deletes-and-terminates.md) for what they already own.
+Descriptive; it recommends no Parallax semantics.
 
 ## Scope — what this research does not cover
 
