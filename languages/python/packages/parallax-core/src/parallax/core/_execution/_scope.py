@@ -87,7 +87,6 @@ class ExecutionScope:
         *,
         max_retries: int | Omitted = OMITTED,
         concurrency: Concurrency | Omitted = OMITTED,
-        retry_optimistic_conflicts: bool | Omitted = OMITTED,
         isolation: IsolationLevel | Omitted = OMITTED,
     ) -> ExecutionScope:
         """This scope's authority and resources under patched option defaults."""
@@ -98,7 +97,6 @@ class ExecutionScope:
                 self._options,
                 max_retries=max_retries,
                 concurrency=concurrency,
-                retry_optimistic_conflicts=retry_optimistic_conflicts,
                 isolation=isolation,
             ),
             lifecycle=self._lifecycle,
@@ -195,7 +193,6 @@ class ExecutionScope:
         *,
         max_retries: int | Omitted = OMITTED,
         concurrency: Concurrency | Omitted = OMITTED,
-        retry_optimistic_conflicts: bool | Omitted = OMITTED,
         isolation: IsolationLevel | Omitted = OMITTED,
     ) -> T:
         """Run ``fn`` in a transaction under this scope's authority, joining the
@@ -212,7 +209,6 @@ class ExecutionScope:
             defaults=self._options,
             max_retries=max_retries,
             concurrency=concurrency,
-            retry_optimistic_conflicts=retry_optimistic_conflicts,
             isolation=isolation,
         )
 

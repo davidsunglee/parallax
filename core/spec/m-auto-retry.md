@@ -24,16 +24,20 @@ surfaced error carries the attempt count). This mirrors Reladomo's
 `MithraManager.executeTransactionalCommand` retry loop (`TransactionStyle`
 default 10), with the default owned by the root rather than by each call.
 
-Which failures are retriable:
+Which failures are retriable is fixed policy rather than an option. Together
+they are the **recoverable conflicts**: a failure a re-execution against fresh
+state can resolve.
 
 - **Transient database failures** — deadlock and serialization failure (the
-  `m-db-error` `deadlock` category) — are retriable **by default**, no caller
-  action needed.
-- An **Optimistic Lock Conflict Error** is **not** retriable by default: a
-  conflict surfaces to the caller after one attempt, and joins the retriable set
-  **only** when the unit of work opts in (`retryOptimisticConflicts`, Reladomo's
-  `setRetryOnOptimisticLockFailure`; an omitted opt-in resolves to the invoking
-  Execution Scope's effective value, whose root-built-in value is off).
+  `m-db-error` `deadlock` category).
+- An **Optimistic Lock Conflict Error** — a gate an observation of the attempt
+  bound came up short because a concurrent writer moved the row first.
+- Either one carried as the cause of the rollback-only refusal a caught failure
+  left behind (`m-unit-work` *Abort*): the refusal is replayed on the terms of
+  the failure that doomed the attempt.
+
+Everything else surfaces after the attempt it ended:
+
 - A **lock-wait timeout** (the `m-db-error` `lockWaitTimeout` category) is **not**
   retriable.
 - The remaining Write Effect Errors — **Missing Target Error**, **Stale Write
@@ -57,7 +61,24 @@ reacquisition loop, or a broadened retriable set to accommodate it.
 Because each re-execution opens a fresh atomic scope and re-reads through the
 freshness rule, the retry re-observes the version(s) a subsequent `m-opt-lock` gate
 binds — so an auto-retried conflict re-reads the current version and succeeds, with
-no caller-authored retry code.
+no caller-authored retry code. A re-execution re-runs the whole closure: reads and
+the work built from them are reconstructed inside it, a value captured outside it
+is not refreshed, and a stream the closure consumed may deliver roots the failed
+attempt already delivered.
+
+## One verdict per attempt
+
+The boundary classifies an attempt's failure **once**, after the attempt's
+rollback completed, and that one verdict is both what the attempt reports
+(`m-execution-lifecycle` `retryEligible`) and what decides a re-execution. It
+does not consider the remaining bound. A recoverable conflict is re-executed only
+once the failed attempt has rolled back, released its connection, and finished
+reporting, and only if nothing after the classification failed: a rollback that
+did not complete, or a failure raised while releasing the connection or
+finishing the attempt, ends the invocation instead, whatever the verdict was. A
+lifecycle handler's own failure, which `m-execution-lifecycle` quarantines,
+changes nothing. The error a caller receives after exhaustion, or after any
+terminal failure, is the failure itself with its own causal chain.
 
 ## Recognizing the conflict
 
@@ -69,25 +90,22 @@ over its existing `m-auto-retry --> m-unit-work` edge.
 That ownership is what keeps the retry loop free of a dependency on an optional
 concurrency module. An implementation **MUST NOT** require the composition root
 to inject the conflict type into the retry classifier, and **MUST NOT** take a
-`m-auto-retry --> m-opt-lock` edge to name it. The `retryOptimisticConflicts`
-opt-in above is genuine caller policy and stays; wiring whose only purpose was
-carrying a type across a module boundary does not.
+`m-auto-retry --> m-opt-lock` edge to name it.
 
 The Write Precondition Error a caller-addressed write raises (`m-unit-work`) is
-never in the retriable set, opted in or not, and neither is a doom it caused: a
-retry re-states the same caller revision against the same stored row.
+never in the retriable set, and neither is a doom it caused: a retry re-states
+the same caller revision against the same stored row.
 
 ## What the suite pins down
 
-The observable loop-mechanics branches (a conflict surfacing without the opt-in, an
-injected transient auto-retried away, `maxRetries: 0`, bound exhaustion, the callback
-value withheld on abort) need injected faults a single-connection harness cannot
-provoke, so they are authored as **boundary** cases on the `api-conformance` lane
-and satisfied by each language's API Conformance Suite (`m-api-conformance`).
-The root-owned defaults (`m-execution` *Options a root is configured with*) are
-proven the same way, through what the loop does under a configured root
-(`m-case-format` *Root configuration*): a zero bound on
-the root disables the loop for an invocation naming none and an explicit bound
-overrides it; a root level stands over every attempt and an explicit level
-overrides it; and an explicit opt-out under an opted-in root still retries a
-transient, because the opt-in widens the retriable set without ever narrowing it.
+The observable loop-mechanics branches (a conflict replayed away, a conflict a
+zero bound leaves unreplayed, an injected transient auto-retried away,
+`maxRetries: 0`, bound exhaustion, the callback value withheld on abort) need
+injected faults a single-connection harness cannot provoke, so they are authored
+as **boundary** cases on the `api-conformance` lane and satisfied by each
+language's API Conformance Suite (`m-api-conformance`). The root-owned defaults
+(`m-execution` *Options a root is configured with*) are proven the same way,
+through what the loop does under a configured root (`m-case-format` *Root
+configuration*): a zero bound on the root disables the loop for an invocation
+naming none, a conflict included, and an explicit bound overrides it; and a root
+level stands over every attempt and an explicit level overrides it.

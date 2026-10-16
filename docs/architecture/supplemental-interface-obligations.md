@@ -197,9 +197,9 @@ compatibility case is.
 - **Required assertion**: a keyed write that affects zero rows classifies as
   **non-retriable** where its target's Effective Concurrency Strategy is Locking
   (a stale write) and where the target is unversioned (a missing target), and the
-  bounded retry loop does **not** re-run the transaction body for either. Both
-  classes sit outside the loop's caught set, so no opt-in flag and no caller
-  extension of the retriable set can reach them. A retry loop over these is the
+  bounded retry loop does **not** re-run the transaction body for either. The
+  retry policy is fixed, so no option and no caller extension of the retriable
+  set can reach them. A retry loop over these is the
   genuinely bad failure mode, which is what the assertion protects against.
 
 ### SIO-009 — A collapsed multi-key delete cannot come up short

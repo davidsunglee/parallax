@@ -246,14 +246,12 @@ class WriteBatchFinished(_Event):
 class RetryPolicy:
     """The bounded-retry policy one outer invocation resolved.
 
-    ``retries`` bounds RE-EXECUTIONS rather than total attempts.
-    ``retry_optimistic_conflicts`` is the caller opt-in that widens the
-    classifier, so the two together are the effective policy an attempt's
-    ``retry_eligible`` verdict is reached under.
+    ``retries`` bounds RE-EXECUTIONS rather than total attempts. Which failures
+    are eligible is fixed policy rather than a resolved option, so the bound is
+    the whole of it.
     """
 
     retries: int
-    retry_optimistic_conflicts: bool
 
 
 @dataclass(frozen=True, slots=True)

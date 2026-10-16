@@ -3,8 +3,9 @@ from __future__ import annotations
 import contextlib
 import datetime as dt
 import threading
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
+from typing import cast
 
 from parallax.conformance import case_format, models
 from parallax.conformance._database_control import (
@@ -21,7 +22,6 @@ from parallax.conformance._lanes.scenario import (
     group_tx_instant,
     group_writes,
     read_table_state,
-    refuse_a_conflict_retry_opt_in,
     run_group_step,
     run_standalone_find,
     scenario_group_step_indices,
@@ -98,12 +98,13 @@ def _run_interleaved_group(
     :class:`~parallax.core.unit_work.OptimisticLockConflictError` (the SAME
     signal a caller-driven retry catches, the keyed unit-of-work lane's own
     conflict-write precedent) — caught HERE, recorded as the group's flush
-    failure where the flush ran, and the transaction aborts (never retried: a
-    case whose groups would resolve the ``retryOptimisticConflicts`` opt-in
-    under a positive bound — from `when.uow` or from its root — is refused
-    before either worker starts, so
+    failure where the flush ran, and the transaction aborts. It is never
+    replayed: a case grading a conflict's abort under a positive bound is
+    refused before either worker starts (:func:`_refuse_a_replayed_abort`), so
     :func:`~parallax.core.auto_retry.run_with_retry` surfaces the conflict after
-    exactly one attempt). Unlike
+    exactly one attempt, and a replay the case never described — the callback
+    entered a second time — fails the group rather than re-running its steps
+    against a turnstile that has already passed them. Unlike
     :func:`~parallax.conformance._lanes.scenario._run_uow_group`, this lane
     abandons no group: the only rollback it reports is the one a group's own
     conflicting flush causes. The turnstile only ADVANCES past the group's own
@@ -139,8 +140,17 @@ def _run_interleaved_group(
     lowered: dict[int, LoweredStep] = {}
     state = result.state
     running: list[int] = []
+    entered = False
 
     def body(tx: TxnContext) -> None:
+        nonlocal entered
+        if entered:
+            raise EngineError(
+                "production replayed an interleaved `uow` group's attempt; each group is one "
+                "turnstile-sequenced attempt, so a case whose group can fail with a retry-eligible "
+                "error states `maxRetries: 0`"
+            )
+        entered = True
         for position, index in enumerate(indices):
             turnstile.wait_for(index)
             running.append(index)
@@ -205,6 +215,32 @@ def _refuse_untrusted_terminations(
     )
 
 
+def _refuse_a_replayed_abort(case: case_format.Case, labels: Iterable[str]) -> None:
+    """Refuse a case that grades one of its groups rolled back by an optimistic
+    conflict while its transactions resolve a positive retry bound.
+
+    An optimistic conflict is a recoverable failure production replays within
+    the bound, so the abort the case grades is reachable only where the bound
+    leaves the first attempt unreplayed (`m-auto-retry`).
+    """
+    bound = case_format.effective_options(case).max_retries
+    if bound == 0:
+        return
+    for label in labels:
+        flush = case_document.unit_fate(case, label).get("flushFailure")
+        shortfall = (
+            cast("Mapping[str, object]", flush).get("shortfall")
+            if isinstance(flush, Mapping)
+            else None
+        )
+        if shortfall == "optimisticConflict":
+            raise EngineError(
+                f"{case.path.name}: group {label!r} is graded rolled back by an optimistic "
+                f"conflict under `maxRetries: {bound}`, and production replays that conflict "
+                "within the bound — the abort is a first attempt's, which `maxRetries: 0` states"
+            )
+
+
 def _refuse_graph_oracles(steps: Sequence[Mapping[str, object]], case_name: str) -> None:
     if any("expectGraph" in step for step in steps):
         raise EngineError(
@@ -260,23 +296,19 @@ def run_interleaved_scenario_case(
     an execution that declares none is refused loudly here, rather than
     surfacing only much later as an indefinite hang at
     :func:`~parallax.conformance._lanes.turnstile.await_workers`'s own
-    unbounded post-ladder join. A case whose groups would resolve the
-    optimistic-conflict opt-in under a positive bound is refused at the same
-    point
-    (:func:`~parallax.conformance._lanes.scenario.refuse_a_conflict_retry_opt_in`):
-    each group is one turnstile-sequenced production attempt, and a retried
-    group would re-run its steps against a turnstile that has already passed
-    them.
+    unbounded post-ladder join. A case grading a group's conflict abort under a
+    positive retry bound is refused at the same point
+    (:func:`_refuse_a_replayed_abort`): each group is one turnstile-sequenced
+    production attempt, and a replayed group would re-run its steps against a
+    turnstile that has already passed them.
     """
     steps = case_document.scenario_steps(case)
     serving = case_serving_model(case)
     model = models.accepted_model_of(serving.current().model)
     concurrency = case_document.concurrency(case)
-    refuse_a_conflict_retry_opt_in(
-        case, case_format.effective_options(case), "`when.uow` or `given.databaseOptions`"
-    )
     _refuse_graph_oracles(steps, case.path.name)
     groups = scenario_group_step_indices(steps)
+    _refuse_a_replayed_abort(case, groups)
     if len(groups) != 2:
         raise EngineError(  # pragma: no cover - defensive: every case reaching this entry has two
             f"{case.path.name}: run_interleaved_scenario_case supports exactly the "

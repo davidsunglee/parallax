@@ -82,7 +82,6 @@ def _write_root(**attempt_finish: Any) -> dict[str, Any]:
                     "invocation": "outer",
                     "concurrency": "locking",
                     "retries": 10,
-                    "retryOptimisticConflicts": False,
                 },
             ),
             _event(2, 2, 1, transactionAttemptStarted={"edition": "account"}),
@@ -548,7 +547,6 @@ def test_an_attempt_under_a_joined_invocation_is_flagged() -> None:
                     "invocation": "outer",
                     "concurrency": "locking",
                     "retries": 10,
-                    "retryOptimisticConflicts": False,
                 },
             ),
             _event(2, 2, 1, transactionAttemptStarted={"edition": "account"}),
@@ -583,7 +581,6 @@ def test_a_second_outer_invocation_nested_in_the_first_is_flagged() -> None:
                 "invocation": "outer",
                 "concurrency": "locking",
                 "retries": 10,
-                "retryOptimisticConflicts": False,
             },
         ),
     )
@@ -625,7 +622,6 @@ def test_a_joined_invocation_finishing_in_the_outer_vocabulary_is_flagged() -> N
                     "invocation": "outer",
                     "concurrency": "locking",
                     "retries": 10,
-                    "retryOptimisticConflicts": False,
                 },
             ),
             _event(2, 2, 1, transactionAttemptStarted={"edition": "account"}),
@@ -702,7 +698,6 @@ def test_a_cause_naming_a_child_that_had_not_finished_is_flagged() -> None:
                     "invocation": "outer",
                     "concurrency": "locking",
                     "retries": 10,
-                    "retryOptimisticConflicts": False,
                 },
             ),
             _event(2, 2, 1, transactionAttemptStarted={"edition": "account"}),
@@ -763,7 +758,6 @@ _OUTER_POLICY: dict[str, Any] = {
     "invocation": "outer",
     "concurrency": "locking",
     "retries": 10,
-    "retryOptimisticConflicts": False,
 }
 
 
@@ -1039,7 +1033,6 @@ def _read_then_write_root(read_statement: int | None = None) -> dict[str, Any]:
                     "invocation": "outer",
                     "concurrency": "optimistic",
                     "retries": 10,
-                    "retryOptimisticConflicts": False,
                 },
             ),
             _event(2, 2, 1, transactionAttemptStarted={"edition": "account"}),
@@ -1152,7 +1145,6 @@ def _two_write_root(second_statement: int) -> dict[str, Any]:
                     "invocation": "outer",
                     "concurrency": "locking",
                     "retries": 10,
-                    "retryOptimisticConflicts": False,
                 },
             ),
             _event(2, 2, 1, transactionAttemptStarted={"edition": "account"}),
@@ -1249,7 +1241,6 @@ def _retry_root(outcomes: list[dict[str, Any]], retries: int) -> dict[str, Any]:
                 "invocation": "outer",
                 "concurrency": "locking",
                 "retries": retries,
-                "retryOptimisticConflicts": False,
             },
         )
     ]
@@ -1382,7 +1373,6 @@ def _beginless_root(outcome: dict[str, Any]) -> dict[str, Any]:
                     "invocation": "outer",
                     "concurrency": "locking",
                     "retries": 10,
-                    "retryOptimisticConflicts": False,
                 },
             ),
             _event(2, 1, None, transactionInvocationFinished=outcome),
@@ -1408,7 +1398,6 @@ def _begin_failed_root() -> dict[str, Any]:
                     "invocation": "outer",
                     "concurrency": "locking",
                     "retries": 10,
-                    "retryOptimisticConflicts": False,
                 },
             ),
             _event(2, 2, 1, transactionAttemptStarted={"edition": "account"}),
@@ -1543,7 +1532,6 @@ def test_every_authored_oracle_in_the_corpus_is_internally_consistent() -> None:
         "m-unit-work-035-a-join-may-not-renegotiate-the-isolation-level.yaml",
         "m-unit-work-037-a-join-inherits-every-root-configured-option.yaml",
         "m-unit-work-038-a-join-is-held-to-the-outer-concurrency-not-the-roots.yaml",
-        "m-unit-work-039-a-join-is-held-to-the-outer-opt-in-not-the-roots.yaml",
         "m-unit-work-040-a-join-is-held-to-the-outer-bound-not-the-roots.yaml",
         "m-unit-work-041-a-join-is-held-to-the-outer-level-not-the-roots.yaml",
     ]

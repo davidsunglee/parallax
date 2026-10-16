@@ -722,9 +722,7 @@ def _begun_attempt(
             access_mode="read_write",
             concurrency="optimistic",
             retries=1,
-            retry_optimistic_conflicts=False,
             isolation=None,
-            extra_retriable=None,
         )
     )
     attempt = stack.enter_context(invocation.attempt("edition"))

@@ -1,5 +1,5 @@
 # Boundary case (m-unit-work join rule, m-case-format root configuration): a
-# joining call inherits, repeats, or is refused on ALL FOUR options at once, and
+# joining call inherits, repeats, or is refused on ALL THREE options at once, and
 # the values it is held to are the ones the outer invocation resolved from a
 # configured Database Root — `api-conformance` lane.
 model: models/account.yaml
@@ -14,7 +14,6 @@ given:
   databaseOptions:
     maxRetries: 2
     concurrency: locking
-    retryOptimisticConflicts: true
     isolation: repeatable-read
 when:
   boundary:
@@ -27,7 +26,6 @@ when:
     - action: join
       maxRetries: 2
       concurrency: locking
-      retryOptimisticConflicts: true
       isolation: repeatable-read
       note: a joining call repeating every resolved value is accepted
     - action: join
@@ -49,7 +47,6 @@ then:
               accessMode: read-write
               concurrency: locking
               retries: 2
-              retryOptimisticConflicts: true
               isolation: repeatable-read
           - sequence: 2
             activity: 2

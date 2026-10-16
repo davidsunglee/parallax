@@ -380,21 +380,21 @@ in decimal space under any authored `tolerance`.
 | `given.provisioningModel` | `given` | no | a `read` case only: the path (relative to `core/compatibility/`) of the model descriptor whose DDL and fixtures provision the database and against which `given.corrupt` resolves; the top-level `model` still owns the query, its execution, and every expectation. Absent, the top-level `model` provisions too (see *Provisioning through another model*, below) |
 | `given.fault` | `given` | boundary | an injected portable fault kind (`serialization-failure` / `deadlock` / `lock-wait-timeout` / `optimistic-lock-conflict`) driving the retry loop, or one of the four that are not failures of the work: `isolation-setup-failure` and `access-mode-setup-failure` — the session setup opening the boundary at its requested level, or in its requested access mode, failing, so the boundary never opens and the one attempt that adopted before it finishes `beginFailed`; `connection-acquisition-failure` — the attempt's Acquisition granting no connection, so the attempt finishes `beginFailed` caused by it; `connection-cleanup-failure` — the attempt's Release reaching `release-unconfirmed`, which is diagnostic and leaves the boundary committed |
 | `given.sessionDefault` | `given` | boundary | the Isolation Level the connection ALREADY defaults to when the adapter takes it (`read-uncommitted`), established before intake — the seam `m-db-port` puts the once-per-connection floor check at |
-| `given.databaseOptions` | `given` | no | the transaction option defaults the Database Root every unit of work of the case runs through is CONFIGURED with at connect — the same four fields as `when.uow` (`maxRetries`, `concurrency`, `retryOptimisticConflicts`, `isolation`) under the same definitions; a field the case omits is the root's built-in default (`10` / `optimistic` / `false` / `read-committed`), and no field may be `null`. Configuration, not a request: an outer invocation resolves each option as its explicit `when.uow` value, else this root value, and a joining call compares against the ACTIVE transaction's resolved values, never against this record (see *Root configuration*, below) |
+| `given.databaseOptions` | `given` | no | the transaction option defaults the Database Root every unit of work of the case runs through is CONFIGURED with at connect — the same three fields as `when.uow` (`maxRetries`, `concurrency`, `isolation`) under the same definitions; a field the case omits is the root's built-in default (`10` / `optimistic` / `read-committed`), and no field may be `null`. Configuration, not a request: an outer invocation resolves each option as its explicit `when.uow` value, else this root value, and a joining call compares against the ACTIVE transaction's resolved values, never against this record (see *Root configuration*, below) |
 | `when.objectQuery` | `when` | read / rejected | a canonical `m-object-query` document, validated against the Object Query schema; it names its own queried `target` (see *Read targeting*, below) |
 | `when.writeSequence` | `when` | writeSequence | an ordered list of mutations a write case realizes: `insert` / `amend` / `terminate` (Transaction-Time-Only and Bitemporal; the plain Bitemporal writes are unbounded Valid-Time rectangle splits), `delete`, `cascadeDelete`, plus `insertUntil` / `amendUntil` / `terminateUntil` for bounded Bitemporal rectangle splits |
 | `when.scenario` | `when` | scenario | an ordered list of read / committed-write / lifecycle-**action** steps (`action` + `on`, plus `set` / `path` and the per-step lifecycle observables `expectRows` / `expectError` / `sameObjectAs` / `differentObjectFrom`, plus `expectGraph` in either of its two placements — an `access` step or an include-bearing read step), each carrying its own per-step golden `statements`; a `uow`-grouped read step MAY carry `stream`, making its own statements the pages of a streamed delivery (see *Streamed read steps*, below), and each submission of a `uow`-grouped write step MAY carry `on`, naming the read step it settles against or the insert whose value it writes through (see *Settling against a grouped find*, below) |
 | `when.coherence` | `when` | coherence | a two-node (A / B) step sequence, each step carrying its node, kind, and per-step golden `statements` |
 | `when.concurrency` | `when` | error / concurrencySuccess | a two-connection, barrier-separated `rounds` choreography; each node step carries per-step golden `statements`, except a `kind: commit` step, which carries none because what it performs is that node's own commit. A statement step MAY declare `blocks`, and a `write` step MAY state `affectedRows` (see *Error cases*, below) |
-| `when.boundary` | `when` | boundary | an ordered list of portable unit-of-work actions (`read` / `create` / `amend` / `terminate` / `delete`, plus `join` — open a joined unit of work that shares the current one, the actions after it running inside that joined boundary, optionally naming the `accessMode` its entrypoint selects and any of the four transaction options — `maxRetries`, `concurrency`, `retryOptimisticConflicts`, `isolation` — THAT joining call explicitly requests) |
+| `when.boundary` | `when` | boundary | an ordered list of portable unit-of-work actions (`read` / `create` / `amend` / `terminate` / `delete`, plus `join` — open a joined unit of work that shares the current one, the actions after it running inside that joined boundary, optionally naming the `accessMode` its entrypoint selects and any of the three transaction options — `maxRetries`, `concurrency`, `isolation` — THAT joining call explicitly requests) |
 | `when.edit` | `when` | edit | the native edit under test: `source.origin` is `constructed` or `read`; a constructed source carries its whole authored `value`, while a read source carries the canonical `objectQuery` that produces its containing Entity; optional `source.path` names the Value Object occurrence to edit instead of that Entity. Optional `set` maps canonical member names to complete assigned values; omitting it spells a change-free edit |
 | `when.attempts` | `when` | conflict | an ordered retry sequence of optimistic-lock `UPDATE` attempts, each carrying its own `statements` + `affectedRows` + `write` |
 | `when.write` | `when` | conflict / rejected | the single-attempt neutral write input (①): the flat attribute-named row the versioned `UPDATE` / `DELETE` operates on; on a `rejected` case, a write the validator MUST refuse pre-SQL — a row, a predicate-selected instruction, or a whole keyed instruction, dispatched on the members it carries (see *Rejected cases*) |
 | `when.mutation` | `when` | conflict | the keyed verb `when.write` names — `amend` (default) or `delete` |
 | `when.model` | `when` | rejected | an inline model descriptor whose accepted-model formation is invalid — a standalone/table-level defect, cross-entity family invariant, or relationship join type mismatch a model-aware validator MUST reject pre-SQL; kept inline so the shared `models/` registry stays loadable (see *Rejected cases*) |
 | `when.evolve` | `when` | evolution | the two accepted models the case evolves between: `earlier`, a model descriptor path or the explicit fresh-provisioning sentinel `null`, and `later`, a model descriptor path. It is an `evolution` case's ONLY `when` member (see *Evolution cases*, below) |
-| `when.uow` | `when` | no | the transaction options the action's outer invocation EXPLICITLY requests (`concurrency: locking \| optimistic`, `maxRetries`, `retryOptimisticConflicts`, `isolation`); a field the case omits is omitted at the invocation and resolves to the Database Root's configured default — `given.databaseOptions`, else the built-in (`m-unit-work`, `m-auto-retry`, `m-db-port`) — and no field may be `null`; `concurrency` is the requested Concurrency Preference, not a claim that every Entity uses one strategy; descriptive apart from `isolation` |
-| `when.uow.accessMode` | `when.uow` | no | admitted on `read` and `boundary` cases alone: the Access Mode (`m-db-port`) the outer invocation's entrypoint selects (`m-execution` *Read-only transactions*) — `read-write`, the default when omitted, or `read-only`, whose request names neither `concurrency` nor `retryOptimisticConflicts`. **Prescriptive** like `isolation`: an API Conformance Suite invokes the matching entrypoint. No root configures it, because the mode is the entrypoint's rather than an option |
+| `when.uow` | `when` | no | the transaction options the action's outer invocation EXPLICITLY requests (`concurrency: locking \| optimistic`, `maxRetries`, `isolation`); a field the case omits is omitted at the invocation and resolves to the Database Root's configured default — `given.databaseOptions`, else the built-in (`m-unit-work`, `m-auto-retry`, `m-db-port`) — and no field may be `null`; `concurrency` is the requested Concurrency Preference, not a claim that every Entity uses one strategy; descriptive apart from `isolation` |
+| `when.uow.accessMode` | `when.uow` | no | admitted on `read` and `boundary` cases alone: the Access Mode (`m-db-port`) the outer invocation's entrypoint selects (`m-execution` *Read-only transactions*) — `read-write`, the default when omitted, or `read-only`, whose request names no `concurrency`. **Prescriptive** like `isolation`: an API Conformance Suite invokes the matching entrypoint. No root configures it, because the mode is the entrypoint's rather than an option |
 | `when.uow.isolation` | `when.uow` | no | the portable Isolation Level (`m-db-port`) every held session or `uow` group the case opens is opened at — `read-committed` \| `repeatable-read` \| `serializable`, the core serialized values. **Prescriptive**: the harness opens each held session at it through the provider seam, and an API Conformance Suite passes it to each group's own transaction. Omitted means the invocation requests the Database Root's configured default (`given.databaseOptions.isolation`, built-in `read-committed`), which the harness resolves the same way for the sessions it holds. A case never names an engine's own level or a session variable |
 | `when.stream` | `when` or a scenario read step | no | the streamed delivery of a `read` case (`{batchSize}`) — its presence makes the read streamed rather than eager, and its `batchSize` is the page size in ROOT positions; admitted only beside `then.graph`, and in its second placement on a `uow`-grouped scenario read step whose own `statements` are the delivery's pages (see *Streamed reads* and *Streamed read steps*, below) |
 | `when.equivalentEncodings` | `when` or a scenario read step | no | alternate authoring encodings of the sibling `objectQuery`; each MUST normalize and canonicalize to it |
@@ -1333,6 +1333,16 @@ re-reads the now-fresh version and re-applies affects `1`. The final
 `then.tableState` confirms the retried write — not the concurrent writer's —
 landed. (Golden SQL lives per attempt, so there is no top-level `then.statements`.)
 
+The authored attempts are the attempts of **one** outer invocation: an
+implementation's own bounded retry loop replays the conflicting attempt, and each
+replay is the next authored attempt (`m-auto-retry`). The single-attempt form is
+one attempt of its own invocation. Because a gated shortfall is replayed within
+the bound, a case whose final attempt comes up short resolves the bound that
+leaves it unreplayed — `maxRetries: 0` for the single-attempt form — and a case
+whose bound admits fewer attempts than it authors is refused before any read. An
+invocation that replays past the last authored attempt, or ends before it, fails
+the case.
+
 ### Scenario cases (`m-unit-work`)
 
 A **scenario** case proves the unit-of-work / identity / query-cache contract as
@@ -1386,7 +1396,11 @@ Steps execute in **authored order**; a group's own steps need **not** be
 contiguous — two groups MAY interleave, which is how a scenario represents the
 classic optimistic-lock race as two competing units of work: one group's
 observing find, then a second (concurrent) group's own observe-and-commit,
-then back to the first group's conflicting write. A group **commits** after its
+then back to the first group's conflicting write. Each group is one attempt of
+its own invocation, so a case whose `then.units` grades a group rolled back by an
+optimistic conflict resolves `maxRetries: 0`: under a positive bound the
+implementation would replay that conflict (`m-auto-retry`), and such a case is
+refused before either group runs. A group **commits** after its
 LAST step, **unless** `then.units` states it `rolledBack` — then the WHOLE GROUP
 rolls back after its last step instead, exactly the `m-unit-work` **abort
 contract** applied to the group rather than one step (*Unit fates*, below). This
@@ -1818,7 +1832,7 @@ rollback.
 
 A case MAY carry **`given.databaseOptions`**, the transaction option defaults the
 Database Root its units of work run through is configured with at connect (ADR
-0065). It spells the same four fields as `when.uow` under the same definitions,
+0065). It spells the same three fields as `when.uow` under the same definitions,
 and it is configuration rather than a request: how an outer invocation and a
 joining call resolve each option against it, and the built-in record an
 unconfigured root carries, are `m-execution`'s (*Option resolution*). A field
@@ -2245,8 +2259,8 @@ goldens name only the dialect it describes.
 
 A **boundary** case proves the unit-of-work **bounded automatic retry** contract
 (`m-auto-retry`, `m-opt-lock` *Retry contract*): a loop-mechanics branch
-whose observable — a retriable failure auto-retried away, a conflict surfaced
-without the opt-in, a disabled loop (`maxRetries: 0`), an exhausted bound, a callback
+whose observable — a retriable failure auto-retried away, a conflict a zero
+bound leaves unreplayed, a disabled loop (`maxRetries: 0`), an exhausted bound, a callback
 value withheld on abort, a boundary option refused — a **single-connection**
 harness cannot provoke, because it needs an **injected failure**, a re-executed
 closure, or a connection configured before the adapter took it. It carries a
@@ -2258,7 +2272,7 @@ portable `when.boundary` (the ordered unit-of-work actions), an OPTIONAL
 `given.sessionDefault`, a `then.outcome` (the portable outcome — `committed`, a
 surfaced error kind, or a refused boundary option), and the transaction options
 its outer invocation explicitly requests under `when.uow` (`maxRetries` /
-`concurrency` / `retryOptimisticConflicts` / `isolation`, beside the
+`concurrency` / `isolation`, beside the
 `accessMode` its entrypoint selects), every omitted option
 resolving to the Database Root's configured default — `given.databaseOptions`,
 else the built-in (*Root configuration*, above). It carries **no** golden SQL — the concrete DML and
@@ -2267,17 +2281,17 @@ lane. The root-driven witnesses state each configured default through what the
 loop then does: `maxRetries: 0` on the root disables the loop for an invocation
 that names no bound (`m-auto-retry-007`) and an explicit bound overrides it
 (`-008`); a root level is the level the outer invocation reports and every attempt
-opens at (`-009`), and an explicit level overrides it (`-010`); a root opt-in
-retries an eligible conflict (`m-opt-lock-024`), and an explicit `false` disables
-that opt-in (`-025`) without disabling transient retry (`m-auto-retry-011`).
+opens at (`-009`), and an explicit level overrides it (`-010`); a zero root bound
+leaves a conflict unreplayed (`m-opt-lock-024`), and an explicit bound replays it
+(`-025`).
 
 The action list also spells the **joined** boundary (`m-unit-work`): a `join`
 action opens a unit of work that shares the current one rather than a nested
 boundary of its own, and every action after it runs inside that joined scope.
 The list stays flat because the arrangement is one linear body; what a case
 asserts about the sharing rides `then.outcome` and `then.executionLifecycle`, never the
-list's shape. A `join` step MAY carry any of the four transaction options —
-`maxRetries`, `concurrency`, `retryOptimisticConflicts`, `isolation` — each the
+list's shape. A `join` step MAY carry any of the three transaction options —
+`maxRetries`, `concurrency`, `isolation` — each the
 value **that joining call explicitly names**, spelled as `when.uow` spells it:
 omitted it inherits the active transaction's resolved value, equal to that value
 it is accepted, and different it is refused before the joined callback runs. The
@@ -2285,8 +2299,8 @@ root's default never enters that comparison on its own: a join naming the root's
 value under an outer call that overrode it is a conflict. No other action may
 carry one, because every other action runs inside a boundary that is already
 open. `m-unit-work-035` states the rule for an explicitly requested level;
-`m-unit-work-037` states it for all four fields inherited from a configured root
-at once, and `-038` through `-041` state it one field at a time under an outer
+`m-unit-work-037` states it for all three fields inherited from a configured root
+at once, and `-038`, `-040`, and `-041` state it one field at a time under an outer
 call that overrode the root, each with an accepted outer-equal join and a refused
 root-equal one. An accepted join opens no Transaction Attempt of its own, and a
 refused one leaves no joined activity in the stream.
@@ -2295,8 +2309,7 @@ A `join` step MAY also carry `accessMode`, the entrypoint **that joining call**
 is made through, spelled as `when.uow.accessMode` is; omitted, the join is made
 through the outer invocation's own entrypoint. A join whose mode differs from
 the active transaction's is refused before its callback runs, as `then.outcome:
-access-mode-mismatch` states, and a `read-only` join names neither `concurrency`
-nor `retryOptimisticConflicts`.
+access-mode-mismatch` states, and a `read-only` join names no `concurrency`.
 
 Four elements of the grammar exist for the isolation obligations an adapter owes
 above the wire (`m-db-port` *Mapping obligations*), and all four are portable:

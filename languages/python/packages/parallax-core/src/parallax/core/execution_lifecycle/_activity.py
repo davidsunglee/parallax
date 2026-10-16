@@ -9,8 +9,8 @@ from types import TracebackType
 from typing import ClassVar, Final, Protocol, Self, runtime_checkable
 from uuid import UUID, uuid4
 
+from parallax.core import auto_retry
 from parallax.core._execution._unit_work.uow import Concurrency, WriteBatchReason
-from parallax.core.auto_retry import retriable_failure
 from parallax.core.db_port import (
     AccessMode,
     AcquisitionReason,
@@ -663,12 +663,16 @@ class TransactionAttemptActivity(ConnectionOwnerActivity, Protocol):
         """The attempt committed."""
         ...
 
-    def rolled_back(self, trigger: RollbackTrigger, /) -> None:
-        """``trigger`` ended the attempt and the rollback completed."""
+    def rolled_back(self, trigger: RollbackTrigger, retry_eligible: bool, /) -> None:
+        """``trigger`` ended the attempt and the rollback completed;
+        ``retry_eligible`` is the retry policy's verdict on it."""
         ...
 
-    def rollback_failed(self, trigger: RollbackTrigger, rollback_error: Exception, /) -> None:
-        """``trigger`` ended the attempt and undoing it did not complete."""
+    def rollback_failed(
+        self, trigger: RollbackTrigger, rollback_error: Exception, retry_eligible: bool, /
+    ) -> None:
+        """``trigger`` ended the attempt and undoing it did not complete;
+        ``retry_eligible`` is the retry policy's verdict on the trigger."""
         ...
 
     def read(self, target: ActivityTarget, interface: ReadInterface, /) -> ReadActivity:
@@ -869,9 +873,11 @@ class _InertActivity:
 
     def committed(self) -> None: ...
 
-    def rolled_back(self, trigger: RollbackTrigger, /) -> None: ...
+    def rolled_back(self, trigger: RollbackTrigger, retry_eligible: bool, /) -> None: ...
 
-    def rollback_failed(self, trigger: RollbackTrigger, rollback_error: Exception, /) -> None: ...
+    def rollback_failed(
+        self, trigger: RollbackTrigger, rollback_error: Exception, retry_eligible: bool, /
+    ) -> None: ...
 
     def exhausted(self) -> None: ...
 
@@ -1995,17 +2001,10 @@ class _LiveTransactionAttempt(_LiveConnectionOwner):
     it and consumes its ID.
     """
 
-    __slots__ = ("_edition", "_extra_retriable", "_outcome", "_pre_commit_failure")
+    __slots__ = ("_edition", "_outcome", "_pre_commit_failure")
 
-    def __init__(
-        self,
-        publisher: _Publisher,
-        parent: _LiveActivity,
-        extra_retriable: Callable[[BaseException], bool] | None,
-        edition: str,
-    ) -> None:
+    def __init__(self, publisher: _Publisher, parent: _LiveActivity, edition: str) -> None:
         super().__init__(publisher, parent)
-        self._extra_retriable = extra_retriable
         self._edition = edition
         self._outcome: TransactionAttemptOutcome | None = None
         self._pre_commit_failure: BaseException | None = None
@@ -2041,9 +2040,12 @@ class _LiveTransactionAttempt(_LiveConnectionOwner):
             # The port gave up without reporting an outcome, which its contract
             # forbids. The attempt still ran and still has to be accounted for,
             # and rolled back is the honest reading: an adapter owes the boundary
-            # an undo before it stops answering for it.
+            # an undo before it stops answering for it. Its verdict is still the
+            # retry policy's, although an attempt with no outcome is never
+            # replayed.
+            error = exc if exc is not None else RuntimeError()
             outcome = AttemptRolledBack(
-                self._attempt_failure("callback", exc if exc is not None else RuntimeError())
+                self._attempt_failure("callback", error, auto_retry.retry_eligible(error))
             )
         publisher.deliver(
             TransactionAttemptFinished(
@@ -2078,12 +2080,14 @@ class _LiveTransactionAttempt(_LiveConnectionOwner):
     def committed(self) -> None:
         self._outcome = AttemptCommitted()
 
-    def rolled_back(self, trigger: RollbackTrigger, /) -> None:
-        self._outcome = AttemptRolledBack(self._triggered(trigger))
+    def rolled_back(self, trigger: RollbackTrigger, retry_eligible: bool, /) -> None:
+        self._outcome = AttemptRolledBack(self._triggered(trigger, retry_eligible))
 
-    def rollback_failed(self, trigger: RollbackTrigger, rollback_error: Exception, /) -> None:
+    def rollback_failed(
+        self, trigger: RollbackTrigger, rollback_error: Exception, retry_eligible: bool, /
+    ) -> None:
         self._outcome = AttemptRollbackFailed(
-            self._triggered(trigger), diagnostic_for(rollback_error)
+            self._triggered(trigger, retry_eligible), diagnostic_for(rollback_error)
         )
 
     def read(self, target: ActivityTarget, interface: ReadInterface, /) -> _LiveRead:
@@ -2111,7 +2115,7 @@ class _LiveTransactionAttempt(_LiveConnectionOwner):
         """
         self._pre_commit_failure = exc
 
-    def _triggered(self, trigger: RollbackTrigger) -> AttemptFailure:
+    def _triggered(self, trigger: RollbackTrigger, retry_eligible: bool) -> AttemptFailure:
         """The attempt failure ``trigger`` describes.
 
         The value carried up is the triggering error rather than whatever
@@ -2125,9 +2129,11 @@ class _LiveTransactionAttempt(_LiveConnectionOwner):
             if isinstance(trigger, CommitFailed)
             else ("pre_commit" if error is self._pre_commit_failure else "callback")
         )
-        return self._attempt_failure(phase, error)
+        return self._attempt_failure(phase, error, retry_eligible)
 
-    def _attempt_failure(self, phase: AttemptPhase, error: BaseException) -> AttemptFailure:
+    def _attempt_failure(
+        self, phase: AttemptPhase, error: BaseException, retry_eligible: bool
+    ) -> AttemptFailure:
         """This attempt's failure, reported to the invocation as the invocation's
         own cause.
 
@@ -2136,12 +2142,7 @@ class _LiveTransactionAttempt(_LiveConnectionOwner):
         the boundary included: an invocation that goes on to fail with that value
         names the attempt rather than claiming the failure as its own.
         """
-        failure = AttemptFailure(
-            phase,
-            self._failure(error),
-            retriable_failure(error)
-            or (self._extra_retriable is not None and self._extra_retriable(error)),
-        )
+        failure = AttemptFailure(phase, self._failure(error), retry_eligible)
         parent = self._parent
         if parent is not None:
             parent.attribute(error, self._activity_id, failure.failure.diagnostic)
@@ -2200,17 +2201,11 @@ class _LiveOuterInvocation(_LiveActivity):
     there is nothing that could have deactivated delivery in between.
     """
 
-    __slots__ = ("_extra_retriable", "_invocation")
+    __slots__ = ("_invocation",)
 
-    def __init__(
-        self,
-        publisher: _Publisher,
-        invocation: OuterInvocation,
-        extra_retriable: Callable[[BaseException], bool] | None,
-    ) -> None:
+    def __init__(self, publisher: _Publisher, invocation: OuterInvocation) -> None:
         super().__init__(publisher, None)
         self._invocation = invocation
-        self._extra_retriable = extra_retriable
 
     def __enter__(self) -> _LiveOuterInvocation:
         publisher = self._publisher
@@ -2249,7 +2244,7 @@ class _LiveOuterInvocation(_LiveActivity):
         )
 
     def attempt(self, edition: str, /) -> _LiveTransactionAttempt:
-        return _LiveTransactionAttempt(self._publisher, self, self._extra_retriable, edition)
+        return _LiveTransactionAttempt(self._publisher, self, edition)
 
 
 def _opened(
@@ -2340,9 +2335,7 @@ def open_transaction_root(
     access_mode: AccessMode | None,
     concurrency: Concurrency | None,
     retries: int,
-    retry_optimistic_conflicts: bool,
     isolation: IsolationLevel | None,
-    extra_retriable: Callable[[BaseException], bool] | None,
 ) -> TransactionInvocationActivity:
     """The Transaction Invocation root activity for one outermost writable or
     read-only invocation, or :data:`INERT`.
@@ -2353,13 +2346,6 @@ def open_transaction_root(
     attempt of this invocation rather than a refusal of it. With no Provider
     installed nothing at all is allocated here, not even the resolved policy
     the Started transition would carry.
-
-    ``extra_retriable`` is the caller's classification extension, the same one
-    the bounded retry loop is given, so the verdict an attempt reports and the
-    decision the loop takes read one policy rather than two spellings of it.
-    Each side evaluates that policy where it needs the answer — the attempt when
-    its outcome is built, the loop when it reaches its decision — so only an
-    extension that answers differently for one exception can separate them.
     """
     if installed is None:
         return INERT
@@ -2369,8 +2355,5 @@ def open_transaction_root(
         return INERT
     return _LiveOuterInvocation(
         _Publisher(execution.id, installed, handler),
-        OuterInvocation(
-            access_mode, concurrency, RetryPolicy(retries, retry_optimistic_conflicts), isolation
-        ),
-        extra_retriable,
+        OuterInvocation(access_mode, concurrency, RetryPolicy(retries), isolation),
     )

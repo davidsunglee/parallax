@@ -613,20 +613,18 @@
         "accessMode": {"enum": ["read-only", "read-write"]},
         "concurrency": {"enum": ["locking", "optimistic"]},
         "retries": {"type": "integer", "minimum": 0},
-        "retryOptimisticConflicts": {"type": "boolean"},
         "isolation": {"enum": ["read-committed", "repeatable-read", "serializable"]}
       },
       "allOf": [
         {
           "description": "The resolved policy belongs to the invocation that resolved it: an outer invocation states it, and a joined one states none, because restating an inherited value would read as a renegotiation. The requested access mode and isolation are OPTIONAL on an outer invocation — a lower-level caller may ask the port for neither, while a Database-driven invocation always states both — and forbidden on a joined one for the same reason the policy is.",
           "if": {"required": ["invocation"], "properties": {"invocation": {"const": "outer"}}},
-          "then": {"required": ["retries", "retryOptimisticConflicts"]},
+          "then": {"required": ["retries"]},
           "else": {
             "allOf": [
               {"not": {"required": ["accessMode"]}},
               {"not": {"required": ["concurrency"]}},
               {"not": {"required": ["retries"]}},
-              {"not": {"required": ["retryOptimisticConflicts"]}},
               {"not": {"required": ["isolation"]}}
             ]
           }

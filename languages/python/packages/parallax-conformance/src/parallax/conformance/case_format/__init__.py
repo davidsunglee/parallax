@@ -410,7 +410,7 @@ def step_access_mode(step: Mapping[str, object], *, where: str) -> AccessMode | 
 
 
 class TransactionKeywords(TypedDict, total=False):
-    """The four option fields one option block AUTHORS, and no others.
+    """The three option fields one option block AUTHORS, and no others.
 
     A sparse projection of one `when.uow` block, one `join` step, or the
     `given.databaseOptions` root block: a key is present exactly when the case
@@ -426,14 +426,12 @@ class TransactionKeywords(TypedDict, total=False):
 
     max_retries: int
     concurrency: Concurrency
-    retry_optimistic_conflicts: bool
     isolation: IsolationLevel
 
 
 class ReadOnlyKeywords(TypedDict, total=False):
     """The two option fields a read-only invocation's request may author: a
-    read-only transaction resolves no Concurrency Preference and no
-    optimistic-conflict opt-in."""
+    read-only transaction resolves no Concurrency Preference."""
 
     max_retries: int
     isolation: IsolationLevel
@@ -456,7 +454,6 @@ def read_only_keywords(keywords: TransactionKeywords, *, where: str) -> ReadOnly
 _REQUEST_KEYS: Final[tuple[str, ...]] = (
     "maxRetries",
     "concurrency",
-    "retryOptimisticConflicts",
     "isolation",
 )
 
@@ -465,9 +462,9 @@ def request_keywords(request: Mapping[str, object], *, where: str) -> Transactio
     """The option fields ``request`` authors, decoded through the case format's
     own vocabulary functions.
 
-    ``request`` is any placement that spells the four option fields — a
+    ``request`` is any placement that spells the three option fields — a
     `when.uow` block, a `join` step, or the `given.databaseOptions` root block —
-    and only the four option keys are read, so a step's own members travel
+    and only the three option keys are read, so a step's own members travel
     beside them untouched. ``where`` names the placement every malformed field
     is reported at, a vocabulary refusal included.
     """
@@ -481,11 +478,6 @@ def request_keywords(request: Mapping[str, object], *, where: str) -> Transactio
         keywords["concurrency"] = _vocabulary_member(
             concurrency_preference, request["concurrency"], f"{where}.concurrency"
         )
-    if "retryOptimisticConflicts" in request:
-        opt_in = request["retryOptimisticConflicts"]
-        if not isinstance(opt_in, bool):
-            raise ValueError(f"{where}.retryOptimisticConflicts must be a boolean, got {opt_in!r}")
-        keywords["retry_optimistic_conflicts"] = opt_in
     if "isolation" in request:
         keywords["isolation"] = _vocabulary_member(
             isolation_literal, request["isolation"], f"{where}.isolation"
@@ -497,7 +489,7 @@ def transaction_keywords(case: Case) -> TransactionKeywords:
     """The ``db.transact`` keywords a case's `when.uow` authors for its outer
     invocation — every authored field and nothing else.
 
-    A `when.uow` naming a key outside the four request keys and the access mode
+    A `when.uow` naming a key outside the three request keys and the access mode
     :func:`access_mode` reads is refused here, so a retired spelling reports the
     case rather than silently requesting nothing.
     """
@@ -535,7 +527,7 @@ def _option_block_keywords(
     case: Case, group: str, member: str, *, entrypoint: tuple[str, ...] = ()
 ) -> TransactionKeywords:
     """The option fields one option block of ``case`` authors — its
-    ``group.member`` mapping — refusing a key outside the four option keys and
+    ``group.member`` mapping — refusing a key outside the three option keys and
     the ``entrypoint`` keys another reader owns."""
     container = case.document.get(group)
     block = (

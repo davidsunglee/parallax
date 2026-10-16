@@ -416,10 +416,10 @@ def test_a_peer_revision_to_equal_values_after_the_read_still_conflicts(
     peer_rows = [(_S1, _TP, 100, _SPEC), (_TP, None, 100, _SPEC)]
     if not retried:
         with pytest.raises(ExecutionFailure) as failed:
-            ours.transact(fn)
+            ours.transact(fn, max_retries=0)
         assert isinstance(failed.value.cause, OptimisticLockConflictError)
     else:
-        ours.transact(fn, retry_optimistic_conflicts=True)
+        ours.transact(fn)
         assert attempts == 2
     # The retry's guard matched the peer's milestone and kept it.
     assert _log_rows(profile_run, entity) == peer_rows
@@ -440,7 +440,8 @@ def test_a_guard_holds_its_lock_until_commit_and_leaves_a_peers_token_standing(
             peer.transact(
                 lambda peer_tx: _update(
                     peer_tx, _log_find(peer_tx, entity, "typed"), "typed", {"amount": 150}
-                )
+                ),
+                max_retries=0,
             )
         except BaseException as failure:
             peer_failures.append(failure)
@@ -519,7 +520,7 @@ def test_losing_any_rectangle_after_the_flush_read_rolls_back_every_effect(
         _update(tx, _span_find(tx, entity, "typed", _MAR), "typed", {"amount": 100}, until=_OCT)
 
     with pytest.raises(ExecutionFailure) as failed:
-        ours.transact(fn)
+        ours.transact(fn, max_retries=0)
     assert interleaving.failures == []
     assert isinstance(failed.value.cause, OptimisticLockConflictError)
     # Only the peer's revision stands: nothing this attempt wrote survives.

@@ -3,3 +3,7 @@
 Parallax's unit-of-work boundary offers bounded automatic retry: on a retriable failure it rolls back, invalidates stale cached state, and re-executes the closure against fresh state, up to a configurable bound (default 10; 0 disables the loop). Transient database failures — deadlock and serialization failure — are retriable by default; an optimistic-lock conflict is retriable only when the unit of work opts in, and otherwise surfaces to the caller after one attempt. This adopts Reladomo's default automatic-retry-with-opt-in-for-conflicts model.
 
 **Considered options.** A pure caller-driven posture — report every optimistic-lock conflict and never retry, on the grounds that callers usually need to inspect the winning change and decide whether their pending change still makes sense — was the original decision. It was rejected as the whole story: transient failures gain nothing from caller inspection, and conflict retry remains opt-in, so the caller-driven insight survives as the default for conflicts.
+
+*Superseded in part (2026-10, [ADR 0073](0073-internal-optimistic-conflicts-replay-automatically.md)):*
+an optimistic-lock conflict is now retried by default like a transient failure,
+and the opt-in is gone. The bounded, automatic, rollback-and-replay loop stands.

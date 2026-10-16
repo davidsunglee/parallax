@@ -301,7 +301,6 @@ def _invocation_started_fields(
             if concurrency is not None:
                 fields["concurrency"] = concurrency
             fields["retries"] = policy.retries
-            fields["retry_optimistic_conflicts"] = policy.retry_optimistic_conflicts
             if isolation is not None:
                 fields["isolation"] = isolation
             return fields

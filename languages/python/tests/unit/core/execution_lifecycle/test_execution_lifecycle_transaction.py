@@ -190,7 +190,7 @@ def test_one_invocation_roots_its_attempt_its_batches_and_its_read() -> None:
     started = root.events[0]
     assert isinstance(started, TransactionInvocationStarted)
     assert started.invocation == OuterInvocation(
-        "read_write", "optimistic", RetryPolicy(10, False), "read_committed"
+        "read_write", "optimistic", RetryPolicy(10), "read_committed"
     )
     assert _finished(root) == OuterInvocationCommitted()
     assert _attempt_outcomes(root) == [AttemptCommitted()]
@@ -240,14 +240,13 @@ def test_the_resolved_policy_the_caller_asked_for_is_what_the_invocation_reports
         lambda _tx: None,
         max_retries=3,
         concurrency="locking",
-        retry_optimistic_conflicts=True,
         isolation="serializable",
     )
 
     started = _only(recorder).events[0]
     assert isinstance(started, TransactionInvocationStarted)
     assert started.invocation == OuterInvocation(
-        "read_write", "locking", RetryPolicy(3, True), "serializable"
+        "read_write", "locking", RetryPolicy(3), "serializable"
     )
 
 
@@ -263,12 +262,12 @@ def test_an_invocation_naming_no_level_reports_the_roots_resolved_default() -> N
     started = _only(recorder).events[0]
     assert isinstance(started, TransactionInvocationStarted)
     assert started.invocation == OuterInvocation(
-        "read_write", "optimistic", RetryPolicy(10, False), "read_committed"
+        "read_write", "optimistic", RetryPolicy(10), "read_committed"
     )
 
 
 def test_a_joined_invocation_states_no_level_of_its_own() -> None:
-    # A joined boundary renegotiates none of the four options, so it carries no
+    # A joined boundary renegotiates none of the three options, so it carries no
     # level either — the one it runs under was resolved by the invocation it
     # joined.
     recorder = RecordingLifecycleProvider()
@@ -281,7 +280,7 @@ def test_a_joined_invocation_states_no_level_of_its_own() -> None:
         if isinstance(event, TransactionInvocationStarted)
     ]
     assert joined == [
-        OuterInvocation("read_write", "optimistic", RetryPolicy(10, False), "repeatable_read"),
+        OuterInvocation("read_write", "optimistic", RetryPolicy(10), "repeatable_read"),
         JoinedInvocation(),
     ]
 
@@ -406,30 +405,31 @@ def test_exhaustion_still_reports_the_classifier_truth_on_the_last_attempt() -> 
     assert failed.failure.cause_activity_id == last_attempt.activity_id
 
 
-def test_the_opt_in_widens_the_verdict_the_attempt_reports() -> None:
+def test_a_replayed_conflict_is_reported_eligible_on_the_attempt_it_ended() -> None:
     recorder = RecordingLifecycleProvider()
     port = ScriptedAdapter(
         Transact(Read(rows=[NEW_ROW]), Write(affected=0)),
         Transact(Read(rows=[NEW_ROW]), Write()),
     )
 
-    _db(port, recorder).transact(_increase_balance, retry_optimistic_conflicts=True)
+    _db(port, recorder).transact(_increase_balance)
 
-    rolled_back, _committed = _attempt_outcomes(_only(recorder))
+    rolled_back, committed = _attempt_outcomes(_only(recorder))
     assert isinstance(rolled_back, AttemptRolledBack)
     assert rolled_back.failure.retry_eligible
+    assert committed == AttemptCommitted()
 
 
-def test_without_the_opt_in_the_same_conflict_is_reported_non_eligible() -> None:
+def test_a_conflict_a_zero_bound_leaves_unreplayed_is_still_reported_eligible() -> None:
     recorder = RecordingLifecycleProvider()
     port = ScriptedAdapter(Transact(Read(rows=[NEW_ROW]), Write(affected=0)))
 
     with raises_contextualized(OptimisticLockConflictError):
-        _db(port, recorder).transact(_increase_balance)
+        _db(port, recorder).transact(_increase_balance, max_retries=0)
 
     (rolled_back,) = _attempt_outcomes(_only(recorder))
     assert isinstance(rolled_back, AttemptRolledBack)
-    assert not rolled_back.failure.retry_eligible
+    assert rolled_back.failure.retry_eligible
 
 
 # --------------------------------------------------------------------------- #
@@ -515,7 +515,7 @@ def test_a_failure_in_the_final_batch_is_the_pre_commit_phase() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[NEW_ROW]), Write(affected=0)))
 
     with raises_contextualized(OptimisticLockConflictError):
-        _db(port, recorder).transact(_increase_balance)
+        _db(port, recorder).transact(_increase_balance, max_retries=0)
 
     (rolled_back,) = _attempt_outcomes(_only(recorder))
     assert isinstance(rolled_back, AttemptRolledBack)
@@ -534,7 +534,7 @@ def test_a_failure_in_a_dependency_batch_is_still_the_callback_phase() -> None:
         tx.find(mm.Account.where(mm.Account.id == 7)).result()
 
     with raises_contextualized(OptimisticLockConflictError):
-        _db(port, recorder).transact(body)
+        _db(port, recorder).transact(body, max_retries=0)
 
     root = _only(recorder)
     batch = next(event for event in root.events if isinstance(event, WriteBatchStarted))
@@ -676,7 +676,7 @@ def test_a_zero_row_write_names_the_call_that_completed_as_the_cause() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[NEW_ROW]), Write(affected=0)))
 
     with raises_contextualized(OptimisticLockConflictError):
-        _db(port, recorder).transact(_increase_balance)
+        _db(port, recorder).transact(_increase_balance, max_retries=0)
 
     root = _only(recorder)
     batch_finished = next(event for event in root.events if isinstance(event, WriteBatchFinished))

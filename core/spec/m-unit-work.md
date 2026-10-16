@@ -606,8 +606,8 @@ Submission follows the target Entity's Effective Concurrency Strategy:
   producing an occurrence's column is the acquisition's, at the call.
 
 A failed precondition is the caller's: re-running the transaction re-states the
-same revision, so it is **never retried**, whatever the retry option, and no
-diagnostic read distinguishes a deleted row from a revised one. A failure at
+same revision, so it is **never retried**, and no diagnostic read distinguishes
+a deleted row from a revised one. A failure at
 flush dooms the attempt like any other execution failure.
 
 An object this attempt **admitted an insertion** of is refused to every
@@ -1571,7 +1571,7 @@ than an effect (*Caller-addressed writes*). It is the same error a Locking
 submission raises when its acquisition finds the condition already false.
 
 Retriability follows the classification, not the raising site: an Optimistic Lock
-Conflict Error is retriable only under the unit of work's opt-in
+Conflict Error is a recoverable conflict the bounded retry loop replays
 (`m-auto-retry`), while a Missing Target Error, a Stale Write Error, a
 Cardinality Corruption Error, and a Write Precondition Error are **never**
 retriable.

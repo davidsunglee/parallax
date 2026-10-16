@@ -649,7 +649,6 @@ def _invocation(invocation: OuterInvocation | JoinedInvocation) -> dict[str, obj
             if concurrency is not None:
                 observed["concurrency"] = concurrency
             observed["retries"] = policy.retries
-            observed["retryOptimisticConflicts"] = policy.retry_optimistic_conflicts
             if isolation is not None:
                 observed["isolation"] = serialized_isolation(isolation)
             return observed

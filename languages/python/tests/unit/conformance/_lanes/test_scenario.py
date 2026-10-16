@@ -2888,26 +2888,72 @@ def test_run_conflict_case_refuses_a_temporal_target_before_any_read() -> None:
     assert port.writes == []
 
 
-def test_run_conflict_case_attempts_form_scripts_each_attempt_independently() -> None:
-    # Each attempt takes its OWN source read, so the retry observes the generation
-    # the concurrent writer left rather than reusing the stale one the first
-    # attempt settled against.
+_ACCOUNT_ROW_2_REVISED: Final[MappingRow] = {
+    **_ACCOUNT_ROW_2,
+    "balance": decimal.Decimal("999.00"),
+    "version": 2,
+}
+
+
+def test_run_conflict_case_attempts_form_is_productions_own_replay() -> None:
+    # One invocation runs every authored attempt: the first attempt's gated
+    # write comes up short, production replays the callback, and the replay
+    # takes its OWN source read, observing the generation the concurrent writer
+    # left rather than reusing the stale one the first attempt settled against.
     port = FakeWritePort(
-        read_script=[
-            [_ACCOUNT_ROW_2],
-            [{**_ACCOUNT_ROW_2, "balance": decimal.Decimal("999.00"), "version": 2}],
-        ]
+        read_script=[[_ACCOUNT_ROW_2], [_ACCOUNT_ROW_2_REVISED]], affected_script=[0, 1]
     )
-    emissions, affected, table_state, _round_trips = scenario.run_conflict_case(
-        _load_case("m-opt-lock-007"), port
+    emissions, affected, table_state, round_trips = scenario.run_conflict_case(
+        _load_case("m-opt-lock-009"), port
     )
     assert [e.case_pointer for e in emissions] == [
         "/when/attempts/0/write",
         "/when/attempts/1/write",
     ]
-    assert len(port.writes) == 3  # given.apply + two independent scripted attempts
+    assert [binds for _sql, binds in port.writes[1:]] == [
+        [decimal.Decimal("275.00"), 2, 2, 1],
+        [decimal.Decimal("275.00"), 3, 2, 2],
+    ]
+    assert len(port.writes) == 3  # given.apply + the gated write of each attempt
+    assert (port.rollbacks, port.commits) == (1, 1)
     assert affected == 1
+    assert round_trips == 4
     assert table_state is not None
+
+
+def test_a_conflict_case_production_replays_past_its_last_attempt_is_refused() -> None:
+    # Under a positive bound production replays the single authored attempt's
+    # conflict, which the case never described: the replay is refused inside
+    # the callback rather than graded against the first attempt's statements.
+    case = _rooted(_load_case("m-opt-lock-005"), uow={"concurrency": "optimistic"}, root={})
+    port = FakeWritePort(find_rows=[_ACCOUNT_ROW_2], zero_affected_for=_ACCOUNT_WRITE_SHORTFALL)
+    with pytest.raises(EngineError, match="replayed the conflict case's last authored attempt"):
+        scenario.run_conflict_case(case, port)
+    assert len(port.levels) == 2
+
+
+def test_a_conflict_case_whose_invocation_ends_before_its_last_attempt_is_refused() -> None:
+    port = FakeWritePort(read_script=[[_ACCOUNT_ROW_2]], affected_script=[1])
+    with pytest.raises(EngineError, match=r"after 1 attempt\(s\), and the case authors 2"):
+        scenario.run_conflict_case(_load_case("m-opt-lock-009"), port)
+
+
+@pytest.mark.parametrize(
+    ("uow", "root"),
+    [
+        ({"concurrency": "optimistic", "maxRetries": 0}, {}),
+        ({"concurrency": "optimistic"}, {"maxRetries": 0}),
+    ],
+    ids=["requested", "root"],
+)
+def test_a_conflict_case_whose_bound_admits_fewer_attempts_than_it_authors_is_refused(
+    uow: dict[str, object], root: dict[str, object]
+) -> None:
+    case = _rooted(_load_case("m-opt-lock-009"), uow=uow, root=root)
+    port = FakeWritePort(find_rows=[_ACCOUNT_ROW_2])
+    with pytest.raises(EngineError, match=r"authors 2 attempts and its transaction resolves"):
+        scenario.run_conflict_case(case, port)
+    assert port.levels == []
 
 
 def test_run_conflict_case_wraps_a_lowering_failure_as_engine_error() -> None:
@@ -3585,38 +3631,6 @@ def test_a_framework_write_step_inside_a_uow_group_is_refused() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# A conflict attempt's transaction requests: the authored preference and level, #
-# never the retry fields the authored attempts themselves spell out.            #
-# --------------------------------------------------------------------------- #
-def test_a_conflict_attempt_forwards_the_authored_preference_and_level_alone() -> None:
-    case = _synthetic_write(
-        "conflict",
-        {
-            "when": {
-                "uow": {
-                    "concurrency": "optimistic",
-                    "retryOptimisticConflicts": True,
-                    "maxRetries": 2,
-                    "isolation": "repeatable-read",
-                },
-                "write": {"id": 2, "balance": "275.00", "observedVersion": 1},
-            }
-        },
-    )
-    assert scenario._conflict_attempt_requests(case) == {  # pyright: ignore[reportPrivateUsage] - unit test drives the conflict lane's private projection directly
-        "concurrency": "optimistic",
-        "isolation": "repeatable_read",
-    }
-
-
-def test_a_conflict_attempt_omitting_every_option_requests_nothing() -> None:
-    case = _synthetic_write(
-        "conflict", {"when": {"write": {"id": 2, "balance": "275.00", "observedVersion": 1}}}
-    )
-    assert scenario._conflict_attempt_requests(case) == {}  # pyright: ignore[reportPrivateUsage] - unit test drives the conflict lane's private projection directly
-
-
-# --------------------------------------------------------------------------- #
 # Root configuration (m-case-format *Root configuration*): every Handle a      #
 # scenario lane composes for the case's own units of work is connected with    #
 # the record `given.databaseOptions` states, and every transaction it opens     #
@@ -3627,7 +3641,6 @@ def test_a_conflict_attempt_omitting_every_option_requests_nothing() -> None:
 _CONSPICUOUS_ROOT: Final[dict[str, object]] = {
     "maxRetries": 0,
     "concurrency": "locking",
-    "retryOptimisticConflicts": True,
     "isolation": "serializable",
 }
 
@@ -3781,7 +3794,6 @@ def test_the_case_context_carries_the_root_record_beside_the_sparse_request() ->
     assert context.options == TxnOptions(
         max_retries=0,
         concurrency="locking",
-        retry_optimistic_conflicts=True,
         isolation="serializable",
     )
     assert context.requests == {"max_retries": 3}
@@ -3805,51 +3817,15 @@ def test_a_case_context_modeling_no_case_state_answers_for_none() -> None:
         context.case_state()
 
 
-def test_a_conflict_attempt_opens_at_the_roots_level_and_forwards_no_retry_field() -> None:
-    # The conflict lane connects each attempt's Handle with the case's root, so
-    # a root level governs the attempt exactly as an authored one does; the
-    # authored `when.attempts` stays the loop, so no retry field reaches the
-    # call from the request whatever the root says about the bound.
-    case = _rooted(
-        _load_case("m-opt-lock-006"),
-        uow={"concurrency": "optimistic", "retryOptimisticConflicts": True, "maxRetries": 3},
-        root={**_CONSPICUOUS_ROOT, "retryOptimisticConflicts": False},
-    )
-    port = FakeWritePort(find_rows=[_ACCOUNT_ROW_2])
-    scenario.run_conflict_case(case, port)
-    assert port.levels == ["serializable"]
-    assert scenario._conflict_attempt_requests(case) == {  # pyright: ignore[reportPrivateUsage] - the lane's own projection is what this pins
-        "concurrency": "optimistic"
-    }
-
-
-def test_a_conflict_case_whose_root_opts_into_conflict_retry_is_refused_up_front() -> None:
-    # The authored attempts ARE the loop, one production attempt each. An
-    # authored opt-in is descriptive and stripped from the request, but a root
-    # opt-in reaches `connect` unchanged and, under a positive bound, would make
-    # production re-run the stale attempt inside its own transaction — so the
-    # case is refused by name before its source read, rather than run as work
-    # it never described.
-    case = _rooted(_load_case("m-opt-lock-006"), root={**_CONSPICUOUS_ROOT, "maxRetries": 1})
-    port = FakeWritePort(find_rows=[_ACCOUNT_ROW_2])
-    with pytest.raises(
-        EngineError, match=r"given\.databaseOptions.*optimistic-conflict retry under a bound of 1"
-    ):
-        scenario.run_conflict_case(case, port)
-    assert port.levels == []
-    assert port.writes == []
-
-
-def test_a_conflict_case_whose_root_opt_in_is_bounded_at_zero_runs_its_attempt() -> None:
-    # A root that opts in and bounds re-execution at `0` cannot add an attempt:
-    # `m-auto-retry` says a zero bound disables the loop, so the opt-in is
-    # inert and the case runs as authored, one production attempt at the
-    # root's level under the optimistic preference its request authors.
+def test_a_conflict_attempt_opens_at_the_roots_level_and_runs_under_its_bound() -> None:
+    # The conflict lane connects its Handle with the case's root, so a root
+    # level and bound govern the attempts exactly as authored ones do: one
+    # production attempt at the root's level under the optimistic preference
+    # the request authors.
     case = _rooted(_load_case("m-opt-lock-006"), uow={"concurrency": "optimistic"})
     assert case_format.database_options(case) == TxnOptions(
         max_retries=0,
         concurrency="locking",
-        retry_optimistic_conflicts=True,
         isolation="serializable",
     )
     port = FakeWritePort(find_rows=[_ACCOUNT_ROW_2])

@@ -252,7 +252,7 @@ def test_an_optimistic_target_whose_start_moved_fails_before_any_write_and_never
         _replace(tx)
 
     with raises_contextualized(WritePreconditionError) as failed:
-        _db(port).transact(fn, retry_optimistic_conflicts=True)
+        _db(port).transact(fn)
     assert (dict(failed.value.key), failed.value.expected) == ({"id": 1}, _T0)
     assert attempts == 1
     assert _writes(port) == []
@@ -263,20 +263,18 @@ def test_a_lost_start_guard_is_the_callers_precondition_and_a_lost_later_row_ret
     rows = [_rectangle(_JAN, _JUN), _rectangle(_JUN, INFINITY_INSTANT, "200.00")]
     lost_start = ScriptedAdapter(Transact(Read(rows=rows), Write(affected=0)))
     with raises_contextualized(WritePreconditionError):
-        _db(lost_start).transact(
-            lambda tx: _patch(tx, value="150.00"), retry_optimistic_conflicts=True
-        )
+        _db(lost_start).transact(lambda tx: _patch(tx, value="150.00"))
     assert len(_writes(lost_start)) == 1
     lost_later = ScriptedAdapter(
         Transact(Read(rows=rows), Write(), Write(affected=0)),
         Transact(Read(rows=rows), Write(times=6)),
     )
-    _db(lost_later).transact(lambda tx: _patch(tx, value="150.00"), retry_optimistic_conflicts=True)
+    _db(lost_later).transact(lambda tx: _patch(tx, value="150.00"))
     starts = [call for call in _writes(lost_later) if call.binds[2] == _JUN]
     assert [call.binds[-1] for call in starts] == [_T0, _T0]
     without_retry = ScriptedAdapter(Transact(Read(rows=rows), Write(), Write(affected=0)))
     with raises_contextualized(OptimisticLockConflictError):
-        _db(without_retry).transact(lambda tx: _patch(tx, value="150.00"))
+        _db(without_retry).transact(lambda tx: _patch(tx, value="150.00"), max_retries=0)
 
 
 # --------------------------------------------------------------------------- #
@@ -904,7 +902,7 @@ def test_a_target_after_an_observed_write_of_another_revision_is_refused() -> No
 # --------------------------------------------------------------------------- #
 def test_an_equal_temporal_patch_keeps_its_milestone_by_a_guard_on_the_stated_start() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[_rectangle(_JAN, INFINITY_INSTANT)]), Write()))
-    _db(port).transact(lambda tx: _patch(tx, value="100.00"), retry_optimistic_conflicts=True)
+    _db(port).transact(lambda tx: _patch(tx, value="100.00"))
     (guard,) = _writes(port)
     assert guard.sql.startswith("update where_position set in_z = in_z where id = %s")
     assert guard.binds[-1] == _T0
@@ -914,7 +912,7 @@ def test_an_equal_temporal_patch_keeps_its_milestone_by_a_guard_on_the_stated_st
     # The guard binds the caller's condition, so losing it is that caller's
     # failed precondition, never a retry.
     with raises_contextualized(WritePreconditionError):
-        _db(lost).transact(lambda tx: _patch(tx, value="100.00"), retry_optimistic_conflicts=True)
+        _db(lost).transact(lambda tx: _patch(tx, value="100.00"))
     assert len(_writes(lost)) == 1
 
 
@@ -981,7 +979,7 @@ def test_two_current_rows_at_the_start_are_corruption_before_any_write(
         _patch(tx, value="150.00")
 
     with raises_contextualized(CardinalityCorruptionError) as corrupt:
-        _db(port).transact(fn, concurrency=concurrency, retry_optimistic_conflicts=True)
+        _db(port).transact(fn, concurrency=concurrency)
     assert (corrupt.value.expected, corrupt.value.actual) == (1, 2)
     assert attempts == 1
     assert _writes(port) == []
@@ -1299,7 +1297,7 @@ def test_a_lost_first_unit_runs_nothing_after_it_and_a_lost_later_one_rolls_back
         _window_patch(tx, _JUN_AUG, "175.00")
 
     with raises_contextualized(WritePreconditionError):
-        _barriered(lost_first).transact(fn, retry_optimistic_conflicts=True)
+        _barriered(lost_first).transact(fn)
     assert _sql_kinds(lost_first) == ["read", "close"]
     lost_later = ScriptedAdapter(
         Transact(
@@ -1311,7 +1309,7 @@ def test_a_lost_first_unit_runs_nothing_after_it_and_a_lost_later_one_rolls_back
         )
     )
     with raises_contextualized(OptimisticLockConflictError):
-        _barriered(lost_later).transact(fn)
+        _barriered(lost_later).transact(fn, max_retries=0)
     assert isinstance(lost_later.calls[-1], RollbackCall)
 
 

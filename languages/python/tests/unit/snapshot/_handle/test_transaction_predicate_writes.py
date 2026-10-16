@@ -2596,7 +2596,7 @@ def test_materializing_where_shortfall_in_optimistic_mode_is_a_lock_conflict() -
     )
 
     with raises_contextualized(OptimisticLockConflictError):
-        account_db(port).transact(_update_balance_where, concurrency="optimistic")
+        account_db(port).transact(_update_balance_where, concurrency="optimistic", max_retries=0)
     assert [type(op) for op in port.calls] == [BeginCall, ReadCall, WriteCall, RollbackCall]
 
 
@@ -2613,9 +2613,7 @@ def test_materializing_where_conflict_is_auto_retried_to_success_with_the_opt_in
         Transact(Read(rows=resolved), Write(affected=1)),
     )
 
-    account_db(port).transact(
-        _update_balance_where, concurrency="optimistic", retry_optimistic_conflicts=True
-    )
+    account_db(port).transact(_update_balance_where, concurrency="optimistic")
     assert [type(op) for op in port.calls] == [
         BeginCall,
         ReadCall,

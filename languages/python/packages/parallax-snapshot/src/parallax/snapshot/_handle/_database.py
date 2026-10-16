@@ -83,14 +83,12 @@ class ScopedDatabase:
         *,
         max_retries: int | Omitted = OMITTED,
         concurrency: Concurrency | Omitted = OMITTED,
-        retry_optimistic_conflicts: bool | Omitted = OMITTED,
         isolation: IsolationLevel | Omitted = OMITTED,
     ) -> ScopedDatabase:
         return self.create(
             self._execution.with_options(
                 max_retries=max_retries,
                 concurrency=concurrency,
-                retry_optimistic_conflicts=retry_optimistic_conflicts,
                 isolation=isolation,
             )
         )
@@ -126,7 +124,6 @@ class ScopedDatabase:
         *,
         max_retries: int | Omitted = OMITTED,
         concurrency: Concurrency | Omitted = OMITTED,
-        retry_optimistic_conflicts: bool | Omitted = OMITTED,
         isolation: IsolationLevel | Omitted = OMITTED,
     ) -> T:
         return self._execution.transact(
@@ -134,7 +131,6 @@ class ScopedDatabase:
             transaction_for,
             max_retries=max_retries,
             concurrency=concurrency,
-            retry_optimistic_conflicts=retry_optimistic_conflicts,
             isolation=isolation,
         )
 

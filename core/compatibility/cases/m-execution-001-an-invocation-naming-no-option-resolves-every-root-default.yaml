@@ -10,7 +10,6 @@ given:
   databaseOptions:
     maxRetries: 2
     concurrency: locking
-    retryOptimisticConflicts: true
     isolation: repeatable-read
 when:
   boundary:
@@ -24,7 +23,7 @@ then:
       - execution: 1
         kind: transaction-invocation
         events:
-          - { sequence: 1, activity: 1, parent: null, transactionInvocationStarted: { invocation: outer, accessMode: read-write, concurrency: locking, retries: 2, retryOptimisticConflicts: true, isolation: repeatable-read } }
+          - { sequence: 1, activity: 1, parent: null, transactionInvocationStarted: { invocation: outer, accessMode: read-write, concurrency: locking, retries: 2, isolation: repeatable-read } }
           - { sequence: 2, activity: 2, parent: 1, transactionAttemptStarted: { edition: account } }
           - { sequence: 3, activity: 3, parent: 2, acquisitionStarted: {} }
           - { sequence: 4, activity: 3, parent: 2, acquisitionFinished: { outcome: acquired } }

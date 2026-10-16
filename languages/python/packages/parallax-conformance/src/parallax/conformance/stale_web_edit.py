@@ -49,8 +49,9 @@ def submit_balance_edit(
     replacement before this read), then apply ``fields`` via ``edit`` and
     update. Legal under either concurrency mode: ``locking``'s shared read lock
     holds the compared row until the flush, and ``optimistic``'s
-    observed-``in_z`` gate closes zero rows —
-    ``OptimisticLockConflictError`` — if one is chained after it."""
+    observed-``in_z`` gate closes zero rows if one is chained after it, a
+    conflict the transaction replays — and the replay's own read then finds the
+    replacement and refuses."""
 
     def fn(tx: TxnContext) -> None:
         current = tx.find(Balance.where(Balance.id == id)).result()
@@ -95,7 +96,8 @@ def submit_branch_edit(
     current coverage. A concurrent split between this read and the flush
     leaves the observed row's ``in_z`` stale — the gated close still addresses
     the displayed rectangle by its own Valid-Time end, but its gate matches zero
-    rows, ``OptimisticLockConflictError``."""
+    rows, a conflict the transaction replays — and the replay's own read then
+    answers the split rectangle and refuses."""
 
     def fn(tx: TxnContext) -> None:
         current = tx.find(Branch.where(Branch.id == id).as_of(valid_time=valid_from)).result()

@@ -1,5 +1,3 @@
-# Boundary case (m-opt-lock): an optimistic-lock conflict SURFACES to the caller when the
-# unit of work does NOT opt into conflict retry — `api-conformance` lane.
 model: models/account.yaml
 tags: [m-opt-lock, m-auto-retry, m-api-conformance, conflict, slice-snapshot-1, slice-managed-1]
 lane: api-conformance
@@ -13,12 +11,12 @@ given:
 when:
   uow:
     concurrency: optimistic
-    retryOptimisticConflicts: false
+    maxRetries: 0
   boundary:
     - action: read
       note: observe the versioned row (records the observed version)
     - action: amend
-      note: the gated UPDATE conflicts once — with the opt-in unset it is NOT retried
+      note: the gated UPDATE conflicts once, and a bound of zero leaves it unreplayed
 then:
   outcome: optimistic-lock-conflict
   roundTrips: 2

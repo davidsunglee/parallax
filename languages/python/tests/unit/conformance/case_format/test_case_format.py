@@ -104,7 +104,6 @@ def test_every_authored_field_projects_under_its_python_name() -> None:
                 "uow": {
                     "maxRetries": 2,
                     "concurrency": "locking",
-                    "retryOptimisticConflicts": True,
                     "isolation": "repeatable-read",
                 }
             }
@@ -113,18 +112,17 @@ def test_every_authored_field_projects_under_its_python_name() -> None:
     assert case_format.transaction_keywords(case) == {
         "max_retries": 2,
         "concurrency": "locking",
-        "retry_optimistic_conflicts": True,
         "isolation": "repeatable_read",
     }
 
 
-def test_authored_zero_and_false_survive_and_absent_keys_stay_absent() -> None:
-    # `0` and `false` are values the case wrote, distinguishable from omission
-    # by presence alone: neither is dropped as falsy, and the two fields the
-    # case did not write are not filled from any default.
-    case = _isolation_case({"when": {"uow": {"maxRetries": 0, "retryOptimisticConflicts": False}}})
+def test_an_authored_zero_survives_and_absent_keys_stay_absent() -> None:
+    # `0` is a value the case wrote, distinguishable from omission by presence
+    # alone: it is not dropped as falsy, and the two fields the case did not
+    # write are not filled from any default.
+    case = _isolation_case({"when": {"uow": {"maxRetries": 0}}})
     keywords = case_format.transaction_keywords(case)
-    assert keywords == {"max_retries": 0, "retry_optimistic_conflicts": False}
+    assert keywords == {"max_retries": 0}
     assert "concurrency" not in keywords
     assert "isolation" not in keywords
 
@@ -134,13 +132,11 @@ def test_authored_zero_and_false_survive_and_absent_keys_stay_absent() -> None:
     [
         ("maxRetries", None),
         ("concurrency", None),
-        ("retryOptimisticConflicts", None),
         ("isolation", None),
         ("maxRetries", True),
         ("maxRetries", -1),
         ("maxRetries", "2"),
         ("concurrency", "pessimistic"),
-        ("retryOptimisticConflicts", 1),
         ("isolation", "read_committed"),
     ],
 )
@@ -154,9 +150,10 @@ def test_a_null_or_malformed_request_field_is_refused_at_ingress(field: str, val
         case_format.transaction_keywords(case)
 
 
-def test_the_retired_retries_request_key_is_refused() -> None:
-    case = _isolation_case({"when": {"uow": {"retries": 2}}})
-    with pytest.raises(ValueError, match="retries"):
+@pytest.mark.parametrize("retired", ["retries", "retryOptimisticConflicts"])
+def test_a_retired_request_key_is_refused(retired: str) -> None:
+    case = _isolation_case({"when": {"uow": {retired: 2}}})
+    with pytest.raises(ValueError, match=retired):
         case_format.transaction_keywords(case)
 
 
@@ -181,14 +178,12 @@ def test_a_join_step_projects_through_the_same_decoder() -> None:
         "isolation": "serializable",
         "maxRetries": 0,
         "concurrency": "locking",
-        "retryOptimisticConflicts": False,
         "note": "x",
     }
     assert case_format.request_keywords(step, where="join") == {
         "isolation": "serializable",
         "max_retries": 0,
         "concurrency": "locking",
-        "retry_optimistic_conflicts": False,
     }
 
 
@@ -298,7 +293,6 @@ def test_every_configured_root_field_reaches_the_record_and_the_rest_stay_built_
                 "databaseOptions": {
                     "maxRetries": 2,
                     "concurrency": "locking",
-                    "retryOptimisticConflicts": True,
                     "isolation": "serializable",
                 }
             }
@@ -307,7 +301,6 @@ def test_every_configured_root_field_reaches_the_record_and_the_rest_stay_built_
     assert case_format.database_options(fully) == TxnOptions(
         max_retries=2,
         concurrency="locking",
-        retry_optimistic_conflicts=True,
         isolation="serializable",
     )
 
@@ -317,12 +310,10 @@ def test_every_configured_root_field_reaches_the_record_and_the_rest_stay_built_
     [
         ("maxRetries", None),
         ("concurrency", None),
-        ("retryOptimisticConflicts", None),
         ("isolation", None),
         ("maxRetries", -1),
         ("maxRetries", True),
         ("concurrency", "pessimistic"),
-        ("retryOptimisticConflicts", "yes"),
         ("isolation", "read-uncommitted"),
     ],
 )
@@ -365,16 +356,14 @@ def test_effective_options_lay_the_authored_request_over_the_root() -> None:
     }
 
 
-def test_an_authored_zero_or_false_overrides_a_configured_root() -> None:
+def test_an_authored_zero_overrides_a_configured_root() -> None:
     case = _isolation_case(
         {
-            "given": {"databaseOptions": {"maxRetries": 3, "retryOptimisticConflicts": True}},
-            "when": {"uow": {"maxRetries": 0, "retryOptimisticConflicts": False}},
+            "given": {"databaseOptions": {"maxRetries": 3}},
+            "when": {"uow": {"maxRetries": 0}},
         }
     )
-    assert case_format.effective_options(case) == TxnOptions(
-        max_retries=0, retry_optimistic_conflicts=False
-    )
+    assert case_format.effective_options(case) == TxnOptions(max_retries=0)
 
 
 def test_effective_options_of_an_unconfigured_unrequesting_case_are_the_built_ins() -> None:

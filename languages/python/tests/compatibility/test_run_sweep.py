@@ -1250,9 +1250,8 @@ def test_error_run_sweep(case: case_format.Case, profile: Profile, profile_run: 
 # mirroring the pk-gen `sequence` run-only set below, neither joins           #
 # `WRITE_EXERCISED` (that set couples compile AND run grading; a run-only     #
 # case would fail `test_compile_sweep`'s `status == "ok"` assert). A          #
-# `when.attempts` sequence (`m-opt-lock-007`, `m-opt-lock-009`) is            #
-# caller-visible retry choreography, not the runtime auto-retry loop, which   #
-# `m-opt-lock-011`'s boundary case proves instead. Every                      #
+# `when.attempts` sequence (`m-opt-lock-009`) is production's own replay of   #
+# one invocation, each authored attempt one physical attempt of it. Every     #
 # non-temporal conflict case here settles against a state a REAL read of this #
 # lane observed, so the concurrent writer commits between that read and the   #
 # write it invalidates. The zero-row shapes whose interference no correct     #
@@ -1266,7 +1265,6 @@ _CONFLICT_CASES_EXERCISED: Final[frozenset[str]] = frozenset(
     {
         "m-opt-lock-005",
         "m-opt-lock-006",
-        "m-opt-lock-007",
         "m-opt-lock-009",
         "m-opt-lock-013",
         "m-value-object-046",
@@ -1300,13 +1298,12 @@ def test_conflict_run_sweep(case: case_format.Case, profile: Profile, profile_ru
 
     The single-attempt form (`m-opt-lock-005/006/013`) grades the golden write's
     emissions and `then.affectedRows` — the count the write's own target expects,
-    or the count a refused write reached instead. The `when.attempts` retry form
-    (`m-opt-lock-007`) grades each attempt's own statements flattened in order
+    or the count a refused write reached instead. The `when.attempts` replay form
+    (`m-opt-lock-009`) grades each attempt's own statements flattened in order
     (proving the `0`-then-`1` transition through each attempt's own distinct gate
     bind) and the FINAL affected-row count. A case authoring `then.roundTrips`
     grades the calls that reached the database across every attempt — its
-    resolving reads among them, which is the one shape where such a read stands
-    outside the transaction it licenses — and a case authoring
+    resolving reads among them — and a case authoring
     `then.executionLifecycle` grades the delivered stream those calls came from,
     where that read is the Root Execution naming no golden statement. Every case
     that authors `then.tableState` grades the committed table contents; a case

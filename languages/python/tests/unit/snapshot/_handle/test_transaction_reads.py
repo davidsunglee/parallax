@@ -51,7 +51,6 @@ from parallax.core.read_delivery._page_reader import EagerPageRequest, EagerPage
 from parallax.core.read_delivery._publication import Publication
 from parallax.core.unit_work import (
     Concurrency,
-    OptimisticLockConflictError,
     ReadEvidence,
     StaleWriteError,
 )
@@ -921,23 +920,27 @@ def test_stale_web_edit_balance_submit_refuses_a_milestone_superseded_before_the
     assert not any(isinstance(op, WriteCall) for op in port.calls)
 
 
-def test_stale_web_edit_balance_submit_conflict_raises_optimistic_lock_conflict() -> None:
+def test_stale_web_edit_balance_submit_conflict_is_replayed_into_the_staleness_refusal() -> None:
     # The later of the two points staleness surfaces at: the submit read saw
     # the milestone the form displayed, so the comparison passes, and a writer
     # chains a replacement between that read and the flush. The observed `in_z`
     # is stale by then, so the gated close matches ZERO rows -- which is the
     # window `optimistic` covers by gating and `locking` covers by holding a
-    # shared read lock on the row the comparison passed on.
+    # shared read lock on the row the comparison passed on. The conflict is
+    # replayed, and the replay's own read meets the replacement.
     in_z = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+    replaced_in_z = dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
     port = ScriptedAdapter(
         Read(rows=[balance_row(in_z=in_z)]),
         Transact(Read(rows=[balance_row(in_z=in_z)]), Write(affected=0)),
+        Transact(Read(rows=[balance_row(in_z=replaced_in_z)])),
     )
     db = db_for(BALANCE, port)
     _node, edge = stale_web_edit.render_balance_milestone(db, id=1)
 
-    with raises_contextualized(OptimisticLockConflictError):
+    with raises_contextualized(stale_web_edit.StaleMilestoneError, match="superseded"):
         stale_web_edit.submit_balance_edit(db, id=1, edge=edge, fields={"value": Decimal("9.00")})
+    assert sum(isinstance(op, WriteCall) for op in port.calls) == 1
 
 
 def _terminate_balance_1(tx: TxnContext) -> None:
@@ -956,9 +959,7 @@ def test_a_locking_temporal_close_missing_its_row_is_a_stale_write__m_temporal_r
     )
 
     with raises_contextualized(StaleWriteError):
-        db_for(BALANCE, port).transact(
-            _terminate_balance_1, concurrency="locking", retry_optimistic_conflicts=True
-        )
+        db_for(BALANCE, port).transact(_terminate_balance_1, concurrency="locking")
     assert sum(isinstance(call, BeginCall) for call in port.calls) == 1
     (close,) = [call for call in port.calls if isinstance(call, WriteCall)]
     assert close.sql == POSTGRES.to_driver_sql(
@@ -977,7 +978,7 @@ def test_a_retried_temporal_close_gates_on_the_start_its_retry_read__m_temporal_
         Transact(Read(rows=[balance_row(in_z=reread)]), Write()),
     )
 
-    db_for(BALANCE, port).transact(_terminate_balance_1, retry_optimistic_conflicts=True)
+    db_for(BALANCE, port).transact(_terminate_balance_1)
     closes = [call for call in port.calls if isinstance(call, WriteCall)]
     assert {close.sql for close in closes} == {
         POSTGRES.to_driver_sql(

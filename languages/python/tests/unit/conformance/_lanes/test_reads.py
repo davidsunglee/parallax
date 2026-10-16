@@ -739,7 +739,6 @@ def _rooted(case_id: str, *, uow: dict[str, object] | None = None) -> case_forma
         "databaseOptions": {
             "maxRetries": 0,
             "concurrency": "locking",
-            "retryOptimisticConflicts": True,
             "isolation": "serializable",
         },
     }

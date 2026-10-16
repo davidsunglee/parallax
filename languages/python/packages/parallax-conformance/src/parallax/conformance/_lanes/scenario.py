@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import itertools
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any, Final, Literal, Protocol, cast
@@ -161,7 +162,6 @@ __all__ = [
     "lower_writes",
     "read_step_graph",
     "read_table_state",
-    "refuse_a_conflict_retry_opt_in",
     "run_conflict_case",
     "run_group_step",
     "run_scenario_case",
@@ -3950,62 +3950,22 @@ def _implied_shortfall_error(
     return OptimisticLockConflictError if strategy == "optimistic" else StaleWriteError
 
 
-def _conflict_attempt_requests(case: case_format.Case) -> case_format.TransactionKeywords:
-    """The options one authored conflict ATTEMPT's transaction requests: the
-    case's `concurrency` and `isolation`, and neither retry field.
+def _refuse_a_bound_short_of_the_authored_attempts(case: case_format.Case, authored: int) -> None:
+    """Refuse a conflict case whose resolved retry bound admits fewer
+    production attempts than it authors.
 
-    A conflict case's `when.attempts` IS its retry loop, authored one attempt at
-    a time and graded per attempt — `affectedRows: 0` on the stale attempt, the
-    advance on the next — so each attempt runs as one transaction of its own.
-    Forwarding an authored `retryOptimisticConflicts` would make production
-    re-execute the stale attempt inside that transaction and report the
-    advance where the case grades the shortfall; the opt-in that case authors
-    describes the loop the attempts spell out, and the boundary lane is where
-    production's own loop is driven from it. The root record a conflict case
-    configures (`given.databaseOptions`) reaches the attempt's ``connect``
-    unchanged, so a root preference or level governs the attempt exactly as an
-    authored one does — and a root that opts into conflict retry under a
-    positive bound is refused before any attempt runs
-    (:func:`refuse_a_conflict_retry_opt_in`), because the lane carries no
-    authored keyword that could stand over it.
+    The case's attempts are production's own: one ``db.transact`` call runs
+    them, and each replay the bounded retry loop makes is the next authored
+    attempt. A bound of ``N`` admits ``N + 1`` attempts, so a sequence longer
+    than that describes replays production would never make.
     """
-    authored = case_format.transaction_keywords(case)
-    requests: case_format.TransactionKeywords = {}
-    if "concurrency" in authored:
-        requests["concurrency"] = authored["concurrency"]
-    if "isolation" in authored:
-        requests["isolation"] = authored["isolation"]
-    return requests
-
-
-def refuse_a_conflict_retry_opt_in(
-    case: case_format.Case, resolved: TxnOptions, placement: str
-) -> None:
-    """Refuse a case whose transactions would resolve `retryOptimisticConflicts`
-    to true under a positive `maxRetries` on a lane that authors each attempt
-    itself.
-
-    The conflict lane's `when.attempts` and the interleaved lane's two `uow`
-    groups are the retry loop, spelled one attempt at a time and graded per
-    attempt, so each attempt must be exactly one production attempt. An opt-in
-    the transaction resolved — from ``resolved``, the record production would
-    resolve to — would make production re-run a conflicting attempt inside the
-    one transaction this lane opened for it: hidden SQL, a second observing
-    read, and an advance reported where the case grades the shortfall. A
-    retried loop is a `boundary` case's to prove; here it is refused by name
-    rather than run as work the case never described. A bound of ``0`` disables
-    re-execution (`m-auto-retry`), so an opt-in the bound makes inert is
-    admitted: production classifies the conflict retriable and still surfaces
-    it after the one attempt. ``placement`` names where the case spelled the
-    opt-in.
-    """
-    if not (resolved.retry_optimistic_conflicts and resolved.max_retries > 0):
+    bound = case_format.effective_options(case).max_retries
+    if bound + 1 >= authored:
         return
     raise EngineError(
-        f"{case.path.name}: {placement} opts into optimistic-conflict retry under a bound of "
-        f"{resolved.max_retries}, so production could re-run a conflicting attempt inside the "
-        "one transaction this lane opens for it; the attempts this shape authors are its retry "
-        "loop, and a retried loop is a `boundary` case's to prove"
+        f"{case.path.name}: the case authors {authored} attempts and its transaction resolves "
+        f"`maxRetries: {bound}`, which admits {bound + 1} — every authored attempt is one "
+        "production attempt of a single invocation (m-case-format 'Conflict cases')"
     )
 
 
@@ -4015,9 +3975,10 @@ def _conflict_attempt_affected(
     implied: type[WriteEffectError],
     body: Callable[[TxnContext], int],
 ) -> int:
-    """One conflict attempt's affected-row observation: what ``body`` reports when
-    the write lands, or the ``actual`` count carried by the ONE Write Effect Error
-    the case's own declared facts admit.
+    """The final conflict attempt's affected-row observation: what ``body``
+    reports when the write lands, or the ``actual`` count carried by the ONE
+    Write Effect Error the case's own declared facts admit, once production's
+    bound left that failure unreplayed.
 
     Every member of the family renders the same ``actual`` count, so a lane that
     caught the whole family would report an identical ``affectedRows`` observation
@@ -4145,7 +4106,7 @@ def _refuse_unobserved_conflict_version(
         )
 
 
-def _run_conflict_write(
+def _run_conflict_attempts(
     port: CaseDatabase,
     serving: ServingModel,
     model: AcceptedMetamodel,
@@ -4153,18 +4114,21 @@ def _run_conflict_write(
     target: str,
     concurrency: Concurrency,
     requests: case_format.TransactionKeywords,
-    write_rows: Sequence[Mapping[str, object]],
+    attempts: Sequence[Sequence[Mapping[str, object]]],
     mutation: Literal["amend", "delete"],
     interfere: Callable[[], None],
     lifecycle: LifecycleRun,
-) -> tuple[tuple[LoweredStatement, ...], int, int]:
-    """Execute one NON-TEMPORAL conflict attempt through ``db.transact`` — ONE
-    transaction over a root connected with ``options``, an inert Clock (never
-    consumed by a non-temporal write), and exactly the options the attempt
-    requests (``requests``); ``concurrency`` is the planning value the implied
-    shortfall is classified under.
+) -> tuple[tuple[tuple[LoweredStatement, ...], ...], int, int]:
+    """Execute a NON-TEMPORAL conflict case's attempts through ONE ``db.transact``
+    call — over a root connected with ``options``, an inert Clock (never
+    consumed by a non-temporal write), and exactly the options the case requests
+    (``requests``) — whose physical attempts are the authored ones, in order:
+    each replay production's bounded retry loop makes runs the next authored
+    attempt. ``attempts`` holds each authored attempt's ``write`` rows;
+    ``concurrency`` is the planning value the implied shortfall is classified
+    under.
 
-    Inside that transaction the attempt reads its sources
+    Inside each attempt the callback reads its sources
     (:func:`_conflict_source_nodes`), lets ``interfere`` commit whatever
     concurrent writer the case stages between that read and the write it
     invalidates, and then writes every row through the PUBLIC keyed Wire verb its
@@ -4174,19 +4138,27 @@ def _run_conflict_write(
     statements they become. The PRODUCTION flush executor's OWN affected-row
     enforcer raises on a violation, and this lane admits only the class the
     case's own declared facts imply (:func:`_implied_shortfall_error`),
-    rendering it as the ``affectedRows`` observation the case asserts. A failure
-    classified any other way — a gated shortfall surfacing as a stale write, or
-    the reverse — propagates and fails the case.
+    rendering it as the final ``affectedRows`` observation the case asserts. A
+    failure classified any other way — a gated shortfall surfacing as a stale
+    write, or the reverse — propagates and fails the case.
 
-    The reported golden-comparable emission is the DML the lifecycle delivered,
-    each statement in the canonical Lowered Statement form its Database Call
-    borrowed, whose metadata projects native execution carriers into one
-    canonical Wire observation.
+    Production deciding on a different number of attempts than the case
+    authors fails the case: a replay past the last authored attempt is refused
+    inside the callback, and an invocation that ended early is refused once it
+    returns.
+
+    Answers each attempt's DML as the lifecycle delivered it, each statement in
+    the canonical Lowered Statement form its Database Call borrowed, whose
+    metadata projects native execution carriers into one canonical Wire
+    observation; the final affected-row count; and the round trips.
     """
-    resolved = _resolve_conflict_writes(model, target, mutation, write_rows)
+    resolved_attempts = [
+        _resolve_conflict_writes(model, target, mutation, rows) for rows in attempts
+    ]
     _refuse_a_locking_conflict_target(model, target, concurrency)
     instant = normalize_instant(dt.datetime.fromisoformat(INERT_CLOCK_INSTANT))
     observed = lifecycle.observation()
+    starts: list[int] = []
     with Database.connect(
         port,
         serving,
@@ -4195,9 +4167,17 @@ def _run_conflict_write(
         lifecycle_provider=observed.provider,
     ) as _root_database:
         database = _root_database.using_database_login()
-        landed = _landed_conflict_rows(resolved)
 
         def body(tx: TxnContext) -> int:
+            if len(starts) == len(resolved_attempts):
+                raise EngineError(
+                    f"{target!r}: production replayed the conflict case's last authored attempt "
+                    f"again — attempt {len(starts) + 1} of a case authoring "
+                    f"{len(resolved_attempts)}; a case whose final attempt fails states the "
+                    "bound that leaves it unreplayed (m-case-format 'Conflict cases')"
+                )
+            starts.append(observed.round_trips)
+            resolved = resolved_attempts[len(starts) - 1]
             nodes = _conflict_source_nodes(tx, model, target, resolved, observed)
             sources = [_conflict_source_node(target, write, nodes) for write in resolved]
             for write, node in zip(resolved, sources, strict=True):
@@ -4208,12 +4188,23 @@ def _run_conflict_write(
                     tx.wire.delete(node)
                 else:
                     tx.wire.amend(node, _conflict_changes(model, write))
-            return landed  # the expectation machinery already verified this on success
+            return _landed_conflict_rows(resolved)  # the expectation machinery verified it
 
         observation_requiring = _versioned_non_temporal_version_attribute(model, target) is not None
         implied = _implied_shortfall_error(observation_requiring, concurrency, model, target)
         affected = _conflict_attempt_affected(database, requests, implied, body)
-        return observed.writes, affected, observed.round_trips
+    if len(starts) != len(resolved_attempts):
+        raise EngineError(
+            f"{target!r}: production ended the conflict case's invocation after {len(starts)} "
+            f"attempt(s), and the case authors {len(resolved_attempts)} (m-case-format "
+            "'Conflict cases')"
+        )
+    calls = observed.calls
+    writes = tuple(
+        tuple(call.statement for call in calls[start:end] if call.kind == "write")
+        for start, end in itertools.pairwise([*starts, len(calls)])
+    )
+    return writes, affected, len(calls)
 
 
 def _refuse_a_locking_conflict_target(
@@ -4291,38 +4282,35 @@ def run_conflict_case(
     lifecycle: LifecycleRun | None = None,
 ) -> tuple[list[Emission], int, dict[str, list[MappingRow]] | None, int]:
     """Run a `conflict` case (`m-opt-lock`): the single-attempt form
-    (`when.write`), or the `when.attempts` retry sequence — each attempt its OWN
-    `db.transact` unit, in order, each with its own statements / affected-row
-    count (the case's own `0`-then-`1` retry-contract witness). The keyed UPDATE
-    or DELETE `when.mutation` names writes every row of its `write` — one row, or
-    the multi-key array whose rows the batching rule may collapse into a single
+    (`when.write`), or the `when.attempts` sequence production's own bounded
+    retry loop replays — every attempt one physical attempt of ONE
+    `db.transact` invocation, in order, each with its own statements (the
+    case's own `0`-then-`1` retry-contract witness). The keyed UPDATE or DELETE
+    `when.mutation` names writes every row of its `write` — one row, or the
+    multi-key array whose rows the batching rule may collapse into a single
     set-based statement — through the public keyed Wire verb. A temporal target
     is refused: the conflict shape is non-temporal (`m-case-format`).
 
     Loads no fixtures itself (the caller's own lifecycle does, per
     `m-case-format`'s conflict-shape default). Each attempt reads its source
-    inside its own transaction, and `given.apply`'s concurrent writer commits
-    BETWEEN the FIRST attempt's source read and the write that read licenses
+    inside itself, and `given.apply`'s concurrent writer commits BETWEEN the
+    FIRST attempt's source read and the write that read licenses
     (:func:`~parallax.conformance._mechanism.given_state.apply_given_apply`),
     which is the ordering a conflict case describes: the state its write settles
     against is one a real read of that attempt observed, and the writer that
-    invalidated it committed afterwards. A retry attempt reads again, after the
-    attempt before it ran, so it observes the state that writer left.
+    invalidated it committed afterwards. A replay reads again, after the attempt
+    before it rolled back, so it observes the state that writer left.
 
-    Returns the ordered emissions, the FINAL (single-attempt or last-retry)
-    affected-row count — the schema's one `affectedRows` slot,
-    `m-conformance-adapter` — and the resulting table state when the case
-    authors `then.tableState`.
+    Returns the ordered emissions, the FINAL attempt's affected-row count — the
+    schema's one `affectedRows` slot, `m-conformance-adapter` — the resulting
+    table state when the case authors `then.tableState`, and the round trips.
     """
     serving = case_serving_model(case)
     model = models.accepted_model_of(serving.current().model)
     lifecycle = lifecycle_run(lifecycle)
     when = case_document.when(case)
     concurrency = case_document.concurrency(case)
-    options = case_format.database_options(case)
-    refuse_a_conflict_retry_opt_in(case, options, "`given.databaseOptions`")
     _refuse_a_snapshot_level_under_a_staged_writer(case)
-    requests = _conflict_attempt_requests(case)
     target = first_declared_entity(case)
     if _is_temporal_entity(model, target):
         raise EngineError(
@@ -4330,49 +4318,47 @@ def run_conflict_case(
             "non-temporal Entity — a temporal write's race is an interleaved scenario "
             "(m-case-format 'Conflict cases')"
         )
-    mutation = _conflict_mutation(when)
-    emissions: list[Emission] = []
-    affected = 0
-    round_trips = 0
+    raw_attempts = when.get("attempts")
+    attempts: list[tuple[str, Mapping[str, object]]] = (
+        [
+            (f"/when/attempts/{index}/write", attempt)
+            for index, attempt in enumerate(cast("list[Mapping[str, object]]", raw_attempts))
+        ]
+        if isinstance(raw_attempts, list)
+        else [("/when/write", when)]
+    )
+    _refuse_a_bound_short_of_the_authored_attempts(case, len(attempts))
     interfered = False
 
     def interfere() -> None:
         # The concurrent writer commits once, between the FIRST attempt's source
-        # read and its write; a later attempt — and any replay of the first —
-        # reads the state that writer left.
+        # read and its write; every replay reads the state that writer left.
         nonlocal interfered
         if not interfered:
             interfered = True
             apply_given_apply(case, port, None)
 
     try:
-        raw_attempts = when.get("attempts")
-        attempts: list[tuple[str, Mapping[str, object]]] = (
-            [
-                (f"/when/attempts/{index}/write", attempt)
-                for index, attempt in enumerate(cast("list[Mapping[str, object]]", raw_attempts))
-            ]
-            if isinstance(raw_attempts, list)
-            else [("/when/write", when)]
+        writes, affected, round_trips = _run_conflict_attempts(
+            port,
+            serving,
+            model,
+            case_format.database_options(case),
+            target,
+            concurrency,
+            case_format.transaction_keywords(case),
+            [_conflict_write_rows(attempt) for _pointer, attempt in attempts],
+            _conflict_mutation(when),
+            interfere,
+            lifecycle,
         )
-        for pointer, attempt in attempts:
-            statements, affected, attempt_trips = _run_conflict_write(
-                port,
-                serving,
-                model,
-                options,
-                target,
-                concurrency,
-                requests,
-                _conflict_write_rows(attempt),
-                mutation,
-                interfere,
-                lifecycle,
-            )
-            emissions.extend(Emission(pointer, statement) for statement in statements)
-            round_trips += attempt_trips
     except LOWERING_ERRORS as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
+    emissions = [
+        Emission(pointer, statement)
+        for (pointer, _attempt), statements in zip(attempts, writes, strict=True)
+        for statement in statements
+    ]
     then = case.document.get("then")
     table_state = (
         read_table_state(port, model)

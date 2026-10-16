@@ -64,10 +64,12 @@ def _row(key: int, start: dt.datetime, end: object, value: str) -> MappingRow:
     }
 
 
-def _transact(port: ScriptedAdapter, *, concurrency: Concurrency, fn: Any) -> None:
+def _transact(
+    port: ScriptedAdapter, *, concurrency: Concurrency, fn: Any, max_retries: int = 10
+) -> None:
     own_root(
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(_FIXED))
-    ).using_database_login().transact(fn, concurrency=concurrency)
+    ).using_database_login().transact(fn, concurrency=concurrency, max_retries=max_retries)
 
 
 def _amend(tx: TxnContext, *, to: str = "150.00") -> None:
@@ -224,7 +226,7 @@ def test_a_shortfall_in_one_batch_prepares_no_later_batch(monkeypatch: pytest.Mo
         )
     )
     with raises_contextualized(OptimisticLockConflictError):
-        _transact(port, concurrency="optimistic", fn=_amend)
+        _transact(port, concurrency="optimistic", fn=_amend, max_retries=0)
     assert _kinds(port) == ["read", "read", "update", "RollbackCall"]
 
 

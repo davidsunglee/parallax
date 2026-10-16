@@ -138,9 +138,7 @@ def _unobserved_transaction(sample: Callable[[], None]) -> None:
             access_mode="read_write",
             concurrency="optimistic",
             retries=10,
-            retry_optimistic_conflicts=False,
             isolation=None,
-            extra_retriable=None,
         ) as invocation,
         invocation.attempt("edition") as attempt,
     ):

@@ -249,7 +249,7 @@ def test_the_flush_reads_later_coverage_a_peer_committed_after_the_call(
     ]
 
 
-def _peer_changes_the_start(profile_run: Any, entity: type[Any], *, retry: bool) -> int:
+def _peer_changes_the_start(profile_run: Any, entity: type[Any], *, max_retries: int) -> int:
     """Amend through an attempt whose first try sees a peer relabel the
     selected start before the flush, answering how many attempts ran."""
     peer = _db(profile_run, _TP)
@@ -262,7 +262,7 @@ def _peer_changes_the_start(profile_run: Any, entity: type[Any], *, retry: bool)
         if attempts == 1:
             _relabel(peer, entity, _FEB, _APR, "p")
 
-    _db(profile_run, _TA, _TB).transact(fn, retry_optimistic_conflicts=retry)
+    _db(profile_run, _TA, _TB).transact(fn, max_retries=max_retries)
     return attempts
 
 
@@ -272,14 +272,14 @@ def test_a_peers_change_of_the_selected_start_is_the_attempts_conflict(
 ) -> None:
     # The selection observed March's rectangle at T0; a peer replaces it
     # before the flush, so the starting gate falls short as an ordinary
-    # conflict, which an opted-in retry reselects past.
+    # conflict, which the replay reselects past.
     _seed(profile_run, entity)
     with pytest.raises(ExecutionFailure) as failed:
-        _peer_changes_the_start(profile_run, entity, retry=False)
+        _peer_changes_the_start(profile_run, entity, max_retries=0)
     assert isinstance(failed.value.cause, OptimisticLockConflictError)
 
     _seed(profile_run, entity)
-    assert _peer_changes_the_start(profile_run, entity, retry=True) == 2
+    assert _peer_changes_the_start(profile_run, entity, max_retries=10) == 2
     assert [row for row in _rows(profile_run, entity) if row[2] is None] == [
         (1, _TP, None, _JAN, _FEB, 100, "a"),
         (1, _TB, None, _FEB, _MAR, 100, "p"),
@@ -309,7 +309,8 @@ def test_a_locking_selection_locks_its_start_at_the_call_and_later_rows_at_the_f
     def change_the_start() -> None:
         try:
             start_peer.transact(
-                lambda other: other.amend(_find(other, entity, _FEB).edit(label="p"), until=_APR)
+                lambda other: other.amend(_find(other, entity, _FEB).edit(label="p"), until=_APR),
+                max_retries=0,
             )
         except BaseException as failure:
             failures.append(failure)

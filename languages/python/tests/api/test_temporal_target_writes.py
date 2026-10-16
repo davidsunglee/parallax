@@ -397,7 +397,6 @@ def test_an_equal_replacement_of_a_stale_milestone_still_fails_its_precondition(
             lambda tx: _equal_replacement(
                 tx, entity, representation, valid_from=_FEB, until=_APR, tx_start=_T1
             ),
-            retry_optimistic_conflicts=True,
         )
     assert isinstance(failed.value.cause, WritePreconditionError)
     assert _span_rows(profile_run, entity) == _SEED_CURRENT
@@ -468,7 +467,7 @@ def test_a_target_whose_start_does_not_stand_at_its_callers_milestone_changes_no
         _span_replace(tx, entity, "wire", **stated)
 
     with pytest.raises(ExecutionFailure) as failed:
-        db.transact(stale, concurrency=concurrency, retry_optimistic_conflicts=True)
+        db.transact(stale, concurrency=concurrency)
     assert isinstance(failed.value.cause, WritePreconditionError)
     assert failed.value.cause.expected == stated.get("tx_start", _T0)
     assert attempts == 1
@@ -915,13 +914,13 @@ def test_a_row_another_session_revises_after_the_flush_read_it_fails_by_whose_it
     if lost != "later":
         peer_rows = _PEER_ROWS[lost]
         with pytest.raises(ExecutionFailure) as failed:
-            ours.transact(fn, retry_optimistic_conflicts=True)
+            ours.transact(fn)
         assert isinstance(failed.value.cause, WritePreconditionError)
         assert (attempts, interleaving.failures) == (1, [])
         # Only the peer's change stands: the attempt's effects rolled back.
         assert [row[:6] for row in _span_rows(profile_run, entity)] == peer_rows
         return
-    ours.transact(fn, retry_optimistic_conflicts=True)
+    ours.transact(fn)
     assert (attempts, interleaving.failures) == (2, [])
     # The retry stated the same milestone for the untouched start and binds
     # the peer's later rows, each keeping its own label.
@@ -995,7 +994,7 @@ def test_a_later_row_lost_after_the_flush_read_rolls_back_without_retries(
         )
     ).using_database_login()
     with pytest.raises(ExecutionFailure) as failed:
-        ours.transact(lambda tx: _span_patch(tx, entity, amount=150))
+        ours.transact(lambda tx: _span_patch(tx, entity, amount=150), max_retries=0)
     assert isinstance(failed.value.cause, OptimisticLockConflictError)
     assert [row[:2] for row in _span_rows(profile_run, entity)][:2] == [(_T0, None), (_T1, _TP)]
 
@@ -1012,7 +1011,8 @@ def test_a_locking_target_holds_its_start_until_commit_against_another_session(
     def peer() -> None:
         try:
             peer_db.transact(
-                lambda tx: tx.amend(_span_find(tx, entity, _FEB).edit(label="peer"), until=_APR)
+                lambda tx: tx.amend(_span_find(tx, entity, _FEB).edit(label="peer"), until=_APR),
+                max_retries=0,
             )
         except BaseException as failure:
             peer_failures.append(failure)
@@ -1141,7 +1141,7 @@ def test_a_source_replacement_whose_evidence_fails_opens_nothing(
         tx.replace(found.edit(amount=300), until=_SEP)
 
     with pytest.raises(ExecutionFailure) as failed:
-        db.transact(fn)
+        db.transact(fn, max_retries=0)
     assert isinstance(failed.value.cause, OptimisticLockConflictError)
     rows = _span_rows(profile_run, entity)
     assert all(row[4] != 300 for row in rows)

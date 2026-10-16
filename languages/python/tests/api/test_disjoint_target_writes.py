@@ -354,7 +354,7 @@ def test_a_disjoint_target_stating_another_rectangles_start_changes_nothing(
         )
 
     with pytest.raises(ExecutionFailure) as failed:
-        db.transact(fn, concurrency=concurrency, retry_optimistic_conflicts=True)
+        db.transact(fn, concurrency=concurrency)
     assert isinstance(failed.value.cause, WritePreconditionError)
     assert attempts == 1
     assert _rows(profile_run, entity) == before
@@ -660,7 +660,7 @@ def test_a_shared_original_revised_after_the_flush_read_fails_at_its_one_guard(
         )
 
     with pytest.raises(ExecutionFailure) as failed:
-        ours.transact(fn, retry_optimistic_conflicts=True)
+        ours.transact(fn)
     # Both callers stated the original the peer replaced; the guard on it is
     # the first start's, so the failure is that caller's and is not retried.
     assert isinstance(failed.value.cause, WritePreconditionError)
@@ -705,7 +705,6 @@ def test_a_lost_second_start_is_its_callers_and_a_lost_observed_original_retries
                     tx_start=_T1,
                 ),
             ),
-            retry_optimistic_conflicts=True,
         )
     assert isinstance(failed.value.cause, WritePreconditionError)
     assert failed.value.cause.expected == _T1
@@ -734,7 +733,7 @@ def test_a_lost_second_start_is_its_callers_and_a_lost_observed_original_retries
         )
         tx.amend(source.edit(label="o"), until=_OCT)
 
-    retried.transact(fn, retry_optimistic_conflicts=True)
+    retried.transact(fn)
     assert (attempts, interleaving.failures) == (2, [])
     current = sorted((row for row in _rows(profile_run, entity) if row[1] is None), key=_start)
     assert [row[2:6] for row in current] == [
@@ -771,7 +770,7 @@ def test_a_disjoint_observed_original_lost_without_retries_rolls_every_effect_ba
         tx.amend(source.edit(label="o"), until=_OCT)
 
     with pytest.raises(ExecutionFailure) as failed:
-        ours.transact(fn)
+        ours.transact(fn, max_retries=0)
     assert isinstance(failed.value.cause, OptimisticLockConflictError)
     assert [row[:2] for row in _rows(profile_run, entity)][:2] == [(_T0, None), (_T1, _TP)]
 

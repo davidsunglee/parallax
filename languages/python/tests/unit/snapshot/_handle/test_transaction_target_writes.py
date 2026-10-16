@@ -412,9 +412,7 @@ def test_a_failed_precondition_is_never_retried_even_with_conflict_retries_on() 
     port = ScriptedAdapter(Transact(Write(affected=0)), Transact(Write()))
 
     with raises_contextualized(WritePreconditionError, match="expected revision 3"):
-        account_db(port).transact(
-            lambda tx: _patch(tx, balance="150.00"), retry_optimistic_conflicts=True
-        )
+        account_db(port).transact(lambda tx: _patch(tx, balance="150.00"))
     assert sum(isinstance(call, WriteCall) for call in port.calls) == 1
     assert RollbackCall() in port.calls
 
@@ -445,7 +443,7 @@ def test_a_retried_attempt_states_the_same_callers_revision() -> None:
         _patch(tx, balance="150.00")
         tx.amend(source.edit(owner="Bo"))
 
-    account_db(port).transact(fn, retry_optimistic_conflicts=True)
+    account_db(port).transact(fn)
     targets = [
         call for call in port.calls if isinstance(call, WriteCall) and call.sql == _GATED_BALANCE
     ]
@@ -535,7 +533,7 @@ def test_a_composed_write_whose_gate_fails_reports_the_callers_precondition() ->
         _patch(tx, balance="150.00")
 
     with raises_contextualized(WritePreconditionError):
-        account_db(port).transact(fn, retry_optimistic_conflicts=True)
+        account_db(port).transact(fn)
 
 
 @pytest.mark.parametrize(

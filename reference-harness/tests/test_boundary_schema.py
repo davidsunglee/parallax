@@ -184,13 +184,12 @@ def test_schema_rejects_zero_round_trips_where_one_dialect_opened_its_boundary()
     )
 
 
-# --- root configuration and the four-field join (m-case-format *Root configuration*)
+# --- root configuration and the three-field join (m-case-format *Root configuration*)
 
-_OPTION_FIELDS = ("maxRetries", "concurrency", "retryOptimisticConflicts", "isolation")
+_OPTION_FIELDS = ("maxRetries", "concurrency", "isolation")
 _A_VALUE = {
     "maxRetries": 2,
     "concurrency": "locking",
-    "retryOptimisticConflicts": True,
     "isolation": "serializable",
 }
 
@@ -215,16 +214,17 @@ def test_schema_accepts_a_root_on_a_read_case() -> None:
     assert list(_case_validator().iter_errors(case)) == []
 
 
-def test_schema_rejects_a_null_root_field_and_the_retired_retries_key() -> None:
+def test_schema_rejects_a_null_root_field_and_the_retired_keys() -> None:
     for field in _OPTION_FIELDS:
         case = _valid_boundary_case()
         case["given"] = {"databaseOptions": {field: None}}
         assert list(_case_validator().iter_errors(case)), field
-    retired = _valid_boundary_case()
-    retired["given"] = {"databaseOptions": {"retries": 2}}
-    assert list(_case_validator().iter_errors(retired)), (
-        "Schema should reject the retired `retries` key on the root; the spelling is `maxRetries`"
-    )
+    for retired_key, value in (("retries", 2), ("retryOptimisticConflicts", True)):
+        retired = _valid_boundary_case()
+        retired["given"] = {"databaseOptions": {retired_key: value}}
+        assert list(_case_validator().iter_errors(retired)), (
+            f"Schema should reject the retired `{retired_key}` key on the root"
+        )
 
 
 def test_schema_rejects_a_root_field_outside_its_type_bound_or_vocabulary() -> None:
@@ -232,7 +232,6 @@ def test_schema_rejects_a_root_field_outside_its_type_bound_or_vocabulary() -> N
         ("maxRetries", -1),
         ("maxRetries", "2"),
         ("concurrency", "pessimistic"),
-        ("retryOptimisticConflicts", "yes"),
         ("isolation", "read-uncommitted"),
     ):
         case = _valid_boundary_case()
