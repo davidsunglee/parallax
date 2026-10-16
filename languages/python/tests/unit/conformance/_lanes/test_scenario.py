@@ -3858,6 +3858,41 @@ def test_a_conflict_case_whose_root_opt_in_is_bounded_at_zero_runs_its_attempt()
     assert len(port.writes) == 1
 
 
+@pytest.mark.parametrize(
+    ("uow", "root", "level"),
+    [
+        ({"concurrency": "optimistic", "isolation": "repeatable-read"}, {}, "repeatable-read"),
+        ({"concurrency": "optimistic"}, {"isolation": "serializable"}, "serializable"),
+    ],
+    ids=["requested", "root"],
+)
+def test_a_staged_writer_under_a_snapshot_level_is_refused_before_any_read(
+    uow: dict[str, object], root: dict[str, object], level: str
+) -> None:
+    # Above Read Committed the attempt's source read fixes its snapshot, so the
+    # `given.apply` writer committing after it turns the write into a
+    # serialization failure, never the zero-row shortfall the case grades.
+    case = _rooted(_load_case("m-opt-lock-005"), uow=uow, root=root)
+    port = FakeWritePort(find_rows=[_ACCOUNT_ROW_2])
+    with pytest.raises(EngineError, match=f"at `{level}` that read fixes the snapshot"):
+        scenario.run_conflict_case(case, port)
+    assert port.levels == []
+    assert port.reads == []
+    assert port.writes == []
+
+
+def test_a_staged_writer_runs_at_a_requested_read_committed_over_a_snapshot_root() -> None:
+    case = _rooted(
+        _load_case("m-opt-lock-005"),
+        uow={"concurrency": "optimistic", "isolation": "read-committed"},
+        root={"isolation": "serializable"},
+    )
+    port = FakeWritePort(find_rows=[_ACCOUNT_ROW_2])
+    scenario.run_conflict_case(case, port)
+    assert port.levels == ["read_committed"]
+    assert len(port.writes) == 2
+
+
 _PERSON_META = model_of(PERSON)
 
 

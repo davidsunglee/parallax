@@ -1302,6 +1302,15 @@ write, and the never-retriable missing target an unversioned target earns — is
 language-internal claim about the planner, the affected-row enforcer, and the
 retry loop rather than a corpus observable.
 
+That ordering also needs **Read Committed**. Above it, the read fixes the
+attempt's snapshot, so the write meets the row the writer changed as a
+serialization failure — or, where the read takes a shared lock, the writer
+cannot commit at all — rather than leaving the zero-row shortfall `then.affectedRows` grades (`m-db-port` *Adapter
+profile*). A case that stages `given.apply` therefore resolves its attempts to
+`read-committed`, and one whose `when.uow` or `given.databaseOptions` resolves
+a stronger level is refused before any read. That race is a two-session case's
+to witness.
+
 The written verb is **`when.mutation`** — `amend` (the default) or `delete`.
 The verb does not decide whether the golden carries a gate: `when.uow.concurrency`
 does, uniformly across update and delete (`m-opt-lock`).
