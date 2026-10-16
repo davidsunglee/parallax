@@ -88,7 +88,7 @@ digests a capture actually ran.
 | File | SHA-256 |
 |---|---|
 | `scripts/_support.py` | `c41ef7b63439739b1f659a2e8d9ce3930f13310832726689e159360b12ea0605` |
-| `scripts/capture.py` | `592906c0b6f05ba59ec07e13b0642ebdb0ca4495c7760d1a1cf1f65fcac9535f` |
+| `scripts/capture.py` | `9645d95e76e0b882d702c04111fc32df91f97ce453a4404040585c65b1e644bd` |
 | `scripts/contention.py` | `e14f457f71e7e276fdc77ded16c8b9d9f0563939c6d67f688b0fb5e3c9ad7baa` |
 | `scripts/end_to_end_writes.py` | `015d7dc667a50fad1b6f63059755ee9ec82e0413352dd178684cced2b22f8963` |
 | `scripts/guard_wal.py` | `3eaed87f4999e964e1d984983134ad30942bb0f2033a22ba08d203cadefe0d79` |
