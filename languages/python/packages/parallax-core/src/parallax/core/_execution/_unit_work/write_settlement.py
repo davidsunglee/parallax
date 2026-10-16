@@ -365,9 +365,8 @@ class WritePlanCompiler:
         a barrier kept before it advance the row past the state that scope
         names.
 
-        A write spending one retained observation, or several twinned
-        observations of one state, changes that state wherever its steps
-        change the row it observed."""
+        A write spending a retained observation changes that state wherever
+        its steps change the row it observed."""
         if isinstance(item, ReadlessPredicateWrite):
             return (
                 BoundRange(steps=eager_writes((_readless_step(item.instruction, audit),))),
@@ -380,7 +379,7 @@ class WritePlanCompiler:
         source: ObjectStateKey | None = None
         if isinstance(item, ObservedKeyedWrite):
             instruction, observation = item.instruction, item.observation
-            claim = _observed_claim(item)
+            claim = item.claim
             source = None if item.claim is None else item.claim.key
         elif isinstance(item, TargetKeyedWrite | InsertionKeyedWrite):
             instruction = item.instruction
@@ -923,15 +922,6 @@ def _unobserved_close(entity: EntityMetadata, mutation: str) -> WritePlanningErr
         "current milestone, and every close requires the Temporal Observation it "
         "addresses, gates on, and carries state forward from (m-unit-work; m-opt-lock)"
     )
-
-
-def _observed_claim(item: ObservedKeyedWrite) -> SourceAuthority | None:
-    """What an observed keyed write's unit spends: its claim, together with
-    every twinned observation of the same state."""
-    if not item.twins:
-        return item.claim
-    assert item.claim is not None  # twins meet only at their claim's own scope
-    return CombinedSourceAuthority((item.claim, *item.twins))
 
 
 def _target_claim(item: TargetKeyedWrite) -> SourceAuthority | None:

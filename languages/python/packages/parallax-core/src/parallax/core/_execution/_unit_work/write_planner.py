@@ -1264,9 +1264,9 @@ def _evidenced(first: _Claimed, second: _Claimed, instruction: PreparedKeyedWrit
     met whatever the survivor writes, and the survivor then spends every
     retained observation either write was admitted through. A read's evidence
     outranks an insertion's authority because the survivor still has to spend
-    it, and the two settle against the same state. Where both were read, the
-    survivor also spends every distinct retained observation the other was
-    admitted through.
+    it, and the two settle against the same state. Where both were read, both
+    were admitted through the one live observation their attempt holds for that
+    state (`UnitOfWork.retain`), so the survivor's claim is the other's too.
     """
     target = (
         first
@@ -1282,21 +1282,15 @@ def _evidenced(first: _Claimed, second: _Claimed, instruction: PreparedKeyedWrit
                 if all(claim is not held for held in claims):
                     claims = (*claims, claim)
         return replace(target, instruction=instruction, claims=claims)
-    carrier, other = (second, first) if isinstance(first, InsertionKeyedWrite) else (first, second)
-    if not isinstance(carrier, ObservedKeyedWrite) or not isinstance(other, ObservedKeyedWrite):
-        return replace(carrier, instruction=instruction)
-    twins = carrier.twins
-    for claim in (other.claim, *other.twins):
-        if claim is not None and claim is not carrier.claim and all(claim is not t for t in twins):
-            twins = (*twins, claim)
-    return replace(carrier, instruction=instruction, twins=twins)
+    carrier = second if isinstance(first, InsertionKeyedWrite) else first
+    return replace(carrier, instruction=instruction)
 
 
 def _retained_claims(write: _Claimed) -> tuple[RetainedObservation, ...]:
     if isinstance(write, TargetKeyedWrite):
         return write.claims
     if isinstance(write, ObservedKeyedWrite) and write.claim is not None:
-        return (write.claim, *write.twins)
+        return (write.claim,)
     return ()
 
 

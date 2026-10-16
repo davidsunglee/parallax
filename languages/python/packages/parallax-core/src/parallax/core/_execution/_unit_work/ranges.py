@@ -106,13 +106,10 @@ class _Original:
 def range_claims(item: ComposedTemporalWrite | TemporalKeyedWrite) -> SourceAuthority | None:
     """The distinct retained observations a range's unit spends, each once."""
     if isinstance(item, ObservedKeyedWrite):
-        if not item.twins:
-            return item.claim
-        claims: Iterable[RetainedObservation | None] = (item.claim, *item.twins)
-    elif isinstance(item, ComposedTemporalWrite):
-        claims = (contribution.claim for contribution in item.contributions)
-    else:
+        return item.claim
+    if not isinstance(item, ComposedTemporalWrite):
         return None
+    claims = (contribution.claim for contribution in item.contributions)
     distinct: list[RetainedObservation] = []
     for claim in claims:
         if claim is not None and all(claim is not held for held in distinct):
