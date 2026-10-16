@@ -57,28 +57,9 @@
             }
           ]
         ],
-        "statementsPerInvocation": [
-          2,
-          2,
-          2,
-          2,
-          2,
-          2,
-          2,
-          2,
-          2,
-          2,
-          2,
-          2,
-          2,
-          2,
-          2,
-          2,
-          2,
-          2,
-          2,
-          2
-        ]
+        "statementsPerInvocation": {
+          "2": 20
+        }
       },
       "target": "account",
       "workflow": "keyed"
@@ -109,28 +90,9 @@
             }
           ]
         ],
-        "statementsPerInvocation": [
-          1,
-          1,
-          1,
-          1,
-          1,
-          1,
-          1,
-          1,
-          1,
-          1,
-          1,
-          1,
-          1,
-          1,
-          1,
-          1,
-          1,
-          1,
-          1,
-          1
-        ]
+        "statementsPerInvocation": {
+          "1": 20
+        }
       },
       "target": "account",
       "workflow": "conditional"
@@ -165,28 +127,9 @@
             }
           ]
         ],
-        "statementsPerInvocation": [
-          2,
-          2,
-          2,
-          2,
-          2,
-          2,
-          2,
-          2,
-          2,
-          2,
-          2,
-          2,
-          2,
-          2,
-          2,
-          2,
-          2,
-          2,
-          2,
-          2
-        ]
+        "statementsPerInvocation": {
+          "2": 20
+        }
       },
       "target": "account",
       "workflow": "predicate"
@@ -225,28 +168,9 @@
             }
           ]
         ],
-        "statementsPerInvocation": [
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3
-        ]
+        "statementsPerInvocation": {
+          "3": 20
+        }
       },
       "target": "balance",
       "workflow": "keyed"
@@ -285,28 +209,9 @@
             }
           ]
         ],
-        "statementsPerInvocation": [
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3
-        ]
+        "statementsPerInvocation": {
+          "3": 20
+        }
       },
       "target": "balance",
       "workflow": "conditional"
@@ -345,28 +250,9 @@
             }
           ]
         ],
-        "statementsPerInvocation": [
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3
-        ]
+        "statementsPerInvocation": {
+          "3": 20
+        }
       },
       "target": "balance",
       "workflow": "predicate"
@@ -405,28 +291,9 @@
             }
           ]
         ],
-        "statementsPerInvocation": [
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3
-        ]
+        "statementsPerInvocation": {
+          "3": 20
+        }
       },
       "target": "position",
       "workflow": "keyed"
@@ -465,28 +332,9 @@
             }
           ]
         ],
-        "statementsPerInvocation": [
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3
-        ]
+        "statementsPerInvocation": {
+          "3": 20
+        }
       },
       "target": "position",
       "workflow": "conditional"
@@ -525,28 +373,9 @@
             }
           ]
         ],
-        "statementsPerInvocation": [
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3,
-          3
-        ]
+        "statementsPerInvocation": {
+          "3": 20
+        }
       },
       "target": "position",
       "workflow": "predicate"

@@ -96,7 +96,7 @@ digests a capture actually ran.
 | File | SHA-256 |
 |---|---|
 | `scripts/_support.py` | `d0594ab2e6aea9d118a0946cea2daab2c8be2d5fe2595aff1fad880ed58af64f` |
-| `scripts/capture.py` | `a0aa4b22e012995c9d9f51ecb716f668876aac0190018bc0954a3366888d2c0d` |
+| `scripts/capture.py` | `3668bb53335733f67d69111be4343b77d979a65bea20892403ad014a6dc13eb1` |
 | `scripts/contention.py` | `0a9f496e13cb337b573804aa1a9b2a190c2c26fa2c67e17ff5d79c4e9767cad8` |
 | `scripts/end_to_end_writes.py` | `015d7dc667a50fad1b6f63059755ee9ec82e0413352dd178684cced2b22f8963` |
 | `scripts/guard_wal.py` | `243345275cba7a3a92ec9ea43b2f359d0e1804072be8877bb8cbdcaddd1665ae` |
@@ -157,6 +157,11 @@ duration and window. `contention.py` and `guard_wal.py` take `--environments`,
 and `capture.py` passes it for C7 alone. Without it every driver runs the
 workload it ran before.
 
+Reducing end-to-end statement counts re-froze `capture.py` after C7; no driver
+changed. An end-to-end cell's statements per invocation is retained as the
+number of invocations that sent each count, rather than one count per
+invocation, and C0, C2, and C6's retained reports were reduced again in place.
+
 ## Checkpoints
 
 `capture.py` owns each checkpoint's drivers. Each checkpoint runs both of its
@@ -181,13 +186,13 @@ size. Each checkpoint's retained JSON stays within 1 MiB.
 
 | Id | Arms captured | Raw JSON, archived | Retained |
 |---|---|---|---|
-| C0 | `7b465769` at RC and at RR | 3.6 MB | 85 KB |
+| C0 | `7b465769` at RC and at RR | 3.6 MB | 81 KB |
 | C1 | `3850203e9` at RC and at RR; each arm reports its writable, read-only, and standalone streams | 0.2 MB | 19 KB |
-| C2 | `3850203e9` and `44e78b3e2`, at RC | 0.4 MB | 32 KB |
+| C2 | `3850203e9` and `44e78b3e2`, at RC | 0.4 MB | 28 KB |
 | C3 | `563e54eae` and `ef923969b`, at RC | 2.6 MB | 35 KB |
 | C4 | `ef923969b` and `e3785f21a`, at RC; `e3785f21a`'s `auto_retry` is the backoff's landing commit `95844b0c2`'s, unchanged | 6.6 MB | 41 KB |
 | C5 | `e3785f21a` and `7ab69577a`, at RC | 0.4 MB | 168 KB |
-| C6 | `7b465769` and `b04687c3f`, the selected backoff's landing commit, each at RC and at RR | 7.3 MB | 309 KB |
+| C6 | `7b465769` and `b04687c3f`, the selected backoff's landing commit, each at RC and at RR | 7.3 MB | 300 KB |
 | C7 | `0581fd395`, the duration-scaled backoff's landing commit, at RC and at RR | 17.9 MB | 129 KB |
 
 ### Raw reports and rewritten commits

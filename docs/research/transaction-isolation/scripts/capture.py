@@ -105,6 +105,10 @@ def _reduce_guard_wal(report: Report) -> None:
 def _reduce_end_to_end_writes(report: Report) -> None:
     for result in report["results"]:
         result.pop("latenciesMs", None)
+        if isinstance(counts := result["summary"].get("statementsPerInvocation"), list):
+            result["summary"]["statementsPerInvocation"] = {
+                str(count): invocations for count, invocations in sorted(Counter(counts).items())
+            }
         if (shapes := result.pop("shapes", None)) is None:
             continue
         statements: list[object] = []
