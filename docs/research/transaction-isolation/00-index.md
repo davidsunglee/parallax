@@ -71,14 +71,15 @@ Python environment of the arm `capture.py` checks out. The measured work uses
 only the public Snapshot API present in every arm of the checkpoints that run
 it; provisioning and statement
 recording use the conformance tooling the corpus runners already rely on.
-`_support.py` declares the drivers' own model, so a corpus model change cannot
-move a workload.
+The drivers declare their own models, `_support.py` the shared one, so a corpus
+model change cannot move a workload.
 
 | Driver | Workload |
 |---|---|
 | `contention.py` | Hot and disjoint keyed writers, each invocation reading its account inside the attempt; `max_retries=0` first, then the default bound. With `--backoff-grid`, which C4 passes, the default bound once per `(base, cap)` candidate of the full-jitter backoff grid |
 | `stream_churn.py` | A transaction-held or standalone stream with fast or slow consumption beside writers; client memory, oldest snapshot age, dead and live tuples, relation and index size, and cleanup after release. With `--read-only`, which C1 and C5 pass, a read-only transaction-held stream as well, so one arm reports writable and read-only reads at one level |
 | `end_to_end_writes.py` | Keyed, conditional, and predicate amendments over non-temporal, Transaction-Time-Only, and bitemporal targets, each window a whole `db.transact` call with any licensing read inside it |
+| `read_retention.py` | Standalone and read-only reads, eager and streamed, Typed and Wire, of a non-temporal Column-layout account and of non-temporal, Transaction-Time-Only, and bitemporal document charters with value-object payloads; whole-read and first-root latency, traced peak and held-result bytes, and a census of the objects a held result keeps |
 | `lock_snapshot_trace.py`, `guard_wal.py` | As above, captured per arm |
 | Arm tool `tools/snapshot_delivery_overhead.py` | The committed delivery instrument, run from each arm's own tree |
 
@@ -88,13 +89,14 @@ digests a capture actually ran.
 
 | File | SHA-256 |
 |---|---|
-| `scripts/_support.py` | `c41ef7b63439739b1f659a2e8d9ce3930f13310832726689e159360b12ea0605` |
-| `scripts/capture.py` | `f878ceac3857728288bd311c0fe61b331c329578331a1a1757fca34a0a645a6d` |
+| `scripts/_support.py` | `715a63e53923fa9a6f685f483f594b96700db184a5eaba16fea1f052919f1e87` |
+| `scripts/capture.py` | `d2b34a7e549f7e33637a41d16f9bc625c43e9ed6df7e8687257848675f2063ea` |
 | `scripts/contention.py` | `91fd3a2cbccd171779f6b9c9e149aa2141cb134241ff04d327bb8d7cd1b220ce` |
 | `scripts/end_to_end_writes.py` | `015d7dc667a50fad1b6f63059755ee9ec82e0413352dd178684cced2b22f8963` |
 | `scripts/guard_wal.py` | `3eaed87f4999e964e1d984983134ad30942bb0f2033a22ba08d203cadefe0d79` |
 | `scripts/lock_snapshot_trace.py` | `a06a14359b95c45b1e5b5b890394d7bbbff9300aac7dd215fcb260937832fc18` |
 | `scripts/predicate_in_place.py` | `9cd1a7fb74edd7aaa40f132996ea6525151032146c233a97c2bbc90cf751b810` |
+| `scripts/read_retention.py` | `225e6e4a40e60e397a347987d723600ec8475fec5218d2fa3ea1e0d3c5481bd9` |
 | `scripts/stream_churn.py` | `16a2f0747f7f36cf965379f3a2e84497309214aa48ddff7ebd5255aa01dcfc0d` |
 
 Read-only transactions re-froze two of them: `stream_churn.py` gained the
@@ -109,6 +111,13 @@ default-bound runs once per candidate with the arm's internal constants
 substituted, recording the backoff each run measured. An arm without the backoff
 replays immediately and runs the default bound once. `capture.py` passes the
 option for C4 alone.
+
+Evidence-free reads added `read_retention.py`, so C5 also measures eager reads
+inside a read-only transaction, and the bytes a held result keeps apart from the
+whole client's memory, over temporal structured payloads as well as the flat
+account. It declares its own model; `_support.py`'s provisioning and scoping
+helpers now take a model, defaulting to the shared one, so the other drivers'
+workloads are unchanged. `capture.py` runs it for C5 alone.
 
 ## Checkpoints
 
