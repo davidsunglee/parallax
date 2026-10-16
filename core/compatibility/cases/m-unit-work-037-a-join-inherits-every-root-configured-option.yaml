@@ -1,7 +1,3 @@
-# Boundary case (m-unit-work join rule, m-case-format root configuration): a
-# joining call inherits, repeats, or is refused on ALL THREE options at once, and
-# the values it is held to are the ones the outer invocation resolved from a
-# configured Database Root — `api-conformance` lane.
 model: models/account.yaml
 tags: [m-unit-work, m-api-conformance, join, database-options, slice-snapshot-1, slice-managed-1]
 lane: api-conformance

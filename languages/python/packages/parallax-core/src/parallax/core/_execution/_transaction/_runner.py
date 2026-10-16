@@ -391,7 +391,7 @@ class TransactionRunner:
         def invoke() -> T:
             with root as invocation:
 
-                def physical_attempt() -> T:
+                def physical_attempt(replayable: list[Exception]) -> T:
                     # Adopted before the attempt opens, so the edition its
                     # Started event carries is the one the boundary is
                     # then asked to begin under — and a retry, re-entering
@@ -438,25 +438,29 @@ class TransactionRunner:
                                     in_txn, isolation=isolation, access_mode=access_mode
                                 ),
                                 physical,
+                                replayable,
                             )
                         except BaseException as failure:
-                            exit_connection(resource, physical, held_since_ns, _carried(failure))
+                            exit_connection(resource, physical, held_since_ns, failure)
                             raise
                         exit_connection(resource, physical, held_since_ns, None)
                         return settled
 
                 def attempt() -> T:
+                    replayable: list[Exception] = []
                     try:
-                        return physical_attempt()
-                    except RetryCandidate:
-                        raise
-                    except BaseException as failure:
-                        _detach_candidate(failure)
-                        raise
+                        return physical_attempt(replayable)
+                    except Exception as failure:
+                        # Wrapped only here, so release and reporting ran with the
+                        # original failure live and chained nothing to a carrier;
+                        # whatever a cleanup step raised instead ends the
+                        # invocation.
+                        if not (replayable and replayable[0] is failure):
+                            raise
+                        raise RetryCandidate(failure) from None
 
                 # The loop handles only what an attempt handed it as a retry
-                # candidate, after that attempt released its connection and
-                # finished; every other failure, a refused begin included,
+                # candidate; every other failure, a refused begin included,
                 # passes straight through it as the caller's own error.
                 return run_with_retry(attempt, retries=retries)
 
@@ -522,7 +526,11 @@ def _mode_name(kind: type[TxnAttempt | ReadOnlyTxnAttempt]) -> str:
     return "read-only" if kind is ReadOnlyTxnAttempt else "writable"
 
 
-def _attempted[T](outcome: TransactionOutcome[T], attempt: TransactionAttemptActivity) -> T:
+def _attempted[T](
+    outcome: TransactionOutcome[T],
+    attempt: TransactionAttemptActivity,
+    replayable: list[Exception],
+) -> T:
     """What one physical attempt answers, from the boundary outcome the port reported.
 
     The port reports what happened; this decides what a caller sees, which is the
@@ -531,9 +539,9 @@ def _attempted[T](outcome: TransactionOutcome[T], attempt: TransactionAttemptAct
     retry loop cannot know which phase failed.
 
     A completed rollback is the one outcome classified for replay, once: the
-    attempt reports that verdict, and an eligible failure leaves as a
-    :class:`~parallax.core.auto_retry.RetryCandidate` carrying it, while any
-    other propagates unchanged, so what a caller catches is what their own
+    attempt reports that verdict, and an eligible failure is recorded in
+    ``replayable`` before it propagates, unchanged like any other, so the
+    attempt's cleanup sees it and what a caller catches is what their own
     callback or the database raised. Only a failed rollback substitutes an error
     of its own, because then neither live error tells the whole story; it still
     reports the verdict on its trigger, and is never replayed.
@@ -556,7 +564,7 @@ def _attempted[T](outcome: TransactionOutcome[T], attempt: TransactionAttemptAct
             eligible = retry_eligible(error)
             attempt.rolled_back(trigger, eligible)
             if eligible and isinstance(error, Exception):
-                raise RetryCandidate(error)
+                replayable.append(error)
             raise error
         case RollbackFailed(trigger, rollback_error):
             attempt.rollback_failed(trigger, rollback_error, retry_eligible(trigger.error))
@@ -566,25 +574,6 @@ def _attempted[T](outcome: TransactionOutcome[T], attempt: TransactionAttemptAct
             # A control-flow or fatal trigger stays primary: an interrupt or a
             # cancellation is not an ordinary failure to be wrapped in one.
             raise triggering_error from rollback_error
-
-
-def _carried(failure: BaseException) -> BaseException:
-    """The failure that ended an attempt: the one a retry candidate carries, or
-    ``failure`` itself — what the attempt's connection cleanup is told."""
-    return failure.failure if isinstance(failure, RetryCandidate) else failure
-
-
-def _detach_candidate(failure: BaseException) -> None:
-    """Relink ``failure``'s implicit chain past a retry candidate it was raised
-    while handling — a release or the attempt's own reporting that failed after
-    an eligible rollback — so it chains to the original failure instead, and
-    the carrier never reaches a caller."""
-    link = failure
-    while (context := link.__context__) is not None:
-        if isinstance(context, RetryCandidate):
-            link.__context__ = context.failure
-            return
-        link = context
 
 
 def _resolved(
