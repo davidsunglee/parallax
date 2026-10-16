@@ -7,37 +7,141 @@ environment (``uv run --frozen --project <worktree>/languages/python``), so the
 current drivers measure the arm's packages.
 
 A retained capture refuses to start unless the preflight passes — a clean tree,
-resolvable refs, an idle machine, and a reachable Docker daemon — and writes
-``captures/<checkpoint>/<arm>/`` with one JSON report per driver beside a
-``provenance.json``. ``--smoke`` runs every driver with tiny samples, skips the
-preflight, and keeps nothing: it checks that the tooling still runs against an
-arm. ``--verify`` checks a retained capture: complete provenance, arms that
-differ only in their commit or isolation, and the size budget.
+resolvable refs, an idle machine, and a reachable Docker daemon. Each driver's
+full report, with its per-invocation and per-sample arrays, goes under
+``--raw-dir``, outside the repository; ``captures/<checkpoint>/<arm>/`` keeps
+each report reduced to its summaries beside a ``provenance.json`` that records
+every full report's size and digest. ``--smoke`` runs every driver with tiny
+samples, skips the preflight, and keeps nothing: it checks that the tooling
+still runs against an arm. ``--verify`` checks a retained capture: complete
+provenance, reduced reports, arms that differ only in their commit or
+isolation, and the size budget.
 """
 
 import argparse
+import copy
 import datetime as dt
 import hashlib
 import json
+import math
 import os
 import platform
 import shutil
+import statistics
 import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Iterator, Sequence
+from collections import Counter
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 SCRIPTS = Path(__file__).resolve().parent
 RESEARCH = SCRIPTS.parent
 REPO = RESEARCH.parents[2]
 CAPTURES = RESEARCH / "captures"
-SIZE_BUDGET_BYTES = 10 * 1024 * 1024
+RAW_CAPTURES = Path.home() / ".local/share/parallax/evidence/cor-214/transaction-isolation-captures"
+SIZE_BUDGET_BYTES = 1024 * 1024
 IDLE_LOAD_PER_CORE = 0.25
 LEVELS = ("read_committed", "repeatable_read")
+
+
+Report = dict[str, Any]
+
+
+def _percentiles(values: Sequence[float]) -> dict[str, float | None]:
+    # The drivers' own summary statistic, `_support.percentiles`.
+    if not values:
+        return {"p50": None, "p95": None, "p99": None}
+    if len(values) == 1:
+        return {"p50": values[0], "p95": values[0], "p99": values[0]}
+    cuts = statistics.quantiles(values, n=100, method="inclusive")
+    return {"p50": cuts[49], "p95": cuts[94], "p99": cuts[98]}
+
+
+def _span(values: Sequence[float]) -> dict[str, float] | None:
+    return {"min": min(values), "max": max(values)} if values else None
+
+
+def _invocation_figures(samples: list[Report]) -> Report:
+    """Failure counts and spans, and the nearest-rank p99 time to success, which
+    scores a failed invocation as unbounded and is ``None`` when unbounded."""
+    failed = [sample for sample in samples if sample["outcome"] != "committed"]
+    to_success = sorted(
+        float(sample["latencyMs"]) if sample["outcome"] == "committed" else math.inf
+        for sample in samples
+    )
+    p99 = to_success[math.ceil(0.99 * len(to_success)) - 1] if to_success else math.inf
+    return {
+        "surfacedFailures": dict(
+            Counter(
+                f"{outcome['type']}:{outcome['category']}:{outcome['nativeCode']}"
+                for outcome in (sample["outcome"] for sample in failed)
+            )
+        ),
+        "surfacedFailureAttempts": _span([int(sample["attempts"]) for sample in failed]),
+        "surfacedFailureLatencyMs": _span([float(sample["latencyMs"]) for sample in failed]),
+        "p99ToSuccessMs": None if math.isinf(p99) else p99,
+    }
+
+
+def _reduce_contention(report: Report) -> None:
+    for run in report["runs"]:
+        if (samples := run.pop("samples", None)) is not None:
+            run["summary"].update(_invocation_figures(samples))
+
+
+def _reduce_guard_wal(report: Report) -> None:
+    for replay in report["replay"]:
+        if (samples := replay.pop("samples", None)) is not None:
+            replay["summary"].update(_invocation_figures(samples))
+    for mode in report["wal"]:
+        mode.pop("samples", None)
+
+
+def _reduce_end_to_end_writes(report: Report) -> None:
+    for result in report["results"]:
+        result.pop("latenciesMs", None)
+        if (shapes := result.pop("shapes", None)) is None:
+            continue
+        statements: list[object] = []
+        for shape in shapes:
+            if shape["statements"] not in statements:
+                statements.append(shape["statements"])
+        result["summary"].update(
+            {
+                "shapedPeakBytes": _percentiles([shape["peakBytes"] for shape in shapes]),
+                "shapedNetBytes": _percentiles([shape["netBytes"] for shape in shapes]),
+                "shapedStatements": statements,
+            }
+        )
+
+
+def _reduce_stream_churn(report: Report) -> None:
+    for run in report["runs"]:
+        run.pop("timeline", None)
+
+
+def _reduce_lock_snapshot_trace(report: Report) -> None:
+    for trace in report["traces"]:
+        trace.pop("checkpoints", None)
+        trace.pop("statements", None)
+
+
+def _reduce_read_retention(report: Report) -> None:
+    for run in report["runs"]:
+        run["memory"].pop("heldBytes", None)
+        run["memory"].pop("peakBytes", None)
+        run["timing"].pop("elapsedS", None)
+        run["timing"].pop("firstRootS", None)
+
+
+def _reduce_snapshot_delivery(report: Report) -> None:
+    for reading in report["readings"]:
+        reading.pop("samples", None)
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,9 +149,12 @@ class Driver:
     """A command an arm runs: a script of this directory, or a tool of the arm's
     own Python tree. A script takes ``--isolation``, ``--out``, and
     ``--smoke``, after the ``options`` a checkpoint runs it with; a tool takes
-    the arguments its evidence or smoke run needs."""
+    the arguments its evidence or smoke run needs. ``reduce`` drops a full
+    report's per-invocation and per-sample arrays in place, summarizing what
+    the research notes quote from them."""
 
     name: str
+    reduce: Callable[[Report], None]
     tool: tuple[str, ...] = ()
     smoke_tool: tuple[str, ...] = ()
     options: tuple[str, ...] = ()
@@ -67,23 +174,29 @@ class Driver:
             return list(self.smoke_tool)
         return [*self.tool, "--out", str(out)]
 
+    def retained(self, report: Report) -> Report:
+        reduced = copy.deepcopy(report)
+        self.reduce(reduced)
+        return reduced
 
-LOCK_SNAPSHOT_TRACE = Driver("lock_snapshot_trace")
-CONTENTION = Driver("contention")
+
+LOCK_SNAPSHOT_TRACE = Driver("lock_snapshot_trace", _reduce_lock_snapshot_trace)
+CONTENTION = Driver("contention", _reduce_contention)
 # The default-bound writers once per backoff candidate, for the checkpoint that
 # selects the backoff.
-CONTENTION_BACKOFF_GRID = Driver("contention", options=("--backoff-grid",))
-GUARD_WAL = Driver("guard_wal")
-STREAM_CHURN = Driver("stream_churn")
+CONTENTION_BACKOFF_GRID = Driver("contention", _reduce_contention, options=("--backoff-grid",))
+GUARD_WAL = Driver("guard_wal", _reduce_guard_wal)
+STREAM_CHURN = Driver("stream_churn", _reduce_stream_churn)
 # Writable and read-only transaction-held streams side by side in one arm, for
 # the checkpoints whose every arm has read-only transactions.
-STREAM_CHURN_READ_ONLY = Driver("stream_churn", options=("--read-only",))
-END_TO_END_WRITES = Driver("end_to_end_writes")
+STREAM_CHURN_READ_ONLY = Driver("stream_churn", _reduce_stream_churn, options=("--read-only",))
+END_TO_END_WRITES = Driver("end_to_end_writes", _reduce_end_to_end_writes)
 # Standalone and read-only eager and streamed reads, for the checkpoints whose
 # every arm has read-only transactions.
-READ_RETENTION = Driver("read_retention")
+READ_RETENTION = Driver("read_retention", _reduce_read_retention)
 SNAPSHOT_DELIVERY = Driver(
     "snapshot_delivery",
+    _reduce_snapshot_delivery,
     tool=(
         "tools/snapshot_delivery_overhead.py",
         "--workload",
@@ -168,12 +281,6 @@ class Arm:
         return f"{(self.commit or self.ref)[:12]}-{self.isolation}"
 
 
-@dataclass(slots=True)
-class Report:
-    arm: Arm
-    drivers: dict[str, dict[str, object]] = field(default_factory=dict)
-
-
 def _git(*args: str, cwd: Path = REPO) -> str:
     return subprocess.run(
         ["git", *args], cwd=cwd, check=True, capture_output=True, text=True
@@ -238,7 +345,7 @@ def worktree(arm: Arm, parent: Path) -> Iterator[Path]:
 
 
 def run_driver(
-    driver: Driver, arm: Arm, tree: Path, out: Path, *, smoke: bool
+    driver: Driver, arm: Arm, tree: Path, raw: Path, out: Path, *, smoke: bool
 ) -> dict[str, object]:
     project = tree / "languages" / "python"
     command = [
@@ -248,7 +355,7 @@ def run_driver(
         "--project",
         str(project),
         "python",
-        *driver.command(arm, out, smoke=smoke),
+        *driver.command(arm, raw, smoke=smoke),
     ]
     environment = {key: value for key, value in os.environ.items() if key != "VIRTUAL_ENV"}
     started = time.perf_counter()
@@ -260,15 +367,17 @@ def run_driver(
         failure = f"{driver.name} failed against {arm.label} ({completed.returncode})"
         raise SystemExit(f"{failure}:\n{completed.stderr[-4000:]}")
     if driver.tool and smoke:
-        out.write_text(completed.stdout)
+        raw.write_text(completed.stdout)
     record: dict[str, object] = {
         "command": command[6:],
         "elapsedS": round(elapsed, 3),
-        "bytes": out.stat().st_size,
+        "bytes": raw.stat().st_size,
+        "sha256": _digest(raw),
     }
     if not (driver.tool and smoke):
-        report = json.loads(out.read_text())
+        report = json.loads(raw.read_text())
         record["conditions"] = tool_conditions(report) if driver.tool else report.get("conditions")
+        out.write_text(json.dumps(driver.retained(report), indent=2, sort_keys=True) + "\n")
     return record
 
 
@@ -313,7 +422,7 @@ def provenance(
     }
 
 
-def capture(checkpoint: str, arms: Sequence[Arm], *, smoke: bool) -> None:
+def capture(checkpoint: str, arms: Sequence[Arm], raw_root: Path, *, smoke: bool) -> None:
     spec = CHECKPOINTS[checkpoint]
     source = capturing_tree()
     with tempfile.TemporaryDirectory(prefix=f"parallax-{checkpoint}-") as scratch:
@@ -329,11 +438,18 @@ def capture(checkpoint: str, arms: Sequence[Arm], *, smoke: bool) -> None:
             target = (
                 parent / "out" / resolved.label if smoke else CAPTURES / checkpoint / resolved.label
             )
+            raw = (parent / "raw" if smoke else raw_root / checkpoint) / resolved.label
             target.mkdir(parents=True, exist_ok=smoke)
+            raw.mkdir(parents=True, exist_ok=smoke)
             with worktree(resolved, parent) as tree:
                 records = {
                     driver.name: run_driver(
-                        driver, resolved, tree, target / f"{driver.name}.json", smoke=smoke
+                        driver,
+                        resolved,
+                        tree,
+                        raw / f"{driver.name}.json",
+                        target / f"{driver.name}.json",
+                        smoke=smoke,
                     )
                     for driver in spec.drivers
                 }
@@ -375,11 +491,14 @@ def _arm_problems(checkpoint: str, arm: Path) -> tuple[list[str], dict[str, obje
     problems = [f"{arm.name}: provenance lacks {key}" for key in REQUIRED if key not in document]
     if (document.get("capture") or {}).get("dirty"):
         problems.append(f"{arm.name}: captured from a dirty tree")
-    problems.extend(
-        f"{arm.name}: no report from {driver.name}"
-        for driver in CHECKPOINTS[checkpoint].drivers
-        if not (arm / f"{driver.name}.json").is_file()
-    )
+    for driver in CHECKPOINTS[checkpoint].drivers:
+        report = arm / f"{driver.name}.json"
+        if not report.is_file():
+            problems.append(f"{arm.name}: no report from {driver.name}")
+            continue
+        content = json.loads(report.read_text())
+        if driver.retained(content) != content:
+            problems.append(f"{arm.name}: {driver.name} keeps raw samples")
     drivers = document.get("drivers")
     records = drivers if isinstance(drivers, dict) else {}
     problems.extend(
@@ -444,6 +563,12 @@ def main() -> int:
     parser.add_argument(
         "--arm", action="append", default=[], help="<ref>[@read_committed|@repeatable_read]"
     )
+    parser.add_argument(
+        "--raw-dir",
+        type=Path,
+        default=RAW_CAPTURES,
+        help=f"where full driver reports go (default {RAW_CAPTURES})",
+    )
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument("--verify", action="store_true")
     args = parser.parse_args()
@@ -455,12 +580,12 @@ def main() -> int:
     arms = [Arm.parse(text) for text in texts]
     if not args.smoke:
         arms = preflight(arms)
-        existing = CAPTURES / args.checkpoint
-        if existing.exists() and any(existing.iterdir()):
-            parser.error(f"{existing} already holds a capture; remove it to recapture")
+        for existing in (CAPTURES / args.checkpoint, args.raw_dir / args.checkpoint):
+            if existing.exists() and any(existing.iterdir()):
+                parser.error(f"{existing} already holds a capture; remove it to recapture")
     if shutil.which("uv") is None:
         parser.error("uv is not on PATH")
-    capture(args.checkpoint, arms, smoke=args.smoke)
+    capture(args.checkpoint, arms, args.raw_dir, smoke=args.smoke)
     return 0
 
 

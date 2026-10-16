@@ -96,7 +96,7 @@ digests a capture actually ran.
 | File | SHA-256 |
 |---|---|
 | `scripts/_support.py` | `715a63e53923fa9a6f685f483f594b96700db184a5eaba16fea1f052919f1e87` |
-| `scripts/capture.py` | `d2b34a7e549f7e33637a41d16f9bc625c43e9ed6df7e8687257848675f2063ea` |
+| `scripts/capture.py` | `9ba0ba4a6c55d2bf8ee56913506da6c6f761dea4f779dd2047839c7edef08e1f` |
 | `scripts/contention.py` | `91fd3a2cbccd171779f6b9c9e149aa2141cb134241ff04d327bb8d7cd1b220ce` |
 | `scripts/end_to_end_writes.py` | `015d7dc667a50fad1b6f63059755ee9ec82e0413352dd178684cced2b22f8963` |
 | `scripts/guard_wal.py` | `3eaed87f4999e964e1d984983134ad30942bb0f2033a22ba08d203cadefe0d79` |
@@ -125,6 +125,16 @@ account. It declares its own model; `_support.py`'s provisioning and scoping
 helpers now take a model, defaulting to the shared one, so the other drivers'
 workloads are unchanged. `capture.py` runs it for C5 alone.
 
+Retaining summaries alone re-froze `capture.py`, after every checkpoint was
+captured; no driver changed. It writes each driver's full report under
+`--raw-dir`, outside the repository, and keeps in `captures/` the report
+without its per-invocation and per-sample arrays. Where the notes quote a
+figure only those arrays held, the retained summary records it: a contention
+or guard-replay run's surfaced failures with their attempt and latency spans
+and its p99 time to success, and an end-to-end cell's per-invocation peak and
+net bytes and its statements. `--verify` refuses a retained report that still
+holds the arrays.
+
 ## Checkpoints
 
 `capture.py` owns each checkpoint's drivers. Each checkpoint runs both of its
@@ -140,21 +150,46 @@ arms in one session; no checkpoint reuses another's numbers.
 | C5 | Backoff's landing commit | Evidence-free reads' landing commit | Standalone and read-only eager and stream reads before and after evidence removal |
 | C6 | `7b465769` | The final design, at RC and RR | The combined change, and long transaction-stream churn |
 
-A retained capture writes `captures/<checkpoint>/<arm>/`: one JSON report per
-driver and a `provenance.json` naming the arm's commit, isolation, and lock
+A retained capture writes `captures/<checkpoint>/<arm>/`: one summary report
+per driver and a `provenance.json` naming the arm's commit, isolation, and lock
 digest, the drivers' digests, the machine, the load average, and each driver's
-server version, settings, image, fixture, pool, and offered load. Each
-checkpoint stays within 10 MiB of raw JSON.
+server version, settings, image, fixture, pool, offered load, and full report
+size. Each checkpoint's retained JSON stays within 1 MiB.
 
-| Id | Arms captured | Raw JSON |
+| Id | Arms captured | Raw JSON, archived | Retained |
+|---|---|---|---|
+| C0 | `7b465769` at RC and at RR | 3.6 MB | 85 KB |
+| C1 | `3850203e9` at RC and at RR; each arm reports its writable, read-only, and standalone streams | 0.2 MB | 19 KB |
+| C2 | `3850203e9` and `44e78b3e2`, at RC | 0.4 MB | 32 KB |
+| C3 | `563e54eae` and `ef923969b`, at RC | 2.6 MB | 35 KB |
+| C4 | `ef923969b` and `e3785f21a`, at RC; `e3785f21a`'s `auto_retry` is the backoff's landing commit `95844b0c2`'s, unchanged | 6.6 MB | 41 KB |
+| C5 | `e3785f21a` and `7ab69577a`, at RC | 0.4 MB | 168 KB |
+| C6 | `7b465769` and `b04687c3f`, the selected backoff's landing commit, each at RC and at RR | 7.3 MB | 309 KB |
+
+### Raw reports and rewritten commits
+
+The checkpoints were first committed with their full reports. The branch
+history was then rewritten so that no commit holds the raw arrays: each
+capture was reduced in place, as `capture.py` now reduces it. The full reports
+are archived outside git at
+`~/.local/share/parallax/evidence/cor-214/transaction-isolation-captures/`,
+where `--raw-dir` points by default. Their `SHA256SUMS` manifest has SHA-256
+`0067879b2a6a2c1ef6203bfd208f470868f1b7e799045d641b43cbbf00a23bc8`.
+
+The rewrite changed only `captures/`, so each rewritten commit's code tree is
+identical to its original's. Each `provenance.json` and capture directory
+keeps the original SHA as the historical record of what was captured, and from
+which tree:
+
+| Original | Rewritten | Commit |
 |---|---|---|
-| C0 | `7b465769` at RC and at RR | 3.6 MB |
-| C1 | `3850203e9` at RC and at RR; each arm reports its writable, read-only, and standalone streams | 0.2 MB |
-| C2 | `3850203e9` and `44e78b3e2`, at RC | 0.4 MB |
-| C3 | `563e54eae` and `ef923969b`, at RC | 2.6 MB |
-| C4 | `ef923969b` and `e3785f21a`, at RC; `e3785f21a`'s `auto_retry` is the backoff's landing commit `95844b0c2`'s, unchanged | 6.6 MB |
-| C5 | `e3785f21a` and `7ab69577a`, at RC | 0.4 MB |
-| C6 | `7b465769` and `8886e730c`, the selected backoff's landing commit, each at RC and at RR | 7.3 MB |
+| `2d07ac327` | `3cc2f715b` | C0's capture; C1's capturing tree |
+| `5ced6887d` | `9012a1939` | C1's capture; C2's capturing tree |
+| `125148596` | `abce63a48` | C2's capture; C3's capturing tree |
+| `5912d0a18` | `184ccca9a` | C3's capture; C4's capturing tree |
+| `8886e730c` | `b04687c3f` | The selected backoff, C6's arm B; C5's capturing tree |
+| `31eb4dc82` | `2d93a52ba` | C5's capture; C6's capturing tree |
+| `649d6abb5` | `64b662d91` | The commit the attribution and recommendation notes were written against |
 
 ## Findings
 
