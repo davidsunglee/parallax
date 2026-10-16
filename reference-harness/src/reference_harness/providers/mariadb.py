@@ -102,6 +102,14 @@ _ISOLATION: dict[str, tuple[str, ...]] = {
 # The session state a Repeatable Read mapping changes, saved before a held session is
 # configured and written back after its transaction settles (m-db-port *Mapping
 # obligations*).
+# The lock-wait view reads `information_schema.innodb_trx`, which needs the
+# PROCESS privilege the provider grants its user at boot.
+_LOCK_WAITS = (
+    "select count(*) from information_schema.innodb_trx "
+    "where trx_state = 'LOCK WAIT' and trx_mysql_thread_id in "
+    "(select id from information_schema.processlist where db = database())"
+)
+_EXTENDED_LOCK_WAIT_TIMEOUT = "set innodb_lock_wait_timeout = 10"
 _SAVE_SNAPSHOT_ISOLATION = "select @@session.innodb_snapshot_isolation"
 _RESTORE_SNAPSHOT_ISOLATION = "set session innodb_snapshot_isolation = %s"
 
@@ -347,6 +355,19 @@ class MariaDbProvider:
         code = self.native_error_code(exc)
         return errors.UNKNOWN if code is None else _CODES.get(code, errors.UNKNOWN)
 
+    def lock_waits(self) -> int:
+        """How many transactions of this database are waiting for a lock now.
+
+        InnoDB refreshes its transaction view only when nothing read it in the
+        last 100 ms, so a caller polling this must wait longer than that between
+        reads to see a wait begin.
+        """
+        with self._conn.cursor() as cur:
+            cur.execute(_LOCK_WAITS)
+            row = cur.fetchone()
+        self._conn.commit()
+        return 0 if row is None else int(row[0])
+
     @contextmanager
     def open_session(self, isolation: str | None = None) -> Iterator[_MariaTxSession]:
         """A second connection in MANUAL-commit mode, for lock contention.
@@ -465,6 +486,10 @@ class _MariaTxSession:
         self._conn.rollback()
         self._state = "rolled back"
 
+    def extend_lock_wait(self) -> None:
+        with self._conn.cursor() as cur:
+            cur.execute(_EXTENDED_LOCK_WAIT_TIMEOUT)
+
     def end(self, saved: int, primary: BaseException | None = None) -> None:
         """Settle, restore *saved*, and close, attempting every step.
 
@@ -564,6 +589,7 @@ def mariadb_provider() -> Iterator[MariaDbProvider]:
     connection: pymysql.connections.Connection | None = None
     try:
         connect_params = _connect_params(container)
+        _grant_lock_wait_view(container, connect_params)
         connection = _connect_with_retry(connect_params, container.dbname)
         provider = MariaDbProvider(connection, container.dbname, connect_params)
         yield provider
@@ -588,6 +614,23 @@ def _connect_params(container: MySqlContainer) -> dict[str, Any]:
         "password": container.password,
         "autocommit": False,
     }
+
+
+def _grant_lock_wait_view(container: MySqlContainer, connect_params: dict[str, Any]) -> None:
+    """Let the provider's user read InnoDB's lock-wait view.
+
+    MariaDB applies a global privilege to connections opened after the grant,
+    so it precedes every connection the provider opens as that user.
+    """
+    root = _connect_with_retry(
+        {**connect_params, "user": "root", "password": container.root_password},
+        container.dbname,
+    )
+    try:
+        with root.cursor() as cur:
+            cur.execute("grant process on *.* to %s@'%%'", (container.username,))
+    finally:
+        root.close()
 
 
 def _connect_with_retry(

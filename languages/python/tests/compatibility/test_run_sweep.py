@@ -12,16 +12,18 @@ gated; a skip is reported, never silent.
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import re
 from collections import Counter
 from collections.abc import Callable, Sequence
 from copy import deepcopy
+from pathlib import Path
 from typing import Any, Final, cast
 
 import pytest
 
-from parallax.conformance import adapter, case_format, concurrency_runner, engine
+from parallax.conformance import adapter, case_format, concurrency_runner, engine, models
 from parallax.conformance.profile import Profile
 from parallax.core import inheritance, storage_layout
 from parallax.core.metamodel import Metamodel, entity_by_name
@@ -1422,29 +1424,22 @@ def test_run_only_write_sequence_run_sweep(
 
 
 # --------------------------------------------------------------------------- #
-# The `when.concurrency` rounds runner (the m-read-lock behavioral matrix,   #
-# joined by `m-db-error`'s own five two-session error cases too, case-       #
-# driven through the SAME two-control choreography): `m-read-lock-006`      #
-# (error / lockWaitTimeout), `-007`/`-008` (concurrencySuccess), and          #
-# `m-db-error-004/-005/-006/-007/-009` (deadlock cycle/reverse, lock-wait     #
-# timeout x2, serialization failure) — structurally identical to the         #
-# m-read-lock matrix: two barrier-synchronized peer sessions, verbatim       #
-# statement execution, error-shape classification (`sweep`'s own module      #
-# docstring named this gap; it is closed here). Each case's own              #
-# `when.uow.isolation` is what the sessions open at, read at ingress like    #
-# every other declared option.                                              #
+# The `when.concurrency` rounds runner: every two-session choreography the    #
+# corpus states, whatever module owns it — the m-read-lock behavioral matrix, #
+# `m-db-error`'s two-session error cases, and the isolation witnesses. Two    #
+# barrier-synchronized peer sessions run verbatim statements; the error shape #
+# classifies its one raised error, the success shape grades each read and    #
+# write, and either grades any stated table state. Each case's own           #
+# `when.uow.isolation` is what the sessions open at, read at ingress like     #
+# every other declared option.                                               #
 # --------------------------------------------------------------------------- #
-_CONCURRENCY_MODULES: Final[frozenset[str]] = frozenset({"m-read-lock", "m-db-error"})
-
-
 def _reachable_concurrency_rounds_cases() -> list[case_format.Case]:
     from parallax.conformance import sweep
 
     return [
         c
         for c in sweep.reachable_cases()
-        if c.primary_module in _CONCURRENCY_MODULES
-        and c.shape in ("error", "concurrencySuccess")
+        if c.shape in ("error", "concurrencySuccess")
         and "concurrency" in (case_document(c).get("when") or {})
     ]
 
@@ -1457,15 +1452,16 @@ def test_concurrency_rounds(case: case_format.Case, profile: Profile, profile_ru
     """Run one `when.concurrency` case's rounds over two independently-held
     peer sessions and grade its own shape's assertion.
 
-    An `error`-shape case (`m-read-lock-006`, `m-db-error-004/-005/-006/-007/
-    -009`) asserts EXACTLY one raised, classified `DatabaseError` across the
-    whole choreography (`errorClass` / `nativeCode`, the `m-db-error`
-    vocabulary) and that every OTHER present step succeeded — the contention
-    round's own well-formedness guard. A `concurrencySuccess`-shape case
-    (`-007`/`-008`) asserts NO node ever raised, and grades each `kind:
-    "read"` step's observed rows against its own `expectRows` (order-
-    insensitive, `compare_rows`); a `kind: "write"` step asserts only that it
-    reached this point at all (no block/no raise).
+    An `error`-shape case asserts EXACTLY one raised, classified
+    `DatabaseError` across the whole choreography (`errorClass` /
+    `nativeCode`, the `m-db-error` vocabulary) and that every OTHER present
+    step succeeded — the contention round's own well-formedness guard. A
+    `concurrencySuccess`-shape case asserts NO node ever raised, grades each
+    `kind: "read"` step's observed rows against its own `expectRows`
+    (order-insensitive, `compare_rows`), and each `kind: "write"` step's
+    per-statement counts against any `affectedRows` it states. Every blocking
+    step must have been seen waiting on a lock, and a stated `tableState` is
+    read back once both sessions closed.
     """
     from parallax.conformance import provision
 
@@ -1480,38 +1476,67 @@ def test_concurrency_rounds(case: case_format.Case, profile: Profile, profile_ru
     # request over the configured root — rather than at the driver's default; no
     # Database is composed here, so there is no root for production to resolve
     # it against.
-    run = concurrency_runner.run_rounds(
-        rounds,
-        lambda: profile_run.control(autocommit=False),
-        isolation=case_format.effective_options(case).isolation,
-    )
-
+    with contextlib.closing(profile_run.control(autocommit=True)) as observer:
+        run = concurrency_runner.run_rounds(
+            rounds,
+            lambda: profile_run.control(autocommit=False),
+            isolation=case_format.effective_options(case).isolation,
+            lock_waits=concurrency_runner.lock_waits_on(observer),
+        )
+    for round_spec, round_outcomes in zip(rounds, run.rounds, strict=True):
+        for node, step in round_spec.items():
+            if step.blocks:
+                assert round_outcomes[node].waited, (case.case_id, node, "never waited")
     if case.shape == "error":
-        raised = [
-            (index, node, outcome.error)
-            for index, round_outcomes in enumerate(run.rounds)
-            for node, outcome in round_outcomes.items()
-            if outcome.error is not None
-        ]
-        assert len(raised) == 1, (case.case_id, raised)
-        raised_index, raised_node, exc = raised[0]
-        then = case_document(case)["then"]
-        assert exc is not None
-        assert exc.category == then["errorClass"], (case.case_id, exc)
-        assert exc.native_code == then["nativeCode"][profile.dialect.name], (case.case_id, exc)
-        for index, round_outcomes in enumerate(run.rounds):
-            for node, outcome in round_outcomes.items():
-                if (index, node) != (raised_index, raised_node):
-                    assert outcome.error is None, (case.case_id, index, node, outcome.error)
+        _grade_error_rounds(case, profile, run)
     else:
         assert case.shape == "concurrencySuccess"
-        for round_spec, round_outcomes in zip(rounds, run.rounds, strict=True):
-            for node, step in round_spec.items():
-                outcome = round_outcomes[node]
-                assert outcome.error is None, (case.case_id, node, outcome.error)
-                if step.kind == "read":
-                    assert step.expect_rows is not None, (case.case_id, node)
-                    compare_rows(
-                        cast("list[dict[str, Any]]", list(outcome.rows)),
-                        cast("list[dict[str, Any]]", list(step.expect_rows)),
-                    )
+        _grade_success_rounds(case, rounds, run)
+    then = cast("dict[str, Any]", case_document(case).get("then") or {})
+    expected_state = cast("dict[str, list[dict[str, Any]]] | None", then.get("tableState"))
+    if expected_state is not None:
+        observed_state = engine.read_table_state(
+            profile_run.port, models.load_models()[Path(case.model).stem]
+        )
+        for table, expected_rows in expected_state.items():
+            compare_rows(cast("list[dict[str, Any]]", observed_state[table]), expected_rows)
+
+
+def _grade_error_rounds(
+    case: case_format.Case, profile: Profile, run: concurrency_runner.RoundsRun
+) -> None:
+    raised = [
+        (index, node, outcome.error)
+        for index, round_outcomes in enumerate(run.rounds)
+        for node, outcome in round_outcomes.items()
+        if outcome.error is not None
+    ]
+    assert len(raised) == 1, (case.case_id, raised)
+    raised_index, raised_node, exc = raised[0]
+    then = case_document(case)["then"]
+    assert exc is not None
+    assert exc.category == then["errorClass"], (case.case_id, exc)
+    assert exc.native_code == then["nativeCode"][profile.dialect.name], (case.case_id, exc)
+    for index, round_outcomes in enumerate(run.rounds):
+        for node, outcome in round_outcomes.items():
+            if (index, node) != (raised_index, raised_node):
+                assert outcome.error is None, (case.case_id, index, node, outcome.error)
+
+
+def _grade_success_rounds(
+    case: case_format.Case,
+    rounds: Sequence[dict[str, concurrency_runner.ConcurrencyStep]],
+    run: concurrency_runner.RoundsRun,
+) -> None:
+    for round_spec, round_outcomes in zip(rounds, run.rounds, strict=True):
+        for node, step in round_spec.items():
+            outcome = round_outcomes[node]
+            assert outcome.error is None, (case.case_id, node, outcome.error)
+            if step.kind == "read":
+                assert step.expect_rows is not None, (case.case_id, node)
+                compare_rows(
+                    cast("list[dict[str, Any]]", list(outcome.rows)),
+                    cast("list[dict[str, Any]]", list(step.expect_rows)),
+                )
+            if step.affected_rows is not None:
+                assert outcome.affected == step.affected_rows, (case.case_id, node)

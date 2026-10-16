@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import contextlib
 import threading
+import time
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Protocol, cast
 
 from parallax.conformance import case_format
@@ -23,6 +24,7 @@ __all__ = [
     "NodeOutcome",
     "RoundsRun",
     "RoundsSession",
+    "lock_waits_on",
     "parse_rounds",
     "run_rounds",
 ]
@@ -71,6 +73,18 @@ __all__ = [
 _DEADLOCK_TIMEOUT: str = "100ms"
 _LOCK_TIMEOUT: str = "250ms"
 
+# A blocking step's statement waits on its peer by design, so its session's
+# budget must outlast the rounds until the peer releases the lock; the same
+# bound limits how long the runner waits to see the wait begin and end.
+_BLOCKING_LOCK_TIMEOUT: str = "10s"
+_BLOCKING_STEP_BOUND_SECONDS: float = 10.0
+_LOCK_WAIT_POLL_SECONDS: float = 0.01
+
+_LOCK_WAITS: str = (
+    "select count(*) from pg_stat_activity "
+    "where datname = current_database() and wait_event_type = 'Lock'"
+)
+
 _NODES: tuple[str, ...] = ("A", "B")
 
 
@@ -118,6 +132,8 @@ class ConcurrencyStep:
     statements: tuple[tuple[str, tuple[Bind, ...]], ...]
     kind: str | None
     expect_rows: tuple[Mapping[str, object], ...] | None
+    blocks: bool = False
+    affected_rows: tuple[int, ...] | None = None
 
 
 def _statement_entries(raw: object, dialect_name: str) -> tuple[tuple[str, tuple[Bind, ...]], ...]:
@@ -145,10 +161,15 @@ def _step(raw: Mapping[str, object], dialect_name: str) -> ConcurrencyStep:
         if isinstance(expect_rows_raw, list)
         else None
     )
+    affected_rows = raw.get("affectedRows")
     return ConcurrencyStep(
         statements=_statement_entries(raw.get("statements", []), dialect_name),
         kind=cast("str | None", kind) if isinstance(kind, str) else None,
         expect_rows=expect_rows,
+        blocks=raw.get("blocks") is True,
+        affected_rows=(
+            tuple(cast("list[int]", affected_rows)) if isinstance(affected_rows, list) else None
+        ),
     )
 
 
@@ -176,11 +197,15 @@ def parse_rounds(
 class NodeOutcome:
     """One node's own outcome for one round: the rows its statements returned
     (empty for a pure-DML step, or a step that never ran because the case
-    declared none this round), XOR the `DatabaseError` its LAST statement
-    raised — never both."""
+    declared none this round) and, for a `write` step, each statement's
+    affected-row count, XOR the `DatabaseError` its LAST statement raised —
+    never both. ``waited`` is whether a blocking step was seen waiting on a
+    lock, and ``None`` for every other step."""
 
     rows: tuple[MappingRow, ...] = ()
     error: DatabaseError | None = None
+    affected: tuple[int, ...] = ()
+    waited: bool | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -193,9 +218,10 @@ class RoundsRun:
     rounds: tuple[dict[str, NodeOutcome], ...]
 
 
-def _execute_step(session: RoundsSession, step: ConcurrencyStep) -> tuple[MappingRow, ...]:
+def _execute_step(session: RoundsSession, step: ConcurrencyStep) -> NodeOutcome:
     """Run one step's statements VERBATIM on ``session`` (`m-case-format`'s
-    own case contract for this shape), returning the LAST statement's rows.
+    own case contract for this shape), reporting the LAST statement's rows
+    and each `write` statement's affected-row count.
 
     Each canonical `?`-placeholder golden statement is translated to the
     dialect's own driver form (`Dialect.to_driver_sql`) immediately before
@@ -219,18 +245,35 @@ def _execute_step(session: RoundsSession, step: ConcurrencyStep) -> tuple[Mappin
     """
     if step.kind == "commit":
         session.execute("commit", [])
-        return ()
+        return NodeOutcome()
     rows: tuple[MappingRow, ...] = ()
+    affected: list[int] = []
     for sql, binds in step.statements:
         driver_sql = session.dialect.to_driver_sql(sql)
         if step.kind == "write":
-            session.execute_write(driver_sql, binds)
+            affected.append(session.execute_write(driver_sql, binds))
         else:
             raw_rows = session.execute(driver_sql, binds)
             if step.expect_rows is not None:
-                keys = tuple(step.expect_rows[0])
-                rows = tuple(dict(zip(keys, row, strict=True)) for row in raw_rows)
-    return rows
+                rows = _named_rows(raw_rows, step.expect_rows)
+    return NodeOutcome(rows=rows, affected=tuple(affected))
+
+
+def _named_rows(
+    raw_rows: Sequence[Row], expected: Sequence[Mapping[str, object]]
+) -> tuple[MappingRow, ...]:
+    """Name each returned row's cells by the expected rows' keys.
+
+    A read expecting no rows names cells by position, so any row it did return
+    still fails the comparison rather than vanishing for want of a key.
+    """
+    keys = tuple(expected[0]) if expected else None
+    return tuple(
+        dict(zip(keys, row, strict=True))
+        if keys is not None
+        else {str(position): value for position, value in enumerate(row)}
+        for row in raw_rows
+    )
 
 
 def _empty_outcomes() -> dict[int, NodeOutcome]:
@@ -297,11 +340,105 @@ def _raise_originating_failure(results: Mapping[str, _WorkerResult]) -> None:
     raise originating from secondary
 
 
+def lock_waits_on(control: RoundsSession) -> Callable[[], int]:
+    """How many backends of ``control``'s database wait for a lock, read through
+    ``control`` — an autocommit session of its own, so each read sees the wait
+    as it stands now."""
+
+    def count() -> int:
+        (row,) = control.execute(_LOCK_WAITS, [])
+        return int(cast("int", row[0]))
+
+    return count
+
+
+def _outcome_of(session: RoundsSession, step: ConcurrencyStep) -> NodeOutcome:
+    try:
+        return _execute_step(session, step)
+    except DatabaseError as exc:
+        return NodeOutcome(error=exc)
+
+
+@dataclass(slots=True)
+class _Blocked:
+    """A blocking step's statement still running on a thread of its own."""
+
+    index: int
+    thread: threading.Thread
+    waited: bool
+    finished: list[NodeOutcome | BaseException]
+
+
+def _start_blocking(
+    session: RoundsSession, step: ConcurrencyStep, index: int, lock_waits: Callable[[], int]
+) -> _Blocked:
+    """Issue a blocking step's statement and return once the engine reports a
+    lock wait, the statement finished without one, or the bound passed."""
+    session.execute(f"set lock_timeout = '{_BLOCKING_LOCK_TIMEOUT}'", [])
+    finished: list[NodeOutcome | BaseException] = []
+
+    def run() -> None:
+        try:
+            finished.append(_outcome_of(session, step))
+        except BaseException as exc:  # handed to the node's own thread by _finish
+            finished.append(exc)
+
+    thread = threading.Thread(target=run, name="concurrency-blocked", daemon=True)
+    thread.start()
+    deadline = time.monotonic() + _BLOCKING_STEP_BOUND_SECONDS
+    while thread.is_alive() and time.monotonic() < deadline:
+        if lock_waits() > 0:
+            return _Blocked(index, thread, True, finished)
+        time.sleep(_LOCK_WAIT_POLL_SECONDS)
+    return _Blocked(index, thread, False, finished)
+
+
+def _finish(blocked: _Blocked, result: _WorkerResult) -> None:
+    blocked.thread.join(timeout=_BLOCKING_STEP_BOUND_SECONDS)
+    if blocked.thread.is_alive():
+        raise RuntimeError(
+            f"round {blocked.index}: a blocking step's statement never finished — "
+            "no peer step released the lock it waits on"
+        )
+    (outcome,) = blocked.finished
+    if isinstance(outcome, BaseException):
+        raise outcome
+    result.outcomes[blocked.index] = replace(outcome, waited=blocked.waited)
+
+
+def _walk_rounds(
+    node: str,
+    rounds: Sequence[Mapping[str, ConcurrencyStep]],
+    session: RoundsSession,
+    result: _WorkerResult,
+    barrier: threading.Barrier,
+    lock_waits: Callable[[], int],
+) -> None:
+    """One node's walk through every round, meeting its partner at the barrier
+    before and after each."""
+    blocked: _Blocked | None = None
+    for index, round_steps in enumerate(rounds):
+        barrier.wait()
+        step = round_steps.get(node)
+        if step is not None and blocked is not None:
+            _finish(blocked, result)
+            blocked = None
+        if step is not None and not _commit_of_an_abandoned_transaction(result, step):
+            if step.blocks:
+                blocked = _start_blocking(session, step, index, lock_waits)
+            else:
+                result.outcomes[index] = _outcome_of(session, step)
+        barrier.wait()
+    if blocked is not None:
+        _finish(blocked, result)
+
+
 def run_rounds(
     rounds: Sequence[Mapping[str, ConcurrencyStep]],
     control_factory: Callable[[], RoundsSession],
     *,
     isolation: IsolationLevel | None = None,
+    lock_waits: Callable[[], int] | None = None,
 ) -> RoundsRun:
     """Drive ``rounds`` over two independently-held peer sessions (the
     m-read-lock behavioral matrix and `m-db-error`'s own five two-session
@@ -350,7 +487,17 @@ def run_rounds(
     if both are, or neither is, `_NODES` order breaks the tie, matching the
     prior behavior), with the secondary chained as its `__cause__` so it stays
     visible in the traceback.
+
+    A blocking step (`m-case-format` *Error cases*) lifts its session's
+    lock-wait budget, issues its statement on a thread of its own, and ends
+    its round once ``lock_waits`` — the count of this database's backends
+    waiting for a lock, which a choreography with a blocking step requires —
+    reports the wait. The node's next step, and the end of the choreography,
+    wait for the statement to finish; its outcome lands on the round that
+    authored it, carrying whether the wait was seen.
     """
+    if lock_waits is None and any(step.blocks for steps in rounds for step in steps.values()):
+        raise ValueError("a choreography with a blocking step needs lock_waits to observe it")
     with contextlib.ExitStack() as stack:
         sessions: dict[str, RoundsSession] = {}
         for node in _NODES:
@@ -362,21 +509,17 @@ def run_rounds(
 
         barrier = threading.Barrier(len(_NODES))
         results: dict[str, _WorkerResult] = {node: _WorkerResult() for node in _NODES}
+        polling = threading.Lock()
+
+        def waiting_backends() -> int:
+            assert lock_waits is not None
+            with polling:
+                return lock_waits()
 
         def worker(node: str) -> None:
             result = results[node]
-            session = sessions[node]
             try:
-                for index, round_steps in enumerate(rounds):
-                    barrier.wait()
-                    step = round_steps.get(node)
-                    if step is not None and not _commit_of_an_abandoned_transaction(result, step):
-                        try:
-                            rows = _execute_step(session, step)
-                            result.outcomes[index] = NodeOutcome(rows=rows)
-                        except DatabaseError as exc:
-                            result.outcomes[index] = NodeOutcome(error=exc)
-                    barrier.wait()
+                _walk_rounds(node, rounds, sessions[node], result, barrier, waiting_backends)
             except BaseException as exc:
                 result.failure = exc
                 barrier.abort()

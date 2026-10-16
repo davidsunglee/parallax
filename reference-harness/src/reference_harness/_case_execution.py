@@ -74,6 +74,9 @@ class CaseExecution:
     def rollback(self) -> None:
         cast("Session", self._executor).rollback()
 
+    def extend_lock_wait(self) -> None:
+        cast("Session", self._executor).extend_lock_wait()
+
     @contextmanager
     def open_session(self, isolation: str | None = None) -> Iterator[CaseExecution]:
         source = cast(_SessionSource, self._executor)
