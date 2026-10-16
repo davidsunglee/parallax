@@ -265,7 +265,7 @@ pydantic-core's `ModelSerializer`, and the first one's value is discarded.
 invokes `__get__`, answering that boolean costs a whole presentation build.
 Measured on CPython 3.14.7 / pydantic 2.13.4 / pydantic-core 2.46.4, against real
 published values built through `allocate` and `publish` over the six canonical
-scenarios of `languages/python/docs/instance-state-baseline.md`: one published
+scenarios of the [historical instance-state reading](https://github.com/davidsunglee/parallax/blob/c7dd36498c31aed00647126bd9c6c99a8c9c5cc7/languages/python/docs/instance-state-baseline.md): one published
 `__dict__` read is 542–576 ns, and the two of them are 62% of the dump. Three
 independent readings agree — the Rust source at 2.41.5 and at 2.48.0, which
 bracket the installed 2.46.4 (whose own tag was not fetchable); a poison test on
@@ -415,7 +415,7 @@ accepted fact and what is known about reducing it cannot drift apart.
 non-data member descriptor, which reads the row off its slot and indexes it. An
 ordinary value's storage answers first and the descriptor is never entered.
 Measured on CPython 3.14.7 over the `wide` scenario of
-`docs/instance-state-baseline.md`, 200,000 repetitions, net of an 11.8 ns
+the [historical instance-state reading](https://github.com/davidsunglee/parallax/blob/c7dd36498c31aed00647126bd9c6c99a8c9c5cc7/languages/python/docs/instance-state-baseline.md), 200,000 repetitions, net of an 11.8 ns
 call floor measured the same way:
 
 ```text
@@ -631,19 +631,19 @@ it is the prerequisite for such a case, and the refusal's own tests
 `tests/unit/conformance/_mechanism/test_given_state.py::test_given_corrupt_refuses_a_temporal_entity_before_reading_anything`)
 are what have to change first, since they pin the restriction this entry lifts.
 
-### D-94 — The execution lifecycle overhead baseline publishes no current reading
+### D-94 — The execution lifecycle overhead baseline lacks stable quiet-machine timings
 
-*Low — a report-only document states its method and its conditions but no
-measurement.* Relates to
-`languages/python/docs/execution-lifecycle-baseline.md`,
+*Low — current observations do not establish repeatable timing on a quiet
+machine.* Relates to
+[`cost evidence`](../evidence/cost/README.md),
 `docs/adr/0060-execution-observability-is-transient-and-provider-driven.md`,
 `just python-report-lifecycle-overhead`. Owner: this target.
 
-**What.** Every operation now brackets the connection it holds, so the workload
-the recorded table describes delivers 28 events where it delivered 20. The table
-is kept for its method and its stated conditions and is explicitly marked as no
-current measurement, which leaves ADR 0060's "reproducible baseline" standing on
-a reading taken against a workload that no longer exists.
+**What.** The original 20-event table was withdrawn when connection bracketing
+raised the workload to 28 events. The current portfolio's lifecycle member
+records that 28-event workload, but its host was active and quiet-machine timing
+stability has not been established. Retaining those observations does not
+settle ADR 0060's reproducible timing baseline.
 
 **Why it is deferred rather than fixed.** Three consecutive runs on the machine
 available disagreed by 40% at p50 on the unobserved arm, against a method whose
@@ -652,9 +652,10 @@ would publish that machine rather than this change, and republishing a number
 under conditions the method rejects is worse than publishing none. Nothing was
 waived: the recipe is a `report`, gates nothing, and belongs to no aggregate.
 
-**When.** One run of `just python-report-lifecycle-overhead` on a quiet machine,
-re-recording the conditions table and the five configurations with it. Closing
-this means replacing the withdrawal section rather than adding to it.
+**When.** Run `just python-report-lifecycle-overhead` on a quiet machine and
+confirm that repeated p50 readings of the same code agree within the method's
+few-percent tolerance. Retain the conditions and five configurations under the
+measurement retention rule, with an explicit conclusion that closes this gap.
 
 ### D-95 — `m-edit` and `m-navigate` are implemented on the Typed surface alone, so a class-free consumer derives an edited copy of its own
 
@@ -717,7 +718,7 @@ re-project a family superset, which is an unrelated obligation.
 
 - **D-97** → fixed. `parallax.core.base.nearest_binary32_of_spelling` rounds a decimal to binary32 once by parsing to binary64 and narrowing, reading the exact decimal only when the parse is exactly a binary32 midpoint — the only place the two roundings can differ — so `_shortest_float`'s candidates and Float32 membership no longer build an exact ratio.
 - **D-98** → closed by the COR-142 owner decision. The unsupported 10% attribution gate is withdrawn rather than replaced; Phase 2 totals and counts remain before evidence, and the same single-implementation report supplies Phase 6's clean whole-lane after deltas without paired adapters or builder-exclusive attribution.
-- **D-96** → closed. The Snapshot delivery portfolio takes each materialization-stress memory cell in a child interpreter of its own (`tools/snapshot_delivery_reading.py`), as a collected window delta with no timed batch run before the reading, so the retained and transient cells are differences rather than levels; the retired reader's mixed-order matrix survives only as dated evidence in `docs/snapshot-materialization-baseline.md`.
+- **D-96** → closed. The Snapshot delivery portfolio takes each materialization-stress memory cell in a child interpreter of its own (`tools/snapshot_delivery_reading.py`), as a collected window delta with no timed batch run before the reading, so the retained and transient cells are differences rather than levels.
 - **D-80** → fixed. Duplicate projections are compared before decode by their exact, type-sensitive positional Payload Witness. Equal witnesses share one Page-owned Entity State; unequal witnesses in one Root View raise `SnapshotConsistencyError`, so no first-projection-wins premise remains.
 - **D-81** → fixed. Production conversion consumes positional provider tuples through compiled ordinals, retains raw witnesses for deferred root-local judgment, and allocates no `PositionalRow`, materialized-row wrapper, or member dictionary per judged row. The production materialization and stream-retention instruments now grade the Page/Root View representation rather than the deleted retained-graph suite.
 

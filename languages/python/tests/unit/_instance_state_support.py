@@ -25,7 +25,7 @@ representation's.** Every framework slot a declared class carries is carried by
 all three — an ordinary value holds the compact and auxiliary pointers exactly
 as a published one does, and an Entity of any backing holds the lifecycle slot —
 so an aggregate over two of them divides two readings taken over one object
-layout, as ``docs/instance-state-baseline.md``'s accounting rule requires.
+layout; readings from a layout without those slots are not comparable.
 
 **Why the legacy fixture is not the ordinary arm.** A materialized node WAS
 ``cls.model_construct()`` with no arguments followed by one
@@ -452,10 +452,8 @@ def legacy_publication(scenario: Scenario, state: object | None) -> object:
     than approximated; every declared relationship slot written, since
     publication installed the unloaded sentinel where a read loaded nothing; and
     the lifecycle state written last, as the construction call's own final phase
-    still does. That write reaches the ``Entity`` root's real slot today and
-    reached the node's storage while this fixture stood for the shipping path —
-    the difference the frozen and current layout rows in
-    ``docs/instance-state-baseline.md`` account for.
+    still does. Lifecycle state occupies the ``Entity`` root's slot in every
+    arm, so comparisons share the same object layout.
     """
     plan = scenario.plan
     values = scenario.values

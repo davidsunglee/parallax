@@ -120,7 +120,7 @@ def test_validation_of_committed_evidence_asks_git_nothing(
 ) -> None:
     members = [
         member
-        for capture in ("recovered", "before", "after")
+        for capture in ("current", "structural-metadata-before", "structural-metadata-after")
         for member in cast(
             "Sequence[Mapping[str, object]]",
             json.loads(

@@ -122,11 +122,9 @@ from snapshot_delivery_overhead import (
 
 WORKSPACE: Final = Path(__file__).resolve().parents[1]
 PORTFOLIO_VERSION: Final = 1
-CANONICAL_PORTFOLIO: Final = Path(
-    "languages/python/docs/structural-metadata-envelope/recovered/portfolio.json"
-)
+CANONICAL_PORTFOLIO: Final = Path("languages/python/evidence/cost/current/portfolio.json")
 """The repository's current cost portfolio and CI's verification input, relative
-to the repository root. The `before/` and `after/` captures beside it are the
+to the repository root. Other captures in the cost evidence directory are
 retained comparison bases, not verification inputs."""
 
 EVIDENCE_DIRECTORY: Final = (WORKSPACE.parents[1] / CANONICAL_PORTFOLIO).resolve().parents[1]
@@ -943,12 +941,6 @@ def write_portfolio(collection: Collection, out: Path) -> None:
     collection.durations.write(out / DURATIONS_FILE)
     if collection.runtimes:
         _write_json(out / CONDITIONS_FILE, conditions_document(collection.runtimes))
-    for result in collection.results:
-        if result.envelope is not None:
-            (out / f"{result.member.subject}.json").write_text(
-                json.dumps(result.envelope, indent=2, sort_keys=True) + "\n",
-                encoding="utf-8",
-            )
 
 
 def _members(document: Document, subject: str) -> tuple[Document, ...]:
@@ -1676,7 +1668,14 @@ def _reclassification_inputs(portfolio: Path) -> tuple[Document, Document, Spans
     document = _object(_load(portfolio), "portfolio")
     if document.get("schemaVersion") != PORTFOLIO_VERSION:
         raise ValueError("the input is not a portfolio")
-    members = cast("Sequence[Document]", document.get("members", ()))
+    recorded_members = document.get("members")
+    if not isinstance(recorded_members, list):
+        raise ValueError("the portfolio members are not a list")
+    members = [
+        _object(member, "portfolio member") for member in cast("Sequence[object]", recorded_members)
+    ]
+    for member in members:
+        validate(member)
     subjects = [str(member["subject"]) for member in members]
     if not subjects or len(set(subjects)) != len(subjects):
         raise ValueError("the portfolio must contain distinct member envelopes")
@@ -1691,9 +1690,6 @@ def _reclassification_inputs(portfolio: Path) -> tuple[Document, Document, Spans
         raise ValueError("conditions.json does not cover the portfolio members")
     digests: set[str] = set()
     for member in members:
-        subject = str(member["subject"])
-        if _load(portfolio.parent / f"{subject}.json") != member:
-            raise ValueError(f"{subject}.json disagrees with its portfolio member")
         digests.add(str(cast("Document", member["provenance"])["budgetContractDigest"]))
     if len(digests) != 1:
         raise ValueError("the members embedded different contracts")
@@ -1705,7 +1701,7 @@ def _reclassification_inputs(portfolio: Path) -> tuple[Document, Document, Spans
 def reclassify(portfolio: Path) -> None:
     """Reclassify a capture under HEAD's authority-only contract change.
 
-    Validate the portfolio and every sidecar before writing any replacement;
+    Validate the embedded envelopes, conditions, and durations before any replacement;
     readings, comparisons, producing provenance, and measurement conditions stay
     as captured. An existing adjustment is never overwritten.
     """
@@ -1727,8 +1723,6 @@ def reclassify(portfolio: Path) -> None:
         },
     }
     summary = _summary(updated, durations)
-    for member in changed:
-        _write_json(portfolio.parent / f"{member['subject']}.json", member)
     _write_json(portfolio, updated)
     (portfolio.parent / "summary.md").write_text(summary, encoding="utf-8")
     _write_json(portfolio.parent / CONDITIONS_FILE, updated_conditions)
@@ -2225,8 +2219,8 @@ def _write_json(path: Path, document: Mapping[str, object]) -> None:
 def write_shard(
     result: ShardResult, request: Request, side: str, commit: str, pair_id: str, out: Path
 ) -> None:
-    """One shard directory: the legacy-shape one-member portfolio, its
-    envelope, summary, and durations, and the capture beside them."""
+    """One shard directory: the one-member portfolio, summary, durations,
+    and capture metadata."""
     write_portfolio(Collection((result.result,), result.durations), out)
     Capture(
         request,

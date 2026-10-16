@@ -66,7 +66,7 @@ loudly in the gate rather than silently in production.
 
 **What the seam costs is part of its Interface, and is stated rather than left to
 be discovered.** Measured over the six canonical scenarios of
-`docs/instance-state-baseline.md`, a published node retains a little over two
+[the historical instance-state baseline](https://github.com/davidsunglee/parallax/blob/c7dd36498c31aed00647126bd9c6c99a8c9c5cc7/languages/python/docs/instance-state-baseline.md), a published node retains a little over two
 fifths of what an ordinary one does — 43.8% on CPython 3.14 and 41.0% on 3.13,
 against an ordinary arm built by the validating constructor, which carries no
 lifecycle state because a plainly constructed instance has none. The claim's own

@@ -107,14 +107,14 @@ def test_an_items_class_agrees_with_what_it_requires(
 def test_the_committed_evidence_is_every_retained_capture_and_the_derived_gates() -> None:
     evidence = [
         PY_ROOT / committed_evidence.GATES,
-        PY_ROOT / "docs/structural-metadata-envelope/recovered/portfolio.json",
-        PY_ROOT / "docs/structural-metadata-envelope/after/write-lowering.json",
-        PY_ROOT / "docs/write-lowering-envelope/rebaseline-2026-09-15/pre-rebase/portfolio.json",
+        PY_ROOT / "evidence/cost/current/portfolio.json",
+        PY_ROOT / "evidence/cost/structural-metadata-after/portfolio.json",
+        PY_ROOT / "evidence/cost/structural-metadata-before/portfolio.json",
     ]
     beside = [
         PY_ROOT / "spec/budget-contract.yaml",
-        PY_ROOT / "docs/structural-metadata-envelope/README.md",
-        PY_ROOT / "docs/structural-metadata-envelope/recovered/summary.md",
+        PY_ROOT / "evidence/cost/README.md",
+        PY_ROOT / "evidence/cost/current/summary.md",
         PY_ROOT / "tests/_support/cost_durations.json",
         REPO_ROOT / "core/schemas/conformance-adapter.schema.json",
     ]

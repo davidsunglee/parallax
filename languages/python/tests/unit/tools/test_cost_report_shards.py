@@ -479,7 +479,7 @@ def test_a_written_shard_is_a_legacy_portfolio_with_its_capture_beside_it(
     out = tmp_path / HEAD / LIFECYCLE.id
     write_shard(result, request, HEAD, request.head_commit, "pair-1", out)
     assert sorted(path.name for path in out.iterdir()) == sorted(
-        ["portfolio.json", "summary.md", DURATIONS_FILE, CAPTURE_FILE, f"{MEMBERS[1].subject}.json"]
+        ["portfolio.json", "summary.md", DURATIONS_FILE, CAPTURE_FILE]
     )
     portfolio = json.loads((out / "portfolio.json").read_text(encoding="utf-8"))
     assert set(portfolio) == {"schemaVersion", "members", "failures"}
@@ -543,9 +543,9 @@ def test_sequential_all_and_independent_shards_write_identical_coverage(
         (r["runtime"], r["workload"], r["cell"])
         for shard in plan
         if shard.subject == SNAPSHOT.subject
-        for r in json.loads(
-            (everything / HEAD / shard.id / f"{SNAPSHOT.subject}.json").read_text("utf-8")
-        )["readings"]
+        for r in json.loads((everything / HEAD / shard.id / "portfolio.json").read_text("utf-8"))[
+            "members"
+        ][0]["readings"]
     ]
     assert sorted(readings) == sorted(
         (r["runtime"], r["workload"], r["cell"]) for r in envelopes[SNAPSHOT.subject]["readings"]
@@ -579,7 +579,6 @@ def test_the_local_default_still_writes_the_complete_legacy_portfolio_over_whole
             "summary.md",
             DURATIONS_FILE,
             cost_report.CONDITIONS_FILE,
-            *(f"{m.subject}.json" for m in MEMBERS),
         ]
     )
     assert not (out / CAPTURE_FILE).exists() and not (out / HEAD).exists()
@@ -863,6 +862,9 @@ class _BaseTool:
         )
         write_shard(
             result, base_local, HEAD, self.staged_commit, "base-own-pair", staging / HEAD / shard.id
+        )
+        (staging / HEAD / shard.id / f"{shard.subject}.json").write_text(
+            json.dumps(self.envelope), encoding="utf-8"
         )
         if self.malformed:
             (staging / HEAD / shard.id / CAPTURE_FILE).write_text("{", encoding="utf-8")

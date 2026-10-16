@@ -304,7 +304,7 @@ jobs:
           echo "## Committed evidence: event merge lock $MERGE_SHA" >> "$GITHUB_STEP_SUMMARY"
           git fetch --no-tags origin "$MERGE_SHA"
           git show "$MERGE_SHA:languages/python/uv.lock" > "$RUNNER_TEMP/event-merge-uv.lock"
-          uv run --project languages/python python languages/python/tools/cost_report.py --freshness-only languages/python/docs/structural-metadata-envelope/recovered/portfolio.json --lock-file "$RUNNER_TEMP/event-merge-uv.lock" 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+          uv run --project languages/python python languages/python/tools/cost_report.py --freshness-only languages/python/evidence/cost/current/portfolio.json --lock-file "$RUNNER_TEMP/event-merge-uv.lock" 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
 
   # The Pydantic parity corpus resolved against the minimum Pydantic release
   # parallax-core declares, rather than against the locked one

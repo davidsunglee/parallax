@@ -63,7 +63,7 @@ def test_a_planted_reading_fails_the_gate(
     [
         ("FIXTURE", "evidence_elsewhere"),
         ("GATES", "spec/gates.yaml"),
-        ("CAPTURES", "docs/*-envelope/*.json"),
+        ("CAPTURES", "evidence/cost/*.json"),
     ],
 )
 def test_an_evidence_location_the_loaders_do_not_read_fails_the_gate(

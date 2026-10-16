@@ -9,7 +9,7 @@
 # comparisons read a delta against.
 schemaVersion: 1
 basis:
-  portfolio: languages/python/docs/structural-metadata-envelope/recovered/portfolio.json
+  portfolio: languages/python/evidence/cost/current/portfolio.json
   headroom: 1.10
 advisory:
   timingNoiseAllowance: 0.05

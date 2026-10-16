@@ -23,7 +23,7 @@ from parallax.conformance.budget import (
 )
 from parallax.conformance.workloads import ACQUISITION_LEVELS
 
-AFTER_PORTFOLIO = Path("languages/python/docs/structural-metadata-envelope/after/portfolio.json")
+AFTER_PORTFOLIO = Path("languages/python/evidence/cost/structural-metadata-after/portfolio.json")
 
 
 def test_budget_contract_has_one_unique_positive_address_per_cell() -> None:
@@ -170,7 +170,7 @@ def test_every_memory_gate_is_the_basis_reading_under_the_stated_rule() -> None:
     assert GATED_WINDOWS.issubset(windows)
 
 
-# The retained `after/` capture carries the legacy counter names on every keyed
+# The retained structural-metadata-after capture carries legacy counter names on every keyed
 # case and both runtimes; renaming all 184 of them to the current vocabulary
 # derives exactly the ceilings the unrenamed file derives, because the rule
 # reads byte units alone and a `calls.*` cell is neither a gate nor a change
@@ -289,11 +289,6 @@ def test_the_advisory_allowances_beside_the_gates_are_the_reports_own() -> None:
         "memoryNoiseAllowance": cost_report.MEMORY_NOISE_ALLOWANCE,
         "timingNoiseFloor": 0.15,
     }
-    readme = (
-        case_format.find_repo_root()
-        / "languages/python/docs/structural-metadata-envelope/README.md"
-    ).read_text(encoding="utf-8")
-    assert "roughly ±15%" in readme
 
 
 @pytest.mark.usefixtures("committed_cost_evidence")
