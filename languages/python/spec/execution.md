@@ -1,6 +1,7 @@
 # Python execution binding
 
-Portable execution rules belong to [Unit of Work](../../../core/spec/m-unit-work.md),
+Portable execution rules belong to [Execution](../../../core/spec/m-execution.md),
+[Unit of Work](../../../core/spec/m-unit-work.md),
 [Execution Authority](../../../core/spec/m-execution-authority.md),
 [Automatic Retry](../../../core/spec/m-auto-retry.md),
 [Database Port](../../../core/spec/m-db-port.md), and
@@ -75,14 +76,26 @@ built-in integer, not `bool`; `retry_optimistic_conflicts` must be a boolean.
 Python isolation spellings are `read_committed`, `repeatable_read`, and
 `serializable`. Invalid field values raise plain `ValueError` before acquisition
 or observation. Defaults and other closed vocabularies are declared by the
-exported record and types.
+exported record and types. `ReadOnlyTxnOptions` is the resolved record of a
+read-only transaction: `max_retries` and `isolation` alone, resolved and
+validated as `TxnOptions` resolves and validates them.
 
 ## Transactions and failure boundaries
 
-`scope.transact(fn, ...)` is callback-only. The callback receives the Transaction
-and its return value is delivered only after durable commit. Python offers no
-transaction context-manager demarcation because a retry must replay the body.
-The public retry bound is `max_retries`; no `retries` alias exists.
+`scope.transact(fn, ...)` is callback-only. The callback receives the writable
+`TxnContext` and its return value is delivered only after durable commit. Python
+offers no transaction context-manager demarcation because a retry must replay
+the body. The public retry bound is `max_retries`; no `retries` alias exists.
+
+`scope.read_only(fn, *, max_retries=..., isolation=...)` is the read-only
+entrypoint, callback-only on the same terms. Its callback receives a
+`ReadOnlyTxnContext`: `find`, `stream`, `read_rows`, a `wire` that is the
+read-only `WireDatabaseView`, `edition`, and `options` — a
+`ReadOnlyTxnOptions` — and no mutation verb. Each attempt asks the port for a
+read-only boundary, and each attempt of `transact` for a read/write one; the
+access mode crosses the port as `access_mode`, `"read_only"` or `"read_write"`,
+beside `isolation`. A read-only transaction takes no participation lock, and a
+standalone read made inside either callback stays standalone.
 
 Only omission inherits a transaction option. An outer call inherits the scope's
 effective record; a joining call inherits the active transaction's resolved
@@ -93,16 +106,20 @@ identifies that selection. Static and cross-edition write eligibility follows
 the adopted model and core evidence rules, not edition inequality alone.
 
 Active transactions are thread-local. Joins must come from the same resource
-root and an equal captured actor. Independently derived aliases may join;
+root and an equal captured actor, through the active transaction's own
+entrypoint. Independently derived aliases may join;
 another root raises `TransactionOwnershipError(transaction-owner-mismatch)`.
 Unequal actor capture raises
-`TransactionAuthorityError(transaction-authority-mismatch)`. A joining explicit
-option may equal the active value but cannot renegotiate it; a difference raises
-`TransactionOptionConflictError`. Scope defaults alone do not conflict.
+`TransactionAuthorityError(transaction-authority-mismatch)`. A `transact` call
+while a read-only transaction is active, or a `read_only` call while a writable
+one is, raises `TransactionAccessModeError(transaction-access-mode-mismatch)`. A
+joining explicit option may equal the active value but cannot renegotiate it; a
+difference raises `TransactionOptionConflictError`. Scope defaults alone do not
+conflict.
 
-Join refusal order is lifecycle re-entry, explicit option validation, bare
-Unit-of-Work detection, root ownership, rollback-only state, actor equality,
-then explicit option equality. Authority and option preflight refusals leave a
+Join refusal order is lifecycle re-entry, explicit option validation, root
+ownership, rollback-only state, actor equality, access mode, then explicit
+option equality. Authority, access-mode, and option preflight refusals leave a
 healthy transaction usable when caught. A joined callback failure marks the
 outer transaction rollback-only before escaping; catching it cannot permit a
 commit. A failure while a flush executes — a database error or an affected-row
@@ -112,8 +129,9 @@ that triggered the flush. Once rollback-only, every further read, write, or
 joining callback raises `RollbackOnlyError` with the original cause, and a
 callback that caught the failure and returned normally still rolls back with its
 result withheld. Preparation, evidence, and planning refusals raised by a write
-verb leave the transaction usable when caught. Transaction references are not thread-safe and execution through an
-escaped reference after the invocation ends is refused.
+verb leave the transaction usable when caught. Transaction context references
+are not thread-safe, and execution through an escaped reference after the
+invocation ends is refused.
 
 An ordinary failure escaping an adopted outer transaction or standalone read
 is `ExecutionFailure`, carrying the adopted edition and original `cause`.
@@ -129,7 +147,7 @@ exposing both `triggering_error` and `rollback_error` and chaining the rollback
 failure. Successful rollback preserves the original error. A fatal trigger
 remains primary with rollback failure attached through native chaining.
 
-Write verbs are on the Transaction; their snake_case temporal parameters bind
+Write verbs are on the `TxnContext`; their snake_case temporal parameters bind
 the corresponding core operations. Inserts accept fresh constructed values;
 later mutations require provenance where the core evidence rules prescribe it.
 Evidence is never a caller-supplied address. Set-based writes take an Object
@@ -151,7 +169,7 @@ names a condition, never a value to store; the canonical instruction keeps
 `ifVersion` and `ifTxStart`.
 
 Every windowed verb — `insert`, `amend`, `amend_if`, `replace`, `replace_if`,
-`terminate`, `amend_where`, and `terminate_where`, on the Transaction and on
+`terminate`, `amend_where`, and `terminate_where`, on the `TxnContext` and on
 `tx.wire` — takes a keyword-only `until`. Omitting it selects the core unbounded
 verb; stating it — `None` included — selects the bounded one, whose window core
 preparation judges before an empty amendment is dropped. Every verb taking

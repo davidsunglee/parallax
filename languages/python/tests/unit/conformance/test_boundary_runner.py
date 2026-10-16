@@ -51,9 +51,13 @@ from parallax.core.db_port import (
     TransactionOutcome,
 )
 from parallax.core.dialect import POSTGRES, Dialect
-from parallax.core.execution import TransactionOptionConflictError, TxnOptions
+from parallax.core.execution import (
+    TransactionAccessModeError,
+    TransactionOptionConflictError,
+    TxnOptions,
+)
 from parallax.core.sql_gen import LoweredStatement
-from parallax.snapshot import Database, ScopedDatabase, TxnContext
+from parallax.snapshot import Database, ReadOnlyTxnContext, ScopedDatabase, TxnContext
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
     ConnectsAsItself,
@@ -128,6 +132,23 @@ def test_boundary_steps_reads_a_joins_own_options() -> None:
         boundary_runner.BoundaryStep(
             "join", {"max_retries": 0, "retry_optimistic_conflicts": False}
         ),
+        boundary_runner.BoundaryStep("join", {}),
+    ]
+
+
+def test_boundary_steps_reads_a_joins_own_access_mode() -> None:
+    case = _case(
+        {
+            "when": {
+                "boundary": [
+                    {"action": "join", "accessMode": "read-only", "maxRetries": 1},
+                    {"action": "join"},
+                ]
+            }
+        }
+    )
+    assert boundary_runner.boundary_steps(case) == [
+        boundary_runner.BoundaryStep("join", {"max_retries": 1}, None, "read_only"),
         boundary_runner.BoundaryStep("join", {}),
     ]
 
@@ -238,7 +259,11 @@ class _FakePort(ConnectsAsItself):
         return 1
 
     def transaction[T](
-        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
+        self,
+        body: Callable[[DatabaseConnection], T],
+        *,
+        isolation: str | None = None,
+        access_mode: str | None = None,
     ) -> TransactionOutcome[T]:
         self.boundaries += 1
         self.levels.append(isolation)
@@ -330,6 +355,53 @@ def test_run_boundary_actions_join_runs_the_rest_inside_a_joined_unit_of_work() 
     # write reached the database after the read, under the outer boundary.
     assert port.boundaries == 1
     assert port.ops == ["read", "write"]
+
+
+def test_a_join_through_the_outer_read_only_entrypoint_reads_in_the_same_attempt() -> None:
+    # A join naming no access mode is made through the enclosing call's own
+    # entrypoint, so inside a read-only invocation it is a read-only join, and
+    # the read after it runs on the one read-only boundary.
+    port = _FakePort(rows=[{"id": 2, "owner": "Linus", "balance": Decimal("250.00"), "version": 1}])
+    db = _db(port)
+    steps = [
+        boundary_runner.BoundaryStep("read", {}),
+        boundary_runner.BoundaryStep("join", {"max_retries": 10}),
+        boundary_runner.BoundaryStep("read", {}),
+    ]
+
+    def fn(rtx: ReadOnlyTxnContext) -> Any:
+        return boundary_runner.run_boundary_actions(rtx, steps, _ACCOUNT_TARGET, database=db)
+
+    result = db.read_only(fn)
+    assert result is not None
+    assert result.balance == Decimal("250.00")
+    assert port.boundaries == 1
+    assert port.ops == ["read", "read"]
+
+
+def test_a_join_naming_the_other_access_mode_is_refused_by_production() -> None:
+    port = _FakePort(rows=[{"id": 2, "owner": "Linus", "balance": Decimal("250.00"), "version": 1}])
+    db = _db(port)
+    steps = [
+        boundary_runner.BoundaryStep("read", {}),
+        boundary_runner.BoundaryStep("join", {}, None, "read_only"),
+    ]
+
+    def fn(tx: TxnContext) -> Any:
+        return boundary_runner.run_boundary_actions(tx, steps, _ACCOUNT_TARGET, database=db)
+
+    with raises_contextualized(TransactionAccessModeError):
+        db.transact(fn)
+
+
+def test_a_writing_action_in_a_read_only_invocation_is_refused() -> None:
+    port = _FakePort(rows=[{"id": 2, "owner": "Linus", "balance": Decimal("250.00"), "version": 1}])
+
+    def fn(rtx: ReadOnlyTxnContext) -> Any:
+        return boundary_runner.run_boundary_actions(rtx, _steps("read", "amend"), _ACCOUNT_TARGET)
+
+    with raises_contextualized(AssertionError, match="`amend` action needs a writable"):
+        _db(port).read_only(fn)
 
 
 def test_a_join_without_the_owning_database_is_refused() -> None:
@@ -519,6 +591,17 @@ def test_fault_injecting_port_answers_a_setup_failure_as_a_boundary_never_opened
     assert unopened.native_code == "22023"
     assert inner.boundaries == 0
     assert ran == []
+
+
+def test_an_access_mode_setup_failure_is_a_boundary_that_never_opened() -> None:
+    inner = _FakePort(rows=[])
+    port = FaultInjectingPort(inner, fault="access-mode-setup-failure", persistent=False)
+    outcome = port.transaction(lambda _conn: "unreachable", access_mode="read_only")
+    assert isinstance(outcome, BeginFailed)
+    unopened = outcome.error
+    assert isinstance(unopened, DatabaseError)
+    assert unopened.category is None
+    assert inner.boundaries == 0
 
 
 def test_a_setup_failure_leaves_the_write_seam_alone() -> None:

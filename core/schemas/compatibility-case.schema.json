@@ -581,6 +581,16 @@
       }
     },
     {
+      "description": "`when.uow.accessMode` belongs to the `read` and `boundary` shapes alone (m-case-format field table): those are the shapes whose runners open the outer invocation through the entrypoint it selects, so an access mode authored elsewhere would be silently ignored rather than graded.",
+      "if": {
+        "required": ["when"],
+        "properties": { "when": { "required": ["uow"], "properties": { "uow": { "required": ["accessMode"] } } } }
+      },
+      "then": {
+        "properties": { "shape": { "enum": ["read", "boundary"] } }
+      }
+    },
+    {
       "description": "`given.sessionDefault` belongs to the `boundary` shape alone (m-case-format field table). The Isolation Level a connection ALREADY defaults to is established on that connection before the adapter takes it, which only the API Conformance Suite arranges — every other shape's executor runs on a connection it did not configure, so the member would state a world state nothing established.",
       "if": {
         "required": ["given"],
@@ -755,13 +765,14 @@
           }
         },
         "fault": {
-          "description": "boundary cases only. A portable fault kind injected at the database-port seam to drive the retry loop (aligned with the m-db-error `errorClass` vocabulary): a `serialization-failure` or `deadlock` transient (always retriable), a `lock-wait-timeout` (never retriable), or an `optimistic-lock-conflict` (retriable only under `when.uow.retryOptimisticConflicts`). Three kinds are not failures of the WORK, and each is terminal for a different reason. `isolation-setup-failure`: the session setup opening the boundary at the requested Isolation Level fails, so the boundary never opens, the one attempt that had adopted and started finishes `beginFailed` on a connection it did acquire, and the callback is never called (m-db-port *Mapping obligations*). `connection-acquisition-failure`: the attempt's Acquisition grants no connection at all, so it carries the partial cleanup it ran, no release follows it, and the attempt finishes `beginFailed` CAUSED by it — an acquisition failure is outside the `m-db-error` categories and is never retriable. `connection-cleanup-failure`: the connection the attempt used reaches release-unconfirmed when the attempt gives it back, which is diagnostic rather than an outcome — the work stands and the boundary commits. Absent when the case exercises only loop configuration (`maxRetries: 0`, the callback-withheld-on-abort case).",
+          "description": "boundary cases only. A portable fault kind injected at the database-port seam to drive the retry loop (aligned with the m-db-error `errorClass` vocabulary): a `serialization-failure` or `deadlock` transient (always retriable), a `lock-wait-timeout` (never retriable), or an `optimistic-lock-conflict` (retriable only under `when.uow.retryOptimisticConflicts`). Four kinds are not failures of the WORK, and each is terminal for a different reason. `isolation-setup-failure` and `access-mode-setup-failure`: the session setup opening the boundary at the requested Isolation Level, or in the requested Access Mode, fails, so the boundary never opens, the one attempt that had adopted and started finishes `beginFailed` on a connection it did acquire, and the callback is never called (m-db-port *Mapping obligations*). `connection-acquisition-failure`: the attempt's Acquisition grants no connection at all, so it carries the partial cleanup it ran, no release follows it, and the attempt finishes `beginFailed` CAUSED by it — an acquisition failure is outside the `m-db-error` categories and is never retriable. `connection-cleanup-failure`: the connection the attempt used reaches release-unconfirmed when the attempt gives it back, which is diagnostic rather than an outcome — the work stands and the boundary commits. Absent when the case exercises only loop configuration (`maxRetries: 0`, the callback-withheld-on-abort case).",
           "enum": [
             "serialization-failure",
             "deadlock",
             "lock-wait-timeout",
             "optimistic-lock-conflict",
             "isolation-setup-failure",
+            "access-mode-setup-failure",
             "connection-acquisition-failure",
             "connection-cleanup-failure"
           ]
@@ -789,7 +800,19 @@
           "description": "The transaction options the action's outer invocation EXPLICITLY requests (m-unit-work strategy selection + m-auto-retry/m-opt-lock bounded automatic retry + the m-db-port Isolation Level). Every member is optional and none may be null: a field the case omits is omitted at the invocation and resolves to the Database Root's default. Descriptive apart from `isolation`: it declares the resolved Concurrency Preference (so a case's mode-dependent golden SQL is self-describing) and the retry configuration a boundary case exercises. `locking` forces the effective Locking strategy for every lockable Entity. `optimistic` is the default and selects Optimistic for an Entity with an explicit-version or Transaction-Time-derived optimistic key, while an unversioned Non-Temporal Entity falls back to Locking. The target Entity's Effective Concurrency Strategy decides gate presence by itself, never the mutation kind: Optimistic omits the shared read lock and gates every observation-requiring write; Locking takes the qualifying shared read lock and emits no gate, though a versioned UPDATE still advances the version. The rule is uniform across the versioned keyed UPDATE, the versioned keyed DELETE, and the temporal milestone close. The harness executes the authored golden SQL either way; the block documents WHICH preference produced it. `isolation` is the one member that is never merely descriptive: it names the portable Isolation Level every boundary the case opens is opened at, and a runner that opens no boundary at all carries it nowhere.",
           "type": "object",
           "additionalProperties": false,
+          "if": {"required": ["accessMode"], "properties": {"accessMode": {"const": "read-only"}}},
+          "then": {
+            "description": "A read-only invocation resolves no Concurrency Preference and no optimistic-conflict opt-in, so its request names neither.",
+            "allOf": [
+              {"not": {"required": ["concurrency"]}},
+              {"not": {"required": ["retryOptimisticConflicts"]}}
+            ]
+          },
           "properties": {
+            "accessMode": {
+              "description": "The Access Mode the outer invocation selects through its entrypoint (m-execution *Read-only transactions*): `read-write` (the default when omitted) opens a writable transaction, `read-only` a read-only one, whose reads take no participation lock and whose request names no Concurrency Preference and no optimistic-conflict opt-in. Prescriptive: a runner opens every boundary of the outer invocation in this mode, and the mode is no option a root configures.",
+              "enum": ["read-only", "read-write"]
+            },
             "concurrency": {
               "description": "The Unit Work's Concurrency Preference this invocation explicitly requests: `optimistic` (a gate-capable Entity uses lock-free reads and observation-bound gates; an unversioned Non-Temporal Entity falls back to Locking) or `locking` (force shared-lock participation and ungated writes for every lockable Entity). Omitted, the Database Root's configured default applies (`given.databaseOptions.concurrency`, built-in `optimistic`). Gate presence follows the target Entity's derived Effective Concurrency Strategy alone, uniformly across the versioned keyed UPDATE, the versioned keyed DELETE, and the temporal milestone close.",
               "$ref": "#/$defs/transactionOptions/concurrency"
@@ -1314,6 +1337,10 @@
                 "description": "The unit-of-work action this step performs, portably named (the concrete API is per-language). `join` opens a JOINED unit of work that shares the current one rather than a nested boundary of its own (m-unit-work), so every action after it runs inside that joined scope; the list stays FLAT because the body is one linear sequence, and what a case asserts about the sharing rides `then.outcome` and `then.executionLifecycle` rather than the list's shape.",
                 "enum": ["read", "create", "amend", "terminate", "delete", "join"]
               },
+              "accessMode": {
+                "description": "The Access Mode THIS joining call's entrypoint selects, spelled as `when.uow.accessMode` is; omitted, the join is made through the outer invocation's own entrypoint. A join in the other mode than the boundary it joins is the refusal `then.outcome: access-mode-mismatch` states, and a `read-only` one names no Concurrency Preference or optimistic-conflict opt-in. Legal on a `join` step alone.",
+                "enum": ["read-only", "read-write"]
+              },
               "actorIdentity": {
                 "description": "The independently selected actor for THIS joining call. Legal on a join alone. Absence reuses the enclosing scope; presence derives an independent scope even where its values equal the outer selection.",
                 "$ref": "#/$defs/actorIdentity"
@@ -1345,19 +1372,30 @@
             },
             "allOf": [
               {
-                "description": "Only a `join` step opens a boundary, so only a `join` step may name a transaction option for one: every other action runs inside a boundary that is already open.",
+                "description": "Only a `join` step opens a boundary, so only a `join` step may name an access mode or a transaction option for one: every other action runs inside a boundary that is already open.",
                 "if": {
                   "required": ["action"],
                   "properties": { "action": { "not": { "const": "join" } } }
                 },
                 "then": {
                   "allOf": [
+                    { "not": { "required": ["accessMode"] } },
                     { "not": { "required": ["maxRetries"] } },
                     { "not": { "required": ["concurrency"] } },
                     { "not": { "required": ["retryOptimisticConflicts"] } },
                     { "not": { "required": ["isolation"] } },
                     { "not": { "required": ["actorIdentity"] } },
                     { "not": { "required": ["databaseAuthorization"] } }
+                  ]
+                }
+              },
+              {
+                "description": "A read-only joining call resolves no Concurrency Preference and no optimistic-conflict opt-in, so it names neither.",
+                "if": {"required": ["accessMode"], "properties": {"accessMode": {"const": "read-only"}}},
+                "then": {
+                  "allOf": [
+                    { "not": { "required": ["concurrency"] } },
+                    { "not": { "required": ["retryOptimisticConflicts"] } }
                   ]
                 }
               },
@@ -1586,7 +1624,7 @@
           "minProperties": 1
         },
         "outcome": {
-          "description": "boundary cases only. The portable expected outcome: `committed` (the unit of work eventually commits — the injected fault was auto-retried away), `aborted` (the closure threw and the boundary rolled back, withholding the callback's return value), a surfaced error kind the caller observes (`optimistic-lock-conflict` when a conflict is not opted into retry; `deadlock` / `serialization-failure` / `lock-wait-timeout` when a transient exhausts the bound or the loop is disabled), or one of the pre-body refusals: `authority-mismatch` (a joining scope's actor differs after ownership and rollback-only eligibility are established and before option comparison), `option-conflict` (a joining call named an option the boundary it joined was not opened with), `boundary-failed` (the boundary never opened), and `connection-refused` (the adapter refused the connection it was handed). The concrete per-language error type stays language-local; this is the neutral kind the suite asserts. A DIALECT-KEYED map states an outcome that differs by engine — the same form `then.nativeCode` and `then.sql` use, and with the same rule that a dialect absent from the map means the case does not apply there.",
+          "description": "boundary cases only. The portable expected outcome: `committed` (the unit of work eventually commits — the injected fault was auto-retried away), `aborted` (the closure threw and the boundary rolled back, withholding the callback's return value), a surfaced error kind the caller observes (`optimistic-lock-conflict` when a conflict is not opted into retry; `deadlock` / `serialization-failure` / `lock-wait-timeout` when a transient exhausts the bound or the loop is disabled), or one of the pre-body refusals: `authority-mismatch` (a joining scope's actor differs after ownership and rollback-only eligibility are established and before access-mode and option comparison), `access-mode-mismatch` (a joining call's access mode differs from the boundary it joined, refused after authority and before option comparison), `option-conflict` (a joining call named an option the boundary it joined was not opened with), `boundary-failed` (the boundary never opened), and `connection-refused` (the adapter refused the connection it was handed). The concrete per-language error type stays language-local; this is the neutral kind the suite asserts. A DIALECT-KEYED map states an outcome that differs by engine — the same form `then.nativeCode` and `then.sql` use, and with the same rule that a dialect absent from the map means the case does not apply there.",
           "oneOf": [
             { "$ref": "#/$defs/boundaryOutcome" },
             {
@@ -2536,18 +2574,20 @@
         "serialization-failure",
         "lock-wait-timeout",
         "authority-mismatch",
+        "access-mode-mismatch",
         "option-conflict",
         "boundary-failed",
         "connection-refused"
       ]
     },
     "lifecycleInvocationStarted": {
-      "description": "One call to callback demarcation opened, as exactly one of the two invocation kinds. An `outer` invocation opened the boundary and is therefore the root activity, so it states the RESOLVED Concurrency Preference and retry policy it runs under — resolved values only, never whether the caller supplied them — plus the Isolation Level it REQUESTED. A Database-driven invocation always states one, because it always resolves one — the explicit level, else the Database Root's default (`read-committed` on an unconfigured root); the field stays optional because the lifecycle vocabulary also serves a lower-level caller that asks the port for no level, and then it is absent rather than a default nothing here established. A `joined` invocation shares the outer root, unit of work, and transaction, runs no Transaction Attempt of its own, and states none of the four: all were resolved by the invocation it joined, which a joined boundary may not renegotiate.",
+      "description": "One call to callback demarcation opened, as exactly one of the two invocation kinds. An `outer` invocation opened the boundary and is therefore the root activity, so it states the RESOLVED retry policy it runs under and, for a read/write invocation, its RESOLVED Concurrency Preference — resolved values only, never whether the caller supplied them — plus the Access Mode and Isolation Level it REQUESTED. A Database-driven invocation always states both, because its entrypoint fixes the mode and it always resolves a level — the explicit level, else the Database Root's default (`read-committed` on an unconfigured root); the two stay optional because the lifecycle vocabulary also serves a lower-level caller that asks the port for neither, and then each is absent rather than a default nothing here established. A read-only invocation resolves no Concurrency Preference and states none. A `joined` invocation shares the outer root, attempt, and transaction, runs no Transaction Attempt of its own, and states none of these: all were resolved or requested by the invocation it joined, which a joined boundary may not renegotiate.",
       "type": "object",
       "additionalProperties": false,
       "required": ["invocation"],
       "properties": {
         "invocation": {"enum": ["outer", "joined"]},
+        "accessMode": {"enum": ["read-only", "read-write"]},
         "concurrency": {"enum": ["locking", "optimistic"]},
         "retries": {"type": "integer", "minimum": 0},
         "retryOptimisticConflicts": {"type": "boolean"},
@@ -2555,16 +2595,26 @@
       },
       "allOf": [
         {
-          "description": "The resolved policy belongs to the invocation that resolved it: an outer invocation states all three, and a joined one states none, because restating an inherited value would read as a renegotiation. The requested isolation is OPTIONAL on an outer invocation — a lower-level caller may ask the port for no level, while a Database-driven invocation always states its resolved one — and forbidden on a joined one for the same reason the other three are.",
+          "description": "The resolved policy belongs to the invocation that resolved it: an outer invocation states it, and a joined one states none, because restating an inherited value would read as a renegotiation. The requested access mode and isolation are OPTIONAL on an outer invocation — a lower-level caller may ask the port for neither, while a Database-driven invocation always states both — and forbidden on a joined one for the same reason the policy is.",
           "if": {"required": ["invocation"], "properties": {"invocation": {"const": "outer"}}},
-          "then": {"required": ["concurrency", "retries", "retryOptimisticConflicts"]},
+          "then": {"required": ["retries", "retryOptimisticConflicts"]},
           "else": {
             "allOf": [
+              {"not": {"required": ["accessMode"]}},
               {"not": {"required": ["concurrency"]}},
               {"not": {"required": ["retries"]}},
               {"not": {"required": ["retryOptimisticConflicts"]}},
               {"not": {"required": ["isolation"]}}
             ]
+          }
+        },
+        {
+          "description": "A read-only outer invocation resolves no Concurrency Preference, so it states none; every other outer invocation states the one it resolved.",
+          "if": {"required": ["invocation"], "properties": {"invocation": {"const": "outer"}}},
+          "then": {
+            "if": {"required": ["accessMode"], "properties": {"accessMode": {"const": "read-only"}}},
+            "then": {"not": {"required": ["concurrency"]}},
+            "else": {"required": ["concurrency"]}
           }
         }
       ]

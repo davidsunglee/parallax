@@ -522,7 +522,11 @@ class _FakePort(ConnectsAsItself):
         raise engine.EngineError("the fake port refuses writes")
 
     def transaction[T](
-        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
+        self,
+        body: Callable[[DatabaseConnection], T],
+        *,
+        isolation: str | None = None,
+        access_mode: str | None = None,
     ) -> TransactionOutcome[T]:  # pragma: no cover
         return body_outcome(self, body)
 
@@ -698,7 +702,11 @@ class _WritePort(ConnectsAsItself):
         return 1
 
     def transaction[T](
-        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
+        self,
+        body: Callable[[DatabaseConnection], T],
+        *,
+        isolation: str | None = None,
+        access_mode: str | None = None,
     ) -> TransactionOutcome[T]:
         return body_outcome(self, body)
 
@@ -819,7 +827,11 @@ class _ManagedPort(ConnectsAsItself):
         raise NotImplementedError
 
     def transaction[T](
-        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
+        self,
+        body: Callable[[DatabaseConnection], T],
+        *,
+        isolation: str | None = None,
+        access_mode: str | None = None,
     ) -> TransactionOutcome[T]:  # pragma: no cover
         return body_outcome(self, body)
 
@@ -897,7 +909,11 @@ class _PositionPort(ConnectsAsItself):
         raise NotImplementedError
 
     def transaction[T](
-        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
+        self,
+        body: Callable[[DatabaseConnection], T],
+        *,
+        isolation: str | None = None,
+        access_mode: str | None = None,
     ) -> TransactionOutcome[T]:  # pragma: no cover
         return body_outcome(self, body)
 
@@ -961,7 +977,11 @@ class _BalancePort(ConnectsAsItself):
         raise NotImplementedError
 
     def transaction[T](
-        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
+        self,
+        body: Callable[[DatabaseConnection], T],
+        *,
+        isolation: str | None = None,
+        access_mode: str | None = None,
     ) -> TransactionOutcome[T]:  # pragma: no cover
         return body_outcome(self, body)
 
@@ -1090,7 +1110,11 @@ class _TriggerPort(ConnectsAsItself):
         return 1
 
     def transaction[T](
-        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
+        self,
+        body: Callable[[DatabaseConnection], T],
+        *,
+        isolation: str | None = None,
+        access_mode: str | None = None,
     ) -> TransactionOutcome[T]:  # pragma: no cover
         return body_outcome(self, body)
 
@@ -1201,7 +1225,11 @@ class _NeverCalledPort(ConnectsAsItself):
         raise AssertionError("a rejected-case run must not execute SQL")
 
     def transaction[T](
-        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
+        self,
+        body: Callable[[DatabaseConnection], T],
+        *,
+        isolation: str | None = None,
+        access_mode: str | None = None,
     ) -> TransactionOutcome[T]:
         raise AssertionError("a rejected-case run must not open a transaction")
 
@@ -1287,7 +1315,11 @@ class _QueuePort(ConnectsAsItself):
         return 1
 
     def transaction[T](
-        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
+        self,
+        body: Callable[[DatabaseConnection], T],
+        *,
+        isolation: str | None = None,
+        access_mode: str | None = None,
     ) -> TransactionOutcome[T]:  # pragma: no cover
         raise NotImplementedError
 
@@ -1512,7 +1544,11 @@ class _WriteAndReadBackPort(ConnectsAsItself):
         return self._affected.pop(0) if self._affected else 1
 
     def transaction[T](
-        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
+        self,
+        body: Callable[[DatabaseConnection], T],
+        *,
+        isolation: str | None = None,
+        access_mode: str | None = None,
     ) -> TransactionOutcome[T]:  # pragma: no cover
         return body_outcome(self, body)
 
@@ -1581,7 +1617,11 @@ class _AccountPort(ConnectsAsItself):
         raise NotImplementedError
 
     def transaction[T](
-        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
+        self,
+        body: Callable[[DatabaseConnection], T],
+        *,
+        isolation: str | None = None,
+        access_mode: str | None = None,
     ) -> TransactionOutcome[T]:  # pragma: no cover
         return body_outcome(self, body)
 
@@ -1735,7 +1775,11 @@ class _OrderWithItemsPort(ConnectsAsItself):
         raise NotImplementedError
 
     def transaction[T](
-        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
+        self,
+        body: Callable[[DatabaseConnection], T],
+        *,
+        isolation: str | None = None,
+        access_mode: str | None = None,
     ) -> TransactionOutcome[T]:  # pragma: no cover
         return body_outcome(self, body)
 

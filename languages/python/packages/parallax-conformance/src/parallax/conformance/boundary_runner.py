@@ -14,6 +14,7 @@ from parallax.conformance.story_models import Account
 from parallax.core import Entity
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
+    AccessMode,
     BeginFailed,
     CanonicalWriteStatement,
     CleanupIssue,
@@ -41,7 +42,7 @@ from parallax.core.db_port import (
 )
 from parallax.core.diagnostics import diagnostic_for
 from parallax.core.dialect import Dialect
-from parallax.snapshot import ScopedDatabase, TxnContext
+from parallax.snapshot import ReadOnlyTxnContext, ScopedDatabase, TxnContext
 
 __all__ = [
     "TARGET_ID",
@@ -84,7 +85,7 @@ class BoundaryTarget[E: Entity]:
     ``baseline``, the fixture value.
     """
 
-    find: Callable[[TxnContext], E]
+    find: Callable[[TxnContext | ReadOnlyTxnContext], E]
     edit: Callable[[E], E]
     amount: Callable[[E], Decimal]
     baseline: Decimal
@@ -150,17 +151,20 @@ def reachable_boundary_cases(cases: list[case_format.Case] | None = None) -> lis
 
 @dataclass(frozen=True, slots=True)
 class BoundaryStep:
-    """One `when.boundary` step: the portable action, and the transaction
-    options a `join` names for the transaction it joins.
+    """One `when.boundary` step: the portable action, and the entrypoint and
+    transaction options a `join` names for the transaction it joins.
 
     ``keywords`` holds exactly the fields the step authors — empty on every
     other action and on a `join` naming none, which is the omission that
-    INHERITS the active transaction's values (`m-unit-work`).
+    INHERITS the active transaction's values (`m-unit-work`). ``access_mode``
+    is the entrypoint a `join` is made through, ``None`` where it joins through
+    the enclosing call's own.
     """
 
     action: str
     keywords: case_format.TransactionKeywords
     actor_selection: case_format.ActorSelection | None = None
+    access_mode: AccessMode | None = None
 
 
 def boundary_steps(case: case_format.Case) -> list[BoundaryStep]:
@@ -174,6 +178,7 @@ def boundary_steps(case: case_format.Case) -> list[BoundaryStep]:
             case_format.step_actor_selection(
                 step, where=f"{case.path.name}: when.boundary[{index}]"
             ),
+            case_format.step_access_mode(step, where=f"{case.path.name}: when.boundary[{index}]"),
         )
         for index, step in enumerate(steps)
     ]
@@ -212,7 +217,7 @@ def outcome(case: case_format.Case, dialect: Dialect) -> str | None:
 
 
 def run_boundary_actions[E: Entity](
-    tx: TxnContext,
+    tx: TxnContext | ReadOnlyTxnContext,
     steps: Sequence[BoundaryStep],
     target: BoundaryTarget[E],
     *,
@@ -234,21 +239,23 @@ def run_boundary_actions[E: Entity](
       range 1-3) — no reachable corpus witness authors this action, but the
       mapping is total, not partial.
     - ``delete`` removes the last-read account.
-    - ``join`` opens a joined unit of work through the enclosing scope, naming exactly
-      the options the step authors, and runs every REMAINING action inside it,
-      carrying the row already observed. A joined call shares the outer transaction
-      (`m-unit-work`), so its closure receives the same :class:`TxnContext` and
-      its buffered writes reach the database in the OUTER boundary's own
-      pre-commit batch — which is exactly what `m-execution-lifecycle-006`
-      asserts. An unqualified join reuses that scope; a qualified join derives
-      an independent scope from the same root. An option the transaction was not opened with is
-      refused there rather than here: the refusal under test is production's
-      own.
+    - ``join`` opens a joined invocation through the enclosing scope — through
+      ``read_only`` or ``transact`` as the step's access mode, else the
+      enclosing call's, selects — naming exactly the options the step authors,
+      and runs every REMAINING action inside it, carrying the row already
+      observed. A joined call shares the outer transaction (`m-unit-work`), so
+      its closure receives the same context and its buffered writes reach the
+      database in the OUTER boundary's own pre-commit batch — which is exactly
+      what `m-execution-lifecycle-006` asserts. An unqualified join reuses that
+      scope; a qualified join derives an independent scope from the same root.
+      A mode or an option the transaction was not opened with is refused there
+      rather than here: the refusal under test is production's own.
     - ``terminate`` is a loud refusal: no target declares one, and no reachable
       corpus witness authors it either.
 
     ``create`` and ``delete`` exist only on the account target, and are refused
-    on any other.
+    on any other. Every writing action needs a writable context, and is refused
+    on a read-only one.
 
     Returns the LAST tracked row (the closure's own return value —
     `then.outcome: committed`'s "callback value returned" half), ``None``
@@ -258,7 +265,7 @@ def run_boundary_actions[E: Entity](
 
 
 def _run_actions(
-    tx: TxnContext,
+    tx: TxnContext | ReadOnlyTxnContext,
     steps: list[BoundaryStep],
     target: BoundaryTarget[Any],
     current: Entity | None,
@@ -273,26 +280,20 @@ def _run_actions(
             if current is None:
                 raise AssertionError("an `amend` action needs a prior `read` observation")
             edited: Entity = target.edit(current)
-            tx.amend(edited)
+            _writable(tx, action).amend(edited)
             current = edited
         elif action == "create":
             _refuse_beyond_the_account(action, target)
             current = Account(id=90, owner="Boundary", balance=Decimal("0.00"))
-            tx.insert(current)
+            _writable(tx, action).insert(current)
         elif action == "delete":
             _refuse_beyond_the_account(action, target)
             if current is None:
                 raise AssertionError("a `delete` action needs a prior `read` observation")
-            tx.delete(current)
+            _writable(tx, action).delete(current)
             current = None
         elif action == "join":
-            joining_database = _joining_database(step, database, scope_for)
-            return joining_database.transact(
-                lambda joined, rest=steps[index + 1 :], seen=current, scope=joining_database: (
-                    _run_actions(joined, rest, target, seen, scope, scope_for)
-                ),
-                **step.keywords,
-            )
+            return _join(tx, step, steps[index + 1 :], target, current, database, scope_for)
         elif action == "terminate":
             raise AssertionError(
                 "`terminate` has no legal target: no boundary target declares one "
@@ -301,6 +302,36 @@ def _run_actions(
         else:  # pragma: no cover - m-case-format's `when.boundary.action` enum is closed
             raise AssertionError(f"unrecognized boundary action {action!r}")
     return current
+
+
+def _join(
+    tx: TxnContext | ReadOnlyTxnContext,
+    step: BoundaryStep,
+    rest: list[BoundaryStep],
+    target: BoundaryTarget[Any],
+    current: Entity | None,
+    database: ScopedDatabase | None,
+    scope_for: Callable[[case_format.ActorSelection], ScopedDatabase] | None,
+) -> Entity | None:
+    """Run ``rest`` inside the joined invocation ``step`` opens, through the
+    entrypoint its access mode — else the enclosing call's — selects."""
+    scope = _joining_database(step, database, scope_for)
+    mode = step.access_mode or ("read_only" if isinstance(tx, ReadOnlyTxnContext) else "read_write")
+
+    def joined(context: TxnContext | ReadOnlyTxnContext) -> Entity | None:
+        return _run_actions(context, rest, target, current, scope, scope_for)
+
+    if mode == "read_only":
+        return scope.read_only(
+            joined, **case_format.read_only_keywords(step.keywords, where="a read-only join step")
+        )
+    return scope.transact(joined, **step.keywords)
+
+
+def _writable(tx: TxnContext | ReadOnlyTxnContext, action: str) -> TxnContext:
+    if not isinstance(tx, TxnContext):
+        raise AssertionError(f"a `{action}` action needs a writable transaction")
+    return tx
 
 
 def _refuse_beyond_the_account(action: str, target: BoundaryTarget[Any]) -> None:
@@ -382,14 +413,21 @@ _FAULTS: Final[Mapping[str, _Fault]] = {
         ),
     ),
     "optimistic-lock-conflict": _Fault(seam="work", retriable="opt_in", error=None),
-    # Uncategorized on purpose: a refused session setup is a request the engine
-    # would not honor, not a contention the classifier has a neutral category
-    # for, so nothing above may read it as retriable.
+    # Both setup kinds are uncategorized on purpose: a refused session setup is
+    # a request the engine would not honor, not a contention the classifier has
+    # a neutral category for, so nothing above may read it as retriable.
     "isolation-setup-failure": _Fault(
         seam="boundary",
         retriable="never",
         error=lambda: DatabaseError(
             category=None, native_code="22023", message="invalid isolation level request"
+        ),
+    ),
+    "access-mode-setup-failure": _Fault(
+        seam="boundary",
+        retriable="never",
+        error=lambda: DatabaseError(
+            category=None, native_code="0A000", message="access mode request refused"
         ),
     ),
     # The two resource kinds raise no DatabaseError, because neither is a
@@ -528,7 +566,11 @@ class FaultInjectingPort:
         )
 
     def transaction[T](
-        self, body: Callable[[DatabaseConnection], T], *, isolation: IsolationLevel | None = None
+        self,
+        body: Callable[[DatabaseConnection], T],
+        *,
+        isolation: IsolationLevel | None = None,
+        access_mode: AccessMode | None = None,
     ) -> TransactionOutcome[T]:
         # A boundary-seam fault is a boundary that never opened, so this ANSWERS
         # `BeginFailed` instead of raising and never reaches the inner port: the
@@ -549,7 +591,7 @@ class FaultInjectingPort:
                 )
             )
 
-        return self._inner.transaction(wrapped, isolation=isolation)
+        return self._inner.transaction(wrapped, isolation=isolation, access_mode=access_mode)
 
     def _armed_at(self, seam: Literal["work", "boundary"]) -> _Fault | None:
         """The case's own fault where ``seam`` is the one it belongs to and this

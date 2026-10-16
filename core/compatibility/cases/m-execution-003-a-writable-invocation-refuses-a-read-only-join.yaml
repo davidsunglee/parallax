@@ -1,0 +1,25 @@
+# Access mode is fixed for the attempt (m-execution *Read-only transactions*;
+# m-execution-authority *Join authority*): a read-only call made while a
+# writable transaction is active is refused as an access-mode mismatch before
+# its callback runs. The read following the join is the joining body's
+# observable: a pre-body refusal leaves the outer read as the only database call.
+model: models/account.yaml
+tags: [m-execution, m-execution-authority, m-api-conformance, join, slice-snapshot-1]
+lane: api-conformance
+shape: boundary
+compileEligibility:
+  mode: run-only
+  reason: single-connection
+  note: "single-connection cross-mode join intent (shape:boundary)"
+when:
+  boundary:
+    - action: read
+      note: the outer writable callback reaches modeled work before the refused call
+    - action: join
+      accessMode: read-only
+      note: a read-only call cannot join the active writable transaction
+    - action: read
+      note: the refused joining body must not reach this database call
+then:
+  outcome: access-mode-mismatch
+  roundTrips: 1

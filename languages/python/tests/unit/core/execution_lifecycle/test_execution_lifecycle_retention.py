@@ -719,6 +719,7 @@ def _begun_attempt(
     invocation = stack.enter_context(
         open_transaction_root(
             installed,
+            access_mode="read_write",
             concurrency="optimistic",
             retries=1,
             retry_optimistic_conflicts=False,
@@ -1143,9 +1144,13 @@ class _CountingPort(ConnectsAsItself):
         raise AssertionError("no write expected — this workload writes nothing")
 
     def transaction[T](
-        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
+        self,
+        body: Callable[[DatabaseConnection], T],
+        *,
+        isolation: str | None = None,
+        access_mode: str | None = None,
     ) -> TransactionOutcome[T]:
-        del isolation
+        del isolation, access_mode
         with self._lock:
             self.begins += 1
         return body_outcome(cast("DatabaseConnection", self), body)
@@ -1334,9 +1339,13 @@ class _ReleasingCommitFailurePort(ConnectsAsItself):
         return 1
 
     def transaction[T](
-        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
+        self,
+        body: Callable[[DatabaseConnection], T],
+        *,
+        isolation: str | None = None,
+        access_mode: str | None = None,
     ) -> TransactionOutcome[T]:
-        del isolation
+        del isolation, access_mode
         self.begins += 1
         outcome = body_outcome(cast("DatabaseConnection", self), body)
         if self._remaining and isinstance(outcome, Committed):

@@ -5,7 +5,7 @@ from typing import Literal
 from uuid import UUID
 
 from parallax.core._execution._unit_work.uow import Concurrency, WriteBatchReason
-from parallax.core.db_port import AcquisitionReason, CleanupResult, IsolationLevel
+from parallax.core.db_port import AccessMode, AcquisitionReason, CleanupResult, IsolationLevel
 from parallax.core.diagnostics import FailureDiagnostic
 from parallax.core.execution_lifecycle._diagnostics import (
     ActivityFailure,
@@ -262,14 +262,18 @@ class OuterInvocation:
 
     It contains every physical attempt and every joined invocation beneath them.
 
-    ``isolation`` is the Isolation Level this invocation REQUESTED, and ``None``
-    where it requested none. It is not the level the database went on to use: a
-    request naming none leaves the adapter's own default, which nothing above
-    the port knows, so reporting that default here would state a fact this
-    invocation never established.
+    ``access_mode`` and ``isolation`` are what this invocation REQUESTED of
+    every attempt's boundary, each ``None`` where it requested none. Neither is
+    what the database went on to use: a request naming none leaves the
+    adapter's own default, which nothing above the port knows, so reporting
+    that default here would state a fact this invocation never established.
+
+    ``concurrency`` is the resolved Concurrency Preference of a writable
+    invocation, and ``None`` for a read-only one, which resolves none.
     """
 
-    concurrency: Concurrency
+    access_mode: AccessMode | None
+    concurrency: Concurrency | None
     retry_policy: RetryPolicy
     isolation: IsolationLevel | None
 

@@ -809,6 +809,25 @@ def test_an_explicit_optimistic_request_under_a_locking_root_plans_and_runs_lock
     assert "for share" not in reads.compile_read_case(case, "postgres")[0][0].sql
 
 
+@pytest.mark.parametrize("case_id", ["m-read-lock-024", "m-read-lock-025"])
+def test_a_read_only_case_plans_and_runs_in_a_read_only_boundary_taking_no_lock(
+    case_id: str,
+) -> None:
+    case = _load_case(case_id)
+    port = FakeDbPort([{"id": 1, "owner": "Ada", "balance": decimal.Decimal("100.00")}])
+    emissions, _rows, _trips = reads.run_read_case(case, port)
+    assert port.modes == ["read_only"]
+    assert "for share" not in emissions[0].sql
+    compiled, _trips = reads.compile_read_case(case, "postgres")
+    assert compiled[0].sql == emissions[0].sql
+
+
+def test_a_writable_case_runs_in_a_read_write_boundary() -> None:
+    port = FakeDbPort([{"id": 1, "name": "Grace"}])
+    reads.run_read_case(_rooted("m-value-object-001", uow={"concurrency": "optimistic"}), port)
+    assert port.modes == ["read_write"]
+
+
 def test_an_authored_level_overrides_the_case_roots_level_on_a_transactional_read() -> None:
     port = FakeDbPort([{"id": 1, "name": "Grace"}])
     reads.run_read_case(

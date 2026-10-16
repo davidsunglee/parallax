@@ -81,12 +81,13 @@ A joining call is admitted only if its selected actor equals the transaction's c
 The mandatory join refusal order is:
 
 1. verify that the active transaction may be joined by the current execution owner under `m-unit-work`;
-2. verify that the active transaction is not rollback-only under `m-unit-work`;
+2. verify that the active transaction is not rollback-only (`m-execution` *Attempts*);
 3. compare the joining Execution Actor with the transaction's captured actor and refuse unequal actors as **authority mismatch**;
-4. compare transaction options and apply the existing option-conflict rule; and
-5. enter the joined body.
+4. compare the joining entrypoint's access mode with the transaction's and refuse a different mode as **access-mode mismatch** (`m-execution` *Read-only transactions*);
+5. compare the transaction options that entrypoint takes and apply the existing option-conflict rule; and
+6. enter the joined body.
 
-Authority mismatch MUST therefore win over option conflict when both differ. It MUST be detected before the joined body starts and before any database operation for that body. The active transaction remains the enclosing caller's transaction; refusing the nested body does not itself replace its actor or invent a second transaction.
+Authority mismatch MUST therefore win over access-mode mismatch, and access-mode mismatch over option conflict, when more than one differs. It MUST be detected before the joined body starts and before any database operation for that body. The active transaction remains the enclosing caller's transaction; refusing the nested body does not itself replace its actor or invent a second transaction.
 
 Switching Principal or Database Authorization inside an active transaction is forbidden. A caller that needs different authority must use a non-joining outer boundary after the current transaction settles.
 

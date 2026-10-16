@@ -17,7 +17,7 @@ The port names a
 `executePipeline(statements) → row batches` /
 `executeWrite(sql, binds) → affected-row count` /
 optional `orderedWriteTransport(statements) → ordered write result` /
-`transaction(body, isolation?)` contract and nothing more. `execute` and
+`transaction(body, isolation?, accessMode?)` contract and nothing more. `execute` and
 `executePipeline` are row/result oriented;
 DML that needs write-outcome classification uses `executeWrite` and **MUST NOT**
 append dialect-specific row-returning clauses merely to infer an affected count.
@@ -453,6 +453,18 @@ transaction never uses that form: an omitted isolation resolves as `m-execution`
 record, and the port is asked for that concrete level on every attempt. Absence
 remains the port's own lower-level capability for a caller below the root.
 
+`accessMode` is optional and, when present, is the **Access Mode** the caller
+asked this boundary to open in: `read-only`, which admits no write the database
+can refuse, or `read-write`. It is requested independently of the level —
+naming one selects nothing about the other — and is carried, applied, and
+refused on the same terms: boundary-scoped, mapped for exactly one attempt, and
+reported as a boundary failure where the adapter cannot open the boundary in
+that mode rather than opened in another. Absence leaves the adapter's own
+default. A modeled transaction never uses that form either: its entrypoint
+fixes the mode (`m-execution` *Read-only transactions*), so every attempt asks
+for `read-only` or `read-write` explicitly, and a writable transaction cannot
+inherit a read-only default.
+
 For each `documentReads` pair, the adapter reads both cells before building the
 managed row. The presence ordinal MUST immediately precede the document ordinal
 and MUST hold the SQL boolean projected by `m-sql`; malformed or overlapping
@@ -505,9 +517,11 @@ the guarantee being kept.
 An adapter maps the requested level to whatever its database needs to forbid that
 level's anomalies for exactly **one Transaction Attempt**, and repeats that work
 for every attempt of an invocation, because an attempt is where the guarantee has
-to hold. Applying the level acquires no snapshot of its own: an adapter **MUST
-NOT** issue a query merely to force one, since when a snapshot is taken is the
-database's own business and a forced one changes what the boundary observes.
+to hold. It applies a requested access mode the same way, before the callback,
+for the same one attempt. Applying either acquires no snapshot of its own: an
+adapter **MUST NOT** issue a query merely to force one, since when a snapshot is
+taken is the database's own business and a forced one changes what the boundary
+observes.
 
 A port request naming no level keeps the adapter's own default, **provided that
 default is at least Read Committed**. An adapter checks this **once per
@@ -543,8 +557,13 @@ the level does not call for. For those two levels that is four obligations per
 3. restore the saved value after the attempt commits or rolls back;
 4. repeat both for every retry attempt.
 
-Session setup that fails before the callback **fails the boundary**: the callback
-does not run, and the outcome is a boundary that never opened. Restoration that
+An access mode set as session state rather than for the transaction alone is
+owned the same way: saved before the attempt, applied, and restored after it
+commits or rolls back.
+
+Session setup that fails before the callback — for the level or for the access
+mode — **fails the boundary**: the callback does not run, and the outcome is a
+boundary that never opened. Restoration that
 fails after commit or rollback **preserves the outcome already reached** — the
 work committed or did not, and a failed restore does not change that — and
 **discards the connection** rather than returning it, since what it would run

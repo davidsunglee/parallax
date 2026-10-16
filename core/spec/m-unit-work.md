@@ -1,8 +1,8 @@
 # m-unit-work — Transactions & Unit of Work
 
-`m-unit-work` is the transaction scope: the unit of work that **buffers,
-finalizes, and flushes** writes, and the automatic read-correctness rules that
-make in-transaction reads safe. It is expressed entirely in terms of **operations
+`m-unit-work` is the unit of work: the coordinator of one writable transaction
+attempt that **buffers, finalizes, and flushes** writes, and the automatic
+read-correctness rules that make that attempt's reads safe. It is expressed entirely in terms of **operations
 and object state** (`m-predicate`): it depends on `m-predicate`, on `m-wire` for
 serialized write-literal conversion, on the execution port `m-db-port`, on
 `m-temporal-read` for the coverage it judges, on `m-write-plan` for the Planned
@@ -32,8 +32,13 @@ model.
 
 ## The unit of work
 
-A **unit of work** (transaction) is the scope within which object reads and
-writes are coherent. Within one unit of work:
+A **unit of work** coordinates the writable work of one transaction attempt:
+the scope within which object reads and writes are coherent. It is not the
+transaction. The attempt opens the native transaction and owns its lifetime —
+whether it still admits work, whether it is rollback-only, and the first cause
+that made it so (`m-execution` *Attempts*) — and the unit of work consults and
+dooms that lifetime rather than holding a state of its own. A read-only attempt
+opens a transaction with no unit of work at all. Within one unit of work:
 
 - Writes are **buffered** as pending operations, not flushed eagerly. At the
   unit-of-work boundary they are **finalized** — combined, batched, and ordered
@@ -82,8 +87,9 @@ that two reads yield the *same* instance, and nothing may mandate they yield
 
 ## Abort
 
-A unit of work either **commits** or **aborts** (rolls back). A commit makes its
-writes durable and observable; an **abort discards them entirely**. The
+The attempt a unit of work coordinates either **commits** or **aborts** (rolls
+back). A commit makes its writes durable and observable; an **abort discards
+them entirely**. The
 observable contract:
 
 - A write performed inside a unit of work that aborts **MUST NOT** be observable

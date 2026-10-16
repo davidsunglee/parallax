@@ -1370,13 +1370,15 @@ class _StatementCapturePort(ConnectsAsItself):
     def execute_write(self, sql: str, binds: Any) -> int:
         return self._inner.execute_write(sql, binds)
 
-    def transaction(self, body: Any, *, isolation: str | None = None) -> Any:
+    def transaction(
+        self, body: Any, *, isolation: str | None = None, access_mode: str | None = None
+    ) -> Any:
         statements = self.statements
 
         def wrapped(conn: Any) -> Any:
             return body(_StatementCapturePort(conn, statements=statements))
 
-        return self._inner.transaction(wrapped, isolation=isolation)
+        return self._inner.transaction(wrapped, isolation=isolation, access_mode=access_mode)
 
 
 def test_statement_capture_forwards_document_read_metadata() -> None:

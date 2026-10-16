@@ -61,9 +61,13 @@ class _SpellingPort(ConnectsAsItself):
         return 1
 
     def transaction[T](
-        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
+        self,
+        body: Callable[[DatabaseConnection], T],
+        *,
+        isolation: str | None = None,
+        access_mode: str | None = None,
     ) -> Outcome[T]:
-        del isolation
+        del isolation, access_mode
         return body_outcome(self, body)
 
 

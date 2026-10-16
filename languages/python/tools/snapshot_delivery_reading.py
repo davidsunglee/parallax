@@ -273,8 +273,9 @@ class CatalogPort:
         body: Callable[[DatabaseConnection], T],
         *,
         isolation: str | None = None,
+        access_mode: str | None = None,
     ) -> TransactionOutcome[T]:
-        del body, isolation
+        del body, isolation, access_mode
         raise NotImplementedError
 
 

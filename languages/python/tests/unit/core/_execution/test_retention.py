@@ -32,6 +32,7 @@ from parallax.core import inheritance, opt_lock, temporal_read
 from parallax.core._execution._page_origins import ReadEvidenceCollector
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._retention import RecordedProjections, defer_read_evidence
+from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
 from parallax.core._execution._unit_work.instructions import prepare_typed_write
 from parallax.core.base import INFINITY
 from parallax.core.metamodel import EntityIdentity
@@ -53,7 +54,6 @@ from parallax.core.unit_work import (
     UnitOfWork,
     WriteBatchReason,
     buffered_write,
-    run_unit_of_work,
 )
 from parallax.core.write_plan import (
     EntityStateRow,
@@ -148,16 +148,18 @@ def _hint(
 
 def _in_transaction[T](model: AcceptedMetamodel, body: Callable[[UnitOfWork], T]) -> T:
     """Run ``body`` in a unit of work over ``model``."""
-    return run_unit_of_work(
-        body,
-        settings=TransactionSettings(),
-        clock=FixedClock(_FIXED),
-        meta=model,
-        flush_executor=_no_flush,
-        acquire_rows=NO_ROW_READS,
-        planner=build_write_planner(model),
-        actor_identity=TEST_ACTOR_IDENTITY,
-        evidence_policy_for=opt_lock.view(model).required_key,
+    return body(
+        UnitOfWork(
+            lifetime=TxnAttemptLifetime(),
+            settings=TransactionSettings(),
+            clock=FixedClock(_FIXED),
+            meta=model,
+            flush_executor=_no_flush,
+            acquire_rows=NO_ROW_READS,
+            planner=build_write_planner(model),
+            actor_identity=TEST_ACTOR_IDENTITY,
+            evidence_policy_for=opt_lock.view(model).required_key,
+        )
     )
 
 

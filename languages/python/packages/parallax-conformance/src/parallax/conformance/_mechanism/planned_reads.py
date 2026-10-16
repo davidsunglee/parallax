@@ -5,9 +5,10 @@ from typing import Literal
 
 from parallax.conformance._lifecycle_observation import LifecycleObservation
 from parallax.conformance._mechanism.sole_connection import ConnectsAsItself, body_outcome
-from parallax.conformance._mechanism.transaction_control import transact, underlying
-from parallax.conformance.case_format import TransactionKeywords
+from parallax.conformance._mechanism.transaction_control import read_only, transact, underlying
+from parallax.conformance.case_format import TransactionKeywords, read_only_keywords
 from parallax.core.db_port import (
+    AccessMode,
     DatabaseConnection,
     DocumentReadOrdinals,
     IsolationLevel,
@@ -18,7 +19,7 @@ from parallax.core.dialect import Dialect
 from parallax.core.execution import ServingModel, TxnOptions
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.sql_gen import LoweredStatement
-from parallax.snapshot import Database, ScopedDatabase, TxnContext
+from parallax.snapshot import Database, ReadOnlyTxnContext, ScopedDatabase, TxnContext
 
 __all__ = ["planned_read"]
 
@@ -48,9 +49,13 @@ class _EmptyDatabase(ConnectsAsItself):
         raise AssertionError(f"a planned read must not write: {sql!r}")
 
     def transaction[T](
-        self, body: Callable[[DatabaseConnection], T], *, isolation: IsolationLevel | None = None
+        self,
+        body: Callable[[DatabaseConnection], T],
+        *,
+        isolation: IsolationLevel | None = None,
+        access_mode: AccessMode | None = None,
     ) -> TransactionOutcome[T]:
-        del isolation
+        del isolation, access_mode
         return body_outcome(self, body)
 
 
@@ -62,14 +67,16 @@ def planned_read(
     *,
     form: Literal["rows", "graph"] = "graph",
     transaction: TransactionKeywords | None = None,
+    access_mode: AccessMode = "read_write",
 ) -> tuple[LoweredStatement, ...]:
     """The read statements production issues for ``query`` before any row arrives.
 
     The read runs through the public Snapshot surface — ``read_rows`` for the
-    row form, ``wire.find`` for the graph form — inside ``db.transact`` with
-    ``transaction``'s keywords when given, so the lock suffix is the one that
-    transaction's resolved preference and the target's Optimistic Lock Facet
-    produce.
+    row form, ``wire.find`` for the graph form — inside a transaction with
+    ``transaction``'s keywords when given, opened through the entrypoint
+    ``access_mode`` selects, so the lock suffix is the one that transaction's
+    resolved preference and the target's Optimistic Lock Facet produce, or none
+    at all in a read-only one.
     """
     observation = LifecycleObservation()
     with Database.connect(
@@ -80,11 +87,13 @@ def planned_read(
     ) as root:
         db = root.using_database_login()
 
-        def read(source: ScopedDatabase | TxnContext) -> object:
+        def read(source: ScopedDatabase | TxnContext | ReadOnlyTxnContext) -> object:
             return source.read_rows(query) if form == "rows" else source.wire.find(query)
 
         if transaction is None:
             underlying(lambda: read(db))
+        elif access_mode == "read_only":
+            read_only(db, read, **read_only_keywords(transaction, where="a read-only read"))
         else:
             transact(db, read, **transaction)
     return observation.since(0, "read")

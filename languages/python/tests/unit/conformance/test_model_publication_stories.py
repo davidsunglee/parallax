@@ -70,7 +70,11 @@ class _AccountPort(ConnectsAsItself):
         return 1
 
     def transaction[T](
-        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
+        self,
+        body: Callable[[DatabaseConnection], T],
+        *,
+        isolation: str | None = None,
+        access_mode: str | None = None,
     ) -> TransactionOutcome[T]:
         return body_outcome(self, body)
 
@@ -81,7 +85,11 @@ class _UnopenablePort(_AccountPort):
         self.error = error
 
     def transaction[T](
-        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
+        self,
+        body: Callable[[DatabaseConnection], T],
+        *,
+        isolation: str | None = None,
+        access_mode: str | None = None,
     ) -> TransactionOutcome[T]:
         return BeginFailed(self.error)
 
@@ -111,7 +119,11 @@ class _UnrollbackablePort(_AccountPort):
         self.rollback_error = rollback_error
 
     def transaction[T](
-        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
+        self,
+        body: Callable[[DatabaseConnection], T],
+        *,
+        isolation: str | None = None,
+        access_mode: str | None = None,
     ) -> TransactionOutcome[T]:
         return RollbackFailed(CallbackRaised(self.trigger), self.rollback_error)
 

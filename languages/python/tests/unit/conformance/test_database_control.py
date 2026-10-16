@@ -70,7 +70,10 @@ class _FakeCursor:
     def __exit__(self, *exc: object) -> None:
         return
 
-    def execute(self, sql: object, binds: Sequence[object] | None = None) -> None:
+    def execute(
+        self, sql: object, binds: Sequence[object] | None = None, *, prepare: bool | None = None
+    ) -> None:
+        del prepare
         text = sql.decode() if isinstance(sql, bytes) else str(sql)
         if text == "select session_user as login_identity":
             rows = self._connection.login_rows

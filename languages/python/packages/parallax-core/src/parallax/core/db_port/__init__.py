@@ -51,6 +51,7 @@ __all__ = [
     "DRIVER_MANAGED",
     "ISOLATION_LEVELS",
     "RESOURCE_LOGGER_NAME",
+    "AccessMode",
     "AcquisitionReason",
     "BeginFailed",
     "Bind",
@@ -239,6 +240,11 @@ def isolation_level(value: object) -> IsolationLevel:
     raise ValueError(f"isolation must be one of {known}, got {value!r}")
 
 
+# The closed access-mode vocabulary (m-db-port): what a boundary admits beyond
+# reading. It is a request of its own, independent of the isolation level.
+AccessMode = Literal["read_only", "read_write"]
+
+
 @dataclass(frozen=True, slots=True)
 class JsonDocument:
     """A neutral managed carrier for a ``json`` (value-object document) bind.
@@ -397,7 +403,11 @@ class DatabaseConnection(Protocol):
         ...
 
     def transaction[T](
-        self, body: Callable[[DatabaseConnection], T], *, isolation: IsolationLevel | None = None
+        self,
+        body: Callable[[DatabaseConnection], T],
+        *,
+        isolation: IsolationLevel | None = None,
+        access_mode: AccessMode | None = None,
     ) -> TransactionOutcome[T]:
         """Run ``body`` inside one database transaction and report how it ended.
 
@@ -417,6 +427,12 @@ class DatabaseConnection(Protocol):
         request silently weakened is indistinguishable from one honored. The
         setting is the BOUNDARY's rather than the connection's: it governs this
         transaction alone and no later one on the same connection.
+
+        ``access_mode`` is the boundary's :data:`AccessMode`, requested and
+        applied on the same terms and independently of ``isolation``: ``None``
+        asks for nothing and leaves the native default, and an implementation
+        unable to open the boundary in the requested mode reports a boundary
+        failure. Applying either request takes no snapshot.
         """
         ...
 

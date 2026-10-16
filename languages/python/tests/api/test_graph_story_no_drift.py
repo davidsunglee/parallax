@@ -54,6 +54,7 @@ from parallax.core._execution._options import (
 )
 from parallax.core.base import INFINITY
 from parallax.core.db_port import (
+    AccessMode,
     Bind,
     DatabaseConnection,
     IsolationLevel,
@@ -251,7 +252,11 @@ class _CannedPort(ConnectsAsItself):
         raise AssertionError("a read-only graph story issues no DML")
 
     def transaction[T](
-        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
+        self,
+        body: Callable[[DatabaseConnection], T],
+        *,
+        isolation: str | None = None,
+        access_mode: str | None = None,
     ) -> TransactionOutcome[T]:  # pragma: no cover
         raise AssertionError("a read-only graph story opens no transaction")
 
@@ -262,7 +267,11 @@ class _TransactingCannedPort(_CannedPort):
     guard that matters: the verb rejects the value before anything is buffered."""
 
     def transaction[T](
-        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
+        self,
+        body: Callable[[DatabaseConnection], T],
+        *,
+        isolation: str | None = None,
+        access_mode: str | None = None,
     ) -> TransactionOutcome[T]:
         return body_outcome(self, body)
 
@@ -313,10 +322,12 @@ class _ResponseRecordingConnection:
         body: Callable[[DatabaseConnection], T],
         *,
         isolation: IsolationLevel | None = None,
+        access_mode: AccessMode | None = None,
     ) -> TransactionOutcome[T]:
         return self._inner.transaction(
             lambda connection: body(_ResponseRecordingConnection(connection, self._responses)),
             isolation=isolation,
+            access_mode=access_mode,
         )
 
 

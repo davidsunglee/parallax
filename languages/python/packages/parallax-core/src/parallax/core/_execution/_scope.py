@@ -19,7 +19,7 @@ from parallax.core._execution._read_policy import (
     read_rows,
     resolved,
 )
-from parallax.core._execution._transaction._attempt import TxnAttempt
+from parallax.core._execution._transaction._attempt import ReadOnlyTxnAttempt, TxnAttempt
 from parallax.core._execution._transaction._runner import TransactionRunner
 from parallax.core._execution._unit_work.retain import ReadEvidence
 from parallax.core._execution._unit_work.uow import Concurrency
@@ -52,7 +52,8 @@ class ExecutionScope:
     spelling as the unresolved input the read resolves once it has adopted its
     selection, and the builder of the Publication its result is stated through —
     and a factory per transaction that turns each fully constructed
-    :class:`TxnAttempt` into the transaction its callback is handed.
+    :class:`TxnAttempt` or :class:`ReadOnlyTxnAttempt` into the context its
+    callback is handed.
 
     Each standalone operation adopts whatever selection is current when it
     begins, through an adoption of its own, and is served under that selection
@@ -189,7 +190,7 @@ class ExecutionScope:
     def transact[Tx, T](
         self,
         fn: Callable[[Tx], T],
-        transaction_for: Callable[[TxnAttempt], Tx],
+        context_for: Callable[[TxnAttempt], Tx],
         /,
         *,
         max_retries: int | Omitted = OMITTED,
@@ -206,11 +207,35 @@ class ExecutionScope:
         """
         return self._runner.transact(
             fn,
-            transaction_for,
+            context_for,
             capture=self._capture,
             defaults=self._options,
             max_retries=max_retries,
             concurrency=concurrency,
             retry_optimistic_conflicts=retry_optimistic_conflicts,
+            isolation=isolation,
+        )
+
+    def read_only[Tx, T](
+        self,
+        fn: Callable[[Tx], T],
+        context_for: Callable[[ReadOnlyTxnAttempt], Tx],
+        /,
+        *,
+        max_retries: int | Omitted = OMITTED,
+        isolation: IsolationLevel | Omitted = OMITTED,
+    ) -> T:
+        """Run ``fn`` in a read-only transaction under this scope's authority,
+        joining the active one where this root opened it read-only.
+
+        The retry bound and isolation resolve exactly as :meth:`transact`'s do;
+        this scope's Concurrency Preference has nothing to apply to.
+        """
+        return self._runner.read_only(
+            fn,
+            context_for,
+            capture=self._capture,
+            defaults=self._options,
+            max_retries=max_retries,
             isolation=isolation,
         )

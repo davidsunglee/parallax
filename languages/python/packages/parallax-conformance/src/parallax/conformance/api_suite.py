@@ -11,6 +11,7 @@ from parallax.conformance import (
     edit_runner,
     execution_authority_stories,
     execution_lifecycle_stories,
+    read_only_stories,
     snapshot_recipes,
 )
 from parallax.conformance.claim import SNAPSHOT_CLAIM, Claim
@@ -310,6 +311,17 @@ EXAMPLES: Final[list[Example]] = [
         "m-unit-work-041",
         "A root default is overridden per call, and a joining call inherits the override",
         database_options_stories.root_options_snippet(),
+    ),
+    # Read-only transactions (m-execution): the case's own oracle states the
+    # read-only boundary, its explicit level, and the joined read-only call,
+    # and the boundary runner grades it. What this executable story adds is the
+    # SPELLING — `db.read_only(fn, isolation=...)`, a context with reads and no
+    # writes, and a writable call refused inside it. Executed against real
+    # Postgres by `tests/api/test_read_only_transactions.py`.
+    Example(
+        "m-execution-002",
+        "Reads run in one read-only transaction at a chosen isolation",
+        read_only_stories.read_only_snippet(),
     ),
 ]
 
@@ -1386,6 +1398,22 @@ _READ_LOCK_ROOT_GOLDEN_REASON: Final[str] = (
     "`connect`, which the root-options story already shows, and the SQL shape is "
     "what these cases isolate"
 )
+_ACCESS_MODE_BOUNDARY_RUNNER_REASON: Final[str] = (
+    "an access mode's own boundary obligation — a joining call refused for selecting "
+    "the other mode, and an access-mode session setup that fails before the boundary "
+    "opens — graded end-to-end by the case-driven boundary runner "
+    "(`tests/api/test_boundary_run.py`), which drives the REAL `db.read_only` and "
+    "`db.transact` against the provisioned database. The developer spelling is the "
+    "read-only story the usage guide already shows (`m-execution-002`), whose refused "
+    "writable join is the same refusal, so a story per direction would repeat it"
+)
+_READ_ONLY_READ_LOCK_GOLDEN_REASON: Final[str] = (
+    "a golden-SQL witness that a read-only transaction's read renders no shared-row-lock "
+    "suffix — under a `locking` root, and for an unversioned Entity whose writable reads "
+    "take the fallback lock — graded end-to-end by the compile and run sweeps against the "
+    "authored goldens; the developer spelling is the read-only story the usage guide "
+    "already shows (`m-execution-002`), and the SQL shape is what these cases isolate"
+)
 _ISOLATION_BOUNDARY_RUNNER_REASON: Final[str] = (
     "a portable Isolation Level's own boundary obligation — a joining call refused for "
     "naming a second level, one requested level standing over every attempt of a retried "
@@ -1536,6 +1564,8 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-read-lock-018": _READ_LOCK_ROOT_GOLDEN_REASON,
     "m-read-lock-019": _READ_LOCK_ROOT_GOLDEN_REASON,
     "m-read-lock-020": _READ_LOCK_ROOT_GOLDEN_REASON,
+    "m-read-lock-024": _READ_ONLY_READ_LOCK_GOLDEN_REASON,
+    "m-read-lock-025": _READ_ONLY_READ_LOCK_GOLDEN_REASON,
     # -- m-unit-work: the isolation scenarios ------------------------------- #
     "m-unit-work-031": _ISOLATION_SCENARIO_REASON,
     "m-unit-work-032": _ISOLATION_SCENARIO_REASON,
@@ -1591,6 +1621,10 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-execution-lifecycle-010": _EXECUTION_LIFECYCLE_RESOURCE_RUNNER_REASON,
     "m-unit-work-035": _ISOLATION_BOUNDARY_RUNNER_REASON,
     "m-unit-work-036": _ISOLATION_BOUNDARY_RUNNER_REASON,
+    # -- the access-mode boundary obligations (m-execution-002 is the story) -- #
+    "m-execution-003": _ACCESS_MODE_BOUNDARY_RUNNER_REASON,
+    "m-execution-004": _ACCESS_MODE_BOUNDARY_RUNNER_REASON,
+    "m-execution-005": _ACCESS_MODE_BOUNDARY_RUNNER_REASON,
     # -- the root-configured boundary witnesses (m-unit-work-041 is the story) - #
     "m-execution-001": _ROOT_OPTIONS_BOUNDARY_RUNNER_REASON,
     "m-auto-retry-007": _ROOT_OPTIONS_BOUNDARY_RUNNER_REASON,

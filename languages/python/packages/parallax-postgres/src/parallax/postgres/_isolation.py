@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from typing import Final
 
-from parallax.core.db_port import IsolationLevel
+from parallax.core.db_port import AccessMode, IsolationLevel
 
-__all__ = ["isolation_spelling"]
+__all__ = ["isolation_spelling", "read_only_setting"]
 
 _SPELLING: Final[dict[IsolationLevel, str]] = {
     "read_committed": "read committed",
@@ -22,3 +22,11 @@ def isolation_spelling(level: IsolationLevel) -> str:
     of those sites could be spelled differently at each of them.
     """
     return _SPELLING[level]
+
+
+_READ_ONLY: Final[dict[AccessMode, str]] = {"read_only": "on", "read_write": "off"}
+
+
+def read_only_setting(mode: AccessMode) -> str:
+    """The `transaction_read_only` value that opens a transaction in ``mode``."""
+    return _READ_ONLY[mode]

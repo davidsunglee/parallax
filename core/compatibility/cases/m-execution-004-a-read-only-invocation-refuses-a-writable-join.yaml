@@ -1,0 +1,26 @@
+# The other direction of m-execution-003: a writable call made while a
+# read-only transaction is active is refused as an access-mode mismatch before
+# its callback runs, rather than joining the read-only attempt or opening a
+# writable boundary of its own.
+model: models/account.yaml
+tags: [m-execution, m-execution-authority, m-api-conformance, join, slice-snapshot-1]
+lane: api-conformance
+shape: boundary
+compileEligibility:
+  mode: run-only
+  reason: single-connection
+  note: "single-connection cross-mode join intent (shape:boundary)"
+when:
+  uow:
+    accessMode: read-only
+  boundary:
+    - action: read
+      note: the outer read-only callback reaches modeled work before the refused call
+    - action: join
+      accessMode: read-write
+      note: a writable call cannot join the active read-only transaction
+    - action: read
+      note: the refused joining body must not reach this database call
+then:
+  outcome: access-mode-mismatch
+  roundTrips: 1

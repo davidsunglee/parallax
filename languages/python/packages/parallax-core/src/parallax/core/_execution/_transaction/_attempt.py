@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 from collections.abc import Callable, Sequence
-from typing import Any, Final, cast, overload
+from typing import Any, Final, Self, cast, overload
 
 from parallax.core import deep_fetch, inheritance
 from parallax.core._execution._family import entity_layout
@@ -13,7 +13,7 @@ from parallax.core._execution._keyed_writes import (
     keyed_insert,
     keyed_write,
 )
-from parallax.core._execution._options import OMITTED, Omitted, TxnOptions
+from parallax.core._execution._options import OMITTED, Omitted, ReadOnlyTxnOptions, TxnOptions
 from parallax.core._execution._publication import SelectedReadModel, SelectedWriteModel
 from parallax.core._execution._read_policy import (
     ReadInputs,
@@ -23,6 +23,7 @@ from parallax.core._execution._read_policy import (
     read_rows,
     resolved,
 )
+from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
 from parallax.core._execution._unit_work.acquisition import (
     CompletionRequest,
     CoverageReadRequest,
@@ -115,7 +116,7 @@ from parallax.core.write_plan.plan import BoundRange, ExecutionUnit, UnitEffects
 from parallax.core.write_plan.steps import PlannedInsert
 from parallax.core.write_plan.steps import PlannedWrite as PlannedStep
 
-__all__ = ["TxnAttempt"]
+__all__ = ["ReadOnlyTxnAttempt", "TxnAttempt"]
 
 _ORDERED_STATEMENTS: Final = 64
 """The most statements one ordered write transport invocation presents. It
@@ -124,129 +125,73 @@ a shortfall not yet enforced the database may already have run; a longer run of
 effects continues in another invocation once this one is enforced."""
 
 
-class TxnAttempt:
-    """One physical transaction attempt: its unit of work, its connection, the
-    selection it adopted, its activity, its resolved options, and the Write
-    Batch its current flush runs inside.
+class _TxnAttemptBase:
+    """What every transaction attempt shares, whatever it may do: its
+    connection, the read projection it adopted, its activity, and the lifetime
+    the runner created for it — and the participating reads served on them.
 
-    Constructed inside the port's transaction callback, after the attempt
-    adopted and opened: every execution field is set before the unit of work is
-    constructed over this attempt's own flush and row-acquisition methods, so
-    neither a lifecycle factory nor a callback can observe a partially wired
-    attempt. A retry
-    constructs a fresh one; a joining call reuses the active attempt and never
-    constructs another.
-
-    It is the attempt's participating read as well as its write door. Every
-    read here runs inside the unit of work's read gate, so pending writes reach
-    the database before a read that must see them, and opens its activity as a
-    child of this attempt on this attempt's connection. Every write admits into
-    the one unit of work, so no two doors of one attempt can disagree about what
-    it stores.
+    Private implementation reuse, not a mode of its own: :class:`TxnAttempt`
+    and :class:`ReadOnlyTxnAttempt` are the two concrete attempts. Every read
+    here opens its activity as a child of this attempt, on this attempt's
+    connection, inside :meth:`_admit_read`, which refuses work the lifetime no
+    longer admits; a writable attempt admits through its unit of work's read
+    gate instead.
     """
 
     __slots__ = (
         "_activity",
-        "_batch",
         "_connection",
         "_inputs",
         "_lifecycle",
-        "_options",
-        "_ordered",
+        "_lifetime",
         "_planner",
         "_read",
-        "_uow",
-        "_write",
     )
 
     def __init__(
         self,
         connection: DatabaseConnection,
         read: SelectedReadModel,
-        write: SelectedWriteModel,
         activity: TransactionAttemptActivity,
         *,
         lifecycle: InstalledLifecycle | None,
         planner: ReadPlanner,
-        options: TxnOptions,
-        clock: Clock,
-        actor: ActorIdentity,
+        lifetime: TxnAttemptLifetime,
     ) -> None:
         self._connection = connection
-        # Read once: a connection's transport capability is fixed for its
-        # lifetime, and every flush of this attempt runs on this connection.
-        self._ordered = connection.ordered_write_transport
         self._read = read
-        self._write = write
         self._activity = activity
         self._lifecycle = lifecycle
         self._planner = planner
-        # The invocation's resolved record, shared by reference across every
-        # attempt of the invocation: what a joining call is compared against,
-        # and what a caller inspects, without ambient state on either path.
-        self._options = options
-        # One flush is ONE Write Batch however many statements its plan lowers
-        # to. The unit of work announces a flush before planning it and hands
-        # the finished plan over afterwards, so the batch opened by the first
-        # call is the one the second runs under; a flush never nests.
-        self._batch: WriteBatchActivity = INERT
-        self._uow = UnitOfWork(
-            settings=TransactionSettings(
-                concurrency=options.concurrency,
-                counts_unchanged_rows=connection.dialect.counts_unchanged_rows,
-            ),
-            clock=clock,
-            meta=write.model.meta,
-            flush_executor=self._execute_flush,
-            write_batch_opening=self._open_write_batch,
-            acquire_rows=self._acquire_rows,
-            # The adopted selection's Write Planner: retained by this unit of
-            # work for its life, and reused by every join into it rather than
-            # re-adopted.
-            planner=write.planner,
-            actor_identity=actor,
-            evidence_policy_for=write.evidence_policy_for,
-        )
-        self._inputs = ReadInputs(connection, self._uow.settings.concurrency, self._uow)
+        self._lifetime = lifetime
+        # What every read of this attempt executes with; each concrete attempt
+        # states its own before the attempt is handed to anyone.
+        self._inputs: ReadInputs
 
     @property
-    def uow(self) -> UnitOfWork:
-        return self._uow
+    def lifetime(self) -> TxnAttemptLifetime:
+        return self._lifetime
 
     @property
     def edition(self) -> str:
         """The Model Edition this attempt adopted before its boundary opened."""
-        return self._write.edition
-
-    @property
-    def options(self) -> TxnOptions:
-        """The resolved options this attempt's invocation runs under."""
-        return self._options
+        return self._read.edition
 
     @property
     def lifecycle(self) -> InstalledLifecycle | None:
         """The installed lifecycle every door of this attempt refuses re-entry on."""
         return self._lifecycle
 
-    @property
-    def model(self) -> CatalogedModel:
-        """The cataloged model every write of this attempt names its Entities in."""
-        return self._write.model
-
-    @property
-    def codec(self) -> EntityRowCodec:
-        """The Entity Row Codec the adopted selection derives write rows through."""
-        return self._write.codec
-
-    @property
-    def classes(self) -> ClassIndex | None:
-        """The class index the adopted write projection borrows, which Typed
-        predicate writes resolve Python member names through."""
-        return self._write.classes
-
     def joined_invocation(self) -> JoinedInvocationActivity:
         """The activity a joining invocation runs inside, as a child of this attempt."""
         return self._activity.joined_invocation()
+
+    def complete(self) -> None:
+        """The work an attempt does once its callback returned and before its
+        boundary commits: none here."""
+
+    def discard(self) -> None:
+        """Drop what an attempt that will not commit holds: nothing here."""
 
     # Reads.
 
@@ -264,7 +209,8 @@ class TxnAttempt:
         Re-entry is refused first, then the publication is built over this
         attempt's selection — where a selection that cannot publish the
         requested representation refuses — before the query is captured, before
-        the gate resolves it under that selection, and before the force-flush.
+        the gate resolves it under that selection, and before the read is
+        admitted.
         """
         refuse_reentry(self._lifecycle)
         publication = build_publication(self._read)
@@ -280,11 +226,13 @@ class TxnAttempt:
         build_publication: Callable[[SelectedReadModel], P],
         on_page_start: Callable[[deep_fetch.IncludeTree], None],
         on_release: Callable[[], None],
-    ) -> StreamDelivery[TxnAttempt, ReadQuery, P]:
+    ) -> StreamDelivery[Self, ReadQuery, P]:
         """One participating streamed delivery, constructed and not yet entered.
 
         Re-entry is refused, then the query is captured and the page size judged;
-        nothing model-dependent happens before the delivery is entered.
+        nothing model-dependent happens before the delivery is entered. Each
+        page is admitted on its own, so a stream that outlived its attempt
+        reads nothing more.
         """
         refuse_reentry(self._lifecycle)
         read_query = convert_query(query)
@@ -303,16 +251,16 @@ class TxnAttempt:
         refuse_reentry(self._lifecycle)
         return read_rows(self, node, self._planner)
 
-    def begin(self) -> TxnAttempt:
+    def begin(self) -> Self:
         """The read a participating delivery is begun as: this attempt itself."""
         return self
 
-    def resolved(self, read: TxnAttempt, query: ReadQuery, /) -> ResolvedObjectQuery:
+    def resolved(self, read: Self, query: ReadQuery, /) -> ResolvedObjectQuery:
         return resolved(read, query)
 
     def page(
         self,
-        read: TxnAttempt,
+        read: Self,
         paging: PagingPlan,
         at: At,
         batch: StreamBatchActivity,
@@ -356,14 +304,14 @@ class TxnAttempt:
         body: Callable[[ReadActivity, ReadInputs], T],
         /,
     ) -> T:
-        """Run ``body`` inside the read gate, so pending writes flush first.
+        """Run ``body`` once the read is admitted, inside its own activity.
 
-        The activity opens INSIDE that flush, which is what makes the
-        dependency batch the read forces out an ordered SIBLING of it under the
-        same attempt rather than a scope containing it
-        (`m-execution-lifecycle`).
+        The activity opens INSIDE the admission, which is what makes a
+        dependency batch a writable attempt's admission forces out an ordered
+        SIBLING of the read under the same attempt rather than a scope
+        containing it (`m-execution-lifecycle`).
         """
-        return self._uow.read(lambda: self._inside_read(target, interface, body))
+        return self._admit_read(lambda: self._inside_read(target, interface, body))
 
     def _inside_read[T](
         self,
@@ -377,15 +325,171 @@ class TxnAttempt:
     def paged[T](
         self, batch: StreamBatchActivity, body: Callable[[DatabaseCallScope, ReadInputs], T], /
     ) -> T:
-        """Run one page's ``body`` inside the read gate and inside ``batch``,
-        so read-your-own-writes holds at every page."""
-        return self._uow.read(lambda: self._inside_page(batch, body))
+        """Run one page's ``body`` once the page is admitted, inside ``batch``,
+        so every page meets the admission a whole read does."""
+        return self._admit_read(lambda: self._inside_page(batch, body))
 
     def _inside_page[T](
         self, batch: StreamBatchActivity, body: Callable[[DatabaseCallScope, ReadInputs], T]
     ) -> T:
         with batch as calls:
             return body(calls, self._inputs)
+
+    def _admit_read[T](self, body: Callable[[], T], /) -> T:
+        """Run ``body`` as one read of this attempt, once its lifetime admits work."""
+        self._lifetime.ensure_open()
+        return body()
+
+
+class ReadOnlyTxnAttempt(_TxnAttemptBase):
+    """One physical read-only transaction attempt: the shared reads, and
+    nothing that writes.
+
+    Its reads pass no Concurrency Preference and no evidence context, so they
+    take no participation lock — the unversioned fallback included — and
+    stamp no participation on what they publish. It owns no unit of work, write
+    projection, planner, or write-only state. A retry constructs a fresh one;
+    a joining call reuses the active one.
+    """
+
+    __slots__ = ("_options",)
+
+    def __init__(
+        self,
+        connection: DatabaseConnection,
+        read: SelectedReadModel,
+        activity: TransactionAttemptActivity,
+        *,
+        lifecycle: InstalledLifecycle | None,
+        planner: ReadPlanner,
+        options: ReadOnlyTxnOptions,
+        lifetime: TxnAttemptLifetime,
+    ) -> None:
+        super().__init__(
+            connection, read, activity, lifecycle=lifecycle, planner=planner, lifetime=lifetime
+        )
+        self._inputs = ReadInputs(connection, None, None)
+        # The invocation's resolved record, shared by reference across every
+        # attempt of the invocation, as a writable attempt's is.
+        self._options = options
+
+    @property
+    def options(self) -> ReadOnlyTxnOptions:
+        """The resolved options this attempt's invocation runs under."""
+        return self._options
+
+
+class TxnAttempt(_TxnAttemptBase):
+    """One physical writable transaction attempt: its unit of work, its
+    connection, the selection it adopted, its activity, its resolved options,
+    and the Write Batch its current flush runs inside.
+
+    Constructed inside the port's transaction callback, after the attempt
+    adopted and opened: every execution field is set before the unit of work is
+    constructed over this attempt's own flush and row-acquisition methods, so
+    neither a lifecycle factory nor a callback can observe a partially wired
+    attempt. A retry constructs a fresh one; a joining call reuses the active
+    attempt and never constructs another.
+
+    It is the attempt's participating read as well as its write door. Every
+    read is admitted through the unit of work's read gate, so pending writes
+    reach the database before a read that must see them. Every write admits
+    into the one unit of work, so no two doors of one attempt can disagree
+    about what it stores.
+    """
+
+    __slots__ = ("_batch", "_options", "_ordered", "_uow", "_write")
+
+    def __init__(
+        self,
+        connection: DatabaseConnection,
+        read: SelectedReadModel,
+        write: SelectedWriteModel,
+        activity: TransactionAttemptActivity,
+        *,
+        lifecycle: InstalledLifecycle | None,
+        planner: ReadPlanner,
+        options: TxnOptions,
+        clock: Clock,
+        actor: ActorIdentity,
+        lifetime: TxnAttemptLifetime,
+    ) -> None:
+        super().__init__(
+            connection, read, activity, lifecycle=lifecycle, planner=planner, lifetime=lifetime
+        )
+        # Read once: a connection's transport capability is fixed for its
+        # lifetime, and every flush of this attempt runs on this connection.
+        self._ordered = connection.ordered_write_transport
+        self._write = write
+        # The invocation's resolved record, shared by reference across every
+        # attempt of the invocation: what a joining call is compared against,
+        # and what a caller inspects, without ambient state on either path.
+        self._options = options
+        # One flush is ONE Write Batch however many statements its plan lowers
+        # to. The unit of work announces a flush before planning it and hands
+        # the finished plan over afterwards, so the batch opened by the first
+        # call is the one the second runs under; a flush never nests.
+        self._batch: WriteBatchActivity = INERT
+        self._uow = UnitOfWork(
+            settings=TransactionSettings(
+                concurrency=options.concurrency,
+                counts_unchanged_rows=connection.dialect.counts_unchanged_rows,
+            ),
+            lifetime=lifetime,
+            clock=clock,
+            meta=write.model.meta,
+            flush_executor=self._execute_flush,
+            write_batch_opening=self._open_write_batch,
+            acquire_rows=self._acquire_rows,
+            # The adopted selection's Write Planner: retained by this unit of
+            # work for its life, and reused by every join into it rather than
+            # re-adopted.
+            planner=write.planner,
+            actor_identity=actor,
+            evidence_policy_for=write.evidence_policy_for,
+        )
+        self._inputs = ReadInputs(connection, self._uow.settings.concurrency, self._uow)
+
+    @property
+    def uow(self) -> UnitOfWork:
+        return self._uow
+
+    @property
+    def options(self) -> TxnOptions:
+        """The resolved options this attempt's invocation runs under."""
+        return self._options
+
+    @property
+    def model(self) -> CatalogedModel:
+        """The cataloged model every write of this attempt names its Entities in."""
+        return self._write.model
+
+    @property
+    def codec(self) -> EntityRowCodec:
+        """The Entity Row Codec the adopted selection derives write rows through."""
+        return self._write.codec
+
+    @property
+    def classes(self) -> ClassIndex | None:
+        """The class index the adopted write projection borrows, which Typed
+        predicate writes resolve Python member names through."""
+        return self._write.classes
+
+    def complete(self) -> None:
+        """Flush what is still buffered as the boundary's pre-commit batch, while
+        the lifetime still admits work."""
+        self._uow.flush(trigger="pre_commit")
+
+    def discard(self) -> None:
+        """Drop the buffered and in-memory writable state of an attempt that
+        will not commit."""
+        self._uow.discard()
+
+    def _admit_read[T](self, body: Callable[[], T], /) -> T:
+        """Admit ``body`` through the unit of work's read gate, which consults
+        the same lifetime and flushes pending writes first, so a read observes
+        this attempt's own writes."""
+        return self._uow.read(body)
 
     # Writes.
 

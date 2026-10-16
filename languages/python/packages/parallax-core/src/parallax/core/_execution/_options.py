@@ -10,6 +10,7 @@ from parallax.core.db_port import IsolationLevel, isolation_level
 __all__ = [
     "OMITTED",
     "Omitted",
+    "ReadOnlyTxnOptions",
     "TxnOptions",
     "check_max_retries",
     "check_retry_optimistic_conflicts",
@@ -92,6 +93,24 @@ class TxnOptions:
             "retry_optimistic_conflicts",
             check_retry_optimistic_conflicts(self.retry_optimistic_conflicts),
         )
+        object.__setattr__(self, "isolation", isolation_level(self.isolation))
+
+
+@dataclass(frozen=True, slots=True)
+class ReadOnlyTxnOptions:
+    """The resolved options a read-only invocation runs under.
+
+    Each field is the read-only call's explicit keyword, else the scope's
+    default for it, validated under the rule :class:`TxnOptions` applies to the
+    same field. A read-only transaction takes no participation lock, so it has
+    no Concurrency Preference to resolve, whatever the scope's defaults name.
+    """
+
+    max_retries: int
+    isolation: IsolationLevel
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "max_retries", check_max_retries(self.max_retries))
         object.__setattr__(self, "isolation", isolation_level(self.isolation))
 
 

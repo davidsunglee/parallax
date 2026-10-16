@@ -291,24 +291,29 @@ call is named as their cause.
 
 ## Transaction events
 
-A **Transaction Invocation** is one call to callback demarcation. Its Started
-transition carries exactly one invocation value:
+A **Transaction Invocation** is one call to callback demarcation, writable or
+read-only (`m-execution` *Read-only transactions*). Both report the same
+events, the same attempt topology, and the same outcomes. Its Started transition
+carries exactly one invocation value:
 
 ```text
-OuterInvocation(concurrency, retryPolicy, isolation)
+OuterInvocation(accessMode, concurrency, retryPolicy, isolation)
 JoinedInvocation()
 ```
 
-`isolation` is the Isolation Level this invocation **requested**, in the
-`m-db-port` portable vocabulary, and is **absent** when it requested none. An
-modeled outer invocation always requests one — the level it resolved (`m-execution`
-*Option resolution*) — so it always states one here;
-absence is the form a lower-level caller takes when it asks the port for no
-level. It is the requested level, not the level the database used: a boundary
-requesting none opens at whatever its adapter defaults to, and that default is
-the adapter's own knowledge, so an implementation MUST NOT infer or report it
-here. Every attempt of one invocation opens at the same requested level, so the
-level belongs to the invocation and no attempt restates it.
+`accessMode` and `isolation` are the Access Mode and Isolation Level this
+invocation **requested**, in the `m-db-port` portable vocabulary, each
+**absent** when it requested none. A modeled outer invocation always requests
+both — the mode its entrypoint fixes and the level it resolved (`m-execution`
+*Option resolution*) — so it always states both here; absence is the form a
+lower-level caller takes when it asks the port for neither. Each is the
+request, not what the database used: a boundary requesting none opens at
+whatever its adapter defaults to, and that default is the adapter's own
+knowledge, so an implementation MUST NOT infer or report it here. Every attempt
+of one invocation opens in the same requested mode and at the same requested
+level, so both belong to the invocation and no attempt restates them.
+`concurrency` is the resolved Concurrency Preference of a writable invocation,
+and is **absent** for a read-only one, which resolves none.
 
 An Outer Invocation is the root activity. It spans every physical attempt and
 finishes exactly once as:

@@ -193,6 +193,79 @@ def test_a_join_step_projects_through_the_same_decoder() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# The access mode: the entrypoint an invocation or a join is made through.    #
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize(
+    ("serialized", "literal"), [("read-only", "read_only"), ("read-write", "read_write")]
+)
+def test_a_core_serialized_access_mode_round_trips_through_its_python_literal(
+    serialized: str, literal: str
+) -> None:
+    assert case_format.access_mode_literal(serialized) == literal
+    assert case_format.serialized_access_mode(case_format.access_mode_literal(serialized)) == (
+        serialized
+    )
+
+
+@pytest.mark.parametrize("declared", ["read_only", "readonly", ""])
+def test_an_access_mode_outside_the_core_vocabulary_is_refused(declared: str) -> None:
+    with pytest.raises(ValueError, match="accessMode must be one of"):
+        case_format.access_mode_literal(declared)
+
+
+@pytest.mark.parametrize(
+    ("document", "mode"),
+    [
+        ({}, "read_write"),
+        ({"when": {"uow": {"isolation": "serializable"}}}, "read_write"),
+        ({"when": {"uow": {"accessMode": "read-write"}}}, "read_write"),
+        ({"when": {"uow": {"accessMode": "read-only"}}}, "read_only"),
+    ],
+)
+def test_an_invocation_is_read_write_unless_its_case_selects_read_only(
+    document: dict[str, object], mode: str
+) -> None:
+    assert case_format.access_mode(_isolation_case(document)) == mode
+
+
+def test_the_access_mode_travels_beside_the_request_rather_than_in_it() -> None:
+    case = _isolation_case({"when": {"uow": {"accessMode": "read-only", "maxRetries": 1}}})
+    assert case_format.transaction_keywords(case) == {"max_retries": 1}
+    with pytest.raises(ValueError, match=r"when\.uow\.accessMode: accessMode must be one of"):
+        case_format.access_mode(_isolation_case({"when": {"uow": {"accessMode": "rw"}}}))
+
+
+def test_a_root_record_names_no_access_mode() -> None:
+    with pytest.raises(ValueError, match="accessMode"):
+        case_format.database_options(
+            _isolation_case({"given": {"databaseOptions": {"accessMode": "read-only"}}})
+        )
+
+
+def test_a_join_step_names_its_own_entrypoint_or_inherits_the_outer_one() -> None:
+    assert case_format.step_access_mode({"action": "join"}, where="join") is None
+    assert (
+        case_format.step_access_mode({"action": "join", "accessMode": "read-only"}, where="join")
+        == "read_only"
+    )
+    with pytest.raises(ValueError, match=r"when\.boundary\[0\]\.accessMode is legal only"):
+        case_format.step_access_mode(
+            {"action": "read", "accessMode": "read-only"}, where="when.boundary[0]"
+        )
+
+
+def test_a_read_only_request_keeps_its_bound_and_level_and_refuses_writable_options() -> None:
+    assert case_format.read_only_keywords({}, where="when.uow") == {}
+    assert case_format.read_only_keywords(
+        {"max_retries": 2, "isolation": "serializable"}, where="when.uow"
+    ) == {"max_retries": 2, "isolation": "serializable"}
+    with pytest.raises(
+        ValueError, match=r"when\.uow names writable-only options \['concurrency'\]"
+    ):
+        case_format.read_only_keywords({"concurrency": "locking"}, where="when.uow")
+
+
+# --------------------------------------------------------------------------- #
 # The root record: `given.databaseOptions` alone, built-ins for the rest.      #
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize(

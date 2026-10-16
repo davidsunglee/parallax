@@ -7,7 +7,7 @@ from parallax.core._execution._keyed_writes import (
     KeyedWriteValueError,
     TransactionTimePinReadOnlyError,
 )
-from parallax.core._execution._options import TxnOptions
+from parallax.core._execution._options import ReadOnlyTxnOptions, TxnOptions
 from parallax.core._execution._planning import prepare_model
 from parallax.core._execution._preflight import QueryTargetError
 from parallax.core._execution._publication import (
@@ -16,6 +16,7 @@ from parallax.core._execution._publication import (
     ServingModel,
 )
 from parallax.core._execution._transaction._runner import (
+    TransactionAccessModeError,
     TransactionAuthorityError,
     TransactionOptionConflictError,
     TransactionOwnershipError,
@@ -33,7 +34,9 @@ __all__ = [
     "Principal",
     "PublicationConflictError",
     "QueryTargetError",
+    "ReadOnlyTxnOptions",
     "ServingModel",
+    "TransactionAccessModeError",
     "TransactionAuthorityError",
     "TransactionOptionConflictError",
     "TransactionOwnershipError",

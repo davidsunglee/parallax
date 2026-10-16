@@ -4,7 +4,7 @@ import contextlib
 import sys
 from collections.abc import Callable, Generator, Sequence
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any, LiteralString, cast
 
 import psycopg
 from psycopg.abc import AdaptContext, Buffer
@@ -19,6 +19,7 @@ from psycopg.types.json import Jsonb, JsonbBinaryLoader, JsonbLoader
 from parallax.core.base import TemporalBound
 from parallax.core.db_error import DatabaseError, classify_error
 from parallax.core.db_port import (
+    AccessMode,
     BeginFailed,
     CallbackRaised,
     CanonicalWriteStatement,
@@ -48,7 +49,7 @@ from parallax.core.db_port import (
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.wire._json import dump_document, prepared_loads
 from parallax.postgres._compiled_loaders import compiled_loaders
-from parallax.postgres._isolation import isolation_spelling
+from parallax.postgres._isolation import isolation_spelling, read_only_setting
 
 __all__ = [
     "CONNECT_KWARGS",
@@ -791,6 +792,7 @@ class PostgresConnection:
         body: Callable[[DatabaseConnection], T],
         *,
         isolation: IsolationLevel | None = None,
+        access_mode: AccessMode | None = None,
     ) -> TransactionOutcome[T]:
         """Run ``body`` in one transaction and report which boundary phase decided
         the outcome.
@@ -819,31 +821,32 @@ class PostgresConnection:
         indistinguishable, and a rollback failure — which psycopg's context logs
         and discards — would not arrive at all.
 
-        A requested ``isolation`` is part of opening the boundary rather than
-        part of the work inside it: it is applied to the transaction just begun,
-        before the body sees a connection, so it governs this transaction alone
-        and leaves the session's own default untouched for the next one. An
-        explicit boundary opens on an autocommit session exactly as it does on
-        any other, so autocommit changes none of this. Postgres forbids each
-        portable level's anomalies under its own name for it, so this maps the
-        request to that name and asks for it; a level Postgres nonetheless
-        refuses ends the boundary
+        A requested ``isolation`` or ``access_mode`` is part of opening the
+        boundary rather than part of the work inside it: each is applied to the
+        transaction just begun, before the body sees a connection, so it governs
+        this transaction alone and leaves the session's own defaults untouched
+        for the next one. An explicit boundary opens on an autocommit session
+        exactly as it does on any other, so autocommit changes none of this.
+        Postgres forbids each portable level's anomalies under its own name for
+        it and states the access mode as `transaction_read_only`, so this maps
+        each request to that setting and asks for it; a request Postgres
+        nonetheless refuses ends the boundary
         :class:`~parallax.core.db_port.BeginFailed`: no work of the caller's was
-        attempted, and a request silently downgraded to a level the caller did
-        not ask for is worse than one refused.
+        attempted, and a request silently downgraded to one the caller did not
+        make is worse than one refused.
         """
         connection = self._native()
-        # Resolved before the physical transaction exists, so a level outside the
-        # vocabulary — a type violation the handle's own check would have caught —
-        # cannot leave an empty transaction open on the connection.
-        spelling = None if isolation is None else isolation_spelling(isolation)
+        # Resolved before the physical transaction exists, so a request outside
+        # its vocabulary — a type violation the handle's own check would have
+        # caught — cannot leave an empty transaction open on the connection.
+        settings = _transaction_settings(isolation, access_mode)
         boundary = connection.transaction()
         try:
             boundary.__enter__()
         except psycopg.Error as exc:
             return BeginFailed(reported_failure(self.dialect, exc))
-        if spelling is not None:
-            unopened = self._at_isolation(spelling, boundary=boundary)
+        if settings:
+            unopened = self._configured(settings, boundary=boundary)
             if unopened is not None:
                 return unopened
         try:
@@ -856,23 +859,28 @@ class PostgresConnection:
             return self._undone(CommitFailed(reported_failure(self.dialect, exc)), boundary=None)
         return Committed(value)
 
-    def _at_isolation(
+    def _configured(
         self,
-        spelling: str,
+        settings: Sequence[tuple[LiteralString, str]],
         *,
         boundary: contextlib.AbstractContextManager[psycopg.Transaction],
     ) -> BeginFailed | None:
-        """Ask the transaction just begun for ``spelling``, or report it unopened.
+        """Apply each transaction-scoped ``(setting, value)`` to the transaction
+        just begun, or report it unopened.
 
-        Postgres accepts a level only as a transaction's first statement, which
-        is what makes this part of opening the boundary rather than of the work
-        inside it.
+        Postgres accepts a level and an access mode only before a transaction's
+        first query, which is what makes this part of opening the boundary rather
+        than of the work inside it. Every setting travels in one request, so
+        asking for both costs the round trip asking for one does, and none of
+        them takes a snapshot. The request is never prepared: the driver would
+        otherwise prepare it once it passes its preparation threshold, and a
+        prepared statement holds a single command.
 
-        The mapped name arrives as the bound VALUE of the transaction-scoped
-        setting rather than as SQL text it is composed into, so what the
-        statement can express is one level and never a second transaction mode
-        or a second statement — a property of the request's SHAPE, which holds
-        however the mapping above is later spelled.
+        Each mapped value arrives as the bound VALUE of its transaction-scoped
+        setting rather than as SQL text it is composed into, so what a statement
+        can express is one value of one setting and never a second transaction
+        mode or a second statement — a property of the request's SHAPE, which
+        holds however the mappings are later spelled.
 
         A refusal leaves a transaction that began and did nothing. Undoing it is
         this connection's business rather than the caller's, and the outcome
@@ -883,10 +891,12 @@ class PostgresConnection:
         is the acquisition's cleanup, which is the one place that can also
         settle the accounting for it.
         """
-        request = SQL("set local transaction_isolation = {}").format(Literal(spelling))
+        request = SQL("; ").join(
+            SQL("set local {} = {}").format(SQL(name), Literal(value)) for name, value in settings
+        )
         try:
             with self._native().cursor() as cursor:
-                cursor.execute(request)
+                cursor.execute(request, prepare=False)
         except psycopg.Error as exc:
             try:
                 boundary.__exit__(type(exc), exc, exc.__traceback__)
@@ -927,3 +937,16 @@ class PostgresConnection:
             self._suspect = True
             return RollbackFailed(trigger, rollback_error)
         return RolledBack(trigger)
+
+
+def _transaction_settings(
+    isolation: IsolationLevel | None, access_mode: AccessMode | None
+) -> tuple[tuple[LiteralString, str], ...]:
+    """The transaction-scoped settings a boundary's requests map to, in the order
+    they are applied; a request naming nothing contributes none."""
+    settings: list[tuple[LiteralString, str]] = []
+    if isolation is not None:
+        settings.append(("transaction_isolation", isolation_spelling(isolation)))
+    if access_mode is not None:
+        settings.append(("transaction_read_only", read_only_setting(access_mode)))
+    return tuple(settings)

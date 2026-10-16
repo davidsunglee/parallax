@@ -3,8 +3,8 @@
 `m-execution` is the lifecycle-neutral runtime over the database port: the
 **Database Root** that owns one runtime's resources, the **Execution Scopes**
 derived from it, the resolution of transaction options, the serving and adoption
-of Model Editions, and the **Attempt** that runs one physical transaction
-attempt. It executes reads by handing them to `m-read-delivery` under the
+of Model Editions, and the **Attempts**, writable or read-only, that run each
+physical transaction attempt. It executes reads by handing them to `m-read-delivery` under the
 conditions it establishes, and executes writes by running the Write Plan
 `m-unit-work` finalizes, acquiring the rows a write needs to read, and reporting
 each completed unit back. Per the dependency graph it depends on `m-unit-work`
@@ -64,10 +64,15 @@ changes the record, and options never select, clear, or replace authority.
 An outer transaction resolves each option as its explicit argument, else its
 invoking scope's effective value. Every physical attempt of that invocation, and
 every call joining it, observes that one resolved record, and the transaction
-exposes it as a value of the same shape the root and scope carry.
+exposes it as a value of the same shape the root and scope carry. A read-only
+transaction (*Read-only transactions*, below) resolves the retry bound and the
+Isolation Level the same way and nothing else: it has no Concurrency Preference
+and no optimistic-conflict opt-in, whatever the scope's effective record names,
+and the record it exposes carries neither.
 
-A joining call never renegotiates. An omitted option inherits the active
-transaction's resolved value; an explicit option equal to that value is
+A joining call never renegotiates, and it compares only the options its own
+entrypoint takes. An omitted option inherits the active transaction's resolved
+value; an explicit option equal to that value is
 accepted; an explicit option different from it is an **option conflict**,
 refused before the joined callback runs. Neither the joining scope's effective
 record nor its root's enters that comparison on its own, so under an outer call
@@ -75,7 +80,7 @@ that overrode its default, a join naming that default conflicts. Options are
 exact values rather than an ordered substitution rule: a join naming Read
 Committed under a Serializable boundary conflicts rather than weakening what the
 boundary already satisfies. The order of the join refusals — ownership, then
-rollback-only, then authority, then explicit options — is
+rollback-only, then authority, then access mode, then explicit options — is
 `m-execution-authority`'s *Join authority*.
 
 A standalone read or stream opens no transaction, so no transaction option
@@ -120,16 +125,56 @@ execution, fixed at adoption, is this contract's.
 
 ## Attempts
 
-An **Attempt** is the execution state of one physical transaction attempt: its
-unit of work, connection, adopted selection, attempt activity, resolved options,
-captured authority, and flush state. The runtime constructs it, wires every
-execution dependency its unit of work needs into it, and only then hands it to
-the lifecycle's transaction surface and the application callback — so neither
-can observe an Attempt whose unit of work is not ready. A retry constructs a
-fresh Attempt; a joining call reuses the active one, and the lifecycle surface
-the outer attempt was handed, rather than constructing another. The port owns
-the physical begin, commit, and rollback (`m-db-port`), and the unit of work
-owns buffering, rollback-only state, and the pre-commit flush (`m-unit-work`).
+An **Attempt** is the execution state of one physical transaction attempt. A
+**writable** attempt holds its unit of work, connection, adopted selection,
+attempt activity, resolved options, captured authority, and flush state; a
+**read-only** attempt holds the same less the unit of work and everything only a
+write needs. Every attempt has one **lifetime**: whether it still admits work,
+whether it is rollback-only, and the first failure that made it so. The lifetime
+is the one state the attempt's handles and streams, the calls joining it, its
+commit, and a writable attempt's unit of work all consult; a failure escaping a
+joined callback, and one escaping a writable flush, doom that same lifetime. The
+runtime constructs the attempt, wires every execution dependency its unit of
+work needs into it, and only then hands it to the lifecycle's transaction surface
+and the application callback — so neither can observe an Attempt whose unit of
+work is not ready. A retry constructs a fresh Attempt; a joining call reuses the
+active one, and the lifecycle surface the outer attempt was handed, rather than
+constructing another. The port owns the physical begin, commit, and rollback
+(`m-db-port`), the lifetime owns rollback-only state, and a writable attempt's
+unit of work owns buffering and the pre-commit flush (`m-unit-work`).
+
+Once the callback returns, an attempt refuses to commit a rollback-only
+lifetime, then — writable only — flushes what its unit of work still buffers
+while the lifetime admits work, and finally fences its handles and streams
+before the port commits. A callback or completion failure withholds the
+callback's value, discards a writable attempt's buffered state, fences the
+attempt, and the port rolls back.
+
+### Read-only transactions
+
+A **read-only transaction** is an invocation made through the read-only
+entrypoint, which hands its callback a surface with reads and no modeled
+mutation. Its access mode is the entrypoint's, fixed for the whole invocation —
+never by an option, a join, or a read:
+
+- every attempt asks the port for a read-only boundary at the resolved level,
+  and every attempt of a writable invocation asks for a read/write one
+  (`m-db-port`), so neither mode is inherited from a native default;
+- its reads take no participation lock — the unversioned fallback a writable
+  read takes included (`m-read-lock`) — stamp no participation on what they
+  publish, and force no flush, since nothing is buffered; the surface offers no
+  mutation, so the runtime refuses one before native enforcement could;
+- a joining call is admitted only in the same mode: a writable call while a
+  read-only transaction is active, or a read-only call while a writable one is,
+  is an **access-mode mismatch**, refused before its callback runs;
+- immutable results remain readable after commit, while a live stream cannot
+  outlive its attempt.
+
+Read-only prohibits modeled mutations. It promises nothing about external
+effects of the callback's own code, and what the native transaction refuses or
+locks implicitly is the provider's. A standalone read made while a transaction
+of either mode is active stays standalone: it leases its own connection and is
+never redirected into the active attempt.
 
 ### Reads under an Attempt or a scope
 
@@ -137,10 +182,11 @@ A read through a scope or an Attempt runs one fixed ladder: refuse re-entry from
 inside a lifecycle handler (`m-execution-lifecycle`), adopt (or, inside an
 Attempt, reuse the adopted selection), have the lifecycle build its Publication
 from the adopted read projection, convert and validate the query against the
-adopted model, then — inside an Attempt — force the unit of work's pending
-writes out through its read gate (`m-unit-work`), and finally deliver the read
-inside its Read or Stream activity and connection bracket. A model-dependent
-refusal therefore precedes query conversion and any force-flush, and a stream
+adopted model, then — inside an Attempt — admit the read through the attempt's lifetime,
+which a writable attempt does through its unit of work's read gate, forcing its
+pending writes out first (`m-unit-work`), and finally deliver the read inside
+its Read or Stream activity and connection bracket. A model-dependent refusal
+therefore precedes query conversion and any force-flush, and a stream
 converts its query when it is constructed but adopts and builds its Publication
 only at entry. A standalone read leases a connection for its read, and a
 standalone stream for each page (`m-read-delivery` *The connection a delivery
@@ -269,3 +315,6 @@ rollback-only exactly as for any other failure.
 | Case | What it proves |
 |---|---|
 | root-default resolution | an outer invocation that names no option resolves all four from the configured root, states them on its invocation, and runs its attempt and read on one connection |
+| read-only invocation | a read-only invocation requests a read-only boundary at its explicit level, a read-only join reuses its attempt, nothing is flushed, and the invocation states its access mode and no preference |
+| cross-mode joins | a read-only call under a writable transaction, and a writable call under a read-only one, are each refused before their callbacks run |
+| access-mode setup failure | a refused access-mode setup opens no boundary and finishes the attempt begin-failed, terminally |

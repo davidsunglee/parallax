@@ -1,0 +1,29 @@
+# A read-only transaction takes no participation lock (m-read-lock;
+# m-execution *Read-only transactions*): the root is configured `locking`,
+# the read runs inside a read-only invocation, and the object find renders no
+# shared-row-lock suffix. Contrast `m-read-lock-020`, the same root and query
+# inside a writable transaction, which inherits the lock.
+model: models/account.yaml
+tags: [m-read-lock, m-execution, m-dialect, database-options, slice-snapshot-1]
+shape: read
+given:
+  databaseOptions:
+    concurrency: locking
+when:
+  uow:
+    accessMode: read-only
+  objectQuery:
+    target: parallax.compatibility.Account
+    predicate:
+      eq:
+        path: parallax.compatibility.Account.id
+        value: 2
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+      binds: [2]
+  referenceSql: select id, owner, balance, version from account where id = 2
+  rows:
+    - { id: 2, owner: Linus, balance: "250.00", version: 1 }
+  roundTrips: 1

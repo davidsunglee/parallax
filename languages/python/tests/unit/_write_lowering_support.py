@@ -737,8 +737,9 @@ class AcceptingPort(ConnectsAsItself):
         body: Callable[[DatabaseConnection], T],
         *,
         isolation: str | None = None,
+        access_mode: str | None = None,
     ) -> TransactionOutcome[T]:
-        del isolation
+        del isolation, access_mode
         return body_outcome(cast("DatabaseConnection", self), body)
 
 

@@ -1,17 +1,17 @@
-"""Unit-of-work shell unit tests (m-unit-work, Docker-free).
+"""Unit-of-work coordination unit tests (m-unit-work, Docker-free).
 
-Exercises the transaction-scope state machine independently of any real port or
-SQL lowering (the flush is an injected neutral executor): the frame stack (a
-nested scope joins the active transaction, ADR 0005), rollback-only doom and
-re-entry refusal, abort that discards buffered effects and withholds the callback
-value (ADR 0006), read-your-own-writes force-flush, Clock injection,
-use-after-scope rejection, and what buffering admits: the claim each carrier
-names, all or nothing, and the pending-insert transition it reports.
+Exercises the writable coordinator of one attempt independently of any real
+port, runner, or SQL lowering (the flush is an injected neutral executor and
+row acquisition an injected reader): the pre-commit and read-dependency
+flushes, discarding buffered effects, read-your-own-writes force-flush, Clock
+injection, the attempt lifetime it consults and dooms, and what buffering
+admits: the claim each carrier names, all or nothing, and the pending-insert
+transition it reports. The attempt's own lifecycle — commit admission, joins,
+and rollback — is the managed runner's, and is tested there.
 """
 
 from __future__ import annotations
 
-import contextlib
 import datetime as dt
 from collections.abc import Callable, Mapping
 from decimal import Decimal
@@ -25,6 +25,7 @@ from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import Attr, DomainModel, Entity, attr, opt_lock, temporal_read
 from parallax.core import predicate as predicate_algebra
 from parallax.core._execution._planning import build_write_planner
+from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
 from parallax.core._execution._unit_work.acquisition import AcquireRows, CoverageReadRequest
 from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedWrite,
@@ -76,9 +77,7 @@ from parallax.core.unit_work import (
     WriteEvidenceError,
     WritePlanningRequest,
     WritePreconditionError,
-    active_unit_of_work,
     buffered_write,
-    run_unit_of_work,
 )
 from parallax.core.write_plan import (
     SUPERSEDED,
@@ -172,13 +171,20 @@ def _run[T](
     meta: Metamodel | None = None,
     opening: OpenWriteBatch | None = None,
     rows: AcquireRows | None = None,
+    lifetime: TxnAttemptLifetime | None = None,
 ) -> T:
-    """Run ``body`` in a unit of work whose row reads answer ``rows``, or find
-    no row at all."""
+    """Drive ``body`` against a unit of work whose row reads answer ``rows``, or
+    find no row at all, then flush what it left as the attempt's pre-commit
+    batch, and end the attempt's lifetime either way.
+
+    Coordination only: what an attempt does around that flush — refusing a
+    doomed commit, discarding on failure, binding joins — is the runner's.
+    """
     resolved_meta = meta or _ACCOUNT
-    return run_unit_of_work(
-        body,
+    attempt = lifetime or TxnAttemptLifetime()
+    uow = UnitOfWork(
         settings=settings or TransactionSettings(),
+        lifetime=attempt,
         clock=clock or FixedClock(_FIXED),
         meta=resolved_meta,
         flush_executor=executor or _noop,
@@ -188,6 +194,12 @@ def _run[T](
         evidence_policy_for=opt_lock.view(resolved_meta).required_key,
         write_batch_opening=opening,
     )
+    try:
+        result = body(uow)
+        uow.flush(trigger="pre_commit")
+        return result
+    finally:
+        attempt.close()
 
 
 def _prepared_keyed(write: KeyedWrite, model: Metamodel) -> PreparedKeyedWrite:
@@ -215,9 +227,9 @@ def _member_value(attributes: Mapping[AttributeIdentity, object], name: str) -> 
 
 
 # --------------------------------------------------------------------------- #
-# Commit / abort at the outermost boundary.                                    #
+# The pre-commit flush, discarding, and the lifetime it consults.              #
 # --------------------------------------------------------------------------- #
-def test_outermost_commit_flushes_and_returns_value() -> None:
+def test_the_pre_commit_flush_plans_what_is_buffered() -> None:
     recorder = _Recorder()
 
     def body(tx: UnitOfWork) -> str:
@@ -229,60 +241,34 @@ def test_outermost_commit_flushes_and_returns_value() -> None:
     assert len(recorder.plans[0].steps) == 1
 
 
-def test_active_unit_of_work_tracks_the_scope() -> None:
-    assert active_unit_of_work() is None
-    seen: dict[str, object] = {}
+def test_discarding_drops_every_buffered_write() -> None:
+    recorder = _Recorder()
 
     def body(tx: UnitOfWork) -> None:
-        seen["same"] = active_unit_of_work() is tx
-
-    _run(body)
-    assert seen["same"] is True
-    assert active_unit_of_work() is None
-
-
-def test_body_exception_aborts_discards_and_withholds() -> None:
-    recorder = _Recorder()
-    captured: dict[str, UnitOfWork] = {}
-
-    def body(tx: UnitOfWork) -> str:
         tx.buffer(_account_insert(9))
-        captured["tx"] = tx
-        raise ValueError("boom")
+        tx.discard()
 
-    with pytest.raises(ValueError, match="boom"):
-        _run(body, executor=recorder)
-    assert recorder.plans == []  # never committed — the write is withheld
-    with pytest.raises(EscapedTransactionError):
-        captured["tx"].buffer(_account_insert(1))  # discarded + closed
+    _run(body, executor=recorder)
+    assert recorder.plans == []  # nothing buffered survives to be planned
 
 
-def test_rollback_only_refuses_commit_and_withholds_value() -> None:
+def test_a_doomed_lifetime_refuses_the_pre_commit_flush_with_its_first_cause() -> None:
     recorder = _Recorder()
-    cause = RuntimeError("inner")
-
-    def body(tx: UnitOfWork) -> str:
-        tx.buffer(_account_insert(9))
-        tx.mark_rollback_only(cause)
-        return "ignored"
-
-    with pytest.raises(RollbackOnlyError) as exc:
-        _run(body, executor=recorder)
-    assert exc.value.__cause__ is cause
-    assert recorder.plans == []  # commit (flush) refused
-
-
-def test_first_rollback_cause_is_preserved() -> None:
+    lifetime = TxnAttemptLifetime()
     first = RuntimeError("first")
-    second = RuntimeError("second")
 
-    def body(tx: UnitOfWork) -> None:
-        tx.mark_rollback_only(first)
-        tx.mark_rollback_only(second)
+    def body(tx: UnitOfWork) -> str:
+        tx.buffer(_account_insert(9))
+        lifetime.doom(first)
+        lifetime.doom(RuntimeError("second"))
+        with pytest.raises(RollbackOnlyError):
+            tx.buffer(_account_insert(10))
+        return "withheld"
 
     with pytest.raises(RollbackOnlyError) as exc:
-        _run(body)
+        _run(body, executor=recorder, lifetime=lifetime)
     assert exc.value.__cause__ is first
+    assert recorder.plans == []  # the flush was refused before it planned
 
 
 def test_settings_are_carried_on_the_unit_of_work() -> None:
@@ -584,77 +570,6 @@ def test_transaction_time_instant_is_captured_once_per_transaction() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Frame stack — join, doom, re-entry.                                          #
-# --------------------------------------------------------------------------- #
-def test_nested_transaction_joins_the_active_one() -> None:
-    outer_exec = _Recorder()
-    inner_exec = _Recorder()
-    seen: dict[str, object] = {}
-
-    def inner(tx: UnitOfWork) -> str:
-        seen["inner_tx"] = tx
-        tx.buffer(_account_insert(10))
-        return "inner-result"
-
-    def outer(tx: UnitOfWork) -> str:
-        seen["outer_tx"] = tx
-        seen["inner_ret"] = _run(inner, executor=inner_exec)  # joins the active transaction
-        tx.buffer(_account_insert(9))
-        return "outer-result"
-
-    assert _run(outer, executor=outer_exec) == "outer-result"
-    assert seen["inner_tx"] is seen["outer_tx"]  # the same unit of work
-    assert seen["inner_ret"] == "inner-result"  # a joined body returns immediately
-    assert inner_exec.plans == []  # the joined call's executor is ignored
-    assert len(outer_exec.plans) == 1  # one flush at the outermost boundary
-    # Both buffered writes reached the SAME outermost flush — the production
-    # planner's own batching then collapses the two uniform Account inserts
-    # into one multi-row step, so the entry count is the observable, not the
-    # step count.
-    (step,) = outer_exec.plans[0].steps
-    assert isinstance(step, PlannedInsert)
-    assert len(step.entries) == 2
-
-
-def test_inner_failure_dooms_the_transaction_even_if_caught() -> None:
-    outer_exec = _Recorder()
-    cause = RuntimeError("inner boom")
-
-    def inner(tx: UnitOfWork) -> None:
-        raise cause
-
-    def outer(tx: UnitOfWork) -> str:
-        # The outer body catches the inner failure and would return normally.
-        with contextlib.suppress(RuntimeError):
-            _run(inner)  # joins; the failure dooms the whole transaction
-        return "outer-ok"
-
-    with pytest.raises(RollbackOnlyError) as exc:
-        _run(outer, executor=outer_exec)
-    assert exc.value.__cause__ is cause  # the original cause + classification survives
-    assert outer_exec.plans == []  # commit refused despite the caught exception
-
-
-def test_reentry_into_a_rollback_only_transaction_is_refused() -> None:
-    cause = RuntimeError("first failure")
-    ran: dict[str, bool] = {"inner": False}
-
-    def inner(tx: UnitOfWork) -> None:
-        ran["inner"] = True
-
-    def outer(tx: UnitOfWork) -> str:
-        tx.mark_rollback_only(cause)
-        with pytest.raises(RollbackOnlyError) as exc:
-            _run(inner)  # joining a doomed scope raises before running the body
-        assert exc.value.__cause__ is cause
-        return "done"
-
-    with pytest.raises(RollbackOnlyError):
-        _run(outer)
-    assert ran["inner"] is False
-
-
-# --------------------------------------------------------------------------- #
 # The batch scope.                                                             #
 # --------------------------------------------------------------------------- #
 class _Scope:
@@ -721,7 +636,7 @@ def test_a_unit_of_work_without_a_batch_opening_still_flushes() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Use-after-scope.                                                             #
+# Use after the attempt's lifetime ended.                                      #
 # --------------------------------------------------------------------------- #
 def test_escaped_reference_raises_on_every_use() -> None:
     captured: dict[str, UnitOfWork] = {}

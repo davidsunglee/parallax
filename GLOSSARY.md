@@ -19,9 +19,9 @@ contract owners; this index does not add requirements.
 | Execution Runtime | The lifecycle-neutral root, scopes, and attempts that run reads and writes | [Execution](core/spec/m-execution.md) |
 | Database Root | Resource owner from which execution scopes are derived, configured with option defaults | [Execution](core/spec/m-execution.md) |
 | Execution Scope | Authority-selected view through which modeled work is invoked | [Execution authority](core/spec/m-execution-authority.md) |
-| Attempt | The execution state of one physical transaction attempt, wired before any callback sees it | [Execution](core/spec/m-execution.md) |
+| Transaction Attempt | One execution attempt, distinct from the invocation that may replay it and the native transaction it may open | [Execution](core/spec/m-execution.md) |
 | Principal / Execution Actor | Application input versus captured execution authority | [Execution authority](core/spec/m-execution-authority.md) |
-| Unit of Work | Transactional buffering and settlement boundary | [Unit of work](core/spec/m-unit-work.md) |
+| Unit of Work | Writable-work coordination within a transaction attempt, distinct from the transaction itself | [Unit of work](core/spec/m-unit-work.md) |
 | Read Evidence | Read-derived identity, participation, and state facts evaluated for source-write admission, distinct from general publication provenance | [Unit of work](core/spec/m-unit-work.md) |
 | Row Acquisition | A write's read of the existing rows it needs, described by the unit of work and executed by the runtime | [Unit of work](core/spec/m-unit-work.md) |
 | Retained Starting Row | The row a Locking target write's acquisition read whole, kept as pending data its range reuses while no earlier unit changed it | [Unit of work](core/spec/m-unit-work.md) |

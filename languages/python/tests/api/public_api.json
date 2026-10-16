@@ -148,7 +148,9 @@
     "Principal",
     "PublicationConflictError",
     "QueryTargetError",
+    "ReadOnlyTxnOptions",
     "ServingModel",
+    "TransactionAccessModeError",
     "TransactionAuthorityError",
     "TransactionOptionConflictError",
     "TransactionOwnershipError",
@@ -163,6 +165,7 @@
     "STACK_LIMIT_BYTES"
   ],
   "parallax.core.db_port": [
+    "AccessMode",
     "AcquisitionReason",
     "BeginFailed",
     "Bind",
@@ -499,6 +502,7 @@
     "CheckedSnapshot",
     "Database",
     "NoResultFound",
+    "ReadOnlyTxnContext",
     "ScopedDatabase",
     "Snapshot",
     "SnapshotConnectionError",

@@ -12,6 +12,7 @@ from psycopg.rows import TupleRow, tuple_row
 
 from parallax.conformance._database_control import TerminationReport
 from parallax.core.db_port import (
+    AccessMode,
     CleanupCode,
     CleanupIssue,
     CleanupPhase,
@@ -181,9 +182,13 @@ class PostgresControl:
         return self._execution.ordered_write_transport
 
     def transaction[T](
-        self, body: Callable[[DatabaseConnection], T], *, isolation: IsolationLevel | None = None
+        self,
+        body: Callable[[DatabaseConnection], T],
+        *,
+        isolation: IsolationLevel | None = None,
+        access_mode: AccessMode | None = None,
     ) -> TransactionOutcome[T]:
-        return self._execution.transaction(body, isolation=isolation)
+        return self._execution.transaction(body, isolation=isolation, access_mode=access_mode)
 
     def rollback(self) -> None:
         self._connection.rollback()

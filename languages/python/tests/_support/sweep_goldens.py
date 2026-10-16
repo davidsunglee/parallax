@@ -68,6 +68,8 @@ _READ_LOCK_READS: Final[frozenset[str]] = frozenset(
         "m-read-lock-010",
         "m-read-lock-019",
         "m-read-lock-020",
+        "m-read-lock-024",
+        "m-read-lock-025",
     }
 )
 _DESCRIPTOR_DEFAULT_COLUMN_READS: Final[frozenset[str]] = frozenset({"m-descriptor-002"})

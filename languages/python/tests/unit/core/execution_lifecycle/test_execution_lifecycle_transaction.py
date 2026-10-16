@@ -190,7 +190,7 @@ def test_one_invocation_roots_its_attempt_its_batches_and_its_read() -> None:
     started = root.events[0]
     assert isinstance(started, TransactionInvocationStarted)
     assert started.invocation == OuterInvocation(
-        "optimistic", RetryPolicy(10, False), "read_committed"
+        "read_write", "optimistic", RetryPolicy(10, False), "read_committed"
     )
     assert _finished(root) == OuterInvocationCommitted()
     assert _attempt_outcomes(root) == [AttemptCommitted()]
@@ -246,7 +246,9 @@ def test_the_resolved_policy_the_caller_asked_for_is_what_the_invocation_reports
 
     started = _only(recorder).events[0]
     assert isinstance(started, TransactionInvocationStarted)
-    assert started.invocation == OuterInvocation("locking", RetryPolicy(3, True), "serializable")
+    assert started.invocation == OuterInvocation(
+        "read_write", "locking", RetryPolicy(3, True), "serializable"
+    )
 
 
 def test_an_invocation_naming_no_level_reports_the_roots_resolved_default() -> None:
@@ -261,7 +263,7 @@ def test_an_invocation_naming_no_level_reports_the_roots_resolved_default() -> N
     started = _only(recorder).events[0]
     assert isinstance(started, TransactionInvocationStarted)
     assert started.invocation == OuterInvocation(
-        "optimistic", RetryPolicy(10, False), "read_committed"
+        "read_write", "optimistic", RetryPolicy(10, False), "read_committed"
     )
 
 
@@ -279,7 +281,7 @@ def test_a_joined_invocation_states_no_level_of_its_own() -> None:
         if isinstance(event, TransactionInvocationStarted)
     ]
     assert joined == [
-        OuterInvocation("optimistic", RetryPolicy(10, False), "repeatable_read"),
+        OuterInvocation("read_write", "optimistic", RetryPolicy(10, False), "repeatable_read"),
         JoinedInvocation(),
     ]
 
@@ -1058,9 +1060,13 @@ class _DrainingFaultPort(ConnectsAsItself):
         return 1
 
     def transaction[T](
-        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
+        self,
+        body: Callable[[DatabaseConnection], T],
+        *,
+        isolation: str | None = None,
+        access_mode: str | None = None,
     ) -> TransactionOutcome[T]:
-        del isolation
+        del isolation, access_mode
         outcome = body_outcome(cast("DatabaseConnection", self), body)
         if self._commit_faults and isinstance(outcome, Committed):
             return RolledBack(CommitFailed(self._commit_faults.pop(0)))
@@ -1155,9 +1161,13 @@ class _AbandoningPort(ConnectsAsItself):
         raise AssertionError("no write expected")
 
     def transaction[T](
-        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
+        self,
+        body: Callable[[DatabaseConnection], T],
+        *,
+        isolation: str | None = None,
+        access_mode: str | None = None,
     ) -> TransactionOutcome[T]:
-        del isolation
+        del isolation, access_mode
         body_outcome(cast("DatabaseConnection", self), body)
         raise RuntimeError("the port gave up")
 

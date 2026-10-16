@@ -305,7 +305,11 @@ class _GeneratingPort(ConnectsAsItself):
         raise NotImplementedError
 
     def transaction[T](
-        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
+        self,
+        body: Callable[[DatabaseConnection], T],
+        *,
+        isolation: str | None = None,
+        access_mode: str | None = None,
     ) -> TransactionOutcome[T]:  # pragma: no cover
         raise NotImplementedError
 
@@ -339,9 +343,13 @@ class _WritingPort(_GeneratingPort):
         return 1
 
     def transaction[T](
-        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
+        self,
+        body: Callable[[DatabaseConnection], T],
+        *,
+        isolation: str | None = None,
+        access_mode: str | None = None,
     ) -> TransactionOutcome[T]:
-        del isolation
+        del isolation, access_mode
         return body_outcome(cast("DatabaseConnection", self), body)
 
 

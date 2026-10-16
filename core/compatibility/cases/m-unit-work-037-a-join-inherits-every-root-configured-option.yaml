@@ -46,6 +46,7 @@ then:
             parent: null
             transactionInvocationStarted:
               invocation: outer
+              accessMode: read-write
               concurrency: locking
               retries: 2
               retryOptimisticConflicts: true

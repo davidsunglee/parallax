@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import bisect
 import datetime as dt
-import threading
 from collections.abc import Callable, Hashable, Iterable, Iterator
 from dataclasses import dataclass, replace
 from enum import Enum
@@ -119,6 +118,7 @@ from parallax.core.write_plan.steps import Finite, KeyTarget
 __all__ = [
     "NO_INSERTION_AUTHORITY",
     "WRITE_EVIDENCE_CODES",
+    "AttemptLifetime",
     "BindDeferredRange",
     "BufferOutcome",
     "Concurrency",
@@ -135,9 +135,7 @@ __all__ = [
     "WriteBatchReason",
     "WriteEvidenceError",
     "WriteEvidenceErrorCode",
-    "active_unit_of_work",
     "bind_deferred_range",
-    "run_unit_of_work",
 ]
 
 type WriteBatchReason = Literal["read_dependency", "pre_commit"]
@@ -145,7 +143,7 @@ type WriteBatchReason = Literal["read_dependency", "pre_commit"]
 
 ``read_dependency`` is the batch :meth:`UnitOfWork.read` forces out so a
 dependent read observes it; ``pre_commit`` is the boundary-owned final batch
-:meth:`UnitOfWork.run_outermost` flushes once the callback has returned. There
+the transaction attempt flushes once its callback has returned. There
 is no size-based, periodic, or caller-invoked third trigger, which is what lets
 an observer state which of the two produced a batch instead of guessing from
 position.
@@ -270,6 +268,19 @@ class OpenWriteBatch(Protocol):
     def __call__(self, trigger: WriteBatchReason, /) -> WriteBatchScope: ...
 
 
+class AttemptLifetime(Protocol):
+    """The lifetime of the transaction attempt a unit of work coordinates.
+
+    The attempt owns it; the unit of work only asks it to admit work, which it
+    refuses once the attempt ended or became rollback-only, and dooms it when a
+    flush fails while executing.
+    """
+
+    def ensure_open(self) -> None: ...
+
+    def doom(self, cause: BaseException, /) -> None: ...
+
+
 @dataclass(frozen=True, slots=True)
 class StoredTarget:
     """What a target acquisition found of the stored state a caller-addressed
@@ -285,16 +296,16 @@ class UnitOfWorkError(RuntimeError):
 
 
 class EscapedTransactionError(UnitOfWorkError):
-    """A unit-of-work reference was used after its owning scope ended."""
+    """A transaction reference was used after its attempt ended."""
 
 
 class RollbackOnlyError(UnitOfWorkError):
-    """A doomed (rollback-only) transaction refused commit or re-entry.
+    """A doomed (rollback-only) transaction refused work, a join, or commit.
 
-    Raised when the outermost boundary would commit a transaction an inner failure
-    marked rollback-only, and when a nested scope tries to join one — carrying the
-    original failure as its cause (``__cause__``), so its retriability classification
-    survives for the outermost retry loop.
+    Raised when further work, a joining invocation, or the outermost attempt's
+    commit reaches a transaction a failure doomed, carrying the original failure
+    as its cause (``__cause__``), so its retriability classification survives
+    for the outermost retry loop.
     """
 
 
@@ -995,13 +1006,16 @@ def _address(target: ObjectKey) -> _Address:
 
 
 class UnitOfWork:
-    """The buffering, observing, flushing transaction scope (m-unit-work).
+    """The buffering, observing, flushing coordinator of one writable
+    transaction attempt's work (m-unit-work).
 
-    Run it through :meth:`run_outermost` or :func:`run_unit_of_work`, which own
-    the frame lifecycle; the body receives the unit of work and drives it with
-    :meth:`buffer`, :meth:`buffer_predicate`, :meth:`buffer_target`,
-    :meth:`retain`, and :meth:`read`, asking :meth:`resolve_read_evidence`
-    what a keyed write's source licenses here.
+    It is not the transaction: the attempt owns the native transaction and its
+    lifetime, and hands this the lifetime to consult and doom rather than a
+    state of its own. The attempt drives it with :meth:`buffer`,
+    :meth:`buffer_predicate`, :meth:`buffer_target`, :meth:`retain`, and
+    :meth:`read`, asking :meth:`resolve_read_evidence` what a keyed write's
+    source licenses here, flushes it once more before commit, and has it
+    :meth:`discard` its state when the attempt does not commit.
 
     Every row a write reads — a predicate's selection, a caller-addressed
     target's starting state, a deferred range's coverage — is read through
@@ -1013,22 +1027,19 @@ class UnitOfWork:
         "_actor_identity",
         "_changed",
         "_claims",
-        "_closed",
         "_evidence_policy_for",
         "_freshness",
+        "_lifetime",
         "_observations",
         "_participation",
         "_pending",
         "_planner",
         "_reported",
         "_reporting",
-        "_rollback_cause",
-        "_rollback_only",
         "_targets",
         "_transaction_instant",
         "acquire_rows",
         "clock",
-        "companion",
         "flush_executor",
         "meta",
         "settings",
@@ -1039,6 +1050,7 @@ class UnitOfWork:
         self,
         *,
         settings: TransactionSettings,
+        lifetime: AttemptLifetime,
         clock: Clock,
         meta: Metamodel,
         flush_executor: ExecuteFlush,
@@ -1049,6 +1061,7 @@ class UnitOfWork:
         write_batch_opening: OpenWriteBatch | None = None,
     ) -> None:
         self.settings = settings
+        self._lifetime = lifetime
         self.clock = clock
         self.meta = meta
         self.flush_executor = flush_executor
@@ -1068,12 +1081,6 @@ class UnitOfWork:
         # The connected model's write-evidence policy, bound once per accepted
         # model by model preparation, which alone may reach `m-opt-lock`.
         self._evidence_policy_for = evidence_policy_for
-        # An opaque demarcation-layer companion (the `db.transact` transaction
-        # facade), published for the scope's duration so a joining call recovers
-        # it via `active_unit_of_work()`. The shell never reads it, and it needs
-        # no cleanup of its own: it is reachable only through the per-thread
-        # active binding, which `run_outermost` already clears on every exit.
-        self.companion: object | None = None
         # The buffered writes, composed as each is admitted, each carrying the
         # claims its verbs resolved for it — the strong reference that keeps a
         # write's evidence alive after its source value is released, and what a
@@ -1109,14 +1116,11 @@ class UnitOfWork:
         # stamps on the values it produces, and what an effective-Locking write
         # tests its source against.
         self._participation = ParticipationToken()
-        self._rollback_only = False
-        self._rollback_cause: BaseException | None = None
         # One attempt, one lazy instant: constructing it reads no clock, and
         # every flush this scope plans carries the SAME holder, so all
         # timestamp-requiring work in the attempt shares one captured value
         # while work that needs none never captures at all.
         self._transaction_instant = TransactionInstant(clock)
-        self._closed = False
 
     @property
     def participation(self) -> ParticipationToken:
@@ -1777,7 +1781,7 @@ class UnitOfWork:
 
         ``trigger`` names which of the two flush reasons this call is, and every
         caller already knows its own: :meth:`read` serves a read dependency and
-        :meth:`run_outermost` runs the boundary's pre-commit batch. The whole
+        the attempt runs the boundary's pre-commit batch. The whole
         flush runs inside the injected :class:`OpenWriteBatch`'s scope, so a
         planning refusal is inside the batch rather than beside it and a batch
         planning reduces to no DML at all still ends the way it began.
@@ -1792,9 +1796,9 @@ class UnitOfWork:
         stated no write at all. Spending is idempotent, so a claim several
         units carry is spent once.
 
-        A failure while executing, enforcing, or completing marks the
-        transaction rollback-only before it propagates, so a caller that catches
-        it can do no further work and cannot commit. A planning refusal precedes
+        A failure while executing, enforcing, or completing dooms the attempt's
+        lifetime before it propagates, so a caller that catches it can do no
+        further work and cannot commit. A planning refusal precedes
         execution and leaves the transaction usable.
 
         The claims the buffer took travel out with it: what a later write may
@@ -1845,7 +1849,7 @@ class UnitOfWork:
             for source in sources:
                 source.consume()
         except BaseException as failure:
-            self.mark_rollback_only(failure)
+            self._lifetime.doom(failure)
             raise
         finally:
             self._reporting = ()
@@ -1949,77 +1953,23 @@ class UnitOfWork:
         if isinstance(key, VersionedObjectStateKey):
             self._targets.advanced(key)
 
-    def mark_rollback_only(self, cause: BaseException) -> None:
-        """Doom the transaction: commit will be refused. The first cause is kept."""
-        self._rollback_only = True
-        if self._rollback_cause is None:
-            self._rollback_cause = cause
-
-    def ensure_not_rollback_only(self) -> None:
-        """Refuse new joined work when the transaction is already doomed."""
-        if self._rollback_only:
-            raise RollbackOnlyError(
-                "cannot join a rollback-only transaction"
-            ) from self._rollback_cause
-
     def _ensure_open(self) -> None:
-        if self._closed:
-            raise EscapedTransactionError(
-                "the unit of work has ended; a reference escaped its scope"
-            )
-        if self._rollback_only:
-            raise RollbackOnlyError(
-                "the transaction is rollback-only; it accepts no further work"
-            ) from self._rollback_cause
+        self._lifetime.ensure_open()
 
-    def _discard(self) -> None:
-        # Abort: drop buffered + force-flushed in-memory state. The DB rollback the
-        # enclosing transaction performs (upstream) erases any force-flushed rows.
-        # Buffered claims are released rather than spent: nothing this scope wrote
-        # survives, so evidence a later scope is handed is still about stored state.
+    def discard(self) -> None:
+        """Drop every buffered and in-memory effect of an attempt that will not
+        commit.
+
+        The rollback the attempt performs erases any force-flushed rows, and
+        buffered claims are released rather than spent: nothing this attempt
+        wrote survives, so evidence a later attempt is handed is still about
+        stored state.
+        """
         self._pending.clear()
         self._claims.clear()
         self._targets.clear()
         self._observations.clear()
         self._changed.clear()
-
-    def run_outermost[T](self, body: Callable[[UnitOfWork], T]) -> T:
-        """Run ``body`` as the outermost frame: commit (flush) on success, else abort.
-
-        Driven by :func:`run_unit_of_work`; not part of the developer surface.
-        """
-        _bind_active(self)
-        try:
-            result = body(self)
-            if self._rollback_only:
-                # An inner failure doomed the scope; commit is refused even though
-                # the outer body returned normally, and the value is withheld.
-                raise RollbackOnlyError(
-                    "transaction is rollback-only; commit refused"
-                ) from self._rollback_cause
-            self.flush(trigger="pre_commit")
-            return result
-        except BaseException:
-            # Abort: discard buffered effects and withhold the callback value.
-            self._discard()
-            raise
-        finally:
-            self._closed = True
-            _clear_active()
-
-    def run_joined[T](self, body: Callable[[UnitOfWork], T]) -> T:
-        """Run ``body`` as a joined (nested) frame: return immediately, doom on failure.
-
-        Driven by :func:`run_unit_of_work`; not part of the developer surface.
-        """
-        self.ensure_not_rollback_only()
-        try:
-            # The joined body returns immediately; commit/abort/retry belong to the
-            # outermost boundary. An inner failure dooms the whole txn.
-            return body(self)
-        except BaseException as exc:
-            self.mark_rollback_only(exc)
-            raise
 
 
 def bind_deferred_range(
@@ -2105,72 +2055,3 @@ def _already_claimed(target: EntityMetadata, key: ObjectKey) -> WriteEvidenceErr
         ),
         object_key=key,
     )
-
-
-class _ActiveState(threading.local):
-    """Per-thread holder for the active unit of work (the class default is the
-    per-thread fallback until a thread binds its own instance attribute)."""
-
-    uow: UnitOfWork | None = None
-
-
-_active = _ActiveState()
-
-
-def active_unit_of_work() -> UnitOfWork | None:
-    """The unit of work active on the current thread, or ``None``."""
-    return _active.uow
-
-
-def _bind_active(uow: UnitOfWork) -> None:
-    _active.uow = uow
-
-
-def _clear_active() -> None:
-    _active.uow = None
-
-
-def run_unit_of_work[T](
-    body: Callable[[UnitOfWork], T],
-    *,
-    settings: TransactionSettings,
-    clock: Clock,
-    meta: Metamodel,
-    flush_executor: ExecuteFlush,
-    acquire_rows: AcquireRows,
-    planner: WritePlanner,
-    actor_identity: ActorIdentity,
-    evidence_policy_for: EvidencePolicyLookup,
-    write_batch_opening: OpenWriteBatch | None = None,
-) -> T:
-    """Run ``body`` in a unit of work — joining the active one or opening a new frame.
-
-    A call while a transaction is active on the current thread **joins** it: the
-    body receives the same unit of work and its return value is returned
-    immediately (commit and abort belong to the outermost frame), and the passed
-    ``settings`` / ``clock`` / ``meta`` / ``flush_executor`` / ``acquire_rows``
-    / ``write_batch_opening`` / ``planner`` / ``actor_identity`` /
-    ``evidence_policy_for`` are ignored in favor of the active transaction's
-    (``db.transact`` performs the option-conflict check before calling).
-    Otherwise a new outermost frame is opened, and its value is returned only
-    after a durable flush; an abort withholds it. ``planner`` is the injected
-    Write Planner a new outermost frame's flushes call, and ``actor_identity``
-    the boundary-captured Actor Identity every one of its Planning Requests
-    carries, and ``evidence_policy_for`` the connected model's write-evidence
-    policy its keyed writes are admitted under.
-    """
-    active = active_unit_of_work()
-    if active is not None:
-        return active.run_joined(body)
-    uow = UnitOfWork(
-        settings=settings,
-        clock=clock,
-        meta=meta,
-        flush_executor=flush_executor,
-        acquire_rows=acquire_rows,
-        planner=planner,
-        actor_identity=actor_identity,
-        evidence_policy_for=evidence_policy_for,
-        write_batch_opening=write_batch_opening,
-    )
-    return uow.run_outermost(body)

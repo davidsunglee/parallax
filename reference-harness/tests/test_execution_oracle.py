@@ -1507,9 +1507,10 @@ def test_every_authored_oracle_in_the_corpus_is_internally_consistent() -> None:
     auto-retry cases whose streams are the only place one requested Isolation
     Level is seen standing over two attempts (`-006`, and its root-configured
     pair `-009`/`-010`) or a root's zero bound is seen ending the loop (`-007`),
-    and the join cases whose streams are the only place an accepted join and a
+    the join cases whose streams are the only place an accepted join and a
     refused one are told apart (`m-unit-work-035`, and the root-configured
-    `-037` through `-041`)."""
+    `-037` through `-041`), and the read-only invocations whose streams state
+    an access mode and no preference (`m-execution-002`, `-005`)."""
     authored = []
     for case_path in sorted(_CASES.glob("**/*.y*ml")):
         case = read_corpus_yaml(case_path)
@@ -1525,6 +1526,8 @@ def test_every_authored_oracle_in_the_corpus_is_internally_consistent() -> None:
         "m-auto-retry-009-a-root-level-stands-over-every-attempt.yaml",
         "m-auto-retry-010-an-explicit-level-overrides-the-root-level.yaml",
         "m-execution-001-an-invocation-naming-no-option-resolves-every-root-default.yaml",
+        "m-execution-002-a-read-only-invocation-at-an-explicit-level-joins-read-only.yaml",
+        "m-execution-005-an-access-mode-setup-failure-fails-the-attempt.yaml",
         "m-execution-lifecycle-001-standalone-read.yaml",
         "m-execution-lifecycle-002-pre-commit-batch.yaml",
         "m-execution-lifecycle-003-read-dependency.yaml",

@@ -33,6 +33,7 @@ then:
             parent: null
             transactionInvocationStarted:
               invocation: outer
+              accessMode: read-write
               concurrency: optimistic
               retries: 10
               retryOptimisticConflicts: true

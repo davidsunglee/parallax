@@ -47,6 +47,7 @@ if TYPE_CHECKING:
         PostgresInterleavedExecution,
     )
     from parallax.core.db_port import (
+        AccessMode,
         Bind,
         ConnectionContextSource,
         CredentialSource,
@@ -405,9 +406,13 @@ class ContainerDatabase:  # pragma: no cover - exercised by the Docker-backed la
         return self._session.ordered_write_transport
 
     def transaction[T](
-        self, body: Callable[[DatabaseConnection], T], *, isolation: IsolationLevel | None = None
+        self,
+        body: Callable[[DatabaseConnection], T],
+        *,
+        isolation: IsolationLevel | None = None,
+        access_mode: AccessMode | None = None,
     ) -> TransactionOutcome[T]:
-        return self._session.transaction(body, isolation=isolation)
+        return self._session.transaction(body, isolation=isolation, access_mode=access_mode)
 
     def release_runtimes(self) -> None:
         """Close every runtime a composed Database left open."""

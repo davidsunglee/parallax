@@ -53,7 +53,13 @@ class _Inner:
         self.calls.append(("write", sql))
         return 1
 
-    def transaction(self, body: Callable[[object], object], *, isolation: object = None) -> object:
+    def transaction(
+        self,
+        body: Callable[[object], object],
+        *,
+        isolation: object = None,
+        access_mode: object = None,
+    ) -> object:
         self.calls.append(("transaction", isolation))
         return body(self)
 

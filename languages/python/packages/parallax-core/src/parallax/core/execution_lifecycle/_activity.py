@@ -12,6 +12,7 @@ from uuid import UUID, uuid4
 from parallax.core._execution._unit_work.uow import Concurrency, WriteBatchReason
 from parallax.core.auto_retry import retriable_failure
 from parallax.core.db_port import (
+    AccessMode,
     AcquisitionReason,
     CleanupResult,
     CommitFailed,
@@ -2336,20 +2337,22 @@ def open_stream_root(
 def open_transaction_root(
     installed: InstalledLifecycle | None,
     *,
-    concurrency: Concurrency,
+    access_mode: AccessMode | None,
+    concurrency: Concurrency | None,
     retries: int,
     retry_optimistic_conflicts: bool,
     isolation: IsolationLevel | None,
     extra_retriable: Callable[[BaseException], bool] | None,
 ) -> TransactionInvocationActivity:
-    """The Transaction Invocation root activity for one outermost ``transact``
-    call, or :data:`INERT`.
+    """The Transaction Invocation root activity for one outermost writable or
+    read-only invocation, or :data:`INERT`.
 
     Called after the deterministic refusals a joining call is measured by —
-    ownership and option conflict — and before any attempt adopts an edition,
-    because a begin failure is an OUTCOME of an attempt of this invocation
-    rather than a refusal of it. With no Provider installed nothing at all is allocated here,
-    not even the resolved policy the Started transition would carry.
+    ownership, authority, access mode, and option conflict — and before any
+    attempt adopts an edition, because a begin failure is an OUTCOME of an
+    attempt of this invocation rather than a refusal of it. With no Provider
+    installed nothing at all is allocated here, not even the resolved policy
+    the Started transition would carry.
 
     ``extra_retriable`` is the caller's classification extension, the same one
     the bounded retry loop is given, so the verdict an attempt reports and the
@@ -2366,6 +2369,8 @@ def open_transaction_root(
         return INERT
     return _LiveOuterInvocation(
         _Publisher(execution.id, installed, handler),
-        OuterInvocation(concurrency, RetryPolicy(retries, retry_optimistic_conflicts), isolation),
+        OuterInvocation(
+            access_mode, concurrency, RetryPolicy(retries, retry_optimistic_conflicts), isolation
+        ),
         extra_retriable,
     )
