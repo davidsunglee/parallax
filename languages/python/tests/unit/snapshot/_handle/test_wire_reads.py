@@ -80,6 +80,7 @@ from parallax.snapshot._publication._wire import (
     _wire_scalar,  # pyright: ignore[reportPrivateUsage] - the scalar branch is under test
     read_evidence_of,
     shared_wire_encoder,
+    stored_entity_of,
     wire_roots,
 )
 from tests._support.db_port import (
@@ -360,11 +361,12 @@ def test_two_stored_occurrences_short_and_null_publish_differently() -> None:
     }
 
 
-def test_only_an_entity_node_can_carry_a_read_evidence() -> None:
+def test_only_an_entity_node_can_carry_provenance() -> None:
     # A nested Value Object mapping is structurally identical to an Entity node
     # and answers `isinstance(value, WireEntity)` with false — and it has no slot
-    # to put a hint in, which is what makes "only an Entity node carries one"
-    # structural rather than a rule the materializer has to keep.
+    # to put provenance or a hint in, which is what makes "only an Entity node
+    # carries one" structural rather than a rule the materializer has to keep.
+    # A standalone read leaves its stored node no Read Evidence either.
     port = QueuePort(
         [
             [
@@ -389,8 +391,10 @@ def test_only_an_entity_node_can_carry_a_read_evidence() -> None:
     )
     address = _mapping(root["address"])
     assert not isinstance(address, WireEntity)
+    assert stored_entity_of(cast("Any", address)) is None
     assert read_evidence_of(cast("Any", address)) is None
-    assert read_evidence_of(root) is not None
+    assert stored_entity_of(root) == EntityIdentity("parallax.compatibility", "Customer")
+    assert read_evidence_of(root) is None
 
 
 def test_an_absent_document_occurrence_reads_null_and_an_absent_many_reads_empty() -> None:

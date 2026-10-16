@@ -119,7 +119,7 @@ from parallax.core.metamodel import (
     Multiplicity,
     OccurrenceMetadata,
 )
-from parallax.snapshot._inspection import SnapshotNodeState
+from parallax.snapshot._inspection import RootConformance, SnapshotNodeState
 from tests._support.model_capabilities import graph_construction_for
 
 __all__ = [
@@ -439,7 +439,9 @@ class Scenario:
         object built outside the window would be borrowed by every arm and priced
         by none.
         """
-        return SnapshotNodeState(entity=self.entity, views={})
+        return SnapshotNodeState(
+            entity=self.entity, views={}, root_conformance=RootConformance.CONFORMING
+        )
 
 
 def legacy_publication(scenario: Scenario, state: object | None) -> object:

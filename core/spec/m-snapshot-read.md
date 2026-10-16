@@ -25,8 +25,10 @@ A snapshot read runs through `m-execution` and is delivered, whole or streamed,
 by `m-read-delivery`; Snapshot is the Publication that delivery invokes. It
 builds Typed and Wire values from a Page's judged Entity States — choosing each
 root's reachable projections through its Root View, checking them for
-consistency, classifying the root, and attaching Read Evidence to eligible
-values — and composes the eager result envelope from those roots. Stored-data
+consistency, classifying the root, recording each value's publication
+provenance, and attaching Read Evidence to the eligible values a writable
+transaction attempt's read publishes (`m-unit-work` *Write value provenance*) —
+and composes the eager result envelope from those roots. Stored-data
 judgement and its vocabulary, the Page, whole-result atomicity, the Continuation
 Order, page bounds, and the connection a delivery holds are `m-read-delivery`'s
 and apply to every snapshot read unchanged; the Snapshot surface names its
@@ -50,11 +52,12 @@ carry this classification are language-surface concerns built over this contract
 
 Any finding suppresses write authority for the complete classified root. A
 hydratable root may still publish its collapsed diagnostic data, but neither that
-root nor any node reached only through it carries Read Evidence. Entity State
-sharing does not share this authority decision: when a valid root and an invalid
-root reach one page-owned Entity State, their root-local node graphs are distinct;
-the valid root's node may carry its ordinary Read Evidence and the invalid root's
-corresponding node carries none. A diagnostic value is never a route around the
+root nor any node reached only through it is a stored value of the source or
+carries Read Evidence. Entity State sharing does not share this authority
+decision: when a valid root and an invalid root reach one page-owned Entity
+State, their root-local node graphs are distinct; the valid root's node is a
+stored value and may carry its ordinary Read Evidence, and the invalid root's
+corresponding node is neither. A diagnostic value is never a route around the
 classification that produced it.
 
 ## What a materialized value carries

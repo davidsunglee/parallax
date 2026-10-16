@@ -19,6 +19,7 @@ from parallax.core.read_delivery._page import (
 )
 from parallax.core.temporal_read import Edge
 from parallax.core.write_plan import ObjectKey
+from parallax.snapshot._inspection import RootConformance
 from parallax.snapshot._publication._root import RootView
 
 __all__ = [
@@ -79,6 +80,11 @@ class RootClassifications:
     roots: tuple[RootClassification, ...]
     excluded: frozenset[int] = frozenset()
     conforming: bool = False
+
+    @property
+    def conformance(self) -> RootConformance:
+        """The verdict every node this Root View publishes carries."""
+        return RootConformance.CONFORMING if self.conforming else RootConformance.NONCONFORMING
 
 
 def classify_roots(

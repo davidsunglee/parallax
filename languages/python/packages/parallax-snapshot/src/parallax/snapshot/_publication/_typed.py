@@ -17,7 +17,7 @@ from parallax.core.entity import (
 from parallax.core.metamodel import EntityIdentity, Metamodel, RelationshipIdentity
 from parallax.core.read_delivery._page import ABSENT, InvalidData, VersionAttributes
 from parallax.core.temporal_read import Edge, NonTemporal, TemporalFacet, milestone_edge
-from parallax.snapshot._inspection import SnapshotNodeState
+from parallax.snapshot._inspection import RootConformance, SnapshotNodeState
 from parallax.snapshot._publication._classify import (
     ConformingRoot,
     NonConformingRoot,
@@ -49,7 +49,8 @@ def typed_root(
     ordered result the caller publishes, including a later root or streamed Page. ``origins`` is
     the Read Evidence the read retained per projection,
     which each node's own Snapshot state carries so a later keyed write reads its
-    evidence off the value it was handed.
+    evidence off the value it was handed; a read that retained none passes the
+    empty mapping. Each node's state carries the root's conformance either way.
     """
     classification = classify_roots(root, model, versions, ordinal_offset=ordinal_offset)
     retained: Mapping[int, ReadEvidence] = (
@@ -72,6 +73,7 @@ class _Materialization:
 
     __slots__ = (
         "_classification",
+        "_conformance",
         "_handles",
         "_origins",
         "_pending",
@@ -90,6 +92,7 @@ class _Materialization:
         self._root = root
         self._temporal = temporal
         self._classification = classification
+        self._conformance: RootConformance = classification.conformance
         self._origins = origins
         self._scope = tuple(
             index for index in range(len(root.order)) if index not in classification.excluded
@@ -184,6 +187,7 @@ class _Materialization:
                 if key.narrowed_view is not None
                 and (value := self._root.view(index, slot)) is not ABSENT
             },
+            root_conformance=self._conformance,
             pin=self._root.pin if edge is not None else None,
             edge=edge,
             read_evidence=self._origins.get(index),

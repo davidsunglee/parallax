@@ -611,8 +611,8 @@ class ReadOnlyTxnContext:
 
     def find[S](self, query: ObjectQuery[Any, S]) -> Snapshot[S]:
         """Run ``query`` inside this transaction and return ``Snapshot[S]``,
-        taking no participation lock. Otherwise identical to
-        :meth:`TxnContext.find`; a milestone-set read retains no evidence."""
+        taking no participation lock and retaining no Read Evidence. Otherwise
+        identical to :meth:`TxnContext.find`."""
         return self._attempt.read(
             query, convert_query=typed_read_query, build_publication=typed_publication_for
         )

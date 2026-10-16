@@ -347,7 +347,7 @@ class ReadOnlyTxnAttempt(_TxnAttemptBase):
 
     Its reads pass no Concurrency Preference and no evidence context, so they
     take no participation lock — the unversioned fallback included — and
-    stamp no participation on what they publish. It owns no unit of work, write
+    retain no Read Evidence on what they publish. It owns no unit of work, write
     projection, planner, or write-only state. A retry constructs a fresh one;
     a joining call reuses the active one.
     """

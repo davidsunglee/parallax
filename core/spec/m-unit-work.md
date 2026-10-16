@@ -313,22 +313,31 @@ proceed from a row an earlier read returned is settled by whether the writing un
 of work **observed** that row, which the observation requirements decide on their
 own and independently of which reader produced the value.
 
-**Read Evidence** is the opaque record a managed source attaches when it publishes
-a value from valid Entity State. It records the concrete Entity, Object Key, source
-Pin, read participation, and retained observation when one exists. Read Evidence is
-provenance and an implementation-private selector for evidence; it is not
-itself a Write Observation, a lock, a database gate, or write authority. A source
-recognizes a keyed write value as its own through that record, but must still
-satisfy the Effective Concurrency Strategy's evidence rule.
+A managed source recognizes a keyed write value as its own through the
+**publication provenance** it records when it publishes the value from valid
+Entity State: the concrete Entity, the source Pin, and whether the result root
+conforms. That provenance needs no write evidence, so a value a standalone read
+or a read-only transaction published is a stored value of its source exactly as
+one a writable attempt's read published.
 
-Publication of diagnostic data is not source admission. When a classified result
-root suppresses its Read Evidence under `m-snapshot-read`, a hydratable node exposed
-inside that result is treated as **NotStored** by keyed amendment and
-replacement verbs: no valid
-managed read source produced it for writing. This applies to every node in the
-classified root's graph, including a node whose page-owned Entity State is also
-reached by a separate valid root. The separate root-local node may carry its own
-Read Evidence; the classified root's node may not borrow it.
+**Read Evidence** is the opaque record a read of a **writable transaction
+attempt** attaches beside that provenance. It records the concrete Entity, Object
+Key, source Pin, read participation, and retained observation when one exists.
+Read Evidence is an implementation-private selector for evidence; it is not
+itself a Write Observation, a lock, a database gate, or write authority, and a
+value carrying it must still satisfy the Effective Concurrency Strategy's
+evidence rule. A standalone read and a read-only transaction attach none: they
+collect no observation, participation, predecessor row, or raw document for a
+write *Current-attempt source admission* would refuse anyway, and a value they
+published is refused there for having no Read Evidence of the writing attempt.
+
+Publication of diagnostic data is not source admission. A hydratable node
+exposed inside a classified result root (`m-snapshot-read`) is treated as
+**NotStored** by keyed amendment and replacement verbs: no valid managed read
+source produced it for writing. This applies to every node in the classified
+root's graph, including a node whose page-owned Entity State is also reached by
+a separate valid root. The separate root-local node is a stored value and may
+carry its own Read Evidence; the classified root's node may borrow neither.
 
 Provenance has exactly three answers for a given verb, and they **partition** the
 values that verb can be handed: no valid managed read admitted the value as a

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Final, Protocol, cast
+from typing import Final, cast
 
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.temporal_read import Pin
@@ -52,15 +52,6 @@ class ParticipationToken:
     __slots__ = ()
 
 
-class _DeferredReadEvidence(Protocol):
-    @property
-    def entity(self) -> EntityIdentity: ...
-
-    def object_key(self) -> ObjectKey: ...
-
-    def observation(self) -> RetainedObservation: ...
-
-
 _CONSUMED: Final = 1
 _INVALIDATED: Final = 2
 
@@ -70,7 +61,7 @@ class RetainedObservation:
 
     ``key`` is the exact state the evidence is about, ``evidence`` the database
     evidence itself, and ``participation`` the unit of work whose read produced
-    it — absent for a standalone read, which participates in nothing.
+    it, where a read did.
 
     :attr:`consumed` and :attr:`invalidated` are the two mutable facts, and each
     moves one way. They live on this shared object rather than in a
@@ -172,14 +163,13 @@ class _Spent:
 
     __slots__ = ("context",)
 
-    def __init__(
-        self, context: ParticipationToken | Pin | tuple[ParticipationToken, Pin] | None
-    ) -> None:
+    def __init__(self, context: ParticipationToken | tuple[ParticipationToken, Pin]) -> None:
         self.context: Final = context
 
 
 class ReadEvidence:
-    """What one source value privately retains about the read that produced it.
+    """What one source value privately retains about the writable attempt's
+    read that produced it.
 
     Never authority of its own: it names the concrete Entity the read resolved
     the row to, the object that row denotes, the participation its read
@@ -188,52 +178,35 @@ class ReadEvidence:
     facts license under the target Entity's own Effective Concurrency Strategy.
 
     ``observation`` is absent for an unversioned Non-Temporal row, which
-    observes no state at all; ``participation`` is absent for a standalone read;
-    ``pin`` is absent for a row whose family declares no As-Of Axis, exactly as
-    a Typed node's own lifecycle state leaves it absent there. A value that
-    carries no hint carried no read behind it, which is the one answer a
-    caller-built value can ever give.
+    observes no state at all; ``pin`` is absent for a row whose family declares
+    no As-Of Axis, exactly as a Typed node's own lifecycle state leaves it
+    absent there. A value that carries no hint was read by no writable attempt,
+    or by no read at all.
 
     An origin with no observation still carries one mutable fact, moving one
     way: whether a successful write already completed through it
     (:attr:`consumed`). Every value derived from the source shares the origin,
     so completing through one spends them all; an origin with an observation
     defers both questions to that shared observation instead.
-
-    The pin rides here because a representation with no lifecycle state of its
-    own has nowhere else to keep it: a frozen Wire node's whole provenance is
-    this record, and the Transaction-Time past is read-only through every keyed
-    verb, Typed and Wire alike.
     """
 
     __slots__ = ("_context", "_source")
 
-    _context: ParticipationToken | Pin | tuple[ParticipationToken, Pin] | _Spent | None
-    _source: (
-        ObjectKey
-        | tuple[ObjectKey, RetainedObservation]
-        | tuple[EntityIdentity, str, object]
-        | _DeferredReadEvidence
-    )
+    _context: ParticipationToken | tuple[ParticipationToken, Pin] | _Spent
+    _source: ObjectKey | tuple[ObjectKey, RetainedObservation] | tuple[EntityIdentity, str, object]
 
     def __init__(
         self,
         entity: EntityIdentity,
         object_key: ObjectKey,
-        participation: ParticipationToken | None,
+        participation: ParticipationToken,
         observation: RetainedObservation | None,
         pin: Pin | None = None,
     ) -> None:
         object.__setattr__(
             self, "_source", object_key if observation is None else (object_key, observation)
         )
-        object.__setattr__(
-            self,
-            "_context",
-            (participation, pin)
-            if participation is not None and pin is not None
-            else participation or pin,
-        )
+        object.__setattr__(self, "_context", participation if pin is None else (participation, pin))
 
     @classmethod
     def from_single_primary_key(
@@ -241,26 +214,11 @@ class ReadEvidence:
         entity: EntityIdentity,
         name: str,
         value: object,
-        participation: ParticipationToken | None,
+        participation: ParticipationToken,
     ) -> ReadEvidence:
         origin = object.__new__(cls)
         object.__setattr__(origin, "_source", (entity, name, value))
         object.__setattr__(origin, "_context", participation)
-        return origin
-
-    @classmethod
-    def deferred(
-        cls,
-        entity: EntityIdentity,
-        evidence: _DeferredReadEvidence,
-        *,
-        pin: Pin | None,
-    ) -> ReadEvidence:
-        if evidence.entity != entity:
-            raise ValueError("deferred read evidence must name its origin's Entity")
-        origin = object.__new__(cls)
-        object.__setattr__(origin, "_source", evidence)
-        object.__setattr__(origin, "_context", pin)
         return origin
 
     @property
@@ -268,28 +226,22 @@ class ReadEvidence:
         source = self._source
         if isinstance(source, ObjectKey):
             return source.entity
-        if isinstance(source, tuple):
-            if isinstance(source[0], ObjectKey):
-                return cast("tuple[ObjectKey, RetainedObservation]", source)[0].entity
-            return cast("tuple[EntityIdentity, str, object]", source)[0]
-        return source.entity
+        if isinstance(source[0], ObjectKey):
+            return cast("tuple[ObjectKey, RetainedObservation]", source)[0].entity
+        return cast("tuple[EntityIdentity, str, object]", source)[0]
 
     @property
-    def participation(self) -> ParticipationToken | None:
+    def participation(self) -> ParticipationToken:
         context = self._context
         if isinstance(context, _Spent):
             context = context.context
-        if isinstance(context, ParticipationToken):
-            return context
-        return context[0] if isinstance(context, tuple) else None
+        return context if isinstance(context, ParticipationToken) else context[0]
 
     @property
     def pin(self) -> Pin | None:
         context = self._context
         if isinstance(context, _Spent):
             context = context.context
-        if isinstance(context, Pin):
-            return context
         return context[1] if isinstance(context, tuple) else None
 
     @property
@@ -323,30 +275,19 @@ class ReadEvidence:
         source = self._source
         if isinstance(source, ObjectKey):
             return source
-        if isinstance(source, tuple):
-            if isinstance(source[0], ObjectKey):
-                return cast("tuple[ObjectKey, RetainedObservation]", source)[0]
-            entity, name, value = cast("tuple[EntityIdentity, str, object]", source)
-            held = ObjectKey(entity, ((name, value),))
-            object.__setattr__(self, "_source", held)
-            return held
-        held = source.object_key()
-        object.__setattr__(self, "_source", (held, source.observation()))
+        if isinstance(source[0], ObjectKey):
+            return cast("tuple[ObjectKey, RetainedObservation]", source)[0]
+        entity, name, value = cast("tuple[EntityIdentity, str, object]", source)
+        held = ObjectKey(entity, ((name, value),))
+        object.__setattr__(self, "_source", held)
         return held
 
     @property
     def observation(self) -> RetainedObservation | None:
         source = self._source
-        if isinstance(source, ObjectKey) or (
-            isinstance(source, tuple) and not isinstance(source[0], ObjectKey)
-        ):
+        if isinstance(source, ObjectKey) or not isinstance(source[0], ObjectKey):
             return None
-        if isinstance(source, tuple):
-            return cast("tuple[ObjectKey, RetainedObservation]", source)[1]
-        key = source.object_key()
-        held = source.observation()
-        object.__setattr__(self, "_source", (key, held))
-        return held
+        return cast("tuple[ObjectKey, RetainedObservation]", source)[1]
 
     def __eq__(self, other: object) -> bool:
         return isinstance(other, ReadEvidence) and (

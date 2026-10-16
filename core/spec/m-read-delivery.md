@@ -33,7 +33,11 @@ database-call events*) and the
 Model Edition the read adopted, publishes one root's values on request, and
 composes an eager result from a whole Page by publishing its roots. Origins an
 execution retains for a Page's projections travel to the Publication by
-reference; delivery neither interprets nor rebuilds them.
+reference; delivery neither interprets nor rebuilds them. Only a writable
+transaction attempt's read retains any: a standalone delivery and a read-only
+transaction's delivery, eager or streamed, retain no write evidence, and their
+values keep only the publication provenance `m-unit-work` *Write value
+provenance* names.
 
 ## Invalid stored data
 

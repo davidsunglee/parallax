@@ -6,7 +6,7 @@ these tests measure is what a value carries, how long it lives, what survives an
 edit or a copy, and what a conversion strips.
 
 The seam's own mechanics — which rows retain what, and under which state key —
-live in `test_write_observation_retention.py`; what lives here is the
+live in `tests/unit/core/_execution/test_retention.py`; what lives here is the
 choreography a caller actually performs.
 """
 
@@ -16,6 +16,7 @@ import datetime as dt
 import gc
 import io
 import pickle
+import types
 import weakref
 from collections.abc import Callable
 from decimal import Decimal
@@ -27,7 +28,7 @@ from pydantic import BaseModel
 import parallax.snapshot
 from parallax.conformance import vo_models as vo
 from parallax.conformance.read_models import Person
-from parallax.core import Attr, Entity, attr
+from parallax.core import LATEST, Attr, Bitemporal, Document, Entity, ValueObject, attr
 from parallax.core.base import PresentDocument
 from parallax.core.entity import (
     EntityDefinitionError,
@@ -39,6 +40,7 @@ from parallax.core.entity._entity import lifecycle_state
 from parallax.core.entity._model import DomainModel
 from parallax.core.execution import KeyedWriteValueError
 from parallax.core.read_delivery import InvalidData
+from parallax.core.temporal_read import Edge, Pin
 from parallax.core.unit_work import (
     Concurrency,
     ParticipationToken,
@@ -46,12 +48,18 @@ from parallax.core.unit_work import (
     RetainedObservation,
     WriteEvidenceError,
 )
-from parallax.core.write_plan import ObjectKey, VersionObservation
+from parallax.core.write_plan import (
+    ObjectKey,
+    PredecessorRow,
+    TemporalObservation,
+    VersionObservation,
+)
 from parallax.core.write_plan.keys import VersionedObjectStateKey
-from parallax.snapshot import TxnContext, WireEntity, connect
+from parallax.snapshot import TxnContext, WireEntity, connect, edge_of, pin_of
 from parallax.snapshot import _publication as publication
-from parallax.snapshot._inspection import snapshot_state_of
-from parallax.snapshot._publication._wire import read_evidence_of
+from parallax.snapshot._handle._typed_writes import provenance_of
+from parallax.snapshot._inspection import RootConformance, snapshot_state_of
+from parallax.snapshot._publication._wire import read_evidence_of, stored_entity_of, wire_pin_of
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
@@ -66,7 +74,9 @@ from tests._support.db_port import (
 from tests._support.model_capabilities import graph_construction_for
 from tests._support.root_ownership import own_root
 from tests.unit._authored_storage_support import answering_for_instance_state, stored_state
+from tests.unit._gc_reachability import reachable_objects
 from tests.unit._transact_support import (
+    ACCOUNT,
     BALANCE,
     PERSON,
     account_db,
@@ -93,15 +103,20 @@ def _typed_hint(node: object) -> object:
     return state.read_evidence
 
 
+def _read_in_a_transaction() -> mm.Account:
+    """One `Account` as a read of a writable transaction publishes it, Read
+    Evidence and all."""
+    port = ScriptedAdapter(Transact(_ACCOUNT_READ))
+    return account_db(port).transact(
+        lambda tx: tx.find(mm.Account.where(mm.Account.id == 1)).result()
+    )
+
+
 # --------------------------------------------------------------------------- #
 # What a source value carries.                                                #
 # --------------------------------------------------------------------------- #
 def test_a_typed_node_carries_the_state_its_row_observed() -> None:
-    node = (
-        account_db(ScriptedAdapter(_ACCOUNT_READ))
-        .find(mm.Account.where(mm.Account.id == 1))
-        .result()
-    )
+    node = _read_in_a_transaction()
     hint = _typed_hint(node)
     assert hint is not None
     assert cast("Any", hint).observation.key == VersionedObjectStateKey(
@@ -111,11 +126,14 @@ def test_a_typed_node_carries_the_state_its_row_observed() -> None:
 
 def test_a_read_evidence_is_an_immutable_value_over_its_complete_claim() -> None:
     object_key = ObjectKey(mm.Account.identity, (("id", 1),))
+    participation = ParticipationToken()
     observation = RetainedObservation(
-        VersionedObjectStateKey(object_key, 4), VersionObservation(observed_version=4), None
+        VersionedObjectStateKey(object_key, 4),
+        VersionObservation(observed_version=4),
+        participation,
     )
-    origin = ReadEvidence(mm.Account.identity, object_key, None, observation)
-    equal = ReadEvidence(mm.Account.identity, object_key, None, observation)
+    origin = ReadEvidence(mm.Account.identity, object_key, participation, observation)
+    equal = ReadEvidence(mm.Account.identity, object_key, participation, observation)
 
     assert origin == equal
     assert origin != object()
@@ -130,14 +148,16 @@ def test_spending_an_origin_spends_its_observation_or_itself() -> None:
     # without carries its own one-way status, and keeps answering the same
     # participation once spent, so equality and hashing do not move.
     object_key = ObjectKey(mm.Account.identity, (("id", 1),))
+    participation = ParticipationToken()
     observation = RetainedObservation(
-        VersionedObjectStateKey(object_key, 4), VersionObservation(observed_version=4), None
+        VersionedObjectStateKey(object_key, 4),
+        VersionObservation(observed_version=4),
+        participation,
     )
-    observed = ReadEvidence(mm.Account.identity, object_key, None, observation)
+    observed = ReadEvidence(mm.Account.identity, object_key, participation, observation)
     observed.consume()
     assert observed.consumed and observation.consumed
 
-    participation = ParticipationToken()
     unversioned = ReadEvidence(mm.Account.identity, object_key, participation, None)
     before = hash(unversioned)
     assert not unversioned.consumed
@@ -154,14 +174,6 @@ def test_no_exported_name_reaches_a_read_evidence() -> None:
     for package in (parallax.snapshot, publication):
         assert "read_evidence_of" not in package.__all__
         assert not hasattr(package, "read_evidence_of")
-
-
-def test_deferred_read_evidence_must_name_the_origins_entity() -> None:
-    class Evidence:
-        entity = mm.Balance.identity
-
-    with pytest.raises(ValueError, match="must name its origin"):
-        ReadEvidence.deferred(mm.Account.identity, cast("Any", Evidence()), pin=None)
 
 
 def test_a_wire_node_and_a_typed_node_of_one_row_carry_the_identical_evidence() -> None:
@@ -188,24 +200,21 @@ def test_a_wire_node_and_a_typed_node_of_one_row_carry_the_identical_evidence() 
 # Claim transfer and stripping.                                               #
 # --------------------------------------------------------------------------- #
 def test_entity_edit_transfers_the_sources_claim_to_the_derived_value() -> None:
-    node = (
-        account_db(ScriptedAdapter(_ACCOUNT_READ))
-        .find(mm.Account.where(mm.Account.id == 1))
-        .result()
-    )
+    node = _read_in_a_transaction()
     edited = node.edit(balance=Decimal("125.00"))
+    assert _typed_hint(node) is not None
     assert _typed_hint(edited) is _typed_hint(node)
 
 
 def test_wire_copy_answers_the_same_value_and_therefore_the_same_claim() -> None:
     import copy as copy_module
 
-    node = (
-        account_db(ScriptedAdapter(_ACCOUNT_READ))
-        .wire.find(mm.Account.where(mm.Account.id == 1))
-        .result()
+    port = ScriptedAdapter(Transact(_ACCOUNT_READ))
+    node = account_db(port).transact(
+        lambda tx: tx.wire.find(mm.Account.where(mm.Account.id == 1)).result()
     )
     assert isinstance(node, WireEntity)
+    assert read_evidence_of(node) is not None
     for copied in (cast("Any", node).copy(), copy_module.copy(node), copy_module.deepcopy(node)):
         assert copied is node
         assert read_evidence_of(cast("WireEntity", copied)) is read_evidence_of(node)
@@ -421,12 +430,9 @@ def test_a_materialized_node_nested_in_what_is_pickled_is_refused_too() -> None:
 def test_pickling_an_edited_copy_that_kept_the_claim_is_refused_too() -> None:
     # An edit transfers the claim, so the derived value is a materialized node's
     # equal in everything the refusal is about.
-    node = (
-        account_db(ScriptedAdapter(_ACCOUNT_READ))
-        .find(mm.Account.where(mm.Account.id == 1))
-        .result()
-    )
+    node = _read_in_a_transaction()
     edited = node.edit(balance=Decimal("125.00"))
+    assert _typed_hint(node) is not None
     assert _typed_hint(edited) is _typed_hint(node)
 
     with pytest.raises(pickle.PicklingError):
@@ -643,7 +649,6 @@ def test_a_retained_included_child_outlives_its_released_root_and_snapshot() -> 
     # released, because the claim belongs to the entity node rather than to the
     # result it arrived in.
     from parallax.conformance.graph_models import POLICY_MODEL, Policy
-    from parallax.core import LATEST
 
     policy_row: dict[str, object] = {
         "id": 1,
@@ -662,9 +667,11 @@ def test_a_retained_included_child_outlives_its_released_root_and_snapshot() -> 
         "in_z": _TX_START,
         "out_z": dt.datetime(9999, 12, 31, tzinfo=dt.UTC),
     }
-    port = ScriptedAdapter(Read(rows=[policy_row]), Read(rows=[coverage_row]))
-    snapshot = db_for(POLICY_MODEL, port).find(
-        Policy.where(Policy.id == 1).as_of(valid_time=LATEST).include(Policy.coverages)
+    port = ScriptedAdapter(Transact(Read(rows=[policy_row]), Read(rows=[coverage_row])))
+    snapshot = db_for(POLICY_MODEL, port).transact(
+        lambda tx: tx.find(
+            Policy.where(Policy.id == 1).as_of(valid_time=LATEST).include(Policy.coverages)
+        )
     )
     child = snapshot.result().coverages[0]
     del snapshot
@@ -821,6 +828,197 @@ def test_a_reread_of_one_state_answers_the_evidence_the_first_read_retained() ->
 
     earlier, later = account_db(port).transact(fn)
     assert cast("Any", earlier).observation is cast("Any", later).observation
+
+
+# --------------------------------------------------------------------------- #
+# Reads outside a writable attempt. A standalone read and a read-only          #
+# transaction collect no Read Evidence, so nothing a write could stand on —    #
+# no observation, participation, predecessor row, raw document, or deferred   #
+# closure — survives in what they publish, while the published values keep    #
+# their provenance.                                                           #
+# --------------------------------------------------------------------------- #
+class _CensusStop(ValueObject):
+    port: Attr[str | None]
+
+
+class _CensusRoute(ValueObject):
+    name: Attr[str | None]
+    stops: Attr[tuple[_CensusStop, ...]]
+
+
+class _CensusCharter(
+    Bitemporal,
+    table="census_charter",
+    name="CensusCharter",
+    namespace="parallax.compatibility",
+    layout=Document(),
+):
+    id: Attr[int] = attr(primary_key=True)
+    title: Attr[str | None] = attr(max_length=64)
+    route: Attr[_CensusRoute | None]
+    legs: Attr[tuple[_CensusStop, ...]]
+
+
+_CENSUS_MODEL: Final = DomainModel(_CensusCharter)
+_CENSUS_START: Final = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+_CENSUS_AT: Final = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
+_CENSUS_OPEN: Final = dt.datetime(9999, 12, 31, tzinfo=dt.UTC)
+
+_WRITE_EVIDENCE_KINDS: Final = (
+    ReadEvidence,
+    RetainedObservation,
+    ParticipationToken,
+    PredecessorRow,
+    TemporalObservation,
+    VersionObservation,
+    types.FunctionType,
+    types.CellType,
+)
+
+
+def _census_row() -> tuple[dict[str, object], object]:
+    """One Bitemporal Relational Document Layout row, and the raw Structured
+    Column the read takes ownership of."""
+    payload = PresentDocument(
+        {
+            "title": "Northbound",
+            "charterCode": "NB-118",
+            "route": {"name": "Coastal", "stops": [{"port": "Oslo"}]},
+            "legs": [{"port": "Bergen"}],
+        }
+    )
+    row: dict[str, object] = {
+        "id": 1,
+        "from_z": _CENSUS_START,
+        "thru_z": _CENSUS_OPEN,
+        "in_z": _CENSUS_START,
+        "out_z": _CENSUS_OPEN,
+        "payload": payload,
+    }
+    return row, payload.document
+
+
+def _census_subject(subject: str) -> tuple[DomainModel, Any, dict[str, object], object | None]:
+    """The model, query, stored row, and raw document a census reads."""
+    if subject == "versioned":
+        return ACCOUNT, mm.Account.where(mm.Account.id == 1), dict(_ACCOUNT_ROW), None
+    row, document = _census_row()
+    query = _CensusCharter.where(_CensusCharter.id == 1).as_of(valid_time=_CENSUS_AT)
+    return _CENSUS_MODEL, query, row, document
+
+
+def _published_by(reader: Any, query: Any, representation: str, delivery: str) -> list[object]:
+    """Every root ``reader`` publishes for ``query``, held past its delivery."""
+    surface = reader if representation == "typed" else reader.wire
+    if delivery == "find":
+        return list(surface.find(query).results())
+    with surface.stream(query, batch_size=10) as stream:
+        return list(stream)
+
+
+def _write_evidence_reached(values: list[object], document: object | None) -> set[str]:
+    """What of a write's evidence ``values`` keep reachable, by kind."""
+    reached: set[str] = set()
+    for held in reachable_objects(tuple(values)):
+        if isinstance(held, _WRITE_EVIDENCE_KINDS):
+            reached.add(type(held).__name__)
+        elif document is not None and held is document:
+            reached.add("raw document")
+    return reached
+
+
+@pytest.mark.parametrize("subject", ["versioned", "bitemporal-document"])
+@pytest.mark.parametrize("representation", ["typed", "wire"])
+@pytest.mark.parametrize("delivery", ["find", "stream"])
+@pytest.mark.parametrize("placement", ["standalone", "read-only", "writable"])
+def test_only_a_writable_attempts_read_retains_write_evidence(
+    placement: str, delivery: str, representation: str, subject: str
+) -> None:
+    model, query, row, document = _census_subject(subject)
+    read = Read(rows=[row])
+    port = ScriptedAdapter(read if placement == "standalone" else Transact(read))
+    db = db_for(model, port)
+
+    def published(reader: Any) -> list[object]:
+        return _published_by(reader, query, representation, delivery)
+
+    if placement == "standalone":
+        values = published(db)
+    elif placement == "read-only":
+        values = db.read_only(published)
+    else:
+        values = db.transact(published)
+    gc.collect()
+    reached = _write_evidence_reached(values, document)
+
+    assert len(values) == 1
+    if placement != "writable":
+        assert reached == set()
+    elif subject == "versioned":
+        assert {"ReadEvidence", "RetainedObservation", "VersionObservation"} <= reached
+    else:
+        assert {
+            "ReadEvidence",
+            "RetainedObservation",
+            "TemporalObservation",
+            "PredecessorRow",
+            "raw document",
+        } <= reached
+
+
+@pytest.mark.parametrize("placement", ["standalone", "read-only"])
+def test_a_value_no_writable_attempt_read_keeps_its_published_provenance(placement: str) -> None:
+    # Dropping the evidence drops nothing a reader inspects: the Typed node keeps
+    # its concrete Entity, pin, milestone edge, and conformance, and its Wire
+    # projection carries the same facts, so both stay stored values of this
+    # source that a write can name — and refuse for want of a current read.
+    row, _document = _census_row()
+    read = Read(rows=[row])
+    port = ScriptedAdapter(read if placement == "standalone" else Transact(read))
+    db = db_for(_CENSUS_MODEL, port)
+    query = _CensusCharter.where(_CensusCharter.id == 1).as_of(valid_time=_CENSUS_AT)
+    snapshot = (
+        db.find(query) if placement == "standalone" else db.read_only(lambda rtx: rtx.find(query))
+    )
+
+    node = snapshot.result()
+    state = snapshot_state_of(node)
+    assert state is not None
+    assert state.read_evidence is None
+    assert state.entity == _CensusCharter.identity
+    assert state.root_conformance is RootConformance.CONFORMING
+    assert pin_of(node) == Pin(tx_time=LATEST, valid_time=_CENSUS_AT)
+    assert edge_of(node) == Edge(tx_time=_CENSUS_START, valid_time=_CENSUS_START)
+    assert provenance_of(node) == "this"
+
+    projected = snapshot.wire().result()
+    assert isinstance(projected, WireEntity)
+    assert read_evidence_of(projected) is None
+    assert stored_entity_of(projected) == _CensusCharter.identity
+    assert wire_pin_of(projected) == pin_of(node)
+
+
+def test_a_classified_roots_nodes_are_published_as_no_stored_value() -> None:
+    # The other side of the conformance verdict: a hydratable invalid root's
+    # nodes carry their Entity and pin for inspection, yet are no stored value
+    # of this source in either representation.
+    port = ScriptedAdapter(
+        Read(rows=[{"id": 1, "name": "Ada", "address": PresentDocument({"city": "Berlin"})}]),
+        Read(rows=[{"id": 1, "name": "Ada", "address": PresentDocument({"city": "Berlin"})}]),
+    )
+    db = own_root(connect(port, vo.CUSTOMER_MODEL)).using_database_login()
+    query = vo.Customer.where(vo.Customer.id == 1)
+    typed = db.find(query).checked().result()
+    wire = db.wire.find(query).checked().result()
+
+    assert isinstance(typed, InvalidData)
+    state = snapshot_state_of(typed.data)
+    assert state is not None
+    assert state.root_conformance is RootConformance.NONCONFORMING
+    assert provenance_of(cast("Entity", typed.data)) == "none"
+    assert isinstance(wire, InvalidData)
+    assert isinstance(wire.data, WireEntity)
+    assert stored_entity_of(wire.data) is None
 
 
 # --------------------------------------------------------------------------- #

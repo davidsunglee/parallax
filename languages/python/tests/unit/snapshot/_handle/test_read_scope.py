@@ -68,6 +68,7 @@ from parallax.core.read_delivery import _delivery as delivery
 from parallax.core.read_delivery import _row_lane as row_lane
 from parallax.core.read_delivery._page import VersionAttributes
 from parallax.core.read_delivery._page_reader import (
+    EMPTY_PAGE_ORIGIN_COLLECTOR,
     EagerPageRequest,
     PageReader,
     StreamPageRequest,
@@ -280,7 +281,10 @@ class _Executed:
 
 
 def _evidence_context_of(origins: object) -> ReadEvidenceContext | None:
-    """The evidence context an execution-owned projection collector was built over."""
+    """The evidence context an execution-owned origin collector files into, or
+    ``None`` for the collector of a read that collects no Read Evidence."""
+    if origins is EMPTY_PAGE_ORIGIN_COLLECTOR:
+        return None
     return cast("Any", origins)._evidence_context
 
 

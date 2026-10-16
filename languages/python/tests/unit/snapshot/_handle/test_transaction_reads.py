@@ -43,7 +43,6 @@ from parallax.core.db_port import JsonDocument, MappingRow
 from parallax.core.dialect import POSTGRES
 from parallax.core.execution import (
     DeferredFeatureError,
-    KeyedWriteValueError,
     QueryTargetError,
     TransactionTimePinReadOnlyError,
 )
@@ -119,9 +118,9 @@ def _recording_find(recorded: list[_RecordedFind]) -> Callable[..., object]:
     """
 
     def recording(request: EagerPageRequest[Any], publication: Publication[Any, Any]) -> object:
-        evidence_context: ReadEvidenceContext | None = cast(
-            "Any", request.origin_collector
-        )._evidence_context
+        evidence_context: ReadEvidenceContext | None = getattr(
+            request.origin_collector, "_evidence_context", None
+        )
         result = PageReader().read_page(request)
         recorded.append(
             _RecordedFind(
@@ -133,23 +132,20 @@ def _recording_find(recorded: list[_RecordedFind]) -> Callable[..., object]:
     return recording
 
 
-def test_a_standalone_find_stamps_no_participation_on_the_evidence_it_retains() -> None:
+def test_a_standalone_find_collects_no_read_evidence() -> None:
     # A standalone read has no unit of work to file into, so it hands the
-    # executor no evidence context — and still retains what its rows observed, because a
-    # value's write evidence belongs to the value. What its sources lack is
-    # participation, which is exactly what every source write asks for.
+    # executor no evidence context, and the Page it reads collects nothing: no
+    # write could stand on what it observed, so it retains none of it.
     calls: list[_RecordedFind] = []
     port = ScriptedAdapter(Read(rows=[balance_row(in_z=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))]))
     db = db_for(BALANCE, port)
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(read_policy_module, "deliver_find", _recording_find(calls))
-        db.find(mm.Balance.where(mm.Balance.id == 1)).result()
+        node = db.find(mm.Balance.where(mm.Balance.id == 1)).result()
     (call,) = calls
     assert call.participation is None
-    assert len(call.result.origins) == 1
-    (hint,) = call.result.origins.values()
-    assert hint.participation is None
-    assert hint.observation is not None
+    assert dict(call.result.origins) == {}
+    assert _retained_evidence(node) is None
 
 
 def test_a_participating_find_stamps_its_transactions_own_participation() -> None:
@@ -840,9 +836,10 @@ def test_a_milestone_set_read_publishes_roots_no_keyed_write_can_address() -> No
     # The write-side consequence of "a milestone-set read retains no evidence",
     # asserted rather than read off `HistoryFindResult`'s missing sources field.
     # A pinned participating read of the same row leaves Read Evidence on its
-    # root; every root of the `.history()` read carries none, and each stands at
-    # its own milestone's from-instant — a finite Transaction-Time coordinate the
-    # keyed verbs refuse to write through, so no DML is derived at all.
+    # root; every root of the `.history()` read carries none. Each is still a
+    # stored value of this source, standing at its own milestone's from-instant
+    # — a finite Transaction-Time coordinate the keyed verbs refuse to write
+    # through, so no DML is derived at all.
     port = ScriptedAdapter(
         Transact(Read(rows=[balance_row(in_z=dt.datetime(2024, 4, 1, tzinfo=dt.UTC))])),
         Transact(Read(rows=_balance_history_rows())),
@@ -857,9 +854,10 @@ def test_a_milestone_set_read_publishes_roots_no_keyed_write_can_address() -> No
         assert [_retained_evidence(root) for root in milestones] == [None, None]
         tx.amend(milestones[-1].edit(value=Decimal("9.00")))
 
-    with raises_contextualized(KeyedWriteValueError) as refusal:
+    with raises_contextualized(
+        TransactionTimePinReadOnlyError, match="transaction-time-pin-read-only"
+    ):
         db.transact(fn)
-    assert refusal.value.code == "write-value-not-stored"
     assert not any(isinstance(op, WriteCall) for op in port.calls)
 
 

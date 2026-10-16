@@ -4,7 +4,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import ExitStack
 from dataclasses import dataclass, replace
 from types import MappingProxyType
-from typing import Any, Protocol, cast, overload
+from typing import Any, Final, Never, Protocol, cast, overload
 
 from parallax.core import deep_fetch
 from parallax.core._execution._unit_work.uow import Concurrency
@@ -47,8 +47,10 @@ from parallax.core.sql_gen._compile import CompiledRead
 from parallax.core.temporal_read import Pin, TemporalShape, resolved_query_pin
 
 __all__ = [
+    "EMPTY_PAGE_ORIGIN_COLLECTOR",
     "EagerPageRequest",
     "EagerPageResult",
+    "EmptyPageOriginCollector",
     "FlatPageRequest",
     "FlatPageResult",
     "HistoryPageResult",
@@ -78,6 +80,29 @@ class PageOriginCollector[Origin](PageProjectionObserver, Protocol):
     """
 
     def origins_for(self, page: Page, /) -> Mapping[int, Origin]: ...
+
+
+class EmptyPageOriginCollector:
+    """The collector of a read that retains no origin: it records nothing and
+    answers every sealed Page with the same empty mapping.
+
+    Stateless, so one shared instance serves every such Page."""
+
+    __slots__ = ()
+
+    def observe_projection(
+        self, node: int, entity: EntityIdentity, document: object | None
+    ) -> None:
+        del node, entity, document
+
+    def origins_for(self, page: Page, /) -> Mapping[int, Never]:
+        del page
+        return _NO_ORIGINS
+
+
+_NO_ORIGINS: Final[Mapping[int, Never]] = MappingProxyType({})
+
+EMPTY_PAGE_ORIGIN_COLLECTOR: Final = EmptyPageOriginCollector()
 
 
 @dataclass(frozen=True, slots=True)

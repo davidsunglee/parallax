@@ -31,15 +31,19 @@ from parallax.core._execution._unit_work.instructions import (
     TargetWrite,
     WriteAssignment,
 )
-from parallax.core._execution._unit_work.retain import InsertionIdentity, ReadEvidence
+from parallax.core._execution._unit_work.retain import InsertionIdentity
 from parallax.core.execution_lifecycle._activity import refuse_reentry
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
+from parallax.core.wire import WireValue, decode_wire
 from parallax.core.write_plan import ObjectKey
+from parallax.snapshot._handle._typed_writes import written_object_key
 from parallax.snapshot._publication._wire import (
     WireEntity,
     authoring_of,
     opened_wire_entity,
     read_evidence_of,
+    stored_entity_of,
+    wire_pin_of,
 )
 
 __all__ = [
@@ -141,10 +145,11 @@ def wire_keyed_write(
     """Buffer a Wire keyed write against the state ``observed`` came from.
 
     ``observed`` is a frozen Entity mapping Parallax published for the row, from
-    a read or from the insert that opened it. A read's private Read Evidence
-    supplies the concrete Entity, the object the write addresses, the pin the
-    source stands at — which is also where a Bitemporal write starts — and the
-    evidence the target Entity's Effective Concurrency Strategy weighs. The node
+    a read or from the insert that opened it. A read-published node supplies the
+    concrete Entity and the pin the source stands at — which is also where a
+    Bitemporal write starts — and, where a read of this writable attempt
+    published it, the Read Evidence that names the object the write addresses
+    and that the target Entity's Effective Concurrency Strategy weighs. The node
     an insert answered carries that insertion's authority instead, which names
     the object and licenses the write, starting at the insertion's own anchor,
     while it stands. ``changes`` is an amendment's assignment document, a
@@ -304,22 +309,22 @@ def editable_wire_data(attempt: TxnAttempt, source: object) -> dict[str, object]
 def published_entity(meta: Metamodel, node: object, verb: str) -> EntityMetadata:
     """The concrete Entity a node Parallax published names, by the provenance
     it carries, or the refusal for anything else."""
-    origin = read_evidence_of(node) if isinstance(node, WireEntity) else None
+    stored = stored_entity_of(node) if isinstance(node, WireEntity) else None
     authoring = authoring_of(node) if isinstance(node, WireEntity) else None
-    key = (
-        origin.object_key
-        if origin is not None
-        else authoring.object_key
+    entity = (
+        stored
+        if stored is not None
+        else authoring.object_key.entity
         if authoring is not None
         else None
     )
-    if key is None:
+    if entity is None:
         raise instructions.WriteInstructionError(
             f"{verb} on `tx.wire` takes a frozen Entity mapping Parallax published — a "
             "`tx.wire.find` result, or the node `tx.wire.insert` answered — and "
             f"{type(node).__name__} carries no such provenance"
         )
-    return _concrete_entity(meta, key.entity)
+    return _concrete_entity(meta, entity)
 
 
 def _published_writable(
@@ -356,11 +361,14 @@ class _WireKeyedSource:
 
     ``node`` and ``object_key`` are what the adapter still needs after the
     ingress has the answers: the published identity spelling and the object the
-    write settles against.
+    write settles against. ``object_key`` is absent for a node that names its
+    object by no Read Evidence or insertion authority — one a standalone,
+    read-only, or milestone-set read published — whose key the prepared row
+    states instead.
     """
 
     node: WireEntity
-    object_key: ObjectKey
+    object_key: ObjectKey | None
     resolved: ResolvedKeyedWriteSource
 
 
@@ -373,26 +381,39 @@ def _resolved_wire_source(
     OVER is one thing whether its assignments arrive as a document to prepare or
     as a product already prepared from one.
 
-    Provenance is ``"this"`` for a node a read published. The node a Wire
-    insert answered was published by no read, so its provenance is
-    ``"none"``, which the insertion's standing authority lifts exactly as it
-    does for the instance a Typed insert took. Anything else is refused as no
-    source at all before the question is asked, so the foreign-lifecycle
-    refusal a Typed value can earn has no Wire spelling.
+    Provenance is ``"this"`` for a node a read published from conforming
+    stored state, whether or not a read of this attempt left Read Evidence on
+    it. The node a Wire insert answered was published by no read, so its
+    provenance is ``"none"``, which the insertion's standing authority lifts
+    exactly as it does for the instance a Typed insert took. Anything else is
+    refused as no source at all before the question is asked, so the
+    foreign-lifecycle refusal a Typed value can earn has no Wire spelling.
     """
-    node, hint, authoring = _keyed_source(mutation, observed)
-    key = hint.object_key if hint is not None else authoring.object_key
-    record = _concrete_entity(meta, key.entity)
+    node, stored, authoring = _keyed_source(mutation, observed)
+    if stored is None:
+        assert authoring is not None  # _keyed_source refuses a node carrying neither
+        return _WireKeyedSource(
+            node,
+            authoring.object_key,
+            ResolvedKeyedWriteSource(
+                entity=_concrete_entity(meta, authoring.object_key.entity),
+                pin=None,
+                read_evidence=None,
+                provenance="none",
+                representation="wire",
+                authoring=authoring,
+            ),
+        )
+    hint = read_evidence_of(node)
     return _WireKeyedSource(
         node,
-        key,
+        None if hint is None else hint.object_key,
         ResolvedKeyedWriteSource(
-            entity=record,
-            pin=None if hint is None else hint.pin,
+            entity=_concrete_entity(meta, stored),
+            pin=wire_pin_of(node),
             read_evidence=hint,
-            provenance="none" if hint is None else "this",
+            provenance="this",
             representation="wire",
-            authoring=authoring if hint is None else None,
         ),
     )
 
@@ -426,14 +447,34 @@ def _prepared_wire_write(
     return prepared
 
 
-def _published_identity(source: _WireKeyedSource) -> dict[str, object]:
-    """The object the source names, in the spelling the source published it in.
+def _published_identity(
+    meta: Metamodel, entity: EntityMetadata, node: WireEntity
+) -> dict[str, object]:
+    """The object ``node`` names, in the spelling it was published in.
 
-    The source's own key names it in MANAGED values; the row an instruction is
-    built from is authored, so its identity members are read back off the
-    published node under those same names.
+    The row an instruction is built from is authored, so its identity members
+    are read back off the published node under the family key's own name — the
+    name every Object Key of the family pairs its value with.
     """
-    return {name: source.node[name] for name, _value in source.object_key.primary_key}
+    name = family_view(meta, entity).primary_key.identity.name
+    return {name: node[name]}
+
+
+def _published_address(
+    meta: Metamodel, entity: EntityMetadata, source: _WireKeyedSource
+) -> tuple[tuple[str, object], ...]:
+    """The key members the source's object is addressed by, as managed values.
+
+    Read off the Object Key its evidence or authority names where it carries
+    one. A node that carries neither — published by a read of no writable
+    attempt, so its write is refused once prepared — names the object by its
+    published key alone, decoded through the key's declared type.
+    """
+    if source.object_key is not None:
+        return source.object_key.primary_key
+    key = family_view(meta, entity).primary_key
+    name = key.identity.name
+    return ((name, decode_wire(key.type, cast("WireValue", source.node[name]))),)
 
 
 class WireKeyedWriteSource:
@@ -497,9 +538,8 @@ class WireKeyedWriteSource:
         authored = self._authored
         if authored is None:
             authored = _published_writable(meta, entity, source.node, copy=False)
-        address = source.object_key.primary_key
-        identity = _published_identity(source)
-        if not any(name in authored for name, _value in address):
+        identity = _published_identity(meta, entity, source.node)
+        if not any(name in authored for name in identity):
             instruction = _prepared_wire_write(
                 meta,
                 mutation,
@@ -520,11 +560,19 @@ class WireKeyedWriteSource:
                 None,
                 valid_from=valid_from,
                 until=until,
-                members=lambda: instructions.addressed_members(meta, entity, address, stated),
+                members=lambda: instructions.addressed_members(
+                    meta, entity, _published_address(meta, entity, source), stated
+                ),
             )
             assigned = frozenset(name for name in authored if name not in identity)
         return PreparedSourceWrite(
-            instruction=instruction, object_key=source.object_key, assigned=assigned
+            instruction=instruction,
+            object_key=(
+                source.object_key
+                if source.object_key is not None
+                else written_object_key(entity, meta, instruction.rows[0])
+            ),
+            assigned=assigned,
         )
 
     def _retained(self) -> tuple[Metamodel, KeyedMutation, _WireKeyedSource]:
@@ -572,12 +620,12 @@ class WireKeyedInsertSource:
         self._meta = model
         self._mutation = mutation
         data = self._data
-        published = read_evidence_of(data) if isinstance(data, WireEntity) else None
+        stored = stored_entity_of(data) if isinstance(data, WireEntity) else None
         opened = authoring_of(data) if isinstance(data, WireEntity) else None
         return ResolvedKeyedInsert(
             entity=instructions.resolve_target(model, self._entity_name),
-            pin=None if published is None else published.pin,
-            provenance="none" if published is None and opened is None else "this",
+            pin=None if stored is None else wire_pin_of(cast("WireEntity", data)),
+            provenance="none" if stored is None and opened is None else "this",
             representation="wire",
         )
 
@@ -610,10 +658,10 @@ class WireKeyedInsertSource:
 
 def _keyed_source(
     mutation: KeyedMutation, observed: object
-) -> tuple[WireEntity, ReadEvidence | None, InsertionIdentity]:
-    """``observed`` with its own Read Evidence, or with the insertion authority
-    the node a Wire insert answered carries, or refuse the value as a keyed
-    source.
+) -> tuple[WireEntity, EntityIdentity | None, InsertionIdentity | None]:
+    """``observed`` with the concrete Entity a read published it from conforming
+    stored state under, or with the insertion authority the node a Wire insert
+    answered carries, or refuse the value as a keyed source.
 
     One refusal covers every non-source a caller can reach for — an ordinary
     mapping, ``dict(node)``, a JSON or pickle round trip, an
@@ -621,9 +669,9 @@ def _keyed_source(
     published as diagnostic data under an invalid root. They differ only in how
     the provenance is absent; none can authorize a keyed write.
     """
-    hint = read_evidence_of(observed) if isinstance(observed, WireEntity) else None
+    stored = stored_entity_of(observed) if isinstance(observed, WireEntity) else None
     authoring = authoring_of(observed) if isinstance(observed, WireEntity) else None
-    if hint is None and authoring is None:
+    if stored is None and authoring is None:
         raise instructions.WriteInstructionError(
             f"a keyed `{mutation}` on `tx.wire` takes a frozen Entity mapping Parallax "
             f"published — a `tx.wire.find` result, or the node `tx.wire.insert` answered — and "
@@ -633,7 +681,7 @@ def _keyed_source(
             "it; read the row through `tx.wire.find` and write what it returned"
         )
     assert isinstance(observed, WireEntity)  # provenance rides an Entity node alone
-    return observed, hint, cast("InsertionIdentity", authoring)
+    return observed, stored, authoring
 
 
 def _concrete_entity(meta: Metamodel, entity: EntityIdentity) -> EntityMetadata:

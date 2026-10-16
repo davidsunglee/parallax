@@ -44,7 +44,6 @@ from parallax.core import (
     rel,
 )
 from parallax.core._execution._concurrency import CONCURRENCY
-from parallax.core._execution._page_origins import ReadEvidenceCollector
 from parallax.core._execution._preflight import preflight
 from parallax.core.base import INFINITY
 from parallax.core.db_port import (
@@ -90,7 +89,11 @@ from parallax.core.read_delivery._page import (
     page_edges,
     page_rows,
 )
-from parallax.core.read_delivery._page_reader import EagerPageResult, HistoryPageResult
+from parallax.core.read_delivery._page_reader import (
+    EMPTY_PAGE_ORIGIN_COLLECTOR,
+    EagerPageResult,
+    HistoryPageResult,
+)
 from parallax.core.read_delivery._read_plan import UNCACHED_READ_PLANNER, ReadPlanCache, ReadPlanner
 from parallax.core.read_delivery._row_lane import find_rows
 from parallax.core.sql_gen._compile import CompiledRead
@@ -255,7 +258,7 @@ def _find(
         preflight(query, model=model, form="graph"),
         _cataloged(model),
         port,
-        origin_collector=ReadEvidenceCollector(model, evidence_context=None, scanned=False),
+        origin_collector=EMPTY_PAGE_ORIGIN_COLLECTOR,
     )
 
 
@@ -334,7 +337,7 @@ def test_a_later_root_document_is_not_classified_before_its_root_view() -> None:
                 ]
             ]
         ),
-        origin_collector=ReadEvidenceCollector(meta, evidence_context=None, scanned=False),
+        origin_collector=EMPTY_PAGE_ORIGIN_COLLECTOR,
         observer=observer,
     )
 
@@ -1813,7 +1816,7 @@ def test_a_dormant_root_prepares_its_levels_but_renders_and_executes_nothing() -
         preflight(query, model=meta, form="graph"),
         _cataloged(meta),
         QueuePort([]),
-        origin_collector=ReadEvidenceCollector(meta, evidence_context=None, scanned=False),
+        origin_collector=EMPTY_PAGE_ORIGIN_COLLECTOR,
         observer=observer,
     )
 

@@ -83,7 +83,7 @@ def _query(entity: str, key: int, temporal: dict[str, object] | None = None) -> 
 
 def _published(model: DomainModel, row: MappingRow, query: dict[str, object]) -> WireEntity:
     """One frozen Entity mapping as a standalone Wire read of this store
-    publishes it, Read Evidence and all."""
+    publishes it: a stored node carrying no Read Evidence."""
     port = ScriptedAdapter(Read(rows=[dict(row)]))
     return db_for(model, port).wire.find(query).result()
 
@@ -134,17 +134,21 @@ def test_an_insert_payload_that_is_no_document_is_judged_at_capture() -> None:
 # Resolve: what a published node states about the state a write revises.      #
 # --------------------------------------------------------------------------- #
 def test_a_published_node_answers_the_facts_its_own_read_filed() -> None:
+    # A standalone read publishes a stored node of this source and leaves no
+    # Read Evidence on it, so the object the write addresses comes from the row
+    # the node's own key authors.
     source = WireKeyedWriteSource(_account_node(), {"balance": "125.00"})
     source.capture("amend")
 
     resolved = source.resolve(_meta(ACCOUNT), "amend")
+    prepared = source.prepare(resolved, valid_from=None, until=None)
 
     assert resolved.entity.identity == mm.Account.identity
     assert resolved.provenance == "this"
     assert resolved.representation == "wire"
-    assert resolved.read_evidence is not None
-    assert resolved.read_evidence.object_key == ObjectKey(mm.Account.identity, (("id", 1),))
+    assert resolved.read_evidence is None
     assert resolved.pin is None
+    assert prepared.object_key == ObjectKey(mm.Account.identity, (("id", 1),))
 
 
 def test_a_projected_node_enters_the_existing_wire_keyed_source() -> None:
@@ -214,6 +218,29 @@ def test_a_member_equal_to_what_the_source_published_is_still_assigned() -> None
 
     assert prepared.instruction.rows[0] == {"id": 1, "balance": Decimal("100.00")}
     assert prepared.assigned == {"balance"}
+
+
+def test_a_stated_key_naming_the_published_object_addresses_rather_than_assigns() -> None:
+    # A node no writable attempt's read published carries no Object Key of its
+    # own, so its published key is what a stated key member is judged against.
+    source = WireKeyedWriteSource(_account_node(), {"id": 1, "balance": "125.00"})
+    source.capture("amend")
+    resolved = source.resolve(_meta(ACCOUNT), "amend")
+
+    prepared = source.prepare(resolved, valid_from=None, until=None)
+
+    assert prepared.instruction.rows[0] == {"id": 1, "balance": Decimal("125.00")}
+    assert prepared.assigned == {"balance"}
+    assert prepared.object_key == ObjectKey(mm.Account.identity, (("id", 1),))
+
+
+def test_a_stated_key_naming_another_object_is_refused_while_preparing() -> None:
+    source = WireKeyedWriteSource(_account_node(), {"id": 2, "balance": "125.00"})
+    source.capture("amend")
+    resolved = source.resolve(_meta(ACCOUNT), "amend")
+
+    with pytest.raises(instructions.WriteInstructionError, match="another object"):
+        source.prepare(resolved, valid_from=None, until=None)
 
 
 def test_a_destructive_verb_authors_its_identity_row_and_assigns_nothing() -> None:

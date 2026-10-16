@@ -19,7 +19,6 @@ import pytest
 from parallax.conformance.dormant_position_models import DORMANT_POSITION_COLUMNS
 from parallax.conformance.story_models import ORDERS_MODEL, Order
 from parallax.core import continuation, deep_fetch
-from parallax.core._execution._page_origins import ReadEvidenceCollector
 from parallax.core._execution._preflight import preflight
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity._layout import CatalogedModel
@@ -30,6 +29,7 @@ from parallax.core.object_query._resolved import ContinuationCoordinate, Resolve
 from parallax.core.predicate._resolved import ResolvedComparison
 from parallax.core.read_delivery import _read_plan
 from parallax.core.read_delivery._delivery import find
+from parallax.core.read_delivery._page_reader import EMPTY_PAGE_ORIGIN_COLLECTOR
 from parallax.core.read_delivery._read_plan import EMPTY_READ, EmptyRead, ReadPlanCache
 from parallax.core.read_delivery._row_converter import ReadRowConverter
 from parallax.core.sql_gen._compile import CompiledRead
@@ -1134,7 +1134,7 @@ def test_read_plan_cache_retains_no_connection_rows_page_evidence_or_result() ->
         _query(),
         _MODEL,
         port,
-        origin_collector=ReadEvidenceCollector(_MODEL.meta, evidence_context=None, scanned=False),
+        origin_collector=EMPTY_PAGE_ORIGIN_COLLECTOR,
         edition="edition-a",
         planner=cache,
     )
