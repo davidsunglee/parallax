@@ -24,7 +24,7 @@ implementation performance.
 
 | Document | Content |
 |---|---|
-| [`01-attribution.md`](01-attribution.md) | Per-change results across C0–C6, each linked to the capture files it reads |
+| [`01-attribution.md`](01-attribution.md) | Per-change results across C0–C7, each linked to the capture files it reads |
 | [`02-isolation-recommendation.md`](02-isolation-recommendation.md) | Whether the built-in level should stay Read Committed: evidence, limits Repeatable Read leaves, the recommendation, and what a switch would take |
 | [`03-reladomo-prior-art.md`](03-reladomo-prior-art.md) | Reladomo's isolation, read participation, gates, streaming and cache qualifications, and retry timing |
 
@@ -188,8 +188,13 @@ size. Each checkpoint's retained JSON stays within 1 MiB.
 | C4 | `ef923969b` and `e3785f21a`, at RC; `e3785f21a`'s `auto_retry` is the backoff's landing commit `95844b0c2`'s, unchanged | 6.6 MB | 41 KB |
 | C5 | `e3785f21a` and `7ab69577a`, at RC | 0.4 MB | 168 KB |
 | C6 | `7b465769` and `b04687c3f`, the selected backoff's landing commit, each at RC and at RR | 7.3 MB | 309 KB |
+| C7 | `0581fd395`, the duration-scaled backoff's landing commit, at RC and at RR | 17.9 MB | 129 KB |
 
 ### Raw reports and rewritten commits
+
+C7 was captured after the rewrite, so its full reports went straight to the
+archive. Its `provenance.json` records each one's size and SHA-256; the
+`SHA256SUMS` manifest below predates it.
 
 The checkpoints were first committed with their full reports. The branch
 history was then rewritten so that no commit holds the raw arrays: each

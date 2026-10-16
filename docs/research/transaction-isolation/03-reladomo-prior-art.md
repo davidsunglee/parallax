@@ -1,6 +1,6 @@
 ---
 date: 2026-10-16
-git_commit: b04687c3ffda598a87b6207c41dcc47260f1fd53
+git_commit: 0581fd3959c3a1996edad08f8141f7dc7d36c851
 topic: "Reladomo prior art for transaction isolation, read participation, write gates, streaming and cache, and retry timing"
 type: research
 tags: [research, reladomo, isolation, read-only, participation, retry, backoff, streaming]
@@ -451,12 +451,20 @@ Reladomo behavior. Parallax's contracts live in `core/spec/m-execution.md`,
     - A conflict with a known blocker waits on that transaction instead.
     - No rationale for the 2000 ms constant appears in the source.
   - *Parallax:*
-    - Exponential full jitter, `uniform(0, min(cap, base × 2^(n−1)))`,
-      starting after release and attempt reporting (`m-auto-retry` *Waiting
-      between attempts*).
-    - The constants, an 8 ms base and a 25 ms cap, were selected from
-      contention evidence ([`01-attribution.md`](01-attribution.md#c4-immediate-replay-versus-bounded-randomized-backoff)).
-    - Reladomo's minimum wait is forty times that cap.
+    - Exponential full jitter, starting after release and attempt reporting
+      (`m-auto-retry` *Waiting between attempts*). The window after attempt
+      *n* is the longer of a fixed window, `min(25 ms, 8 ms × 2^(n−1))`, and
+      one scaled by the failed attempt's own measured duration *d*,
+      `min(8, 0.25 × 2^(n−1)) × d`, never past one second.
+    - The fixed window was selected from contention evidence
+      ([`01-attribution.md`](01-attribution.md#c4-immediate-replay-versus-bounded-randomized-backoff)).
+      The scaled window was checked in simulated slower environments
+      ([`01-attribution.md`](01-attribution.md#c7-fixed-versus-duration-scaled-replay-backoff-across-environments)).
+    - Reladomo's minimum wait equals Parallax's ceiling, which a window
+      reaches only after an attempt of at least 125 ms.
+  - *Both:* the wait is internal, with no public setting. Reladomo's ignores
+    the attempt number and the attempt's duration; Parallax's grows with
+    both.
 - **Streaming.**
   - *Reladomo:* the cursor holds one connection for the whole iteration, and
     the driver's default decides buffering.

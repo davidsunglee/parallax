@@ -1,6 +1,6 @@
 ---
 date: 2026-10-16
-git_commit: 64b662d9198d349bf92e2a15cf939eb962935cba
+git_commit: b46bf4e5070d9a39bb8904c556bc32176b954488
 topic: "Whether the built-in transaction isolation should stay Read Committed or become Repeatable Read"
 type: research
 tags: [research, isolation, repeatable-read, read-committed, postgres, mariadb, recommendation]
@@ -79,7 +79,7 @@ the default:
   `40001` with no value changed (`m-temporal-write-065`–`-068`). MariaDB plans
   no guard.
 
-### C0–C6 deltas
+### C0–C7 deltas
 
 These are PostgreSQL figures.
 
@@ -88,9 +88,16 @@ These are PostgreSQL figures.
     bound, because the selective policy surfaced gate races.
   - Repeatable Read completed 0.934, because it replayed them as `40001`.
 
-  With uniform replay and the selected backoff, the two converge: 0.989 at
-  Read Committed against 0.991 at Repeatable Read, with 1.72 against 1.62
-  attempts per success. That is C0 against C6.
+  With uniform replay and the duration-scaled backoff, the two converge:
+  0.991 at Read Committed against 0.994 at Repeatable Read, with 1.67 against
+  1.63 attempts per success (C7, local).
+- **Replay holds up in slower environments at either level.** With 2 ms of
+  latency per round trip, the final backoff completes 0.977 of hot-key
+  invocations at both levels. With 5 ms per round trip and 10 ms of work
+  inside the attempt it completes 0.982 at Read Committed and 0.983 at
+  Repeatable Read (C7). Immediate replay completes 0.904 and 0.971 at Read
+  Committed there, but only 0.727 and 0.735 at Repeatable Read, so waiting
+  matters more at Repeatable Read.
 - **First attempts are close at either level**: 0.21 against 0.24 at
   `max_retries=0`, in every arm.
 - **The gate race replays to commit at both levels.** That changed at C3.
@@ -114,10 +121,11 @@ These are PostgreSQL figures.
   |---|---|---|
   | `max_retries=0` | 400 of 400 commit on the first attempt | 200 of 400 surface `40001` |
   | Default bound, immediate replay | 400 of 400 | 382 of 400 commit; 18 exhaust |
-  | Default bound, selected backoff | 400 of 400 | 400 of 400 commit; 1.06 attempts per success |
+  | Default bound, duration-scaled backoff | 400 of 400 | 399–400 of 400 commit; 1.10–1.61 attempts per success |
 
   Every Repeatable Read failure here comes with no semantic conflict
-  (C0, C6).
+  (C0, C7). The backoff range spans C7's three simulated environments; the
+  slowest needs the most attempts.
 
 ### Snapshot-horizon cost
 
@@ -166,8 +174,9 @@ not make what it decides true at commit.
 1. **Replay no longer depends on the level.** At the C0 source, the levels
    differed most in replay: Read Committed surfaced a current-attempt gate
    race that Repeatable Read replayed. Uniform recoverable-conflict replay
-   with the selected backoff removed that difference. Both levels now
-   complete about 99% of hot-key invocations at the default bound.
+   with the duration-scaled backoff removed that difference. Both levels now
+   complete about 99% of hot-key invocations at the default bound locally,
+   and about 98% in C7's slower simulated environments.
 2. **Repeatable Read's benefit is opt-in where it matters.**
    - Read stability inside one transaction is the real gain: no torn graphs,
      stable stream membership, and stable range reads.
@@ -286,6 +295,7 @@ accurate at `64b662d91`.
   explicitly.
 - Operators should expect more serialization-failure replays, from guards and
   key-selecting writes, and snapshot-horizon growth under long transactions.
-- The backoff constants were selected at Read Committed. C6 measured them
-  once at Repeatable Read (0.991 completion, 0.94% exhausted). A grid at
-  Repeatable Read would be owed before a switch.
+- The backoff was selected at Read Committed. C7 measured it once at
+  Repeatable Read in each simulated environment, where it qualified under the
+  selection rule (0.977–0.994 completion). A grid at Repeatable Read would be
+  owed before a switch.
