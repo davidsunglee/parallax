@@ -157,9 +157,10 @@ def wire_keyed_write(
     preparation — the verb's applicability to the target and the window, the
     key members the document states, and only then every named member's
     legality and value — all before the strategy is derived or any evidence
-    resolved. An amendment naming no member is the empty set, dropped before
-    the evidence question is asked at all; every member it does name is
-    assigned, whatever value the source published for it.
+    resolved. An amendment naming no member is the empty set, dropped only once
+    its source is admitted, so ``{}`` never lets an ineligible source pass;
+    every member it does name is assigned, whatever value the source published
+    for it.
     """
     attempt.keyed_write(WireKeyedWriteSource(observed, changes), mutation, until=until)
 

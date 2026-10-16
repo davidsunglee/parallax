@@ -4232,6 +4232,30 @@ def _refuse_a_locking_conflict_target(
         )
 
 
+def _refuse_a_snapshot_level_under_a_staged_writer(case: case_format.Case) -> None:
+    """Refuse a conflict case that stages a `given.apply` writer while its
+    attempts resolve to a level stronger than Read Committed.
+
+    The staged writer commits between the attempt's source read and its write.
+    Above Read Committed that read fixes the attempt's snapshot, so the write
+    meets the changed row as a serialization failure, or the writer waits on the
+    read's shared lock, rather than leaving the zero-row shortfall the case
+    grades (`m-case-format` "Conflict cases").
+    """
+    given = case.document.get("given")
+    if not isinstance(given, Mapping) or "apply" not in cast("Mapping[str, object]", given):
+        return
+    level = case_format.effective_options(case).isolation
+    if level == "read_committed":
+        return
+    raise EngineError(
+        f"{case.path.name}: a conflict case stages a writer that commits between the "
+        f"attempt's source read and its write, and at `{level.replace('_', '-')}` that read "
+        "fixes the snapshot the write then conflicts with — only Read Committed leaves the "
+        "zero-row shortfall the case grades (m-case-format 'Conflict cases')"
+    )
+
+
 def _conflict_changes(model: AcceptedMetamodel, write: _ConflictWrite) -> dict[str, object]:
     """One conflict attempt row's authored assignments — its durable row less the
     identity the source node already carries, in authored order.
@@ -4293,6 +4317,7 @@ def run_conflict_case(
     concurrency = case_document.concurrency(case)
     options = case_format.database_options(case)
     refuse_a_conflict_retry_opt_in(case, options, "`given.databaseOptions`")
+    _refuse_a_snapshot_level_under_a_staged_writer(case)
     requests = _conflict_attempt_requests(case)
     target = first_declared_entity(case)
     if _is_temporal_entity(model, target):
