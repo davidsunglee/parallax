@@ -251,10 +251,22 @@ def run_driver(
         "elapsedS": round(elapsed, 3),
         "bytes": out.stat().st_size,
     }
-    if not driver.tool:
+    if not (driver.tool and smoke):
         report = json.loads(out.read_text())
-        record["conditions"] = report.get("conditions")
+        record["conditions"] = tool_conditions(report) if driver.tool else report.get("conditions")
     return record
+
+
+# What an arm tool's own provenance states about its arm rather than about the
+# conditions it measured under.
+ARM_FACTS = ("commit", "lockDigest", "budgetContract")
+
+
+def tool_conditions(envelope: dict[str, object]) -> dict[str, object] | None:
+    provenance = envelope.get("provenance")
+    if not isinstance(provenance, dict):
+        return None
+    return {key: value for key, value in provenance.items() if key not in ARM_FACTS}
 
 
 def capturing_tree() -> dict[str, object]:
@@ -352,6 +364,13 @@ def _arm_problems(checkpoint: str, arm: Path) -> tuple[list[str], dict[str, obje
         f"{arm.name}: no report from {driver.name}"
         for driver in CHECKPOINTS[checkpoint].drivers
         if not (arm / f"{driver.name}.json").is_file()
+    )
+    drivers = document.get("drivers")
+    records = drivers if isinstance(drivers, dict) else {}
+    problems.extend(
+        f"{arm.name}: {driver.name} recorded no measurement conditions"
+        for driver in CHECKPOINTS[checkpoint].drivers
+        if not (records.get(driver.name) or {}).get("conditions")
     )
     return problems, document
 
