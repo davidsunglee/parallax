@@ -53,19 +53,23 @@ the default:
     whose correlation or own predicate column changed still writes that
     target, because only key membership is rechecked (`m-batch-write-020`–
     `-035`). At Repeatable Read the same schedules raise `40001`.
-  - On MariaDB at Read Committed the DELETE excludes the target and the
-    UPDATE writes it.
+  - On MariaDB at Read Committed, after a correlation change the DELETE
+    excludes the target and the UPDATE writes it (`-021`, `-024`). After an
+    own-column change both exclude it (`-029`, `-033`).
   - On MariaDB at Repeatable Read both exclude it with no error. MariaDB's
     Repeatable Read conflicts only once a read view exists, and here the write
     is the transaction's first statement.
 - **MariaDB Read Committed runs with snapshot isolation off.** MariaDB 12.3
   defaults `innodb_snapshot_isolation` to on. Under that default, a
-  key-selecting UPDATE whose target changed during its wait raised `1020` at
-  Read Committed. The harness's Read Committed mapping now sets the variable
-  off for each attempt, as `m-db-port` *Mapping obligations* requires. With
-  that setting the UPDATE writes the moved target, as on PostgreSQL. Read
-  Committed therefore means the same thing on both engines' graded schedules,
-  except for the DELETE above. Repeatable Read keeps the variable on.
+  key-selecting UPDATE after a correlation change raised `1020` at Read
+  Committed. The harness's Read Committed mapping now sets the variable off
+  for each attempt, as `m-db-port` *Mapping obligations* requires. With that
+  setting the UPDATE writes the moved target, as on PostgreSQL, and both
+  engines share `m-batch-write-024`. The engines still differ at Read
+  Committed where MariaDB re-reads the changed row and excludes it: the
+  correlation-change DELETE and both own-column-change writes above, and the
+  joined-row schedules tabulated in [`00-index.md`](00-index.md#compatibility-cases).
+  Repeatable Read keeps the variable on.
 - **Dependency locks keep protecting unwritten rows at Repeatable Read**
   (`m-read-lock-023`). The level does not replace them.
 - **PostgreSQL Repeatable Read refuses physical change, not semantic change.**
@@ -179,9 +183,6 @@ not make what it decides true at commit.
    - *Physical-change failures.* Unchanged-milestone guards conflict with no
      semantic change. A fixed-revision `*_if` spends a second attempt before
      its terminal precondition failure, and key-selecting writes replay.
-   - *MariaDB session state.* Every MariaDB Repeatable Read attempt must
-     manage `innodb_snapshot_isolation`. Only the reference harness does that
-     today.
 4. **Repeatable Read does not remove the decision anomalies a default could be
    expected to address.** Write skew, predicate truth at commit, pre-snapshot
    revisions, and gap creation remain. A stronger default would suggest a
@@ -194,8 +195,12 @@ not make what it decides true at commit.
    - At Repeatable Read the write raises `40001`, and the replay acts on the
      current membership.
    - COR-211 kept the key-selecting lowering and documented the engine
-     outcomes. Callers whose predicate writes must reflect commit-time
-     membership can request Repeatable Read for those invocations.
+     outcomes. Callers whose predicate writes must not act on a selected
+     target whose predicate truth changed while they waited can request
+     Repeatable Read for those invocations.
+   - That protects only the targets the statement selected. A row that
+     comes to match after the snapshot is not written, and the transaction
+     still commits (`m-db-error-013`).
 
 The recommendation would change in two cases:
 
@@ -211,7 +216,7 @@ Either is a product decision about default semantics, not a measured cost.
 The follow-up decision needs this inventory whichever way it goes. It is
 accurate at `649d6abb5`.
 
-**Contracts and decision records.**
+**Contracts, schemas, and decision records.**
 
 - `m-execution` *Options a root is configured with*: the built-in record
   states Read Committed, a concrete level requested on every attempt.
@@ -223,6 +228,10 @@ accurate at `649d6abb5`.
   - the meaning of an omitted `when.uow.isolation`;
   - *Conflict cases*, which require Read Committed for a staged `given.apply`
     writer.
+- `compatibility-case.schema.json` names the built-in `read-committed` in its
+  `given.databaseOptions`, `when.uow.isolation`, and
+  `lifecycleInvocationStarted` descriptions. `conformance-adapter.schema.json`
+  repeats it in its `lifecycleInvocationStarted` description.
 - ADR 0065 states Read Committed as the concrete default. A switch needs a
   superseding ADR. ADR 0061's portable vocabulary is unaffected.
 
@@ -252,17 +261,22 @@ accurate at `649d6abb5`.
   would change, for example `m-unit-work-038` and
   `m-execution-lifecycle-004`.
 - Python's `tests/api/test_database_options.py` pins that an unconfigured root
-  runs at Read Committed over a stronger session default.
+  runs at Read Committed over a stronger session default, and the
+  transaction-runner unit tests pin that an omitted level asks the port for
+  Read Committed.
 - Usage-guide examples that rely on the default would need review, and the
   guide would need regenerating.
 
-**Adapter work.**
+**Adapter and harness work.**
 
 - PostgreSQL needs none. It already maps every level per attempt with
   `set local`.
-- No production MariaDB adapter exists. The harness's qualified MariaDB
-  Repeatable Read mapping (12.3.2+, `innodb_snapshot_isolation` saved, set on,
-  and restored per attempt) is what a future adapter would owe.
+- The reference harness resolves an omitted level to its own built-in
+  `read-committed` (`DEFAULT_ISOLATION` in `reference_harness/case.py`).
+- No production MariaDB adapter exists. A future adapter owes the harness's
+  per-attempt `innodb_snapshot_isolation` mapping for both levels (on for
+  Repeatable Read on 12.3.2+, off for Read Committed) whichever default is
+  chosen, so a switch adds no MariaDB adapter work.
 
 **Migration.**
 
