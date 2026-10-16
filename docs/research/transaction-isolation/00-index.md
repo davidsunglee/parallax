@@ -22,6 +22,12 @@ Python performance is PostgreSQL performance. MariaDB results come from the
 reference harness and are labeled harness/native evidence, not Python
 implementation performance.
 
+| Document | Content |
+|---|---|
+| [`01-attribution.md`](01-attribution.md) | Per-change results across C0–C6, each linked to the capture files it reads |
+| [`02-isolation-recommendation.md`](02-isolation-recommendation.md) | Whether the built-in level should stay Read Committed: evidence, limits Repeatable Read leaves, the recommendation, and what a switch would take |
+| [`03-reladomo-prior-art.md`](03-reladomo-prior-art.md) | Reladomo's isolation, read participation, gates, streaming and cache qualifications, and retry timing |
+
 ## Witnesses
 
 ### Compatibility cases
@@ -152,9 +158,11 @@ checkpoint stays within 10 MiB of raw JSON.
 
 ## Findings
 
-These describe behavior at the C0 source, read from the witnesses above. A
-diagnostic smoke run, which is not a retained capture, confirms the Parallax-level
-outcomes through the public API.
+These describe behavior at the C0 source, read from the witnesses above. The
+retained C0 traces confirm the Parallax-level outcomes through the public API.
+[`01-attribution.md`](01-attribution.md) attributes what each later change
+moved, and [`02-isolation-recommendation.md`](02-isolation-recommendation.md)
+weighs them for the default.
 
 - **PostgreSQL Read Committed rechecks only the target row.** A key-selecting
   write that waited on a target whose correlation or own predicate column
