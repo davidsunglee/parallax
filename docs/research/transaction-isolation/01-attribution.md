@@ -1,13 +1,13 @@
 ---
 date: 2026-10-16
-git_commit: 64b662d9198d349bf92e2a15cf939eb962935cba
-topic: "Per-change attribution of the transaction execution changes across checkpoints C0–C6"
+git_commit: b46bf4e5070d9a39bb8904c556bc32176b954488
+topic: "Per-change attribution of the transaction execution changes across checkpoints C0–C7"
 type: research
 tags: [research, isolation, repeatable-read, read-committed, postgres, retry, backoff, read-evidence, benchmark]
 status: complete
 ---
 
-# Transaction Execution Attribution, C0–C6
+# Transaction Execution Attribution, C0–C7
 
 This note attributes each measured change to the checkpoint that isolates it.
 Every number below is read from the capture reports under
@@ -27,7 +27,8 @@ question is treated separately in
 | Automatic optimistic replay, immediate | C3 | Read Committed hot-key completion rises from 0.213 to 0.931. Committed throughput stays flat at about 400/s, p99 rises from 7 to 53 ms, and 6.9% of invocations exhaust the bound. |
 | Bounded randomized backoff, 8 ms base and 25 ms cap | C4 | Against immediate replay, hot-key committed throughput rises from 429 to 830/s, exhaustion falls from 6.44% to 0.88%, and attempts per success fall from 4.66 to 1.62. Disjoint p50 is unchanged. |
 | Evidence-free standalone and read-only reads | C5 | Held-result bytes fall 25–26% for Typed account results and versioned document results, 49–50% for Wire account results, and 54–56% for temporal document results. Standalone and read-only results are cut the same, eager and streamed. |
-| All of the above | C6 | Hot-key completion at the default bound rises from 0.204 to 0.989 at Read Committed and from 0.928 to 0.991 at Repeatable Read. At Repeatable Read the guard/guard schedule commits 400 of 400. First-attempt outcomes are unchanged. |
+| All of the above | C6 | Hot-key completion at the default bound rises from 0.204 to 0.989 at Read Committed and from 0.928 to 0.991 at Repeatable Read. First-attempt outcomes are unchanged. Its replay figures describe the fixed backoff that C7's arm replaced. |
+| Duration-scaled backoff | C7 | In each simulated environment the scaled window qualifies under the selection rule at both levels and stays within 6% of the best fixed window that qualifies. Fixed 8/25 ms exhausts more invocations than immediate replay once attempts take about 45 ms, and fixed 8/400 ms runs 12% slower locally at RR. |
 
 ## Reading the captures
 
@@ -66,6 +67,10 @@ question is treated separately in
 - **Placements.** A *transaction-held* stream runs inside one transaction for
   the whole delivery. A *standalone* stream acquires a connection per page and
   holds no transaction between pages.
+- **Simulated environments.** C7 alone adds client-side latency to every
+  round trip and application work inside the attempt
+  ([`00-index.md`](00-index.md#drivers)). Every other checkpoint runs against
+  the local container directly.
 - **Load.** The preflight refuses to start above a 1-minute load of 2.5. Each
   `provenance.json` records the load average after its arm's drivers finish,
   so that figure includes the drivers' own load.
@@ -306,6 +311,8 @@ has released its connection.
     replay, and five of the six with a finite p99 to success do so by more
     than 1.5×. A rerun could reorder candidates within a few percent of each
     other.
+- **Later.** The selected window is now the shortest window of the
+  duration-scaled backoff, which C7 tests in slower environments.
 
 ## C5: standalone and read-only reads before and after evidence removal
 
@@ -379,7 +386,10 @@ throughput from C3 and C4 instead. Use C6 for completion, exhaustion,
 attempts, and trace outcomes, which counting does not distort. The RR arms
 show no such disturbance.
 
-**Contention**
+**Contention** — *superseded by C7 for the final design.* The `b04687c3f`
+columns measure the fixed 8/25 ms backoff, which `0581fd395` replaced with the
+duration-scaled one. The `7b465769` columns stand as the C0 source's
+behavior
 ([`7b465769` RC](captures/C6/7b465769dc87-read_committed/contention.json),
 [`7b465769` RR](captures/C6/7b465769dc87-repeatable_read/contention.json),
 [`b04687c3f` RC](captures/C6/8886e730c2f9-read_committed/contention.json),
@@ -412,7 +422,7 @@ show no such disturbance.
   includes the RR fixed-revision command, which still spends a second attempt
   before failing its precondition.
 
-**Guard replay at RR**
+**Guard replay at RR** — *superseded by C7 for the final design*, as above
 ([`7b465769`](captures/C6/7b465769dc87-repeatable_read/guard_wal.json),
 [`b04687c3f`](captures/C6/8886e730c2f9-repeatable_read/guard_wal.json)):
 
@@ -461,12 +471,138 @@ show no such disturbance.
 - Its timings move in both directions by up to 94% between the RR arms, so
   they carry no signal.
 
+## C7: fixed versus duration-scaled replay backoff across environments
+
+Arms: `0581fd395`, where the duration-scaled backoff landed, at RC and at RR
+([RC](captures/C7/0581fd3959c3-read_committed/provenance.json),
+[RR](captures/C7/0581fd3959c3-repeatable_read/provenance.json)). Every later
+commit is tooling, captures, or docs, so `0581fd395` is the final design. Each
+arm runs the contention writers and the guard/guard replay in three simulated
+environments, with immediate replay, the fixed 8/25 ms and 8/400 ms windows,
+and the arm's own scaled window substituted for the default-bound runs
+([RC contention](captures/C7/0581fd3959c3-read_committed/contention.json),
+[RR contention](captures/C7/0581fd3959c3-repeatable_read/contention.json)).
+
+The scaled window after attempt *n*, whose failed attempt took *d*, is the
+longer of `min(25 ms, 8 ms × 2^(n−1))` and `min(8, 0.25 × 2^(n−1)) × d`,
+never past one second.
+
+| Environment | Nominal round trip / think | Realized round trip | Disjoint p50 | Failed attempt p50 |
+|---|---|---|---|---|
+| `local` | none | none | 4.2–4.8 ms (6.3 ms in one disturbed run) | 1.4 ms (scaled), 4.2 ms (immediate) |
+| `rtt-2ms` | 2 ms / none | 1.99–2.28 ms | 14.2–15.4 ms | 14.6–19.0 ms |
+| `rtt-5ms+think` | 5 ms / 10 ms | 5.00–5.47 ms | 43.4–48.3 ms | 41.9–45.2 ms |
+
+- Six round trips make an uncontended attempt: the acquisition probe, `BEGIN`,
+  the level request, the read, the write, and `COMMIT`. The disjoint p50s
+  match that count at the realized latency.
+- Realized latency runs up to 14% above nominal, because a waking writer
+  waits for the interpreter lock, and less when the machine is quieter. Within
+  one environment and arm the contention runs agree within 0.3 ms, so each
+  comparison between policies is like for like. In the RR arm's
+  `rtt-5ms+think` every contention run saw 5.00–5.06 ms, against 5.33–5.38 ms
+  at RC.
+
+**Hot key, default bound, RC**, where the rule applies, as C4 selected at RC:
+
+| Environment | Policy | Throughput | Exhausted | p99 to success | Attempts per success | Window p50 / p99 |
+|---|---|---|---|---|---|---|
+| `local` | immediate | 388/s | 6.06% | unbounded | 4.69 | — |
+| | fixed 8/25 | 416/s (disturbed) | 0.69% | 175.5 ms | 2.06 | 16 / 25 ms |
+| | fixed 8/400 | 446/s (disturbed) | 0.06% | 326.4 ms | 1.46 | 16 / 400 ms |
+| | **scaled** | **765/s** | **0.94%** | **160.7 ms** | **1.67** | 25 / 25 ms |
+| `rtt-2ms` | immediate | 98.9/s | 9.56% | unbounded | 4.12 | — |
+| | fixed 8/25 | 115.3/s | 2.94% | unbounded | 2.70 | 25 / 25 ms |
+| | fixed 8/400 | 109.5/s | 1.00% | 1,557 ms | 1.79 | 16 / 400 ms |
+| | **scaled** | **113.0/s** | **2.31%** | unbounded | **2.19** | 25 / 161 ms |
+| `rtt-5ms+think` | immediate | 37.2/s | 2.94% | unbounded | 4.56 | — |
+| | fixed 8/25 | 32.3/s | 4.81% | unbounded | 4.35 | 16 / 25 ms |
+| | fixed 8/400 | 30.4/s | 2.25% | unbounded | 3.34 | 16 / 400 ms |
+| | **scaled** | **29.4/s** | **1.81%** | unbounded | **3.26** | 23 / 419 ms |
+
+**Hot key, default bound, RR**:
+
+| Environment | Immediate | Fixed 8/25 | Fixed 8/400 | Scaled |
+|---|---|---|---|---|
+| `local` | 427/s, 6.25% | 786/s, 0.56% | 690/s, 0.06% | 787/s, 0.62% |
+| `rtt-2ms` | 58.7/s, 27.31% | 124.4/s, 3.81% | 109.7/s, 1.06% | 128.2/s, 2.31% |
+| `rtt-5ms+think` | 22.4/s, 26.50% | 34.3/s, 5.25% | 32.7/s, 2.50% | 32.4/s, 1.69% |
+
+Each cell is committed throughput and the share exhausted. Immediate replay's
+p99 to success is unbounded everywhere. Locally every fixed and scaled policy
+has a finite one (122–153 ms), and in the slower environments none does.
+
+**Selection, per environment.** The rule is C4's as decided: an exhausted
+invocation counts as unbounded latency. A policy qualifies if its disjoint p50
+is within noise of immediate replay's, and its exhaustion rate and p99 to
+success are no worse than immediate replay's. The scaled policy had to qualify
+in every environment and stay within 10% of the best qualifying fixed policy's
+throughput. That margin is several times the 1–2% spread between same-session
+diagnostic repeats in `rtt-5ms+think`.
+
+| Environment | RC: qualifying fixed | RC: scaled ÷ best | RR: qualifying fixed | RR: scaled ÷ best |
+|---|---|---|---|---|
+| `local` | 8/400 | 1.71 | 8/25, 8/400 | 1.00 |
+| `rtt-2ms` | 8/25, 8/400 | 0.98 | 8/25, 8/400 | 1.03 |
+| `rtt-5ms+think` | 8/400 | 0.97 | 8/25, 8/400 | 0.95 |
+
+- **The scaled policy passes in every environment at both levels.** Its
+  exhaustion never exceeds 2.31%, against up to 9.56% for immediate replay at
+  RC and 27.31% at RR.
+- **Fixed 8/25 ms does not carry.** At RC in `rtt-5ms+think` it exhausts
+  4.81% of invocations, more than immediate replay's 2.94%, so it fails the
+  rule. Its windows stay shorter than one 45 ms attempt, so a replay lands
+  inside the next conflicting attempt. The first, superseded C7 run measured
+  5.13% against 3.44%.
+- **Fixed 8/400 ms is slower where attempts are fast.** It is 12% below the
+  scaled policy locally at RR (690 against 787/s).
+- **RC local is disturbed.** Outside load slowed the fixed 8/25 and 8/400
+  runs: their failed attempts took 2.9–3.1 ms at p50 against 1.4 ms in every
+  other local run, and fixed 8/25's disjoint p50 of 6.28 ms disqualified it.
+  Their RC local figures carry no signal. The scaled window locally equals the
+  fixed 8/25 window at p50 and p99, and at RR the two run at 786 and 787/s.
+- **In `rtt-5ms+think` at RC, waiting costs throughput.** Immediate replay
+  keeps the contended row busiest there: 37.2/s against 29.4–32.3/s for every
+  policy that waits, at 2.94% exhausted. Every waiting policy that qualifies
+  trades some of that throughput for fewer exhausted invocations.
+
+**Superseded first run.** C7 was first captured from a driver whose statement
+latency skipped the answer leg when the server refused the statement. At RR
+each refused write therefore returned half a round trip early; at RC no
+statement is refused, since a stale gate matches no row. That run was
+discarded and recaptured with the fix; its full and summary reports are
+archived outside git, at
+`~/.local/share/parallax/evidence/cor-214/c7-first-run-superseded/`. Its RC figures replicate the retained run within 4%
+outside RC local, where its undisturbed fixed 8/25 ran at 800/s against 791/s
+for the scaled policy.
+
+**Guard/guard replay**
+([RC](captures/C7/0581fd3959c3-read_committed/guard_wal.json),
+[RR](captures/C7/0581fd3959c3-repeatable_read/guard_wal.json)):
+
+- At RC every policy commits 400 of 400 on first attempts in every
+  environment.
+- At RR, at the default bound:
+
+  | Environment | Immediate | Fixed 8/25 | Fixed 8/400 | Scaled |
+  |---|---|---|---|---|
+  | `local` | 382 of 400, 1.52 attempts per success | 399, 1.07 | 400, 1.03 | 399, 1.10 |
+  | `rtt-2ms` | 382, 1.52 | 400, 1.08 | 400, 1.09 | 400, 1.12 |
+  | `rtt-5ms+think` | 382, 1.52 | 400, 1.67 | 400, 1.62 | 400, 1.61 |
+
+- At `max_retries=0` half the RR invocations surface `40001` in every
+  environment.
+
 ## What these captures do not measure
 
 - Python against MariaDB. No production MariaDB adapter exists, and the
   MariaDB evidence is the harness witnesses.
-- The backoff at RR as a grid. C4 tuned at RC alone, and C6 shows the selected
-  constants at RR only as one run.
+- The backoff at RR as a grid. C4 tuned at RC alone, and C7 compares four
+  policies at RR, one run each.
+- Real networks. C7's environments add fixed client-side latency to each round
+  trip. They add no jitter, loss, or server load from other clients, and
+  their application work sits only between an invocation's read and its
+  write.
 - Locking-preference contention. Every contention invocation reads a versioned
   account under the Optimistic preference.
 - A read-only transaction's native setup cost apart from its read delivery.
