@@ -841,6 +841,13 @@ _ISOLATION_SCENARIO_REASON: Final[str] = (
     "are the arms the run sweep's interleaved-group runner drives against real "
     "Postgres through the shipped `db.transact`"
 )
+_ISOLATION_WITNESS_REASON: Final[str] = (
+    "a two-session isolation witness: two transactions held open at once over the "
+    "statements Parallax emits, which has no single-callback developer expression. The "
+    "case-driven `when.concurrency` rounds runner "
+    "(`parallax.conformance.concurrency_runner`) grades it against real Postgres, and "
+    "the reference harness grades it on both engines"
+)
 # `m-pk-gen-014` composes a non-temporal sequence-registry update with an
 # Transaction-Time-Only insert in one write sequence and two transactions. It is graded
 # end-to-end but has no idiomatic story.
@@ -1533,6 +1540,49 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-unit-work-031": _ISOLATION_SCENARIO_REASON,
     "m-unit-work-032": _ISOLATION_SCENARIO_REASON,
     "m-unit-work-034": _ISOLATION_SCENARIO_REASON,
+    # -- the two-session isolation witnesses, whichever module states each -- #
+    **dict.fromkeys(
+        (
+            "m-unit-work-051",
+            "m-unit-work-052",
+            "m-unit-work-053",
+            "m-unit-work-054",
+            "m-opt-lock-034",
+            "m-opt-lock-035",
+            "m-opt-lock-036",
+            "m-opt-lock-037",
+            "m-opt-lock-038",
+            "m-batch-write-020",
+            "m-batch-write-022",
+            "m-batch-write-024",
+            "m-batch-write-026",
+            "m-batch-write-028",
+            "m-batch-write-030",
+            "m-batch-write-032",
+            "m-batch-write-034",
+            "m-batch-write-036",
+            "m-batch-write-038",
+            "m-batch-write-040",
+            "m-batch-write-041",
+            "m-batch-write-043",
+            "m-batch-write-044",
+            "m-batch-write-045",
+            "m-batch-write-046",
+            "m-read-lock-023",
+            "m-temporal-write-061",
+            "m-temporal-write-062",
+            "m-temporal-write-063",
+            "m-temporal-write-064",
+            "m-temporal-write-065",
+            "m-temporal-write-066",
+            "m-temporal-write-067",
+            "m-temporal-write-068",
+            "m-db-error-012",
+            "m-db-error-013",
+            "m-db-error-014",
+        ),
+        _ISOLATION_WITNESS_REASON,
+    ),
     # -- the isolation boundary obligations, whichever module states each ---- #
     "m-auto-retry-006": _ISOLATION_BOUNDARY_RUNNER_REASON,
     "m-execution-lifecycle-008": _ISOLATION_BOUNDARY_RUNNER_REASON,

@@ -1,0 +1,45 @@
+# Transaction A changes order item 11's own sku, a column the predicate tests, and
+# holds the change. Transaction B's key-selecting delete of Ada's items whose sku is
+# A-100 runs before A commits. The statement waits on item 11 and resumes on A's
+# commit; Postgres rechecks only the outer key membership against the new row version,
+# so it still deletes item 11.
+model: models/orders.yaml
+tags: [m-batch-write, m-sql, m-unit-work, isolation, concurrency, predicate-write, readless, relationship, to-one, delete, read-committed, slice-snapshot-1]
+shape: concurrencySuccess
+compileEligibility:
+  mode: run-only
+  reason: single-connection
+  note: "two-session isolation witness (when.concurrency)"
+given:
+  fixtures: true
+when:
+  uow:
+    isolation: read-committed
+  concurrency:
+    rounds:
+      - A:
+          kind: write
+          statements:
+            - sql:
+                postgres: update order_item set sku = ? where id = ?
+              binds: [X-1, 11]
+          affectedRows: [1]
+      - B:
+          kind: write
+          blocks: true
+          statements:
+            - sql:
+                postgres: delete from order_item where id in (select t0.id from order_item t0 left join orders t1 on t1.id = t0.order_id where t1.name = ? and t0.sku = ?)
+              binds: [Ada, A-100]
+          affectedRows: [1]
+      - A:
+          kind: commit
+      - B:
+          kind: commit
+then:
+  tableState:
+    order_item:
+      - { id: 12, order_id: 1, sku: B-200, quantity: 1, shipped_on: 2024-02-15 }
+      - { id: 21, order_id: 2, sku: A-300, quantity: 4, shipped_on: 2024-02-20 }
+      - { id: 421, order_id: 42, sku: A-999, quantity: 3, shipped_on: 2024-03-10 }
+      - { id: 422, order_id: 42, sku: B-200, quantity: 5, shipped_on: 2024-02-05 }

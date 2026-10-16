@@ -1,0 +1,60 @@
+# Both transactions read account 2 at version 1 and the peer's gated update commits
+# first. At Read Committed the stale gate matches no row, the shortfall Parallax
+# reports as an optimistic conflict, so the transaction ends without committing.
+model: models/account.yaml
+tags: [m-opt-lock, m-unit-work, isolation, concurrency, optimistic-lock-conflict, read-committed, slice-snapshot-1]
+shape: concurrencySuccess
+compileEligibility:
+  mode: run-only
+  reason: single-connection
+  note: "two-session isolation witness (when.concurrency)"
+given:
+  fixtures: true
+when:
+  uow:
+    concurrency: optimistic
+    isolation: read-committed
+  concurrency:
+    rounds:
+      - A:
+          kind: read
+          statements:
+            - sql:
+                postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+                mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+              binds: [2]
+          expectRows:
+            - { id: 2, owner: Linus, balance: "250.00", version: 1 }
+      - B:
+          kind: read
+          statements:
+            - sql:
+                postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+                mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+              binds: [2]
+          expectRows:
+            - { id: 2, owner: Linus, balance: "250.00", version: 1 }
+      - B:
+          kind: write
+          statements:
+            - sql:
+                postgres: update account set balance = ?, version = ? where id = ? and version = ?
+                mariadb: update account set balance = ?, version = ? where id = ? and version = ?
+              binds: ["999.00", 2, 2, 1]
+          affectedRows: [1]
+      - B:
+          kind: commit
+      - A:
+          kind: write
+          statements:
+            - sql:
+                postgres: update account set balance = ?, version = ? where id = ? and version = ?
+                mariadb: update account set balance = ?, version = ? where id = ? and version = ?
+              binds: ["300.00", 2, 2, 1]
+          affectedRows: [0]
+then:
+  tableState:
+    account:
+      - { id: 1, owner: Ada, balance: "100.00", version: 1 }
+      - { id: 2, owner: Linus, balance: "999.00", version: 2 }
+      - { id: 3, owner: Grace, balance: "10.00", version: 1 }

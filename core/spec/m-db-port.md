@@ -557,9 +557,16 @@ this table lists.
 
 | Decision point | Postgres | MariaDB |
 |---|---|---|
-| Read Committed | fresh statement snapshot | fresh statement/read snapshot |
-| Repeatable Read | transaction-stable snapshot; no phantoms on supported versions; write skew possible | transaction-stable snapshot with `innodb_snapshot_isolation` on; no phantoms on the supported floor; conflict raises `1020`, which retries |
+| Read Committed | fresh statement snapshot; a statement that waited on a row another transaction changed re-evaluates its conditions against that row's new version while keeping the versions of every other row it read | fresh statement/read snapshot; the mapping leaves `innodb_snapshot_isolation` as the server sets it, and with it on a write over a row changed after the statement's read view can raise `1020` |
+| Repeatable Read | transaction-stable snapshot taken by the first statement; no phantoms on supported versions; write skew possible; writing or locking a row whose physical version changed after the snapshot raises `40001`, whether or not a modeled value changed | transaction-stable snapshot with `innodb_snapshot_isolation` on, taken by the first consistent read; no phantoms on the supported floor; write skew possible; a locking read or write of a row changed after that read view raises `1020`, which retries, while a transaction that writes before it reads anything has no read view yet and writes the latest committed row |
 | Serializable / conflict behavior | SSI; conflict raises `40001`, which retries | shared locking reads and range protection; conflict raises `1213`, which retries |
+
+These Repeatable Read rows are **qualified provider profiles**: two-session
+compatibility cases witness them per dialect, and they are stronger than the
+portable minimum without strengthening it. A stable snapshot still does not make
+a predicate true at commit, prevent write skew, validate a revision the caller
+read before the snapshot was taken, or coordinate concurrent creation in a
+temporal gap.
 
 The graded MariaDB floor is **12.3.2+**, one floor for every supported release
 rather than one per series. Carrying `innodb_snapshot_isolation` is not enough:

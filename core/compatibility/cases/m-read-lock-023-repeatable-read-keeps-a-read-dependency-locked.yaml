@@ -1,0 +1,48 @@
+# A locking transaction reads account 2 as a dependency and writes only account 1. At
+# Repeatable Read its shared lock still protects the row it never writes: the peer's
+# update of account 2 waits on it and times out.
+model: models/account.yaml
+tags: [m-read-lock, m-unit-work, m-db-error, isolation, concurrency, locking-mode, lockWaitTimeout, repeatable-read, slice-snapshot-1]
+shape: error
+compileEligibility:
+  mode: run-only
+  reason: single-connection
+  note: "two-session isolation witness (when.concurrency)"
+given:
+  fixtures: true
+when:
+  uow:
+    concurrency: locking
+    isolation: repeatable-read
+  concurrency:
+    rounds:
+      - A:
+          statements:
+            - sql:
+                postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? for share of t0
+                mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? lock in share mode
+              binds: [2]
+      - A:
+          statements:
+            - sql:
+                postgres: update account set balance = ?, version = ? where id = ?
+                mariadb: update account set balance = ?, version = ? where id = ?
+              binds: ["50.00", 2, 1]
+      - B:
+          statements:
+            - sql:
+                postgres: update account set balance = ?, version = ? where id = ? and version = ?
+                mariadb: update account set balance = ?, version = ? where id = ? and version = ?
+              binds: ["999.00", 2, 2, 1]
+      - A:
+          kind: commit
+then:
+  errorClass: lockWaitTimeout
+  nativeCode:
+    postgres: "55P03"
+    mariadb: 1205
+  tableState:
+    account:
+      - { id: 1, owner: Ada, balance: "50.00", version: 2 }
+      - { id: 2, owner: Linus, balance: "250.00", version: 1 }
+      - { id: 3, owner: Grace, balance: "10.00", version: 1 }

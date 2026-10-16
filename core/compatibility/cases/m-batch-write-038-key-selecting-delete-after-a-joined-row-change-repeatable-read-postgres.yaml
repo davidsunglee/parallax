@@ -1,0 +1,42 @@
+# Transaction A renames order 1, the joined row alone, so neither item row changes,
+# and holds the change. Transaction B's key-selecting delete of items of orders named
+# Ada runs before A commits. The statement locks only order items, so it does not
+# wait, and it acts on the order name its own view read before A committed.
+model: models/orders.yaml
+tags: [m-batch-write, m-sql, m-unit-work, isolation, concurrency, predicate-write, readless, relationship, to-one, delete, repeatable-read, slice-snapshot-1]
+shape: concurrencySuccess
+compileEligibility:
+  mode: run-only
+  reason: single-connection
+  note: "two-session isolation witness (when.concurrency)"
+given:
+  fixtures: true
+when:
+  uow:
+    isolation: repeatable-read
+  concurrency:
+    rounds:
+      - A:
+          kind: write
+          statements:
+            - sql:
+                postgres: update orders set name = ? where id = ?
+              binds: [Zed, 1]
+          affectedRows: [1]
+      - B:
+          kind: write
+          statements:
+            - sql:
+                postgres: delete from order_item where id in (select t0.id from order_item t0 left join orders t1 on t1.id = t0.order_id where t1.name = ?)
+              binds: [Ada]
+          affectedRows: [2]
+      - A:
+          kind: commit
+      - B:
+          kind: commit
+then:
+  tableState:
+    order_item:
+      - { id: 21, order_id: 2, sku: A-300, quantity: 4, shipped_on: 2024-02-20 }
+      - { id: 421, order_id: 42, sku: A-999, quantity: 3, shipped_on: 2024-03-10 }
+      - { id: 422, order_id: 42, sku: B-200, quantity: 5, shipped_on: 2024-02-05 }
