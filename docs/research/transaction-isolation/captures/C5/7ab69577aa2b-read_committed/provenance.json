@@ -1,0 +1,187 @@
+{
+  "arm": {
+    "commit": "7ab69577aa2b3ace2dfe80ea445a1fd587382744",
+    "isolation": "read_committed",
+    "ref": "7ab69577a"
+  },
+  "attribution": "standalone and read-only reads before and after evidence removal",
+  "capture": {
+    "commit": "8886e730c2f97b54f72bd6b9dce516aec1d36126",
+    "dirty": false,
+    "scripts": {
+      "_support.py": "715a63e53923fa9a6f685f483f594b96700db184a5eaba16fea1f052919f1e87",
+      "capture.py": "d2b34a7e549f7e33637a41d16f9bc625c43e9ed6df7e8687257848675f2063ea",
+      "contention.py": "91fd3a2cbccd171779f6b9c9e149aa2141cb134241ff04d327bb8d7cd1b220ce",
+      "end_to_end_writes.py": "015d7dc667a50fad1b6f63059755ee9ec82e0413352dd178684cced2b22f8963",
+      "guard_wal.py": "3eaed87f4999e964e1d984983134ad30942bb0f2033a22ba08d203cadefe0d79",
+      "lock_snapshot_trace.py": "a06a14359b95c45b1e5b5b890394d7bbbff9300aac7dd215fcb260937832fc18",
+      "predicate_in_place.py": "9cd1a7fb74edd7aaa40f132996ea6525151032146c233a97c2bbc90cf751b810",
+      "read_retention.py": "225e6e4a40e60e397a347987d723600ec8475fec5218d2fa3ea1e0d3c5481bd9",
+      "stream_churn.py": "16a2f0747f7f36cf965379f3a2e84497309214aa48ddff7ebd5255aa01dcfc0d"
+    }
+  },
+  "capturedAt": "2026-10-16T12:06:02.992654+00:00",
+  "checkpoint": "C5",
+  "drivers": {
+    "read_retention": {
+      "bytes": 67471,
+      "command": [
+        "/Users/david/.humanlayer/workspaces/cor-214-simplify-transactions-and-repeatable-read-7bk9nl/parallax/docs/research/transaction-isolation/scripts/read_retention.py",
+        "--isolation",
+        "read_committed",
+        "--out",
+        "/Users/david/.humanlayer/workspaces/cor-214-simplify-transactions-and-repeatable-read-7bk9nl/parallax/docs/research/transaction-isolation/captures/C5/7ab69577aa2b-read_committed/read_retention.json"
+      ],
+      "conditions": {
+        "cpython": "3.14.8",
+        "image": "postgres:18.6-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2",
+        "isolation": "read_committed",
+        "settings": {
+          "autovacuum": "on",
+          "deadlock_timeout": "1s",
+          "default_transaction_isolation": "read committed",
+          "lock_timeout": "0",
+          "max_connections": "100",
+          "server_version": "18.6",
+          "shared_buffers": "128MB",
+          "synchronous_commit": "on",
+          "wal_level": "replica"
+        },
+        "version": "PostgreSQL 18.6 on aarch64-unknown-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit",
+        "workload": {
+          "deliveries": [
+            "eager",
+            "stream"
+          ],
+          "held": "an eager read holds its Snapshot and roots; a stream holds every root",
+          "memory": "tracemalloc per traced read from a collected baseline; the census counts gc-tracked objects by type",
+          "pageSize": 500,
+          "placements": [
+            "standalone",
+            "read-only"
+          ],
+          "pool": 1,
+          "representations": [
+            "typed",
+            "wire"
+          ],
+          "roots": 2000,
+          "subjects": [
+            "account",
+            "charter",
+            "tt-charter",
+            "bt-charter"
+          ],
+          "timedReads": 15,
+          "tracedReads": 5,
+          "warmups": 3
+        }
+      },
+      "elapsedS": 140.765
+    },
+    "snapshot_delivery": {
+      "bytes": 53662,
+      "command": [
+        "tools/snapshot_delivery_overhead.py",
+        "--workload",
+        "conventional-fanout",
+        "--workload",
+        "versioned-document",
+        "--workload",
+        "bitemporal-current",
+        "--out",
+        "/Users/david/.humanlayer/workspaces/cor-214-simplify-transactions-and-repeatable-read-7bk9nl/parallax/docs/research/transaction-isolation/captures/C5/7ab69577aa2b-read_committed/snapshot_delivery.json"
+      ],
+      "conditions": {
+        "budgetContractDigest": "422106570ad6bcf7e945c173f3627277e33fc896aabc52f61ce9d4ee6fede9c0",
+        "cores": 10,
+        "cpu": "Apple M5",
+        "cpython": "3.14.8",
+        "dirty": false,
+        "machine": "Mac17,4",
+        "os": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
+        "postgres": "18.6",
+        "ramGiB": 32,
+        "sampling": {
+          "memory": {
+            "armGrowthMaxKiB": 16,
+            "children": 3,
+            "collectAtPageBoundary": true,
+            "individualMax": 1.1,
+            "medianMeetsCeiling": true,
+            "scalingArms": [
+              200,
+              2000
+            ]
+          },
+          "timing": {
+            "measured": 9,
+            "medianMeetsCeiling": true,
+            "secondSlowestMax": 1.25,
+            "warmups": 3
+          }
+        },
+        "workloadDigest": "1484a076705bf0cd2a153bb5cd2794515caafe3c92a9d62babee6132ac86633c"
+      },
+      "elapsedS": 565.733
+    },
+    "stream_churn": {
+      "bytes": 82262,
+      "command": [
+        "/Users/david/.humanlayer/workspaces/cor-214-simplify-transactions-and-repeatable-read-7bk9nl/parallax/docs/research/transaction-isolation/scripts/stream_churn.py",
+        "--read-only",
+        "--isolation",
+        "read_committed",
+        "--out",
+        "/Users/david/.humanlayer/workspaces/cor-214-simplify-transactions-and-repeatable-read-7bk9nl/parallax/docs/research/transaction-isolation/captures/C5/7ab69577aa2b-read_committed/stream_churn.json"
+      ],
+      "conditions": {
+        "cpython": "3.14.8",
+        "image": "postgres:18.6-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2",
+        "isolation": "read_committed",
+        "settings": {
+          "autovacuum": "on",
+          "deadlock_timeout": "1s",
+          "default_transaction_isolation": "read committed",
+          "lock_timeout": "0",
+          "max_connections": "100",
+          "server_version": "18.6",
+          "shared_buffers": "128MB",
+          "synchronous_commit": "on",
+          "wal_level": "replica"
+        },
+        "version": "PostgreSQL 18.6 on aarch64-unknown-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit",
+        "workload": {
+          "consumerDelayS": {
+            "fast": 0.0,
+            "slow": 0.0005
+          },
+          "memory": "tracemalloc over the whole driver process, writers and sampler included",
+          "pageSize": 500,
+          "placements": [
+            "transaction-held",
+            "read-only-held",
+            "standalone"
+          ],
+          "roots": 20000,
+          "sampleIntervalS": 0.25,
+          "writers": 2
+        }
+      },
+      "elapsedS": 143.71
+    }
+  },
+  "loadAverage": [
+    2.57275390625,
+    2.5244140625,
+    2.556640625
+  ],
+  "lockDigest": "ba94b858fe8d97e5b38e66362623f67e2e6634515530972af4459e0dcee51334",
+  "machine": {
+    "cores": 10,
+    "cpu": "Apple M5",
+    "model": "Mac17,4",
+    "os": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
+    "ramGiB": 32
+  }
+}

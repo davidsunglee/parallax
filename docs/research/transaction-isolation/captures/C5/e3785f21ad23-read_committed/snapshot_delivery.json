@@ -1,0 +1,1149 @@
+{
+  "authority": "authoritative",
+  "comparisons": [
+    {
+      "cell": "live.eager.maxMs",
+      "limit": 12.5,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "ms",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "live.eager.minRootsPerSecond",
+      "limit": 16000.0,
+      "operator": "at-least",
+      "outcome": "within",
+      "unit": "roots/s",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "live.page32.maxMs",
+      "limit": 20.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "ms",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "live.page32.minRootsPerSecond",
+      "limit": 10000.0,
+      "operator": "at-least",
+      "outcome": "within",
+      "unit": "roots/s",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "live.page128.maxMs",
+      "limit": 15.5,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "ms",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "live.page128.minRootsPerSecond",
+      "limit": 12903.0,
+      "operator": "at-least",
+      "outcome": "within",
+      "unit": "roots/s",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "firstResult.page1.maxMs",
+      "limit": 1.5,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "ms",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "firstResult.page32.maxMs",
+      "limit": 2.5,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "ms",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "providerFreeCpu.eager.maxMs",
+      "limit": 10.5,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "ms",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "providerFreeCpu.eager.minRootsPerSecond",
+      "limit": 19048.0,
+      "operator": "at-least",
+      "outcome": "within",
+      "unit": "roots/s",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "providerFreeCpu.page32.maxMs",
+      "limit": 13.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "ms",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "providerFreeCpu.page32.minRootsPerSecond",
+      "limit": 15385.0,
+      "operator": "at-least",
+      "outcome": "within",
+      "unit": "roots/s",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "eagerMemory.retainedKiB",
+      "limit": 800.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "eagerMemory.peakKiB",
+      "limit": 1350.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "streamedMemory.retainedKiB",
+      "limit": 64.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "streamedMemory.page1PeakKiB",
+      "limit": 64.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "streamedMemory.page32PeakKiB",
+      "limit": 256.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "streamedMemory.page128PeakKiB",
+      "limit": 768.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "live.eager.maxMs",
+      "limit": 5.5,
+      "operator": "at-most",
+      "outcome": "outside",
+      "unit": "ms",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "live.eager.minRootsPerSecond",
+      "limit": 36364.0,
+      "operator": "at-least",
+      "outcome": "within",
+      "unit": "roots/s",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "live.page32.maxMs",
+      "limit": 8.0,
+      "operator": "at-most",
+      "outcome": "outside",
+      "unit": "ms",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "live.page32.minRootsPerSecond",
+      "limit": 25000.0,
+      "operator": "at-least",
+      "outcome": "outside",
+      "unit": "roots/s",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "live.page128.maxMs",
+      "limit": 6.75,
+      "operator": "at-most",
+      "outcome": "outside",
+      "unit": "ms",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "live.page128.minRootsPerSecond",
+      "limit": 29630.0,
+      "operator": "at-least",
+      "outcome": "outside",
+      "unit": "roots/s",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "firstResult.page1.maxMs",
+      "limit": 0.6,
+      "operator": "at-most",
+      "outcome": "outside",
+      "unit": "ms",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "firstResult.page32.maxMs",
+      "limit": 1.0,
+      "operator": "at-most",
+      "outcome": "outside",
+      "unit": "ms",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "eagerMemory.retainedKiB",
+      "limit": 275.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "eagerMemory.peakKiB",
+      "limit": 475.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "streamedMemory.retainedKiB",
+      "limit": 64.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "streamedMemory.page1PeakKiB",
+      "limit": 64.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "streamedMemory.page32PeakKiB",
+      "limit": 144.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "streamedMemory.page128PeakKiB",
+      "limit": 336.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "live.eager.maxMs",
+      "limit": 6.5,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "ms",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "live.eager.minRootsPerSecond",
+      "limit": 30769.0,
+      "operator": "at-least",
+      "outcome": "within",
+      "unit": "roots/s",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "live.page32.maxMs",
+      "limit": 10.0,
+      "operator": "at-most",
+      "outcome": "outside",
+      "unit": "ms",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "live.page32.minRootsPerSecond",
+      "limit": 20000.0,
+      "operator": "at-least",
+      "outcome": "outside",
+      "unit": "roots/s",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "live.page128.maxMs",
+      "limit": 8.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "ms",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "live.page128.minRootsPerSecond",
+      "limit": 25000.0,
+      "operator": "at-least",
+      "outcome": "within",
+      "unit": "roots/s",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "firstResult.page1.maxMs",
+      "limit": 1.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "ms",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "firstResult.page32.maxMs",
+      "limit": 1.25,
+      "operator": "at-most",
+      "outcome": "outside",
+      "unit": "ms",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "eagerMemory.retainedKiB",
+      "limit": 330.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "eagerMemory.peakKiB",
+      "limit": 425.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "streamedMemory.retainedKiB",
+      "limit": 64.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "streamedMemory.page1PeakKiB",
+      "limit": 64.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "streamedMemory.page32PeakKiB",
+      "limit": 144.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "streamedMemory.page128PeakKiB",
+      "limit": 352.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "bitemporal-current"
+    }
+  ],
+  "errors": [],
+  "incomplete": [],
+  "provenance": {
+    "budgetContract": "schemaVersion: 1\nauthority:\n  machine: Mac17,4\n  cpu: Apple M5\n  cores: 10\n  ramGiB: 32\n  cpython: 3.14.8\n  postgres: \"18.6\"\nsampling:\n  timing:\n    warmups: 3\n    measured: 9\n    medianMeetsCeiling: true\n    secondSlowestMax: 1.25\n  memory:\n    children: 3\n    collectAtPageBoundary: true\n    medianMeetsCeiling: true\n    individualMax: 1.10\n    scalingArms: [200, 2000]\n    armGrowthMaxKiB: 16\nworkloads:\n  conventional-fanout:\n    fixture: benchmarks/stream.yaml\n    cells:\n      live:\n        eager: { maxMs: 12.5, minRootsPerSecond: 16000 }\n        page32: { maxMs: 20, minRootsPerSecond: 10000 }\n        page128: { maxMs: 15.5, minRootsPerSecond: 12903 }\n      firstResult:\n        page1: { maxMs: 1.5 }\n        page32: { maxMs: 2.5 }\n      providerFreeCpu:\n        eager: { maxMs: 10.5, minRootsPerSecond: 19048 }\n        page32: { maxMs: 13, minRootsPerSecond: 15385 }\n      eagerMemory: { retainedKiB: 800, peakKiB: 1350 }\n      streamedMemory:\n        retainedKiB: 64\n        page1PeakKiB: 64\n        page32PeakKiB: 256\n        page128PeakKiB: 768\n  duplicate-include:\n    fixture: benchmarks/duplicate-include.yaml\n    cells:\n      live:\n        eager: { maxMs: 18, minRootsPerSecond: 11111 }\n        page32: { maxMs: 24, minRootsPerSecond: 8333 }\n        page128: { maxMs: 22, minRootsPerSecond: 9091 }\n      firstResult:\n        page1: { maxMs: 1.5 }\n        page32: { maxMs: 3.0 }\n      providerFreeCpu:\n        eager: { maxMs: 14.5, minRootsPerSecond: 13793 }\n        page32: { maxMs: 17, minRootsPerSecond: 11765 }\n      eagerMemory: { retainedKiB: 820, peakKiB: 1500 }\n      streamedMemory:\n        retainedKiB: 64\n        page1PeakKiB: 64\n        page32PeakKiB: 320\n        page128PeakKiB: 1200\n  document-heavy:\n    fixture: benchmarks/document-layout.yaml\n    cells:\n      live:\n        eager: { maxMs: 22, minRootsPerSecond: 9091 }\n        page32: { maxMs: 28, minRootsPerSecond: 7143 }\n        page128: { maxMs: 27, minRootsPerSecond: 7407 }\n      firstResult:\n        page1: { maxMs: 2.0 }\n        page32: { maxMs: 3.5 }\n      eagerMemory: { retainedKiB: 975, peakKiB: 1900 }\n      streamedMemory:\n        retainedKiB: 64\n        page1PeakKiB: 96\n        page32PeakKiB: 400\n        page128PeakKiB: 1280\n  versioned-document:\n    fixture: benchmarks/versioned-document.yaml\n    cells:\n      live:\n        eager: { maxMs: 5.5, minRootsPerSecond: 36364 }\n        page32: { maxMs: 8, minRootsPerSecond: 25000 }\n        page128: { maxMs: 6.75, minRootsPerSecond: 29630 }\n      firstResult:\n        page1: { maxMs: 0.6 }\n        page32: { maxMs: 1.0 }\n      eagerMemory: { retainedKiB: 275, peakKiB: 475 }\n      streamedMemory:\n        retainedKiB: 64\n        page1PeakKiB: 64\n        page32PeakKiB: 144\n        page128PeakKiB: 336\n  bitemporal-current:\n    fixture: benchmarks/bitemporal-current.yaml\n    cells:\n      live:\n        eager: { maxMs: 6.5, minRootsPerSecond: 30769 }\n        page32: { maxMs: 10, minRootsPerSecond: 20000 }\n        page128: { maxMs: 8, minRootsPerSecond: 25000 }\n      firstResult:\n        page1: { maxMs: 1.0 }\n        page32: { maxMs: 1.25 }\n      eagerMemory: { retainedKiB: 330, peakKiB: 425 }\n      streamedMemory:\n        retainedKiB: 64\n        page1PeakKiB: 64\n        page32PeakKiB: 144\n        page128PeakKiB: 352\n  stress-columns:\n    fixture: benchmarks/materialization-stress-columns.yaml\n    cells:\n      stress:\n        maxUsPerProjection: 175\n        minProjectionsPerSecond: 5714\n        retainedBPerProjection: 2800\n        transientBPerProjection: 3328\n        peakFor64KiB: 400\n        preparedSetKiB: 64\n  stress-document:\n    fixture: benchmarks/materialization-stress-document.yaml\n    cells:\n      stress:\n        maxUsPerProjection: 210\n        minProjectionsPerSecond: 4762\n        retainedBPerProjection: 3200\n        transientBPerProjection: 3328\n        peakFor64KiB: 425\n        preparedSetKiB: 80\n",
+    "budgetContractDigest": "422106570ad6bcf7e945c173f3627277e33fc896aabc52f61ce9d4ee6fede9c0",
+    "commit": "e3785f21ad23663eb2fa2a70f75c460e711d2023",
+    "cores": 10,
+    "cpu": "Apple M5",
+    "cpython": "3.14.8",
+    "dirty": false,
+    "lockDigest": "ba94b858fe8d97e5b38e66362623f67e2e6634515530972af4459e0dcee51334",
+    "machine": "Mac17,4",
+    "os": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
+    "postgres": "18.6",
+    "ramGiB": 32,
+    "sampling": {
+      "memory": {
+        "armGrowthMaxKiB": 16,
+        "children": 3,
+        "collectAtPageBoundary": true,
+        "individualMax": 1.1,
+        "medianMeetsCeiling": true,
+        "scalingArms": [
+          200,
+          2000
+        ]
+      },
+      "timing": {
+        "measured": 9,
+        "medianMeetsCeiling": true,
+        "secondSlowestMax": 1.25,
+        "warmups": 3
+      }
+    },
+    "workloadDigest": "1484a076705bf0cd2a153bb5cd2794515caafe3c92a9d62babee6132ac86633c"
+  },
+  "readings": [
+    {
+      "cell": "live.eager.maxMs",
+      "runtime": "3.13",
+      "unit": "ms",
+      "value": 10.448665998410434,
+      "window": "live-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "live.eager.minRootsPerSecond",
+      "runtime": "3.13",
+      "unit": "roots/s",
+      "value": 20097.050699966276,
+      "window": "live-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "live.page32.maxMs",
+      "runtime": "3.13",
+      "unit": "ms",
+      "value": 18.292542023118585,
+      "window": "live-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "live.page32.minRootsPerSecond",
+      "runtime": "3.13",
+      "unit": "roots/s",
+      "value": 11530.340844923803,
+      "window": "live-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "live.page128.maxMs",
+      "runtime": "3.13",
+      "unit": "ms",
+      "value": 12.448916997527704,
+      "window": "live-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "live.page128.minRootsPerSecond",
+      "runtime": "3.13",
+      "unit": "roots/s",
+      "value": 15470.297016521048,
+      "window": "live-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "firstResult.page1.maxMs",
+      "runtime": "3.13",
+      "unit": "ms",
+      "value": 1.2171249836683273,
+      "window": "live-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "firstResult.page32.maxMs",
+      "runtime": "3.13",
+      "unit": "ms",
+      "value": 1.7323749780189246,
+      "window": "live-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "providerFreeCpu.eager.maxMs",
+      "runtime": "3.13",
+      "unit": "ms",
+      "value": 8.484709018375725,
+      "window": "provider-free-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "providerFreeCpu.eager.minRootsPerSecond",
+      "runtime": "3.13",
+      "unit": "roots/s",
+      "value": 23628.674402808127,
+      "window": "provider-free-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "providerFreeCpu.page32.maxMs",
+      "runtime": "3.13",
+      "unit": "ms",
+      "value": 9.50095898588188,
+      "window": "provider-free-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "providerFreeCpu.page32.minRootsPerSecond",
+      "runtime": "3.13",
+      "unit": "roots/s",
+      "value": 21330.109355045308,
+      "window": "provider-free-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "eagerMemory.retainedKiB",
+      "runtime": "3.13",
+      "unit": "KiB",
+      "value": 521.97265625,
+      "window": "live-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "eagerMemory.peakKiB",
+      "runtime": "3.13",
+      "unit": "KiB",
+      "value": 1232.2607421875,
+      "window": "live-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "streamedMemory.retainedKiB",
+      "runtime": "3.13",
+      "unit": "KiB",
+      "value": 5.001953125,
+      "window": "live-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "streamedMemory.page1PeakKiB",
+      "runtime": "3.13",
+      "unit": "KiB",
+      "value": 29.3291015625,
+      "window": "live-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "streamedMemory.page32PeakKiB",
+      "runtime": "3.13",
+      "unit": "KiB",
+      "value": 188.2763671875,
+      "window": "live-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "streamedMemory.page128PeakKiB",
+      "runtime": "3.13",
+      "unit": "KiB",
+      "value": 667.8974609375,
+      "window": "live-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "live.eager.maxMs",
+      "runtime": "3.13",
+      "unit": "ms",
+      "value": 5.977916996926069,
+      "window": "live-delivery",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "live.eager.minRootsPerSecond",
+      "runtime": "3.13",
+      "unit": "roots/s",
+      "value": 34405.89111846413,
+      "window": "live-delivery",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "live.page32.maxMs",
+      "runtime": "3.13",
+      "unit": "ms",
+      "value": 10.967291018459946,
+      "window": "live-delivery",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "live.page32.minRootsPerSecond",
+      "runtime": "3.13",
+      "unit": "roots/s",
+      "value": 16872.356151633747,
+      "window": "live-delivery",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "live.page128.maxMs",
+      "runtime": "3.13",
+      "unit": "ms",
+      "value": 7.631332991877571,
+      "window": "live-delivery",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "live.page128.minRootsPerSecond",
+      "runtime": "3.13",
+      "unit": "roots/s",
+      "value": 27175.29770672394,
+      "window": "live-delivery",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "firstResult.page1.maxMs",
+      "runtime": "3.13",
+      "unit": "ms",
+      "value": 0.8552080253139138,
+      "window": "live-delivery",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "firstResult.page32.maxMs",
+      "runtime": "3.13",
+      "unit": "ms",
+      "value": 1.033750013448298,
+      "window": "live-delivery",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "eagerMemory.retainedKiB",
+      "runtime": "3.13",
+      "unit": "KiB",
+      "value": 171.86328125,
+      "window": "live-delivery",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "eagerMemory.peakKiB",
+      "runtime": "3.13",
+      "unit": "KiB",
+      "value": 292.6044921875,
+      "window": "live-delivery",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "streamedMemory.retainedKiB",
+      "runtime": "3.13",
+      "unit": "KiB",
+      "value": 3.13671875,
+      "window": "live-delivery",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "streamedMemory.page1PeakKiB",
+      "runtime": "3.13",
+      "unit": "KiB",
+      "value": 30.6494140625,
+      "window": "live-delivery",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "streamedMemory.page32PeakKiB",
+      "runtime": "3.13",
+      "unit": "KiB",
+      "value": 68.2822265625,
+      "window": "live-delivery",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "streamedMemory.page128PeakKiB",
+      "runtime": "3.13",
+      "unit": "KiB",
+      "value": 177.19921875,
+      "window": "live-delivery",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "live.eager.maxMs",
+      "runtime": "3.13",
+      "unit": "ms",
+      "value": 5.853000009665266,
+      "window": "live-delivery",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "live.eager.minRootsPerSecond",
+      "runtime": "3.13",
+      "unit": "roots/s",
+      "value": 33343.29195325865,
+      "window": "live-delivery",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "live.page32.maxMs",
+      "runtime": "3.13",
+      "unit": "ms",
+      "value": 12.489209009800106,
+      "window": "live-delivery",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "live.page32.minRootsPerSecond",
+      "runtime": "3.13",
+      "unit": "roots/s",
+      "value": 16394.674880302275,
+      "window": "live-delivery",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "live.page128.maxMs",
+      "runtime": "3.13",
+      "unit": "ms",
+      "value": 7.431249978253618,
+      "window": "live-delivery",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "live.page128.minRootsPerSecond",
+      "runtime": "3.13",
+      "unit": "roots/s",
+      "value": 29651.224571891114,
+      "window": "live-delivery",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "firstResult.page1.maxMs",
+      "runtime": "3.13",
+      "unit": "ms",
+      "value": 1.0565420088823885,
+      "window": "live-delivery",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "firstResult.page32.maxMs",
+      "runtime": "3.13",
+      "unit": "ms",
+      "value": 1.4277500158641487,
+      "window": "live-delivery",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "eagerMemory.retainedKiB",
+      "runtime": "3.13",
+      "unit": "KiB",
+      "value": 295.99609375,
+      "window": "live-delivery",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "eagerMemory.peakKiB",
+      "runtime": "3.13",
+      "unit": "KiB",
+      "value": 422.5634765625,
+      "window": "live-delivery",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "streamedMemory.retainedKiB",
+      "runtime": "3.13",
+      "unit": "KiB",
+      "value": 11.2861328125,
+      "window": "live-delivery",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "streamedMemory.page1PeakKiB",
+      "runtime": "3.13",
+      "unit": "KiB",
+      "value": 46.4423828125,
+      "window": "live-delivery",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "streamedMemory.page32PeakKiB",
+      "runtime": "3.13",
+      "unit": "KiB",
+      "value": 82.58203125,
+      "window": "live-delivery",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "streamedMemory.page128PeakKiB",
+      "runtime": "3.13",
+      "unit": "KiB",
+      "value": 217.9052734375,
+      "window": "live-delivery",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "live.eager.maxMs",
+      "runtime": "3.14",
+      "unit": "ms",
+      "value": 9.89683301304467,
+      "window": "live-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "live.eager.minRootsPerSecond",
+      "runtime": "3.14",
+      "unit": "roots/s",
+      "value": 21657.129957131667,
+      "window": "live-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "live.page32.maxMs",
+      "runtime": "3.14",
+      "unit": "ms",
+      "value": 19.845500006340444,
+      "window": "live-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "live.page32.minRootsPerSecond",
+      "runtime": "3.14",
+      "unit": "roots/s",
+      "value": 10336.896513562686,
+      "window": "live-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "live.page128.maxMs",
+      "runtime": "3.14",
+      "unit": "ms",
+      "value": 12.267208017874509,
+      "window": "live-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "live.page128.minRootsPerSecond",
+      "runtime": "3.14",
+      "unit": "roots/s",
+      "value": 17022.664494384408,
+      "window": "live-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "firstResult.page1.maxMs",
+      "runtime": "3.14",
+      "unit": "ms",
+      "value": 1.3287499896250665,
+      "window": "live-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "firstResult.page32.maxMs",
+      "runtime": "3.14",
+      "unit": "ms",
+      "value": 1.9998330099042505,
+      "window": "live-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "providerFreeCpu.eager.maxMs",
+      "runtime": "3.14",
+      "unit": "ms",
+      "value": 7.8103340056259185,
+      "window": "provider-free-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "providerFreeCpu.eager.minRootsPerSecond",
+      "runtime": "3.14",
+      "unit": "roots/s",
+      "value": 25645.54645516941,
+      "window": "provider-free-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "providerFreeCpu.page32.maxMs",
+      "runtime": "3.14",
+      "unit": "ms",
+      "value": 8.725667023099959,
+      "window": "provider-free-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "providerFreeCpu.page32.minRootsPerSecond",
+      "runtime": "3.14",
+      "unit": "roots/s",
+      "value": 23125.50713997393,
+      "window": "provider-free-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "eagerMemory.retainedKiB",
+      "runtime": "3.14",
+      "unit": "KiB",
+      "value": 531.3828125,
+      "window": "live-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "eagerMemory.peakKiB",
+      "runtime": "3.14",
+      "unit": "KiB",
+      "value": 1221.8642578125,
+      "window": "live-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "streamedMemory.retainedKiB",
+      "runtime": "3.14",
+      "unit": "KiB",
+      "value": 5.107421875,
+      "window": "live-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "streamedMemory.page1PeakKiB",
+      "runtime": "3.14",
+      "unit": "KiB",
+      "value": 31.853515625,
+      "window": "live-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "streamedMemory.page32PeakKiB",
+      "runtime": "3.14",
+      "unit": "KiB",
+      "value": 189.09375,
+      "window": "live-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "streamedMemory.page128PeakKiB",
+      "runtime": "3.14",
+      "unit": "KiB",
+      "value": 665.9140625,
+      "window": "live-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "live.eager.maxMs",
+      "runtime": "3.14",
+      "unit": "ms",
+      "value": 5.568124994169921,
+      "window": "live-delivery",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "live.eager.minRootsPerSecond",
+      "runtime": "3.14",
+      "unit": "roots/s",
+      "value": 36593.17538259516,
+      "window": "live-delivery",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "live.page32.maxMs",
+      "runtime": "3.14",
+      "unit": "ms",
+      "value": 11.828707996755838,
+      "window": "live-delivery",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "live.page32.minRootsPerSecond",
+      "runtime": "3.14",
+      "unit": "roots/s",
+      "value": 16418.11420414911,
+      "window": "live-delivery",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "live.page128.maxMs",
+      "runtime": "3.14",
+      "unit": "ms",
+      "value": 7.033000001683831,
+      "window": "live-delivery",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "live.page128.minRootsPerSecond",
+      "runtime": "3.14",
+      "unit": "roots/s",
+      "value": 29540.644524856478,
+      "window": "live-delivery",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "firstResult.page1.maxMs",
+      "runtime": "3.14",
+      "unit": "ms",
+      "value": 0.9206249960698187,
+      "window": "live-delivery",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "firstResult.page32.maxMs",
+      "runtime": "3.14",
+      "unit": "ms",
+      "value": 1.1236660066060722,
+      "window": "live-delivery",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "eagerMemory.retainedKiB",
+      "runtime": "3.14",
+      "unit": "KiB",
+      "value": 174.9453125,
+      "window": "live-delivery",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "eagerMemory.peakKiB",
+      "runtime": "3.14",
+      "unit": "KiB",
+      "value": 253.65234375,
+      "window": "live-delivery",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "streamedMemory.retainedKiB",
+      "runtime": "3.14",
+      "unit": "KiB",
+      "value": 3.21484375,
+      "window": "live-delivery",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "streamedMemory.page1PeakKiB",
+      "runtime": "3.14",
+      "unit": "KiB",
+      "value": 30.93359375,
+      "window": "live-delivery",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "streamedMemory.page32PeakKiB",
+      "runtime": "3.14",
+      "unit": "KiB",
+      "value": 64.8857421875,
+      "window": "live-delivery",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "streamedMemory.page128PeakKiB",
+      "runtime": "3.14",
+      "unit": "KiB",
+      "value": 183.2265625,
+      "window": "live-delivery",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "live.eager.maxMs",
+      "runtime": "3.14",
+      "unit": "ms",
+      "value": 5.232041992712766,
+      "window": "live-delivery",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "live.eager.minRootsPerSecond",
+      "runtime": "3.14",
+      "unit": "roots/s",
+      "value": 35964.754552680904,
+      "window": "live-delivery",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "live.page32.maxMs",
+      "runtime": "3.14",
+      "unit": "ms",
+      "value": 12.697792000835761,
+      "window": "live-delivery",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "live.page32.minRootsPerSecond",
+      "runtime": "3.14",
+      "unit": "roots/s",
+      "value": 16902.183091227846,
+      "window": "live-delivery",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "live.page128.maxMs",
+      "runtime": "3.14",
+      "unit": "ms",
+      "value": 6.975915981456637,
+      "window": "live-delivery",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "live.page128.minRootsPerSecond",
+      "runtime": "3.14",
+      "unit": "roots/s",
+      "value": 28143.74414396182,
+      "window": "live-delivery",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "firstResult.page1.maxMs",
+      "runtime": "3.14",
+      "unit": "ms",
+      "value": 0.9716670028865337,
+      "window": "live-delivery",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "firstResult.page32.maxMs",
+      "runtime": "3.14",
+      "unit": "ms",
+      "value": 1.3567080022767186,
+      "window": "live-delivery",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "eagerMemory.retainedKiB",
+      "runtime": "3.14",
+      "unit": "KiB",
+      "value": 299.05078125,
+      "window": "live-delivery",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "eagerMemory.peakKiB",
+      "runtime": "3.14",
+      "unit": "KiB",
+      "value": 382.166015625,
+      "window": "live-delivery",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "streamedMemory.retainedKiB",
+      "runtime": "3.14",
+      "unit": "KiB",
+      "value": 11.1845703125,
+      "window": "live-delivery",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "streamedMemory.page1PeakKiB",
+      "runtime": "3.14",
+      "unit": "KiB",
+      "value": 42.3154296875,
+      "window": "live-delivery",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "streamedMemory.page32PeakKiB",
+      "runtime": "3.14",
+      "unit": "KiB",
+      "value": 75.0478515625,
+      "window": "live-delivery",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "streamedMemory.page128PeakKiB",
+      "runtime": "3.14",
+      "unit": "KiB",
+      "value": 201.1142578125,
+      "window": "live-delivery",
+      "workload": "bitemporal-current"
+    }
+  ],
+  "schemaVersion": 2,
+  "subject": "snapshot-delivery"
+}
