@@ -14,7 +14,6 @@ given:
 when:
   uow:
     concurrency: optimistic
-    retryOptimisticConflicts: true
   boundary:
     - action: read
       note: observe the versioned row (records the observed version)
@@ -36,7 +35,6 @@ then:
               accessMode: read-write
               concurrency: optimistic
               retries: 10
-              retryOptimisticConflicts: true
               isolation: read-committed
           - sequence: 2
             activity: 2

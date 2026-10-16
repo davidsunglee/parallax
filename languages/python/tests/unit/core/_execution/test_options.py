@@ -17,12 +17,21 @@ from parallax.core._execution._options import (
 from parallax.core.execution import TxnOptions
 
 
-def test_the_built_in_record_is_ten_optimistic_off_and_read_committed() -> None:
+def test_the_built_in_record_is_ten_optimistic_and_read_committed() -> None:
     options = TxnOptions()
     assert options.max_retries == 10
     assert options.concurrency == "optimistic"
-    assert options.retry_optimistic_conflicts is False
     assert options.isolation == "read_committed"
+
+
+def test_the_optimistic_conflict_opt_in_is_no_field() -> None:
+    assert [field.name for field in dataclasses.fields(TxnOptions)] == [
+        "max_retries",
+        "concurrency",
+        "isolation",
+    ]
+    with pytest.raises(TypeError, match="retry_optimistic_conflicts"):
+        TxnOptions(retry_optimistic_conflicts=True)  # pyright: ignore[reportCallIssue] - the removed field's refusal is what this proves
 
 
 def test_the_record_is_frozen_and_slotted() -> None:
@@ -36,13 +45,11 @@ def test_every_field_is_configurable_and_compares_by_value() -> None:
     configured = TxnOptions(
         max_retries=0,
         concurrency="locking",
-        retry_optimistic_conflicts=True,
         isolation="serializable",
     )
     assert configured == TxnOptions(
         max_retries=0,
         concurrency="locking",
-        retry_optimistic_conflicts=True,
         isolation="serializable",
     )
     assert configured != TxnOptions()
@@ -58,9 +65,6 @@ def test_every_field_is_configurable_and_compares_by_value() -> None:
         ("max_retries", None, "max_retries must be a nonnegative int"),
         ("concurrency", "pessimistic", r"concurrency must be one of \['locking', 'optimistic'\]"),
         ("concurrency", None, "concurrency must be one of"),
-        ("retry_optimistic_conflicts", 1, "retry_optimistic_conflicts must be a bool"),
-        ("retry_optimistic_conflicts", "true", "retry_optimistic_conflicts must be a bool"),
-        ("retry_optimistic_conflicts", None, "retry_optimistic_conflicts must be a bool"),
         ("isolation", "read uncommitted", "isolation must be one of"),
         ("isolation", "repeatable read", "isolation must be one of"),
         ("isolation", None, "isolation must be one of"),
@@ -90,7 +94,6 @@ def test_an_accepted_vocabulary_value_is_stored_as_its_canonical_spelling() -> N
 
 def test_zero_retries_is_a_value_rather_than_an_omission() -> None:
     assert TxnOptions(max_retries=0).max_retries == 0
-    assert TxnOptions(retry_optimistic_conflicts=False).retry_optimistic_conflicts is False
 
 
 def test_the_omission_marker_is_one_slotted_value_that_names_itself() -> None:

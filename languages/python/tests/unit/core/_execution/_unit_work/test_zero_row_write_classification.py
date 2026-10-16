@@ -9,13 +9,13 @@ interference, and no write ingress:
 * a versioned keyed write settled UNGATED (the Locking arm) carries the
   never-retriable stale write as its shortfall class, and an unversioned one
   carries the never-retriable missing target;
-* the classifier calls both non-retriable, and the bounded re-execution loop
-  does not retry either, so a caller with retry budget left still surfaces the
-  failure after exactly one attempt.
+* the retry policy calls both ineligible, so no retry candidate carries them
+  and a caller with retry budget left still surfaces the failure after exactly
+  one attempt.
 
 The verdict and the attempt count are asserted separately on purpose: a loop
-that never consulted the classifier would also surface after one attempt, so the
-count alone cannot tell "classified non-retriable" from "never asked". What an
+that never consulted the policy would also surface after one attempt, so the
+count alone cannot tell "classified ineligible" from "never asked". What an
 observer is told is the classifier's own verdict (`m-execution-lifecycle` — a
 Transaction Attempt reports `retryEligible` independently of the remaining
 budget), and that is the function asserted here.
@@ -35,7 +35,7 @@ from decimal import Decimal
 import pytest
 
 from parallax.core._execution._planning import build_write_planner
-from parallax.core.auto_retry import retriable_failure, run_with_retry
+from parallax.core.auto_retry import RetryCandidate, retry_eligible, run_with_retry
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity, Metamodel
 from parallax.core.unit_work import (
     KeyedWrite,
@@ -132,10 +132,15 @@ def test_an_unversioned_write_reaching_no_row_is_the_non_retriable_missing_targe
 
 
 def _raising(error: WriteEffectError) -> tuple[Callable[[], int], list[int]]:
+    """An attempt that rolls back with ``error`` every time, handed to the loop
+    the way the transaction runner hands it: as a retry candidate exactly when
+    the policy calls it eligible."""
     attempts: list[int] = []
 
     def attempt() -> int:
         attempts.append(len(attempts))
+        if retry_eligible(error):
+            raise RetryCandidate(error)
         raise error
 
     return attempt, attempts
@@ -152,36 +157,20 @@ def _raising(error: WriteEffectError) -> tuple[Callable[[], int], list[int]]:
 def test_a_non_retriable_shortfall_surfaces_after_one_attempt_with_budget_left(
     error: WriteEffectError,
 ) -> None:
-    # Outside the loop's caught set entirely, which is stronger than being
-    # classified non-retriable: there is no opt-in, and no `extra_retriable`
-    # extension, that could turn one of these into a re-execution.
-    assert not retriable_failure(error)
+    assert not retry_eligible(error)
     attempt, attempts = _raising(error)
     with pytest.raises(type(error)):
-        run_with_retry(attempt, retries=10, extra_retriable=lambda _exc: True)
+        run_with_retry(attempt, retries=10)
     assert len(attempts) == 1
 
 
 def test_the_retriable_conflict_is_the_one_shortfall_the_loop_can_re_execute() -> None:
     # The contrast that gives the verdict above its meaning: the same loop, the
-    # same budget, and a gate that came up short IS re-run — but only where the
-    # unit of work opted in, which is what `extra_retriable` carries.
-    attempt, attempts = _raising(OptimisticLockConflictError(_ROW_2, _KEY_2, 1, 0))
-    with pytest.raises(OptimisticLockConflictError):
-        run_with_retry(attempt, retries=2, extra_retriable=lambda _exc: True)
-    assert len(attempts) == 3  # the first attempt plus its two re-executions
-
-
-def test_an_un_opted_in_conflict_still_surfaces_after_one_attempt() -> None:
-    # The same recognized conflict, the same budget, and no opt-in: the loop
-    # catches it and declines to re-execute, so the caller sees it after the
-    # first attempt exactly as an unrecognized failure would surface.
+    # same budget, and a gate that came up short IS re-run until the bound ends.
     conflict = OptimisticLockConflictError(_ROW_2, _KEY_2, 1, 0)
-    # The classifier's own verdict, which is what an observer of the attempt is
-    # told: this module never widens the retriable set, so the opt-in above is
-    # the whole difference between the two outcomes.
-    assert not retriable_failure(conflict)
+    assert retry_eligible(conflict)
     attempt, attempts = _raising(conflict)
-    with pytest.raises(OptimisticLockConflictError):
-        run_with_retry(attempt, retries=10)
-    assert len(attempts) == 1
+    with pytest.raises(OptimisticLockConflictError) as surfaced:
+        run_with_retry(attempt, retries=2)
+    assert surfaced.value is conflict
+    assert len(attempts) == 3  # the first attempt plus its two re-executions

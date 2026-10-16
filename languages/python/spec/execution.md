@@ -72,13 +72,14 @@ field-wise patch; omission preserves the previous value and later patches win.
 Authority selection preserves options, and option derivation preserves authority.
 `connect(options=None)` and omission both select the default record, but `None`
 is invalid for an individual field. `max_retries` must be a nonnegative exact
-built-in integer, not `bool`; `retry_optimistic_conflicts` must be a boolean.
-Python isolation spellings are `read_committed`, `repeatable_read`, and
-`serializable`. Invalid field values raise plain `ValueError` before acquisition
-or observation. Defaults and other closed vocabularies are declared by the
-exported record and types. `ReadOnlyTxnOptions` is the resolved record of a
-read-only transaction: `max_retries` and `isolation` alone, resolved and
-validated as `TxnOptions` resolves and validates them.
+built-in integer, not `bool`; which failures are replayed is fixed policy
+(`m-auto-retry`), not an option. Python isolation spellings are
+`read_committed`, `repeatable_read`, and `serializable`. Invalid field values
+raise plain `ValueError` before acquisition or observation. Defaults and other
+closed vocabularies are declared by the exported record and types.
+`ReadOnlyTxnOptions` is the resolved record of a read-only transaction:
+`max_retries` and `isolation` alone, resolved and validated as `TxnOptions`
+resolves and validates them.
 
 ## Transactions and failure boundaries
 
@@ -86,6 +87,9 @@ validated as `TxnOptions` resolves and validates them.
 `TxnContext` and its return value is delivered only after durable commit. Python
 offers no transaction context-manager demarcation because a retry must replay
 the body. The public retry bound is `max_retries`; no `retries` alias exists.
+After the bound is exhausted the caller receives the last attempt's own failure,
+inside `ExecutionFailure`, with its original chain and a note naming the attempt
+count.
 
 `scope.read_only(fn, *, max_retries=..., isolation=...)` is the read-only
 entrypoint, callback-only on the same terms. Its callback receives a

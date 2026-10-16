@@ -1,6 +1,3 @@
-# Boundary case (m-opt-lock): with the opt-in SET, an optimistic-lock conflict is
-# AUTO-retried — the closure re-executes, re-reads, and succeeds — `api-conformance`
-# lane.
 model: models/account.yaml
 tags: [m-opt-lock, m-auto-retry, m-api-conformance, conflict, success, slice-snapshot-1, slice-managed-1]
 lane: api-conformance
@@ -14,12 +11,11 @@ given:
 when:
   uow:
     concurrency: optimistic
-    retryOptimisticConflicts: true
   boundary:
     - action: read
       note: observe the versioned row (records the observed version)
     - action: amend
-      note: the gated UPDATE conflicts once, then the auto-retry re-reads and succeeds
+      note: the gated UPDATE conflicts once, then the replayed callback re-reads and succeeds
 then:
   outcome: committed
   roundTrips: 4

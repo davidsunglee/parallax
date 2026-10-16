@@ -291,7 +291,7 @@ def test_versioned_update_shortfall_in_optimistic_mode_is_a_lock_conflict() -> N
         tx.amend(fetched.edit(balance=Decimal("175.00")))
 
     with raises_contextualized(OptimisticLockConflictError, match="Account"):
-        account_db(port).transact(fn, concurrency="optimistic")
+        account_db(port).transact(fn, concurrency="optimistic", max_retries=0)
     assert RollbackCall() in port.calls
 
 

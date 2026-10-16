@@ -419,7 +419,7 @@ an observation of the same state — one composed from both — the shortfall is
 caller's. A temporal caller-addressed write's starting gate is classified the
 same way, whether a close or a guard carries it; a later milestone's gate in the
 same write is an ordinary conflict,
-retried under the opt-in with the caller's stated start unchanged.
+retried with the caller's stated start unchanged.
 
 ## Retry contract
 
@@ -436,23 +436,21 @@ A detected conflict is **retriable**. On conflict an implementation **MUST**:
 The unit-of-work boundary **MUST** offer **bounded automatic retry** as specified
 in `m-auto-retry`: a configurable bound (default **10**; `0` disables the loop),
 and on a retriable failure a rollback, a freshness invalidation, and a
-re-execution of the closure against fresh state. A conflict is **not**
-automatically retried by default — it surfaces to the caller — and joins the
-retriable set only when the unit of work opts in (`retryOptimisticConflicts`,
-Reladomo's `setRetryOnOptimisticLockFailure`, default off). Transient database
-failures (deadlock / serialization failure) are always retriable regardless of
-that flag. A retry that exhausts its bound surfaces the conflict to the caller.
-A failed caller precondition is never retried, opted in or not: the retry would
-state the same version again.
+re-execution of the closure against fresh state. A conflict is retried
+automatically, as a transient database failure (deadlock / serialization
+failure) is: both are recoverable conflicts, and no option selects between them.
+A retry that exhausts its bound surfaces the conflict to the caller. A failed
+caller precondition is never retried: the retry would state the same version
+again.
 
 The suite proves the retriable half observably with a conflict case's
 **`when.attempts`** sequence (`m-case-format`): a stale-version `UPDATE` affects `0`
-rows, then a retry that re-reads the fresh version and re-applies affects `1` — the
-`0`-then-`1` transition, asserted against real data. The loop-mechanics branches a
-single-connection harness cannot provoke (a conflict surfacing without the opt-in,
-an injected transient auto-retried, `maxRetries: 0`, bound exhaustion) are authored as
-**boundary** cases on the `api-conformance` lane and satisfied by each language's
-API Conformance Suite (`m-api-conformance`).
+rows, then the automatic retry re-reads the fresh version and re-applies, affecting
+`1` — the `0`-then-`1` transition, asserted against real data. The loop-mechanics
+branches a single-connection harness cannot provoke (a conflict a zero bound
+leaves unreplayed, an injected transient auto-retried, `maxRetries: 0`, bound
+exhaustion) are authored as **boundary** cases on the `api-conformance` lane and
+satisfied by each language's API Conformance Suite (`m-api-conformance`).
 
 Optimistic locking composes with **inheritance** (`m-inheritance` × `m-sql`)
 without disturbing the gate-last invariant. A concrete-subtype `UPDATE` under

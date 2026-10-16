@@ -12,7 +12,6 @@ from parallax.core._execution._options import (
     ReadOnlyTxnOptions,
     TxnOptions,
     check_max_retries,
-    check_retry_optimistic_conflicts,
 )
 from parallax.core._execution._publication import (
     ModelSelection,
@@ -23,10 +22,9 @@ from parallax.core._execution._publication import (
 from parallax.core._execution._transaction._attempt import ReadOnlyTxnAttempt, TxnAttempt
 from parallax.core._execution._transaction._lifetime import ActiveBinding, TxnAttemptLifetime
 from parallax.core._execution._unit_work.clock import Clock
-from parallax.core._execution._unit_work.effects import OptimisticLockConflictError
 from parallax.core._execution._unit_work.strategy import concurrency_preference
-from parallax.core._execution._unit_work.uow import Concurrency, RollbackOnlyError
-from parallax.core.auto_retry import run_with_retry
+from parallax.core._execution._unit_work.uow import Concurrency
+from parallax.core.auto_retry import RetryCandidate, retry_eligible, run_with_retry
 from parallax.core.db_port import (
     AccessMode,
     BeginFailed,
@@ -131,24 +129,6 @@ class TransactionRollbackError(RuntimeError):
         self.rollback_error = rollback_error
 
 
-class _BeginFailure(Exception):
-    """A begin failure in transit past the bounded retry loop.
-
-    An attempt whose boundary never opened ran no callback, so
-    `m-execution-lifecycle` makes its failure terminal however retriable the
-    error's own category is — but ``m-auto-retry`` classifies by the exception
-    it catches, and a begin failure is an ordinary
-    :class:`~parallax.core.db_error.DatabaseError` like any other. Travelling
-    as a type the loop does not catch is what makes it terminal; the runner
-    unwraps it immediately outside the loop, so nothing above ever sees this
-    class.
-    """
-
-    def __init__(self, error: Exception) -> None:
-        super().__init__(error)
-        self.error = error
-
-
 @dataclass(frozen=True, slots=True)
 class _ActiveTransaction:
     """What the outermost attempt binds for joining invocations.
@@ -225,7 +205,6 @@ class TransactionRunner:
         defaults: TxnOptions,
         max_retries: int | Omitted,
         concurrency: Concurrency | Omitted,
-        retry_optimistic_conflicts: bool | Omitted,
         isolation: IsolationLevel | Omitted,
     ) -> T:
         """Run ``fn`` in a writable transaction under ``capture``, returning its
@@ -255,33 +234,15 @@ class TransactionRunner:
         preference = (
             concurrency if isinstance(concurrency, Omitted) else concurrency_preference(concurrency)
         )
-        opt_in = (
-            retry_optimistic_conflicts
-            if isinstance(retry_optimistic_conflicts, Omitted)
-            else check_retry_optimistic_conflicts(retry_optimistic_conflicts)
-        )
         level = isolation if isinstance(isolation, Omitted) else isolation_level(isolation)
         active = _ACTIVE.active()
         if active is not None:
             joined = self._admitted(active, capture, TxnAttempt)
             _check_join_options(
-                joined.options,
-                max_retries=bound,
-                concurrency=preference,
-                retry_optimistic_conflicts=opt_in,
-                isolation=level,
+                joined.options, max_retries=bound, concurrency=preference, isolation=level
             )
             return _joined(joined, cast("Tx", active.context), fn)
-        options = _resolved(
-            defaults,
-            max_retries=bound,
-            concurrency=preference,
-            retry_optimistic_conflicts=opt_in,
-            isolation=level,
-        )
-        extra_retriable = (
-            _optimistic_conflict_retriable if options.retry_optimistic_conflicts else None
-        )
+        options = _resolved(defaults, max_retries=bound, concurrency=preference, isolation=level)
         # The Root Execution opens after the deterministic refusals above and
         # spans every physical attempt below, and it opens BEFORE anything is
         # adopted: a Provider that fails to open keeps its own type, because no
@@ -291,9 +252,7 @@ class TransactionRunner:
             access_mode="read_write",
             concurrency=options.concurrency,
             retries=options.max_retries,
-            retry_optimistic_conflicts=options.retry_optimistic_conflicts,
             isolation=options.isolation,
-            extra_retriable=extra_retriable,
         )
 
         def attempt_for(selection: ModelSelection) -> _AttemptFactory[TxnAttempt]:
@@ -321,7 +280,6 @@ class TransactionRunner:
             retries=options.max_retries,
             isolation=options.isolation,
             access_mode="read_write",
-            extra_retriable=extra_retriable,
         )
 
     def read_only[Tx, T](
@@ -360,9 +318,7 @@ class TransactionRunner:
             access_mode="read_only",
             concurrency=None,
             retries=options.max_retries,
-            retry_optimistic_conflicts=False,
             isolation=options.isolation,
-            extra_retriable=None,
         )
 
         def attempt_for(selection: ModelSelection) -> _AttemptFactory[ReadOnlyTxnAttempt]:
@@ -386,7 +342,6 @@ class TransactionRunner:
             retries=options.max_retries,
             isolation=options.isolation,
             access_mode="read_only",
-            extra_retriable=None,
         )
 
     def _admitted[A: (TxnAttempt, ReadOnlyTxnAttempt)](
@@ -427,7 +382,6 @@ class TransactionRunner:
         retries: int,
         isolation: IsolationLevel,
         access_mode: AccessMode,
-        extra_retriable: Callable[[BaseException], bool] | None,
     ) -> T:
         """Run one outermost invocation: the retry loop over physical attempts,
         each adopting, acquiring, and opening its boundary afresh, the whole
@@ -437,7 +391,7 @@ class TransactionRunner:
         def invoke() -> T:
             with root as invocation:
 
-                def attempt() -> T:
+                def physical_attempt() -> T:
                     # Adopted before the attempt opens, so the edition its
                     # Started event carries is the one the boundary is
                     # then asked to begin under — and a retry, re-entering
@@ -477,7 +431,7 @@ class TransactionRunner:
                             # boundary, whatever the reason the Acquisition
                             # derived for it.
                             physical.begin_failed(unacquired)
-                            raise _BeginFailure(unacquired) from unacquired
+                            raise
                         try:
                             settled = _attempted(
                                 conn.transaction(
@@ -486,24 +440,25 @@ class TransactionRunner:
                                 physical,
                             )
                         except BaseException as failure:
-                            exit_connection(resource, physical, held_since_ns, failure)
+                            exit_connection(resource, physical, held_since_ns, _carried(failure))
                             raise
                         exit_connection(resource, physical, held_since_ns, None)
                         return settled
 
-                try:
-                    return run_with_retry(attempt, retries=retries, extra_retriable=extra_retriable)
-                except _BeginFailure as failed:
-                    # Unwrapped here rather than at the port, so the loop sees a
-                    # type it does not retry.
-                    begin_failure = failed.error
-                # Raised once the handler has been left, so the carrier enters
-                # neither the cause nor the context of what leaves: the caller
-                # reads exactly the error the port made, with the chain that
-                # error already had — and the root's own Finished event,
-                # delivered as this scope is left, attributes it to the attempt
-                # that reported it.
-                raise begin_failure
+                def attempt() -> T:
+                    try:
+                        return physical_attempt()
+                    except RetryCandidate:
+                        raise
+                    except BaseException as failure:
+                        _detach_candidate(failure)
+                        raise
+
+                # The loop handles only what an attempt handed it as a retry
+                # candidate, after that attempt released its connection and
+                # finished; every other failure, a refused begin included,
+                # passes straight through it as the caller's own error.
+                return run_with_retry(attempt, retries=retries)
 
         # Contextualized around the whole invocation and outside the root scope:
         # the classifier saw every underlying error, the lifecycle reported it
@@ -575,15 +530,19 @@ def _attempted[T](outcome: TransactionOutcome[T], attempt: TransactionAttemptAct
     failure must never be retried while a rolled-back deadlock must be, and the
     retry loop cannot know which phase failed.
 
-    A rolled-back transaction propagates its triggering error unchanged, so what
-    a caller catches is what their own callback or the database raised. Only a
-    failed rollback substitutes an error of its own, because then neither live
-    error tells the whole story.
+    A completed rollback is the one outcome classified for replay, once: the
+    attempt reports that verdict, and an eligible failure leaves as a
+    :class:`~parallax.core.auto_retry.RetryCandidate` carrying it, while any
+    other propagates unchanged, so what a caller catches is what their own
+    callback or the database raised. Only a failed rollback substitutes an error
+    of its own, because then neither live error tells the whole story; it still
+    reports the verdict on its trigger, and is never replayed.
 
     It is also where the attempt activity learns its outcome, for the same
     reason: the port's report is the only account of what the boundary did. A
     boundary that never opened is one such outcome — the attempt had already
-    adopted and started, so it finishes as begin-failed rather than not at all.
+    adopted and started, so it finishes as begin-failed rather than not at all,
+    and terminal however retriable the error's own category is.
     """
     match outcome:
         case Committed(value):
@@ -591,12 +550,16 @@ def _attempted[T](outcome: TransactionOutcome[T], attempt: TransactionAttemptAct
             return value
         case BeginFailed(error):
             attempt.begin_failed(error)
-            raise _BeginFailure(error) from error
+            raise error
         case RolledBack(trigger):
-            attempt.rolled_back(trigger)
-            raise trigger.error
+            error = trigger.error
+            eligible = retry_eligible(error)
+            attempt.rolled_back(trigger, eligible)
+            if eligible and isinstance(error, Exception):
+                raise RetryCandidate(error)
+            raise error
         case RollbackFailed(trigger, rollback_error):
-            attempt.rollback_failed(trigger, rollback_error)
+            attempt.rollback_failed(trigger, rollback_error, retry_eligible(trigger.error))
             triggering_error = trigger.error
             if isinstance(triggering_error, Exception):
                 raise TransactionRollbackError(triggering_error, rollback_error) from rollback_error
@@ -605,12 +568,30 @@ def _attempted[T](outcome: TransactionOutcome[T], attempt: TransactionAttemptAct
             raise triggering_error from rollback_error
 
 
+def _carried(failure: BaseException) -> BaseException:
+    """The failure that ended an attempt: the one a retry candidate carries, or
+    ``failure`` itself — what the attempt's connection cleanup is told."""
+    return failure.failure if isinstance(failure, RetryCandidate) else failure
+
+
+def _detach_candidate(failure: BaseException) -> None:
+    """Relink ``failure``'s implicit chain past a retry candidate it was raised
+    while handling — a release or the attempt's own reporting that failed after
+    an eligible rollback — so it chains to the original failure instead, and
+    the carrier never reaches a caller."""
+    link = failure
+    while (context := link.__context__) is not None:
+        if isinstance(context, RetryCandidate):
+            link.__context__ = context.failure
+            return
+        link = context
+
+
 def _resolved(
     defaults: TxnOptions,
     *,
     max_retries: int | Omitted,
     concurrency: Concurrency | Omitted,
-    retry_optimistic_conflicts: bool | Omitted,
     isolation: IsolationLevel | Omitted,
 ) -> TxnOptions:
     """The options an outer invocation runs under: each explicit value, else
@@ -624,52 +605,14 @@ def _resolved(
     """
     bound = defaults.max_retries if isinstance(max_retries, Omitted) else max_retries
     preference = defaults.concurrency if isinstance(concurrency, Omitted) else concurrency
-    opt_in = (
-        defaults.retry_optimistic_conflicts
-        if isinstance(retry_optimistic_conflicts, Omitted)
-        else retry_optimistic_conflicts
-    )
     level = defaults.isolation if isinstance(isolation, Omitted) else isolation
     if (
         bound == defaults.max_retries
         and preference == defaults.concurrency
-        and opt_in == defaults.retry_optimistic_conflicts
         and level == defaults.isolation
     ):
         return defaults
-    return TxnOptions(
-        max_retries=bound,
-        concurrency=preference,
-        retry_optimistic_conflicts=opt_in,
-        isolation=level,
-    )
-
-
-def _optimistic_conflict_retriable(exc: BaseException) -> bool:
-    """The ``retry_optimistic_conflicts`` opt-in's own retriability verdict
-    (`m-opt-lock` "Retry contract"; `m-auto-retry.md` "Which failures are
-    retriable"; ADR 0008 / the Python binding) — injected into
-    :func:`~parallax.core.auto_retry.run_with_retry` as its
-    ``extra_retriable`` extension ONLY when the resolved option is set
-    (:meth:`TransactionRunner.transact`, above).
-
-    The retry loop already recognizes the canonical conflict; what stays
-    caller policy is whether a recognized conflict is RETRIED, which is what
-    this predicate answers. It covers the SAME two raise shapes
-    :func:`~parallax.core.auto_retry.retriable_failure` already distinguishes
-    for a transient database failure: the conflict itself, or the rollback-only
-    refusal whose ``__cause__`` preserves it (the JOIN case — an inner joined
-    scope's own conflict marks the root rollback-only, and the outermost retry
-    loop still applies per the original failure's category). The
-    remaining Write Effect Errors are never named here: a Stale Write, a Missing
-    Target, and a Cardinality Corruption stay outside the retriable set
-    unconditionally, opt-in or not.
-    """
-    if isinstance(exc, OptimisticLockConflictError):
-        return True
-    if isinstance(exc, RollbackOnlyError):
-        return isinstance(exc.__cause__, OptimisticLockConflictError)
-    return False
+    return TxnOptions(max_retries=bound, concurrency=preference, isolation=level)
 
 
 def _check_join_options(
@@ -677,7 +620,6 @@ def _check_join_options(
     *,
     max_retries: int | Omitted,
     concurrency: Concurrency | Omitted,
-    retry_optimistic_conflicts: bool | Omitted,
     isolation: IsolationLevel | Omitted,
 ) -> None:
     """Refuse a joining call's explicit option that conflicts with the active
@@ -692,9 +634,6 @@ def _check_join_options(
     """
     _refuse_conflict("max_retries", max_retries, active.max_retries)
     _refuse_conflict("concurrency", concurrency, active.concurrency)
-    _refuse_conflict(
-        "retry_optimistic_conflicts", retry_optimistic_conflicts, active.retry_optimistic_conflicts
-    )
     _refuse_conflict("isolation", isolation, active.isolation)
 
 

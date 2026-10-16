@@ -13,7 +13,6 @@ __all__ = [
     "ReadOnlyTxnOptions",
     "TxnOptions",
     "check_max_retries",
-    "check_retry_optimistic_conflicts",
     "patch_options",
 ]
 
@@ -51,48 +50,30 @@ def check_max_retries(value: object) -> int:
     return value
 
 
-def check_retry_optimistic_conflicts(value: object) -> bool:
-    """``value`` as the optimistic-conflict opt-in, or ``ValueError``.
-
-    Strictly a ``bool``: the opt-in widens the retriable set, and a truthy value
-    of another type would enable that silently.
-    """
-    if not isinstance(value, bool):
-        raise ValueError(f"retry_optimistic_conflicts must be a bool, got {value!r}")
-    return value
-
-
 @dataclass(frozen=True, slots=True)
 class TxnOptions:
-    """The four transaction options a Database Root configures as defaults, and
+    """The three transaction options a Database Root configures as defaults, and
     the resolved record every outer invocation runs under.
 
     ``max_retries`` bounds re-executions rather than attempts: ``0`` runs the
     callback once and ``N`` admits at most ``N + 1`` attempts. ``concurrency``
     is the Concurrency Preference each Entity's Effective Concurrency Strategy is
-    derived from. ``retry_optimistic_conflicts`` adds an Optimistic Lock
-    Conflict to the retriable set. ``isolation`` is the portable level every
-    physical attempt asks the port for; the built-in default is Read Committed,
-    requested concretely rather than left to the database's configured default.
+    derived from. ``isolation`` is the portable level every physical attempt
+    asks the port for; the built-in default is Read Committed, requested
+    concretely rather than left to the database's configured default.
 
     Every field is validated at construction under the same rules an explicit
-    ``db.transact`` keyword meets, and ``None`` is invalid for all four: only an
-    omitted keyword inherits.
+    ``db.transact`` keyword meets, and ``None`` is invalid for all three: only
+    an omitted keyword inherits.
     """
 
     max_retries: int = 10
     concurrency: Concurrency = "optimistic"
-    retry_optimistic_conflicts: bool = False
     isolation: IsolationLevel = "read_committed"
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "max_retries", check_max_retries(self.max_retries))
         object.__setattr__(self, "concurrency", concurrency_preference(self.concurrency))
-        object.__setattr__(
-            self,
-            "retry_optimistic_conflicts",
-            check_retry_optimistic_conflicts(self.retry_optimistic_conflicts),
-        )
         object.__setattr__(self, "isolation", isolation_level(self.isolation))
 
 
@@ -119,7 +100,6 @@ def patch_options(
     *,
     max_retries: int | Omitted = OMITTED,
     concurrency: Concurrency | Omitted = OMITTED,
-    retry_optimistic_conflicts: bool | Omitted = OMITTED,
     isolation: IsolationLevel | Omitted = OMITTED,
 ) -> TxnOptions:
     """Apply one partial option patch, reusing ``options`` when unchanged."""
@@ -131,22 +111,11 @@ def patch_options(
         if isinstance(concurrency, Omitted)
         else concurrency_preference(concurrency)
     )
-    opt_in = (
-        options.retry_optimistic_conflicts
-        if isinstance(retry_optimistic_conflicts, Omitted)
-        else check_retry_optimistic_conflicts(retry_optimistic_conflicts)
-    )
     level = options.isolation if isinstance(isolation, Omitted) else isolation_level(isolation)
     if (
         bound == options.max_retries
         and preference == options.concurrency
-        and opt_in == options.retry_optimistic_conflicts
         and level == options.isolation
     ):
         return options
-    return TxnOptions(
-        max_retries=bound,
-        concurrency=preference,
-        retry_optimistic_conflicts=opt_in,
-        isolation=level,
-    )
+    return TxnOptions(max_retries=bound, concurrency=preference, isolation=level)

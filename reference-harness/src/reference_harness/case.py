@@ -688,7 +688,6 @@ DEFAULT_ISOLATION = "read-committed"
 BUILT_IN_DATABASE_OPTIONS: dict[str, Any] = {
     "maxRetries": 10,
     "concurrency": DEFAULT_CONCURRENCY,
-    "retryOptimisticConflicts": False,
     "isolation": DEFAULT_ISOLATION,
 }
 
@@ -790,8 +789,8 @@ class Case:
         requests (m-case-format ``when.uow``), or empty.
 
         A case MAY carry a ``when.uow`` block naming any of ``concurrency``,
-        ``maxRetries``, ``retryOptimisticConflicts``, and ``isolation``. All but
-        ``isolation`` are DESCRIPTIVE here — the harness executes the authored
+        ``maxRetries``, and ``isolation``. All but ``isolation`` are
+        DESCRIPTIVE here — the harness executes the authored
         golden SQL either way — so this accessor exists for self-description /
         tooling; the resolved accessors below answer what each option is under
         the root the case configures and the Database Root's built-in defaults

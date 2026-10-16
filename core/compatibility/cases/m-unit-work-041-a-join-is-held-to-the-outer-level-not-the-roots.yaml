@@ -45,7 +45,6 @@ then:
               accessMode: read-write
               concurrency: optimistic
               retries: 10
-              retryOptimisticConflicts: false
               isolation: serializable
           - sequence: 2
             activity: 2

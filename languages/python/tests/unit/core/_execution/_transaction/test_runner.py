@@ -24,6 +24,7 @@ import contextlib
 from collections.abc import Callable
 from dataclasses import dataclass
 from decimal import Decimal
+from types import TracebackType
 from typing import Any, Final, cast
 
 import pytest
@@ -32,10 +33,12 @@ from parallax.core import Attr, DomainModel, Entity, Int32, attr, index
 from parallax.core._execution._scope import ExecutionScope
 from parallax.core._execution._transaction._attempt import ReadOnlyTxnAttempt, TxnAttempt
 from parallax.core._execution._unit_work.uow import EscapedTransactionError
+from parallax.core.auto_retry import RetryCandidate
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
     ISOLATION_LEVELS,
     AccessMode,
+    ConnectionContext,
     DatabaseAdapter,
     DatabaseConnection,
     IsolationLevel,
@@ -57,13 +60,16 @@ from parallax.core.execution import (
     TxnOptions,
     prepare_model,
 )
+from parallax.core.metamodel import AttributeIdentity, EntityIdentity
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.unit_work import (
     DatabaseLoginActor,
+    OptimisticLockConflictError,
     RollbackOnlyError,
     SubjectActor,
     WritePlanner,
 )
+from parallax.core.write_plan.steps import KeyTarget
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
@@ -73,6 +79,8 @@ from tests._support.db_port import (
     ReadCall,
     RollbackCall,
     ScriptedAdapter,
+    ScriptedContext,
+    ScriptedRuntime,
     Transact,
     Write,
     body_outcome,
@@ -148,7 +156,6 @@ def test_join_with_equal_or_omitted_options_inherits() -> None:
             itself,
             max_retries=10,
             concurrency="optimistic",
-            retry_optimistic_conflicts=False,
             isolation="read_committed",
         )
 
@@ -295,12 +302,8 @@ def test_write_planning_receives_the_original_captured_actor(
 _CONFLICTING_JOINS: list[tuple[str, Callable[[ExecutionScope], object]]] = [
     ("max_retries", lambda db: db.transact(_must_not_run, itself, max_retries=3)),
     ("concurrency", lambda db: db.transact(_must_not_run, itself, concurrency="locking")),
-    (
-        "retry_optimistic_conflicts",
-        lambda db: db.transact(_must_not_run, itself, retry_optimistic_conflicts=True),
-    ),
     # The transaction these join resolved the root's Read Committed, so NAMING
-    # a different level conflicts on the same terms as the other three.
+    # a different level conflicts on the same terms as the other two.
     ("isolation", lambda db: db.transact(_must_not_run, itself, isolation="serializable")),
 ]
 
@@ -632,8 +635,6 @@ def test_negative_retries_are_rejected_before_any_attempt() -> None:
         ("max_retries", None, "max_retries must be a nonnegative int"),
         ("concurrency", "pessimistic", "concurrency must be one of"),
         ("concurrency", None, "concurrency must be one of"),
-        ("retry_optimistic_conflicts", 1, "retry_optimistic_conflicts must be a bool"),
-        ("retry_optimistic_conflicts", None, "retry_optimistic_conflicts must be a bool"),
     ],
 )
 def test_an_explicit_value_outside_its_fields_contract_is_refused_before_any_attempt(
@@ -655,7 +656,6 @@ def test_an_explicit_value_outside_its_fields_contract_is_refused_before_any_att
         ("max_retries", True, "max_retries must be a nonnegative int"),
         ("max_retries", -1, "max_retries must be >= 0"),
         ("concurrency", "pessimistic", "concurrency must be one of"),
-        ("retry_optimistic_conflicts", None, "retry_optimistic_conflicts must be a bool"),
         ("isolation", "repeatable read", "isolation must be one of"),
     ],
 )
@@ -971,43 +971,156 @@ def test_the_deterministic_refusals_and_the_provider_opening_keep_their_own_type
 
 
 # --------------------------------------------------------------------------- #
-# Optimistic-lock conflict opt-in (m-opt-lock "Retry contract";               #
-# m-auto-retry): `retry_optimistic_conflicts` joins                           #
-# `OptimisticLockConflictError` — and no other Write Effect Error — to the    #
-# retriable set, the SAME `0`-then-`1` affected-rows transition               #
-# `m-opt-lock-009` witnesses against real Postgres, reproduced here as one    #
-# scripted attempt per affected-row count.                                    #
+# Recoverable-conflict replay (m-auto-retry; m-opt-lock "Retry contract"): an  #
+# internal optimistic conflict replays like a transient database failure, the  #
+# caller sees the failure the attempt raised with its own chain, and anything  #
+# a later cleanup step raises ends the invocation instead.                     #
 # --------------------------------------------------------------------------- #
+_ROW_2: Final = EntityIdentity("parallax.compatibility", "Account")
+_KEY_2: Final = KeyTarget(key_attributes=(AttributeIdentity(_ROW_2, "id"),), key_values=((2,),))
 
 
-def test_optimistic_conflict_opt_in_is_inert_for_a_transient_failure() -> None:
-    # The opt-in gates ONLY the conflict classification branch; a transient
-    # database failure is retriable regardless of the flag's value (m-auto-retry
-    # "Which failures are retriable" — transients are always retriable). This
-    # RETRIABLE deadlock is classified retriable by `retriable_failure` alone
-    # (the `or`'s left operand), so it never actually reaches the opt-in's own
-    # predicate at all — see the NON-retriable sibling below for that.
-    port = ScriptedAdapter(Transact(commit=deadlock()), Transact())
-    assert scope(port).transact(lambda _tx: "ok", itself, retry_optimistic_conflicts=True) == "ok"
+def _conflict() -> OptimisticLockConflictError:
+    return OptimisticLockConflictError(_ROW_2, _KEY_2, 1, 0)
+
+
+def test_an_optimistic_conflict_is_replayed_without_any_option() -> None:
+    port = ScriptedAdapter(Transact(), Transact())
+    attempts: list[TxnAttempt] = []
+
+    def body(tx: TxnAttempt) -> str:
+        attempts.append(tx)
+        if len(attempts) == 1:
+            raise _conflict()
+        return "ok"
+
+    assert scope(port).transact(body, itself) == "ok"
+    assert port.calls == [BeginCall(), RollbackCall(), BeginCall(), CommitCall()]
+    assert attempts[0] is not attempts[1]
+
+
+def test_a_conflict_a_caught_join_left_behind_is_replayed_through_the_rollback_only_refusal() -> (
+    None
+):
+    port = ScriptedAdapter(Transact(), Transact())
+    db = scope(port)
+    attempts: list[int] = []
+
+    def inner(_tx: TxnAttempt) -> None:
+        raise _conflict()
+
+    def outer(_tx: TxnAttempt) -> str:
+        attempts.append(len(attempts))
+        if len(attempts) == 1:
+            with contextlib.suppress(OptimisticLockConflictError):
+                db.transact(inner, itself)
+        return "caught"
+
+    assert db.transact(outer, itself) == "caught"
     assert port.calls.count(BeginCall()) == 2
 
 
-def test_optimistic_conflict_opt_in_is_inert_for_a_non_retriable_database_error() -> None:
-    # A NON-retriable `DatabaseError` (neither a direct
-    # `OptimisticLockConflictError` nor a `RollbackOnlyError` wrapping one)
-    # reaches the opt-in's own predicate (`_optimistic_conflict_retriable`,
-    # since `retriable_failure` alone already calls it non-retriable) and
-    # is classified non-retriable there too — the opt-in's structural
-    # extension never widens the retriable set beyond the optimistic-lock
-    # conflict shape itself.
+def test_an_exhausted_conflict_surfaces_as_the_identical_failure_with_its_own_chain() -> None:
+    port = ScriptedAdapter(Transact(), Transact())
+    raised: list[OptimisticLockConflictError] = []
+    origin = RuntimeError("what the callback was handling")
+
+    def body(_tx: TxnAttempt) -> None:
+        conflict = _conflict()
+        raised.append(conflict)
+        try:
+            raise origin
+        except RuntimeError:
+            raise conflict from None
+
+    with raises_contextualized(OptimisticLockConflictError) as excinfo:
+        scope(port).transact(body, itself, max_retries=1)
+    assert excinfo.value is raised[-1]
+    assert excinfo.value.__cause__ is None
+    assert excinfo.value.__suppress_context__
+    assert excinfo.value.__context__ is origin
+    assert "2 attempts (retries=1)" in "".join(excinfo.value.__notes__)
+    assert not any(isinstance(link, RetryCandidate) for link in _chain(excinfo.value))
+
+
+def test_a_non_retriable_database_error_is_not_replayed() -> None:
     port = ScriptedAdapter(
         Transact(
             commit=DatabaseError(category="uniqueViolation", native_code="23505", message="dup")
         )
     )
     with raises_contextualized(DatabaseError):
-        scope(port).transact(lambda _tx: "ok", itself, retry_optimistic_conflicts=True)
+        scope(port).transact(lambda _tx: "ok", itself)
     assert port.calls.count(BeginCall()) == 1
+
+
+class _ReleaseObservingAdapter(ScriptedAdapter):
+    """A scripted adapter whose connections record what each release was told
+    ended the attempt, and whose ``interrupted`` release raises instead."""
+
+    def __init__(self, *script: Transact, interrupted: int | None = None) -> None:
+        super().__init__(*script)
+        self.released_after: list[BaseException | None] = []
+        self.interrupt = KeyboardInterrupt()
+        self.interrupted = interrupted
+
+    def open(self) -> ScriptedRuntime:
+        adapter = self
+
+        class _Runtime(ScriptedRuntime):
+            def new_bound_context(self, authorization: object | None) -> ConnectionContext:
+                del authorization
+                return _ObservedContext(self, adapter)
+
+        return _Runtime(self)
+
+
+class _ObservedContext(ScriptedContext):
+    def __init__(self, runtime: ScriptedRuntime, adapter: _ReleaseObservingAdapter) -> None:
+        super().__init__(runtime)
+        self._adapter = adapter
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+        /,
+    ) -> None:
+        super().__exit__(exc_type, exc, traceback)
+        adapter = self._adapter
+        adapter.released_after.append(exc)
+        if len(adapter.released_after) == adapter.interrupted:
+            raise adapter.interrupt
+
+
+def test_the_release_after_an_eligible_failure_is_told_the_failure_itself() -> None:
+    port = _ReleaseObservingAdapter(Transact(commit=deadlock()), Transact())
+    assert scope(port).transact(lambda _tx: "ok", itself) == "ok"
+    first, second = port.released_after
+    assert isinstance(first, DatabaseError)
+    assert first.is_retriable
+    assert second is None
+
+
+def test_a_release_that_fails_after_an_eligible_failure_ends_the_invocation() -> None:
+    port = _ReleaseObservingAdapter(Transact(commit=deadlock()), Transact(), interrupted=1)
+    with pytest.raises(KeyboardInterrupt) as excinfo:
+        scope(port).transact(lambda _tx: "ok", itself)
+    assert excinfo.value is port.interrupt
+    assert port.calls.count(BeginCall()) == 1
+    (released_after,) = port.released_after
+    assert excinfo.value.__context__ is released_after
+    assert not any(isinstance(link, RetryCandidate) for link in _chain(excinfo.value))
+
+
+def _chain(failure: BaseException) -> list[BaseException]:
+    links: list[BaseException] = []
+    link: BaseException | None = failure
+    while link is not None:
+        links.append(link)
+        link = link.__cause__ or link.__context__
+    return links
 
 
 # --------------------------------------------------------------------------- #
@@ -1015,9 +1128,7 @@ def test_optimistic_conflict_opt_in_is_inert_for_a_non_retriable_database_error(
 # against the root's TxnOptions, an explicit keyword overrides it, a join  #
 # inherits the invocation's resolved value, and `tx.options` is that record.    #
 # --------------------------------------------------------------------------- #
-_CONFIGURED = TxnOptions(
-    max_retries=2, concurrency="locking", retry_optimistic_conflicts=True, isolation="serializable"
-)
+_CONFIGURED = TxnOptions(max_retries=2, concurrency="locking", isolation="serializable")
 
 
 def _configured_db(port: DatabaseAdapter[Any], options: TxnOptions = _CONFIGURED) -> ExecutionScope:
@@ -1043,7 +1154,6 @@ def test_omitted_keywords_resolve_to_the_roots_configured_defaults() -> None:
     [
         ("max_retries", 0),
         ("concurrency", "optimistic"),
-        ("retry_optimistic_conflicts", False),
         ("isolation", "repeatable_read"),
     ],
 )
@@ -1063,7 +1173,6 @@ def _fields(options: TxnOptions) -> dict[str, object]:
     return {
         "max_retries": options.max_retries,
         "concurrency": options.concurrency,
-        "retry_optimistic_conflicts": options.retry_optimistic_conflicts,
         "isolation": options.isolation,
     }
 
@@ -1078,7 +1187,6 @@ def test_explicit_values_equal_to_the_defaults_reuse_the_roots_record() -> None:
         itself,
         max_retries=2,
         concurrency="locking",
-        retry_optimistic_conflicts=True,
         isolation="serializable",
     )
     assert resolved is _CONFIGURED
@@ -1120,7 +1228,6 @@ def test_a_join_reads_the_same_transaction_and_the_same_record() -> None:
     [
         ("max_retries", 0, 3),
         ("concurrency", "optimistic", "locking"),
-        ("retry_optimistic_conflicts", False, True),
         ("isolation", "repeatable_read", "serializable"),
     ],
 )

@@ -670,7 +670,7 @@ def test_an_outer_invocation_states_the_policy_it_resolved(
                 1,
                 1,
                 None,
-                OuterInvocation("read_write", "locking", RetryPolicy(10, True), "serializable"),
+                OuterInvocation("read_write", "locking", RetryPolicy(10), "serializable"),
             ),
             TransactionInvocationStarted(TRANSACTION.id, 2, 3, 2, JoinedInvocation()),
         ],
@@ -680,7 +680,7 @@ def test_an_outer_invocation_states_the_policy_it_resolved(
     assert outer.fields["access_mode"] == "read_write"
     assert outer.fields["concurrency"] == "locking"
     assert outer.fields["retries"] == 10
-    assert outer.fields["retry_optimistic_conflicts"] is True
+    assert "retry_optimistic_conflicts" not in outer.fields
     assert outer.fields["isolation"] == "serializable"
     assert joined.fields["invocation"] == "joined"
     assert "concurrency" not in joined.fields, "a joined call resolved no policy of its own"
@@ -702,7 +702,7 @@ def test_an_invocation_that_requested_no_level_or_mode_omits_the_keys(
                 1,
                 1,
                 None,
-                OuterInvocation(None, "optimistic", RetryPolicy(10, False), None),
+                OuterInvocation(None, "optimistic", RetryPolicy(10), None),
             )
         ],
         execution=TRANSACTION,
@@ -723,7 +723,7 @@ def test_a_read_only_invocation_states_its_mode_and_no_preference(
                 1,
                 1,
                 None,
-                OuterInvocation("read_only", None, RetryPolicy(10, False), "repeatable_read"),
+                OuterInvocation("read_only", None, RetryPolicy(10), "repeatable_read"),
             )
         ],
         execution=TRANSACTION,
@@ -914,16 +914,12 @@ def test_a_transition_the_logger_would_drop_is_never_described() -> None:
             self.read += 1
             return 3
 
-        @property
-        def retry_optimistic_conflicts(self) -> bool:
-            return False
-
     def described(level: int) -> tuple[int, int]:
         logger = _logger(level)
         collected = _Collecting()
         logger.addHandler(collected)
         policy = _CountingPolicy()
-        invocation = OuterInvocation("read_write", "locking", RetryPolicy(3, False), None)
+        invocation = OuterInvocation("read_write", "locking", RetryPolicy(3), None)
         object.__setattr__(invocation, "retry_policy", policy)
         handler = LoggingLifecycleProvider(logger).open(TRANSACTION)
         assert handler is not None

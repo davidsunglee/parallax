@@ -272,7 +272,7 @@ def test_a_revision_that_no_longer_holds_fails_without_retry_and_changes_nothing
             _delete(tx, entity, "wire")
 
     with pytest.raises(ExecutionFailure) as failed:
-        db.transact(stale, concurrency=concurrency, retry_optimistic_conflicts=True)
+        db.transact(stale, concurrency=concurrency)
     assert isinstance(failed.value.cause, WritePreconditionError)
     assert failed.value.cause.expected == 1
     assert attempts == 1

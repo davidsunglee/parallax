@@ -72,29 +72,28 @@ def test_the_direct_constructor_takes_the_same_keywords_over_an_open_runtime() -
     ]
 
 
-def test_transact_names_the_four_options_by_their_record_field_names() -> None:
+def test_transact_names_the_three_options_by_their_record_field_names() -> None:
     signature = inspect.signature(ScopedDatabase.transact)
     keywords = [name for name in signature.parameters if name not in ("self", "fn")]
-    assert keywords == ["max_retries", "concurrency", "retry_optimistic_conflicts", "isolation"]
+    assert keywords == ["max_retries", "concurrency", "isolation"]
     assert all(
         signature.parameters[name].kind is inspect.Parameter.KEYWORD_ONLY for name in keywords
     )
     assert "retries" not in signature.parameters
     # Every keyword's default is one shared omission marker: never `None`, and
-    # never a value any of the four fields admits.
+    # never a value any of the three fields admits.
     defaults = {signature.parameters[name].default for name in keywords}
     assert len(defaults) == 1
     assert None not in defaults
     assert not isinstance(next(iter(defaults)), (bool, int, str))
 
 
-def test_the_record_is_read_only_on_the_transaction_and_names_the_same_four_fields() -> None:
+def test_the_record_is_read_only_on_the_transaction_and_names_the_same_three_fields() -> None:
     assert isinstance(TxnContext.options, property)
     assert TxnContext.options.fset is None
     assert [field.name for field in dataclasses.fields(TxnOptions)] == [
         "max_retries",
         "concurrency",
-        "retry_optimistic_conflicts",
         "isolation",
     ]
 
@@ -269,7 +268,6 @@ def test_a_standalone_read_and_stream_under_a_configured_root_open_no_transactio
     root = TxnOptions(
         max_retries=0,
         concurrency="locking",
-        retry_optimistic_conflicts=True,
         isolation="serializable",
     )
     with connect(_probed(profile_run, seen), _ACCOUNT, options=root) as _root_db:

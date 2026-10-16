@@ -97,7 +97,9 @@ class FakeWritePort(ConnectsAsItself):
     the script's next result verbatim and an exhausted script answers no rows,
     so a retry sequence's successive source reads observe successive
     generations of one row. A write is recorded and reports one affected row,
-    except that a statement starting with any spelling in ``zero_affected_for``
+    or, for a parameterized statement, the next count ``affected_script``
+    holds while it holds any, except that a statement starting with any
+    spelling in ``zero_affected_for``
     (the DRIVER spelling, so a golden write is named as it reaches the port)
     reports a zero-row shortfall, and a parameterized statement raises
     ``parameterized_write_failure`` after being recorded — a case's own
@@ -115,6 +117,7 @@ class FakeWritePort(ConnectsAsItself):
         zero_affected_for: tuple[str, ...] = (),
         parameterized_write_failure: DatabaseError | None = None,
         read_script: Sequence[list[MappingRow]] | None = None,
+        affected_script: Sequence[int] = (),
     ) -> None:
         self.find_rows = find_rows if find_rows is not None else []
         self.writes: list[tuple[str, list[object]]] = []
@@ -125,6 +128,7 @@ class FakeWritePort(ConnectsAsItself):
         self._zero_affected_for = zero_affected_for
         self._parameterized_write_failure = parameterized_write_failure
         self._read_script = None if read_script is None else list(read_script)
+        self._affected_script = list(affected_script)
 
     def execute(
         self,
@@ -145,7 +149,9 @@ class FakeWritePort(ConnectsAsItself):
         self.writes.append((sql, list(binds)))
         if binds and self._parameterized_write_failure is not None:
             raise self._parameterized_write_failure
-        return 0 if sql.startswith(self._zero_affected_for) else 1
+        if sql.startswith(self._zero_affected_for):
+            return 0
+        return self._affected_script.pop(0) if binds and self._affected_script else 1
 
     def transaction[T](
         self,

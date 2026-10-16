@@ -149,7 +149,6 @@ class DatabaseRoot[Authorization, Scope]:
         *,
         max_retries: int | Omitted = OMITTED,
         concurrency: Concurrency | Omitted = OMITTED,
-        retry_optimistic_conflicts: bool | Omitted = OMITTED,
         isolation: IsolationLevel | Omitted = OMITTED,
     ) -> Self:
         return self._alias(
@@ -157,7 +156,6 @@ class DatabaseRoot[Authorization, Scope]:
                 self._options,
                 max_retries=max_retries,
                 concurrency=concurrency,
-                retry_optimistic_conflicts=retry_optimistic_conflicts,
                 isolation=isolation,
             )
         )

@@ -36,7 +36,6 @@ then:
               accessMode: read-write
               concurrency: locking
               retries: 1
-              retryOptimisticConflicts: false
               isolation: read-committed
           - sequence: 2
             activity: 2

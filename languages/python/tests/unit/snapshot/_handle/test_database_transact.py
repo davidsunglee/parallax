@@ -5,8 +5,8 @@ The runner's own semantics — joins, options, isolation, retry bounds, boundary
 outcomes, and adoption — are graded over the neutral scope and Attempt in
 ``tests/unit/core/_execution/_transaction/test_runner.py``. What stays here is what only the
 Typed write verbs reach: the write-effect failure a real flush of a Typed
-update raises, which of them the ``retry_optimistic_conflicts`` opt-in widens
-the retriable set to, a caught flush failure dooming the attempt, a failed unit
+update raises, which of them the bounded retry loop replays, a caught flush
+failure dooming the attempt, a failed unit
 stopping the flush, the participating read's lock under the root's preference,
 and the write-evidence strategy each attempt's adopted selection settles a
 Typed keyed write under.
@@ -123,7 +123,7 @@ def _observe_and_update(tx: TxnContext) -> None:
     tx.amend(current.edit(balance=Decimal("20.00")))
 
 
-def test_optimistic_conflict_surfaces_after_one_attempt_without_the_opt_in() -> None:
+def test_an_optimistic_conflict_surfaces_after_one_attempt_under_a_zero_bound() -> None:
     port = ScriptedAdapter(
         Transact(
             Read(rows=[{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]),
@@ -131,24 +131,22 @@ def test_optimistic_conflict_surfaces_after_one_attempt_without_the_opt_in() -> 
         )
     )
     with raises_contextualized(OptimisticLockConflictError):
-        account_db(port).transact(_observe_and_update, concurrency="optimistic")
+        account_db(port).transact(_observe_and_update, concurrency="optimistic", max_retries=0)
     assert port.calls.count(BeginCall()) == 1
 
 
-def test_optimistic_conflict_is_auto_retried_to_success_with_the_opt_in() -> None:
+def test_an_optimistic_conflict_is_replayed_to_success_by_default() -> None:
     grace = [{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]
     port = ScriptedAdapter(
         Transact(Read(rows=grace), Write(affected=0)), Transact(Read(rows=grace), Write())
     )
-    account_db(port).transact(
-        _observe_and_update, concurrency="optimistic", retry_optimistic_conflicts=True
-    )
+    account_db(port).transact(_observe_and_update, concurrency="optimistic")
     assert (
         port.calls.count(BeginCall()) == 2
-    )  # the conflicting attempt, then the retried (successful) attempt
+    )  # the conflicting attempt, then the replayed (successful) attempt
 
 
-def test_optimistic_conflict_opt_in_exhausts_its_bound() -> None:
+def test_an_optimistic_conflict_exhausts_its_bound() -> None:
     grace = [{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]
     port = ScriptedAdapter(
         *(
@@ -156,37 +154,22 @@ def test_optimistic_conflict_opt_in_exhausts_its_bound() -> None:
         )  # every attempt conflicts
     )
     with raises_contextualized(OptimisticLockConflictError) as excinfo:
-        account_db(port).transact(
-            _observe_and_update,
-            concurrency="optimistic",
-            max_retries=2,
-            retry_optimistic_conflicts=True,
-        )
+        account_db(port).transact(_observe_and_update, concurrency="optimistic", max_retries=2)
     assert port.calls.count(BeginCall()) == 3
     assert "3 attempts (retries=2)" in "".join(excinfo.value.__notes__)
 
 
-def test_optimistic_conflict_opt_in_is_inert_in_locking_mode() -> None:
-    # Locking mode never gates a versioned UPDATE (`m-opt-lock` "the version
-    # column" — the shared read lock, not a version check, is what makes the
-    # write correct), so there is nothing for the opt-in to ever retry: a
-    # single-attempt commit, `retry_optimistic_conflicts` notwithstanding.
-    port = ScriptedAdapter(
-        Transact(
-            Read(rows=[{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]),
-            Write(),
-        )
-    )
-    account_db(port).transact(
-        _observe_and_update, concurrency="locking", retry_optimistic_conflicts=True
-    )
-    assert port.calls.count(BeginCall()) == 1
+def test_the_removed_conflict_opt_in_is_an_unknown_keyword() -> None:
+    port = ScriptedAdapter()
+    with pytest.raises(TypeError, match="retry_optimistic_conflicts"):
+        account_db(port).transact(_observe_and_update, retry_optimistic_conflicts=True)  # pyright: ignore[reportCallIssue] - the removed keyword's refusal is what this proves
+    assert port.calls == []
 
 
 # Every sibling below scripts `[0, 1]` (or `[2, 1]`): a second attempt WOULD
-# have succeeded, so `begins == 1` is evidence the opt-in refused to widen
+# have succeeded, so `begins == 1` is evidence the loop declined to replay
 # rather than an artifact of a persistently failing port.
-def test_stale_write_is_never_retried_even_with_the_opt_in() -> None:
+def test_stale_write_is_never_retried() -> None:
     # A locking-mode versioned UPDATE renders no gate, so its zero-row shortfall
     # is the stale write: the shared read lock should have made it impossible,
     # which makes it a consistency failure no re-read resolves.
@@ -197,9 +180,7 @@ def test_stale_write_is_never_retried_even_with_the_opt_in() -> None:
         )
     )
     with raises_contextualized(StaleWriteError):
-        account_db(port).transact(
-            _observe_and_update, concurrency="locking", retry_optimistic_conflicts=True
-        )
+        account_db(port).transact(_observe_and_update, concurrency="locking")
     assert port.calls.count(BeginCall()) == 1
 
 
@@ -208,7 +189,7 @@ def _rename_person(tx: TxnContext) -> None:
     tx.amend(fetched.edit(name="Grace"))
 
 
-def test_missing_target_is_never_retried_even_with_the_opt_in() -> None:
+def test_missing_target_is_never_retried() -> None:
     # An observation-free keyed write against an unversioned Entity: a shortfall
     # says only that the addressed rows are not there, and re-executing cannot
     # bring them into being. The renamed value comes from this transaction's own
@@ -216,14 +197,14 @@ def test_missing_target_is_never_retried_even_with_the_opt_in() -> None:
     # keyed update needs a value some read of this store produced.
     port = ScriptedAdapter(Transact(Read(rows=[{"id": 1, "name": "Ada"}]), Write(affected=0)))
     with raises_contextualized(MissingTargetError):
-        db_for(PERSON, port).transact(_rename_person, retry_optimistic_conflicts=True)
+        db_for(PERSON, port).transact(_rename_person)
     assert port.calls.count(BeginCall()) == 1
 
 
-def test_cardinality_corruption_is_never_retried_even_with_the_opt_in() -> None:
+def test_cardinality_corruption_is_never_retried() -> None:
     # An EXCESS over the exact count means an accepted identity, storage, or
     # lowering invariant does not hold — an invariant failure rather than a
-    # concurrency outcome, so the opt-in never widens to it either.
+    # concurrency outcome, so nothing replays it.
     port = ScriptedAdapter(
         Transact(
             Read(rows=[{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]),
@@ -231,9 +212,7 @@ def test_cardinality_corruption_is_never_retried_even_with_the_opt_in() -> None:
         )
     )
     with raises_contextualized(CardinalityCorruptionError):
-        account_db(port).transact(
-            _observe_and_update, concurrency="optimistic", retry_optimistic_conflicts=True
-        )
+        account_db(port).transact(_observe_and_update, concurrency="optimistic")
     assert port.calls.count(BeginCall()) == 1
 
 
@@ -243,14 +222,13 @@ def _observe_update_then_force_flush(tx: TxnContext) -> None:
     tx.find(mm.Account.where(mm.Account.id == 3))  # forces the flush inside THIS (joined) scope
 
 
-def test_optimistic_conflict_rollback_only_cause_is_retried_with_the_opt_in() -> None:
+def test_optimistic_conflict_rollback_only_cause_is_retried() -> None:
     # The join rule extended to an optimistic-lock conflict (pinned
     # semantics #5): a JOINED scope's own conflict, discovered by its OWN
     # forced flush (read-your-own-writes), dooms the ROOT rollback-only; the
     # outer callback catches it and returns normally, but commit is refused —
-    # the outermost retry loop still applies per the ORIGINAL failure's
-    # category (the conflict, not a `DatabaseError`), retriable here because
-    # the opt-in is set.
+    # the outermost retry loop still applies per the ORIGINAL failure, the
+    # conflict, which it replays.
     grace = [{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]
     port = ScriptedAdapter(
         Transact(Read(rows=grace), Write(affected=0)),
@@ -263,7 +241,7 @@ def test_optimistic_conflict_rollback_only_cause_is_retried_with_the_opt_in() ->
             db.transact(_observe_update_then_force_flush)  # joins; conflicts mid-scope
         return "caught"
 
-    assert db.transact(outer, concurrency="optimistic", retry_optimistic_conflicts=True) == "caught"
+    assert db.transact(outer, concurrency="optimistic") == "caught"
     assert (
         port.calls.count(BeginCall()) == 2
     )  # the conflicting attempt, then the retried (successful) attempt
@@ -291,7 +269,9 @@ def test_a_caught_dependent_read_flush_failure_refuses_further_work_and_the_comm
     port = ScriptedAdapter(Transact(Read(rows=grace), Write(affected=0)))
     refusals: list[BaseException] = []
     with raises_contextualized(RollbackOnlyError) as failure:
-        account_db(port).transact(_update_force_flush_and_catch(refusals), concurrency="optimistic")
+        account_db(port).transact(
+            _update_force_flush_and_catch(refusals), concurrency="optimistic", max_retries=0
+        )
     assert isinstance(failure.value.__cause__, OptimisticLockConflictError)
     (refusal,) = refusals
     assert isinstance(refusal.__cause__, OptimisticLockConflictError)
@@ -315,10 +295,7 @@ def test_a_caught_flush_conflict_keeps_its_retriability_through_the_doom() -> No
         return "retried"
 
     db = account_db(port)
-    assert (
-        db.transact(callback, concurrency="optimistic", retry_optimistic_conflicts=True)
-        == "retried"
-    )
+    assert db.transact(callback, concurrency="optimistic") == "retried"
     assert port.calls.count(BeginCall()) == 2
 
 
@@ -334,34 +311,21 @@ def test_a_failed_unit_stops_the_flush_before_any_later_unit_executes() -> None:
             tx.amend(current.edit(balance=Decimal("30.00")))
 
     with raises_contextualized(OptimisticLockConflictError):
-        account_db(port).transact(callback, concurrency="optimistic")
+        account_db(port).transact(callback, concurrency="optimistic", max_retries=0)
     assert sum(isinstance(call, WriteCall) for call in port.calls) == 1
 
 
-def test_the_roots_conflict_opt_in_retries_an_eligible_conflict() -> None:
+def test_a_zero_bound_root_surfaces_a_conflict_and_an_explicit_bound_replays_it() -> None:
     grace = [{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]
+    zero = TxnOptions(max_retries=0)
+    port = ScriptedAdapter(Transact(Read(rows=grace), Write(affected=0)))
+    with raises_contextualized(OptimisticLockConflictError):
+        _configured_db(port, zero).transact(_observe_and_update)
+    assert port.calls.count(BeginCall()) == 1
     port = ScriptedAdapter(
         Transact(Read(rows=grace), Write(affected=0)), Transact(Read(rows=grace), Write())
     )
-    opted_in = TxnOptions(retry_optimistic_conflicts=True)
-    _configured_db(port, opted_in).transact(_observe_and_update)
-    assert port.calls.count(BeginCall()) == 2
-
-
-def test_an_explicit_false_disables_the_roots_conflict_opt_in_but_not_transient_retry() -> None:
-    grace = [{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]
-    opted_in = TxnOptions(retry_optimistic_conflicts=True)
-    port = ScriptedAdapter(Transact(Read(rows=grace), Write(affected=0)))
-    with raises_contextualized(OptimisticLockConflictError):
-        _configured_db(port, opted_in).transact(
-            _observe_and_update, retry_optimistic_conflicts=False
-        )
-    assert port.calls.count(BeginCall()) == 1
-    port = ScriptedAdapter(Transact(commit=deadlock()), Transact())
-    assert (
-        _configured_db(port, opted_in).transact(lambda _tx: "ok", retry_optimistic_conflicts=False)
-        == "ok"
-    )
+    _configured_db(port, zero).transact(_observe_and_update, max_retries=1)
     assert port.calls.count(BeginCall()) == 2
 
 

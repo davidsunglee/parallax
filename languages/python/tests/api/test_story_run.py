@@ -198,7 +198,6 @@ class _CountingDatabase(ScopedDatabase):
         *,
         max_retries: int | Omitted = OMITTED,
         concurrency: Concurrency | Omitted = OMITTED,
-        retry_optimistic_conflicts: bool | Omitted = OMITTED,
         isolation: IsolationLevel | Omitted = OMITTED,
     ) -> T:
         return self._counted(
@@ -206,7 +205,6 @@ class _CountingDatabase(ScopedDatabase):
                 fn,
                 max_retries=max_retries,
                 concurrency=concurrency,
-                retry_optimistic_conflicts=retry_optimistic_conflicts,
                 isolation=isolation,
             )
         )

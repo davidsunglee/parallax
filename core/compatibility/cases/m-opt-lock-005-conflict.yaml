@@ -12,6 +12,7 @@ given:
 when:
   uow:
     concurrency: optimistic
+    maxRetries: 0
   write: { id: 2, balance: "275.00", observedVersion: 1 }
 then:
   statements:

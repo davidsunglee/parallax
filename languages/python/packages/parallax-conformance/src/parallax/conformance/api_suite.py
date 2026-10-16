@@ -8,6 +8,7 @@ from typing import Final
 from parallax.conformance import (
     case_format,
     conditional_family_stories,
+    conflict_replay_stories,
     database_options_stories,
     edit_runner,
     execution_authority_stories,
@@ -357,6 +358,17 @@ EXAMPLES: Final[list[Example]] = [
         "A row with no revision is written through a read of the writing transaction",
         conditional_family_stories.unversioned_write_snippet(),
     ),
+    # Recoverable-conflict replay (m-auto-retry): the case grades the gate race
+    # production's own loop replays, each attempt's statements and the final
+    # table. What this story adds is the caller's side — reads and work stay
+    # inside the callback, so the replay rebuilds them from what it read, with
+    # no retry option to set. Executed against real Postgres by
+    # `tests/api/test_conflict_replay.py`.
+    Example(
+        "m-opt-lock-009",
+        "A write another writer overtook is replayed from a fresh read",
+        conflict_replay_stories.conflict_replay_snippet(),
+    ),
 ]
 
 # Primary module -> reason its active cases have no idiomatic API example.
@@ -404,7 +416,7 @@ SKIP_REASONS: Final[dict[str, str]] = {
         "scenario graded by the run lane alone (query-result-dependent): its developer "
         "spelling is the exercised `tx.terminate` close (`m-temporal-write-003`), and what it "
         "adds is the framework-emitted `and in_z = ?` gate no caller spells. The "
-        "stale-`in_z` race (`-010`) and the root opt-in retrying a conflicted "
+        "stale-`in_z` race (`-010`) and the replay of a conflicted "
         "Transaction-Time-Only write (`-011`) have their own case-scoped entries below"
     ),
     "m-db-error": (
@@ -427,9 +439,9 @@ SKIP_REASONS: Final[dict[str, str]] = {
     "m-auto-retry": (
         "the bounded retry loop is implemented (parallax.core.auto_retry) and proven "
         "by fake-port unit tests of db.transact (test_database_transact), including the "
-        "optimistic-lock opt-in classification; the five boundary-shape cases (transient "
-        "retry with the opt-in unset/set, the opt-in inert in locking mode, `maxRetries: 0` "
-        "disabling the loop, and bound exhaustion) are graded end-to-end by the "
+        "recoverable-conflict classification; the boundary-shape cases (transient retry, "
+        "`maxRetries: 0` disabling the loop, and bound exhaustion) are graded end-to-end "
+        "by the "
         "case-driven boundary runner (`tests/api/test_boundary_run.py`, "
         "driving the REAL db.transact against the provisioned database through a "
         "fault-injecting port decorator): a retry/backoff choreography has no "
@@ -443,16 +455,17 @@ SKIP_REASONS: Final[dict[str, str]] = {
         "readless forms) or the run lane alone (the materializing ones, "
         "query-result-dependent). The versioned keyed LOCKING-mode advance has an "
         "idiomatic story (`m-opt-lock-002`); the OPTIMISTIC-mode forms have none, for "
-        "two DIFFERENT reasons: `-005` and `-007` are stale-gate cases whose competing "
-        "writer is applied out of band (`given.apply`), which no single-session story "
-        "can stage, while `-006` and `-013` are single-session SUCCESSES needing no "
+        "two DIFFERENT reasons: `-005` is a stale-gate case whose competing writer is "
+        "applied out of band (`given.apply`), which no single-session story can stage, "
+        "while `-006` and `-013` are single-session SUCCESSES needing no "
         "second writer at all — their developer spelling is the exercised `m-opt-lock-002` "
         "story's observe-edit-update, taken under optimistic concurrency, and what they add "
         "is framework-emitted SQL no caller spells (the `and version = ?` gate optimistic "
         "mode renders, and the multi-column SET ordering ahead of ONE version advance). The "
-        "auto-retry conflict-lane witness (`-009`), the boundary runner's "
-        "conflict-opt-in pair (`-010`/`-011`), and the interleaved two-session race "
-        "(`-012`, over the `peer` seam) each have their own case-scoped entry below"
+        "conflict-lane replay (`-009`) has a usage-guide story, and the boundary "
+        "runner's zero-bound and default-replay pair (`-010`/`-011`) and the interleaved "
+        "two-session race (`-012`, over the `peer` seam) each have their own case-scoped "
+        "entry below"
     ),
     "m-temporal-write": (
         "the milestone-chaining write forms (insert / close-and-chain update / "
@@ -759,7 +772,7 @@ _INHERITANCE_ABSTRACT_OBSERVATION_LICENSES_WRITE_REASON: Final[str] = (
 # distinguished from its exercised locking-mode sibling only by emitted SQL.
 _OPT_LOCK_STALE_GATE_SECOND_WRITER_REASON: Final[str] = (
     "a non-temporal optimistic-lock keyed write whose version gate is STALE when it "
-    "runs (the 0-row conflict, and the 0-then-1 retry choreography over it): graded "
+    "runs (the 0-row conflict a zero bound leaves unreplayed): graded "
     "end-to-end by the run lane; no idiomatic story covers it because the staleness is "
     "produced by a competing writer applied out of band (`given.apply`), which one "
     "single-session callback cannot stage"
@@ -784,29 +797,15 @@ _BATCH_WRITE_VERSIONED_MATERIALIZE_REASON: Final[str] = (
     "than a developer spelling (the resolving read half is proven by "
     "`m-opt-lock-003`/`-004`)"
 )
-# The auto-retry optimistic-conflict opt-in's conflict-lane witness uses
-# `retryOptimisticConflicts: true` over a two-attempt, 0-then-1
-# `when.attempts` choreography — the same
-# caller-visible attempts-sequence lane `m-opt-lock-007` already exercises; the
-# runtime auto-retry LOOP itself is `-011`'s own boundary witness, below.
-_OPT_LOCK_CONFLICT_LANE_OPT_IN_REASON: Final[str] = (
-    "the auto-retry optimistic-conflict opt-in's own conflict-lane witness "
-    "(`retryOptimisticConflicts: true` over a two-attempt, 0-then-1 `when.attempts` "
-    "choreography) is graded end-to-end by the run lane (the SAME caller-visible "
-    "`when.attempts` choreography `m-opt-lock-007` already exercises; the runtime "
-    "auto-retry loop itself is `m-opt-lock-011`'s own boundary witness); no idiomatic "
-    "story was authored for this opt-in choreography — a retry/backoff choreography "
-    "has no single-callback idiomatic developer spelling distinct from what the run "
-    "lane already exercises directly"
-)
-# The auto-retry optimistic-conflict opt-in's boundary pair covers a conflict
-# surfacing after one attempt without the
-# opt-in (`-010`) / auto-retried to success with it (`-011`) — graded by the
-# SAME case-driven boundary runner the `m-auto-retry` module bucket names.
+# The optimistic-conflict boundary witnesses cover a conflict surfacing after
+# one attempt under a zero bound (`m-opt-lock-010`) and replayed to success by
+# default (`m-opt-lock-011`, and `m-temporal-read-011` over a
+# Transaction-Time-Only milestone) — graded by the SAME case-driven boundary
+# runner the `m-auto-retry` module bucket names.
 _OPT_LOCK_BOUNDARY_RUNNER_REASON: Final[str] = (
-    "the auto-retry optimistic-conflict opt-in's own boundary witness (the conflict "
-    "surfacing after one attempt without the opt-in, or auto-retried to success with "
-    "it) is graded end-to-end by the case-driven boundary runner "
+    "an optimistic conflict's own boundary witness (the conflict surfacing after one "
+    "attempt under a zero bound, or replayed to success by default) is graded "
+    "end-to-end by the case-driven boundary runner "
     "(`tests/api/test_boundary_run.py`) against the real, provisioned "
     "database (the boundary runner's own generic action mapping is deliberately not "
     "itself an idiomatic developer surface); a retry/backoff choreography has no "
@@ -1405,19 +1404,18 @@ _EXECUTION_AUTHORITY_BOUNDARY_RUNNER_REASON: Final[str] = (
 
 # The root-configured boundary witnesses (m-case-format *Root configuration*):
 # what each proves is what the loop DOES under a configured root — an
-# invocation naming no option resolving all four from the root, a zero root
-# bound, a root level over every attempt, a root opt-in (over a versioned row,
-# `m-opt-lock-024`, and over a Transaction-Time-Only milestone,
-# `m-temporal-read-011`), and each one's explicit override, plus the four-field
+# invocation naming no option resolving all three from the root, a zero root
+# bound (over a transient, and over a conflict, `m-opt-lock-024`), a root level
+# over every attempt, and each one's explicit override, plus the three-field
 # join rule under a configured root — graded by the SAME case-driven boundary
 # runner, which connects the case's root record and forwards only the authored
 # request. The developer spelling those cases share is the one executable story
 # above (`m-unit-work-041`).
 _ROOT_OPTIONS_BOUNDARY_RUNNER_REASON: Final[str] = (
     "a Database Root's configured transaction default reaching the loop it governs — "
-    "an invocation naming no option resolving all four from the root, "
-    "a zero root bound disabling the loop, a root level requested on every attempt, a "
-    "root opt-in retrying a conflict, each one's explicit per-call override, and a "
+    "an invocation naming no option resolving all three from the root, "
+    "a zero root bound disabling the loop, a root level requested on every attempt, "
+    "each one's explicit per-call override, and a "
     "joining call held to the outer call's resolved values rather than the root's — "
     "graded end-to-end by the case-driven boundary runner (`tests/api/test_boundary_run.py`), "
     "which connects the REAL `db` with the case's own `TxnOptions` record and "
@@ -1593,10 +1591,8 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     # -- m-opt-lock: non-temporal write family, conformance-lane covered ----- #
     "m-opt-lock-005": _OPT_LOCK_STALE_GATE_SECOND_WRITER_REASON,
     "m-opt-lock-006": _OPT_LOCK_MATCHING_GATE_EMITTED_SQL_REASON,
-    "m-opt-lock-007": _OPT_LOCK_STALE_GATE_SECOND_WRITER_REASON,
     "m-opt-lock-013": _OPT_LOCK_MATCHING_GATE_EMITTED_SQL_REASON,
     # -- m-opt-lock / m-read-lock concurrency cases -------------------------- #
-    "m-opt-lock-009": _OPT_LOCK_CONFLICT_LANE_OPT_IN_REASON,
     "m-opt-lock-010": _OPT_LOCK_BOUNDARY_RUNNER_REASON,
     "m-opt-lock-011": _OPT_LOCK_BOUNDARY_RUNNER_REASON,
     "m-opt-lock-012": _OPT_LOCK_INTERLEAVED_RACE_REASON,
@@ -1682,13 +1678,11 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-auto-retry-008": _ROOT_OPTIONS_BOUNDARY_RUNNER_REASON,
     "m-auto-retry-009": _ROOT_OPTIONS_BOUNDARY_RUNNER_REASON,
     "m-auto-retry-010": _ROOT_OPTIONS_BOUNDARY_RUNNER_REASON,
-    "m-auto-retry-011": _ROOT_OPTIONS_BOUNDARY_RUNNER_REASON,
     "m-opt-lock-024": _ROOT_OPTIONS_BOUNDARY_RUNNER_REASON,
     "m-opt-lock-025": _ROOT_OPTIONS_BOUNDARY_RUNNER_REASON,
-    "m-temporal-read-011": _ROOT_OPTIONS_BOUNDARY_RUNNER_REASON,
+    "m-temporal-read-011": _OPT_LOCK_BOUNDARY_RUNNER_REASON,
     "m-unit-work-037": _ROOT_OPTIONS_BOUNDARY_RUNNER_REASON,
     "m-unit-work-038": _ROOT_OPTIONS_BOUNDARY_RUNNER_REASON,
-    "m-unit-work-039": _ROOT_OPTIONS_BOUNDARY_RUNNER_REASON,
     "m-unit-work-040": _ROOT_OPTIONS_BOUNDARY_RUNNER_REASON,
     # -- m-batch-write: versioned per-key delete materialization ------------- #
     "m-batch-write-004": _BATCH_WRITE_VERSIONED_MATERIALIZE_REASON,

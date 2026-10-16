@@ -373,8 +373,8 @@ class _Fault:
     attempt no connection at all, which is the same terminal begin failure
     reached one step earlier; and a ``release`` fault is a connection that
     cannot be confirmed after the attempt settled, which changes no outcome
-    at all. ``retriable`` is `m-auto-retry` / `m-opt-lock`'s verdict on the kind,
-    ``opt_in`` where `retryOptimisticConflicts` decides it. ``error`` builds the
+    at all. ``retriable`` is `m-auto-retry` / `m-opt-lock`'s verdict on the
+    kind. ``error`` builds the
     translated :class:`DatabaseError` the real adapter's own classification would
     produce, and is ``None`` for the kinds that raise no database error at all:
     an optimistic conflict is simulated as the gated update's zero-row
@@ -386,46 +386,46 @@ class _Fault:
     """
 
     seam: Literal["work", "boundary", "acquisition", "release"]
-    retriable: Literal["always", "never", "opt_in"]
+    retriable: bool
     error: Callable[[], DatabaseError] | None
 
 
 _FAULTS: Final[Mapping[str, _Fault]] = {
     "serialization-failure": _Fault(
         seam="work",
-        retriable="always",
+        retriable=True,
         error=lambda: DatabaseError(
             category="deadlock", native_code="40001", message="serialization failure"
         ),
     ),
     "deadlock": _Fault(
         seam="work",
-        retriable="always",
+        retriable=True,
         error=lambda: DatabaseError(
             category="deadlock", native_code="40P01", message="deadlock detected"
         ),
     ),
     "lock-wait-timeout": _Fault(
         seam="work",
-        retriable="never",
+        retriable=False,
         error=lambda: DatabaseError(
             category="lockWaitTimeout", native_code="55P03", message="lock wait timeout"
         ),
     ),
-    "optimistic-lock-conflict": _Fault(seam="work", retriable="opt_in", error=None),
+    "optimistic-lock-conflict": _Fault(seam="work", retriable=True, error=None),
     # Both setup kinds are uncategorized on purpose: a refused session setup is
     # a request the engine would not honor, not a contention the classifier has
     # a neutral category for, so nothing above may read it as retriable.
     "isolation-setup-failure": _Fault(
         seam="boundary",
-        retriable="never",
+        retriable=False,
         error=lambda: DatabaseError(
             category=None, native_code="22023", message="invalid isolation level request"
         ),
     ),
     "access-mode-setup-failure": _Fault(
         seam="boundary",
-        retriable="never",
+        retriable=False,
         error=lambda: DatabaseError(
             category=None, native_code="0A000", message="access mode request refused"
         ),
@@ -434,8 +434,8 @@ _FAULTS: Final[Mapping[str, _Fault]] = {
     # failure of a statement: an acquisition failure is outside the `m-db-error`
     # categories by contract, and a cleanup problem is reported as a value
     # rather than raised at all.
-    "connection-acquisition-failure": _Fault(seam="acquisition", retriable="never", error=None),
-    "connection-cleanup-failure": _Fault(seam="release", retriable="never", error=None),
+    "connection-acquisition-failure": _Fault(seam="acquisition", retriable=False, error=None),
+    "connection-cleanup-failure": _Fault(seam="release", retriable=False, error=None),
 }
 
 
@@ -826,13 +826,11 @@ def expected_attempts(
     fault: str | None,
     outcome_kind: str,
     max_retries: int,
-    retry_optimistic_conflicts: bool,
 ) -> int:
     """The authored attempt count (`m-auto-retry.md` / `m-opt-lock.md`'s own
     retriability rules, never a per-case hand table): no fault surfaces or
     commits after exactly one attempt; a NON-retriable fault (a
-    `lock-wait-timeout`, or an `optimistic-lock-conflict` without the
-    opt-in) surfaces after one; a retriable fault retried to `committed`
+    `lock-wait-timeout`) surfaces after one; a retriable fault retried to `committed`
     succeeds on the SECOND attempt (`persistent` — see
     :class:`FaultInjectingPort` — is a don't-care there, injected once);
     a retriable fault that PERSISTS to a failure-kind outcome exhausts the
@@ -850,10 +848,10 @@ def expected_attempts(
     :data:`_FAULTS` rather than tested here, so one kind's declaration answers
     the injection point and the count together.
 
-    ``max_retries`` and ``retry_optimistic_conflicts`` are the values the outer
-    invocation RESOLVES to — the authored request over the configured root,
+    ``max_retries`` is the bound the outer invocation RESOLVES to — the
+    authored request over the configured root,
     :func:`~parallax.conformance.case_format.effective_options` — because an
-    oracle needs the resolved numbers; production resolves the same two from the
+    oracle needs the resolved number; production resolves the same one from the
     root record and the sparse request it was actually handed.
     """
     if fault is None:
@@ -861,10 +859,7 @@ def expected_attempts(
     kind = _fault(fault)
     if kind.seam != "work":
         return 1
-    retriable = (
-        retry_optimistic_conflicts if kind.retriable == "opt_in" else kind.retriable == "always"
-    )
-    if not retriable:
+    if not kind.retriable:
         return 1
     if outcome_kind == "committed":
         return 1 if max_retries < 1 else 2

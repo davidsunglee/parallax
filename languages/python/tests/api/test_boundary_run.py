@@ -272,10 +272,7 @@ def test_boundary_case_runs_through_the_shipped_surface(
     # call above.
     effective = case_format.effective_options(case)
     assert attempts == boundary_runner.expected_attempts(
-        fault=fault,
-        outcome_kind=outcome,
-        max_retries=effective.max_retries,
-        retry_optimistic_conflicts=effective.retry_optimistic_conflicts,
+        fault=fault, outcome_kind=outcome, max_retries=effective.max_retries
     ), case.case_id
 
     then = cast("dict[str, Any]", case_document(case)["then"])
@@ -295,10 +292,10 @@ def test_boundary_case_runs_through_the_shipped_surface(
 
 def test_reachable_boundary_cases_cover_the_expected_population() -> None:
     # Grep-verified complete set (the corpus's complete boundary
-    # population): `m-auto-retry-001..011`, `m-opt-lock-010/011/024/025`, its
+    # population): `m-auto-retry-001` and `-004..010`, `m-opt-lock-010/011/024/025`, its
     # Transaction-Time-Only analogue `m-temporal-read-011`,
-    # `m-unit-work-004`, the isolation pair `m-unit-work-035/036`, the five
-    # root-configured join cases `m-unit-work-037..041`, the root-default
+    # `m-unit-work-004`, the isolation pair `m-unit-work-035/036`, the four
+    # root-configured join cases `m-unit-work-037/038/040/041`, the root-default
     # resolution case `m-execution-001`, the four read-only and access-mode
     # cases `m-execution-002..005`, and the six
     # `m-execution-lifecycle` spine cases whose observables need an injected
@@ -307,8 +304,6 @@ def test_reachable_boundary_cases_cover_the_expected_population() -> None:
     assert _CASE_IDS
     assert set(_CASE_IDS) == {
         "m-auto-retry-001",
-        "m-auto-retry-002",
-        "m-auto-retry-003",
         "m-auto-retry-004",
         "m-auto-retry-005",
         "m-auto-retry-006",
@@ -316,7 +311,6 @@ def test_reachable_boundary_cases_cover_the_expected_population() -> None:
         "m-auto-retry-008",
         "m-auto-retry-009",
         "m-auto-retry-010",
-        "m-auto-retry-011",
         "m-execution-001",
         "m-execution-002",
         "m-execution-003",
@@ -343,7 +337,6 @@ def test_reachable_boundary_cases_cover_the_expected_population() -> None:
         "m-unit-work-036",
         "m-unit-work-037",
         "m-unit-work-038",
-        "m-unit-work-039",
         "m-unit-work-040",
         "m-unit-work-041",
     }

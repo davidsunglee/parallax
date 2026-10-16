@@ -93,8 +93,8 @@ class OptimisticLockConflictError(WriteEffectError):
     """A gated write's version condition no longer held.
 
     A concurrent write moved the row first. This is the one member of the family
-    a re-read can resolve, and therefore the only one the unit of work's retry
-    opt-in admits.
+    a re-read can resolve, and therefore the only one the bounded retry loop
+    replays.
     """
 
     _summary = "a concurrent write changed the gated rows first"

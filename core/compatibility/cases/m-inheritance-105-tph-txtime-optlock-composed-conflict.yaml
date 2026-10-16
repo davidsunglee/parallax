@@ -17,6 +17,7 @@ compileEligibility:
 when:
   uow:
     concurrency: optimistic
+    maxRetries: 0
   scenario:
     - uow: ours
       objectQuery:

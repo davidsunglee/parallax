@@ -96,7 +96,7 @@ def test_where_the_count_proves_no_guard_an_unchanged_row_is_closed_and_chained(
 def test_a_guard_that_matches_nothing_is_the_milestones_conflict() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[balance_row(in_z=_T0)]), Write(affected=0)))
     with raises_contextualized(OptimisticLockConflictError):
-        db_for(BALANCE, port).transact(lambda tx: _restate(tx, "typed"))
+        db_for(BALANCE, port).transact(lambda tx: _restate(tx, "typed"), max_retries=0)
     assert [call.sql for call in _writes(port)] == [_GUARD]
 
 
@@ -105,9 +105,7 @@ def test_a_retried_conflict_reads_the_row_again_and_its_guard_matches() -> None:
         Transact(Read(rows=[balance_row(in_z=_T0)]), Write(affected=0)),
         Transact(Read(rows=[balance_row(in_z=_T0)]), Write()),
     )
-    db_for(BALANCE, port).transact(
-        lambda tx: _restate(tx, "typed"), retry_optimistic_conflicts=True
-    )
+    db_for(BALANCE, port).transact(lambda tx: _restate(tx, "typed"))
     assert [call.sql for call in _writes(port)] == [_GUARD, _GUARD]
 
 

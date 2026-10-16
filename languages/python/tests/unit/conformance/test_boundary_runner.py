@@ -121,7 +121,7 @@ def test_boundary_steps_reads_a_joins_own_options() -> None:
             "when": {
                 "boundary": [
                     {"action": "join", "isolation": "serializable"},
-                    {"action": "join", "maxRetries": 0, "retryOptimisticConflicts": False},
+                    {"action": "join", "maxRetries": 0, "concurrency": "locking"},
                     {"action": "join", "note": "inherits everything"},
                 ]
             }
@@ -129,9 +129,7 @@ def test_boundary_steps_reads_a_joins_own_options() -> None:
     )
     assert boundary_runner.boundary_steps(case) == [
         boundary_runner.BoundaryStep("join", {"isolation": "serializable"}),
-        boundary_runner.BoundaryStep(
-            "join", {"max_retries": 0, "retry_optimistic_conflicts": False}
-        ),
+        boundary_runner.BoundaryStep("join", {"max_retries": 0, "concurrency": "locking"}),
         boundary_runner.BoundaryStep("join", {}),
     ]
 
@@ -784,46 +782,43 @@ class _AttemptsCase:
     fault: str | None
     outcome_kind: str
     max_retries: int
-    retry_optimistic_conflicts: bool
     expected: int
 
 
-# The oracle takes the values the outer invocation RESOLVES to, so a case that
-# omits a field reaches it as the root's built-in (10 / false) rather than as an
+# The oracle takes the bound the outer invocation RESOLVES to, so a case that
+# omits it reaches the oracle as the root's built-in 10 rather than as an
 # absence the oracle would have to resolve for itself.
 _ATTEMPTS_CASES: list[_AttemptsCase] = [
-    # m-auto-retry-001/002: transient, first-attempt-only (don't-care), committed.
-    _AttemptsCase("serialization-failure", "committed", 10, False, 2),
-    _AttemptsCase("serialization-failure", "committed", 10, True, 2),
-    # m-auto-retry-003: no fault at all.
-    _AttemptsCase(None, "committed", 10, True, 1),
+    # m-auto-retry-001: transient, first-attempt-only (don't-care), committed.
+    _AttemptsCase("serialization-failure", "committed", 10, 2),
     # m-auto-retry-004 / -007: a zero bound, explicit or the root's, disables the loop.
-    _AttemptsCase("serialization-failure", "serialization-failure", 0, False, 1),
+    _AttemptsCase("serialization-failure", "serialization-failure", 0, 1),
     # m-auto-retry-008: an explicit bound of 1 over a zero root admits the retry.
-    _AttemptsCase("serialization-failure", "committed", 1, False, 2),
+    _AttemptsCase("serialization-failure", "committed", 1, 2),
     # m-auto-retry-005: persistent, bound exhausted.
-    _AttemptsCase("serialization-failure", "serialization-failure", 2, False, 3),
-    # m-opt-lock-010 / -025: conflict without the opt-in — not retriable.
-    _AttemptsCase("optimistic-lock-conflict", "optimistic-lock-conflict", 10, False, 1),
-    # m-opt-lock-011 / -024: conflict with the opt-in — retried to success.
-    _AttemptsCase("optimistic-lock-conflict", "committed", 10, True, 2),
+    _AttemptsCase("serialization-failure", "serialization-failure", 2, 3),
+    # m-opt-lock-010 / -024: a conflict under a zero bound surfaces after one attempt.
+    _AttemptsCase("optimistic-lock-conflict", "optimistic-lock-conflict", 0, 1),
+    # m-opt-lock-011 / -025: a conflict is replayed to success.
+    _AttemptsCase("optimistic-lock-conflict", "committed", 10, 2),
+    _AttemptsCase("optimistic-lock-conflict", "committed", 1, 2),
+    # A conflict that persists exhausts the bound like a transient does.
+    _AttemptsCase("optimistic-lock-conflict", "optimistic-lock-conflict", 2, 3),
     # m-unit-work-004: no fault, the scripted closure itself aborts.
-    _AttemptsCase(None, "aborted", 10, False, 1),
-    # lock-wait-timeout is never retriable, opt-in or not.
-    _AttemptsCase("lock-wait-timeout", "lock-wait-timeout", 10, True, 1),
+    _AttemptsCase(None, "aborted", 10, 1),
+    _AttemptsCase(None, "committed", 10, 1),
+    # lock-wait-timeout is never retriable.
+    _AttemptsCase("lock-wait-timeout", "lock-wait-timeout", 10, 1),
     # m-execution-lifecycle-008: a boundary that never opened is ONE attempt —
     # the one that adopted and started before the boundary was asked to begin —
     # and it is terminal however the loop is configured.
-    _AttemptsCase("isolation-setup-failure", "boundary-failed", 10, False, 1),
-    _AttemptsCase("isolation-setup-failure", "boundary-failed", 5, True, 1),
+    _AttemptsCase("isolation-setup-failure", "boundary-failed", 10, 1),
     # m-execution-lifecycle-009: an acquisition that granted nothing is the same
     # terminal begin failure reached one step earlier, and m-execution-lifecycle-010:
     # an unconfirmed release changes no outcome at all, so the
     # attempt it followed commits and there is nothing to retry.
-    _AttemptsCase("connection-acquisition-failure", "boundary-failed", 10, False, 1),
-    _AttemptsCase("connection-acquisition-failure", "boundary-failed", 5, True, 1),
-    _AttemptsCase("connection-cleanup-failure", "committed", 10, False, 1),
-    _AttemptsCase("connection-cleanup-failure", "committed", 5, True, 1),
+    _AttemptsCase("connection-acquisition-failure", "boundary-failed", 10, 1),
+    _AttemptsCase("connection-cleanup-failure", "committed", 10, 1),
 ]
 
 
@@ -831,10 +826,7 @@ _ATTEMPTS_CASES: list[_AttemptsCase] = [
 def test_expected_attempts(case: _AttemptsCase) -> None:
     assert (
         boundary_runner.expected_attempts(
-            fault=case.fault,
-            outcome_kind=case.outcome_kind,
-            max_retries=case.max_retries,
-            retry_optimistic_conflicts=case.retry_optimistic_conflicts,
+            fault=case.fault, outcome_kind=case.outcome_kind, max_retries=case.max_retries
         )
         == case.expected
     )
@@ -844,20 +836,18 @@ def test_expected_attempts(case: _AttemptsCase) -> None:
 # resolves to and the attempt count that follows: the same resolution the
 # real-database runner grades against, read off the corpus rather than restated
 # per case in that runner.
-_ROOT_WITNESS_ATTEMPTS: dict[str, tuple[int, bool, str, str, int]] = {
-    "m-auto-retry-007": (0, False, "optimistic", "read_committed", 1),
-    "m-auto-retry-008": (1, False, "optimistic", "read_committed", 2),
-    "m-auto-retry-009": (10, False, "optimistic", "repeatable_read", 2),
-    "m-auto-retry-010": (10, False, "optimistic", "repeatable_read", 2),
-    "m-auto-retry-011": (10, False, "optimistic", "read_committed", 2),
-    "m-execution-001": (2, True, "locking", "repeatable_read", 1),
-    "m-opt-lock-024": (10, True, "optimistic", "read_committed", 2),
-    "m-opt-lock-025": (10, False, "optimistic", "read_committed", 1),
-    "m-unit-work-037": (2, True, "locking", "repeatable_read", 1),
-    "m-unit-work-038": (10, False, "optimistic", "read_committed", 1),
-    "m-unit-work-039": (10, False, "optimistic", "read_committed", 1),
-    "m-unit-work-040": (5, False, "optimistic", "read_committed", 1),
-    "m-unit-work-041": (10, False, "optimistic", "serializable", 1),
+_ROOT_WITNESS_ATTEMPTS: dict[str, tuple[int, str, str, int]] = {
+    "m-auto-retry-007": (0, "optimistic", "read_committed", 1),
+    "m-auto-retry-008": (1, "optimistic", "read_committed", 2),
+    "m-auto-retry-009": (10, "optimistic", "repeatable_read", 2),
+    "m-auto-retry-010": (10, "optimistic", "repeatable_read", 2),
+    "m-execution-001": (2, "locking", "repeatable_read", 1),
+    "m-opt-lock-024": (0, "optimistic", "read_committed", 1),
+    "m-opt-lock-025": (1, "optimistic", "read_committed", 2),
+    "m-unit-work-037": (2, "locking", "repeatable_read", 1),
+    "m-unit-work-038": (10, "optimistic", "read_committed", 1),
+    "m-unit-work-040": (5, "optimistic", "read_committed", 1),
+    "m-unit-work-041": (10, "optimistic", "serializable", 1),
 }
 
 
@@ -866,12 +856,11 @@ def test_a_root_configured_witness_resolves_its_effective_options_and_attempts(
     case_id: str,
 ) -> None:
     case = next(c for c in case_format.load_cases() if c.case_id == case_id)
-    max_retries, opt_in, concurrency, isolation, attempts = _ROOT_WITNESS_ATTEMPTS[case_id]
+    max_retries, concurrency, isolation, attempts = _ROOT_WITNESS_ATTEMPTS[case_id]
     effective = case_format.effective_options(case)
     assert effective == TxnOptions(
         max_retries=max_retries,
         concurrency=concurrency,  # pyright: ignore[reportArgumentType] - a corpus spelling
-        retry_optimistic_conflicts=opt_in,
         isolation=isolation,  # pyright: ignore[reportArgumentType] - a corpus spelling
     )
     # Neither placement was flattened into the other: the root record holds
@@ -890,7 +879,6 @@ def test_a_root_configured_witness_resolves_its_effective_options_and_attempts(
             fault=boundary_runner.fault_kind(case),
             outcome_kind=outcome,
             max_retries=effective.max_retries,
-            retry_optimistic_conflicts=effective.retry_optimistic_conflicts,
         )
         == attempts
     )
@@ -946,10 +934,7 @@ def test_every_attempt_of_a_root_configured_case_opens_at_the_resolved_level(
             db.transact(fn, **requests)
     effective = case_format.effective_options(case)
     attempts = boundary_runner.expected_attempts(
-        fault=fault,
-        outcome_kind=outcome,
-        max_retries=effective.max_retries,
-        retry_optimistic_conflicts=effective.retry_optimistic_conflicts,
+        fault=fault, outcome_kind=outcome, max_retries=effective.max_retries
     )
     assert port.boundaries == attempts
     assert port.levels == [effective.isolation] * attempts
