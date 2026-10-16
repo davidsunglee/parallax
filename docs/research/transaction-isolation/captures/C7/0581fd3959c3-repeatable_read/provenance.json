@@ -1,0 +1,195 @@
+{
+  "arm": {
+    "commit": "0581fd3959c3a1996edad08f8141f7dc7d36c851",
+    "isolation": "repeatable_read",
+    "ref": "0581fd3959c3a1996edad08f8141f7dc7d36c851"
+  },
+  "attribution": "fixed versus duration-scaled replay backoff across simulated environments",
+  "capture": {
+    "commit": "0a379e5c15bc6b5f32721491c539843ebd694316",
+    "dirty": false,
+    "scripts": {
+      "_support.py": "d0594ab2e6aea9d118a0946cea2daab2c8be2d5fe2595aff1fad880ed58af64f",
+      "capture.py": "a0aa4b22e012995c9d9f51ecb716f668876aac0190018bc0954a3366888d2c0d",
+      "contention.py": "0a9f496e13cb337b573804aa1a9b2a190c2c26fa2c67e17ff5d79c4e9767cad8",
+      "end_to_end_writes.py": "015d7dc667a50fad1b6f63059755ee9ec82e0413352dd178684cced2b22f8963",
+      "guard_wal.py": "243345275cba7a3a92ec9ea43b2f359d0e1804072be8877bb8cbdcaddd1665ae",
+      "lock_snapshot_trace.py": "a06a14359b95c45b1e5b5b890394d7bbbff9300aac7dd215fcb260937832fc18",
+      "predicate_in_place.py": "9cd1a7fb74edd7aaa40f132996ea6525151032146c233a97c2bbc90cf751b810",
+      "read_retention.py": "225e6e4a40e60e397a347987d723600ec8475fec5218d2fa3ea1e0d3c5481bd9",
+      "stream_churn.py": "16a2f0747f7f36cf965379f3a2e84497309214aa48ddff7ebd5255aa01dcfc0d"
+    }
+  },
+  "capturedAt": "2026-10-16T17:55:34.271802+00:00",
+  "checkpoint": "C7",
+  "drivers": {
+    "contention": {
+      "bytes": 8103525,
+      "command": [
+        "/Users/david/.humanlayer/workspaces/cor-214-simplify-transactions-and-repeatable-read-7bk9nl/parallax/docs/research/transaction-isolation/scripts/contention.py",
+        "--environments",
+        "--isolation",
+        "repeatable_read",
+        "--out",
+        "/Users/david/.local/share/parallax/evidence/cor-214/transaction-isolation-captures/C7/0581fd3959c3-repeatable_read/contention.json"
+      ],
+      "conditions": {
+        "cpython": "3.14.8",
+        "image": "postgres:18.6-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2",
+        "isolation": "repeatable_read",
+        "settings": {
+          "autovacuum": "on",
+          "deadlock_timeout": "1s",
+          "default_transaction_isolation": "read committed",
+          "lock_timeout": "0",
+          "max_connections": "100",
+          "server_version": "18.6",
+          "shared_buffers": "128MB",
+          "synchronous_commit": "on",
+          "wal_level": "replica"
+        },
+        "version": "PostgreSQL 18.6 on aarch64-unknown-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit",
+        "workload": {
+          "body": "read one account in the attempt, then amend its balance",
+          "environments": [
+            {
+              "name": "local",
+              "roundTripMs": 0.0,
+              "thinkMs": 0.0
+            },
+            {
+              "name": "rtt-2ms",
+              "roundTripMs": 2.0,
+              "thinkMs": 0.0
+            },
+            {
+              "name": "rtt-5ms+think",
+              "roundTripMs": 5.0,
+              "thinkMs": 10.0
+            }
+          ],
+          "invocationsPerWorker": 200,
+          "pool": {
+            "maxSize": 8,
+            "minSize": 8
+          },
+          "replayPolicies": {
+            "fixed-8/25": [
+              0.008,
+              0.025
+            ],
+            "fixed-8/400": [
+              0.008,
+              0.4
+            ],
+            "immediate": [
+              0.0,
+              0.0
+            ],
+            "scaled": "the arm's own"
+          },
+          "retry": "the arm's own replay policy",
+          "scaledPolicy": {
+            "ceilingS": 1.0,
+            "floorFirstS": 0.008,
+            "floorLimitS": 0.025,
+            "scaleFirst": 0.25,
+            "scaleLimit": 8.0
+          },
+          "warmUpInvocationsPerWriter": 50,
+          "workers": 8
+        }
+      },
+      "elapsedS": 348.67,
+      "sha256": "61f0404054c467586ba3c133e2dd47b3a554d9c687958f60acf4b92d0d949641"
+    },
+    "guard_wal": {
+      "bytes": 1023722,
+      "command": [
+        "/Users/david/.humanlayer/workspaces/cor-214-simplify-transactions-and-repeatable-read-7bk9nl/parallax/docs/research/transaction-isolation/scripts/guard_wal.py",
+        "--environments",
+        "--isolation",
+        "repeatable_read",
+        "--out",
+        "/Users/david/.local/share/parallax/evidence/cor-214/transaction-isolation-captures/C7/0581fd3959c3-repeatable_read/guard_wal.json"
+      ],
+      "conditions": {
+        "cpython": "3.14.8",
+        "image": "postgres:18.6-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2",
+        "isolation": "repeatable_read",
+        "settings": {
+          "autovacuum": "on",
+          "deadlock_timeout": "1s",
+          "default_transaction_isolation": "read committed",
+          "lock_timeout": "0",
+          "max_connections": "100",
+          "server_version": "18.6",
+          "shared_buffers": "128MB",
+          "synchronous_commit": "on",
+          "wal_level": "replica"
+        },
+        "version": "PostgreSQL 18.6 on aarch64-unknown-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit",
+        "workload": {
+          "balances": 200,
+          "environments": [
+            {
+              "name": "local",
+              "roundTripMs": 0.0,
+              "thinkMs": 0.0
+            },
+            {
+              "name": "rtt-2ms",
+              "roundTripMs": 2.0,
+              "thinkMs": 0.0
+            },
+            {
+              "name": "rtt-5ms+think",
+              "roundTripMs": 5.0,
+              "thinkMs": 10.0
+            }
+          ],
+          "invocationsPerWriter": 200,
+          "replayPolicies": {
+            "fixed-8/25": [
+              0.008,
+              0.025
+            ],
+            "fixed-8/400": [
+              0.008,
+              0.4
+            ],
+            "immediate": [
+              0.0,
+              0.0
+            ],
+            "scaled": "the arm's own"
+          },
+          "scaledPolicy": {
+            "ceilingS": 1.0,
+            "floorFirstS": 0.008,
+            "floorLimitS": 0.025,
+            "scaleFirst": 0.25,
+            "scaleLimit": 8.0
+          },
+          "warmUpInvocationsPerWriter": 50,
+          "writers": 2
+        }
+      },
+      "elapsedS": 108.322,
+      "sha256": "c84bdd01b76329abf3bd479165e46205795e7d86548814ecdc33c1ed800ddeba"
+    }
+  },
+  "loadAverage": [
+    2.78759765625,
+    2.53173828125,
+    2.50537109375
+  ],
+  "lockDigest": "ba94b858fe8d97e5b38e66362623f67e2e6634515530972af4459e0dcee51334",
+  "machine": {
+    "cores": 10,
+    "cpu": "Apple M5",
+    "model": "Mac17,4",
+    "os": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
+    "ramGiB": 32
+  }
+}
