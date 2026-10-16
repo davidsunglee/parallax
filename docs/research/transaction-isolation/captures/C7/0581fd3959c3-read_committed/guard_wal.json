@@ -1,0 +1,623 @@
+{
+  "conditions": {
+    "cpython": "3.14.8",
+    "image": "postgres:18.6-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2",
+    "isolation": "read_committed",
+    "settings": {
+      "autovacuum": "on",
+      "deadlock_timeout": "1s",
+      "default_transaction_isolation": "read committed",
+      "lock_timeout": "0",
+      "max_connections": "100",
+      "server_version": "18.6",
+      "shared_buffers": "128MB",
+      "synchronous_commit": "on",
+      "wal_level": "replica"
+    },
+    "version": "PostgreSQL 18.6 on aarch64-unknown-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit",
+    "workload": {
+      "balances": 200,
+      "environments": [
+        {
+          "name": "local",
+          "roundTripMs": 0.0,
+          "thinkMs": 0.0
+        },
+        {
+          "name": "rtt-2ms",
+          "roundTripMs": 2.0,
+          "thinkMs": 0.0
+        },
+        {
+          "name": "rtt-5ms+think",
+          "roundTripMs": 5.0,
+          "thinkMs": 10.0
+        }
+      ],
+      "invocationsPerWriter": 200,
+      "replayPolicies": {
+        "fixed-8/25": [
+          0.008,
+          0.025
+        ],
+        "fixed-8/400": [
+          0.008,
+          0.4
+        ],
+        "immediate": [
+          0.0,
+          0.0
+        ],
+        "scaled": "the arm's own"
+      },
+      "scaledPolicy": {
+        "ceilingS": 1.0,
+        "floorFirstS": 0.008,
+        "floorLimitS": 0.025,
+        "scaleFirst": 0.25,
+        "scaleLimit": 8.0
+      },
+      "warmUpInvocationsPerWriter": 50,
+      "writers": 2
+    }
+  },
+  "driver": "guard_wal",
+  "replay": [
+    {
+      "backoff": "scaled",
+      "environment": "local",
+      "latency": {
+        "meanRoundTripMs": null,
+        "roundTrips": 0.0
+      },
+      "maxRetries": 0,
+      "replayWaits": {
+        "failedAttemptMs": {
+          "p50": null,
+          "p95": null,
+          "p99": null
+        },
+        "waits": 0,
+        "windowMs": {
+          "p50": null,
+          "p95": null,
+          "p99": null
+        }
+      },
+      "summary": {
+        "attemptsPerSuccess": 1.0,
+        "committed": 400,
+        "committedThroughputPerS": 1407.2070108266964,
+        "invocations": 400,
+        "latencyMs": {
+          "p50": 1.3859790051355958,
+          "p95": 1.5859082937822677,
+          "p99": 2.076224170450587
+        },
+        "p99ToSuccessMs": 2.0755000005010515,
+        "surfacedFailureAttempts": null,
+        "surfacedFailureLatencyMs": null,
+        "surfacedFailures": {}
+      }
+    },
+    {
+      "backoff": "immediate",
+      "environment": "local",
+      "latency": {
+        "meanRoundTripMs": null,
+        "roundTrips": 0.0
+      },
+      "maxRetries": "default",
+      "replayWaits": {
+        "failedAttemptMs": {
+          "p50": null,
+          "p95": null,
+          "p99": null
+        },
+        "waits": 0,
+        "windowMs": {
+          "p50": null,
+          "p95": null,
+          "p99": null
+        }
+      },
+      "summary": {
+        "attemptsPerSuccess": 1.0,
+        "committed": 400,
+        "committedThroughputPerS": 1409.1850681642732,
+        "invocations": 400,
+        "latencyMs": {
+          "p50": 1.3849374954588711,
+          "p95": 1.578789550694637,
+          "p99": 1.7386460007401183
+        },
+        "p99ToSuccessMs": 1.7382910009473562,
+        "surfacedFailureAttempts": null,
+        "surfacedFailureLatencyMs": null,
+        "surfacedFailures": {}
+      }
+    },
+    {
+      "backoff": "fixed-8/25",
+      "environment": "local",
+      "latency": {
+        "meanRoundTripMs": null,
+        "roundTrips": 0.0
+      },
+      "maxRetries": "default",
+      "replayWaits": {
+        "failedAttemptMs": {
+          "p50": null,
+          "p95": null,
+          "p99": null
+        },
+        "waits": 0,
+        "windowMs": {
+          "p50": null,
+          "p95": null,
+          "p99": null
+        }
+      },
+      "summary": {
+        "attemptsPerSuccess": 1.0,
+        "committed": 400,
+        "committedThroughputPerS": 1360.355859220335,
+        "invocations": 400,
+        "latencyMs": {
+          "p50": 1.4085834991419688,
+          "p95": 1.7848853938630782,
+          "p99": 2.378265925508458
+        },
+        "p99ToSuccessMs": 2.373833005549386,
+        "surfacedFailureAttempts": null,
+        "surfacedFailureLatencyMs": null,
+        "surfacedFailures": {}
+      }
+    },
+    {
+      "backoff": "fixed-8/400",
+      "environment": "local",
+      "latency": {
+        "meanRoundTripMs": null,
+        "roundTrips": 0.0
+      },
+      "maxRetries": "default",
+      "replayWaits": {
+        "failedAttemptMs": {
+          "p50": null,
+          "p95": null,
+          "p99": null
+        },
+        "waits": 0,
+        "windowMs": {
+          "p50": null,
+          "p95": null,
+          "p99": null
+        }
+      },
+      "summary": {
+        "attemptsPerSuccess": 1.0,
+        "committed": 400,
+        "committedThroughputPerS": 1341.5124632362085,
+        "invocations": 400,
+        "latencyMs": {
+          "p50": 1.3892295100959018,
+          "p95": 1.958069103420712,
+          "p99": 3.1336479444871657
+        },
+        "p99ToSuccessMs": 3.1336250249296427,
+        "surfacedFailureAttempts": null,
+        "surfacedFailureLatencyMs": null,
+        "surfacedFailures": {}
+      }
+    },
+    {
+      "backoff": "scaled",
+      "environment": "local",
+      "latency": {
+        "meanRoundTripMs": null,
+        "roundTrips": 0.0
+      },
+      "maxRetries": "default",
+      "replayWaits": {
+        "failedAttemptMs": {
+          "p50": null,
+          "p95": null,
+          "p99": null
+        },
+        "waits": 0,
+        "windowMs": {
+          "p50": null,
+          "p95": null,
+          "p99": null
+        }
+      },
+      "summary": {
+        "attemptsPerSuccess": 1.0,
+        "committed": 400,
+        "committedThroughputPerS": 1279.6459658928468,
+        "invocations": 400,
+        "latencyMs": {
+          "p50": 1.4041039976291358,
+          "p95": 1.9806062526185997,
+          "p99": 3.299338732904289
+        },
+        "p99ToSuccessMs": 3.2771249825600535,
+        "surfacedFailureAttempts": null,
+        "surfacedFailureLatencyMs": null,
+        "surfacedFailures": {}
+      }
+    },
+    {
+      "backoff": "scaled",
+      "environment": "rtt-2ms",
+      "latency": {
+        "meanRoundTripMs": 2.1969916565770595,
+        "roundTrips": 2400.0
+      },
+      "maxRetries": 0,
+      "replayWaits": {
+        "failedAttemptMs": {
+          "p50": null,
+          "p95": null,
+          "p99": null
+        },
+        "waits": 0,
+        "windowMs": {
+          "p50": null,
+          "p95": null,
+          "p99": null
+        }
+      },
+      "summary": {
+        "attemptsPerSuccess": 1.0,
+        "committed": 400,
+        "committedThroughputPerS": 121.40034232621076,
+        "invocations": 400,
+        "latencyMs": {
+          "p50": 16.477666489663534,
+          "p95": 17.418229795293882,
+          "p99": 19.110401161306072
+        },
+        "p99ToSuccessMs": 19.106291991192847,
+        "surfacedFailureAttempts": null,
+        "surfacedFailureLatencyMs": null,
+        "surfacedFailures": {}
+      }
+    },
+    {
+      "backoff": "immediate",
+      "environment": "rtt-2ms",
+      "latency": {
+        "meanRoundTripMs": 2.207685932541305,
+        "roundTrips": 2400.0
+      },
+      "maxRetries": "default",
+      "replayWaits": {
+        "failedAttemptMs": {
+          "p50": null,
+          "p95": null,
+          "p99": null
+        },
+        "waits": 0,
+        "windowMs": {
+          "p50": null,
+          "p95": null,
+          "p99": null
+        }
+      },
+      "summary": {
+        "attemptsPerSuccess": 1.0,
+        "committed": 400,
+        "committedThroughputPerS": 121.12973618024142,
+        "invocations": 400,
+        "latencyMs": {
+          "p50": 16.38814549369272,
+          "p95": 17.837254783080425,
+          "p99": 19.729237688006833
+        },
+        "p99ToSuccessMs": 19.727666018297896,
+        "surfacedFailureAttempts": null,
+        "surfacedFailureLatencyMs": null,
+        "surfacedFailures": {}
+      }
+    },
+    {
+      "backoff": "fixed-8/25",
+      "environment": "rtt-2ms",
+      "latency": {
+        "meanRoundTripMs": 2.20201310406992,
+        "roundTrips": 2400.0
+      },
+      "maxRetries": "default",
+      "replayWaits": {
+        "failedAttemptMs": {
+          "p50": null,
+          "p95": null,
+          "p99": null
+        },
+        "waits": 0,
+        "windowMs": {
+          "p50": null,
+          "p95": null,
+          "p99": null
+        }
+      },
+      "summary": {
+        "attemptsPerSuccess": 1.0,
+        "committed": 400,
+        "committedThroughputPerS": 119.70319891084569,
+        "invocations": 400,
+        "latencyMs": {
+          "p50": 16.621687507722527,
+          "p95": 17.733050597598776,
+          "p99": 20.954248074849602
+        },
+        "p99ToSuccessMs": 20.950165984686464,
+        "surfacedFailureAttempts": null,
+        "surfacedFailureLatencyMs": null,
+        "surfacedFailures": {}
+      }
+    },
+    {
+      "backoff": "fixed-8/400",
+      "environment": "rtt-2ms",
+      "latency": {
+        "meanRoundTripMs": 2.196005966543453,
+        "roundTrips": 2400.0
+      },
+      "maxRetries": "default",
+      "replayWaits": {
+        "failedAttemptMs": {
+          "p50": null,
+          "p95": null,
+          "p99": null
+        },
+        "waits": 0,
+        "windowMs": {
+          "p50": null,
+          "p95": null,
+          "p99": null
+        }
+      },
+      "summary": {
+        "attemptsPerSuccess": 1.0,
+        "committed": 400,
+        "committedThroughputPerS": 123.092634772648,
+        "invocations": 400,
+        "latencyMs": {
+          "p50": 16.24049998645205,
+          "p95": 17.202914610970765,
+          "p99": 19.378602652577683
+        },
+        "p99ToSuccessMs": 19.371290982235223,
+        "surfacedFailureAttempts": null,
+        "surfacedFailureLatencyMs": null,
+        "surfacedFailures": {}
+      }
+    },
+    {
+      "backoff": "scaled",
+      "environment": "rtt-2ms",
+      "latency": {
+        "meanRoundTripMs": 2.1986077812107396,
+        "roundTrips": 2400.0
+      },
+      "maxRetries": "default",
+      "replayWaits": {
+        "failedAttemptMs": {
+          "p50": null,
+          "p95": null,
+          "p99": null
+        },
+        "waits": 0,
+        "windowMs": {
+          "p50": null,
+          "p95": null,
+          "p99": null
+        }
+      },
+      "summary": {
+        "attemptsPerSuccess": 1.0,
+        "committed": 400,
+        "committedThroughputPerS": 121.42448067074582,
+        "invocations": 400,
+        "latencyMs": {
+          "p50": 16.413666497101076,
+          "p95": 17.55388897145167,
+          "p99": 20.54308284074068
+        },
+        "p99ToSuccessMs": 20.542167010717094,
+        "surfacedFailureAttempts": null,
+        "surfacedFailureLatencyMs": null,
+        "surfacedFailures": {}
+      }
+    },
+    {
+      "backoff": "scaled",
+      "environment": "rtt-5ms+think",
+      "latency": {
+        "meanRoundTripMs": 5.4332189353590365,
+        "roundTrips": 2400.0
+      },
+      "maxRetries": 0,
+      "replayWaits": {
+        "failedAttemptMs": {
+          "p50": null,
+          "p95": null,
+          "p99": null
+        },
+        "waits": 0,
+        "windowMs": {
+          "p50": null,
+          "p95": null,
+          "p99": null
+        }
+      },
+      "summary": {
+        "attemptsPerSuccess": 1.0,
+        "committed": 400,
+        "committedThroughputPerS": 41.57193804259064,
+        "invocations": 400,
+        "latencyMs": {
+          "p50": 47.867375003988855,
+          "p95": 50.71613690524828,
+          "p99": 52.79236384900287
+        },
+        "p99ToSuccessMs": 52.78995801927522,
+        "surfacedFailureAttempts": null,
+        "surfacedFailureLatencyMs": null,
+        "surfacedFailures": {}
+      }
+    },
+    {
+      "backoff": "immediate",
+      "environment": "rtt-5ms+think",
+      "latency": {
+        "meanRoundTripMs": 5.451863419026873,
+        "roundTrips": 2400.0
+      },
+      "maxRetries": "default",
+      "replayWaits": {
+        "failedAttemptMs": {
+          "p50": null,
+          "p95": null,
+          "p99": null
+        },
+        "waits": 0,
+        "windowMs": {
+          "p50": null,
+          "p95": null,
+          "p99": null
+        }
+      },
+      "summary": {
+        "attemptsPerSuccess": 1.0,
+        "committed": 400,
+        "committedThroughputPerS": 41.84280471584053,
+        "invocations": 400,
+        "latencyMs": {
+          "p50": 47.67372951027937,
+          "p95": 49.84886043530423,
+          "p99": 51.31261666974751
+        },
+        "p99ToSuccessMs": 51.30487499991432,
+        "surfacedFailureAttempts": null,
+        "surfacedFailureLatencyMs": null,
+        "surfacedFailures": {}
+      }
+    },
+    {
+      "backoff": "fixed-8/25",
+      "environment": "rtt-5ms+think",
+      "latency": {
+        "meanRoundTripMs": 5.429334831957628,
+        "roundTrips": 2400.0
+      },
+      "maxRetries": "default",
+      "replayWaits": {
+        "failedAttemptMs": {
+          "p50": null,
+          "p95": null,
+          "p99": null
+        },
+        "waits": 0,
+        "windowMs": {
+          "p50": null,
+          "p95": null,
+          "p99": null
+        }
+      },
+      "summary": {
+        "attemptsPerSuccess": 1.0,
+        "committed": 400,
+        "committedThroughputPerS": 41.72089677027916,
+        "invocations": 400,
+        "latencyMs": {
+          "p50": 47.720854010549374,
+          "p95": 50.08119788544718,
+          "p99": 54.200424739101436
+        },
+        "p99ToSuccessMs": 54.19841597904451,
+        "surfacedFailureAttempts": null,
+        "surfacedFailureLatencyMs": null,
+        "surfacedFailures": {}
+      }
+    },
+    {
+      "backoff": "fixed-8/400",
+      "environment": "rtt-5ms+think",
+      "latency": {
+        "meanRoundTripMs": 5.440362742034873,
+        "roundTrips": 2400.0
+      },
+      "maxRetries": "default",
+      "replayWaits": {
+        "failedAttemptMs": {
+          "p50": null,
+          "p95": null,
+          "p99": null
+        },
+        "waits": 0,
+        "windowMs": {
+          "p50": null,
+          "p95": null,
+          "p99": null
+        }
+      },
+      "summary": {
+        "attemptsPerSuccess": 1.0,
+        "committed": 400,
+        "committedThroughputPerS": 41.54665741557888,
+        "invocations": 400,
+        "latencyMs": {
+          "p50": 47.95254200871568,
+          "p95": 50.47465179231949,
+          "p99": 53.33450540463673
+        },
+        "p99ToSuccessMs": 53.33374999463558,
+        "surfacedFailureAttempts": null,
+        "surfacedFailureLatencyMs": null,
+        "surfacedFailures": {}
+      }
+    },
+    {
+      "backoff": "scaled",
+      "environment": "rtt-5ms+think",
+      "latency": {
+        "meanRoundTripMs": 5.423963674644862,
+        "roundTrips": 2400.0
+      },
+      "maxRetries": "default",
+      "replayWaits": {
+        "failedAttemptMs": {
+          "p50": null,
+          "p95": null,
+          "p99": null
+        },
+        "waits": 0,
+        "windowMs": {
+          "p50": null,
+          "p95": null,
+          "p99": null
+        }
+      },
+      "summary": {
+        "attemptsPerSuccess": 1.0,
+        "committed": 400,
+        "committedThroughputPerS": 41.69522880172503,
+        "invocations": 400,
+        "latencyMs": {
+          "p50": 47.814874997129664,
+          "p95": 50.241791988082696,
+          "p99": 53.776647169434
+        },
+        "p99ToSuccessMs": 53.77345799934119,
+        "surfacedFailureAttempts": null,
+        "surfacedFailureLatencyMs": null,
+        "surfacedFailures": {}
+      }
+    }
+  ],
+  "wal": []
+}
