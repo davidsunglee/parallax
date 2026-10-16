@@ -237,7 +237,7 @@ def test_reclassify_command_preserves_measurements_and_discloses(
         expected.pop("budgetContract")
         expected.pop("budgetContractDigest")
         assert provenance == expected
-        assert json.loads((tmp_path / f"{new['subject']}.json").read_text()) == new
+        assert not (tmp_path / f"{new['subject']}.json").exists()
     assert after["members"][0]["authority"] == "authoritative"
     amended = json.loads((tmp_path / "conditions.json").read_text())
     assert (
@@ -297,8 +297,8 @@ def test_reclassify_refuses_contract_changes_before_writes(
     "damage",
     [
         "adjustment",
-        "missing",
-        "member",
+        "missing-conditions",
+        "coverage",
         "digest",
         "contracts",
         "conditions",
@@ -319,10 +319,13 @@ def test_reclassify_refuses_bad_inputs_before_writes(
         conditions = json.loads(path.read_text())
         conditions["adjustment"] = {}
         path.write_text(json.dumps(conditions))
-    elif damage == "missing":
-        (tmp_path / "write-lowering.json").unlink()
-    elif damage == "member":
-        (tmp_path / "write-lowering.json").write_text("{}")
+    elif damage == "missing-conditions":
+        (tmp_path / "conditions.json").unlink()
+    elif damage == "coverage":
+        path = tmp_path / "conditions.json"
+        conditions = json.loads(path.read_text())
+        conditions["members"].pop(cost_report.WRITE_SUBJECT)
+        path.write_text(json.dumps(conditions))
     elif damage in {"digest", "contracts", "reading", "comparison"}:
         member = document["members"][-1 if damage == "contracts" else 0]
         if damage == "contracts":
@@ -340,7 +343,6 @@ def test_reclassify_refuses_bad_inputs_before_writes(
         else:
             member["comparisons"][0]["limit"] += 1
         portfolio.write_text(json.dumps(document))
-        (tmp_path / f"{member['subject']}.json").write_text(json.dumps(member))
         (tmp_path / "summary.md").write_text(
             cost_report._summary(  # pyright: ignore[reportPrivateUsage] - renderer seam
                 document,
@@ -349,6 +351,39 @@ def test_reclassify_refuses_bad_inputs_before_writes(
         )
     else:
         (tmp_path / f"{damage}.json").write_text("{}")
+    before = _files(tmp_path)
+    assert cost_report.main(["--reclassify", str(portfolio)]) == 1
+    assert _files(tmp_path) == before
+
+
+@pytest.mark.parametrize("members", [None, {}, [], [{}], [None], "invalid"])
+def test_reclassify_refuses_malformed_embedded_members_before_writes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    members: object,
+) -> None:
+    portfolio, _current = _capture(tmp_path, monkeypatch)
+    document = json.loads(portfolio.read_text())
+    document["members"] = members
+    portfolio.write_text(json.dumps(document))
+    before = _files(tmp_path)
+    assert cost_report.main(["--reclassify", str(portfolio)]) == 1
+    assert _files(tmp_path) == before
+
+
+@pytest.mark.parametrize("damage", ["duplicate", "unknown"])
+def test_reclassify_refuses_invalid_member_subjects_before_writes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    damage: str,
+) -> None:
+    portfolio, _current = _capture(tmp_path, monkeypatch)
+    document = json.loads(portfolio.read_text())
+    if damage == "duplicate":
+        document["members"].append(document["members"][0])
+    else:
+        document["members"][-1]["subject"] = "unknown"
+    portfolio.write_text(json.dumps(document))
     before = _files(tmp_path)
     assert cost_report.main(["--reclassify", str(portfolio)]) == 1
     assert _files(tmp_path) == before
@@ -377,7 +412,6 @@ def test_reclassify_preserves_optional_member_failures(
         }
     ]
     portfolio.write_text(json.dumps(document))
-    (tmp_path / f"{omitted}.json").unlink()
     before_conditions = json.loads((tmp_path / "conditions.json").read_text())
     assert cost_report.main(["--reclassify", str(portfolio)]) == 0
     updated = json.loads(portfolio.read_text())

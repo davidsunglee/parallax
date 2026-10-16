@@ -31,9 +31,8 @@ here is wrong.
 two of them the representation's. Every framework slot a declared class carries
 is carried by all three — an ordinary value holds the compact and auxiliary
 pointers exactly as a published one does, and an Entity of any backing holds the
-lifecycle slot — so these sums may be divided, where the frozen sums in
-``docs/instance-state-baseline.md`` were taken over a tree that had none and may
-not be the comparand for a reading taken here.
+lifecycle slot. Ratios require readings from this same layout; measurements from
+a layout without those slots are not comparable.
 
 **The legacy arm is a FIXTURE** —
 ``_instance_state_support.legacy_publication``, which builds one node the way

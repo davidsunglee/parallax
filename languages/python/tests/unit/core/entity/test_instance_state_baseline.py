@@ -1,9 +1,8 @@
 """What the instance-state report is asked for, and every comparison it computes.
 
-``docs/instance-state-baseline.md`` records what a published Entity retains under
-each backing, and `just python-report-instance-state` re-derives it. Neither
-grades a byte total — one is machine- and interpreter-relative — so what is
-gradeable here is everything ABOUT a reading rather than any reading: the mix the
+`just python-report-instance-state` measures what a published Entity retains
+under each backing. A byte total is machine- and interpreter-relative, so these
+tests grade how the report computes and compares readings: the mix the
 measurement contract names, the warmed scenario held outside every aggregate, the
 matrix being the supported minors, an aggregate dividing sums rather than
 averaging percentages, the ordinary arm staying out of both, construction being

@@ -26,8 +26,8 @@ __all__ = ["CAPTURES", "FIXTURE", "GATES", "EvidenceRefused", "is_committed"]
 FIXTURE: Final = "committed_cost_evidence"
 """The fixture an item requests to read the committed cost evidence."""
 
-CAPTURES: Final = "docs/*-envelope/**/*.json"
-"""Every capture record retained under an envelope directory, relative to the
+CAPTURES: Final = "evidence/cost/**/*.json"
+"""Every capture record retained under the cost evidence directory, relative to the
 Python root: the canonical capture and every comparison base beside it."""
 
 GATES: Final = "spec/memory-gates.yaml"

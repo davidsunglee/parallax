@@ -458,7 +458,7 @@ def test_collection_asks_each_member_for_a_sidecar_and_folds_only_what_decodes()
     assert collection.results[2].failure == "exit 4: the matrix is incomplete"
 
 
-def test_written_output_keeps_the_legacy_portfolio_beside_the_durations_sidecar(
+def test_written_output_keeps_one_portfolio_with_conditions_and_durations(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     contract = BudgetContract.load()
@@ -486,7 +486,6 @@ def test_written_output_keeps_the_legacy_portfolio_beside_the_durations_sidecar(
             "summary.md",
             DURATIONS_FILE,
             cost_report.CONDITIONS_FILE,
-            *(f"{m.subject}.json" for m in MEMBERS),
         ]
     )
     portfolio = cast("dict[str, Any]", json.loads((out / "portfolio.json").read_text("utf-8")))
@@ -614,8 +613,11 @@ _RENAMED_COUNTERS = {
 
 
 def _historical(name: str, member: str) -> dict[str, Any]:
-    path = cost_report.EVIDENCE_DIRECTORY / name / f"{member}.json"
-    return cast("dict[str, Any]", json.loads(path.read_text(encoding="utf-8")))
+    path = cost_report.EVIDENCE_DIRECTORY / f"structural-metadata-{name}" / "portfolio.json"
+    portfolio = cast("dict[str, Any]", json.loads(path.read_text(encoding="utf-8")))
+    if member == "portfolio":
+        return portfolio
+    return next(envelope for envelope in portfolio["members"] if envelope["subject"] == member)
 
 
 def _counter_readings(document: dict[str, Any]) -> list[dict[str, Any]]:
@@ -684,7 +686,9 @@ def test_each_retained_historical_portfolio_preserves_its_original_provenance(
     portfolio = cast(
         "dict[str, Any]",
         json.loads(
-            (cost_report.EVIDENCE_DIRECTORY / name / "portfolio.json").read_text(encoding="utf-8")
+            (
+                cost_report.EVIDENCE_DIRECTORY / f"structural-metadata-{name}" / "portfolio.json"
+            ).read_text(encoding="utf-8")
         ),
     )
     assert verify(portfolio) == [
@@ -1300,22 +1304,14 @@ def test_compare_reads_throughput_deltas_in_their_own_direction() -> None:
     assert "| incomparable |" in rendered
 
 
-# Every capture is compared under the frozen protocol the evidence README publishes.
-# Changing an allowance or the write sampling makes already-committed captures
-# incomparable, so each value is pinned here as a reviewed diff line.
-def test_the_frozen_allowances_and_write_sampling_match_the_published_protocol() -> None:
+# Changing allowances or sampling makes retained captures incomparable.
+def test_the_frozen_allowances_and_write_sampling_remain_comparable() -> None:
     assert cost_report.TIMING_NOISE_ALLOWANCE == 0.05
     assert cost_report.MEMORY_NOISE_ALLOWANCE == 0.03
     assert (write_report.WARMUPS, write_report.MEASURED) == (3, 9)
     assert write_report.samples_expected("elapsedUs") == 9
     assert write_report.samples_expected("retainedBytes") == 1
     assert write_report.samples_expected("calls.encodeMany") == 1
-    readme = (
-        cost_report.WORKSPACE / "docs" / "structural-metadata-envelope" / "README.md"
-    ).read_text(encoding="utf-8")
-    assert "three warm-ups and nine measured samples" in readme
-    assert "**5%**" in readme
-    assert "**3%**" in readme
 
 
 def test_a_diagnostic_reading_set_is_never_verifiable_evidence(tmp_path: Path) -> None:

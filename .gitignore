@@ -23,6 +23,9 @@ __pycache__/
 .coverage.*
 
 # Build / report artifacts
+languages/python/reports/
+languages/python/evidence/cost/**/summary.md
+languages/python/evidence/cost/**/comparison*.md
 report.json
 matrix.json
 coverage/

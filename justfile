@@ -387,8 +387,6 @@ python-test-psycopg-c:
 # different reason: a `report` passes no judgement, so no number it prints can
 # fail a merge. That is deliberate — nothing in this repository is enforced
 # against elapsed time, and every CI job runs the floating `ubuntu-latest` label.
-# What has been read off it, and under what conditions, is
-# `languages/python/docs/execution-lifecycle-baseline.md`.
 [metadata("runtime:medium")]
 [doc("Execution lifecycle dispatch and overhead against the same workload unobserved.")]
 python-report-lifecycle-overhead:
@@ -411,8 +409,7 @@ python-report-snapshot-delivery:
 # first two arms; the third states what a published node costs against one a
 # caller built, and enters neither. What grades those comparisons is
 # `tests/unit/core/entity/test_instance_state_baseline.py`, which `python-test-dbfree` owns
-# and which feeds them doctored readings. What has been read off this, and under
-# what conditions, is `languages/python/docs/instance-state-baseline.md`.
+# and which feeds them doctored readings.
 [metadata("runtime:medium")]
 [doc("Retained published Entity state under each backing over the canonical mix, on every supported minor.")]
 python-report-instance-state:
@@ -517,7 +514,7 @@ python-check-instrument-access:
 [metadata("runtime:fast")]
 [doc("The committed canonical cost capture is valid, current evidence for the inspected checkout.")]
 python-check-evidence:
-    cd {{python}} && uv run python tools/cost_report.py --verify docs/structural-metadata-envelope/recovered/portfolio.json
+    cd {{python}} && uv run python tools/cost_report.py --verify evidence/cost/current/portfolio.json
 
 [metadata("runtime:fast")]
 [doc("Dead-code scan over the Python workspace.")]

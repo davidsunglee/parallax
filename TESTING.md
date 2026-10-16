@@ -79,6 +79,30 @@ run `uv run python tools/cost_report.py --help` from `languages/python`.
 Diagnostic output is not a retained evidence envelope. Cost gates and
 measurement budgets remain in their executable configuration.
 
+## Measurement retention
+
+Python cost captures live under
+[`languages/python/evidence/cost/`](languages/python/evidence/cost/README.md).
+Keep the canonical portfolio, comparison bases that checks still read, and
+their provenance and collection durations. The portfolio owns its member
+envelopes, including the samples required to verify their counts and medians;
+standalone member exports and generated summaries or comparisons are run
+artifacts. Keep concise conclusions and measurement limits beside the evidence
+instead of committing generated tables.
+
+Raw campaign samples, profiles, and logs belong outside Git, such as
+`~/.local/share/parallax/evidence/<ticket>/`, or in CI workflow artifacts.
+Retained research summaries cite their raw archive and SHA-256 when needed to
+judge their conclusions. Research evidence stays with its subject and follows
+this rule; operational inputs such as shard weights and independent functional
+oracles are not measurement reports.
+
+Remove a superseded capture when its replacement lands, unless a check or an
+active comparison still needs it. Preserve any unique conclusion and the
+provenance needed to assess it. Local collector output belongs in the ignored
+`languages/python/reports/` directory; only retained envelopes and their
+supporting records move into the evidence directory.
+
 ## Local permissions
 
 Tracked command permissions live in `.claude/settings.json`. Untracked local
