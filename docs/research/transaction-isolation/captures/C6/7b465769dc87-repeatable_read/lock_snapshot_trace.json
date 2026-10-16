@@ -1,0 +1,462 @@
+{
+  "capturedAt": "2026-10-16T12:21:20.214208+00:00",
+  "conditions": {
+    "cpython": "3.14.8",
+    "image": "postgres:18.6-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2",
+    "isolation": "repeatable_read",
+    "settings": {
+      "autovacuum": "on",
+      "deadlock_timeout": "1s",
+      "default_transaction_isolation": "read committed",
+      "lock_timeout": "0",
+      "max_connections": "100",
+      "server_version": "18.6",
+      "shared_buffers": "128MB",
+      "synchronous_commit": "on",
+      "wal_level": "replica"
+    },
+    "version": "PostgreSQL 18.6 on aarch64-unknown-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit",
+    "workload": {
+      "pool": 4,
+      "schedules": [
+        "gate-race",
+        "fixed-revision",
+        "key-selecting-delete",
+        "guard-then-write"
+      ]
+    }
+  },
+  "driver": "lock_snapshot_trace",
+  "traces": [
+    {
+      "finalState": {
+        "account": [
+          [
+            1,
+            "110.00",
+            2
+          ],
+          [
+            2,
+            "100.00",
+            1
+          ]
+        ],
+        "balance": [
+          [
+            "1",
+            "100.00",
+            "2024-01-01 00:00:00+00:00",
+            "TemporalBound.INFINITY"
+          ]
+        ],
+        "order_item": [
+          [
+            11,
+            1,
+            "A-100"
+          ],
+          [
+            12,
+            1,
+            "B-200"
+          ]
+        ]
+      },
+      "maxRetries": 0,
+      "results": [
+        {
+          "attempts": 1,
+          "outcome": {
+            "category": "deadlock",
+            "nativeCode": "40001",
+            "notes": [
+              "bounded retry exhausted after 1 attempts (retries=0)"
+            ],
+            "type": "DatabaseError"
+          }
+        },
+        {
+          "attempts": 1,
+          "outcome": "committed"
+        }
+      ],
+      "schedule": "gate-race"
+    },
+    {
+      "finalState": {
+        "account": [
+          [
+            1,
+            "111.00",
+            3
+          ],
+          [
+            2,
+            "100.00",
+            1
+          ]
+        ],
+        "balance": [
+          [
+            "1",
+            "100.00",
+            "2024-01-01 00:00:00+00:00",
+            "TemporalBound.INFINITY"
+          ]
+        ],
+        "order_item": [
+          [
+            11,
+            1,
+            "A-100"
+          ],
+          [
+            12,
+            1,
+            "B-200"
+          ]
+        ]
+      },
+      "maxRetries": "default",
+      "results": [
+        {
+          "attempts": 2,
+          "outcome": "committed"
+        },
+        {
+          "attempts": 1,
+          "outcome": "committed"
+        }
+      ],
+      "schedule": "gate-race"
+    },
+    {
+      "finalState": {
+        "account": [
+          [
+            1,
+            "999.00",
+            2
+          ],
+          [
+            2,
+            "100.00",
+            1
+          ]
+        ],
+        "balance": [
+          [
+            "1",
+            "100.00",
+            "2024-01-01 00:00:00+00:00",
+            "TemporalBound.INFINITY"
+          ]
+        ],
+        "order_item": [
+          [
+            11,
+            1,
+            "A-100"
+          ],
+          [
+            12,
+            1,
+            "B-200"
+          ]
+        ]
+      },
+      "maxRetries": 0,
+      "results": [
+        {
+          "attempts": 1,
+          "outcome": {
+            "category": "deadlock",
+            "nativeCode": "40001",
+            "notes": [
+              "bounded retry exhausted after 1 attempts (retries=0)"
+            ],
+            "type": "DatabaseError"
+          }
+        },
+        {
+          "attempts": 1,
+          "outcome": "committed"
+        }
+      ],
+      "schedule": "fixed-revision"
+    },
+    {
+      "finalState": {
+        "account": [
+          [
+            1,
+            "999.00",
+            2
+          ],
+          [
+            2,
+            "100.00",
+            1
+          ]
+        ],
+        "balance": [
+          [
+            "1",
+            "100.00",
+            "2024-01-01 00:00:00+00:00",
+            "TemporalBound.INFINITY"
+          ]
+        ],
+        "order_item": [
+          [
+            11,
+            1,
+            "A-100"
+          ],
+          [
+            12,
+            1,
+            "B-200"
+          ]
+        ]
+      },
+      "maxRetries": "default",
+      "results": [
+        {
+          "attempts": 2,
+          "outcome": {
+            "category": null,
+            "nativeCode": null,
+            "notes": [],
+            "type": "WritePreconditionError"
+          }
+        },
+        {
+          "attempts": 1,
+          "outcome": "committed"
+        }
+      ],
+      "schedule": "fixed-revision"
+    },
+    {
+      "finalState": {
+        "account": [
+          [
+            1,
+            "100.00",
+            1
+          ],
+          [
+            2,
+            "100.00",
+            1
+          ]
+        ],
+        "balance": [
+          [
+            "1",
+            "100.00",
+            "2024-01-01 00:00:00+00:00",
+            "TemporalBound.INFINITY"
+          ]
+        ],
+        "order_item": [
+          [
+            11,
+            2,
+            "A-100"
+          ],
+          [
+            12,
+            1,
+            "B-200"
+          ]
+        ]
+      },
+      "maxRetries": 0,
+      "results": [
+        {
+          "attempts": 1,
+          "outcome": "committed"
+        },
+        {
+          "attempts": 1,
+          "outcome": {
+            "category": "deadlock",
+            "nativeCode": "40001",
+            "notes": [
+              "bounded retry exhausted after 1 attempts (retries=0)"
+            ],
+            "type": "DatabaseError"
+          }
+        },
+        {
+          "waited": true
+        }
+      ],
+      "schedule": "key-selecting-delete"
+    },
+    {
+      "finalState": {
+        "account": [
+          [
+            1,
+            "100.00",
+            1
+          ],
+          [
+            2,
+            "100.00",
+            1
+          ]
+        ],
+        "balance": [
+          [
+            "1",
+            "100.00",
+            "2024-01-01 00:00:00+00:00",
+            "TemporalBound.INFINITY"
+          ]
+        ],
+        "order_item": [
+          [
+            11,
+            2,
+            "A-100"
+          ]
+        ]
+      },
+      "maxRetries": "default",
+      "results": [
+        {
+          "attempts": 1,
+          "outcome": "committed"
+        },
+        {
+          "attempts": 2,
+          "outcome": "committed"
+        },
+        {
+          "waited": true
+        }
+      ],
+      "schedule": "key-selecting-delete"
+    },
+    {
+      "finalState": {
+        "account": [
+          [
+            1,
+            "100.00",
+            1
+          ],
+          [
+            2,
+            "100.00",
+            1
+          ]
+        ],
+        "balance": [
+          [
+            "1",
+            "100.00",
+            "2024-01-01 00:00:00+00:00",
+            "TemporalBound.INFINITY"
+          ]
+        ],
+        "order_item": [
+          [
+            11,
+            1,
+            "A-100"
+          ],
+          [
+            12,
+            1,
+            "B-200"
+          ]
+        ]
+      },
+      "maxRetries": 0,
+      "results": [
+        {
+          "attempts": 1,
+          "outcome": "committed"
+        },
+        {
+          "attempts": 1,
+          "outcome": {
+            "category": "deadlock",
+            "nativeCode": "40001",
+            "notes": [
+              "bounded retry exhausted after 1 attempts (retries=0)"
+            ],
+            "type": "DatabaseError"
+          }
+        },
+        {
+          "waited": true
+        }
+      ],
+      "schedule": "guard-then-write"
+    },
+    {
+      "finalState": {
+        "account": [
+          [
+            1,
+            "100.00",
+            1
+          ],
+          [
+            2,
+            "100.00",
+            1
+          ]
+        ],
+        "balance": [
+          [
+            "1",
+            "100.00",
+            "2024-01-01 00:00:00+00:00",
+            "2026-10-16 12:21:20.207286+00:00"
+          ],
+          [
+            "1",
+            "999.00",
+            "2026-10-16 12:21:20.207286+00:00",
+            "TemporalBound.INFINITY"
+          ]
+        ],
+        "order_item": [
+          [
+            11,
+            1,
+            "A-100"
+          ],
+          [
+            12,
+            1,
+            "B-200"
+          ]
+        ]
+      },
+      "maxRetries": "default",
+      "results": [
+        {
+          "attempts": 1,
+          "outcome": "committed"
+        },
+        {
+          "attempts": 2,
+          "outcome": "committed"
+        },
+        {
+          "waited": true
+        }
+      ],
+      "schedule": "guard-then-write"
+    }
+  ]
+}

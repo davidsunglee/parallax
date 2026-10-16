@@ -1,0 +1,555 @@
+{
+  "conditions": {
+    "cpython": "3.14.8",
+    "image": "postgres:18.6-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2",
+    "isolation": "read_committed",
+    "settings": {
+      "autovacuum": "on",
+      "deadlock_timeout": "1s",
+      "default_transaction_isolation": "read committed",
+      "lock_timeout": "0",
+      "max_connections": "100",
+      "server_version": "18.6",
+      "shared_buffers": "128MB",
+      "synchronous_commit": "on",
+      "wal_level": "replica"
+    },
+    "version": "PostgreSQL 18.6 on aarch64-unknown-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit",
+    "workload": {
+      "objectsPerWorkflow": 400,
+      "pool": {
+        "maxSize": 1,
+        "minSize": 1
+      },
+      "shapedInvocations": 20,
+      "window": "one whole db.transact call, licensing read included"
+    }
+  },
+  "driver": "end_to_end_writes",
+  "results": [
+    {
+      "summary": {
+        "invocations": 400,
+        "latencyMs": {
+          "p50": 2.4152914993464947,
+          "p95": 3.8053919284720905,
+          "p99": 4.585185817268211
+        },
+        "shapedNetBytes": {
+          "p50": 11184.0,
+          "p95": 12085.1,
+          "p99": 12360.22
+        },
+        "shapedPeakBytes": {
+          "p50": 23050.0,
+          "p95": 23976.7,
+          "p99": 24215.34
+        },
+        "shapedStatements": [
+          [
+            {
+              "kind": "read",
+              "sql": "select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = %s"
+            },
+            {
+              "kind": "write",
+              "sql": "update account set balance = %s, version = %s where id = %s and version = %s"
+            }
+          ]
+        ],
+        "statementsPerInvocation": [
+          2,
+          2,
+          2,
+          2,
+          2,
+          2,
+          2,
+          2,
+          2,
+          2,
+          2,
+          2,
+          2,
+          2,
+          2,
+          2,
+          2,
+          2,
+          2,
+          2
+        ]
+      },
+      "target": "account",
+      "workflow": "keyed"
+    },
+    {
+      "summary": {
+        "invocations": 400,
+        "latencyMs": {
+          "p50": 0.8756669994909316,
+          "p95": 1.1939648786210455,
+          "p99": 1.310219478327781
+        },
+        "shapedNetBytes": {
+          "p50": 4583.0,
+          "p95": 4583.0,
+          "p99": 4583.0
+        },
+        "shapedPeakBytes": {
+          "p50": 14203.0,
+          "p95": 14203.35,
+          "p99": 14208.67
+        },
+        "shapedStatements": [
+          [
+            {
+              "kind": "write",
+              "sql": "update account set balance = %s, version = %s where id = %s and version = %s"
+            }
+          ]
+        ],
+        "statementsPerInvocation": [
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1
+        ]
+      },
+      "target": "account",
+      "workflow": "conditional"
+    },
+    {
+      "summary": {
+        "invocations": 400,
+        "latencyMs": {
+          "p50": 1.4663749898318201,
+          "p95": 2.5500583520624787,
+          "p99": 2.71675299591152
+        },
+        "shapedNetBytes": {
+          "p50": 4714.0,
+          "p95": 4714.0,
+          "p99": 4714.0
+        },
+        "shapedPeakBytes": {
+          "p50": 15560.0,
+          "p95": 15560.0,
+          "p99": 15560.0
+        },
+        "shapedStatements": [
+          [
+            {
+              "kind": "read",
+              "sql": "select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = %s"
+            },
+            {
+              "kind": "write",
+              "sql": "update account set balance = %s, version = %s where id = %s and version = %s"
+            }
+          ]
+        ],
+        "statementsPerInvocation": [
+          2,
+          2,
+          2,
+          2,
+          2,
+          2,
+          2,
+          2,
+          2,
+          2,
+          2,
+          2,
+          2,
+          2,
+          2,
+          2,
+          2,
+          2,
+          2,
+          2
+        ]
+      },
+      "target": "account",
+      "workflow": "predicate"
+    },
+    {
+      "summary": {
+        "invocations": 400,
+        "latencyMs": {
+          "p50": 2.551770507125184,
+          "p95": 3.2588899091933854,
+          "p99": 3.6927559215109795
+        },
+        "shapedNetBytes": {
+          "p50": 13053.0,
+          "p95": 13890.2,
+          "p99": 14638.04
+        },
+        "shapedPeakBytes": {
+          "p50": 24056.0,
+          "p95": 24894.2,
+          "p99": 25642.04
+        },
+        "shapedStatements": [
+          [
+            {
+              "kind": "read",
+              "sql": "select t0.bal_id, t0.acct_num, t0.val, t0.in_z, t0.out_z from balance t0 where t0.bal_id = %s and t0.out_z = %s"
+            },
+            {
+              "kind": "write",
+              "sql": "update balance set out_z = %s where bal_id = %s and out_z = %s and in_z = %s"
+            },
+            {
+              "kind": "write",
+              "sql": "insert into balance(bal_id, acct_num, val, in_z, out_z) values (%s, %s, %s, %s, %s)"
+            }
+          ]
+        ],
+        "statementsPerInvocation": [
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3
+        ]
+      },
+      "target": "balance",
+      "workflow": "keyed"
+    },
+    {
+      "summary": {
+        "invocations": 400,
+        "latencyMs": {
+          "p50": 2.675499999895692,
+          "p95": 3.8612315503996797,
+          "p99": 4.218924093293026
+        },
+        "shapedNetBytes": {
+          "p50": 6244.0,
+          "p95": 6276.8,
+          "p99": 6364.96
+        },
+        "shapedPeakBytes": {
+          "p50": 17594.0,
+          "p95": 17604.75,
+          "p99": 17692.15
+        },
+        "shapedStatements": [
+          [
+            {
+              "kind": "read",
+              "sql": "select t0.bal_id, t0.acct_num, t0.val, t0.in_z, t0.out_z from balance t0 where t0.bal_id = %s and t0.out_z = %s"
+            },
+            {
+              "kind": "write",
+              "sql": "update balance set out_z = %s where bal_id = %s and out_z = %s and in_z = %s"
+            },
+            {
+              "kind": "write",
+              "sql": "insert into balance(bal_id, acct_num, val, in_z, out_z) values (%s, %s, %s, %s, %s)"
+            }
+          ]
+        ],
+        "statementsPerInvocation": [
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3
+        ]
+      },
+      "target": "balance",
+      "workflow": "conditional"
+    },
+    {
+      "summary": {
+        "invocations": 400,
+        "latencyMs": {
+          "p50": 2.22210401261691,
+          "p95": 3.211987162649166,
+          "p99": 3.6637050766148604
+        },
+        "shapedNetBytes": {
+          "p50": 5799.0,
+          "p95": 5801.2,
+          "p99": 5834.64
+        },
+        "shapedPeakBytes": {
+          "p50": 16827.0,
+          "p95": 16829.15,
+          "p99": 16861.83
+        },
+        "shapedStatements": [
+          [
+            {
+              "kind": "read",
+              "sql": "select t0.bal_id, t0.acct_num, t0.val, t0.in_z, t0.out_z from balance t0 where t0.bal_id = %s and t0.out_z = %s"
+            },
+            {
+              "kind": "write",
+              "sql": "update balance set out_z = %s where bal_id = %s and out_z = %s and in_z = %s"
+            },
+            {
+              "kind": "write",
+              "sql": "insert into balance(bal_id, acct_num, val, in_z, out_z) values (%s, %s, %s, %s, %s)"
+            }
+          ]
+        ],
+        "statementsPerInvocation": [
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3
+        ]
+      },
+      "target": "balance",
+      "workflow": "predicate"
+    },
+    {
+      "summary": {
+        "invocations": 400,
+        "latencyMs": {
+          "p50": 3.618770497268997,
+          "p95": 9.903819097962696,
+          "p99": 10.902354173304047
+        },
+        "shapedNetBytes": {
+          "p50": 15240.0,
+          "p95": 15906.15,
+          "p99": 16106.03
+        },
+        "shapedPeakBytes": {
+          "p50": 28173.0,
+          "p95": 28839.25,
+          "p99": 29040.65
+        },
+        "shapedStatements": [
+          [
+            {
+              "kind": "read",
+              "sql": "select t0.pos_id, t0.acct_num, t0.val, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from position t0 where t0.pos_id = %s and t0.from_z <= %s and t0.thru_z > %s and t0.out_z = %s"
+            },
+            {
+              "kind": "write",
+              "sql": "update position set out_z = %s where pos_id = %s and thru_z = %s and out_z = %s and in_z = %s"
+            },
+            {
+              "kind": "write",
+              "sql": "insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (%s, %s, %s, %s, %s, %s, %s), (%s, %s, %s, %s, %s, %s, %s)"
+            }
+          ]
+        ],
+        "statementsPerInvocation": [
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3
+        ]
+      },
+      "target": "position",
+      "workflow": "keyed"
+    },
+    {
+      "summary": {
+        "invocations": 400,
+        "latencyMs": {
+          "p50": 1.3143544929334894,
+          "p95": 2.4481457861838862,
+          "p99": 3.108871251461096
+        },
+        "shapedNetBytes": {
+          "p50": 7425.5,
+          "p95": 7505.35,
+          "p99": 7921.07
+        },
+        "shapedPeakBytes": {
+          "p50": 20685.0,
+          "p95": 20762.25,
+          "p99": 21176.45
+        },
+        "shapedStatements": [
+          [
+            {
+              "kind": "read",
+              "sql": "select t0.pos_id, t0.acct_num, t0.val, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from position t0 where t0.pos_id = %s and t0.thru_z > %s and t0.out_z = %s"
+            },
+            {
+              "kind": "write",
+              "sql": "update position set out_z = %s where pos_id = %s and thru_z = %s and out_z = %s and in_z = %s"
+            },
+            {
+              "kind": "write",
+              "sql": "insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (%s, %s, %s, %s, %s, %s, %s), (%s, %s, %s, %s, %s, %s, %s)"
+            }
+          ]
+        ],
+        "statementsPerInvocation": [
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3
+        ]
+      },
+      "target": "position",
+      "workflow": "conditional"
+    },
+    {
+      "summary": {
+        "invocations": 400,
+        "latencyMs": {
+          "p50": 1.8027294863713905,
+          "p95": 3.192802079138346,
+          "p99": 3.650857924367301
+        },
+        "shapedNetBytes": {
+          "p50": 7327.5,
+          "p95": 7445.55,
+          "p99": 7681.91
+        },
+        "shapedPeakBytes": {
+          "p50": 21533.5,
+          "p95": 21653.35,
+          "p99": 21901.87
+        },
+        "shapedStatements": [
+          [
+            {
+              "kind": "read",
+              "sql": "select t0.pos_id, t0.acct_num, t0.val, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from position t0 where t0.pos_id = %s and t0.from_z <= %s and t0.thru_z > %s and t0.out_z = %s"
+            },
+            {
+              "kind": "write",
+              "sql": "update position set out_z = %s where pos_id = %s and thru_z = %s and out_z = %s and in_z = %s"
+            },
+            {
+              "kind": "write",
+              "sql": "insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (%s, %s, %s, %s, %s, %s, %s), (%s, %s, %s, %s, %s, %s, %s)"
+            }
+          ]
+        ],
+        "statementsPerInvocation": [
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3
+        ]
+      },
+      "target": "position",
+      "workflow": "predicate"
+    }
+  ]
+}
