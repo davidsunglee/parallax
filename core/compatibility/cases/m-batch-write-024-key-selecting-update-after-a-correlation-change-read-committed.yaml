@@ -1,13 +1,12 @@
 # Transaction A moves order item 11 to order 2, changing the correlation column the
 # predicate joins through, and holds the change. Transaction B's key-selecting update
-# of items of orders named Ada runs before A commits. MariaDB refuses the resumed
-# update because item 11 changed after the statement's read view: at Read Committed
-# the session keeps the server's default innodb_snapshot_isolation, which is on, and
-# the refusal is in the retriable deadlock category. The key-selecting delete of the
-# same schedule excludes item 11 instead.
+# of items of orders named Ada runs before A commits. The statement waits on item 11
+# and resumes on A's commit; Postgres rechecks only the outer key membership against
+# the new row version, so it still updates item 11, and MariaDB updates it too. The
+# key-selecting delete of the same schedule diverges per engine.
 model: models/orders.yaml
-tags: [m-batch-write, m-sql, m-unit-work, m-db-error, isolation, concurrency, predicate-write, readless, relationship, to-one, update, read-committed, deadlock]
-shape: error
+tags: [m-batch-write, m-sql, m-unit-work, isolation, concurrency, predicate-write, readless, relationship, to-one, update, read-committed, slice-snapshot-1]
+shape: concurrencySuccess
 compileEligibility:
   mode: run-only
   reason: single-connection
@@ -20,26 +19,31 @@ when:
   concurrency:
     rounds:
       - A:
+          kind: write
           statements:
             - sql:
+                postgres: update order_item set order_id = ? where id = ?
                 mariadb: update order_item set order_id = ? where id = ?
               binds: [2, 11]
+          affectedRows: [1]
       - B:
+          kind: write
           blocks: true
           statements:
             - sql:
+                postgres: update order_item set sku = ? where id in (select t0.id from order_item t0 left join orders t1 on t1.id = t0.order_id where t1.name = ?)
                 mariadb: update order_item set sku = ? where id in (select t0.id from order_item t0 left join orders t1 on t1.id = t0.order_id where t1.name = ?)
               binds: [Z, Ada]
+          affectedRows: [2]
       - A:
           kind: commit
+      - B:
+          kind: commit
 then:
-  errorClass: deadlock
-  nativeCode:
-    mariadb: 1020
   tableState:
     order_item:
-      - { id: 11, order_id: 2, sku: A-100, quantity: 2, shipped_on: null }
-      - { id: 12, order_id: 1, sku: B-200, quantity: 1, shipped_on: 2024-02-15 }
+      - { id: 11, order_id: 2, sku: Z, quantity: 2, shipped_on: null }
+      - { id: 12, order_id: 1, sku: Z, quantity: 1, shipped_on: 2024-02-15 }
       - { id: 21, order_id: 2, sku: A-300, quantity: 4, shipped_on: 2024-02-20 }
       - { id: 421, order_id: 42, sku: A-999, quantity: 3, shipped_on: 2024-03-10 }
       - { id: 422, order_id: 42, sku: B-200, quantity: 5, shipped_on: 2024-02-05 }

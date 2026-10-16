@@ -182,26 +182,30 @@ def test_both_dialects_render_the_same_selected_slots_and_nullability() -> None:
 # --- the per-level session statements (the isolation seam) -------------------
 
 
-def test_only_repeatable_read_opens_with_snapshot_isolation_set() -> None:
+def test_read_committed_and_repeatable_read_open_with_opposite_snapshot_isolation() -> None:
     # MariaDB's Repeatable Read forbids the lost update only with
-    # `innodb_snapshot_isolation`, so that level sets it explicitly rather than
-    # inheriting whatever the booted server defaults to. Serializable forbids the
-    # same anomaly through shared locking reads and range protection, which do not
+    # `innodb_snapshot_isolation` on, and its Read Committed re-checks a row changed
+    # during a write's wait only with it off, so both levels set it explicitly rather
+    # than inheriting whatever the booted server defaults to. Serializable forbids the
+    # lost update through shared locking reads and range protection, which do not
     # work from the read view the variable governs, so it must leave the setting
-    # alone; Read Committed never promised the anomaly away at all.
+    # alone.
     #
-    # What this pins is the provider's own per-level mapping — which levels name the
-    # variable — and no behavior of a booted server. It is pinned here rather than
-    # against a live one because a server whose own default is ON reports the flag on
-    # for every level, masking both a level that stopped setting it and one that
-    # started. The assertion is over which statements mention the variable, so
-    # rewording a statement keeps it green.
-    carrying = {
-        level
+    # What this pins is the provider's own per-level mapping — which value each level
+    # gives the variable — and no behavior of a booted server. It is pinned here
+    # rather than against a live one because a server whose own default is ON reports
+    # the flag on for Repeatable Read and Serializable alike, masking both a level that
+    # stopped setting it and one that started. The assertion is over the value the
+    # statements naming the variable assign, so rewording a statement keeps it green.
+    setting = {
+        level: [
+            statement.rsplit("=", 1)[1].strip()
+            for statement in statements
+            if "innodb_snapshot_isolation" in statement
+        ]
         for level, statements in _ISOLATION.items()
-        if any("innodb_snapshot_isolation" in statement for statement in statements)
     }
-    assert carrying == {"repeatable-read"}
+    assert setting == {"read-committed": ["OFF"], "repeatable-read": ["ON"], "serializable": []}
 
 
 # --- the infinity / instant adapters (the max-sentinel fallback) -------------

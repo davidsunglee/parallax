@@ -25,6 +25,7 @@ from reference_harness.providers.mariadb import (
 
 _LOCK_TUNING = "set innodb_lock_wait_timeout = 1"
 _SNAPSHOT_ON = "set session innodb_snapshot_isolation = ON"
+_SNAPSHOT_OFF = "set session innodb_snapshot_isolation = OFF"
 _WORK = "update gauge set level = 1"
 _MORE_WORK = "update gauge set level = 2"
 
@@ -131,32 +132,38 @@ def test_a_session_saves_configures_restores_and_closes(
     assert not driver.connections[0].open
 
 
-def test_only_repeatable_read_enables_snapshot_isolation_after_saving_it(
+def test_read_committed_disables_and_repeatable_read_enables_snapshot_isolation_after_saving_it(
     driver: _Driver, owner: MariaDbProvider
 ) -> None:
     for level in _ISOLATION:
         with owner.open_session(level):
             pass
-    enabling = {
-        level: _SNAPSHOT_ON in connection.calls
+    setting = {
+        level: [call for call in connection.calls if call in (_SNAPSHOT_ON, _SNAPSHOT_OFF)]
         for level, connection in zip(_ISOLATION, driver.connections, strict=True)
     }
-    assert enabling == {"read-committed": False, "repeatable-read": True, "serializable": False}
-    repeatable = driver.connections[list(_ISOLATION).index("repeatable-read")].calls
-    assert repeatable.index(_SAVE_SNAPSHOT_ISOLATION) < repeatable.index(_SNAPSHOT_ON)
+    assert setting == {
+        "read-committed": [_SNAPSHOT_OFF],
+        "repeatable-read": [_SNAPSHOT_ON],
+        "serializable": [],
+    }
+    for level, statement in (("read-committed", _SNAPSHOT_OFF), ("repeatable-read", _SNAPSHOT_ON)):
+        calls = driver.connections[list(_ISOLATION).index(level)].calls
+        assert calls.index(_SAVE_SNAPSHOT_ISOLATION) < calls.index(statement)
 
 
+@pytest.mark.parametrize("level", ["read-committed", "repeatable-read"])
 def test_each_attempt_context_repeats_the_choreography_on_its_own_connection(
-    driver: _Driver, owner: MariaDbProvider
+    driver: _Driver, owner: MariaDbProvider, level: str
 ) -> None:
     driver.saved = [0, 1]
     for _ in driver.saved:
-        with owner.open_session("repeatable-read") as session:
+        with owner.open_session(level) as session:
             session.execute(_WORK)
             session.commit()
     first, second = (connection.calls for connection in driver.connections)
-    assert first == [*_setup("repeatable-read"), _WORK, "commit", _restore(0), "close"]
-    assert second == [*_setup("repeatable-read"), _WORK, "commit", _restore(1), "close"]
+    assert first == [*_setup(level), _WORK, "commit", _restore(0), "close"]
+    assert second == [*_setup(level), _WORK, "commit", _restore(1), "close"]
 
 
 def test_unfinished_work_is_rolled_back_before_the_restore(

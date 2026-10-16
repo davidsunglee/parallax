@@ -157,12 +157,12 @@ When a transient proof would be impractical for a specific database in local
 tooling, the language spec must record the gap and name the deeper suite that
 proves the same classification.
 
-An adapter whose engine forbids a level's anomalies only with **session state**,
-rather than with a boundary keyword alone, owes two further proofs — both about
-that state's whole life rather than about the statement that sets it, because
-`m-db-port` makes the option boundary-scoped while the state is the connection's.
-MariaDB's Repeatable Read is the case that specification states, and the proofs
-are: the saved value is restored after the attempt commits or rolls back, and the
+An adapter whose engine maps a level only with **session state**, rather than
+with a boundary keyword alone, owes two further proofs — both about that state's
+whole life rather than about the statement that sets it, because `m-db-port`
+makes the option boundary-scoped while the state is the connection's. MariaDB's
+Read Committed and Repeatable Read are the cases that specification states, and
+the proofs are: the saved value is restored after the attempt commits or rolls back, and the
 save, set, and restore happen again for **every** attempt of a retried
 invocation, so an invocation neither leaves the variable changed behind it nor
 opens its second attempt without it; and a **restore that fails** preserves the
