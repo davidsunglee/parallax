@@ -5,10 +5,10 @@ from dataclasses import replace
 from typing import Any, Final, Protocol, cast, overload
 
 from parallax.core import deep_fetch
+from parallax.core._execution._publication import SelectedReadModel
+from parallax.core._execution._read_policy import ReadQuery
 from parallax.core.base import ManagedValue, NeutralType
 from parallax.core.entity import Entity, EntityGraphConstruction, IncludePath
-from parallax.core.execution._publication import SelectedReadModel
-from parallax.core.execution._read_policy import ReadQuery
 from parallax.core.read_delivery import InvalidData, StreamStateError
 from parallax.core.read_delivery._stream import StreamDelivery
 from parallax.core.temporal_read import Pin

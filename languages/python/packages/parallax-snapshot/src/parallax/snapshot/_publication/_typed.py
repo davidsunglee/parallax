@@ -5,6 +5,7 @@ from types import MappingProxyType
 from typing import cast
 
 from parallax.core import temporal_read
+from parallax.core._execution._unit_work.retain import ReadOrigin
 from parallax.core.entity import (
     UNLOADED,
     EntityGraphConstruction,
@@ -16,7 +17,6 @@ from parallax.core.entity import (
 from parallax.core.metamodel import EntityIdentity, Metamodel, RelationshipIdentity
 from parallax.core.read_delivery._page import ABSENT, InvalidData, VersionAttributes
 from parallax.core.temporal_read import Edge, NonTemporal, TemporalFacet, milestone_edge
-from parallax.core.unit_work import ReadOrigin
 from parallax.snapshot._inspection import SnapshotNodeState
 from parallax.snapshot._publication._classify import (
     ClassifiedRoot,

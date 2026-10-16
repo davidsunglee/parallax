@@ -6,9 +6,8 @@ from dataclasses import dataclass
 from typing import cast
 
 from parallax.core import predicate as predicate_algebra
-from parallax.core.execution._attempt import Attempt
-from parallax.core.execution._family import family_view
-from parallax.core.execution._keyed_writes import (
+from parallax.core._execution._family import family_view
+from parallax.core._execution._keyed_writes import (
     PreparedSourceWrite,
     ResolvedKeyedInsert,
     ResolvedKeyedWriteSource,
@@ -17,26 +16,24 @@ from parallax.core.execution._keyed_writes import (
     retained,
     stated_valid_from,
 )
-from parallax.core.execution._options import OMITTED, Omitted
-from parallax.core.execution_lifecycle._activity import refuse_reentry
-from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
-from parallax.core.unit_work import (
+from parallax.core._execution._options import OMITTED, Omitted
+from parallax.core._execution._transaction._attempt import Attempt
+from parallax.core._execution._unit_work import instructions
+from parallax.core._execution._unit_work.instructions import (
     AMEND_MUTATIONS,
     REPLACE_MUTATIONS,
     KeyedMutation,
     PredicateMutation,
     PredicateSelection,
     PredicateWrite,
-    ReadOrigin,
+    PreparedKeyedWrite,
     TargetMutation,
     TargetWrite,
     WriteAssignment,
-    instructions,
 )
-from parallax.core.unit_work.instructions import (
-    PreparedKeyedWrite,
-)
-from parallax.core.unit_work.retain import InsertionIdentity
+from parallax.core._execution._unit_work.retain import InsertionIdentity, ReadOrigin
+from parallax.core.execution_lifecycle._activity import refuse_reentry
+from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.write_plan import ObjectKey
 from parallax.snapshot._publication._wire import (
     WireEntity,

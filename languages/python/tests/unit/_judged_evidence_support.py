@@ -5,14 +5,14 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from parallax.core.entity._construction_input import ABSENT
-from parallax.core.entity._layout import EntityLayout, LayoutCatalog
-from parallax.core.execution._retention import (
+from parallax.core._execution._retention import (
     ObservationLedger,
     ReadOrigins,
     RecordedProjections,
     deferred_read_origins,
 )
+from parallax.core.entity._construction_input import ABSENT
+from parallax.core.entity._layout import EntityLayout, LayoutCatalog
 from parallax.core.metamodel import EntityIdentity, Metamodel
 from parallax.core.temporal_read import Pin
 from tests.unit._positional_row_support import positional_row

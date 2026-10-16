@@ -30,10 +30,10 @@ import pytest
 from parallax.conformance import read_models
 from parallax.conformance import vo_models as vo
 from parallax.core import DomainModel
+from parallax.core._execution._concurrency import CONCURRENCY
 from parallax.core.base import INFINITY, PresentDocument
 from parallax.core.db_port import MappingRow
 from parallax.core.entity._model import model_of
-from parallax.core.execution._concurrency import CONCURRENCY
 from parallax.core.metamodel import (
     AttributeIdentity,
     AttributeMetadata,

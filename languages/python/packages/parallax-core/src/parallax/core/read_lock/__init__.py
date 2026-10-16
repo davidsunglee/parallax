@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+from parallax.core._execution._unit_work.uow import Concurrency
 from parallax.core.dialect import LockMode
-from parallax.core.unit_work import Concurrency
 
 __all__ = ["mode_for"]
 

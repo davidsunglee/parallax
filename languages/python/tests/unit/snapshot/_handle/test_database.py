@@ -1,7 +1,7 @@
 """The Snapshot Database doors over a prepared model (`execution.md`).
 
 Preparation itself, and the Serving Model, are execution's
-(``tests/unit/core/execution/test_publication.py``). What is graded here is what
+(``tests/unit/core/_execution/test_publication.py``). What is graded here is what
 the Snapshot doors add: a static model is prepared once per connection under an
 edition of its own, a descriptor-backed model connects but refuses a Typed read
 before any I/O, and nothing a request path reaches derives anything once the

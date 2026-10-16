@@ -1,7 +1,7 @@
 """The Snapshot Database Root and ScopedDatabase facade boundaries.
 
 What a root and its Execution Scopes share and derive is execution's
-(``tests/unit/core/execution/test_scope.py``); what is graded here is the
+(``tests/unit/core/_execution/test_scope.py``); what is graded here is the
 facade: which object offers which verbs, that a ScopedDatabase is immutable and
 built only by authority selection, and its positional-only arguments.
 """

@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from typing import Final, Literal, NamedTuple
 
 from parallax.core import inheritance, navigate, relationship
+from parallax.core._execution._unit_work.instructions import PreparedPredicateWrite
 from parallax.core.base import INFINITY, ManagedValue
 from parallax.core.inheritance import InheritanceEntityView, InheritanceFacet
 from parallax.core.metamodel import (
@@ -45,7 +46,6 @@ from parallax.core.temporal_read import (
     resolved_hop_as_of_terms,
     resolved_pinned_instants,
 )
-from parallax.core.unit_work.instructions import PreparedPredicateWrite
 
 from ._include_tree import (
     IncludeTree,

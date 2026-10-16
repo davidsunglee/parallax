@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Final, cast
 
+from parallax.core._execution._unit_work.retain import InsertionIdentity, ReadOrigin
 from parallax.core.entity import UNLOADED, Entity, IncludePath, UnloadedRelationshipError
 from parallax.core.entity import lifecycle_state_of as _lifecycle_state_of
 from parallax.core.entity import relationship_value_of as _relationship_value_of
@@ -13,8 +14,6 @@ from parallax.core.entity._expressions import IncludeTraversal, include_traversa
 from parallax.core.metamodel import EntityIdentity, RelationshipIdentity
 from parallax.core.object_query import IncludeSegment
 from parallax.core.temporal_read import Edge, Pin
-from parallax.core.unit_work import ReadOrigin
-from parallax.core.unit_work.retain import InsertionIdentity
 
 __all__ = [
     "SNAPSHOT_INSPECTION_CODES",

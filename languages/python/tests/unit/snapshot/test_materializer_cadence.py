@@ -8,11 +8,11 @@ import pytest
 
 from parallax.conformance.story_models import ORDERS_MODEL
 from parallax.core import deep_fetch
+from parallax.core._execution._concurrency import CONCURRENCY
+from parallax.core._execution._preflight import preflight
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
-from parallax.core.execution._concurrency import CONCURRENCY
-from parallax.core.execution._preflight import preflight
 from parallax.core.metamodel import Metamodel
 from parallax.core.object_query import deserialize
 from parallax.core.read_delivery import _row_lane

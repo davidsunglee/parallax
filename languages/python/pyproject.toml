@@ -198,6 +198,7 @@ ignore_imports = [
 unmatched_ignore_imports_alerting = "none"
 forbidden_modules = [
     "parallax.conformance",
+    "parallax.core._execution",
     "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
@@ -242,6 +243,7 @@ type = "forbidden"
 source_modules = ["parallax.aws.postgres"]
 forbidden_modules = [
     "parallax.conformance",
+    "parallax.core._execution",
     "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
@@ -278,6 +280,295 @@ forbidden_modules = [
 ]
 
 [[tool.importlinter.contracts]]
+name = "parallax.core._execution may import only its permitted dependencies"
+type = "forbidden"
+source_modules = ["parallax.core._execution"]
+forbidden_modules = [
+    "parallax.aws",
+    "parallax.aws.postgres",
+    "parallax.conformance",
+    "parallax.core.execution",
+    "parallax.core.pk_gen",
+    "parallax.core.unit_work",
+    "parallax.descriptor",
+    "parallax.evolution.model_evolution",
+    "parallax.evolution.schema_delta",
+    "parallax.postgres",
+    "parallax.snapshot",
+]
+
+[[tool.importlinter.contracts]]
+name = "parallax.core._execution._family may import only its permitted dependencies"
+type = "forbidden"
+source_modules = ["parallax.core._execution._family"]
+forbidden_modules = [
+    "parallax.aws",
+    "parallax.aws.postgres",
+    "parallax.conformance",
+    "parallax.core._formation_profile",
+    "parallax.core.auto_retry",
+    "parallax.core.batch_write",
+    "parallax.core.continuation",
+    "parallax.core.db_error",
+    "parallax.core.execution",
+    "parallax.core.execution_authority",
+    "parallax.core.execution_lifecycle",
+    "parallax.core.pk_gen",
+    "parallax.core.read_delivery",
+    "parallax.core.read_lock",
+    "parallax.core.unit_work",
+    "parallax.core.value_object",
+    "parallax.core.write_payload",
+    "parallax.descriptor",
+    "parallax.evolution.model_evolution",
+    "parallax.evolution.schema_delta",
+    "parallax.postgres",
+    "parallax.snapshot",
+]
+
+[[tool.importlinter.contracts]]
+name = "parallax.core._execution._keyed_sql may import only its permitted dependencies"
+type = "forbidden"
+source_modules = ["parallax.core._execution._keyed_sql"]
+forbidden_modules = [
+    "parallax.aws",
+    "parallax.aws.postgres",
+    "parallax.conformance",
+    "parallax.core._formation_profile",
+    "parallax.core.auto_retry",
+    "parallax.core.batch_write",
+    "parallax.core.continuation",
+    "parallax.core.db_error",
+    "parallax.core.execution",
+    "parallax.core.execution_authority",
+    "parallax.core.execution_lifecycle",
+    "parallax.core.pk_gen",
+    "parallax.core.read_delivery",
+    "parallax.core.read_lock",
+    "parallax.core.unit_work",
+    "parallax.core.value_object",
+    "parallax.core.write_payload",
+    "parallax.descriptor",
+    "parallax.evolution.model_evolution",
+    "parallax.evolution.schema_delta",
+    "parallax.postgres",
+    "parallax.snapshot",
+]
+
+[[tool.importlinter.contracts]]
+name = "parallax.core._execution._keyed_writes may import only its permitted dependencies"
+type = "forbidden"
+source_modules = ["parallax.core._execution._keyed_writes"]
+forbidden_modules = [
+    "parallax.aws",
+    "parallax.aws.postgres",
+    "parallax.conformance",
+    "parallax.core.batch_write",
+    "parallax.core.continuation",
+    "parallax.core.execution",
+    "parallax.core.execution_authority",
+    "parallax.core.pk_gen",
+    "parallax.core.read_delivery",
+    "parallax.core.read_lock",
+    "parallax.core.unit_work",
+    "parallax.core.write_payload",
+    "parallax.descriptor",
+    "parallax.evolution.model_evolution",
+    "parallax.evolution.schema_delta",
+    "parallax.postgres",
+    "parallax.snapshot",
+]
+
+[[tool.importlinter.contracts]]
+name = "parallax.core._execution._preflight may import only its permitted dependencies"
+type = "forbidden"
+source_modules = ["parallax.core._execution._preflight"]
+forbidden_modules = [
+    "parallax.aws",
+    "parallax.aws.postgres",
+    "parallax.conformance",
+    "parallax.core._formation_profile",
+    "parallax.core.auto_retry",
+    "parallax.core.batch_write",
+    "parallax.core.continuation",
+    "parallax.core.db_error",
+    "parallax.core.db_port",
+    "parallax.core.deep_fetch",
+    "parallax.core.diagnostics",
+    "parallax.core.dialect",
+    "parallax.core.document_codec",
+    "parallax.core.entity",
+    "parallax.core.execution",
+    "parallax.core.execution_authority",
+    "parallax.core.execution_lifecycle",
+    "parallax.core.navigate",
+    "parallax.core.opt_lock",
+    "parallax.core.pk_gen",
+    "parallax.core.read_delivery",
+    "parallax.core.read_lock",
+    "parallax.core.relationship",
+    "parallax.core.sql_gen",
+    "parallax.core.storage_layout",
+    "parallax.core.temporal_read",
+    "parallax.core.temporal_write",
+    "parallax.core.unit_work",
+    "parallax.core.value_object",
+    "parallax.core.write_payload",
+    "parallax.core.write_plan",
+    "parallax.descriptor",
+    "parallax.evolution.model_evolution",
+    "parallax.evolution.schema_delta",
+    "parallax.postgres",
+    "parallax.snapshot",
+]
+
+[[tool.importlinter.contracts]]
+name = "parallax.core._execution._publication may import only its permitted dependencies"
+type = "forbidden"
+source_modules = ["parallax.core._execution._publication"]
+forbidden_modules = [
+    "parallax.aws",
+    "parallax.aws.postgres",
+    "parallax.conformance",
+    "parallax.core.auto_retry",
+    "parallax.core.batch_write",
+    "parallax.core.continuation",
+    "parallax.core.db_error",
+    "parallax.core.deep_fetch",
+    "parallax.core.execution",
+    "parallax.core.execution_authority",
+    "parallax.core.execution_lifecycle",
+    "parallax.core.navigate",
+    "parallax.core.pk_gen",
+    "parallax.core.read_delivery",
+    "parallax.core.read_lock",
+    "parallax.core.sql_gen",
+    "parallax.core.unit_work",
+    "parallax.core.write_payload",
+    "parallax.descriptor",
+    "parallax.evolution.model_evolution",
+    "parallax.evolution.schema_delta",
+    "parallax.postgres",
+    "parallax.snapshot",
+]
+
+[[tool.importlinter.contracts]]
+name = "parallax.core._execution._read_policy may import only its permitted dependencies"
+type = "forbidden"
+source_modules = ["parallax.core._execution._read_policy"]
+forbidden_modules = [
+    "parallax.aws",
+    "parallax.aws.postgres",
+    "parallax.conformance",
+    "parallax.core.batch_write",
+    "parallax.core.execution",
+    "parallax.core.pk_gen",
+    "parallax.core.unit_work",
+    "parallax.core.write_payload",
+    "parallax.descriptor",
+    "parallax.evolution.model_evolution",
+    "parallax.evolution.schema_delta",
+    "parallax.postgres",
+    "parallax.snapshot",
+]
+
+[[tool.importlinter.contracts]]
+name = "parallax.core._execution._retention may import only its permitted dependencies"
+type = "forbidden"
+source_modules = ["parallax.core._execution._retention"]
+forbidden_modules = [
+    "parallax.aws",
+    "parallax.aws.postgres",
+    "parallax.conformance",
+    "parallax.core._formation_profile",
+    "parallax.core.auto_retry",
+    "parallax.core.batch_write",
+    "parallax.core.continuation",
+    "parallax.core.db_error",
+    "parallax.core.deep_fetch",
+    "parallax.core.execution",
+    "parallax.core.execution_authority",
+    "parallax.core.execution_lifecycle",
+    "parallax.core.navigate",
+    "parallax.core.pk_gen",
+    "parallax.core.read_delivery",
+    "parallax.core.read_lock",
+    "parallax.core.sql_gen",
+    "parallax.core.storage_layout",
+    "parallax.core.unit_work",
+    "parallax.core.value_object",
+    "parallax.core.write_payload",
+    "parallax.descriptor",
+    "parallax.evolution.model_evolution",
+    "parallax.evolution.schema_delta",
+    "parallax.postgres",
+    "parallax.snapshot",
+]
+
+[[tool.importlinter.contracts]]
+name = "parallax.core._execution._unit_work may import only its permitted dependencies"
+type = "forbidden"
+source_modules = ["parallax.core._execution._unit_work"]
+forbidden_modules = [
+    "parallax.aws",
+    "parallax.aws.postgres",
+    "parallax.conformance",
+    "parallax.core._formation_profile",
+    "parallax.core.auto_retry",
+    "parallax.core.batch_write",
+    "parallax.core.continuation",
+    "parallax.core.db_error",
+    "parallax.core.deep_fetch",
+    "parallax.core.execution",
+    "parallax.core.execution_authority",
+    "parallax.core.execution_lifecycle",
+    "parallax.core.navigate",
+    "parallax.core.opt_lock",
+    "parallax.core.pk_gen",
+    "parallax.core.read_delivery",
+    "parallax.core.read_lock",
+    "parallax.core.sql_gen",
+    "parallax.core.storage_layout",
+    "parallax.core.unit_work",
+    "parallax.core.value_object",
+    "parallax.core.write_payload",
+    "parallax.descriptor",
+    "parallax.evolution.model_evolution",
+    "parallax.evolution.schema_delta",
+    "parallax.postgres",
+    "parallax.snapshot",
+]
+
+[[tool.importlinter.contracts]]
+name = "parallax.core._execution._write_lowering may import only its permitted dependencies"
+type = "forbidden"
+source_modules = ["parallax.core._execution._write_lowering"]
+forbidden_modules = [
+    "parallax.aws",
+    "parallax.aws.postgres",
+    "parallax.conformance",
+    "parallax.core._formation_profile",
+    "parallax.core.auto_retry",
+    "parallax.core.batch_write",
+    "parallax.core.continuation",
+    "parallax.core.db_error",
+    "parallax.core.execution",
+    "parallax.core.execution_authority",
+    "parallax.core.execution_lifecycle",
+    "parallax.core.pk_gen",
+    "parallax.core.read_delivery",
+    "parallax.core.read_lock",
+    "parallax.core.unit_work",
+    "parallax.core.value_object",
+    "parallax.core.write_payload",
+    "parallax.descriptor",
+    "parallax.evolution.model_evolution",
+    "parallax.evolution.schema_delta",
+    "parallax.postgres",
+    "parallax.snapshot",
+]
+
+[[tool.importlinter.contracts]]
 name = "parallax.core._formation_profile may import only its permitted dependencies"
 type = "forbidden"
 source_modules = ["parallax.core._formation_profile"]
@@ -298,6 +589,7 @@ forbidden_modules = [
     "parallax.core.read_delivery",
     "parallax.core.read_lock",
     "parallax.core.sql_gen",
+    "parallax.core.unit_work",
     "parallax.core.write_payload",
     "parallax.descriptor",
     "parallax.evolution.model_evolution",
@@ -328,6 +620,7 @@ forbidden_modules = [
     "parallax.core.read_lock",
     "parallax.core.sql_gen",
     "parallax.core.storage_layout",
+    "parallax.core.unit_work",
     "parallax.core.value_object",
     "parallax.core.write_payload",
     "parallax.descriptor",
@@ -345,6 +638,7 @@ forbidden_modules = [
     "parallax.aws",
     "parallax.aws.postgres",
     "parallax.conformance",
+    "parallax.core._execution",
     "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
@@ -408,6 +702,7 @@ forbidden_modules = [
     "parallax.core.read_lock",
     "parallax.core.sql_gen",
     "parallax.core.storage_layout",
+    "parallax.core.unit_work",
     "parallax.core.value_object",
     "parallax.core.write_payload",
     "parallax.descriptor",
@@ -425,6 +720,7 @@ forbidden_modules = [
     "parallax.aws",
     "parallax.aws.postgres",
     "parallax.conformance",
+    "parallax.core._execution",
     "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
@@ -466,6 +762,7 @@ forbidden_modules = [
     "parallax.aws",
     "parallax.aws.postgres",
     "parallax.conformance",
+    "parallax.core._execution",
     "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
@@ -511,6 +808,7 @@ forbidden_modules = [
     "parallax.aws",
     "parallax.aws.postgres",
     "parallax.conformance",
+    "parallax.core._execution",
     "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
@@ -571,6 +869,7 @@ forbidden_modules = [
     "parallax.core.read_lock",
     "parallax.core.sql_gen",
     "parallax.core.storage_layout",
+    "parallax.core.unit_work",
     "parallax.core.value_object",
     "parallax.core.write_payload",
     "parallax.descriptor",
@@ -588,6 +887,7 @@ forbidden_modules = [
     "parallax.aws",
     "parallax.aws.postgres",
     "parallax.conformance",
+    "parallax.core._execution",
     "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.base",
@@ -637,6 +937,7 @@ forbidden_modules = [
     "parallax.aws",
     "parallax.aws.postgres",
     "parallax.conformance",
+    "parallax.core._execution",
     "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
@@ -685,6 +986,7 @@ forbidden_modules = [
     "parallax.aws",
     "parallax.aws.postgres",
     "parallax.conformance",
+    "parallax.core._execution",
     "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
@@ -744,6 +1046,7 @@ forbidden_modules = [
     "parallax.core.read_delivery",
     "parallax.core.read_lock",
     "parallax.core.sql_gen",
+    "parallax.core.unit_work",
     "parallax.core.write_payload",
     "parallax.descriptor",
     "parallax.evolution.model_evolution",
@@ -760,6 +1063,7 @@ forbidden_modules = [
     "parallax.aws",
     "parallax.aws.postgres",
     "parallax.conformance",
+    "parallax.core._execution",
     "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.base",
@@ -814,6 +1118,7 @@ forbidden_modules = [
     "parallax.aws",
     "parallax.aws.postgres",
     "parallax.conformance",
+    "parallax.core._execution",
     "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
@@ -861,6 +1166,7 @@ forbidden_modules = [
     "parallax.aws",
     "parallax.aws.postgres",
     "parallax.conformance",
+    "parallax.core._execution",
     "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
@@ -902,6 +1208,7 @@ forbidden_modules = [
     "parallax.aws",
     "parallax.aws.postgres",
     "parallax.conformance",
+    "parallax.core._execution",
     "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.base",
@@ -951,6 +1258,7 @@ forbidden_modules = [
     "parallax.aws",
     "parallax.aws.postgres",
     "parallax.conformance",
+    "parallax.core._execution",
     "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
@@ -995,6 +1303,7 @@ forbidden_modules = [
     "parallax.aws",
     "parallax.aws.postgres",
     "parallax.conformance",
+    "parallax.core._execution",
     "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.base",
@@ -1050,228 +1359,7 @@ forbidden_modules = [
     "parallax.aws.postgres",
     "parallax.conformance",
     "parallax.core.pk_gen",
-    "parallax.descriptor",
-    "parallax.evolution.model_evolution",
-    "parallax.evolution.schema_delta",
-    "parallax.postgres",
-    "parallax.snapshot",
-]
-
-[[tool.importlinter.contracts]]
-name = "parallax.core.execution._family may import only its permitted dependencies"
-type = "forbidden"
-source_modules = ["parallax.core.execution._family"]
-forbidden_modules = [
-    "parallax.aws",
-    "parallax.aws.postgres",
-    "parallax.conformance",
-    "parallax.core._formation_profile",
-    "parallax.core.auto_retry",
-    "parallax.core.batch_write",
-    "parallax.core.continuation",
-    "parallax.core.db_error",
-    "parallax.core.execution_authority",
-    "parallax.core.execution_lifecycle",
-    "parallax.core.pk_gen",
-    "parallax.core.read_delivery",
-    "parallax.core.read_lock",
-    "parallax.core.value_object",
-    "parallax.core.write_payload",
-    "parallax.descriptor",
-    "parallax.evolution.model_evolution",
-    "parallax.evolution.schema_delta",
-    "parallax.postgres",
-    "parallax.snapshot",
-]
-
-[[tool.importlinter.contracts]]
-name = "parallax.core.execution._keyed_sql may import only its permitted dependencies"
-type = "forbidden"
-source_modules = ["parallax.core.execution._keyed_sql"]
-forbidden_modules = [
-    "parallax.aws",
-    "parallax.aws.postgres",
-    "parallax.conformance",
-    "parallax.core._formation_profile",
-    "parallax.core.auto_retry",
-    "parallax.core.batch_write",
-    "parallax.core.continuation",
-    "parallax.core.db_error",
-    "parallax.core.execution_authority",
-    "parallax.core.execution_lifecycle",
-    "parallax.core.pk_gen",
-    "parallax.core.read_delivery",
-    "parallax.core.read_lock",
-    "parallax.core.value_object",
-    "parallax.core.write_payload",
-    "parallax.descriptor",
-    "parallax.evolution.model_evolution",
-    "parallax.evolution.schema_delta",
-    "parallax.postgres",
-    "parallax.snapshot",
-]
-
-[[tool.importlinter.contracts]]
-name = "parallax.core.execution._keyed_writes may import only its permitted dependencies"
-type = "forbidden"
-source_modules = ["parallax.core.execution._keyed_writes"]
-forbidden_modules = [
-    "parallax.aws",
-    "parallax.aws.postgres",
-    "parallax.conformance",
-    "parallax.core.batch_write",
-    "parallax.core.continuation",
-    "parallax.core.execution_authority",
-    "parallax.core.pk_gen",
-    "parallax.core.read_delivery",
-    "parallax.core.read_lock",
-    "parallax.core.write_payload",
-    "parallax.descriptor",
-    "parallax.evolution.model_evolution",
-    "parallax.evolution.schema_delta",
-    "parallax.postgres",
-    "parallax.snapshot",
-]
-
-[[tool.importlinter.contracts]]
-name = "parallax.core.execution._preflight may import only its permitted dependencies"
-type = "forbidden"
-source_modules = ["parallax.core.execution._preflight"]
-forbidden_modules = [
-    "parallax.aws",
-    "parallax.aws.postgres",
-    "parallax.conformance",
-    "parallax.core._formation_profile",
-    "parallax.core.auto_retry",
-    "parallax.core.batch_write",
-    "parallax.core.continuation",
-    "parallax.core.db_error",
-    "parallax.core.db_port",
-    "parallax.core.deep_fetch",
-    "parallax.core.diagnostics",
-    "parallax.core.dialect",
-    "parallax.core.document_codec",
-    "parallax.core.entity",
-    "parallax.core.execution_authority",
-    "parallax.core.execution_lifecycle",
-    "parallax.core.navigate",
-    "parallax.core.opt_lock",
-    "parallax.core.pk_gen",
-    "parallax.core.read_delivery",
-    "parallax.core.read_lock",
-    "parallax.core.relationship",
-    "parallax.core.sql_gen",
-    "parallax.core.storage_layout",
-    "parallax.core.temporal_read",
-    "parallax.core.temporal_write",
     "parallax.core.unit_work",
-    "parallax.core.value_object",
-    "parallax.core.write_payload",
-    "parallax.core.write_plan",
-    "parallax.descriptor",
-    "parallax.evolution.model_evolution",
-    "parallax.evolution.schema_delta",
-    "parallax.postgres",
-    "parallax.snapshot",
-]
-
-[[tool.importlinter.contracts]]
-name = "parallax.core.execution._publication may import only its permitted dependencies"
-type = "forbidden"
-source_modules = ["parallax.core.execution._publication"]
-forbidden_modules = [
-    "parallax.aws",
-    "parallax.aws.postgres",
-    "parallax.conformance",
-    "parallax.core.auto_retry",
-    "parallax.core.batch_write",
-    "parallax.core.continuation",
-    "parallax.core.db_error",
-    "parallax.core.deep_fetch",
-    "parallax.core.execution_authority",
-    "parallax.core.execution_lifecycle",
-    "parallax.core.navigate",
-    "parallax.core.pk_gen",
-    "parallax.core.read_delivery",
-    "parallax.core.read_lock",
-    "parallax.core.sql_gen",
-    "parallax.core.write_payload",
-    "parallax.descriptor",
-    "parallax.evolution.model_evolution",
-    "parallax.evolution.schema_delta",
-    "parallax.postgres",
-    "parallax.snapshot",
-]
-
-[[tool.importlinter.contracts]]
-name = "parallax.core.execution._read_policy may import only its permitted dependencies"
-type = "forbidden"
-source_modules = ["parallax.core.execution._read_policy"]
-forbidden_modules = [
-    "parallax.aws",
-    "parallax.aws.postgres",
-    "parallax.conformance",
-    "parallax.core.batch_write",
-    "parallax.core.pk_gen",
-    "parallax.core.write_payload",
-    "parallax.descriptor",
-    "parallax.evolution.model_evolution",
-    "parallax.evolution.schema_delta",
-    "parallax.postgres",
-    "parallax.snapshot",
-]
-
-[[tool.importlinter.contracts]]
-name = "parallax.core.execution._retention may import only its permitted dependencies"
-type = "forbidden"
-source_modules = ["parallax.core.execution._retention"]
-forbidden_modules = [
-    "parallax.aws",
-    "parallax.aws.postgres",
-    "parallax.conformance",
-    "parallax.core._formation_profile",
-    "parallax.core.auto_retry",
-    "parallax.core.batch_write",
-    "parallax.core.continuation",
-    "parallax.core.db_error",
-    "parallax.core.deep_fetch",
-    "parallax.core.execution_authority",
-    "parallax.core.execution_lifecycle",
-    "parallax.core.navigate",
-    "parallax.core.pk_gen",
-    "parallax.core.read_delivery",
-    "parallax.core.read_lock",
-    "parallax.core.sql_gen",
-    "parallax.core.storage_layout",
-    "parallax.core.value_object",
-    "parallax.core.write_payload",
-    "parallax.descriptor",
-    "parallax.evolution.model_evolution",
-    "parallax.evolution.schema_delta",
-    "parallax.postgres",
-    "parallax.snapshot",
-]
-
-[[tool.importlinter.contracts]]
-name = "parallax.core.execution._write_lowering may import only its permitted dependencies"
-type = "forbidden"
-source_modules = ["parallax.core.execution._write_lowering"]
-forbidden_modules = [
-    "parallax.aws",
-    "parallax.aws.postgres",
-    "parallax.conformance",
-    "parallax.core._formation_profile",
-    "parallax.core.auto_retry",
-    "parallax.core.batch_write",
-    "parallax.core.continuation",
-    "parallax.core.db_error",
-    "parallax.core.execution_authority",
-    "parallax.core.execution_lifecycle",
-    "parallax.core.pk_gen",
-    "parallax.core.read_delivery",
-    "parallax.core.read_lock",
-    "parallax.core.value_object",
-    "parallax.core.write_payload",
     "parallax.descriptor",
     "parallax.evolution.model_evolution",
     "parallax.evolution.schema_delta",
@@ -1302,6 +1390,7 @@ forbidden_modules = [
     "parallax.core.read_lock",
     "parallax.core.sql_gen",
     "parallax.core.storage_layout",
+    "parallax.core.unit_work",
     "parallax.core.value_object",
     "parallax.core.write_payload",
     "parallax.descriptor",
@@ -1328,6 +1417,7 @@ forbidden_modules = [
     "parallax.core.pk_gen",
     "parallax.core.read_delivery",
     "parallax.core.read_lock",
+    "parallax.core.unit_work",
     "parallax.core.value_object",
     "parallax.core.write_payload",
     "parallax.descriptor",
@@ -1345,6 +1435,7 @@ forbidden_modules = [
     "parallax.aws",
     "parallax.aws.postgres",
     "parallax.conformance",
+    "parallax.core._execution",
     "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
@@ -1391,6 +1482,7 @@ forbidden_modules = [
     "parallax.aws",
     "parallax.aws.postgres",
     "parallax.conformance",
+    "parallax.core._execution",
     "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
@@ -1439,6 +1531,7 @@ forbidden_modules = [
     "parallax.aws",
     "parallax.aws.postgres",
     "parallax.conformance",
+    "parallax.core._execution",
     "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
@@ -1501,6 +1594,7 @@ forbidden_modules = [
     "parallax.core.read_lock",
     "parallax.core.sql_gen",
     "parallax.core.storage_layout",
+    "parallax.core.unit_work",
     "parallax.core.value_object",
     "parallax.core.write_payload",
     "parallax.descriptor",
@@ -1523,6 +1617,7 @@ forbidden_modules = [
     "parallax.aws",
     "parallax.aws.postgres",
     "parallax.conformance",
+    "parallax.core._execution",
     "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
@@ -1579,6 +1674,7 @@ forbidden_modules = [
     "parallax.core.read_delivery",
     "parallax.core.read_lock",
     "parallax.core.sql_gen",
+    "parallax.core.unit_work",
     "parallax.core.write_payload",
     "parallax.descriptor",
     "parallax.evolution.model_evolution",
@@ -1610,6 +1706,7 @@ forbidden_modules = [
     "parallax.core.read_lock",
     "parallax.core.sql_gen",
     "parallax.core.storage_layout",
+    "parallax.core.unit_work",
     "parallax.core.value_object",
     "parallax.core.write_payload",
     "parallax.descriptor",
@@ -1627,6 +1724,7 @@ forbidden_modules = [
     "parallax.aws",
     "parallax.aws.postgres",
     "parallax.conformance",
+    "parallax.core._execution",
     "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
@@ -1674,6 +1772,7 @@ forbidden_modules = [
     "parallax.aws",
     "parallax.aws.postgres",
     "parallax.conformance",
+    "parallax.core._execution",
     "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
@@ -1723,6 +1822,7 @@ forbidden_modules = [
     "parallax.core.execution",
     "parallax.core.execution_authority",
     "parallax.core.pk_gen",
+    "parallax.core.unit_work",
     "parallax.core.value_object",
     "parallax.core.write_payload",
     "parallax.descriptor",
@@ -1753,6 +1853,7 @@ forbidden_modules = [
     "parallax.core.read_lock",
     "parallax.core.sql_gen",
     "parallax.core.storage_layout",
+    "parallax.core.unit_work",
     "parallax.core.value_object",
     "parallax.core.write_payload",
     "parallax.descriptor",
@@ -1785,6 +1886,7 @@ forbidden_modules = [
     "parallax.core.read_delivery",
     "parallax.core.sql_gen",
     "parallax.core.storage_layout",
+    "parallax.core.unit_work",
     "parallax.core.value_object",
     "parallax.core.write_payload",
     "parallax.descriptor",
@@ -1802,6 +1904,7 @@ forbidden_modules = [
     "parallax.aws",
     "parallax.aws.postgres",
     "parallax.conformance",
+    "parallax.core._execution",
     "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
@@ -1860,6 +1963,7 @@ forbidden_modules = [
     "parallax.core.pk_gen",
     "parallax.core.read_delivery",
     "parallax.core.read_lock",
+    "parallax.core.unit_work",
     "parallax.core.value_object",
     "parallax.core.write_payload",
     "parallax.descriptor",
@@ -1877,6 +1981,7 @@ forbidden_modules = [
     "parallax.aws",
     "parallax.aws.postgres",
     "parallax.conformance",
+    "parallax.core._execution",
     "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
@@ -1921,6 +2026,7 @@ forbidden_modules = [
     "parallax.aws",
     "parallax.aws.postgres",
     "parallax.conformance",
+    "parallax.core._execution",
     "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
@@ -1963,6 +2069,7 @@ forbidden_modules = [
     "parallax.aws",
     "parallax.aws.postgres",
     "parallax.conformance",
+    "parallax.core._execution",
     "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
@@ -2035,6 +2142,7 @@ forbidden_modules = [
     "parallax.aws",
     "parallax.aws.postgres",
     "parallax.conformance",
+    "parallax.core._execution",
     "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
@@ -2081,6 +2189,7 @@ forbidden_modules = [
     "parallax.aws",
     "parallax.aws.postgres",
     "parallax.conformance",
+    "parallax.core._execution",
     "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
@@ -2129,6 +2238,7 @@ forbidden_modules = [
     "parallax.aws",
     "parallax.aws.postgres",
     "parallax.conformance",
+    "parallax.core._execution",
     "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
@@ -2166,6 +2276,7 @@ forbidden_modules = [
     "parallax.aws",
     "parallax.aws.postgres",
     "parallax.conformance",
+    "parallax.core._execution",
     "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
@@ -2211,6 +2322,7 @@ forbidden_modules = [
     "parallax.aws",
     "parallax.aws.postgres",
     "parallax.conformance",
+    "parallax.core._execution",
     "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
@@ -2269,6 +2381,7 @@ forbidden_modules = [
     "parallax.core.read_delivery",
     "parallax.core.read_lock",
     "parallax.core.sql_gen",
+    "parallax.core.unit_work",
     "parallax.core.write_payload",
     "parallax.evolution.model_evolution",
     "parallax.evolution.schema_delta",
@@ -2299,6 +2412,7 @@ forbidden_modules = [
     "parallax.core.read_lock",
     "parallax.core.sql_gen",
     "parallax.core.storage_layout",
+    "parallax.core.unit_work",
     "parallax.core.value_object",
     "parallax.core.write_payload",
     "parallax.descriptor",
@@ -2329,6 +2443,7 @@ forbidden_modules = [
     "parallax.core.read_delivery",
     "parallax.core.read_lock",
     "parallax.core.sql_gen",
+    "parallax.core.unit_work",
     "parallax.core.value_object",
     "parallax.core.write_payload",
     "parallax.descriptor",
@@ -2344,6 +2459,7 @@ forbidden_modules = [
     "parallax.aws",
     "parallax.aws.postgres",
     "parallax.conformance",
+    "parallax.core._execution",
     "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
@@ -2387,7 +2503,9 @@ forbidden_modules = [
     "parallax.aws",
     "parallax.aws.postgres",
     "parallax.conformance",
+    "parallax.core.execution",
     "parallax.core.pk_gen",
+    "parallax.core.unit_work",
     "parallax.descriptor",
     "parallax.evolution.model_evolution",
     "parallax.evolution.schema_delta",
@@ -2415,6 +2533,7 @@ forbidden_modules = [
     "parallax.core.read_delivery",
     "parallax.core.read_lock",
     "parallax.core.sql_gen",
+    "parallax.core.unit_work",
     "parallax.core.write_payload",
     "parallax.descriptor",
     "parallax.evolution.model_evolution",
@@ -2440,6 +2559,7 @@ forbidden_modules = [
     "parallax.core.pk_gen",
     "parallax.core.read_lock",
     "parallax.core.sql_gen",
+    "parallax.core.unit_work",
     "parallax.core.write_payload",
     "parallax.descriptor",
     "parallax.evolution.model_evolution",
@@ -2451,6 +2571,7 @@ forbidden_modules = [
 name = "Direct imports of botocore require an explicit §7 grant"
 type = "forbidden"
 source_modules = [
+    "parallax.core._execution",
     "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.base",
@@ -2502,6 +2623,7 @@ name = "Direct imports of psycopg require an explicit §7 grant"
 type = "forbidden"
 source_modules = [
     "parallax.aws",
+    "parallax.core._execution",
     "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.base",
@@ -2557,6 +2679,7 @@ name = "Direct imports of psycopg_pool require an explicit §7 grant"
 type = "forbidden"
 source_modules = [
     "parallax.aws",
+    "parallax.core._execution",
     "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.base",
@@ -2607,6 +2730,7 @@ name = "Direct imports of pydantic require an explicit §7 grant"
 type = "forbidden"
 source_modules = [
     "parallax.aws",
+    "parallax.core._execution",
     "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.base",
@@ -2660,6 +2784,7 @@ name = "Direct imports of pydantic_core require an explicit §7 grant"
 type = "forbidden"
 source_modules = [
     "parallax.aws",
+    "parallax.core._execution",
     "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.base",

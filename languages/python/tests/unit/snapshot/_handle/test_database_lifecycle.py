@@ -545,7 +545,7 @@ def test_a_composition_that_fails_after_the_runtime_opened_closes_it_again(
     # that never received one. The refusal is injected into the transaction
     # runner the root composes, which is work that genuinely runs after
     # opening.
-    from parallax.core.execution import _root as root_module
+    from parallax.core._execution import _root as root_module
 
     def refuse(*_args: object, **_kwargs: object) -> object:
         raise RuntimeError("this handle cannot be composed")

@@ -146,7 +146,7 @@ def canonical_predicate_doc(raw_write: Mapping[str, object]) -> dict[str, object
     Clock-context Transaction-Time instant) is DROPPED — never an instruction
     field, ADR 0010. ``validFrom`` and ``until`` already use the canonical
     spelling. Every caller that hands a raw case document to
-    :func:`~parallax.core.unit_work.instructions.deserialize` routes through
+    :func:`~parallax.core._execution._unit_work.instructions.deserialize` routes through
     this first — the canonical deserializer rejects ``at``/``until`` outright
     as unexpected keys.
     """

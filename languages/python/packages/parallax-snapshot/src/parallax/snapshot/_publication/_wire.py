@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Final, Protocol, Self, SupportsIndex, cast
 
+from parallax.core._execution._unit_work.retain import InsertionIdentity, ReadOrigin
 from parallax.core.base import INFINITY_LITERAL, ManagedValue, NeutralType, TemporalBound
 from parallax.core.deep_fetch import IncludeTree, RelationshipViewKey, RenderToken
 from parallax.core.document_codec import (
@@ -36,8 +37,6 @@ from parallax.core.metamodel import (
     OccurrenceMetadata,
 )
 from parallax.core.read_delivery._page import ABSENT, InvalidData, VersionAttributes
-from parallax.core.unit_work import ReadOrigin
-from parallax.core.unit_work.retain import InsertionIdentity
 from parallax.core.wire import encode_wire
 from parallax.core.wire._codec import encode_managed_wire
 from parallax.snapshot._inspection import SnapshotInspectionError, snapshot_state_of

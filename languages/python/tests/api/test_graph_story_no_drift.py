@@ -48,6 +48,10 @@ from parallax.conformance.class_models import MODELS
 from parallax.conformance.story_models import Order, OrderStatus
 from parallax.conformance.temporal_state import TemporalShadow
 from parallax.core import DomainModel, ObjectQuery
+from parallax.core._execution._options import (
+    OMITTED,
+    Omitted,
+)
 from parallax.core.base import INFINITY
 from parallax.core.db_port import (
     Bind,
@@ -64,10 +68,6 @@ from parallax.core.execution import (
     ServingModel,
     TransactionTimePinReadOnlyError,
     prepare_model,
-)
-from parallax.core.execution._options import (
-    OMITTED,
-    Omitted,
 )
 from parallax.core.unit_work import Clock, Concurrency
 from parallax.snapshot import Database, ScopedDatabase, Snapshot, Transaction, is_view_loaded

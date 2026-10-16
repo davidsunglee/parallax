@@ -7,12 +7,12 @@ from typing import cast
 from parallax.conformance import case_format, models
 from parallax.conformance._mechanism.envelope import EngineError
 from parallax.core import inheritance
+from parallax.core._execution._preflight import preflight
 from parallax.core.entity import DomainModel
 from parallax.core.execution import (
     ServingModel,
     prepare_model,
 )
-from parallax.core.execution._preflight import preflight
 from parallax.core.metamodel import EntityMetadata, entity_by_name
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.object_query import ObjectQueryNode

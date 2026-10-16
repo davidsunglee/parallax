@@ -25,6 +25,7 @@ from parallax.conformance.vo_models import (
     Destination,
     Shipment,
 )
+from parallax.core._execution._unit_work import instructions
 from parallax.core.base import INFINITY, TemporalBound
 from parallax.core.db_port import (
     Bind,
@@ -38,7 +39,7 @@ from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity import DomainModel
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import EntityMetadata
-from parallax.core.unit_work import KeyedWrite, WriteRejectedError, instructions
+from parallax.core.unit_work import KeyedWrite, WriteRejectedError
 from parallax.snapshot import Database, ScopedDatabase, Transaction
 from tests._support.adoption import raises_contextualized
 from tests._support.corpus import case_document, compare_binds

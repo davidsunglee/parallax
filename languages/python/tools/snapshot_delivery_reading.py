@@ -32,6 +32,8 @@ from parallax.conformance.workloads import (
     catalog,
 )
 from parallax.core import ObjectQuery
+from parallax.core._execution._preflight import preflight
+from parallax.core._execution._publication import read_projection
 from parallax.core.db_port import (
     DRIVER_MANAGED,
     CleanupResult,
@@ -48,8 +50,6 @@ from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity import DomainModel
 from parallax.core.entity._authored_resolver import object_query_node
 from parallax.core.execution import prepare_model
-from parallax.core.execution._preflight import preflight
-from parallax.core.execution._publication import read_projection
 from parallax.core.read_delivery._read_plan import (
     DEFAULT_READ_PLAN_CACHE_CAPACITY,
     ReadPlan,

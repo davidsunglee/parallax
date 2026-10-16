@@ -3,7 +3,7 @@ Docker-free fake ports).
 
 The runner's own semantics — joins, options, isolation, retry bounds, boundary
 outcomes, and adoption — are graded over the neutral scope and Attempt in
-``tests/unit/core/execution/test_runner.py``. What stays here is what only the
+``tests/unit/core/_execution/_transaction/test_runner.py``. What stays here is what only the
 Typed write verbs reach: the write-effect failure a real flush of a Typed
 update raises, which of them the ``retry_optimistic_conflicts`` opt-in widens
 the retriable set to, a caught flush failure dooming the attempt, a failed unit

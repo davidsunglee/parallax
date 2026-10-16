@@ -6,6 +6,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Protocol, cast, overload
 
 from parallax.core import deep_fetch
+from parallax.core._execution._unit_work.retain import ReadOrigin
 from parallax.core.entity import Entity, EntityGraphConstruction, IncludePath
 from parallax.core.entity._expressions import include_traversal
 from parallax.core.entity._layout import CatalogedModel
@@ -19,13 +20,12 @@ from parallax.core.read_delivery._page import Page, page_edges
 from parallax.core.read_delivery._page_reader import EagerPageResult, HistoryPageResult
 from parallax.core.read_delivery._publication import RootsOf
 from parallax.core.temporal_read import Edge, Pin, TemporalShape
-from parallax.core.unit_work import ReadOrigin
 
 if TYPE_CHECKING:
     from parallax.snapshot._publication._wire import EntityReader
 
-from parallax.core.execution._concurrency import CONCURRENCY
-from parallax.core.execution._publication import SelectedReadModel
+from parallax.core._execution._concurrency import CONCURRENCY
+from parallax.core._execution._publication import SelectedReadModel
 from parallax.snapshot._handle._errors import SnapshotConnectionError, SnapshotMaterializationError
 from parallax.snapshot._inspection import SnapshotInspectionError
 from parallax.snapshot._publication._root import RootView

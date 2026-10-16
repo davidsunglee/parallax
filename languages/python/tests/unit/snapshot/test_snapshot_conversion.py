@@ -31,6 +31,7 @@ import pytest
 
 from parallax.conformance import vo_models
 from parallax.core import predicate as oa
+from parallax.core._execution._concurrency import CONCURRENCY
 from parallax.core.base import (
     BOOLEAN,
     BYTES,
@@ -52,7 +53,6 @@ from parallax.core.deep_fetch import RelationshipViewKey
 from parallax.core.dialect import POSTGRES
 from parallax.core.document_codec import encode_leaf
 from parallax.core.entity._layout import CatalogedModel, EntityLayout
-from parallax.core.execution._concurrency import CONCURRENCY
 from parallax.core.metamodel import (
     AttributeIdentity,
     EntityIdentity,

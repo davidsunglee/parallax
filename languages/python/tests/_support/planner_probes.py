@@ -8,6 +8,20 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Final
 
+from parallax.core._execution._unit_work.acquisition import AcquireRows, RowConsumer, RowRequest
+from parallax.core._execution._unit_work.instructions import (
+    PreparedKeyedWrite,
+    PreparedPredicateWrite,
+    PreparedWrite,
+    prepare_typed_write,
+)
+from parallax.core._execution._unit_work.materialized import (
+    AfterRemoval,
+    readless_write,
+)
+from parallax.core._execution._unit_work.strategy import ActorIdentity
+from parallax.core._execution._unit_work.write_planner import BufferedWrite, compose_writes
+from parallax.core._execution._unit_work.write_settlement import OrderedWrite
 from parallax.core.metamodel import Metamodel
 from parallax.core.unit_work import (
     BufferItem,
@@ -17,20 +31,6 @@ from parallax.core.unit_work import (
     buffered_write,
     object_key,
 )
-from parallax.core.unit_work.acquisition import AcquireRows, RowConsumer, RowRequest
-from parallax.core.unit_work.instructions import (
-    PreparedKeyedWrite,
-    PreparedPredicateWrite,
-    PreparedWrite,
-    prepare_typed_write,
-)
-from parallax.core.unit_work.materialized import (
-    AfterRemoval,
-    readless_write,
-)
-from parallax.core.unit_work.strategy import ActorIdentity
-from parallax.core.unit_work.write_planner import BufferedWrite, compose_writes
-from parallax.core.unit_work.write_settlement import OrderedWrite
 from parallax.core.write_plan import ObjectKey, WriteObservation
 
 __all__ = ["NO_ROW_READS", "TEST_ACTOR_IDENTITY", "observed_buffer", "observed_write"]

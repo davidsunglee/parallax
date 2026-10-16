@@ -6,8 +6,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from parallax.conformance.temporal_state import TemporalShadow
+from parallax.core._execution._unit_work.acquisition import CoverageReadRequest, consume_coverage
 from parallax.core.metamodel import Metamodel
-from parallax.core.unit_work.acquisition import CoverageReadRequest, consume_coverage
 from parallax.core.write_plan import PredecessorRow, PredecessorRows
 
 __all__ = ["coverage_members", "read_coverage"]

@@ -4,12 +4,15 @@ from collections.abc import Callable
 from typing import Any, cast
 from uuid import uuid4
 
+from parallax.core._execution._options import OMITTED, DatabaseOptions, Omitted
+from parallax.core._execution._planning import prepare_model
+from parallax.core._execution._publication import ServingModel
+from parallax.core._execution._root import DatabaseRoot
+from parallax.core._execution._scope import ExecutionScope
+from parallax.core._execution._unit_work.clock import Clock
+from parallax.core._execution._unit_work.uow import Concurrency
 from parallax.core.db_port import DatabaseAdapter, DatabaseRuntime, IsolationLevel
 from parallax.core.entity import DomainModel
-from parallax.core.execution import DatabaseOptions, ServingModel, prepare_model
-from parallax.core.execution._options import OMITTED, Omitted
-from parallax.core.execution._root import DatabaseRoot
-from parallax.core.execution._scope import ExecutionScope
 from parallax.core.execution_lifecycle import ExecutionLifecycleProvider
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query._fluent import ObjectQuery, typed_read_query
@@ -18,7 +21,6 @@ from parallax.core.read_delivery._read_plan import (
     DEFAULT_READ_PLAN_CACHE_CAPACITY,
     check_read_plan_cache_capacity,
 )
-from parallax.core.unit_work import Clock, Concurrency
 from parallax.snapshot._handle._errors import SnapshotConnectionError
 from parallax.snapshot._handle._read import Snapshot, typed_publication_for
 from parallax.snapshot._handle._stream import SnapshotStream

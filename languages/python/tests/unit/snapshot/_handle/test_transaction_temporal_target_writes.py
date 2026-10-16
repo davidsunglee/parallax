@@ -22,6 +22,10 @@ from typing import Any, Literal, cast
 import pytest
 
 from parallax.core import Attr, DomainModel, Entity, attr
+from parallax.core._execution._unit_work import ranges
+from parallax.core._execution._unit_work.ranges import DeferredTemporalRange
+from parallax.core._execution._unit_work.retain import RetainedTargetState
+from parallax.core._execution._unit_work.write_planner import WritePlanner
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import MappingRow
 from parallax.core.metamodel import EntityIdentity
@@ -33,11 +37,7 @@ from parallax.core.unit_work import (
     WriteInstructionError,
     WritePreconditionError,
     WriteRejectedError,
-    ranges,
 )
-from parallax.core.unit_work.ranges import DeferredTemporalRange
-from parallax.core.unit_work.retain import RetainedTargetState
-from parallax.core.unit_work.write_planner import WritePlanner
 from parallax.core.write_payload import LayoutPayloadPreparer
 from parallax.core.write_plan import PredecessorRows
 from parallax.core.write_plan.payload import AssignmentPayload

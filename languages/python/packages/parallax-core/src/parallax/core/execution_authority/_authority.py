@@ -3,12 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
+from parallax.core._execution._unit_work.strategy import DatabaseLoginActor, SubjectActor
 from parallax.core.db_port import (
     ConnectionContextSource,
     DatabaseRuntime,
     InvalidAuthorizationError,
 )
-from parallax.core.unit_work import DatabaseLoginActor, SubjectActor
 
 __all__ = [
     "ExecutionCapture",

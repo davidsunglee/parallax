@@ -6,6 +6,8 @@ from types import MappingProxyType
 from typing import Any, cast
 
 from parallax.core import ObjectQuery
+from parallax.core._execution._preflight import preflight
+from parallax.core._execution._publication import read_projection
 from parallax.core.db_port import DatabaseConnection
 from parallax.core.entity import (
     UNLOADED,
@@ -15,8 +17,6 @@ from parallax.core.entity import (
 )
 from parallax.core.entity._authored_resolver import object_query_node
 from parallax.core.execution import ModelSelection
-from parallax.core.execution._preflight import preflight
-from parallax.core.execution._publication import read_projection
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.read_delivery._delivery import find as execute_read
 from parallax.core.read_delivery._page import Page

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from parallax.core import continuation, temporal_read
+from parallax.core._execution._unit_work.uow import Concurrency
 from parallax.core.db_port import DatabaseConnection
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.execution_lifecycle._activity import INERT, DatabaseCallScope
@@ -18,7 +19,6 @@ from parallax.core.read_delivery._page_reader import (
 from parallax.core.read_delivery._publication import Publication
 from parallax.core.read_delivery._read_plan import UNCACHED_READ_PLANNER, ReadPlanner
 from parallax.core.temporal_read import Pin, TemporalShape
-from parallax.core.unit_work import Concurrency
 
 __all__ = [
     "deliver_find",

@@ -42,11 +42,11 @@ from parallax.core import (
     attr,
     rel,
 )
+from parallax.core._execution._concurrency import CONCURRENCY
 from parallax.core.base import PresentDocument
 from parallax.core.deep_fetch import RelationshipViewKey
 from parallax.core.entity import GraphConstructionError, IncludePath
 from parallax.core.entity._expressions import IncludeTraversal
-from parallax.core.execution._concurrency import CONCURRENCY
 from parallax.core.metamodel import (
     AttributeIdentity,
     EntityIdentity,

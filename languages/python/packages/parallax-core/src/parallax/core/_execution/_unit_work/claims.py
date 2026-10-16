@@ -1,0 +1,341 @@
+from __future__ import annotations
+
+from collections.abc import Iterable, Set
+from dataclasses import dataclass
+from typing import Final, Literal
+
+from parallax.core._execution._unit_work.instructions import INSERT_MUTATIONS, PreparedKeyedWrite
+from parallax.core._execution._unit_work.retain import RetainedObservation
+from parallax.core.temporal_read import TimeInterval
+from parallax.core.write_plan.keys import ObjectKey, ObservedStateKey
+from parallax.core.write_plan.observe import WriteObservation
+
+__all__ = [
+    "SELECTION_INTENT",
+    "SPANNING_SELECTION_INTENT",
+    "ClaimScope",
+    "ClaimTable",
+    "ClaimVerdict",
+    "SettledEvidence",
+    "WriteIntent",
+    "admits",
+    "admits_composed",
+    "claim_scope",
+    "claimed_object",
+    "keyed_intent",
+]
+
+type WriteIntentKind = Literal["assignment", "destructive", "selection"]
+"""What a buffered write means to do to what it claimed.
+
+``assignment`` writes member values against a row that survives the write;
+``destructive`` removes the row or closes the milestone; ``selection`` is a
+Materialized Write Group's own claim over every state its predicate resolved,
+which is a whole compact unit rather than a per-object intent a later write
+could join.
+"""
+
+# The keyed mutations that write member values against a surviving row. The
+# complement among non-insert mutations is destructive: `delete` removes the
+# row outright, and `terminate` / `terminateUntil` close the milestone.
+_ASSIGNMENT_MUTATIONS: Final[frozenset[str]] = frozenset(
+    {"amend", "amendUntil", "replace", "replaceUntil"}
+)
+
+
+@dataclass(frozen=True, slots=True)
+class WriteIntent:
+    """One buffered write's claim at one scope: what it does, over which
+    Valid-Time window.
+
+    The window is the one the prepared instruction carries, shared rather than
+    copied — ``None`` for a non-temporal or Transaction-Time-Only write. It is
+    part of the claim rather than payload beside it because two intents over
+    DIFFERENT windows are incompatible by construction: composing them would
+    require interval semantics this framework deliberately does not invent, so
+    the second is refused and the caller flushes the first through a
+    participating read.
+    """
+
+    kind: WriteIntentKind
+    valid_time_window: TimeInterval | None = None
+    spans: bool = False
+
+
+SELECTION_INTENT: Final = WriteIntent(kind="selection")
+"""The claim a Materialized Write Group takes on every state its predicate
+resolved. It is one intent value rather than one per row because a group carries
+no window of its own to compare: it is indivisible, and every keyed intent
+against a state it selected is incompatible with it."""
+
+_NOTHING_SPANNED: Final[frozenset[ObjectKey]] = frozenset()
+
+SPANNING_SELECTION_INTENT: Final = WriteIntent(kind="selection", spans=True)
+"""The selection claim of a group that reaches every state of each object it
+selected, not only the one it selected (:meth:`ClaimTable.spans`)."""
+
+
+type ClaimScope = ObservedStateKey | ObjectKey
+"""What one buffered write's claim is taken AT — the grain two intents must
+share before either can affect the other.
+
+A versioned or temporal existing-row write claims the exact
+:data:`~parallax.core.write_plan.keys.ObservedStateKey` its source observed,
+because two writes of one key that observed two different states are two
+independent intents. An unversioned Non-Temporal existing-row write claims its
+:class:`~parallax.core.write_plan.keys.ObjectKey`, because the shared row lock
+its evidence rule demands is held on the OBJECT and covers every state the row
+can be in — two such writes can never have observed two different states, so the
+state-keyed rule's own reason does not apply and the object is the correct grain.
+An insert claims nothing at all and reaches no scope.
+
+Both keyed arms address ONE object, so an instruction naming SEVERAL rows reaches
+no scope either: it has no single object and no single observed state. Only a
+caller holding a pre-formed multi-row instruction can author one — a keyed
+developer verb writes the one row the value it was handed names — and where that
+caller supplies no evidence of its own, the write claims nothing and buffers
+bare. Evidence such a caller does supply is refused by the single-row carrier
+that would have had to hold it, before the write takes any claim, rather than
+dropped in favour of the bare shape.
+
+Which arm a write takes is derived from declared facts — the target Entity's
+Optimistic Key and the write's own mutation — never from an absent observation:
+an insert observes no state either, so an absence-triggered object claim would
+sweep it in.
+"""
+
+
+type SettledEvidence = WriteObservation | RetainedObservation | ObjectKey
+"""What one keyed write against existing state settles against, in the three
+shapes a producer can hold — which is also what decides the buffer item it
+becomes and the claim it takes:
+
+* a RETAINED observation is a read's own claim on one exact observed state: the
+  write settles against that state, claims it, and a successful flush spends it;
+* a caller-HELD Write Observation is that same evidence as a plain value: the
+  write settles against the state it describes and claims nothing, because there
+  is no reference into this scope's ledger for a second intent to compete for;
+* an OBJECT KEY is what an unversioned Non-Temporal row's write settles against.
+  Its evidence is the shared row lock, which is held on the object rather than on
+  a state, so the object is what it claims and there is nothing for a flush to
+  spend.
+
+A write against existing state that addresses no single object is derived none of
+the three and settles against nothing: an instruction naming several rows, or a
+row naming no complete primary key, has neither a state nor an object for
+evidence to be about. A caller can still hold one of the three and supply it with
+such a write, and the carrier it would travel in refuses that pairing rather than
+settling the write bare.
+"""
+
+
+def claim_scope(evidence: SettledEvidence | None) -> ClaimScope | None:
+    """The scope the write settling against ``evidence`` claims, or ``None``
+    where it claims nothing.
+
+    Total over the three shapes above, so a caller reads one answer rather than
+    pairing an evidence value with a separately derived address that could name
+    a different state than the evidence it travels with.
+    """
+    if isinstance(evidence, RetainedObservation):
+        return evidence.key
+    if isinstance(evidence, ObjectKey):
+        return evidence
+    return None
+
+
+def claimed_object(scope: ClaimScope) -> ObjectKey:
+    """The object ``scope`` addresses — itself for an object-scoped claim, and the
+    identity half of the state for a state-scoped one.
+
+    What a refusal reports is which OBJECT was refused; the observed state behind
+    a state-scoped claim stays implementation detail.
+    """
+    return scope if isinstance(scope, ObjectKey) else scope.object
+
+
+type ClaimVerdict = Literal["admit", "coalesce", "supersede", "deduplicate", "incompatible"]
+"""What an arriving intent becomes against the intent a buffer already holds.
+
+``admit`` — nothing claimed this scope yet. ``coalesce`` — the two assignments
+merge in authored order into one surviving write. ``supersede`` — a destructive
+intent replaces the assignments buffered before it, so an amendment followed by a
+delete at one scope emits one delete. ``deduplicate`` — an identical destructive
+intent is already buffered and the second adds nothing. ``incompatible`` — the
+two cannot be combined, and the arriving verb refuses.
+"""
+
+
+def keyed_intent(instruction: PreparedKeyedWrite) -> WriteIntent | None:
+    """What ``instruction`` intends against existing state, or ``None`` for an
+    insert, which intends nothing against any.
+
+    An insert opens a row rather than writing against one, so it claims nothing;
+    every other keyed mutation is an assignment or a destruction of the existing
+    row it addresses, whichever scope that row's claim is taken at.
+
+    An intent is not itself a claim: a write takes one only where it also reaches
+    a scope, so an instruction naming several rows carries the intent its mutation
+    states and still claims nothing, having no single scope to claim at.
+    """
+    if instruction.mutation in INSERT_MUTATIONS:
+        return None
+    kind: WriteIntentKind = (
+        "assignment" if instruction.mutation in _ASSIGNMENT_MUTATIONS else "destructive"
+    )
+    return WriteIntent(kind=kind, valid_time_window=instruction.valid_time_window)
+
+
+def admits(held: WriteIntent | None, arriving: WriteIntent) -> ClaimVerdict:
+    """What ``arriving`` becomes against the ``held`` claim at one scope, or
+    against ``None`` where nothing claims that scope yet.
+
+    The unclaimed row belongs here rather than in each consumer, which is what
+    makes this function the whole rule: a caller answers every ``(held,
+    arriving)`` pair by asking once, and the verb-time seam and the flush cannot
+    disagree about the one row a second implementation would have had to repeat.
+
+    The rule reads in the order the incompatibilities appear:
+
+    * an unclaimed scope admits whatever arrives;
+    * a Materialized Write Group's selection claim admits nothing beside it, in
+      either direction — the group is compact and indivisible, so merging a keyed
+      assignment into it would mean indexing and mutating it;
+    * different Valid-Time windows never compose, because interval composition
+      is semantics this framework does not invent;
+    * an assignment after a destruction is a resurrection, which no write means;
+    * two destructions of one scope and window are one destruction; and
+    * everything else combines — assignments merge, and a destruction supersedes
+      the assignments buffered before it.
+    """
+    if held is None:
+        return "admit"
+    if "selection" in (held.kind, arriving.kind):
+        return "incompatible"
+    if held.valid_time_window != arriving.valid_time_window:
+        return "incompatible"
+    if held.kind == "destructive":
+        return "deduplicate" if arriving.kind == "destructive" else "incompatible"
+    return "coalesce" if arriving.kind == "assignment" else "supersede"
+
+
+def admits_composed(
+    held: Iterable[tuple[ClaimScope | None, WriteIntent]],
+    scope: ClaimScope | None,
+    arriving: WriteIntent,
+) -> Literal["compose", "incompatible"]:
+    """Whether ``arriving``, a temporal object's observed write at ``scope``,
+    composes with the writes of that object ``held`` already pending, each at
+    its own scope.
+
+    Assignments compose in authored order whatever their windows or scopes:
+    later values win per member where windows overlap, and every earlier
+    condition stays. Destruction composes only where it cannot be undone or
+    half-applied: no assignment follows a destruction at the same scope or over
+    an overlapping window — a resurrection — and a destruction overlapping any
+    other write, or sharing its scope, must state exactly that write's window,
+    superseding an assignment there or repeating a destruction.
+    """
+    for held_scope, intent in held:
+        same_scope = scope is not None and held_scope == scope
+        overlapping = _overlaps(intent, arriving)
+        if arriving.kind == "assignment":
+            if intent.kind == "destructive" and (same_scope or overlapping):
+                return "incompatible"
+        elif (same_scope or overlapping) and intent.valid_time_window != arriving.valid_time_window:
+            return "incompatible"
+    return "compose"
+
+
+def _overlaps(first: WriteIntent, second: WriteIntent) -> bool:
+    """Whether two intents' requested windows share any instant; an intent
+    without Valid Time spans the whole axis."""
+    first_window = first.valid_time_window
+    second_window = second.valid_time_window
+    return first_window is None or second_window is None or first_window.overlaps(second_window)
+
+
+class ClaimTable:
+    """The claims one buffer holds, by the scope each is taken at.
+
+    A unit of work files its Materialized Write Groups' selection claims here;
+    a keyed write's claim is the pending write itself, indexed where the buffer
+    composes it.
+
+    Buffer-scoped and no wider: a flush spends the buffer it planned and the
+    claims travel out with it, so what a later write may claim is decided
+    by what is still pending rather than by everything this unit of work has
+    ever written. An abort drops both together for the same reason.
+    """
+
+    __slots__ = ("_held", "_objects", "_spanned")
+
+    def __init__(self) -> None:
+        self._held: dict[ClaimScope, WriteIntent] = {}
+        # The objects the claims address, built by the first question about an
+        # object and kept current from then on, so a buffer that is never asked
+        # pays nothing per claim.
+        self._objects: set[ObjectKey] | None = None
+        # The objects a claim reaches every state of, built by the first
+        # question after a spanning claim; a buffer holding none keeps the
+        # shared empty set rather than one of its own.
+        self._spanned: Set[ObjectKey] | None = _NOTHING_SPANNED
+
+    def claim(self, key: ClaimScope, intent: WriteIntent) -> ClaimVerdict:
+        """Take ``intent``'s claim at ``key``, answering what it became.
+
+        The verdict is :func:`admits`' alone, unclaimed row included, so this
+        table decides nothing of its own and stays the storage the rule is
+        applied to.
+
+        What it is left holding is what the buffer will actually carry after the
+        verdict: an admitted or coalescing intent replaces the held one, a
+        superseding destruction replaces it too, and a deduplicated or
+        incompatible intent leaves it untouched — the first because the second
+        adds nothing, the second because the arriving verb is about to refuse.
+        """
+        verdict = admits(self._held.get(key), intent)
+        if verdict in ("admit", "coalesce", "supersede"):
+            self._held[key] = intent
+            if self._objects is not None:
+                self._objects.add(claimed_object(key))
+            if intent.spans:
+                self._spanned = None
+        return verdict
+
+    def held(self, key: ClaimScope) -> WriteIntent | None:
+        """What this buffer currently claims at ``key``, if anything — the read
+        side of :meth:`claim`, for a verb deciding whether it has an earlier
+        intent to combine with at all."""
+        return self._held.get(key)
+
+    def claims_object(self, key: ObjectKey) -> bool:
+        """Whether this buffer claims any state of object ``key``."""
+        objects = self._objects
+        if objects is None:
+            objects = self._objects = {claimed_object(scope) for scope in self._held}
+        return key in objects
+
+    def spans(self, key: ObjectKey) -> bool:
+        """Whether a claim this buffer holds reaches every state of object
+        ``key``, not only the one it names (:data:`SPANNING_SELECTION_INTENT`)."""
+        spanned = self._spanned
+        if spanned is None:
+            spanned = self._spanned = {
+                claimed_object(scope) for scope, intent in self._held.items() if intent.spans
+            } or _NOTHING_SPANNED
+        return key in spanned
+
+    def release(self, keys: Iterable[ClaimScope]) -> None:
+        """Drop the claims at ``keys``, which the caller itself just admitted
+        and is withdrawing before the write that took them is buffered."""
+        for key in keys:
+            del self._held[key]
+        self._objects = None
+        self._spanned = None
+
+    def clear(self) -> None:
+        """Drop every claim — the buffer that held them is gone."""
+        self._held.clear()
+        self._objects = None
+        self._spanned = _NOTHING_SPANNED

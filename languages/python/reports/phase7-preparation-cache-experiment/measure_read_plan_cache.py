@@ -18,11 +18,11 @@ from parallax.conformance.budget import BudgetContract
 from parallax.conformance.story_models import Order
 from parallax.conformance.workloads import catalog
 from parallax.core import continuation
+from parallax.core._execution._page_origins import ObservedPageProjections
+from parallax.core._execution._preflight import preflight
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
-from parallax.core.execution._page_origins import ObservedPageProjections
-from parallax.core.execution._preflight import preflight
 from parallax.core.object_query._fluent import object_query_node
 from parallax.core.object_query._validated import ContinuationCoordinate, ValidatedObjectQuery
 from parallax.core.read_delivery._delivery import find

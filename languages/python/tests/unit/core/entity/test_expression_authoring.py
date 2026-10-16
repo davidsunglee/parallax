@@ -26,10 +26,10 @@ from parallax.core import (
     attr,
     rel,
 )
+from parallax.core._execution._preflight import preflight
 from parallax.core.entity import model_of
 from parallax.core.entity._authored_resolver import object_query_node
 from parallax.core.entity._expressions import AuthoredQuantifier
-from parallax.core.execution._preflight import preflight
 from parallax.core.predicate import Comparison, FieldSubject, Presence, Quantifier, serialize
 from parallax.core.predicate._resolved import (
     CURRENT,

@@ -31,6 +31,7 @@ from parallax.conformance import class_models, models
 from parallax.conformance.read_models import Animal, Cat, Dog, Pet
 from parallax.conformance.story_models import Order
 from parallax.core import Attr, DomainModel, Entity, attr
+from parallax.core._execution._concurrency import CONCURRENCY
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import INFINITY, JSON, STRING, TIMESTAMP, ManagedValue, PresentDocument
 from parallax.core.db_port import (
@@ -47,7 +48,6 @@ from parallax.core.entity import _layout as entity_layout
 from parallax.core.entity._expressions import AuthoredQuery
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
-from parallax.core.execution._concurrency import CONCURRENCY
 from parallax.core.metamodel import (
     AbstractRoot,
     Column,

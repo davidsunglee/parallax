@@ -24,6 +24,11 @@ from parallax.conformance.claim import SNAPSHOT_CLAIM, Claim
 from parallax.conformance.profile import Profile, profile_for
 from parallax.conformance.provision import Provisioner
 from parallax.core import inheritance, wire
+from parallax.core._execution._unit_work import instructions
+from parallax.core._execution._unit_work.instructions import (
+    PreparedKeyedWrite,
+    PreparedPredicateWrite,
+)
 from parallax.core.base import INFINITY, PresentDocument
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import DatabaseConnection, MappingRow, Row, TransactionOutcome
@@ -34,8 +39,6 @@ from parallax.core.predicate import And, Comparison, FieldSubject, ModelRejected
 from parallax.core.predicate import serialize as serialize_predicate
 from parallax.core.predicate._resolved import ResolvedComparison
 from parallax.core.temporal_read import TimeInterval
-from parallax.core.unit_work import instructions
-from parallax.core.unit_work.instructions import PreparedKeyedWrite, PreparedPredicateWrite
 from tests._support.db_port import ConnectsAsItself, body_outcome, projected_row
 from tests._support.repo import canonical_snapshot_claim, validate_adapter_envelope
 from tests.unit._second_dialect import BACKTICKED

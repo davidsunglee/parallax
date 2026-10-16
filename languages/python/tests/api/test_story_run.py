@@ -36,15 +36,15 @@ from parallax.conformance.stories import WRITE_STORIES, WriteStory
 from parallax.conformance.story_models import Order, OrderStatus
 from parallax.conformance.temporal_state import TemporalShadow
 from parallax.core import LATEST, DomainModel, ObjectQuery
+from parallax.core._execution._options import (
+    OMITTED,
+    Omitted,
+)
 from parallax.core.db_port import IsolationLevel
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity import UnloadedRelationshipError
 from parallax.core.entity._model import model_of
 from parallax.core.execution import TransactionTimePinReadOnlyError
-from parallax.core.execution._options import (
-    OMITTED,
-    Omitted,
-)
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.read_delivery import InvalidData, InvalidDataError
 from parallax.core.unit_work import Concurrency

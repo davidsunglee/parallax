@@ -68,6 +68,8 @@ from parallax.core import (
     deep_fetch,
     rel,
 )
+from parallax.core._execution._page_origins import ObservedPageProjections
+from parallax.core._execution._preflight import preflight
 from parallax.core.base import SQL_NULL, DocumentValue, ManagedValue, PresentDocument
 from parallax.core.db_port import DocumentReadOrdinals, Row
 from parallax.core.dialect import POSTGRES, Dialect
@@ -80,8 +82,6 @@ from parallax.core.document_codec import (
 )
 from parallax.core.entity._layout import CatalogedModel, EntityLayout
 from parallax.core.entity._model import model_of
-from parallax.core.execution._page_origins import ObservedPageProjections
-from parallax.core.execution._preflight import preflight
 from parallax.core.execution_lifecycle._activity import INERT
 from parallax.core.metamodel import (
     EntityIdentity,

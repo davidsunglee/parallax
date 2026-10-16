@@ -36,6 +36,8 @@ from parallax.core import (
     ValueObject,
     attr,
 )
+from parallax.core._execution import _read_policy as read_policy_module
+from parallax.core._execution._retention import ObservationLedger
 from parallax.core.base import SQL_NULL, DocumentValue, FrozenMap, PresentDocument
 from parallax.core.db_port import JsonDocument, MappingRow
 from parallax.core.dialect import POSTGRES
@@ -45,8 +47,6 @@ from parallax.core.execution import (
     QueryTargetError,
     TransactionTimePinReadOnlyError,
 )
-from parallax.core.execution import _read_policy as read_policy_module
-from parallax.core.execution._retention import ObservationLedger
 from parallax.core.read_delivery._page_reader import EagerPageRequest, EagerPageResult, PageReader
 from parallax.core.read_delivery._publication import Publication
 from parallax.core.unit_work import (

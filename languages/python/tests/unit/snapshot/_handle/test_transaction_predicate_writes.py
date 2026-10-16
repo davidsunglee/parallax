@@ -50,6 +50,11 @@ from parallax.core import (
     attr,
     inheritance,
 )
+from parallax.core._execution._family import comparison_shape
+from parallax.core._execution._publication import write_projection
+from parallax.core._execution._transaction import _attempt as attempt_module
+from parallax.core._execution._unit_work import acquisition as acquisition_module
+from parallax.core._execution._unit_work import instructions
 from parallax.core.base import (
     INFINITY,
     SQL_NULL,
@@ -73,9 +78,6 @@ from parallax.core.entity._layout import LayoutCatalog
 from parallax.core.entity._model import DomainModel as _Fixed
 from parallax.core.entity._model import class_index, model_of
 from parallax.core.execution import QueryTargetError, ServingModel, prepare_model
-from parallax.core.execution import _attempt as attempt_module
-from parallax.core.execution._family import comparison_shape
-from parallax.core.execution._publication import write_projection
 from parallax.core.execution_lifecycle import (
     DirectFailure,
     ExecutionEvent,
@@ -96,9 +98,7 @@ from parallax.core.unit_work import (
     StaleWriteError,
     UnitOfWork,
     WriteEvidenceError,
-    instructions,
 )
-from parallax.core.unit_work import acquisition as acquisition_module
 from parallax.core.write_plan import (
     ChunkedColumnBuilder,
     EntityStateRow,

@@ -86,6 +86,7 @@ from parallax.core import (
     ValueObject,
     attr,
 )
+from parallax.core._execution._unit_work.instructions import coerce_typed_row
 from parallax.core.base import INFINITY as OPEN_BOUND
 from parallax.core.base import detach_json_container
 from parallax.core.db_port import (
@@ -101,7 +102,6 @@ from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
 from parallax.core.storage_layout import view as storage_layout_view
 from parallax.core.unit_work import KeyedMutation, TargetMutation
-from parallax.core.unit_work.instructions import coerce_typed_row
 from parallax.postgres._connection import adapt_binds
 from parallax.snapshot import Database, ScopedDatabase, Transaction, WireEntity
 from tests._support.db_port import ConnectsAsItself, body_outcome, projected_rows

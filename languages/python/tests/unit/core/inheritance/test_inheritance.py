@@ -12,6 +12,7 @@ import pytest
 
 from parallax.conformance import case_format
 from parallax.core import inheritance
+from parallax.core._execution._unit_work.instructions import prepare_typed_write
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import STRING, coerce_neutral_input, matches_neutral_type
 from parallax.core.base import Decimal as DecimalType
@@ -83,7 +84,6 @@ from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.metamodel._resolve import UNRESOLVED_ENTITY_REFERENCE
 from parallax.core.model_formation import MetamodelValidationError
 from parallax.core.unit_work import KeyedWrite, WriteRejectedError
-from parallax.core.unit_work.instructions import prepare_typed_write
 from parallax.descriptor._adapter import unresolved_metamodel
 from parallax.descriptor._parse import parse_document
 from parallax.descriptor._records import (
