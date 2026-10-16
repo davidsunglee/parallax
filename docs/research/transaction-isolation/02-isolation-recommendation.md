@@ -98,8 +98,11 @@ These are PostgreSQL figures.
   Repeatable Read (C7). Immediate replay completes 0.904 and 0.971 at Read
   Committed there, but only 0.727 and 0.735 at Repeatable Read, so waiting
   matters more at Repeatable Read.
-- **First attempts are close at either level**: 0.21 against 0.24 at
-  `max_retries=0`, in every arm.
+- **First attempts are close at either level locally**: 0.21 against 0.24
+  at `max_retries=0`, in every arm. In C7's slower simulated environments
+  Repeatable Read's first attempts fall behind: 0.238 at Read Committed
+  against 0.144 at Repeatable Read with 2 ms per round trip, and 0.214
+  against 0.125 with 5 ms and 10 ms of work.
 - **The gate race replays to commit at both levels.** That changed at C3.
 - **The changes that matter here are level-independent.**
   - Read-only transactions cost no more than reads in a writable attempt and
