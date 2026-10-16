@@ -34,7 +34,9 @@ from parallax.core.object_query._resolved import ResolvedObjectQuery
 from parallax.core.read_delivery import RowsResult
 from parallax.core.read_delivery._delivery import deliver_find, deliver_history
 from parallax.core.read_delivery._page_reader import (
+    EMPTY_PAGE_ORIGIN_COLLECTOR,
     EagerPageRequest,
+    PageOriginCollector,
     PageReader,
     StreamPageRequest,
     StreamPageResult,
@@ -83,7 +85,7 @@ class ReadInputs:
     read carries its attempt's connection and neither of the other two; a
     writable one carries the attempt's connection, the unit of work's
     preference, and the unit of work itself as the evidence context retained
-    evidence indexes into. Either way the
+    evidence indexes into. Only that last read collects Read Evidence. Either way the
     connection is the one the operation currently holds rather than anything a
     scope retains, which is what makes an operation's statements provably run
     on the connection that operation acquired.
@@ -137,8 +139,8 @@ def read_graph[Eager](
     the publication decides only how its result is stated. The gate precedes
     the bracket, and therefore a participating read's force-flush. A
     milestone-set read retains no evidence at all, so its roots stand at
-    coordinates no keyed write may address. Each eager Page's projection
-    observer is created inside the bracket, after any read gate.
+    coordinates no keyed write may address. Each eager Page's origin collector
+    is selected inside the bracket, after any read gate.
     """
     selected = read.selected
     checked = preflight(interpreted(selected, query), model=selected.model.meta, form="graph")
@@ -161,9 +163,7 @@ def read_graph[Eager](
                 selected.model,
                 inputs.connection,
                 inputs.preference,
-                ReadEvidenceCollector(
-                    selected.model.meta, evidence_context=inputs.evidence_context, scanned=False
-                ),
+                _page_origin_collector(selected.model.meta, inputs.evidence_context, scanned=False),
                 activity,
                 planner,
                 selected.edition,
@@ -222,7 +222,7 @@ def read_page(
     read does — and takes its model from the read the delivery was begun as,
     which holds the one selection it was opened under. A standalone page leases
     its own connection; a participating page uses the attempt's. The page's
-    projection observer is created inside that bracket, after any read gate.
+    origin collector is selected inside that bracket, after any read gate.
     """
     selected = read.selected
     model = selected.model
@@ -235,9 +235,7 @@ def read_page(
                 model,
                 inputs.connection,
                 inputs.preference,
-                ReadEvidenceCollector(
-                    model.meta, evidence_context=inputs.evidence_context, scanned=scanned
-                ),
+                _page_origin_collector(model.meta, inputs.evidence_context, scanned=scanned),
                 calls,
                 planner,
                 selected.edition,
@@ -247,14 +245,29 @@ def read_page(
     return read.paged(batch, body)
 
 
+def _page_origin_collector(
+    meta: Metamodel, evidence_context: ReadEvidenceContext | None, *, scanned: bool
+) -> PageOriginCollector[ReadEvidence]:
+    """The origin collector one eager Page or stream Page reads through.
+
+    A read with no evidence context collects no Read Evidence, and neither does
+    a read scanning an As-Of Axis, whose roots stand at no single observed
+    state: both record nothing and build nothing. A writable attempt's other
+    reads take a fresh collector filing into that attempt's unit of work.
+    """
+    if evidence_context is None or scanned:
+        return EMPTY_PAGE_ORIGIN_COLLECTOR
+    return ReadEvidenceCollector(meta, evidence_context=evidence_context)
+
+
 class StandaloneRead:
     """One standalone operation's read: its own Root Execution, its own
     connection, no flush, and the edition it adopted named on whatever ordinary
     failure escapes it.
 
     Non-transactional in the three ways that reach the executor: no read lock,
-    no Concurrency Preference, and no evidence context — which is what leaves the evidence
-    a standalone read retains unstamped by any participation. Built per
+    no Concurrency Preference, and no evidence context — which is what leaves a
+    standalone read collecting no Read Evidence at all. Built per
     operation by its Execution Scope, over the selection that operation
     adopted, so everything done through it runs under that one selection
     however long a delivery through it takes.

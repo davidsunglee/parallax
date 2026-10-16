@@ -133,17 +133,22 @@ def _published_contact() -> Contact:
 # What a value states about the state a write revises.                        #
 # --------------------------------------------------------------------------- #
 def test_a_published_value_answers_the_facts_its_own_read_filed() -> None:
+    # A standalone read publishes a stored value of this source and leaves no
+    # Read Evidence on it, so the object the write addresses comes from the row
+    # the value authors.
     meta, codec = _accounts()
     node = _published_account()
+    source = TypedKeyedWriteSource(node.edit(balance=Decimal("125.00")), codec)
 
-    resolved = TypedKeyedWriteSource(node, codec).resolve(meta, "amend")
+    resolved = source.resolve(meta, "amend")
+    prepared = source.prepare(resolved, valid_from=None, until=None)
 
     assert resolved.entity.identity == mm.Account.identity
     assert resolved.provenance == "this"
     assert resolved.representation == "typed"
-    assert resolved.read_evidence is not None
-    assert resolved.read_evidence.object_key == ObjectKey(mm.Account.identity, (("id", 1),))
+    assert resolved.read_evidence is None
     assert resolved.pin is None  # an unpinned read stands at no instant
+    assert prepared.object_key == ObjectKey(mm.Account.identity, (("id", 1),))
 
 
 def test_a_plainly_constructed_value_answers_that_no_read_produced_it() -> None:

@@ -319,9 +319,9 @@ class ResolvedKeyedWriteSource:
     refusal that is the honest complaint about it, rather than a codec failure.
 
     ``pin`` and ``read_evidence`` are the source's own, never derived: a source
-    without read evidence is one no read of this store published, and a source
-    pinned at a finite Transaction-Time instant is read-only whatever else is
-    true of it.
+    without read evidence is one no read of a writable attempt published, and a
+    source pinned at a finite Transaction-Time instant is read-only whatever
+    else is true of it.
 
     ``representation`` is which interface stated the write, and is here for the
     one thing a refusal cannot state without it: the verb that DOES accept the

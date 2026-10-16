@@ -4,9 +4,8 @@ Drives :class:`RecordedProjections` and :func:`defer_read_evidence` directly, of
 hand-written rows admitted as judged positional Entity State rather than through
 a `TxnContext.find`: which of the two mutually exclusive branches a row takes (a
 versioned row's observed version, a temporal row's whole predecessor milestone),
-which rows retain no evidence at all, what the retained state is keyed by, what a
-hint carries when there is no state behind it, and that a standalone and a
-participating read retain one and the same evidence.
+which rows retain no evidence at all, what the retained state is keyed by, and
+what a hint carries when there is no state behind it.
 
 Everything a collector holds is asserted through the Read Evidence the retention
 answers, never off its own storage: the accumulator is an internal seam, and a
@@ -31,7 +30,11 @@ from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import inheritance, opt_lock, temporal_read
 from parallax.core._execution._page_origins import ReadEvidenceCollector
 from parallax.core._execution._planning import build_write_planner
-from parallax.core._execution._retention import RecordedProjections, defer_read_evidence
+from parallax.core._execution._retention import (
+    ReadEvidenceByProjection,
+    RecordedProjections,
+    defer_read_evidence,
+)
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
 from parallax.core._execution._unit_work.instructions import prepare_typed_write
 from parallax.core.base import INFINITY
@@ -56,7 +59,6 @@ from parallax.core.unit_work import (
     buffered_write,
 )
 from parallax.core.write_plan import (
-    EntityStateRow,
     ObjectStateKey,
     TemporalObservation,
     VersionObservation,
@@ -136,31 +138,42 @@ _VOYAGE_DOCUMENT: Mapping[str, object] = {
 }
 
 
+def _unit_of_work(model: AcceptedMetamodel) -> UnitOfWork:
+    return UnitOfWork(
+        lifetime=TxnAttemptLifetime(),
+        settings=TransactionSettings(),
+        clock=FixedClock(_FIXED),
+        meta=model,
+        flush_executor=_no_flush,
+        acquire_rows=NO_ROW_READS,
+        planner=build_write_planner(model),
+        actor_identity=TEST_ACTOR_IDENTITY,
+        evidence_policy_for=opt_lock.view(model).required_key,
+    )
+
+
+def _in_transaction[T](model: AcceptedMetamodel, body: Callable[[UnitOfWork], T]) -> T:
+    """Run ``body`` in a unit of work over ``model``."""
+    return body(_unit_of_work(model))
+
+
+def _retained(
+    model: AcceptedMetamodel, entity: EntityIdentity, *rows: Mapping[str, object]
+) -> ReadEvidenceByProjection:
+    """What one participating read of ``rows`` retains, in a unit of work of its own."""
+    return judged_evidence(model, entity, *rows, evidence_context=_unit_of_work(model))
+
+
 def _hint(
     model: AcceptedMetamodel,
     entity: EntityIdentity,
     columns: Mapping[str, object],
     document: object | None = None,
 ) -> ReadEvidence:
-    """The hint a STANDALONE read retains for one row — no unit of work behind it."""
-    return judged_evidence(model, entity, columns, document=document)[0]
-
-
-def _in_transaction[T](model: AcceptedMetamodel, body: Callable[[UnitOfWork], T]) -> T:
-    """Run ``body`` in a unit of work over ``model``."""
-    return body(
-        UnitOfWork(
-            lifetime=TxnAttemptLifetime(),
-            settings=TransactionSettings(),
-            clock=FixedClock(_FIXED),
-            meta=model,
-            flush_executor=_no_flush,
-            acquire_rows=NO_ROW_READS,
-            planner=build_write_planner(model),
-            actor_identity=TEST_ACTOR_IDENTITY,
-            evidence_policy_for=opt_lock.view(model).required_key,
-        )
-    )
+    """The hint one participating read retains for one row."""
+    return judged_evidence(
+        model, entity, columns, document=document, evidence_context=_unit_of_work(model)
+    )[0]
 
 
 # --------------------------------------------------------------------------- #
@@ -170,7 +183,7 @@ def test_a_collector_that_observed_nothing_retains_no_sources() -> None:
     # A read that materialized no row — or whose every row was non-hydrating —
     # hands the retention an empty collector, and every value it publishes
     # carries no hint rather than a hint over nothing.
-    assert judged_evidence(_accepted("account"), corpus_entity("Account")) == {}
+    assert _retained(_accepted("account"), corpus_entity("Account")) == {}
 
 
 def test_deferred_sources_release_callbacks_after_resolving_every_origin() -> None:
@@ -184,7 +197,7 @@ def test_deferred_sources_release_callbacks_after_resolving_every_origin() -> No
         lambda _node: None,
         lambda _node: entity,
         lambda _node: 1,
-        evidence_context=None,
+        evidence_context=_unit_of_work(model),
         pin=Pin(),
     )
 
@@ -206,55 +219,12 @@ def test_deferred_sources_report_a_reached_projection_with_no_admissible_state_a
         lambda _node: None,
         lambda _node: unknown,
         lambda _node: 1,
-        evidence_context=None,
+        evidence_context=_unit_of_work(model),
         pin=Pin(),
     )
 
     with pytest.raises(KeyError):
         sources[0]
-
-
-def test_deferred_standalone_evidence_releases_member_state_after_materialization() -> None:
-    model = _accepted("account")
-    entity = corpus_entity("Account")
-    sources = judged_evidence(model, entity, _account_columns())
-
-    origin = sources[0]
-    evidence = cast("Any", origin)._source
-    assert origin.observation is not None
-    assert origin.observation.evidence == VersionObservation(observed_version=4)
-    assert evidence.entity == entity
-    assert evidence._member_row == ()
-    assert evidence._locator is None
-    assert evidence._layout is None
-    assert evidence._document is None
-
-
-def test_deferred_standalone_temporal_evidence_adopts_its_row_view_and_document() -> None:
-    # The standalone deferred source materializes its predecessor from the
-    # judged positional state it held, viewed by declared name, and releases
-    # that state once the evidence exists; the raw document the read
-    # transferred to it reaches the predecessor by identity, never copied.
-    model = _accepted("document-layout")
-    entity = corpus_entity("Voyage")
-    document: dict[str, object] = dict(_VOYAGE_DOCUMENT)
-    sources = judged_evidence(model, entity, _voyage_columns(), document=document)
-    origin = sources[0]
-    evidence = cast("Any", origin)._source
-
-    assert origin.observation is not None
-    observation = origin.observation.evidence
-    assert isinstance(observation, TemporalObservation)
-    assert isinstance(observation.predecessor.members, EntityStateRow)
-    assert dict(observation.predecessor.members) == _plain(_voyage_members())
-    assert origin.observation.key == TemporalObjectStateKey(
-        corpus_object_key("Voyage", ("id", 7)), Edge(tx_time=_TX_START)
-    )
-    assert observation.predecessor.document is document
-    assert evidence._member_row == ()
-    assert evidence._document is None
-    assert evidence._locator is None
-    assert origin.observation is origin.observation
 
 
 def _deposit_rate_columns() -> Mapping[str, object]:
@@ -269,35 +239,7 @@ def _deposit_rate_columns() -> Mapping[str, object]:
     }
 
 
-def test_deferred_evidence_locates_its_state_by_its_familys_owner_object() -> None:
-    # Until it materializes, a standalone row's evidence holds the one object
-    # its family's owner compiled — the explicit version key, or the shared
-    # Temporal Shape an inherited position aliases from its root — and after
-    # materializing it holds only what it produced.
-    account = _accepted("account")
-    rate = _accepted("rate")
-    deposit_rate = corpus_entity("DepositRate")
-    root = temporal_read.view(rate).shape(corpus_entity("Rate"))
-    cases = (
-        (
-            judged_evidence(account, corpus_entity("Account"), _account_columns())[0],
-            opt_lock.view(account).key(corpus_entity("Account")),
-        ),
-        (
-            judged_evidence(rate, deposit_rate, _deposit_rate_columns())[0],
-            temporal_read.view(rate).shape(deposit_rate),
-        ),
-    )
-    assert cases[1][1] is root
-    for origin, owner in cases:
-        evidence = cast("Any", origin)._source
-        assert isinstance(owner, opt_lock.ExplicitVersion | temporal_read.Bitemporal)
-        assert evidence._locator is owner
-        assert origin.observation is not None
-        assert evidence._locator is None
-
-
-def test_resolving_and_materializing_evidence_again_repeats_no_derivation(
+def test_resolving_evidence_again_repeats_no_derivation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     derived: list[ObjectStateKey] = []
@@ -309,9 +251,7 @@ def test_resolving_and_materializing_evidence_again_repeats_no_derivation(
     monkeypatch.setattr(
         "parallax.core._execution._retention.object_state_key_from_observation", counted
     )
-    sources = judged_evidence(
-        _accepted("rate"), corpus_entity("DepositRate"), _deposit_rate_columns()
-    )
+    sources = _retained(_accepted("rate"), corpus_entity("DepositRate"), _deposit_rate_columns())
     origin = sources[0]
     assert sources[0] is origin
     first = origin.observation
@@ -325,7 +265,7 @@ def test_deferred_sources_release_the_family_owners_once_every_origin_resolves()
     model = _accepted("rate")
     sources = cast(
         "Any",
-        judged_evidence(
+        _retained(
             model,
             corpus_entity("DepositRate"),
             _deposit_rate_columns(),
@@ -401,65 +341,41 @@ def _plain(value: object) -> object:
     return value
 
 
-def test_a_standalone_and_a_participating_read_retain_one_predecessor() -> None:
+def test_a_temporal_row_retains_its_judged_state_by_declared_name() -> None:
     # The judged positional Entity State a real find's Page owns is read by
     # declared name, and Voyage's storage names differ from its declared ones
-    # (`in_z` / `txStart`). A standalone read materializes its evidence lazily
-    # and a participating one files it with its unit of work, yet the object
-    # key, the observed state, every predecessor member (value-object
-    # occurrences included), and the retained document agree exactly; two paths
-    # that drifted would chain successors carrying different rows forward from
-    # one stored state.
-    model = _accepted("document-layout")
-    entity = corpus_entity("Voyage")
-    columns = _voyage_columns()
+    # (`in_z` / `txStart`). The object key, the observed state, every
+    # predecessor member (value-object occurrences included), and the retained
+    # document all come from that one state.
+    hint = _hint(
+        _accepted("document-layout"), corpus_entity("Voyage"), _voyage_columns(), _VOYAGE_DOCUMENT
+    )
 
-    def observe(uow: UnitOfWork) -> ReadEvidence:
-        return judged_evidence(
-            model, entity, columns, document=_VOYAGE_DOCUMENT, evidence_context=uow
-        )[0]
-
-    participating = _in_transaction(model, observe)
-    standalone = _hint(model, entity, columns, _VOYAGE_DOCUMENT)
-
-    for hint in (participating, standalone):
-        assert hint.object_key == corpus_object_key("Voyage", ("id", 7))
-        assert hint.observation is not None
-        observation = hint.observation.evidence
-        assert isinstance(observation, TemporalObservation)
-        assert {"manifest", "legs"} <= observation.predecessor.members.keys()
-        assert _plain(dict(observation.predecessor.members)) == _voyage_members()
-        assert observation.predecessor.member("txStart") == _TX_START
-        assert hint.observation.key == TemporalObjectStateKey(
-            corpus_object_key("Voyage", ("id", 7)), Edge(tx_time=_TX_START)
-        )
-        # The Structured Column rides BESIDE the members either way.
-        assert observation.predecessor.document == _VOYAGE_DOCUMENT
-        assert "charterCode" not in observation.predecessor.members
+    assert hint.object_key == corpus_object_key("Voyage", ("id", 7))
+    assert hint.observation is not None
+    observation = hint.observation.evidence
+    assert isinstance(observation, TemporalObservation)
+    assert {"manifest", "legs"} <= observation.predecessor.members.keys()
+    assert _plain(dict(observation.predecessor.members)) == _voyage_members()
+    assert observation.predecessor.member("txStart") == _TX_START
+    assert hint.observation.key == TemporalObjectStateKey(
+        corpus_object_key("Voyage", ("id", 7)), Edge(tx_time=_TX_START)
+    )
+    # The Structured Column rides BESIDE the members.
+    assert observation.predecessor.document == _VOYAGE_DOCUMENT
+    assert "charterCode" not in observation.predecessor.members
 
 
-@pytest.mark.parametrize("participating", [False, True], ids=["standalone", "participating"])
-def test_a_retained_predecessor_document_is_the_one_the_read_transferred(
-    participating: bool,
-) -> None:
-    # The dialect transfers the decoded document to the read, so both retention
-    # hops keep that document itself, host containers and all, rather than a
-    # frozen copy of it (`m-write-plan` "Predecessor Row").
-    model = _accepted("document-layout")
-    entity = corpus_entity("Voyage")
+def test_a_retained_predecessor_document_is_the_one_the_read_transferred() -> None:
+    # The dialect transfers the decoded document to the read, so retention keeps
+    # that document itself, host containers and all, rather than a frozen copy
+    # of it (`m-write-plan` "Predecessor Row").
     document: dict[str, object] = {
         "title": "Northbound",
         "manifest": {"cargo": "grain", "sealNumber": "S-4021"},
         "legs": [{"port": "Oslo"}],
     }
-
-    def observe(evidence_context: UnitOfWork | None) -> ReadEvidence:
-        columns = _voyage_columns()
-        return judged_evidence(
-            model, entity, columns, document=document, evidence_context=evidence_context
-        )[0]
-
-    hint = _in_transaction(model, observe) if participating else observe(None)
+    hint = _hint(_accepted("document-layout"), corpus_entity("Voyage"), _voyage_columns(), document)
     assert hint.observation is not None
     observation = hint.observation.evidence
     assert isinstance(observation, TemporalObservation)
@@ -532,7 +448,7 @@ def test_two_observed_versions_of_one_object_are_distinct_states() -> None:
 def test_every_observed_row_retains_its_own_evidence() -> None:
     # One find observes the root and every attached level, so the collector holds
     # more than one row and each retains independently, under its own projection.
-    sources = judged_evidence(
+    sources = _retained(
         _accepted("account"),
         corpus_entity("Account"),
         _account_columns(id_=1, version=4),
@@ -658,7 +574,7 @@ def test_a_root_retains_evidence_from_its_own_judged_state_beside_an_equal_sibli
     assert page_rows(page).witnesses[bond] == page_rows(page).witnesses[stock]
     state_for(page_rows(page), bond)
     state_for(page_rows(page), stock)
-    observations = ReadEvidenceCollector(model, evidence_context=None, scanned=False)
+    observations = ReadEvidenceCollector(model, evidence_context=_unit_of_work(model))
     observations.observe_projection(bond, corpus_entity("Bond"), None)
     observations.observe_projection(stock, corpus_entity("Stock"), None)
     # Page judgment and Read Evidence retention meet only inside the read that
@@ -676,13 +592,6 @@ def test_a_root_retains_evidence_from_its_own_judged_state_beside_an_equal_sibli
 # --------------------------------------------------------------------------- #
 # Participation: what a read stamps on the values it produced.                #
 # --------------------------------------------------------------------------- #
-def test_a_standalone_read_stamps_no_participation() -> None:
-    hint = _hint(_accepted("account"), corpus_entity("Account"), _account_columns())
-    assert hint.participation is None
-    assert hint.observation is not None
-    assert hint.observation.participation is None
-
-
 def test_a_participating_read_stamps_its_own_unit_of_works_participation() -> None:
     model = _accepted("account")
 

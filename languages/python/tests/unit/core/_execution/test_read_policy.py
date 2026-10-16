@@ -26,7 +26,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-from typing import Final
+from typing import Final, cast
 
 import pytest
 
@@ -34,10 +34,15 @@ from parallax.conformance._lifecycle_recording import (
     RecordedRoot,
     RecordingLifecycleProvider,
 )
+from parallax.core._execution._page_origins import ReadEvidenceCollector
 from parallax.core._execution._publication import read_projection
-from parallax.core._execution._read_policy import ReadInputs
+from parallax.core._execution._read_policy import (
+    ReadInputs,
+    _page_origin_collector,  # pyright: ignore[reportPrivateUsage] - the selection is under test
+)
 from parallax.core._execution._scope import ExecutionScope
 from parallax.core._execution._transaction._attempt import TxnAttempt
+from parallax.core.entity._model import model_of
 from parallax.core.execution import ExecutionFailure, ServingModel, prepare_model
 from parallax.core.execution_lifecycle import (
     ExecutionEvent,
@@ -46,7 +51,10 @@ from parallax.core.execution_lifecycle import (
     WriteBatchStarted,
 )
 from parallax.core.execution_lifecycle._activity import ActivityTarget, StreamActivity
-from parallax.core.unit_work import Concurrency
+from parallax.core.metamodel import EntityIdentity
+from parallax.core.read_delivery._page import Page
+from parallax.core.read_delivery._page_reader import EMPTY_PAGE_ORIGIN_COLLECTOR
+from parallax.core.unit_work import Concurrency, ParticipationToken, RetainedObservation
 from tests._support.db_port import ScriptedAdapter, Transact, Write, WriteCall
 from tests.unit.core._execution._execution_support import (
     ACCOUNT,
@@ -56,6 +64,7 @@ from tests.unit.core._execution._execution_support import (
 )
 
 _SERVING: Final = ServingModel(prepare_model(ACCOUNT, edition="test"))
+ACCOUNT_META: Final = model_of(ACCOUNT)
 
 
 def _scope(
@@ -558,3 +567,64 @@ def test_a_standalone_advance_names_the_edition_and_a_participating_one_does_not
             raise AssertionError("a participating advance wrapped its failure")
 
     _participating(run, ScriptedAdapter(Transact()))
+
+
+# --------------------------------------------------------------------------- #
+# Which origin collector a Page reads through.                                #
+# --------------------------------------------------------------------------- #
+class _EvidenceContext:
+    """A stand-in unit of work answering exactly what an evidence context names."""
+
+    __slots__ = ("_participation",)
+
+    def __init__(self) -> None:
+        self._participation = ParticipationToken()
+
+    @property
+    def participation(self) -> ParticipationToken:
+        return self._participation
+
+    @property
+    def freshness(self) -> int:
+        return 0
+
+    def retain(
+        self, observation: RetainedObservation, /, *, read_at: int | None = None
+    ) -> RetainedObservation:
+        del read_at
+        return observation
+
+
+@pytest.mark.parametrize("scanned", [False, True], ids=["observed", "scanned"])
+def test_a_page_read_with_no_evidence_context_collects_nothing(scanned: bool) -> None:
+    collector = _page_origin_collector(ACCOUNT_META, None, scanned=scanned)
+
+    assert collector is EMPTY_PAGE_ORIGIN_COLLECTOR
+
+
+def test_a_writable_page_scanning_an_axis_collects_nothing() -> None:
+    collector = _page_origin_collector(ACCOUNT_META, _EvidenceContext(), scanned=True)
+
+    assert collector is EMPTY_PAGE_ORIGIN_COLLECTOR
+
+
+def test_every_observed_writable_page_takes_a_fresh_evidence_collector() -> None:
+    context = _EvidenceContext()
+    first = _page_origin_collector(ACCOUNT_META, context, scanned=False)
+    second = _page_origin_collector(ACCOUNT_META, context, scanned=False)
+
+    assert isinstance(first, ReadEvidenceCollector)
+    assert isinstance(second, ReadEvidenceCollector)
+    assert first is not second
+
+
+def test_the_empty_collector_records_nothing_and_answers_no_origin() -> None:
+    page = cast("Page", object())
+    EMPTY_PAGE_ORIGIN_COLLECTOR.observe_projection(
+        0, EntityIdentity("parallax.compatibility", "Account"), {}
+    )
+
+    assert dict(EMPTY_PAGE_ORIGIN_COLLECTOR.origins_for(page)) == {}
+    assert EMPTY_PAGE_ORIGIN_COLLECTOR.origins_for(page) is EMPTY_PAGE_ORIGIN_COLLECTOR.origins_for(
+        page
+    )

@@ -70,7 +70,7 @@ from parallax.core.metamodel import EntityIdentity
 from parallax.core.temporal_read import Pin
 from parallax.core.unit_work import ReadEvidence
 from parallax.snapshot import Database, Snapshot
-from parallax.snapshot._inspection import SnapshotNodeState
+from parallax.snapshot._inspection import RootConformance, SnapshotNodeState
 from tests.unit import _delivery_control_support as control_support
 from tests.unit._gc_reachability import Closure, closure, reachable_objects
 from tests.unit._snapshot_materialization_support import (
@@ -379,6 +379,7 @@ def test_a_closed_eager_typed_result_retains_only_projection_metadata_not_execut
         (ReadEvidence, "origin"),
         (EntityIdentity, "entity-identity"),
         (Pin, "pin"),
+        (RootConformance, "shared"),
         (type, "shared"),
     )
     exact_kinds: dict[type, str] = {
@@ -416,12 +417,11 @@ def test_a_closed_eager_typed_result_retains_only_projection_metadata_not_execut
         "includes": 1,
         "entity": 97,
         "node-state": 97,
-        "origin": 84,
         "entity-identity": 4,
         "pin": 1,
         "unloaded": 1,
         "views": 97,
-        "tuple": 215,
+        "tuple": 131,
     }
 
 

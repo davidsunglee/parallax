@@ -50,7 +50,7 @@ from parallax.core.write_plan import ObjectKey
 # by the private MODULE names and by the package's frozen `__all__`, not by
 # per-name underscores, which under pyright strict would make every intra-package
 # import a reportPrivateUsage error.
-from parallax.snapshot._inspection import insertion_of, snapshot_state_of
+from parallax.snapshot._inspection import RootConformance, insertion_of, snapshot_state_of
 
 __all__ = [
     "TypedKeyedInsertSource",
@@ -68,16 +68,17 @@ def provenance_of(value: EntityBase) -> Provenance:
     Read through :func:`~parallax.snapshot._inspection.snapshot_state_of` and the
     un-narrowed :func:`~parallax.core.entity.lifecycle_state_of`, never through a
     value's private state: the narrowed answer authenticates THIS Snapshot
-    lifecycle, and its Read Evidence says whether that lifecycle published valid
-    stored Entity State. Diagnostic data from an invalid root carries Snapshot
-    state for inspection but no origin, so it is ``none`` rather than a stored
+    lifecycle, and its root conformance says whether that lifecycle published
+    valid stored Entity State, whatever Read Evidence the value carries beside
+    it. Diagnostic data from an invalid root carries Snapshot state for
+    inspection but is nonconforming, so it is ``none`` rather than a stored
     value of this source. The un-narrowed answer distinguishes another
     framework-managed source's value from one no managed source produced at all.
 
     It belongs to the Typed adapter because only a Typed value carries a
-    lifecycle to read: a Wire source answers the same fact from the Read Evidence
-    the door that published it filed, and what the keyed write judges is the
-    answer rather than either carrier.
+    lifecycle to read: a Wire source answers the same fact from the provenance
+    the door that published it filed on the node, and what the keyed write
+    judges is the answer rather than either carrier.
 
     The authority an admitted insertion bound to an instance is no read, so a
     value carrying it alone is still one no managed source published.
@@ -87,7 +88,7 @@ def provenance_of(value: EntityBase) -> Provenance:
     state = snapshot_state_of(value)
     if state is None:
         return "none" if insertion_of(value) is not None else "foreign"
-    return "none" if state.read_evidence is None else "this"
+    return "this" if state.root_conformance is RootConformance.CONFORMING else "none"
 
 
 def metadata_of_instance(meta: Metamodel, instance: EntityBase) -> EntityMetadata:

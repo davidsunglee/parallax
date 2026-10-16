@@ -42,12 +42,12 @@ def retained_sources(
     model: Metamodel,
     judged: JudgedRows,
     *,
+    evidence_context: ReadEvidenceContext,
     document: object | None = None,
-    evidence_context: ReadEvidenceContext | None = None,
 ) -> ReadEvidenceByProjection:
-    """The sources a graph-form read retains for one projection per judged
-    row, each admitted with its positional state; ``document`` is the raw
-    Structured Column every projection carries."""
+    """The sources a writable attempt's graph-form read retains for one
+    projection per judged row, each admitted with its positional state;
+    ``document`` is the raw Structured Column every projection carries."""
     layout, member_rows = judged.layout, judged.member_rows
     entity = layout.concrete
     observations = RecordedProjections()
@@ -68,8 +68,8 @@ def judged_evidence(
     model: Metamodel,
     entity: EntityIdentity,
     *rows: Mapping[str, object],
+    evidence_context: ReadEvidenceContext,
     document: object | None = None,
-    evidence_context: ReadEvidenceContext | None = None,
 ) -> ReadEvidenceByProjection:
     """The sources a graph-form read retains for one projection per ``rows``
     entry, as :func:`judged_rows` lays them out and :func:`retained_sources`

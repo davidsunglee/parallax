@@ -63,7 +63,6 @@ from parallax.core.unit_work import (
     MaterializedWriteGroup,
     PredicateSelection,
     PredicateWrite,
-    RetainedObservation,
     TransactionSettings,
     UnitOfWork,
     VersionedEvidenceBuilder,
@@ -612,10 +611,9 @@ _EVIDENCE: Final = {
 }
 
 
-@pytest.mark.parametrize("participating", [False, True], ids=["standalone", "participating"])
 @pytest.mark.parametrize("entity", sorted(_EVIDENCE))
 def test_retaining_read_evidence_reads_each_familys_locator_from_its_owner(
-    monkeypatch: pytest.MonkeyPatch, entity: str, participating: bool
+    monkeypatch: pytest.MonkeyPatch, entity: str
 ) -> None:
     domain, columns = _EVIDENCE[entity]
     meta = model_of(domain)
@@ -624,26 +622,18 @@ def test_retaining_read_evidence_reads_each_familys_locator_from_its_owner(
     planner = build_write_planner(meta)
     callers = _trace_declarations(monkeypatch, meta)
 
-    def retain(evidence_context: UnitOfWork | None) -> RetainedObservation | None:
-        return retained_sources(meta, judged, evidence_context=evidence_context)[0].observation
-
-    retained = (
-        retain(
-            UnitOfWork(
-                lifetime=TxnAttemptLifetime(),
-                settings=TransactionSettings(),
-                clock=FixedClock(_OPENED),
-                meta=meta,
-                flush_executor=_no_flush,
-                acquire_rows=NO_ROW_READS,
-                planner=planner,
-                actor_identity=TEST_ACTOR_IDENTITY,
-                evidence_policy_for=opt_lock.view(meta).required_key,
-            )
-        )
-        if participating
-        else retain(None)
+    uow = UnitOfWork(
+        lifetime=TxnAttemptLifetime(),
+        settings=TransactionSettings(),
+        clock=FixedClock(_OPENED),
+        meta=meta,
+        flush_executor=_no_flush,
+        acquire_rows=NO_ROW_READS,
+        planner=planner,
+        actor_identity=TEST_ACTOR_IDENTITY,
+        evidence_policy_for=opt_lock.view(meta).required_key,
     )
+    retained = retained_sources(meta, judged, evidence_context=uow)[0].observation
 
     assert callers == []
     assert retained is not None

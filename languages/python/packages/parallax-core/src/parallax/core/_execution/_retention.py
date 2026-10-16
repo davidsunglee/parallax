@@ -104,8 +104,8 @@ class ReadEvidenceContext(Protocol):
     A read needs exactly three things from a transaction — the participation
     its reads stamp, the freshness its rows were acquired at, and the chance to
     answer evidence it already holds for a state this read saw again — so it
-    names those three rather than the whole scope. A standalone read passes none
-    of it.
+    names those three rather than the whole scope. Only a writable attempt's
+    read has one; every other read collects no Read Evidence at all.
     """
 
     @property
@@ -166,7 +166,7 @@ class _DeferredReadEvidenceMap(Mapping[int, ReadEvidence]):
         entity: Callable[[int], EntityIdentity],
         primary_key: Callable[[int], object | None],
         *,
-        evidence_context: ReadEvidenceContext | None,
+        evidence_context: ReadEvidenceContext,
         pin: Pin,
     ) -> None:
         self._families = inheritance.view(meta)
@@ -184,8 +184,8 @@ class _DeferredReadEvidenceMap(Mapping[int, ReadEvidence]):
         self._entity = entity
         self._primary_key = primary_key
         self._evidence_context = evidence_context
-        self._participation = None if evidence_context is None else evidence_context.participation
-        self._read_at = 0 if evidence_context is None else evidence_context.freshness
+        self._participation = evidence_context.participation
+        self._read_at = evidence_context.freshness
         # One observed state, one retained observation within this pass, so two
         # projections of one row answer one claim exactly as graph aliases do.
         self._pass_states: dict[ObjectStateKey, RetainedObservation] = {}
@@ -235,19 +235,6 @@ class _DeferredReadEvidenceMap(Mapping[int, ReadEvidence]):
             return
         layout, member_row = admitted
         document = None if isinstance(pending, int) else pending.document
-        if self._evidence_context is None:
-            primary_key = self._primary_key(key)
-            if primary_key is None:  # pragma: no cover - conforming roots carry identity
-                return
-            self._settle(
-                key,
-                ReadEvidence.deferred(
-                    entity,
-                    _DeferredEvidence(primary_key, locator, layout, member_row, document),
-                    pin=None if isinstance(locator, ExplicitVersion) else self._pin,
-                ),
-            )
-            return
         self._settle(
             key,
             _retain_observed(
@@ -298,7 +285,7 @@ class _DeferredReadEvidenceMap(Mapping[int, ReadEvidence]):
         )
         self._entity = cast("Callable[[int], EntityIdentity]", _released_callback)
         self._primary_key = cast("Callable[[int], object | None]", _released_callback)
-        self._evidence_context = None
+        self._evidence_context = cast("ReadEvidenceContext", None)
         self._families = cast("inheritance.InheritanceFacet", None)
         self._keys = cast("opt_lock.OptimisticLockFacet", None)
         self._temporal = cast("TemporalFacet", None)
@@ -311,7 +298,7 @@ def defer_read_evidence(
     entity: Callable[[int], EntityIdentity],
     primary_key: Callable[[int], object | None],
     *,
-    evidence_context: ReadEvidenceContext | None,
+    evidence_context: ReadEvidenceContext,
     pin: Pin,
 ) -> ReadEvidenceByProjection:
     """A mapping that retains evidence as valid judged states become reachable
@@ -340,10 +327,9 @@ def defer_read_evidence(
     a temporal row carries it instead, where it answers whether the value may be
     written at all rather than which state a write settles against.
 
-    ``evidence_context`` is the participating unit of work, absent for a standalone read.
-    It supplies the participation each hint carries and answers evidence it
-    already holds for a state this read saw again; a standalone read stamps no
-    participation.
+    ``evidence_context`` is the participating unit of work. It supplies the
+    participation each hint carries and answers evidence it already holds for a
+    state this read saw again.
 
     Under Relational Document Layout a temporal observation also retains the
     row's raw Structured Column, so a successor is patched from what the row
@@ -366,9 +352,9 @@ def _retain_observed(
     document: object | None,
     locator: _Locator,
     *,
-    participation: ParticipationToken | None,
+    participation: ParticipationToken,
     pass_states: dict[ObjectStateKey, RetainedObservation],
-    evidence_context: ReadEvidenceContext | None,
+    evidence_context: ReadEvidenceContext,
     read_at: int,
     pin: Pin,
 ) -> ReadEvidence:
@@ -377,9 +363,9 @@ def _retain_observed(
     )
     held = pass_states.get(key)
     if held is None:
-        held = RetainedObservation(key, observation, participation)
-        if evidence_context is not None:
-            held = evidence_context.retain(held, read_at=read_at)
+        held = evidence_context.retain(
+            RetainedObservation(key, observation, participation), read_at=read_at
+        )
         pass_states[key] = held
     observed_pin = None if isinstance(locator, ExplicitVersion) else pin
     return ReadEvidence(layout.concrete, object_key, participation, held, observed_pin)
@@ -420,67 +406,6 @@ def _observed_state(
         observation,
         object_state_key_from_observation(object_key, observation, locator),
     )
-
-
-class _DeferredEvidence:
-    """A standalone read's evidence for one row, materialized on first use.
-
-    Until then it holds the row's judged state and its family's ``_locator``;
-    afterwards it holds only the produced Object Key and observation.
-    """
-
-    __slots__ = (
-        "_document",
-        "_layout",
-        "_locator",
-        "_member_row",
-        "_primary_key",
-    )
-
-    _primary_key: object
-    _locator: _Locator | None
-    _layout: EntityLayout | None
-
-    def __init__(
-        self,
-        primary_key: object,
-        locator: _Locator,
-        layout: EntityLayout,
-        member_row: tuple[object, ...],
-        document: object | None,
-    ) -> None:
-        self._primary_key = primary_key
-        self._locator = locator
-        self._layout = layout
-        self._member_row = member_row
-        self._document = document
-
-    def object_key(self) -> ObjectKey:
-        return self._materialized()[0]
-
-    @property
-    def entity(self) -> EntityIdentity:
-        layout = self._layout
-        return self._materialized()[0].entity if layout is None else layout.concrete
-
-    def observation(self) -> RetainedObservation:
-        return self._materialized()[1]
-
-    def _materialized(self) -> tuple[ObjectKey, RetainedObservation]:
-        locator = self._locator
-        layout = self._layout
-        if locator is None or layout is None:
-            return cast("tuple[ObjectKey, RetainedObservation]", self._primary_key)
-        object_key, evidence, key = _observed_state(
-            layout, self._primary_key, self._member_row, self._document, locator
-        )
-        held = (object_key, RetainedObservation(key, evidence, None))
-        self._primary_key = held
-        self._locator = None
-        self._layout = None
-        self._member_row = ()
-        self._document = None
-        return held
 
 
 def _temporal_observation(

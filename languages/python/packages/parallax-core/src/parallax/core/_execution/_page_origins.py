@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from types import MappingProxyType
-
 from parallax.core._execution._retention import (
     ReadEvidenceByProjection,
     ReadEvidenceContext,
@@ -16,24 +14,20 @@ __all__ = ["ReadEvidenceCollector"]
 
 
 class ReadEvidenceCollector(RecordedProjections):
-    """One Page operation's projection observer and origin source, in one object.
+    """One writable Page operation's projection observer and origin source, in
+    one object.
 
     Conversion reports each projection to it while the row is live, and the
-    reader asks it for the sealed Page's origins once. ``evidence_context`` is the
-    participating unit of work, absent for a standalone read; ``scanned`` marks a
-    read that scans an As-Of Axis, whose roots stand at no single observed state
-    and therefore carry no origin.
+    reader asks it for the sealed Page's origins once. ``evidence_context`` is
+    the participating unit of work the evidence is filed with.
     """
 
-    __slots__ = ("_evidence_context", "_meta", "_scanned")
+    __slots__ = ("_evidence_context", "_meta")
 
-    def __init__(
-        self, meta: Metamodel, *, evidence_context: ReadEvidenceContext | None, scanned: bool
-    ) -> None:
+    def __init__(self, meta: Metamodel, *, evidence_context: ReadEvidenceContext) -> None:
         super().__init__()
         self._meta = meta
         self._evidence_context = evidence_context
-        self._scanned = scanned
 
     def origins_for(self, page: Page, /) -> ReadEvidenceByProjection:
         """The lazy Read Evidence of each recorded projection of the sealed ``page``.
@@ -45,9 +39,6 @@ class ReadEvidenceCollector(RecordedProjections):
         than the origins that still need them, however long the request
         carrying this collector stays reachable.
         """
-        if self._scanned:
-            self._rows.clear()
-            return MappingProxyType({})
         rows = page_rows(page)
 
         def admitted(node: int) -> tuple[EntityLayout, tuple[object, ...]] | None:

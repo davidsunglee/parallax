@@ -178,23 +178,18 @@ class RootView:
             )
         resolved: dict[int, T] = {}
         for index, projection in enumerate(self._winner):
-            try:
-                value = by_projection[projection]
-            except KeyError:
-                continue
-            resolved[index] = value
+            value = by_projection.get(projection, _UNPRIMED)
+            if value is not _UNPRIMED:
+                resolved[index] = cast("T", value)
         return resolved
 
     def prime[T](self, by_projection: Mapping[int, T]) -> None:
         """Resolve canonical projection values while the borrowed Page is live."""
         if self.has_issues:
             return
-        primed: list[object] = [_UNPRIMED] * len(self._winner)
-        for index, projection in enumerate(self._winner):
-            try:
-                primed[index] = by_projection[projection]
-            except KeyError:
-                continue
+        primed: list[object] = [
+            by_projection.get(projection, _UNPRIMED) for projection in self._winner
+        ]
         self._primed_mapping = by_projection
         self._primed_values = primed
 
@@ -203,10 +198,8 @@ class RootView:
         if self._primed_mapping is by_projection and self._primed_values is not None:
             value = self._primed_values[node]
             return None if value is _UNPRIMED else value  # pyright: ignore[reportReturnType]
-        try:
-            return by_projection[self._winner[node]]
-        except KeyError:
-            return None
+        value = by_projection.get(self._winner[node], _UNPRIMED)
+        return None if value is _UNPRIMED else value  # pyright: ignore[reportReturnType]
 
     def release_raw_rows(self) -> None:
         """Release reached raw member rows after all evidence lookups are primed,

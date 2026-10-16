@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from enum import Enum
 from typing import Any, Final, cast
 
 from parallax.core._execution._unit_work.retain import InsertionIdentity, ReadEvidence
@@ -17,6 +18,7 @@ from parallax.core.temporal_read import Edge, Pin
 
 __all__ = [
     "SNAPSHOT_INSPECTION_CODES",
+    "RootConformance",
     "SnapshotInspectionError",
     "SnapshotNodeState",
     "bind_insertion",
@@ -71,6 +73,20 @@ class SnapshotInspectionError(RuntimeError):
         self.entity = entity
 
 
+class RootConformance(Enum):
+    """Whether the reachable graph of the result root a node was published under
+    conforms to stored-data requirements.
+
+    A root-wide verdict rather than one about the node itself: every node of a
+    root some stored state contradicted is ``NONCONFORMING``, its diagnostic
+    data included, and only a ``CONFORMING`` node is a stored value of the
+    Snapshot that published it.
+    """
+
+    CONFORMING = "conforming"
+    NONCONFORMING = "nonconforming"
+
+
 @dataclass(frozen=True, slots=True)
 class SnapshotNodeState:
     """One materialized node's whole Snapshot-lifecycle state.
@@ -82,15 +98,18 @@ class SnapshotNodeState:
     ``pin`` and ``edge`` are present exactly for a node whose family declares
     as-of axes.
 
-    ``read_evidence`` is the private Read Evidence the read retained for this node — the
-    object it denotes, the participation its read licensed, and the observation
-    retained for the state it saw. It is how a Typed value reaches its own write
-    evidence, and it is absent for a node no observation was taken of. Nothing
-    here interprets it; the write side decides what it licenses.
+    ``read_evidence`` is the private Read Evidence a writable attempt's read
+    retained for this node — the object it denotes, the participation its read
+    licensed, and the observation retained for the state it saw. It is how a
+    Typed value reaches its own write evidence, and it is absent for a node no
+    such read observed, which a conforming node of a standalone, read-only, or
+    milestone-set read is. Nothing here interprets it; the write side decides
+    what it licenses.
     """
 
     entity: EntityIdentity
     views: Mapping[str, object]
+    root_conformance: RootConformance
     pin: Pin | None = None
     edge: Edge | None = None
     read_evidence: ReadEvidence | None = None

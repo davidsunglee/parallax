@@ -68,7 +68,6 @@ from parallax.core import (
     deep_fetch,
     rel,
 )
-from parallax.core._execution._page_origins import ReadEvidenceCollector
 from parallax.core._execution._preflight import preflight
 from parallax.core.base import SQL_NULL, DocumentValue, ManagedValue, PresentDocument
 from parallax.core.db_port import DocumentReadOrdinals, Row
@@ -92,6 +91,7 @@ from parallax.core.metamodel import (
 from parallax.core.object_query._resolved import ResolvedObjectQuery
 from parallax.core.read_delivery._page import ABSENT, Page, page_rows
 from parallax.core.read_delivery._page_reader import (
+    EMPTY_PAGE_ORIGIN_COLLECTOR,
     EagerPageResult,
     PageReader,
     _RootRead,  # pyright: ignore[reportPrivateUsage]
@@ -588,7 +588,7 @@ def build_page(
         root,
         model,
         port,
-        origin_collector=ReadEvidenceCollector(model.meta, evidence_context=None, scanned=False),
+        origin_collector=EMPTY_PAGE_ORIGIN_COLLECTOR,
         calls=INERT,
     )
 

@@ -67,9 +67,9 @@ class WireDatabaseView:
     It reads exactly as the Typed reads beside it do. Standalone, as ``db.find``
     is: no transaction, read lock, or Concurrency Preference. Inside a read-only
     transaction, as ``rtx.find`` is: on that transaction's attempt and
-    connection, taking no participation lock. Either way it stamps no
-    participation on the values it publishes — whose own retained evidence an
-    effective-Optimistic write may still settle against.
+    connection, taking no participation lock. Either way it retains no Read
+    Evidence on the values it publishes, which stay stored values a
+    caller-addressed write can state a revision from.
     """
 
     __slots__ = ("_reads",)
