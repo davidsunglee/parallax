@@ -180,8 +180,9 @@ class ReadEvidence:
     ``observation`` is absent for an unversioned Non-Temporal row, which
     observes no state at all; ``pin`` is absent for a row whose family declares
     no As-Of Axis, exactly as a Typed node's own lifecycle state leaves it
-    absent there. A value that carries no hint was read by no writable attempt,
-    or by no read at all.
+    absent there. A missing hint says nothing about publication: a read outside
+    a writable attempt, a milestone-set read, and no read at all each leave a
+    value without one.
 
     An origin with no observation still carries one mutable fact, moving one
     way: whether a successful write already completed through it
