@@ -20,15 +20,28 @@ from parallax.core.db_error import DatabaseError
 
 __all__ = ["RetryCandidate", "check_retry_bound", "retry_eligible", "run_with_retry"]
 
-_BASE_S: Final = 0.008
-_CAP_S: Final = 0.025
-"""The full-jitter backoff's first ceiling and its bound, in seconds: of the
-measured candidates no worse than immediate replay in uncontended latency,
-exhaustion rate, or tail time to success, the one with the highest hot-key
-committed throughput."""
+_FLOOR_FIRST_S: Final = 0.008
+_FLOOR_LIMIT_S: Final = 0.025
+"""The shortest full-jitter window, in seconds: the first attempt's, doubled
+per attempt up to the limit. These are the constants contention evidence
+selected where attempts take a few milliseconds."""
+
+_SCALE_FIRST: Final = 0.25
+_SCALE_LIMIT: Final = 8.0
+"""The window a slower failed attempt calls for instead, in multiples of that
+attempt's own measured duration: the first attempt's, doubled per attempt up to
+the limit. How long a conflicting writer holds its rows depends on round trips
+and application work that fixed delays cannot anticipate, and the failed
+attempt's duration measures them where it ran. A window that stays shorter than
+an attempt lets replays land inside the next conflicting one, while one that
+starts long leaves a contended row idle."""
+
+_CEILING_S: Final = 1.0
+"""The longest window, in seconds, however long the failed attempt took."""
 
 _rng = random.Random()
 _sleep: Callable[[float], None] = time.sleep
+_clock: Callable[[], float] = time.monotonic
 
 
 def check_retry_bound(retries: int, /) -> None:
@@ -68,29 +81,38 @@ class RetryCandidate(Exception):
 def run_with_retry[T](attempt: Callable[[], T], *, retries: int) -> T:
     """``retries`` counts re-executions after the first attempt.
 
-    Before each re-execution the loop sleeps a full-jitter delay, which grows
-    with the attempts already made up to a bound. Exhaustion re-raises the
-    original failure with the attempt count in a note, and sleeps no more.
+    Before each re-execution the loop sleeps a full-jitter delay. Its window
+    grows with the attempts already made and is the longer of a fixed window
+    and one scaled by how long the failed attempt took, from handing it control
+    to receiving its candidate, under an absolute ceiling. Exhaustion re-raises
+    the original failure with the attempt count in a note, and sleeps no more.
     """
     check_retry_bound(retries)
     attempts = 0
     while True:
         attempts += 1
+        started = _clock()
         try:
             return attempt()
         except RetryCandidate as candidate:
             failure = candidate.failure
+        elapsed = _clock() - started
         if attempts > retries:
             failure.add_note(
                 f"bounded retry exhausted after {attempts} attempts (retries={retries})"
             )
             raise failure
-        _sleep(_delay(attempts, _rng))
+        _sleep(_delay(attempts, elapsed, _rng))
 
 
-def _delay(attempt: int, rng: random.Random) -> float:
-    """The wait after ``attempt`` failed: uniform below a ceiling that doubles
-    from ``_BASE_S`` with each attempt and never passes ``_CAP_S``."""
-    # Doubling stops long past any cap, so a large bound never overflows a float.
+def _delay(attempt: int, elapsed: float, rng: random.Random) -> float:
+    """The wait after ``attempt`` failed having taken ``elapsed`` seconds."""
+    return rng.uniform(0.0, _window(attempt, elapsed))
+
+
+def _window(attempt: int, elapsed: float) -> float:
+    # Doubling stops long past either limit, so a large bound never overflows a float.
     doublings = min(attempt - 1, 32)
-    return rng.uniform(0.0, min(_CAP_S, _BASE_S * 2**doublings))
+    floor = min(_FLOOR_LIMIT_S, _FLOOR_FIRST_S * 2**doublings)
+    scaled = min(_SCALE_FIRST * 2**doublings, _SCALE_LIMIT) * elapsed
+    return min(_CEILING_S, max(floor, scaled))
