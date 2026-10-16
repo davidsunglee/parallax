@@ -30,7 +30,7 @@ from parallax.evolution import (
     evolve,
     schema_delta,
 )
-from parallax.snapshot import Transaction, connect
+from parallax.snapshot import TxnContext, connect
 
 __all__ = [
     "PublishedUpdate",
@@ -196,7 +196,7 @@ def a_running_service_publishes_an_evolved_model_without_restarting(
     # overwriting the winner.
     serving.publish(b, expected=a)
 
-    def name_the_account(tx: Transaction) -> tuple[str, str | None]:
+    def name_the_account(tx: TxnContext) -> tuple[str, str | None]:
         account = tx.find(NicknamedAccount.where(NicknamedAccount.id == _TARGET_ID)).result()
         named = account.edit(nickname=_NICKNAME)
         tx.amend(named)

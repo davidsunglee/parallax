@@ -43,7 +43,7 @@ from parallax.core.unit_work import (
     WriteEvidenceError,
     WritePreconditionError,
 )
-from parallax.snapshot import ScopedDatabase, Transaction, connect
+from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.root_ownership import own_root
 from tests.api._coverage_interleaving import AfterCoverageRead
 
@@ -166,7 +166,7 @@ def _seeded(profile_run: Any, entity: type[Any], *instants: dt.datetime) -> Scop
     profile_run.reset(model_of(_MODEL), {})
     db = _db(profile_run, _T0, *instants)
 
-    def seed(tx: Transaction) -> None:
+    def seed(tx: TxnContext) -> None:
         tx.insert(
             entity(id=1, amount=100, label="a", spec=Spec(title="s1"), marks=(Mark(code="m"),)),
             valid_from=_JAN,
@@ -192,11 +192,11 @@ def _two_rectangles(profile_run: Any, entity: type[Any], *instants: dt.datetime)
     return db
 
 
-def _find(tx: Transaction, entity: type[Any], at: dt.datetime) -> Any:
+def _find(tx: TxnContext, entity: type[Any], at: dt.datetime) -> Any:
     return tx.find(entity.where(entity.id == 1).as_of(valid_time=at)).result()
 
 
-def _barrier(tx: Transaction) -> None:
+def _barrier(tx: TxnContext) -> None:
     tx.amend_where(Tag.where(Tag.id == 1), Tag.label.set("q"))
 
 
@@ -226,7 +226,7 @@ class _Operation:
             case _:
                 return None
 
-    def write(self, tx: Transaction, entity: type[Any], source: Any) -> None:
+    def write(self, tx: TxnContext, entity: type[Any], source: Any) -> None:
         amount, label = (150, "p1") if self.order == 0 else (175, "p2")
         bounds: dict[str, Any] = {"valid_from": self.start, "until": self.until, "tx_start": _T0}
         match self.kind:
@@ -285,7 +285,7 @@ def test_disjoint_operations_over_one_original_each_keep_their_own_effect(
         )
     ]
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         # Every observed source is read before any write, so both operations
         # are pending together: each reads the one rectangle at its own start.
         sources = [_find(tx, entity, op.start) if op.kind in "OD" else None for op in operations]
@@ -305,7 +305,7 @@ def test_disjoint_targets_over_distinct_originals_meet_their_own_starts(
     profile_run: Any, entity: type[Any], concurrency: _Concurrency, order: str
 ) -> None:
     db = _two_rectangles(profile_run, entity, _TA)
-    writes: list[Callable[[Transaction], None]] = [
+    writes: list[Callable[[TxnContext], None]] = [
         lambda tx: tx.wire.amend_if(
             _name(entity), {"id": 1, "amount": 150}, valid_from=_FEB, until=_APR, tx_start=_T0
         ),
@@ -316,7 +316,7 @@ def test_disjoint_targets_over_distinct_originals_meet_their_own_starts(
     if order == "later-first":
         writes.reverse()
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         for write in writes:
             write(tx)
 
@@ -342,7 +342,7 @@ def test_a_disjoint_target_stating_another_rectangles_start_changes_nothing(
     before = _rows(profile_run, entity)
     attempts = 0
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         nonlocal attempts
         attempts += 1
         tx.wire.amend_if(
@@ -360,11 +360,11 @@ def test_a_disjoint_target_stating_another_rectangles_start_changes_nothing(
     assert _rows(profile_run, entity) == before
 
 
-def _overlapping_observed(tx: Transaction, entity: type[Any], source: Any) -> None:
+def _overlapping_observed(tx: TxnContext, entity: type[Any], source: Any) -> None:
     tx.amend(source.edit(label="o"), until=_AUG)
 
 
-def _overlapping_target(tx: Transaction, entity: type[Any], source: Any) -> None:
+def _overlapping_target(tx: TxnContext, entity: type[Any], source: Any) -> None:
     del source
     tx.wire.amend_if(
         _name(entity), {"id": 1, "amount": 1}, valid_from=_JUN, until=_AUG, tx_start=_T0
@@ -380,11 +380,11 @@ def _overlapping_target(tx: Transaction, entity: type[Any], source: Any) -> None
     ],
 )
 def test_a_window_overlapping_a_targets_unequally_is_refused_and_earlier_work_still_runs(
-    profile_run: Any, entity: type[Any], second: Callable[[Transaction, type[Any], Any], None]
+    profile_run: Any, entity: type[Any], second: Callable[[TxnContext, type[Any], Any], None]
 ) -> None:
     db = _seeded(profile_run, entity, _TA)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         source = _find(tx, entity, _JUN)
         # An unbounded window reaches every later window, whatever its start.
         tx.wire.amend_if(_name(entity), {"id": 1, "amount": 150}, valid_from=_MAR, tx_start=_T0)
@@ -459,7 +459,7 @@ def test_a_barrier_between_disjoint_operations_keeps_each_on_its_own_side(
         )
     )
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         sources = [
             _find(tx, entity, op.start) if op.kind in "OD" else None for op in (first, second)
         ]
@@ -484,7 +484,7 @@ def test_a_write_of_the_same_window_after_a_barrier_carries_the_values_left_befo
 ) -> None:
     db = _seeded(profile_run, entity, _TA)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         source = _find(tx, entity, _FEB)
         tx.wire.amend_if(
             _name(entity), {"id": 1, "amount": 150}, valid_from=_FEB, until=_APR, tx_start=_T0
@@ -511,7 +511,7 @@ def test_overlapping_observed_writes_on_either_side_of_a_barrier_apply_in_author
     db = _seeded(profile_run, entity, _TA)
     _install(profile_run, entity, _audit_current_rows(entity))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         early, later = _find(tx, entity, _MAR), _find(tx, entity, _APR)
         tx.amend(early.edit(label="e"), until=_JUN)
         _barrier(tx)
@@ -547,7 +547,7 @@ def test_a_side_effect_that_breaks_continuity_across_a_barrier_fails_the_later_o
     _install(profile_run, entity, _BREAKS[broken].format(table=_TABLES[entity]))
     before = _rows(profile_run, entity)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.wire.amend_if(
             _name(entity), {"id": 1, "amount": 150}, valid_from=_FEB, until=_APR, tx_start=_T0
         )
@@ -575,7 +575,7 @@ def test_after_a_read_flushes_one_window_a_later_window_restates_its_start(
 ) -> None:
     db = _seeded(profile_run, entity, _TA, _TB)
 
-    def stale(tx: Transaction) -> None:
+    def stale(tx: TxnContext) -> None:
         tx.wire.amend_if(
             _name(entity), {"id": 1, "amount": 150}, valid_from=_FEB, until=_APR, tx_start=_T0
         )
@@ -591,7 +591,7 @@ def test_after_a_read_flushes_one_window_a_later_window_restates_its_start(
     assert isinstance(failed.value.cause, WritePreconditionError)
     assert _rows(profile_run, entity) == before
 
-    def fresh(tx: Transaction) -> None:
+    def fresh(tx: TxnContext) -> None:
         early = _find(tx, entity, _JUN)
         tx.wire.amend_if(
             _name(entity), {"id": 1, "amount": 150}, valid_from=_FEB, until=_APR, tx_start=_T0
@@ -647,7 +647,7 @@ def test_a_shared_original_revised_after_the_flush_read_fails_at_its_one_guard(
     ours, interleaving = _interleaved(profile_run, entity, peer, _TA, _TB)
     attempts = 0
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         nonlocal attempts
         attempts += 1
         tx.wire.amend_if(
@@ -725,7 +725,7 @@ def test_a_lost_second_start_is_its_callers_and_a_lost_observed_original_retries
     retried, interleaving = _interleaved(profile_run, entity, later_peer, _TA, _TB)
     attempts = 0
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         nonlocal attempts
         attempts += 1
         source = _find(tx, entity, _SEP)
@@ -763,7 +763,7 @@ def test_a_disjoint_observed_original_lost_without_retries_rolls_every_effect_ba
 
     ours, _interleaving = _interleaved(profile_run, entity, peer, _TA)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         source = _find(tx, entity, _SEP)
         tx.wire.amend_if(
             _name(entity), {"id": 1, "amount": 150}, valid_from=_FEB, until=_APR, tx_start=_T0
@@ -788,13 +788,13 @@ def test_a_transaction_time_write_after_a_barrier_revises_the_row_the_first_open
     profile_run.reset(model_of(_MODEL), {})
     db = _db(profile_run, _T0, _TA)
 
-    def seed(tx: Transaction) -> None:
+    def seed(tx: TxnContext) -> None:
         tx.insert(entity(id=1, label="seed", spec=Spec(title="s1")))
         tx.insert(Tag(id=1, label="t"))
 
     db.transact(seed)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.wire.amend_if(_name(entity), {"id": 1, "label": "p"}, tx_start=_T0)
         _barrier(tx)
         # Both callers state the milestone the first one closes; the second's
@@ -824,7 +824,7 @@ def test_an_insertion_sources_edits_on_both_sides_of_a_barrier_keep_one_instant(
     db = _db(profile_run, _TA)
     db.transact(lambda tx: tx.insert(Tag(id=1, label="t")))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         inserted = tx.wire.insert(
             _name(entity), {"id": 1, "amount": 100, "label": "a"}, valid_from=_JAN
         )

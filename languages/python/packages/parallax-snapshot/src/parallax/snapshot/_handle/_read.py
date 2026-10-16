@@ -6,7 +6,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Protocol, cast, overload
 
 from parallax.core import deep_fetch
-from parallax.core._execution._unit_work.retain import ReadOrigin
+from parallax.core._execution._unit_work.retain import ReadEvidence
 from parallax.core.entity import Entity, EntityGraphConstruction, IncludePath
 from parallax.core.entity._expressions import include_traversal
 from parallax.core.entity._layout import CatalogedModel
@@ -512,12 +512,12 @@ class SnapshotPublication:
     """
 
     interface: ReadInterface
-    roots_of: RootsOf[ReadOrigin]
+    roots_of: RootsOf[ReadEvidence]
     edition: str
     release: Callable[[], None]
     construction: EntityGraphConstruction | None = None
 
-    def from_find(self, result: EagerPageResult[ReadOrigin]) -> Snapshot[Any]:
+    def from_find(self, result: EagerPageResult[ReadEvidence]) -> Snapshot[Any]:
         """``result``'s Page as a Snapshot at that read's own pin."""
         try:
             return Snapshot(
@@ -526,7 +526,7 @@ class SnapshotPublication:
                         result.page,
                         result.includes,
                         atomic=True,
-                        sources=result.sources,
+                        origins=result.origins,
                     )
                 ),
                 result.page.pin,
@@ -608,7 +608,7 @@ def typed_publication(
         *,
         atomic: bool = False,
         ordinal_offset: int = 0,
-        sources: Mapping[int, ReadOrigin] = MappingProxyType({}),
+        origins: Mapping[int, ReadEvidence] = MappingProxyType({}),
         milestones: TemporalShape | None = None,
     ) -> Iterator[object]:
         del includes
@@ -623,7 +623,7 @@ def typed_publication(
                 model.meta,
                 construction,
                 ordinal_offset=ordinal_offset + position,
-                sources=sources,
+                origins=origins,
             )
 
         yield from publish_roots(
@@ -633,7 +633,7 @@ def typed_publication(
             model=model.meta,
             ordinal_offset=ordinal_offset,
             pins=pins,
-            prepare=lambda root: root.prime(sources),
+            prepare=lambda root: root.prime(origins),
         )
 
     return SnapshotPublication("typed", roots_of, edition, _release_nothing, construction)
@@ -668,7 +668,7 @@ def wire_publication(model: CatalogedModel, edition: str) -> SnapshotPublication
         *,
         atomic: bool = False,
         ordinal_offset: int = 0,
-        sources: Mapping[int, ReadOrigin] = MappingProxyType({}),
+        origins: Mapping[int, ReadEvidence] = MappingProxyType({}),
         milestones: TemporalShape | None = None,
     ) -> Iterator[object]:
         pins = tuple(
@@ -688,7 +688,7 @@ def wire_publication(model: CatalogedModel, edition: str) -> SnapshotPublication
                 CONCURRENCY,
                 includes,
                 ordinal_offset=ordinal_offset + position,
-                sources=sources,
+                origins=origins,
                 encode=current,
             )
 
@@ -699,7 +699,7 @@ def wire_publication(model: CatalogedModel, edition: str) -> SnapshotPublication
             model=model.meta,
             ordinal_offset=ordinal_offset,
             pins=pins,
-            prepare=lambda root: root.prime(sources),
+            prepare=lambda root: root.prime(origins),
         )
 
     return SnapshotPublication("wire", roots_of, edition, release)
@@ -711,7 +711,7 @@ def _materialize_result_page(
     construction: EntityGraphConstruction,
     *,
     ordinal_offset: int = 0,
-    sources: Mapping[int, ReadOrigin] = MappingProxyType({}),
+    origins: Mapping[int, ReadEvidence] = MappingProxyType({}),
 ) -> tuple[Any, ...]:
     """Translate a graph-construction or lifecycle failure exactly once.
 
@@ -721,7 +721,7 @@ def _materialize_result_page(
     """
     try:
         return typed_root(
-            root, meta, CONCURRENCY, construction, ordinal_offset=ordinal_offset, sources=sources
+            root, meta, CONCURRENCY, construction, ordinal_offset=ordinal_offset, origins=origins
         )
     except Exception as exc:
         raise SnapshotMaterializationError(

@@ -29,7 +29,7 @@ from parallax.core import Attr, Bitemporal, Document, DomainModel, attr
 from parallax.core.entity._model import model_of
 from parallax.core.execution import ExecutionFailure
 from parallax.core.unit_work import OptimisticLockConflictError
-from parallax.snapshot import ScopedDatabase, Transaction, connect
+from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.root_ownership import own_root
 
 _NAMESPACE = "predicate.ranges"
@@ -97,7 +97,7 @@ def _seed(profile_run: Any, entity: type[Any], *, start: int = 100) -> None:
     profile_run.reset(model_of(_MODEL), {})
     seeder = _db(profile_run, _T0, _T1)
 
-    def first(tx: Transaction) -> None:
+    def first(tx: TxnContext) -> None:
         tx.insert(entity(id=1, amount=start, label="a"), valid_from=_JAN, until=_JUN)
         tx.insert(entity(id=2, amount=900, label="z"), valid_from=_JAN)
 
@@ -106,7 +106,7 @@ def _seed(profile_run: Any, entity: type[Any], *, start: int = 100) -> None:
 
 
 def _amend(
-    tx: Transaction,
+    tx: TxnContext,
     entity: type[Any],
     representation: _Representation = "typed",
     *,
@@ -130,7 +130,7 @@ def _amend(
     )
 
 
-def _find(tx: Transaction, entity: type[Any], at: dt.datetime) -> Any:
+def _find(tx: TxnContext, entity: type[Any], at: dt.datetime) -> Any:
     return tx.find(entity.where(entity.id == 1).as_of(valid_time=at)).result()
 
 
@@ -230,7 +230,7 @@ def test_the_flush_reads_later_coverage_a_peer_committed_after_the_call(
     _seed(profile_run, entity)
     peer = _db(profile_run, _TP)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         _amend(tx, entity)
         _relabel(peer, entity, _JUL, _SEP, "p")
 
@@ -255,7 +255,7 @@ def _peer_changes_the_start(profile_run: Any, entity: type[Any], *, retry: bool)
     peer = _db(profile_run, _TP)
     attempts = 0
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         nonlocal attempts
         attempts += 1
         _amend(tx, entity)
@@ -316,7 +316,7 @@ def test_a_locking_selection_locks_its_start_at_the_call_and_later_rows_at_the_f
 
     blocked = threading.Thread(target=change_the_start)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         _amend(tx, entity)
         # The later rectangle is not locked yet: a peer relabels it and commits.
         _relabel(later_peer, entity, _JUL, _SEP, "q")
@@ -354,7 +354,7 @@ def test_a_failed_flush_rolls_back_every_batch_it_executed(
     # whole attempt rolls back, the amendment's statements included.
     _seed(profile_run, entity)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         _amend(tx, entity)
         tx.wire.amend_if(
             f"{_NAMESPACE}.{entity.__name__}",

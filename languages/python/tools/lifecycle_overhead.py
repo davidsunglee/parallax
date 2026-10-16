@@ -115,7 +115,7 @@ from parallax.core.execution_lifecycle import (
     LoggingLifecycleProvider,
     RootExecution,
 )
-from parallax.snapshot import Database, ScopedDatabase, Transaction
+from parallax.snapshot import Database, ScopedDatabase, TxnContext
 
 PAIRS: Final = 3_000
 """Timed pairs per configuration. Each contributes one sample to each arm, so the
@@ -431,7 +431,7 @@ def _workload(db: ScopedDatabase) -> None:
     """
     db.find(Account.where(Account.id == 7)).result()
 
-    def body(tx: Transaction) -> None:
+    def body(tx: TxnContext) -> None:
         tx.insert(Account(id=11, owner="Hopper", balance=Decimal("1.00")))
         tx.find(Account.where(Account.id == 7)).result()
         tx.insert(Account(id=12, owner="Lovelace", balance=Decimal("2.00")))

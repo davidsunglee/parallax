@@ -3,38 +3,40 @@ from __future__ import annotations
 from types import MappingProxyType
 
 from parallax.core._execution._retention import (
-    ObservationLedger,
-    ReadOrigins,
+    ReadEvidenceByProjection,
+    ReadEvidenceContext,
     RecordedProjections,
-    deferred_read_origins,
+    defer_read_evidence,
 )
 from parallax.core.entity._layout import EntityLayout
 from parallax.core.metamodel import Metamodel
 from parallax.core.read_delivery._page import Page, hydrates, judged_state, page_rows
 
-__all__ = ["ObservedPageProjections"]
+__all__ = ["ReadEvidenceCollector"]
 
 
-class ObservedPageProjections(RecordedProjections):
+class ReadEvidenceCollector(RecordedProjections):
     """One Page operation's projection observer and origin source, in one object.
 
     Conversion reports each projection to it while the row is live, and the
-    reader asks it for the sealed Page's origins once. ``ledger`` is the
+    reader asks it for the sealed Page's origins once. ``evidence_context`` is the
     participating unit of work, absent for a standalone read; ``scanned`` marks a
     read that scans an As-Of Axis, whose roots stand at no single observed state
     and therefore carry no origin.
     """
 
-    __slots__ = ("_ledger", "_meta", "_scanned")
+    __slots__ = ("_evidence_context", "_meta", "_scanned")
 
-    def __init__(self, meta: Metamodel, *, ledger: ObservationLedger | None, scanned: bool) -> None:
+    def __init__(
+        self, meta: Metamodel, *, evidence_context: ReadEvidenceContext | None, scanned: bool
+    ) -> None:
         super().__init__()
         self._meta = meta
-        self._ledger = ledger
+        self._evidence_context = evidence_context
         self._scanned = scanned
 
-    def origins_for(self, page: Page, /) -> ReadOrigins:
-        """The lazy Read Origin of each recorded projection of the sealed ``page``.
+    def origins_for(self, page: Page, /) -> ReadEvidenceByProjection:
+        """The lazy Read Evidence of each recorded projection of the sealed ``page``.
 
         Participation and read freshness are captured now, while the read that
         acquired the rows runs; each origin resolves from its Page-owned judged
@@ -59,13 +61,13 @@ class ObservedPageProjections(RecordedProjections):
             key = rows.keys[node]
             return None if key is None else key.primary_key
 
-        origins = deferred_read_origins(
+        origins = defer_read_evidence(
             self._meta,
             self,
             admitted,
             lambda node: rows.layouts[node].concrete,
             primary_key,
-            ledger=self._ledger,
+            evidence_context=self._evidence_context,
             pin=page.pin,
         )
         self._rows.clear()

@@ -51,7 +51,7 @@ from parallax.core.unit_work import (
     WriteEvidenceError,
     WritePreconditionError,
 )
-from parallax.snapshot import ScopedDatabase, Transaction, connect
+from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.root_ownership import own_root
 from tests.api._coverage_interleaving import AfterCoverageRead
 
@@ -191,7 +191,7 @@ def _seeded_spans(profile_run: Any, entity: type[Any], *instants: dt.datetime) -
 
 
 def _span_patch(
-    tx: Transaction,
+    tx: TxnContext,
     entity: type[Any],
     *,
     valid_from: dt.datetime = _MAR,
@@ -214,7 +214,7 @@ def _span_patch(
 
 
 def _span_replace(
-    tx: Transaction,
+    tx: TxnContext,
     entity: type[Any],
     representation: _Representation,
     *,
@@ -233,7 +233,7 @@ def _span_replace(
         tx.wire.replace_if(_name(entity), {"id": 1, "amount": amount, "label": label}, **bounds)
 
 
-def _span_find(tx: Transaction, entity: type[Any], at: dt.datetime) -> Any:
+def _span_find(tx: TxnContext, entity: type[Any], at: dt.datetime) -> Any:
     return tx.find(entity.where(entity.id == 1).as_of(valid_time=at)).result()
 
 
@@ -350,7 +350,7 @@ def test_an_equal_patch_keeps_the_rectangle_it_leaves_and_rewrites_the_later_one
 
 
 def _equal_replacement(
-    tx: Transaction, entity: type[Any], representation: _Representation, **bounds: Any
+    tx: TxnContext, entity: type[Any], representation: _Representation, **bounds: Any
 ) -> None:
     if representation == "typed":
         tx.replace_if(
@@ -460,7 +460,7 @@ def test_a_target_whose_start_does_not_stand_at_its_callers_milestone_changes_no
     db = _seeded_spans(profile_run, entity, _TA, _TB)
     attempts = 0
 
-    def stale(tx: Transaction) -> None:
+    def stale(tx: TxnContext) -> None:
         nonlocal attempts
         attempts += 1
         _span_replace(tx, entity, "wire", **stated)
@@ -494,7 +494,7 @@ def test_a_transaction_time_target_chains_one_milestone_from_its_callers(
         (_T1, None, "patched", _S1, []),
     ]
 
-    def replace(tx: Transaction) -> None:
+    def replace(tx: TxnContext) -> None:
         if representation == "typed":
             tx.replace_if(entity(id=1, label="replaced", marks=(Mark(code="r"),)), tx_start=_T1)
         else:
@@ -553,7 +553,7 @@ def test_target_and_observed_writes_of_one_window_compose_into_one_range(
 ) -> None:
     db = _single(profile_run, entity, _TA)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         source = _span_find(tx, entity, _MAR)
         for step in sequence.split("-"):
             if step == "P":
@@ -596,7 +596,7 @@ def test_a_stale_observed_source_composed_with_a_replacement_fails_as_its_precon
     db.transact(lambda tx: tx.amend(_span_find(tx, entity, _FEB).edit(label="peer"), until=_APR))
     before = _span_rows(profile_run, entity)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.amend(stale.edit(amount=1), until=_SEP)
         _span_replace(tx, entity, "wire", until=_SEP)
 
@@ -616,7 +616,7 @@ def test_a_target_then_a_read_then_an_observed_write_each_stand_on_their_own(
 ) -> None:
     db = _single(profile_run, entity, _TA)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         before = _span_find(tx, entity, _JUN)
         _span_patch(tx, entity, amount=150)
         fresh = _span_find(tx, entity, _JUN)
@@ -644,7 +644,7 @@ def test_a_target_after_this_attempts_own_flush_states_the_milestone_it_left(
 ) -> None:
     db = _single(profile_run, entity, _TA, _TB)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.amend(_span_find(tx, entity, _MAR).edit(amount=150))
         rewritten = _span_find(tx, entity, _APR)
         assert rewritten.amount == 150
@@ -661,7 +661,7 @@ def test_a_target_after_this_attempts_own_flush_states_the_milestone_it_left(
         (_TA, None, _APR, None, 175, "a", _S1, _M),
     ]
 
-    def outdated(tx: Transaction) -> None:
+    def outdated(tx: TxnContext) -> None:
         tx.amend(_span_find(tx, entity, _MAR).edit(amount=1))
         _span_find(tx, entity, _JAN)
         _span_patch(tx, entity, valid_from=_APR, tx_start=_TA, amount=2)
@@ -690,7 +690,7 @@ def test_a_temporal_target_of_an_object_this_attempt_inserted_is_refused_until_c
     bounds: dict[str, Any] = {"valid_from": _JAN} if bitemporal else {}
     seed = {"amount": 100} if bitemporal else {"label": "seed"}
 
-    def target(tx: Transaction, **changes: object) -> None:
+    def target(tx: TxnContext, **changes: object) -> None:
         if representation == "typed" and changes:
             tx.replace_if(entity(id=1, **{**seed, **changes}), tx_start=_TA, **bounds)
         else:
@@ -699,7 +699,7 @@ def test_a_temporal_target_of_an_object_this_attempt_inserted_is_refused_until_c
     member = "amount" if bitemporal else "label"
     changed: object = 150 if bitemporal else "target"
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         inserted = tx.wire.insert(_name(entity), {"id": 1, **seed}, **bounds)
         for flushed in (False, True):
             if flushed:
@@ -791,7 +791,7 @@ def test_a_row_another_session_revises_after_the_flush_read_it_fails_by_whose_it
     ).using_database_login()
     attempts = 0
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         nonlocal attempts
         attempts += 1
         _span_patch(tx, entity, amount=150)
@@ -908,7 +908,7 @@ def test_a_locking_target_holds_its_start_until_commit_against_another_session(
     ours = _db(profile_run, _TA)
     thread = threading.Thread(target=peer)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         _span_patch(tx, entity, amount=150)
         thread.start()
         deadline = time.monotonic() + 10.0
@@ -939,7 +939,7 @@ def test_a_locking_target_holds_its_start_until_commit_against_another_session(
 # its source supplies the authority and the start, and the complete state it  #
 # states fills every gap its window reaches.                                  #
 # --------------------------------------------------------------------------- #
-def _source_replace(tx: Transaction, entity: type[Any], representation: _Representation) -> None:
+def _source_replace(tx: TxnContext, entity: type[Any], representation: _Representation) -> None:
     if representation == "typed":
         found = _span_find(tx, entity, _MAR)
         tx.replace(found.edit(amount=300, label="r"), until=_SEP)
@@ -993,7 +993,7 @@ def test_a_source_amendment_of_the_same_window_leaves_its_gaps(
 ) -> None:
     db = _seeded_spans(profile_run, entity, _TA)
 
-    def amend(tx: Transaction) -> None:
+    def amend(tx: TxnContext) -> None:
         if representation == "typed":
             tx.amend(_span_find(tx, entity, _MAR).edit(amount=300), until=_SEP)
         else:
@@ -1050,7 +1050,7 @@ def test_an_insertion_replacement_reaches_later_coverage_whether_or_not_it_flush
 ) -> None:
     db = _seeded_later(profile_run, entity, _TA)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         opened = entity(id=1, amount=100, label="a", spec=Spec(title="s1"), marks=())
         tx.insert(opened, valid_from=_JAN, until=_APR)
         if flushed:
@@ -1075,7 +1075,7 @@ def test_a_terminated_insertion_replacement_removes_what_it_reached_whether_or_n
 ) -> None:
     db = _seeded_later(profile_run, entity, _TA)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         opened = entity(id=1, amount=100, label="a", spec=Spec(title="s1"), marks=())
         tx.insert(opened, valid_from=_JAN, until=_APR)
         if flushed:
@@ -1097,7 +1097,7 @@ def test_a_reinsertion_follows_the_removal_of_all_an_insertion_replacement_reach
 ) -> None:
     db = _seeded_later(profile_run, entity, _TA)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         first = entity(id=1, amount=100, label="a", spec=Spec(title="s1"), marks=())
         tx.insert(first, valid_from=_JAN, until=_APR)
         if flushed:
@@ -1124,7 +1124,7 @@ def test_a_reinsertion_follows_the_removal_of_all_an_insertion_replacement_reach
 def test_an_ended_insertion_authorizes_no_replacement(profile_run: Any, entity: type[Any]) -> None:
     db = _seeded_later(profile_run, entity, _TA)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         opened = entity(id=1, amount=100, label="a", spec=Spec(title="s1"), marks=())
         tx.insert(opened, valid_from=_JAN, until=_APR)
         tx.terminate(opened, until=_APR)
@@ -1144,7 +1144,7 @@ def test_a_rolled_back_insertion_replacement_leaves_nothing(
     class _Abandoned(Exception):
         pass
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         opened = entity(id=1, amount=100, label="a", spec=Spec(title="s1"), marks=())
         tx.insert(opened, valid_from=_JAN, until=_APR)
         tx.replace(opened.edit(amount=300), until=_JUN)
@@ -1169,7 +1169,7 @@ def test_a_historical_observation_restores_its_state_under_a_current_condition(
     db = _seeded_spans(profile_run, entity, _TA, _TB)
     db.transact(lambda tx: tx.amend(_span_find(tx, entity, _FEB).edit(amount=150, label="c")))
 
-    def restore(tx: Transaction) -> None:
+    def restore(tx: TxnContext) -> None:
         if representation == "typed":
             historical = tx.find(
                 entity.where(entity.id == 1).as_of(valid_time=_FEB, tx_time=_T1)
@@ -1200,7 +1200,7 @@ def test_a_transaction_time_source_replacement_chains_its_complete_state(
     db = _db(profile_run, _T0, _TA)
     db.transact(lambda tx: tx.insert(entity(id=1, label="a", spec=Spec(title="s1"), marks=())))
 
-    def replace(tx: Transaction) -> None:
+    def replace(tx: TxnContext) -> None:
         if representation == "typed":
             found = tx.find(entity.where(entity.id == 1)).result()
             tx.replace(found.edit(label="r"))
@@ -1313,7 +1313,7 @@ def test_locking_targets_read_the_parts_their_acquired_starts_leave_in_one_state
     reads = _Reads()
     db = _counted(profile_run, reads, _TA)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         _span_patch(tx, entity, valid_from=_FEB, until=_MAR, amount=150)
         _span_patch(tx, entity, valid_from=_JUL, until=_SEP, tx_start=_T1, label="c")
 
@@ -1364,7 +1364,7 @@ def test_a_locking_targets_invalid_stored_occurrence_fails_at_the_flush(
     profile_run.port.execute(f"update {_TABLES[entity]} set {column} where from_z = %s", [_JAN])
     called: list[str] = []
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         _span_patch(tx, entity, valid_from=_FEB, until=_MAR, amount=150)
         called.append("admitted")
 
@@ -1386,7 +1386,7 @@ def test_a_reused_start_a_flush_keeps_leaves_an_observation_of_it_writable(
 ) -> None:
     _seeded_spans(profile_run, entity)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         source = _span_find(tx, entity, _FEB)
         # The equal patch reuses the start its call acquired and keeps it.
         _span_patch(tx, entity, valid_from=_MAR, until=_APR, amount=100)

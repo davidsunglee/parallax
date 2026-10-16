@@ -71,7 +71,7 @@ from parallax.snapshot import (
     Database,
     ScopedDatabase,
     SnapshotInspectionError,
-    Transaction,
+    TxnContext,
     WireEntity,
     edge_of,
     pin_of,
@@ -79,7 +79,7 @@ from parallax.snapshot import (
 from parallax.snapshot._handle import _stream as stream_module
 from parallax.snapshot._inspection import snapshot_state_of
 from parallax.snapshot._publication import _wire as wire_materialize
-from parallax.snapshot._publication._wire import read_origin_of
+from parallax.snapshot._publication._wire import read_evidence_of
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
     Read,
@@ -339,7 +339,7 @@ def test_a_typed_stream_binds_its_query_once_at_entry_for_every_page(
     reads = paged_reads([_order_row(index) for index in (1, 2, 3, 4, 5)], size=2)
     port = ScriptedAdapter(Transact(*reads)) if participating else ScriptedAdapter(*reads)
 
-    def deliver(reads_from: ScopedDatabase | Transaction) -> list[int]:
+    def deliver(reads_from: ScopedDatabase | TxnContext) -> list[int]:
         stream = reads_from.stream(_all_orders(), batch_size=2)
         assert bindings == []
         with stream:
@@ -372,7 +372,7 @@ def test_a_participating_stream_delivers_its_roots_inside_the_transaction() -> N
         Transact(*paged_reads([_order_row(index) for index in (1, 2, 3)], size=2))
     )
 
-    def body(tx: Transaction) -> list[int]:
+    def body(tx: TxnContext) -> list[int]:
         with tx.stream(_all_orders(), batch_size=2) as stream:
             return _ids(iter(stream))
 
@@ -384,7 +384,7 @@ def test_a_participating_wire_stream_delivers_the_same_roots() -> None:
         Transact(*paged_reads([_order_row(index) for index in (1, 2, 3)], size=2))
     )
 
-    def body(tx: Transaction) -> list[int]:
+    def body(tx: TxnContext) -> list[int]:
         with tx.wire.stream(_all_orders(), batch_size=2) as stream:
             return [cast("int", _entity(root)["id"]) for root in stream]
 
@@ -394,7 +394,7 @@ def test_a_participating_wire_stream_delivers_the_same_roots() -> None:
 def test_a_participating_stream_validates_its_page_size_at_the_call() -> None:
     port = ScriptedAdapter(Transact())
 
-    def body(tx: Transaction) -> None:
+    def body(tx: TxnContext) -> None:
         with pytest.raises(ValueError, match="positive built-in int"):
             tx.stream(_all_orders(), batch_size=0)
         with pytest.raises(ValueError, match="positive built-in int"):
@@ -592,7 +592,7 @@ def test_typed_projection_is_available_only_while_paused_at_a_delivered_root() -
             "active": True,
             "orderedOn": "2024-01-05",
         }
-        assert read_origin_of(projected) is state.source
+        assert read_evidence_of(projected) is state.read_evidence
         assert stream.wire(order) is projected
         assert len(port.calls) == calls
 
@@ -1355,14 +1355,14 @@ def test_a_streamed_milestone_set_delivers_what_the_whole_result_read_does() -> 
 
 
 def _retained(node: object) -> object:
-    """One Typed node's own retained Read Origin, or ``None`` where it kept none."""
+    """One Typed node's own retained Read Evidence, or ``None`` where it kept none."""
     state = snapshot_state_of(node)
-    return None if state is None else state.source
+    return None if state is None else state.read_evidence
 
 
 def test_a_wire_streamed_milestone_root_retains_no_more_than_its_typed_peer() -> None:
     # The two namespaces answer one delivery. A Wire node keeps its whole
-    # provenance — the pin included — in its Read Origin rather than in lifecycle
+    # provenance — the pin included — in its Read Evidence rather than in lifecycle
     # state, so a hint carrying the QUERY's coordinates would make a Wire-streamed
     # historical root writable where its Typed peer is refused.
     with _positions(_milestone_pages(size=2)).wire.stream(
@@ -1370,7 +1370,7 @@ def test_a_wire_streamed_milestone_root_retains_no_more_than_its_typed_peer() ->
     ) as stream:
         roots = [_entity(root) for root in stream]
     assert [root["value"] for root in roots] == ["90.00", "100.00", "200.00"]
-    assert [read_origin_of(root) for root in roots] == [None, None, None]
+    assert [read_evidence_of(root) for root in roots] == [None, None, None]
 
 
 def test_a_streamed_history_with_includes_is_refused_before_any_io() -> None:

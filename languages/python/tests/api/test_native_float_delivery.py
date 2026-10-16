@@ -44,7 +44,7 @@ from parallax.core.db_error import DatabaseError
 from parallax.core.entity._model import model_of
 from parallax.core.execution import ExecutionFailure
 from parallax.core.sql_gen._compile import CompiledRead, CompiledTemplate
-from parallax.snapshot import ScopedDatabase, SnapshotStream, Transaction, connect
+from parallax.snapshot import ScopedDatabase, SnapshotStream, TxnContext, connect
 from tests._support.binary32 import narrowed, rounded_once, shortest_spelling
 from tests._support.root_ownership import own_root
 
@@ -250,7 +250,7 @@ _WRITERS: tuple[Writer, ...] = ("insert", "keyed", "predicate")
 
 
 def _insert_widths(representation: Representation, widths: Iterable[tuple[int, float, float]]):
-    def insert(tx: Transaction) -> None:
+    def insert(tx: TxnContext) -> None:
         for key, f32, f64 in widths:
             if representation == "typed":
                 tx.insert(Reading(id=key, f32=f32, f64=f64))
@@ -261,7 +261,7 @@ def _insert_widths(representation: Representation, widths: Iterable[tuple[int, f
 
 
 def _keyed_widths(representation: Representation, widths: Mapping[int, tuple[float, float]]):
-    def update(tx: Transaction) -> None:
+    def update(tx: TxnContext) -> None:
         if representation == "typed":
             for row in tx.find(Reading.where(Reading.all)).results():
                 f32, f64 = widths[row.id]
@@ -275,7 +275,7 @@ def _keyed_widths(representation: Representation, widths: Mapping[int, tuple[flo
 
 
 def _predicate_widths(representation: Representation, widths: Mapping[int, tuple[float, float]]):
-    def update(tx: Transaction) -> None:
+    def update(tx: TxnContext) -> None:
         for key, (f32, f64) in widths.items():
             if representation == "typed":
                 tx.amend_where(
@@ -372,7 +372,7 @@ def test_a_nonfinite_float_is_refused_before_any_write(
 
     for invalid in _NONFINITE:
         for f32, f64 in ((invalid, 2.5), (1.5, invalid)):
-            attempts: Sequence[Callable[[Transaction], None]] = (
+            attempts: Sequence[Callable[[TxnContext], None]] = (
                 _insert_widths(representation, [(2, f32, f64)]),
                 _keyed_widths(representation, {1: (f32, f64)}),
                 _predicate_widths(representation, {1: (f32, f64)}),
@@ -387,7 +387,7 @@ def test_a_nonfinite_float_is_refused_before_any_write(
 
 
 def _restate_samples(representation: Representation, writer: Writer):
-    def restate(tx: Transaction) -> None:
+    def restate(tx: TxnContext) -> None:
         if representation == "typed":
             for row in tx.find(Plot.where(Plot.all)).results():
                 sample = Sample(f32=row.sample.f32)
@@ -487,7 +487,7 @@ def _lock_and_update_each(
         ]
     )
 
-    def lock_and_update(tx: Transaction) -> list[Any]:
+    def lock_and_update(tx: TxnContext) -> list[Any]:
         if representation == "typed":
             query = Marker.where(Marker.all).order_by(Marker.rank.asc())
             rows = _drained(tx.stream(query, batch_size=1), expected=len(ranked))
@@ -586,7 +586,7 @@ def test_included_children_correlate_on_integral_identities_with_float32_payload
     parents = (_stored32(1.2), _MIDPOINT, _ABOVE_MIDPOINT, -_MIDPOINT, _SMALLEST_SUBNORMAL)
     children = {key: (_LARGEST_SUBNORMAL, -parent) for key, parent in enumerate(parents, start=1)}
 
-    def insert(tx: Transaction) -> None:
+    def insert(tx: TxnContext) -> None:
         key = 0
         for parent, values in children.items():
             tx.insert(Parent(id=parent, coordinate=parents[parent - 1]))
@@ -642,7 +642,7 @@ def test_rendering_an_include_page_calls_no_wire_codec(
     db = _served(profile_run)
     parents = (_stored32(1.2), _MIDPOINT, -_MIDPOINT)
 
-    def insert(tx: Transaction) -> None:
+    def insert(tx: TxnContext) -> None:
         for key, parent in enumerate(parents, start=1):
             tx.insert(Parent(id=key, coordinate=parent))
             tx.insert(Child(id=key, owner=key, value=parent))
@@ -700,7 +700,7 @@ def test_a_family_union_ordered_by_a_shared_float32_key_yields_each_subtype_row_
     }
     stocks = {4: _ABOVE_MIDPOINT, 5: _KEYS[0], 6: _LARGEST_SUBNORMAL}
 
-    def insert(tx: Transaction) -> None:
+    def insert(tx: TxnContext) -> None:
         for key, (value, coupon) in bonds.items():
             tx.insert(Bond(id=key, value=value, coupon=coupon))
         for key, value in stocks.items():

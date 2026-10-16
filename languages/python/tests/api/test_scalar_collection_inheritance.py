@@ -32,7 +32,7 @@ from parallax.core import (
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import TablePerConcreteSubtype
 from parallax.core.object_query import deserialize
-from parallax.snapshot import ScopedDatabase, Transaction, connect
+from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.root_ownership import own_root
 
 type Strategy = Literal["tph", "tpcs"]
@@ -226,7 +226,7 @@ def test_writes_through_each_concrete_assign_inherited_and_own_collections(
     _seed(db, strategy, layout)
     root, _device, phone, tablet, desk = _FAMILIES[(strategy, layout)]
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         phone_row = tx.find(phone.where(phone.id == 1)).result()
         tx.amend(phone_row.edit(tags=("b",), ports=(), numbers=("1", "1")))
         tx.amend(

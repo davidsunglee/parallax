@@ -36,7 +36,7 @@ from parallax.conformance.vo_models import (
     CustomerPoint,
 )
 from parallax.core.entity._model import model_of
-from parallax.snapshot import ScopedDatabase, Transaction, connect
+from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.root_ownership import own_root
 
 _CUSTOMER = MODELS["customer"]
@@ -92,7 +92,7 @@ def test_an_edited_occurrence_stores_what_it_names_and_carries_the_rest(
 ) -> None:
     db = _connect_and_seed(profile_run)
 
-    def relocate(tx: Transaction) -> CustomerAddress:
+    def relocate(tx: TxnContext) -> CustomerAddress:
         customer = tx.find(Customer.where(Customer.id == 1)).result()
         address = _address_of(customer)
         tx.amend(customer.edit(address=address.edit(city="Bergen")))
@@ -113,7 +113,7 @@ def test_an_edited_occurrence_replaces_a_nested_and_a_plural_member_whole(
 ) -> None:
     db = _connect_and_seed(profile_run)
 
-    def replace(tx: Transaction) -> None:
+    def replace(tx: TxnContext) -> None:
         customer = tx.find(Customer.where(Customer.id == 1)).result()
         tx.amend(
             customer.edit(
@@ -139,7 +139,7 @@ def test_edits_compose_and_leave_every_value_they_derive_from_untouched(
 ) -> None:
     db = _connect_and_seed(profile_run)
 
-    def compose(tx: Transaction) -> tuple[CustomerAddress, CustomerAddress]:
+    def compose(tx: TxnContext) -> tuple[CustomerAddress, CustomerAddress]:
         customer = tx.find(Customer.where(Customer.id == 1)).result()
         address = _address_of(customer)
         moved = address.edit(city="Bergen")
@@ -178,7 +178,7 @@ def test_an_occurrence_carrying_no_net_change_is_still_assigned(
     db = _connect_and_seed(profile_run, observed)
     seeded = observed.round_trips
 
-    def rewrite(tx: Transaction) -> None:
+    def rewrite(tx: TxnContext) -> None:
         customer = tx.find(Customer.where(Customer.id == 1)).result()
         tx.amend(customer.edit(address=derive(_address_of(customer))))
 

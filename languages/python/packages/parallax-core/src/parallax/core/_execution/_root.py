@@ -5,7 +5,7 @@ from collections.abc import Callable
 from types import TracebackType
 from typing import Self
 
-from parallax.core._execution._options import OMITTED, DatabaseOptions, Omitted, patch_options
+from parallax.core._execution._options import OMITTED, Omitted, TxnOptions, patch_options
 from parallax.core._execution._publication import ServingModel
 from parallax.core._execution._scope import ExecutionScope
 from parallax.core._execution._transaction._runner import TransactionRunner
@@ -83,7 +83,7 @@ class RootResources[Authorization]:
             lifecycle_provider, runtime.pool_metrics
         )
 
-    def scope(self, capture: ExecutionCapture, options: DatabaseOptions) -> ExecutionScope:
+    def scope(self, capture: ExecutionCapture, options: TxnOptions) -> ExecutionScope:
         return ExecutionScope(
             self.transaction_runner,
             capture,
@@ -121,13 +121,13 @@ class DatabaseRoot[Authorization, Scope]:
         serving: ServingModel,
         *,
         scope_for: Callable[[ExecutionScope], Scope],
-        options: DatabaseOptions | None = None,
+        options: TxnOptions | None = None,
         read_plan_cache_capacity: int = DEFAULT_READ_PLAN_CACHE_CAPACITY,
         clock: Clock | None = None,
         lifecycle_provider: ExecutionLifecycleProvider | None = None,
     ) -> None:
         capacity = check_read_plan_cache_capacity(read_plan_cache_capacity)
-        self._options = options if options is not None else DatabaseOptions()
+        self._options = options if options is not None else TxnOptions()
         self._scope_for = scope_for
         self._resources = RootResources(
             runtime,
@@ -137,7 +137,7 @@ class DatabaseRoot[Authorization, Scope]:
             lifecycle_provider=lifecycle_provider,
         )
 
-    def _alias(self, options: DatabaseOptions) -> Self:
+    def _alias(self, options: TxnOptions) -> Self:
         alias = object.__new__(type(self))
         alias._resources = self._resources
         alias._scope_for = self._scope_for

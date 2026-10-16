@@ -68,7 +68,7 @@ from parallax.core import (
     deep_fetch,
     rel,
 )
-from parallax.core._execution._page_origins import ObservedPageProjections
+from parallax.core._execution._page_origins import ReadEvidenceCollector
 from parallax.core._execution._preflight import preflight
 from parallax.core.base import SQL_NULL, DocumentValue, ManagedValue, PresentDocument
 from parallax.core.db_port import DocumentReadOrdinals, Row
@@ -100,7 +100,7 @@ from parallax.core.read_delivery._read_plan import UNCACHED_READ_PLANNER, EmptyR
 from parallax.core.sql_gen._compile import CompiledRead
 from parallax.core.storage_layout import DirectColumn, TableLayout
 from parallax.core.storage_layout import view as storage_layout_view
-from parallax.core.unit_work import ReadOrigin
+from parallax.core.unit_work import ReadEvidence
 from tests._support.db_port import ConnectsAsItself
 
 __all__ = [
@@ -579,7 +579,7 @@ def read_root(
 
 def build_page(
     model: CatalogedModel, root: _RootRead, port: StressPort
-) -> EagerPageResult[ReadOrigin]:
+) -> EagerPageResult[ReadEvidence]:
     """One whole Page built from an executed ``root``: its rows converted, every
     fetch rendered, executed on ``port``, converted, and attached, and the Page's
     read sources retained. ``root`` is consumed."""
@@ -587,14 +587,14 @@ def build_page(
         root,
         model,
         port,
-        origins=ObservedPageProjections(model.meta, ledger=None, scanned=False),
+        origin_collector=ReadEvidenceCollector(model.meta, evidence_context=None, scanned=False),
         calls=INERT,
     )
 
 
 def batch(
     model: CatalogedModel, validated: ResolvedObjectQuery, plan: ReadPlan, port: StressPort
-) -> EagerPageResult[ReadOrigin]:
+) -> EagerPageResult[ReadEvidence]:
     """One whole standalone find of ``validated`` over ``port``."""
     return build_page(model, read_root(model, validated, plan, port), port)
 

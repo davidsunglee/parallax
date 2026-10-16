@@ -301,22 +301,22 @@ proceed from a row an earlier read returned is settled by whether the writing un
 of work **observed** that row, which the observation requirements decide on their
 own and independently of which reader produced the value.
 
-A **Read Origin** is the opaque record a managed source attaches when it publishes
+**Read Evidence** is the opaque record a managed source attaches when it publishes
 a value from valid Entity State. It records the concrete Entity, Object Key, source
-Pin, read participation, and retained observation when one exists. The Read Origin
-is provenance and an implementation-private selector for evidence; it is not
+Pin, read participation, and retained observation when one exists. Read Evidence is
+provenance and an implementation-private selector for evidence; it is not
 itself a Write Observation, a lock, a database gate, or write authority. A source
 recognizes a keyed write value as its own through that record, but must still
 satisfy the Effective Concurrency Strategy's evidence rule.
 
 Publication of diagnostic data is not source admission. When a classified result
-root suppresses its Read Origins under `m-snapshot-read`, a hydratable node exposed
+root suppresses its Read Evidence under `m-snapshot-read`, a hydratable node exposed
 inside that result is treated as **NotStored** by keyed amendment and
 replacement verbs: no valid
 managed read source produced it for writing. This applies to every node in the
 classified root's graph, including a node whose page-owned Entity State is also
 reached by a separate valid root. The separate root-local node may carry its own
-Read Origin; the classified root's node may not borrow it.
+Read Evidence; the classified root's node may not borrow it.
 
 Provenance has exactly three answers for a given verb, and they **partition** the
 values that verb can be handed: no valid managed read admitted the value as a
@@ -918,7 +918,7 @@ however the flush ends.
 `m-write-plan` owns the Planned Write algebra — Row Origin and Close Cause,
 planned rows and assignments, the Write Target, the Write Gate and its
 concurrency decision, and the Affected Rows Policy — and the Write Observation
-vocabulary: the Object Key and Observed State Key that address evidence, and
+vocabulary: the Object Key and Object State Key that address evidence, and
 the Predecessor Row a Temporal Observation retains. This module settles
 buffered writes into that algebra, carries each observation to the write it
 settles, and owns how long that evidence stays eligible.

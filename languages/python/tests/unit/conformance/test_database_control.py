@@ -48,7 +48,7 @@ from parallax.core.db_port import (
     ReleaseUnconfirmed,
 )
 from parallax.core.dialect import POSTGRES
-from parallax.core.execution import DatabaseOptions
+from parallax.core.execution import TxnOptions
 from parallax.postgres import PostgresRole
 from parallax.snapshot import SnapshotConnectionError
 from tests._support.snapshot_models import SNAP_ORDERS_MODEL
@@ -392,11 +392,11 @@ def test_an_execution_composes_its_handle_over_the_root_record_it_is_handed() ->
     # reaches the composed Database, so a transaction the group opens resolves
     # what it omits against the case's root, and an execution handed none
     # composes the record's own defaults.
-    root = DatabaseOptions(isolation="serializable", max_retries=0)
+    root = TxnOptions(isolation="serializable", max_retries=0)
     execution = _execution(_FakeConnection(), options=root)
     assert execution.database.transact(lambda tx: tx.options) is root
     unconfigured = _execution(_FakeConnection())
-    assert unconfigured.database.transact(lambda tx: tx.options) == DatabaseOptions()
+    assert unconfigured.database.transact(lambda tx: tx.options) == TxnOptions()
 
 
 def test_a_composition_that_refuses_the_model_opens_no_session_at_all() -> None:

@@ -17,7 +17,7 @@ from parallax.core._execution._keyed_writes import (
     stated_valid_from,
 )
 from parallax.core._execution._options import OMITTED, Omitted
-from parallax.core._execution._transaction._attempt import Attempt
+from parallax.core._execution._transaction._attempt import TxnAttempt
 from parallax.core._execution._unit_work import instructions
 from parallax.core._execution._unit_work.instructions import (
     AMEND_MUTATIONS,
@@ -31,7 +31,7 @@ from parallax.core._execution._unit_work.instructions import (
     TargetWrite,
     WriteAssignment,
 )
-from parallax.core._execution._unit_work.retain import InsertionIdentity, ReadOrigin
+from parallax.core._execution._unit_work.retain import InsertionIdentity, ReadEvidence
 from parallax.core.execution_lifecycle._activity import refuse_reentry
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.write_plan import ObjectKey
@@ -39,7 +39,7 @@ from parallax.snapshot._publication._wire import (
     WireEntity,
     authoring_of,
     opened_wire_entity,
-    read_origin_of,
+    read_evidence_of,
 )
 
 __all__ = [
@@ -78,7 +78,7 @@ set-based write has none to shape."""
 
 
 def wire_insert(
-    attempt: Attempt,
+    attempt: TxnAttempt,
     entity_name: str,
     data: Mapping[str, object],
     *,
@@ -117,7 +117,7 @@ def wire_insert(
     Wire caller must be handed something too or it can never revise the row it
     just opened. What it publishes is the buffered ROW rather than the payload —
     a ``many`` the payload left out is answered as the empty collection that row
-    stores. It carries the insertion's authority and no Read Origin, since no
+    stores. It carries the insertion's authority and no Read Evidence, since no
     read published it: the writes off it are licensed by that authority, before
     and after a flush, and compose with the insert while it is pending.
     """
@@ -131,7 +131,7 @@ def wire_insert(
 
 
 def wire_keyed_write(
-    attempt: Attempt,
+    attempt: TxnAttempt,
     mutation: KeyedMutation,
     observed: object,
     changes: WireChanges | Omitted | None = None,
@@ -141,7 +141,7 @@ def wire_keyed_write(
     """Buffer a Wire keyed write against the state ``observed`` came from.
 
     ``observed`` is a frozen Entity mapping Parallax published for the row, from
-    a read or from the insert that opened it. A read's private Read Origin
+    a read or from the insert that opened it. A read's private Read Evidence
     supplies the concrete Entity, the object the write addresses, the pin the
     source stands at — which is also where a Bitemporal write starts — and the
     evidence the target Entity's Effective Concurrency Strategy weighs. The node
@@ -165,7 +165,7 @@ def wire_keyed_write(
 
 
 def wire_predicate_write(
-    attempt: Attempt,
+    attempt: TxnAttempt,
     mutation: PredicateMutation,
     target: WirePredicateTarget,
     changes: WireChanges | None = None,
@@ -212,7 +212,7 @@ def wire_predicate_write(
 
 
 def wire_target_write(
-    attempt: Attempt,
+    attempt: TxnAttempt,
     mutation: TargetMutation,
     target: object,
     document: object,
@@ -278,7 +278,7 @@ def wire_target_write(
     )
 
 
-def editable_wire_data(attempt: Attempt, source: object) -> dict[str, object]:
+def editable_wire_data(attempt: TxnAttempt, source: object) -> dict[str, object]:
     """Independently mutable authoring data copied from a node Parallax
     published: its primary key and every writable member it published, in
     their Wire spellings, recursively copied into fresh mappings and lists.
@@ -299,7 +299,7 @@ def editable_wire_data(attempt: Attempt, source: object) -> dict[str, object]:
 def published_entity(meta: Metamodel, node: object, verb: str) -> EntityMetadata:
     """The concrete Entity a node Parallax published names, by the provenance
     it carries, or the refusal for anything else."""
-    origin = read_origin_of(node) if isinstance(node, WireEntity) else None
+    origin = read_evidence_of(node) if isinstance(node, WireEntity) else None
     authoring = authoring_of(node) if isinstance(node, WireEntity) else None
     key = (
         origin.object_key
@@ -384,7 +384,7 @@ def _resolved_wire_source(
         ResolvedKeyedWriteSource(
             entity=record,
             pin=None if hint is None else hint.pin,
-            hint=hint,
+            read_evidence=hint,
             provenance="none" if hint is None else "this",
             representation="wire",
             authoring=authoring if hint is None else None,
@@ -567,7 +567,7 @@ class WireKeyedInsertSource:
         self._meta = model
         self._mutation = mutation
         data = self._data
-        published = read_origin_of(data) if isinstance(data, WireEntity) else None
+        published = read_evidence_of(data) if isinstance(data, WireEntity) else None
         opened = authoring_of(data) if isinstance(data, WireEntity) else None
         return ResolvedKeyedInsert(
             entity=instructions.resolve_target(model, self._entity_name),
@@ -605,8 +605,8 @@ class WireKeyedInsertSource:
 
 def _keyed_source(
     mutation: KeyedMutation, observed: object
-) -> tuple[WireEntity, ReadOrigin | None, InsertionIdentity]:
-    """``observed`` with its own Read Origin, or with the insertion authority
+) -> tuple[WireEntity, ReadEvidence | None, InsertionIdentity]:
+    """``observed`` with its own Read Evidence, or with the insertion authority
     the node a Wire insert answered carries, or refuse the value as a keyed
     source.
 
@@ -616,7 +616,7 @@ def _keyed_source(
     published as diagnostic data under an invalid root. They differ only in how
     the provenance is absent; none can authorize a keyed write.
     """
-    hint = read_origin_of(observed) if isinstance(observed, WireEntity) else None
+    hint = read_evidence_of(observed) if isinstance(observed, WireEntity) else None
     authoring = authoring_of(observed) if isinstance(observed, WireEntity) else None
     if hint is None and authoring is None:
         raise instructions.WriteInstructionError(

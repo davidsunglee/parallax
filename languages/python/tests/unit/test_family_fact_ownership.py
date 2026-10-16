@@ -81,7 +81,7 @@ from parallax.core.write_plan import (
     WriteObservation,
     WritePlan,
 )
-from parallax.core.write_plan.keys import TemporalStateKey, VersionedStateKey
+from parallax.core.write_plan.keys import TemporalObjectStateKey, VersionedObjectStateKey
 from parallax.core.write_plan.plan import NO_TEMPORAL_WRITE_OWNERSHIP
 from parallax.core.write_plan.steps import (
     PlannedClose,
@@ -92,9 +92,9 @@ from parallax.core.write_plan.steps import (
     Versioned,
 )
 from parallax.descriptor._records import Metamodel as DescriptorMetamodel
-from parallax.snapshot import Database, ScopedDatabase, Transaction, edge_of, pin_of
+from parallax.snapshot import Database, ScopedDatabase, TxnContext, edge_of, pin_of
 from parallax.snapshot._handle._read import typed_publication, wire_publication
-from parallax.snapshot._publication._classify import ClassifiedRoot, classify_roots
+from parallax.snapshot._publication._classify import NonConformingRoot, classify_roots
 from parallax.snapshot._publication._root import RootView
 from tests._support.clock_probes import inert_instant, instant_at
 from tests._support.db_port import (
@@ -421,7 +421,7 @@ def test_a_typed_temporal_insert_admits_and_flushes_from_the_family_shape(
     )
     callers = _trace_declarations(monkeypatch, _TEMPORAL_MODEL)
 
-    def insert(tx: Transaction) -> None:
+    def insert(tx: TxnContext) -> None:
         tx.insert(DepositRate(id=1, amount=Decimal("1.00"), grade="A"), valid_from=_VALID_FROM)
 
     database.using_database_login().transact(insert)
@@ -461,7 +461,7 @@ def test_keyed_temporal_writes_settle_standalone_evidence_from_the_family_shape(
     callers = _trace_declarations(monkeypatch, _TEMPORAL_MODEL)
     updated, terminated = pinned(1), pinned(2)
 
-    def write(tx: Transaction) -> None:
+    def write(tx: TxnContext) -> None:
         tx.amend(updated.edit(amount=Decimal("2.00")))
         tx.terminate(terminated)
 
@@ -536,9 +536,9 @@ class _PreparedPage:
         )
 
 
-def _record(published: object) -> ClassifiedRoot | InvalidData[object]:
-    assert isinstance(published, ClassifiedRoot | InvalidData)
-    return cast("ClassifiedRoot | InvalidData[object]", published)
+def _record(published: object) -> NonConformingRoot | InvalidData[object]:
+    assert isinstance(published, NonConformingRoot | InvalidData)
+    return cast("NonConformingRoot | InvalidData[object]", published)
 
 
 @pytest.mark.parametrize("publication", _PUBLICATIONS)
@@ -622,8 +622,8 @@ def test_retaining_read_evidence_reads_each_familys_locator_from_its_owner(
     planner = build_write_planner(meta)
     callers = _trace_declarations(monkeypatch, meta)
 
-    def retain(ledger: UnitOfWork | None) -> RetainedObservation | None:
-        return retained_sources(meta, judged, ledger=ledger)[0].observation
+    def retain(evidence_context: UnitOfWork | None) -> RetainedObservation | None:
+        return retained_sources(meta, judged, evidence_context=evidence_context)[0].observation
 
     retained = (
         run_unit_of_work(
@@ -645,9 +645,9 @@ def test_retaining_read_evidence_reads_each_familys_locator_from_its_owner(
     assert retained is not None
     observed = ObjectKey(identity, (("id", 1),))
     assert retained.key == (
-        TemporalStateKey(observed, Edge(tx_time=_OPENED, valid_time=_VALID_FROM))
+        TemporalObjectStateKey(observed, Edge(tx_time=_OPENED, valid_time=_VALID_FROM))
         if entity == "DepositRate"
-        else VersionedStateKey(observed, 3)
+        else VersionedObjectStateKey(observed, 3)
     )
 
 
@@ -704,7 +704,7 @@ def _streamed_rate_history(database: ScopedDatabase) -> None:
 
 
 def _materialized_policy_update(database: ScopedDatabase) -> None:
-    def update(tx: Transaction) -> None:
+    def update(tx: TxnContext) -> None:
         tx.amend_where(Policy.where(Policy.id == 1), Policy.name.set("P-2"), valid_from=_VALID_FROM)
 
     database.transact(update)

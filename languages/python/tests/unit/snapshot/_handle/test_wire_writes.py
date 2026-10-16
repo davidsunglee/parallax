@@ -43,8 +43,8 @@ from parallax.core.execution import (
 from parallax.core.predicate import CanonicalDocumentError, ModelRejectedError
 from parallax.core.read_delivery import InvalidData
 from parallax.core.unit_work import WriteEvidenceError, WriteRejectedError
-from parallax.snapshot import Database, ScopedDatabase, Snapshot, Transaction, WireEntity, connect
-from parallax.snapshot._publication._wire import authoring_of, read_origin_of
+from parallax.snapshot import Database, ScopedDatabase, Snapshot, TxnContext, WireEntity, connect
+from parallax.snapshot._publication._wire import authoring_of, read_evidence_of
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
@@ -196,7 +196,7 @@ def _reads(port: ScriptedAdapter) -> list[ReadCall]:
     return [op for op in port.calls if isinstance(op, ReadCall)]
 
 
-def _node(tx: Transaction, query: dict[str, object]) -> WireEntity:
+def _node(tx: TxnContext, query: dict[str, object]) -> WireEntity:
     return tx.wire.find(query).result()
 
 
@@ -233,7 +233,7 @@ def test_authoring_an_occurrence_short_of_a_nested_many_emits_one_answer() -> No
     }
     wire_port = ScriptedAdapter(Transact(Read(rows=[copy.deepcopy(stored)]), Write()))
 
-    def wire(tx: Transaction) -> None:
+    def wire(tx: TxnContext) -> None:
         node = tx.wire.find(_CONTACT_QUERY).result()
         assert _address(node)["phones"] == []
         tx.wire.amend(node, {"address": authored})
@@ -242,7 +242,7 @@ def test_authoring_an_occurrence_short_of_a_nested_many_emits_one_answer() -> No
 
     typed_port = ScriptedAdapter(Transact(Read(rows=[copy.deepcopy(stored)]), Write()))
 
-    def typed(tx: Transaction) -> None:
+    def typed(tx: TxnContext) -> None:
         node = tx.find(vo.Contact.where(vo.Contact.id == 1)).result()
         tx.amend(
             node.edit(
@@ -268,7 +268,7 @@ def test_an_insert_answers_the_nested_many_its_own_buffered_row_stores() -> None
     # from the row it addresses.
     port = ScriptedAdapter(Transact(Write()))
 
-    def body(tx: Transaction) -> None:
+    def body(tx: TxnContext) -> None:
         opened = tx.wire.insert(
             "parallax.compatibility.Contact",
             {
@@ -298,7 +298,7 @@ def test_an_insert_answers_the_top_level_many_its_own_buffered_row_stores() -> N
     # value the row does not hold.
     columns_port = ScriptedAdapter(Transact(Write()))
 
-    def columns(tx: Transaction) -> None:
+    def columns(tx: TxnContext) -> None:
         opened = tx.wire.insert("parallax.compatibility.Roster", {"id": 7})
         assert opened["members"] == []
 
@@ -307,7 +307,7 @@ def test_an_insert_answers_the_top_level_many_its_own_buffered_row_stores() -> N
 
     document_port = ScriptedAdapter(Transact(Write()))
 
-    def document(tx: Transaction) -> None:
+    def document(tx: TxnContext) -> None:
         opened = tx.wire.insert("parallax.compatibility.Traveler", {"id": 7})
         assert opened["tags"] == []
 
@@ -337,7 +337,7 @@ def test_a_wire_terminate_closes_the_observed_milestone() -> None:
 def test_a_bounded_wire_update_splits_the_observed_rectangle() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[_position_row()]), Write(times=2)))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.wire.amend(_node(tx, _POSITION_QUERY), {"value": "300.00"}, until=_UNTIL)
 
     own_root(
@@ -352,7 +352,7 @@ def test_a_bounded_wire_update_splits_the_observed_rectangle() -> None:
 def test_a_bounded_wire_terminate_closes_and_reopens_the_flanks() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[_position_row()]), Write(times=2)))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.wire.terminate(_node(tx, _POSITION_QUERY), until=_UNTIL)
 
     own_root(
@@ -367,7 +367,7 @@ def test_a_bounded_wire_terminate_closes_and_reopens_the_flanks() -> None:
 def test_a_bounded_wire_insert_opens_one_bounded_rectangle() -> None:
     port = ScriptedAdapter(Transact(Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.wire.insert(
             "parallax.compatibility.WherePosition",
             {"id": 2, "acctNum": "B", "value": "10.00"},
@@ -420,7 +420,7 @@ def test_the_bounded_predicate_verbs_reach_the_rectangle_split() -> None:
             "predicate": {"eq": {"path": "parallax.compatibility.WherePosition.id", "value": 1}},
         }
 
-        def fn(tx: Transaction, verb: str = verb, target: dict[str, object] = target) -> None:
+        def fn(tx: TxnContext, verb: str = verb, target: dict[str, object] = target) -> None:
             if verb == "update_where":
                 tx.wire.amend_where(
                     target, {"value": "300.00"}, valid_from=_VALID_FROM, until=_UNTIL
@@ -451,7 +451,7 @@ def _lost_provenance(node: WireEntity) -> list[object]:
 def test_a_mapping_that_lost_its_provenance_is_no_keyed_source() -> None:
     port = ScriptedAdapter(Transact(_ACCOUNT_READ))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         node = _node(tx, _ACCOUNT_QUERY)
         for candidate in _lost_provenance(node):
             with pytest.raises(
@@ -468,7 +468,7 @@ def test_a_copy_of_a_published_node_keeps_its_provenance() -> None:
     # the Wire counterpart of `Entity.edit` transferring a Typed node's claim.
     port = ScriptedAdapter(Transact(_ACCOUNT_READ, Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         node = _node(tx, _ACCOUNT_QUERY)
         tx.wire.amend(copy.deepcopy(node), {"balance": "125.00"})
 
@@ -479,7 +479,7 @@ def test_a_copy_of_a_published_node_keeps_its_provenance() -> None:
 def test_a_hydratable_classified_row_cannot_author_its_own_correction() -> None:
     # The stored `address` omits the required `street`, so the read publishes the
     # row as a classified record whose `data` still hydrates. That node is a
-    # diagnostic data with no Read Origin. The update supplying the missing
+    # diagnostic data with no Read Evidence. The update supplying the missing
     # member is refused before buffering rather than treating invalid state as
     # write authority.
     stored: MappingRow = {
@@ -497,7 +497,7 @@ def test_a_hydratable_classified_row_cannot_author_its_own_correction() -> None:
     }
     port = ScriptedAdapter(Transact(Read(rows=[stored])))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         published = tx.wire.find(_CONTACT_QUERY).checked().result()
         assert isinstance(published, InvalidData)
         record = cast("InvalidData[object]", published)
@@ -513,7 +513,7 @@ def test_a_hydratable_classified_row_cannot_author_its_own_correction() -> None:
 def test_none_and_a_non_mapping_are_refused_as_keyed_sources() -> None:
     port = ScriptedAdapter(Transact())
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         for candidate in (None, 7, "Account"):
             with pytest.raises(instructions.WriteInstructionError):
                 tx.wire.delete(cast("WireEntity", candidate))
@@ -539,7 +539,7 @@ def test_an_illegal_wire_assignment_is_refused_statically(
 ) -> None:
     port = ScriptedAdapter(Transact(_ACCOUNT_READ))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         with pytest.raises(error, match=match):
             tx.wire.amend(_node(tx, _ACCOUNT_QUERY), changes)
 
@@ -550,7 +550,7 @@ def test_an_illegal_wire_assignment_is_refused_statically(
 def test_a_temporal_axis_member_is_not_assignable() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[balance_row(in_z=_TX_START)])))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         with pytest.raises(instructions.WriteInstructionError, match="framework-owned"):
             tx.wire.amend(_node(tx, _BALANCE_QUERY), {"txStart": "2024-01-01T00:00:00Z"})
 
@@ -566,11 +566,11 @@ def test_a_bounded_verb_states_its_window_as_a_pair() -> None:
     account = ScriptedAdapter(Transact(_ACCOUNT_READ))
     position = ScriptedAdapter(Transact(Read(rows=[_position_row()])))
 
-    def non_temporal(tx: Transaction) -> None:
+    def non_temporal(tx: TxnContext) -> None:
         with pytest.raises(instructions.WriteInstructionError, match="takes no until"):
             tx.wire.amend(_node(tx, _ACCOUNT_QUERY), {"balance": "125.00"}, until=_UNTIL)
 
-    def absent_until(tx: Transaction) -> None:
+    def absent_until(tx: TxnContext) -> None:
         node = _node(tx, _POSITION_QUERY)
         with pytest.raises(instructions.WriteInstructionError, match="until is absent"):
             tx.wire.amend(node, {}, until=cast("dt.datetime", None))
@@ -594,7 +594,7 @@ def test_a_bound_carries_the_refusal_of_whichever_rule_it_broke() -> None:
     # both are answered rather than left to leak out of instant normalization.
     port = ScriptedAdapter(Transact(Read(rows=[_position_row()])))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         node = _node(tx, _POSITION_QUERY)
         with pytest.raises(InstantError, match="naive datetime"):
             tx.wire.amend(node, {"value": "300.00"}, until=_NAIVE_INSTANT)
@@ -621,17 +621,17 @@ def test_an_instant_no_canonical_spelling_writes_is_refused_at_every_ingress() -
     inserted = ScriptedAdapter(Transact())
     selected = ScriptedAdapter(Transact())
 
-    def update(tx: Transaction) -> None:
+    def update(tx: TxnContext) -> None:
         with pytest.raises(instructions.InstructionRejectedError, match="out-of-space"):
             tx.wire.amend(_node(tx, _SAMPLE_QUERY), {"taken": _UNSPELLABLE_INSTANT})
 
-    def insert(tx: Transaction) -> None:
+    def insert(tx: TxnContext) -> None:
         with pytest.raises(instructions.InstructionRejectedError, match="out-of-space"):
             tx.wire.insert(
                 "parallax.compatibility.Sample", {"id": 2, "taken": _UNSPELLABLE_INSTANT}
             )
 
-    def update_where(tx: Transaction) -> None:
+    def update_where(tx: TxnContext) -> None:
         with pytest.raises(instructions.InstructionRejectedError, match="out-of-space"):
             tx.wire.amend_where(_SAMPLE_TARGET, {"taken": _UNSPELLABLE_INSTANT})
 
@@ -645,7 +645,7 @@ def test_an_instant_no_canonical_spelling_writes_is_refused_at_every_ingress() -
 def test_a_non_temporal_target_takes_no_valid_from() -> None:
     port = ScriptedAdapter(Transact())
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         with pytest.raises(instructions.WriteInstructionError, match="takes no valid_from"):
             tx.wire.insert(
                 "parallax.compatibility.Account",
@@ -659,7 +659,7 @@ def test_a_non_temporal_target_takes_no_valid_from() -> None:
 def test_a_predicate_target_carries_exactly_entity_and_predicate() -> None:
     port = ScriptedAdapter(Transact())
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         with pytest.raises(instructions.WriteInstructionError, match="exactly `entity`"):
             tx.wire.delete_where({**_PERSON_TARGET, "limit": 1})
         with pytest.raises(instructions.WriteInstructionError, match="exactly `entity`"):
@@ -680,7 +680,7 @@ def test_a_change_set_that_is_not_a_document_is_refused(changes: object) -> None
     # the destructive and close ones, which take no change set at all.
     port = ScriptedAdapter(Transact(_ACCOUNT_READ))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         with pytest.raises(instructions.WriteInstructionError, match="document of names"):
             tx.wire.amend(_node(tx, _ACCOUNT_QUERY), cast("dict[str, object]", changes))
 
@@ -691,7 +691,7 @@ def test_a_change_set_that_is_not_a_document_is_refused(changes: object) -> None
 def test_every_update_verb_requires_the_change_document_its_signature_states() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[_position_row()])))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         node = _node(tx, _POSITION_QUERY)
         none_changes = cast("dict[str, object]", None)
         with pytest.raises(instructions.WriteInstructionError, match="document of names"):
@@ -725,7 +725,7 @@ def test_a_tuple_is_not_a_wire_array_the_predicate_algebra_accepts() -> None:
         "predicate": {"and": {"operands": operands}},
     }
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         with pytest.raises(CanonicalDocumentError, match="operands"):
             tx.wire.delete_where(target)
         tx.wire.delete_where({**target, "predicate": {"and": {"operands": list(operands)}}})
@@ -740,7 +740,7 @@ def test_an_insert_payload_that_is_not_a_document_is_refused() -> None:
     # nothing from the model, so it leads the spelling an insert has to resolve.
     port = ScriptedAdapter(Transact())
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         with pytest.raises(instructions.WriteInstructionError, match="document of names"):
             tx.wire.insert("parallax.compatibility.Person", cast("dict[str, object]", [("id", 9)]))
         with pytest.raises(instructions.WriteInstructionError, match="document of names"):
@@ -758,7 +758,7 @@ def test_a_malformed_predicate_is_judged_before_anything_the_model_decides() -> 
     port = ScriptedAdapter(Transact())
     malformed: dict[str, object] = {"entity": "Unknown", "predicate": {"nonsense": {}}}
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         with pytest.raises(CanonicalDocumentError, match="unknown predicate node"):
             tx.wire.delete_where(malformed)
         with pytest.raises(CanonicalDocumentError, match="unknown predicate node"):
@@ -776,7 +776,7 @@ def test_a_malformed_predicate_is_judged_before_anything_the_model_decides() -> 
 def test_predicate_write_rejects_valid_selection_changes_that_name_unknown_members() -> None:
     port = ScriptedAdapter(Transact())
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         with pytest.raises(
             instructions.WriteInstructionError,
             match=r"'parallax\.compatibility\.Person\.undeclared' does not name a declared member",
@@ -792,7 +792,7 @@ def test_a_predicate_writes_first_failing_assignment_is_the_one_refused() -> Non
     # decoded and judged — before the next one is visited.
     port = ScriptedAdapter(Transact())
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         with pytest.raises(instructions.WriteInstructionError, match="declared member"):
             tx.wire.amend_where(_PERSON_TARGET, {"undeclared": 1, "name": 5})
         with pytest.raises(instructions.InstructionRejectedError) as value_fault:
@@ -816,7 +816,7 @@ def test_a_predicate_writes_window_is_judged_before_its_predicate() -> None:
         },
     }
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         with pytest.raises(instructions.WriteInstructionError, match="requires valid_from"):
             tx.wire.amend_where(inverted, {"value": "1.00"})
         with pytest.raises(ModelRejectedError):
@@ -835,10 +835,10 @@ def test_an_empty_change_document_is_a_keyed_no_op_and_a_predicate_refusal() -> 
     keyed = ScriptedAdapter(Transact(_ACCOUNT_READ))
     predicate = ScriptedAdapter(Transact())
 
-    def keyed_fn(tx: Transaction) -> None:
+    def keyed_fn(tx: TxnContext) -> None:
         tx.wire.amend(_node(tx, _ACCOUNT_QUERY), {})
 
-    def predicate_fn(tx: Transaction) -> None:
+    def predicate_fn(tx: TxnContext) -> None:
         with pytest.raises(
             instructions.WriteInstructionError, match="requires at least one assignment"
         ):
@@ -856,7 +856,7 @@ def test_a_document_key_that_is_not_a_name_is_refused() -> None:
     # verb rather than reaching the comparison that cannot order it.
     port = ScriptedAdapter(Transact(Read(rows=[dict(_PERSON_ROW)])))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         with pytest.raises(instructions.WriteInstructionError, match="keyed by names"):
             tx.wire.insert(
                 "parallax.compatibility.Person",
@@ -878,7 +878,7 @@ def test_a_document_that_contains_itself_is_refused() -> None:
     target: dict[str, Any] = dict(_PERSON_TARGET)
     target["predicate"] = {"and": {"operands": [target]}}
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         with pytest.raises(instructions.WriteInstructionError, match="contains itself"):
             tx.wire.insert("parallax.compatibility.Person", data)
         with pytest.raises(instructions.WriteInstructionError, match="contains itself"):
@@ -894,7 +894,7 @@ def test_an_insert_refuses_a_value_a_read_published() -> None:
     # `tx.amend(...)`, which is not a spelling a Wire caller has.
     port = ScriptedAdapter(Transact(_ACCOUNT_READ))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         node = _node(tx, _ACCOUNT_QUERY)
         with pytest.raises(KeyedWriteValueError) as refusal:
             tx.wire.insert("parallax.compatibility.Account", node)
@@ -915,7 +915,7 @@ def test_an_insert_refuses_a_pinned_node_for_its_view_before_its_provenance() ->
         "temporal": {"transaction-time": {"asOf": "2024-03-01T00:00:00.000000Z"}},
     }
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         with pytest.raises(TransactionTimePinReadOnlyError) as refusal:
             tx.wire.insert("parallax.compatibility.Balance", _node(tx, pinned))
         assert refusal.value.code == "transaction-time-pin-read-only"
@@ -927,7 +927,7 @@ def test_an_insert_refuses_a_pinned_node_for_its_view_before_its_provenance() ->
 def test_an_insert_refuses_a_framework_owned_member() -> None:
     port = ScriptedAdapter(Transact())
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         with pytest.raises(instructions.WriteInstructionError, match="framework-owned"):
             tx.wire.insert(
                 "parallax.compatibility.Account",
@@ -960,7 +960,7 @@ def test_an_insert_judges_its_payload_subtype_then_framework_owned_then_undeclar
     port = ScriptedAdapter(Transact())
     payload = {"id": 1, "amount": "1.00", "grade": "A", **extra}
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         with pytest.raises(refusal, match=message):
             tx.wire.insert("parallax.compatibility.DepositRate", payload, valid_from=_VALID_FROM)
 
@@ -971,7 +971,7 @@ def test_an_insert_judges_its_payload_subtype_then_framework_owned_then_undeclar
 def test_an_unresolvable_entity_spelling_is_refused_at_the_verb() -> None:
     port = ScriptedAdapter(Transact())
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         with pytest.raises(
             instructions.WriteInstructionError,
             match=r"the connected model declares no entity 'parallax\.compatibility\.Nope'",
@@ -1000,7 +1000,7 @@ def test_a_finite_transaction_time_pinned_source_is_read_only() -> None:
         "temporal": {"transaction-time": {"asOf": "2024-03-01T00:00:00.000000Z"}},
     }
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         with pytest.raises(TransactionTimePinReadOnlyError):
             tx.wire.terminate(_node(tx, pinned))
 
@@ -1014,7 +1014,7 @@ def test_a_finite_transaction_time_pinned_source_is_read_only() -> None:
 def test_an_unversioned_participating_wire_source_licenses_an_ungated_write() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[dict(_PERSON_ROW)]), Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.wire.amend(_node(tx, _PERSON_QUERY), {"name": "Grace"})
 
     db_for(PERSON, port).transact(fn)
@@ -1028,7 +1028,7 @@ def test_a_standalone_unversioned_wire_source_has_no_usable_evidence() -> None:
     db = db_for(PERSON, port)
     standalone = _standalone(db, _PERSON_QUERY)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         with pytest.raises(WriteEvidenceError) as exc_info:
             tx.wire.amend(standalone, {"name": "Grace"})
         assert exc_info.value.code == "write-evidence-unavailable"
@@ -1079,7 +1079,7 @@ def test_typed_update_does_not_detour_through_wire_projection(
     monkeypatch.setattr(Snapshot, "wire", forbidden)
     port = ScriptedAdapter(Transact(_ACCOUNT_READ, Write()))
 
-    def update(tx: Transaction) -> None:
+    def update(tx: TxnContext) -> None:
         typed = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         tx.amend(typed.edit(balance=Decimal("125.00")))
 
@@ -1092,7 +1092,7 @@ def test_explicit_locking_refuses_a_standalone_versioned_wire_source() -> None:
     db = db_for(ACCOUNT, port)
     standalone = _standalone(db, _ACCOUNT_QUERY)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         with pytest.raises(WriteEvidenceError) as exc_info:
             tx.wire.amend(standalone, {"balance": "125.00"})
         assert exc_info.value.code == "write-evidence-unavailable"
@@ -1104,7 +1104,7 @@ def test_explicit_locking_refuses_a_standalone_versioned_wire_source() -> None:
 def test_a_wire_source_whose_evidence_a_flush_spent_is_refused() -> None:
     port = ScriptedAdapter(Transact(_ACCOUNT_READ, Write(), _ACCOUNT_READ))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         node = _node(tx, _ACCOUNT_QUERY)
         tx.wire.amend(node, {"balance": "125.00"})
         # The dependent read force-flushes, which spends the claim the write carried.
@@ -1133,13 +1133,13 @@ def test_independent_standalone_sources_of_one_version_are_both_spent(
     db = db_for(ACCOUNT, port)
     sources = (_standalone(db, _ACCOUNT_QUERY), _standalone(db, _ACCOUNT_QUERY))
 
-    def write(tx: Transaction, verb: str, source: WireEntity, owner: str) -> None:
+    def write(tx: TxnContext, verb: str, source: WireEntity, owner: str) -> None:
         if verb == "amend":
             tx.wire.amend(source, {"owner": owner})
         else:
             tx.wire.delete(source)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         write(tx, first_verb, sources[0], "Lin")
         write(tx, second_verb, sources[1], "Ana")
         tx.wire.find(_ACCOUNT_QUERY).results()
@@ -1158,7 +1158,7 @@ def test_independent_standalone_sources_of_one_milestone_are_both_spent() -> Non
     db = db_for(BALANCE, port)
     sources = (_standalone(db, _BALANCE_QUERY), _standalone(db, _BALANCE_QUERY))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.wire.amend(sources[0], {"value": "6.00"})
         tx.wire.amend(sources[1], {"acctNum": "A-2"})
         tx.wire.find(_BALANCE_QUERY).results()
@@ -1174,7 +1174,7 @@ def test_independent_standalone_sources_of_one_milestone_are_both_spent() -> Non
 def test_a_wire_termination_over_another_window_of_one_state_is_refused_synchronously() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[_position_row()]), Write(times=4)))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         node = _node(tx, _POSITION_QUERY)
         tx.wire.amend(node, {"value": "300.00"}, until=_UNTIL)
         with pytest.raises(WriteEvidenceError) as exc_info:
@@ -1190,7 +1190,7 @@ def test_a_wire_verb_refuses_before_any_io() -> None:
     port = ScriptedAdapter(Transact())
     db = own_root(Database.connect(port, ACCOUNT, clock=FixedClock(FIXED))).using_database_login()
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         with pytest.raises(instructions.WriteInstructionError):
             tx.wire.amend(cast("WireEntity", {"id": 1}), {"balance": "1.00"})
 
@@ -1203,7 +1203,7 @@ def test_a_wire_verb_refuses_before_any_io() -> None:
 def test_two_wire_assignments_of_one_state_merge_with_the_later_value_winning() -> None:
     port = ScriptedAdapter(Transact(_ACCOUNT_READ, Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         node = _node(tx, _ACCOUNT_QUERY)
         tx.wire.amend(node, {"balance": "125.00"})
         tx.wire.amend(node, {"balance": "150.00", "owner": "Grace"})
@@ -1220,7 +1220,7 @@ def test_a_wire_assignment_equal_to_what_the_read_published_is_still_written() -
     # versioned update.
     port = ScriptedAdapter(Transact(_ACCOUNT_READ, Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         node = _node(tx, _ACCOUNT_QUERY)
         tx.wire.amend(node, {"balance": node["balance"], "owner": node["owner"]})
 
@@ -1231,7 +1231,7 @@ def test_a_wire_assignment_equal_to_what_the_read_published_is_still_written() -
 def test_an_empty_wire_change_document_emits_nothing() -> None:
     port = ScriptedAdapter(Transact(_ACCOUNT_READ))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.wire.amend(_node(tx, _ACCOUNT_QUERY), {})
 
     db_for(ACCOUNT, port).transact(fn)
@@ -1241,7 +1241,7 @@ def test_an_empty_wire_change_document_emits_nothing() -> None:
 def test_a_wire_net_equal_chain_across_two_verbs_writes_its_last_value() -> None:
     port = ScriptedAdapter(Transact(_ACCOUNT_READ, Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         node = _node(tx, _ACCOUNT_QUERY)
         tx.wire.amend(node, {"balance": "125.00"})
         tx.wire.amend(node, {"balance": "100.00"})
@@ -1256,7 +1256,7 @@ def test_a_typed_assignment_a_wire_verb_restates_writes_the_wire_value() -> None
     # inside, not around.
     port = ScriptedAdapter(Transact(Read(rows=[_ACCOUNT_ROW], times=2), Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         typed = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         node = _node(tx, _ACCOUNT_QUERY)
         tx.amend(typed.edit(balance=Decimal("125.00")))
@@ -1269,7 +1269,7 @@ def test_a_typed_assignment_a_wire_verb_restates_writes_the_wire_value() -> None
 def test_a_wire_assignment_a_typed_verb_restates_writes_the_typed_value() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[_ACCOUNT_ROW], times=2), Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         typed = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         node = _node(tx, _ACCOUNT_QUERY)
         tx.wire.amend(node, {"balance": "125.00"})
@@ -1282,7 +1282,7 @@ def test_a_wire_assignment_a_typed_verb_restates_writes_the_typed_value() -> Non
 def test_a_typed_and_a_wire_assignment_of_one_object_merge_in_authored_order() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[_ACCOUNT_ROW], times=2), Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         typed = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         node = _node(tx, _ACCOUNT_QUERY)
         tx.amend(typed.edit(balance=Decimal("125.00")))
@@ -1297,7 +1297,7 @@ def test_a_typed_and_a_wire_assignment_of_one_object_merge_in_authored_order() -
 def test_a_wire_update_then_delete_of_one_object_emits_one_delete() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[dict(_PERSON_ROW)]), Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         node = _node(tx, _PERSON_QUERY)
         tx.wire.amend(node, {"name": "Grace"})
         tx.wire.delete(node)
@@ -1313,7 +1313,7 @@ def test_an_insert_answers_the_frozen_node_it_opened() -> None:
     port = ScriptedAdapter(Transact(Write()))
     opened: list[object] = []
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         opened.append(tx.wire.insert("parallax.compatibility.Person", {"id": 9, "name": "Newton"}))
 
     db_for(PERSON, port).transact(fn)
@@ -1330,7 +1330,7 @@ def test_a_wire_update_of_a_row_the_same_unit_inserted_coalesces_in_place() -> N
     # option — a participating read force-flushes.
     port = ScriptedAdapter(Transact(Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         opened = tx.wire.insert("parallax.compatibility.Person", {"id": 9, "name": "Newton"})
         tx.wire.amend(opened, {"name": "Grace"})
 
@@ -1343,7 +1343,7 @@ def test_a_wire_update_of_a_row_the_same_unit_inserted_coalesces_in_place() -> N
 def test_a_wire_delete_of_a_row_the_same_unit_inserted_cancels_to_no_dml() -> None:
     port = ScriptedAdapter(Transact())
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.wire.delete(tx.wire.insert("parallax.compatibility.Person", {"id": 9, "name": "N"}))
 
     db_for(PERSON, port).transact(fn)
@@ -1357,7 +1357,7 @@ def test_a_wire_insert_after_a_cancelled_insert_delete_pair_opens_the_row_again(
     # INSERT, and it is the second one's values.
     port = ScriptedAdapter(Transact(Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         opened = tx.wire.insert("parallax.compatibility.Person", {"id": 9, "name": "Newton"})
         tx.wire.delete(opened)
         tx.wire.insert("parallax.compatibility.Person", {"id": 9, "name": "Grace"})
@@ -1374,7 +1374,7 @@ def test_writing_back_what_an_insert_published_is_the_ordinary_no_op() -> None:
     # what makes the returned value interchangeable with a read result.
     port = ScriptedAdapter(Transact(Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         opened = tx.wire.insert("parallax.compatibility.Person", {"id": 9, "name": "Newton"})
         tx.wire.amend(opened, {"name": opened["name"]})
 
@@ -1391,7 +1391,7 @@ def test_an_insert_refuses_the_node_a_previous_insert_answered() -> None:
     # repeating an insert hears one answer whichever value spells the repeat.
     port = ScriptedAdapter(Transact())
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         opened = tx.wire.insert("parallax.compatibility.Person", {"id": 9, "name": "Newton"})
         tx.wire.insert("parallax.compatibility.Person", opened)
 
@@ -1408,7 +1408,7 @@ def test_an_insert_refuses_the_payload_a_previous_insert_opened_a_row_with() -> 
     # revise the row through.
     port = ScriptedAdapter(Transact())
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.wire.insert("parallax.compatibility.Person", {"id": 9, "name": "Newton"})
         tx.wire.insert("parallax.compatibility.Person", {"id": 9, "name": "Newton"})
 
@@ -1430,7 +1430,7 @@ def test_a_wire_insert_of_an_object_a_typed_insert_opened_is_refused() -> None:
     port = ScriptedAdapter(Transact(Write()))
     refused: list[str] = []
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         inserted = mm.Person(id=9, name="Newton")
         tx.insert(inserted)
         try:
@@ -1454,7 +1454,7 @@ def test_a_typed_insert_of_an_object_a_wire_insert_opened_is_refused() -> None:
     port = ScriptedAdapter(Transact(Write()))
     refused: list[str] = []
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         opened = tx.wire.insert("parallax.compatibility.Person", {"id": 9, "name": "Newton"})
         try:
             tx.insert(mm.Person(id=9, name="Grace"))
@@ -1476,7 +1476,7 @@ def test_a_typed_value_of_an_object_a_wire_insert_opened_carries_no_authority() 
     # so it is refused rather than coalesced into the pending insert.
     port = ScriptedAdapter(Transact(Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.wire.insert("parallax.compatibility.Person", {"id": 9, "name": "Newton"})
         with pytest.raises(KeyedWriteValueError) as refusal:
             tx.amend(mm.Person(id=9, name="Newton").edit(name="Grace"))
@@ -1495,7 +1495,7 @@ def test_mutating_the_changes_mapping_after_the_verb_returns_changes_nothing() -
     port = ScriptedAdapter(Transact(_ACCOUNT_READ, Write()))
     changes: dict[str, object] = {"balance": "125.00"}
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.wire.amend(_node(tx, _ACCOUNT_QUERY), changes)
         changes["balance"] = "999.00"
         changes["owner"] = "Mallory"
@@ -1513,7 +1513,7 @@ def test_mutating_insert_data_after_the_verb_returns_changes_nothing() -> None:
     port = ScriptedAdapter(Transact(Write()))
     data: dict[str, Any] = {"id": 9, "name": "Newton"}
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.wire.insert("parallax.compatibility.Person", data)
         data["name"] = "Mallory"
 
@@ -1528,7 +1528,7 @@ def test_mutating_a_predicate_target_after_the_verb_returns_changes_nothing() ->
     predicate: dict[str, Any] = {"eq": {"path": "parallax.compatibility.Person.id", "value": 1}}
     target: dict[str, Any] = {"entity": "parallax.compatibility.Person", "predicate": predicate}
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.wire.delete_where(target)
         cast("dict[str, Any]", predicate["eq"])["value"] = 99
 
@@ -1539,7 +1539,7 @@ def test_mutating_a_predicate_target_after_the_verb_returns_changes_nothing() ->
 def test_a_returned_wire_mapping_still_refuses_mutation_after_a_write() -> None:
     port = ScriptedAdapter(Transact(_ACCOUNT_READ, Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         node = _node(tx, _ACCOUNT_QUERY)
         tx.wire.amend(node, {"balance": "125.00"})
         with pytest.raises(TypeError):
@@ -1605,7 +1605,7 @@ def test_an_authored_occurrence_is_captured_at_the_call() -> None:
     address: dict[str, Any] = copy.deepcopy(_ADDRESS)
     data: dict[str, Any] = {"id": 1, "name": "Ada", "address": address}
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.wire.insert("parallax.compatibility.Contact", data)
         cast("list[dict[str, Any]]", address["phones"]).append({"type": "work"})
         cast("dict[str, Any]", address["geo"])["country"] = "FR"
@@ -1625,7 +1625,7 @@ def test_two_positions_sharing_one_document_are_captured_rather_than_refused() -
     phone: dict[str, Any] = {"type": "home", "number": "555"}
     address: dict[str, Any] = {**copy.deepcopy(_ADDRESS), "phones": [phone, phone]}
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.wire.insert(
             "parallax.compatibility.Contact", {"id": 1, "name": "Ada", "address": address}
         )
@@ -1666,7 +1666,7 @@ def test_a_malformed_occurrence_document_is_refused_by_the_judgement(address: ob
     # every ingress that accepts it.
     port = ScriptedAdapter(Transact())
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         with pytest.raises(WriteRejectedError, match=r"Contact\.address"):
             tx.wire.insert(
                 "parallax.compatibility.Contact",
@@ -1680,7 +1680,7 @@ def test_a_malformed_occurrence_document_is_refused_by_the_judgement(address: ob
 def test_a_predicate_target_that_is_not_a_document_is_refused() -> None:
     port = ScriptedAdapter(Transact())
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         with pytest.raises(instructions.WriteInstructionError, match="canonical"):
             tx.wire.delete_where(cast("dict[str, object]", ["Person"]))
 
@@ -1693,7 +1693,7 @@ def test_an_insert_naming_an_undeclared_member_reaches_the_honesty_gate() -> Non
     # failure standing in for one.
     port = ScriptedAdapter(Transact())
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         with pytest.raises(instructions.WriteInstructionError, match="undeclared member"):
             tx.wire.insert("parallax.compatibility.Person", {"id": 9, "name": "Newton", "nope": 1})
 
@@ -1709,7 +1709,7 @@ def test_an_insert_of_a_family_subtype_answers_a_node_carrying_its_variant() -> 
     port = ScriptedAdapter(Transact(Write()))
     opened: list[WireEntity] = []
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         opened.append(
             tx.wire.insert(
                 "parallax.compatibility.CardPayment",
@@ -1724,7 +1724,7 @@ def test_an_insert_of_a_family_subtype_answers_a_node_carrying_its_variant() -> 
         "cardNetwork": "Visa",
         "familyVariant": "CardPayment",
     }
-    assert read_origin_of(opened[0]) is None
+    assert read_evidence_of(opened[0]) is None
     authority = authoring_of(opened[0])
     assert authority is not None
     assert authority.object_key.entity.name == "CardPayment"

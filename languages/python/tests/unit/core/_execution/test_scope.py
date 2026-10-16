@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from typing import Any, cast
 
 from parallax.core._execution._scope import ExecutionScope
-from parallax.core._execution._transaction._attempt import Attempt
+from parallax.core._execution._transaction._attempt import TxnAttempt
 from parallax.core.db_port import (
     Committed,
     ConnectionAcquisitionError,
@@ -24,7 +24,7 @@ from parallax.core.db_port import (
     TransactionOutcome,
 )
 from parallax.core.dialect import POSTGRES, Dialect
-from parallax.core.execution import DatabaseOptions
+from parallax.core.execution import TxnOptions
 from parallax.core.unit_work import SubjectActor
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import ConnectsAsItself, ScriptedAdapter, Transact
@@ -60,7 +60,7 @@ def test_an_option_derived_scope_shares_its_authority_runner_and_root_resources(
     assert derived._runner is private._runner
     assert derived._planner is private._planner
     assert derived._serving is private._serving
-    assert derived._options == DatabaseOptions(max_retries=3)
+    assert derived._options == TxnOptions(max_retries=3)
     assert unchanged._options is private._options
 
 
@@ -72,7 +72,7 @@ def test_root_alias_options_are_independent_while_resources_and_close_are_shared
     alias_scope = alias.using_database_login()
 
     assert isinstance(alias_scope, ExecutionScope)
-    assert original_scope.transact(lambda attempt: attempt.options, itself) == DatabaseOptions()
+    assert original_scope.transact(lambda attempt: attempt.options, itself) == TxnOptions()
     assert adapter.acquisitions == 1
     alias.close()
 
@@ -117,8 +117,8 @@ def test_concurrent_scopes_keep_their_own_authority_and_defaults() -> None:
         max_retries=4, isolation="repeatable_read"
     )
 
-    def observe(scope: ExecutionScope) -> tuple[object, DatabaseOptions]:
-        def body(attempt: Attempt) -> tuple[object, DatabaseOptions]:
+    def observe(scope: ExecutionScope) -> tuple[object, TxnOptions]:
+        def body(attempt: TxnAttempt) -> tuple[object, TxnOptions]:
             actor = attempt.uow._actor_identity  # pyright: ignore[reportPrivateUsage] - the actor each attempt plans under is the claim
             return actor, attempt.options
 
@@ -130,9 +130,9 @@ def test_concurrent_scopes_keep_their_own_authority_and_defaults() -> None:
 
     assert alice_result.result() == (
         SubjectActor("alice"),
-        DatabaseOptions(max_retries=1, isolation="serializable"),
+        TxnOptions(max_retries=1, isolation="serializable"),
     )
     assert bob_result.result() == (
         SubjectActor("bob"),
-        DatabaseOptions(max_retries=4, isolation="repeatable_read"),
+        TxnOptions(max_retries=4, isolation="repeatable_read"),
     )

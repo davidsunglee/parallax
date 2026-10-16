@@ -18,7 +18,7 @@ from parallax.core._execution._unit_work.write_planner import PendingWrites
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.unit_work import KeyedWrite, RetainedObservation, TargetWrite, buffered_write
 from parallax.core.write_plan import ObjectKey, VersionObservation
-from parallax.core.write_plan.keys import VersionedStateKey
+from parallax.core.write_plan.keys import VersionedObjectStateKey
 from tests.unit._corpus_model_support import corpus_records, formed
 
 _ACCOUNT = formed(corpus_records()["account"])
@@ -43,7 +43,7 @@ def _update(**members: object) -> PreparedKeyedWrite:
 
 def _retained(version: int) -> RetainedObservation:
     return RetainedObservation(
-        VersionedStateKey(_OBJECT, version), VersionObservation(version), None
+        VersionedObjectStateKey(_OBJECT, version), VersionObservation(version), None
     )
 
 
@@ -54,7 +54,7 @@ def test_a_target_write_meets_the_writes_of_its_own_stated_state() -> None:
     target = _target(3, balance="1.00")
     assert pending.admits_target(target, _OBJECT)
     pending.add(target, _OBJECT)
-    assert pending.target_scope(_OBJECT) == VersionedStateKey(_OBJECT, 3)
+    assert pending.target_scope(_OBJECT) == VersionedObjectStateKey(_OBJECT, 3)
     (merged,) = pending.writes()
     assert isinstance(merged, TargetKeyedWrite)
     assert merged.claims == (observed,)
@@ -90,4 +90,4 @@ def test_a_target_carrier_refuses_an_insert_and_a_write_of_several_objects() -> 
     for instruction in (insert, several):
         assert isinstance(instruction, PreparedKeyedWrite)
         with pytest.raises(ValueError, match="addresses one existing object"):
-            TargetKeyedWrite(instruction, ExpectedVersion(3), VersionedStateKey(_OBJECT, 3))
+            TargetKeyedWrite(instruction, ExpectedVersion(3), VersionedObjectStateKey(_OBJECT, 3))

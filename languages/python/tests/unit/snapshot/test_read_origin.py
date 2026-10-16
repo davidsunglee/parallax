@@ -41,16 +41,16 @@ from parallax.core.read_delivery import InvalidData
 from parallax.core.unit_work import (
     OptimisticLockConflictError,
     ParticipationToken,
-    ReadOrigin,
+    ReadEvidence,
     RetainedObservation,
     WriteEvidenceError,
 )
 from parallax.core.write_plan import ObjectKey, VersionObservation
-from parallax.core.write_plan.keys import VersionedStateKey
-from parallax.snapshot import Transaction, WireEntity, connect
+from parallax.core.write_plan.keys import VersionedObjectStateKey
+from parallax.snapshot import TxnContext, WireEntity, connect
 from parallax.snapshot import _publication as publication
 from parallax.snapshot._inspection import snapshot_state_of
-from parallax.snapshot._publication._wire import read_origin_of
+from parallax.snapshot._publication._wire import read_evidence_of
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
@@ -89,7 +89,7 @@ _TX_START = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 def _typed_hint(node: object) -> object:
     state = snapshot_state_of(node)
     assert state is not None
-    return state.source
+    return state.read_evidence
 
 
 # --------------------------------------------------------------------------- #
@@ -103,21 +103,23 @@ def test_a_typed_node_carries_the_state_its_row_observed() -> None:
     )
     hint = _typed_hint(node)
     assert hint is not None
-    assert cast("Any", hint).observation.key == VersionedStateKey(cast("Any", hint).object_key, 4)
+    assert cast("Any", hint).observation.key == VersionedObjectStateKey(
+        cast("Any", hint).object_key, 4
+    )
 
 
-def test_a_read_origin_is_an_immutable_value_over_its_complete_claim() -> None:
+def test_a_read_evidence_is_an_immutable_value_over_its_complete_claim() -> None:
     object_key = ObjectKey(mm.Account.identity, (("id", 1),))
     observation = RetainedObservation(
-        VersionedStateKey(object_key, 4), VersionObservation(observed_version=4), None
+        VersionedObjectStateKey(object_key, 4), VersionObservation(observed_version=4), None
     )
-    origin = ReadOrigin(mm.Account.identity, object_key, None, observation)
-    equal = ReadOrigin(mm.Account.identity, object_key, None, observation)
+    origin = ReadEvidence(mm.Account.identity, object_key, None, observation)
+    equal = ReadEvidence(mm.Account.identity, object_key, None, observation)
 
     assert origin == equal
     assert origin != object()
     assert hash(origin) == hash(equal)
-    assert repr(origin).startswith("ReadOrigin(entity=")
+    assert repr(origin).startswith("ReadEvidence(entity=")
     with pytest.raises(AttributeError, match="immutable"):
         origin.pin = None  # pyright: ignore[reportAttributeAccessIssue] - the refusal is this test's subject
 
@@ -128,14 +130,14 @@ def test_spending_an_origin_spends_its_observation_or_itself() -> None:
     # participation once spent, so equality and hashing do not move.
     object_key = ObjectKey(mm.Account.identity, (("id", 1),))
     observation = RetainedObservation(
-        VersionedStateKey(object_key, 4), VersionObservation(observed_version=4), None
+        VersionedObjectStateKey(object_key, 4), VersionObservation(observed_version=4), None
     )
-    observed = ReadOrigin(mm.Account.identity, object_key, None, observation)
+    observed = ReadEvidence(mm.Account.identity, object_key, None, observation)
     observed.consume()
     assert observed.consumed and observation.consumed
 
     participation = ParticipationToken()
-    unversioned = ReadOrigin(mm.Account.identity, object_key, participation, None)
+    unversioned = ReadEvidence(mm.Account.identity, object_key, participation, None)
     before = hash(unversioned)
     assert not unversioned.consumed
     unversioned.consume()
@@ -145,12 +147,12 @@ def test_spending_an_origin_spends_its_observation_or_itself() -> None:
     assert hash(unversioned) == before
 
 
-def test_no_exported_name_reaches_a_read_origin() -> None:
-    # A Read Origin holds its read's raw evidence by reference, so only the
+def test_no_exported_name_reaches_a_read_evidence() -> None:
+    # Read Evidence holds its read's raw evidence by reference, so only the
     # Snapshot's private reader reaches it.
     for package in (parallax.snapshot, publication):
-        assert "read_origin_of" not in package.__all__
-        assert not hasattr(package, "read_origin_of")
+        assert "read_evidence_of" not in package.__all__
+        assert not hasattr(package, "read_evidence_of")
 
 
 def test_deferred_read_evidence_must_name_the_origins_entity() -> None:
@@ -158,7 +160,7 @@ def test_deferred_read_evidence_must_name_the_origins_entity() -> None:
         entity = mm.Balance.identity
 
     with pytest.raises(ValueError, match="must name its origin"):
-        ReadOrigin.deferred(mm.Account.identity, cast("Any", Evidence()), pin=None)
+        ReadEvidence.deferred(mm.Account.identity, cast("Any", Evidence()), pin=None)
 
 
 def test_a_wire_node_and_a_typed_node_of_one_row_carry_the_identical_evidence() -> None:
@@ -169,11 +171,11 @@ def test_a_wire_node_and_a_typed_node_of_one_row_carry_the_identical_evidence() 
     # source stays live across the second, which is what makes them one state.
     port = ScriptedAdapter(Transact(Read(rows=[dict(_ACCOUNT_ROW)], times=2)))
 
-    def fn(tx: Transaction) -> tuple[object, object]:
+    def fn(tx: TxnContext) -> tuple[object, object]:
         typed = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         wire = tx.wire.find(mm.Account.where(mm.Account.id == 1)).result()
         assert isinstance(wire, WireEntity)
-        return _typed_hint(typed), read_origin_of(wire)
+        return _typed_hint(typed), read_evidence_of(wire)
 
     typed_hint, wire_hint = (cast("Any", hint) for hint in account_db(port).transact(fn))
     assert wire_hint is not None
@@ -205,7 +207,7 @@ def test_wire_copy_answers_the_same_value_and_therefore_the_same_claim() -> None
     assert isinstance(node, WireEntity)
     for copied in (cast("Any", node).copy(), copy_module.copy(node), copy_module.deepcopy(node)):
         assert copied is node
-        assert read_origin_of(cast("WireEntity", copied)) is read_origin_of(node)
+        assert read_evidence_of(cast("WireEntity", copied)) is read_evidence_of(node)
 
 
 def test_plain_dict_conversion_strips_a_wire_nodes_keyed_source_status() -> None:
@@ -222,7 +224,7 @@ def test_plain_dict_conversion_strips_a_wire_nodes_keyed_source_status() -> None
     assert converted == dict(node.items())
     assert type(converted) is dict
     assert not isinstance(converted, WireEntity)
-    assert not hasattr(converted, "_source")
+    assert not hasattr(converted, "_read_evidence")
 
 
 # --------------------------------------------------------------------------- #
@@ -678,7 +680,7 @@ def test_releasing_every_source_makes_the_transactions_index_forget_the_state() 
     # and no scope-bound bookkeeping.
     port = ScriptedAdapter(Transact(_ACCOUNT_READ))
 
-    def fn(tx: Transaction) -> bool:
+    def fn(tx: TxnContext) -> bool:
         node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         evidence = weakref.ref(cast("Any", _typed_hint(node)).observation)
         assert evidence() is not None
@@ -695,7 +697,7 @@ def test_releasing_every_source_makes_the_transactions_index_forget_the_state() 
 def test_a_successful_flush_consumes_the_evidence_its_write_used() -> None:
     port = ScriptedAdapter(Transact(_ACCOUNT_READ, Write()))
 
-    def fn(tx: Transaction) -> object:
+    def fn(tx: TxnContext) -> object:
         node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         tx.amend(node.edit(balance=Decimal("125.00")))
         return _typed_hint(node)
@@ -711,14 +713,14 @@ def test_reusing_a_consumed_source_after_the_flush_is_refused() -> None:
     port = ScriptedAdapter(Transact(_ACCOUNT_READ, Write()), Transact())
     db = account_db(port)
 
-    def fn(tx: Transaction) -> mm.Account:
+    def fn(tx: TxnContext) -> mm.Account:
         node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         tx.amend(node.edit(balance=Decimal("125.00")))
         return node
 
     stale = db.transact(fn)
 
-    def second(tx: Transaction) -> None:
+    def second(tx: TxnContext) -> None:
         tx.amend(stale.edit(balance=Decimal("150.00")))
 
     with raises_contextualized(WriteEvidenceError) as refusal:
@@ -737,7 +739,7 @@ def test_a_locking_source_consumed_by_a_flush_cannot_drive_a_second_write() -> N
         Transact(Read(rows=[dict(_ACCOUNT_ROW)]), Write(), Read(rows=[dict(_ACCOUNT_ROW)]))
     )
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         tx.amend(node.edit(balance=Decimal("125.00")))
         tx.find(mm.Account.where(mm.Account.id == 1))
@@ -756,7 +758,7 @@ def test_an_intent_eliminated_before_dml_consumes_nothing() -> None:
     port = ScriptedAdapter(Transact(_ACCOUNT_READ))
     db = account_db(port)
 
-    def fn(tx: Transaction) -> mm.Account:
+    def fn(tx: TxnContext) -> mm.Account:
         node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         tx.amend(node.edit())
         return node
@@ -774,7 +776,7 @@ def test_an_aborted_flush_spends_no_evidence() -> None:
     db = account_db(port)
     escaped: list[mm.Account] = []
 
-    def doomed(tx: Transaction) -> None:
+    def doomed(tx: TxnContext) -> None:
         node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         escaped.append(node)
         tx.amend(node.edit(balance=Decimal("125.00")))
@@ -797,7 +799,7 @@ def test_two_observed_versions_of_one_object_coexist_and_resolve_independently()
     )
     db = account_db(port)
 
-    def fn(tx: Transaction) -> tuple[object, object]:
+    def fn(tx: TxnContext) -> tuple[object, object]:
         first = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         second = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         return _typed_hint(first), _typed_hint(second)
@@ -815,7 +817,7 @@ def test_a_reread_of_one_state_answers_the_evidence_the_first_read_retained() ->
     # what was just written.
     port = ScriptedAdapter(Transact(Read(rows=[dict(_ACCOUNT_ROW)], times=2)))
 
-    def fn(tx: Transaction) -> tuple[object, object]:
+    def fn(tx: TxnContext) -> tuple[object, object]:
         first = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         second = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         return _typed_hint(first), _typed_hint(second)
@@ -958,7 +960,7 @@ def test_a_shared_child_carries_an_origin_only_under_the_valid_root() -> None:
         )
     )
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         invalid, valid = (
             tx.find(vo.Location.where(vo.Location.all).include(vo.Location.customer))
             .checked()

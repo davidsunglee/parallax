@@ -84,7 +84,7 @@ from parallax.core.write_plan import (
 from parallax.core.write_plan.columns import (
     ColumnSlice,
 )
-from parallax.core.write_plan.keys import TemporalStateKey
+from parallax.core.write_plan.keys import TemporalObjectStateKey
 from parallax.core.write_plan.steps import ChangedFrom, PlannedUpdate
 from tests._support.clock_probes import CountingClock, inert_instant
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
@@ -120,7 +120,10 @@ def test_a_groups_state_keys_read_no_axis_end(
 
     keys = list(GroupStates(entity.identity, "id", evidence, shape))
 
-    assert [cast("TemporalStateKey", key).milestone.valid_time for key in keys] == [_JAN, _MAR]
+    assert [cast("TemporalObjectStateKey", key).milestone.valid_time for key in keys] == [
+        _JAN,
+        _MAR,
+    ]
 
 
 def test_versioned_evidence_aligns_one_version_with_each_key() -> None:

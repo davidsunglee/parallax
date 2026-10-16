@@ -28,12 +28,12 @@ from parallax.core.metamodel import (
     ValueObjectIdentity,
 )
 from parallax.core.write_plan import (
-    ObservedStateKey,
+    ObjectStateKey,
     PlannedInsert,
     PredecessorRow,
     TemporalObservation,
 )
-from parallax.core.write_plan.keys import TemporalStateKey
+from parallax.core.write_plan.keys import TemporalObjectStateKey
 from parallax.core.write_plan.steps import (
     Finite,
     PlannedClose,
@@ -316,7 +316,7 @@ class TemporalShadow:
         model: Metamodel,
         steps: Iterable[PlannedWrite],
         *,
-        retired: Iterable[ObservedStateKey] = (),
+        retired: Iterable[ObjectStateKey] = (),
     ) -> None:
         """Track every milestone ``steps`` OPENS as the current state a later step
         observes, once every milestone in ``retired`` — the states a bound range
@@ -333,7 +333,7 @@ class TemporalShadow:
         ledger of them would answer no question a later step can ask.
         """
         for state in retired:
-            if not isinstance(state, TemporalStateKey):
+            if not isinstance(state, TemporalObjectStateKey):
                 continue
             key = (
                 state.object.entity.name,

@@ -14,7 +14,7 @@ from parallax.core import Attr, Bitemporal, Document, DomainModel, TxTemporal, V
 from parallax.core.entity._model import model_of
 from parallax.core.execution import ExecutionFailure
 from parallax.core.unit_work import OptimisticLockConflictError, WriteEvidenceError
-from parallax.snapshot import ScopedDatabase, Transaction, connect
+from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.root_ownership import own_root
 from tests.api._coverage_interleaving import AfterCoverageRead
 
@@ -128,7 +128,7 @@ def _log_rows(profile_run: Any, entity: type[Any]) -> list[_Row]:
     return [_plain(row) for row in profile_run.port.execute(sql, [])]
 
 
-def _log_find(tx: Transaction, entity: type[Any], representation: _Representation) -> Any:
+def _log_find(tx: TxnContext, entity: type[Any], representation: _Representation) -> Any:
     if representation == "typed":
         return tx.find(entity.where(entity.id == 1)).result()
     name = _name(entity)
@@ -142,7 +142,7 @@ def _log_find(tx: Transaction, entity: type[Any], representation: _Representatio
 
 
 def _span_find(
-    tx: Transaction, entity: type[Any], representation: _Representation, at: dt.datetime
+    tx: TxnContext, entity: type[Any], representation: _Representation, at: dt.datetime
 ) -> Any:
     if representation == "typed":
         return tx.find(entity.where(entity.id == 1).as_of(valid_time=at)).result()
@@ -173,7 +173,7 @@ def _typed(changes: dict[str, object]) -> dict[str, object]:
 
 
 def _update(
-    tx: Transaction,
+    tx: TxnContext,
     observed: Any,
     representation: _Representation,
     changes: dict[str, object],
@@ -205,7 +205,7 @@ def test_an_update_restating_a_transaction_time_row_keeps_its_milestone(
 ) -> None:
     _seed_log(profile_run, entity)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         source = _log_find(tx, entity, representation)
         _update(tx, source, representation, {"amount": 100, "spec": _SPEC})
         fresh = _log_find(tx, entity, representation)
@@ -296,7 +296,7 @@ def test_a_range_keeps_each_rectangle_it_leaves_unchanged(
 ) -> None:
     _seed_spans(profile_run, entity, _AMOUNTS[variant])
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         source = _span_find(tx, entity, representation, _MAR)
         _update(tx, source, representation, {"amount": 100}, until=_OCT)
 
@@ -311,7 +311,7 @@ def test_a_composition_that_ends_where_it_started_keeps_its_milestone(
 ) -> None:
     _seed_spans(profile_run, entity, _AMOUNTS["all-equal"])
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         source = _span_find(tx, entity, representation, _FEB)
         _update(tx, source, representation, {"amount": 150}, until=_MAR)
         _update(tx, source, representation, {"amount": 100}, until=_MAR)
@@ -345,7 +345,7 @@ def test_nullable_and_structured_assignments_compare_their_whole_values(
     )
     changes, kept = _STRUCTURED[case]
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         _update(
             tx, _span_find(tx, entity, representation, _MAR), representation, changes, until=_JUN
         )
@@ -370,7 +370,7 @@ def test_an_unchanged_rectangle_the_attempt_opened_is_neither_split_nor_revised(
 ) -> None:
     profile_run.reset(model_of(_MODEL), {})
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         inserted = entity(id=1, amount=100, label="a", spec=None, marks=())
         tx.insert(inserted, valid_from=_JAN)
         _update(tx, _span_find(tx, entity, representation, _MAR), representation, {"amount": 100})
@@ -396,13 +396,13 @@ def test_a_peer_revision_to_equal_values_after_the_read_still_conflicts(
     def revise() -> None:
         # The peer changes the row and restores its value in one transaction, so
         # a new milestone holds values equal to the one this attempt read.
-        def restore(peer_tx: Transaction) -> None:
+        def restore(peer_tx: TxnContext) -> None:
             _update(peer_tx, _log_find(peer_tx, entity, "typed"), "typed", {"amount": 120})
             _update(peer_tx, _log_find(peer_tx, entity, "typed"), "typed", {"amount": 100})
 
         peer.transact(restore)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         nonlocal attempts
         attempts += 1
         source = _log_find(tx, entity, "typed")
@@ -451,7 +451,7 @@ def test_a_guard_holds_its_lock_until_commit_and_leaves_a_peers_token_standing(
 
     thread = threading.Thread(target=peer_write)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         _update(tx, _log_find(tx, entity, "typed"), "typed", {"amount": amount})
         # A dependent read runs the guard now; the callback goes on afterwards.
         _log_find(tx, entity, "typed")
@@ -515,7 +515,7 @@ def test_losing_any_rectangle_after_the_flush_read_rolls_back_every_effect(
         )
     ).using_database_login()
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         _update(tx, _span_find(tx, entity, "typed", _MAR), "typed", {"amount": 100}, until=_OCT)
 
     with pytest.raises(ExecutionFailure) as failed:

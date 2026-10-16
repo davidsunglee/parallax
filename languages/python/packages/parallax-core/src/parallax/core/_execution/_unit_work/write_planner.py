@@ -69,7 +69,7 @@ from parallax.core._execution._unit_work.write_settlement import OrderedWrite, W
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.temporal_read import TimeInterval, milestone_edge, valid_time_coverage
 from parallax.core.temporal_write.coverage import NO_TRANSFORM
-from parallax.core.write_plan.keys import ObjectKey, ObservedStateKey, VersionedStateKey
+from parallax.core.write_plan.keys import ObjectKey, ObjectStateKey, VersionedObjectStateKey
 from parallax.core.write_plan.materialized import PredecessorRows
 from parallax.core.write_plan.observe import TemporalObservation
 from parallax.core.write_plan.payload import WritePayloadPreparer
@@ -666,7 +666,7 @@ class PendingWrites:
         entity = item.instruction.target
         arriving = temporal_contribution(item)
         start = self._starting_revision(entity, arriving)
-        untargeted: list[tuple[ObservedStateKey | None, WriteIntent]] = []
+        untargeted: list[tuple[ObjectStateKey | None, WriteIntent]] = []
         for held in compositions:
             for contribution in _contributions(held):
                 if arriving.condition is None and contribution.condition is None:
@@ -739,7 +739,7 @@ class PendingWrites:
         assert shape is not None  # the facet covers every accepted Entity
         return milestone_edge(shape, observation.predecessor, None).tx_time
 
-    def holds(self, state: ObservedStateKey) -> bool:
+    def holds(self, state: ObjectStateKey) -> bool:
         """Whether a pending keyed write claims observed state ``state``."""
         if state in self._claims:
             return True
@@ -1150,7 +1150,7 @@ def _scope_object(scope: Hashable) -> ObjectKey:
     object beside a caller-held observation."""
     if isinstance(scope, ObjectKey):
         return scope
-    if isinstance(scope, VersionedStateKey):
+    if isinstance(scope, VersionedObjectStateKey):
         return scope.object
     key, _evidence = cast("tuple[ObjectKey, object]", scope)
     return key
@@ -1158,7 +1158,7 @@ def _scope_object(scope: Hashable) -> ObjectKey:
 
 def composed_intents(
     held: PendingTemporal,
-) -> tuple[tuple[ObservedStateKey | None, WriteIntent], ...]:
+) -> tuple[tuple[ObjectStateKey | None, WriteIntent], ...]:
     """Each write ``held`` composes, as the scope it claims and the intent it
     states over its window."""
     if not isinstance(held, ComposedTemporalWrite):
@@ -1171,7 +1171,7 @@ def composed_intents(
     )
 
 
-def _scope(contribution: TemporalContribution) -> ObservedStateKey | None:
+def _scope(contribution: TemporalContribution) -> ObjectStateKey | None:
     return None if contribution.claim is None else contribution.claim.key
 
 
@@ -1224,7 +1224,7 @@ def _claim_scope(
     item: ClaimedKeyedWrite | InsertionKeyedWrite | TargetKeyedWrite, key: ObjectKey
 ) -> Hashable:
     """The scope ``item``'s claim is filed under: the retained claim's own
-    Observed State Key, the object for an object claim, the scope an
+    Object State Key, the object for an object claim, the scope an
     insertion-authorized write was admitted at, the state a caller's condition
     names, or — for a caller-held observation, which names no state key — the
     object beside that evidence, since equal evidence about one object is one

@@ -69,7 +69,7 @@ class RootView:
         "_order",
         "_pending_invalid",
         "_pin",
-        "_primed_source",
+        "_primed_mapping",
         "_primed_values",
         "_releasable_rows",
         "_resolved",
@@ -92,7 +92,7 @@ class RootView:
         rows = page_rows(page)
         self._rows = rows
         self._pin = rows.pin if pin is None else pin
-        self._primed_source: Mapping[int, object] | None = None
+        self._primed_mapping: Mapping[int, object] | None = None
         self._primed_values: list[object] | None = None
         self._winner: list[int] = []
         self._resolved: dict[int, int] = {}
@@ -167,7 +167,7 @@ class RootView:
         a deferred evidence mapping therefore judges nothing outside this Root
         View, and a projection no root reached contributes nothing.
         """
-        if self._primed_source is by_projection and self._primed_values is not None:
+        if self._primed_mapping is by_projection and self._primed_values is not None:
             return cast(
                 "Mapping[int, T]",
                 {
@@ -195,12 +195,12 @@ class RootView:
                 primed[index] = by_projection[projection]
             except KeyError:
                 continue
-        self._primed_source = by_projection
+        self._primed_mapping = by_projection
         self._primed_values = primed
 
     def projection_value[T](self, node: int, by_projection: Mapping[int, T]) -> T | None:
         """The canonical projection's value for one allocation, when present."""
-        if self._primed_source is by_projection and self._primed_values is not None:
+        if self._primed_mapping is by_projection and self._primed_values is not None:
             value = self._primed_values[node]
             return None if value is _UNPRIMED else value  # pyright: ignore[reportReturnType]
         try:

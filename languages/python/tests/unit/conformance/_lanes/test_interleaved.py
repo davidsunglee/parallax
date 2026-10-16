@@ -31,7 +31,7 @@ from parallax.conformance._mechanism.envelope import EngineError
 from parallax.core.base import INFINITY
 from parallax.core.db_port import MappingRow, Row
 from parallax.core.dialect import Dialect
-from parallax.core.execution import DatabaseOptions
+from parallax.core.execution import TxnOptions
 from parallax.snapshot import Database, ScopedDatabase
 from tests._support.root_ownership import own_root
 from tests.unit._second_dialect import BACKTICKED
@@ -83,7 +83,7 @@ class _ScriptedExecution:
         port: ScriptedPort,
         model: Any,
         *,
-        options: DatabaseOptions | None = None,
+        options: TxnOptions | None = None,
         clock: Any = None,
         lifecycle_provider: Any = None,
         trusted: bool = True,
@@ -148,7 +148,7 @@ class _ScriptedExecutions:
         self,
         model: Any,
         *,
-        options: DatabaseOptions | None = None,
+        options: TxnOptions | None = None,
         clock: Any = None,
         lifecycle_provider: Any = None,
     ) -> Any:
@@ -651,7 +651,7 @@ def test_each_interleaved_group_is_composed_over_the_cases_own_root_record() -> 
     run_interleaved_scenario_case(rooted, caller_port, executions)
 
     expected = case_format.database_options(rooted)
-    assert expected == DatabaseOptions(isolation="serializable", max_retries=0)
+    assert expected == TxnOptions(isolation="serializable", max_retries=0)
     assert [execution.options for execution in executions.opened] == [expected, expected]
     assert ours_port.levels == ["serializable"]
     assert peer_port.levels == ["serializable"]

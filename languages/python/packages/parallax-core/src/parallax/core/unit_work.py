@@ -55,7 +55,7 @@ from parallax.core._execution._unit_work.materialized import (
 )
 from parallax.core._execution._unit_work.retain import (
     ParticipationToken,
-    ReadOrigin,
+    ReadEvidence,
     RetainedObservation,
 )
 from parallax.core._execution._unit_work.strategy import (
@@ -116,7 +116,7 @@ __all__ = [
     "PredicateMutation",
     "PredicateSelection",
     "PredicateWrite",
-    "ReadOrigin",
+    "ReadEvidence",
     "RetainedObservation",
     "RollbackOnlyError",
     "SettledEvidence",

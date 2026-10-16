@@ -55,7 +55,7 @@ from parallax.core.db_port import (
 )
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.execution import ExecutionFailure
-from parallax.snapshot import Database, ScopedDatabase, Transaction
+from parallax.snapshot import Database, ScopedDatabase, TxnContext
 from tests._support.db_port import ConnectsAsItself, body_outcome, projected_rows
 from tests.unit import _leaf_type_support as leaf_support
 
@@ -319,7 +319,7 @@ def acquire(
     body and before any flush could run; a reading marks its window with them.
     """
 
-    def body(transaction: Transaction) -> None:
+    def body(transaction: TxnContext) -> None:
         if opened is not None:
             opened()
         transaction.wire.amend_where(

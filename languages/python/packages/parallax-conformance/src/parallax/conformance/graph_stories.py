@@ -54,7 +54,7 @@ from parallax.conformance.vo_models import (
 )
 from parallax.core.object_query import LATEST, TX_TIME
 from parallax.core.unit_work import Clock
-from parallax.snapshot import ScopedDatabase, Snapshot, Transaction
+from parallax.snapshot import ScopedDatabase, Snapshot, TxnContext
 
 __all__ = ["GRAPH_STORIES", "GraphStory", "graph_story_snippet"]
 
@@ -137,7 +137,7 @@ def a_write_keeps_a_loaded_to_one_view(db: ScopedDatabase) -> tuple[Snapshot[Any
     snapshot = db.find(OrderItem.where(OrderItem.id == 11).include(OrderItem.order))
     loaded_order = snapshot.result().order
 
-    def rewrite(tx: Transaction) -> None:
+    def rewrite(tx: TxnContext) -> None:
         observed = tx.find(Order.where(Order.id == 1)).result()
         tx.amend(observed.edit(name="Rewritten"))
 
@@ -164,7 +164,7 @@ def a_delete_keeps_a_loaded_relationship_view(
     snapshot = db.find(Order.where(Order.id == 1).include(Order.items))
     loaded_items = snapshot.result().items
 
-    def destroy(tx: Transaction) -> None:
+    def destroy(tx: TxnContext) -> None:
         observed = tx.find(OrderItem.where(OrderItem.id == 11)).result()
         tx.delete(observed)
 
@@ -188,7 +188,7 @@ def a_write_keeps_a_loaded_value_object_document(
     snapshot = db.find(Location.where(Location.id == 100).include(Location.customer))
     loaded_customer = snapshot.result().customer
 
-    def rewrite(tx: Transaction) -> None:
+    def rewrite(tx: TxnContext) -> None:
         observed = tx.find(Customer.where(Customer.id == 1)).result()
         tx.amend(
             observed.edit(
@@ -214,7 +214,7 @@ def a_write_keeps_a_loaded_value_object_document(
 def a_write_keeps_a_view_over_freshly_inserted_rows(
     db: ScopedDatabase,
 ) -> tuple[None, Snapshot[Any], Any, None, Snapshot[Any]]:
-    def create(tx: Transaction) -> None:
+    def create(tx: TxnContext) -> None:
         tx.insert(
             Order(
                 id=6,
@@ -232,7 +232,7 @@ def a_write_keeps_a_view_over_freshly_inserted_rows(
     snapshot = db.find(Order.where(Order.id == 6).include(Order.items))
     loaded_items = snapshot.result().items
 
-    def rewrite(tx: Transaction) -> None:
+    def rewrite(tx: TxnContext) -> None:
         observed = tx.find(OrderItem.where(OrderItem.id == 61)).result()
         tx.amend(observed.edit(sku="Rewritten"))
 
@@ -244,7 +244,7 @@ def a_write_keeps_a_view_over_freshly_inserted_rows(
 def a_grouped_read_observes_its_own_relationship_writes(
     db: ScopedDatabase,
 ) -> tuple[Snapshot[Any], Snapshot[Any]]:
-    def read_your_own_writes(tx: Transaction) -> tuple[Snapshot[Any], Snapshot[Any]]:
+    def read_your_own_writes(tx: TxnContext) -> tuple[Snapshot[Any], Snapshot[Any]]:
         before = tx.find(Order.where(Order.id == 1).include(Order.items))
         loaded_item = before.result().items[1]  # item 11, by the declared `id desc`
         tx.insert(OrderItem(id=13, order_id=1, sku="D-130", quantity=6))
@@ -268,7 +268,7 @@ def a_rectangle_split_keeps_a_loaded_relationship_view(
     )
     loaded_coverages = snapshot.result().coverages
 
-    def split(tx: Transaction) -> None:
+    def split(tx: TxnContext) -> None:
         observed = tx.find(
             Coverage.where(Coverage.id == 20).as_of(
                 valid_time=dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
@@ -288,7 +288,7 @@ def a_rectangle_split_keeps_a_loaded_relationship_view(
 
 def a_finite_transaction_time_pinned_view_is_read_only(db: ScopedDatabase) -> None:
 
-    def mutate_the_pinned_view(tx: Transaction) -> None:
+    def mutate_the_pinned_view(tx: TxnContext) -> None:
         superseded = tx.find(
             Balance.where(Balance.id == 1).as_of(tx_time=dt.datetime(2024, 3, 1, tzinfo=dt.UTC))
         ).result()

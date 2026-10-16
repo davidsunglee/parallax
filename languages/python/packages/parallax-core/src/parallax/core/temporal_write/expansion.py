@@ -31,7 +31,7 @@ from parallax.core.temporal_write.coverage import (
     CoverageTransform,
     Successor,
 )
-from parallax.core.write_plan.keys import ObjectKey, ObservedStateKey, TemporalStateKey
+from parallax.core.write_plan.keys import ObjectKey, ObjectStateKey, TemporalObjectStateKey
 from parallax.core.write_plan.materialized import PredecessorRows
 from parallax.core.write_plan.observe import AssignedComparison, PredecessorRow
 from parallax.core.write_plan.payload import RowPayload, WritePayloadPreparer
@@ -245,7 +245,7 @@ class PredecessorExpander:
         predecessor: PredecessorRow,
         *,
         role: ExpansionRole,
-        state: ObservedStateKey,
+        state: ObjectStateKey,
         coverage: TimeInterval | None,
     ) -> BoundRange:
         """``predecessor`` settled alone (:meth:`settle`): the steps and effects
@@ -448,7 +448,7 @@ class PredecessorExpander:
     def settle(
         self,
         predecessors: Iterable[
-            tuple[PredecessorRow, ExpansionRole, ObservedStateKey, TimeInterval | None]
+            tuple[PredecessorRow, ExpansionRole, ObjectStateKey, TimeInterval | None]
         ],
         *,
         lineage: tuple[_ResolvedState, TimeInterval] | None = None,
@@ -518,7 +518,7 @@ class PredecessorExpander:
         settlement: _Settlement,
         predecessor: PredecessorRow,
         role: ExpansionRole,
-        state: ObservedStateKey,
+        state: ObjectStateKey,
         coverage: TimeInterval | None,
     ) -> None:
         """Add ``predecessor`` — the current row whose observed state is
@@ -794,7 +794,7 @@ class _Reached:
     the attempt owned it, and the row it is revised into, if any."""
 
     predecessor: PredecessorRow
-    state: ObservedStateKey
+    state: ObjectStateKey
     coverage: TimeInterval | None
     closing: PlannedClose
     own: OwnedEndpoint
@@ -1300,7 +1300,7 @@ class SettledGroup:
             ),
         )
 
-    def changed_states(self, evidence: PredecessorRows) -> Iterator[ObservedStateKey]:
+    def changed_states(self, evidence: PredecessorRows) -> Iterator[ObjectStateKey]:
         facts = self.facts
         entity = facts.entity.identity
         key_name = self.key_attributes[0].name
@@ -1310,7 +1310,7 @@ class SettledGroup:
             return
         for row, values in enumerate(evidence.rows):
             if dispositions is None or _changes(dispositions[row]):
-                yield TemporalStateKey(
+                yield TemporalObjectStateKey(
                     ObjectKey(entity, ((key_name, values[key_position]),)),
                     milestone_edge(facts.shape, evidence, row),
                 )
@@ -1466,7 +1466,7 @@ class _GroupChanges:
     group: SettledGroup
     evidence: PredecessorRows
 
-    def __iter__(self) -> Iterator[ObservedStateKey]:
+    def __iter__(self) -> Iterator[ObjectStateKey]:
         return self.group.changed_states(self.evidence)
 
 

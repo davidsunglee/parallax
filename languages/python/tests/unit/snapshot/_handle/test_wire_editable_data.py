@@ -20,7 +20,7 @@ from parallax.core.base import PresentDocument
 from parallax.core.db_port import MappingRow
 from parallax.core.dialect import POSTGRES
 from parallax.core.unit_work import WriteInstructionError
-from parallax.snapshot import Transaction, WireEntity
+from parallax.snapshot import TxnContext, WireEntity
 from tests._support.db_port import (
     BeginCall,
     CommitCall,
@@ -66,7 +66,7 @@ def test_editable_data_holds_the_key_and_writable_members_but_no_revision() -> N
     port = ScriptedAdapter(Transact(Read(rows=[_ACCOUNT_ROW])))
     copies: list[dict[str, object]] = []
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         node = tx.wire.find(_ACCOUNT_QUERY).result()
         assert node["version"] == 3
         copies.append(tx.wire.editable_data(node))
@@ -81,7 +81,7 @@ def test_editable_data_holds_the_key_and_writable_members_but_no_revision() -> N
 def test_editable_data_is_independent_of_the_node_at_every_depth() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[copy.deepcopy(_CONTACT_ROW)])))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         node = tx.wire.find(_CONTACT_QUERY).result()
         data = tx.wire.editable_data(node)
         address = cast("dict[str, Any]", data["address"])
@@ -101,7 +101,7 @@ def test_editable_data_leaves_derived_variant_metadata_out() -> None:
     row: MappingRow = {"id": 4, "kind": "card", "amount": Decimal(1), "card_network": "visa"}
     port = ScriptedAdapter(Transact(Read(rows=[row])))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         node = tx.wire.find(
             {"target": "Payment", "predicate": {"eq": {"path": "Payment.id", "value": 4}}}
         ).result()
@@ -114,7 +114,7 @@ def test_editable_data_leaves_derived_variant_metadata_out() -> None:
 def test_editable_data_serves_a_conditional_replacement_and_an_insertion() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[_ACCOUNT_ROW]), Write(), Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         node = tx.wire.find(_ACCOUNT_QUERY).result()
         data = tx.wire.editable_data(node)
         data["owner"] = "Bo"
@@ -134,7 +134,7 @@ def test_editable_data_serves_a_conditional_replacement_and_an_insertion() -> No
 def test_editable_data_of_an_inserted_node_copies_the_row_it_opened() -> None:
     port = ScriptedAdapter(Transact(Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         opened = tx.wire.insert("Account", {"id": 9, "owner": "Ada", "balance": "1.00"})
         assert tx.wire.editable_data(opened) == {"id": 9, "owner": "Ada", "balance": "1.00"}
 
@@ -149,7 +149,7 @@ def test_editable_data_of_an_inserted_node_copies_the_row_it_opened() -> None:
 def test_editable_data_takes_a_node_parallax_published(value: object) -> None:
     port = ScriptedAdapter(Transact())
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         with pytest.raises(WriteInstructionError, match="published"):
             tx.wire.editable_data(cast("WireEntity", value))
 
@@ -160,7 +160,7 @@ def test_editable_data_takes_a_node_parallax_published(value: object) -> None:
 def test_a_published_node_states_a_conditional_replacement_whole() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[_ACCOUNT_ROW]), Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         node = tx.wire.find(_ACCOUNT_QUERY).result()
         tx.wire.replace_if(node, version=3)
 
@@ -171,7 +171,7 @@ def test_a_published_node_states_a_conditional_replacement_whole() -> None:
 def test_a_node_stated_replacement_takes_neither_data_nor_its_source_authority() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[_ACCOUNT_ROW])))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         node = tx.wire.find(_ACCOUNT_QUERY).result()
         with pytest.raises(WriteInstructionError, match="takes no data"):
             tx.wire.replace_if(node, {"owner": "Bo", "balance": "1"}, version=3)
@@ -191,7 +191,7 @@ def test_a_node_stated_replacement_takes_neither_data_nor_its_source_authority()
 def test_editable_data_amends_every_member_it_holds_and_is_no_source() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[_ACCOUNT_ROW]), Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         node = tx.wire.find(_ACCOUNT_QUERY).result()
         data = tx.wire.editable_data(node)
         with pytest.raises(WriteInstructionError, match="published"):

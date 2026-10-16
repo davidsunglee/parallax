@@ -300,24 +300,24 @@ existing state retains. Transaction-Time-Only and Bitemporal entities have
 separate observation variant per temporal flavor — decides which topology
 applies.
 
-### Observed State Key
+### Object State Key
 
 An observation is evidence about **one exact observed state**, and that state is
 what addresses it:
 
 ```text
-ObservedStateKey =
-    VersionedStateKey(object, version)
-  | TemporalStateKey(object, milestone)
+ObjectStateKey =
+    VersionedObjectStateKey(object, version)
+  | TemporalObjectStateKey(object, milestone)
 ```
 
 An **Object Key** is Entity Identity plus ordered primary-key values and
 deliberately carries no version and no temporal coordinate: it addresses the
 object **across** its states, which is what write coalescing, cancellation, and
-buffered-insert recognition each ask about. An **Observed State Key** addresses
+buffered-insert recognition each ask about. An **Object State Key** addresses
 **one** of those states, which is what observation eligibility and consumption
 ask about. Inserts and unversioned Non-Temporal writes observe no state and
-therefore have no Observed State Key at all; the absence is the missing arm,
+therefore have no Object State Key at all; the absence is the missing arm,
 never a key with an empty coordinate. The two differ in what follows from that
 absence: an insert opens a row and has no prior state for anything to be about,
 while an unversioned Non-Temporal existing-row write does write against a stored
@@ -339,7 +339,7 @@ The milestone coordinate is deliberately the **converse** of the identity key
 one unless told otherwise. The identity triple carries the *query's* lowered
 as-of coordinate and makes **distinct** coordinates denote **distinct pinned
 views**, even when both currently resolve to one milestone row, because each
-view drives its own relationship dereferencing. An Observed State Key carries
+view drives its own relationship dereferencing. An Object State Key carries
 the *observed milestone's own* coordinate, so two **distinct** pins that resolve
 to **one** milestone deliberately name **one** observed state: an observation
 records what was read, not the reading, and a milestone read twice is one piece

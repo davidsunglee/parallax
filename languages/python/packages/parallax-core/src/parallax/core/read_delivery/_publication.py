@@ -17,7 +17,7 @@ class RootsOf[Origin](Protocol):
 
     ``includes`` is the requested Include Path tree. ``ordinal_offset`` is where
     this Page's roots start in the ordered result being published, which is
-    nonzero wherever one result spans several Pages. ``sources`` is the origin
+    nonzero wherever one result spans several Pages. ``origins`` is the origin
     each observed projection's value carries, keyed by projection index.
     ``milestones`` is the target family's Temporal Shape for a milestone-set
     read, whose roots each stand at their own edge. An ``atomic`` publication
@@ -32,7 +32,7 @@ class RootsOf[Origin](Protocol):
         *,
         atomic: bool = False,
         ordinal_offset: int = 0,
-        sources: Mapping[int, Origin] = ...,
+        origins: Mapping[int, Origin] = ...,
         milestones: TemporalShape | None = None,
     ) -> Iterator[object]: ...
 

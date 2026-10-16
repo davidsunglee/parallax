@@ -13,7 +13,7 @@ import yaml
 from parallax.conformance import case_format
 from parallax.conformance.case_format import Case, SelectionFilter
 from parallax.core.base import FLOAT32, FLOAT64, INT32, INT64, ManagedValue, matches_neutral_type
-from parallax.core.execution import DatabaseOptions
+from parallax.core.execution import TxnOptions
 from parallax.core.wire import (
     WireDecodingError,
     WireEncodingError,
@@ -209,14 +209,14 @@ def test_an_unconfigured_root_is_the_records_own_defaults(document: dict[str, ob
     # A request under `when.uow` is not configuration: the root a case connects
     # is built from `given.databaseOptions` alone, so an authored request never
     # leaks into the record production resolves it against.
-    assert case_format.database_options(_isolation_case(document)) == DatabaseOptions()
+    assert case_format.database_options(_isolation_case(document)) == TxnOptions()
 
 
 def test_every_configured_root_field_reaches_the_record_and_the_rest_stay_built_in() -> None:
     case = _isolation_case(
         {"given": {"databaseOptions": {"maxRetries": 0, "isolation": "repeatable-read"}}}
     )
-    assert case_format.database_options(case) == DatabaseOptions(
+    assert case_format.database_options(case) == TxnOptions(
         max_retries=0, isolation="repeatable_read"
     )
     fully = _isolation_case(
@@ -231,7 +231,7 @@ def test_every_configured_root_field_reaches_the_record_and_the_rest_stay_built_
             }
         }
     )
-    assert case_format.database_options(fully) == DatabaseOptions(
+    assert case_format.database_options(fully) == TxnOptions(
         max_retries=2,
         concurrency="locking",
         retry_optimistic_conflicts=True,
@@ -282,12 +282,10 @@ def test_effective_options_lay_the_authored_request_over_the_root() -> None:
             "when": {"uow": {"maxRetries": 5, "isolation": "serializable"}},
         }
     )
-    assert case_format.effective_options(case) == DatabaseOptions(
+    assert case_format.effective_options(case) == TxnOptions(
         max_retries=5, concurrency="locking", isolation="serializable"
     )
-    assert case_format.database_options(case) == DatabaseOptions(
-        max_retries=2, concurrency="locking"
-    )
+    assert case_format.database_options(case) == TxnOptions(max_retries=2, concurrency="locking")
     assert case_format.transaction_keywords(case) == {
         "max_retries": 5,
         "isolation": "serializable",
@@ -301,13 +299,13 @@ def test_an_authored_zero_or_false_overrides_a_configured_root() -> None:
             "when": {"uow": {"maxRetries": 0, "retryOptimisticConflicts": False}},
         }
     )
-    assert case_format.effective_options(case) == DatabaseOptions(
+    assert case_format.effective_options(case) == TxnOptions(
         max_retries=0, retry_optimistic_conflicts=False
     )
 
 
 def test_effective_options_of_an_unconfigured_unrequesting_case_are_the_built_ins() -> None:
-    assert case_format.effective_options(_isolation_case({})) == DatabaseOptions()
+    assert case_format.effective_options(_isolation_case({})) == TxnOptions()
 
 
 def test_is_module_tag_grammar() -> None:

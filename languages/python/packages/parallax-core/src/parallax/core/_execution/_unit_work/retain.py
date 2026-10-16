@@ -4,13 +4,13 @@ from typing import Final, Protocol, cast
 
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.temporal_read import Pin
-from parallax.core.write_plan.keys import ObjectKey, ObservedStateKey, TemporalStateKey
+from parallax.core.write_plan.keys import ObjectKey, ObjectStateKey, TemporalObjectStateKey
 from parallax.core.write_plan.observe import WriteObservation
 
 __all__ = [
     "InsertionIdentity",
     "ParticipationToken",
-    "ReadOrigin",
+    "ReadEvidence",
     "RetainedObservation",
     "RetainedTargetState",
 ]
@@ -83,7 +83,7 @@ class RetainedObservation:
 
     def __init__(
         self,
-        key: ObservedStateKey,
+        key: ObjectStateKey,
         evidence: WriteObservation,
         participation: ParticipationToken | None,
     ) -> None:
@@ -145,7 +145,7 @@ class RetainedTargetState:
 
     def __init__(
         self,
-        state: TemporalStateKey,
+        state: TemporalObjectStateKey,
         read_at: int,
         row: tuple[object, ...],
         document: object | None,
@@ -178,7 +178,7 @@ class _Spent:
         self.context: Final = context
 
 
-class ReadOrigin:
+class ReadEvidence:
     """What one source value privately retains about the read that produced it.
 
     Never authority of its own: it names the concrete Entity the read resolved
@@ -242,7 +242,7 @@ class ReadOrigin:
         name: str,
         value: object,
         participation: ParticipationToken | None,
-    ) -> ReadOrigin:
+    ) -> ReadEvidence:
         origin = object.__new__(cls)
         object.__setattr__(origin, "_source", (entity, name, value))
         object.__setattr__(origin, "_context", participation)
@@ -255,7 +255,7 @@ class ReadOrigin:
         evidence: _DeferredReadEvidence,
         *,
         pin: Pin | None,
-    ) -> ReadOrigin:
+    ) -> ReadEvidence:
         if evidence.entity != entity:
             raise ValueError("deferred read evidence must name its origin's Entity")
         origin = object.__new__(cls)
@@ -316,7 +316,7 @@ class ReadOrigin:
 
     def __setattr__(self, name: str, value: object) -> None:
         del value
-        raise AttributeError(f"a Read Origin is immutable: cannot set {name!r}")
+        raise AttributeError(f"Read Evidence is immutable: cannot set {name!r}")
 
     @property
     def object_key(self) -> ObjectKey:
@@ -349,7 +349,7 @@ class ReadOrigin:
         return held
 
     def __eq__(self, other: object) -> bool:
-        return isinstance(other, ReadOrigin) and (
+        return isinstance(other, ReadEvidence) and (
             self.entity,
             self.object_key,
             self.participation,
@@ -368,7 +368,7 @@ class ReadOrigin:
 
     def __repr__(self) -> str:
         return (
-            "ReadOrigin("
+            "ReadEvidence("
             f"entity={self.entity!r}, object_key={self.object_key!r}, "
             f"participation={self.participation!r}, observation={self.observation!r}, "
             f"pin={self.pin!r})"

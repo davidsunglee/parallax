@@ -91,7 +91,7 @@ from parallax.core.execution_lifecycle import (
 )
 from parallax.core.execution_lifecycle._diagnostics import database_diagnostic_for
 from parallax.core.sql_gen import LoweredStatement
-from parallax.snapshot import ScopedDatabase, Transaction, connect
+from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
     ScriptedAdapter,
@@ -1078,7 +1078,7 @@ def test_a_whole_transaction_through_connect_reads_as_one_operation(
     port = ScriptedAdapter(Transact(Write(), commit=deadlock()), Transact(Write()))
     db = _db(port, LoggingLifecycleProvider(logger))
 
-    def body(tx: Transaction) -> None:
+    def body(tx: TxnContext) -> None:
         tx.insert(new_account())
 
     with caplog.at_level(logging.DEBUG, logger=logger.name):

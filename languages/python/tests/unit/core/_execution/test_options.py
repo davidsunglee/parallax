@@ -1,4 +1,4 @@
-"""`DatabaseOptions` (`execution.md`): the built-in record, the field rules
+"""`TxnOptions` (`execution.md`): the built-in record, the field rules
 construction is held to — the same rules an explicit `db.transact` keyword
 meets — the immutability of what a root is connected with, and the private
 marker an omitted transaction keyword defaults to.
@@ -14,11 +14,11 @@ from parallax.core._execution._options import (
     OMITTED,
     Omitted,
 )
-from parallax.core.execution import DatabaseOptions
+from parallax.core.execution import TxnOptions
 
 
 def test_the_built_in_record_is_ten_optimistic_off_and_read_committed() -> None:
-    options = DatabaseOptions()
+    options = TxnOptions()
     assert options.max_retries == 10
     assert options.concurrency == "optimistic"
     assert options.retry_optimistic_conflicts is False
@@ -26,26 +26,26 @@ def test_the_built_in_record_is_ten_optimistic_off_and_read_committed() -> None:
 
 
 def test_the_record_is_frozen_and_slotted() -> None:
-    options = DatabaseOptions()
+    options = TxnOptions()
     with pytest.raises(dataclasses.FrozenInstanceError):
         options.max_retries = 3  # pyright: ignore[reportAttributeAccessIssue] - the refusal is what this proves
     assert not hasattr(options, "__dict__")
 
 
 def test_every_field_is_configurable_and_compares_by_value() -> None:
-    configured = DatabaseOptions(
+    configured = TxnOptions(
         max_retries=0,
         concurrency="locking",
         retry_optimistic_conflicts=True,
         isolation="serializable",
     )
-    assert configured == DatabaseOptions(
+    assert configured == TxnOptions(
         max_retries=0,
         concurrency="locking",
         retry_optimistic_conflicts=True,
         isolation="serializable",
     )
-    assert configured != DatabaseOptions()
+    assert configured != TxnOptions()
 
 
 @pytest.mark.parametrize(
@@ -72,14 +72,14 @@ def test_construction_refuses_a_value_outside_its_fields_contract(
     # `None` is invalid for every field: the record holds concrete values only,
     # and omission is a keyword a caller leaves out rather than a value.
     with pytest.raises(ValueError, match=message):
-        DatabaseOptions(**{field: value})  # pyright: ignore[reportArgumentType] - the runtime refusal of an untyped caller is what this proves
+        TxnOptions(**{field: value})  # pyright: ignore[reportArgumentType] - the runtime refusal of an untyped caller is what this proves
 
 
 def test_an_accepted_vocabulary_value_is_stored_as_its_canonical_spelling() -> None:
     class Spelled(str):
         __hash__ = None  # type: ignore[assignment]
 
-    options = DatabaseOptions(
+    options = TxnOptions(
         concurrency=Spelled("locking"),  # pyright: ignore[reportArgumentType]
         isolation=Spelled("serializable"),  # pyright: ignore[reportArgumentType]
     )
@@ -89,8 +89,8 @@ def test_an_accepted_vocabulary_value_is_stored_as_its_canonical_spelling() -> N
 
 
 def test_zero_retries_is_a_value_rather_than_an_omission() -> None:
-    assert DatabaseOptions(max_retries=0).max_retries == 0
-    assert DatabaseOptions(retry_optimistic_conflicts=False).retry_optimistic_conflicts is False
+    assert TxnOptions(max_retries=0).max_retries == 0
+    assert TxnOptions(retry_optimistic_conflicts=False).retry_optimistic_conflicts is False
 
 
 def test_the_omission_marker_is_one_slotted_value_that_names_itself() -> None:

@@ -83,9 +83,9 @@ from parallax.core.db_port import (
 )
 from parallax.core.dialect import Dialect
 from parallax.core.execution import (
-    DatabaseOptions,
     ServingModel,
     TransactionTimePinReadOnlyError,
+    TxnOptions,
 )
 from parallax.core.metamodel import (
     AbstractRoot,
@@ -131,7 +131,7 @@ from parallax.core.unit_work import (
 )
 from parallax.core.write_plan import (
     ObjectKey,
-    ObservedStateKey,
+    ObjectStateKey,
     TemporalObservation,
     VersionObservation,
     WriteObservation,
@@ -141,8 +141,8 @@ from parallax.core.write_plan import (
 from parallax.core.write_plan.payload import WritePayloadPreparer
 from parallax.core.write_plan.plan import NO_TEMPORAL_WRITE_OWNERSHIP, WriteStepView
 from parallax.core.write_plan.steps import KeyTarget, PlannedWrite
-from parallax.snapshot import Database, ScopedDatabase, Snapshot, Transaction, WireEntity
-from parallax.snapshot._publication._wire import authoring_of, read_origin_of
+from parallax.snapshot import Database, ScopedDatabase, Snapshot, TxnContext, WireEntity
+from parallax.snapshot._publication._wire import authoring_of, read_evidence_of
 
 __all__ = [
     "INERT_CLOCK_INSTANT",
@@ -598,7 +598,7 @@ class GroupEvidence:
                 "retained, which this lane does not model"
             )
         node = _group_source_node(name, key, self.state, self.named, valid_from)
-        origin = read_origin_of(node)
+        origin = read_evidence_of(node)
         retained = None if origin is None else origin.observation
         if retained is None:
             raise EngineError(
@@ -868,7 +868,7 @@ def _binds_row_observations(
 ) -> bool:
     """Whether a non-temporal write entry's rows each carry their OWN object key
     and observation, mirroring what that many separate
-    `Transaction.insert`/`.update`/`.delete` calls would buffer — rather than
+    `TxnContext.insert`/`.update`/`.delete` calls would buffer — rather than
     arriving as anonymous rows free to be merged back together.
 
     This decides OBSERVATION BINDING only, never statement count:
@@ -969,7 +969,7 @@ def _seed_insert_version(
     pair whose insert never survives to ANY golden DML
     (`m-unit-work-010`'s insert-then-delete cancellation) has no golden bind
     to match and so may omit it. The RUN lane's own translation
-    (`_execute_write_unit`, mirroring "as many separate `Transaction.insert`
+    (`_execute_write_unit`, mirroring "as many separate `TxnContext.insert`
     calls") states each insert through `tx.wire.insert`, whose Create Payload
     carries no framework-owned member at all (`_wire_insert_payload` drops the
     seeded version), and a case's own authored `version` is what a
@@ -1020,7 +1020,7 @@ def _build_instructions(
     / ``roundTrips`` / ``rollback``). ``rows`` MAY batch several logical
     per-object writes into one entry (the write-instruction schema's "one or
     more rows" vocabulary), and this seam ALWAYS buffers one single-row
-    instruction per row, exactly as that many separate ``Transaction`` calls
+    instruction per row, exactly as that many separate ``TxnContext`` calls
     would. Nothing is ever pre-merged here: whether buffered rows share one
     statement is the planner's own collapse stage to decide.
 
@@ -1357,7 +1357,7 @@ class ExecutedPlan:
     plan: WritePlan
     payloads: WritePayloadPreparer
     runs: list[WriteStepView] = field(default_factory=list[WriteStepView])
-    changed: list[ObservedStateKey] = field(default_factory=list[ObservedStateKey])
+    changed: list[ObjectStateKey] = field(default_factory=list[ObjectStateKey])
 
     @property
     def steps(self) -> list[PlannedWrite]:
@@ -1431,7 +1431,7 @@ def _lower_predicate_write_step(
 
 
 def _buffer_wire_predicate_write(
-    tx: Transaction,
+    tx: TxnContext,
     model: AcceptedMetamodel,
     raw_write: Mapping[str, object],
     prepared: PreparedPredicateWrite,
@@ -2177,7 +2177,7 @@ def _execute_write_unit(
     port: CaseDatabase,
     serving: ServingModel,
     model: AcceptedMetamodel,
-    options: DatabaseOptions,
+    options: TxnOptions,
     requests: case_format.TransactionKeywords,
     resolved: Sequence[_ResolvedWrite],
     tx_instant: str,
@@ -2220,7 +2220,7 @@ def _execute_write_unit(
     ) as _root_database:
         database = _root_database.using_database_login()
 
-        def body(tx: Transaction) -> None:
+        def body(tx: TxnContext) -> None:
             state = GroupState()
             with observed.resolving_reads():
                 for query in _unit_source_reads(model, resolved):
@@ -2357,7 +2357,7 @@ def _run_readless_predicate_write(
     ) as _root_database:
         database = _root_database.using_database_login()
 
-        def body(tx: Transaction) -> None:
+        def body(tx: TxnContext) -> None:
             _buffer_wire_predicate_write(tx, context.model, raw_write, instruction)
 
         with absorbing_rollback():
@@ -2495,7 +2495,7 @@ def _run_materializing_pair(
     ) as _root_database:
         database = _root_database.using_database_login()
 
-        def body(tx: Transaction) -> None:
+        def body(tx: TxnContext) -> None:
             _buffer_wire_predicate_write(
                 tx,
                 model,
@@ -2654,7 +2654,7 @@ class CaseContext:
     concurrency: Concurrency
     shadow: TemporalShadow | None
     requests: case_format.TransactionKeywords
-    options: DatabaseOptions
+    options: TxnOptions
 
     def case_state(self) -> TemporalShadow:
         """The tracker of a lane that models case state."""
@@ -2798,7 +2798,7 @@ def _published_claims(nodes: Sequence[WireEntity]) -> GroupObservations:
     against so the two can never name different states."""
     claims: list[RetainedObservation] = []
     for node in nodes:
-        hint = read_origin_of(node)
+        hint = read_evidence_of(node)
         if hint is not None and hint.observation is not None:
             claims.append(hint.observation)
     return claims
@@ -2807,7 +2807,7 @@ def _published_claims(nodes: Sequence[WireEntity]) -> GroupObservations:
 def _node_object_key(node: WireEntity) -> ObjectKey:
     """The object ``node`` names: the one its read observed, or the one the
     insert that answered it opened."""
-    hint = read_origin_of(node)
+    hint = read_evidence_of(node)
     if hint is not None:
         return hint.object_key
     authority = authoring_of(node)
@@ -2825,7 +2825,7 @@ def _writable_source(node: WireEntity) -> bool:
     writable one, so an unreferenced scan skips what the verb would refuse
     rather than reaching for the refusal.
     """
-    hint = read_origin_of(node)
+    hint = read_evidence_of(node)
     assert hint is not None
     try:
         validate_source_pin(hint.entity, hint.pin)
@@ -2905,7 +2905,7 @@ def _pinned_at(node: WireEntity, valid_from: dt.datetime | None) -> bool:
     takes none."""
     if valid_from is None:
         return True
-    hint = read_origin_of(node)
+    hint = read_evidence_of(node)
     assert hint is not None
     pin = hint.pin
     return pin is not None and pin.valid_time == valid_from
@@ -2946,7 +2946,7 @@ def _source_find_nodes(
 
 
 def _buffer_wire_write(
-    tx: Transaction,
+    tx: TxnContext,
     model: AcceptedMetamodel,
     state: GroupState,
     write: _ResolvedWrite,
@@ -3024,7 +3024,7 @@ def _buffer_wire_write(
 
 
 def _buffer_wire_target(
-    tx: Transaction, model: AcceptedMetamodel, instruction: PreparedTargetWrite
+    tx: TxnContext, model: AcceptedMetamodel, instruction: PreparedTargetWrite
 ) -> None:
     """Buffer ONE caller-addressed write through the public ``tx.wire`` verb
     its mutation names, with the caller's own revision beside its document."""
@@ -3163,7 +3163,7 @@ class GroupSession:
 
 
 def run_group_step(
-    tx: Transaction,
+    tx: TxnContext,
     session: ModeledExecution,
     context: CaseContext,
     state: GroupState,
@@ -3264,7 +3264,7 @@ def run_group_step(
 
 
 def _group_read(
-    tx: Transaction,
+    tx: TxnContext,
     context: CaseContext,
     state: GroupState,
     step: Mapping[str, object],
@@ -3333,7 +3333,7 @@ def _run_uow_group(
         rows_observed: list[dict[str, object]] = []
         step_graphs: list[dict[str, object]] = []
 
-        def body(tx: Transaction) -> None:
+        def body(tx: TxnContext) -> None:
             for index in range(start, end + 1):
                 step, read = run_group_step(
                     tx, session, context, state, steps[index], index, tx_instant, observation
@@ -3412,7 +3412,7 @@ def _submission_writes(
 
 
 def _submit(
-    tx: Transaction,
+    tx: TxnContext,
     model: AcceptedMetamodel,
     state: GroupState,
     submitted: _Submitted,
@@ -3526,7 +3526,7 @@ def _run_state_graded_group(
     rows_observed: list[dict[str, object]] = []
     running: list[int] = []
 
-    def body(tx: Transaction) -> None:
+    def body(tx: TxnContext) -> None:
         for index in range(start, end + 1):
             running.append(index)
             step = steps[index]
@@ -3975,7 +3975,7 @@ def _conflict_attempt_requests(case: case_format.Case) -> case_format.Transactio
 
 
 def refuse_a_conflict_retry_opt_in(
-    case: case_format.Case, resolved: DatabaseOptions, placement: str
+    case: case_format.Case, resolved: TxnOptions, placement: str
 ) -> None:
     """Refuse a case whose transactions would resolve `retryOptimisticConflicts`
     to true under a positive `maxRetries` on a lane that authors each attempt
@@ -4009,7 +4009,7 @@ def _conflict_attempt_affected(
     database: ScopedDatabase,
     requests: case_format.TransactionKeywords,
     implied: type[WriteEffectError],
-    body: Callable[[Transaction], int],
+    body: Callable[[TxnContext], int],
 ) -> int:
     """One conflict attempt's affected-row observation: what ``body`` reports when
     the write lands, or the ``actual`` count carried by the ONE Write Effect Error
@@ -4067,7 +4067,7 @@ def _conflict_source_nodes(
     port: CaseDatabase,
     serving: ServingModel,
     model: AcceptedMetamodel,
-    options: DatabaseOptions,
+    options: TxnOptions,
     target: str,
     resolved: Sequence[_ConflictWrite],
     lifecycle: LifecycleRun,
@@ -4114,7 +4114,7 @@ def _conflict_source_nodes(
                 {"target": target, "predicate": _conflict_key_predicate(model, target, resolved)}
             )
             for root in snapshot.results():
-                hint = read_origin_of(root)
+                hint = read_evidence_of(root)
                 assert hint is not None  # a Wire read files a hint on every published Entity node
                 nodes[hint.object_key] = root
         return nodes, observed.round_trips
@@ -4154,7 +4154,7 @@ def _refuse_unobserved_conflict_version(
     statement against a version no read of this lane ever saw.
     """
     declared = None if write.observation is None else write.observation.observed_version
-    hint = read_origin_of(node)
+    hint = read_evidence_of(node)
     assert hint is not None  # the node came from :func:`_conflict_source_nodes`
     retained = None if hint.observation is None else hint.observation.evidence
     observed = retained.observed_version if isinstance(retained, VersionObservation) else None
@@ -4170,7 +4170,7 @@ def _run_conflict_write(
     port: CaseDatabase,
     serving: ServingModel,
     model: AcceptedMetamodel,
-    options: DatabaseOptions,
+    options: TxnOptions,
     target: str,
     concurrency: Concurrency,
     requests: case_format.TransactionKeywords,
@@ -4217,7 +4217,7 @@ def _run_conflict_write(
         for write, node in zip(resolved, sources, strict=True):
             _refuse_unobserved_conflict_version(target, write, node)
 
-        def body(tx: Transaction) -> int:
+        def body(tx: TxnContext) -> int:
             for write, node in zip(resolved, sources, strict=True):
                 if mutation == "delete":
                     tx.wire.delete(node)

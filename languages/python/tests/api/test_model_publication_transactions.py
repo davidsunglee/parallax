@@ -21,7 +21,7 @@ from parallax.core.execution import (
     ServingModel,
     prepare_model,
 )
-from parallax.snapshot import Transaction, connect
+from parallax.snapshot import TxnContext, connect
 from tests._support.corpus import case_fixtures
 from tests._support.root_ownership import own_root
 
@@ -46,7 +46,7 @@ def test_a_publication_during_a_transaction_leaves_that_transaction_on_a(
     a, b, serving = _editions()
     db = own_root(connect(_seeded(profile_run), serving)).using_database_login()
 
-    def body(tx: Transaction) -> tuple[str, str, Decimal]:
+    def body(tx: TxnContext) -> tuple[str, str, Decimal]:
         before = tx.edition
         serving.publish(b, expected=a)
         # Still served under A: the read runs against the projections this
@@ -65,7 +65,7 @@ def test_a_retry_adopts_b_and_commits_under_it(profile_run: Any) -> None:
     db = own_root(connect(port, serving)).using_database_login()
     seen: list[str] = []
 
-    def body(tx: Transaction) -> str:
+    def body(tx: TxnContext) -> str:
         seen.append(tx.edition)
         if len(seen) == 1:
             serving.publish(b, expected=a)
@@ -86,7 +86,7 @@ def test_a_join_stays_on_the_outer_attempts_edition(profile_run: Any) -> None:
     a, b, serving = _editions()
     db = own_root(connect(_seeded(profile_run), serving)).using_database_login()
 
-    def outer(tx: Transaction) -> tuple[str, bool]:
+    def outer(tx: TxnContext) -> tuple[str, bool]:
         serving.publish(b, expected=a)
         return db.transact(lambda inner: (inner.edition, inner is tx))
 

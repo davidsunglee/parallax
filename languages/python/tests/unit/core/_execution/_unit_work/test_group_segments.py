@@ -78,7 +78,7 @@ from parallax.core.write_plan import (
     WritePlanningError,
 )
 from parallax.core.write_plan.columns import ColumnSlice
-from parallax.core.write_plan.keys import ObservedStateKey
+from parallax.core.write_plan.keys import ObjectStateKey
 from parallax.core.write_plan.plan import (
     NO_TEMPORAL_WRITE_OWNERSHIP,
     BoundRange,
@@ -1427,12 +1427,12 @@ class _LiveOwnership:
     ) -> tuple[TimeInterval | None, ...]:
         return (valid_time_coverage,) if endpoint in self.inserted else ()
 
-    def proven(self, original: ObservedStateKey, /) -> Derivation | None:
+    def proven(self, original: ObjectStateKey, /) -> Derivation | None:
         del original
         return None
 
     def descendants(
-        self, original: ObservedStateKey, valid_time_window: TimeInterval | None, /
+        self, original: ObjectStateKey, valid_time_window: TimeInterval | None, /
     ) -> Iterator[tuple[OwnedEndpoint, Descent]]:
         del original, valid_time_window
         return iter(())

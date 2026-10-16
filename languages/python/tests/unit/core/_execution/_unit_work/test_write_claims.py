@@ -40,7 +40,7 @@ from parallax.core.unit_work import (
     keyed_intent,
 )
 from parallax.core.write_plan import ObjectKey, VersionObservation
-from parallax.core.write_plan.keys import VersionedStateKey
+from parallax.core.write_plan.keys import VersionedObjectStateKey
 from tests.unit._where_position_model import (
     WHERE_POSITION_META,
 )
@@ -54,13 +54,15 @@ _UNTIL = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
 _ASSIGNMENT = WriteIntent(kind="assignment")
 _DESTRUCTIVE = WriteIntent(kind="destructive")
 _OBJECT = ObjectKey(EntityIdentity("parallax.compatibility", "Account"), (("id", 1),))
-_STATE = VersionedStateKey(ObjectKey(EntityIdentity("parallax.compatibility", "Account"), ()), 4)
+_STATE = VersionedObjectStateKey(
+    ObjectKey(EntityIdentity("parallax.compatibility", "Account"), ()), 4
+)
 _VERSION_ATTRIBUTE = AttributeIdentity(
     EntityIdentity("parallax.compatibility", "Account"), "version"
 )
 _START_ATTRIBUTE = AttributeIdentity(EntityIdentity("parallax.compatibility", "Balance"), "inZ")
 _RETAINED = RetainedObservation(
-    VersionedStateKey(_OBJECT, 4), VersionObservation(observed_version=4), None
+    VersionedObjectStateKey(_OBJECT, 4), VersionObservation(observed_version=4), None
 )
 
 _PERSON_META = model_of(PERSON)
@@ -187,7 +189,7 @@ def test_the_claim_table_holds_what_the_buffer_will_carry() -> None:
 
 
 def test_releasing_claims_drops_exactly_the_named_scopes() -> None:
-    other = VersionedStateKey(_STATE.object, _STATE.version + 1)
+    other = VersionedObjectStateKey(_STATE.object, _STATE.version + 1)
     table = ClaimTable()
     assert table.claim(_STATE, SELECTION_INTENT) == "admit"
     assert table.claim(other, _ASSIGNMENT) == "admit"

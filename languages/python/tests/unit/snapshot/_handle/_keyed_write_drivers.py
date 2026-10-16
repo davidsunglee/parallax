@@ -45,7 +45,7 @@ from parallax.core.db_port import MappingRow
 from parallax.core.entity import Entity as EntityBase
 from parallax.core.execution import ExecutionFailure
 from parallax.core.object_query._fluent import ObjectQuery
-from parallax.snapshot import ScopedDatabase, Transaction, WireEntity
+from parallax.snapshot import ScopedDatabase, TxnContext, WireEntity
 from tests._support import mirrored_models as mm
 from tests._support.db_port import (
     PortCall,
@@ -557,7 +557,7 @@ class Scenario:
     opened_until: bool = False
     """Whether the same-transaction insert stated a bounded Valid-Time window."""
     lost_provenance: bool = False
-    """Whether the Wire source reaches the verb as a copy carrying no Read Origin
+    """Whether the Wire source reaches the verb as a copy carrying no Read Evidence
     — the one defect a keyed source can arrive with that no Typed value has a
     spelling for, and the argument the shape of an authored document is judged
     ahead of."""
@@ -656,7 +656,7 @@ def outcome(scenario: Scenario, representation: Representation) -> Outcome:
     db = db_for(scenario.target.model, port)
     phase: Phase = "source"
 
-    def body(tx: Transaction) -> None:
+    def body(tx: TxnContext) -> None:
         nonlocal phase
         _body(tx, scenario, representation, prior)
         phase = "flush"
@@ -743,7 +743,7 @@ def _standalone_source(
 
 
 def _body(
-    tx: Transaction, scenario: Scenario, representation: Representation, prior: object | None
+    tx: TxnContext, scenario: Scenario, representation: Representation, prior: object | None
 ) -> None:
     if representation == "typed":
         _typed(tx, scenario, prior)
@@ -751,7 +751,7 @@ def _body(
         _wire(tx, scenario, prior)
 
 
-def _typed(tx: Transaction, scenario: Scenario, prior: object | None) -> None:
+def _typed(tx: TxnContext, scenario: Scenario, prior: object | None) -> None:
     target = scenario.target
     if scenario.verb in _INSERT_VERBS and scenario.source != "pinned":
         _open_ahead_of_the_insert(tx, scenario, "typed")
@@ -762,7 +762,7 @@ def _typed(tx: Transaction, scenario: Scenario, prior: object | None) -> None:
 
 
 def _open_ahead_of_the_insert(
-    tx: Transaction, scenario: Scenario, representation: Representation
+    tx: TxnContext, scenario: Scenario, representation: Representation
 ) -> None:
     """Buffer the same-transaction insert an INSERT scenario repeats, and on the
     ``reread`` route run the participating read that force-flushes it.
@@ -782,7 +782,7 @@ def _open_ahead_of_the_insert(
         tx.wire.find(scenario.target.inserted_wire_query).result()
 
 
-def _typed_source(tx: Transaction, scenario: Scenario, prior: object | None) -> object:
+def _typed_source(tx: TxnContext, scenario: Scenario, prior: object | None) -> object:
     target = scenario.target
     if scenario.opened_by is not None:
         opened = _open(tx, scenario)
@@ -812,7 +812,7 @@ def _typed_authored(scenario: Scenario, source: EntityBase) -> EntityBase:
     return edited.edit(**restored)
 
 
-def _call_typed(tx: Transaction, scenario: Scenario, value: EntityBase) -> None:
+def _call_typed(tx: TxnContext, scenario: Scenario, value: EntityBase) -> None:
     plain = scenario.target.valid_from
     valid_from, until = _bounded_window(scenario)
     match scenario.verb:
@@ -836,7 +836,7 @@ def _call_typed(tx: Transaction, scenario: Scenario, value: EntityBase) -> None:
             raise AssertionError(f"no {scenario.verb} in this lane")
 
 
-def _wire(tx: Transaction, scenario: Scenario, prior: object | None) -> None:
+def _wire(tx: TxnContext, scenario: Scenario, prior: object | None) -> None:
     target = scenario.target
     if scenario.verb in _INSERT_VERBS and scenario.source != "pinned":
         _open_ahead_of_the_insert(tx, scenario, "wire")
@@ -848,7 +848,7 @@ def _wire(tx: Transaction, scenario: Scenario, prior: object | None) -> None:
     _call_wire(tx, scenario, source, _wire_authored(scenario))
 
 
-def _wire_source(tx: Transaction, scenario: Scenario, prior: object | None) -> object:
+def _wire_source(tx: TxnContext, scenario: Scenario, prior: object | None) -> object:
     target = scenario.target
     if scenario.opened_by is not None:
         opened = _open(tx, scenario)
@@ -875,7 +875,7 @@ def _wire_authored(scenario: Scenario) -> Mapping[str, object]:
 
 
 def _call_wire(
-    tx: Transaction, scenario: Scenario, source: object, changes: Mapping[str, object]
+    tx: TxnContext, scenario: Scenario, source: object, changes: Mapping[str, object]
 ) -> None:
     plain = scenario.target.valid_from
     valid_from, until = _bounded_window(scenario)
@@ -935,7 +935,7 @@ def _source_until(scenario: Scenario) -> dt.datetime:
     return VALID_FROM if scenario.window == "reversed" else UNTIL
 
 
-def _open(tx: Transaction, scenario: Scenario) -> object:
+def _open(tx: TxnContext, scenario: Scenario) -> object:
     """Buffer the same-transaction insert this scenario's source came from, and
     answer the carrier of its authority: the instance a Typed insert took, or
     the node a Wire insert answered.

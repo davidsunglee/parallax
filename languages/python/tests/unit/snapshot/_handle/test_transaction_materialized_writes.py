@@ -9,7 +9,7 @@ from decimal import Decimal
 
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.core.base import INFINITY
-from parallax.snapshot import Database, Transaction
+from parallax.snapshot import Database, TxnContext
 from tests._support import mirrored_models as mm
 from tests._support.db_port import (
     Read,
@@ -53,7 +53,7 @@ def test_a_multi_row_materialized_bitemporal_update_lowers_one_close_and_chain_p
     valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
     clock = FixedClock(dt.datetime(2024, 6, 1, tzinfo=dt.UTC))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.amend_where(
             WherePosition.where(WherePosition.value == Decimal("200.00")),
             WherePosition.value.set(Decimal("300.00")),
@@ -100,7 +100,7 @@ def test_a_temporal_materializing_update_eliminates_a_no_op_row_and_chains_the_r
         )
     )
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.amend_where(
             mm.Balance.where(mm.Balance.value < Decimal("1000000.00")),
             mm.Balance.value.set(Decimal("5.00")),
@@ -117,7 +117,7 @@ def test_a_temporal_materializing_update_eliminates_a_no_op_row_and_chains_the_r
 def test_a_temporal_materializing_update_with_every_row_a_no_op_buffers_nothing() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[_balance_row(1, Decimal("5.00"))])))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.amend_where(
             mm.Balance.where(mm.Balance.value < Decimal("1000000.00")),
             mm.Balance.value.set(Decimal("5.00")),

@@ -58,8 +58,8 @@ from parallax.core.temporal_read import view as temporal_view
 from parallax.core.write_plan import ObjectKey
 from parallax.snapshot import connect
 from parallax.snapshot._publication._classify import (
-    ClassifiedRoot,
     ConformingRoot,
+    NonConformingRoot,
     RootClassification,
     RootClassifications,
     classify_roots,
@@ -70,6 +70,7 @@ from tests._support.db_port import (
     ScriptedAdapter,
 )
 from tests._support.root_ownership import own_root
+from tests.unit.snapshot._encoded_identity_read import ENCODED_IDENTITY, encoded_identity_page
 from tests.unit.snapshot._encoded_page_models import (
     ENCODED_ACCOUNT,
     ENCODED_ORDERS,
@@ -90,9 +91,9 @@ _ITEM_ORDER = "parallax.compatibility.EncodedOrderItem.order"
 _ITEM = EntityIdentity(_NAMESPACE, "EncodedOrderItem")
 
 
-def _classified(root: RootClassification) -> ClassifiedRoot:
+def _classified(root: RootClassification) -> NonConformingRoot:
     """The classified verdict ``root`` is, narrowed for the assertions on it."""
-    assert isinstance(root, ClassifiedRoot), root
+    assert isinstance(root, NonConformingRoot), root
     return root
 
 
@@ -187,6 +188,22 @@ def test_the_ordinal_offset_positions_a_record_in_the_published_result() -> None
 
     (classified,) = _classify(fixture, order, offset=4).roots
     assert _classified(classified).ordinal == 4
+
+
+def test_a_root_whose_key_never_decoded_locates_itself_by_ordinal_alone() -> None:
+    page = encoded_identity_page({"id_wire": None, "token_hex": "0e"})
+    view = RootView(cast("Any", page), 0)
+
+    (classified,) = classify_roots(view, ENCODED_IDENTITY, CONCURRENCY, ordinal_offset=3).roots
+    root = _classified(classified)
+    assert (root.ordinal, root.object_key, root.version, root.edge, root.node) == (
+        3,
+        None,
+        None,
+        None,
+        None,
+    )
+    assert [issue.code for issue in root.issues] == ["stored-data-primary-key-null"]
 
 
 # --------------------------------------------------------------------------- #

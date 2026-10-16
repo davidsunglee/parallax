@@ -26,7 +26,7 @@ from parallax.core.execution import (
 )
 from parallax.core.object_query import deserialize
 from parallax.core.read_delivery import InvalidDataError
-from parallax.snapshot import Transaction, connect
+from parallax.snapshot import TxnContext, connect
 from tests._support.adoption import raises_contextualized
 from tests._support.corpus import case_fixtures
 from tests._support.root_ownership import own_root
@@ -138,7 +138,7 @@ def test_a_typed_value_read_under_a_licenses_a_keyed_write_validated_under_b(
     account = db.find(Account.where(Account.id == TARGET_ID)).result()
     serving.publish(b, expected=a)
 
-    def body(tx: Transaction) -> str:
+    def body(tx: TxnContext) -> str:
         # Validated under B's model, licensed by the observation A's read
         # retained on the value: no reread, no evidence upgrade, no refusal.
         tx.amend(account.edit(balance=account.balance + Decimal("1.00")))
@@ -157,7 +157,7 @@ def test_a_wire_value_read_under_a_licenses_a_keyed_write_validated_under_b(
     node = db.wire.find(_target_node()).result()
     serving.publish(b, expected=a)
 
-    def body(tx: Transaction) -> str:
+    def body(tx: TxnContext) -> str:
         tx.wire.amend(node, {"balance": "260.00"})
         return tx.edition
 

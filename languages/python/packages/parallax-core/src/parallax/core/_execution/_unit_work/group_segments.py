@@ -11,7 +11,7 @@ from parallax.core.inheritance import InheritanceEntityView
 from parallax.core.metamodel import AttributeIdentity, EntityMetadata
 from parallax.core.temporal_write.expansion import PredecessorUse, SettledGroup
 from parallax.core.write_plan.columns import ColumnSlice
-from parallax.core.write_plan.keys import ObservedStateKey
+from parallax.core.write_plan.keys import ObjectStateKey
 from parallax.core.write_plan.materialized import PredecessorRows
 from parallax.core.write_plan.observe import PredecessorRow
 from parallax.core.write_plan.plan import ExecutionUnit
@@ -163,7 +163,7 @@ class NonTemporalGroupSegment:
     versions: ColumnSlice[int]
     emission: NonTemporalEmission
     affected_rows: AffectedRows
-    changed: Iterable[ObservedStateKey]
+    changed: Iterable[ObjectStateKey]
     audited: Mapping[int, PlannedAssignments] = MappingProxyType({})
 
     def __len__(self) -> int:

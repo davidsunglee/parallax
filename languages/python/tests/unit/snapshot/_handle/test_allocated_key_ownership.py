@@ -17,7 +17,7 @@ from parallax.core import MAX, Attr, Bitemporal, Document, DomainModel, TxTempor
 from parallax.core._execution._unit_work.instructions import prepare_typed_write
 from parallax.core.entity._model import model_of
 from parallax.core.unit_work import KeyedWrite
-from parallax.snapshot import ScopedDatabase, Transaction, connect
+from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.root_ownership import own_root
 from tests._support.write_bounds import stated_start
 
@@ -76,7 +76,7 @@ def _plain(row: tuple[object, ...]) -> tuple[object, ...]:
 
 
 def _insert_allocated(
-    tx: Transaction, entity: type[Any], valid_from: dt.datetime | None = None, **row: object
+    tx: TxnContext, entity: type[Any], valid_from: dt.datetime | None = None, **row: object
 ) -> None:
     instruction = KeyedWrite(
         "insert",
@@ -103,7 +103,7 @@ def test_a_transaction_time_row_whose_key_the_database_allocated_is_revised_in_p
 ) -> None:
     _seed(profile_run, entity, 7)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         _insert_allocated(tx, entity, amount=100)
         opened = tx.find(entity.where(entity.id == 8)).result()
         tx.amend(opened.edit(amount=150))
@@ -125,7 +125,7 @@ def test_a_bitemporal_row_whose_key_the_database_allocated_is_split_in_place(
 ) -> None:
     _seed(profile_run, entity, 7)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         _insert_allocated(tx, entity, _JAN, amount=100)
         opened = tx.find(entity.where(entity.id == 8).as_of(valid_time=_MAR)).result()
         tx.amend(opened.edit(amount=150), until=_JUN)

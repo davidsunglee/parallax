@@ -1,6 +1,6 @@
-"""`DatabaseOptions` through the shipped public surface (`spec/execution.md`): the connect
+"""`TxnOptions` through the shipped public surface (`spec/execution.md`): the connect
 and constructor keywords a root is configured with, the transaction keywords
-that override them, `Transaction.options`, the usage guide's own root-options
+that override them, `TxnContext.options`, the usage guide's own root-options
 story, and — against a real Postgres — that the level a root resolves is the
 level a transaction runs at even where the database's own configured default is
 stronger, while a standalone read or stream under a configured root opens no
@@ -32,8 +32,8 @@ from parallax.core.db_port import (
     TransactionOutcome,
 )
 from parallax.core.dialect import Dialect
-from parallax.core.execution import DatabaseOptions
-from parallax.snapshot import Database, ScopedDatabase, Transaction, connect
+from parallax.core.execution import TxnOptions
+from parallax.snapshot import Database, ScopedDatabase, TxnContext, connect
 
 _ACCOUNT = MODELS["account"]
 _root_options_story = (
@@ -88,9 +88,9 @@ def test_transact_names_the_four_options_by_their_record_field_names() -> None:
 
 
 def test_the_record_is_read_only_on_the_transaction_and_names_the_same_four_fields() -> None:
-    assert isinstance(Transaction.options, property)
-    assert Transaction.options.fset is None
-    assert [field.name for field in dataclasses.fields(DatabaseOptions)] == [
+    assert isinstance(TxnContext.options, property)
+    assert TxnContext.options.fset is None
+    assert [field.name for field in dataclasses.fields(TxnOptions)] == [
         "max_retries",
         "concurrency",
         "retry_optimistic_conflicts",
@@ -176,7 +176,7 @@ def _probed(profile_run: Any, seen: list[dict[str, str | None]]) -> Any:
     return DecoratingAdapter(configured, lambda conn: _IsolationProbe(conn, seen))
 
 
-def _read_one(tx: Transaction) -> Account:
+def _read_one(tx: TxnContext) -> Account:
     return tx.find(Account.where(Account.id == 1)).result()
 
 
@@ -192,7 +192,7 @@ def test_an_unconfigured_root_runs_at_read_committed_over_a_stronger_session_def
     with connect(_probed(profile_run, seen), _ACCOUNT) as _root_db:
         db = _root_db.using_database_login()
         options = db.transact(lambda tx: (_read_one(tx), tx.options)[1])
-    assert options == DatabaseOptions()
+    assert options == TxnOptions()
     assert seen == [
         {
             "requested": "read_committed",
@@ -207,7 +207,7 @@ def test_a_root_default_and_an_explicit_override_each_reach_the_transaction(
 ) -> None:
     _seeded(profile_run)
     seen: list[dict[str, str | None]] = []
-    root = DatabaseOptions(isolation="serializable")
+    root = TxnOptions(isolation="serializable")
     with connect(_probed(profile_run, seen), _ACCOUNT, options=root) as _root_db:
         db = _root_db.using_database_login()
         inherited = db.transact(lambda tx: (_read_one(tx), tx.options)[1])
@@ -215,7 +215,7 @@ def test_a_root_default_and_an_explicit_override_each_reach_the_transaction(
             lambda tx: (_read_one(tx), tx.options)[1], isolation="repeatable_read"
         )
     assert inherited is root
-    assert overridden == DatabaseOptions(isolation="repeatable_read")
+    assert overridden == TxnOptions(isolation="repeatable_read")
     assert [(entry["requested"], entry["effective"]) for entry in seen] == [
         ("serializable", "serializable"),
         ("repeatable_read", "repeatable read"),
@@ -230,7 +230,7 @@ def test_every_level_a_root_can_be_configured_with_is_the_level_its_attempts_run
     _seeded(profile_run)
     seen: list[dict[str, str | None]] = []
     with connect(
-        _probed(profile_run, seen), _ACCOUNT, options=DatabaseOptions(isolation=level)
+        _probed(profile_run, seen), _ACCOUNT, options=TxnOptions(isolation=level)
     ) as _root_db:
         db = _root_db.using_database_login()
         db.transact(_read_one)
@@ -243,9 +243,9 @@ def test_the_root_options_usage_guide_story_runs_against_a_real_database(
 ) -> None:
     _seeded(profile_run)
     shape = _root_options_story(profile_run.port, _ACCOUNT)
-    root = DatabaseOptions(isolation="repeatable_read", max_retries=2)
+    root = TxnOptions(isolation="repeatable_read", max_retries=2)
     assert shape.inherited == root
-    assert shape.overridden == DatabaseOptions(isolation="serializable", max_retries=2)
+    assert shape.overridden == TxnOptions(isolation="serializable", max_retries=2)
     assert shape.joined == shape.overridden
     assert shape.repeated == shape.overridden
     assert shape.root_level_refused_on_join
@@ -261,7 +261,7 @@ def test_a_standalone_read_and_stream_under_a_configured_root_open_no_transactio
     # only the transaction opened beside them does.
     _seeded(profile_run)
     seen: list[dict[str, str | None]] = []
-    root = DatabaseOptions(
+    root = TxnOptions(
         max_retries=0,
         concurrency="locking",
         retry_optimistic_conflicts=True,

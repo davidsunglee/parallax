@@ -7,8 +7,8 @@ from decimal import Decimal
 from parallax.conformance.story_models import Account
 from parallax.core.db_port import DatabaseAdapter
 from parallax.core.entity import DomainModel
-from parallax.core.execution import DatabaseOptions, TransactionOptionConflictError
-from parallax.snapshot import Transaction, connect
+from parallax.core.execution import TransactionOptionConflictError, TxnOptions
+from parallax.snapshot import TxnContext, connect
 
 __all__ = [
     "ResolvedOptions",
@@ -23,10 +23,10 @@ _TARGET_ID = 2
 class ResolvedOptions:
     """What each transaction of the story ran under, read off ``tx.options``."""
 
-    inherited: DatabaseOptions
-    overridden: DatabaseOptions
-    joined: DatabaseOptions
-    repeated: DatabaseOptions
+    inherited: TxnOptions
+    overridden: TxnOptions
+    joined: TxnOptions
+    repeated: TxnOptions
     root_level_refused_on_join: bool
     balance: Decimal
 
@@ -46,15 +46,15 @@ def a_root_default_is_overridden_per_call_and_a_join_inherits_the_override(
     other value, the root's own included, is refused before the joined body
     runs. Nothing is passed as ``None``: only an omitted keyword inherits.
     """
-    root = DatabaseOptions(isolation="repeatable_read", max_retries=2)
+    root = TxnOptions(isolation="repeatable_read", max_retries=2)
     with connect(adapter, model, options=root) as database:
         db = database.using_database_login()
         inherited = db.transact(lambda tx: tx.options)
 
-        def outer(tx: Transaction) -> ResolvedOptions:
+        def outer(tx: TxnContext) -> ResolvedOptions:
             account = tx.find(Account.where(Account.id == _TARGET_ID)).result()
 
-            def joined_body(joined_tx: Transaction) -> DatabaseOptions:
+            def joined_body(joined_tx: TxnContext) -> TxnOptions:
                 return joined_tx.options
 
             joined = db.transact(joined_body)

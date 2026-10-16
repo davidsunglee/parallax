@@ -26,7 +26,7 @@ from parallax.conformance.story_models import Account
 from parallax.conformance.vo_models import Customer
 from parallax.core.execution import prepare_model
 from parallax.core.read_delivery import InvalidData
-from parallax.snapshot import Transaction, connect
+from parallax.snapshot import TxnContext, connect
 from tests._support.corpus import case_fixtures
 from tests._support.root_ownership import own_root
 from tests._support.write_values import invalid_customer_root
@@ -53,7 +53,7 @@ def test_write_value_case_runs_through_the_shipped_verbs(
     )
     steps = write_value_runner.write_value_steps(case)
 
-    def fn(tx: Transaction) -> list[str | None]:
+    def fn(tx: TxnContext) -> list[str | None]:
         return write_value_runner.graded_outcomes(
             tx, steps, another, lambda: invalid_customer_root(model)
         )

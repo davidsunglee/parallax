@@ -111,7 +111,7 @@ def _with_value(case: case_format.Case, **updates: object) -> case_format.Case:
     return replace(case, document=document)
 
 
-def test_constructed_source_rejects_a_read_origin() -> None:
+def test_constructed_source_rejects_a_read_evidence() -> None:
     case = _with_source(_case("m-edit-001"), origin="read")
 
     with pytest.raises(ValueError, match="source is not constructed"):

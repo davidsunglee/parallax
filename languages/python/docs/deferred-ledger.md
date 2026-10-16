@@ -34,7 +34,7 @@ Entry numbering is continuous and never reused. The next new number is **D-99**.
 ### D-56 — A table-per-concrete-subtype union-all read cannot run inside a transaction whose target resolves to the Locking strategy
 
 *Low — one concurrency mode of a legal read shape is unreachable from
-`Transaction.find`.* Relates to `parallax.core.sql_gen._inheritance._plan_tpcs_read`,
+`TxnContext.find`.* Relates to `parallax.core.sql_gen._inheritance._plan_tpcs_read`,
 `m-sql` *Ordered or limited abstract read*.
 
 **What.** `_plan_tpcs_read` refuses a union-all read that requests a shared row

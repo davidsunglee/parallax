@@ -37,7 +37,7 @@ from parallax.core.entity import DomainModel
 from parallax.core.execution import KeyedWriteValueError
 from parallax.core.read_delivery import InvalidData
 from parallax.core.unit_work import MissingTargetError, WriteEvidenceError, WriteInstructionError
-from parallax.snapshot import Database, Transaction
+from parallax.snapshot import Database, TxnContext
 from parallax.snapshot._inspection import insertion_of, snapshot_state_of
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
@@ -75,7 +75,7 @@ def _position(value: str = "100.00") -> WherePosition:
     return WherePosition(id=1, acct_num="A", value=Decimal(value))
 
 
-def _transact(port: ScriptedAdapter, fn: Callable[[Transaction], object]) -> None:
+def _transact(port: ScriptedAdapter, fn: Callable[[TxnContext], object]) -> None:
     own_root(
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
     ).using_database_login().transact(fn)
@@ -108,7 +108,7 @@ def _rectangle(start: dt.datetime, end: object, value: str = "100.00") -> Mappin
     }
 
 
-def _read_at(tx: Transaction, at: dt.datetime) -> WherePosition:
+def _read_at(tx: TxnContext, at: dt.datetime) -> WherePosition:
     return tx.find(WherePosition.where(WherePosition.id == 1).as_of(valid_time=at)).result()
 
 
@@ -145,7 +145,7 @@ def test_a_pending_opening_takes_each_edit_over_only_the_coverage_it_opens(
 ) -> None:
     port = ScriptedAdapter(Transact(Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         bounds: dict[str, Any] = {} if opening_end is None else {"until": opening_end}
         edit: dict[str, Any] = {} if until is None else {"until": until}
         if representation == "typed":
@@ -170,7 +170,7 @@ def test_an_edit_bounded_at_or_before_the_anchor_is_refused_and_leaves_the_openi
     # changes, and a valid edit afterwards still transforms the whole opening.
     port = ScriptedAdapter(Transact(Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         opened = _position()
         tx.insert(opened, valid_from=_MAR, until=_SEP)
         for bound in (_JAN, _MAR):
@@ -188,7 +188,7 @@ def test_an_edit_bounded_at_or_before_the_anchor_is_refused_and_leaves_the_openi
 def test_repeated_bounded_edits_start_at_the_anchor_rather_than_at_a_split() -> None:
     port = ScriptedAdapter(Transact(Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         opened = _position()
         tx.insert(opened, valid_from=_JAN, until=_DEC)
         tx.amend(opened.edit(value=Decimal("150.00")), until=_MAY)
@@ -204,7 +204,7 @@ def test_repeated_bounded_edits_start_at_the_anchor_rather_than_at_a_split() -> 
 def test_a_literal_reset_of_a_pending_opening_writes_the_reset_value() -> None:
     port = ScriptedAdapter(Transact(Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         opened = _position()
         tx.insert(opened, valid_from=_JAN)
         tx.amend(opened.edit(value=Decimal("150.00")))
@@ -220,7 +220,7 @@ def test_a_resubmitted_draft_reasserts_its_whole_touched_set() -> None:
     # member it adds.
     port = ScriptedAdapter(Transact(Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         opened = _position()
         tx.insert(opened, valid_from=_JAN)
         draft = opened.edit(value=Decimal("150.00"))
@@ -239,7 +239,7 @@ def test_an_edit_over_coverage_a_pending_destruction_removed_is_refused() -> Non
     # resurrect coverage: it is refused, and the tail is all the flush inserts.
     port = ScriptedAdapter(Transact(Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         opened = _position()
         tx.insert(opened, valid_from=_JAN)
         tx.terminate(opened, until=_MAY)
@@ -263,7 +263,7 @@ def _refused_as_not_stored(write: Callable[[], object]) -> None:
 def test_a_draft_derived_before_the_insertion_carries_no_authority() -> None:
     port = ScriptedAdapter(Transact(Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         opened = mm.Person(id=9, name="Newton")
         earlier = opened.edit(name="Hooke")
         tx.insert(opened)
@@ -279,7 +279,7 @@ def test_a_draft_derived_before_the_insertion_carries_no_authority() -> None:
 def test_an_independently_built_value_of_the_inserted_key_carries_no_authority() -> None:
     port = ScriptedAdapter(Transact(Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.insert(mm.Person(id=9, name="Newton"))
         _refused_as_not_stored(lambda: tx.amend(mm.Person(id=9, name="Newton").edit(name="X")))
 
@@ -292,7 +292,7 @@ def test_an_independently_built_value_of_the_inserted_key_carries_no_authority()
 def test_a_refused_insertion_grants_nothing() -> None:
     port = ScriptedAdapter(Transact())
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         refused = _position()
         with pytest.raises(WriteInstructionError):
             tx.insert(refused, valid_from=_SEP, until=_JAN)
@@ -308,7 +308,7 @@ def test_an_insertion_authority_ends_with_its_attempt(ending: str) -> None:
     db = db_for(PERSON, port)
     opened = mm.Person(id=9, name="Newton")
 
-    def insert(tx: Transaction) -> None:
+    def insert(tx: TxnContext) -> None:
         tx.insert(opened)
         if ending == "rollback":
             raise RuntimeError("abandon")
@@ -320,7 +320,7 @@ def test_an_insertion_authority_ends_with_its_attempt(ending: str) -> None:
             db.transact(insert)
     later = opened.edit(name="Grace")
 
-    def edit(tx: Transaction) -> None:
+    def edit(tx: TxnContext) -> None:
         _refused_as_not_stored(lambda: tx.amend(later))
 
     db.transact(edit)
@@ -333,7 +333,7 @@ def test_a_reinsertion_rebinds_only_the_instance_it_takes() -> None:
     # while a draft derived under the first keeps the retired one.
     port = ScriptedAdapter(Transact(Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         opened = mm.Balance(id=9, acct_num="Z", value=Decimal("1.00"))
         tx.insert(opened)
         draft = opened.edit(value=Decimal("5.00"))
@@ -353,7 +353,7 @@ def test_converting_a_wire_insertion_node_loses_its_authority() -> None:
     # round trip are ordinary data, which no keyed verb takes as a source.
     port = ScriptedAdapter(Transact(Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         node = tx.wire.insert("parallax.compatibility.Person", {"id": 9, "name": "Newton"})
         for converted in (dict(node), pickle.loads(pickle.dumps(node))):
             assert converted == node
@@ -370,7 +370,7 @@ def test_converting_a_wire_insertion_node_loses_its_authority() -> None:
 def test_an_inserted_instance_pickles_as_domain_data_without_its_authority() -> None:
     port = ScriptedAdapter(Transact(Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         opened = mm.Person(id=9, name="Newton")
         tx.insert(opened)
         copied = pickle.loads(pickle.dumps(opened))
@@ -397,7 +397,7 @@ def test_an_insertion_source_edits_its_stored_bitemporal_coverage_after_a_helper
     row = _rectangle(_JAN, INFINITY_INSTANT)
     port = ScriptedAdapter(Transact(Write(), Read(rows=[row]), Read(rows=[row]), Write(times=2)))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         opened = _position()
         tx.insert(opened, valid_from=_JAN)
         _read_at(tx, _MAR)
@@ -431,7 +431,7 @@ def test_an_insertion_source_revises_its_stored_transaction_time_row_after_a_hel
     }
     port = ScriptedAdapter(Transact(Write(), Read(rows=[row]), Read(rows=[row]), Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         opened = mm.Balance(id=9, acct_num="Z", value=Decimal("1.00"))
         tx.insert(opened)
         tx.find(mm.Balance.where(mm.Balance.id == 9)).result()
@@ -459,7 +459,7 @@ def test_an_insertion_source_advances_its_stored_version_after_each_flush() -> N
         )
     )
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         opened = mm.Account(id=7, owner="Newton", balance=Decimal("5.00"))
         tx.insert(opened)
         tx.find(mm.Account.where(mm.Account.id == 7)).result()
@@ -486,7 +486,7 @@ def test_an_insertion_source_and_a_read_of_the_same_version_compose_into_one_upd
 ) -> None:
     port = ScriptedAdapter(Transact(Write(), Read(rows=[_account_row(1)]), Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         opened = mm.Account(id=7, owner="Newton", balance=Decimal("5.00"))
         tx.insert(opened)
         read = tx.find(mm.Account.where(mm.Account.id == 7)).result()
@@ -517,7 +517,7 @@ def test_insertion_and_observed_assignments_compose_over_unequal_windows_after_a
     # where the windows overlap, and the opening's own value survives past it.
     port = ScriptedAdapter(Transact(Write(), Read(rows=[_rectangle(_MAR, _SEP)]), Write(times=3)))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         opened = _position()
         tx.insert(opened, valid_from=_MAR, until=_SEP)
         observed = _read_at(tx, _MAY)
@@ -557,7 +557,7 @@ def test_an_insertion_source_whose_anchor_was_removed_fails_its_flush() -> None:
         )
     )
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         opened = _position()
         tx.insert(opened, valid_from=_JAN)
         tx.terminate(_read_at(tx, _JAN), until=_MAR)
@@ -579,7 +579,7 @@ def test_a_reinsertion_after_a_complete_stored_removal_executes_after_it() -> No
     row = _rectangle(_JAN, INFINITY_INSTANT)
     port = ScriptedAdapter(Transact(Write(), Read(rows=[row]), Read(rows=[row]), Write(times=2)))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         first = _position()
         tx.insert(first, valid_from=_JAN)
         _read_at(tx, _MAR)
@@ -606,7 +606,7 @@ def test_a_reinsertion_at_identical_coordinates_never_revives_the_first() -> Non
         Transact(Write(), Read(rows=[row]), Read(rows=[row]), Write(times=2), Read(rows=[row]))
     )
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         first = _position()
         tx.insert(first, valid_from=_JAN)
         _read_at(tx, _MAR)
@@ -624,7 +624,7 @@ def test_a_failed_removal_withholds_the_reinsertion_that_depends_on_it() -> None
     row = _rectangle(_JAN, INFINITY_INSTANT)
     port = ScriptedAdapter(Transact(Write(), Read(rows=[row]), Read(rows=[row]), Write(affected=0)))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         first = _position()
         tx.insert(first, valid_from=_JAN)
         _read_at(tx, _MAR)
@@ -644,7 +644,7 @@ def test_a_failed_reinsertion_after_its_removal_rolls_the_attempt_back() -> None
         Transact(Write(), Read(rows=[row]), Read(rows=[row]), Write(), Write(raises=duplicate))
     )
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         first = _position()
         tx.insert(first, valid_from=_JAN)
         _read_at(tx, _MAR)
@@ -664,7 +664,7 @@ def test_a_failed_reinsertion_after_its_removal_rolls_the_attempt_back() -> None
 _BARRIER_MODEL = DomainModel(WherePosition, Wallet)
 
 
-def _barrier(tx: Transaction) -> None:
+def _barrier(tx: TxnContext) -> None:
     tx.amend_where(Wallet.where(Wallet.balance < Decimal("2.00")), Wallet.owner.set("Low"))
 
 
@@ -685,7 +685,7 @@ def test_an_opening_a_barrier_kept_back_and_removed_whole_admits_a_reinsertion(
     opened = _rectangle(_JAN, INFINITY_INSTANT if opening_end is None else opening_end)
     port = ScriptedAdapter(Transact(Write(times=2), Read(rows=[opened]), Write(times=2)))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         first = _position()
         if opening_end is None:
             tx.insert(first, valid_from=_JAN)
@@ -712,7 +712,7 @@ def test_an_opening_a_barrier_kept_back_and_removed_whole_admits_a_reinsertion(
 def test_an_opening_a_barrier_kept_back_and_removed_in_part_refuses_a_reinsertion() -> None:
     port = ScriptedAdapter(Transact())
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         first = _position()
         tx.insert(first, valid_from=_JAN)
         _barrier(tx)
@@ -731,7 +731,7 @@ def test_a_removal_before_a_pending_reinsertion_never_counts_against_it() -> Non
     row = _rectangle(_MAR, INFINITY_INSTANT)
     port = ScriptedAdapter(Transact(Write(), Read(rows=[row])))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         first = _position()
         tx.insert(first, valid_from=_MAR)
         _read_at(tx, _MAR)
@@ -765,7 +765,7 @@ def test_an_assignment_an_owned_row_already_holds_revises_nothing() -> None:
     row = _balance_row(9, FIXED)
     port = ScriptedAdapter(Transact(Write(), Read(rows=[row]), Read(rows=[row])))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         opened = mm.Balance(id=9, acct_num="Z", value=Decimal("1.00"))
         tx.insert(opened)
         tx.find(mm.Balance.where(mm.Balance.id == 9)).result()
@@ -784,7 +784,7 @@ def test_a_reinsertion_after_its_removal_flushed_is_a_first_opening() -> None:
         )
     )
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         first = mm.Balance(id=9, acct_num="Z", value=Decimal("1.00"))
         tx.insert(first)
         tx.find(mm.Balance.where(mm.Balance.id == 9)).result()
@@ -800,7 +800,7 @@ def test_a_transaction_time_reinsertion_runs_after_the_removal_it_depends_on() -
     row = _balance_row(9, FIXED)
     port = ScriptedAdapter(Transact(Write(), Read(rows=[row]), Read(rows=[row]), Write(times=2)))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         first = mm.Balance(id=9, acct_num="Z", value=Decimal("1.00"))
         tx.insert(first)
         tx.find(mm.Balance.where(mm.Balance.id == 9)).result()
@@ -821,7 +821,7 @@ def test_a_cancelled_reinsertion_leaves_the_next_one_depending_on_the_same_remov
     row = _balance_row(9, FIXED)
     port = ScriptedAdapter(Transact(Write(), Read(rows=[row]), Read(rows=[row]), Write(times=2)))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         first = mm.Balance(id=9, acct_num="Z", value=Decimal("1.00"))
         tx.insert(first)
         tx.find(mm.Balance.where(mm.Balance.id == 9)).result()
@@ -842,7 +842,7 @@ def test_a_pending_assignment_alone_leaves_a_stored_insertion_standing() -> None
     row = _balance_row(9, FIXED)
     port = ScriptedAdapter(Transact(Write(), Read(rows=[row]), Read(rows=[row]), Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         first = mm.Balance(id=9, acct_num="Z", value=Decimal("1.00"))
         tx.insert(first)
         tx.find(mm.Balance.where(mm.Balance.id == 9)).result()
@@ -871,7 +871,7 @@ def test_a_bounded_removal_reaching_every_end_the_insertion_opened_is_complete()
         )
     )
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         first = _position()
         tx.insert(first, valid_from=_JAN, until=_SEP)
         tx.insert(WherePosition(id=2, acct_num="B", value=Decimal("5.00")), valid_from=_JAN)
@@ -889,7 +889,7 @@ def test_a_removal_composed_of_several_pending_writes_admits_a_reinsertion() -> 
     row = _rectangle(_JAN, INFINITY_INSTANT)
     port = ScriptedAdapter(Transact(Write(), Read(rows=[row]), Read(rows=[row]), Write(times=2)))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         first = _position()
         tx.insert(first, valid_from=_JAN)
         _read_at(tx, _MAR)
@@ -918,7 +918,7 @@ def test_removing_a_row_no_insertion_opened_leaves_the_insertions_standing() -> 
         )
     )
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         opened = mm.Balance(id=9, acct_num="Z", value=Decimal("1.00"))
         tx.insert(opened)
         other = tx.find(mm.Balance.where(mm.Balance.id == 1)).result()
@@ -937,7 +937,7 @@ def test_removing_a_row_no_insertion_opened_leaves_the_insertions_standing() -> 
 
 
 def test_an_inserted_value_keeps_the_node_state_a_classified_read_gave_it() -> None:
-    # A classified read hands back a hydrated root with no Read Origin; a copy
+    # A classified read hands back a hydrated root with no Read Evidence; a copy
     # of it completed by an edit is a value no read published, so it may be
     # inserted. The insertion's authority is bound beside the node state that
     # value already carries, which stays the node's own — its pin and views
@@ -960,12 +960,12 @@ def test_an_inserted_value_keeps_the_node_state_a_classified_read_gave_it() -> N
         phones=(),
     )
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         published = tx.find(Contact.where(Contact.id == 1)).checked().result()
         assert isinstance(published, InvalidData)
         value = cast("Contact", published.data).edit(address=complete)
         node = snapshot_state_of(value)
-        assert node is not None and node.source is None
+        assert node is not None and node.read_evidence is None
         tx.insert(value)
         assert snapshot_state_of(value) is node
         assert insertion_of(value) is not None
@@ -983,7 +983,7 @@ def test_a_retry_admits_the_insertion_afresh_and_expires_the_first_attempts_draf
     opened = mm.Person(id=9, name="Newton")
     drafts: list[mm.Person] = []
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         if drafts:
             _refused_as_not_stored(lambda: tx.amend(drafts[0]))
         tx.insert(opened)
@@ -1006,7 +1006,7 @@ def test_composition_spends_the_observed_source_and_not_the_insertions_authority
         )
     )
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         opened = _position()
         tx.insert(opened, valid_from=_MAR, until=_SEP)
         observed = _read_at(tx, _MAY)
@@ -1040,7 +1040,7 @@ def test_a_reinsertion_at_identical_coordinates_revives_no_earlier_observation()
         )
     )
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         first = _position()
         tx.insert(first, valid_from=_JAN)
         earlier = _read_at(tx, _MAR)
@@ -1066,7 +1066,7 @@ def test_a_pending_assignment_alone_leaves_a_stored_bitemporal_insertion_standin
     row = _rectangle(_JAN, INFINITY_INSTANT)
     port = ScriptedAdapter(Transact(Write(), Read(rows=[row]), Read(rows=[row]), Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         first = _position()
         tx.insert(first, valid_from=_JAN)
         _read_at(tx, _MAR)
@@ -1096,7 +1096,7 @@ def test_removing_a_bitemporal_row_no_insertion_opened_leaves_the_insertions_sta
         )
     )
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.insert(WherePosition(id=9, acct_num="B", value=Decimal("5.00")), valid_from=_JAN)
         tx.amend(_read_at(tx, _MAR).edit(value=Decimal("150.00")))
         tx.terminate(_read_at(tx, _MAR))
@@ -1127,7 +1127,7 @@ def _stored(start: dt.datetime, end: object, value: str = "200.00") -> MappingRo
     return {**_rectangle(start, end, value), "in_z": _T0}
 
 
-def _replace_opening(tx: Transaction, representation: str, until: dt.datetime) -> None:
+def _replace_opening(tx: TxnContext, representation: str, until: dt.datetime) -> None:
     if representation == "typed":
         opened = _position()
         tx.insert(opened, valid_from=_JAN, until=_MAR)
@@ -1186,7 +1186,7 @@ def test_a_pending_replacement_transforms_the_stored_coverage_it_reaches(
 def test_a_pending_replacement_inside_its_opening_reads_nothing() -> None:
     port = ScriptedAdapter(Transact(Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         opened = _position()
         tx.insert(opened, valid_from=_JAN, until=_SEP)
         tx.replace(opened.edit(value=Decimal("300.00")), until=_JUN)
@@ -1206,7 +1206,7 @@ def test_a_destruction_of_a_pending_replacements_window_removes_what_it_reached(
     rows = [_stored(_MAY, _AUG)] if stored else []
     port = ScriptedAdapter(Transact(Read(rows=rows), Write(times=2 if stored else 0)))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         opened = _position()
         tx.insert(opened, valid_from=_JAN, until=_MAR)
         tx.replace(opened.edit(value=Decimal("300.00")), until=_JUN)
@@ -1230,7 +1230,7 @@ def test_a_destruction_of_all_a_pending_replacement_reached_admits_a_reinsertion
     rows = [_stored(_MAY, _AUG)] if stored else []
     port = ScriptedAdapter(Transact(Read(rows=rows), Write(times=3 if stored else 1)))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         first = _position()
         tx.insert(first, valid_from=_JAN, until=_MAR)
         tx.replace(first.edit(value=Decimal("300.00")), until=_JUN)
@@ -1254,7 +1254,7 @@ def test_a_pending_amendment_reaches_only_as_far_as_the_replacement(
 ) -> None:
     port = ScriptedAdapter(Transact(Read(rows=[_stored(_MAY, _AUG)]), Write(times=3)))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         opened = _position()
         tx.insert(opened, valid_from=_JAN, until=_MAR)
         if replaced_first:
@@ -1273,7 +1273,7 @@ def test_a_pending_amendment_reaches_only_as_far_as_the_replacement(
 def test_a_replacement_over_coverage_a_pending_destruction_removed_is_refused() -> None:
     port = ScriptedAdapter(Transact(Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         opened = _position()
         tx.insert(opened, valid_from=_JAN, until=_MAY)
         tx.terminate(opened, until=_MAR)

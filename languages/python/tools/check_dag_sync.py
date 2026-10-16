@@ -298,7 +298,7 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
     ),
     # The Snapshot slice's own node-inspection surface is scoped apart from the
     # rest of the lifecycle extension: it reads a node's loaded views, pin,
-    # milestone edge, and retained Read Origin through the advanced Entity seam
+    # milestone edge, and retained Read Evidence through the advanced Entity seam
     # and nothing else, so its row proves it reaches no driver, no read planner,
     # no SQL, and no dialect. The Database Port is NOT one of those: the granted
     # Entity frontend reaches it through `_formation_profile -> opt_lock ->

@@ -16,7 +16,7 @@ from parallax.core._execution._keyed_writes import (
     stated_valid_from,
 )
 from parallax.core._execution._options import OMITTED, Omitted
-from parallax.core._execution._transaction._attempt import Attempt
+from parallax.core._execution._transaction._attempt import TxnAttempt
 from parallax.core._execution._unit_work import instructions
 from parallax.core._execution._unit_work.instructions import (
     ASSIGNMENT_MUTATIONS,
@@ -30,7 +30,7 @@ from parallax.core._execution._unit_work.instructions import (
     TargetWrite,
     WriteAssignment,
 )
-from parallax.core._execution._unit_work.retain import ReadOrigin
+from parallax.core._execution._unit_work.retain import ReadEvidence
 from parallax.core.entity import (
     AttributeAssignment,
     EntityRowCodec,
@@ -68,14 +68,14 @@ def provenance_of(value: EntityBase) -> Provenance:
     Read through :func:`~parallax.snapshot._inspection.snapshot_state_of` and the
     un-narrowed :func:`~parallax.core.entity.lifecycle_state_of`, never through a
     value's private state: the narrowed answer authenticates THIS Snapshot
-    lifecycle, and its Read Origin says whether that lifecycle published valid
+    lifecycle, and its Read Evidence says whether that lifecycle published valid
     stored Entity State. Diagnostic data from an invalid root carries Snapshot
     state for inspection but no origin, so it is ``none`` rather than a stored
     value of this source. The un-narrowed answer distinguishes another
     framework-managed source's value from one no managed source produced at all.
 
     It belongs to the Typed adapter because only a Typed value carries a
-    lifecycle to read: a Wire source answers the same fact from the Read Origin
+    lifecycle to read: a Wire source answers the same fact from the Read Evidence
     the door that published it filed, and what the keyed write judges is the
     answer rather than either carrier.
 
@@ -87,7 +87,7 @@ def provenance_of(value: EntityBase) -> Provenance:
     state = snapshot_state_of(value)
     if state is None:
         return "none" if insertion_of(value) is not None else "foreign"
-    return "none" if state.source is None else "this"
+    return "none" if state.read_evidence is None else "this"
 
 
 def metadata_of_instance(meta: Metamodel, instance: EntityBase) -> EntityMetadata:
@@ -109,8 +109,8 @@ def metadata_of_instance(meta: Metamodel, instance: EntityBase) -> EntityMetadat
     return metadata
 
 
-def instance_read_origin(instance: object) -> ReadOrigin | None:
-    """The private :class:`~parallax.core.unit_work.ReadOrigin` ``instance``
+def instance_read_evidence(instance: object) -> ReadEvidence | None:
+    """The private :class:`~parallax.core.unit_work.ReadEvidence` ``instance``
     carries, or ``None`` for a value Parallax never published.
 
     An edited copy answers the node's own hint, because an edit preserves every
@@ -121,7 +121,7 @@ def instance_read_origin(instance: object) -> ReadOrigin | None:
     this lifecycle recognizes no hint on it.
     """
     state = snapshot_state_of(instance)
-    return None if state is None else state.source
+    return None if state is None else state.read_evidence
 
 
 def source_pin(instance: object) -> Pin | None:
@@ -142,7 +142,7 @@ def written_object_key(
     record: EntityMetadata, meta: Metamodel, row: Mapping[str, object]
 ) -> ObjectKey:
     """The object a WRITTEN instance addresses — the same
-    :class:`~parallax.core.write_plan.ObjectKey` a source's own Read Origins name
+    :class:`~parallax.core.write_plan.ObjectKey` a source's own Read Evidence name
     their objects by (the instance's OWN Entity Identity, never
     family-normalized; its one pair keyed by the family key's canonical
     attribute name) and `unit_work.object_key` computes at flush, so a
@@ -241,7 +241,7 @@ class TypedKeyedWriteSource:
         return ResolvedKeyedWriteSource(
             entity=entity,
             pin=source_pin(self._value),
-            hint=instance_read_origin(self._value),
+            read_evidence=instance_read_evidence(self._value),
             provenance=provenance_of(self._value),
             representation="typed",
             authoring=insertion_of(self._value),
@@ -286,8 +286,8 @@ class TypedKeyedWriteSource:
         return PreparedSourceWrite(
             instruction=instruction,
             object_key=(
-                resolved.hint.object_key
-                if resolved.hint is not None
+                resolved.read_evidence.object_key
+                if resolved.read_evidence is not None
                 else written_object_key(resolved.entity, meta, instruction.rows[0])
             ),
             assigned=assigned,
@@ -373,7 +373,7 @@ class TypedKeyedInsertSource:
 
 
 def typed_predicate_write(
-    attempt: Attempt,
+    attempt: TxnAttempt,
     mutation: PredicateMutation,
     query: ObjectQuery[Any, Any],
     assignments: Sequence[AttributeAssignment[Any]],
@@ -416,7 +416,7 @@ def typed_predicate_write(
 
 
 def typed_target_write(
-    attempt: Attempt,
+    attempt: TxnAttempt,
     mutation: TargetMutation,
     instance: EntityBase,
     codec: EntityRowCodec,
@@ -454,7 +454,7 @@ def typed_target_write(
 
 
 def typed_conditional_amend(
-    attempt: Attempt,
+    attempt: TxnAttempt,
     mutation: TargetMutation,
     entity_class: type[EntityBase],
     assignments: Sequence[AttributeAssignment[Any]],

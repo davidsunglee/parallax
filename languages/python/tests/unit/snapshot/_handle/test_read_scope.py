@@ -6,7 +6,7 @@ it cannot even lower included, since lowering is the call's own argument — tha
 it selects the model before it refuses a classless one, that a refused query
 reaches no capability that executes, that one scope chooses its publication per
 call rather than holding one, and that the body it hands the policy takes its port,
-its Concurrency Preference, and its observation ledger from the inputs it was
+its Concurrency Preference, and its evidence context from the inputs it was
 handed rather than from anything it closed over.
 
 A delivery is the same ladder read from the other side, and gets the same
@@ -39,13 +39,13 @@ from parallax.core import LATEST, TX_TIME
 from parallax.core._execution import _read_policy as read_policy_module
 from parallax.core._execution._publication import SelectedReadModel
 from parallax.core._execution._read_policy import ReadInputs
-from parallax.core._execution._retention import ObservationLedger
+from parallax.core._execution._retention import ReadEvidenceContext
 from parallax.core._execution._scope import ExecutionScope
 from parallax.core.db_port import DatabaseConnection
 from parallax.core.entity._authored_resolver import object_query_node
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import class_index
-from parallax.core.execution import DatabaseOptions, QueryTargetError
+from parallax.core.execution import QueryTargetError, TxnOptions
 from parallax.core.execution_lifecycle import ExecutionLifecycleReentryError, ReadInterface
 from parallax.core.execution_lifecycle._activity import (
     INERT,
@@ -137,11 +137,11 @@ class _LoweringReached(Exception):
     pass
 
 
-class _Ledger:
+class _EvidenceContext:
     """The two things an observing read asks a transaction for, and nothing else.
 
     A stand-in rather than a unit of work, because what this suite grades is
-    WHICH ledger the body was handed, never what a real one does with what it
+    WHICH evidence context the body was handed, never what a real one does with what it
     receives.
     """
 
@@ -258,7 +258,7 @@ class _RecordingScope(ExecutionScope):
         super().__init__(
             cast("Any", None),
             cast("Any", None),
-            DatabaseOptions(),
+            TxnOptions(),
             lifecycle=lifecycle,
             serving=cast("Any", None),
             planner=ReadPlanCache(0),
@@ -276,12 +276,12 @@ class _Executed:
     executor: str
     port: DatabaseConnection
     preference: Concurrency | None
-    ledger: ObservationLedger | None
+    evidence_context: ReadEvidenceContext | None
 
 
-def _ledger_of(origins: object) -> ObservationLedger | None:
-    """The ledger an execution-owned projection collector was built over."""
-    return cast("Any", origins)._ledger
+def _evidence_context_of(origins: object) -> ReadEvidenceContext | None:
+    """The evidence context an execution-owned projection collector was built over."""
+    return cast("Any", origins)._evidence_context
 
 
 def _recorded(patch: pytest.MonkeyPatch) -> list[_Executed]:
@@ -300,7 +300,12 @@ def _recorded(patch: pytest.MonkeyPatch) -> list[_Executed]:
         request: EagerPageRequest[Any], publication: Publication[Any, Any]
     ) -> Any:
         executed.append(
-            _Executed("find", request.port, request.preference, _ledger_of(request.origins))
+            _Executed(
+                "find",
+                request.port,
+                request.preference,
+                _evidence_context_of(request.origin_collector),
+            )
         )
         return deliver_find(request, publication)
 
@@ -363,11 +368,11 @@ class _PageRead:
     model: CatalogedModel
     port: DatabaseConnection
     preference: Concurrency | None
-    ledger: ObservationLedger | None
+    evidence_context: ReadEvidenceContext | None
 
 
 def _recorded_pages(patch: pytest.MonkeyPatch) -> list[_PageRead]:
-    """The model, port, preference, and ledger every page of a delivery was read
+    """The model, port, preference, and evidence context every page of a delivery was read
     under, spelled with the page reader's full signature for `_recorded`'s
     reason."""
     page_reads: list[_PageRead] = []
@@ -378,7 +383,9 @@ def _recorded_pages(patch: pytest.MonkeyPatch) -> list[_PageRead]:
         assert isinstance(request, StreamPageRequest)
         page = cast("StreamPageRequest[Any]", request)
         page_reads.append(
-            _PageRead(page.model, page.port, page.preference, _ledger_of(page.origins))
+            _PageRead(
+                page.model, page.port, page.preference, _evidence_context_of(page.origin_collector)
+            )
         )
         return read_page(reader, page)
 
@@ -430,10 +437,10 @@ def _scope(
     selected: SelectedReadModel | None = None,
     lifecycle: InstalledLifecycle | None = None,
     preference: Concurrency | None = None,
-    ledger: ObservationLedger | None = None,
+    evidence_context: ReadEvidenceContext | None = None,
 ) -> tuple[ExecutionScope, _Recording]:
     resolved = selected if selected is not None else _selection()
-    execution = _Recording(resolved, ReadInputs(port, preference, ledger))
+    execution = _Recording(resolved, ReadInputs(port, preference, evidence_context))
     return _RecordingScope(execution, lifecycle), execution
 
 
@@ -647,44 +654,46 @@ def test_the_graph_tail_dispatches_the_milestone_set_read_for_both_interfaces(
 # --------------------------------------------------------------------------- #
 # The body reads its lane off the inputs it is handed                          #
 # --------------------------------------------------------------------------- #
-def test_every_body_threads_the_port_preference_and_ledger_it_was_handed(
+def test_every_body_threads_the_port_preference_and_evidence_context_it_was_handed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # The scope holds no port, no preference, and no ledger: all three arrive
+    # The scope holds no port, no preference, and no evidence context: all three arrive
     # with the body's own invocation, which is what lets one ladder serve a
     # standalone read and a participating one without a mode flag between them.
     standalone_port = ScriptedAdapter(Read(rows=list(_ACCOUNT_ROWS)))
     participating_port = ScriptedAdapter(Read(rows=list(_ACCOUNT_ROWS)))
-    ledger = _Ledger()
+    evidence_context = _EvidenceContext()
     standalone, _ = _scope(standalone_port)
-    participating, _ = _scope(participating_port, preference="locking", ledger=ledger)
+    participating, _ = _scope(
+        participating_port, preference="locking", evidence_context=evidence_context
+    )
     executed = _recorded(monkeypatch)
 
     _find(standalone, _typed_query()).result()
     _find(participating, _typed_query()).result()
 
     first, second = executed
-    assert (first.port, first.preference, first.ledger) == (standalone_port, None, None)
+    assert (first.port, first.preference, first.evidence_context) == (standalone_port, None, None)
     assert (second.port, second.preference) == (participating_port, "locking")
-    assert second.ledger is ledger
+    assert second.evidence_context is evidence_context
 
 
 def test_the_row_form_body_threads_the_preference_and_files_into_no_ledger(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # The values lane locks like the graph lane and observes nothing: its
-    # executor takes no ledger at all, so a preference reaching it while no
+    # executor takes no evidence context at all, so a preference reaching it while no
     # evidence does is a property of the one body that calls it.
     port = ScriptedAdapter(Read(rows=list(_ACCOUNT_ROWS)))
-    ledger = _Ledger()
-    scope, _ = _scope(port, preference="locking", ledger=ledger)
+    evidence_context = _EvidenceContext()
+    scope, _ = _scope(port, preference="locking", evidence_context=evidence_context)
     executed = _recorded(monkeypatch)
 
     scope.read_rows(_rows_node())
 
     (call,) = executed
     assert (call.executor, call.port, call.preference) == ("find_rows", port, "locking")
-    assert ledger.retained == []
+    assert evidence_context.retained == []
     assert [type(op) for op in port.calls] == [ReadCall]
 
 
@@ -806,18 +815,20 @@ def test_every_page_of_a_delivery_is_read_under_the_one_selection_it_opened_with
     assert execution.advances == 4
 
 
-def test_every_page_threads_the_port_preference_and_ledger_it_was_handed(
+def test_every_page_threads_the_port_preference_and_evidence_context_it_was_handed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # A page IS an eager read of a bounded root query, so it takes its lane off
     # the same inputs an eager read's body does: the scope holds none of the
     # three and a participating delivery differs from a standalone one in what
     # its policy hands each page, never in what the loop above asks for.
-    ledger = _Ledger()
+    evidence_context = _EvidenceContext()
     standalone_port = ScriptedAdapter(Read(rows=[_account_row(1)]))
     participating_port = ScriptedAdapter(Read(rows=[_account_row(1)]))
     standalone, _ = _scope(standalone_port)
-    participating, _ = _scope(participating_port, preference="locking", ledger=ledger)
+    participating, _ = _scope(
+        participating_port, preference="locking", evidence_context=evidence_context
+    )
     page_reads = _recorded_pages(monkeypatch)
 
     for scope, expected_port in (
@@ -829,6 +840,6 @@ def test_every_page_threads_the_port_preference_and_ledger_it_was_handed(
         assert page_reads[-1].port is expected_port
 
     first, second = page_reads
-    assert (first.preference, first.ledger) == (None, None)
+    assert (first.preference, first.evidence_context) == (None, None)
     assert second.preference == "locking"
-    assert second.ledger is ledger
+    assert second.evidence_context is evidence_context

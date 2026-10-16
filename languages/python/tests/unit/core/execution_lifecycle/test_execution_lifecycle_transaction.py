@@ -80,7 +80,7 @@ from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.unit_work import (
     OptimisticLockConflictError,
 )
-from parallax.snapshot import ScopedDatabase, Transaction, connect
+from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
@@ -139,7 +139,7 @@ def _attempt_outcomes(root: RecordedRoot) -> list[TransactionAttemptOutcome]:
     return [event.outcome for event in root.events if isinstance(event, TransactionAttemptFinished)]
 
 
-def _increase_balance(tx: Transaction) -> None:
+def _increase_balance(tx: TxnContext) -> None:
     """Read one Account and buffer a gated update of it — the shape that makes a
     zero-row write a shortfall the enforcer judges after the call completed."""
     account = tx.find(mm.Account.where(mm.Account.id == 7)).result()
@@ -153,7 +153,7 @@ def test_one_invocation_roots_its_attempt_its_batches_and_its_read() -> None:
     recorder = RecordingLifecycleProvider()
     port = ScriptedAdapter(Transact(Write(), Read(rows=[NEW_ROW]), Write()))
 
-    def body(tx: Transaction) -> str:
+    def body(tx: TxnContext) -> str:
         tx.insert(new_account())
         tx.find(mm.Account.where(mm.Account.id == 7)).result()
         tx.insert(mm.Account(id=8, owner="Bell", balance=Decimal("1.00")))
@@ -206,7 +206,7 @@ def test_a_requested_isolation_opens_no_activity_of_its_own() -> None:
         recorder = RecordingLifecycleProvider()
         port = ScriptedAdapter(Transact(Read(rows=[NEW_ROW]), Write()))
 
-        def body(tx: Transaction) -> None:
+        def body(tx: TxnContext) -> None:
             tx.find(mm.Account.where(mm.Account.id == 7)).result()
             tx.insert(new_account())
 
@@ -220,7 +220,7 @@ def test_each_batch_names_the_trigger_that_forced_it() -> None:
     recorder = RecordingLifecycleProvider()
     port = ScriptedAdapter(Transact(Write(), Read(rows=[NEW_ROW]), Write()))
 
-    def body(tx: Transaction) -> None:
+    def body(tx: TxnContext) -> None:
         tx.insert(new_account())
         tx.find(mm.Account.where(mm.Account.id == 7)).result()
         tx.insert(mm.Account(id=8, owner="Bell", balance=Decimal("1.00")))
@@ -493,7 +493,7 @@ def test_a_commit_failure_is_the_commit_phase() -> None:
 def test_a_callback_failure_is_the_callback_phase() -> None:
     recorder = RecordingLifecycleProvider()
 
-    def body(_tx: Transaction) -> None:
+    def body(_tx: TxnContext) -> None:
         raise ValueError("boom")
 
     with raises_contextualized(ValueError, match="boom"):
@@ -527,7 +527,7 @@ def test_a_failure_in_a_dependency_batch_is_still_the_callback_phase() -> None:
     recorder = RecordingLifecycleProvider()
     port = ScriptedAdapter(Transact(Read(rows=[NEW_ROW]), Write(affected=0)))
 
-    def body(tx: Transaction) -> None:
+    def body(tx: TxnContext) -> None:
         _increase_balance(tx)
         tx.find(mm.Account.where(mm.Account.id == 7)).result()
 
@@ -550,7 +550,7 @@ def test_a_rollback_failure_reports_both_live_failures() -> None:
         )
     )
 
-    def body(_tx: Transaction) -> None:
+    def body(_tx: TxnContext) -> None:
         raise ValueError("boom")
 
     with raises_contextualized(TransactionRollbackError):
@@ -574,7 +574,7 @@ def test_a_rollback_failure_reports_both_live_failures() -> None:
 def test_a_control_flow_escape_still_finishes_every_activity_it_left() -> None:
     recorder = RecordingLifecycleProvider()
 
-    def body(_tx: Transaction) -> None:
+    def body(_tx: TxnContext) -> None:
         raise KeyboardInterrupt
 
     with pytest.raises(KeyboardInterrupt):
@@ -643,7 +643,7 @@ def test_a_joined_callback_that_raises_is_reported_as_raising_and_nothing_more()
     recorder = RecordingLifecycleProvider()
     db = _db(ScriptedAdapter(Transact()), recorder)
 
-    def inner(_tx: Transaction) -> None:
+    def inner(_tx: TxnContext) -> None:
         raise ValueError("nested")
 
     with raises_contextualized(ValueError, match="nested"):
@@ -719,7 +719,7 @@ def test_the_higher_numbered_read_reporting_one_value_is_what_the_attempt_names(
     fault = deadlock()
     port = _DrainingFaultPort(read_faults=[fault, fault])
 
-    def body(tx: Transaction) -> None:
+    def body(tx: TxnContext) -> None:
         with suppress(DatabaseError):
             tx.find(mm.Account.where(mm.Account.id == 7)).result()
         tx.find(mm.Account.where(mm.Account.id == 8)).result()
@@ -749,7 +749,7 @@ def test_a_join_reporting_a_value_after_the_read_it_encloses_does_not_displace_i
     port = ScriptedAdapter(Transact(Read(raises=deadlock())))
     db = _db(port, recorder)
 
-    def inner(tx: Transaction) -> None:
+    def inner(tx: TxnContext) -> None:
         tx.find(mm.Account.where(mm.Account.id == 7)).result()
 
     with raises_contextualized(DatabaseError):
@@ -803,7 +803,7 @@ def test_neither_of_two_nested_joins_outranks_the_read_they_enclose() -> None:
     port = ScriptedAdapter(Transact(Read(raises=deadlock())))
     db = _db(port, recorder)
 
-    def innermost(tx: Transaction) -> None:
+    def innermost(tx: TxnContext) -> None:
         tx.find(mm.Account.where(mm.Account.id == 7)).result()
 
     with raises_contextualized(DatabaseError):
@@ -839,7 +839,7 @@ def test_a_failure_caught_and_re_raised_still_names_the_read_it_came_from() -> N
     recorder = RecordingLifecycleProvider()
     port = ScriptedAdapter(Transact(Read(raises=deadlock()), Read(rows=[NEW_ROW])))
 
-    def body(tx: Transaction) -> None:
+    def body(tx: TxnContext) -> None:
         with pytest.raises(DatabaseError) as caught:
             tx.find(mm.Account.where(mm.Account.id == 7)).result()
         tx.find(mm.Account.where(mm.Account.id == 8)).result()
@@ -885,7 +885,7 @@ def test_a_value_two_reads_produced_names_the_later_read_when_the_callback_re_ra
     recorder = RecordingLifecycleProvider()
     port = ScriptedAdapter(Transact(), dialect=dialect)
 
-    def body(tx: Transaction) -> None:
+    def body(tx: TxnContext) -> None:
         with suppress(ValueError):
             tx.find(mm.Account.where(mm.Account.id == 7)).result()
         with suppress(ValueError):
@@ -935,7 +935,7 @@ def test_a_failure_stashed_past_a_later_one_is_reported_as_direct() -> None:
         )
     )
 
-    def body(tx: Transaction) -> None:
+    def body(tx: TxnContext) -> None:
         with pytest.raises(DatabaseError) as stashed:
             tx.find(mm.Account.where(mm.Account.id == 7)).result()
         with suppress(DatabaseError):
@@ -984,7 +984,7 @@ def test_a_join_re_raising_an_evicted_value_names_itself_rather_than_the_read() 
     )
     db = _db(port, recorder)
 
-    def inner(tx: Transaction) -> None:
+    def inner(tx: TxnContext) -> None:
         with pytest.raises(DatabaseError) as first:
             tx.find(mm.Account.where(mm.Account.id == 7)).result()
         with suppress(DatabaseError):
@@ -1077,7 +1077,7 @@ def test_an_attempt_keeps_one_handled_failure_however_many_it_sees() -> None:
     port = _DrainingFaultPort(read_faults=[deadlock() for _ in range(handled)])
     watched: list[weakref.ref[DatabaseError]] = []
 
-    def body(tx: Transaction) -> None:
+    def body(tx: TxnContext) -> None:
         for _ in range(handled):
             try:
                 tx.find(mm.Account.where(mm.Account.id == 7)).result()
@@ -1111,7 +1111,7 @@ def test_an_invocation_keeps_one_failed_attempt_however_many_it_retries() -> Non
     port = _DrainingFaultPort(commit_faults=[commit_failure(), commit_failure()])
     attempts = 0
 
-    def body(tx: Transaction) -> None:
+    def body(tx: TxnContext) -> None:
         nonlocal attempts
         attempts += 1
         if attempts == 3:
@@ -1314,7 +1314,7 @@ def test_a_retry_reports_each_attempts_own_edition_and_the_failure_names_the_las
     db = _db(port, recorder, serving)
     seen: list[str] = []
 
-    def body(tx: Transaction) -> None:
+    def body(tx: TxnContext) -> None:
         seen.append(tx.edition)
         if len(seen) == 1:
             serving.publish(b, expected=a)

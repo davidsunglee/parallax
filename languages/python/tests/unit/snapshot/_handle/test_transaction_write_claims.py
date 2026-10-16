@@ -14,7 +14,7 @@ from parallax.conformance.read_models import Person
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.core.dialect import POSTGRES
 from parallax.core.unit_work import WriteEvidenceError
-from parallax.snapshot import Database, Transaction
+from parallax.snapshot import Database, TxnContext
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
@@ -69,7 +69,7 @@ def _writes(port: ScriptedAdapter) -> list[WriteCall]:
 def test_two_updates_of_one_state_with_disjoint_assignments_merge_into_one_write() -> None:
     port = ScriptedAdapter(Transact(_ACCOUNT_READ, Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         tx.amend(node.edit(balance=Decimal("125.00")))
         tx.amend(node.edit(owner="Grace"))
@@ -89,7 +89,7 @@ def test_two_updates_of_one_state_with_disjoint_assignments_merge_into_one_write
 def test_a_repeated_assignment_member_takes_the_later_authored_value() -> None:
     port = ScriptedAdapter(Transact(_ACCOUNT_READ, Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         tx.amend(node.edit(balance=Decimal("125.00")))
         tx.amend(node.edit(balance=Decimal("150.00")))
@@ -105,7 +105,7 @@ def test_a_net_equal_chain_across_two_verbs_writes_its_last_value() -> None:
     # versioned update does, advances the version.
     port = ScriptedAdapter(Transact(_ACCOUNT_READ, Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         edited = node.edit(balance=Decimal("125.00"))
         tx.amend(edited)
@@ -127,7 +127,7 @@ def test_a_net_zero_edit_chain_still_writes_the_member_it_touched() -> None:
     # and set back is still assigned, at the value the chain ended on.
     port = ScriptedAdapter(Transact(_ACCOUNT_READ, Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         tx.amend(node.edit(balance=Decimal("125.00")).edit(balance=Decimal("100.00")))
 
@@ -140,7 +140,7 @@ def test_a_net_zero_edit_of_an_unversioned_source_still_writes() -> None:
     # its read holds, and a net-zero chain writes its touched member there too.
     port = ScriptedAdapter(Transact(Read(rows=[{"id": 1, "name": "Ada"}]), Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         node = tx.find(Person.where(Person.id == 1)).result()
         tx.amend(node.edit(name="Grace").edit(name="Ada"))
 
@@ -153,7 +153,7 @@ def test_a_net_zero_edit_of_an_unversioned_source_still_writes() -> None:
 def test_a_later_edit_restating_one_member_writes_both_it_and_its_new_one() -> None:
     port = ScriptedAdapter(Transact(_ACCOUNT_READ, Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         edited = node.edit(balance=Decimal("125.00"))
         tx.amend(edited)
@@ -174,7 +174,7 @@ def test_a_later_edit_restating_one_member_writes_both_it_and_its_new_one() -> N
 def test_an_update_then_a_delete_of_one_state_is_one_delete() -> None:
     port = ScriptedAdapter(Transact(_ACCOUNT_READ, Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         tx.amend(node.edit(balance=Decimal("125.00")))
         tx.delete(node)
@@ -190,7 +190,7 @@ def test_an_update_then_a_delete_of_one_state_is_one_delete() -> None:
 def test_identical_destructive_intents_deduplicate() -> None:
     port = ScriptedAdapter(Transact(_ACCOUNT_READ, Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         tx.delete(node)
         tx.delete(node)
@@ -204,7 +204,7 @@ def test_an_assignment_after_a_destructive_intent_is_refused() -> None:
     # Unit Work invents no order in which both could be true.
     port = ScriptedAdapter(Transact(_ACCOUNT_READ))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         tx.delete(node)
         tx.amend(node.edit(balance=Decimal("125.00")))
@@ -218,7 +218,7 @@ def test_an_assignment_after_a_destructive_intent_is_refused() -> None:
 def test_a_temporal_update_and_terminate_over_one_region_is_one_terminate() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[balance_row(in_z=_TX_START)]), Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         node = tx.find(mm.Balance.where(mm.Balance.id == 1)).result()
         tx.amend(node.edit(value=Decimal("9.00")))
         tx.terminate(node)
@@ -231,7 +231,7 @@ def test_a_temporal_update_and_terminate_over_one_region_is_one_terminate() -> N
     ]
 
 
-def _position_at(tx: Transaction, at: dt.datetime) -> WherePosition:
+def _position_at(tx: TxnContext, at: dt.datetime) -> WherePosition:
     return tx.find(WherePosition.where(WherePosition.id == 1).as_of(valid_time=at)).result()
 
 
@@ -244,7 +244,7 @@ def test_temporal_assignments_over_different_windows_compose_in_authored_order()
         Transact(Read(rows=[_position_row()]), Read(rows=[_position_row()]), Write(times=2))
     )
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         early = _position_at(tx, _VALID_FROM)
         late = _position_at(tx, _OTHER_FROM)
         tx.amend(early.edit(value=Decimal("9.00")), until=_UNTIL)
@@ -269,7 +269,7 @@ def test_a_destruction_over_another_window_of_the_same_state_is_refused() -> Non
     # half of one and half of the other, so the second verb refuses.
     port = ScriptedAdapter(Transact(Read(rows=[_position_row()]), Read(rows=[_position_row()])))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         early = _position_at(tx, _VALID_FROM)
         late = _position_at(tx, _OTHER_FROM)
         tx.amend(early.edit(value=Decimal("9.00")), until=_UNTIL)
@@ -287,7 +287,7 @@ def test_a_refused_composition_leaves_the_earlier_write_pending_and_executable()
         Transact(Read(rows=[_position_row()]), Read(rows=[_position_row()]), Write(times=2))
     )
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         early = _position_at(tx, _VALID_FROM)
         late = _position_at(tx, _OTHER_FROM)
         tx.amend(early.edit(value=Decimal("9.00")), until=_UNTIL)
@@ -312,7 +312,7 @@ def test_temporal_updates_over_one_region_merge_into_one_rectangle_split() -> No
     # once rather than twice.
     port = ScriptedAdapter(Transact(Read(rows=[_position_row()]), Write(times=2)))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         node = _position_at(tx, _VALID_FROM)
         tx.amend(node.edit(value=Decimal("9.00")), until=_UNTIL)
         tx.amend(node.edit(acct_num="B"), until=_UNTIL)
@@ -342,7 +342,7 @@ def test_a_participating_read_flushes_the_first_intent_and_frees_the_state() -> 
     # intent, and the fresh read it then runs observes a state nothing claims.
     port = ScriptedAdapter(Transact(_ACCOUNT_READ, Write(), _ACCOUNT_READ, Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         first = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         tx.delete(first)
         second = tx.find(mm.Account.where(mm.Account.id == 1)).result()
@@ -365,7 +365,7 @@ def test_an_unversioned_update_then_delete_of_one_object_is_one_delete() -> None
     # never reaches the wire.
     port = ScriptedAdapter(Transact(Read(rows=[{"id": 1, "name": "Ada"}]), Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         node = tx.find(Person.where(Person.id == 1)).result()
         tx.amend(node.edit(name="Grace"))
         tx.delete(node)
@@ -382,7 +382,7 @@ def test_identical_unversioned_destructive_intents_deduplicate() -> None:
     # a legal two-verb sequence reaching a Planned Write at all.
     port = ScriptedAdapter(Transact(Read(rows=[{"id": 1, "name": "Ada"}]), Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         node = tx.find(Person.where(Person.id == 1)).result()
         tx.delete(node)
         tx.delete(node)
@@ -394,7 +394,7 @@ def test_identical_unversioned_destructive_intents_deduplicate() -> None:
 def test_an_unversioned_assignment_after_a_destructive_intent_is_refused() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[{"id": 1, "name": "Ada"}])))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         node = tx.find(Person.where(Person.id == 1)).result()
         tx.delete(node)
         tx.amend(node.edit(name="Grace"))
@@ -408,7 +408,7 @@ def test_an_unversioned_assignment_after_a_destructive_intent_is_refused() -> No
 def test_two_unversioned_updates_of_one_object_merge_into_one_write() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[{"id": 1, "name": "Ada"}]), Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         node = tx.find(Person.where(Person.id == 1)).result()
         tx.amend(node.edit(name="Grace"))
         tx.amend(node.edit(name="Hopper"))
@@ -425,7 +425,7 @@ def test_a_net_equal_chain_of_an_unversioned_object_writes_its_last_value() -> N
     # row holds, is written.
     port = ScriptedAdapter(Transact(Read(rows=[{"id": 1, "name": "Ada"}]), Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         node = tx.find(Person.where(Person.id == 1)).result()
         edited = node.edit(name="Grace")
         tx.amend(edited)
@@ -447,7 +447,7 @@ def test_writes_of_two_unversioned_objects_stay_independent_and_batch() -> None:
         )
     )
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         people = tx.find(Person.where(Person.id.in_([1, 2]))).results()
         for person in people:
             tx.delete(person)
@@ -466,7 +466,7 @@ def test_a_restoring_edit_of_a_value_this_transaction_inserted_cancels_nothing()
     # alone, carrying the value the caller ended on.
     port = ScriptedAdapter(Transact(Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         fresh = Person(id=9, name="Ada")
         tx.insert(fresh)
         tx.amend(fresh.edit(name="Grace").edit(name="Ada"))
@@ -487,7 +487,7 @@ def test_a_predicate_group_claims_every_state_it_selected() -> None:
     # mutated.
     port = ScriptedAdapter(Transact(Read(rows=[_ACCOUNT_ROW], times=2)))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         tx.amend_where(mm.Account.where(mm.Account.id == 1), mm.Account.owner.set("Grace"))
         tx.amend(node.edit(balance=Decimal("125.00")))
@@ -506,7 +506,7 @@ def test_a_keyed_write_of_a_state_the_group_did_not_select_stays_independent() -
         )
     )
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         tx.amend_where(mm.Account.where(mm.Account.id == 2), mm.Account.owner.set("Grace"))
         tx.amend(node.edit(balance=Decimal("125.00")))
@@ -521,7 +521,7 @@ def test_a_keyed_intent_before_an_overlapping_predicate_write_force_flushes_firs
     # pending intent still holds.
     port = ScriptedAdapter(Transact(_ACCOUNT_READ, Write(), _ACCOUNT_READ, Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         tx.amend(node.edit(balance=Decimal("125.00")))
         tx.amend_where(mm.Account.where(mm.Account.id == 1), mm.Account.owner.set("Grace"))
@@ -542,7 +542,7 @@ def test_the_locked_read_is_what_a_locking_preference_still_licenses() -> None:
     # locks the read and the same two assignments still merge into one write.
     port = ScriptedAdapter(Transact(_ACCOUNT_READ, Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         tx.amend(node.edit(balance=Decimal("125.00")))
         tx.amend(node.edit(owner="Grace"))
@@ -555,7 +555,7 @@ def test_the_locked_read_is_what_a_locking_preference_still_licenses() -> None:
 def test_the_default_preference_leaves_the_versioned_read_unlocked() -> None:
     port = ScriptedAdapter(Transact(_ACCOUNT_READ, Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         tx.amend(node.edit(balance=Decimal("125.00")))
 

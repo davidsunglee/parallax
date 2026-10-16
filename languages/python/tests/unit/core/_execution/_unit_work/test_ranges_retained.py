@@ -26,7 +26,7 @@ from parallax.core.entity._construction_input import ABSENT
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.unit_work import RetainedObservation, WritePlanningRequest
 from parallax.core.write_plan import PlannedClose, PlannedInsert, PredecessorRow
-from parallax.core.write_plan.keys import ObservedStateKey, TemporalStateKey
+from parallax.core.write_plan.keys import ObjectStateKey, TemporalObjectStateKey
 from parallax.core.write_plan.plan import NO_TEMPORAL_WRITE_OWNERSHIP, BoundRange, ExecutionUnit
 from tests._support.clock_probes import instant_at
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
@@ -61,9 +61,9 @@ def _held(predecessor: PredecessorRow, *, read_at: int = 0) -> RetainedTargetSta
     return RetainedTargetState(_state(predecessor), read_at, row, None)
 
 
-def _state(predecessor: PredecessorRow) -> TemporalStateKey:
+def _state(predecessor: PredecessorRow) -> TemporalObjectStateKey:
     state = retained(predecessor).key
-    assert isinstance(state, TemporalStateKey)
+    assert isinstance(state, TemporalObjectStateKey)
     return state
 
 
@@ -99,7 +99,7 @@ def _unit(
     return unit
 
 
-def _always(state: ObservedStateKey, read_at: int) -> bool:
+def _always(state: ObjectStateKey, read_at: int) -> bool:
     del state, read_at
     return True
 
@@ -108,7 +108,7 @@ def _bind(
     unit: ExecutionUnit,
     stored: Sequence[PredecessorRow],
     *,
-    current: Callable[[ObservedStateKey, int], bool] = _always,
+    current: Callable[[ObjectStateKey, int], bool] = _always,
 ) -> tuple[BoundRange, HeldRows]:
     deferred = unit.deferred
     assert isinstance(deferred, DeferredTemporalRange)
@@ -248,7 +248,7 @@ def test_a_stale_retained_row_is_discarded_unjudged_and_its_coverage_read() -> N
     unit = _unit(_holding(addressed_write(value="150.00"), stale))
     judged: list[int] = []
 
-    def current(state: ObservedStateKey, read_at: int) -> bool:
+    def current(state: ObjectStateKey, read_at: int) -> bool:
         judged.append(read_at)
         return False
 

@@ -34,7 +34,7 @@ from parallax.core.unit_work import (
     WritePreconditionError,
     WriteRejectedError,
 )
-from parallax.snapshot import Transaction
+from parallax.snapshot import TxnContext
 from parallax.snapshot._handle._wire import WireTransactionView
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
@@ -92,12 +92,12 @@ def _row(version: int = 3, balance: str = "100.00") -> dict[str, object]:
     return {"id": 1, "owner": "Ada", "balance": Decimal(balance), "version": version}
 
 
-def _patch(tx: Transaction, version: int = 3, **changes: object) -> None:
+def _patch(tx: TxnContext, version: int = 3, **changes: object) -> None:
     tx.wire.amend_if("Account", {"id": 1, **changes}, version=version)
 
 
 def _replace(
-    tx: Transaction, representation: _Representation, version: int = 3, owner: str = "Zed"
+    tx: TxnContext, representation: _Representation, version: int = 3, owner: str = "Zed"
 ) -> None:
     if representation == "typed":
         tx.replace_if(mm.Account(id=1, owner=owner, balance=Decimal("3.00")), version=version)
@@ -115,7 +115,7 @@ def _calls(port: ScriptedAdapter) -> list[PortCall]:
 def test_a_wire_patch_gates_on_its_callers_version_and_reads_nothing() -> None:
     port = ScriptedAdapter(Transact(Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         assert tx.wire.amend_if("Account", {"id": 1, "balance": "175.00"}, version=3) is None
 
     account_db(port).transact(fn)
@@ -134,7 +134,7 @@ def test_a_replacement_writes_every_writable_member_under_its_callers_version(
 def test_a_net_equal_patch_chain_still_advances_the_version_once() -> None:
     port = ScriptedAdapter(Transact(Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         _patch(tx, balance="150.00")
         _patch(tx, balance="100.00")
 
@@ -160,7 +160,7 @@ def test_an_identity_only_patch_reads_writes_and_checks_nothing(
 def test_an_identity_only_patch_neither_cancels_nor_changes_earlier_work() -> None:
     port = ScriptedAdapter(Transact(Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         _patch(tx, balance="150.00")
         tx.wire.amend_if("Account", {"id": 1}, version=99)
 
@@ -176,7 +176,7 @@ def test_a_non_temporal_target_refuses_until_before_an_empty_patch_is_dropped(
     port = ScriptedAdapter(Transact())
     bound = cast("dt.datetime", until)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         with pytest.raises(WriteInstructionError, match="until"):
             if operation == "amend":
                 tx.wire.amend_if("Account", {"id": 1}, until=bound, version=3)
@@ -198,7 +198,7 @@ def test_a_non_temporal_target_refuses_until_before_an_empty_patch_is_dropped(
 def test_a_locking_target_write_reads_its_row_under_the_shared_lock_once() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[_row()]), Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         _patch(tx, balance="150.00")
         _patch(tx, owner="Bo")
 
@@ -217,7 +217,7 @@ def test_a_locking_target_write_reads_its_row_under_the_shared_lock_once() -> No
 def test_a_locking_target_write_reuses_a_held_read_of_exactly_its_state() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[_row()]), Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         held = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         _patch(tx, balance="150.00")
         assert held.version == 3
@@ -235,7 +235,7 @@ def test_a_locking_target_write_refuses_a_stale_or_missing_start_at_the_call(
 ) -> None:
     port = ScriptedAdapter(Transact(Read(rows=stored), Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.insert(mm.Account(id=7, owner="Newton", balance=Decimal("5.00")))
         with pytest.raises(WritePreconditionError) as refused:
             _patch(tx, balance="150.00")
@@ -249,7 +249,7 @@ def test_a_locking_target_write_refuses_a_stale_or_missing_start_at_the_call(
 def test_a_locking_target_write_reuses_a_pending_observed_write_of_its_state() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[_row()]), Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         source = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         tx.amend(source.edit(owner="Bo"))
         del source
@@ -279,7 +279,7 @@ def test_a_spent_read_never_stands_in_for_a_locking_acquisition_and_a_fresh_one_
         )
     )
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         source = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         tx.amend(source.edit(owner="Bo"))
         fresh = tx.find(mm.Account.where(mm.Account.id == 1)).result()
@@ -299,7 +299,7 @@ def test_a_spent_read_never_stands_in_for_a_locking_acquisition_and_a_fresh_one_
 def test_a_released_read_leaves_a_locking_target_write_to_acquire_its_row() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[_row()]), Read(rows=[_row()]), Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.find(mm.Account.where(mm.Account.id == 1)).result()
         gc.collect()
         _patch(tx, balance="150.00")
@@ -315,7 +315,7 @@ def test_a_released_read_leaves_a_locking_target_write_to_acquire_its_row() -> N
 def test_a_read_of_another_version_does_not_stand_in_for_the_callers() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[_row(version=2)]), Read(rows=[_row(version=2)])))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         held = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         with pytest.raises(WritePreconditionError):
             _patch(tx, balance="150.00")
@@ -330,7 +330,7 @@ def test_an_unversioned_target_takes_the_locking_fallback_and_misses_as_a_missin
         Transact(Read(rows=[{"id": 5, "owner": "Ada", "balance": Decimal(1)}]), Write(affected=0))
     )
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.wire.amend_if("Wallet", {"id": 5, "balance": "2.00"}, unversioned=True)
 
     with raises_contextualized(MissingTargetError, match="Wallet"):
@@ -345,7 +345,7 @@ def test_a_target_writes_window_outranks_its_revision_which_outranks_its_payload
     port = ScriptedAdapter(Transact())
     unknown = {"id": 1, "nickname": "Bo"}
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         refusals: list[str] = []
         for call in (
             lambda: tx.wire.amend_if("Account", unknown, valid_from=FIXED),
@@ -371,7 +371,7 @@ def test_a_target_writes_window_outranks_its_revision_which_outranks_its_payload
 def test_an_unversioned_target_states_no_revision() -> None:
     port = ScriptedAdapter(Transact())
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         with pytest.raises(WriteInstructionError, match="takes unversioned, not version"):
             tx.replace_if(Wallet(id=5, owner="Ada", balance=Decimal(1)), version=1)
 
@@ -396,7 +396,7 @@ def test_a_failed_precondition_is_never_retried_even_with_conflict_retries_on() 
 def test_a_caught_precondition_failure_still_rolls_the_attempt_back() -> None:
     port = ScriptedAdapter(Transact(Write(affected=0)))
 
-    def fn(tx: Transaction) -> str:
+    def fn(tx: TxnContext) -> str:
         _patch(tx, balance="150.00")
         with pytest.raises(WritePreconditionError):
             tx.find(mm.Account.where(mm.Account.id == 2))
@@ -414,7 +414,7 @@ def test_a_retried_attempt_states_the_same_callers_revision() -> None:
         Transact(Read(rows=[other]), Write(times=2)),
     )
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         source = tx.find(mm.Account.where(mm.Account.id == 2)).result()
         _patch(tx, balance="150.00")
         tx.amend(source.edit(owner="Bo"))
@@ -429,22 +429,22 @@ def test_a_retried_attempt_states_the_same_callers_revision() -> None:
 # --------------------------------------------------------------------------- #
 # Exact-window composition with observed writes of the same state.            #
 # --------------------------------------------------------------------------- #
-type _Step = Callable[[Transaction, mm.Account], None]
+type _Step = Callable[[TxnContext, mm.Account], None]
 
 
-def _p(tx: Transaction, _source: mm.Account) -> None:
+def _p(tx: TxnContext, _source: mm.Account) -> None:
     _patch(tx, balance="150.00")
 
 
-def _r(tx: Transaction, _source: mm.Account) -> None:
+def _r(tx: TxnContext, _source: mm.Account) -> None:
     _replace(tx, "wire")
 
 
-def _o(tx: Transaction, source: mm.Account) -> None:
+def _o(tx: TxnContext, source: mm.Account) -> None:
     tx.amend(source.edit(owner="Bo"))
 
 
-def _d(tx: Transaction, source: mm.Account) -> None:
+def _d(tx: TxnContext, source: mm.Account) -> None:
     tx.delete(source)
 
 
@@ -476,7 +476,7 @@ def test_exact_window_target_and_observed_writes_compose_into_one_statement(
     port = ScriptedAdapter(Transact(Read(rows=[_row()]), Write(), Read(rows=[])))
     spent: list[BaseException] = []
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         source = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         for step in steps:
             step(tx, source)
@@ -493,7 +493,7 @@ def test_exact_window_target_and_observed_writes_compose_into_one_statement(
 def test_a_composed_write_whose_gate_fails_reports_the_callers_precondition() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[_row()]), Write(affected=0)))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         source = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         tx.amend(source.edit(owner="Bo"))
         _patch(tx, balance="150.00")
@@ -502,22 +502,22 @@ def test_a_composed_write_whose_gate_fails_reports_the_callers_precondition() ->
         account_db(port).transact(fn, retry_optimistic_conflicts=True)
 
 
-type _WalletStep = Callable[[Transaction, Wallet], None]
+type _WalletStep = Callable[[TxnContext, Wallet], None]
 
 
-def _wallet_p(tx: Transaction, _source: Wallet) -> None:
+def _wallet_p(tx: TxnContext, _source: Wallet) -> None:
     tx.wire.amend_if("Wallet", {"id": 5, "balance": "2.00"}, unversioned=True)
 
 
-def _wallet_r(tx: Transaction, _source: Wallet) -> None:
+def _wallet_r(tx: TxnContext, _source: Wallet) -> None:
     tx.replace_if(Wallet(id=5, owner="Zed", balance=Decimal("3.00")), unversioned=True)
 
 
-def _wallet_o(tx: Transaction, source: Wallet) -> None:
+def _wallet_o(tx: TxnContext, source: Wallet) -> None:
     tx.amend(source.edit(owner="Bo"))
 
 
-def _wallet_d(tx: Transaction, source: Wallet) -> None:
+def _wallet_d(tx: TxnContext, source: Wallet) -> None:
     tx.delete(source)
 
 
@@ -576,7 +576,7 @@ def test_an_unversioned_target_composes_with_observed_writes_of_its_object(
     port = ScriptedAdapter(Transact(Read(rows=[_WALLET_ROW]), *acquisition, Write(), Read(rows=[])))
     submitted = any(step in (_wallet_o, _wallet_d) for step in steps)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         source = tx.find(Wallet.where(Wallet.id == 5)).result()
         for step in steps:
             step(tx, source)
@@ -593,7 +593,7 @@ def test_an_unversioned_target_composes_with_observed_writes_of_its_object(
 def test_an_unversioned_target_write_after_a_destruction_of_its_object_is_refused() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[_WALLET_ROW]), Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         source = tx.find(Wallet.where(Wallet.id == 5)).result()
         tx.delete(source)
         for second in (_wallet_p, _wallet_r):
@@ -608,7 +608,7 @@ def test_an_unversioned_target_write_after_a_destruction_of_its_object_is_refuse
 def test_a_target_write_after_a_destruction_of_its_state_is_refused(second: _Step) -> None:
     port = ScriptedAdapter(Transact(Read(rows=[_row()]), Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         source = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         tx.delete(source)
         with pytest.raises(WriteEvidenceError) as refused:
@@ -629,7 +629,7 @@ def test_a_second_stated_revision_of_one_object_is_refused_and_the_first_still_r
     acquired = [Read(rows=[_row()])] if concurrency == "locking" else []
     port = ScriptedAdapter(Transact(*acquired, Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         _patch(tx, balance="150.00")
         with pytest.raises(WriteEvidenceError) as refused:
             _patch(tx, version=4, owner="Bo")
@@ -652,7 +652,7 @@ def test_a_target_and_an_observed_write_of_two_states_of_one_object_are_refused(
 ) -> None:
     port = ScriptedAdapter(Transact(Read(rows=[_row(version=2)]), Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         source = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         first, second = (_p, _o) if target_first else (_o, _p)
         first(tx, source)
@@ -671,7 +671,7 @@ def test_a_target_and_an_observed_write_of_two_states_of_one_object_are_refused(
 def test_a_target_write_of_a_state_a_pending_group_selected_is_refused() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[_row(version=2)]), Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.amend_where(mm.Account.where(mm.Account.id == 1), mm.Account.owner.set("Bo"))
         with pytest.raises(WriteEvidenceError, match="already buffered"):
             _patch(tx, balance="150.00")
@@ -690,7 +690,7 @@ def test_a_target_write_of_an_object_this_attempt_inserted_is_refused(
 ) -> None:
     port = ScriptedAdapter(Transact(Write(), Read(rows=[]), Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         inserted = mm.Account(id=1, owner="Ada", balance=Decimal("1.00"))
         tx.insert(inserted)
         if flushed:
@@ -713,7 +713,7 @@ def test_a_target_write_of_an_object_this_attempt_inserted_is_refused(
 def test_a_cancelled_insertion_of_an_object_still_refuses_a_target_write_of_it() -> None:
     port = ScriptedAdapter(Transact())
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         inserted = mm.Account(id=1, owner="Ada", balance=Decimal("1.00"))
         tx.insert(inserted)
         tx.delete(inserted)
@@ -727,7 +727,7 @@ def test_a_cancelled_insertion_of_an_object_still_refuses_a_target_write_of_it()
 def test_a_committed_object_rewritten_in_this_attempt_is_target_writable() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[_row()]), Write(), Read(rows=[_row(4)]), Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         source = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         tx.amend(source.edit(owner="Bo"))
         assert tx.find(mm.Account.where(mm.Account.id == 1)).result().version == 4
@@ -751,7 +751,7 @@ def test_a_source_write_takes_no_condition_or_start(verb: str, keyword: str) -> 
         "valid_from": FIXED,
     }
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         node = tx.wire.find(_ACCOUNT_ONE).result()
         write = cast("Callable[..., None]", getattr(tx.wire, verb))
         with pytest.raises(TypeError, match=keyword):
@@ -768,7 +768,7 @@ def test_a_source_write_takes_no_condition_or_start(verb: str, keyword: str) -> 
 def test_a_typed_replacement_of_a_read_value_is_addressed_by_its_key_alone() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[_row()]), Write()))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         fetched = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         tx.replace_if(fetched.edit(owner="Bo"), version=7)
 
@@ -801,7 +801,7 @@ def test_a_typed_replacement_of_a_read_value_leaves_its_read_only_members_unwrit
     port = ScriptedAdapter(Transact(Read(rows=[stored]), Write()))
     ledger = cast("type[Ledger]", entity)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         fetched = tx.find(ledger.where(ledger.id == 1)).result()
         tx.replace_if(fetched.edit(note="changed"), version=3)
 
@@ -820,7 +820,7 @@ def test_a_subtype_target_write_is_guarded_by_its_tag_and_refuses_a_sibling_memb
         Transact(Read(rows=[{"id": 4, "amount": Decimal(1), "cardNetwork": "visa"}]), Write())
     )
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         with pytest.raises(WriteRejectedError):
             tx.wire.amend_if("CardPayment", {"id": 4, "tendered": "1.00"}, unversioned=True)
         tx.wire.amend_if("CardPayment", {"id": 4, "cardNetwork": "amex"}, unversioned=True)
@@ -835,8 +835,8 @@ def test_a_subtype_target_write_is_guarded_by_its_tag_and_refuses_a_sibling_memb
 @pytest.mark.parametrize(
     "method",
     [
-        Transaction.amend_if,
-        Transaction.replace_if,
+        TxnContext.amend_if,
+        TxnContext.replace_if,
         WireTransactionView.amend_if,
         WireTransactionView.replace_if,
     ],

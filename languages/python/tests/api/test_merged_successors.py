@@ -39,7 +39,7 @@ from parallax.core.execution import (
     TransactionTimePinReadOnlyError,
 )
 from parallax.core.unit_work import WriteEvidenceError, WritePreconditionError
-from parallax.snapshot import ScopedDatabase, Transaction, connect
+from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.adoption import raises_contextualized
 from tests._support.root_ownership import own_root
 
@@ -133,7 +133,7 @@ def _seeded(
     profile_run.reset(model_of(_MODEL), {})
     db = _db(profile_run, _T0, _T1, *instants)
 
-    def first(tx: Transaction) -> None:
+    def first(tx: TxnContext) -> None:
         tx.insert(
             entity(id=1, amount=100, label=labels[0], spec=Spec(title="s")),
             valid_from=_JAN,
@@ -152,11 +152,11 @@ def _seeded(
     return db
 
 
-def _find(tx: Transaction, entity: type[Any], at: dt.datetime) -> Any:
+def _find(tx: TxnContext, entity: type[Any], at: dt.datetime) -> Any:
     return tx.find(entity.where(entity.id == 1).as_of(valid_time=at)).result()
 
 
-def _wire_find(tx: Transaction, entity: type[Any], at: dt.datetime) -> Any:
+def _wire_find(tx: TxnContext, entity: type[Any], at: dt.datetime) -> Any:
     return tx.wire.find(
         {
             "target": _name(entity),
@@ -169,7 +169,7 @@ def _wire_find(tx: Transaction, entity: type[Any], at: dt.datetime) -> Any:
     ).result()
 
 
-def _amend(tx: Transaction, entity: type[Any], representation: _Representation) -> None:
+def _amend(tx: TxnContext, entity: type[Any], representation: _Representation) -> None:
     """Amend span 1 from February until June to 150, from a read at
     February."""
     if representation == "typed":
@@ -236,7 +236,7 @@ def test_a_uniform_replacement_across_differing_rectangles_leaves_three_current_
 ) -> None:
     db = _seeded(profile_run, entity, _TA, labels=("A", "B"))
 
-    def replace(tx: Transaction) -> None:
+    def replace(tx: TxnContext) -> None:
         if representation == "typed":
             tx.replace(_find(tx, entity, _FEB).edit(amount=150, label="R"), until=_JUN)
         else:
@@ -262,7 +262,7 @@ def test_a_failed_proof_rolls_back_the_merge_with_everything_else(
 ) -> None:
     db = _seeded(profile_run, entity, _TA)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.wire.amend_if(
             _name(entity), {"id": 1, "amount": 150}, valid_from=_FEB, until=_JUN, tx_start=_T1
         )
@@ -284,7 +284,7 @@ def test_a_fresh_read_of_the_merged_row_writes_from_its_own_pin(
 ) -> None:
     db = _seeded(profile_run, entity, _TA)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         _amend(tx, entity, "typed")
         # The read flushes the merge; its pin, not the merged row's February
         # start, is where the next write starts.
@@ -310,7 +310,7 @@ def test_a_historical_read_of_a_merged_original_writes_nothing(
     db.transact(lambda tx: _amend(tx, entity, "typed"))
     before = _rows(profile_run, entity)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         historical = tx.find(
             entity.where(entity.id == 1).as_of(valid_time=_MAY, tx_time=_T1)
         ).result()
@@ -331,7 +331,7 @@ def test_a_source_a_completed_write_spent_is_refused_however_its_rows_merged(
 ) -> None:
     db = _seeded(profile_run, entity, _TA)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         source = _find(tx, entity, _FEB)
         tx.amend(source.edit(amount=100 if unchanged else 150), until=_JUN)
         _find(tx, entity, _MAY)  # flush the write that spent the source
@@ -342,7 +342,7 @@ def test_a_source_a_completed_write_spent_is_refused_however_its_rows_merged(
     db.transact(fn)
 
 
-def _barrier(tx: Transaction) -> None:
+def _barrier(tx: TxnContext) -> None:
     tx.amend_where(Tag.where(Tag.id == 1), Tag.label.set("q"))
 
 
@@ -353,7 +353,7 @@ def test_a_write_admitted_before_a_barrier_reaches_the_merged_row_through_its_ow
 ) -> None:
     db = _seeded(profile_run, entity, _TA)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         early, may = _find(tx, entity, _FEB), _find(tx, entity, _MAY)
         tx.amend(early.edit(amount=150), until=_JUN)
         _barrier(tx)
@@ -388,7 +388,7 @@ def test_an_insertion_stands_while_its_part_of_a_merged_row_does_and_ends_with_i
         )
     )
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         opened = entity(id=1, amount=100, label="a", spec=Spec(title="s"))
         tx.insert(opened, valid_from=_JAN, until=_APR)
         if flushed:

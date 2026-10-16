@@ -41,7 +41,7 @@ from parallax.core.execution_lifecycle import (
 from parallax.core.read_delivery import InvalidData
 from parallax.core.unit_work import RetainedObservation
 from parallax.snapshot import ScopedDatabase, Snapshot, WireEntity, connect
-from parallax.snapshot._publication._wire import read_origin_of
+from parallax.snapshot._publication._wire import read_evidence_of
 from tests._support import mirrored_models as mm
 from tests._support.root_ownership import own_root
 
@@ -203,7 +203,7 @@ def published_claims(snapshot: Snapshot[WireEntity]) -> tuple[RetainedObservatio
     """The retained claims the Entity nodes ``snapshot`` PUBLISHED carry, each
     once, in the order the walk reaches them.
 
-    What a first-party holder of a Wire result reads off `read_origin_of`, and
+    What a first-party holder of a Wire result reads off `read_evidence_of`, and
     the same walk the conformance engine runs over a grouped find's own output.
     Publication is what settles ownership: a claim belongs to a value a caller
     was handed, so a projection no published root reaches contributes none. A
@@ -226,7 +226,7 @@ def published_claims(snapshot: Snapshot[WireEntity]) -> tuple[RetainedObservatio
         if not isinstance(value, WireEntity) or id(value) in visited:
             continue
         visited.add(id(value))
-        hint = read_origin_of(value)
+        hint = read_evidence_of(value)
         if hint is not None and hint.observation is not None:
             claims.append(hint.observation)
         frontier.extend(cast("Mapping[str, object]", value).values())

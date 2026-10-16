@@ -41,7 +41,7 @@ from parallax.core.unit_work import (
     buffered_write,
 )
 from parallax.core.write_plan import PredecessorRow, TemporalObservation
-from parallax.core.write_plan.keys import ObjectKey, VersionedStateKey
+from parallax.core.write_plan.keys import ObjectKey, VersionedObjectStateKey
 from parallax.core.write_plan.plan import PlannedWrites
 from tests.unit.conformance._coverage_rows_support import coverage_members, read_coverage
 
@@ -452,7 +452,7 @@ def test_retiring_a_state_with_no_milestone_leaves_the_tracker_alone() -> None:
     shadow.track_opened(
         POSITION,
         _rectangles((1, "2024-01-01T00:00:00Z", None, "1.00")),
-        retired=(VersionedStateKey(ObjectKey(POSITION_ENTITY.identity, (("id", 1),)), 1),),
+        retired=(VersionedObjectStateKey(ObjectKey(POSITION_ENTITY.identity, (("id", 1),)), 1),),
     )
     assert shadow.resolve(POSITION, POSITION_ENTITY, {"id": 1}) is not None
 

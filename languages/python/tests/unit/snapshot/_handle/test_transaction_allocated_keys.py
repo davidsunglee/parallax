@@ -21,7 +21,7 @@ from parallax.core.execution_lifecycle import (
     DatabaseWriteRowsCompleted,
 )
 from parallax.core.unit_work import KeyedWrite, WriteResultError
-from parallax.snapshot import Transaction
+from parallax.snapshot import TxnContext
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
     Read,
@@ -54,7 +54,7 @@ _INSERT = (
 )
 
 
-def _insert_allocated(tx: Transaction, entity: type[Entity], amount: int) -> None:
+def _insert_allocated(tx: TxnContext, entity: type[Entity], amount: int) -> None:
     instruction = KeyedWrite(
         "insert", entity.identity.canonical, ({"id": {"computed": "maxPlusOne"}, "amount": amount},)
     )
@@ -71,7 +71,7 @@ def test_an_allocated_temporal_key_is_answered_and_the_row_revised_in_place() ->
         Transact(Read(rows=[{"id": 8}]), Read(rows=[_ledger_row(8, 100)]), Write())
     )
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         _insert_allocated(tx, Ledger, 100)
         opened = tx.find(Ledger.where(Ledger.id == 8)).result()
         tx.amend(opened.edit(amount=150))

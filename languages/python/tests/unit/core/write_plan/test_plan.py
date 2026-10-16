@@ -16,7 +16,7 @@ import pytest
 
 from parallax.core.metamodel import AttributeIdentity
 from parallax.core.write_plan import PlannedInsert, WritePlan
-from parallax.core.write_plan.keys import ObjectKey, VersionedStateKey
+from parallax.core.write_plan.keys import ObjectKey, VersionedObjectStateKey
 from parallax.core.write_plan.plan import (
     NO_OPENINGS,
     NO_TEMPORAL_WRITE_OWNERSHIP,
@@ -166,7 +166,7 @@ def test_an_attempt_that_opened_nothing_owns_nothing_an_insertion_opened() -> No
 
 def test_an_attempt_that_opened_nothing_has_proved_and_derived_nothing() -> None:
     endpoint = OwnedEndpoint(_ACCOUNT, (1,), OPEN_BITEMPORAL_ENDS)
-    state = VersionedStateKey(ObjectKey(_ACCOUNT, (("id", 1),)), 1)
+    state = VersionedObjectStateKey(ObjectKey(_ACCOUNT, (("id", 1),)), 1)
     assert NO_TEMPORAL_WRITE_OWNERSHIP.proven(state) is None
     assert tuple(NO_TEMPORAL_WRITE_OWNERSHIP.descendants(state, None)) == ()
     assert NO_TEMPORAL_WRITE_OWNERSHIP.descent(endpoint) is None

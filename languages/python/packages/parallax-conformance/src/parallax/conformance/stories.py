@@ -25,7 +25,7 @@ from parallax.conformance.vo_models import (
 from parallax.core.entity import Entity
 from parallax.core.execution import ExecutionFailure
 from parallax.core.unit_work import Clock
-from parallax.snapshot import ScopedDatabase, Transaction
+from parallax.snapshot import ScopedDatabase, TxnContext
 
 __all__ = ["WRITE_STORIES", "WriteStory", "story_snippet"]
 
@@ -75,7 +75,7 @@ def story_snippet(story: WriteStory) -> str:
 
 
 def insert_then_read_your_own_write(db: ScopedDatabase) -> list[Entity]:
-    def fn(tx: Transaction) -> list[Entity]:
+    def fn(tx: TxnContext) -> list[Entity]:
         tx.insert(Account(id=7, owner="Newton", balance=Decimal("5.00")))
         return list(tx.find(Account.where(Account.id == 7)).results())
 
@@ -86,7 +86,7 @@ def aborted_update_is_discarded(db: ScopedDatabase) -> list[Entity]:
     fetched = db.transact(lambda tx: tx.find(Account.where(Account.id == 1))).result()
     edited = fetched.edit(balance=Decimal("999.00"))
 
-    def doomed(tx: Transaction) -> None:
+    def doomed(tx: TxnContext) -> None:
         tx.amend(edited)
         raise RuntimeError("changed my mind")
 
@@ -96,7 +96,7 @@ def aborted_update_is_discarded(db: ScopedDatabase) -> list[Entity]:
 
 
 def fk_ordered_inserts(db: ScopedDatabase) -> None:
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.insert(
             Order(
                 id=100,
@@ -114,7 +114,7 @@ def fk_ordered_inserts(db: ScopedDatabase) -> None:
 
 
 def callback_value_withheld_on_abort(db: ScopedDatabase) -> list[Entity]:
-    def fn(tx: Transaction) -> list[Entity]:
+    def fn(tx: TxnContext) -> list[Entity]:
         current = tx.find(Account.where(Account.id == 1)).result()
         tx.amend(current.edit(balance=Decimal("175.00")))
         tx.find(Account.where(Account.id == 1))
@@ -124,7 +124,7 @@ def callback_value_withheld_on_abort(db: ScopedDatabase) -> list[Entity]:
 
 
 def keyed_amendment_observed_in_transaction(db: ScopedDatabase) -> list[Entity]:
-    def fn(tx: Transaction) -> list[Entity]:
+    def fn(tx: TxnContext) -> list[Entity]:
         current = tx.find(Account.where(Account.id == 1)).result()
         tx.amend(current.edit(balance=Decimal("175.00")))
         return list(tx.find(Account.where(Account.id == 1)).results())
@@ -133,7 +133,7 @@ def keyed_amendment_observed_in_transaction(db: ScopedDatabase) -> list[Entity]:
 
 
 def keyed_delete_observed_in_transaction(db: ScopedDatabase) -> list[Entity]:
-    def fn(tx: Transaction) -> list[Entity]:
+    def fn(tx: TxnContext) -> list[Entity]:
         current = tx.find(Account.where(Account.id == 3)).result()
         tx.delete(current)
         return list(tx.find(Account.where(Account.id == 3)).results())
@@ -142,7 +142,7 @@ def keyed_delete_observed_in_transaction(db: ScopedDatabase) -> list[Entity]:
 
 
 def create_then_delete_a_parent_child_pair(db: ScopedDatabase) -> None:
-    def create(tx: Transaction) -> None:
+    def create(tx: TxnContext) -> None:
         tx.insert(
             Order(
                 id=100,
@@ -156,7 +156,7 @@ def create_then_delete_a_parent_child_pair(db: ScopedDatabase) -> None:
         )
         tx.insert(OrderItem(id=200, order_id=100, sku="X-1", quantity=3))
 
-    def teardown(tx: Transaction) -> None:
+    def teardown(tx: TxnContext) -> None:
         tx.delete_where(OrderItem.where(OrderItem.id == 200))
         tx.delete_where(Order.where(Order.id == 100))
 
@@ -165,7 +165,7 @@ def create_then_delete_a_parent_child_pair(db: ScopedDatabase) -> None:
 
 
 def one_flush_combined_mixed_verb_order(db: ScopedDatabase) -> list[Entity]:
-    def fn(tx: Transaction) -> list[Entity]:
+    def fn(tx: TxnContext) -> list[Entity]:
         current = tx.find(Account.where(Account.id == 1)).result()
         deleted = tx.find(Account.where(Account.id == 3)).result()
         tx.insert(Account(id=9, owner="Noether", balance=Decimal("5.00")))
@@ -177,7 +177,7 @@ def one_flush_combined_mixed_verb_order(db: ScopedDatabase) -> list[Entity]:
 
 
 def aborted_insert_never_becomes_durable(db: ScopedDatabase) -> list[Entity]:
-    def doomed(tx: Transaction) -> None:
+    def doomed(tx: TxnContext) -> None:
         tx.insert(Account(id=7, owner="Newton", balance=Decimal("5.00")))
         raise RuntimeError("abort")
 
@@ -187,7 +187,7 @@ def aborted_insert_never_becomes_durable(db: ScopedDatabase) -> list[Entity]:
 
 
 def aborted_delete_leaves_the_row_standing(db: ScopedDatabase) -> list[Entity]:
-    def doomed(tx: Transaction) -> None:
+    def doomed(tx: TxnContext) -> None:
         current = tx.find(Account.where(Account.id == 3)).result()
         tx.delete(current)
         tx.find(Account.where(Account.id == 3))
@@ -199,17 +199,17 @@ def aborted_delete_leaves_the_row_standing(db: ScopedDatabase) -> list[Entity]:
 
 
 def transaction_time_only_insert_opens_a_current_milestone(db: ScopedDatabase) -> None:
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.insert(Balance(id=1, acct_num="A", value=Decimal("100.00")))
 
     db.transact(fn)
 
 
 def transaction_time_only_terminate_closes_the_current_milestone(db: ScopedDatabase) -> None:
-    def insert(tx: Transaction) -> None:
+    def insert(tx: TxnContext) -> None:
         tx.insert(Balance(id=1, acct_num="A", value=Decimal("100.00")))
 
-    def close(tx: Transaction) -> None:
+    def close(tx: TxnContext) -> None:
         current = tx.find(Balance.where(Balance.id == 1)).result()
         tx.terminate(current)
 
@@ -218,10 +218,10 @@ def transaction_time_only_terminate_closes_the_current_milestone(db: ScopedDatab
 
 
 def transaction_time_only_chain_update_via_a_sparse_copy(db: ScopedDatabase) -> None:
-    def insert(tx: Transaction) -> None:
+    def insert(tx: TxnContext) -> None:
         tx.insert(Balance(id=1, acct_num="A", value=Decimal("100.00")))
 
-    def update(tx: Transaction) -> None:
+    def update(tx: TxnContext) -> None:
         current = tx.find(Balance.where(Balance.id == 1)).result()
         tx.amend(current.edit(value=Decimal("150.00")))
 
@@ -230,10 +230,10 @@ def transaction_time_only_chain_update_via_a_sparse_copy(db: ScopedDatabase) -> 
 
 
 def transaction_time_only_chain_update_carries_every_new_attribute(db: ScopedDatabase) -> None:
-    def insert(tx: Transaction) -> None:
+    def insert(tx: TxnContext) -> None:
         tx.insert(Balance(id=1, acct_num="A", value=Decimal("100.00")))
 
-    def update(tx: Transaction) -> None:
+    def update(tx: TxnContext) -> None:
         current = tx.find(Balance.where(Balance.id == 1)).result()
         tx.amend(current.edit(acct_num="B", value=Decimal("250.00")))
 
@@ -242,7 +242,7 @@ def transaction_time_only_chain_update_carries_every_new_attribute(db: ScopedDat
 
 
 def transaction_time_only_chain_update_from_existing_history(db: ScopedDatabase) -> None:
-    def update(tx: Transaction) -> None:
+    def update(tx: TxnContext) -> None:
         current = tx.find(Balance.where(Balance.id == 1)).result()
         tx.amend(current.edit(value=Decimal("175.00")))
 
@@ -252,10 +252,10 @@ def transaction_time_only_chain_update_from_existing_history(db: ScopedDatabase)
 def transaction_time_only_conditional_replacement_gates_on_the_callers_milestone(
     db: ScopedDatabase,
 ) -> None:
-    def insert(tx: Transaction) -> None:
+    def insert(tx: TxnContext) -> None:
         tx.insert(Balance(id=1, acct_num="A", value=Decimal("100.00")))
 
-    def replace(tx: Transaction) -> None:
+    def replace(tx: TxnContext) -> None:
         tx.replace_if(
             Balance(id=1, acct_num="B", value=Decimal("150.00")),
             tx_start=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
@@ -266,7 +266,7 @@ def transaction_time_only_conditional_replacement_gates_on_the_callers_milestone
 
 
 def versioned_update_advances_the_version_ungated_in_locking_mode(db: ScopedDatabase) -> None:
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         current = tx.find(Account.where(Account.id == 2)).result()
         tx.amend(current.edit(balance=Decimal("500.00")))
 
@@ -274,21 +274,21 @@ def versioned_update_advances_the_version_ungated_in_locking_mode(db: ScopedData
 
 
 def conditional_amendment_gates_on_the_callers_version(db: ScopedDatabase) -> None:
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.amend_if(Account, Account.balance.set(Decimal("250.00")), key=2, version=1)
 
     db.transact(fn)
 
 
 def conditional_replacement_states_every_writable_member(db: ScopedDatabase) -> None:
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.replace_if(Account(id=3, owner="Hopper", balance=Decimal("12.00")), version=1)
 
     db.transact(fn)
 
 
 def wallet_predicate_delete_is_readless(db: ScopedDatabase) -> list[Entity]:
-    def fn(tx: Transaction) -> list[Entity]:
+    def fn(tx: TxnContext) -> list[Entity]:
         tx.delete_where(Wallet.where(Wallet.balance < Decimal("200.00")))
         return list(tx.find(Wallet.where(Wallet.balance < Decimal("200.00"))).results())
 
@@ -296,7 +296,7 @@ def wallet_predicate_delete_is_readless(db: ScopedDatabase) -> list[Entity]:
 
 
 def bitemporal_insert_until_opens_one_bounded_rectangle(db: ScopedDatabase) -> None:
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.insert(
             Position(id=1, acct_num="A", value=Decimal("100.00")),
             valid_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
@@ -307,13 +307,13 @@ def bitemporal_insert_until_opens_one_bounded_rectangle(db: ScopedDatabase) -> N
 
 
 def bitemporal_plain_update_splits_head_and_new_tail(db: ScopedDatabase) -> None:
-    def insert(tx: Transaction) -> None:
+    def insert(tx: TxnContext) -> None:
         tx.insert(
             Position(id=1, acct_num="A", value=Decimal("100.00")),
             valid_from=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
         )
 
-    def correct(tx: Transaction) -> None:
+    def correct(tx: TxnContext) -> None:
         current = tx.find(
             Position.where(Position.id == 1).as_of(
                 valid_time=dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
@@ -326,7 +326,7 @@ def bitemporal_plain_update_splits_head_and_new_tail(db: ScopedDatabase) -> None
 
 
 def bitemporal_plain_insert_opens_a_fully_current_rectangle(db: ScopedDatabase) -> None:
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.insert(
             Position(id=1, acct_num="A", value=Decimal("100.00")),
             valid_from=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
@@ -336,13 +336,13 @@ def bitemporal_plain_insert_opens_a_fully_current_rectangle(db: ScopedDatabase) 
 
 
 def bitemporal_amend_until_splits_head_middle_tail(db: ScopedDatabase) -> None:
-    def insert(tx: Transaction) -> None:
+    def insert(tx: TxnContext) -> None:
         tx.insert(
             Position(id=1, acct_num="A", value=Decimal("100.00")),
             valid_from=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
         )
 
-    def split(tx: Transaction) -> None:
+    def split(tx: TxnContext) -> None:
         current = tx.find(
             Position.where(Position.id == 1).as_of(
                 valid_time=dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
@@ -358,13 +358,13 @@ def bitemporal_amend_until_splits_head_middle_tail(db: ScopedDatabase) -> None:
 
 
 def bitemporal_conditional_amendment_gates_on_the_callers_milestone(db: ScopedDatabase) -> None:
-    def insert(tx: Transaction) -> None:
+    def insert(tx: TxnContext) -> None:
         tx.insert(
             Position(id=1, acct_num="A", value=Decimal("100.00")),
             valid_from=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
         )
 
-    def patch(tx: Transaction) -> None:
+    def patch(tx: TxnContext) -> None:
         tx.wire.amend_if(
             "Position",
             {"id": 1, "value": "200.00"},
@@ -378,13 +378,13 @@ def bitemporal_conditional_amendment_gates_on_the_callers_milestone(db: ScopedDa
 
 
 def bitemporal_conditional_replacement_acquires_its_start_under_locking(db: ScopedDatabase) -> None:
-    def insert(tx: Transaction) -> None:
+    def insert(tx: TxnContext) -> None:
         tx.insert(
             Position(id=1, acct_num="A", value=Decimal("100.00")),
             valid_from=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
         )
 
-    def replace(tx: Transaction) -> None:
+    def replace(tx: TxnContext) -> None:
         tx.replace_if(
             Position(id=1, acct_num="B", value=Decimal("300.00")),
             valid_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
@@ -396,7 +396,7 @@ def bitemporal_conditional_replacement_acquires_its_start_under_locking(db: Scop
 
 
 def a_close_settles_against_the_milestone_its_own_find_observed(db: ScopedDatabase) -> None:
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         head = tx.find(
             Position.where(Position.id == 1).as_of(
                 valid_time=dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
@@ -413,7 +413,7 @@ def a_close_settles_against_the_milestone_its_own_find_observed(db: ScopedDataba
 
 
 def supplier_transaction_time_only_chain_update_carries_the_document(db: ScopedDatabase) -> None:
-    def insert(tx: Transaction) -> None:
+    def insert(tx: TxnContext) -> None:
         tx.insert(
             Supplier(
                 id=1,
@@ -427,7 +427,7 @@ def supplier_transaction_time_only_chain_update_carries_the_document(db: ScopedD
             )
         )
 
-    def update(tx: Transaction) -> None:
+    def update(tx: TxnContext) -> None:
         current = tx.find(Supplier.where(Supplier.id == 1)).result()
         tx.amend(
             current.edit(
@@ -448,7 +448,7 @@ def supplier_transaction_time_only_chain_update_carries_the_document(db: ScopedD
 
 
 def branch_bitemporal_rectangle_split_carries_the_document(db: ScopedDatabase) -> None:
-    def insert(tx: Transaction) -> None:
+    def insert(tx: TxnContext) -> None:
         tx.insert(
             Branch(
                 id=1,
@@ -463,7 +463,7 @@ def branch_bitemporal_rectangle_split_carries_the_document(db: ScopedDatabase) -
             valid_from=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
         )
 
-    def split(tx: Transaction) -> None:
+    def split(tx: TxnContext) -> None:
         current = tx.find(
             Branch.where(Branch.id == 1).as_of(valid_time=dt.datetime(2024, 3, 1, tzinfo=dt.UTC))
         ).result()
@@ -487,7 +487,7 @@ def branch_bitemporal_rectangle_split_carries_the_document(db: ScopedDatabase) -
 
 
 def customer_insert_carries_the_whole_address_document(db: ScopedDatabase) -> None:
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.insert(
             Customer(
                 id=100,
@@ -508,7 +508,7 @@ def customer_insert_carries_the_whole_address_document(db: ScopedDatabase) -> No
 
 
 def customer_update_replaces_the_whole_address_document(db: ScopedDatabase) -> None:
-    def insert(tx: Transaction) -> None:
+    def insert(tx: TxnContext) -> None:
         tx.insert(
             Customer(
                 id=200,
@@ -522,7 +522,7 @@ def customer_update_replaces_the_whole_address_document(db: ScopedDatabase) -> N
             )
         )
 
-    def replace(tx: Transaction) -> None:
+    def replace(tx: TxnContext) -> None:
         current = tx.find(Customer.where(Customer.id == 200)).result()
         tx.amend(
             current.edit(
@@ -539,7 +539,7 @@ def customer_update_replaces_the_whole_address_document(db: ScopedDatabase) -> N
 
 
 def customer_update_nulls_the_address_document_out(db: ScopedDatabase) -> None:
-    def insert(tx: Transaction) -> None:
+    def insert(tx: TxnContext) -> None:
         tx.insert(
             Customer(
                 id=300,
@@ -550,7 +550,7 @@ def customer_update_nulls_the_address_document_out(db: ScopedDatabase) -> None:
             )
         )
 
-    def null_out(tx: Transaction) -> None:
+    def null_out(tx: TxnContext) -> None:
         current = tx.find(Customer.where(Customer.id == 300)).result()
         tx.amend(current.edit(address=None))
 

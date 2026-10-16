@@ -7,7 +7,7 @@ from parallax.core._execution._keyed_writes import (
     KeyedWriteValueError,
     TransactionTimePinReadOnlyError,
 )
-from parallax.core._execution._options import DatabaseOptions
+from parallax.core._execution._options import TxnOptions
 from parallax.core._execution._planning import prepare_model
 from parallax.core._execution._preflight import QueryTargetError
 from parallax.core._execution._publication import (
@@ -25,7 +25,6 @@ from parallax.core.execution_authority._authority import InvalidPrincipalError, 
 
 __all__ = [
     "KEYED_WRITE_VALUE_CODES",
-    "DatabaseOptions",
     "DeferredFeatureError",
     "ExecutionFailure",
     "InvalidPrincipalError",
@@ -40,5 +39,6 @@ __all__ = [
     "TransactionOwnershipError",
     "TransactionRollbackError",
     "TransactionTimePinReadOnlyError",
+    "TxnOptions",
     "prepare_model",
 ]

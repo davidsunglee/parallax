@@ -20,7 +20,7 @@ from parallax.conformance.scripted_clock import ScriptedClock
 from parallax.core import LATEST, Attr, Bitemporal, DomainModel, Float32, TxTemporal, attr
 from parallax.core.base import INFINITY, TemporalBound
 from parallax.core.entity._model import model_of
-from parallax.snapshot import ScopedDatabase, Transaction, connect
+from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.binary32 import narrowed, shortest_spelling
 from tests._support.root_ownership import own_root
 from tests._support.write_bounds import stated_start
@@ -126,11 +126,11 @@ def _wire_query(entity: type[Any], valid: Pin | None, tx: Pin) -> dict[str, obje
 
 def _write(
     representation: Representation, writer: Writer, entity: type[Any]
-) -> Callable[[Transaction], None]:
+) -> Callable[[TxnContext], None]:
     name = f"{_NAMESPACE}.{entity.__name__}"
     valid_from = _valid_from(entity, _CORRECTED_FROM)
 
-    def write(tx: Transaction) -> None:
+    def write(tx: TxnContext) -> None:
         # A keyed write starts where its source was read.
         pinned: Pin | None = _CORRECTED_FROM if entity is Position else None
         if writer == "keyed" and representation == "typed":

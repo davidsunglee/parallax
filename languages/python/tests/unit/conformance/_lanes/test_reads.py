@@ -26,8 +26,8 @@ from parallax.conformance._mechanism.envelope import EngineError
 from parallax.core.base import INFINITY, PresentDocument
 from parallax.core.db_port import MappingRow
 from parallax.core.execution import (
-    DatabaseOptions,
     DeferredFeatureError,
+    TxnOptions,
 )
 from parallax.core.metamodel import (
     AttributeIdentity,
@@ -834,4 +834,4 @@ def test_case_database_connects_with_the_cases_own_root_record() -> None:
     assert port.levels == ["serializable"]
     with reads.case_database(_load_case("m-value-object-001"), FakeDbPort([]), provider) as root:
         db = root.using_database_login()
-        assert db.transact(lambda tx: tx.options) == DatabaseOptions()
+        assert db.transact(lambda tx: tx.options) == TxnOptions()

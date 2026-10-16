@@ -19,7 +19,7 @@ import pytest
 from parallax.conformance.dormant_position_models import DORMANT_POSITION_COLUMNS
 from parallax.conformance.story_models import ORDERS_MODEL, Order
 from parallax.core import continuation, deep_fetch
-from parallax.core._execution._page_origins import ObservedPageProjections
+from parallax.core._execution._page_origins import ReadEvidenceCollector
 from parallax.core._execution._preflight import preflight
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity._layout import CatalogedModel
@@ -1134,7 +1134,7 @@ def test_read_plan_cache_retains_no_connection_rows_page_evidence_or_result() ->
         _query(),
         _MODEL,
         port,
-        origins=ObservedPageProjections(_MODEL.meta, ledger=None, scanned=False),
+        origin_collector=ReadEvidenceCollector(_MODEL.meta, evidence_context=None, scanned=False),
         edition="edition-a",
         planner=cache,
     )
@@ -1143,7 +1143,7 @@ def test_read_plan_cache_retains_no_connection_rows_page_evidence_or_result() ->
     assert not _reaches(cache, stored_row)
     assert not _reaches(cache, result)
     assert not _reaches(cache, result.page)
-    assert not _reaches(cache, result.sources)
+    assert not _reaches(cache, result.origins)
     del result, port
     gc.collect()
 

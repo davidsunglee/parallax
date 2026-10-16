@@ -12,7 +12,7 @@ import pytest
 
 from parallax.core.dialect import POSTGRES
 from parallax.core.unit_work import OptimisticLockConflictError, WriteEvidenceError
-from parallax.snapshot import Transaction
+from parallax.snapshot import TxnContext
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import Read, ScriptedAdapter, Transact, Write, WriteCall
@@ -42,7 +42,7 @@ def _writes(port: ScriptedAdapter) -> list[WriteCall]:
     return [call for call in port.calls if isinstance(call, WriteCall)]
 
 
-def _restate(tx: Transaction, representation: _Representation, value: str = "5.00") -> None:
+def _restate(tx: TxnContext, representation: _Representation, value: str = "5.00") -> None:
     if representation == "typed":
         fetched = tx.find(mm.Balance.where(mm.Balance.id == 1)).result()
         tx.amend(fetched.edit(value=Decimal(value)))
@@ -121,7 +121,7 @@ def test_a_guarded_source_is_spent_and_a_fresh_read_writes_again() -> None:
         )
     )
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         fetched = tx.find(mm.Balance.where(mm.Balance.id == 1)).result()
         tx.amend(fetched.edit(value=Decimal("5.00")))
         fresh = tx.find(mm.Balance.where(mm.Balance.id == 1)).result()
@@ -139,7 +139,7 @@ def test_a_wire_projection_of_a_guarded_source_shares_its_spent_evidence() -> No
         Transact(Read(rows=[balance_row(in_z=_T0)]), Write(), Read(rows=[balance_row(in_z=_T0)]))
     )
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         snapshot = tx.find(mm.Balance.where(mm.Balance.id == 1))
         projected = snapshot.wire().result()
         tx.amend(snapshot.result().edit(value=Decimal("5.00")))
@@ -174,7 +174,7 @@ _COVERAGE = [
 ]
 
 
-def _find(tx: Transaction, at: dt.datetime) -> WherePosition:
+def _find(tx: TxnContext, at: dt.datetime) -> WherePosition:
     return tx.find(WherePosition.where(WherePosition.id == 1).as_of(valid_time=at)).result()
 
 
@@ -183,7 +183,7 @@ def test_a_range_guards_its_unchanged_rectangles_where_it_would_have_closed_them
         Transact(Read(rows=[_COVERAGE[0]]), Read(rows=_COVERAGE), Write(times=4))
     )
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         tx.amend(_find(tx, _MAR).edit(value=Decimal("100.00")), until=_OCT)
 
     db_for(WHERE_POSITION_META, port).transact(fn)
@@ -220,7 +220,7 @@ def test_a_read_of_a_rectangle_the_range_kept_stays_writable(value: str, kept: b
     )
     november = dt.datetime(2024, 11, 1, tzinfo=dt.UTC)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         source = _find(tx, _MAR)
         last = _find(tx, november)
         tx.amend(source.edit(value=Decimal(value)), until=_OCT)

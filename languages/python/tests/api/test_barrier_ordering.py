@@ -20,7 +20,7 @@ from parallax.core import (
 )
 from parallax.core.entity._model import model_of
 from parallax.core.execution import KeyedWriteValueError
-from parallax.snapshot import ScopedDatabase, Transaction, connect
+from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.root_ownership import own_root
 
 _NAMESPACE = "barrier.ordering"
@@ -122,7 +122,7 @@ def _db(profile_run: Any, *instants: dt.datetime) -> ScopedDatabase:
     ).using_database_login()
 
 
-def _low(tx: Transaction, stock: type[Any]) -> None:
+def _low(tx: TxnContext, stock: type[Any]) -> None:
     """The barrier: label every stock row whose quantity is below two."""
     tx.amend_where(stock.where(stock.quantity < 2), stock.label.set("low"))
 
@@ -164,7 +164,7 @@ def test_a_predicate_observes_the_write_of_a_state_buffered_before_it(
     db = _db(profile_run)
     db.transact(lambda tx: tx.insert(stock(id=1, quantity=5, label="a")))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         if representation == "typed":
             source = tx.find(stock.where(stock.id == 1)).result()
             tx.amend(source.edit(quantity=1))
@@ -187,7 +187,7 @@ def test_a_predicate_observes_an_insert_buffered_before_it_and_not_the_edit_afte
 ) -> None:
     db = _db(profile_run)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         inserted = stock(id=9, quantity=1, label="new")
         tx.insert(inserted)
         _low(tx, stock)
@@ -204,7 +204,7 @@ def test_an_insert_removed_after_a_barrier_is_observed_and_admits_its_reinsertio
     db = _db(profile_run)
     db.transact(lambda tx: tx.insert(Tag(id=1, label="t")))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         inserted = stock(id=9, quantity=1, label="new")
         tx.insert(inserted)
         _low(tx, stock)
@@ -224,7 +224,7 @@ def test_a_versioned_write_after_a_barrier_advances_the_version_the_earlier_one_
     db.transact(lambda tx: tx.insert(ledger(id=1, balance=10)))
     db.transact(lambda tx: tx.insert(ColumnsStock(id=1, quantity=5, label="a")))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         source = tx.find(ledger.where(ledger.id == 1)).result()
         tx.amend(source.edit(balance=20))
         _low(tx, ColumnsStock)
@@ -240,7 +240,7 @@ def test_a_versioned_insert_is_revised_after_a_barrier_from_the_version_it_opene
 ) -> None:
     db = _db(profile_run)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         inserted = ledger(id=1, balance=10)
         tx.insert(inserted)
         _low(tx, ColumnsStock)
@@ -276,7 +276,7 @@ def test_an_opening_edited_after_a_barrier_is_revised_at_one_instant(
     finally:
         control.close()
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         inserted = span(id=1, amount=100)
         tx.insert(inserted, valid_from=_JAN)
         tx.amend_where(Tag.where(Tag.id == 1), Tag.label.set("q"))
@@ -316,7 +316,7 @@ def test_an_opening_removed_whole_after_a_barrier_admits_its_reinsertion(
     db = _db(profile_run, _TA)
     db.transact(lambda tx: tx.insert(Tag(id=1, label="t")))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         first = span(id=1, amount=100)
         if opening == "bounded":
             tx.insert(first, valid_from=_JAN, until=_APR)
@@ -342,7 +342,7 @@ def test_an_opening_removed_in_part_after_a_barrier_still_refuses_a_reinsertion(
     db = _db(profile_run, _TA)
     db.transact(lambda tx: tx.insert(Tag(id=1, label="t")))
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         first = span(id=1, amount=100)
         tx.insert(first, valid_from=_JAN)
         tx.amend_where(Tag.where(Tag.id == 1), Tag.label.set("q"))
@@ -362,7 +362,7 @@ def test_a_transaction_time_insert_edited_after_a_barrier_is_revised_in_place(
 ) -> None:
     db = _db(profile_run, _TA)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         inserted = log(id=1, label="seed")
         tx.insert(inserted)
         tx.amend_where(Tag.where(Tag.id == 1), Tag.label.set("q"))
@@ -383,7 +383,7 @@ def test_a_transaction_time_insert_removed_after_a_barrier_admits_its_reinsertio
 ) -> None:
     db = _db(profile_run, _TA)
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         inserted = log(id=1, label="seed")
         tx.insert(inserted)
         tx.amend_where(Tag.where(Tag.id == 1), Tag.label.set("q"))

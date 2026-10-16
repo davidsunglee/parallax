@@ -37,7 +37,7 @@ from parallax.core.execution_lifecycle import (
     TransactionAttemptFinished,
 )
 from parallax.core.unit_work import RollbackOnlyError
-from parallax.snapshot import ScopedDatabase, Transaction, connect
+from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.root_ownership import own_root
 
 _NAMESPACE = "temporal.openings"
@@ -105,18 +105,18 @@ def _database(profile_run: Any, provider: RecordingLifecycleProvider) -> ScopedD
 
 
 def _seed(db: ScopedDatabase, entity: type[Any], tags: tuple[str, ...]) -> None:
-    def seed(tx: Transaction) -> None:
+    def seed(tx: TxnContext) -> None:
         tx.insert(entity(id=1, account="A-1", amount=100, tags=tags, legs=_LEGS), valid_from=_JAN)
         tx.insert(Account(code="B-2"))
 
     db.transact(seed)
 
 
-def _find(tx: Transaction, entity: type[Any]) -> Any:
+def _find(tx: TxnContext, entity: type[Any]) -> Any:
     return tx.find(entity.where(entity.id == 1).as_of(valid_time=_FEB)).result()
 
 
-def _amend(tx: Transaction, entity: type[Any]) -> None:
+def _amend(tx: TxnContext, entity: type[Any]) -> None:
     """Amend span 1 from February until September: one close, then a head, a
     changed middle, and a tail."""
     tx.amend(_find(tx, entity).edit(amount=150), until=_SEP)
@@ -188,8 +188,8 @@ def test_one_grouped_statement_stores_the_history_each_opening_alone_stores(
 
 
 def _conflicting_amendment(
-    profile_run: Any, entity: type[Any], then: Callable[[Transaction], None]
-) -> Callable[[Transaction], None]:
+    profile_run: Any, entity: type[Any], then: Callable[[TxnContext], None]
+) -> Callable[[TxnContext], None]:
     """Amend span 1 after another session committed a row holding the key the
     changed middle opens, once an account constraint no opening satisfies is in
     force: the head violates that constraint, which is checked as its
@@ -205,7 +205,7 @@ def _conflicting_amendment(
     finally:
         control.close()
 
-    def edit(tx: Transaction) -> None:
+    def edit(tx: TxnContext) -> None:
         source = _find(tx, entity)
         other = profile_run.control()
         try:
@@ -240,7 +240,7 @@ def _failed(
     monkeypatch: pytest.MonkeyPatch,
     *,
     grouped: bool,
-    then: Callable[[Transaction], None] = lambda tx: None,
+    then: Callable[[TxnContext], None] = lambda tx: None,
 ) -> _Failed:
     provider = RecordingLifecycleProvider()
     db = _database(profile_run, provider)
@@ -308,7 +308,7 @@ def test_a_grouped_statements_failure_leaves_the_attempt_rollback_only(
 ) -> None:
     outcomes: list[BaseException] = []
 
-    def then(tx: Transaction) -> None:
+    def then(tx: TxnContext) -> None:
         # The read forces the flush; its failure is swallowed, and the attempt
         # refuses every later operation because of it.
         for _ in range(2):

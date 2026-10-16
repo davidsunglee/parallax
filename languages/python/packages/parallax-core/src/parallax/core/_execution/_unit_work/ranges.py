@@ -51,7 +51,7 @@ from parallax.core.temporal_write.expansion import (
     bitemporal_ends,
 )
 from parallax.core.write_plan.columns import ChunkedColumnBuilder
-from parallax.core.write_plan.keys import ObjectKey, ObservedStateKey, TemporalStateKey
+from parallax.core.write_plan.keys import ObjectKey, ObjectStateKey, TemporalObjectStateKey
 from parallax.core.write_plan.materialized import PredecessorRows
 from parallax.core.write_plan.observe import PredecessorRow, TemporalObservation
 from parallax.core.write_plan.payload import WritePayloadPreparer
@@ -99,7 +99,7 @@ class _Original:
     Transaction-Time-Only target."""
 
     predecessor: PredecessorRow
-    state: ObservedStateKey
+    state: ObjectStateKey
     valid_time_coverage: TimeInterval | None
 
 
@@ -233,13 +233,13 @@ def _original(
     key_attribute: AttributeIdentity,
     key_value: object,
     predecessor: PredecessorRow,
-    state: ObservedStateKey | None,
+    state: ObjectStateKey | None,
 ) -> _Original:
     """One current row as an original: its observed state is the claim's where
     one names it, and otherwise the state its milestone edge keys."""
     shape = facts.shape
     if state is None:
-        state = TemporalStateKey(
+        state = TemporalObjectStateKey(
             _object_key(facts, key_attribute, key_value), milestone_edge(shape, predecessor, None)
         )
     return _Original(
@@ -299,7 +299,7 @@ def _holds(original: _Original, anchor: object) -> bool:
     return coverage.contains(anchor)
 
 
-def _physical(original: _Original) -> tuple[ObservedStateKey, object | None]:
+def _physical(original: _Original) -> tuple[ObjectStateKey, object | None]:
     """The physical row ``original`` is: its state, which names its start on
     each axis, and the Valid-Time end its address holds."""
     return original.state, _valid_end(original)
@@ -307,7 +307,7 @@ def _physical(original: _Original) -> tuple[ObservedStateKey, object | None]:
 
 def _expansions(
     starts: Sequence[_Original], validations: Sequence[_Original], originals: Sequence[_Original]
-) -> Iterator[tuple[PredecessorRow, ExpansionRole, ObservedStateKey, TimeInterval | None]]:
+) -> Iterator[tuple[PredecessorRow, ExpansionRole, ObjectStateKey, TimeInterval | None]]:
     """Each original in the role it settles in, in the order its own effect
     runs: the starts, the validations, then every other original."""
     for original in starts:
@@ -321,7 +321,7 @@ def _expansions(
 
 def _expanded(
     original: _Original, role: ExpansionRole
-) -> tuple[PredecessorRow, ExpansionRole, ObservedStateKey, TimeInterval | None]:
+) -> tuple[PredecessorRow, ExpansionRole, ObjectStateKey, TimeInterval | None]:
     return original.predecessor, role, original.state, original.valid_time_coverage
 
 
@@ -636,7 +636,7 @@ class _TemporalRangeBinder:
         if original is None:
             return False
         proof = self.ownership.proven(original)
-        if proof is None or not isinstance(original, TemporalStateKey):
+        if proof is None or not isinstance(original, TemporalObjectStateKey):
             return False
         milestone = original.milestone
         if milestone.tx_time != condition.expected:
@@ -646,7 +646,7 @@ class _TemporalRangeBinder:
             return False
         return self._intact(original, read)
 
-    def _intact(self, original: ObservedStateKey, read: Sequence[_Original]) -> bool:
+    def _intact(self, original: ObjectStateKey, read: Sequence[_Original]) -> bool:
         """Whether the flush transformed ``original`` under protection and every
         row it derived from it that lies inside this range's window still stands
         as it was opened."""
@@ -902,7 +902,7 @@ def _known(
 
 
 def retained_completion(
-    description: DeferredTemporalRange, current: Callable[[ObservedStateKey, int], bool]
+    description: DeferredTemporalRange, current: Callable[[ObjectStateKey, int], bool]
 ) -> CompletionRequest | None:
     """The completion of every starting row ``description`` retained that is
     still ``current`` — no change the attempt completed since its read replaced
@@ -1213,7 +1213,7 @@ class GroupContinuation:
             audit=audit,
             payloads=payloads,
         )
-        self._changed: ChunkedColumnBuilder[ObservedStateKey] = ChunkedColumnBuilder()
+        self._changed: ChunkedColumnBuilder[ObjectStateKey] = ChunkedColumnBuilder()
         self._removed: ChunkedColumnBuilder[OwnedEndpoint] = ChunkedColumnBuilder()
         self._fresh: ChunkedColumnBuilder[OwnedEndpoint] = ChunkedColumnBuilder()
         self._continued: ChunkedColumnBuilder[OwnedEndpoint] = ChunkedColumnBuilder()
@@ -1338,7 +1338,7 @@ def _distinct(reads: Sequence[list[_Original]]) -> list[_Original]:
     if len(reads) < 2:
         return reads[0] if reads else []
     originals: list[_Original] = []
-    earlier: set[tuple[ObservedStateKey, object | None]] = set()
+    earlier: set[tuple[ObjectStateKey, object | None]] = set()
     for read in reads:
         originals.extend(original for original in read if _physical(original) not in earlier)
         earlier.update(_physical(original) for original in read)

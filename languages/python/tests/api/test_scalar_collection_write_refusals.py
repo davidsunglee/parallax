@@ -24,7 +24,7 @@ from parallax.core.entity._expressions import AttributeRef
 from parallax.core.execution import ExecutionFailure
 from parallax.core.metamodel import WriteAssignmentError
 from parallax.core.unit_work import WriteInstructionError
-from parallax.snapshot import Transaction, connect
+from parallax.snapshot import TxnContext, connect
 from tests._support.db_port import ScriptedAdapter, Transact
 from tests._support.root_ownership import own_root
 
@@ -40,7 +40,7 @@ _MODEL = DomainModel(Order)
 _ORDER = f"{_NS}.Order"
 
 
-def _refusal(work: Callable[[Transaction], object]) -> BaseException:
+def _refusal(work: Callable[[TxnContext], object]) -> BaseException:
     port = ScriptedAdapter(Transact())
     database = own_root(connect(port, _MODEL)).using_database_login()
     with pytest.raises(ExecutionFailure) as caught:

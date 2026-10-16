@@ -32,7 +32,7 @@ from parallax.core.execution_lifecycle import (
     ExecutionLifecycleReentryError,
     RootExecution,
 )
-from parallax.snapshot import ScopedDatabase, Transaction, connect
+from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support import mirrored_models as mm
 from tests._support.db_port import (
     BeginCall,
@@ -291,8 +291,8 @@ def _database_entry_points(db: ScopedDatabase) -> dict[str, _Work]:
     }
 
 
-def _transaction_entry_points(tx: Transaction) -> dict[str, _Work]:
-    """Every public operation a ``Transaction`` offers, keyed by its spelling.
+def _transaction_entry_points(tx: TxnContext) -> dict[str, _Work]:
+    """Every public operation a ``TxnContext`` offers, keyed by its spelling.
 
     The Wire write verbs are here under the view that publishes them, beside
     their Typed peers: each verb is its own entry even where the two
@@ -355,7 +355,7 @@ def test_every_public_entry_point_of_the_handle_and_its_transaction_refuses() ->
     # buffer a write, force a flush, or open a second boundary.
     port = ScriptedAdapter(Transact(Write()))
     handle: list[ScopedDatabase] = []
-    opened: list[Transaction] = []
+    opened: list[TxnContext] = []
     refused: dict[str, list[str]] = {}
 
     class _Reentering:
@@ -378,7 +378,7 @@ def test_every_public_entry_point_of_the_handle_and_its_transaction_refuses() ->
     db = _db(port, provider)
     handle.append(db)
 
-    def body(tx: Transaction) -> None:
+    def body(tx: TxnContext) -> None:
         opened.append(tx)
         tx.insert(new_account())
 

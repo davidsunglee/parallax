@@ -38,7 +38,7 @@ def test_top_package_public_surfaces() -> None:
     assert set(parallax.snapshot.__all__) == {
         "connect",
         "Database",
-        "Transaction",
+        "TxnContext",
         "Snapshot",
         "CheckedSnapshot",
         "SnapshotStream",

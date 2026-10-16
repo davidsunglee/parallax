@@ -16,7 +16,7 @@ from parallax.core.execution_lifecycle import (
     TransactionAttemptStarted,
     TransactionInvocationStarted,
 )
-from parallax.snapshot import Transaction, connect
+from parallax.snapshot import TxnContext, connect
 
 __all__ = [
     "JoinedShape",
@@ -99,10 +99,10 @@ def a_joined_unit_of_work_is_observed_inside_the_outer_attempt(
     with connect(adapter, model, lifecycle_provider=provider) as database:
         db = database.using_database_login()
 
-        def outer(tx: Transaction) -> Account:
+        def outer(tx: TxnContext) -> Account:
             current = tx.find(Account.where(Account.id == _TARGET_ID)).result()
 
-            def joined_body(joined_tx: Transaction) -> Account:
+            def joined_body(joined_tx: TxnContext) -> Account:
                 # A joined call shares the outer transaction rather than opening
                 # a nested one, so its write buffers on the SAME unit of work,
                 # runs on the SAME connection, and reaches the database in the

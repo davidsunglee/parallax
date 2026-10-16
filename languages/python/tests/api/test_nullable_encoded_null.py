@@ -14,7 +14,7 @@ from typing import Any
 
 from parallax.core.entity._model import model_of
 from parallax.core.object_query import deserialize
-from parallax.snapshot import Transaction, connect
+from parallax.snapshot import TxnContext, connect
 from tests._support import mirrored_models as mm
 from tests._support.root_ownership import own_root
 
@@ -59,7 +59,7 @@ def test_nullable_encoded_sql_null_survives_delivery_and_predecessor_observation
     delivered = db.find(mm.WritableScalar.where(mm.WritableScalar.id == 1)).result()
     assert delivered.payload is None
 
-    def update(tx: Transaction) -> None:
+    def update(tx: TxnContext) -> None:
         observed = tx.find(mm.WritableScalar.where(mm.WritableScalar.id == 1)).result()
         assert observed.payload is None
         tx.amend(observed.edit(label="after"))

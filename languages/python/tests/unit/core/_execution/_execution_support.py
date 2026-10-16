@@ -14,7 +14,7 @@ from parallax.core._execution._unit_work.instructions import PreparedKeyedWrite,
 from parallax.core.db_port import DatabaseAdapter
 from parallax.core.entity import DomainModel
 from parallax.core.entity._model import model_of
-from parallax.core.execution import DatabaseOptions, ServingModel, prepare_model
+from parallax.core.execution import ServingModel, TxnOptions, prepare_model
 from parallax.core.execution_lifecycle import ExecutionLifecycleProvider
 from parallax.core.unit_work import KeyedWrite
 from tests._support.root_ownership import own_root
@@ -32,7 +32,7 @@ def root(
     adapter: DatabaseAdapter[Any],
     model: DomainModel | ServingModel = ACCOUNT,
     *,
-    options: DatabaseOptions | None = None,
+    options: TxnOptions | None = None,
     provider: ExecutionLifecycleProvider | None = None,
 ) -> DatabaseRoot[Any, ExecutionScope]:
     """A root over ``adapter`` the current test owns, serving ``model``."""
@@ -57,7 +57,7 @@ def scope(
     adapter: DatabaseAdapter[Any],
     model: DomainModel | ServingModel = ACCOUNT,
     *,
-    options: DatabaseOptions | None = None,
+    options: TxnOptions | None = None,
     provider: ExecutionLifecycleProvider | None = None,
 ) -> ExecutionScope:
     """The database-login scope of a fresh owned root."""

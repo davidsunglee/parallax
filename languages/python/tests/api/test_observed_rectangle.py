@@ -52,7 +52,7 @@ from parallax.core.db_error import DatabaseError
 from parallax.core.entity._model import model_of
 from parallax.core.execution import ExecutionFailure
 from parallax.core.unit_work import RollbackOnlyError, WriteEvidenceError, WriteInstructionError
-from parallax.snapshot import ScopedDatabase, Transaction, connect
+from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.root_ownership import own_root
 
 _POSITION = MODELS["position"]
@@ -105,7 +105,7 @@ def test_an_optimistic_close_settles_against_the_rectangle_it_read(profile_run: 
         lambda tx: tx.insert(Position(id=1, acct_num="A", value=Decimal("100.00")), valid_from=_V2)
     )
 
-    def correct(tx: Transaction) -> None:
+    def correct(tx: TxnContext) -> None:
         current = tx.find(Position.where(Position.id == 1).as_of(valid_time=_V3)).result()
         tx.find(Position.where(Position.id == 1).as_of(valid_time=_VP)).result()
         tx.amend(current.edit(value=Decimal("150.00")))
@@ -231,7 +231,7 @@ def _plain(row: tuple[object, ...]) -> tuple[object, ...]:
     return tuple(int(cell) if isinstance(cell, float) else cell for cell in row)
 
 
-def _log_find(tx: Transaction, entity: type[Any], representation: _Representation) -> Any:
+def _log_find(tx: TxnContext, entity: type[Any], representation: _Representation) -> Any:
     if representation == "typed":
         return tx.find(entity.where(entity.id == 1)).result()
     name = _name(entity)
@@ -245,7 +245,7 @@ def _log_find(tx: Transaction, entity: type[Any], representation: _Representatio
 
 
 def _span_find(
-    tx: Transaction, entity: type[Any], representation: _Representation, at: dt.datetime | None
+    tx: TxnContext, entity: type[Any], representation: _Representation, at: dt.datetime | None
 ) -> Any:
     if representation == "typed":
         return tx.find(
@@ -265,9 +265,7 @@ def _span_find(
     ).result()
 
 
-def _log_update(
-    tx: Transaction, observed: Any, representation: _Representation, label: str
-) -> None:
+def _log_update(tx: TxnContext, observed: Any, representation: _Representation, label: str) -> None:
     if representation == "typed":
         tx.amend(observed.edit(label=label))
     else:
@@ -275,7 +273,7 @@ def _log_update(
 
 
 def _span_update(
-    tx: Transaction,
+    tx: TxnContext,
     observed: Any,
     representation: _Representation,
     amount: int,
@@ -295,7 +293,7 @@ def _span_update(
 
 
 def _span_terminate(
-    tx: Transaction,
+    tx: TxnContext,
     observed: Any,
     representation: _Representation,
     *,
@@ -326,7 +324,7 @@ def test_a_transaction_time_row_the_attempt_opened_is_revised_in_place(
     db = _attempt_db(profile_run)
     db.transact(lambda tx: tx.insert(entity(id=1, label="seeded", spec=_SPEC)))
 
-    def edit(tx: Transaction) -> None:
+    def edit(tx: TxnContext) -> None:
         _log_update(tx, _log_find(tx, entity, representation), representation, "first")
         _log_update(tx, _log_find(tx, entity, representation), representation, "second")
 
@@ -347,7 +345,7 @@ def test_terminating_a_transaction_time_row_the_attempt_opened_removes_it(
     db = _attempt_db(profile_run)
     db.transact(lambda tx: tx.insert(entity(id=1, label="seeded", spec=_SPEC)))
 
-    def edit(tx: Transaction) -> None:
+    def edit(tx: TxnContext) -> None:
         _log_update(tx, _log_find(tx, entity, representation), representation, "first")
         opened = _log_find(tx, entity, representation)
         if representation == "typed":
@@ -369,7 +367,7 @@ def test_a_bitemporal_suffix_the_attempt_opened_is_split_in_place(
     db = _attempt_db(profile_run)
     db.transact(lambda tx: tx.insert(entity(id=1, amount=100, spec=_SPEC), valid_from=_JAN))
 
-    def edit(tx: Transaction) -> None:
+    def edit(tx: TxnContext) -> None:
         current = _span_find(tx, entity, representation, _FEB)
         _span_update(tx, current, representation, 150)
         suffix = _span_find(tx, entity, representation, _MAR)
@@ -394,7 +392,7 @@ def test_a_bounded_correction_inside_a_rectangle_the_attempt_opened_keeps_one_in
     db = _attempt_db(profile_run)
     db.transact(lambda tx: tx.insert(entity(id=1, amount=100, spec=_SPEC), valid_from=_JAN))
 
-    def edit(tx: Transaction) -> None:
+    def edit(tx: TxnContext) -> None:
         current = _span_find(tx, entity, representation, _FEB)
         _span_update(tx, current, representation, 150, until=_APR)
         middle = _span_find(tx, entity, representation, _MAR)
@@ -420,7 +418,7 @@ def test_terminating_a_suffix_the_attempt_opened_replaces_it_with_its_head(
     db = _attempt_db(profile_run)
     db.transact(lambda tx: tx.insert(entity(id=1, amount=100, spec=_SPEC), valid_from=_JAN))
 
-    def edit(tx: Transaction) -> None:
+    def edit(tx: TxnContext) -> None:
         current = _span_find(tx, entity, representation, _FEB)
         _span_update(tx, current, representation, 150)
         suffix = _span_find(tx, entity, representation, _MAR)
@@ -440,7 +438,7 @@ _SUFFIX_GEOMETRIES: dict[
     str,
     tuple[
         dt.datetime,
-        Callable[[Transaction, Any, _Representation], None],
+        Callable[[TxnContext, Any, _Representation], None],
         list[tuple[object, ...]],
     ],
 ] = {
@@ -481,7 +479,7 @@ def test_a_suffix_the_attempt_opened_takes_each_geometry_without_history_of_its_
     db = _attempt_db(profile_run)
     db.transact(lambda tx: tx.insert(entity(id=1, amount=100, spec=_SPEC), valid_from=_JAN))
 
-    def edit(tx: Transaction) -> None:
+    def edit(tx: TxnContext) -> None:
         current = _span_find(tx, entity, representation, _FEB)
         _span_update(tx, current, representation, 150)
         write(tx, _span_find(tx, entity, representation, pin), representation)
@@ -508,7 +506,7 @@ def test_a_committed_rectangle_written_from_its_own_start_opens_no_empty_head(
     db = _attempt_db(profile_run)
     db.transact(lambda tx: tx.insert(entity(id=1, amount=100, spec=_SPEC), valid_from=_JAN))
 
-    def edit(tx: Transaction) -> None:
+    def edit(tx: TxnContext) -> None:
         current = _span_find(tx, entity, representation, _JAN)
         if terminating:
             _span_terminate(tx, current, representation)
@@ -533,7 +531,7 @@ def test_an_unsubmitted_read_of_a_changed_row_is_refused_and_a_fresh_read_carrie
     db.transact(lambda tx: tx.insert(entity(id=1, label="seeded", spec=_SPEC)))
     other = {"title": "replaced", "origin": None}
 
-    def edit(tx: Transaction) -> None:
+    def edit(tx: TxnContext) -> None:
         first = _log_find(tx, entity, representation)
         _log_update(tx, first, representation, "first")
         flushed = _log_find(tx, entity, representation)
@@ -572,7 +570,7 @@ def test_an_own_change_leaves_reads_of_an_unaffected_rectangle_writable(
     )
     db.transact(lambda tx: tx.insert(entity(id=1, amount=100, spec=_SPEC), valid_from=_MAR))
 
-    def edit(tx: Transaction) -> None:
+    def edit(tx: TxnContext) -> None:
         early = _span_find(tx, entity, representation, _FEB)
         late = _span_find(tx, entity, representation, _APR)
         stale_late = _span_find(tx, entity, representation, _APR)
@@ -624,7 +622,7 @@ def test_a_row_the_attempt_inserted_is_revised_in_place(
     clock = ScriptedClock([_ATTEMPT])
     db = own_root(connect(profile_run.port, _ATTEMPT_MODEL, clock=clock)).using_database_login()
 
-    def edit(tx: Transaction) -> None:
+    def edit(tx: TxnContext) -> None:
         # The predicate write's resolving read flushes the insert first, so the
         # row it selects is one the attempt itself opened.
         if representation == "typed":
@@ -648,7 +646,7 @@ def test_a_predicate_write_revises_the_rectangles_the_attempt_opened(
     db = _attempt_db(profile_run)
     db.transact(lambda tx: tx.insert(entity(id=1, amount=100, spec=_SPEC), valid_from=_JAN))
 
-    def edit(tx: Transaction) -> None:
+    def edit(tx: TxnContext) -> None:
         current = _span_find(tx, entity, representation, _FEB)
         _span_update(tx, current, representation, 150)
         if representation == "typed":
@@ -681,7 +679,7 @@ def test_a_predicate_termination_removes_the_row_the_attempt_opened(
     db = _attempt_db(profile_run)
     db.transact(lambda tx: tx.insert(entity(id=1, label="seeded", spec=_SPEC)))
 
-    def edit(tx: Transaction) -> None:
+    def edit(tx: TxnContext) -> None:
         for label in ("first", "second"):
             if representation == "typed":
                 tx.amend_where(entity.where(entity.id == 1), entity.label.set(label))
@@ -703,7 +701,7 @@ def test_a_caught_dependent_read_failure_still_rolls_the_attempt_back(profile_ru
     db.transact(lambda tx: tx.insert(ColumnsLog(id=1, label="seeded", spec=_SPEC)))
     outcomes: list[BaseException] = []
 
-    def edit(tx: Transaction) -> str:
+    def edit(tx: TxnContext) -> str:
         _log_update(tx, _log_find(tx, ColumnsLog, "typed"), "typed", "first")
         tx.insert(DocumentLog(id=1, label="other", spec=_SPEC))
         # A second current row for the stored key: the flush the next read
@@ -744,7 +742,7 @@ def test_a_streamed_root_fetched_before_an_own_change_cannot_write_its_stale_sta
     name = _name(entity)
     refusals: list[str] = []
 
-    def by_id(tx: Transaction, key: int) -> Any:
+    def by_id(tx: TxnContext, key: int) -> Any:
         if representation == "typed":
             return tx.find(entity.where(entity.id == key)).result()
         return tx.wire.find(
@@ -755,7 +753,7 @@ def test_a_streamed_root_fetched_before_an_own_change_cannot_write_its_stale_sta
             }
         ).result()
 
-    def edit(tx: Transaction) -> None:
+    def edit(tx: TxnContext) -> None:
         stream = (
             tx.stream(entity.where(entity.id >= 1), batch_size=2)
             if representation == "typed"
@@ -805,7 +803,7 @@ def test_a_read_stays_writable_until_a_change_to_its_state_completes(
     db.transact(lambda tx: tx.insert(entity(id=1, label="seeded", spec=_SPEC)))
     replaced = {"title": "replaced", "origin": None}
 
-    def edit(tx: Transaction) -> None:
+    def edit(tx: TxnContext) -> None:
         first = _log_find(tx, entity, representation)
         second = _log_find(tx, entity, representation)
         if representation == "typed":
@@ -886,7 +884,7 @@ _EXTENTS: dict[
     str,
     tuple[
         tuple[tuple[dt.datetime, dt.datetime | None, int, AttemptSpec], ...],
-        Callable[[Transaction, Any, _Representation], None],
+        Callable[[TxnContext, Any, _Representation], None],
         list[tuple[object, ...]],
     ],
 ] = {
@@ -996,7 +994,7 @@ def test_two_pins_of_one_observation_compose_in_authored_order(
 ) -> None:
     db = _seeded_spans(profile_run, entity, ((_JAN, _DEC, 100, _SPEC),))
 
-    def edit(tx: Transaction) -> None:
+    def edit(tx: TxnContext) -> None:
         at_mar = _span_find(tx, entity, representation, _MAR)
         at_jun = _span_find(tx, entity, representation, _JUN)
         _span_update(tx, at_mar, representation, 150, until=_SEP)
@@ -1023,7 +1021,7 @@ def test_a_baseline_equal_assignment_sets_every_later_interval_literally(
 ) -> None:
     db = _seeded_spans(profile_run, entity, ((_JAN, _JUN, 100, _SPEC), (_JUN, _DEC, 120, _SPEC)))
 
-    def edit(tx: Transaction) -> None:
+    def edit(tx: TxnContext) -> None:
         at_mar = _span_find(tx, entity, representation, _MAR)
         at_jun = _span_find(tx, entity, representation, _JUN)
         _span_update(tx, at_mar, representation, 150, until=_NOV)
@@ -1084,7 +1082,7 @@ def test_writes_through_two_observed_rectangles_compose_in_authored_order(
     earlier_first, current = _DISTINCT_OBSERVATION_ORDERS[order]
     db = _seeded_spans(profile_run, entity, _TWO_RECTANGLES)
 
-    def edit(tx: Transaction) -> None:
+    def edit(tx: TxnContext) -> None:
         at_mar = _span_find(tx, entity, representation, _MAR)
         at_aug = _span_find(tx, entity, representation, _AUG)
         writes = [
@@ -1109,7 +1107,7 @@ def test_an_observed_write_of_a_source_read_at_valid_time_latest_is_refused(
     db = _seeded_spans(profile_run, entity, _TWO_RECTANGLES)
     seeded = _span_rows(profile_run, entity)
 
-    def edit(tx: Transaction) -> None:
+    def edit(tx: TxnContext) -> None:
         source = _span_find(tx, entity, representation, None)
         with pytest.raises(WriteInstructionError, match="read at Valid-Time LATEST"):
             _span_update(tx, source, representation, 150)
@@ -1131,7 +1129,7 @@ def test_a_range_flushed_before_a_failing_callback_rolls_back_with_it(
     db = _seeded_spans(profile_run, entity, _TWO_RECTANGLES)
     seeded = _span_rows(profile_run, entity)
 
-    def edit(tx: Transaction) -> None:
+    def edit(tx: TxnContext) -> None:
         _span_update(tx, _span_find(tx, entity, representation, _MAR), representation, 150)
         assert _span_find(tx, entity, representation, _AUG) is not None
         raise _Abandoned

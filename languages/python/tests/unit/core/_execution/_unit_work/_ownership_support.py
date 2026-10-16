@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.temporal_read import TimeInterval
-from parallax.core.write_plan.keys import ObservedStateKey
+from parallax.core.write_plan.keys import ObjectStateKey
 from parallax.core.write_plan.plan import Derivation, Descent, OwnedEndpoint
 
 
@@ -20,8 +20,8 @@ class OpenedRows:
 
     endpoints: frozenset[OwnedEndpoint]
     inserted: frozenset[OwnedEndpoint] = frozenset()
-    proofs: dict[ObservedStateKey, Derivation] = field(
-        default_factory=dict[ObservedStateKey, Derivation]
+    proofs: dict[ObjectStateKey, Derivation] = field(
+        default_factory=dict[ObjectStateKey, Derivation]
     )
     descents: dict[OwnedEndpoint, Descent] = field(default_factory=dict[OwnedEndpoint, Descent])
 
@@ -39,11 +39,11 @@ class OpenedRows:
     ) -> tuple[TimeInterval | None, ...]:
         return (valid_time_coverage,) if endpoint in self.inserted else ()
 
-    def proven(self, original: ObservedStateKey, /) -> Derivation | None:
+    def proven(self, original: ObjectStateKey, /) -> Derivation | None:
         return self.proofs.get(original)
 
     def descendants(
-        self, original: ObservedStateKey, valid_time_window: TimeInterval | None, /
+        self, original: ObjectStateKey, valid_time_window: TimeInterval | None, /
     ) -> Iterator[tuple[OwnedEndpoint, Descent]]:
         for endpoint, descent in self.descents.items():
             for contributor, contributed in descent.contributions:

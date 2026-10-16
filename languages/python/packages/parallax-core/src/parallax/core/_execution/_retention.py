@@ -7,7 +7,7 @@ from typing import Protocol, cast
 from parallax.core import inheritance, opt_lock, temporal_read
 from parallax.core._execution._unit_work.retain import (
     ParticipationToken,
-    ReadOrigin,
+    ReadEvidence,
     RetainedObservation,
 )
 from parallax.core.entity._construction_input import ABSENT
@@ -24,24 +24,24 @@ from parallax.core.temporal_read import (
 from parallax.core.write_plan import (
     EntityStateRow,
     ObjectKey,
-    ObservedStateKey,
+    ObjectStateKey,
     PredecessorRow,
     TemporalObservation,
     VersionObservation,
     WriteObservation,
-    observed_state_key,
+    object_state_key_from_observation,
 )
 
 __all__ = [
-    "ObservationLedger",
-    "ReadOrigins",
+    "ReadEvidenceByProjection",
+    "ReadEvidenceContext",
     "RecordedProjections",
-    "deferred_read_origins",
+    "defer_read_evidence",
 ]
 
 
 @dataclass(frozen=True, slots=True)
-class _ObservedPageProjection:
+class _ReadEvidenceProjection:
     """One Page projection's observation provenance, pending its judged state.
 
     ``node`` is the Page projection this row converted into, which is how
@@ -59,7 +59,7 @@ class _ObservedPageProjection:
     document: object | None
 
 
-type _PendingObservation = int | _ObservedPageProjection
+type _PendingObservation = int | _ReadEvidenceProjection
 
 
 class RecordedProjections:
@@ -67,7 +67,7 @@ class RecordedProjections:
 
     Projection references paired with their row provenance, recorded through
     :meth:`observe_projection`: each receives its members only from the judged,
-    Page-owned Entity State, and :func:`deferred_read_origins` is the only
+    Page-owned Entity State, and :func:`defer_read_evidence` is the only
     consumer. A projection whose state turns out not to hydrate is recorded like
     any other and simply resolves to no origin.
     """
@@ -85,12 +85,12 @@ class RecordedProjections:
     ) -> None:
         """Record a projection whose columns will come from its judged Entity State."""
         self._rows.append(
-            node if document is None else _ObservedPageProjection(node, entity, document)
+            node if document is None else _ReadEvidenceProjection(node, entity, document)
         )
 
 
-type ReadOrigins = Mapping[int, ReadOrigin]
-"""The Read Origin each observed projection's value carries, keyed by that
+type ReadEvidenceByProjection = Mapping[int, ReadEvidence]
+"""The Read Evidence each observed projection's value carries, keyed by that
 projection's own index in the read's sealed Page.
 
 Only the read can build this pairing: it alone holds the row and the
@@ -98,7 +98,7 @@ projection it converted into at the same time, and by the time a lifecycle
 publishes the value the row is gone."""
 
 
-class ObservationLedger(Protocol):
+class ReadEvidenceContext(Protocol):
     """The unit of work an observing read files into, satisfied structurally.
 
     A read needs exactly three things from a transaction — the participation
@@ -125,17 +125,17 @@ explicit version key, or its family's shared Temporal Shape."""
 
 
 def _released_callback(*_args: object) -> None:
-    raise RuntimeError("all deferred read origins have already resolved")
+    raise RuntimeError("all deferred read evidence have already resolved")
 
 
-class _DeferredReadOrigins(Mapping[int, ReadOrigin]):
+class _DeferredReadEvidenceMap(Mapping[int, ReadEvidence]):
     """Evidence retained only after its page-owned Entity State is judged valid.
 
     The pass holds the three family-fact owners by reference until every
     origin resolves, and each retained row keeps only the owner object its
     family's evidence is read through.
 
-    The ledger's freshness is captured when the pass is built — while the read
+    The evidence context's freshness is captured when the pass is built — while the read
     that acquired its rows runs — so evidence a projection builds later is
     judged against the state those rows had, not against whatever this
     transaction wrote in between.
@@ -144,9 +144,9 @@ class _DeferredReadOrigins(Mapping[int, ReadOrigin]):
     __slots__ = (
         "_admitted",
         "_entity",
+        "_evidence_context",
         "_families",
         "_keys",
-        "_ledger",
         "_observations",
         "_participation",
         "_pass_states",
@@ -166,7 +166,7 @@ class _DeferredReadOrigins(Mapping[int, ReadOrigin]):
         entity: Callable[[int], EntityIdentity],
         primary_key: Callable[[int], object | None],
         *,
-        ledger: ObservationLedger | None,
+        evidence_context: ReadEvidenceContext | None,
         pin: Pin,
     ) -> None:
         self._families = inheritance.view(meta)
@@ -174,7 +174,7 @@ class _DeferredReadOrigins(Mapping[int, ReadOrigin]):
         self._temporal = temporal_read.view(meta)
         retained: list[_PendingObservation] = [
             pending
-            if not isinstance(pending, _ObservedPageProjection)
+            if not isinstance(pending, _ReadEvidenceProjection)
             or isinstance(self._keys.key(pending.entity), TransactionTimeDerived)
             else pending.node
             for pending in observations._rows  # pyright: ignore[reportPrivateUsage] - same-module transfer
@@ -183,17 +183,17 @@ class _DeferredReadOrigins(Mapping[int, ReadOrigin]):
         self._admitted = admitted
         self._entity = entity
         self._primary_key = primary_key
-        self._ledger = ledger
-        self._participation = None if ledger is None else ledger.participation
-        self._read_at = 0 if ledger is None else ledger.freshness
+        self._evidence_context = evidence_context
+        self._participation = None if evidence_context is None else evidence_context.participation
+        self._read_at = 0 if evidence_context is None else evidence_context.freshness
         # One observed state, one retained observation within this pass, so two
         # projections of one row answer one claim exactly as graph aliases do.
-        self._pass_states: dict[ObservedStateKey, RetainedObservation] = {}
+        self._pass_states: dict[ObjectStateKey, RetainedObservation] = {}
         self._pin = pin
-        self._resolved: list[ReadOrigin | None] = [None] * len(retained)
+        self._resolved: list[ReadEvidence | None] = [None] * len(retained)
         self._resolved_count = 0
 
-    def __getitem__(self, key: int) -> ReadOrigin:
+    def __getitem__(self, key: int) -> ReadEvidence:
         try:
             resolved = self._resolved[key]
         except IndexError:
@@ -235,13 +235,13 @@ class _DeferredReadOrigins(Mapping[int, ReadOrigin]):
             return
         layout, member_row = admitted
         document = None if isinstance(pending, int) else pending.document
-        if self._ledger is None:
+        if self._evidence_context is None:
             primary_key = self._primary_key(key)
             if primary_key is None:  # pragma: no cover - conforming roots carry identity
                 return
             self._settle(
                 key,
-                ReadOrigin.deferred(
+                ReadEvidence.deferred(
                     entity,
                     _DeferredEvidence(primary_key, locator, layout, member_row, document),
                     pin=None if isinstance(locator, ExplicitVersion) else self._pin,
@@ -257,7 +257,7 @@ class _DeferredReadOrigins(Mapping[int, ReadOrigin]):
                 locator,
                 participation=self._participation,
                 pass_states=self._pass_states,
-                ledger=self._ledger,
+                evidence_context=self._evidence_context,
                 read_at=self._read_at,
                 pin=self._pin,
             ),
@@ -273,7 +273,7 @@ class _DeferredReadOrigins(Mapping[int, ReadOrigin]):
             return
         self._settle(
             key,
-            ReadOrigin.from_single_primary_key(
+            ReadEvidence.from_single_primary_key(
                 entity, view.primary_key.identity.name, primary_key, self._participation
             ),
         )
@@ -284,7 +284,7 @@ class _DeferredReadOrigins(Mapping[int, ReadOrigin]):
             raise RuntimeError(f"{entity.canonical}: a Transaction-Time key has no temporal shape")
         return shape
 
-    def _settle(self, key: int, origin: ReadOrigin) -> None:
+    def _settle(self, key: int, origin: ReadEvidence) -> None:
         self._resolved[key] = origin
         self._resolved_count += 1
         if self._resolved_count == len(self._observations):
@@ -298,32 +298,32 @@ class _DeferredReadOrigins(Mapping[int, ReadOrigin]):
         )
         self._entity = cast("Callable[[int], EntityIdentity]", _released_callback)
         self._primary_key = cast("Callable[[int], object | None]", _released_callback)
-        self._ledger = None
+        self._evidence_context = None
         self._families = cast("inheritance.InheritanceFacet", None)
         self._keys = cast("opt_lock.OptimisticLockFacet", None)
         self._temporal = cast("TemporalFacet", None)
 
 
-def deferred_read_origins(
+def defer_read_evidence(
     meta: Metamodel,
     observations: RecordedProjections,
     admitted: Callable[[int], tuple[EntityLayout, tuple[object, ...]] | None],
     entity: Callable[[int], EntityIdentity],
     primary_key: Callable[[int], object | None],
     *,
-    ledger: ObservationLedger | None,
+    evidence_context: ReadEvidenceContext | None,
     pin: Pin,
-) -> ReadOrigins:
+) -> ReadEvidenceByProjection:
     """A mapping that retains evidence as valid judged states become reachable
     (`m-opt-lock`; ADR 0013; `m-unit-work` "Observation lifetime").
 
-    Each projection's Read Origin resolves when first read. Versioned and
+    Each projection's Read Evidence resolves when first read. Versioned and
     temporal evidence comes from the Entity State the Page judged for that
     projection (``admitted``), viewed by declared member name, and is retained
     only once that state is reachable and valid.
 
     Evidence is addressed by the exact state it is about
-    (:func:`~parallax.core.write_plan.observed_state_key`), so a second read of
+    (:func:`~parallax.core.write_plan.object_state_key_from_observation`), so a second read of
     one primary key that resolves to a different version or milestone is
     evidence about the row it saw rather than an overwrite of the first read's.
     The identity half is the :class:`~parallax.core.write_plan.ObjectKey` a later
@@ -340,7 +340,7 @@ def deferred_read_origins(
     a temporal row carries it instead, where it answers whether the value may be
     written at all rather than which state a write settles against.
 
-    ``ledger`` is the participating unit of work, absent for a standalone read.
+    ``evidence_context`` is the participating unit of work, absent for a standalone read.
     It supplies the participation each hint carries and answers evidence it
     already holds for a state this read saw again; a standalone read stamps no
     participation.
@@ -349,13 +349,13 @@ def deferred_read_origins(
     row's raw Structured Column, so a successor is patched from what the row
     held rather than rebuilt from the members this model declares.
     """
-    return _DeferredReadOrigins(
+    return _DeferredReadEvidenceMap(
         meta,
         observations,
         admitted,
         entity,
         primary_key,
-        ledger=ledger,
+        evidence_context=evidence_context,
         pin=pin,
     )
 
@@ -367,22 +367,22 @@ def _retain_observed(
     locator: _Locator,
     *,
     participation: ParticipationToken | None,
-    pass_states: dict[ObservedStateKey, RetainedObservation],
-    ledger: ObservationLedger | None,
+    pass_states: dict[ObjectStateKey, RetainedObservation],
+    evidence_context: ReadEvidenceContext | None,
     read_at: int,
     pin: Pin,
-) -> ReadOrigin:
+) -> ReadEvidence:
     object_key, observation, key = _observed_state(
         layout, member_row[layout.primary_key[0]], member_row, document, locator
     )
     held = pass_states.get(key)
     if held is None:
         held = RetainedObservation(key, observation, participation)
-        if ledger is not None:
-            held = ledger.retain(held, read_at=read_at)
+        if evidence_context is not None:
+            held = evidence_context.retain(held, read_at=read_at)
         pass_states[key] = held
     observed_pin = None if isinstance(locator, ExplicitVersion) else pin
-    return ReadOrigin(layout.concrete, object_key, participation, held, observed_pin)
+    return ReadEvidence(layout.concrete, object_key, participation, held, observed_pin)
 
 
 def _observed_state(
@@ -391,7 +391,7 @@ def _observed_state(
     member_row: tuple[object, ...],
     document: object | None,
     locator: _Locator,
-) -> tuple[ObjectKey, WriteObservation, ObservedStateKey]:
+) -> tuple[ObjectKey, WriteObservation, ObjectStateKey]:
     """One judged row's object, the evidence its family's ``locator`` reads off
     it, and the exact state that evidence is about.
 
@@ -409,9 +409,17 @@ def _observed_state(
         observation: WriteObservation = VersionObservation(
             observed_version=cast("int", members[locator.attribute.name])
         )
-        return object_key, observation, observed_state_key(object_key, observation, NON_TEMPORAL)
+        return (
+            object_key,
+            observation,
+            object_state_key_from_observation(object_key, observation, NON_TEMPORAL),
+        )
     observation = _temporal_observation(layout, member_row, document)
-    return object_key, observation, observed_state_key(object_key, observation, locator)
+    return (
+        object_key,
+        observation,
+        object_state_key_from_observation(object_key, observation, locator),
+    )
 
 
 class _DeferredEvidence:

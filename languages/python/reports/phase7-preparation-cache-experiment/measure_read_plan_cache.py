@@ -18,7 +18,7 @@ from parallax.conformance.budget import BudgetContract
 from parallax.conformance.story_models import Order
 from parallax.conformance.workloads import catalog
 from parallax.core import continuation
-from parallax.core._execution._page_origins import ObservedPageProjections
+from parallax.core._execution._page_origins import ReadEvidenceCollector
 from parallax.core._execution._preflight import preflight
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._layout import CatalogedModel
@@ -112,7 +112,7 @@ def delivery_trace(capacity: int, selected: Sequence[ValidatedObjectQuery]) -> N
             query_,
             MODEL,
             port,
-            origins=ObservedPageProjections(MODEL.meta, ledger=None, scanned=False),
+            origins=ReadEvidenceCollector(MODEL.meta, ledger=None, scanned=False),
             edition="edition-a",
             planner=cache,
         )

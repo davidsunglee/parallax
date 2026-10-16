@@ -17,7 +17,7 @@ from parallax.conformance import database_options_stories
 from parallax.conformance.class_models import MODELS
 from parallax.core.db_port import Bind, DatabaseConnection, Row, TransactionOutcome
 from parallax.core.dialect import POSTGRES, Dialect
-from parallax.core.execution import DatabaseOptions
+from parallax.core.execution import TxnOptions
 from tests._support.db_port import ConnectsAsItself, body_outcome
 
 _story = (
@@ -51,13 +51,13 @@ class _AccountPort(ConnectsAsItself):
 def test_the_documented_root_options_story_resolves_each_call_as_it_states() -> None:
     port = _AccountPort()
     shape = _story(port, MODELS["account"])
-    root = DatabaseOptions(isolation="repeatable_read", max_retries=2)
+    root = TxnOptions(isolation="repeatable_read", max_retries=2)
     # The call that requested nothing ran under the root's own record; the call
     # that overrode one field kept the other three; and both joins answered the
     # OUTER call's resolved record — never the root's — while the join naming
     # the root's level was refused.
     assert shape.inherited == root
-    assert shape.overridden == DatabaseOptions(isolation="serializable", max_retries=2)
+    assert shape.overridden == TxnOptions(isolation="serializable", max_retries=2)
     assert shape.joined == shape.overridden
     assert shape.repeated == shape.overridden
     assert shape.root_level_refused_on_join
@@ -69,7 +69,7 @@ def test_the_documented_root_options_story_resolves_each_call_as_it_states() -> 
 
 def test_the_snippet_the_usage_guide_renders_is_the_source_that_ran() -> None:
     snippet = database_options_stories.root_options_snippet()
-    assert "DatabaseOptions(isolation=" in snippet
+    assert "TxnOptions(isolation=" in snippet
     assert "connect(adapter, model, options=root)" in snippet
     assert "tx.options" in snippet
     assert 'isolation="serializable"' in snippet

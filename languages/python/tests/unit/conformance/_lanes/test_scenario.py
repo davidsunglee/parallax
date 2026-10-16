@@ -43,7 +43,7 @@ from parallax.core.db_port import (
 )
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._model import model_of
-from parallax.core.execution import DatabaseOptions
+from parallax.core.execution import TxnOptions
 from parallax.core.execution_lifecycle import DatabaseCallStarted
 from parallax.core.metamodel import (
     EntityIdentity,
@@ -69,7 +69,7 @@ from parallax.core.write_plan import (
     TemporalObservation,
     VersionObservation,
 )
-from parallax.core.write_plan.keys import TemporalStateKey, VersionedStateKey
+from parallax.core.write_plan.keys import TemporalObjectStateKey, VersionedObjectStateKey
 from tests.unit._transact_support import PERSON
 from tests.unit.conformance._lanes._scripted_port import ScriptedPort
 from tests.unit.conformance._recording_ports import FakeWritePort
@@ -1065,7 +1065,7 @@ _POLICY = ObjectKey(EntityIdentity("parallax.compatibility", "Policy"), (("id", 
 
 def _policy_node(valid_start: dt.datetime, valid_end: object, name: str) -> Any:
     """One node a grouped find of a bitemporal `Policy` published: production's
-    own identity and Observed State Key for it, beside the milestone it is."""
+    own identity and Object State Key for it, beside the milestone it is."""
     members: dict[str, object] = {
         "id": 1,
         "name": name,
@@ -1075,7 +1075,7 @@ def _policy_node(valid_start: dt.datetime, valid_end: object, name: str) -> Any:
         "txEnd": INFINITY,
     }
     return RetainedObservation(
-        TemporalStateKey(_POLICY, Edge(valid_time=valid_start, tx_time=_APR)),
+        TemporalObjectStateKey(_POLICY, Edge(valid_time=valid_start, tx_time=_APR)),
         TemporalObservation(predecessor=PredecessorRow(members=members)),
         None,
     )
@@ -1157,7 +1157,7 @@ def _account_node(version: int) -> Any:
     """One node a grouped find of the versioned `Account` published."""
     key = ObjectKey(EntityIdentity("parallax.compatibility", "Account"), (("id", 1),))
     return RetainedObservation(
-        VersionedStateKey(key, version), VersionObservation(observed_version=version), None
+        VersionedObjectStateKey(key, version), VersionObservation(observed_version=version), None
     )
 
 
@@ -1211,7 +1211,7 @@ def _balance_node(tx_start: str, value: str) -> Any:
         "txEnd": INFINITY,
     }
     return RetainedObservation(
-        TemporalStateKey(key, Edge(tx_time=start)),
+        TemporalObjectStateKey(key, Edge(tx_time=start)),
         TemporalObservation(predecessor=PredecessorRow(members=members)),
         None,
     )
@@ -1254,7 +1254,7 @@ def test_a_settled_write_resolves_a_transaction_time_only_targets_named_mileston
 def test_run_scenario_case_settles_a_grouped_temporal_close_against_the_find_it_names() -> None:
     # m-unit-work-015: two finds of ONE bitemporal key observe two rectangles both
     # current on Transaction Time, and the write step names the first with `on`.
-    # The evidence the write settles by is the Observed State Key the claim that
+    # The evidence the write settles by is the Object State Key the claim that
     # node carries is addressed by, and the golden the oracle renders comes from
     # the same node's own milestone — so the close addresses R2's `thru_z`, which
     # a store keyed by identity alone could not have chosen between. The write
@@ -2560,9 +2560,7 @@ def test_run_materializing_pair_rejects_a_mismatched_preceding_find_target() -> 
             }
         },
     ]
-    context = scenario.CaseContext(
-        serving, meta, "locking", TemporalShadow(), {}, DatabaseOptions()
-    )
+    context = scenario.CaseContext(serving, meta, "locking", TemporalShadow(), {}, TxnOptions())
     with pytest.raises(EngineError, match="not preceded by"):
         scenario._run_materializing_pair(  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helper directly
             FakeWritePort(),
@@ -3767,7 +3765,7 @@ def test_the_case_context_carries_the_root_record_beside_the_sparse_request() ->
         case_format.transaction_keywords(case),
         case_format.database_options(case),
     )
-    assert context.options == DatabaseOptions(
+    assert context.options == TxnOptions(
         max_retries=0,
         concurrency="locking",
         retry_optimistic_conflicts=True,
@@ -3788,7 +3786,7 @@ def test_a_case_context_modeling_no_case_state_answers_for_none() -> None:
         "optimistic",
         None,
         {},
-        DatabaseOptions(),
+        TxnOptions(),
     )
     with pytest.raises(EngineError, match="tracked case state"):
         context.case_state()
@@ -3835,7 +3833,7 @@ def test_a_conflict_case_whose_root_opt_in_is_bounded_at_zero_runs_its_attempt()
     # inert and the case runs as authored, one production attempt at the
     # root's level under the optimistic preference its request authors.
     case = _rooted(_load_case("m-opt-lock-006"), uow={"concurrency": "optimistic"})
-    assert case_format.database_options(case) == DatabaseOptions(
+    assert case_format.database_options(case) == TxnOptions(
         max_retries=0,
         concurrency="locking",
         retry_optimistic_conflicts=True,

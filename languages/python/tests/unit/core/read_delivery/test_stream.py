@@ -136,7 +136,7 @@ class _Scope:
         return StreamPageResult(
             page=builder.finish((), Pin()),
             includes=_INCLUDES,
-            sources={},
+            origins={},
             delivered=roots,
             resume_from=None,
             exhausted=not self._pages,
@@ -175,10 +175,10 @@ class _Publication:
             *,
             atomic: bool = False,
             ordinal_offset: int = 0,
-            sources: Mapping[int, object] = {},
+            origins: Mapping[int, object] = {},
             milestones: TemporalShape | None = None,
         ) -> Iterator[object]:
-            del page, includes, atomic, sources, milestones
+            del page, includes, atomic, origins, milestones
             for ordinal in range(ordinal_offset, ordinal_offset + pages.pop(0)):
                 yield invalid.get(ordinal, ordinal)
 

@@ -37,9 +37,9 @@ from parallax.core.temporal_write.coverage import NO_TRANSFORM, CoverageTransfor
 from parallax.core.write_plan.columns import ChunkedColumnBuilder, ColumnSlice, whole
 from parallax.core.write_plan.keys import (
     ObjectKey,
-    ObservedStateKey,
-    TemporalStateKey,
-    VersionedStateKey,
+    ObjectStateKey,
+    TemporalObjectStateKey,
+    VersionedObjectStateKey,
 )
 from parallax.core.write_plan.materialized import PredecessorRows
 from parallax.core.write_plan.observe import WriteObservation
@@ -189,14 +189,14 @@ class GroupStates:
     evidence: GroupEvidence
     shape: TemporalShape
 
-    def __iter__(self) -> Iterator[ObservedStateKey]:
+    def __iter__(self) -> Iterator[ObjectStateKey]:
         entity, key, evidence = self.entity, self.key, self.evidence
         if isinstance(evidence, VersionedEvidence):
             for value, version in zip(evidence.keys, evidence.versions, strict=True):
-                yield VersionedStateKey(ObjectKey(entity, ((key, value),)), version)
+                yield VersionedObjectStateKey(ObjectKey(entity, ((key, value),)), version)
             return
         for index in range(len(evidence)):
-            yield TemporalStateKey(
+            yield TemporalObjectStateKey(
                 ObjectKey(entity, ((key, evidence.key(index)),)),
                 milestone_edge(self.shape, evidence, index),
             )
@@ -289,7 +289,7 @@ class InsertionKeyedWrite:
 
     instruction: PreparedKeyedWrite
     identity: InsertionIdentity
-    scope: VersionedStateKey | ObjectKey | None = None
+    scope: VersionedObjectStateKey | ObjectKey | None = None
 
     def __post_init__(self) -> None:
         if self.instruction.mutation in INSERT_MUTATIONS:
@@ -324,7 +324,7 @@ class TargetKeyedWrite:
 
     instruction: PreparedKeyedWrite
     expectation: TargetExpectation
-    scope: VersionedStateKey | ObjectKey
+    scope: VersionedObjectStateKey | ObjectKey
     claims: tuple[RetainedObservation, ...] = ()
     retained: RetainedTargetState | None = field(default=None, compare=False)
 
@@ -351,7 +351,7 @@ def target_write(
         instruction=instruction,
         expectation=expectation,
         scope=(
-            VersionedStateKey(key, expectation.version)
+            VersionedObjectStateKey(key, expectation.version)
             if isinstance(expectation, ExpectedVersion)
             else key
         ),

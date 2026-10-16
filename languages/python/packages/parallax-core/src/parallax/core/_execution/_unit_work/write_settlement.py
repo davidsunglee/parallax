@@ -67,8 +67,8 @@ from parallax.core.temporal_write.expansion import (
     openings,
 )
 from parallax.core.write_plan.keys import (
-    ObservedStateKey,
-    VersionedStateKey,
+    ObjectStateKey,
+    VersionedObjectStateKey,
 )
 from parallax.core.write_plan.materialized import PredecessorRows
 from parallax.core.write_plan.observe import TemporalObservation, WriteObservation
@@ -358,7 +358,7 @@ class WritePlanCompiler:
         shape: TemporalShape | None,
         audit: AuditDecoration,
         advances: int = 0,
-    ) -> tuple[BoundRange, SourceAuthority | None, VersionedStateKey | None]:
+    ) -> tuple[BoundRange, SourceAuthority | None, VersionedObjectStateKey | None]:
         """One ordered keyed write's settled steps and effects, beside the
         claim its unit spends and the state its carrier itself names as
         changed. ``advances`` is how many versions earlier writes of its scope
@@ -374,10 +374,10 @@ class WritePlanCompiler:
                 None,
                 None,
             )
-        own_state: VersionedStateKey | None = None
+        own_state: VersionedObjectStateKey | None = None
         observation: WriteObservation | None = None
         claim: SourceAuthority | None = None
-        source: ObservedStateKey | None = None
+        source: ObjectStateKey | None = None
         if isinstance(item, ObservedKeyedWrite):
             instruction, observation = item.instruction, item.observation
             claim = _observed_claim(item)
@@ -385,9 +385,9 @@ class WritePlanCompiler:
         elif isinstance(item, TargetKeyedWrite | InsertionKeyedWrite):
             instruction = item.instruction
             scope = item.scope
-            if isinstance(scope, VersionedStateKey):
+            if isinstance(scope, VersionedObjectStateKey):
                 own_state = (
-                    VersionedStateKey(scope.object, self._advanced(scope.version, advances))
+                    VersionedObjectStateKey(scope.object, self._advanced(scope.version, advances))
                     if advances
                     else scope
                 )
@@ -429,7 +429,7 @@ class WritePlanCompiler:
         shape: TemporalShape | None,
         audit: AuditDecoration,
         *,
-        source: ObservedStateKey | None = None,
+        source: ObjectStateKey | None = None,
         own_version: int | None = None,
         conditioned: bool = False,
         advances: int = 0,
@@ -637,7 +637,7 @@ class WritePlanCompiler:
         shape: TransactionTimeOnly | Bitemporal,
         instruction: PreparedKeyedWrite,
         tx_instant: TransactionInstant,
-        source: ObservedStateKey | None,
+        source: ObjectStateKey | None,
         audit: AuditDecoration,
     ) -> BoundRange:
         """One temporal insert as the new lineage it opens over its prepared
@@ -943,7 +943,7 @@ def _target_claim(item: TargetKeyedWrite) -> SourceAuthority | None:
     return claims[0] if len(claims) == 1 else CombinedSourceAuthority(claims)
 
 
-def _changes(source: ObservedStateKey | None) -> tuple[ObservedStateKey, ...]:
+def _changes(source: ObjectStateKey | None) -> tuple[ObjectStateKey, ...]:
     return () if source is None else (source,)
 
 

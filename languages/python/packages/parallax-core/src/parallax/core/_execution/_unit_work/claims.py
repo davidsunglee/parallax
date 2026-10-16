@@ -7,7 +7,7 @@ from typing import Final, Literal
 from parallax.core._execution._unit_work.instructions import INSERT_MUTATIONS, PreparedKeyedWrite
 from parallax.core._execution._unit_work.retain import RetainedObservation
 from parallax.core.temporal_read import TimeInterval
-from parallax.core.write_plan.keys import ObjectKey, ObservedStateKey
+from parallax.core.write_plan.keys import ObjectKey, ObjectStateKey
 from parallax.core.write_plan.observe import WriteObservation
 
 __all__ = [
@@ -75,12 +75,12 @@ SPANNING_SELECTION_INTENT: Final = WriteIntent(kind="selection", spans=True)
 selected, not only the one it selected (:meth:`ClaimTable.spans`)."""
 
 
-type ClaimScope = ObservedStateKey | ObjectKey
+type ClaimScope = ObjectStateKey | ObjectKey
 """What one buffered write's claim is taken AT — the grain two intents must
 share before either can affect the other.
 
 A versioned or temporal existing-row write claims the exact
-:data:`~parallax.core.write_plan.keys.ObservedStateKey` its source observed,
+:data:`~parallax.core.write_plan.keys.ObjectStateKey` its source observed,
 because two writes of one key that observed two different states are two
 independent intents. An unversioned Non-Temporal existing-row write claims its
 :class:`~parallax.core.write_plan.keys.ObjectKey`, because the shared row lock

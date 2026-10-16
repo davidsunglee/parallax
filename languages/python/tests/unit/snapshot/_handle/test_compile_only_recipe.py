@@ -30,7 +30,7 @@ from parallax.core.dialect import POSTGRES
 from parallax.core.unit_work import WritePlanner, WritePlanningRequest
 from parallax.core.write_payload import LayoutPayloadPreparer
 from parallax.core.write_plan import WritePlan
-from parallax.snapshot import Database, Transaction
+from parallax.snapshot import Database, TxnContext
 from tests._support.db_port import (
     ScriptedAdapter,
     Transact,
@@ -94,7 +94,7 @@ def test_the_compile_lane_emits_exactly_one_plans_own_lowering(
 def test_a_transaction_result_publishes_no_write_plan() -> None:
     port = ScriptedAdapter(Transact(Write()))
 
-    def body(tx: Transaction) -> None:
+    def body(tx: TxnContext) -> None:
         tx.insert(new_account())
 
     result = account_db(port).transact(body)
@@ -169,7 +169,7 @@ def test_the_public_surface_offers_no_plan_and_no_flush() -> None:
     assert "WritePlan" not in exported
     assert not exported.intersection(_FORBIDDEN_ENTRY_POINTS)
     for name in ("flush", *_FORBIDDEN_ENTRY_POINTS):
-        assert not hasattr(Transaction, name)
+        assert not hasattr(TxnContext, name)
         assert not hasattr(Database, name)
 
 

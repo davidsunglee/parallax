@@ -28,7 +28,7 @@ from parallax.core.execution import (
     prepare_model,
 )
 from parallax.postgres import OnDemandOptions, PoolOptions
-from parallax.snapshot import Transaction, connect
+from parallax.snapshot import TxnContext, connect
 
 _ACCOUNT = MODELS["account"]
 
@@ -104,7 +104,7 @@ def test_a_retry_after_a_close_fails_rather_than_replaying(profile_run: Any) -> 
     db = root.using_database_login()
     attempts: list[int] = []
 
-    def body(_tx: Transaction) -> None:
+    def body(_tx: TxnContext) -> None:
         attempts.append(1)
         root.close()
         raise RuntimeError("this attempt fails after the handle closed")
@@ -191,7 +191,7 @@ def test_a_transaction_and_its_participating_work_share_one_slot(profile_run: An
     ) as _root_db:
         db = _root_db.using_database_login()
 
-        def body(tx: Transaction) -> int:
+        def body(tx: TxnContext) -> int:
             found = tx.find(Account.where(Account.all)).results()
             with tx.stream(Account.where(Account.all), batch_size=1) as roots:
                 streamed = list(roots)
@@ -210,7 +210,7 @@ def test_an_independent_transaction_needs_a_slot_of_its_own(profile_run: Any) ->
         release = threading.Event()
         outcomes: list[str] = []
 
-        def hold(tx: Transaction) -> None:
+        def hold(tx: TxnContext) -> None:
             tx.find(Account.where(Account.all)).results()
             started.set()
             release.wait(timeout=10.0)
@@ -253,7 +253,7 @@ def test_a_committed_transaction_keeps_its_value_across_the_release(profile_run:
         existing = _accounts(db)
         new_id = max(int(account.id) for account in existing) + 1
 
-        def body(tx: Transaction) -> int:
+        def body(tx: TxnContext) -> int:
             tx.insert(Account(id=new_id, owner="Pooled", balance=Decimal("1.00")))
             return new_id
 

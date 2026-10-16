@@ -4,7 +4,7 @@ A standalone read is what an Execution Scope begins for one operation, and a
 participating read is the Attempt itself. Each is a bracket around a body the
 read operations hand it, so what it is can only be stated by what the body sees
 when it runs: which activity is open, what has already happened to the unit of
-work, and which connection, Concurrency Preference, and observation ledger
+work, and which connection, Concurrency Preference, and evidence context
 arrived with it. Every case therefore passes a recording body and grades the
 moment that body ran.
 
@@ -37,7 +37,7 @@ from parallax.conformance._lifecycle_recording import (
 from parallax.core._execution._publication import read_projection
 from parallax.core._execution._read_policy import ReadInputs
 from parallax.core._execution._scope import ExecutionScope
-from parallax.core._execution._transaction._attempt import Attempt
+from parallax.core._execution._transaction._attempt import TxnAttempt
 from parallax.core.execution import ExecutionFailure, ServingModel, prepare_model
 from parallax.core.execution_lifecycle import (
     ExecutionEvent,
@@ -68,7 +68,7 @@ def _scope(
 
 
 def _participating(
-    run: Callable[[Attempt], None],
+    run: Callable[[TxnAttempt], None],
     adapter: ScriptedAdapter,
     *,
     provider: RecordingLifecycleProvider | None = None,
@@ -196,7 +196,7 @@ def test_each_lane_answers_the_selection_it_was_begun_under() -> None:
     assert scope.begin().selected is current
     assert scope.begin().selected is current
 
-    def run(attempt: Attempt) -> None:
+    def run(attempt: TxnAttempt) -> None:
         assert attempt.begin() is attempt
         assert attempt.selected is current
 
@@ -264,7 +264,7 @@ def test_a_standalone_body_is_handed_its_own_connection_and_no_preference_or_led
     _scope(adapter).begin().eager(_TARGET, "typed", body)
 
     handed = body.only.inputs
-    assert (handed.preference, handed.ledger) == (None, None)
+    assert (handed.preference, handed.evidence_context) == (None, None)
     assert adapter.acquisitions == 1
     # The connection the body ran on is gone by the time this reads it back: the
     # eager read released at its own end, so what escaped executes nothing.
@@ -303,7 +303,7 @@ def test_a_standalone_read_names_its_edition_on_a_failure_and_the_root_sees_the_
         "ReadFinished",
     ]
 
-    def run(attempt: Attempt) -> None:
+    def run(attempt: TxnAttempt) -> None:
         try:
             attempt.eager(_TARGET, "typed", failing)
         except RuntimeError as raised:
@@ -336,7 +336,7 @@ def test_a_participating_eager_read_force_flushes_before_its_body_runs() -> None
     adapter = ScriptedAdapter(Transact(Write()))
     body = _Body(adapter=adapter)
 
-    def run(attempt: Attempt) -> None:
+    def run(attempt: TxnAttempt) -> None:
         attempt.uow.buffer(account_insert(9))
         assert attempt.eager(_TARGET, "typed", body) is _ANSWER
 
@@ -355,7 +355,7 @@ def test_a_participating_read_opens_inside_the_flush_as_the_batchs_ordered_sibli
     adapter = ScriptedAdapter(Transact(Write()))
     body = _Body(provider, adapter)
 
-    def run(attempt: Attempt) -> None:
+    def run(attempt: TxnAttempt) -> None:
         attempt.uow.buffer(account_insert(9))
         attempt.eager(_TARGET, "typed", body)
 
@@ -398,12 +398,12 @@ def test_a_participating_body_is_handed_the_attempts_connection_preference_and_u
     eager = _Body()
     paged = _Body()
 
-    def run(attempt: Attempt) -> None:
+    def run(attempt: TxnAttempt) -> None:
         attempt.eager(_TARGET, "typed", eager)
         with attempt.open_stream(_TARGET, "typed", 5) as stream:
             attempt.paged(stream.batch(), paged)
         for handed in (eager.only.inputs, paged.only.inputs):
-            assert (handed.preference, handed.ledger) == ("locking", attempt.uow)
+            assert (handed.preference, handed.evidence_context) == ("locking", attempt.uow)
         assert eager.only.inputs.connection is paged.only.inputs.connection
 
     _participating(run, adapter, concurrency="locking")
@@ -437,7 +437,7 @@ def test_a_standalone_stream_opens_a_root_execution_of_its_own() -> None:
 def test_a_participating_stream_is_a_child_of_the_current_attempt() -> None:
     provider = RecordingLifecycleProvider()
 
-    def run(attempt: Attempt) -> None:
+    def run(attempt: TxnAttempt) -> None:
         with attempt.open_stream(_TARGET, "typed", 5):
             pass
 
@@ -488,7 +488,7 @@ def test_a_standalone_page_enters_its_batch_around_the_body_and_flushes_nothing(
         ("StreamFinished", 1, None),
     ]
     handed = body.only.inputs
-    assert (handed.preference, handed.ledger) == (None, None)
+    assert (handed.preference, handed.evidence_context) == (None, None)
 
 
 def test_every_participating_page_flushes_first_and_opens_its_batch_inside_that_flush() -> None:
@@ -499,7 +499,7 @@ def test_every_participating_page_flushes_first_and_opens_its_batch_inside_that_
     adapter = ScriptedAdapter(Transact(Write()))
     body = _Body(provider, adapter)
 
-    def run(attempt: Attempt) -> None:
+    def run(attempt: TxnAttempt) -> None:
         with attempt.open_stream(_TARGET, "typed", 5) as stream:
             attempt.uow.buffer(account_insert(9))
             attempt.paged(stream.batch(), body)
@@ -548,7 +548,7 @@ def test_a_standalone_advance_names_the_edition_and_a_participating_one_does_not
     else:  # pragma: no cover - the assertion is the except arm
         raise AssertionError("a standalone advance's failure was not contextualized")
 
-    def run(attempt: Attempt) -> None:
+    def run(attempt: TxnAttempt) -> None:
         assert attempt.begin().advance(lambda: _ANSWER) is _ANSWER
         try:
             attempt.begin().advance(failing)

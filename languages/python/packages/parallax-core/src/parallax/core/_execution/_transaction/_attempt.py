@@ -13,7 +13,7 @@ from parallax.core._execution._keyed_writes import (
     keyed_insert,
     keyed_write,
 )
-from parallax.core._execution._options import OMITTED, DatabaseOptions, Omitted
+from parallax.core._execution._options import OMITTED, Omitted, TxnOptions
 from parallax.core._execution._publication import SelectedReadModel, SelectedWriteModel
 from parallax.core._execution._read_policy import (
     ReadInputs,
@@ -43,7 +43,7 @@ from parallax.core._execution._unit_work.instructions import (
     PreparedPredicateWrite,
     PreparedTargetWrite,
 )
-from parallax.core._execution._unit_work.retain import ReadOrigin
+from parallax.core._execution._unit_work.retain import ReadEvidence
 from parallax.core._execution._unit_work.strategy import ActorIdentity
 from parallax.core._execution._unit_work.uow import (
     BindDeferredRange,
@@ -115,7 +115,7 @@ from parallax.core.write_plan.plan import BoundRange, ExecutionUnit, UnitEffects
 from parallax.core.write_plan.steps import PlannedInsert
 from parallax.core.write_plan.steps import PlannedWrite as PlannedStep
 
-__all__ = ["Attempt"]
+__all__ = ["TxnAttempt"]
 
 _ORDERED_STATEMENTS: Final = 64
 """The most statements one ordered write transport invocation presents. It
@@ -124,7 +124,7 @@ a shortfall not yet enforced the database may already have run; a longer run of
 effects continues in another invocation once this one is enforced."""
 
 
-class Attempt:
+class TxnAttempt:
     """One physical transaction attempt: its unit of work, its connection, the
     selection it adopted, its activity, its resolved options, and the Write
     Batch its current flush runs inside.
@@ -168,7 +168,7 @@ class Attempt:
         *,
         lifecycle: InstalledLifecycle | None,
         planner: ReadPlanner,
-        options: DatabaseOptions,
+        options: TxnOptions,
         clock: Clock,
         actor: ActorIdentity,
     ) -> None:
@@ -219,7 +219,7 @@ class Attempt:
         return self._write.edition
 
     @property
-    def options(self) -> DatabaseOptions:
+    def options(self) -> TxnOptions:
         """The resolved options this attempt's invocation runs under."""
         return self._options
 
@@ -256,7 +256,7 @@ class Attempt:
         /,
         *,
         convert_query: Callable[[Q], ReadQuery],
-        build_publication: Callable[[SelectedReadModel], Publication[ReadOrigin, Eager]],
+        build_publication: Callable[[SelectedReadModel], Publication[ReadEvidence, Eager]],
     ) -> Eager:
         """One participating whole-result read, published through
         ``build_publication``.
@@ -270,7 +270,7 @@ class Attempt:
         publication = build_publication(self._read)
         return read_graph(self, convert_query(query), publication, self._planner)
 
-    def stream[Q, P: Publication[ReadOrigin, Any]](
+    def stream[Q, P: Publication[ReadEvidence, Any]](
         self,
         query: Q,
         batch_size: int,
@@ -280,7 +280,7 @@ class Attempt:
         build_publication: Callable[[SelectedReadModel], P],
         on_page_start: Callable[[deep_fetch.IncludeTree], None],
         on_release: Callable[[], None],
-    ) -> StreamDelivery[Attempt, ReadQuery, P]:
+    ) -> StreamDelivery[TxnAttempt, ReadQuery, P]:
         """One participating streamed delivery, constructed and not yet entered.
 
         Re-entry is refused, then the query is captured and the page size judged;
@@ -303,23 +303,23 @@ class Attempt:
         refuse_reentry(self._lifecycle)
         return read_rows(self, node, self._planner)
 
-    def begin(self) -> Attempt:
+    def begin(self) -> TxnAttempt:
         """The read a participating delivery is begun as: this attempt itself."""
         return self
 
-    def resolved(self, read: Attempt, query: ReadQuery, /) -> ResolvedObjectQuery:
+    def resolved(self, read: TxnAttempt, query: ReadQuery, /) -> ResolvedObjectQuery:
         return resolved(read, query)
 
     def page(
         self,
-        read: Attempt,
+        read: TxnAttempt,
         paging: PagingPlan,
         at: At,
         batch: StreamBatchActivity,
         /,
         *,
         scanned: bool,
-    ) -> StreamPageResult[ReadOrigin]:
+    ) -> StreamPageResult[ReadEvidence]:
         return read_page(read, paging, at, batch, self._planner, scanned=scanned)
 
     @property

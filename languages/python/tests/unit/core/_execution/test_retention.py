@@ -1,14 +1,14 @@
 """Write-observation retention unit tests (`parallax.core._execution._retention`).
 
-Drives :class:`RecordedProjections` and :func:`deferred_read_origins` directly, off
+Drives :class:`RecordedProjections` and :func:`defer_read_evidence` directly, off
 hand-written rows admitted as judged positional Entity State rather than through
-a `Transaction.find`: which of the two mutually exclusive branches a row takes (a
+a `TxnContext.find`: which of the two mutually exclusive branches a row takes (a
 versioned row's observed version, a temporal row's whole predecessor milestone),
 which rows retain no evidence at all, what the retained state is keyed by, what a
 hint carries when there is no state behind it, and that a standalone and a
 participating read retain one and the same evidence.
 
-Everything a collector holds is asserted through the Read Origins the retention
+Everything a collector holds is asserted through the Read Evidence the retention
 answers, never off its own storage: the accumulator is an internal seam, and a
 proof that crosses it would pin an arrangement no caller can observe.
 
@@ -29,9 +29,9 @@ import pytest
 from parallax.conformance import models
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import inheritance, opt_lock, temporal_read
-from parallax.core._execution._page_origins import ObservedPageProjections
+from parallax.core._execution._page_origins import ReadEvidenceCollector
 from parallax.core._execution._planning import build_write_planner
-from parallax.core._execution._retention import RecordedProjections, deferred_read_origins
+from parallax.core._execution._retention import RecordedProjections, defer_read_evidence
 from parallax.core._execution._unit_work.instructions import prepare_typed_write
 from parallax.core.base import INFINITY
 from parallax.core.metamodel import EntityIdentity
@@ -47,7 +47,7 @@ from parallax.core.temporal_read import Edge, Pin
 from parallax.core.unit_work import (
     BufferItem,
     KeyedWrite,
-    ReadOrigin,
+    ReadEvidence,
     RetainedObservation,
     TransactionSettings,
     UnitOfWork,
@@ -57,13 +57,13 @@ from parallax.core.unit_work import (
 )
 from parallax.core.write_plan import (
     EntityStateRow,
-    ObservedStateKey,
+    ObjectStateKey,
     TemporalObservation,
     VersionObservation,
     WritePlan,
-    observed_state_key,
+    object_state_key_from_observation,
 )
-from parallax.core.write_plan.keys import TemporalStateKey, VersionedStateKey
+from parallax.core.write_plan.keys import TemporalObjectStateKey, VersionedObjectStateKey
 from tests._support.planner_probes import NO_ROW_READS, TEST_ACTOR_IDENTITY
 from tests.unit._corpus_identity_support import corpus_entity, corpus_object_key
 from tests.unit._judged_evidence_support import judged_evidence
@@ -99,7 +99,9 @@ def _account_columns(*, id_: int = 1, version: int = 4) -> Mapping[str, object]:
 
 # The state every `_balance_columns` row observed: `Balance` is
 # Transaction-Time-only, so its milestone is that one axis's from-instant.
-_BALANCE_STATE = TemporalStateKey(corpus_object_key("Balance", ("id", 1)), Edge(tx_time=_TX_START))
+_BALANCE_STATE = TemporalObjectStateKey(
+    corpus_object_key("Balance", ("id", 1)), Edge(tx_time=_TX_START)
+)
 
 
 def _balance_columns(*, id_: int = 1) -> Mapping[str, object]:
@@ -139,7 +141,7 @@ def _hint(
     entity: EntityIdentity,
     columns: Mapping[str, object],
     document: object | None = None,
-) -> ReadOrigin:
+) -> ReadEvidence:
     """The hint a STANDALONE read retains for one row — no unit of work behind it."""
     return judged_evidence(model, entity, columns, document=document)[0]
 
@@ -174,13 +176,13 @@ def test_deferred_sources_release_callbacks_after_resolving_every_origin() -> No
     entity = corpus_entity("Order")
     observations = RecordedProjections()
     observations.observe_projection(0, entity, None)
-    sources = deferred_read_origins(
+    sources = defer_read_evidence(
         model,
         observations,
         lambda _node: None,
         lambda _node: entity,
         lambda _node: 1,
-        ledger=None,
+        evidence_context=None,
         pin=Pin(),
     )
 
@@ -196,13 +198,13 @@ def test_deferred_sources_report_a_reached_projection_with_no_admissible_state_a
     unknown = EntityIdentity("parallax.compatibility", "Unknown")
     observations = RecordedProjections()
     observations.observe_projection(0, unknown, None)
-    sources = deferred_read_origins(
+    sources = defer_read_evidence(
         model,
         observations,
         lambda _node: None,
         lambda _node: unknown,
         lambda _node: 1,
-        ledger=None,
+        evidence_context=None,
         pin=Pin(),
     )
 
@@ -243,7 +245,7 @@ def test_deferred_standalone_temporal_evidence_adopts_its_row_view_and_document(
     assert isinstance(observation, TemporalObservation)
     assert isinstance(observation.predecessor.members, EntityStateRow)
     assert dict(observation.predecessor.members) == _plain(_voyage_members())
-    assert origin.observation.key == TemporalStateKey(
+    assert origin.observation.key == TemporalObjectStateKey(
         corpus_object_key("Voyage", ("id", 7)), Edge(tx_time=_TX_START)
     )
     assert observation.predecessor.document is document
@@ -296,13 +298,15 @@ def test_deferred_evidence_locates_its_state_by_its_familys_owner_object() -> No
 def test_resolving_and_materializing_evidence_again_repeats_no_derivation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    derived: list[ObservedStateKey] = []
+    derived: list[ObjectStateKey] = []
 
-    def counted(*args: Any) -> ObservedStateKey:
-        derived.append(observed_state_key(*args))
+    def counted(*args: Any) -> ObjectStateKey:
+        derived.append(object_state_key_from_observation(*args))
         return derived[-1]
 
-    monkeypatch.setattr("parallax.core._execution._retention.observed_state_key", counted)
+    monkeypatch.setattr(
+        "parallax.core._execution._retention.object_state_key_from_observation", counted
+    )
     sources = judged_evidence(
         _accepted("rate"), corpus_entity("DepositRate"), _deposit_rate_columns()
     )
@@ -342,7 +346,9 @@ def test_a_versioned_row_retains_its_observed_version() -> None:
     hint = _hint(_accepted("account"), corpus_entity("Account"), _account_columns())
     assert hint.observation is not None
     assert hint.observation.evidence == VersionObservation(observed_version=4)
-    assert hint.observation.key == VersionedStateKey(corpus_object_key("Account", ("id", 1)), 4)
+    assert hint.observation.key == VersionedObjectStateKey(
+        corpus_object_key("Account", ("id", 1)), 4
+    )
 
 
 def test_a_row_that_is_neither_versioned_nor_temporal_retains_no_state() -> None:
@@ -406,8 +412,10 @@ def test_a_standalone_and_a_participating_read_retain_one_predecessor() -> None:
     entity = corpus_entity("Voyage")
     columns = _voyage_columns()
 
-    def observe(uow: UnitOfWork) -> ReadOrigin:
-        return judged_evidence(model, entity, columns, document=_VOYAGE_DOCUMENT, ledger=uow)[0]
+    def observe(uow: UnitOfWork) -> ReadEvidence:
+        return judged_evidence(
+            model, entity, columns, document=_VOYAGE_DOCUMENT, evidence_context=uow
+        )[0]
 
     participating = _in_transaction(model, observe)
     standalone = _hint(model, entity, columns, _VOYAGE_DOCUMENT)
@@ -420,7 +428,7 @@ def test_a_standalone_and_a_participating_read_retain_one_predecessor() -> None:
         assert {"manifest", "legs"} <= observation.predecessor.members.keys()
         assert _plain(dict(observation.predecessor.members)) == _voyage_members()
         assert observation.predecessor.member("txStart") == _TX_START
-        assert hint.observation.key == TemporalStateKey(
+        assert hint.observation.key == TemporalObjectStateKey(
             corpus_object_key("Voyage", ("id", 7)), Edge(tx_time=_TX_START)
         )
         # The Structured Column rides BESIDE the members either way.
@@ -443,9 +451,11 @@ def test_a_retained_predecessor_document_is_the_one_the_read_transferred(
         "legs": [{"port": "Oslo"}],
     }
 
-    def observe(ledger: UnitOfWork | None) -> ReadOrigin:
+    def observe(evidence_context: UnitOfWork | None) -> ReadEvidence:
         columns = _voyage_columns()
-        return judged_evidence(model, entity, columns, document=document, ledger=ledger)[0]
+        return judged_evidence(
+            model, entity, columns, document=document, evidence_context=evidence_context
+        )[0]
 
     hint = _in_transaction(model, observe) if participating else observe(None)
     assert hint.observation is not None
@@ -468,8 +478,12 @@ def test_two_reads_of_one_milestone_at_different_pins_retain_one_state() -> None
     balance = corpus_entity("Balance")
 
     def observe(uow: UnitOfWork) -> tuple[RetainedObservation, RetainedObservation]:
-        first = judged_evidence(model, balance, _balance_columns(), ledger=uow)[0].observation
-        second = judged_evidence(model, balance, _balance_columns(), ledger=uow)[0].observation
+        first = judged_evidence(model, balance, _balance_columns(), evidence_context=uow)[
+            0
+        ].observation
+        second = judged_evidence(model, balance, _balance_columns(), evidence_context=uow)[
+            0
+        ].observation
         assert first is not None
         assert second is not None
         return first, second
@@ -480,28 +494,32 @@ def test_two_reads_of_one_milestone_at_different_pins_retain_one_state() -> None
 
 
 def test_two_observed_versions_of_one_object_are_distinct_states() -> None:
-    # The ledger admits several observed states of one Object Key: the version is
+    # The evidence context admits several observed states of one Object Key: the version is
     # part of the address, so a read that saw version 4 and a later read that saw
     # version 7 hold evidence about two different states rather than overwriting
     # one slot.
     model = _accepted("account")
     account = corpus_entity("Account")
 
-    def observe(uow: UnitOfWork) -> tuple[ObservedStateKey, ObservedStateKey]:
-        first_read = judged_evidence(model, account, _account_columns(version=4), ledger=uow)
-        second_read = judged_evidence(model, account, _account_columns(version=7), ledger=uow)
+    def observe(uow: UnitOfWork) -> tuple[ObjectStateKey, ObjectStateKey]:
+        first_read = judged_evidence(
+            model, account, _account_columns(version=4), evidence_context=uow
+        )
+        second_read = judged_evidence(
+            model, account, _account_columns(version=7), evidence_context=uow
+        )
         earlier = first_read[0].observation
         later = second_read[0].observation
         assert earlier is not None
         assert later is not None
-        reread = judged_evidence(model, account, _account_columns(version=4), ledger=uow)
+        reread = judged_evidence(model, account, _account_columns(version=4), evidence_context=uow)
         assert reread[0].observation is earlier
         return earlier.key, later.key
 
     earlier_key, later_key = _in_transaction(model, observe)
     assert earlier_key != later_key
-    assert isinstance(earlier_key, VersionedStateKey)
-    assert isinstance(later_key, VersionedStateKey)
+    assert isinstance(earlier_key, VersionedObjectStateKey)
+    assert isinstance(later_key, VersionedObjectStateKey)
     assert (earlier_key.object, earlier_key.version) == (
         corpus_object_key("Account", ("id", 1)),
         4,
@@ -535,9 +553,9 @@ def test_two_projections_of_one_state_share_one_retained_observation() -> None:
     # rather than two that could be spent independently.
     model = _accepted("account")
 
-    def observe(uow: UnitOfWork) -> tuple[ReadOrigin, ReadOrigin]:
+    def observe(uow: UnitOfWork) -> tuple[ReadEvidence, ReadEvidence]:
         row = _account_columns()
-        sources = judged_evidence(model, corpus_entity("Account"), row, row, ledger=uow)
+        sources = judged_evidence(model, corpus_entity("Account"), row, row, evidence_context=uow)
         return sources[0], sources[1]
 
     first, second = _in_transaction(model, observe)
@@ -552,9 +570,9 @@ def test_two_judged_projections_of_one_temporal_state_share_one_retained_observa
     # (`txStart` over storage `in_z`).
     model = _accepted("balance")
 
-    def observe(uow: UnitOfWork) -> tuple[ReadOrigin, ReadOrigin]:
+    def observe(uow: UnitOfWork) -> tuple[ReadEvidence, ReadEvidence]:
         row = _balance_columns()
-        sources = judged_evidence(model, corpus_entity("Balance"), row, row, ledger=uow)
+        sources = judged_evidence(model, corpus_entity("Balance"), row, row, evidence_context=uow)
         return sources[0], sources[1]
 
     first, second = _in_transaction(model, observe)
@@ -591,7 +609,7 @@ def test_evidence_is_keyed_by_the_rows_own_entity_through_inherited_members() ->
     hint = _hint(_accepted("rate"), corpus_entity("DepositRate"), columns)
     assert hint.object_key == corpus_object_key("DepositRate", ("id", 1))
     assert hint.observation is not None
-    assert hint.observation.key == TemporalStateKey(
+    assert hint.observation.key == TemporalObjectStateKey(
         corpus_object_key("DepositRate", ("id", 1)),
         Edge(tx_time=_RATE_TX_START, valid_time=_VALID_START),
     )
@@ -638,10 +656,10 @@ def test_a_root_retains_evidence_from_its_own_judged_state_beside_an_equal_sibli
     assert page_rows(page).witnesses[bond] == page_rows(page).witnesses[stock]
     state_for(page_rows(page), bond)
     state_for(page_rows(page), stock)
-    observations = ObservedPageProjections(model, ledger=None, scanned=False)
+    observations = ReadEvidenceCollector(model, evidence_context=None, scanned=False)
     observations.observe_projection(bond, corpus_entity("Bond"), None)
     observations.observe_projection(stock, corpus_entity("Stock"), None)
-    # Page judgment and Read Origin retention meet only inside the read that
+    # Page judgment and Read Evidence retention meet only inside the read that
     # owns both, so the collector's origin step is called directly.
     sources = observations.origins_for(page)
 
@@ -667,7 +685,9 @@ def test_a_participating_read_stamps_its_own_unit_of_works_participation() -> No
     model = _accepted("account")
 
     def observe(uow: UnitOfWork) -> bool:
-        hint = judged_evidence(model, corpus_entity("Account"), _account_columns(), ledger=uow)[0]
+        hint = judged_evidence(
+            model, corpus_entity("Account"), _account_columns(), evidence_context=uow
+        )[0]
         assert hint.observation is not None
         return (
             hint.participation is uow.participation
@@ -680,7 +700,7 @@ def test_a_participating_read_stamps_its_own_unit_of_works_participation() -> No
 # --------------------------------------------------------------------------- #
 # Freshness: evidence is judged against the state its rows had when read.     #
 # --------------------------------------------------------------------------- #
-def _balance_update(model: AcceptedMetamodel, hint: ReadOrigin) -> BufferItem:
+def _balance_update(model: AcceptedMetamodel, hint: ReadEvidence) -> BufferItem:
     instruction = prepare_typed_write(
         KeyedWrite("amend", "Balance", ({"id": 1, "value": Decimal("6.00")},)), model
     )
@@ -696,9 +716,9 @@ def test_evidence_resolved_after_an_own_change_to_its_state_is_invalidated() -> 
     entity = corpus_entity("Balance")
 
     def observe(uow: UnitOfWork) -> None:
-        unsubmitted = judged_evidence(model, entity, _balance_columns(), ledger=uow)
-        unaffected = judged_evidence(model, entity, _balance_columns(id_=2), ledger=uow)
-        writer = judged_evidence(model, entity, _balance_columns(), ledger=uow)[0]
+        unsubmitted = judged_evidence(model, entity, _balance_columns(), evidence_context=uow)
+        unaffected = judged_evidence(model, entity, _balance_columns(id_=2), evidence_context=uow)
+        writer = judged_evidence(model, entity, _balance_columns(), evidence_context=uow)[0]
         uow.buffer(_balance_update(model, writer))
         uow.read(lambda: None)
         stale = unsubmitted[0].observation
@@ -708,7 +728,9 @@ def test_evidence_resolved_after_an_own_change_to_its_state_is_invalidated() -> 
         assert stale is not writer.observation
         other = unaffected[0].observation
         assert other is not None and not other.invalidated
-        fresh = judged_evidence(model, entity, _balance_columns(), ledger=uow)[0].observation
+        fresh = judged_evidence(model, entity, _balance_columns(), evidence_context=uow)[
+            0
+        ].observation
         assert fresh is not None and not fresh.invalidated and not fresh.consumed
 
     _in_transaction(model, observe)
@@ -719,9 +741,11 @@ def test_an_own_change_invalidates_a_built_observation_no_write_used() -> None:
     entity = corpus_entity("Balance")
 
     def observe(uow: UnitOfWork) -> None:
-        built = judged_evidence(model, entity, _balance_columns(), ledger=uow)[0].observation
+        built = judged_evidence(model, entity, _balance_columns(), evidence_context=uow)[
+            0
+        ].observation
         assert built is not None
-        writer = judged_evidence(model, entity, _balance_columns(), ledger=uow)[0]
+        writer = judged_evidence(model, entity, _balance_columns(), evidence_context=uow)[0]
         assert writer.observation is built  # one state, one shared observation
         uow.buffer(_balance_update(model, writer))
         assert not built.invalidated  # buffered, not yet completed

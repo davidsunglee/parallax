@@ -30,7 +30,7 @@ from parallax.core.unit_work import (
 )
 from parallax.core.write_plan import PredecessorRows
 from parallax.core.write_plan.plan import UnitEffects
-from parallax.snapshot import Database, Transaction
+from parallax.snapshot import Database, TxnContext
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
     CommitCall,
@@ -70,7 +70,7 @@ def _transact(port: ScriptedAdapter, *, concurrency: Concurrency, fn: Any) -> No
     ).using_database_login().transact(fn, concurrency=concurrency)
 
 
-def _amend(tx: Transaction, *, to: str = "150.00") -> None:
+def _amend(tx: TxnContext, *, to: str = "150.00") -> None:
     tx.amend_where(
         WherePosition.where(WherePosition.value == Decimal("150.00")),
         WherePosition.value.set(Decimal(to)),
@@ -367,7 +367,7 @@ def test_a_later_write_observing_another_state_of_a_selected_object_is_refused()
     # the group changes first.
     refusals: list[WriteEvidenceError] = []
 
-    def fn(tx: Transaction) -> None:
+    def fn(tx: TxnContext) -> None:
         april = tx.find(WherePosition.where(WherePosition.id == 1).as_of(valid_time=_APR)).result()
         _amend(tx)
         try:
@@ -426,7 +426,7 @@ def _tagged(key: int, start: dt.datetime, end: object, tags: list[DocumentValue]
     }
 
 
-def _tag(tx: Transaction) -> None:
+def _tag(tx: TxnContext) -> None:
     tx.amend_where(
         WhereTagged.where(WhereTagged.id <= 2),
         WhereTagged.tags.set(("z", "z")),
