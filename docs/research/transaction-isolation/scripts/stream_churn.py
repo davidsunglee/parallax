@@ -3,10 +3,13 @@
 The reader streams every account page by page with a per-root consumer delay;
 ``fast`` consumes without delay and ``slow`` sleeps between roots. In the
 ``transaction-held`` placement the stream runs inside one ``db.transact`` at the
-requested isolation, so its transaction stays open for the whole delivery; in
-the ``standalone`` placement ``db.stream`` acquires a connection per page and
-holds no transaction between pages. Writers amend random accounts in their own
-short transactions until the reader finishes.
+requested isolation, so its transaction stays open for the whole delivery; with
+``--read-only`` a ``read-only-held`` placement streams inside one
+``db.read_only`` at the same isolation instead, which only an arm that has
+read-only transactions can run; in the ``standalone`` placement ``db.stream``
+acquires a connection per page and holds no transaction between pages. Writers
+amend random accounts in their own short transactions until the reader
+finishes.
 
 A sampler records, at a fixed interval, the client's traced Python memory, the
 oldest snapshot any backend of the database holds (``age(backend_xmin)``),
@@ -161,6 +164,13 @@ def run_placement(
                 reader.consume(stream)
 
         db.transact(held, isolation=isolation)
+    elif placement == "read-only-held":
+
+        def read_only_held(rtx: Any) -> None:
+            with rtx.stream(query, batch_size=page) as stream:
+                reader.consume(stream)
+
+        db.read_only(read_only_held, isolation=isolation)
     else:
         with db.stream(query, batch_size=page) as stream:
             reader.consume(stream)
@@ -191,7 +201,17 @@ def run_placement(
 
 
 def main() -> None:
-    args = arguments(__doc__ or "")
+    args = arguments(
+        __doc__ or "",
+        extra=lambda parser: parser.add_argument(
+            "--read-only", action="store_true", help="also stream inside a read-only transaction"
+        ),
+    )
+    placements = (
+        ("transaction-held", "read-only-held", "standalone")
+        if args.read_only
+        else ("transaction-held", "standalone")
+    )
     if args.smoke:
         roots, page, writers, interval, delays = 40, 10, 1, 0.05, {"fast": 0.0, "slow": 0.002}
     else:
@@ -201,7 +221,7 @@ def main() -> None:
     with provisioned(rows) as run, observer(run) as control:
         adapter = pooled(run, writers + 1)
         with scoped(adapter) as db:
-            for placement in ("transaction-held", "standalone"):
+            for placement in placements:
                 for speed, delay in delays.items():
                     reset(run, rows)
                     result = run_placement(
@@ -225,6 +245,7 @@ def main() -> None:
                 roots=roots,
                 pageSize=page,
                 writers=writers,
+                placements=placements,
                 consumerDelayS=delays,
                 sampleIntervalS=interval,
                 memory="tracemalloc over the whole driver process, writers and sampler included",

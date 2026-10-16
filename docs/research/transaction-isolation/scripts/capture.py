@@ -44,16 +44,19 @@ LEVELS = ("read_committed", "repeatable_read")
 class Driver:
     """A command an arm runs: a script of this directory, or a tool of the arm's
     own Python tree. A script takes ``--isolation``, ``--out``, and
-    ``--smoke``; a tool takes the arguments its evidence or smoke run needs."""
+    ``--smoke``, after the ``options`` a checkpoint runs it with; a tool takes
+    the arguments its evidence or smoke run needs."""
 
     name: str
     tool: tuple[str, ...] = ()
     smoke_tool: tuple[str, ...] = ()
+    options: tuple[str, ...] = ()
 
     def command(self, arm: "Arm", out: Path, *, smoke: bool) -> list[str]:
         if not self.tool:
             command = [
                 str(SCRIPTS / f"{self.name}.py"),
+                *self.options,
                 "--isolation",
                 arm.isolation,
                 "--out",
@@ -69,6 +72,9 @@ LOCK_SNAPSHOT_TRACE = Driver("lock_snapshot_trace")
 CONTENTION = Driver("contention")
 GUARD_WAL = Driver("guard_wal")
 STREAM_CHURN = Driver("stream_churn")
+# Writable and read-only transaction-held streams side by side in one arm, for
+# the checkpoints whose every arm has read-only transactions.
+STREAM_CHURN_READ_ONLY = Driver("stream_churn", options=("--read-only",))
 END_TO_END_WRITES = Driver("end_to_end_writes")
 SNAPSHOT_DELIVERY = Driver(
     "snapshot_delivery",
@@ -107,7 +113,7 @@ CHECKPOINTS: dict[str, Checkpoint] = {
         (LOCK_SNAPSHOT_TRACE, CONTENTION, GUARD_WAL, STREAM_CHURN, END_TO_END_WRITES),
         (f"{C0_SOURCE}@read_committed", f"{C0_SOURCE}@repeatable_read"),
     ),
-    "C1": Checkpoint("writable versus read-only reads at one isolation", (STREAM_CHURN,)),
+    "C1": Checkpoint("writable versus read-only reads at one isolation", (STREAM_CHURN_READ_ONLY,)),
     "C2": Checkpoint(
         "existing versus strict source admission, evidence retained", (END_TO_END_WRITES,)
     ),
@@ -118,7 +124,7 @@ CHECKPOINTS: dict[str, Checkpoint] = {
     "C4": Checkpoint("immediate replay versus bounded randomized backoff", (CONTENTION, GUARD_WAL)),
     "C5": Checkpoint(
         "standalone and read-only reads before and after evidence removal",
-        (SNAPSHOT_DELIVERY, STREAM_CHURN),
+        (SNAPSHOT_DELIVERY, STREAM_CHURN_READ_ONLY),
     ),
     "C6": Checkpoint(
         "the C0 source versus the final design",
