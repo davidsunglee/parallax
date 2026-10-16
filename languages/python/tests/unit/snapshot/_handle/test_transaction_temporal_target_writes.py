@@ -1438,3 +1438,137 @@ def test_a_deferred_unit_completes_before_a_later_statement_is_prepared(
         ("Balance", ["read"]),
         ("WhereTag", ["read", "close", "insert"]),
     ]
+
+
+# --------------------------------------------------------------------------- #
+# Termination: the caller's start conditions the coverage its window ends,     #
+# and a missing or revised start fails rather than ending nothing.             #
+# --------------------------------------------------------------------------- #
+def _terminate(tx: TxnContext, *, until: dt.datetime | None = None) -> None:
+    if until is None:
+        tx.wire.terminate_if("WherePosition", {"id": 1}, valid_from=_MAR, tx_start=_T0)
+    else:
+        tx.terminate_if(WherePosition, key=1, valid_from=_MAR, until=until, tx_start=_T0)
+
+
+@pytest.mark.parametrize("representation", ["typed", "wire"])
+def test_an_optimistic_transaction_time_termination_closes_its_current_row_and_chains_nothing(
+    representation: str,
+) -> None:
+    port = ScriptedAdapter(Transact(Read(rows=[balance_row(in_z=_T0)]), Write()))
+
+    def fn(tx: TxnContext) -> None:
+        if representation == "typed":
+            tx.terminate_if(mm.Balance, key=1, tx_start=_T0)
+        else:
+            tx.wire.terminate_if("Balance", {"id": 1}, tx_start=_T0)
+        assert _calls(port) == []
+
+    db_for(BALANCE, port).transact(fn)
+    (coverage,) = _reads(port)
+    assert coverage.sql.endswith("from balance t0 where t0.bal_id = %s and t0.out_z = %s")
+    (close,) = _writes(port)
+    assert close.sql.endswith("where bal_id = %s and out_z = %s and in_z = %s")
+    assert close.binds[1:] == (1, "infinity", _T0)
+
+
+@pytest.mark.parametrize(
+    ("until", "opened"),
+    [
+        pytest.param(None, [(Decimal("100.00"), _JAN, _MAR)], id="unbounded"),
+        pytest.param(
+            _SEP,
+            [(Decimal("100.00"), _JAN, _MAR), (Decimal("200.00"), _SEP, INFINITY_INSTANT)],
+            id="bounded",
+        ),
+    ],
+)
+def test_an_optimistic_bitemporal_termination_ends_every_interval_its_window_reaches(
+    until: dt.datetime | None, opened: list[tuple[object, ...]]
+) -> None:
+    later = _rectangle(_JUN, INFINITY_INSTANT, "200.00", tx_start=_T1)
+    port = ScriptedAdapter(Transact(Read(rows=[_rectangle(_JAN, _JUN), later]), Write(times=3)))
+    _db(port).transact(lambda tx: _terminate(tx, until=until))
+    (coverage,) = _reads(port)
+    assert coverage.binds[:2] == (1, _MAR)
+    start, later_close, insert = _writes(port)
+    # The caller's start gates the rectangle holding `valid_from` alone; the
+    # later rectangle, changed at T1 after the caller's T0 observation, is
+    # ended under its own milestone.
+    assert (start.binds[2], start.binds[-1]) == (_JUN, _T0)
+    assert (later_close.binds[2], later_close.binds[-1]) == ("infinity", _T1)
+    assert [row[2:5] for row in inserted_rows(insert)] == opened
+
+
+@pytest.mark.parametrize(
+    "coverage",
+    [
+        pytest.param([], id="no-coverage"),
+        pytest.param([_rectangle(_JUN, INFINITY_INSTANT)], id="a-gap-at-its-start"),
+        pytest.param([_rectangle(_JAN, _JUN, tx_start=_T1)], id="another-revision"),
+    ],
+)
+def test_an_optimistic_termination_whose_start_moved_fails_before_any_write(
+    coverage: list[MappingRow],
+) -> None:
+    port = ScriptedAdapter(Transact(Read(rows=coverage)))
+    with raises_contextualized(WritePreconditionError) as failed:
+        _db(port).transact(lambda tx: _terminate(tx))
+    assert (dict(failed.value.key), failed.value.expected) == ({"id": 1}, _T0)
+    assert _writes(port) == []
+    assert isinstance(port.calls[-1], RollbackCall)
+
+
+def test_a_termination_whose_start_gate_matches_nothing_fails_its_precondition() -> None:
+    port = ScriptedAdapter(
+        Transact(Read(rows=[_rectangle(_JAN, INFINITY_INSTANT)]), Write(affected=0))
+    )
+    with raises_contextualized(WritePreconditionError):
+        _db(port).transact(lambda tx: _terminate(tx))
+    assert len(_writes(port)) == 1
+    assert isinstance(port.calls[-1], RollbackCall)
+
+
+def test_a_locking_termination_reads_its_start_at_the_call_and_closes_ungated() -> None:
+    port = ScriptedAdapter(Transact(Read(rows=[balance_row(in_z=_T0)]), Write()))
+
+    def fn(tx: TxnContext) -> None:
+        tx.terminate_if(mm.Balance, key=1, tx_start=_T0)
+        (acquired,) = _reads(port)
+        assert acquired.sql.endswith("where t0.bal_id = %s and t0.out_z = %s for share of t0")
+
+    db_for(BALANCE, port).transact(fn, concurrency="locking")
+    assert len(_reads(port)) == 1
+    (close,) = _writes(port)
+    assert close.sql.endswith("where bal_id = %s and out_z = %s")
+
+
+@pytest.mark.parametrize(
+    "stored",
+    [[_rectangle(_JAN, INFINITY_INSTANT, tx_start=_T1)], []],
+    ids=["another-revision", "no-row"],
+)
+def test_a_locking_termination_refuses_a_stale_or_missing_start_at_the_call(
+    stored: list[MappingRow],
+) -> None:
+    port = ScriptedAdapter(Transact(Read(rows=stored)))
+
+    def fn(tx: TxnContext) -> None:
+        with pytest.raises(WritePreconditionError):
+            _terminate(tx)
+
+    _db(port).transact(fn, concurrency="locking")
+    assert _writes(port) == []
+
+
+def test_a_termination_states_its_key_alone() -> None:
+    port = ScriptedAdapter(Transact())
+
+    def fn(tx: TxnContext) -> None:
+        with pytest.raises(WriteInstructionError, match="primary key alone"):
+            tx.wire.terminate_if(
+                "WherePosition", {"id": 1, "value": "1.00"}, valid_from=_MAR, tx_start=_T0
+            )
+
+    _db(port).transact(fn)
+    assert _calls(port) == []

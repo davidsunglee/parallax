@@ -28,15 +28,12 @@ is a literal assignment and writes like any other.
 
 The caller-addressed target cases revise a row their transaction never read:
 a Wire amendment (``tx.wire.amend_if``) or a Typed or Wire replacement
-(``tx.replace_if``, ``tx.wire.replace_if``) states the key and the condition —
-the Transaction-Time start a temporal caller last observed, or the unversioned
-assertion — and a Bitemporal
+(``tx.replace_if``, ``tx.wire.replace_if``) states the key, the
+Transaction-Time start its temporal caller last observed, and a Bitemporal
 target's interior window, under the default Optimistic strategy. Their window
-opens at the verb, with nothing read before it, so it contains every read the
-target makes: the point read under the shared lock that an unversioned
-Non-Temporal target acquires its row with at the call, under either strategy,
-and the coverage read a temporal target's flush makes before it closes
-anything. The port answers each with the stored row, composed per statement.
+opens at the verb, with nothing read before it, so it contains the one read the
+target makes: the coverage read its flush makes before it closes anything. The
+port answers it with the stored row, composed per statement.
 Every target assigns every writable member the values its observed twin
 assigns, so the two lower to the same statements.
 
@@ -514,13 +511,14 @@ def _categorical_cases() -> tuple[Case, ...]:
 
 
 _TARGET_TWINS: Final[tuple[tuple[str, int, str, int, bool], ...]] = (
-    ("plain", 701, "after", 1, False),
     ("txtime", 301, "after", 2, False),
     ("bitemporal", 901, "middle", 4, True),
 )
 """Each target family's observed twin: its key, the label of the values it
 assigns, its statement count, and whether it is bounded to the interior
-window. The predecessor is always the twin's ``before`` row."""
+window. The predecessor is always the twin's ``before`` row. The unversioned
+``plain`` family has no revision a caller could state, so it has no target
+write."""
 
 
 def _target_cases() -> tuple[Case, ...]:
@@ -806,30 +804,24 @@ def _source(tx: TxnContext, case: Case) -> object:
 
 def _address(tx: TxnContext, case: Case) -> None:
     """Buffer ``case``'s target write through its public verb, conditioned on
-    the stored milestone's Transaction-Time start where the Entity has one and
-    asserted unversioned where it has none. Each branch states its keywords
-    literally, so the window holds the verb's own work and no argument
-    assembly."""
+    the stored milestone's Transaction-Time start. Each branch states its
+    keywords literally, so the window holds the verb's own work and no
+    argument assembly."""
     name = case.entity.identity.name
-    temporal = issubclass(case.entity, Bitemporal | TxTemporal)
     if case.mutation in ("replace", "replaceUntil") and case.ingress == "typed":
         instance = cast("Entity", case.instance)
         if case.bounded:
             tx.replace_if(
                 instance, tx_start=TX_START, valid_from=INTERIOR_FROM, until=INTERIOR_UNTIL
             )
-        elif temporal:
-            tx.replace_if(instance, tx_start=TX_START)
         else:
-            tx.replace_if(instance, unversioned=True)
+            tx.replace_if(instance, tx_start=TX_START)
         return
     verb = tx.wire.replace_if if case.mutation in ("replace", "replaceUntil") else tx.wire.amend_if
     if case.bounded:
         verb(name, case.changes, tx_start=TX_START, valid_from=INTERIOR_FROM, until=INTERIOR_UNTIL)
-    elif temporal:
-        verb(name, case.changes, tx_start=TX_START)
     else:
-        verb(name, case.changes, unversioned=True)
+        verb(name, case.changes, tx_start=TX_START)
 
 
 def _buffer(tx: TxnContext, case: Case, source: object) -> None:

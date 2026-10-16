@@ -265,6 +265,19 @@ def transaction_time_only_conditional_replacement_gates_on_the_callers_milestone
     db.transact(replace)
 
 
+def transaction_time_only_conditional_termination_gates_on_the_callers_milestone(
+    db: ScopedDatabase,
+) -> None:
+    def insert(tx: TxnContext) -> None:
+        tx.insert(Balance(id=1, acct_num="A", value=Decimal("100.00")))
+
+    def terminate(tx: TxnContext) -> None:
+        tx.terminate_if(Balance, key=1, tx_start=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))
+
+    db.transact(insert)
+    db.transact(terminate)
+
+
 def versioned_update_advances_the_version_ungated_in_locking_mode(db: ScopedDatabase) -> None:
     def fn(tx: TxnContext) -> None:
         current = tx.find(Account.where(Account.id == 2)).result()
@@ -285,6 +298,20 @@ def conditional_replacement_states_every_writable_member(db: ScopedDatabase) -> 
         tx.replace_if(Account(id=3, owner="Hopper", balance=Decimal("12.00")), version=1)
 
     db.transact(fn)
+
+
+def conditional_deletion_gates_on_the_callers_version(db: ScopedDatabase) -> None:
+    def fn(tx: TxnContext) -> None:
+        tx.delete_if(Account, key=2, version=1)
+
+    db.transact(fn)
+
+
+def locking_conditional_deletion_reads_its_row_under_the_shared_lock(db: ScopedDatabase) -> None:
+    def fn(tx: TxnContext) -> None:
+        tx.delete_if(Account, key=1, version=1)
+
+    db.transact(fn, concurrency="locking")
 
 
 def wallet_predicate_delete_is_readless(db: ScopedDatabase) -> list[Entity]:
@@ -734,6 +761,14 @@ WRITE_STORIES: Final[tuple[WriteStory, ...]] = (
         clock=_temporal_write_002_clock,
     ),
     WriteStory(
+        "m-temporal-write-069",
+        "A Transaction-Time-Only conditional termination gates on its caller's milestone",
+        "commit",
+        "balance",
+        transaction_time_only_conditional_termination_gates_on_the_callers_milestone,
+        clock=_temporal_write_002_clock,
+    ),
+    WriteStory(
         "m-opt-lock-002",
         "Versioned update advances the version ungated in locking mode",
         "commit",
@@ -753,6 +788,20 @@ WRITE_STORIES: Final[tuple[WriteStory, ...]] = (
         "commit",
         "account",
         conditional_replacement_states_every_writable_member,
+    ),
+    WriteStory(
+        "m-opt-lock-039",
+        "A conditional deletion states its key and the version its caller last observed",
+        "commit",
+        "account",
+        conditional_deletion_gates_on_the_callers_version,
+    ),
+    WriteStory(
+        "m-opt-lock-040",
+        "A Locking conditional deletion reads its row under the shared lock",
+        "commit",
+        "account",
+        locking_conditional_deletion_reads_its_row_under_the_shared_lock,
     ),
     WriteStory(
         "m-batch-write-005",

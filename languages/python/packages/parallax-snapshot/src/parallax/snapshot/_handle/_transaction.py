@@ -16,7 +16,7 @@ from parallax.snapshot._handle._stream import SnapshotStream
 from parallax.snapshot._handle._typed_writes import (
     TypedKeyedInsertSource,
     TypedKeyedWriteSource,
-    typed_conditional_amend,
+    typed_addressed_write,
     typed_predicate_write,
     typed_target_write,
 )
@@ -42,9 +42,10 @@ class TxnContext:
     :meth:`amend` its edits or explicit assignments, :meth:`replace` its
     complete writable state, :meth:`delete` and :meth:`terminate` its object.
     :meth:`insert` opens a full instance (the Create Payload). The
-    caller-conditioned verbs :meth:`amend_if` and :meth:`replace_if` address an
-    object themselves under the one condition their caller states, never
-    falling back on a source's authority. :meth:`find` runs a participating
+    caller-conditioned verbs :meth:`amend_if`, :meth:`replace_if`,
+    :meth:`delete_if`, and :meth:`terminate_if` address an object themselves
+    under the one revision their caller states, never falling back on a
+    source's authority. :meth:`find` runs a participating
     read and returns ``Snapshot[T]``: force-flush + the lock suffix each
     materialized level's own target Entity calls for, otherwise identical to
     :meth:`ScopedDatabase.find`. The predicate-selected ``_where`` verb family
@@ -204,12 +205,11 @@ class TxnContext:
         key: object,
         version: int | Omitted = OMITTED,
         tx_start: dt.datetime | Omitted = OMITTED,
-        unversioned: bool | Omitted = OMITTED,
         valid_from: dt.datetime | Omitted = OMITTED,
         until: dt.datetime | Omitted = OMITTED,
     ) -> None:
         """Buffer an amendment of the existing object of concrete ``entity``
-        that ``key`` names, under the one condition its caller states.
+        that ``key`` names, under the one revision its caller states.
 
         ``key`` is the object's scalar primary-key value, whatever the key
         Attribute is called. ``assignments`` are ``Attr.set(...)`` calls naming
@@ -218,20 +218,21 @@ class TxnContext:
         validated and then dropped, with no database work at all. No instance,
         read, or source is consulted.
 
-        Exactly one condition is required, and it must be the one ``entity``
+        Exactly one revision is required, and it must be the one ``entity``
         has: ``version``, the version of a versioned Entity its caller last
-        observed; ``tx_start``, the Transaction-Time start of the milestone a
-        temporal Entity's write starts from; or ``unversioned=True`` for an
-        Entity with neither. A missing, extra, ``None``, or inapplicable
-        condition is refused, never replaced by a source's authority. Under
-        the Optimistic strategy the stated revision gates the write, and a row
-        no longer standing at it raises
+        observed, or ``tx_start``, the Transaction-Time start of the milestone a
+        temporal Entity's write starts from. A missing, extra, ``None``, or
+        inapplicable revision is refused, never replaced by a source's
+        authority, and an Entity with neither is refused outright: no write
+        could detect a change to it since its caller's query, so it is written
+        through a read of this transaction instead. A retried callback states
+        the same revision again. Under the Optimistic strategy the stated
+        revision gates the write, and a row no longer standing at it raises
         :class:`~parallax.core.unit_work.WritePreconditionError` at flush, which
         no retry repeats. Under Locking the stored row is read under the shared
         lock now — reading nothing it already holds, and executing no pending
-        write — and a mismatch raises that error here; ``unversioned=True``
-        never disables that lock. An object this transaction inserted is
-        refused (``write-evidence-inserted``).
+        write — and a mismatch raises that error here. An object this
+        transaction inserted is refused (``write-evidence-inserted``).
 
         A Bitemporal amendment requires ``valid_from`` and current coverage
         there, and applies to every interval of its window, each keeping what
@@ -239,8 +240,8 @@ class TxnContext:
         stay absent. ``valid_from`` and ``until`` follow :meth:`insert`'s
         rules."""
         mutation, bound = window_mutation("amend", "amendUntil", until)
-        condition = target_condition(version=version, tx_start=tx_start, unversioned=unversioned)
-        typed_conditional_amend(
+        condition = target_condition(version=version, tx_start=tx_start)
+        typed_addressed_write(
             self._attempt,
             mutation,
             entity,
@@ -278,19 +279,18 @@ class TxnContext:
         *,
         version: int | Omitted = OMITTED,
         tx_start: dt.datetime | Omitted = OMITTED,
-        unversioned: bool | Omitted = OMITTED,
         valid_from: dt.datetime | Omitted = OMITTED,
         until: dt.datetime | Omitted = OMITTED,
     ) -> None:
         """Buffer a complete replacement of the existing object ``payload``'s
-        primary key names, under the one condition its caller states.
+        primary key names, under the one revision its caller states.
 
         ``payload`` states the object's whole writable state, completed as
         :meth:`replace` completes it. Whatever produced ``payload`` is not
         consulted: a historical observation can restore its state under a
         current condition and new bounds without being copied first, and no
         read's evidence or insertion's authority it carries stands in for the
-        condition. The condition follows :meth:`amend_if`'s rules.
+        revision. The revision follows :meth:`amend_if`'s rules.
 
         A Bitemporal replacement requires ``valid_from`` and current coverage
         there, and establishes ``payload``'s state over its whole window, gaps
@@ -300,12 +300,85 @@ class TxnContext:
         :meth:`insert`'s rules. Returns ``None``; a read reports the saved
         state."""
         mutation, bound = window_mutation("replace", "replaceUntil", until)
-        condition = target_condition(version=version, tx_start=tx_start, unversioned=unversioned)
+        condition = target_condition(version=version, tx_start=tx_start)
         typed_target_write(
             self._attempt,
             mutation,
             payload,
             self._codec,
+            condition,
+            valid_from=valid_from,
+            until=bound,
+        )
+
+    def delete_if(
+        self,
+        entity: type[EntityBase],
+        *,
+        key: object,
+        version: int | Omitted = OMITTED,
+        tx_start: dt.datetime | Omitted = OMITTED,
+    ) -> None:
+        """Buffer a deletion of the existing object of concrete ``entity`` that
+        ``key`` names, under the one revision its caller states.
+
+        ``key`` and the revision follow :meth:`amend_if`'s rules, and no
+        instance, read, or source is consulted. A deletion has no empty form:
+        under the Optimistic strategy the stated version gates the ``delete``,
+        and an object no longer standing at it — revised or already gone —
+        raises :class:`~parallax.core.unit_work.WritePreconditionError` at
+        flush rather than deleting nothing; under Locking the stored row is
+        read under the shared lock now, and a mismatch or a missing row raises
+        that error here. A temporal ``entity`` refuses the verb and names
+        :meth:`terminate_if`, which closes its history instead."""
+        condition = target_condition(version=version, tx_start=tx_start)
+        typed_addressed_write(
+            self._attempt,
+            "delete",
+            entity,
+            (),
+            key,
+            condition,
+            valid_from=OMITTED,
+            until=None,
+        )
+
+    def terminate_if(
+        self,
+        entity: type[EntityBase],
+        *,
+        key: object,
+        version: int | Omitted = OMITTED,
+        tx_start: dt.datetime | Omitted = OMITTED,
+        valid_from: dt.datetime | Omitted = OMITTED,
+        until: dt.datetime | Omitted = OMITTED,
+    ) -> None:
+        """Buffer a termination of the existing temporal object of concrete
+        ``entity`` that ``key`` names, under the one revision its caller
+        states.
+
+        ``key`` and the revision follow :meth:`amend_if`'s rules. A
+        Transaction-Time-Only termination closes the current milestone, which
+        must start at ``tx_start``. A Bitemporal one requires ``valid_from`` and
+        a current rectangle there starting at ``tx_start``, and ends every
+        interval of its window — through infinity when ``until`` is omitted,
+        or up to the exclusive ``until`` — as :meth:`terminate` does. The
+        stated milestone describes that start alone: a later rectangle the
+        window reaches is ended under its own current revision, even one
+        another writer changed after the caller's query. A missing or revised
+        starting milestone raises
+        :class:`~parallax.core.unit_work.WritePreconditionError`, never an
+        empty termination. A non-temporal ``entity`` refuses the verb and names
+        :meth:`delete_if`. ``valid_from`` and ``until`` follow :meth:`insert`'s
+        rules."""
+        mutation, bound = window_mutation("terminate", "terminateUntil", until)
+        condition = target_condition(version=version, tx_start=tx_start)
+        typed_addressed_write(
+            self._attempt,
+            mutation,
+            entity,
+            (),
+            key,
             condition,
             valid_from=valid_from,
             until=bound,

@@ -56,7 +56,7 @@ __all__ = [
     "TypedKeyedInsertSource",
     "TypedKeyedWriteSource",
     "provenance_of",
-    "typed_conditional_amend",
+    "typed_addressed_write",
     "typed_predicate_write",
     "typed_target_write",
 ]
@@ -447,13 +447,12 @@ def typed_target_write(
         condition.if_tx_start,
         start,
         until,
-        condition.unversioned,
         condition.stated,
     )
     attempt.target_write(instructions.prepare_typed_write(instruction, meta))
 
 
-def typed_conditional_amend(
+def typed_addressed_write(
     attempt: TxnAttempt,
     mutation: TargetMutation,
     entity_class: type[EntityBase],
@@ -464,16 +463,17 @@ def typed_conditional_amend(
     valid_from: dt.datetime | Omitted,
     until: dt.datetime | None,
 ) -> None:
-    """The Typed entry to caller-conditioned amendment: ``assignments`` of the
-    object of concrete ``entity_class`` its scalar ``key`` names, under the
-    caller's own condition, with no instance, read, or source consulted.
+    """The Typed entry to a caller-conditioned amendment, deletion, or
+    termination of the object of concrete ``entity_class`` its scalar ``key``
+    names: ``assignments`` for an amendment, none for a destructive verb, under
+    the caller's own condition, with no instance, read, or source consulted.
 
     ``key`` addresses the family's one primary-key Attribute whatever its
     declared name; a mapping or tuple is no key here. The key and assignments
-    are the write's payload, judged only once its window and condition admit
-    it. Each assignment's reference is judged against the class's own ancestry
-    before any is flattened into the row, so an inherited member applies and a
-    foreign one is refused.
+    are the write's payload, judged only once its verb, window, and condition
+    admit it. Each assignment's reference is judged against the class's own
+    ancestry before any is flattened into the row, so an inherited member
+    applies and a foreign one is refused.
     """
     refuse_reentry(attempt.lifecycle)
     start = stated_valid_from(valid_from)
@@ -498,7 +498,6 @@ def typed_conditional_amend(
         condition.if_tx_start,
         start,
         until,
-        condition.unversioned,
         condition.stated,
     )
     attempt.target_write(instructions.prepare_typed_write(instruction, meta, members=members))

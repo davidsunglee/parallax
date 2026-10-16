@@ -1,0 +1,55 @@
+model: models/account.yaml
+tags: [m-opt-lock, m-unit-work, scenario, target-write, abort, slice-snapshot-1, slice-managed-1]
+shape: scenario
+grading: state
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "state-graded: whether each gated delete matches a row depends on the stored revision, so no golden statement is stated to compile against (m-case-format 'State-graded scenarios')"
+given:
+  fixtures: true
+when:
+  uow:
+    concurrency: optimistic
+  scenario:
+    - uow: revised
+      write:
+        - mutation: delete
+          entity: parallax.compatibility.Account
+          row: { id: 1 }
+          ifVersion: 2
+      note: "account 1 stands at version 1, so the version its caller states no longer holds: the gated delete matches no row and fails the caller's precondition rather than deleting nothing"
+    - uow: missing
+      write:
+        - mutation: delete
+          entity: parallax.compatibility.Account
+          row: { id: 9 }
+          ifVersion: 1
+      note: "no account 9 stands at any version, so its deletion fails the same precondition"
+    - uow: control
+      write:
+        - mutation: delete
+          entity: parallax.compatibility.Account
+          row: { id: 3 }
+          ifVersion: 1
+then:
+  units:
+    revised:
+      outcome: rolledBack
+      flushFailure:
+        at: commit
+        entity: parallax.compatibility.Account
+        key: { id: 1 }
+        shortfall: failedPrecondition
+    missing:
+      outcome: rolledBack
+      flushFailure:
+        at: commit
+        entity: parallax.compatibility.Account
+        key: { id: 9 }
+        shortfall: failedPrecondition
+    control: { outcome: committed }
+  tableState:
+    account:
+      - { id: 1, owner: Ada, balance: "100.00", version: 1 }
+      - { id: 2, owner: Linus, balance: "250.00", version: 1 }

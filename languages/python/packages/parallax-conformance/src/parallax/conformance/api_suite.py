@@ -7,6 +7,7 @@ from typing import Final
 
 from parallax.conformance import (
     case_format,
+    conditional_family_stories,
     database_options_stories,
     edit_runner,
     execution_authority_stories,
@@ -334,6 +335,27 @@ EXAMPLES: Final[list[Example]] = [
         "m-unit-work-056",
         "A value read before the transaction is written under the version it showed",
         source_admission_stories.source_admission_snippet(),
+    ),
+    # The fixed-revision conditional family (m-unit-work *Caller-addressed
+    # writes*): the case states a stale and a missing deletion failing their
+    # precondition, and the run lane grades it. What this story adds is the
+    # caller's workflow — versions a read-only review saw, stated through
+    # `delete_if` in later transactions, one of them outdated by another writer.
+    # Executed against real Postgres by `tests/api/test_conditional_family.py`.
+    Example(
+        "m-opt-lock-041",
+        "Accounts reviewed earlier are deleted under the versions the review saw",
+        conditional_family_stories.reviewed_deletion_snippet(),
+    ),
+    # The unversioned Locking fallback (m-unit-work *Strategy selection*): an
+    # Entity with no revision takes no caller-addressed write, so it is written
+    # through a read of the writing transaction, whose shared lock the case's
+    # golden statements render. Executed against real Postgres by
+    # `tests/api/test_conditional_family.py`.
+    Example(
+        "m-opt-lock-023",
+        "A row with no revision is written through a read of the writing transaction",
+        conditional_family_stories.unversioned_write_snippet(),
     ),
 ]
 
@@ -1479,9 +1501,9 @@ _RELATIONSHIP_FORMATION_REASON: Final[str] = (
 
 _TARGET_REPLACEMENT_TWIN_REASON: Final[str] = (
     "a layout-twin replacement graded per arm by the compile/run conformance lanes and "
-    "by the reference harness; its developer spelling is the exercised `m-opt-lock-028` "
-    "replacement story, and what the twins add is the empty value each omitted "
-    "occurrence is written as under each Storage Layout, which no caller spells"
+    "by the reference harness; its developer spelling is the exercised `m-temporal-write-016` "
+    "Transaction-Time-Only replacement story, and what the twins add is the empty value "
+    "each omitted occurrence is written as under each Storage Layout, which no caller spells"
 )
 
 _BUFFERED_SEQUENCE_REASON: Final[str] = (
@@ -1557,6 +1579,10 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
             "m-temporal-write-049",
             "m-opt-lock-030",
             "m-opt-lock-031",
+            "m-temporal-write-070",
+            "m-temporal-write-071",
+            "m-temporal-write-072",
+            "m-temporal-write-073",
         ),
         _BUFFERED_SEQUENCE_REASON,
     ),

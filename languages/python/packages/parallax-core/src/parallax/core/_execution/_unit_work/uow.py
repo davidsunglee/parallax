@@ -1263,10 +1263,12 @@ class UnitOfWork:
     def buffer_target(self, prepared: PreparedTargetWrite) -> None:
         """Admit a caller-addressed write and buffer it — all of it, or nothing.
 
-        A patch that assigns no member is the empty write: it is dropped here,
-        having been validated, before any condition, participation, or other
-        pending work is consulted. Every other target write is refused, with
-        nothing buffered and the pending writes as they were, where:
+        An amendment that assigns no member is the empty write: it is dropped
+        here, having been validated, before any condition, participation, or
+        other pending work is consulted. A deletion or termination assigns
+        nothing either and is never empty: it reaches the condition like every
+        other target write. Every other target write is refused, with nothing
+        buffered and the pending writes as they were, where:
 
         * this attempt admitted an insertion of the object, before or after a
           flush (``write-evidence-inserted``) — such an object is written
@@ -1295,7 +1297,7 @@ class UnitOfWork:
         and, on a Bitemporal object, by the coverage at its ``valid_from``.
         """
         self._ensure_open()
-        if not prepared.replaces and not prepared.assigns:
+        if prepared.mutation in AMEND_MUTATIONS and not prepared.assigns:
             return
         target = prepared.target
         item = target_write(prepared, inheritance.view(self.meta))
@@ -1326,10 +1328,9 @@ class UnitOfWork:
                 assert isinstance(expectation, ExpectedTxStart)  # a temporal target's revision
                 item = self._acquire_temporal(item, key, expectation)
             elif not (self._pending.holds_scope(scope) or self._participates(scope)):
+                assert isinstance(expectation, ExpectedVersion)  # a non-temporal target's revision
                 stored, _row, _document = self._stored_target(target, key, None)
-                if isinstance(expectation, ExpectedVersion) and (
-                    stored is None or stored.version != expectation.version
-                ):
+                if stored is None or stored.version != expectation.version:
                     raise WritePreconditionError(
                         target.identity, dict(key.primary_key), expectation.version
                     )
@@ -1407,8 +1408,7 @@ class UnitOfWork:
             stored = StoredTarget(tx_start=normalize_instant(cast("dt.datetime", start)))
             return stored, row, document
         version = self._planner.version_attribute(target.identity)
-        if version is None:
-            return StoredTarget(), row, document
+        assert version is not None  # preparation refuses a target with no revision
         return StoredTarget(cast("int", row[selection.position(version)])), row, document
 
     def _family(self, entity: EntityMetadata) -> InheritanceEntityView:

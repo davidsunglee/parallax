@@ -199,21 +199,23 @@ def test_predicate_until_requires_both_valid_time_bounds() -> None:
 # --- caller-addressed (target) instructions ------------------------------------
 
 
-def test_target_patch_and_replacement_carry_one_row_and_their_callers_revision() -> None:
+def test_target_writes_carry_one_row_and_exactly_one_callers_revision() -> None:
     patch = {"mutation": "amend", "entity": "Account", "row": {"id": 1}, "ifVersion": 3}
     assert _valid(patch)
     assert _valid({**patch, "mutation": "replace"})
+    assert _valid({**patch, "mutation": "delete"})
     assert _valid(
         {
-            "mutation": "amend",
+            "mutation": "terminate",
             "entity": "Balance",
-            "row": {"id": 1, "value": 150.0},
+            "row": {"id": 1},
             "ifTxStart": "2024-01-01T00:00:00+00:00",
         }
     )
     assert not _valid({**patch, "ifTxStart": "2024-01-01T00:00:00+00:00"})
+    assert not _valid({key: value for key, value in patch.items() if key != "ifVersion"})
     assert not _valid({**patch, "row": {"id": 1, "observedVersion": 3}})
-    assert not _valid({**patch, "mutation": "delete"})
+    assert not _valid({**patch, "mutation": "insert"})
 
 
 def test_target_until_requires_both_valid_time_bounds() -> None:
@@ -226,8 +228,10 @@ def test_target_until_requires_both_valid_time_bounds() -> None:
         "until": "2024-09-01T00:00:00+00:00",
     }
     assert _valid(doc)
+    assert _valid({**doc, "mutation": "terminateUntil", "row": {"id": 1}})
     assert not _valid({key: value for key, value in doc.items() if key != "validFrom"})
     assert not _valid({**doc, "mutation": "replace"})
+    assert not _valid({**doc, "mutation": "terminate"})
 
 
 def test_instruction_rejects_unknown_top_level_key() -> None:

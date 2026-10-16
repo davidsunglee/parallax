@@ -152,9 +152,11 @@ how `m-predicate` hosts `predicate.schema.json`; `m-case-format` and
   (`entity` plus a bare `m-predicate` predicate) matching that predicate, with
   `assignments` on the amendment forms;
 - a **caller-addressed** (target) instruction — an amendment (`amend` /
-  `amendUntil`) or a complete replacement (`replace` / `replaceUntil`) of the one
-  existing `entity` object its `row` names by primary key, carrying its caller's
-  own starting revision as `ifVersion` or `ifTxStart` (*Caller-addressed writes*).
+  `amendUntil`), a complete replacement (`replace` / `replaceUntil`), a
+  deletion (`delete`), or a termination (`terminate` / `terminateUntil`) of the
+  one existing `entity` object its `row` names by primary key, carrying exactly
+  one caller's starting revision as `ifVersion` or `ifTxStart`
+  (*Caller-addressed writes*).
 
 The embedded predicate is a canonical `m-predicate` node, legal vocabulary here
 because `m-unit-work` already depends on `m-predicate` (the dependency-graph edge);
@@ -266,23 +268,27 @@ position-keyed findings from that same pass rather than walking the document
 again. A validation-only caller invokes the same traversal without constructing
 successful managed output.
 
-A caller-addressed instruction is judged in its own fixed order: its target and
-window first, as above; then its revision arguments against the target's
-revision kind — stating both is refused first, then a misstated kind, then a
-missing one, then a value of the wrong type; and only then its payload, whose
-key names the object and whose every other member is judged as an assignment. A
+A caller-addressed instruction is judged in its own fixed order: its target,
+verb, and window first, as above; then its revision arguments against the
+target's revision kind — an unversioned Non-Temporal target, which has no
+revision kind, is refused before any argument is weighed, and otherwise
+stating both is refused first, then a misstated kind, then a missing one, then
+a value of the wrong type; and only then its payload, whose key names the
+object. An amendment's every other member is judged as an assignment, and a
 replacement additionally states every writable member: an omitted required one
 is refused, an omitted nullable one is written empty, and an omitted `many` the
-empty collection. A missing revision is therefore heard before an undeclared
-member, and an inadmissible window before both.
+empty collection. A deletion or termination names the key alone, and any other
+member it states is refused. A missing revision is therefore heard before an
+undeclared member, and an inadmissible window before both.
 
 `PreparedKeyedWrite` carries the exact target, deeply owned managed rows, and
 prepared temporal bounds. `PreparedPredicateWrite` carries its
 `ResolvedMutationSelection`, ordered managed assignments, and prepared temporal
-bounds. `PreparedTargetWrite` carries the exact target, its one owned managed row,
-prepared temporal bounds, whether it replaces, and its validated starting
-expectation — an expected version, an expected Transaction-Time start, or the
-explicit absence of a revision for an unversioned target. Omission and nullable assignment remain structural states; no prepared
+bounds. `PreparedTargetWrite` carries its exact mutation, the exact target, its one
+owned managed row, prepared temporal bounds, and its validated starting
+expectation — an expected version or an expected Transaction-Time start.
+Whether it assigns, replaces, or destroys follows from that mutation, so no
+later stage reconstructs the verb from its row. Omission and nullable assignment remain structural states; no prepared
 variant retains an authored scalar literal or unresolved instruction field.
 Construction is restricted to these operations, with no public constructor or
 serialization contract. Buffering, evidence envelopes, coalescing, and planning
@@ -517,21 +523,27 @@ Transaction-Time start of the milestone, an earlier query returned — never by 
 read's evidence or by anything the payload carries. An **amendment** assigns the
 members it names and leaves every other member as stored; a **replacement**
 states the object's whole writable state, completed exactly as a
-source-authorized one is (*Source-authorized replacement*). Neither creates an
-object: the state it starts from must exist. Each buffers and answers nothing;
-an explicit read reports the saved state. A versioned target requires
-`ifVersion`, a temporal one `ifTxStart`, and an unversioned Non-Temporal target
-states neither: its caller asserts that the target has no revision, so the write
-cannot detect a change since its caller's query. The assertion never stands in
-for a revision a versioned or temporal target requires, and never disables the
-effective Locking strategy below. A write that states its condition is never
-admitted under a source's authority instead, and a source-authorized write
-states no condition.
+source-authorized one is (*Source-authorized replacement*); a **deletion**
+removes a Non-Temporal object; and a **termination** ends a temporal object's
+coverage over its window, as a keyed `terminate` does (`m-temporal-write`). None
+creates an object: the state it starts from must exist. Each buffers and
+answers nothing; an explicit read reports the saved state. A versioned target
+requires `ifVersion` and a temporal one `ifTxStart`. The revision a caller
+states never changes: a replayed callback states it again, and nothing an
+attempt reads replaces it. An unversioned Non-Temporal target has no revision a
+caller could state, so no write can detect a change to it since a caller's
+query, and it takes no caller-addressed write: a caller writes it through a read
+of the writing attempt, whose shared lock protects it (*Strategy selection*). A
+write that states its condition is never admitted under a source's authority
+instead, and a source-authorized write states no condition.
 
 An amendment that names nothing beside the key is the **empty** write: once it is
 validated it is dropped, with no database work, no existence or revision check,
-and no effect on earlier pending work. A nonempty amendment and every replacement
-carry **revision intent**: a versioned row's version advances even when every
+and no effect on earlier pending work. Only an amendment can be empty. A deletion
+or termination states nothing beside the key either, yet it keeps its intent
+through every stage, so a missing or revised target is its caller's failed
+precondition and never an empty selection that succeeds. A nonempty amendment
+and every replacement carry **revision intent**: a versioned row's version advances even when every
 value it writes equals the stored one, and a later write composing with it keeps
 that intent. A temporal target's milestone is judged as any temporal write's
 instead, and one it leaves exactly as it was is kept, under the guard or lock
@@ -567,9 +579,8 @@ Submission follows the target Entity's Effective Concurrency Strategy:
   pending write and publishes nothing. The stated revision is compared with the
   row that acquisition holds; a row standing at another revision, or no row, is
   a failed precondition refused at the call, leaving the pending writes as they
-  were, and more than one row is Cardinality Corruption. The write itself is ungated. An unversioned target takes this path under
-  either preference, and a missing row is its ordinary missing target at flush.
-  A temporal target's state is the milestone its stated start and its
+  were, and more than one row is Cardinality Corruption. The write itself is
+  ungated. A temporal target's state is the milestone its stated start and its
   `validFrom` name, so a live read hits only where `validFrom` is that
   milestone's own Valid-Time start; a pending write of the object over exactly
   the same window, which admission required to start from the same state,
@@ -1238,11 +1249,12 @@ assigned. A superseded or coalesced write's source condition is kept by the
 survivor, which claims the same scope.
 
 **A caller-addressed write claims the state its revision names** — the object at
-its stated version, or the object itself when it is unversioned — so it composes
-with observed writes of that same state by the table above: an amendment and an
-observed assignment merge member by member, a replacement replaces what came
-before it and is overlaid by what follows, and a destruction supersedes both
-while keeping the caller's condition, which a destruction's own gate then binds.
+its stated version — so it composes with observed writes of that same state by
+the table above: an amendment and an observed assignment merge member by
+member, a replacement replaces what came before it and is overlaid by what
+follows, and a destruction — an observed one, or the caller's own deletion —
+supersedes both while keeping the caller's condition, which the destruction's
+own gate then binds.
 One object's writes start from one state: a caller-addressed write is refused
 where any other write of the object pending — another stated revision, or an
 observation of another state — stands at another scope, and so is an observed

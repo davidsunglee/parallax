@@ -8,9 +8,8 @@ Five windows are read. A keyed-write case reads its row inside one
 transaction and runs from the public keyed verb until ``transact`` returns:
 preparation, buffering, and the pre-commit flush's settlement, SQL lowering,
 production bind adaptation, and psycopg's own document serialization. A
-caller-addressed target reads nothing before its verb, so its own reads — an
-unversioned target's acquisition, a temporal target's coverage read at flush —
-fall inside that window. A
+caller-addressed target reads nothing before its verb, so its own coverage read
+at flush falls inside that window. A
 predicate-acquisition case runs one
 public bounded ``tx.wire.amend_where`` from the caller's documents through
 preparation and production acquisition over freshly composed resolving rows to a

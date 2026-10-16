@@ -139,7 +139,6 @@ def test_twenty_categorical_cases_cross_every_layout_and_ingress() -> None:
 
 
 _TARGET_TWINS = {
-    "plain": "plain.changed",
     "txtime": "txtime.changed",
     "bitemporal": "bitemporal.interior",
 }

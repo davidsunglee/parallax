@@ -1,0 +1,86 @@
+model: models/buffered-sequence-layout-twin-document.yaml
+tags: [m-temporal-write, m-opt-lock, m-unit-work, m-storage-layout, scenario, target-write, abort, layout-twin, document-layout, slice-snapshot-1, slice-managed-1]
+shape: scenario
+grading: state
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "state-graded: the termination ends the coverage its flush reads at its own start, so no golden statement is stated to compile against (m-case-format 'State-graded scenarios')"
+given:
+  fixtures: true
+when:
+  uow:
+    concurrency: optimistic
+  scenario:
+    - uow: later
+      write:
+        - mutation: terminate
+          entity: parallax.compatibility.SequenceSpan
+          row: { id: 3 }
+          ifTxStart: "2023-12-15T00:00:00.000000Z"
+          validFrom: "2024-02-01T00:00:00.000000Z"
+          at: "2024-11-01T00:00:00.000000Z"
+      note: "span 3's rectangle holding February stands at T0, while its June rectangle was revised at T1: a caller stating T1 states the later rectangle's revision, not the start's, and fails"
+    - uow: anchored
+      write:
+        - mutation: terminate
+          entity: parallax.compatibility.SequenceSpan
+          row: { id: 3 }
+          ifTxStart: "2023-12-01T00:00:00.000000Z"
+          validFrom: "2024-02-01T00:00:00.000000Z"
+          at: "2024-11-01T00:00:00.000000Z"
+      note: "a caller stating the start's T0 is admitted and ends every rectangle from February, the June one revised at T1 included: the condition describes the starting rectangle alone, not the whole window its caller reviewed"
+then:
+  units:
+    later:
+      outcome: rolledBack
+      flushFailure:
+        at: commit
+        entity: parallax.compatibility.SequenceSpan
+        key: { id: 3 }
+        shortfall: failedPrecondition
+    anchored: { outcome: committed }
+  tableState:
+    sequence_span:
+      - id: 1
+        from_z: "2024-01-01T00:00:00.000000Z"
+        thru_z: infinity
+        in_z: "2023-12-01T00:00:00.000000Z"
+        out_z: infinity
+        payload: { amount: 100, label: a, memo: { note: n1 } }
+      - id: 2
+        from_z: "2024-01-01T00:00:00.000000Z"
+        thru_z: infinity
+        in_z: "2023-12-01T00:00:00.000000Z"
+        out_z: infinity
+        payload: { amount: 100, label: b, memo: { note: n2 } }
+      - id: 3
+        from_z: "2024-01-01T00:00:00.000000Z"
+        thru_z: "2024-06-01T00:00:00.000000Z"
+        in_z: "2023-12-01T00:00:00.000000Z"
+        out_z: "2024-11-01T00:00:00.000000Z"
+        payload: { amount: 100, label: c, memo: { note: n3 } }
+      - id: 3
+        from_z: "2024-01-01T00:00:00.000000Z"
+        thru_z: "2024-02-01T00:00:00.000000Z"
+        in_z: "2024-11-01T00:00:00.000000Z"
+        out_z: infinity
+        payload: { amount: 100, label: c, memo: { note: n3 } }
+      - id: 3
+        from_z: "2024-06-01T00:00:00.000000Z"
+        thru_z: infinity
+        in_z: "2023-12-15T00:00:00.000000Z"
+        out_z: "2024-11-01T00:00:00.000000Z"
+        payload: { amount: 200, label: c, memo: { note: n3 } }
+      - id: 4
+        from_z: "2024-01-01T00:00:00.000000Z"
+        thru_z: infinity
+        in_z: "2023-12-01T00:00:00.000000Z"
+        out_z: "2023-12-15T00:00:00.000000Z"
+        payload: { amount: 90, label: d, memo: { note: n4 } }
+      - id: 4
+        from_z: "2024-01-01T00:00:00.000000Z"
+        thru_z: infinity
+        in_z: "2023-12-15T00:00:00.000000Z"
+        out_z: infinity
+        payload: { amount: 100, label: d, memo: { note: n4 } }

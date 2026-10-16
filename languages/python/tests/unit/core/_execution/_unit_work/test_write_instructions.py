@@ -32,7 +32,6 @@ from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.metamodel import Table
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.unit_work import WriteRejectedError
-from parallax.core.write_plan.steps import UNVERSIONED
 from tests._support.repo import REPO_ROOT
 from tests.unit._metamodel_support import Declaration, attribute, identity, key, source
 
@@ -269,8 +268,23 @@ _INSTRUCTIONS: list[tuple[str, dict[str, Any]]] = [
         },
     ),
     (
-        "target-update-unversioned",
-        {"mutation": "amend", "entity": "Wallet", "row": {"id": 1, "balance": 5.0}},
+        "target-delete-versioned",
+        {"mutation": "delete", "entity": "Account", "row": {"id": 1}, "ifVersion": 3},
+    ),
+    (
+        "target-terminate-audit",
+        {"mutation": "terminate", "entity": "Balance", "row": {"id": 9}, "ifTxStart": _B1},
+    ),
+    (
+        "target-terminateUntil-bitemporal-bounded",
+        {
+            "mutation": "terminateUntil",
+            "entity": "Position",
+            "row": {"id": 9},
+            "ifTxStart": _B1,
+            "validFrom": _B1,
+            "until": _B2,
+        },
     ),
     (
         "target-update-audit",
@@ -569,6 +583,10 @@ def test_predicate_structural_rejections(doc: dict[str, Any], match: str) -> Non
             {"mutation": "amend", "entity": "Account", "rows": [{"id": 1}], "row": {"id": 1}},
             "ambiguous",
         ),
+        (
+            {"mutation": "delete", "entity": "Account", "row": {"id": 1}},
+            "states no revision",
+        ),
     ],
 )
 def test_target_structural_rejections(doc: dict[str, Any], match: str) -> None:
@@ -577,7 +595,7 @@ def test_target_structural_rejections(doc: dict[str, Any], match: str) -> None:
 
 
 def test_a_target_rows_members_are_a_frozen_view() -> None:
-    instruction = wi.TargetWrite("amend", "Account", {"id": 1})
+    instruction = wi.TargetWrite("amend", "Account", {"id": 1}, if_version=3)
     with pytest.raises(TypeError):
         cast("dict[str, object]", instruction.row)["id"] = 2
     assert wi.deserialize(wi.serialize(instruction)) == instruction
@@ -616,7 +634,7 @@ def test_a_target_patch_states_its_key_its_assignments_and_its_callers_version(
         _target("amend", "Account", {"id": 1, "owner": "Bo"}, if_version=3), _ACCOUNT
     )
     assert isinstance(prepared, wi.PreparedTargetWrite)
-    assert (prepared.replaces, prepared.assigns) == (False, True)
+    assert (prepared.mutation, prepared.assigns) == ("amend", True)
     assert prepared.expectation == wi.ExpectedVersion(3)
     assert dict(prepared.row) == {"id": 1, "owner": "Bo"}
     keyed = wi.target_instruction(prepared)
@@ -630,15 +648,47 @@ def test_a_target_patch_states_its_key_its_assignments_and_its_callers_version(
 @_BOTH_PRODUCERS
 def test_an_identity_only_patch_is_prepared_as_the_empty_write(prepare: Any) -> None:
     prepared = prepare(_target("amend", "Account", {"id": 1}, if_version=3), _ACCOUNT)
-    assert (prepared.replaces, prepared.assigns) == (False, False)
+    assert (prepared.mutation, prepared.assigns) == ("amend", False)
+
+
+@_BOTH_PRODUCERS
+@pytest.mark.parametrize(
+    ("instruction", "model"),
+    [
+        pytest.param(_target("delete", "Account", {"id": 1}, if_version=3), "account", id="delete"),
+        pytest.param(
+            _target("terminate", "Balance", {"id": 1}, if_tx_start=_I1), "balance", id="terminate"
+        ),
+        pytest.param(
+            _target(
+                "terminateUntil",
+                "Position",
+                {"id": 1},
+                if_tx_start=_I1,
+                valid_from=_I1,
+                until=_I2,
+            ),
+            "position",
+            id="terminate-until",
+        ),
+    ],
+)
+def test_a_destructive_target_keeps_its_verb_and_assigns_nothing(
+    prepare: Any, instruction: wi.TargetWrite, model: str
+) -> None:
+    prepared = prepare(instruction, _MODELS[model])
+    assert (prepared.mutation, prepared.assigns) == (instruction.mutation, False)
+    assert dict(prepared.row) == {"id": 1}
+    keyed = wi.target_instruction(prepared)
+    assert (keyed.mutation, keyed.rows) == (instruction.mutation, (prepared.row,))
 
 
 @_BOTH_PRODUCERS
 def test_a_replacement_writes_every_omitted_nullable_member_empty(prepare: Any) -> None:
-    prepared = prepare(_target("replace", "WriteTwinItem", {"id": 1}), _TWIN)
-    assert (prepared.replaces, prepared.assigns) == (True, True)
-    assert prepared.expectation is UNVERSIONED
-    assert dict(prepared.row) == {"id": 1, "label": None, "spec": None, "marks": ()}
+    prepared = prepare(_target("replace", "WriteTwinLog", {"id": 5}, if_tx_start=_I1), _TWIN)
+    assert (prepared.mutation, prepared.assigns) == ("replace", True)
+    assert prepared.expectation == wi.ExpectedTxStart(_I1)
+    assert dict(prepared.row) == {"id": 5, "label": None, "spec": None, "marks": ()}
 
 
 _TAGS = _MODELS["scalar-collection-lifecycle-layout-twin-columns"]
@@ -662,15 +712,23 @@ def test_a_patch_assigns_only_the_collections_it_states(prepare: Any) -> None:
 
 @_BOTH_PRODUCERS
 def test_a_replacement_refuses_an_omitted_required_value_object(prepare: Any) -> None:
-    with pytest.raises(WriteRejectedError, match=r"destination.*absent") as refused:
-        prepare(_target("replace", "Shipment", {"id": 5, "name": "Express"}), _MODELS["shipment"])
+    with pytest.raises(WriteRejectedError, match=r"probe.*absent") as refused:
+        prepare(
+            _target(
+                "replace",
+                "LayoutMeterReading",
+                {"id": 5, "sensor": "s", "celsius": "1.00"},
+                if_tx_start=_I1,
+            ),
+            _MODELS["storage-layout"],
+        )
     assert refused.value.rule == "write-required-value-object-missing"
 
 
 @_BOTH_PRODUCERS
 def test_a_replacement_refuses_an_omitted_required_member(prepare: Any) -> None:
     with pytest.raises(WriteRejectedError, match=r"balance.*absent") as refused:
-        prepare(_target("replace", "Wallet", {"id": 1, "owner": "Ada"}), _WALLET)
+        prepare(_target("replace", "Account", {"id": 1, "owner": "Ada"}, if_version=3), _ACCOUNT)
     assert refused.value.rule == "write-required-attribute-missing"
 
 
@@ -730,13 +788,43 @@ def test_a_replacement_refuses_an_omitted_required_member(prepare: Any) -> None:
         ),
         pytest.param(
             _target("amend", "Wallet", {"id": 1, "owner": "Bo"}, if_version=1),
-            "takes unversioned, not version",
+            "has none to state",
             id="unversioned-version",
         ),
         pytest.param(
-            _target("amend", "Wallet", {"id": 1, "owner": "Bo"}, if_tx_start=_I1),
-            "takes unversioned, not tx_start",
-            id="unversioned-start",
+            _target("amend", "Wallet", {"id": 1, "nope": 5}, if_version=1, if_tx_start=_I1),
+            "has none to state",
+            id="unversioned-before-two-revisions",
+        ),
+        pytest.param(
+            _target("delete", "Wallet", {"id": 1}),
+            "has none to state",
+            id="unversioned-delete",
+        ),
+        pytest.param(
+            _target("delete", "Balance", {"id": 1, "nope": 5}, until=_I2),
+            "Use 'terminate_if' instead",
+            id="temporal-delete-before-its-window",
+        ),
+        pytest.param(
+            _target("terminate", "Account", {"id": 1}),
+            "Use 'delete_if' instead",
+            id="non-temporal-terminate-before-its-revision",
+        ),
+        pytest.param(
+            _target("terminateUntil", "Account", {"id": 1}, if_version=3, until=_I2),
+            "takes no until",
+            id="non-temporal-bounded-terminate",
+        ),
+        pytest.param(
+            _target("delete", "Account", {"id": 1, "owner": "Bo"}, if_version=3),
+            "primary key alone",
+            id="destructive-member",
+        ),
+        pytest.param(
+            _target("delete", "Account", {"owner": "Bo"}, if_version=3),
+            "names the object it writes by its primary key",
+            id="destructive-no-key",
         ),
         pytest.param(
             _target("amend", "Account", {"balance": 5}, if_version=3),

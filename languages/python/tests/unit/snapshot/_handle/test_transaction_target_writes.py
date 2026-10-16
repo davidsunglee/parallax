@@ -1,12 +1,13 @@
-"""Caller-addressed patch and replacement through the public verbs (scripted port).
+"""Caller-addressed patch, replacement, and deletion through the public verbs
+(scripted port).
 
 A target write names an existing object by key and states its own starting
 revision. These tests grade what each call puts on the wire and when: the
 Optimistic gate on the caller's version, the Locking acquisition and its reuse,
-the empty patch that does nothing, the exact-window composition matrix with
-observed writes, whole-group refusals that leave earlier work executable, the
-attempt-wide refusal of an object the attempt inserted, and the
-non-retriable precondition failure.
+the empty patch that does nothing beside the deletion that is never empty, the
+exact-window composition matrix with observed writes, whole-group refusals that
+leave earlier work executable, the attempt-wide refusal of an object the
+attempt inserted, and the non-retriable precondition failure.
 """
 
 from __future__ import annotations
@@ -20,14 +21,11 @@ from typing import Literal, cast
 
 import pytest
 
-from parallax.conformance.class_models import MODELS
-from parallax.conformance.story_models import Wallet
 from parallax.core import Attr, Entity, attr
 from parallax.core._execution._options import OMITTED
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity import DomainModel
 from parallax.core.unit_work import (
-    MissingTargetError,
     RollbackOnlyError,
     WriteEvidenceError,
     WriteInstructionError,
@@ -54,10 +52,10 @@ from tests.unit._transact_support import (
     FIND_SQL_LOCKED,
     FIND_SQL_UNLOCKED,
     FIXED,
-    PAYMENT,
     account_db,
     db_for,
 )
+from tests.unit.snapshot._handle._vessel_model import VESSEL
 
 type _Representation = Literal["typed", "wire"]
 
@@ -76,10 +74,7 @@ _UNGATED_BALANCE = POSTGRES.to_driver_sql(
     "update account set balance = ?, version = ? where id = ?"
 )
 _GATED_DELETE = POSTGRES.to_driver_sql("delete from account where id = ? and version = ?")
-_WALLET_FIND_LOCKED = POSTGRES.to_driver_sql(
-    "select t0.id, t0.owner, t0.balance from wallet t0 where t0.id = ? for share of t0"
-)
-_WALLET_UPDATE = POSTGRES.to_driver_sql("update wallet set balance = ? where id = ?")
+_UNGATED_DELETE = POSTGRES.to_driver_sql("delete from account where id = ?")
 
 
 _ACCOUNT_ONE = {
@@ -94,6 +89,13 @@ def _row(version: int = 3, balance: str = "100.00") -> dict[str, object]:
 
 def _patch(tx: TxnContext, version: int = 3, **changes: object) -> None:
     tx.wire.amend_if("Account", {"id": 1, **changes}, version=version)
+
+
+def _delete(tx: TxnContext, representation: _Representation = "wire", version: int = 3) -> None:
+    if representation == "typed":
+        tx.delete_if(mm.Account, key=1, version=version)
+    else:
+        tx.wire.delete_if("Account", {"id": 1}, version=version)
 
 
 def _replace(
@@ -146,15 +148,37 @@ def test_a_net_equal_patch_chain_still_advances_the_version_once() -> None:
 def test_an_identity_only_patch_reads_writes_and_checks_nothing(
     concurrency: Literal["optimistic", "locking"],
 ) -> None:
-    versioned = ScriptedAdapter(Transact())
-    account_db(versioned).transact(
+    port = ScriptedAdapter(Transact())
+    account_db(port).transact(
         lambda tx: tx.wire.amend_if("Account", {"id": 1}, version=99), concurrency=concurrency
     )
-    unversioned = ScriptedAdapter(Transact())
-    db_for(MODELS["wallet"], unversioned).transact(
-        lambda tx: tx.wire.amend_if("Wallet", {"id": 5}, unversioned=True), concurrency=concurrency
-    )
-    assert _calls(versioned) == _calls(unversioned) == []
+    assert _calls(port) == []
+
+
+@_REPRESENTATIONS
+def test_a_deletion_gates_on_its_callers_version_and_reads_nothing(
+    representation: _Representation,
+) -> None:
+    port = ScriptedAdapter(Transact(Write()))
+
+    def fn(tx: TxnContext) -> None:
+        _delete(tx, representation)
+        assert _calls(port) == []
+
+    account_db(port).transact(fn)
+    assert _calls(port) == [WriteCall(_GATED_DELETE, (1, 3))]
+
+
+@_REPRESENTATIONS
+def test_a_deletion_that_removes_nothing_fails_its_precondition_and_never_commits(
+    representation: _Representation,
+) -> None:
+    port = ScriptedAdapter(Transact(Write(affected=0)))
+
+    with raises_contextualized(WritePreconditionError, match="expected revision 3") as failed:
+        account_db(port).transact(lambda tx: _delete(tx, representation))
+    assert dict(failed.value.key) == {"id": 1}
+    assert _calls(port) == [WriteCall(_GATED_DELETE, (1, 3)), RollbackCall()]
 
 
 def test_an_identity_only_patch_neither_cancels_nor_changes_earlier_work() -> None:
@@ -325,20 +349,33 @@ def test_a_read_of_another_version_does_not_stand_in_for_the_callers() -> None:
     assert _calls(port) == [ReadCall(FIND_SQL_LOCKED, (1,)), ReadCall(FIND_SQL_LOCKED, (1,))]
 
 
-def test_an_unversioned_target_takes_the_locking_fallback_and_misses_as_a_missing_target() -> None:
-    port = ScriptedAdapter(
-        Transact(Read(rows=[{"id": 5, "owner": "Ada", "balance": Decimal(1)}]), Write(affected=0))
-    )
+@_REPRESENTATIONS
+def test_a_locking_deletion_reads_its_row_under_the_shared_lock_and_deletes_ungated(
+    representation: _Representation,
+) -> None:
+    port = ScriptedAdapter(Transact(Read(rows=[_row()]), Write()))
 
     def fn(tx: TxnContext) -> None:
-        tx.wire.amend_if("Wallet", {"id": 5, "balance": "2.00"}, unversioned=True)
+        _delete(tx, representation)
+        assert _calls(port) == [ReadCall(FIND_SQL_LOCKED, (1,))]
 
-    with raises_contextualized(MissingTargetError, match="Wallet"):
-        db_for(MODELS["wallet"], port).transact(fn)
-    assert _calls(port)[:2] == [
-        ReadCall(_WALLET_FIND_LOCKED, (5,)),
-        WriteCall(_WALLET_UPDATE, (Decimal("2.00"), 5)),
-    ]
+    account_db(port).transact(fn, concurrency="locking")
+    assert _calls(port) == [ReadCall(FIND_SQL_LOCKED, (1,)), WriteCall(_UNGATED_DELETE, (1,))]
+
+
+@pytest.mark.parametrize("stored", [[_row(version=2)], []], ids=["another-revision", "no-row"])
+def test_a_locking_deletion_refuses_a_stale_or_missing_start_at_the_call(
+    stored: list[dict[str, object]],
+) -> None:
+    port = ScriptedAdapter(Transact(Read(rows=stored)))
+
+    def fn(tx: TxnContext) -> None:
+        with pytest.raises(WritePreconditionError) as refused:
+            _delete(tx)
+        assert (dict(refused.value.key), refused.value.expected) == ({"id": 1}, 3)
+
+    account_db(port).transact(fn, concurrency="locking")
+    assert _calls(port) == [ReadCall(FIND_SQL_LOCKED, (1,))]
 
 
 def test_a_target_writes_window_outranks_its_revision_which_outranks_its_payload() -> None:
@@ -365,17 +402,6 @@ def test_a_target_writes_window_outranks_its_revision_which_outranks_its_payload
         assert "balance" in incomplete
 
     account_db(port).transact(fn)
-    assert _calls(port) == []
-
-
-def test_an_unversioned_target_states_no_revision() -> None:
-    port = ScriptedAdapter(Transact())
-
-    def fn(tx: TxnContext) -> None:
-        with pytest.raises(WriteInstructionError, match="takes unversioned, not version"):
-            tx.replace_if(Wallet(id=5, owner="Ada", balance=Decimal(1)), version=1)
-
-    db_for(MODELS["wallet"], port).transact(fn)
     assert _calls(port) == []
 
 
@@ -448,6 +474,10 @@ def _d(tx: TxnContext, source: mm.Account) -> None:
     tx.delete(source)
 
 
+def _x(tx: TxnContext, _source: mm.Account) -> None:
+    _delete(tx)
+
+
 @pytest.mark.parametrize(
     "steps, statement",
     [
@@ -468,6 +498,12 @@ def _d(tx: TxnContext, source: mm.Account) -> None:
             (_r, _o, _p), WriteCall(_GATED, ("Bo", Decimal("150.00"), 4, 1, 3)), id="R-O-P"
         ),
         pytest.param((_o, _r, _d), WriteCall(_GATED_DELETE, (1, 3)), id="O-R-D"),
+        pytest.param((_p, _x), WriteCall(_GATED_DELETE, (1, 3)), id="P-X"),
+        pytest.param((_r, _x), WriteCall(_GATED_DELETE, (1, 3)), id="R-X"),
+        pytest.param((_o, _x), WriteCall(_GATED_DELETE, (1, 3)), id="O-X"),
+        pytest.param((_d, _x), WriteCall(_GATED_DELETE, (1, 3)), id="D-X"),
+        pytest.param((_x, _d), WriteCall(_GATED_DELETE, (1, 3)), id="X-D"),
+        pytest.param((_x, _x), WriteCall(_GATED_DELETE, (1, 3)), id="X-X"),
     ],
 )
 def test_exact_window_target_and_observed_writes_compose_into_one_statement(
@@ -502,115 +538,19 @@ def test_a_composed_write_whose_gate_fails_reports_the_callers_precondition() ->
         account_db(port).transact(fn, retry_optimistic_conflicts=True)
 
 
-type _WalletStep = Callable[[TxnContext, Wallet], None]
-
-
-def _wallet_p(tx: TxnContext, _source: Wallet) -> None:
-    tx.wire.amend_if("Wallet", {"id": 5, "balance": "2.00"}, unversioned=True)
-
-
-def _wallet_r(tx: TxnContext, _source: Wallet) -> None:
-    tx.replace_if(Wallet(id=5, owner="Zed", balance=Decimal("3.00")), unversioned=True)
-
-
-def _wallet_o(tx: TxnContext, source: Wallet) -> None:
-    tx.amend(source.edit(owner="Bo"))
-
-
-def _wallet_d(tx: TxnContext, source: Wallet) -> None:
-    tx.delete(source)
-
-
-_WALLET_ROW = {"id": 5, "owner": "Ada", "balance": Decimal(1)}
-_WALLET_UPDATE_BOTH = POSTGRES.to_driver_sql(
-    "update wallet set owner = ?, balance = ? where id = ?"
-)
-_WALLET_DELETE = POSTGRES.to_driver_sql("delete from wallet where id = ?")
-
-
 @pytest.mark.parametrize(
-    "steps, statement",
-    [
-        pytest.param(
-            (_wallet_p, _wallet_r),
-            WriteCall(_WALLET_UPDATE_BOTH, ("Zed", Decimal("3.00"), 5)),
-            id="P-R",
-        ),
-        pytest.param(
-            (_wallet_r, _wallet_p),
-            WriteCall(_WALLET_UPDATE_BOTH, ("Zed", Decimal("2.00"), 5)),
-            id="R-P",
-        ),
-        pytest.param(
-            (_wallet_p, _wallet_o),
-            WriteCall(_WALLET_UPDATE_BOTH, ("Bo", Decimal("2.00"), 5)),
-            id="P-O",
-        ),
-        pytest.param(
-            (_wallet_o, _wallet_p),
-            WriteCall(_WALLET_UPDATE_BOTH, ("Bo", Decimal("2.00"), 5)),
-            id="O-P",
-        ),
-        pytest.param(
-            (_wallet_r, _wallet_o),
-            WriteCall(_WALLET_UPDATE_BOTH, ("Bo", Decimal("3.00"), 5)),
-            id="R-O",
-        ),
-        pytest.param(
-            (_wallet_o, _wallet_r),
-            WriteCall(_WALLET_UPDATE_BOTH, ("Zed", Decimal("3.00"), 5)),
-            id="O-R",
-        ),
-        pytest.param((_wallet_p, _wallet_d), WriteCall(_WALLET_DELETE, (5,)), id="P-D"),
-        pytest.param((_wallet_r, _wallet_d), WriteCall(_WALLET_DELETE, (5,)), id="R-D"),
-    ],
+    ("first", "second"),
+    [(_d, _p), (_d, _r), (_x, _p), (_x, _r), (_x, _o)],
+    ids=["D-P", "D-R", "X-P", "X-R", "X-O"],
 )
-def test_an_unversioned_target_composes_with_observed_writes_of_its_object(
-    steps: tuple[_WalletStep, ...], statement: WriteCall
+def test_a_write_assigning_after_a_destruction_of_its_state_is_refused(
+    first: _Step, second: _Step
 ) -> None:
-    # Unversioned rows take the Locking fallback: a target write arriving
-    # first acquires its row, and one arriving after an observed write of the
-    # object takes that write's participation instead.
-    acquired = steps[0] in (_wallet_p, _wallet_r)
-    acquisition = [Read(rows=[_WALLET_ROW])] if acquired else []
-    port = ScriptedAdapter(Transact(Read(rows=[_WALLET_ROW]), *acquisition, Write(), Read(rows=[])))
-    submitted = any(step in (_wallet_o, _wallet_d) for step in steps)
-
-    def fn(tx: TxnContext) -> None:
-        source = tx.find(Wallet.where(Wallet.id == 5)).result()
-        for step in steps:
-            step(tx, source)
-        tx.find(Wallet.where(Wallet.id == 6))
-        if submitted:
-            with pytest.raises(WriteEvidenceError, match="write-evidence-consumed"):
-                tx.amend(source.edit(owner="Again"))
-
-    db_for(MODELS["wallet"], port).transact(fn)
-    reads = [ReadCall(_WALLET_FIND_LOCKED, (5,))] * (2 if acquired else 1)
-    assert _calls(port) == [*reads, statement, ReadCall(_WALLET_FIND_LOCKED, (6,))]
-
-
-def test_an_unversioned_target_write_after_a_destruction_of_its_object_is_refused() -> None:
-    port = ScriptedAdapter(Transact(Read(rows=[_WALLET_ROW]), Write()))
-
-    def fn(tx: TxnContext) -> None:
-        source = tx.find(Wallet.where(Wallet.id == 5)).result()
-        tx.delete(source)
-        for second in (_wallet_p, _wallet_r):
-            with pytest.raises(WriteEvidenceError, match="already buffered"):
-                second(tx, source)
-
-    db_for(MODELS["wallet"], port).transact(fn)
-    assert _calls(port) == [ReadCall(_WALLET_FIND_LOCKED, (5,)), WriteCall(_WALLET_DELETE, (5,))]
-
-
-@pytest.mark.parametrize("second", [_p, _r], ids=["D-P", "D-R"])
-def test_a_target_write_after_a_destruction_of_its_state_is_refused(second: _Step) -> None:
     port = ScriptedAdapter(Transact(Read(rows=[_row()]), Write()))
 
     def fn(tx: TxnContext) -> None:
         source = tx.find(mm.Account.where(mm.Account.id == 1)).result()
-        tx.delete(source)
+        first(tx, source)
         with pytest.raises(WriteEvidenceError) as refused:
             second(tx, source)
         assert refused.value.code == "write-evidence-already-claimed"
@@ -710,6 +650,22 @@ def test_a_target_write_of_an_object_this_attempt_inserted_is_refused(
     )
 
 
+@_REPRESENTATIONS
+def test_a_deletion_of_an_object_this_attempt_inserted_is_refused(
+    representation: _Representation,
+) -> None:
+    port = ScriptedAdapter(Transact(Write()))
+
+    def fn(tx: TxnContext) -> None:
+        tx.insert(mm.Account(id=1, owner="Ada", balance=Decimal("1.00")))
+        with pytest.raises(WriteEvidenceError) as refused:
+            _delete(tx, representation, version=1)
+        assert refused.value.code == "write-evidence-inserted"
+
+    account_db(port).transact(fn)
+    assert [type(call) for call in _calls(port)] == [WriteCall]
+
+
 def test_a_cancelled_insertion_of_an_object_still_refuses_a_target_write_of_it() -> None:
     port = ScriptedAdapter(Transact())
 
@@ -741,15 +697,10 @@ def test_a_committed_object_rewritten_in_this_attempt_is_target_writable() -> No
 # The two update overloads, addressing, subtypes, and keyword-only arguments. #
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize("verb", ["amend", "replace"])
-@pytest.mark.parametrize("keyword", ["version", "tx_start", "unversioned", "valid_from"])
+@pytest.mark.parametrize("keyword", ["version", "tx_start", "valid_from"])
 def test_a_source_write_takes_no_condition_or_start(verb: str, keyword: str) -> None:
     port = ScriptedAdapter(Transact(Read(rows=[_row()])))
-    stated: dict[str, object] = {
-        "version": 3,
-        "tx_start": FIXED,
-        "unversioned": True,
-        "valid_from": FIXED,
-    }
+    stated: dict[str, object] = {"version": 3, "tx_start": FIXED, "valid_from": FIXED}
 
     def fn(tx: TxnContext) -> None:
         node = tx.wire.find(_ACCOUNT_ONE).result()
@@ -815,37 +766,45 @@ def test_a_typed_replacement_of_a_read_value_leaves_its_read_only_members_unwrit
     )
 
 
-def test_a_subtype_target_write_is_guarded_by_its_tag_and_refuses_a_sibling_member() -> None:
-    port = ScriptedAdapter(
-        Transact(Read(rows=[{"id": 4, "amount": Decimal(1), "cardNetwork": "visa"}]), Write())
-    )
+@pytest.mark.parametrize("concurrency", ["optimistic", "locking"])
+def test_a_subtype_target_write_is_guarded_by_its_tag_and_refuses_a_sibling_member(
+    concurrency: Literal["optimistic", "locking"],
+) -> None:
+    stored = {"id": 4, "name": "Skua", "berths": 6, "version": 3}
+    acquired = [Read(rows=[stored])] if concurrency == "locking" else []
+    port = ScriptedAdapter(Transact(*acquired, Write()))
 
     def fn(tx: TxnContext) -> None:
         with pytest.raises(WriteRejectedError):
-            tx.wire.amend_if("CardPayment", {"id": 4, "tendered": "1.00"}, unversioned=True)
-        tx.wire.amend_if("CardPayment", {"id": 4, "cardNetwork": "amex"}, unversioned=True)
+            tx.wire.amend_if("Ferry", {"id": 4, "pull": 1}, version=3)
+        tx.wire.amend_if("Ferry", {"id": 4, "berths": 8}, version=3)
 
-    db_for(PAYMENT, port).transact(fn)
-    read, write = _calls(port)
-    assert isinstance(read, ReadCall) and "kind" in read.sql and "for share" in read.sql
-    assert isinstance(write, WriteCall) and write.sql.endswith("where id = %s and kind = %s")
-    assert write.binds == ("amex", 4, "card")
+    db_for(VESSEL, port).transact(fn, concurrency=concurrency)
+    *reads, write = _calls(port)
+    assert all(
+        isinstance(read, ReadCall) and "kind" in read.sql and "for share" in read.sql
+        for read in reads
+    )
+    assert isinstance(write, WriteCall)
+    guard = "where id = %s and kind = %s" + (" and version = %s" if not reads else "")
+    assert write.sql.endswith(guard)
+    assert write.binds == ((8, 4, 4, "ferry", 3) if not reads else (8, 4, 4, "ferry"))
 
 
-@pytest.mark.parametrize(
-    "method",
-    [
-        TxnContext.amend_if,
-        TxnContext.replace_if,
-        WireTransactionView.amend_if,
-        WireTransactionView.replace_if,
-    ],
-    ids=["typed-amend-if", "typed-replace-if", "wire-amend-if", "wire-replace-if"],
-)
+_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "amend_if": ("valid_from", "until", "version", "tx_start"),
+    "replace_if": ("valid_from", "until", "version", "tx_start"),
+    "delete_if": ("version", "tx_start"),
+    "terminate_if": ("valid_from", "until", "version", "tx_start"),
+}
+
+
+@pytest.mark.parametrize("owner", [TxnContext, WireTransactionView], ids=["typed", "wire"])
+@pytest.mark.parametrize("name", list(_KEYWORDS))
 def test_a_target_writes_condition_and_bounds_are_keyword_only(
-    method: Callable[..., None],
+    owner: type[object], name: str
 ) -> None:
-    parameters = inspect.signature(method).parameters
-    for name in ("valid_from", "until", "version", "tx_start", "unversioned"):
-        assert parameters[name].kind is inspect.Parameter.KEYWORD_ONLY
-        assert parameters[name].default is OMITTED
+    parameters = inspect.signature(getattr(owner, name)).parameters
+    for keyword in _KEYWORDS[name]:
+        assert parameters[keyword].kind is inspect.Parameter.KEYWORD_ONLY
+        assert parameters[keyword].default is OMITTED

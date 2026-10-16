@@ -871,12 +871,12 @@
                 }
               },
               {
-                "description": "A caller-addressed (target) step: its `row` names one existing object by primary key beside the members a patch assigns or the complete writable state a replacement states, and its condition is the caller's own revision member — `ifVersion` or `ifTxStart` — exactly as `write-instruction.schema.json`'s `targetWriteInstruction` carries it.",
+                "description": "A caller-addressed (target) step: its `row` names one existing object by primary key beside the members a patch assigns or the complete writable state a replacement states — the key alone for a deletion or termination — and its condition is exactly one caller's revision member, `ifVersion` or `ifTxStart`, as `write-instruction.schema.json`'s `targetWriteInstruction` carries it.",
                 "required": ["row"],
                 "properties": {
-                  "mutation": { "enum": ["amend", "amendUntil", "replace", "replaceUntil"] }
+                  "mutation": { "$ref": "write-instruction.schema.json#/$defs/targetMutation" }
                 },
-                "not": { "required": ["ifVersion", "ifTxStart"] }
+                "oneOf": [{ "required": ["ifVersion"] }, { "required": ["ifTxStart"] }]
               }
             ],
             "allOf": [
@@ -2862,7 +2862,7 @@
       "enum": ["write-evidence-already-claimed", "write-evidence-inserted"]
     },
     "targetSubmission": {
-      "description": "A caller-addressed (target) submission inside a buffered scenario: `write-instruction.schema.json`'s `targetWriteInstruction` — one `row` naming an existing object by primary key, the caller's own revision as `ifVersion` or `ifTxStart`, and on a Bitemporal target `validFrom` with an optional `until` — beside the Clock-supplied `at`. State-graded cases only.",
+      "description": "A caller-addressed (target) submission inside a buffered scenario: `write-instruction.schema.json`'s `targetWriteInstruction` — one `row` naming an existing object by primary key, exactly one caller's revision as `ifVersion` or `ifTxStart`, and on a Bitemporal target `validFrom` with an optional `until` — beside the Clock-supplied `at`. State-graded cases only.",
       "type": "object",
       "additionalProperties": false,
       "required": ["mutation", "entity", "row"],
@@ -2881,13 +2881,15 @@
         },
         "expectError": { "$ref": "#/$defs/submissionRefusal" }
       },
-      "not": { "required": ["ifVersion", "ifTxStart"] },
+      "oneOf": [{ "required": ["ifVersion"] }, { "required": ["ifTxStart"] }],
       "allOf": [
         {
           "description": "A bounded target write is over `[validFrom, until)`; an unbounded one omits `until`.",
           "if": {
             "required": ["mutation"],
-            "properties": { "mutation": { "enum": ["amendUntil", "replaceUntil"] } }
+            "properties": {
+              "mutation": { "enum": ["amendUntil", "replaceUntil", "terminateUntil"] }
+            }
           },
           "then": { "required": ["validFrom", "until"] },
           "else": { "not": { "required": ["until"] } }

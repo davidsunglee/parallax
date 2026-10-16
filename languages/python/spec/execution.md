@@ -163,20 +163,21 @@ produced its source was authored to start, and a source read at Valid-Time
 earlier attempt published raises `WriteEvidenceError(write-evidence-unavailable)`
 at the call under either concurrency preference, an amendment naming nothing
 included (`m-unit-work` *Current-attempt source admission*); its caller states
-the revision that value carries through `amend_if` or `replace_if` instead.
-`amend_if` and `replace_if` address an object themselves
-and require exactly one keyword-only condition: `version` for a versioned
-Entity, `tx_start` for a temporal one, or `unversioned=True` for an unversioned
-Non-Temporal one. Presence is counted before any value is judged: none, more
-than one, a stated `None`, an `unversioned` other than `True`, or a condition the
-Entity does not take is refused, and no missing condition falls back on a
-source. `unversioned=True` never disables the Locking strategy. The keyword
-names a condition, never a value to store; the canonical instruction keeps
+the revision that value carries through a conditional verb instead.
+`amend_if`, `replace_if`, `delete_if`, and `terminate_if` address an object
+themselves and require exactly one keyword-only revision: `version` for a
+versioned Entity or `tx_start` for a temporal one. Presence is counted before
+any value is judged: none, both, a stated `None`, or a revision the Entity does
+not take is refused, and no missing revision falls back on a source. An
+unversioned Non-Temporal Entity has no revision, so every conditional verb
+refuses it with `WriteInstructionError`; it is written through a read of the
+writing transaction, whose shared lock the Locking fallback takes. The keyword
+names a revision, never a value to store; the canonical instruction keeps
 `ifVersion` and `ifTxStart`.
 
 Every windowed verb — `insert`, `amend`, `amend_if`, `replace`, `replace_if`,
-`terminate`, `amend_where`, and `terminate_where`, on the `TxnContext` and on
-`tx.wire` — takes a keyword-only `until`. Omitting it selects the core unbounded
+`terminate`, `terminate_if`, `amend_where`, and `terminate_where`, on the
+`TxnContext` and on `tx.wire` — takes a keyword-only `until`. Omitting it selects the core unbounded
 verb; stating it — `None` included — selects the bounded one, whose window core
 preparation judges before an empty amendment is dropped. Every verb taking
 `valid_from` treats omission alone as absence: a stated `None` is refused, so a
@@ -185,9 +186,10 @@ caller forwarding optional bounds omits an unavailable one.
 A Typed `amend(source)` assigns every member touched along the value's `edit`
 chain; `amend(source, *assignments)` assigns exactly the given `Attr.set(...)`
 assignments instead and refuses a source with any edit history, restored or
-equal edits included. `amend_if(EntityClass, *assignments, key=...)` takes the
-concrete class and the scalar primary-key value, whatever the key Attribute is
-called; a mapping or tuple key is refused. Assignment references are judged
+equal edits included. `amend_if(EntityClass, *assignments, key=...)`,
+`delete_if(EntityClass, key=...)`, and `terminate_if(EntityClass, key=...)`
+take the concrete class and the scalar primary-key value, whatever the key
+Attribute is called; a mapping or tuple key is refused. Assignment references are judged
 against the class's own ancestry before they are flattened, so an inherited
 member applies and a foreign or duplicated one is refused. A Wire `amend`
 assigns every key its change document names. Equal values are assigned either
@@ -200,6 +202,9 @@ stated, completed state. `replace_if` takes an Entity spelling with `data`, or a
 published node — current or historical — alone. A Wire source write's document
 may repeat the source's primary key, which must name the source's object and is
 never assigned; an entity-spelled write names its key in its document.
+`tx.wire.delete_if` and `tx.wire.terminate_if` take an Entity spelling and a
+key-only document. `delete_if` applies to a Non-Temporal Entity and
+`terminate_if` to a temporal one; each refuses the other's and names it.
 `tx.wire.editable_data(source)` copies a published node's key and writable
 members into fresh mutable mappings and lists, preserving Wire spellings and
 absent members; it queries, completes, and authorizes nothing, and records no
@@ -231,15 +236,17 @@ inserted instance succeeds, unlike a read's node. Inserting the same instance
 again once its earlier insertion was removed rebinds it; drafts derived before
 keep the earlier, retired authority.
 A conditional write addresses an existing object by key under its caller's own
-condition (`m-unit-work` *Caller-addressed writes*). Each returns `None`. A
+revision (`m-unit-work` *Caller-addressed writes*). Each returns `None`. A
 Bitemporal one states `valid_from`, and `until` bounds it exactly as it bounds
 `insert`; a Transaction-Time-Only one takes neither. `tx_start` is the
 milestone start the caller's query returned, an aware `datetime`, never this
-transaction's own instant. A failed precondition raises
-`parallax.core.unit_work.WritePreconditionError` — at the call under Locking, at
-the flush under Optimistic — and is never retried; its `expected` is the stated
-revision. An object the attempt inserted is refused with
-`WriteEvidenceError(write-evidence-inserted)`.
+transaction's own instant, and describes the coverage at `valid_from` alone. A
+retried callback states the same revision again. A missing or revised target
+raises `parallax.core.unit_work.WritePreconditionError` — at the call under
+Locking, at the flush under Optimistic — a deletion or termination included,
+which never succeeds by removing nothing; it is never retried, and its
+`expected` is the stated revision. An object the attempt inserted is refused
+with `WriteEvidenceError(write-evidence-inserted)`.
 `tx.wire` is the Wire ingress, sharing transaction state and policy. Public
 write-plan and flush operations are absent. Framework-owned attributes cannot
 be authored by construction, `edit`, assignments, or Wire changes.

@@ -134,10 +134,6 @@ def _account(account_id: int, *, version: int = 3) -> PredecessorRow:
     )
 
 
-def _person(person_id: int) -> PredecessorRow:
-    return PredecessorRow(members={"id": person_id, "name": "Ada"})
-
-
 def _predicate(
     meta: Metamodel,
     entity: str,
@@ -164,10 +160,6 @@ def _account_patch(*, version: int = 3) -> PreparedTargetWrite:
         TargetWrite("amend", "Account", {"id": 1, "balance": "9.00"}, if_version=version),
         _ACCOUNT,
     )
-
-
-def _person_patch() -> PreparedTargetWrite:
-    return prepare_wire_write(TargetWrite("amend", "Person", {"id": 1, "name": "Zed"}), _PERSON)
 
 
 # --------------------------------------------------------------------------- #
@@ -381,14 +373,3 @@ def test_an_effectively_optimistic_target_reads_nothing() -> None:
     uow.buffer_target(_account_patch())
     uow.flush(trigger="pre_commit")
     assert len(flushes.plans) == 1
-
-
-@pytest.mark.parametrize("concurrency", ["optimistic", "locking"])
-def test_an_unversioned_non_temporal_target_participates_under_either_preference(
-    concurrency: Concurrency,
-) -> None:
-    held = HeldRows(_PERSON, [_person(1)])
-    uow, _flushes = _uow(_PERSON, held, concurrency=concurrency)
-    uow.buffer_target(_person_patch())
-    (request,) = held.requests
-    assert isinstance(request, TargetReadRequest)

@@ -175,8 +175,8 @@ def test_a_temporal_target_replacement_reads_its_keyed_window() -> None:
 
 
 @in_a_child_interpreter
-def test_a_non_temporal_target_patch_reads_its_keyed_window() -> None:
-    _assert_reading("plain.target-patch.columns.wire", units=1)
+def test_a_transaction_time_target_patch_reads_its_keyed_window() -> None:
+    _assert_reading("txtime.target-patch.columns.wire", units=1)
 
 
 @in_a_child_interpreter

@@ -1,4 +1,5 @@
-"""Caller-addressed patch and replacement of temporal objects, against real Postgres.
+"""Caller-addressed patch, replacement, and termination of temporal objects, against
+real Postgres.
 
 A web client holds a key, the Valid-Time instant it edits from, and the
 Transaction-Time start an earlier query returned. Each case commits a starting
@@ -517,6 +518,113 @@ def test_a_transaction_time_target_chains_one_milestone_from_its_callers(
             concurrency=concurrency,
         )
     assert isinstance(failed.value.cause, WritePreconditionError)
+
+
+# --------------------------------------------------------------------------- #
+# Termination: the caller's start conditions every interval its window ends.   #
+# --------------------------------------------------------------------------- #
+def _span_terminate(
+    tx: TxnContext,
+    entity: type[Any],
+    representation: _Representation,
+    *,
+    valid_from: dt.datetime = _MAR,
+    until: dt.datetime | None = None,
+    tx_start: dt.datetime = _T0,
+) -> None:
+    bounds: dict[str, Any] = {"valid_from": valid_from, "tx_start": tx_start}
+    if until is not None:
+        bounds["until"] = until
+    if representation == "typed":
+        tx.terminate_if(entity, key=1, **bounds)
+    else:
+        tx.wire.terminate_if(_name(entity), {"id": 1}, **bounds)
+
+
+_ENDED_FROM_MARCH: list[_SpanRow] = [(_TA, None, _JAN, _MAR, 100, "a", _S1, _M)]
+_ENDED_FROM_MARCH_UNTIL_JULY: list[_SpanRow] = [
+    *_ENDED_FROM_MARCH,
+    (_TA, None, _JUL, _AUG, 200, "b", _S2, []),
+]
+
+
+@_SPAN_AXES
+@_STRATEGIES
+@_REPRESENTATIONS
+@pytest.mark.parametrize(
+    ("until", "current"),
+    [
+        pytest.param(None, _ENDED_FROM_MARCH, id="unbounded"),
+        pytest.param(_JUL, _ENDED_FROM_MARCH_UNTIL_JULY, id="bounded"),
+    ],
+)
+def test_a_termination_ends_every_interval_its_window_reaches_from_its_start(
+    profile_run: Any,
+    entity: type[Any],
+    concurrency: _Concurrency,
+    representation: _Representation,
+    until: dt.datetime | None,
+    current: list[_SpanRow],
+) -> None:
+    db = _seeded_spans(profile_run, entity, _TA)
+    db.transact(
+        lambda tx: _span_terminate(tx, entity, representation, until=until),
+        concurrency=concurrency,
+    )
+    # The caller stated the start's T0; the June rectangle, written at T1 after
+    # that, is ended under its own milestone all the same.
+    assert _span_rows(profile_run, entity) == [*_SEED_HISTORY, *current]
+
+
+@_SPAN_AXES
+@_STRATEGIES
+@pytest.mark.parametrize(
+    "stated",
+    [
+        pytest.param({"valid_from": _MAY}, id="a-start-in-a-gap"),
+        pytest.param({"tx_start": _T1}, id="another-milestone"),
+    ],
+)
+def test_a_termination_whose_start_does_not_stand_fails_and_ends_nothing(
+    profile_run: Any, entity: type[Any], concurrency: _Concurrency, stated: dict[str, Any]
+) -> None:
+    db = _seeded_spans(profile_run, entity, _TA, _TB)
+
+    with pytest.raises(ExecutionFailure) as failed:
+        db.transact(
+            lambda tx: _span_terminate(tx, entity, "wire", **stated), concurrency=concurrency
+        )
+    assert isinstance(failed.value.cause, WritePreconditionError)
+    assert _span_rows(profile_run, entity) == _SEED_CURRENT
+
+
+@_LOG_AXES
+@_STRATEGIES
+@_REPRESENTATIONS
+def test_a_transaction_time_termination_closes_its_callers_milestone_and_chains_nothing(
+    profile_run: Any,
+    entity: type[Any],
+    concurrency: _Concurrency,
+    representation: _Representation,
+) -> None:
+    profile_run.reset(model_of(_MODEL), {})
+    db = _db(profile_run, _T0, _TA, _TB)
+    db.transact(lambda tx: tx.insert(entity(id=1, label="seed", spec=Spec(title="s1"))))
+
+    def terminate(tx: TxnContext, tx_start: dt.datetime) -> None:
+        if representation == "typed":
+            tx.terminate_if(entity, key=1, tx_start=tx_start)
+        else:
+            tx.wire.terminate_if(_name(entity), {"id": 1}, tx_start=tx_start)
+
+    with pytest.raises(ExecutionFailure) as failed:
+        db.transact(lambda tx: terminate(tx, _T1), concurrency=concurrency)
+    assert isinstance(failed.value.cause, WritePreconditionError)
+    db.transact(lambda tx: terminate(tx, _T0), concurrency=concurrency)
+    # Locking refuses the stale start at the call, before its attempt takes a
+    # Transaction-Time instant; Optimistic refuses it at the flush, after.
+    closed = _TA if concurrency == "locking" else _TB
+    assert _log_rows(profile_run, entity) == [(_T0, closed, "seed", _S1, [])]
 
 
 # --------------------------------------------------------------------------- #
