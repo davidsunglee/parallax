@@ -1,0 +1,60 @@
+# Transaction A's unchanged-milestone guard rewrites balance 2's row in place without
+# changing its in_z, and holds it. Transaction B's close of that milestone waits on it
+# and resumes on A's commit. At Repeatable Read B is refused because the row changed
+# after its snapshot, although no semantic milestone changed.
+model: models/balance.yaml
+tags: [m-temporal-write, m-opt-lock, m-unit-work, m-db-error, isolation, concurrency, temporal, audit-only, unchanged-milestone, repeatable-read, slice-snapshot-1]
+shape: error
+compileEligibility:
+  mode: run-only
+  reason: single-connection
+  note: "two-session isolation witness (when.concurrency)"
+given:
+  fixtures: true
+when:
+  uow:
+    concurrency: optimistic
+    isolation: repeatable-read
+  concurrency:
+    rounds:
+      - A:
+          statements:
+            - sql:
+                postgres: select t0.bal_id, t0.acct_num, t0.val, t0.in_z, t0.out_z from balance t0 where t0.bal_id = ? and t0.out_z = ?
+              binds: [2, infinity]
+      - B:
+          statements:
+            - sql:
+                postgres: select t0.bal_id, t0.acct_num, t0.val, t0.in_z, t0.out_z from balance t0 where t0.bal_id = ? and t0.out_z = ?
+              binds: [2, infinity]
+      - A:
+          statements:
+            - sql:
+                postgres: update balance set in_z = in_z where bal_id = ? and out_z = ? and in_z = ?
+              binds: [2, infinity, "2024-02-01T00:00:00.000000Z"]
+      - B:
+          blocks: true
+          statements:
+            - sql:
+                postgres: update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?
+              binds: ["2024-09-01T00:00:00.000000Z", 2, infinity, "2024-02-01T00:00:00.000000Z"]
+      - A:
+          kind: commit
+then:
+  errorClass: deadlock
+  nativeCode:
+    postgres: "40001"
+  tableState:
+    balance:
+      - bal_id: 1
+        acct_num: A
+        val: "100.00"
+        in_z: "2024-01-01T00:00:00.000000Z"
+        out_z: "2024-06-01T00:00:00.000000Z"
+      - { bal_id: 1, acct_num: A, val: "150.00", in_z: "2024-06-01T00:00:00.000000Z", out_z: infinity }
+      - { bal_id: 2, acct_num: B, val: "200.00", in_z: "2024-02-01T00:00:00.000000Z", out_z: infinity }
+      - bal_id: 3
+        acct_num: C
+        val: "50.00"
+        in_z: "2024-03-01T00:00:00.000000Z"
+        out_z: "2024-08-01T00:00:00.000000Z"

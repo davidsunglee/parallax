@@ -1,0 +1,92 @@
+# Both transactions read position 2's coverage, find the whole Valid-Time line empty,
+# and each inserts a bounded rectangle into that gap. The rectangles overlap over
+# [June, September), and Repeatable Read refuses neither: no snapshot coordinates
+# creation in a gap, so both commit an invalid overlapping coverage.
+model: models/position.yaml
+tags: [m-temporal-write, m-unit-work, isolation, concurrency, bitemporal, temporal, insert-until, repeatable-read, slice-snapshot-1]
+shape: concurrencySuccess
+compileEligibility:
+  mode: run-only
+  reason: single-connection
+  note: "two-session isolation witness (when.concurrency)"
+given:
+  fixtures: true
+when:
+  uow:
+    isolation: repeatable-read
+  concurrency:
+    rounds:
+      - A:
+          kind: read
+          statements:
+            - sql:
+                postgres: select t0.pos_id, t0.acct_num, t0.val, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from position t0 where t0.pos_id = ? and t0.out_z = ? order by t0.pos_id asc, t0.from_z asc, t0.in_z asc
+                mariadb: select t0.pos_id, t0.acct_num, t0.val, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from `position` t0 where t0.pos_id = ? and t0.out_z = ? order by t0.pos_id asc, t0.from_z asc, t0.in_z asc
+              binds: [2, infinity]
+          expectRows: []
+      - B:
+          kind: read
+          statements:
+            - sql:
+                postgres: select t0.pos_id, t0.acct_num, t0.val, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from position t0 where t0.pos_id = ? and t0.out_z = ? order by t0.pos_id asc, t0.from_z asc, t0.in_z asc
+                mariadb: select t0.pos_id, t0.acct_num, t0.val, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from `position` t0 where t0.pos_id = ? and t0.out_z = ? order by t0.pos_id asc, t0.from_z asc, t0.in_z asc
+              binds: [2, infinity]
+          expectRows: []
+      - A:
+          kind: write
+          statements:
+            - sql:
+                postgres: insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
+                mariadb: insert into `position` (pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
+              binds: [2, B, "10.00", "2024-03-01T00:00:00.000000Z", "2024-09-01T00:00:00.000000Z", "2024-07-01T00:00:00.000000Z", infinity]
+          affectedRows: [1]
+      - B:
+          kind: write
+          statements:
+            - sql:
+                postgres: insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
+                mariadb: insert into `position` (pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
+              binds: [2, B, "20.00", "2024-06-01T00:00:00.000000Z", "2024-12-01T00:00:00.000000Z", "2024-07-02T00:00:00.000000Z", infinity]
+          affectedRows: [1]
+      - A:
+          kind: commit
+      - B:
+          kind: commit
+then:
+  tableState:
+    position:
+      - pos_id: 1
+        acct_num: A
+        val: "90.00"
+        from_z: "2024-01-01T00:00:00.000000Z"
+        thru_z: infinity
+        in_z: "2024-01-01T00:00:00.000000Z"
+        out_z: "2024-04-01T00:00:00.000000Z"
+      - pos_id: 1
+        acct_num: A
+        val: "100.00"
+        from_z: "2024-01-01T00:00:00.000000Z"
+        thru_z: "2024-06-01T00:00:00.000000Z"
+        in_z: "2024-04-01T00:00:00.000000Z"
+        out_z: infinity
+      - pos_id: 1
+        acct_num: A
+        val: "200.00"
+        from_z: "2024-06-01T00:00:00.000000Z"
+        thru_z: infinity
+        in_z: "2024-04-01T00:00:00.000000Z"
+        out_z: infinity
+      - pos_id: 2
+        acct_num: B
+        val: "10.00"
+        from_z: "2024-03-01T00:00:00.000000Z"
+        thru_z: "2024-09-01T00:00:00.000000Z"
+        in_z: "2024-07-01T00:00:00.000000Z"
+        out_z: infinity
+      - pos_id: 2
+        acct_num: B
+        val: "20.00"
+        from_z: "2024-06-01T00:00:00.000000Z"
+        thru_z: "2024-12-01T00:00:00.000000Z"
+        in_z: "2024-07-02T00:00:00.000000Z"
+        out_z: infinity

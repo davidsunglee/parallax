@@ -1,0 +1,54 @@
+# The same race at Repeatable Read: the stale gated update finds its snapshot's
+# version-1 row and is refused because the row changed after the snapshot, in the
+# retriable deadlock category rather than as a zero-row shortfall.
+model: models/account.yaml
+tags: [m-opt-lock, m-unit-work, m-db-error, isolation, concurrency, deadlock, repeatable-read, slice-snapshot-1]
+shape: error
+compileEligibility:
+  mode: run-only
+  reason: single-connection
+  note: "two-session isolation witness (when.concurrency)"
+given:
+  fixtures: true
+when:
+  uow:
+    concurrency: optimistic
+    isolation: repeatable-read
+  concurrency:
+    rounds:
+      - A:
+          statements:
+            - sql:
+                postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+                mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+              binds: [2]
+      - B:
+          statements:
+            - sql:
+                postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+                mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+              binds: [2]
+      - B:
+          statements:
+            - sql:
+                postgres: update account set balance = ?, version = ? where id = ? and version = ?
+                mariadb: update account set balance = ?, version = ? where id = ? and version = ?
+              binds: ["999.00", 2, 2, 1]
+      - B:
+          kind: commit
+      - A:
+          statements:
+            - sql:
+                postgres: update account set balance = ?, version = ? where id = ? and version = ?
+                mariadb: update account set balance = ?, version = ? where id = ? and version = ?
+              binds: ["300.00", 2, 2, 1]
+then:
+  errorClass: deadlock
+  nativeCode:
+    postgres: "40001"
+    mariadb: 1020
+  tableState:
+    account:
+      - { id: 1, owner: Ada, balance: "100.00", version: 1 }
+      - { id: 2, owner: Linus, balance: "999.00", version: 2 }
+      - { id: 3, owner: Grace, balance: "10.00", version: 1 }
