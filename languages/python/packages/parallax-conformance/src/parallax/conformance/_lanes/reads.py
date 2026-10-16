@@ -434,17 +434,15 @@ def _wire_delivery(
     apply_given_corrupt(case, load_case_setup_metamodel(case), port)
     with case_database(case, port, observed.provider) as root:
         db = root.using_database_login()
-        roots: list[object] = []
 
-        def drained(reader: _Reader) -> None:
+        def drained(reader: _Reader) -> list[object]:
             with reader.wire.stream(query, batch_size=_stream_batch_size(case)) as delivery:
-                roots.extend(delivery.checked())
+                return list(delivery.checked())
 
         try:
-            _case_read(case, db, drained)
+            return _case_read(case, db, drained), observed
         except _STREAM_ERRORS as exc:
             raise EngineError(f"{case.path.name}: {exc}") from exc
-        return roots, observed
 
 
 def run_graphs_case(

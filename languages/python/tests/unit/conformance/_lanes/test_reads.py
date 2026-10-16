@@ -24,6 +24,7 @@ from parallax.conformance._lanes import reads
 from parallax.conformance._lifecycle_observation import lifecycle_run
 from parallax.conformance._mechanism.envelope import EngineError
 from parallax.core.base import INFINITY, PresentDocument
+from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import MappingRow
 from parallax.core.execution import (
     DeferredFeatureError,
@@ -868,6 +869,38 @@ def test_a_graph_case_without_uow_opens_no_boundary(
     port = FakeDbPort([])
     run(_doctored(case_id, **members), port)
     assert port.modes == []
+
+
+def _order(order_id: int) -> MappingRow:
+    return {
+        "id": order_id,
+        "name": f"order-{order_id}",
+        "sku": "A-100",
+        "qty": 1,
+        "price": decimal.Decimal("1.00"),
+        "active": True,
+        "ordered_on": dt.date(2024, 1, 1),
+        "parallax_seek_0": order_id,
+    }
+
+
+def test_a_retried_streamed_case_reports_only_the_succeeding_attempts_roots() -> None:
+    serialization_failure = DatabaseError(
+        category="deadlock", native_code="40001", message="could not serialize access"
+    )
+    port = FakeDbPort(
+        [],
+        read_script=[
+            [_order(1), _order(2), _order(3)],
+            serialization_failure,
+            [_order(1), _order(2), _order(3)],
+            [_order(3), _order(42)],
+        ],
+    )
+    case = _doctored(_STREAM_CASE_ID, uow={"accessMode": "read-only", "isolation": "serializable"})
+    _, graph, _, _ = reads.run_stream_case(case, port)
+    assert [cast("Mapping[str, object]", root)["id"] for root in graph["Order"]] == [1, 2, 3, 42]
+    assert port.modes == ["read_only", "read_only"]
 
 
 def test_a_writable_case_runs_in_a_read_write_boundary() -> None:
