@@ -19,6 +19,8 @@ Each provider exposes:
 * ``execute(sql, binds)`` — execute a write (DML) and return the affected count.
 * ``open_session(isolation)`` — a manual-commit :class:`Session`, opened at a
   portable Isolation Level when a case declares one.
+* ``lock_waits()`` — how many transactions of the provider's database are
+  waiting for a lock right now, read from the engine's own lock-wait view.
 
 An accepted Object Query observation reads through a narrower view of the same
 surface — ``dialect`` and ``query`` alone are
@@ -176,6 +178,15 @@ class Session(Protocol):
 
     def rollback(self) -> None: ...
 
+    def extend_lock_wait(self) -> None:
+        """Lift the session's lowered lock-wait budget for the statements after it.
+
+        The budget makes a lock wait no choreography expects fail fast; a step
+        that waits on its peer's lock by design needs the wait to outlast the
+        rounds until the peer releases it.
+        """
+        ...
+
 
 @runtime_checkable
 class DatabaseProvider(Protocol):
@@ -225,6 +236,14 @@ class DatabaseProvider(Protocol):
 
     def classify_error(self, exc: Exception) -> str:
         """Map a raised driver error to a neutral m-db-error error category."""
+        ...
+
+    def lock_waits(self) -> int:
+        """How many transactions of this database are waiting for a lock now.
+
+        Read from the engine's own lock-wait view, so a choreography can prove a
+        statement is waiting rather than merely slow.
+        """
         ...
 
     def native_error_code(self, exc: Exception) -> str | int | None:

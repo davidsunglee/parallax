@@ -1,7 +1,7 @@
 """Provider-contract + adapter-smoke suite (m-db-port / m-db-error, real Postgres).
 
 Exercises the reusable provider obligations over the container — reset, applyDdl,
-loadFixtures, query, exec, execRolledBack, peer — plus a minimal psycopg adapter
+loadFixtures, query, exec, execRolledBack, peer, lockWaits — plus a minimal psycopg adapter
 smoke (construction, scalar read, bytes round trip through the dialect bind seam,
 affected-row semantics, and a transaction callback that commits its value). The
 `m-db-error` translation-boundary proof completes the smoke: two crossed-update
@@ -19,12 +19,13 @@ from __future__ import annotations
 import decimal
 import json
 import threading
+import time
 from contextlib import closing, suppress
 from typing import Any, cast
 
 import pytest
 
-from parallax.conformance import engine, models, provision
+from parallax.conformance import concurrency_runner, engine, models, provision
 from parallax.conformance._postgres_control import PostgresControl
 from parallax.conformance.case_format import default_cases_dir, load_case
 from parallax.conformance.models import default_models_dir
@@ -527,3 +528,47 @@ def test_deadlock_is_reraised_as_a_retriable_database_error(profile_run: Any) ->
     assert victim.is_retriable
     assert not victim.violates_unique_index
     assert victim.message  # the preserved driver message crosses the port
+
+
+def test_lock_waits_counts_a_session_waiting_on_its_peers_row_lock(profile_run: Any) -> None:
+    """The provider's lock-wait view is what lets a two-session choreography prove
+    that a blocking step's statement waits on its peer rather than merely ran slow
+    (`m-case-format` *Error cases*). Read through a separately owned autocommit
+    session, it counts the waiting backend while the holder keeps its row lock and
+    none once the holder commits."""
+    port = profile_run.port
+    for statement in provision.reset_statements():
+        port.execute_write(statement, [])
+    port.execute_write("create table gauge (id integer primary key, v integer)", [])
+    port.execute_write("insert into gauge (id, v) values (1, 0)", [])
+
+    holder = profile_run.control(autocommit=False)
+    waiter = profile_run.control(autocommit=False)
+    observer = profile_run.control(autocommit=True)
+    lock_waits = concurrency_runner.lock_waits_on(observer)
+    finished: list[int] = []
+    try:
+        holder.execute_write("update gauge set v = %s where id = %s", [1, 1])
+        waiter.execute("set lock_timeout = '10s'", [])
+        statement = threading.Thread(
+            target=lambda: finished.append(
+                waiter.execute_write("update gauge set v = %s where id = %s", [2, 1])
+            )
+        )
+        statement.start()
+        waited = False
+        for _ in range(500):
+            if lock_waits():
+                waited = True
+                break
+            time.sleep(0.01)
+        holder.execute("commit", [])
+        statement.join(timeout=10)
+        waiter.execute("commit", [])
+        assert waited
+        assert finished == [1]
+        assert lock_waits() == 0
+    finally:
+        holder.close()
+        waiter.close()
+        observer.close()

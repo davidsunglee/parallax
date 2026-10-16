@@ -254,7 +254,12 @@ A provider contract suite must exercise these operations:
   (`m-db-port` *Mapping obligations*): each context saves the state before
   configuring the level and, on exit, rolls back an unfinished transaction,
   restores the saved state, and closes the connection. A cleanup failure never
-  replaces the body's own failure
+  replaces the body's own failure. A session also lifts its lowered lock-wait
+  budget on request, for a statement a choreography expects to wait on its peer
+- `lockWaits`: report how many transactions of the provider's database are
+  waiting for a lock now, read from the engine's own lock-wait view, so a
+  choreography's blocking step is proven to wait rather than merely to run slowly
+  (`m-case-format` *Error cases*)
 - `catalog`: report what the database itself holds for a named set of tables —
   each table's columns with their types and nullability, and each index with its
   ordered columns and its uniqueness. Column ordinal position is deliberately

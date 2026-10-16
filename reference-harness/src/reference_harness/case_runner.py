@@ -51,6 +51,7 @@ import contextlib
 import datetime as dt
 import re
 import threading
+import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from typing import Any, NamedTuple
 
@@ -269,6 +270,7 @@ def _assert_error_shape(case: Case) -> None:
             f"(single-connection) or a non-empty concurrency choreography"
         )
     _assert_commit_is_a_nodes_last_step(case)
+    _assert_blocking_steps_are_released(case)
 
 
 def _assert_concurrency_success_shape(case: Case) -> None:
@@ -283,6 +285,7 @@ def _assert_concurrency_success_shape(case: Case) -> None:
     # the schema (which requires kind + the read/write expectRows rule), as defense.
     _assert_concurrency_success_step_kinds(case)
     _assert_commit_is_a_nodes_last_step(case)
+    _assert_blocking_steps_are_released(case)
 
 
 def _assert_boundary_shape(case: Case) -> None:
@@ -2606,6 +2609,34 @@ def _assert_commit_is_a_nodes_last_step(case: Case) -> None:
                 committed_at[node] = index
 
 
+def _assert_blocking_steps_are_released(case: Case) -> None:
+    """Guard: a peer step comes after each blocking step and before its node's next.
+
+    A blocking step's statement finishes only when its peer releases the lock,
+    and its node's next step waits for that. With no peer step in between,
+    nothing could release it, so the choreography would hang until the extended
+    lock-wait budget expired rather than say anything about the schedule.
+    """
+    rounds = (case.concurrency or {}).get("rounds", [])
+    for index, rnd in enumerate(rounds):
+        for node in _CONCURRENCY_NODES:
+            step = rnd.get(node)
+            if not (isinstance(step, dict) and step.get("blocks")):
+                continue
+            peer = "B" if node == "A" else "A"
+            following = rounds[index + 1 :]
+            until = next(
+                (offset for offset, later in enumerate(following) if later.get(node) is not None),
+                len(following) - 1,
+            )
+            if not any(later.get(peer) is not None for later in following[: until + 1]):
+                raise CaseFailure(
+                    f"{case.path.name}: /concurrency/rounds/{index}/{node}: a blocking step "
+                    f"needs a later step of node {peer}, no later than node {node}'s next "
+                    f"step, to release the lock it waits on"
+                )
+
+
 def _assert_error_normalization(case: Case, dialect: str) -> None:
     for statement in _error_statements(case, dialect):
         canonical = normalize(statement, dialect)
@@ -2688,36 +2719,100 @@ def _assert_classified(case: Case, db: DatabaseProvider, exc: Exception) -> None
 _CONCURRENCY_NODES = ("A", "B")
 
 
+# InnoDB refreshes its lock-wait view only once nothing read it for 100 ms, so a
+# faster poll would keep reading the view as it stood before the wait began.
+_LOCK_WAIT_POLL_SECONDS = 0.15
+_BLOCKING_STEP_BOUND_SECONDS = 10.0
+
+
+class _Choreography:
+    """Two held sessions walking the rounds together, and their blocking steps.
+
+    A barrier separates rounds, so round k completes for both nodes before round
+    k+1 begins; a node absent from a round receives ``None``. A blocking step runs
+    on a thread of its own, and its round ends once the engine reports the wait;
+    the node's next step, and the end of the choreography, wait for it to finish.
+    ``failures`` collects what the choreography itself got wrong: a blocking step
+    that never waited or never finished.
+    """
+
+    def __init__(
+        self,
+        db: DatabaseProvider,
+        rounds: Sequence[Mapping[str, Any]],
+        run_step: Callable[[str, Any, object], None],
+    ) -> None:
+        self._db = db
+        self._rounds = rounds
+        self._run_step = run_step
+        self._barrier = threading.Barrier(len(_CONCURRENCY_NODES))
+        self._polling = threading.Lock()
+        self.failures: list[str] = []
+
+    def walk(self, node: str, session: Any) -> None:
+        blocked: tuple[threading.Thread, str] | None = None
+        for index, rnd in enumerate(self._rounds):
+            step = rnd.get(node)
+            if step is not None and blocked is not None:
+                self._finish(*blocked)
+                blocked = None
+            where = f"/concurrency/rounds/{index}/{node}"
+            if isinstance(step, dict) and step.get("blocks"):
+                blocked = (self._start_blocking(node, session, step, where), where)
+            else:
+                self._run_step(node, session, step)
+            try:
+                self._barrier.wait(timeout=30)
+            except threading.BrokenBarrierError:
+                return
+        if blocked is not None:
+            self._finish(*blocked)
+
+    def _waiting(self) -> bool:
+        with self._polling:
+            return self._db.lock_waits() > 0
+
+    def _start_blocking(
+        self, node: str, session: Any, step: object, where: str
+    ) -> threading.Thread:
+        session.extend_lock_wait()
+        statement = threading.Thread(target=self._run_step, args=(node, session, step), daemon=True)
+        statement.start()
+        deadline = time.monotonic() + _BLOCKING_STEP_BOUND_SECONDS
+        while statement.is_alive() and time.monotonic() < deadline:
+            if self._waiting():
+                return statement
+            time.sleep(_LOCK_WAIT_POLL_SECONDS)
+        self.failures.append(f"{where}: the blocking step's statement never waited on a lock")
+        return statement
+
+    def _finish(self, statement: threading.Thread, where: str) -> None:
+        statement.join(timeout=_BLOCKING_STEP_BOUND_SECONDS)
+        if statement.is_alive():
+            self.failures.append(f"{where}: the blocking step's statement never finished")
+
+
 def _run_concurrency_rounds(
     case: Case,
     execution: CaseExecution,
+    db: DatabaseProvider,
     rounds: Sequence[Mapping[str, Any]],
     run_step: Callable[[str, Any, object], None],
-) -> None:
+) -> list[str]:
     """Run each node's step of every round on its own thread and held session.
 
-    A barrier separates rounds, so round k completes for both nodes before round
-    k+1 begins; a node absent from a round receives ``None``. *run_step* must not
-    raise. Both sessions are rolled back (releasing any held lock or uncommitted
-    write) before they close.
+    *run_step* must not raise. Both sessions are rolled back (releasing any held
+    lock or uncommitted write) before they close. Returns the choreography's own
+    failures (:class:`_Choreography`).
     """
-    barrier = threading.Barrier(len(_CONCURRENCY_NODES))
-
-    def run_node(node: str, session: Any) -> None:
-        for rnd in rounds:
-            run_step(node, session, rnd.get(node))
-            try:
-                barrier.wait(timeout=30)
-            except threading.BrokenBarrierError:
-                return
-
+    choreography = _Choreography(db, rounds, run_step)
     with contextlib.ExitStack() as stack:
         sessions = {
             node: stack.enter_context(execution.open_session(case.isolation))
             for node in _CONCURRENCY_NODES
         }
         threads = [
-            threading.Thread(target=run_node, args=(node, sessions[node]), daemon=True)
+            threading.Thread(target=choreography.walk, args=(node, sessions[node]), daemon=True)
             for node in _CONCURRENCY_NODES
         ]
         for thread in threads:
@@ -2727,6 +2822,12 @@ def _run_concurrency_rounds(
         for session in sessions.values():
             with contextlib.suppress(Exception):
                 session.rollback()
+    return choreography.failures
+
+
+def _assert_choreography_ran(case: Case, failures: Sequence[str]) -> None:
+    if failures:
+        raise CaseFailure(f"{case.path.name}: " + "\n".join(failures))
 
 
 def _assert_error_concurrency(case: Case, db: DatabaseProvider) -> None:
@@ -2783,7 +2884,9 @@ def _assert_error_concurrency(case: Case, db: DatabaseProvider) -> None:
             with contextlib.suppress(Exception):
                 session.rollback()  # release locks so the peer unblocks
 
-    _run_concurrency_rounds(case, execution, concurrency["rounds"], run_step)
+    _assert_choreography_ran(
+        case, _run_concurrency_rounds(case, execution, db, concurrency["rounds"], run_step)
+    )
 
     if not raised:
         raise CaseFailure(
@@ -2796,6 +2899,7 @@ def _assert_error_concurrency(case: Case, db: DatabaseProvider) -> None:
             f"{len(raised)} ({list(raised)}): {raised}"
         )
     _assert_classified(case, db, next(iter(raised.values())))
+    assert_table_state(case, db, after="the choreography")
 
 
 # --- concurrency-success cases (m-read-lock behavioral read-lock) ---------------------
@@ -2849,6 +2953,13 @@ def _assert_concurrency_success_step_kinds(case: Case) -> None:
                 raise CaseFailure(
                     f"{case.path.name}: /concurrency/rounds/{index}/{node}: a kind: read "
                     f"step must declare expectRows (its rows are graded on the held session)"
+                )
+            counts = step.get("affectedRows")
+            if counts is not None and len(counts) != len(step.get("statements", [])):
+                raise CaseFailure(
+                    f"{case.path.name}: /concurrency/rounds/{index}/{node}: affectedRows "
+                    f"states {len(counts)} counts for {len(step.get('statements', []))} "
+                    f"statements; it states one count per statement"
                 )
 
 
@@ -2910,8 +3021,11 @@ def _assert_concurrency_success(case: Case, db: DatabaseProvider) -> None:
             if failure is not None:
                 row_failures.append(failure)
 
-    _run_concurrency_rounds(case, execution, concurrency["rounds"], run_step)
+    _assert_choreography_ran(
+        case, _run_concurrency_rounds(case, execution, db, concurrency["rounds"], run_step)
+    )
     _assert_no_concurrency_failure(case, dialect, raised, row_failures)
+    assert_table_state(case, db, after="the choreography")
 
 
 def _assert_no_concurrency_failure(
@@ -2939,11 +3053,16 @@ def _concurrency_success_step(
     Returns the row mismatch a read observed, or ``None``; any raise is the node's error.
     """
     if step.get("kind") != "read":
-        # A write step (kind: write) succeeds iff no lock blocks it; it holds until
-        # the caller rolls it back.
-        for sql, binds in pairs:
-            session.execute(sql, binds)
-        return None
+        # A write step (kind: write) succeeds iff it does not raise; its writes
+        # hold until its node commits or the runner rolls them back.
+        affected = [session.execute(sql, binds) for sql, binds in pairs]
+        expected = step.get("affectedRows")
+        if expected is None or affected == expected:
+            return None
+        return (
+            f"node {node} write affected {affected} rows per statement, "
+            f"expected affectedRows {expected}"
+        )
     # A read step: fetch on the HELD session (a shared-lock SELECT takes its lock
     # here) and compare the observed rows.
     rows: list[dict[str, Any]] = []

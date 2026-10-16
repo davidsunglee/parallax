@@ -121,6 +121,13 @@ def _statement_binds(sql: str, binds: Sequence[Any]) -> tuple[Any, ...]:
     )
 
 
+_LOCK_WAITS = (
+    "select count(*) from pg_stat_activity "
+    "where datname = current_database() and wait_event_type = 'Lock'"
+)
+_EXTENDED_LOCK_TIMEOUT = "set lock_timeout = '10s'"
+
+
 def _trusted_query(sql: str) -> QueryNoTemplate:
     """Mark harness-controlled SQL as trusted for psycopg's LiteralString stubs."""
     return cast(QueryNoTemplate, sql)
@@ -319,6 +326,13 @@ class PostgresProvider:
         code = self.native_error_code(exc)
         return errors.UNKNOWN if code is None else _CODES.get(code, errors.UNKNOWN)
 
+    def lock_waits(self) -> int:
+        """How many backends of this database are waiting for a lock now."""
+        with self._conn.cursor() as cur:
+            cur.execute(_trusted_query(_LOCK_WAITS))
+            row = cur.fetchone()
+        return 0 if row is None else int(row[0])
+
     @contextmanager
     def open_session(self, isolation: str | None = None) -> Iterator[_PgTxSession]:
         """A second connection in MANUAL-commit mode, for lock contention.
@@ -413,6 +427,12 @@ class _PgTxSession:
 
     def rollback(self) -> None:
         self._conn.rollback()
+
+    def extend_lock_wait(self) -> None:
+        # A plain SET takes no snapshot, so it leaves a Repeatable Read
+        # transaction's snapshot to the statement the choreography authored.
+        with self._conn.cursor() as cur:
+            cur.execute(_trusted_query(_EXTENDED_LOCK_TIMEOUT))
 
     def close(self) -> None:
         if self._conn is not None and not self._conn.closed:

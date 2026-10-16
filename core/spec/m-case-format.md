@@ -173,12 +173,13 @@ A case is one of **eleven shapes**, named by the required top-level `shape`:
   triggered by top-level `then.statements` (single-connection `uniqueViolation`) or
   a `when.concurrency` deadlock / lock-wait choreography.
 - **`concurrencySuccess`** — a `when.concurrency` choreography with **no**
-  `then.errorClass` (`m-read-lock` behavioral read-lock — barrier-separated rounds
-  on two held sessions that assert no error is raised; every present step declares
-  an explicit `kind`, a `read` step's `expectRows` observed on its held session, a
-  `write` step asserting only that it did not block/raise, a `commit` step ending
-  that node's held transaction). Proves the shared read
-  lock is compatible with a second reader.
+  `then.errorClass` — barrier-separated rounds on two held sessions that assert
+  no error is raised; every present step declares an explicit `kind`, a `read`
+  step's `expectRows` observed on its held session, a `write` step asserting that
+  it did not raise and any `affectedRows` it states, a `commit` step ending that
+  node's held transaction. It proves the shared read lock is compatible with a
+  second reader (`m-read-lock`), and carries the two-session isolation witnesses
+  whose schedules end without an error.
 - **`boundary`** — `when.boundary` ordered actions + `then.outcome`
   (`m-auto-retry` — an `api-conformance`-lane case the harness schema-validates but
   does not execute, carrying no golden SQL).
@@ -384,7 +385,7 @@ in decimal space under any authored `tolerance`.
 | `when.writeSequence` | `when` | writeSequence | an ordered list of mutations a write case realizes: `insert` / `amend` / `terminate` (Transaction-Time-Only and Bitemporal; the plain Bitemporal writes are unbounded Valid-Time rectangle splits), `delete`, `cascadeDelete`, plus `insertUntil` / `amendUntil` / `terminateUntil` for bounded Bitemporal rectangle splits |
 | `when.scenario` | `when` | scenario | an ordered list of read / committed-write / lifecycle-**action** steps (`action` + `on`, plus `set` / `path` and the per-step lifecycle observables `expectRows` / `expectError` / `sameObjectAs` / `differentObjectFrom`, plus `expectGraph` in either of its two placements — an `access` step or an include-bearing read step), each carrying its own per-step golden `statements`; a `uow`-grouped read step MAY carry `stream`, making its own statements the pages of a streamed delivery (see *Streamed read steps*, below), and each submission of a `uow`-grouped write step MAY carry `on`, naming the read step it settles against or the insert whose value it writes through (see *Settling against a grouped find*, below) |
 | `when.coherence` | `when` | coherence | a two-node (A / B) step sequence, each step carrying its node, kind, and per-step golden `statements` |
-| `when.concurrency` | `when` | error / concurrencySuccess | a two-connection, barrier-separated `rounds` choreography; each node step carries per-step golden `statements`, except a `kind: commit` step, which carries none because what it performs is that node's own commit |
+| `when.concurrency` | `when` | error / concurrencySuccess | a two-connection, barrier-separated `rounds` choreography; each node step carries per-step golden `statements`, except a `kind: commit` step, which carries none because what it performs is that node's own commit. A statement step MAY declare `blocks`, and a `write` step MAY state `affectedRows` (see *Error cases*, below) |
 | `when.boundary` | `when` | boundary | an ordered list of portable unit-of-work actions (`read` / `create` / `amend` / `terminate` / `delete`, plus `join` — open a joined unit of work that shares the current one, the actions after it running inside that joined boundary, optionally naming any of the four transaction options — `maxRetries`, `concurrency`, `retryOptimisticConflicts`, `isolation` — THAT joining call explicitly requests) |
 | `when.edit` | `when` | edit | the native edit under test: `source.origin` is `constructed` or `read`; a constructed source carries its whole authored `value`, while a read source carries the canonical `objectQuery` that produces its containing Entity; optional `source.path` names the Value Object occurrence to edit instead of that Entity. Optional `set` maps canonical member names to complete assigned values; omitting it spells a change-free edit |
 | `when.attempts` | `when` | conflict | an ordered retry sequence of optimistic-lock `UPDATE` attempts, each carrying its own `statements` + `affectedRows` + `write` |
@@ -402,7 +403,7 @@ in decimal space under any authored `tolerance`.
 | `then.graph` | `then` | read | the assembled object graph a deep fetch must produce (one of `then.rows` / `then.graph` / `then.graphs` is REQUIRED for a read case) |
 | `then.graphs` | `then` | read | an ORDERED array of per-milestone edge-pinned graphs a `history` / `asOfRange` snapshot read materializes (see *Milestone-set graphs*, below) — each entry `{pin, graph}`; coexists with `then.graph` exactly as `then.rows` does |
 | `then.storedDataIssues` | `then` | read | the stored-data diagnoses a read publishes for the result positions whose stored state contradicted the declared model — one `{ordinal, hydrated, issues}` entry per invalid position, in result order (see *Classified stored data*, below) |
-| `then.tableState` | `then` | writeSequence | the resulting table state a writeSequence, conflict, or scenario case asserts once its writes have run, keyed by table name (REQUIRED for a writeSequence case and a state-graded scenario) |
+| `then.tableState` | `then` | writeSequence | the resulting table state a writeSequence, conflict, scenario, or `when.concurrency` case asserts once its writes have run, keyed by table name (REQUIRED for a writeSequence case and a state-graded scenario) |
 | `then.units` | `then` | state-graded scenario | each `uow` group's fate, keyed by its label: `outcome` `committed` or `rolledBack`, and for a group a flush failure ended, its `flushFailure` (see *Unit fates*, below); a golden-graded group stating none commits |
 | `then.affectedRows` | `then` | conflict | the number of rows the golden write must affect (`0` = the zero-row shortfall of a gated conflict, `1` = success) |
 | `then.errorClass` | `then` | error | the neutral `m-db-error` category a triggered error must classify to (`uniqueViolation` / `deadlock` / `lockWaitTimeout`) |
@@ -2189,6 +2190,27 @@ one whose conflict can only surface at commit, authors that moment rather than
 leaving a runner to infer it: `m-db-error-009` declares `serializable` and commits
 both nodes as its final round, and its refusal arrives as Postgres `40001` or
 MariaDB `1213` from the same authored choreography.
+
+A statement step MAY declare **`blocks: true`**: its one statement waits for a lock
+its peer holds. A barrier alone cannot author that moment, because a waiting
+statement never reaches the round's end. The runner lifts the session's lowered
+lock-wait budget for that statement, issues it, and ends the round only once the
+engine's own lock-wait view reports a transaction of the case's database
+waiting; a statement that finishes without ever being seen waiting fails the
+case. The statement finishes when a later round's peer step — typically the
+peer's commit — releases the lock, and its rows, counts, or error are graded as
+that step's own. The node's next step waits for it, so a peer step MUST come
+between the blocking step and the node's next one. This is how a schedule states
+the order a commit-time check depends on: a statement that took its view of the
+data before the peer committed, and acted after.
+
+A `write` step MAY state **`affectedRows`**, the count each of its statements
+reports, in statement order; omitted, a write step asserts only that it did not
+raise. Either shape MAY state **`then.tableState`**: the tables once both held
+sessions have ended, each node's authored commit applied and any transaction
+still open rolled back. Where engines reach different outcomes for one
+schedule — a refusal on one, a write on the other — each is its own case, whose
+goldens name only the dialect it describes.
 
 ### Boundary cases (`m-auto-retry`)
 

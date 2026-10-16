@@ -27,6 +27,8 @@ session running at.
 from __future__ import annotations
 
 import copy
+import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -192,6 +194,41 @@ def test_mariadb_restores_snapshot_isolation_after_every_attempt(provider, monke
                 session.commit()
     assert during == {"repeatable-read": [1, 1], "serializable": [0, 0]}
     assert restored == [0, 0, 0, 0]
+
+
+def test_lock_waits_reports_a_session_waiting_on_its_peers_row_lock(provider) -> None:
+    # The lock-wait view is what lets a choreography prove a blocking step waits.
+    # The waiting session lifts its budget first, so the wait outlasts the polls
+    # (InnoDB refreshes its view only after 100 ms without a reader).
+    provider.reset()
+    provider.apply_ddl(["create table gauge (id bigint primary key, v int not null)"])
+    provider.execute("insert into gauge (id, v) values (?, ?)", [1, 0])
+    finished: list[int] = []
+    with (
+        provider.open_session("read-committed") as holder,
+        provider.open_session("read-committed") as waiter,
+    ):
+        holder.execute("update gauge set v = ? where id = ?", [1, 1])
+        waiter.extend_lock_wait()
+        statement = threading.Thread(
+            target=lambda: finished.append(
+                waiter.execute("update gauge set v = ? where id = ?", [2, 1])
+            )
+        )
+        statement.start()
+        seen = []
+        for _ in range(40):
+            seen.append(provider.lock_waits())
+            if seen[-1]:
+                break
+            time.sleep(0.15)
+        holder.commit()
+        statement.join(timeout=10)
+        waiter.commit()
+    assert seen[-1] == 1
+    assert finished == [1]
+    time.sleep(0.15)
+    assert provider.lock_waits() == 0
 
 
 @pytest.mark.parametrize("case", CASES, ids=[_case_id(c) for c in CASES])

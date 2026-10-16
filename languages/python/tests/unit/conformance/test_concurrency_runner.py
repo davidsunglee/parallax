@@ -570,3 +570,254 @@ def test_run_rounds_an_already_errored_node_skips_its_own_authored_commit() -> N
     assert all(call[1] != "commit" for call in a.calls)
     assert b.calls[-1][1] == "commit"
     assert "A" not in run.rounds[1]
+
+
+def test_parse_rounds_reads_a_blocking_step_and_affected_row_counts() -> None:
+    case = _case(
+        {
+            "when": {
+                "concurrency": {
+                    "rounds": [
+                        {
+                            "B": {
+                                "kind": "write",
+                                "blocks": True,
+                                "statements": [{"sql": {"postgres": "delete from t"}}],
+                                "affectedRows": [2],
+                            }
+                        },
+                        {"A": {"kind": "write", "statements": [{"sql": {"postgres": "x"}}]}},
+                    ]
+                }
+            }
+        }
+    )
+    round0, round1 = concurrency_runner.parse_rounds(case, "postgres")
+    assert round0["B"].blocks
+    assert round0["B"].affected_rows == (2,)
+    assert not round1["A"].blocks
+    assert round1["A"].affected_rows is None
+
+
+def test_run_rounds_reports_each_write_statements_affected_rows() -> None:
+    a, b = _FakeSession(), _FakeSession()
+    peers = iter([a, b])
+    rounds = _rounds(
+        {
+            "A": ConcurrencyStep(
+                statements=(("update t set x = 1", ()), ("update t set y = 2", ())),
+                kind="write",
+                expect_rows=None,
+            )
+        }
+    )
+    run = concurrency_runner.run_rounds(rounds, lambda: next(peers))
+    assert run.rounds[0]["A"].affected == (1, 1)
+    assert run.rounds[0]["A"].waited is None
+
+
+def test_run_rounds_names_the_cells_of_a_row_a_read_expecting_none_returned() -> None:
+    a, b = _FakeSession(), _FakeSession()
+    peers = iter([a, b])
+    rounds = _rounds(
+        {"A": ConcurrencyStep(statements=(("select 1", ()),), kind="read", expect_rows=())}
+    )
+    run = concurrency_runner.run_rounds(rounds, lambda: next(peers))
+    assert run.rounds[0]["A"].rows == ({"0": 2},)
+
+
+def test_run_rounds_refuses_a_blocking_step_it_cannot_observe() -> None:
+    rounds = _rounds(
+        {
+            "A": ConcurrencyStep(
+                statements=(("update t set x = 1", ()),), kind=None, expect_rows=None, blocks=True
+            )
+        }
+    )
+    with pytest.raises(ValueError, match="lock_waits"):
+        concurrency_runner.run_rounds(rounds, lambda: _FakeSession())
+
+
+class _LockingPair:
+    """Two fake sessions sharing one row lock: A's update takes it, B's update
+    waits for it until A commits, and the wait is what ``lock_waits`` counts."""
+
+    def __init__(self) -> None:
+        self.held = threading.Event()
+        self.released = threading.Event()
+        self.waiting = 0
+        self._guard = threading.Lock()
+
+    def lock_waits(self) -> int:
+        with self._guard:
+            return self.waiting
+
+    def session(self, node: str) -> Any:
+        pair = self
+
+        class _Session:
+            dialect: Dialect = POSTGRES
+
+            def __init__(self) -> None:
+                self.calls: list[str] = []
+
+            def execute(
+                self, sql: str, binds: Sequence[Any], document_reads: Sequence[tuple[int, int]] = ()
+            ) -> list[Row]:
+                self.calls.append(sql)
+                if sql == "commit" and node == "A":
+                    pair.released.set()
+                elif sql.startswith("update") and node == "A":
+                    pair.held.set()
+                elif sql.startswith("update") and pair.held.is_set():
+                    with pair._guard:
+                        pair.waiting += 1
+                    assert pair.released.wait(timeout=5), "A never committed"
+                    with pair._guard:
+                        pair.waiting -= 1
+                return []
+
+            def execute_write(self, sql: str, binds: Sequence[Any]) -> int:
+                self.execute(sql, binds)
+                return 1
+
+            def close(self) -> None:
+                pass
+
+        return _Session()
+
+
+def test_run_rounds_ends_a_blocking_round_once_the_wait_is_seen() -> None:
+    # B's update waits on A's lock; its round ends on the observed wait, A's
+    # commit in the next round releases it, and B's commit after that runs only
+    # once the update finished. The outcome lands on the round that authored it.
+    pair = _LockingPair()
+    sessions = {"A": pair.session("A"), "B": pair.session("B")}
+    peers = iter([sessions["A"], sessions["B"]])
+    rounds = _rounds(
+        {
+            "A": ConcurrencyStep(
+                statements=(("update t set x = 1", ()),), kind="write", expect_rows=None
+            )
+        },
+        {
+            "B": ConcurrencyStep(
+                statements=(("update t set x = 2", ()),),
+                kind="write",
+                expect_rows=None,
+                blocks=True,
+            )
+        },
+        {"A": _commit()},
+        {"B": _commit()},
+    )
+    run = concurrency_runner.run_rounds(rounds, lambda: next(peers), lock_waits=pair.lock_waits)
+    assert run.rounds[1]["B"].waited is True
+    assert run.rounds[1]["B"].affected == (1,)
+    b_calls = sessions["B"].calls
+    assert b_calls[-3:] == ["set lock_timeout = '10s'", "update t set x = 2", "commit"]
+
+
+def test_run_rounds_reports_a_blocking_step_that_never_waited() -> None:
+    a, b = _FakeSession(), _FakeSession()
+    peers = iter([a, b])
+    rounds = _rounds(
+        {
+            "A": ConcurrencyStep(
+                statements=(("update t set x = 1", ()),),
+                kind="write",
+                expect_rows=None,
+                blocks=True,
+            )
+        },
+        {"B": _commit()},
+    )
+    run = concurrency_runner.run_rounds(rounds, lambda: next(peers), lock_waits=lambda: 0)
+    assert run.rounds[0]["A"].waited is False
+    assert run.rounds[0]["A"].affected == (1,)
+
+
+def test_lock_waits_on_counts_through_the_observer_session() -> None:
+    class _Observer(_FakeSession):
+        def execute(
+            self, sql: str, binds: Sequence[Any], document_reads: Sequence[tuple[int, int]] = ()
+        ) -> list[Row]:
+            self.calls.append(("execute", sql, tuple(binds)))
+            return [(3,)]
+
+    observer = _Observer()
+    assert concurrency_runner.lock_waits_on(observer)() == 3
+    (call,) = observer.calls
+    assert "pg_stat_activity" in call[1]
+    assert "wait_event_type = 'Lock'" in call[1]
+
+
+def _blocking_write(sql: str) -> ConcurrencyStep:
+    return ConcurrencyStep(statements=((sql, ()),), kind="write", expect_rows=None, blocks=True)
+
+
+def test_run_rounds_reraises_a_blocking_statements_unexpected_failure() -> None:
+    class _Broken(_FakeSession):
+        def execute_write(self, sql: str, binds: Sequence[Any]) -> int:
+            raise RuntimeError("the blocked statement's own defect")
+
+    a, b = _FakeSession(), _Broken()
+    peers = iter([a, b])
+    rounds = _rounds({"B": _blocking_write("delete from t")}, {"A": _commit()})
+    with pytest.raises(RuntimeError, match="the blocked statement's own defect"):
+        concurrency_runner.run_rounds(rounds, lambda: next(peers), lock_waits=lambda: 0)
+    assert a.closed
+    assert b.closed
+
+
+def test_run_rounds_refuses_a_blocking_statement_nothing_releases(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(concurrency_runner, "_BLOCKING_STEP_BOUND_SECONDS", 0.05)
+    release = threading.Event()
+
+    class _Stuck(_FakeSession):
+        def execute_write(self, sql: str, binds: Sequence[Any]) -> int:
+            release.wait(timeout=5)
+            return 1
+
+    a, b = _FakeSession(), _Stuck()
+    peers = iter([a, b])
+    rounds = _rounds({"B": _blocking_write("delete from t")}, {"A": _commit()})
+    try:
+        with pytest.raises(
+            RuntimeError, match="round 0: a blocking step's statement never finished"
+        ):
+            concurrency_runner.run_rounds(rounds, lambda: next(peers), lock_waits=lambda: 1)
+    finally:
+        release.set()
+
+
+def test_run_rounds_keeps_polling_until_the_wait_is_reported() -> None:
+    # The engine reports the wait only on the second look; the round must not end
+    # before it, and the statement still finishes once the peer releases it.
+    released = threading.Event()
+    looks = {"count": 0}
+
+    def lock_waits() -> int:
+        looks["count"] += 1
+        return 0 if looks["count"] == 1 else 1
+
+    class _Holder(_FakeSession):
+        def execute(
+            self, sql: str, binds: Sequence[Any], document_reads: Sequence[tuple[int, int]] = ()
+        ) -> list[Row]:
+            if sql == "commit":
+                released.set()
+            return super().execute(sql, binds, document_reads)
+
+    class _Waiter(_FakeSession):
+        def execute_write(self, sql: str, binds: Sequence[Any]) -> int:
+            assert released.wait(timeout=5), "the holder never committed"
+            return 1
+
+    peers = iter([_Holder(), _Waiter()])
+    rounds = _rounds({"B": _blocking_write("delete from t")}, {"A": _commit()})
+    run = concurrency_runner.run_rounds(rounds, lambda: next(peers), lock_waits=lock_waits)
+    assert run.rounds[0]["B"].waited is True
+    assert looks["count"] == 2
