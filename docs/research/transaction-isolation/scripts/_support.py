@@ -155,15 +155,19 @@ def emit(document: Mapping[str, object], out: Path | None) -> None:
 
 
 @contextmanager
-def provisioned(rows: Mapping[str, Sequence[Mapping[str, object]]]) -> Iterator[Any]:
-    """A pinned PostgreSQL container holding ``MODEL``'s schema and ``rows``."""
+def provisioned(
+    rows: Mapping[str, Sequence[Mapping[str, object]]], model: DomainModel = MODEL
+) -> Iterator[Any]:
+    """A pinned PostgreSQL container holding ``model``'s schema and ``rows``."""
     with profile_for("pg-full").provisioned() as run:
-        run.reset(accepted_model_of(MODEL), rows)
+        run.reset(accepted_model_of(model), rows)
         yield run
 
 
-def reset(run: Any, rows: Mapping[str, Sequence[Mapping[str, object]]]) -> None:
-    run.reset(accepted_model_of(MODEL), rows)
+def reset(
+    run: Any, rows: Mapping[str, Sequence[Mapping[str, object]]], model: DomainModel = MODEL
+) -> None:
+    run.reset(accepted_model_of(model), rows)
 
 
 def pooled(run: Any, size: int) -> Any:
@@ -174,8 +178,8 @@ def pooled(run: Any, size: int) -> Any:
 
 
 @contextmanager
-def scoped(adapter: Any) -> Iterator[ScopedDatabase]:
-    with connect(adapter, MODEL) as root:
+def scoped(adapter: Any, model: DomainModel = MODEL) -> Iterator[ScopedDatabase]:
+    with connect(adapter, model) as root:
         yield root.using_database_login()
 
 

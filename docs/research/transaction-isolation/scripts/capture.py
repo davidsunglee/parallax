@@ -79,6 +79,9 @@ STREAM_CHURN = Driver("stream_churn")
 # the checkpoints whose every arm has read-only transactions.
 STREAM_CHURN_READ_ONLY = Driver("stream_churn", options=("--read-only",))
 END_TO_END_WRITES = Driver("end_to_end_writes")
+# Standalone and read-only eager and streamed reads, for the checkpoints whose
+# every arm has read-only transactions.
+READ_RETENTION = Driver("read_retention")
 SNAPSHOT_DELIVERY = Driver(
     "snapshot_delivery",
     tool=(
@@ -130,7 +133,7 @@ CHECKPOINTS: dict[str, Checkpoint] = {
     ),
     "C5": Checkpoint(
         "standalone and read-only reads before and after evidence removal",
-        (SNAPSHOT_DELIVERY, STREAM_CHURN_READ_ONLY),
+        (SNAPSHOT_DELIVERY, STREAM_CHURN_READ_ONLY, READ_RETENTION),
     ),
     "C6": Checkpoint(
         "the C0 source versus the final design",
