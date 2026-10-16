@@ -70,6 +70,9 @@ class Driver:
 
 LOCK_SNAPSHOT_TRACE = Driver("lock_snapshot_trace")
 CONTENTION = Driver("contention")
+# The default-bound writers once per backoff candidate, for the checkpoint that
+# selects the backoff.
+CONTENTION_BACKOFF_GRID = Driver("contention", options=("--backoff-grid",))
 GUARD_WAL = Driver("guard_wal")
 STREAM_CHURN = Driver("stream_churn")
 # Writable and read-only transaction-held streams side by side in one arm, for
@@ -121,7 +124,10 @@ CHECKPOINTS: dict[str, Checkpoint] = {
         "selective versus automatic optimistic replay at Read Committed",
         (CONTENTION, LOCK_SNAPSHOT_TRACE),
     ),
-    "C4": Checkpoint("immediate replay versus bounded randomized backoff", (CONTENTION, GUARD_WAL)),
+    "C4": Checkpoint(
+        "immediate replay versus bounded randomized backoff",
+        (CONTENTION_BACKOFF_GRID, GUARD_WAL),
+    ),
     "C5": Checkpoint(
         "standalone and read-only reads before and after evidence removal",
         (SNAPSHOT_DELIVERY, STREAM_CHURN_READ_ONLY),

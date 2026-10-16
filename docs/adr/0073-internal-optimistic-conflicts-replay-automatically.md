@@ -21,7 +21,11 @@ write, whose failed precondition stays terminal because a replay restates the
 same revision.
 
 The boundary classifies an attempt's failure once, after its rollback, and the
-attempt reports that verdict while the loop acts on it.
+attempt reports that verdict while the loop acts on it. Replaying conflicts
+immediately lets contending invocations collide again, so the loop waits a
+bounded randomized delay before each re-execution, only after the failed attempt
+has released its connection. Its timing is internal policy selected from
+contention evidence rather than a public setting.
 
 This supersedes the opt-in clause of
 [ADR 0008](0008-unit-of-work-retry-is-bounded-and-automatic.md): optimistic

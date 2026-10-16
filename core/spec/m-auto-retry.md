@@ -56,7 +56,8 @@ already states, and it reaches the caller after one attempt however retriable
 its cause might look. Each attempt acquires afresh and releases before it
 finishes, so a retry runs on a connection of its own; nothing about that release
 authorizes another attempt, and an implementation MUST NOT add a wait, a
-reacquisition loop, or a broadened retriable set to accommodate it.
+reacquisition loop, or a broadened retriable set to accommodate an acquisition
+failure.
 
 Because each re-execution opens a fresh atomic scope and re-reads through the
 freshness rule, the retry re-observes the version(s) a subsequent `m-opt-lock` gate
@@ -79,6 +80,17 @@ finishing the attempt, ends the invocation instead, whatever the verdict was. A
 lifecycle handler's own failure, which `m-execution-lifecycle` quarantines,
 changes nothing. The error a caller receives after exhaustion, or after any
 terminal failure, is the failure itself with its own causal chain.
+
+## Waiting between attempts
+
+Before each re-execution the boundary **MUST** wait a **bounded randomized
+delay**, so that conflicting invocations replaying at once spread out rather than
+collide again. The wait begins only once the failed attempt has rolled back,
+released its connection, and finished reporting, so no connection or attempt is
+held while it lasts. Nothing waits before a first attempt, after the last one,
+or after a terminal failure, and a bound of `0` never waits. The delay's
+distribution and its bound are internal policy, chosen from contention evidence
+rather than offered as an option.
 
 ## Recognizing the conflict
 
