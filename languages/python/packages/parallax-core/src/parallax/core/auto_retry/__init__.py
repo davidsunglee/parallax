@@ -20,11 +20,12 @@ from parallax.core.db_error import DatabaseError
 
 __all__ = ["RetryCandidate", "check_retry_bound", "retry_eligible", "run_with_retry"]
 
-_BASE_S: Final = 0.002
-_CAP_S: Final = 0.1
-"""The full-jitter backoff's first ceiling and its bound, in seconds:
-provisional, the middle of the candidate grid the contention capture compares,
-until that capture selects measured values."""
+_BASE_S: Final = 0.008
+_CAP_S: Final = 0.025
+"""The full-jitter backoff's first ceiling and its bound, in seconds: of the
+measured candidates no worse than immediate replay in uncontended latency,
+exhaustion rate, or tail time to success, the one with the highest hot-key
+committed throughput."""
 
 _rng = random.Random()
 _sleep: Callable[[float], None] = time.sleep
