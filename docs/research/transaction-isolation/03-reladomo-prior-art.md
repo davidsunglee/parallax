@@ -308,7 +308,7 @@ treated as retriable, unless it was killed and no retries remain
 | MariaDB | vendor error code `== 40001` | vendor code `1205` (lock wait timeout) | `MariaDatabaseType.java:49-51`, `:179-187` |
 | Oracle | vendor error code `== 40001` | a specific state/code pair | `OracleDatabaseType.java:206-214` |
 | Sybase ASE | `1205` deadlock, schema change, closed connection, batch deadlock message, jTDS server close | listed states/codes | `SybaseDatabaseType.java:419-438` |
-| DB2 | `-911`, `57033`, `40001` | `-911` with reason `00C9008E` | `Udb82DatabaseType.java:34-37`, `:190-203` |
+| DB2 | `-911`, `57033`, `40001` | `-911` with reason `00C9008E`, shadowed: every `-911` is already retriable | `Udb82DatabaseType.java:34-37`, `:190-203` |
 | MS SQL | `1205` or deadlock victim | listed states/codes | `MsSqlDatabaseType.java:287-305` |
 | H2 | vendor error code `40001` | a specific state/code pair | `H2DatabaseType.java:204-212` |
 
@@ -316,6 +316,12 @@ The MariaDB and Oracle checks compare the vendor error code with `40001`, not
 the SQLSTATE. MariaDB documents a deadlock as error `1213` with SQLSTATE
 `40001`. As written, the check matches only if a driver reports `40001` as the
 vendor code. This pass did not execute that path.
+
+The DB2 timeout predicate never takes effect. Its check is a `-911` with
+reason `00C9008E`, but every `-911` already satisfies the retriable check, and
+the timed-out flag is consulted only when the retriable flag is unset
+(`MithraAbstractDatabaseObject.java:2494-2497`). A root transaction therefore
+retries a DB2 lock timeout with retry-after-timeout off.
 
 In-memory conflicts are retriable without the database:
 
@@ -432,7 +438,9 @@ Reladomo behavior. Parallax's contracts live in `core/spec/m-execution.md`,
     read lock instead of a gate.
 - **Retry eligibility.**
   - *Reladomo:* optimistic failures are retried only on request, which
-    matches Parallax's former ADR 0008. Timeouts are retried only on request.
+    matches Parallax's former ADR 0008. Timeouts are retried only on request,
+    except DB2's `-911` lock timeout, which its dialect also classifies as
+    retriable.
     Dead connections and in-memory deadlocks are retriable.
   - *Parallax:* optimistic conflicts replay automatically alongside deadlock
     and serialization failures (ADR 0073). Lock-wait timeouts are not retried.
