@@ -1,0 +1,230 @@
+{
+  "conditions": {
+    "cpython": "3.14.8",
+    "image": "postgres:18.6-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2",
+    "isolation": "repeatable_read",
+    "settings": {
+      "autovacuum": "on",
+      "deadlock_timeout": "1s",
+      "default_transaction_isolation": "read committed",
+      "lock_timeout": "0",
+      "max_connections": "100",
+      "server_version": "18.6",
+      "shared_buffers": "128MB",
+      "synchronous_commit": "on",
+      "wal_level": "replica"
+    },
+    "version": "PostgreSQL 18.6 on aarch64-unknown-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit",
+    "workload": {
+      "consumerDelayS": {
+        "fast": 0.0,
+        "slow": 0.0005
+      },
+      "memory": "tracemalloc over the whole driver process, writers and sampler included",
+      "pageSize": 500,
+      "placements": [
+        "transaction-held",
+        "read-only-held",
+        "standalone"
+      ],
+      "roots": 20000,
+      "sampleIntervalS": 0.25,
+      "writers": 2
+    }
+  },
+  "driver": "stream_churn",
+  "runs": [
+    {
+      "consumer": "fast",
+      "delay": 0.0,
+      "placement": "transaction-held",
+      "summary": {
+        "afterRelease": {
+          "deadTuples": 91,
+          "indexBytes": 466944,
+          "liveTuples": 20000,
+          "oldestXminAge": 0,
+          "relationBytes": 1212416
+        },
+        "afterVacuum": {
+          "deadTuples": 0,
+          "indexBytes": 466944,
+          "liveTuples": 20000,
+          "oldestXminAge": 0,
+          "relationBytes": 1212416
+        },
+        "clientPeakTracedBytes": 839872,
+        "firstRootS": 0.02199770900188014,
+        "oldestXminAge": {
+          "p50": 41.5,
+          "p95": 80.5,
+          "p99": 83.3
+        },
+        "readerElapsedS": 1.624582874996122,
+        "rootsDelivered": 20000,
+        "writerCommits": 93,
+        "writerThroughputPerS": 57.24546370108819
+      }
+    },
+    {
+      "consumer": "slow",
+      "delay": 0.0005,
+      "placement": "transaction-held",
+      "summary": {
+        "afterRelease": {
+          "deadTuples": 8687,
+          "indexBytes": 909312,
+          "liveTuples": 20000,
+          "oldestXminAge": 0,
+          "relationBytes": 1736704
+        },
+        "afterVacuum": {
+          "deadTuples": 0,
+          "indexBytes": 909312,
+          "liveTuples": 20000,
+          "oldestXminAge": 0,
+          "relationBytes": 1736704
+        },
+        "clientPeakTracedBytes": 984136,
+        "firstRootS": 0.02054229099303484,
+        "oldestXminAge": {
+          "p50": 4511.0,
+          "p95": 8316.4,
+          "p99": 8649.0
+        },
+        "readerElapsedS": 18.743156458018348,
+        "rootsDelivered": 20000,
+        "writerCommits": 8730,
+        "writerThroughputPerS": 465.7700008829246
+      }
+    },
+    {
+      "consumer": "fast",
+      "delay": 0.0,
+      "placement": "read-only-held",
+      "summary": {
+        "afterRelease": {
+          "deadTuples": 89,
+          "indexBytes": 466944,
+          "liveTuples": 20000,
+          "oldestXminAge": 0,
+          "relationBytes": 1212416
+        },
+        "afterVacuum": {
+          "deadTuples": 0,
+          "indexBytes": 466944,
+          "liveTuples": 20000,
+          "oldestXminAge": 0,
+          "relationBytes": 1212416
+        },
+        "clientPeakTracedBytes": 581882,
+        "firstRootS": 0.01566516701132059,
+        "oldestXminAge": {
+          "p50": 35.0,
+          "p95": 70.4,
+          "p99": 73.28
+        },
+        "readerElapsedS": 1.4151585000217892,
+        "rootsDelivered": 20000,
+        "writerCommits": 90,
+        "writerThroughputPerS": 63.59711650575838
+      }
+    },
+    {
+      "consumer": "slow",
+      "delay": 0.0005,
+      "placement": "read-only-held",
+      "summary": {
+        "afterRelease": {
+          "deadTuples": 8577,
+          "indexBytes": 909312,
+          "liveTuples": 20000,
+          "oldestXminAge": 0,
+          "relationBytes": 1736704
+        },
+        "afterVacuum": {
+          "deadTuples": 0,
+          "indexBytes": 909312,
+          "liveTuples": 20000,
+          "oldestXminAge": 0,
+          "relationBytes": 1736704
+        },
+        "clientPeakTracedBytes": 805849,
+        "firstRootS": 0.010125750006409362,
+        "oldestXminAge": {
+          "p50": 4491.0,
+          "p95": 8264.9,
+          "p99": 8590.05
+        },
+        "readerElapsedS": 18.980855083005736,
+        "rootsDelivered": 20000,
+        "writerCommits": 8671,
+        "writerThroughputPerS": 456.8287341155388
+      }
+    },
+    {
+      "consumer": "fast",
+      "delay": 0.0,
+      "placement": "standalone",
+      "summary": {
+        "afterRelease": {
+          "deadTuples": 4,
+          "indexBytes": 466944,
+          "liveTuples": 20000,
+          "oldestXminAge": 0,
+          "relationBytes": 1212416
+        },
+        "afterVacuum": {
+          "deadTuples": 0,
+          "indexBytes": 466944,
+          "liveTuples": 20000,
+          "oldestXminAge": 0,
+          "relationBytes": 1212416
+        },
+        "clientPeakTracedBytes": 620757,
+        "firstRootS": 0.016081000008853152,
+        "oldestXminAge": {
+          "p50": 0.0,
+          "p95": 0.8,
+          "p99": 0.96
+        },
+        "readerElapsedS": 1.3346712909988128,
+        "rootsDelivered": 20000,
+        "writerCommits": 102,
+        "writerThroughputPerS": 76.42331163328419
+      }
+    },
+    {
+      "consumer": "slow",
+      "delay": 0.0005,
+      "placement": "standalone",
+      "summary": {
+        "afterRelease": {
+          "deadTuples": 135,
+          "indexBytes": 466944,
+          "liveTuples": 20000,
+          "oldestXminAge": 0,
+          "relationBytes": 1261568
+        },
+        "afterVacuum": {
+          "deadTuples": 0,
+          "indexBytes": 466944,
+          "liveTuples": 20000,
+          "oldestXminAge": 0,
+          "relationBytes": 1261568
+        },
+        "clientPeakTracedBytes": 798376,
+        "firstRootS": 0.011274457996478304,
+        "oldestXminAge": {
+          "p50": 0.0,
+          "p95": 1.0,
+          "p99": 1.22
+        },
+        "readerElapsedS": 20.285584875004133,
+        "rootsDelivered": 20000,
+        "writerCommits": 9084,
+        "writerThroughputPerS": 447.8056736334623
+      }
+    }
+  ]
+}
