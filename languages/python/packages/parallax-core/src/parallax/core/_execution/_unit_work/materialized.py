@@ -206,18 +206,16 @@ class GroupStates:
 class ObservedKeyedWrite:
     """Carries verb-time evidence through planning without resolving it again.
 
-    A retained ``claim`` is spent only if this write survives to settlement.
-    ``twins`` are the distinct retained observations of the same state, other
-    than ``claim``, that writes coalesced into this one were admitted through,
-    and its completion spends them with ``claim``. An update's row is its
-    literal assignment set: the identity plus every member its producer
-    expressed, each written whatever value the source observed for it.
+    A retained ``claim`` is spent only if this write survives to settlement,
+    and a write coalesced into it was admitted through that same claim. An
+    update's row is its literal assignment set: the identity plus every member
+    its producer expressed, each written whatever value the source observed for
+    it.
     """
 
     instruction: PreparedKeyedWrite
     observation: WriteObservation
     claim: RetainedObservation | None = None
-    twins: tuple[RetainedObservation, ...] = ()
 
     def __post_init__(self) -> None:
         if self.instruction.mutation in INSERT_MUTATIONS:

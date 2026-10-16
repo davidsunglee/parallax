@@ -8,7 +8,6 @@ each bound step once.
 
 from __future__ import annotations
 
-import dataclasses
 import datetime as dt
 from collections.abc import Iterable, Sequence
 from typing import Any
@@ -56,7 +55,6 @@ from parallax.core.write_plan.keys import TemporalObjectStateKey
 from parallax.core.write_plan.plan import (
     NO_TEMPORAL_WRITE_OWNERSHIP,
     BoundRange,
-    CombinedSourceAuthority,
     DeferredRange,
     ExecutionUnit,
     Openings,
@@ -467,11 +465,3 @@ def test_a_temporal_write_holding_no_temporal_observation_is_refused_before_the_
     with pytest.raises(WritePlanningError, match="closes the current milestone"):
         _plan(item, instant=TransactionInstant(clock))
     assert clock.calls == 0
-
-
-def test_a_lone_observed_write_spends_every_twinned_observation_of_its_state() -> None:
-    claim, twin = _retained(_HEAD), _retained(_HEAD)
-    (buffered,) = compose_writes(_SPANS, [_update(claim, _MAR, _APR)])
-    assert isinstance(buffered, ObservedKeyedWrite)
-    (unit,) = _plan(dataclasses.replace(buffered, twins=(twin, claim))).units
-    assert unit.claim == CombinedSourceAuthority((claim, twin))
