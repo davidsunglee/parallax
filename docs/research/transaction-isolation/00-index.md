@@ -82,11 +82,11 @@ model change cannot move a workload.
 
 | Driver | Workload |
 |---|---|
-| `contention.py` | Hot and disjoint keyed writers, each invocation reading its account inside the attempt; `max_retries=0` first, then the default bound. With `--backoff-grid`, which C4 passes, the default bound once per `(base, cap)` candidate of the full-jitter backoff grid |
+| `contention.py` | Hot and disjoint keyed writers, each invocation reading its account inside the attempt; `max_retries=0` first, then the default bound. With `--backoff-grid`, which C4 passes, the default bound once per `(base, cap)` candidate of the full-jitter backoff grid. With `--environments`, which C7 passes, both key modes in each simulated environment, the default bound once per replay policy |
 | `stream_churn.py` | A transaction-held or standalone stream with fast or slow consumption beside writers; client memory, oldest snapshot age, dead and live tuples, relation and index size, and cleanup after release. With `--read-only`, which C1 and C5 pass, a read-only transaction-held stream as well, so one arm reports writable and read-only reads at one level |
 | `end_to_end_writes.py` | Keyed, conditional, and predicate amendments over non-temporal, Transaction-Time-Only, and bitemporal targets, each window a whole `db.transact` call with any licensing read inside it |
 | `read_retention.py` | Standalone and read-only reads, eager and streamed, Typed and Wire, of a non-temporal Column-layout account and of non-temporal, Transaction-Time-Only, and bitemporal document charters with value-object payloads; whole-read and first-root latency, traced peak and held-result bytes, and a census of the objects a held result keeps |
-| `lock_snapshot_trace.py`, `guard_wal.py` | As above, captured per arm |
+| `lock_snapshot_trace.py`, `guard_wal.py` | As above, captured per arm. With `--environments`, which C7 passes, `guard_wal.py` runs only its guard/guard replay, in each simulated environment and once per replay policy |
 | Arm tool `tools/snapshot_delivery_overhead.py` | The committed delivery instrument, run from each arm's own tree |
 
 The workloads are frozen at these digests (SHA-256). A later change to a driver
@@ -95,11 +95,11 @@ digests a capture actually ran.
 
 | File | SHA-256 |
 |---|---|
-| `scripts/_support.py` | `715a63e53923fa9a6f685f483f594b96700db184a5eaba16fea1f052919f1e87` |
-| `scripts/capture.py` | `9ba0ba4a6c55d2bf8ee56913506da6c6f761dea4f779dd2047839c7edef08e1f` |
-| `scripts/contention.py` | `91fd3a2cbccd171779f6b9c9e149aa2141cb134241ff04d327bb8d7cd1b220ce` |
+| `scripts/_support.py` | `d0594ab2e6aea9d118a0946cea2daab2c8be2d5fe2595aff1fad880ed58af64f` |
+| `scripts/capture.py` | `a0aa4b22e012995c9d9f51ecb716f668876aac0190018bc0954a3366888d2c0d` |
+| `scripts/contention.py` | `0a9f496e13cb337b573804aa1a9b2a190c2c26fa2c67e17ff5d79c4e9767cad8` |
 | `scripts/end_to_end_writes.py` | `015d7dc667a50fad1b6f63059755ee9ec82e0413352dd178684cced2b22f8963` |
-| `scripts/guard_wal.py` | `3eaed87f4999e964e1d984983134ad30942bb0f2033a22ba08d203cadefe0d79` |
+| `scripts/guard_wal.py` | `243345275cba7a3a92ec9ea43b2f359d0e1804072be8877bb8cbdcaddd1665ae` |
 | `scripts/lock_snapshot_trace.py` | `a06a14359b95c45b1e5b5b890394d7bbbff9300aac7dd215fcb260937832fc18` |
 | `scripts/predicate_in_place.py` | `9cd1a7fb74edd7aaa40f132996ea6525151032146c233a97c2bbc90cf751b810` |
 | `scripts/read_retention.py` | `225e6e4a40e60e397a347987d723600ec8475fec5218d2fa3ea1e0d3c5481bd9` |
@@ -135,6 +135,28 @@ and its p99 time to success, and an end-to-end cell's per-invocation peak and
 net bytes and its statements. `--verify` refuses a retained report that still
 holds the arrays.
 
+Portable replay backoff re-froze `_support.py`, `contention.py`,
+`guard_wal.py`, and `capture.py`, so C7 can test a backoff in environments
+slower than the local container. `_support.py` gained the simulated
+environments: `local`; `rtt-2ms`, which adds 2 ms of client-side latency to
+every round trip; and `rtt-5ms+think`, which adds 5 ms and does 10 ms of
+application work between an invocation's read and its write. The latency is
+injected in the drivers' own connection wrapper, half before each request and
+half before its answer, so the server sees statements as far apart as a remote
+client would send them. Each statement, pipeline, and ordered write batch is
+one round trip; a boundary opens with two (`BEGIN`, then the request that sets
+its level and access mode) and settles with one; and each acquisition costs
+one more, the pool's validation probe. A statement the server refuses still
+waits for its answer. Each run records the round trips its connections waited
+and their mean realized latency, and each report starts with a discarded
+warm-up run. `_support.py` also names
+the replay policies C7 compares: immediate replay, the fixed full-jitter
+windows 8/25 ms and 8/400 ms, and the arm's own duration-scaled window, each
+substituted for the arm's window per run, recording every wait's failed-attempt
+duration and window. `contention.py` and `guard_wal.py` take `--environments`,
+and `capture.py` passes it for C7 alone. Without it every driver runs the
+workload it ran before.
+
 ## Checkpoints
 
 `capture.py` owns each checkpoint's drivers. Each checkpoint runs both of its
@@ -149,6 +171,7 @@ arms in one session; no checkpoint reuses another's numbers.
 | C4 | Immediate automatic replay | Bounded randomized backoff candidates | Backoff selection |
 | C5 | Backoff's landing commit | Evidence-free reads' landing commit | Standalone and read-only eager and stream reads before and after evidence removal |
 | C6 | `7b465769` | The final design, at RC and RR | The combined change, and long transaction-stream churn |
+| C7 | The duration-scaled backoff's landing commit at RC | The same commit at RR | Immediate, fixed, and duration-scaled replay in each simulated environment; contention and guard/guard replay |
 
 A retained capture writes `captures/<checkpoint>/<arm>/`: one summary report
 per driver and a `provenance.json` naming the arm's commit, isolation, and lock

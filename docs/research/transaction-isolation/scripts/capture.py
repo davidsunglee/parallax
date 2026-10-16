@@ -186,6 +186,11 @@ CONTENTION = Driver("contention", _reduce_contention)
 # selects the backoff.
 CONTENTION_BACKOFF_GRID = Driver("contention", _reduce_contention, options=("--backoff-grid",))
 GUARD_WAL = Driver("guard_wal", _reduce_guard_wal)
+# The writers and the guard/guard replay alone, in every simulated environment,
+# the default bound once per replay policy, for the checkpoint that tests
+# whether the backoff carries across environments.
+CONTENTION_ENVIRONMENTS = Driver("contention", _reduce_contention, options=("--environments",))
+GUARD_REPLAY_ENVIRONMENTS = Driver("guard_wal", _reduce_guard_wal, options=("--environments",))
 STREAM_CHURN = Driver("stream_churn", _reduce_stream_churn)
 # Writable and read-only transaction-held streams side by side in one arm, for
 # the checkpoints whose every arm has read-only transactions.
@@ -225,6 +230,7 @@ class Checkpoint:
 
 
 C0_SOURCE = "7b465769dc87521c758a06d3d1fbfe3f55edba92"
+C7_SOURCE = "0581fd3959c3a1996edad08f8141f7dc7d36c851"
 CHECKPOINTS: dict[str, Checkpoint] = {
     "C0": Checkpoint(
         "current behavior at explicit Read Committed and Repeatable Read, and the "
@@ -258,6 +264,11 @@ CHECKPOINTS: dict[str, Checkpoint] = {
             END_TO_END_WRITES,
             SNAPSHOT_DELIVERY,
         ),
+    ),
+    "C7": Checkpoint(
+        "fixed versus duration-scaled replay backoff across simulated environments",
+        (CONTENTION_ENVIRONMENTS, GUARD_REPLAY_ENVIRONMENTS),
+        (f"{C7_SOURCE}@read_committed", f"{C7_SOURCE}@repeatable_read"),
     ),
 }
 
