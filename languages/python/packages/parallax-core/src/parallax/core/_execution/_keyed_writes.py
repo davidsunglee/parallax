@@ -123,9 +123,11 @@ answers over the values a READ produced, so this answer alone never settles
 whether a row exists for a write to address; the unit of work's admitted
 insertions do, and :func:`validate_provenance` takes that answer as its own
 argument. Deriving the answer
-is the REPRESENTATION's job — a Typed value carries a lifecycle to read it from
-and a Wire source carries Read Evidence — so this is a fact a caller states
-rather than a value this module inspects."""
+is the REPRESENTATION's job — a Typed value carries a lifecycle to read it from,
+and a Wire node the stored Entity a read published it under or the authority of
+the insert that opened it — so this is a fact a caller states rather than a
+value this module inspects. Read Evidence never decides it: a read can publish
+a value without leaving any."""
 
 
 type WriteRepresentation = Literal["typed", "wire"]
@@ -145,11 +147,10 @@ _ALREADY_STORED_ADVICE: Final[Mapping[WriteRepresentation, str]] = {
 }
 """How each interface spells the verb that accepts a value already stored.
 
-Only this refusal is reachable from both representations. The other two — a
-value no managed source published, and one another lifecycle published — arise on the
-source-backed door alone, and a Wire keyed source answers neither: a hintless
-argument is refused as no source at all before provenance is asked, so every
-source that reaches the question is a node this store published."""
+A Wire keyed source never earns the foreign-lifecycle refusal: a node is a
+source only by the stored Entity a read published it under or by the authority
+of the insert that opened it, and anything carrying neither is refused as no
+source at all before provenance is asked."""
 
 _REPEATED_INSERT_ADVICE: Final[Mapping[WriteRepresentation, str]] = {
     "typed": (
@@ -318,9 +319,10 @@ class ResolvedKeyedWriteSource:
     derived — so a value whose class can key no row reaches the provenance
     refusal that is the honest complaint about it, rather than a codec failure.
 
-    ``pin`` and ``read_evidence`` are the source's own, never derived: a source
-    without read evidence is one no read of a writable attempt published, and a
-    source pinned at a finite Transaction-Time instant is read-only whatever
+    ``pin`` and ``read_evidence`` are the source's own, never derived. Read
+    evidence is optional beside ``provenance``: a read outside a writable
+    attempt and a milestone-set read both publish a source that carries none.
+    A source pinned at a finite Transaction-Time instant is read-only whatever
     else is true of it.
 
     ``representation`` is which interface stated the write, and is here for the
