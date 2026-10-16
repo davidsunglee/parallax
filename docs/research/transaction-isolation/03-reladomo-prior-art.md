@@ -1,6 +1,6 @@
 ---
 date: 2026-10-16
-git_commit: 8886e730c2f97b54f72bd6b9dce516aec1d36126
+git_commit: b04687c3ffda598a87b6207c41dcc47260f1fd53
 topic: "Reladomo prior art for transaction isolation, read participation, write gates, streaming and cache, and retry timing"
 type: research
 tags: [research, reladomo, isolation, read-only, participation, retry, backoff, streaming]

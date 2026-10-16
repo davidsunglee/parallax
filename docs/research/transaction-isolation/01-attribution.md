@@ -1,6 +1,6 @@
 ---
 date: 2026-10-16
-git_commit: 649d6abb5876f240eeb59a6dfed7b85e46b18455
+git_commit: 64b662d9198d349bf92e2a15cf939eb962935cba
 topic: "Per-change attribution of the transaction execution changes across checkpoints C0–C6"
 type: research
 tags: [research, isolation, repeatable-read, read-committed, postgres, retry, backoff, read-evidence, benchmark]
@@ -10,8 +10,10 @@ status: complete
 # Transaction Execution Attribution, C0–C6
 
 This note attributes each measured change to the checkpoint that isolates it.
-Every number below is read from the raw JSON under [`captures/`](captures/).
-Each section links the files it uses. [`00-index.md`](00-index.md) owns the
+Every number below is read from the capture reports under
+[`captures/`](captures/), or was read from the full reports archived outside
+git ([`00-index.md`](00-index.md#raw-reports-and-rewritten-commits)) and is
+now kept in a retained summary. Each section links the files it uses. [`00-index.md`](00-index.md) owns the
 drivers, their digests, and the checkpoint arms. The isolation-default
 question is treated separately in
 [`02-isolation-recommendation.md`](02-isolation-recommendation.md).
@@ -55,7 +57,8 @@ question is treated separately in
 - **p99 time to success.** This scores an exhausted invocation as unbounded
   latency. It takes the nearest-rank 99th percentile (rank 1,584 of 1,600), so
   it is finite only when 16 or fewer invocations fail. The backoff selection
-  rule uses this figure.
+  rule uses this figure. Each run's summary records it as `p99ToSuccessMs`,
+  `null` when unbounded.
 - **Snapshot horizon and dead tuples.** The oldest-snapshot age is
   `age(backend_xmin)`, counted in transaction IDs, not time. Dead tuples are
   superseded MVCC versions of the non-temporal `account` table, not temporal
@@ -291,7 +294,7 @@ has released its connection.
     disjoint and exhaustion criteria.
   - 8/25 ms has the highest throughput of the nine, so it is selected whether
     or not the three 0.5 ms candidates, whose p99 is also unbounded, count as
-    ties. It landed in `8886e730c`.
+    ties. It landed in `b04687c3f`.
 - **The p99 criterion is fragile near 1% exhaustion.** The selected
   candidate's exhaustion was 0.88% here (14 failures). In C6 the same
   constants exhausted 1.12% at RC (18) and 0.94% at RR (15). The nearest-rank
@@ -358,18 +361,18 @@ four subjects.
 
 ## C6: the C0 source versus the final design
 
-Arms: `7b465769` and `8886e730c`, the selected backoff's landing commit, each
-at RC and at RR
+Arms: `7b465769` and `b04687c3f`, the selected backoff's landing commit,
+captured as `8886e730c` with an identical code tree, each at RC and at RR
 ([`7b465769` RC](captures/C6/7b465769dc87-read_committed/provenance.json),
 [`7b465769` RR](captures/C6/7b465769dc87-repeatable_read/provenance.json),
-[`8886e730c` RC](captures/C6/8886e730c2f9-read_committed/provenance.json),
-[`8886e730c` RR](captures/C6/8886e730c2f9-repeatable_read/provenance.json)).
+[`b04687c3f` RC](captures/C6/8886e730c2f9-read_committed/provenance.json),
+[`b04687c3f` RR](captures/C6/8886e730c2f9-repeatable_read/provenance.json)).
 
 **Noise caveat.** Outside load slowed two sets of RC runs.
 
 - The `7b465769` RC arm's first three contention runs ran at 236/s hot
   zero-retry, against 414/s in C0, and at 6.8 ms disjoint p50.
-- The `8886e730c` RC arm's disjoint runs had p50s of 5.1 and 4.7 ms.
+- The `b04687c3f` RC arm's disjoint runs had p50s of 5.1 and 4.7 ms.
 
 C6's RC throughput and latency deltas are therefore unreliable. Attribute RC
 throughput from C3 and C4 instead. Use C6 for completion, exhaustion,
@@ -379,10 +382,10 @@ show no such disturbance.
 **Contention**
 ([`7b465769` RC](captures/C6/7b465769dc87-read_committed/contention.json),
 [`7b465769` RR](captures/C6/7b465769dc87-repeatable_read/contention.json),
-[`8886e730c` RC](captures/C6/8886e730c2f9-read_committed/contention.json),
-[`8886e730c` RR](captures/C6/8886e730c2f9-repeatable_read/contention.json)):
+[`b04687c3f` RC](captures/C6/8886e730c2f9-read_committed/contention.json),
+[`b04687c3f` RR](captures/C6/8886e730c2f9-repeatable_read/contention.json)):
 
-| Hot key | RC `7b465769` | RC `8886e730c` | RR `7b465769` | RR `8886e730c` |
+| Hot key | RC `7b465769` | RC `b04687c3f` | RR `7b465769` | RR `b04687c3f` |
 |---|---|---|---|---|
 | Completion, `max_retries=0` | 0.209 | 0.213 | 0.239 | 0.239 |
 | Completion, default bound | 0.204 | 0.989 | 0.928 | 0.991 |
@@ -400,9 +403,9 @@ show no such disturbance.
 
 **Traces**
 ([`7b465769` RC](captures/C6/7b465769dc87-read_committed/lock_snapshot_trace.json),
-[`8886e730c` RC](captures/C6/8886e730c2f9-read_committed/lock_snapshot_trace.json),
+[`b04687c3f` RC](captures/C6/8886e730c2f9-read_committed/lock_snapshot_trace.json),
 [`7b465769` RR](captures/C6/7b465769dc87-repeatable_read/lock_snapshot_trace.json),
-[`8886e730c` RR](captures/C6/8886e730c2f9-repeatable_read/lock_snapshot_trace.json)):
+[`b04687c3f` RR](captures/C6/8886e730c2f9-repeatable_read/lock_snapshot_trace.json)):
 
 - The RC gate race now commits on attempt 2 at the default bound.
 - Every other schedule is unchanged at each level, as tabulated in C0. That
@@ -411,7 +414,7 @@ show no such disturbance.
 
 **Guard replay at RR**
 ([`7b465769`](captures/C6/7b465769dc87-repeatable_read/guard_wal.json),
-[`8886e730c`](captures/C6/8886e730c2f9-repeatable_read/guard_wal.json)):
+[`b04687c3f`](captures/C6/8886e730c2f9-repeatable_read/guard_wal.json)):
 
 - At the default bound, commits rise from 382 to 400 of 400. Attempts per
   success fall from 1.52 to 1.06, and p99 from 13.9 to 1.9 ms.
@@ -420,12 +423,12 @@ show no such disturbance.
 
 **Stream churn**
 ([`7b465769` RC](captures/C6/7b465769dc87-read_committed/stream_churn.json),
-[`8886e730c` RC](captures/C6/8886e730c2f9-read_committed/stream_churn.json),
+[`b04687c3f` RC](captures/C6/8886e730c2f9-read_committed/stream_churn.json),
 [`7b465769` RR](captures/C6/7b465769dc87-repeatable_read/stream_churn.json),
-[`8886e730c` RR](captures/C6/8886e730c2f9-repeatable_read/stream_churn.json)):
+[`b04687c3f` RR](captures/C6/8886e730c2f9-repeatable_read/stream_churn.json)):
 
 - The RR slow transaction-held stream still holds back cleanup:
-  - oldest snapshot age p50 4,425 at `7b465769` and 3,818 at `8886e730c`;
+  - oldest snapshot age p50 4,425 at `7b465769` and 3,818 at `b04687c3f`;
   - 8,605 and 7,742 dead tuples at release;
   - a relation of 1,696 and 1,648 KiB and an 888 KiB index.
 - RC stays at about 100 snapshot age, 257–260 dead tuples, and a 1,248 KiB
@@ -436,9 +439,9 @@ show no such disturbance.
 
 **End-to-end writes**
 ([`7b465769` RC](captures/C6/7b465769dc87-read_committed/end_to_end_writes.json),
-[`8886e730c` RC](captures/C6/8886e730c2f9-read_committed/end_to_end_writes.json),
+[`b04687c3f` RC](captures/C6/8886e730c2f9-read_committed/end_to_end_writes.json),
 [`7b465769` RR](captures/C6/7b465769dc87-repeatable_read/end_to_end_writes.json),
-[`8886e730c` RR](captures/C6/8886e730c2f9-repeatable_read/end_to_end_writes.json)):
+[`b04687c3f` RR](captures/C6/8886e730c2f9-repeatable_read/end_to_end_writes.json)):
 
 - Statements per invocation are unchanged.
 - The median traced peak per invocation rose by 1.1–1.2 KB on every workflow
@@ -450,7 +453,7 @@ show no such disturbance.
 
 **Delivery instrument** on CPython 3.14
 ([`7b465769` RC](captures/C6/7b465769dc87-read_committed/snapshot_delivery.json),
-[`8886e730c` RC](captures/C6/8886e730c2f9-read_committed/snapshot_delivery.json)):
+[`b04687c3f` RC](captures/C6/8886e730c2f9-read_committed/snapshot_delivery.json)):
 
 - Eager retained memory falls 21%, 40%, and 56%, and eager peak 11%, 23%, and
   36%, for conventional fan-out, the versioned document, and bitemporal
