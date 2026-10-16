@@ -13,6 +13,12 @@ it, which include whatever the server wrote meanwhile.
 The replay section has two writers repeatedly guarding the same balance; at
 Repeatable Read their physical rewrites refuse each other although no value
 changes, so attempts per committed invocation measure the guard's replay cost.
+
+With ``--environments`` only the replay section runs, in every simulated
+environment of ``_support.ENVIRONMENTS``, with the application work between
+each read and its amendment, and its default-bound run repeats once per
+replay policy of ``_support.REPLAY_POLICIES``, as ``contention.py`` runs them,
+after a discarded warm-up run.
 """
 
 import threading
@@ -21,16 +27,24 @@ from decimal import Decimal
 from typing import Any
 
 from _support import (
+    ENVIRONMENTS,
+    REPLAY_POLICIES,
+    WARM_UP_INVOCATIONS,
     Balance,
+    Waits,
     arguments,
     conditions,
+    delayed,
     emit,
+    environment_conditions,
     failure,
     fixtures,
     observer,
+    pause,
     percentiles,
     pooled,
     provisioned,
+    replay_policy,
     reset,
     scalar,
     scoped,
@@ -84,7 +98,12 @@ def wal_mode(db: Any, control: Any, keys: int, mode: str, isolation: str) -> dic
 
 
 def guard_replay(
-    db: Any, writers: int, invocations: int, isolation: str, retries: int | None
+    db: Any,
+    writers: int,
+    invocations: int,
+    isolation: str,
+    retries: int | None,
+    think_s: float = 0.0,
 ) -> dict[str, object]:
     samples: list[dict[str, object]] = []
     lock = threading.Lock()
@@ -98,6 +117,8 @@ def guard_replay(
             def body(tx: Any, calls: dict[str, int] = calls) -> None:
                 calls["attempts"] += 1
                 current = tx.find(Balance.where(Balance.id == 1)).result()
+                if think_s:
+                    pause(think_s)
                 tx.amend(current.edit(value=current.value))
 
             options: dict[str, object] = {"isolation": isolation}
@@ -142,21 +163,63 @@ def guard_replay(
     }
 
 
+def environment_replays(
+    run: Any, rows: Any, writers: int, invocations: int, isolation: str
+) -> list[dict[str, object]]:
+    """The guard/guard replay in every environment: at ``max_retries=0`` once,
+    then at the default bound once per replay policy."""
+    replay: list[dict[str, object]] = []
+    reset(run, rows)
+    with scoped(pooled(run, writers)) as db:
+        guard_replay(db, writers, WARM_UP_INVOCATIONS, isolation, None)
+    for environment in ENVIRONMENTS:
+        adapter, latency = delayed(pooled(run, writers), environment)
+        for retries in (0, None):
+            for policy in ["scaled"] if retries == 0 else list(REPLAY_POLICIES):
+                reset(run, rows)
+                waits = Waits()
+                latency.take()
+                with scoped(adapter) as db, replay_policy(policy, waits):
+                    measured = guard_replay(
+                        db, writers, invocations, isolation, retries, environment.think_s
+                    )
+                measured.update(
+                    {
+                        "environment": environment.name,
+                        "backoff": policy,
+                        "latency": latency.take(),
+                        "replayWaits": waits.take(),
+                    }
+                )
+                replay.append(measured)
+    return replay
+
+
 def main() -> None:
-    args = arguments(__doc__ or "")
+    def extra(parser: Any) -> None:
+        parser.add_argument(
+            "--environments",
+            action="store_true",
+            help="run only the replay, in every simulated environment and replay policy",
+        )
+
+    args = arguments(__doc__ or "", extra=extra)
     keys, writers, invocations = (3, 2, 3) if args.smoke else (200, 2, 200)
     rows = fixtures(balance_rows=keys)
     with provisioned(rows) as run, observer(run) as control:
-        adapter = pooled(run, writers)
         wal: list[dict[str, object]] = []
         replay: list[dict[str, object]] = []
-        with scoped(adapter) as db:
-            for mode in WAL_MODES:
-                reset(run, rows)
-                wal.append(wal_mode(db, control, keys, mode, args.isolation))
-            for retries in (0, None):
-                reset(run, rows)
-                replay.append(guard_replay(db, writers, invocations, args.isolation, retries))
+        if args.environments:
+            replay = environment_replays(run, rows, writers, invocations, args.isolation)
+        else:
+            adapter = pooled(run, writers)
+            with scoped(adapter) as db:
+                for mode in WAL_MODES:
+                    reset(run, rows)
+                    wal.append(wal_mode(db, control, keys, mode, args.isolation))
+                for retries in (0, None):
+                    reset(run, rows)
+                    replay.append(guard_replay(db, writers, invocations, args.isolation, retries))
         report = {
             "driver": "guard_wal",
             "conditions": conditions(
@@ -165,6 +228,7 @@ def main() -> None:
                 balances=keys,
                 writers=writers,
                 invocationsPerWriter=invocations,
+                **(environment_conditions() if args.environments else {}),
             ),
             "wal": wal,
             "replay": replay,

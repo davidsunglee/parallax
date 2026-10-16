@@ -17,6 +17,7 @@ import threading
 import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import closing, contextmanager
+from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -261,6 +262,260 @@ def recorded(adapter: Any) -> tuple[Any, Recording]:
     return DecoratingAdapter(
         adapter, lambda inner: _RecordingConnection(inner, recording)
     ), recording
+
+
+# ------------------------------------------------------------- environments
+
+
+@dataclass(frozen=True, slots=True)
+class Environment:
+    """A deployment the local database stands in for: latency the client adds
+    to each round trip it makes, and application work an attempt does between
+    its read and its write."""
+
+    name: str
+    round_trip_s: float = 0.0
+    think_s: float = 0.0
+
+    def describe(self) -> dict[str, object]:
+        return {
+            "name": self.name,
+            "roundTripMs": self.round_trip_s * 1000,
+            "thinkMs": self.think_s * 1000,
+        }
+
+
+ENVIRONMENTS = (
+    Environment("local"),
+    Environment("rtt-2ms", round_trip_s=0.002),
+    Environment("rtt-5ms+think", round_trip_s=0.005, think_s=0.010),
+)
+
+
+def pause(seconds: float) -> None:
+    """Sleep ``seconds`` to within about 50 µs. A plain sleep of a few
+    milliseconds overruns by about a quarter on macOS, so this sleeps most of
+    what remains until the deadline passes."""
+    deadline = time.perf_counter() + seconds
+    while (remaining := deadline - time.perf_counter()) > 0.00005:
+        time.sleep(remaining * 0.75)
+
+
+class Latency:
+    """Half-round-trip legs the delayed connections waited, and how long."""
+
+    def __init__(self, round_trip_s: float) -> None:
+        self._leg_s = round_trip_s / 2
+        self._lock = threading.Lock()
+        self._legs = 0
+        self._slept_s = 0.0
+
+    def legs(self, count: int = 1) -> None:
+        started = time.perf_counter()
+        pause(self._leg_s * count)
+        slept = time.perf_counter() - started
+        with self._lock:
+            self._legs += count
+            self._slept_s += slept
+
+    @contextmanager
+    def round_trip(self) -> Iterator[None]:
+        """A request and its answer, which arrives whether the statement
+        succeeded or the server refused it."""
+        self.legs()
+        try:
+            yield
+        finally:
+            self.legs()
+
+    def take(self) -> dict[str, object]:
+        with self._lock:
+            legs, slept, self._legs, self._slept_s = self._legs, self._slept_s, 0, 0.0
+        trips = legs / 2
+        return {"roundTrips": trips, "meanRoundTripMs": slept / trips * 1000 if trips else None}
+
+
+class _DelayedConnection:
+    """The connection one acquisition yields, with every round trip it makes
+    delayed: half before the request reaches the server and half before the
+    answer reaches the client, so the server sees statements as far apart as
+    a remote client would send them.
+
+    Each statement, pipeline, and ordered write batch is one round trip. A
+    boundary opens with ``BEGIN`` and, where a level or access mode is asked
+    for, the request that sets them, and settles with one ``COMMIT`` or
+    ``ROLLBACK``."""
+
+    def __init__(self, inner: Any, latency: Latency) -> None:
+        self._inner = inner
+        self._latency = latency
+        transport = inner.ordered_write_transport
+        self._transport = None if transport is None else self._delayed_transport(transport)
+
+    def _delayed_transport(
+        self, transport: Callable[[Sequence[Any]], Any]
+    ) -> Callable[[Sequence[Any]], Any]:
+        def send(statements: Sequence[Any]) -> Any:
+            with self._latency.round_trip():
+                return transport(statements)
+
+        return send
+
+    @property
+    def dialect(self) -> Any:
+        return self._inner.dialect
+
+    @property
+    def ordered_write_transport(self) -> Any:
+        return self._transport
+
+    def execute(self, sql: str, binds: Sequence[Any], document_reads: Sequence[Any] = ()) -> Any:
+        with self._latency.round_trip():
+            return self._inner.execute(sql, binds, document_reads)
+
+    def execute_pipeline(self, statements: Sequence[Any]) -> Any:
+        with self._latency.round_trip():
+            return self._inner.execute_pipeline(statements)
+
+    def execute_write(self, sql: str, binds: Sequence[Any]) -> int:
+        with self._latency.round_trip():
+            return self._inner.execute_write(sql, binds)
+
+    def transaction(self, body: Callable[[Any], Any], **options: Any) -> Any:
+        opening = 1 + bool(options.get("isolation") or options.get("access_mode"))
+        # Every leg of the opening trips but the last answer, which arrives
+        # once the boundary has opened.
+        self._latency.legs(2 * opening - 1)
+
+        def delayed(_connection: Any) -> Any:
+            self._latency.legs()
+            try:
+                value = body(self)
+            except BaseException:
+                self._latency.legs()  # the ROLLBACK's request
+                raise
+            self._latency.legs()  # the COMMIT's request
+            return value
+
+        try:
+            return self._inner.transaction(delayed, **options)
+        finally:
+            self._latency.legs()  # the settling statement's answer
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+
+def delayed(adapter: Any, environment: Environment) -> tuple[Any, Latency]:
+    """``adapter`` as ``environment`` would reach it. The pool validates each
+    connection it hands out with a round trip of its own, so every acquisition
+    waits one round trip too."""
+    latency = Latency(environment.round_trip_s)
+    if not environment.round_trip_s:
+        return adapter, latency
+
+    def decorate(inner: Any) -> Any:
+        latency.legs(2)
+        return _DelayedConnection(inner, latency)
+
+    return DecoratingAdapter(adapter, decorate), latency
+
+
+# ---------------------------------------------------------------- backoffs
+
+# The replay policies a portability checkpoint compares in every environment,
+# each substituted for the arm's own window: no wait, the fixed full-jitter
+# windows `min(cap, base * 2**(attempt - 1))` as (base, cap) in seconds, and the
+# arm's own window scaled by the failed attempt's duration.
+REPLAY_POLICIES: dict[str, tuple[float, float] | None] = {
+    "immediate": (0.0, 0.0),
+    "fixed-8/25": (0.008, 0.025),
+    "fixed-8/400": (0.008, 0.4),
+    "scaled": None,
+}
+
+
+def scaled_policy() -> dict[str, float] | None:
+    """The arm's own duration-scaled window constants, or ``None`` for an arm
+    whose replay window does not scale."""
+    from parallax.core import auto_retry
+
+    names = {
+        "floorFirstS": "_FLOOR_FIRST_S",
+        "floorLimitS": "_FLOOR_LIMIT_S",
+        "scaleFirst": "_SCALE_FIRST",
+        "scaleLimit": "_SCALE_LIMIT",
+        "ceilingS": "_CEILING_S",
+    }
+    if not hasattr(auto_retry, "_window"):
+        return None
+    return {key: getattr(auto_retry, name) for key, name in names.items()}
+
+
+# Discarded invocations per writer before the first measured run of an
+# ``--environments`` report, so a freshly started database and process are not
+# what that run measures.
+WARM_UP_INVOCATIONS = 50
+
+
+def environment_conditions() -> dict[str, object]:
+    """The environments and replay policies a ``--environments`` report ran."""
+    return {
+        "warmUpInvocationsPerWriter": WARM_UP_INVOCATIONS,
+        "environments": [environment.describe() for environment in ENVIRONMENTS],
+        "replayPolicies": {
+            name: "the arm's own" if fixed is None else list(fixed)
+            for name, fixed in REPLAY_POLICIES.items()
+        },
+        "scaledPolicy": scaled_policy(),
+    }
+
+
+class Waits:
+    """Each replay wait's failed-attempt duration and window, as the arm's loop
+    computed them."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._waits: list[tuple[float, float]] = []
+
+    def record(self, elapsed: float, window: float) -> None:
+        with self._lock:
+            self._waits.append((elapsed, window))
+
+    def take(self) -> dict[str, object]:
+        with self._lock:
+            waits, self._waits = self._waits, []
+        return {
+            "waits": len(waits),
+            "failedAttemptMs": percentiles([elapsed * 1000 for elapsed, _ in waits]),
+            "windowMs": percentiles([window * 1000 for _, window in waits]),
+        }
+
+
+@contextmanager
+def replay_policy(name: str, waits: Waits) -> Iterator[None]:
+    """Run with the replay policy ``name`` in place of the arm's own window,
+    recording every wait into ``waits``."""
+    from parallax.core import auto_retry
+
+    own = auto_retry._window
+    fixed = REPLAY_POLICIES[name]
+
+    def window(attempt: int, elapsed: float) -> float:
+        if fixed is None:
+            chosen = own(attempt, elapsed)
+        else:
+            base, cap = fixed
+            chosen = min(cap, base * 2 ** min(attempt - 1, 32))
+        waits.record(elapsed, chosen)
+        return chosen
+
+    auto_retry._window = window
+    try:
+        yield
+    finally:
+        auto_retry._window = own
 
 
 # ---------------------------------------------------------------- observing

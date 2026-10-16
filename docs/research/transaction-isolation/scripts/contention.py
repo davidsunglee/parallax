@@ -12,6 +12,15 @@ full-jitter backoff grid below, each with the arm's internal base and cap
 substituted for the run. An arm without that backoff replays immediately and
 runs the default bound once. Every run records the backoff it measured.
 
+With ``--environments`` both key modes run in every simulated environment of
+``_support.ENVIRONMENTS``: client-side latency on each round trip, and
+application work between an invocation's read and its amendment. There the
+default-bound runs repeat once per replay policy of
+``_support.REPLAY_POLICIES``, each substituted for the arm's own
+duration-scaled window, and each run records the latency its connections
+actually added and every replay wait's failed-attempt duration and window.
+A discarded hot-key run warms the database and the process first.
+
 The report keeps one sample per invocation and summarizes completion,
 surfaced failures, latency percentiles, committed throughput, and attempts per
 committed invocation.
@@ -26,17 +35,27 @@ from decimal import Decimal
 from typing import Any
 
 from _support import (
+    ENVIRONMENTS,
+    REPLAY_POLICIES,
+    WARM_UP_INVOCATIONS,
     Account,
+    Environment,
+    Waits,
     arguments,
     conditions,
+    delayed,
     emit,
+    environment_conditions,
     failure,
     fixtures,
     observer,
+    pause,
     percentiles,
     pooled,
     provisioned,
+    replay_policy,
     reset,
+    scaled_policy,
     scoped,
 )
 
@@ -51,14 +70,20 @@ BACKOFF_CAPS_S = (0.025, 0.1, 0.4)
 BACKOFF_GRID = tuple((base, cap) for base in BACKOFF_BASES_S for cap in BACKOFF_CAPS_S)
 
 
-def arm_backoff() -> dict[str, float] | None:
-    """The arm's own backoff base and cap, or ``None`` for an arm that replays
-    immediately."""
+def fixed_backoff() -> dict[str, float] | None:
+    """The arm's own fixed backoff base and cap, or ``None`` for an arm without
+    them."""
     from parallax.core import auto_retry
 
     base = getattr(auto_retry, "_BASE_S", None)
     cap = getattr(auto_retry, "_CAP_S", None)
     return None if base is None or cap is None else {"baseS": base, "capS": cap}
+
+
+def arm_backoff() -> dict[str, float] | None:
+    """The arm's own backoff, fixed or duration-scaled, or ``None`` for an arm
+    that replays immediately."""
+    return fixed_backoff() or scaled_policy()
 
 
 @contextmanager
@@ -76,16 +101,20 @@ def backoff(candidate: tuple[float, float]) -> Iterator[None]:
 
 def default_bound_backoffs(grid: bool) -> list[tuple[float, float] | None]:
     """The backoffs the default-bound runs measure: every grid candidate where
-    asked and the arm has a backoff to substitute, else the arm's own."""
-    return list(BACKOFF_GRID) if grid and arm_backoff() is not None else [None]
+    asked and the arm has a fixed backoff to substitute, else the arm's own."""
+    return list(BACKOFF_GRID) if grid and fixed_backoff() is not None else [None]
 
 
-def _invoke(db: Any, key: int, isolation: str, retries: int | None) -> dict[str, object]:
+def _invoke(
+    db: Any, key: int, isolation: str, retries: int | None, think_s: float = 0.0
+) -> dict[str, object]:
     calls = {"attempts": 0}
 
     def body(tx: Any) -> None:
         calls["attempts"] += 1
         current = tx.find(Account.where(Account.id == key)).result()
+        if think_s:
+            pause(think_s)
         tx.amend(current.edit(balance=current.balance + Decimal("1.00")))
 
     options: dict[str, object] = {"isolation": isolation}
@@ -112,6 +141,7 @@ def run_mode(
     retries: int | None,
     isolation: str,
     candidate: tuple[float, float] | None = None,
+    think_s: float = 0.0,
 ) -> dict[str, object]:
     samples: list[dict[str, object]] = []
     lock = threading.Lock()
@@ -121,7 +151,7 @@ def run_mode(
         key = 1 if keys == "hot" else index + 1
         ready.wait()
         for _ in range(invocations):
-            sample = _invoke(db, key, isolation, retries)
+            sample = _invoke(db, key, isolation, retries, think_s)
             sample["worker"] = index
             with lock:
                 samples.append(sample)
@@ -147,6 +177,46 @@ def run_mode(
         "summary": summarize(samples, elapsed),
         "samples": samples,
     }
+
+
+def environment_runs(
+    run: Any,
+    rows: Any,
+    workers: int,
+    invocations: int,
+    isolation: str,
+    environment: Environment,
+) -> list[dict[str, object]]:
+    """Both key modes in ``environment``: at ``max_retries=0`` once, then at the
+    default bound once per replay policy."""
+    adapter, latency = delayed(pooled(run, workers), environment)
+    runs: list[dict[str, object]] = []
+    for retries in RETRY_MODES:
+        for policy in ["scaled"] if retries == 0 else list(REPLAY_POLICIES):
+            for keys in KEY_MODES:
+                reset(run, rows)
+                waits = Waits()
+                latency.take()
+                with scoped(adapter) as db, replay_policy(policy, waits):
+                    measured = run_mode(
+                        db,
+                        workers,
+                        invocations,
+                        keys,
+                        retries,
+                        isolation,
+                        think_s=environment.think_s,
+                    )
+                measured.update(
+                    {
+                        "environment": environment.name,
+                        "backoff": policy,
+                        "latency": latency.take(),
+                        "replayWaits": waits.take(),
+                    }
+                )
+                runs.append(measured)
+    return runs
 
 
 def summarize(samples: list[dict[str, object]], elapsed: float) -> dict[str, object]:
@@ -179,24 +249,44 @@ def main() -> None:
             action="store_true",
             help="repeat the default-bound runs for every backoff candidate",
         )
+        parser.add_argument(
+            "--environments",
+            action="store_true",
+            help="run in every simulated environment, the default bound once per replay policy",
+        )
 
     args = arguments(__doc__ or "", extra=extra)
     workers, invocations = (2, 3) if args.smoke else (args.workers, args.invocations)
     rows = fixtures(account_rows=workers)
     runs: list[dict[str, object]] = []
     with provisioned(rows) as run, observer(run) as control:
-        adapter = pooled(run, workers)
-        for retries in RETRY_MODES:
-            candidates = [None] if retries == 0 else default_bound_backoffs(args.backoff_grid)
-            for candidate in candidates:
-                for keys in KEY_MODES:
-                    reset(run, rows)
-                    with scoped(adapter) as db:
-                        runs.append(
-                            run_mode(
-                                db, workers, invocations, keys, retries, args.isolation, candidate
+        if args.environments:
+            reset(run, rows)
+            with scoped(pooled(run, workers)) as db:
+                run_mode(db, workers, WARM_UP_INVOCATIONS, "hot", None, args.isolation)
+            for environment in ENVIRONMENTS:
+                runs.extend(
+                    environment_runs(run, rows, workers, invocations, args.isolation, environment)
+                )
+        else:
+            adapter = pooled(run, workers)
+            for retries in RETRY_MODES:
+                candidates = [None] if retries == 0 else default_bound_backoffs(args.backoff_grid)
+                for candidate in candidates:
+                    for keys in KEY_MODES:
+                        reset(run, rows)
+                        with scoped(adapter) as db:
+                            runs.append(
+                                run_mode(
+                                    db,
+                                    workers,
+                                    invocations,
+                                    keys,
+                                    retries,
+                                    args.isolation,
+                                    candidate,
+                                )
                             )
-                        )
         report = {
             "driver": "contention",
             "conditions": conditions(
@@ -208,6 +298,7 @@ def main() -> None:
                 body="read one account in the attempt, then amend its balance",
                 retry="the arm's own replay policy",
                 **({"backoffGrid": [list(c) for c in BACKOFF_GRID]} if args.backoff_grid else {}),
+                **(environment_conditions() if args.environments else {}),
             ),
             "runs": runs,
         }
