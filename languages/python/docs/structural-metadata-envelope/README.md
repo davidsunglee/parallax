@@ -1243,7 +1243,9 @@ memory cell, and the two scaling arms named above is within its limit.
 ## Current HEAD capture — `recovered/`
 
 One complete capture from the clean head of a published pull-request branch,
-`d125a65958c86cc0912d0498c01699d89c109659`, on **2026-10-16
+`d125a65958c86cc0912d0498c01699d89c109659` (later rewritten, with an identical
+tree outside `docs/research/transaction-isolation/captures/`, as `5b37f3099`;
+the provenance keeps the commit actually captured), on **2026-10-16
 09:53:29–10:52:58 EDT** (13:53:29–14:52:58 UTC). The collector exited **0**,
 taking **59m29s wall clock** and 3,568.116 s in its recorded collection span,
 against about 3,552 s projected from the outgoing capture's retained durations
