@@ -1,0 +1,1296 @@
+{
+  "conditions": {
+    "cpython": "3.14.8",
+    "image": "postgres:18.6-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2",
+    "isolation": "read_committed",
+    "settings": {
+      "autovacuum": "on",
+      "deadlock_timeout": "1s",
+      "default_transaction_isolation": "read committed",
+      "lock_timeout": "0",
+      "max_connections": "100",
+      "server_version": "18.6",
+      "shared_buffers": "128MB",
+      "synchronous_commit": "on",
+      "wal_level": "replica"
+    },
+    "version": "PostgreSQL 18.6 on aarch64-unknown-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit",
+    "workload": {
+      "deliveries": [
+        "eager",
+        "stream"
+      ],
+      "held": "an eager read holds its Snapshot and roots; a stream holds every root",
+      "memory": "tracemalloc per traced read from a collected baseline; the census counts gc-tracked objects by type",
+      "pageSize": 500,
+      "placements": [
+        "standalone",
+        "read-only"
+      ],
+      "pool": 1,
+      "representations": [
+        "typed",
+        "wire"
+      ],
+      "roots": 2000,
+      "subjects": [
+        "account",
+        "charter",
+        "tt-charter",
+        "bt-charter"
+      ],
+      "timedReads": 15,
+      "tracedReads": 5,
+      "warmups": 3
+    }
+  },
+  "driver": "read_retention",
+  "runs": [
+    {
+      "census": {
+        "_support.Account": 2000,
+        "builtins.builtin_function_or_method": 31,
+        "builtins.dict": 2000,
+        "builtins.list": 1,
+        "builtins.tuple": 2001,
+        "collections.Counter": 1,
+        "decimal.Decimal": 2000,
+        "parallax.core.temporal_read.Pin": 1,
+        "parallax.snapshot._handle._read.Snapshot": 1,
+        "parallax.snapshot._inspection.SnapshotNodeState": 2000,
+        "weakref.ReferenceType": 31
+      },
+      "delivery": "eager",
+      "memory": {
+        "held": {
+          "p50": 1126397.0,
+          "p95": 1126454.6,
+          "p99": 1126459.72
+        },
+        "peak": {
+          "p50": 1547385.0,
+          "p95": 1547385.0,
+          "p99": 1547385.0
+        }
+      },
+      "placement": "standalone",
+      "representation": "typed",
+      "rootsDelivered": 2000,
+      "subject": "account",
+      "timing": {
+        "elapsed": {
+          "p50": 0.0201500830007717,
+          "p95": 0.021193079411750658,
+          "p99": 0.021195015892153606
+        },
+        "firstRoot": null
+      }
+    },
+    {
+      "census": {
+        "_support.Account": 2000,
+        "builtins.dict": 2000,
+        "builtins.list": 1,
+        "builtins.tuple": 2000,
+        "collections.Counter": 1,
+        "decimal.Decimal": 2000,
+        "parallax.snapshot._inspection.SnapshotNodeState": 2000
+      },
+      "delivery": "stream",
+      "memory": {
+        "held": {
+          "p50": 1110281.0,
+          "p95": 1110338.6,
+          "p99": 1110343.72
+        },
+        "peak": {
+          "p50": 1357980.0,
+          "p95": 1357980.0,
+          "p99": 1357980.0
+        }
+      },
+      "placement": "standalone",
+      "representation": "typed",
+      "rootsDelivered": 2000,
+      "subject": "account",
+      "timing": {
+        "elapsed": {
+          "p50": 0.026409792015329003,
+          "p95": 0.027564616984454914,
+          "p99": 0.027916156988358126
+        },
+        "firstRoot": {
+          "p50": 0.0029893749742768705,
+          "p95": 0.0032000749022699894,
+          "p99": 0.003271381373051554
+        }
+      }
+    },
+    {
+      "census": {
+        "builtins.list": 1,
+        "builtins.tuple": 1,
+        "collections.Counter": 1,
+        "parallax.core.temporal_read.Pin": 1,
+        "parallax.snapshot._handle._read.Snapshot": 1,
+        "parallax.snapshot._publication._wire._WireEntityNode": 2000
+      },
+      "delivery": "eager",
+      "memory": {
+        "held": {
+          "p50": 614444.0,
+          "p95": 614501.6,
+          "p99": 614506.72
+        },
+        "peak": {
+          "p50": 1138549.0,
+          "p95": 1138549.0,
+          "p99": 1138549.0
+        }
+      },
+      "placement": "standalone",
+      "representation": "wire",
+      "rootsDelivered": 2000,
+      "subject": "account",
+      "timing": {
+        "elapsed": {
+          "p50": 0.018593332992168143,
+          "p95": 0.019166237389435993,
+          "p99": 0.01917251387028955
+        },
+        "firstRoot": null
+      }
+    },
+    {
+      "census": {
+        "builtins.list": 1,
+        "collections.Counter": 1,
+        "parallax.snapshot._publication._wire._WireEntityNode": 2000
+      },
+      "delivery": "stream",
+      "memory": {
+        "held": {
+          "p50": 598392.0,
+          "p95": 598449.6,
+          "p99": 598454.72
+        },
+        "peak": {
+          "p50": 950616.0,
+          "p95": 950616.0,
+          "p99": 950616.0
+        }
+      },
+      "placement": "standalone",
+      "representation": "wire",
+      "rootsDelivered": 2000,
+      "subject": "account",
+      "timing": {
+        "elapsed": {
+          "p50": 0.025017459003720433,
+          "p95": 0.025699783113668672,
+          "p99": 0.025709256622358224
+        },
+        "firstRoot": {
+          "p50": 0.0030187920201569796,
+          "p95": 0.0032054455048637466,
+          "p99": 0.0032742555072763934
+        }
+      }
+    },
+    {
+      "census": {
+        "_support.Account": 2000,
+        "builtins.dict": 2000,
+        "builtins.list": 1,
+        "builtins.tuple": 2001,
+        "collections.Counter": 1,
+        "decimal.Decimal": 2000,
+        "parallax.core.temporal_read.Pin": 1,
+        "parallax.snapshot._handle._read.Snapshot": 1,
+        "parallax.snapshot._inspection.SnapshotNodeState": 2000
+      },
+      "delivery": "eager",
+      "memory": {
+        "held": {
+          "p50": 1126317.0,
+          "p95": 1126374.6,
+          "p99": 1126379.72
+        },
+        "peak": {
+          "p50": 1552222.0,
+          "p95": 1552257.2,
+          "p99": 1552261.04
+        }
+      },
+      "placement": "read-only",
+      "representation": "typed",
+      "rootsDelivered": 2000,
+      "subject": "account",
+      "timing": {
+        "elapsed": {
+          "p50": 0.021814499981701374,
+          "p95": 0.022223212505923583,
+          "p99": 0.022365942500764503
+        },
+        "firstRoot": null
+      }
+    },
+    {
+      "census": {
+        "_support.Account": 2000,
+        "builtins.dict": 2000,
+        "builtins.list": 1,
+        "builtins.tuple": 2000,
+        "collections.Counter": 1,
+        "decimal.Decimal": 2000,
+        "parallax.snapshot._inspection.SnapshotNodeState": 2000
+      },
+      "delivery": "stream",
+      "memory": {
+        "held": {
+          "p50": 1110405.0,
+          "p95": 1110462.6,
+          "p99": 1110467.72
+        },
+        "peak": {
+          "p50": 1362775.0,
+          "p95": 1362775.0,
+          "p99": 1362775.0
+        }
+      },
+      "placement": "read-only",
+      "representation": "typed",
+      "rootsDelivered": 2000,
+      "subject": "account",
+      "timing": {
+        "elapsed": {
+          "p50": 0.02654749999055639,
+          "p95": 0.027098100099829027,
+          "p99": 0.027182753626839258
+        },
+        "firstRoot": {
+          "p50": 0.0025284579896833748,
+          "p95": 0.0027390500938054172,
+          "p99": 0.0027720436023082585
+        }
+      }
+    },
+    {
+      "census": {
+        "builtins.list": 1,
+        "builtins.tuple": 1,
+        "collections.Counter": 1,
+        "parallax.core.temporal_read.Pin": 1,
+        "parallax.snapshot._handle._read.Snapshot": 1,
+        "parallax.snapshot._publication._wire._WireEntityNode": 2000
+      },
+      "delivery": "eager",
+      "memory": {
+        "held": {
+          "p50": 614364.0,
+          "p95": 614421.6,
+          "p99": 614426.72
+        },
+        "peak": {
+          "p50": 1143418.0,
+          "p95": 1143418.0,
+          "p99": 1143418.0
+        }
+      },
+      "placement": "read-only",
+      "representation": "wire",
+      "rootsDelivered": 2000,
+      "subject": "account",
+      "timing": {
+        "elapsed": {
+          "p50": 0.019001000007847324,
+          "p95": 0.019442854399676433,
+          "p99": 0.019455570880672894
+        },
+        "firstRoot": null
+      }
+    },
+    {
+      "census": {
+        "builtins.list": 1,
+        "collections.Counter": 1,
+        "parallax.snapshot._publication._wire._WireEntityNode": 2000
+      },
+      "delivery": "stream",
+      "memory": {
+        "held": {
+          "p50": 598452.0,
+          "p95": 598509.6,
+          "p99": 598514.72
+        },
+        "peak": {
+          "p50": 955651.0,
+          "p95": 955651.0,
+          "p99": 955651.0
+        }
+      },
+      "placement": "read-only",
+      "representation": "wire",
+      "rootsDelivered": 2000,
+      "subject": "account",
+      "timing": {
+        "elapsed": {
+          "p50": 0.02389262497308664,
+          "p95": 0.025076987303327768,
+          "p99": 0.02520903024589643
+        },
+        "firstRoot": {
+          "p50": 0.002607624977827072,
+          "p95": 0.0027385124820284547,
+          "p99": 0.0027537024836055933
+        }
+      }
+    },
+    {
+      "census": {
+        "__main__.Charter": 2000,
+        "__main__.Route": 2000,
+        "__main__.Stop": 14000,
+        "builtins.dict": 2000,
+        "builtins.list": 1,
+        "builtins.tuple": 8001,
+        "collections.Counter": 1,
+        "parallax.core.temporal_read.Pin": 1,
+        "parallax.snapshot._handle._read.Snapshot": 1,
+        "parallax.snapshot._inspection.SnapshotNodeState": 2000
+      },
+      "delivery": "eager",
+      "memory": {
+        "held": {
+          "p50": 4912385.0,
+          "p95": 4912442.6,
+          "p99": 4912447.72
+        },
+        "peak": {
+          "p50": 5608059.0,
+          "p95": 5608059.0,
+          "p99": 5608059.0
+        }
+      },
+      "placement": "standalone",
+      "representation": "typed",
+      "rootsDelivered": 2000,
+      "subject": "charter",
+      "timing": {
+        "elapsed": {
+          "p50": 0.10011904101702385,
+          "p95": 0.11968053320597391,
+          "p99": 0.12097894023580011
+        },
+        "firstRoot": null
+      }
+    },
+    {
+      "census": {
+        "__main__.Charter": 2000,
+        "__main__.Route": 2000,
+        "__main__.Stop": 14000,
+        "builtins.dict": 2000,
+        "builtins.list": 1,
+        "builtins.tuple": 8000,
+        "collections.Counter": 1,
+        "parallax.snapshot._inspection.SnapshotNodeState": 2000
+      },
+      "delivery": "stream",
+      "memory": {
+        "held": {
+          "p50": 4890739.0,
+          "p95": 4890805.4,
+          "p99": 4890814.68
+        },
+        "peak": {
+          "p50": 5487334.0,
+          "p95": 5487432.4,
+          "p99": 5487441.68
+        }
+      },
+      "placement": "standalone",
+      "representation": "typed",
+      "rootsDelivered": 2000,
+      "subject": "charter",
+      "timing": {
+        "elapsed": {
+          "p50": 0.1074173339875415,
+          "p95": 0.12610399191034957,
+          "p99": 0.12849579838337377
+        },
+        "firstRoot": {
+          "p50": 0.009733540995512158,
+          "p95": 0.010257766096037813,
+          "p99": 0.010294119613827207
+        }
+      }
+    },
+    {
+      "census": {
+        "builtins.list": 1,
+        "builtins.tuple": 1,
+        "collections.Counter": 1,
+        "parallax.core.temporal_read.Pin": 1,
+        "parallax.snapshot._handle._read.Snapshot": 1,
+        "parallax.snapshot._publication._wire._FrozenMapping": 16000,
+        "parallax.snapshot._publication._wire._FrozenSequence": 4000,
+        "parallax.snapshot._publication._wire._WireEntityNode": 2000
+      },
+      "delivery": "eager",
+      "memory": {
+        "held": {
+          "p50": 4800385.0,
+          "p95": 4800442.6,
+          "p99": 4800447.72
+        },
+        "peak": {
+          "p50": 5608809.0,
+          "p95": 5608809.0,
+          "p99": 5608809.0
+        }
+      },
+      "placement": "standalone",
+      "representation": "wire",
+      "rootsDelivered": 2000,
+      "subject": "charter",
+      "timing": {
+        "elapsed": {
+          "p50": 0.09199954097857699,
+          "p95": 0.10121366619714536,
+          "p99": 0.11371613325201907
+        },
+        "firstRoot": null
+      }
+    },
+    {
+      "census": {
+        "builtins.list": 1,
+        "collections.Counter": 1,
+        "parallax.snapshot._publication._wire._FrozenMapping": 16000,
+        "parallax.snapshot._publication._wire._FrozenSequence": 4000,
+        "parallax.snapshot._publication._wire._WireEntityNode": 2000
+      },
+      "delivery": "stream",
+      "memory": {
+        "held": {
+          "p50": 4778579.0,
+          "p95": 4778781.4,
+          "p99": 4778813.88
+        },
+        "peak": {
+          "p50": 5375635.0,
+          "p95": 5375856.6,
+          "p99": 5375899.32
+        }
+      },
+      "placement": "standalone",
+      "representation": "wire",
+      "rootsDelivered": 2000,
+      "subject": "charter",
+      "timing": {
+        "elapsed": {
+          "p50": 0.09748954200767912,
+          "p95": 0.11561648310162127,
+          "p99": 0.11698479660786688
+        },
+        "firstRoot": {
+          "p50": 0.009355207992484793,
+          "p95": 0.015812733123311773,
+          "p99": 0.02511904663988389
+        }
+      }
+    },
+    {
+      "census": {
+        "__main__.Charter": 2000,
+        "__main__.Route": 2000,
+        "__main__.Stop": 14000,
+        "builtins.dict": 2000,
+        "builtins.list": 1,
+        "builtins.tuple": 8001,
+        "collections.Counter": 1,
+        "parallax.core.temporal_read.Pin": 1,
+        "parallax.snapshot._handle._read.Snapshot": 1,
+        "parallax.snapshot._inspection.SnapshotNodeState": 2000
+      },
+      "delivery": "eager",
+      "memory": {
+        "held": {
+          "p50": 4912273.0,
+          "p95": 4912330.6,
+          "p99": 4912335.72
+        },
+        "peak": {
+          "p50": 5612928.0,
+          "p95": 5612928.0,
+          "p99": 5612928.0
+        }
+      },
+      "placement": "read-only",
+      "representation": "typed",
+      "rootsDelivered": 2000,
+      "subject": "charter",
+      "timing": {
+        "elapsed": {
+          "p50": 0.1015061250072904,
+          "p95": 0.12071888740174472,
+          "p99": 0.12333784389309585
+        },
+        "firstRoot": null
+      }
+    },
+    {
+      "census": {
+        "__main__.Charter": 2000,
+        "__main__.Route": 2000,
+        "__main__.Stop": 14000,
+        "builtins.dict": 2000,
+        "builtins.list": 1,
+        "builtins.tuple": 8000,
+        "collections.Counter": 1,
+        "parallax.snapshot._inspection.SnapshotNodeState": 2000
+      },
+      "delivery": "stream",
+      "memory": {
+        "held": {
+          "p50": 4890872.0,
+          "p95": 4890923.4,
+          "p99": 4890929.48
+        },
+        "peak": {
+          "p50": 5492335.0,
+          "p95": 5492345.0,
+          "p99": 5492345.8
+        }
+      },
+      "placement": "read-only",
+      "representation": "typed",
+      "rootsDelivered": 2000,
+      "subject": "charter",
+      "timing": {
+        "elapsed": {
+          "p50": 0.10671649998403154,
+          "p95": 0.12854060890385882,
+          "p99": 0.1293316553789191
+        },
+        "firstRoot": {
+          "p50": 0.009260374994482845,
+          "p95": 0.009883958005229943,
+          "p99": 0.00988955799897667
+        }
+      }
+    },
+    {
+      "census": {
+        "builtins.list": 1,
+        "builtins.tuple": 1,
+        "collections.Counter": 1,
+        "parallax.core.temporal_read.Pin": 1,
+        "parallax.snapshot._handle._read.Snapshot": 1,
+        "parallax.snapshot._publication._wire._FrozenMapping": 16000,
+        "parallax.snapshot._publication._wire._FrozenSequence": 4000,
+        "parallax.snapshot._publication._wire._WireEntityNode": 2000
+      },
+      "delivery": "eager",
+      "memory": {
+        "held": {
+          "p50": 4800273.0,
+          "p95": 4800330.6,
+          "p99": 4800335.72
+        },
+        "peak": {
+          "p50": 5613678.0,
+          "p95": 5613678.0,
+          "p99": 5613678.0
+        }
+      },
+      "placement": "read-only",
+      "representation": "wire",
+      "rootsDelivered": 2000,
+      "subject": "charter",
+      "timing": {
+        "elapsed": {
+          "p50": 0.09204383302130736,
+          "p95": 0.0986072454979876,
+          "p99": 0.10757501549378504
+        },
+        "firstRoot": null
+      }
+    },
+    {
+      "census": {
+        "builtins.list": 1,
+        "collections.Counter": 1,
+        "parallax.snapshot._publication._wire._FrozenMapping": 16000,
+        "parallax.snapshot._publication._wire._FrozenSequence": 4000,
+        "parallax.snapshot._publication._wire._WireEntityNode": 2000
+      },
+      "delivery": "stream",
+      "memory": {
+        "held": {
+          "p50": 4778587.0,
+          "p95": 4778614.8,
+          "p99": 4778615.76
+        },
+        "peak": {
+          "p50": 5380551.0,
+          "p95": 5380598.0,
+          "p99": 5380606.8
+        }
+      },
+      "placement": "read-only",
+      "representation": "wire",
+      "rootsDelivered": 2000,
+      "subject": "charter",
+      "timing": {
+        "elapsed": {
+          "p50": 0.09985979201155715,
+          "p95": 0.11498515460989438,
+          "p99": 0.1152221981238108
+        },
+        "firstRoot": {
+          "p50": 0.008956750010838732,
+          "p95": 0.01447826688818168,
+          "p99": 0.023299853377393445
+        }
+      }
+    },
+    {
+      "census": {
+        "__main__.Route": 2000,
+        "__main__.Stop": 14000,
+        "__main__.TtCharter": 2000,
+        "builtins.dict": 2000,
+        "builtins.list": 1,
+        "builtins.tuple": 8001,
+        "collections.Counter": 1,
+        "parallax.core.temporal_read.Edge": 2000,
+        "parallax.core.temporal_read.Pin": 1,
+        "parallax.snapshot._handle._read.Snapshot": 1,
+        "parallax.snapshot._inspection.SnapshotNodeState": 2000
+      },
+      "delivery": "eager",
+      "memory": {
+        "held": {
+          "p50": 5120389.0,
+          "p95": 5120440.2,
+          "p99": 5120450.44
+        },
+        "peak": {
+          "p50": 5808947.0,
+          "p95": 5808947.0,
+          "p99": 5808947.0
+        }
+      },
+      "placement": "standalone",
+      "representation": "typed",
+      "rootsDelivered": 2000,
+      "subject": "tt-charter",
+      "timing": {
+        "elapsed": {
+          "p50": 0.10741329099982977,
+          "p95": 0.12522206271532924,
+          "p99": 0.12608807974494993
+        },
+        "firstRoot": null
+      }
+    },
+    {
+      "census": {
+        "__main__.Route": 2000,
+        "__main__.Stop": 14000,
+        "__main__.TtCharter": 2000,
+        "builtins.dict": 2000,
+        "builtins.list": 1,
+        "builtins.tuple": 8000,
+        "collections.Counter": 1,
+        "parallax.core.temporal_read.Edge": 2000,
+        "parallax.core.temporal_read.Pin": 4,
+        "parallax.snapshot._inspection.SnapshotNodeState": 2000
+      },
+      "delivery": "stream",
+      "memory": {
+        "held": {
+          "p50": 5105350.0,
+          "p95": 5105458.0,
+          "p99": 5105470.0
+        },
+        "peak": {
+          "p50": 5778085.0,
+          "p95": 5778173.8,
+          "p99": 5778188.36
+        }
+      },
+      "placement": "standalone",
+      "representation": "typed",
+      "rootsDelivered": 2000,
+      "subject": "tt-charter",
+      "timing": {
+        "elapsed": {
+          "p50": 0.11793916701572016,
+          "p95": 0.13862273760605603,
+          "p99": 0.1389913811115548
+        },
+        "firstRoot": {
+          "p50": 0.010648833005689085,
+          "p95": 0.011383512592874467,
+          "p99": 0.011415736111812293
+        }
+      }
+    },
+    {
+      "census": {
+        "builtins.list": 1,
+        "builtins.tuple": 1,
+        "collections.Counter": 1,
+        "parallax.core.temporal_read.Pin": 1,
+        "parallax.snapshot._handle._read.Snapshot": 1,
+        "parallax.snapshot._publication._wire._FrozenMapping": 16000,
+        "parallax.snapshot._publication._wire._FrozenSequence": 4000,
+        "parallax.snapshot._publication._wire._WireEntityNode": 2000
+      },
+      "delivery": "eager",
+      "memory": {
+        "held": {
+          "p50": 5001207.0,
+          "p95": 5001299.8,
+          "p99": 5001305.56
+        },
+        "peak": {
+          "p50": 5818112.0,
+          "p95": 5818242.0,
+          "p99": 5818258.0
+        }
+      },
+      "placement": "standalone",
+      "representation": "wire",
+      "rootsDelivered": 2000,
+      "subject": "tt-charter",
+      "timing": {
+        "elapsed": {
+          "p50": 0.12068383299629204,
+          "p95": 0.13850556248798968,
+          "p99": 0.15306661248672754
+        },
+        "firstRoot": null
+      }
+    },
+    {
+      "census": {
+        "builtins.list": 1,
+        "collections.Counter": 1,
+        "parallax.core.temporal_read.Pin": 4,
+        "parallax.snapshot._publication._wire._FrozenMapping": 16000,
+        "parallax.snapshot._publication._wire._FrozenSequence": 4000,
+        "parallax.snapshot._publication._wire._WireEntityNode": 2000
+      },
+      "delivery": "stream",
+      "memory": {
+        "held": {
+          "p50": 4985458.0,
+          "p95": 4985602.4,
+          "p99": 4985606.88
+        },
+        "peak": {
+          "p50": 5683230.0,
+          "p95": 5683368.0,
+          "p99": 5683377.6
+        }
+      },
+      "placement": "standalone",
+      "representation": "wire",
+      "rootsDelivered": 2000,
+      "subject": "tt-charter",
+      "timing": {
+        "elapsed": {
+          "p50": 0.1088713750068564,
+          "p95": 0.12785579548799433,
+          "p99": 0.12956652549211867
+        },
+        "firstRoot": {
+          "p50": 0.010310124984243885,
+          "p95": 0.01624212489987258,
+          "p99": 0.026314191392739304
+        }
+      }
+    },
+    {
+      "census": {
+        "__main__.Route": 2000,
+        "__main__.Stop": 14000,
+        "__main__.TtCharter": 2000,
+        "builtins.dict": 2000,
+        "builtins.list": 1,
+        "builtins.tuple": 8001,
+        "collections.Counter": 1,
+        "parallax.core.temporal_read.Edge": 2000,
+        "parallax.core.temporal_read.Pin": 1,
+        "parallax.snapshot._handle._read.Snapshot": 1,
+        "parallax.snapshot._inspection.SnapshotNodeState": 2000
+      },
+      "delivery": "eager",
+      "memory": {
+        "held": {
+          "p50": 5120239.0,
+          "p95": 5120302.6,
+          "p99": 5120307.72
+        },
+        "peak": {
+          "p50": 5813705.0,
+          "p95": 5813760.0,
+          "p99": 5813760.0
+        }
+      },
+      "placement": "read-only",
+      "representation": "typed",
+      "rootsDelivered": 2000,
+      "subject": "tt-charter",
+      "timing": {
+        "elapsed": {
+          "p50": 0.11025683299521916,
+          "p95": 0.13050541229895316,
+          "p99": 0.13334281527320854
+        },
+        "firstRoot": null
+      }
+    },
+    {
+      "census": {
+        "__main__.Route": 2000,
+        "__main__.Stop": 14000,
+        "__main__.TtCharter": 2000,
+        "builtins.dict": 2000,
+        "builtins.list": 1,
+        "builtins.tuple": 8000,
+        "collections.Counter": 1,
+        "parallax.core.temporal_read.Edge": 2000,
+        "parallax.core.temporal_read.Pin": 4,
+        "parallax.snapshot._inspection.SnapshotNodeState": 2000
+      },
+      "delivery": "stream",
+      "memory": {
+        "held": {
+          "p50": 5105289.0,
+          "p95": 5105437.8,
+          "p99": 5105456.36
+        },
+        "peak": {
+          "p50": 5783003.0,
+          "p95": 5783048.6,
+          "p99": 5783056.92
+        }
+      },
+      "placement": "read-only",
+      "representation": "typed",
+      "rootsDelivered": 2000,
+      "subject": "tt-charter",
+      "timing": {
+        "elapsed": {
+          "p50": 0.11737241601804271,
+          "p95": 0.13859099979163148,
+          "p99": 0.13864163274993188
+        },
+        "firstRoot": {
+          "p50": 0.009195374994305894,
+          "p95": 0.009838508709799498,
+          "p99": 0.010140768142882735
+        }
+      }
+    },
+    {
+      "census": {
+        "builtins.list": 1,
+        "builtins.tuple": 1,
+        "collections.Counter": 1,
+        "parallax.core.temporal_read.Pin": 1,
+        "parallax.snapshot._handle._read.Snapshot": 1,
+        "parallax.snapshot._publication._wire._FrozenMapping": 16000,
+        "parallax.snapshot._publication._wire._FrozenSequence": 4000,
+        "parallax.snapshot._publication._wire._WireEntityNode": 2000
+      },
+      "delivery": "eager",
+      "memory": {
+        "held": {
+          "p50": 5000909.0,
+          "p95": 5001035.0,
+          "p99": 5001043.0
+        },
+        "peak": {
+          "p50": 5822811.0,
+          "p95": 5822991.0,
+          "p99": 5823007.0
+        }
+      },
+      "placement": "read-only",
+      "representation": "wire",
+      "rootsDelivered": 2000,
+      "subject": "tt-charter",
+      "timing": {
+        "elapsed": {
+          "p50": 0.10196562501369044,
+          "p95": 0.11169487060396932,
+          "p99": 0.11820867412607186
+        },
+        "firstRoot": null
+      }
+    },
+    {
+      "census": {
+        "builtins.list": 1,
+        "collections.Counter": 1,
+        "parallax.core.temporal_read.Pin": 4,
+        "parallax.snapshot._publication._wire._FrozenMapping": 16000,
+        "parallax.snapshot._publication._wire._FrozenSequence": 4000,
+        "parallax.snapshot._publication._wire._WireEntityNode": 2000
+      },
+      "delivery": "stream",
+      "memory": {
+        "held": {
+          "p50": 4985311.0,
+          "p95": 4985543.0,
+          "p99": 4985551.0
+        },
+        "peak": {
+          "p50": 5688294.0,
+          "p95": 5688476.4,
+          "p99": 5688484.08
+        }
+      },
+      "placement": "read-only",
+      "representation": "wire",
+      "rootsDelivered": 2000,
+      "subject": "tt-charter",
+      "timing": {
+        "elapsed": {
+          "p50": 0.10864112499984913,
+          "p95": 0.1257605500111822,
+          "p99": 0.12726191000198014
+        },
+        "firstRoot": {
+          "p50": 0.009263332991395146,
+          "p95": 0.015236783702857793,
+          "p99": 0.02508802312426269
+        }
+      }
+    },
+    {
+      "census": {
+        "__main__.BtCharter": 2000,
+        "__main__.Route": 2000,
+        "__main__.Stop": 14000,
+        "builtins.dict": 2000,
+        "builtins.list": 1,
+        "builtins.tuple": 8001,
+        "collections.Counter": 1,
+        "parallax.core.temporal_read.Edge": 2000,
+        "parallax.core.temporal_read.Pin": 1,
+        "parallax.snapshot._handle._read.Snapshot": 1,
+        "parallax.snapshot._inspection.SnapshotNodeState": 2000
+      },
+      "delivery": "eager",
+      "memory": {
+        "held": {
+          "p50": 5248433.0,
+          "p95": 5248534.2,
+          "p99": 5248544.44
+        },
+        "peak": {
+          "p50": 6144405.0,
+          "p95": 6144455.0,
+          "p99": 6144455.0
+        }
+      },
+      "placement": "standalone",
+      "representation": "typed",
+      "rootsDelivered": 2000,
+      "subject": "bt-charter",
+      "timing": {
+        "elapsed": {
+          "p50": 0.1127157500013709,
+          "p95": 0.13152809549646918,
+          "p99": 0.1340191854938166
+        },
+        "firstRoot": null
+      }
+    },
+    {
+      "census": {
+        "__main__.BtCharter": 2000,
+        "__main__.Route": 2000,
+        "__main__.Stop": 14000,
+        "builtins.dict": 2000,
+        "builtins.list": 1,
+        "builtins.tuple": 8000,
+        "collections.Counter": 1,
+        "parallax.core.temporal_read.Edge": 2000,
+        "parallax.core.temporal_read.Pin": 4,
+        "parallax.snapshot._inspection.SnapshotNodeState": 2000
+      },
+      "delivery": "stream",
+      "memory": {
+        "held": {
+          "p50": 5233405.0,
+          "p95": 5233493.2,
+          "p99": 5233498.64
+        },
+        "peak": {
+          "p50": 5926548.0,
+          "p95": 5926693.8,
+          "p99": 5926704.36
+        }
+      },
+      "placement": "standalone",
+      "representation": "typed",
+      "rootsDelivered": 2000,
+      "subject": "bt-charter",
+      "timing": {
+        "elapsed": {
+          "p50": 0.1232682499976363,
+          "p95": 0.14446236249932554,
+          "p99": 0.14709457249555272
+        },
+        "firstRoot": {
+          "p50": 0.010774124995805323,
+          "p95": 0.011595396199845709,
+          "p99": 0.011791745641385205
+        }
+      }
+    },
+    {
+      "census": {
+        "builtins.list": 1,
+        "builtins.tuple": 1,
+        "collections.Counter": 1,
+        "parallax.core.temporal_read.Pin": 1,
+        "parallax.snapshot._handle._read.Snapshot": 1,
+        "parallax.snapshot._publication._wire._FrozenMapping": 16000,
+        "parallax.snapshot._publication._wire._FrozenSequence": 4000,
+        "parallax.snapshot._publication._wire._WireEntityNode": 2000
+      },
+      "delivery": "eager",
+      "memory": {
+        "held": {
+          "p50": 5001283.0,
+          "p95": 5001392.2,
+          "p99": 5001410.44
+        },
+        "peak": {
+          "p50": 5985907.0,
+          "p95": 5985907.0,
+          "p99": 5985907.0
+        }
+      },
+      "placement": "standalone",
+      "representation": "wire",
+      "rootsDelivered": 2000,
+      "subject": "bt-charter",
+      "timing": {
+        "elapsed": {
+          "p50": 0.10338370900717564,
+          "p95": 0.11153282492305153,
+          "p99": 0.12299593139789067
+        },
+        "firstRoot": null
+      }
+    },
+    {
+      "census": {
+        "builtins.list": 1,
+        "collections.Counter": 1,
+        "parallax.core.temporal_read.Pin": 4,
+        "parallax.snapshot._publication._wire._FrozenMapping": 16000,
+        "parallax.snapshot._publication._wire._FrozenSequence": 4000,
+        "parallax.snapshot._publication._wire._WireEntityNode": 2000
+      },
+      "delivery": "stream",
+      "memory": {
+        "held": {
+          "p50": 4985828.0,
+          "p95": 4986025.8,
+          "p99": 4986049.96
+        },
+        "peak": {
+          "p50": 5727778.0,
+          "p95": 5728007.8,
+          "p99": 5728031.96
+        }
+      },
+      "placement": "standalone",
+      "representation": "wire",
+      "rootsDelivered": 2000,
+      "subject": "bt-charter",
+      "timing": {
+        "elapsed": {
+          "p50": 0.1122210829926189,
+          "p95": 0.1339301412983332,
+          "p99": 0.13412796185933984
+        },
+        "firstRoot": {
+          "p50": 0.010467207990586758,
+          "p95": 0.017255750007461757,
+          "p99": 0.027202049989718945
+        }
+      }
+    },
+    {
+      "census": {
+        "__main__.BtCharter": 2000,
+        "__main__.Route": 2000,
+        "__main__.Stop": 14000,
+        "builtins.dict": 2000,
+        "builtins.list": 1,
+        "builtins.tuple": 8001,
+        "collections.Counter": 1,
+        "parallax.core.temporal_read.Edge": 2000,
+        "parallax.core.temporal_read.Pin": 1,
+        "parallax.snapshot._handle._read.Snapshot": 1,
+        "parallax.snapshot._inspection.SnapshotNodeState": 2000
+      },
+      "delivery": "eager",
+      "memory": {
+        "held": {
+          "p50": 5248375.0,
+          "p95": 5248432.6,
+          "p99": 5248437.72
+        },
+        "peak": {
+          "p50": 6149208.0,
+          "p95": 6149208.0,
+          "p99": 6149208.0
+        }
+      },
+      "placement": "read-only",
+      "representation": "typed",
+      "rootsDelivered": 2000,
+      "subject": "bt-charter",
+      "timing": {
+        "elapsed": {
+          "p50": 0.11459141699015163,
+          "p95": 0.13363192500255536,
+          "p99": 0.1351983850164106
+        },
+        "firstRoot": null
+      }
+    },
+    {
+      "census": {
+        "__main__.BtCharter": 2000,
+        "__main__.Route": 2000,
+        "__main__.Stop": 14000,
+        "builtins.dict": 2000,
+        "builtins.list": 1,
+        "builtins.tuple": 8000,
+        "collections.Counter": 1,
+        "parallax.core.temporal_read.Edge": 2000,
+        "parallax.core.temporal_read.Pin": 4,
+        "parallax.snapshot._inspection.SnapshotNodeState": 2000
+      },
+      "delivery": "stream",
+      "memory": {
+        "held": {
+          "p50": 5233402.0,
+          "p95": 5233564.4,
+          "p99": 5233590.48
+        },
+        "peak": {
+          "p50": 5931516.0,
+          "p95": 5931682.4,
+          "p99": 5931708.48
+        }
+      },
+      "placement": "read-only",
+      "representation": "typed",
+      "rootsDelivered": 2000,
+      "subject": "bt-charter",
+      "timing": {
+        "elapsed": {
+          "p50": 0.12212791701313108,
+          "p95": 0.14284603749983943,
+          "p99": 0.14435950750135818
+        },
+        "firstRoot": {
+          "p50": 0.009883334016194567,
+          "p95": 0.010794933093711734,
+          "p99": 0.011398286609910428
+        }
+      }
+    },
+    {
+      "census": {
+        "builtins.list": 1,
+        "builtins.tuple": 1,
+        "collections.Counter": 1,
+        "parallax.core.temporal_read.Pin": 1,
+        "parallax.snapshot._handle._read.Snapshot": 1,
+        "parallax.snapshot._publication._wire._FrozenMapping": 16000,
+        "parallax.snapshot._publication._wire._FrozenSequence": 4000,
+        "parallax.snapshot._publication._wire._WireEntityNode": 2000
+      },
+      "delivery": "eager",
+      "memory": {
+        "held": {
+          "p50": 5000928.0,
+          "p95": 5001072.2,
+          "p99": 5001100.04
+        },
+        "peak": {
+          "p50": 5990780.0,
+          "p95": 5990780.0,
+          "p99": 5990780.0
+        }
+      },
+      "placement": "read-only",
+      "representation": "wire",
+      "rootsDelivered": 2000,
+      "subject": "bt-charter",
+      "timing": {
+        "elapsed": {
+          "p50": 0.10386512501281686,
+          "p95": 0.11660541259043385,
+          "p99": 0.12484751612006222
+        },
+        "firstRoot": null
+      }
+    },
+    {
+      "census": {
+        "builtins.list": 1,
+        "collections.Counter": 1,
+        "parallax.core.temporal_read.Pin": 4,
+        "parallax.snapshot._publication._wire._FrozenMapping": 16000,
+        "parallax.snapshot._publication._wire._FrozenSequence": 4000,
+        "parallax.snapshot._publication._wire._WireEntityNode": 2000
+      },
+      "delivery": "stream",
+      "memory": {
+        "held": {
+          "p50": 4985620.0,
+          "p95": 4985795.0,
+          "p99": 4985823.8
+        },
+        "peak": {
+          "p50": 5732749.0,
+          "p95": 5732962.4,
+          "p99": 5732986.08
+        }
+      },
+      "placement": "read-only",
+      "representation": "wire",
+      "rootsDelivered": 2000,
+      "subject": "bt-charter",
+      "timing": {
+        "elapsed": {
+          "p50": 0.1126220409933012,
+          "p95": 0.13114184568985365,
+          "p99": 0.13148930274765008
+        },
+        "firstRoot": {
+          "p50": 0.009799208986805752,
+          "p95": 0.01641475450305734,
+          "p99": 0.02719818450335879
+        }
+      }
+    }
+  ]
+}
