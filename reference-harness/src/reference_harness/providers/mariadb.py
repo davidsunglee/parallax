@@ -28,6 +28,7 @@ import time
 import uuid
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
+from dataclasses import dataclass
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -107,6 +108,14 @@ _ISOLATION: dict[str, tuple[str, ...]] = {
     "serializable": ("set session transaction isolation level serializable",),
 }
 
+# Each portable Access Mode (m-db-port), keyed by its core serialized value, as the
+# statement that opens a session in it. Session scope for the reason a level is;
+# the setting is saved and restored around the attempt as the level's is.
+_ACCESS_MODE: dict[str, str] = {
+    "read-only": "set session transaction read only",
+    "read-write": "set session transaction read write",
+}
+
 # The lock-wait view reads `information_schema.innodb_trx`, which needs the
 # PROCESS privilege the provider grants its user at boot.
 _LOCK_WAITS = (
@@ -116,11 +125,24 @@ _LOCK_WAITS = (
 )
 _EXTENDED_LOCK_WAIT_TIMEOUT = "set innodb_lock_wait_timeout = 10"
 
-# The session state the level mappings change, saved before a held session is
-# configured and written back after its transaction settles (m-db-port *Mapping
-# obligations*).
+# The session state the level and access-mode mappings change, saved before a held
+# session is configured and written back after its transaction settles (m-db-port
+# *Mapping obligations*). The access mode is saved only where one is requested.
 _SAVE_SNAPSHOT_ISOLATION = "select @@session.innodb_snapshot_isolation"
 _RESTORE_SNAPSHOT_ISOLATION = "set session innodb_snapshot_isolation = %s"
+_SAVE_ACCESS_MODE = "select @@session.transaction_read_only"
+_RESTORE_ACCESS_MODE = "set session transaction_read_only = %s"
+
+
+@dataclass(frozen=True, slots=True)
+class _SavedSession:
+    """The session state an attempt found before it configured the session:
+    ``read_only`` is ``None`` where no access mode was requested, so nothing of
+    it was changed or needs restoring."""
+
+    snapshot_isolation: int
+    read_only: int | None
+
 
 # What a held session's native transaction has reached, as cleanup diagnostics state it.
 type _SessionState = Literal["idle", "open", "committed", "rolled back"]
@@ -378,7 +400,9 @@ class MariaDbProvider:
         return 0 if row is None else int(row[0])
 
     @contextmanager
-    def open_session(self, isolation: str | None = None) -> Iterator[_MariaTxSession]:
+    def open_session(
+        self, isolation: str | None = None, access_mode: str | None = None
+    ) -> Iterator[_MariaTxSession]:
         """A second connection in MANUAL-commit mode, for lock contention.
 
         Mirrors the Postgres session. MariaDB's default
@@ -386,16 +410,17 @@ class MariaDbProvider:
         is lowered to 1s on open; a blocked lock then raises errno 1205 quickly.
         InnoDB detects deadlocks immediately (no timeout knob needed).
 
-        A declared ``isolation`` is applied at SESSION scope, because a case's
-        whole choreography is one transaction on this connection and MariaDB's
-        per-next-transaction form is neither readable back nor legal once that
-        transaction has begun.
+        A declared ``isolation`` and ``access_mode`` are applied at SESSION scope,
+        because a case's whole choreography is one transaction on this connection
+        and MariaDB's per-next-transaction form is neither readable back nor legal
+        once that transaction has begun.
 
         Each context is one attempt over its own connection, and it owns the
-        session state that attempt's level needs for the attempt's whole life
-        (m-db-port *Mapping obligations*): ``innodb_snapshot_isolation`` is saved
-        before the level is applied, and on exit any unfinished transaction is
-        rolled back, the saved value restored, and the connection closed. A setup
+        session state that attempt's level and mode need for the attempt's whole
+        life (m-db-port *Mapping obligations*): ``innodb_snapshot_isolation``, and
+        ``transaction_read_only`` where a mode is requested, are saved before
+        either is applied, and on exit any unfinished transaction is rolled back,
+        the saved values restored, and the connection closed. A setup
         failure closes the connection before the body runs. A cleanup failure
         never replaces the body's own failure, which carries it as a note; with
         no body failure the first cleanup failure is raised, noting its phase and
@@ -404,7 +429,7 @@ class MariaDbProvider:
         params = {**self._connect_params, "autocommit": False}
         conn = pymysql.connect(database=self._dbname, **params)
         try:
-            saved = _configure_session(conn, isolation)
+            saved = _configure_session(conn, isolation, access_mode)
         except BaseException as failure:
             _close_after_failed_setup(conn, failure)
             raise
@@ -499,7 +524,7 @@ class _MariaTxSession:
         with self._conn.cursor() as cur:
             cur.execute(_EXTENDED_LOCK_WAIT_TIMEOUT)
 
-    def end(self, saved: int, primary: BaseException | None = None) -> None:
+    def end(self, saved: _SavedSession, primary: BaseException | None = None) -> None:
         """Settle, restore *saved*, and close, attempting every step.
 
         Each cleanup failure becomes a note on *primary* when there is one;
@@ -521,12 +546,23 @@ class _MariaTxSession:
             first.add_note(f"MariaDB session cleanup also failed while {phase}: {failure!r}")
         raise first
 
-    def _clean_up(self, saved: int) -> list[tuple[str, Exception]]:
+    def _clean_up(self, saved: _SavedSession) -> list[tuple[str, Exception]]:
         failures: list[tuple[str, Exception]] = []
-        steps: tuple[tuple[str, Callable[[], None]], ...] = (
+        steps: list[tuple[str, Callable[[], None]]] = [
             ("settling its unfinished transaction", self._settle),
-            ("restoring innodb_snapshot_isolation", lambda: self._restore(saved)),
-        )
+            (
+                "restoring innodb_snapshot_isolation",
+                lambda: self._restore(_RESTORE_SNAPSHOT_ISOLATION, saved.snapshot_isolation),
+            ),
+        ]
+        read_only = saved.read_only
+        if read_only is not None:
+            steps.append(
+                (
+                    "restoring transaction_read_only",
+                    lambda: self._restore(_RESTORE_ACCESS_MODE, read_only),
+                )
+            )
         try:
             for phase, step in steps:
                 try:
@@ -545,21 +581,30 @@ class _MariaTxSession:
         if self._state == "open":
             self.rollback()
 
-    def _restore(self, saved: int) -> None:
+    def _restore(self, statement: str, saved: int) -> None:
         with self._conn.cursor() as cur:
-            cur.execute(_RESTORE_SNAPSHOT_ISOLATION, (saved,))
+            cur.execute(statement, (saved,))
 
 
-def _configure_session(conn: pymysql.connections.Connection, isolation: str | None) -> int:
-    """Save ``innodb_snapshot_isolation``, then apply *isolation* and lock tuning."""
+def _configure_session(
+    conn: pymysql.connections.Connection, isolation: str | None, access_mode: str | None
+) -> _SavedSession:
+    """Save the session state the request changes, then apply *isolation*,
+    *access_mode*, and lock tuning."""
     with conn.cursor() as cur:
         cur.execute(_SAVE_SNAPSHOT_ISOLATION)
-        ((saved,),) = cur.fetchall()
+        ((snapshot_isolation,),) = cur.fetchall()
+        read_only = None
+        if access_mode is not None:
+            cur.execute(_SAVE_ACCESS_MODE)
+            ((read_only,),) = cur.fetchall()
         for statement in _ISOLATION[isolation] if isolation is not None else ():
             cur.execute(statement)
+        if access_mode is not None:
+            cur.execute(_ACCESS_MODE[access_mode])
         cur.execute("set innodb_lock_wait_timeout = 1")
     conn.commit()
-    return saved
+    return _SavedSession(snapshot_isolation, read_only)
 
 
 def _close_after_failed_setup(conn: pymysql.connections.Connection, failure: BaseException) -> None:
