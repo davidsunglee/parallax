@@ -138,8 +138,17 @@ A retained capture writes `captures/<checkpoint>/<arm>/`: one JSON report per
 driver and a `provenance.json` naming the arm's commit, isolation, and lock
 digest, the drivers' digests, the machine, the load average, and each driver's
 server version, settings, image, fixture, pool, and offered load. Each
-checkpoint stays within 10 MiB of raw JSON. `captures/` is empty until the
-measurement campaign.
+checkpoint stays within 10 MiB of raw JSON.
+
+| Id | Arms captured | Raw JSON |
+|---|---|---|
+| C0 | `7b465769` at RC and at RR | 3.6 MB |
+| C1 | `3850203e9` at RC and at RR; each arm reports its writable, read-only, and standalone streams | 0.2 MB |
+| C2 | `3850203e9` and `44e78b3e2`, at RC | 0.4 MB |
+| C3 | `563e54eae` and `ef923969b`, at RC | 2.6 MB |
+| C4 | `ef923969b` and `e3785f21a`, at RC; `e3785f21a`'s `auto_retry` is the backoff's landing commit `95844b0c2`'s, unchanged | 6.6 MB |
+
+C5 and C6 are not captured yet.
 
 ## Findings
 
