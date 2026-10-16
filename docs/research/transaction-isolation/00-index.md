@@ -147,8 +147,8 @@ checkpoint stays within 10 MiB of raw JSON.
 | C2 | `3850203e9` and `44e78b3e2`, at RC | 0.4 MB |
 | C3 | `563e54eae` and `ef923969b`, at RC | 2.6 MB |
 | C4 | `ef923969b` and `e3785f21a`, at RC; `e3785f21a`'s `auto_retry` is the backoff's landing commit `95844b0c2`'s, unchanged | 6.6 MB |
-
-C5 and C6 are not captured yet.
+| C5 | `e3785f21a` and `7ab69577a`, at RC | 0.4 MB |
+| C6 | `7b465769` and `8886e730c`, the selected backoff's landing commit, each at RC and at RR | 7.3 MB |
 
 ## Findings
 
