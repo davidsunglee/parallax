@@ -7,8 +7,9 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+from parallax.core._execution._unit_work.effects import OptimisticLockConflictError
+from parallax.core._execution._unit_work.uow import RollbackOnlyError
 from parallax.core.db_error import DatabaseError
-from parallax.core.unit_work import OptimisticLockConflictError, RollbackOnlyError
 
 __all__ = ["retriable_failure", "run_with_retry"]
 

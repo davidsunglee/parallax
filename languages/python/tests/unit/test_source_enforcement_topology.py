@@ -39,20 +39,20 @@ from pathlib import Path
 from typing import get_type_hints
 
 from parallax.core import sql_gen
-from parallax.core.deep_fetch import ResolvedEntityQuery
-from parallax.core.deep_fetch import plan as plan_deep_fetch
-from parallax.core.execution._preflight import preflight
-from parallax.core.object_query._resolved import ResolvedObjectQuery
-from parallax.core.predicate._resolved import ResolvedPredicate
-from parallax.core.sql_gen._compile import compile_read, compile_write_predicate
-from parallax.core.sql_gen._write import compile_write_step
-from parallax.core.unit_work import WritePlanner
-from parallax.core.unit_work.instructions import (
+from parallax.core._execution._preflight import preflight
+from parallax.core._execution._unit_work.instructions import (
     PreparedTargetWrite,
     PreparedWrite,
     prepare_typed_write,
     prepare_wire_write,
 )
+from parallax.core.deep_fetch import ResolvedEntityQuery
+from parallax.core.deep_fetch import plan as plan_deep_fetch
+from parallax.core.object_query._resolved import ResolvedObjectQuery
+from parallax.core.predicate._resolved import ResolvedPredicate
+from parallax.core.sql_gen._compile import compile_read, compile_write_predicate
+from parallax.core.sql_gen._write import compile_write_step
+from parallax.core.unit_work import WritePlanner
 from parallax.core.write_plan.steps import PlannedWrite
 from tests._support.repo import PY_ROOT
 from tests.unit._source_inventory_support import (
@@ -88,7 +88,7 @@ _CARRIER_NEUTRAL_PRIVATE_SQL_REACHES: dict[tuple[str, str], frozenset[str]] = {
         "parallax.core.sql_gen._compile",
     ): frozenset({"CompiledRead"}),
     (
-        "parallax.core.execution._attempt",
+        "parallax.core._execution._transaction._attempt",
         "parallax.core.sql_gen._compile",
     ): frozenset({"compile_read", "CompiledRead"}),
     (
@@ -96,7 +96,7 @@ _CARRIER_NEUTRAL_PRIVATE_SQL_REACHES: dict[tuple[str, str], frozenset[str]] = {
         "parallax.core.sql_gen._seek",
     ): frozenset({"null_pattern"}),
     (
-        "parallax.core.execution._write_lowering",
+        "parallax.core._execution._write_lowering",
         "parallax.core.sql_gen._write",
     ): frozenset(
         {"InsertStatementBuilder", "StepPayload", "compile_write_step", "effect_bind_bound"}
@@ -188,20 +188,20 @@ def test_carrier_neutral_lowering_requires_producer_owned_semantic_products() ->
 # model selection's projections borrow `_model`'s class index that adapter
 # resolves Python member names through.
 ACCEPTED_PRIVATE_ENTITY_REACHES: dict[tuple[str, str], frozenset[str]] = {
-    ("parallax.core.execution._attempt", "_layout"): frozenset({"CatalogedModel"}),
-    ("parallax.core.execution._attempt", "_model"): frozenset({"ClassIndex"}),
-    ("parallax.core.execution._keyed_writes", "_layout"): frozenset({"CatalogedModel"}),
-    ("parallax.core.execution._page_origins", "_layout"): frozenset({"EntityLayout"}),
-    ("parallax.core.execution._planning", "_layout"): frozenset({"CatalogedModel"}),
-    ("parallax.core.execution._planning", "_model"): frozenset({"class_index", "model_of"}),
-    ("parallax.core.execution._publication", "_layout"): frozenset({"CatalogedModel"}),
-    ("parallax.core.execution._publication", "_model"): frozenset({"ClassIndex"}),
-    ("parallax.core.execution._read_policy", "_authored_resolver"): frozenset(
+    ("parallax.core._execution._transaction._attempt", "_layout"): frozenset({"CatalogedModel"}),
+    ("parallax.core._execution._transaction._attempt", "_model"): frozenset({"ClassIndex"}),
+    ("parallax.core._execution._keyed_writes", "_layout"): frozenset({"CatalogedModel"}),
+    ("parallax.core._execution._page_origins", "_layout"): frozenset({"EntityLayout"}),
+    ("parallax.core._execution._planning", "_layout"): frozenset({"CatalogedModel"}),
+    ("parallax.core._execution._planning", "_model"): frozenset({"class_index", "model_of"}),
+    ("parallax.core._execution._publication", "_layout"): frozenset({"CatalogedModel"}),
+    ("parallax.core._execution._publication", "_model"): frozenset({"ClassIndex"}),
+    ("parallax.core._execution._read_policy", "_authored_resolver"): frozenset(
         {"typed_interpretation"}
     ),
-    ("parallax.core.execution._read_policy", "_expressions"): frozenset({"AuthoredQuery"}),
-    ("parallax.core.execution._retention", "_construction_input"): frozenset({"ABSENT"}),
-    ("parallax.core.execution._retention", "_layout"): frozenset({"EntityLayout"}),
+    ("parallax.core._execution._read_policy", "_expressions"): frozenset({"AuthoredQuery"}),
+    ("parallax.core._execution._retention", "_construction_input"): frozenset({"ABSENT"}),
+    ("parallax.core._execution._retention", "_layout"): frozenset({"EntityLayout"}),
     ("parallax.core.object_query._fluent", "_entity"): frozenset({"Entity"}),
     ("parallax.core.object_query._fluent", "_expressions"): frozenset(
         {"AuthoredPredicate", "AuthoredQuery", "IncludePath", "SortKey", "include_traversal"}
@@ -294,7 +294,7 @@ def test_the_entity_reach_inventory_names_a_new_reach_and_passes_the_public_door
                         "from ..entity._construction_input import UNLOADED\n"
                         "from parallax.core.entity import _instance_state\n"
                     ),
-                    "parallax.core.execution._new": (
+                    "parallax.core._execution._new": (
                         "from parallax.core.entity._declaration import declaration_of\n"
                     ),
                     "parallax.snapshot._handle._resembling": (
@@ -311,7 +311,7 @@ def test_the_entity_reach_inventory_names_a_new_reach_and_passes_the_public_door
     assert _private_entity_reaches(imported) == {
         ("parallax.core.read_delivery._new", "_model"): {"model_of"},
         ("parallax.core.read_delivery._new", "_construction_input"): {"UNLOADED"},
-        ("parallax.core.execution._new", "_declaration"): {"declaration_of"},
+        ("parallax.core._execution._new", "_declaration"): {"declaration_of"},
     }
     assert _entity_package_imports(imported) == [
         synthetic_site("parallax.core.read_delivery._new", 2),
@@ -345,7 +345,7 @@ def test_the_sql_gen_reach_inventory_names_a_new_reach_and_passes_the_public_doo
                     "from parallax.core.sql_gen._predicate import compile_predicate\n"
                     "import parallax.core.sql_gen._seek\n"
                 ),
-                "parallax.core.execution._new": "from parallax.core.sql_gen import _compile\n",
+                "parallax.core._execution._new": "from parallax.core.sql_gen import _compile\n",
                 "parallax.snapshot._handle._resembling": (
                     "from parallax.core.sql_gen import LoweredStatement\n"
                     "import parallax.core.sql_gen\n"
@@ -361,7 +361,7 @@ def test_the_sql_gen_reach_inventory_names_a_new_reach_and_passes_the_public_doo
         ("parallax.core.read_delivery._new", "parallax.core.sql_gen._seek"): {
             "parallax.core.sql_gen._seek"
         },
-        ("parallax.core.execution._new", "parallax.core.sql_gen._compile"): {
+        ("parallax.core._execution._new", "parallax.core.sql_gen._compile"): {
             "parallax.core.sql_gen._compile"
         },
     }
@@ -380,18 +380,18 @@ def test_the_sql_gen_reach_inventory_names_a_new_reach_and_passes_the_public_doo
 ACCEPTED_PRIVATE_LIFECYCLE_REACHES: frozenset[tuple[str, str]] = frozenset(
     {
         *(
-            (f"parallax.core.execution.{module}", "parallax.core.execution_lifecycle._activity")
+            (f"parallax.core._execution.{module}", "parallax.core.execution_lifecycle._activity")
             for module in (
-                "_attempt",
                 "_connection_lifecycle",
                 "_keyed_writes",
                 "_read_policy",
                 "_root",
-                "_runner",
                 "_scope",
+                "_transaction._attempt",
+                "_transaction._runner",
             )
         ),
-        ("parallax.core.execution._root", "parallax.core.execution_lifecycle._pool_observation"),
+        ("parallax.core._execution._root", "parallax.core.execution_lifecycle._pool_observation"),
         *(
             (f"parallax.core.read_delivery.{module}", "parallax.core.execution_lifecycle._activity")
             for module in ("_delivery", "_fetch", "_page_reader", "_row_lane", "_stream")
@@ -428,10 +428,10 @@ def test_the_lifecycle_reach_inventory_names_a_new_reach_and_passes_the_public_d
                     "from parallax.core.execution_lifecycle._activity import ReadActivity\n"
                     "import parallax.core.execution_lifecycle._events\n"
                 ),
-                "parallax.core.execution._new": (
+                "parallax.core._execution._new": (
                     "from parallax.core.execution_lifecycle import _pool_observation\n"
                 ),
-                "parallax.core.execution._resembling": (
+                "parallax.core._execution._resembling": (
                     "from parallax.core.execution_lifecycle import ReadInterface\n"
                     "import parallax.core.execution_lifecycle\n"
                     "from parallax.core.execution_lifecycles._activity import INERT\n"
@@ -442,7 +442,7 @@ def test_the_lifecycle_reach_inventory_names_a_new_reach_and_passes_the_public_d
     assert _private_lifecycle_reaches(imported) == {
         ("parallax.core.read_delivery._new", "parallax.core.execution_lifecycle._activity"),
         ("parallax.core.read_delivery._new", "parallax.core.execution_lifecycle._events"),
-        ("parallax.core.execution._new", "parallax.core.execution_lifecycle._pool_observation"),
+        ("parallax.core._execution._new", "parallax.core.execution_lifecycle._pool_observation"),
     }
 
 
@@ -510,12 +510,12 @@ ACCEPTED_CONFORMANCE_PRIVATE_REACHES: dict[tuple[str, str], frozenset[str]] = {
     ("parallax.conformance.another_source", "parallax.snapshot._publication._root"): frozenset(
         {"RootView"}
     ),
-    ("parallax.conformance.another_source", "parallax.core.execution._preflight"): frozenset(
+    ("parallax.conformance.another_source", "parallax.core._execution._preflight"): frozenset(
         {"preflight"}
     ),
     (
         "parallax.conformance._mechanism.model_facts",
-        "parallax.core.execution._preflight",
+        "parallax.core._execution._preflight",
     ): frozenset({"preflight"}),
     ("parallax.conformance._lanes.scenario", "parallax.snapshot._publication._wire"): frozenset(
         {"authoring_of", "read_origin_of"}
@@ -523,23 +523,70 @@ ACCEPTED_CONFORMANCE_PRIVATE_REACHES: dict[tuple[str, str], frozenset[str]] = {
     # The conformance-only runtime names the scenario and snapshot lanes drive the
     # production planner, lowering, and source-pin check through, read from the
     # modules that own them, and the family-variant key a Wire node is spelled with.
-    ("parallax.conformance._lanes.scenario", "parallax.core.execution._planning"): frozenset(
+    ("parallax.conformance._lanes.scenario", "parallax.core._execution._planning"): frozenset(
         {"build_write_planner"}
     ),
     (
         "parallax.conformance._lanes.scenario",
-        "parallax.core.execution._write_lowering",
+        "parallax.core._execution._write_lowering",
     ): frozenset({"stream_physical"}),
-    ("parallax.conformance._lanes.scenario", "parallax.core.execution._keyed_writes"): frozenset(
+    ("parallax.conformance._lanes.scenario", "parallax.core._execution._keyed_writes"): frozenset(
         {"validate_source_pin"}
     ),
-    ("parallax.conformance._lanes.snapshot", "parallax.core.execution._keyed_writes"): frozenset(
+    ("parallax.conformance._lanes.snapshot", "parallax.core._execution._keyed_writes"): frozenset(
         {"validate_source_pin"}
     ),
     ("parallax.conformance._lanes.snapshot", "parallax.snapshot._publication._wire"): frozenset(
         {"FAMILY_VARIANT_KEY"}
     ),
-    ("parallax.conformance.another_source", "parallax.core.execution._publication"): frozenset(
+    # The unit of work's implementation leaves the case lanes compose writes
+    # through: the instruction vocabulary and its prepared forms, the materialized
+    # and readless write builders, deferred-range binding, write composition, and
+    # the row-acquisition requests a temporal stored state is read by. The facade
+    # exports none of them, so each lane names the private owner.
+    **{
+        (lane, "parallax.core._execution._unit_work"): frozenset({"instructions"})
+        for lane in (
+            "parallax.conformance._case_ingress",
+            "parallax.conformance._lanes.rejected",
+            "parallax.conformance._lanes.scenario",
+            "parallax.conformance._lanes.snapshot",
+        )
+    },
+    (
+        "parallax.conformance._case_ingress",
+        "parallax.core._execution._unit_work.instructions",
+    ): frozenset({"PreparedTargetWrite", "PreparedWrite", "WriteInstruction"}),
+    (
+        "parallax.conformance._lanes.scenario",
+        "parallax.core._execution._unit_work.instructions",
+    ): frozenset(
+        {
+            "ExpectedTxStart",
+            "ExpectedVersion",
+            "PreparedKeyedWrite",
+            "PreparedPredicateWrite",
+            "PreparedTargetWrite",
+            "PreparedWrite",
+            "WriteInstruction",
+        }
+    ),
+    (
+        "parallax.conformance._lanes.scenario",
+        "parallax.core._execution._unit_work.materialized",
+    ): frozenset({"readless_write", "target_write"}),
+    ("parallax.conformance._lanes.scenario", "parallax.core._execution._unit_work.uow"): frozenset(
+        {"bind_deferred_range"}
+    ),
+    (
+        "parallax.conformance._lanes.scenario",
+        "parallax.core._execution._unit_work.write_planner",
+    ): frozenset({"compose_writes"}),
+    (
+        "parallax.conformance.temporal_state",
+        "parallax.core._execution._unit_work.acquisition",
+    ): frozenset({"AcquireRows", "CoverageReadRequest", "RowConsumer", "RowRequest"}),
+    ("parallax.conformance.another_source", "parallax.core._execution._publication"): frozenset(
         {"read_projection"}
     ),
     ("parallax.conformance.another_source", "parallax.core.entity._authored_resolver"): frozenset(
@@ -697,7 +744,7 @@ def test_build_write_planner_is_the_sole_planner_composition_root() -> None:
     ]
     import_every_module(all_sources())
     assert _shipped_descendant_names(WritePlanner) == [
-        "parallax.core.unit_work.write_planner.WritePlanner"
+        "parallax.core._execution._unit_work.write_planner.WritePlanner"
     ]
 
 

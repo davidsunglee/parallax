@@ -14,11 +14,12 @@ from parallax.conformance._mechanism.model_facts import (
     load_case_metamodel,
 )
 from parallax.core import inheritance
+from parallax.core._execution._unit_work import instructions
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.model_formation import MetamodelValidationError
 from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.predicate import CanonicalDocumentError, ModelRejectedError
-from parallax.core.unit_work import KeyedWrite, PredicateWrite, WriteRejectedError, instructions
+from parallax.core.unit_work import KeyedWrite, PredicateWrite, WriteRejectedError
 from parallax.core.write_plan import WritePlanningError
 from parallax.descriptor import (
     DescriptorError,
@@ -108,7 +109,7 @@ def run_rejected_case(case: case_format.Case) -> str:
     entity), wrapped as the canonical keyed instruction, and routed through
     the case-format preparation seam. That seam normalizes carriers and delegates
     recursive Wire decoding, validation, and retained-value freezing to
-    :func:`~parallax.core.unit_work.instructions.prepare_wire_write`, so the
+    :func:`~parallax.core._execution._unit_work.instructions.prepare_wire_write`, so the
     rejected lane cannot drift from ordinary Wire write ingress.
 
     Membership can decide the form only because `target` and `rows` are RESERVED

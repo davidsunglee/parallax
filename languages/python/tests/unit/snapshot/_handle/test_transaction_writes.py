@@ -30,6 +30,8 @@ from parallax.conformance.vo_models import (
     ContactPoint,
 )
 from parallax.core import LATEST, Attr, DomainModel, Entity, attr, unit_work
+from parallax.core._execution._options import OMITTED
+from parallax.core._execution._unit_work import instructions
 from parallax.core.base import DocumentValue, InstantError, PresentDocument
 from parallax.core.db_port import MappingRow
 from parallax.core.dialect import POSTGRES
@@ -40,14 +42,12 @@ from parallax.core.execution import (
     KeyedWriteValueError,
     TransactionTimePinReadOnlyError,
 )
-from parallax.core.execution._options import OMITTED
 from parallax.core.read_delivery import InvalidData
 from parallax.core.unit_work import (
     OptimisticLockConflictError,
     StaleWriteError,
     WriteEvidenceError,
     WriteInstructionError,
-    instructions,
 )
 from parallax.core.write_plan import ObjectKey
 from parallax.snapshot import Database, ScopedDatabase, Transaction
@@ -1038,7 +1038,7 @@ def test_an_inherited_positions_window_is_judged_by_its_family_shape(
 # `valid_from < until` ... all validated at build" — an EQUAL and a        #
 # REVERSED window both reject, at the verb call, before any buffering, for    #
 # BOTH the KEYED and the `_where` verb families — the ONE window judgment of  #
-# write preparation (`parallax.core.unit_work.instructions`) makes them all  #
+# write preparation (`parallax.core._execution._unit_work.instructions`) makes them all  #
 # converge.                                                                   #
 # --------------------------------------------------------------------------- #
 def test_a_bounded_keyed_update_rejects_an_equal_window_bound() -> None:

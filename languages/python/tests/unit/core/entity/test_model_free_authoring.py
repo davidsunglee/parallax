@@ -42,6 +42,7 @@ from parallax.core import (
     attr,
     inheritance,
 )
+from parallax.core._execution._preflight import preflight
 from parallax.core.base import Decimal as NeutralDecimal
 from parallax.core.db_port import DatabaseAdapter
 from parallax.core.entity import _authored_resolver
@@ -56,7 +57,6 @@ from parallax.core.entity._expressions import (
 from parallax.core.entity._model import DomainModel as _Fixed
 from parallax.core.entity._model import model_of
 from parallax.core.execution import QueryTargetError
-from parallax.core.execution._preflight import preflight
 from parallax.core.metamodel import (
     UnresolvedEntityDeclaration,
     WriteAssignmentError,

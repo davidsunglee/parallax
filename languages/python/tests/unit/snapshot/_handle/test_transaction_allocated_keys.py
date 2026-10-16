@@ -12,6 +12,7 @@ import pytest
 
 from parallax.conformance._lifecycle_recording import RecordingLifecycleProvider
 from parallax.core import MAX, Attr, DomainModel, Entity, TxTemporal, attr
+from parallax.core._execution._unit_work.instructions import prepare_typed_write
 from parallax.core.entity._model import model_of
 from parallax.core.execution_lifecycle import (
     DatabaseCallFinished,
@@ -20,7 +21,6 @@ from parallax.core.execution_lifecycle import (
     DatabaseWriteRowsCompleted,
 )
 from parallax.core.unit_work import KeyedWrite, WriteResultError
-from parallax.core.unit_work.instructions import prepare_typed_write
 from parallax.snapshot import Transaction
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (

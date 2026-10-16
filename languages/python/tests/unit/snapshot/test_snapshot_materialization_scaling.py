@@ -58,6 +58,7 @@ from collections.abc import Callable, Iterator, Sequence
 from itertools import count, repeat
 from typing import Any, Final, cast
 
+from parallax.core._execution._publication import read_projection
 from parallax.core.db_port import Row
 from parallax.core.entity import UNLOADED, Entity
 from parallax.core.entity._layout import CatalogedModel
@@ -65,7 +66,6 @@ from parallax.core.execution import (
     ModelSelection,
     prepare_model,
 )
-from parallax.core.execution._publication import read_projection
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.temporal_read import Pin
 from parallax.core.unit_work import ReadOrigin

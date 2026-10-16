@@ -23,9 +23,9 @@ import pytest
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.story_models import Wallet
 from parallax.core import Attr, Entity, attr
+from parallax.core._execution._options import OMITTED
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity import DomainModel
-from parallax.core.execution._options import OMITTED
 from parallax.core.unit_work import (
     MissingTargetError,
     RollbackOnlyError,

@@ -14,6 +14,7 @@ from typing import Any
 import pytest
 
 from parallax.core import inheritance, temporal_read
+from parallax.core._execution._unit_work.strategy import NO_AUDIT, AuditDecoration
 from parallax.core.base import INFINITY
 from parallax.core.document_codec import PreparedEffectiveChange, prepare_effective_change
 from parallax.core.metamodel import EntityIdentity, Metamodel
@@ -25,7 +26,6 @@ from parallax.core.temporal_write.expansion import (
     TemporalFacts,
     opening,
 )
-from parallax.core.unit_work.strategy import NO_AUDIT, AuditDecoration
 from parallax.core.write_payload import LayoutPayloadPreparer
 from parallax.core.write_plan import ObjectKey, PredecessorRow, observe
 from parallax.core.write_plan.keys import TemporalStateKey
@@ -61,7 +61,7 @@ from parallax.core.write_plan.steps import INFINITY as OPEN_END
 from tests._support.clock_probes import inert_instant
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
 from tests.unit._corpus_model_support import model
-from tests.unit.core.unit_work._ownership_support import OpenedRows
+from tests.unit.core._execution._unit_work._ownership_support import OpenedRows
 
 _SPANS = model("buffered-sequence-layout-twin-columns")
 _BALANCES = model("balance")

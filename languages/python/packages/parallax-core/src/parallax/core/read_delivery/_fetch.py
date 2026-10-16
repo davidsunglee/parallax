@@ -4,6 +4,7 @@ from collections.abc import Iterable, Sequence
 from typing import cast
 
 from parallax.core import deep_fetch, inheritance, opt_lock, read_lock
+from parallax.core._execution._unit_work.uow import Concurrency
 from parallax.core.base import ManagedValue
 from parallax.core.db_port import DatabaseConnection, Row
 from parallax.core.dialect import LockMode
@@ -11,7 +12,6 @@ from parallax.core.execution_lifecycle._activity import DatabaseCallScope
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity, Metamodel
 from parallax.core.read_delivery._page import ABSENT, ROOT_LEVEL, ChildSlot, PageBuilder
 from parallax.core.sql_gen._compile import CompiledRead
-from parallax.core.unit_work import Concurrency
 
 __all__ = [
     "attach_back_reference",

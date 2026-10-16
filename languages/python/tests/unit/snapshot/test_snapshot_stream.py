@@ -45,6 +45,7 @@ from parallax.conformance.story_models import (
     Position,
 )
 from parallax.core import DomainModel
+from parallax.core._execution import _read_policy
 from parallax.core.base import ManagedValue, NeutralType
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import DatabaseAdapter, MappingRow
@@ -53,7 +54,6 @@ from parallax.core.execution import (
     DeferredFeatureError,
     QueryTargetError,
     ServingModel,
-    _read_policy,
     prepare_model,
 )
 from parallax.core.object_query import TX_TIME, VALID_TIME

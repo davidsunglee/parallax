@@ -7,7 +7,7 @@ Write Planner's own batching-stage adjacency logic (pinned in
 ``test_write_planner.py``) and the rendered SQL (pinned in
 ``test_write_lowering.py`` / ``test_engine.py``). The final section composes
 the two: it plans through the SAME production wiring
-(``parallax.core.execution._planning.build_write_planner``) and lowers the resulting
+(``parallax.core._execution._planning.build_write_planner``) and lowers the resulting
 plan, pinning that a run only ever collapses rows whose filtered Table Layout
 slot selections match (`m-sql` "Physical DML ordering").
 """
@@ -20,9 +20,9 @@ import pytest
 
 from parallax.conformance import models
 from parallax.core import batch_write
+from parallax.core._execution._keyed_sql import collapse_group_key
+from parallax.core._execution._planning import build_write_planner
 from parallax.core.dialect import POSTGRES
-from parallax.core.execution._keyed_sql import collapse_group_key
-from parallax.core.execution._planning import build_write_planner
 from parallax.core.metamodel import AttributeMetadata, EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.unit_work import BufferItem, KeyedWrite, WritePlanningRequest, WriteRejectedError

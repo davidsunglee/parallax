@@ -21,7 +21,7 @@ every capability call and runs each body with INERT activities over whichever
 :class:`ReadInputs` the case names. That is what lets each claim be stated
 once, for both lanes and both interfaces, rather than once per handle. What
 each production read DOES inside its own bracket — adoption included — is
-`tests/unit/core/execution/test_read_policy.py`'s subject, and what a whole read
+`tests/unit/core/_execution/test_read_policy.py`'s subject, and what a whole read
 answers stays the public-surface suites'.
 """
 
@@ -36,16 +36,16 @@ import pytest
 
 from parallax.conformance._lifecycle_recording import RecordingLifecycleProvider
 from parallax.core import LATEST, TX_TIME
+from parallax.core._execution import _read_policy as read_policy_module
+from parallax.core._execution._publication import SelectedReadModel
+from parallax.core._execution._read_policy import ReadInputs
+from parallax.core._execution._retention import ObservationLedger
+from parallax.core._execution._scope import ExecutionScope
 from parallax.core.db_port import DatabaseConnection
 from parallax.core.entity._authored_resolver import object_query_node
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import class_index
 from parallax.core.execution import DatabaseOptions, QueryTargetError
-from parallax.core.execution import _read_policy as read_policy_module
-from parallax.core.execution._publication import SelectedReadModel
-from parallax.core.execution._read_policy import ReadInputs
-from parallax.core.execution._retention import ObservationLedger
-from parallax.core.execution._scope import ExecutionScope
 from parallax.core.execution_lifecycle import ExecutionLifecycleReentryError, ReadInterface
 from parallax.core.execution_lifecycle._activity import (
     INERT,

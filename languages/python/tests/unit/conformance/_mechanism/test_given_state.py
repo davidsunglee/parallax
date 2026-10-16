@@ -33,6 +33,7 @@ from parallax.conformance._mechanism.model_facts import (
     load_case_setup_metamodel,
 )
 from parallax.conformance.temporal_state import TemporalShadow
+from parallax.core._execution._unit_work.acquisition import CoverageReadRequest, CoverageTerm
 from parallax.core.base import INFINITY
 from parallax.core.db_port import (
     DatabaseConnection,
@@ -45,7 +46,6 @@ from parallax.core.db_port import (
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.metamodel import AttributeIdentity
 from parallax.core.temporal_read import TimeInterval
-from parallax.core.unit_work.acquisition import CoverageReadRequest, CoverageTerm
 from tests._support.db_port import body_outcome
 from tests.unit.conformance._coverage_rows_support import coverage_members, read_coverage
 from tests.unit.conformance._recording_ports import FakeWritePort

@@ -24,6 +24,9 @@ from typing import Final, cast
 
 import pytest
 
+from parallax.core._execution._keyed_sql import collapse_group_key
+from parallax.core._execution._unit_work.instructions import WriteInstruction
+from parallax.core._execution._write_lowering import lowered
 from parallax.core.base import FrozenMap, retain_document_value
 from parallax.core.db_port import JsonDocument
 from parallax.core.dialect import POSTGRES
@@ -31,8 +34,6 @@ from parallax.core.document_codec import _managed as managed
 from parallax.core.document_codec import persisted_document_equal
 from parallax.core.entity._construction_input import ABSENT
 from parallax.core.entity._layout import LayoutCatalog
-from parallax.core.execution._keyed_sql import collapse_group_key
-from parallax.core.execution._write_lowering import lowered
 from parallax.core.metamodel import (
     AttributeIdentity,
     AttributeMetadata,
@@ -42,7 +43,6 @@ from parallax.core.metamodel import (
 from parallax.core.sql_gen import LoweredStatement, SqlGenError
 from parallax.core.sql_gen._write import InsertStatementBuilder
 from parallax.core.unit_work import KeyedWrite
-from parallax.core.unit_work.instructions import WriteInstruction
 from parallax.core.write_payload import LayoutPayloadPreparer
 from parallax.core.write_plan import PredecessorRow
 from parallax.core.write_plan.observe import (

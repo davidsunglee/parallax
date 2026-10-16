@@ -125,7 +125,10 @@ def test_every_scope_submodule_imports() -> None:
         "parallax.core.read_delivery",
         "parallax.core.read_delivery._page",
         "parallax.core.execution",
-        "parallax.core.execution._retention",
+        "parallax.core.unit_work",
+        "parallax.core._execution._retention",
+        "parallax.core._execution._transaction._runner",
+        "parallax.core._execution._unit_work.uow",
     ],
 )
 def test_snapshot_imports_cold_in_a_fresh_interpreter(module: str) -> None:

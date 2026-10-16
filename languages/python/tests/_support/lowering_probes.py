@@ -2,10 +2,10 @@
 write's DML.
 
 Each settled step lowers alone through the shipped seam
-(:func:`~parallax.core.execution._write_lowering.lowered`), one statement per
+(:func:`~parallax.core._execution._write_lowering.lowered`), one statement per
 Planned Write, whatever statements execution then groups them into. A unit test
 usually pins the statements of one instruction, so this plans it — through the
-SAME production wiring :func:`~parallax.core.execution._planning.build_write_planner`
+SAME production wiring :func:`~parallax.core._execution._planning.build_write_planner`
 builds — as the one-instruction buffer it means, and hands back the lowered
 statements in order.
 """
@@ -14,18 +14,18 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Iterator
 
-from parallax.core.dialect import POSTGRES, Dialect
-from parallax.core.execution._planning import build_write_planner
-from parallax.core.execution._write_lowering import lowered
-from parallax.core.metamodel import Metamodel
-from parallax.core.sql_gen import LoweredStatement
-from parallax.core.unit_work import Concurrency, TransactionInstant, WritePlanningRequest
-from parallax.core.unit_work.instructions import (
+from parallax.core._execution._planning import build_write_planner
+from parallax.core._execution._unit_work.instructions import (
     PreparedTargetWrite,
     PreparedWrite,
     WriteInstruction,
     prepare_typed_write,
 )
+from parallax.core._execution._write_lowering import lowered
+from parallax.core.dialect import POSTGRES, Dialect
+from parallax.core.metamodel import Metamodel
+from parallax.core.sql_gen import LoweredStatement
+from parallax.core.unit_work import Concurrency, TransactionInstant, WritePlanningRequest
 from parallax.core.write_payload import LayoutPayloadPreparer
 from parallax.core.write_plan import WriteObservation
 from parallax.core.write_plan.payload import WritePayloadPreparer

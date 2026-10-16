@@ -1,7 +1,7 @@
 """Write admission and Observed-State Coalescing through the real handles over a
 fake port (`m-unit-work`): the choreography a caller performs, refused at the
 verb or merged at finalization by the claim algebra
-``tests/unit/core/unit_work/test_write_claims.py`` measures as a pure function."""
+``tests/unit/core/_execution/_unit_work/test_write_claims.py`` measures as a pure function."""
 
 from __future__ import annotations
 

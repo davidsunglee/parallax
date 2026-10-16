@@ -31,6 +31,8 @@ from parallax.conformance._mechanism import case_document, model_facts
 from parallax.conformance._mechanism.envelope import EngineError
 from parallax.conformance.temporal_state import TemporalShadow
 from parallax.core import predicate
+from parallax.core._execution._unit_work import instructions
+from parallax.core._execution._unit_work.instructions import PreparedKeyedWrite
 from parallax.core.base import (
     INFINITY,
     TemporalBound,
@@ -60,9 +62,7 @@ from parallax.core.unit_work import (
     WriteEffectError,
     WriteEvidenceError,
     WriteRejectedError,
-    instructions,
 )
-from parallax.core.unit_work.instructions import PreparedKeyedWrite
 from parallax.core.write_plan import (
     ObjectKey,
     PredecessorRow,

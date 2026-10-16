@@ -7,6 +7,7 @@ from decimal import Decimal
 from typing import Final, Literal, NamedTuple, Protocol, assert_never, cast
 
 from parallax.core import deep_fetch, inheritance
+from parallax.core._execution._unit_work.uow import Concurrency
 from parallax.core.dialect import Dialect
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.metamodel import AttributeIdentity
@@ -52,7 +53,6 @@ from parallax.core.sql_gen._compile import (
 )
 from parallax.core.sql_gen._seek import null_pattern
 from parallax.core.temporal_read import scans_resolved_axis
-from parallax.core.unit_work import Concurrency
 
 __all__ = [
     "DEFAULT_READ_PLAN_CACHE_CAPACITY",

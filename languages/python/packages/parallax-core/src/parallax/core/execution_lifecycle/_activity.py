@@ -9,6 +9,7 @@ from types import TracebackType
 from typing import ClassVar, Final, Protocol, Self, runtime_checkable
 from uuid import UUID, uuid4
 
+from parallax.core._execution._unit_work.uow import Concurrency, WriteBatchReason
 from parallax.core.auto_retry import retriable_failure
 from parallax.core.db_port import (
     AcquisitionReason,
@@ -93,7 +94,6 @@ from parallax.core.execution_lifecycle._events import (
     WriteBatchStarted,
 )
 from parallax.core.sql_gen import LoweredStatement
-from parallax.core.unit_work import Concurrency, WriteBatchReason
 
 
 @runtime_checkable

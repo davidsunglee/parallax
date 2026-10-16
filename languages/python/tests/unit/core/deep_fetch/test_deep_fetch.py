@@ -31,6 +31,10 @@ from parallax.conformance.read_models import (
     WildBoar,
 )
 from parallax.core import DomainModel, deep_fetch, inheritance, relationship
+from parallax.core._execution._unit_work.instructions import (
+    PreparedPredicateWrite,
+    prepare_typed_write,
+)
 from parallax.core.base import INFINITY, ManagedValue
 from parallax.core.deep_fetch._include_tree import EMPTY_RENDER, IncludePosition
 from parallax.core.dialect import POSTGRES
@@ -72,7 +76,6 @@ from parallax.core.predicate._resolved import (
 from parallax.core.sql_gen._compile import compile_read, compile_template
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.unit_work import PredicateSelection, PredicateWrite, WriteAssignment
-from parallax.core.unit_work.instructions import PreparedPredicateWrite, prepare_typed_write
 from tests.unit._corpus_model_support import model as accepted_model
 from tests.unit._corpus_model_support import target as entity_of
 

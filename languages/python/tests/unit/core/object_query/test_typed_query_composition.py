@@ -108,20 +108,20 @@ from parallax.core import (
     attr,
     rel,
 )
+from parallax.core._execution._preflight import preflight
+from parallax.core._execution._unit_work.instructions import (
+    prepare_typed_write,
+)
 from parallax.core.entity import AttributeAssignment
 from parallax.core.entity._authored_resolver import object_query_node
 from parallax.core.entity._expressions import AuthoredConstant, include_traversal
 from parallax.core.entity._model import model_of
-from parallax.core.execution._preflight import preflight
 from parallax.core.predicate import TrueNode
 from parallax.core.unit_work import (
     PredicateSelection,
     PredicateWrite,
     WriteAssignment,
     WriteInstructionError,
-)
-from parallax.core.unit_work.instructions import (
-    prepare_typed_write,
 )
 from tests._support import snapshot_models
 from tests._support.query_probes import canonical_document, predicate_document

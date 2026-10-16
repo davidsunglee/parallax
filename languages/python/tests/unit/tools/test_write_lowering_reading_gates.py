@@ -43,11 +43,11 @@ import pytest
 
 import write_lowering_reading
 from parallax.conformance.budget import MemoryGates
+from parallax.core._execution import _write_lowering
+from parallax.core._execution._unit_work import instructions
+from parallax.core._execution._write_lowering import LoweringCursor
 from parallax.core.base import DocumentValue, PresentDocument, detach_json_container
 from parallax.core.db_port import JsonDocument
-from parallax.core.execution import _write_lowering
-from parallax.core.execution._write_lowering import LoweringCursor
-from parallax.core.unit_work import instructions
 from tests.unit import _memory_gate_support as gate_support
 from tests.unit import _predicate_acquisition_support as acquisition_support
 from tests.unit import _write_lowering_support as lowering_support

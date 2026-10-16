@@ -39,6 +39,7 @@ from parallax.core import (
     attr,
     rel,
 )
+from parallax.core._execution._preflight import preflight
 from parallax.core.base import TIMESTAMP
 from parallax.core.base import Decimal as NeutralDecimal
 from parallax.core.entity import IncludePath
@@ -47,7 +48,6 @@ from parallax.core.entity._entity import build_object_query
 from parallax.core.entity._expressions import IncludeTraversal, include_traversal
 from parallax.core.entity._model import model_of
 from parallax.core.execution import DeferredFeatureError
-from parallax.core.execution._preflight import preflight
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.object_query import AsOf, AsOfRange, History, IncludeSegment
 from parallax.core.object_query._fluent import ObjectQuery, typed_read_query

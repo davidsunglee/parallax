@@ -43,6 +43,9 @@ from parallax.core import (
     deep_fetch,
     rel,
 )
+from parallax.core._execution._concurrency import CONCURRENCY
+from parallax.core._execution._page_origins import ObservedPageProjections
+from parallax.core._execution._preflight import preflight
 from parallax.core.base import INFINITY
 from parallax.core.db_port import (
     DatabaseConnection,
@@ -64,9 +67,6 @@ from parallax.core.execution import (
     ServingModel,
     prepare_model,
 )
-from parallax.core.execution._concurrency import CONCURRENCY
-from parallax.core.execution._page_origins import ObservedPageProjections
-from parallax.core.execution._preflight import preflight
 from parallax.core.metamodel import (
     AttributeIdentity,
     EntityIdentity,

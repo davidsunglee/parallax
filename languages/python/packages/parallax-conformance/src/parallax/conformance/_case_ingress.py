@@ -8,6 +8,12 @@ from typing import cast, overload
 
 from parallax.conformance._case_literal import normalize_case_bound, normalize_case_literal
 from parallax.core import inheritance, predicate, temporal_read
+from parallax.core._execution._unit_work import instructions
+from parallax.core._execution._unit_work.instructions import (
+    PreparedTargetWrite,
+    PreparedWrite,
+    WriteInstruction,
+)
 from parallax.core.base import (
     INFINITY,
     INFINITY_LITERAL,
@@ -34,16 +40,12 @@ from parallax.core.metamodel import (
 )
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.object_query import AsOf, AsOfRange, ObjectQueryNode, TemporalSelection
-from parallax.core.unit_work import instructions
-from parallax.core.unit_work.instructions import (
+from parallax.core.unit_work import (
     KeyedWrite,
     PredicateSelection,
     PredicateWrite,
-    PreparedTargetWrite,
-    PreparedWrite,
     TargetWrite,
     WriteAssignment,
-    WriteInstruction,
 )
 from parallax.core.wire import WireDecodingError, WireValue, decode_wire
 from parallax.core.write_plan.columns import freeze_retained_value
@@ -90,7 +92,7 @@ def decode_case_row(
     in its axis ends, so a declared Transaction-Time or Valid-Time end spelled
     ``infinity`` is the managed :data:`~parallax.core.base.INFINITY`; every other
     Timestamp leaf stays finite-only. A ``WireDecodingError`` surfaces as the
-    :class:`~parallax.core.unit_work.instructions.InstructionRejectedError` Wire
+    :class:`~parallax.core._execution._unit_work.instructions.InstructionRejectedError` Wire
     preparation raises for it.
 
     A logical member name the family-effective selection does not declare is

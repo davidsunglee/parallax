@@ -7,6 +7,7 @@ from types import MappingProxyType
 from typing import cast
 
 from parallax.core import opt_lock, temporal_read
+from parallax.core._execution._unit_work.uow import Concurrency
 from parallax.core.db_port import DatabaseConnection
 from parallax.core.entity._layout import CatalogedModel, EntityLayout
 from parallax.core.execution_lifecycle._activity import INERT, DatabaseCallScope
@@ -42,7 +43,6 @@ from parallax.core.read_delivery._page_reader import (
 from parallax.core.read_delivery._read_plan import UNCACHED_READ_PLANNER, EmptyRead, ReadPlanner
 from parallax.core.read_delivery._row_converter import RowPublisher
 from parallax.core.temporal_read import resolved_query_pin
-from parallax.core.unit_work import Concurrency
 
 __all__ = [
     "PublishedRow",

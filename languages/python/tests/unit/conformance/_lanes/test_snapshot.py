@@ -27,6 +27,7 @@ from parallax.conformance._lanes import snapshot
 from parallax.conformance._lifecycle_observation import lifecycle_run
 from parallax.conformance._mechanism import case_document, model_facts
 from parallax.conformance._mechanism.envelope import Emission, EngineError, ScenarioRun
+from parallax.core._execution._unit_work import instructions
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import (
     INFINITY,
@@ -51,7 +52,6 @@ from parallax.core.metamodel import (
     ValueObjectShapeKey,
 )
 from parallax.core.temporal_read import Pin
-from parallax.core.unit_work import instructions
 from tests._support.db_port import body_outcome
 from tests.unit._metamodel_support import Declaration, attribute, key, source
 from tests.unit.conformance._recording_ports import FakeDbPort, FakeWritePort, QueueDbPort

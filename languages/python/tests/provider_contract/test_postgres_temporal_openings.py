@@ -24,9 +24,10 @@ import pytest
 from parallax.conformance._lifecycle_recording import RecordingLifecycleProvider
 from parallax.conformance.scripted_clock import ScriptedClock
 from parallax.core import Attr, Bitemporal, Document, DomainModel, Entity, ValueObject, attr
+from parallax.core._execution import _write_lowering
 from parallax.core.db_error import DatabaseError
 from parallax.core.entity._model import model_of
-from parallax.core.execution import ExecutionFailure, _write_lowering
+from parallax.core.execution import ExecutionFailure
 from parallax.core.execution_lifecycle import (
     AttemptRolledBack,
     DatabaseCallFailed,

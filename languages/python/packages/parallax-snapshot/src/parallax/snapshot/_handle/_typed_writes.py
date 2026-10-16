@@ -4,17 +4,8 @@ import datetime as dt
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, cast
 
-from parallax.core.entity import (
-    AttributeAssignment,
-    EntityRowCodec,
-    lifecycle_state_of,
-)
-from parallax.core.entity import Entity as EntityBase
-from parallax.core.entity._authored_resolver import typed_interpretation
-from parallax.core.entity._declaration import declaration_of
-from parallax.core.execution._attempt import Attempt
-from parallax.core.execution._family import family_view
-from parallax.core.execution._keyed_writes import (
+from parallax.core._execution._family import family_view
+from parallax.core._execution._keyed_writes import (
     PreparedSourceWrite,
     Provenance,
     ResolvedKeyedInsert,
@@ -24,25 +15,34 @@ from parallax.core.execution._keyed_writes import (
     retained,
     stated_valid_from,
 )
-from parallax.core.execution._options import OMITTED, Omitted
-from parallax.core.execution_lifecycle._activity import refuse_reentry
-from parallax.core.metamodel import EntityMetadata, Metamodel
-from parallax.core.object_query._fluent import ObjectQuery, mutation_selection
-from parallax.core.temporal_read import Pin
-from parallax.core.unit_work import (
+from parallax.core._execution._options import OMITTED, Omitted
+from parallax.core._execution._transaction._attempt import Attempt
+from parallax.core._execution._unit_work import instructions
+from parallax.core._execution._unit_work.instructions import (
     ASSIGNMENT_MUTATIONS,
     REPLACE_MUTATIONS,
     KeyedMutation,
     PredicateMutation,
     PredicateSelection,
     PredicateWrite,
-    ReadOrigin,
+    PreparedKeyedWrite,
     TargetMutation,
     TargetWrite,
     WriteAssignment,
-    instructions,
 )
-from parallax.core.unit_work.instructions import PreparedKeyedWrite
+from parallax.core._execution._unit_work.retain import ReadOrigin
+from parallax.core.entity import (
+    AttributeAssignment,
+    EntityRowCodec,
+    lifecycle_state_of,
+)
+from parallax.core.entity import Entity as EntityBase
+from parallax.core.entity._authored_resolver import typed_interpretation
+from parallax.core.entity._declaration import declaration_of
+from parallax.core.execution_lifecycle._activity import refuse_reentry
+from parallax.core.metamodel import EntityMetadata, Metamodel
+from parallax.core.object_query._fluent import ObjectQuery, mutation_selection
+from parallax.core.temporal_read import Pin
 from parallax.core.write_plan import ObjectKey
 
 # Sibling implementation modules. None of these names carries a leading
@@ -394,7 +394,7 @@ def typed_predicate_write(
     instruction carries the Typed adapter over it, borrowing the attempt's
     adopted write projection. Everything the instruction states — its target,
     verb, window, predicate, and assignments — is judged by
-    :func:`~parallax.core.unit_work.instructions.prepare_typed_write` before
+    :func:`~parallax.core._execution._unit_work.instructions.prepare_typed_write` before
     the attempt dispatches the prepared product.
     """
     refuse_reentry(attempt.lifecycle)

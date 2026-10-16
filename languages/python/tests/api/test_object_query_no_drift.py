@@ -62,9 +62,9 @@ from parallax.core import (
     Predicate,
     QueryDefinitionError,
 )
+from parallax.core._execution._preflight import preflight
 from parallax.core.entity._authored_resolver import object_query_node
 from parallax.core.entity._model import model_of
-from parallax.core.execution._preflight import preflight
 from parallax.core.object_query import LATEST, deserialize
 from tests._support import inheritance_models as im
 from tests._support import snapshot_models as sm

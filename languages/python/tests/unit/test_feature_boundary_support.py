@@ -9,9 +9,9 @@ from typing import cast
 import pytest
 
 from parallax.core import DomainModel
+from parallax.core._execution._preflight import preflight
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._model import model_of
-from parallax.core.execution._preflight import preflight
 from parallax.core.object_query import deserialize
 from parallax.core.object_query._resolved import ResolvedObjectQuery
 from parallax.core.read_delivery._read_plan import EmptyRead, ReadPlan

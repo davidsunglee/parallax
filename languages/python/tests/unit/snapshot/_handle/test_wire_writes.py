@@ -33,6 +33,7 @@ import pytest
 from parallax.conformance import vo_models as vo
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import Attr, DomainModel, Entity, ValueObject, attr
+from parallax.core._execution._unit_work import instructions
 from parallax.core.base import InstantError, PresentDocument
 from parallax.core.db_port import JsonDocument, MappingRow
 from parallax.core.execution import (
@@ -41,7 +42,7 @@ from parallax.core.execution import (
 )
 from parallax.core.predicate import CanonicalDocumentError, ModelRejectedError
 from parallax.core.read_delivery import InvalidData
-from parallax.core.unit_work import WriteEvidenceError, WriteRejectedError, instructions
+from parallax.core.unit_work import WriteEvidenceError, WriteRejectedError
 from parallax.snapshot import Database, ScopedDatabase, Snapshot, Transaction, WireEntity, connect
 from parallax.snapshot._publication._wire import authoring_of, read_origin_of
 from tests._support import mirrored_models as mm

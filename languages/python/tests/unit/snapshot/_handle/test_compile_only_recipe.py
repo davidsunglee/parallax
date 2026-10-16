@@ -24,9 +24,9 @@ import pytest
 import parallax.snapshot
 from parallax.conformance import case_format, engine
 from parallax.conformance._lanes import scenario
+from parallax.core._execution._planning import build_write_planner
+from parallax.core._execution._write_lowering import stream_physical
 from parallax.core.dialect import POSTGRES
-from parallax.core.execution._planning import build_write_planner
-from parallax.core.execution._write_lowering import stream_physical
 from parallax.core.unit_work import WritePlanner, WritePlanningRequest
 from parallax.core.write_payload import LayoutPayloadPreparer
 from parallax.core.write_plan import WritePlan

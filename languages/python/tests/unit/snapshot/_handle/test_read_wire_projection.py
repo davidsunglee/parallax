@@ -39,11 +39,11 @@ from parallax.core import (
 from parallax.core import (
     deep_fetch as deep_fetch_module,
 )
+from parallax.core._execution import _preflight as preflight_module
 from parallax.core.base import INFINITY
 from parallax.core.entity._expressions import IncludeTraversal
 from parallax.core.entity._graph_construction import require_correspondence
 from parallax.core.execution import ServingModel, prepare_model
-from parallax.core.execution import _preflight as preflight_module
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.object_query import IncludeSegment
 from parallax.core.object_query import deserialize as deserialize_query

@@ -24,6 +24,7 @@ import pytest
 from parallax.conformance import read_models
 from parallax.conformance._lifecycle_recording import RecordingLifecycleProvider
 from parallax.conformance.scripted_clock import FixedClock
+from parallax.core._execution import _read_policy as read_policy_module
 from parallax.core.base import INFINITY
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
@@ -39,7 +40,6 @@ from parallax.core.execution import (
     ServingModel,
     prepare_model,
 )
-from parallax.core.execution import _read_policy as read_policy_module
 from parallax.core.execution_lifecycle import (
     CausedFailure,
     DatabaseCallFailed,

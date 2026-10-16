@@ -1,0 +1,2046 @@
+"""Write-DML lowering unit tests (execution's lowering seam, m-sql write DML).
+
+``parallax.core._execution._write_lowering.lowered`` is the single
+write-lowering seam each Planned Write lowers through alone, whichever path
+reaches it. These tests pin its byte-exact non-temporal keyed emissions against
+the corpus goldens (``m-unit-work-001/003/005``, ``m-opt-lock-002/005/006/013``,
+``m-inheritance-007/008/009/010/084/104``, ``m-pk-gen-001``), compose it with the
+Write Planner for the coalescing / mixed-flush / cancellation cases
+(``-008/-009/-010``), pin the ``m-opt-lock`` version gate/advance/shortfall
+policy (observation-required for BOTH update and delete, gate-optimistic-only, a
+row-carried version value refused outright, the derived initial version), the
+inheritance tag derivation/guard/opt-lock composition, and the pk-gen
+``max``/``increment`` marker lowering. The temporal keyed forms—close-and-chain,
+the rectangle split, the per-axis close address, the observed-``in_z`` gate, and
+the settled ``StaleWrite`` versus ``OptimisticConflict`` shortfall tag—are pinned
+in ``tests/unit/core/_execution/_unit_work/test_temporal_write_lowering.py``. The
+predicate-selected and multi-row batch forms use the same lowering seam. Planning
+refuses a materializing predicate write that reaches it, a mixed-shape multi-row
+instruction, a milestone verb on a non-temporal entity, and an unsupported
+DB-computed marker with a loud
+``WritePlanningError``, and payload preparation refuses a target with no
+effective table the same way — each a forward-error posture, never a wrong
+emission, mirroring the read compiler's own.
+
+A later section pins the halves the non-temporal insert family crosses
+separately: the Write Planner settling an instruction into finalized steps, and
+the shared lowering path preparing and rendering a step built by hand — proving
+that lowering answers a purely physical question and never re-derives a semantic
+one — and the private SQL compiler refusing a payload that was not prepared from
+the step it renders.
+The composed emissions above are the byte-exact evidence; these are the seam
+itself. The last section pins the insert compiler's entry-atomic appends and the
+order in which a logical insert's preparation and validation refusals win.
+"""
+
+from __future__ import annotations
+
+import dataclasses
+import datetime as dt
+import gc
+import weakref
+from collections.abc import Callable, Mapping
+from decimal import Decimal
+from types import MappingProxyType
+from typing import cast
+
+import pytest
+
+from parallax.core import (
+    Attr,
+    DomainModel,
+    TxTemporal,
+    ValueObject,
+    attr,
+    inheritance,
+    opt_lock,
+    storage_layout,
+    temporal_read,
+)
+from parallax.core import predicate as oa
+from parallax.core._execution._planning import build_write_planner
+from parallax.core._execution._unit_work.instructions import WriteInstruction
+from parallax.core._execution._write_lowering import lowered
+from parallax.core._formation_profile import form_metamodel
+from parallax.core.base import INFINITY as OPEN_BOUND
+from parallax.core.base import INT64, STRING, TIMESTAMP, FrozenMap
+from parallax.core.db_port import JsonDocument
+from parallax.core.dialect import POSTGRES, Dialect
+from parallax.core.entity._model import model_of
+from parallax.core.metamodel import (
+    AttributeIdentity,
+    AttributeMetadata,
+    EntityIdentity,
+    Metamodel,
+    Multiplicity,
+    ValueObjectAttributeDeclaration,
+    ValueObjectIdentity,
+    ValueObjectOccurrenceDeclaration,
+    ValueObjectShapeDeclaration,
+    ValueObjectShapeKey,
+    entity_by_name,
+)
+from parallax.core.metamodel import Column as CoreColumn
+from parallax.core.metamodel import Table as CoreTable
+from parallax.core.model_formation import MetamodelValidationError
+from parallax.core.sql_gen import LoweredStatement, SqlGenError
+from parallax.core.sql_gen._context import (
+    _RepeatedTypedBindSpan,  # pyright: ignore[reportPrivateUsage]
+    _TypedBindSpan,  # pyright: ignore[reportPrivateUsage]
+)
+from parallax.core.sql_gen._write import InsertStatementBuilder, StepPayload, compile_write_step
+from parallax.core.storage_layout import InheritanceDiscriminator
+from parallax.core.temporal_read import TransactionTimeOnly
+from parallax.core.unit_work import (
+    Concurrency,
+    KeyedWrite,
+    PredicateSelection,
+    PredicateWrite,
+    WriteAssignment,
+    WritePlanningRequest,
+)
+from parallax.core.write_payload import LayoutPayloadPreparer
+from parallax.core.write_plan import (
+    ObjectKey,
+    PlannedInsert,
+    VersionObservation,
+    WriteObservation,
+    WritePlanningError,
+)
+from parallax.core.write_plan.payload import AssignmentPayload, PatchedDocument, RowPayload
+from parallax.core.write_plan.steps import (
+    ANY_COUNT,
+    MAX_PLUS_ONE,
+    MISSING_TARGET,
+    NEW_LINEAGE,
+    OPTIMISTIC_CONFLICT,
+    STALE_WRITE,
+    UNGATED,
+    UNVERSIONED,
+    ExactCount,
+    KeyTarget,
+    NewLineage,
+    PlannedAssignments,
+    PlannedDelete,
+    PlannedRow,
+    PlannedUpdate,
+    ResolvedMutationSelection,
+    SelfIncrement,
+    Ungated,
+    Versioned,
+    VersionGate,
+    WriteRow,
+)
+from parallax.core.write_plan.steps import PlannedWrite as PlannedStep
+from parallax.descriptor import _records
+from tests._support.clock_probes import inert_instant
+from tests._support.lowering_probes import lower_instruction, lower_instruction_steps, lowered_steps
+from tests._support.planner_probes import TEST_ACTOR_IDENTITY, observed_buffer
+from tests.unit._corpus_identity_support import corpus_object_key
+from tests.unit._corpus_model_support import formed, records
+from tests.unit._corpus_model_support import model as corpus_model
+from tests.unit._document_layout_support import PERSON, document_model
+from tests.unit._metamodel_support import Declaration, attribute, identity, key, source
+
+ACCOUNT = corpus_model("account")
+ORDERS = corpus_model("orders")
+CUSTOMER = corpus_model("customer")
+PAYMENT = corpus_model("payment")
+VEHICLE = corpus_model("vehicle")
+APPLIANCE = corpus_model("appliance")
+DOCUMENT = corpus_model("document")
+PK_MAX = corpus_model("pk-max")
+PK_SEQUENCE = corpus_model("pk-sequence")
+WALLET = corpus_model("wallet")
+BALANCE = corpus_model("balance")
+
+
+def _lower(
+    instruction: WriteInstruction,
+    model: Metamodel,
+    *,
+    observation: WriteObservation | None = None,
+    dialect: Dialect = POSTGRES,
+    concurrency: Concurrency = "locking",
+) -> list[LoweredStatement]:
+    return lower_instruction(instruction, model, dialect, concurrency, observation=observation)
+
+
+def _flush_and_lower(
+    buffer: list[KeyedWrite | PredicateWrite],
+    model: Metamodel,
+    *,
+    concurrency: Concurrency = "locking",
+    observations: Mapping[ObjectKey, WriteObservation] | None = None,
+) -> list[LoweredStatement]:
+    instant = inert_instant()
+    plan = build_write_planner(model).finalize(
+        WritePlanningRequest(
+            actor_identity=TEST_ACTOR_IDENTITY,
+            transaction_instant=instant,
+            concurrency=concurrency,
+            buffered_writes=observed_buffer(buffer, model, observations),
+        )
+    )
+    return [
+        statement
+        for _step, statement in lowered_steps(
+            plan.steps, LayoutPayloadPreparer(model), model, POSTGRES
+        )
+    ]
+
+
+def _layout_columns(model: Metamodel, entity_name: str) -> tuple[str, ...]:
+    """The target Entity's applicable Table Layout slots, in canonical order."""
+    metadata = entity_by_name(model, entity_name)
+    assert metadata is not None
+    view = storage_layout.view(model).entity(metadata.identity)
+    assert view is not None
+    return tuple(slot.column.name for slot in view.columns)
+
+
+def _insert_columns(statement: LoweredStatement) -> tuple[str, ...]:
+    columns = statement.sql.split("(", 1)[1].split(")", 1)[0]
+    return tuple(column.strip() for column in columns.split(","))
+
+
+def test_non_temporal_write_requires_an_effective_table() -> None:
+    account = dataclasses.replace(records("account").entity("Account"), table=None)
+    malformed = formed(_records.Metamodel(entities=(account,)))
+    with pytest.raises(WritePlanningError, match="write target has no effective table"):
+        _lower(
+            KeyedWrite(
+                "insert",
+                "Account",
+                ({"id": 1, "owner": "A", "balance": Decimal("1.00"), "version": 1},),
+            ),
+            malformed,
+        )
+
+
+def test_insert_projects_every_present_column_in_column_order() -> None:
+    # m-unit-work-001 step 0.
+    statement = _lower(
+        KeyedWrite(
+            "insert",
+            "Account",
+            ({"id": 7, "owner": "Newton", "balance": Decimal("5.00"), "version": 1},),
+        ),
+        ACCOUNT,
+    )[0]
+    assert statement.sql == "insert into account(id, owner, balance, version) values (?, ?, ?, ?)"
+    assert statement.binds == (7, "Newton", 5.00, 1)
+
+
+def test_insert_omits_an_absent_nullable_column() -> None:
+    # m-unit-work-003 step 1: OrderItem's nullable shipped_on is absent from the write
+    # input, so the INSERT is narrower (4 of 5 columns) — never an explicit NULL bind.
+    statement = _lower(
+        KeyedWrite(
+            "insert", "OrderItem", ({"id": 200, "orderId": 100, "sku": "X-1", "quantity": 3},)
+        ),
+        ORDERS,
+    )[0]
+    assert (
+        statement.sql == "insert into order_item(id, order_id, sku, quantity) values (?, ?, ?, ?)"
+    )
+    assert statement.binds == (200, 100, "X-1", 3)
+
+
+def test_insert_orders_columns_by_column_order_not_row_order() -> None:
+    # m-unit-work-003 step 0: the row is authored id..orderedOn; the emission follows
+    # the Entity Layout's slots (orderedOn -> ordered_on last among Order's scalars).
+    row = {
+        "orderedOn": dt.date(2024, 7, 1),
+        "id": 100,
+        "name": "Hopper",
+        "sku": "X-1",
+        "qty": 1,
+        "price": Decimal("9.99"),
+        "active": True,
+    }
+    statement = _lower(KeyedWrite("insert", "Order", (row,)), ORDERS)[0]
+    assert statement.sql == (
+        "insert into orders(id, name, sku, qty, price, active, ordered_on) "
+        "values (?, ?, ?, ?, ?, ?, ?)"
+    )
+    assert statement.binds == (100, "Hopper", "X-1", 1, Decimal("9.99"), True, dt.date(2024, 7, 1))
+
+
+def test_update_sets_non_pk_columns_in_column_order_keyed_by_pk() -> None:
+    # m-unit-work-005 step 1: the version advances from this unit of work's own
+    # recorded observation (`m-opt-lock`), never a row-carried value.
+    statement = _lower(
+        KeyedWrite("amend", "Account", ({"id": 1, "balance": Decimal("175.00")},)),
+        ACCOUNT,
+        observation=VersionObservation(observed_version=1),
+    )[0]
+    assert statement.sql == "update account set balance = ?, version = ? where id = ?"
+    assert statement.binds == (175.00, 2, 1)
+
+
+def test_delete_is_keyed_by_the_primary_key() -> None:
+    # m-unit-work-007's own delete shape: a NON-versioned entity's keyed delete
+    # is a bare `delete ... where <pk> = ?`, no opt-lock participation at all
+    # (the versioned delete's own observation requirement is pinned below).
+    statement = _lower(KeyedWrite("delete", "OrderItem", ({"id": 200},)), ORDERS)[0]
+    assert statement.sql == "delete from order_item where id = ?"
+    assert statement.binds == (200,)
+
+
+def test_value_object_document_binds_as_one_json_document_in_column_order() -> None:
+    # A value-object member rides its Document-tier slot as one JsonDocument — the
+    # whole document, never decomposed (m-sql valueObject atomic document write).
+    # The document is COMPOSED through the codec rather than bound as the write
+    # input carried it, so presence is the codec's answer: `phones` is a `many`
+    # occurrence and always contributes its array, the sole zero-element
+    # representation.
+    statement = _lower(
+        KeyedWrite(
+            "insert",
+            "Customer",
+            ({"id": 1, "name": "Ada", "address": {"street": "1 Main", "city": "Oslo"}},),
+        ),
+        CUSTOMER,
+    )[0]
+    assert statement.sql == "insert into customer(id, name, address) values (?, ?, ?)"
+    assert statement.binds[:2] == (1, "Ada")
+    assert statement.binds[2] == JsonDocument({"street": "1 Main", "city": "Oslo", "phones": []})
+
+
+def test_a_value_object_leaf_binds_the_codecs_spelling_not_the_write_inputs() -> None:
+    # The write input carries each leaf in its portable wire spelling; what the
+    # statement binds is the ONE document spelling the codec owns, at every depth.
+    # `elevation` is a `float64`, so the shortest round-tripping number replaces
+    # the authored integer carrier rather than riding through to a serializer.
+    statement = _lower(
+        KeyedWrite(
+            "insert",
+            "Customer",
+            (
+                {
+                    "id": 2,
+                    "name": "Bo",
+                    "address": {
+                        "street": "2 Main",
+                        "city": "Bergen",
+                        "geo": {"country": "NO", "elevation": 12},
+                        "phones": [{"type": "home", "number": "555-0100"}],
+                    },
+                },
+            ),
+        ),
+        CUSTOMER,
+    )[0]
+    assert statement.binds[2] == JsonDocument(
+        {
+            "street": "2 Main",
+            "city": "Bergen",
+            "geo": {"country": "NO", "elevation": 12.0},
+            "phones": [{"type": "home", "number": "555-0100"}],
+        }
+    )
+
+
+# --------------------------------------------------------------------------- #
+# m-storage-layout: the one physical shape every keyed emission follows.       #
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize(
+    ("model", "entity", "row"),
+    [
+        (
+            ORDERS,
+            "Order",
+            {
+                "id": 1,
+                "name": "H",
+                "sku": "X",
+                "qty": 1,
+                "price": Decimal("1.00"),
+                "active": True,
+                "orderedOn": dt.date(2024, 7, 1),
+            },
+        ),
+        (PAYMENT, "CardPayment", {"id": 1, "amount": Decimal("10.00"), "cardNetwork": "Visa"}),
+        (
+            DOCUMENT,
+            "Invoice",
+            {
+                "id": 1,
+                "title": "T",
+                "folderId": 9,
+                "currency": "USD",
+                "amountDue": Decimal("10.00"),
+            },
+        ),
+    ],
+)
+def test_full_row_insert_emits_the_entity_layout_slot_selection(
+    model: Metamodel, entity: str, row: dict[str, object]
+) -> None:
+    # A row naming every applicable member emits exactly the target's Table Layout
+    # slot selection, in slot order — a standalone Entity's own table, a
+    # table-per-hierarchy concrete's applicable slots of the SHARED table (the
+    # derived discriminator included, the sibling's own slot excluded), and a
+    # table-per-concrete-subtype concrete's complete ancestry in its own table.
+    statement = _lower(KeyedWrite("insert", entity, (row,)), model)[0]
+    assert _insert_columns(statement) == _layout_columns(model, entity)
+
+
+def test_update_sets_every_layout_slot_the_row_names_except_the_model_key() -> None:
+    # The SET clause is the layout slot order filtered to the row's members, minus
+    # the model key the predicate carries; the tag slot is a guard, never a SET
+    # column, even though it precedes both domain slots in the shared table.
+    statement = _lower(
+        KeyedWrite(
+            "amend",
+            "CardPayment",
+            ({"id": 1, "amount": Decimal("130.00"), "cardNetwork": "Visa"},),
+        ),
+        PAYMENT,
+    )[0]
+    assert _layout_columns(PAYMENT, "CardPayment") == ("id", "kind", "amount", "card_network")
+    assert statement.sql == (
+        "update payment set amount = ?, card_network = ? where id = ? and kind = ?"
+    )
+    assert statement.binds == (130.00, "Visa", 1, "card")
+
+
+def test_multi_row_insert_column_list_is_the_shared_layout_slot_filter() -> None:
+    # A collapsed multi-row INSERT emits ONE column list: the layout slot order
+    # filtered to the members every row carries, with the derived discriminator at
+    # its own slot in each value tuple.
+    statement = _lower(
+        KeyedWrite(
+            "insert",
+            "CardPayment",
+            (
+                {"id": 1, "amount": Decimal("10.00"), "cardNetwork": "Visa"},
+                {"cardNetwork": "Amex", "amount": Decimal("20.00"), "id": 2},
+            ),
+        ),
+        PAYMENT,
+    )[0]
+    assert _insert_columns(statement) == _layout_columns(PAYMENT, "CardPayment")
+    assert statement.sql == (
+        "insert into payment(id, kind, amount, card_network) values (?, ?, ?, ?), (?, ?, ?, ?)"
+    )
+    assert statement.binds == (1, "card", 10.00, "Visa", 2, "card", 20.00, "Amex")
+
+
+# --------------------------------------------------------------------------- #
+# m-opt-lock: the version gate / advance / conflict policy.                    #
+# --------------------------------------------------------------------------- #
+def test_versioned_update_without_a_row_carried_version_requires_observation() -> None:
+    update = KeyedWrite("amend", "Account", ({"id": 1, "balance": Decimal("50.00")},))
+    with pytest.raises(
+        opt_lock.UnobservedVersionError, match="requires the version its source value observed"
+    ):
+        _lower(update, ACCOUNT)
+
+
+def test_versioned_update_derives_the_advance_from_the_observation_locking_mode() -> None:
+    # locking mode: version = observed + 1 in the SET, no gate.
+    update = KeyedWrite("amend", "Account", ({"id": 1, "balance": Decimal("50.00")},))
+    statement = _lower(
+        update, ACCOUNT, observation=VersionObservation(observed_version=3), concurrency="locking"
+    )[0]
+    assert statement.sql == "update account set balance = ?, version = ? where id = ?"
+    assert statement.binds == (50.00, 4, 1)
+
+
+def test_versioned_update_gates_on_the_observed_version_optimistic_mode() -> None:
+    # optimistic mode: SAME advance, plus `and version = ?` binding the observed
+    # value LAST.
+    update = KeyedWrite("amend", "Account", ({"id": 1, "balance": Decimal("50.00")},))
+    statement = _lower(
+        update,
+        ACCOUNT,
+        observation=VersionObservation(observed_version=3),
+        concurrency="optimistic",
+    )[0]
+    assert (
+        statement.sql == "update account set balance = ?, version = ? where id = ? and version = ?"
+    )
+    assert statement.binds == (50.00, 4, 1, 3)
+
+
+def test_versioned_update_carrying_a_literal_version_is_refused() -> None:
+    # A row that still authors the version attribute is refused outright
+    # (`m-opt-lock` "Version values are framework-owned") — the framework-owned
+    # field is never caller data, so it is never silently double-assigned
+    # against the derived advance, EVEN when an observation is also available.
+    update = KeyedWrite(
+        "amend", "Account", ({"id": 1, "balance": Decimal("175.00"), "version": 2},)
+    )
+    with pytest.raises(opt_lock.CallerAuthoredVersionError, match="framework-owned"):
+        _lower(
+            update,
+            ACCOUNT,
+            observation=VersionObservation(observed_version=1),
+            concurrency="optimistic",
+        )
+
+
+def test_versioned_delete_gates_on_the_observed_version_optimistic_mode() -> None:
+    # m-opt-lock-015: optimistic mode binds the observed version LAST, exactly as
+    # a versioned UPDATE's own gate does — the gate is concurrency-driven, never
+    # mutation-driven.
+    delete = KeyedWrite("delete", "Account", ({"id": 3},))
+    statement = _lower(
+        delete,
+        ACCOUNT,
+        observation=VersionObservation(observed_version=1),
+        concurrency="optimistic",
+    )[0]
+    assert statement.sql == "delete from account where id = ? and version = ?"
+    assert statement.binds == (3, 1)
+
+
+def test_versioned_delete_is_ungated_in_locking_mode() -> None:
+    # m-batch-write-004: locking mode renders NO gate on a versioned delete, the
+    # same ungated form a versioned UPDATE and a temporal close take — the shared
+    # read lock, not a version predicate, is what makes the write correct.
+    delete = KeyedWrite("delete", "Account", ({"id": 3},))
+    statement = _lower(
+        delete, ACCOUNT, observation=VersionObservation(observed_version=1), concurrency="locking"
+    )[0]
+    assert statement.sql == "delete from account where id = ?"
+    assert statement.binds == (3,)
+
+
+def test_versioned_delete_shortfall_classifies_by_gate_not_by_mutation() -> None:
+    # An ungated (locking-mode) shortfall is the NON-retriable stale outcome an
+    # ungated close's is; a gated (optimistic) one stays the retriable conflict.
+    delete = KeyedWrite("delete", "Account", ({"id": 3},))
+    observation = VersionObservation(observed_version=1)
+    model = ACCOUNT
+    locking, _ = lower_instruction_steps(
+        delete, model, concurrency="locking", observation=observation
+    )[0]
+    optimistic, _ = lower_instruction_steps(
+        delete, model, concurrency="optimistic", observation=observation
+    )[0]
+    assert isinstance(locking, PlannedDelete)
+    assert isinstance(optimistic, PlannedDelete)
+    assert locking.affected_rows == ExactCount(1, STALE_WRITE)
+    assert optimistic.affected_rows == ExactCount(1, OPTIMISTIC_CONFLICT)
+
+
+def test_versioned_delete_without_an_observation_requires_observation() -> None:
+    # A keyed DELETE settled with no observed version raises in EITHER mode,
+    # exactly as a keyed UPDATE does (`m-opt-lock`): the framework
+    # never issues an implicit resolving read on behalf of a keyed write, so a
+    # write that reached settlement without the version its source observed has
+    # nothing to advance from.
+    delete = KeyedWrite("delete", "Account", ({"id": 3},))
+    with pytest.raises(
+        opt_lock.UnobservedVersionError, match="requires the version its source value observed"
+    ):
+        _lower(delete, ACCOUNT, concurrency="optimistic")
+
+
+def test_versioned_delete_without_an_observation_raises_in_locking_mode_too() -> None:
+    delete = KeyedWrite("delete", "Account", ({"id": 3},))
+    with pytest.raises(
+        opt_lock.UnobservedVersionError, match="requires the version its source value observed"
+    ):
+        _lower(delete, ACCOUNT, concurrency="locking")
+
+
+def test_versioned_insert_derives_the_initial_version_ignoring_any_row_carried_value() -> None:
+    insert = KeyedWrite(
+        "insert",
+        "Account",
+        ({"id": 9, "owner": "Noether", "balance": Decimal("5.00"), "version": 99},),
+    )
+    statement = _lower(insert, ACCOUNT)[0]
+    assert statement.sql == "insert into account(id, owner, balance, version) values (?, ?, ?, ?)"
+    assert statement.binds == (9, "Noether", 5.00, opt_lock.INITIAL_VERSION)
+    assert opt_lock.INITIAL_VERSION == 1
+
+
+# --------------------------------------------------------------------------- #
+# Inheritance-family keyed writes — tag derivation, tag guard, opt-lock        #
+# composition (m-inheritance x m-sql x m-opt-lock).                            #
+# --------------------------------------------------------------------------- #
+def test_tph_insert_derives_the_tag_at_its_columnorder_position() -> None:
+    # m-inheritance-007.
+    insert = KeyedWrite(
+        "insert",
+        "CardPayment",
+        ({"id": 10, "amount": Decimal("200.00"), "cardNetwork": "Mastercard"},),
+    )
+    statement = _lower(insert, PAYMENT)[0]
+    assert (
+        statement.sql == "insert into payment(id, kind, amount, card_network) values (?, ?, ?, ?)"
+    )
+    assert statement.binds == (10, "card", 200.00, "Mastercard")
+
+
+def test_tph_update_of_a_root_declared_attribute_is_tag_guarded() -> None:
+    # m-inheritance-008.
+    update = KeyedWrite("amend", "CardPayment", ({"id": 1, "amount": Decimal("130.00")},))
+    statement = _lower(update, PAYMENT)[0]
+    assert statement.sql == "update payment set amount = ? where id = ? and kind = ?"
+    assert statement.binds == (130.00, 1, "card")
+
+
+def test_tph_delete_is_tag_guarded() -> None:
+    # m-inheritance-009.
+    delete = KeyedWrite("delete", "CardPayment", ({"id": 2},))
+    statement = _lower(delete, PAYMENT)[0]
+    assert statement.sql == "delete from payment where id = ? and kind = ?"
+    assert statement.binds == (2, "card")
+
+
+def test_tpcs_insert_targets_the_concretes_own_table_no_tag() -> None:
+    # m-inheritance-010.
+    insert = KeyedWrite(
+        "insert",
+        "Invoice",
+        ({"id": 10, "title": "Invoice-C", "currency": "USD", "amountDue": Decimal("300.00")},),
+    )
+    statement = _lower(insert, DOCUMENT)[0]
+    assert (
+        statement.sql == "insert into invoice(id, title, currency, amount_due) values (?, ?, ?, ?)"
+    )
+    assert statement.binds == (10, "Invoice-C", "USD", 300.00)
+
+
+def test_tpcs_delete_targets_the_concretes_own_table_no_tag() -> None:
+    # m-inheritance-085.
+    delete = KeyedWrite("delete", "Invoice", ({"id": 1},))
+    statement = _lower(delete, DOCUMENT)[0]
+    assert statement.sql == "delete from invoice where id = ?"
+    assert statement.binds == (1,)
+
+
+def test_tph_optlock_composition_tag_rides_identity_gate_binds_last() -> None:
+    # m-inheritance-084: the bind order end to end — pk, tag guard,
+    # THEN the version gate (no inheritance exception to "the gate binds last").
+    update = KeyedWrite("amend", "Car", ({"id": 1, "name": "Coupe"},))
+    statement = _lower(
+        update,
+        VEHICLE,
+        observation=VersionObservation(observed_version=5),
+        concurrency="optimistic",
+    )[0]
+    assert statement.sql == (
+        "update vehicle set name = ?, version = ? where id = ? and kind = ? and version = ?"
+    )
+    assert statement.binds == ("Coupe", 6, 1, "car", 5)
+
+
+def test_tpcs_optlock_composition_no_tag_guard_gate_binds_last() -> None:
+    # m-inheritance-104: the TPCS analogue — no shared table, no tag, own table.
+    update = KeyedWrite("amend", "Fridge", ({"id": 1, "name": "Chill"},))
+    statement = _lower(
+        update,
+        APPLIANCE,
+        observation=VersionObservation(observed_version=5),
+        concurrency="optimistic",
+    )[0]
+    assert statement.sql == "update fridge set name = ?, version = ? where id = ? and version = ?"
+    assert statement.binds == ("Chill", 6, 1, 5)
+
+
+# --------------------------------------------------------------------------- #
+# pk-gen DB-computed markers — `max` (INSERT…SELECT fold) and `increment`      #
+# (a self-referential registry advance).                                       #
+# --------------------------------------------------------------------------- #
+def test_pk_gen_max_folds_into_an_insert_select() -> None:
+    # m-pk-gen-001.
+    insert = KeyedWrite("insert", "Attendee", ({"id": {"computed": "maxPlusOne"}, "name": "Ada"},))
+    statement = _lower(insert, PK_MAX)[0]
+    assert statement.sql == (
+        "insert into attendee(id, name) select coalesce(max(t0.id), ?) + ?, ? from attendee t0"
+    )
+    assert statement.binds == (0, 1, "Ada")
+
+
+def test_pk_gen_increment_marker_self_references_the_column() -> None:
+    update = KeyedWrite(
+        "amend", "PkSequence", ({"name": "badge_seq", "nextVal": {"increment": 1}},)
+    )
+    statement = _lower(update, PK_SEQUENCE)[0]
+    assert statement.sql == "update pk_sequence set next_val = next_val + ? where name = ?"
+    assert statement.binds == (1, "badge_seq")
+
+
+def test_increment_marker_reaching_an_insert_is_refused() -> None:
+    insert = KeyedWrite(
+        "insert", "PkSequence", ({"name": "badge_seq", "nextVal": {"increment": 1}},)
+    )
+    with pytest.raises(WritePlanningError, match=r"unsupported DB-computed marker.*'increment'"):
+        _lower(insert, PK_SEQUENCE)
+
+
+def test_computed_marker_reaching_an_update_is_refused() -> None:
+    update = KeyedWrite("amend", "Attendee", ({"id": 1, "name": {"computed": "maxPlusOne"}},))
+    with pytest.raises(WritePlanningError, match=r"unsupported DB-computed marker.*'computed'"):
+        _lower(update, PK_MAX)
+
+
+def test_unrecognized_computed_strategy_is_refused() -> None:
+    insert = KeyedWrite(
+        "insert", "Attendee", ({"id": {"computed": "somethingElse"}, "name": "Ada"},)
+    )
+    with pytest.raises(WritePlanningError, match="not a recognized `computed` strategy"):
+        _lower(insert, PK_MAX)
+
+
+def test_a_mapping_outside_the_marker_shape_is_not_a_string_literal() -> None:
+    update = KeyedWrite(
+        "amend", "Attendee", ({"id": 1, "name": {"computed": "maxPlusOne", "extra": True}},)
+    )
+    with pytest.raises(ValueError, match="does not match the declared type"):
+        _lower(update, PK_MAX)
+
+
+# --------------------------------------------------------------------------- #
+# Composed with the planner — coalescing / mixed flush / cancellation.         #
+# --------------------------------------------------------------------------- #
+def test_insert_then_update_coalesces_to_one_final_value_insert() -> None:
+    # m-unit-work-008: buffered insert + update of the same new object -> ONE insert.
+    statements = _flush_and_lower(
+        [
+            KeyedWrite(
+                "insert",
+                "Account",
+                ({"id": 8, "owner": "Turing", "balance": Decimal("1.00"), "version": 1},),
+            ),
+            KeyedWrite("amend", "Account", ({"id": 8, "balance": Decimal("99.00")},)),
+        ],
+        ACCOUNT,
+    )
+    assert len(statements) == 1
+    assert (
+        statements[0].sql == "insert into account(id, owner, balance, version) values (?, ?, ?, ?)"
+    )
+    assert statements[0].binds == (8, "Turing", 99.00, 1)
+
+
+def test_mixed_flush_lowers_insert_then_update_then_delete_in_order() -> None:
+    # m-unit-work-009's canonical combined order: three objects, one flush. BOTH
+    # the update's and the delete's version (m-opt-lock's own prior-observation
+    # requirement) come from the observation each write carries — never a
+    # row-carried value. `_flush_and_lower`'s own `locking` preference
+    # resolves Account to the Locking strategy, under which neither renders a
+    # gate.
+    statements = _flush_and_lower(
+        [
+            KeyedWrite(
+                "insert",
+                "Account",
+                ({"id": 9, "owner": "Noether", "balance": Decimal("5.00"), "version": 1},),
+            ),
+            KeyedWrite("amend", "Account", ({"id": 1, "balance": Decimal("20.00")},)),
+            KeyedWrite("delete", "Account", ({"id": 3},)),
+        ],
+        ACCOUNT,
+        observations={
+            corpus_object_key("Account", ("id", 1)): VersionObservation(observed_version=1),
+            corpus_object_key("Account", ("id", 3)): VersionObservation(observed_version=1),
+        },
+    )
+    assert [(s.sql, s.binds) for s in statements] == [
+        (
+            "insert into account(id, owner, balance, version) values (?, ?, ?, ?)",
+            (9, "Noether", 5.00, 1),
+        ),
+        ("update account set balance = ?, version = ? where id = ?", (20.00, 2, 1)),
+        ("delete from account where id = ?", (3,)),
+    ]
+
+
+def test_insert_then_delete_cancels_to_no_dml() -> None:
+    # m-unit-work-010: the cancelled flush emits nothing.
+    statements = _flush_and_lower(
+        [
+            KeyedWrite(
+                "insert", "Account", ({"id": 9, "owner": "Noether", "balance": Decimal("5.00")},)
+            ),
+            KeyedWrite("delete", "Account", ({"id": 9},)),
+        ],
+        ACCOUNT,
+    )
+    assert statements == []
+
+
+# --------------------------------------------------------------------------- #
+# Forward-error posture — every not-yet-lowered form refused loudly.           #
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize(
+    "predicate",
+    [
+        # A bare family predicate: the guard is TARGET-driven, so the plainest
+        # shape refuses too.
+        oa.Comparison(op="eq", subject=oa.FieldSubject("CardPayment.cardNetwork"), value="Visa"),
+        # The shape that actually mis-emitted: a `narrow` renders the family's
+        # framework-owned tag guard, which a read alias-qualifies.
+        oa.Narrow(
+            to=("CardPayment",),
+            operand=oa.Comparison(
+                op="eq", subject=oa.FieldSubject("CardPayment.cardNetwork"), value="Visa"
+            ),
+        ),
+    ],
+    ids=["bare-predicate", "narrow"],
+)
+def test_inheritance_family_predicate_write_is_rejected_before_sql(
+    predicate: oa.PredicateNode,
+) -> None:
+    # `m-inheritance`: a set-based write whose target entity belongs to an
+    # inheritance family is REJECTED BEFORE SQL with the corpus's
+    # `subtype-write-set-based-unsupported` classification (m-inheritance-089)".
+    #
+    # The buffer-time seams (`_typed_writes.typed_predicate_write` /
+    # `UnitOfWork.buffer_predicate`) guard the developer `_where` verbs and the
+    # engine's buffering translation — but they are NOT on every road here.
+    # The conformance engine's readless predicate-write step
+    # (`scenario._lower_predicate_write_step`) reaches `stream_physical` straight
+    # from a deserialized instruction. The lowering-side guard must
+    # reject the `narrow` case before it can introduce an alias that unaliased
+    # DML never declares (`m-sql` rule 1).
+    write = PredicateWrite("delete", PredicateSelection("CardPayment", predicate))
+    with pytest.raises(inheritance.InheritanceError) as excinfo:
+        _lower(write, PAYMENT)
+    assert excinfo.value.rule == "subtype-write-set-based-unsupported"
+
+
+def test_multi_row_insert_with_differing_row_shapes_is_refused() -> None:
+    # Batch grouping compares filtered slot selections
+    # (`handle.collapse_group_key`), so no PLANNED instruction is ever
+    # mixed-shape — a hand-built one is a caller wiring defect, and a silent
+    # one: the emitted INSERT names the FIRST row's columns, so every later
+    # value tuple would bind positionally against a column list it does not
+    # match (here `balance`'s hole would take `Omar`'s absent member).
+    # Uniform membership is a Planned Insert's own construction invariant, so
+    # the mixed shape is refused while the step is being settled — before any
+    # column list exists to mis-emit against.
+    mixed = KeyedWrite(
+        "insert",
+        "Wallet",
+        (
+            {"id": 10, "owner": "Mira", "balance": Decimal("100.00")},
+            {"id": 11, "owner": "Omar"},
+        ),
+    )
+    with pytest.raises(ValueError, match="required attribute is absent"):
+        _lower(mixed, WALLET)
+
+
+def test_milestone_verb_on_a_non_temporal_entity_is_refused() -> None:
+    # The temporal milestone verb set (terminate / *Until) stays refused on a
+    # NON-temporal entity — permanently: `Account` has no Transaction-/Valid-Time
+    # axis to close, so a milestone verb aimed at it is never sensible.
+    with pytest.raises(ValueError, match="do not support 'terminate'"):
+        _lower(KeyedWrite("terminate", "Account", ({"id": 1},)), ACCOUNT)
+
+
+def test_multi_row_insert_collapses_to_one_statement_many_value_tuples() -> None:
+    # m-batch-write-001's own insert entry: the multi-row INSERT collapse
+    # renders ONE statement with one value tuple per row, in row order —
+    # the m-batch-write set-based flush's own multi-entry insert.
+    insert = KeyedWrite(
+        "insert",
+        "Wallet",
+        (
+            {"id": 10, "owner": "Mira", "balance": Decimal("100.00")},
+            {"id": 11, "owner": "Omar", "balance": Decimal("20.00")},
+        ),
+    )
+    statement = _lower(insert, WALLET)[0]
+    assert statement.sql == "insert into wallet(id, owner, balance) values (?, ?, ?), (?, ?, ?)"
+    assert statement.binds == (10, "Mira", 100.00, 11, "Omar", 20.00)
+
+
+def test_multi_row_insert_on_a_versioned_entity_derives_initial_version_per_row() -> None:
+    # the multi-entry insert's versioned-entity behavior mirrors the single-row
+    # insert's: every collapsed row derives the SAME `opt_lock.INITIAL_VERSION` at
+    # the version column's own Table Layout slot position, ignoring any row-carried value — a
+    # batched insert is exactly as safe as a single-row one because the initial
+    # version is a constant, never observed. No corpus witness collapses a
+    # multi-row insert on a versioned entity (Wallet/Customer,
+    # m-batch-write-001/m-value-object-045, are both non-versioned), so this
+    # is a unit-level pin.
+    insert = KeyedWrite(
+        "insert",
+        "Account",
+        (
+            {"id": 20, "owner": "Curie", "balance": Decimal("10.00")},
+            {"id": 21, "owner": "Bohr", "balance": Decimal("20.00"), "version": 99},
+        ),
+    )
+    statement = _lower(insert, ACCOUNT)[0]
+    assert (
+        statement.sql
+        == "insert into account(id, owner, balance, version) values (?, ?, ?, ?), (?, ?, ?, ?)"
+    )
+    assert statement.binds == (
+        20,
+        "Curie",
+        10.00,
+        opt_lock.INITIAL_VERSION,
+        21,
+        "Bohr",
+        20.00,
+        opt_lock.INITIAL_VERSION,
+    )
+
+
+def test_batched_update_collapses_to_one_in_list_statement() -> None:
+    # m-batch-write-001's own update entry: a UNIFORM-value multi-row UPDATE
+    # collapses to one `set ... where id in (...)` statement.
+    update = KeyedWrite(
+        "amend",
+        "Wallet",
+        ({"id": 10, "balance": Decimal("500.00")}, {"id": 11, "balance": Decimal("500.00")}),
+    )
+    statement = _lower(update, WALLET)[0]
+    assert statement.sql == "update wallet set balance = ? where id in (?, ?)"
+    assert statement.binds == (500.00, 10, 11)
+
+
+def test_a_preformed_multi_row_update_still_faces_the_collapse_decision() -> None:
+    # The counterpart to the uniform collapse above. A run buffered one row at a
+    # time is asked whether it collapses; an instruction that ARRIVED carrying
+    # several rows must be asked the same question, because a shared step carries
+    # ONE assignment shape and `m-batch-write` keeps incompatible writes in
+    # separate steps. Otherwise the first row's values would be applied to every
+    # key the statement addresses and the later rows' values would never be
+    # written at all.
+    update = KeyedWrite(
+        "amend",
+        "Wallet",
+        ({"id": 10, "balance": Decimal("111.00")}, {"id": 11, "balance": Decimal("222.00")}),
+    )
+    first, second = _lower(update, WALLET)
+    assert first.sql == "update wallet set balance = ? where id = ?"
+    assert first.binds == (111.00, 10)
+    assert second.sql == "update wallet set balance = ? where id = ?"
+    assert second.binds == (222.00, 11)
+
+
+def test_multi_row_delete_collapses_to_one_in_list_statement() -> None:
+    # m-batch-write-003: a non-versioned target's multi-row DELETE collapses
+    # to one `delete ... where id in (...)` statement.
+    delete = KeyedWrite("delete", "Wallet", ({"id": 1}, {"id": 2}, {"id": 3}))
+    statement = _lower(delete, WALLET)[0]
+    assert statement.sql == "delete from wallet where id in (?, ?, ?)"
+    assert statement.binds == (1, 2, 3)
+
+
+def test_batched_writes_on_an_inheritance_participant_carry_the_family_tag_guard() -> None:
+    # A collapsed IN-list statement reuses the SAME family tag guard the
+    # single-row identity predicate carries (`_tag_guard`). CardPayment and
+    # CashPayment share the `payment` table, so an UNGUARDED
+    # `delete from payment where id in (...)` would remove a sibling subtype's
+    # rows whose ids happen to be in the list — the tag is what keeps a batch
+    # collapse inside one concrete subtype.
+    delete = KeyedWrite("delete", "CardPayment", ({"id": 1}, {"id": 2}))
+    statement = _lower(delete, PAYMENT)[0]
+    assert statement.sql == "delete from payment where id in (?, ?) and kind = ?"
+    assert statement.binds == (1, 2, "card")
+
+    update = KeyedWrite(
+        "amend",
+        "CardPayment",
+        ({"id": 1, "amount": Decimal("5.00")}, {"id": 2, "amount": Decimal("5.00")}),
+    )
+    updated = _lower(update, PAYMENT)[0]
+    assert updated.sql == "update payment set amount = ? where id in (?, ?) and kind = ?"
+    assert updated.binds == (5.00, 1, 2, "card")
+
+
+# A COMPOSITE-key entity: the corpus declares none, but a composite primary key
+# is an ordinary well-formed model, and a multi-key target renders it as a
+# row-constructor IN-list rather than the single-column form.
+_LEDGER = _records.Metamodel(
+    entities=(
+        _records.Entity(
+            name="LedgerEntry",
+            table="ledger_entry",
+            attributes=(
+                _records.Attribute(name="bookId", type="int64", column="book_id", primary_key=True),
+                _records.Attribute(name="lineNo", type="int64", column="line_no", primary_key=True),
+                _records.Attribute(name="amount", type="decimal(18,2)", column="amount"),
+            ),
+        ),
+    )
+)
+
+
+def test_a_composite_primary_key_does_not_form() -> None:
+    # The accepted Metamodel admits exactly one primary-key Attribute per
+    # standalone Entity (m-metamodel `metamodel-primary-key-multiple`), so a
+    # composite-key entity never forms and never reaches finalization — the
+    # `(<pk1>, <pk2>) in (...)` row-constructor branch lowering keeps is
+    # defensive under that contract.
+    with pytest.raises(MetamodelValidationError, match="metamodel-primary-key-multiple"):
+        formed(_LEDGER)
+
+
+def test_a_multi_column_key_target_renders_a_row_constructor() -> None:
+    # The form that branch keeps: `(<pk1>, <pk2>) in ((?, ?), …)`, one tuple per
+    # addressed row in planner order, key columns in the target's own order. No
+    # accepted Metamodel can reach it through finalization (the rule above), so
+    # the step is built by hand with a two-Attribute key.
+    step = PlannedDelete(
+        entity=_identity(WALLET, "Wallet"),
+        target=KeyTarget(
+            key_attributes=(
+                _attribute(WALLET, "Wallet", "id"),
+                _attribute(WALLET, "Wallet", "owner"),
+            ),
+            key_values=((1, "Ada"), (2, "Bo")),
+        ),
+        concurrency=UNVERSIONED,
+        affected_rows=ExactCount(expected=2, on_shortfall=MISSING_TARGET),
+    )
+    statement = lowered(step, LayoutPayloadPreparer(WALLET), WALLET, POSTGRES)
+    assert statement.sql == "delete from wallet where (id, owner) in ((?, ?), (?, ?))"
+    assert statement.binds == (1, "Ada", 2, "Bo")
+
+
+def test_readless_predicate_delete_lowers_to_one_statement() -> None:
+    # m-batch-write-005: an unversioned, non-temporal target's predicate
+    # delete is readless — one statement, no materialization, unaliased
+    # predicate rendering (contrast the resolving read's `t0`-aliased form).
+    predicate = PredicateWrite(
+        "delete",
+        PredicateSelection(
+            "Wallet",
+            oa.Comparison(op="lessThan", subject=oa.FieldSubject("Wallet.balance"), value="200.00"),
+        ),
+    )
+    statement = _lower(predicate, WALLET)[0]
+    assert statement.sql == "delete from wallet where balance < ?"
+    assert statement.binds == (200.00,)
+
+
+def test_readless_predicate_update_follows_the_entity_layout_order() -> None:
+    # m-batch-write-006: reversed authored assignments (balance then owner)
+    # still emit the Entity Layout's slot order (owner then balance) —
+    # assignment binds in emitted column order, predicate binds after.
+    predicate = PredicateWrite(
+        "amend",
+        PredicateSelection(
+            "Wallet",
+            oa.Comparison(op="lessThan", subject=oa.FieldSubject("Wallet.balance"), value="200.00"),
+        ),
+        assignments=(
+            WriteAssignment(attr="Wallet.balance", value=Decimal("150.00")),
+            WriteAssignment(attr="Wallet.owner", value="Updated"),
+        ),
+    )
+    statement = _lower(predicate, WALLET)[0]
+    assert statement.sql == "update wallet set owner = ?, balance = ? where balance < ?"
+    assert statement.binds == ("Updated", 150.00, 200.00)
+
+
+def test_a_readless_predicate_update_through_a_shared_join_is_one_key_selecting_statement() -> None:
+    # The selection's join and predicate binds follow the assignment's, in text order.
+    predicate = PredicateWrite(
+        "amend",
+        PredicateSelection(
+            "OrderItem",
+            oa.And(
+                operands=(
+                    oa.Comparison(
+                        op="eq", subject=oa.FieldSubject("OrderItem.order.name"), value="Ada"
+                    ),
+                    oa.Comparison(
+                        op="lessThan", subject=oa.FieldSubject("OrderItem.quantity"), value=3
+                    ),
+                )
+            ),
+        ),
+        assignments=(WriteAssignment(attr="OrderItem.sku", value="Z"),),
+    )
+    (statement,) = _lower(predicate, ORDERS)
+    assert statement.sql == (
+        "update order_item set sku = ? where id in (select t0.id from order_item t0 "
+        "left join orders t1 on t1.id = t0.order_id where t1.name = ? and t0.quantity < ?)"
+    )
+    assert statement.binds == ("Z", "Ada", 3)
+
+
+def test_value_object_document_is_not_mistaken_for_a_marker() -> None:
+    # A DB-computed marker is a SCALAR cell's shape. A value-object member
+    # resolves to its own Value Object identity, so its whole-document mapping is
+    # never offered to the marker classification at all — it still lowers to one
+    # JsonDocument bind, marker-shaped or not.
+    insert = KeyedWrite(
+        "insert",
+        "Customer",
+        ({"id": 5, "name": "Vera", "address": {"street": "3 Main", "city": "Berlin"}},),
+    )
+    statement = _lower(insert, CUSTOMER)[0]
+    assert statement.binds[-1] == JsonDocument({"street": "3 Main", "city": "Berlin", "phones": []})
+
+
+# --------------------------------------------------------------------------- #
+# The finalized non-temporal insert: what settles the step, and what renders   #
+# it. Everything above composes the two; these pin the split itself.           #
+# --------------------------------------------------------------------------- #
+def _finalize(
+    instruction: WriteInstruction,
+    model: Metamodel,
+    *,
+    observation: WriteObservation | None = None,
+    concurrency: Concurrency = "locking",
+) -> tuple[PlannedStep, ...]:
+    steps = lower_instruction_steps(
+        instruction,
+        model,
+        concurrency=concurrency,
+        observation=observation,
+    )
+    return tuple(step for step, _statement in steps)
+
+
+def _identity(model: Metamodel, entity: str) -> EntityIdentity:
+    metadata = entity_by_name(model, entity)
+    assert metadata is not None
+    return metadata.identity
+
+
+def _attribute(model: Metamodel, entity: str, member: str) -> AttributeIdentity:
+    """The Attribute identity a write row's ``member`` spelling names — the
+    family-effective one, so an inherited member resolves at its declaring
+    ancestor exactly as the Table Layout slot's own contributor does."""
+    position = inheritance.view(model).entity(_identity(model, entity))
+    assert position is not None
+    attribute = position.applicable_attribute(member)
+    assert attribute is not None
+    return attribute.identity
+
+
+def _value_object(model: Metamodel, entity: str, member: str) -> ValueObjectIdentity:
+    position = inheritance.view(model).entity(_identity(model, entity))
+    assert position is not None
+    value_object = position.applicable_value_object(member)
+    assert value_object is not None
+    return value_object.identity
+
+
+def test_step_lowering_reads_an_immutable_write_input_into_an_immutable_document() -> None:
+    # A Planned Row freezes what it carries, so the occurrence arrives as a
+    # read-only mapping over read-only elements. The codec READS it and builds the
+    # document, so what crosses the bind seam is its own recursively immutable
+    # carrier rather than an alias to the frozen carriers the planner held.
+    row = PlannedRow(
+        attributes={
+            _attribute(CUSTOMER, "Customer", "id"): 1,
+            _attribute(CUSTOMER, "Customer", "name"): "Ada",
+        },
+        value_objects={
+            _value_object(CUSTOMER, "Customer", "address"): MappingProxyType(
+                {
+                    "city": "Oslo",
+                    "phones": (
+                        MappingProxyType({"type": "home"}),
+                        MappingProxyType({"type": "work"}),
+                    ),
+                }
+            )
+        },
+    )
+    step = PlannedInsert(
+        entity=_identity(CUSTOMER, "Customer"),
+        entries=(WriteRow(row=row, origin=NEW_LINEAGE),),
+    )
+
+    statement = lowered(step, LayoutPayloadPreparer(CUSTOMER), CUSTOMER, POSTGRES)
+
+    assert statement.binds[-1] == JsonDocument(
+        {"city": "Oslo", "phones": [{"type": "home"}, {"type": "work"}]}
+    )
+    document = cast("JsonDocument", statement.binds[-1]).value
+    assert type(document) is FrozenMap
+    assert type(cast("FrozenMap[str, object]", document)["phones"]) is tuple
+
+
+def test_finalization_settles_an_insert_into_one_step_of_new_lineage_entries() -> None:
+    steps = _finalize(
+        KeyedWrite(
+            "insert", "Wallet", ({"id": 10, "owner": "Mira", "balance": Decimal("100.00")},)
+        ),
+        WALLET,
+    )
+    assert steps is not None
+    (step,) = steps
+    assert step == PlannedInsert(
+        entity=_identity(WALLET, "Wallet"),
+        entries=(
+            WriteRow(
+                row=PlannedRow(
+                    attributes={
+                        _attribute(WALLET, "Wallet", "id"): 10,
+                        _attribute(WALLET, "Wallet", "owner"): "Mira",
+                        _attribute(WALLET, "Wallet", "balance"): Decimal("100.00"),
+                    }
+                ),
+                origin=NEW_LINEAGE,
+            ),
+        ),
+    )
+
+
+def test_finalization_derives_the_initial_version_the_row_never_authors() -> None:
+    # The version is framework-owned end to end (ADR 0013): the settled step
+    # already carries it, so nothing downstream re-derives it from the model.
+    steps = _finalize(
+        KeyedWrite(
+            "insert", "Account", ({"id": 9, "owner": "Noether", "balance": Decimal("5.00")},)
+        ),
+        ACCOUNT,
+    )
+    assert steps is not None
+    (step,) = steps
+    assert isinstance(step, PlannedInsert)
+    row = step.entries[0].row
+    assert row.attributes[_attribute(ACCOUNT, "Account", "version")] == opt_lock.INITIAL_VERSION
+
+
+def test_finalization_classifies_a_pk_gen_marker_into_a_generated_value() -> None:
+    # The authored marker document is classified ONCE, while the step is being
+    # settled; the rendered statement reads a closed generated-value expression
+    # rather than re-inspecting a mapping's shape.
+    steps = _finalize(
+        KeyedWrite("insert", "Attendee", ({"id": {"computed": "maxPlusOne"}, "name": "Ada"},)),
+        PK_MAX,
+    )
+    assert steps is not None
+    (step,) = steps
+    assert isinstance(step, PlannedInsert)
+    row = step.entries[0].row
+    assert row.attributes[_attribute(PK_MAX, "Attendee", "id")] == MAX_PLUS_ONE
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        {"computed": "maxPlusOne", "extra": True},
+        {"allocated": "maxPlusOne"},
+    ],
+    ids=["two-key", "unrecognized-key"],
+)
+def test_a_mapping_outside_the_marker_shape_is_rejected_as_a_string(
+    value: dict[str, object],
+) -> None:
+    with pytest.raises(ValueError, match="does not match the declared type"):
+        _lower(KeyedWrite("insert", "Attendee", ({"id": 1, "name": value},)), PK_MAX)
+
+
+def test_a_write_row_naming_no_family_member_is_refused_at_finalization() -> None:
+    # Every member spelling must resolve to a semantic identity before a step
+    # exists, so an unknown one is refused where the resolution happens — never
+    # silently dropped from the emitted column list.
+    with pytest.raises(ValueError, match="undeclared member"):
+        _finalize(KeyedWrite("insert", "Wallet", ({"id": 10, "nickname": "M"},)), WALLET)
+
+
+def test_a_milestone_verb_on_a_non_temporal_entity_is_refused_at_finalization() -> None:
+    # A milestone verb opens, splits, or closes a milestone, and an Entity
+    # declaring no as-of axis has none — refused where the target's family is
+    # resolved, never rendered as an ordinary keyed write.
+    with pytest.raises(ValueError, match="do not support 'terminate'"):
+        _finalize(KeyedWrite("terminate", "Account", ({"id": 1},)), ACCOUNT)
+
+
+def test_finalization_settles_an_addressed_update_into_target_gate_and_policy() -> None:
+    # One step carries the whole decision: which rows it addresses, the gate the
+    # mode chose, the advance that rides the assignments, and how a shortfall
+    # against its expected effect classifies.
+    steps = _finalize(
+        KeyedWrite("amend", "Account", ({"id": 1, "balance": Decimal("175.00")},)),
+        ACCOUNT,
+        observation=VersionObservation(observed_version=3),
+        concurrency="optimistic",
+    )
+    assert steps is not None
+    version = _attribute(ACCOUNT, "Account", "version")
+    assert steps == (
+        PlannedUpdate(
+            entity=_identity(ACCOUNT, "Account"),
+            target=KeyTarget(
+                key_attributes=(_attribute(ACCOUNT, "Account", "id"),), key_values=((1,),)
+            ),
+            assignments=PlannedAssignments(
+                attributes={
+                    _attribute(ACCOUNT, "Account", "balance"): Decimal("175.00"),
+                    version: 4,
+                }
+            ),
+            concurrency=Versioned(attribute=version, gate=VersionGate(observed_version=3)),
+            affected_rows=ExactCount(expected=1, on_shortfall=OPTIMISTIC_CONFLICT),
+        ),
+    )
+
+
+def test_finalization_records_an_explicit_ungated_decision_under_locking() -> None:
+    # Locking mode records `Ungated` rather than a null gate, and the version
+    # still advances — the advance is an assignment, never a gate member — so a
+    # shortfall is the non-retriable stale outcome instead of a conflict.
+    steps = _finalize(
+        KeyedWrite("delete", "Account", ({"id": 1},)),
+        ACCOUNT,
+        observation=VersionObservation(observed_version=3),
+        concurrency="locking",
+    )
+    assert steps == (
+        PlannedDelete(
+            entity=_identity(ACCOUNT, "Account"),
+            target=KeyTarget(
+                key_attributes=(_attribute(ACCOUNT, "Account", "id"),), key_values=((1,),)
+            ),
+            concurrency=Versioned(
+                attribute=_attribute(ACCOUNT, "Account", "version"), gate=UNGATED
+            ),
+            affected_rows=ExactCount(expected=1, on_shortfall=STALE_WRITE),
+        ),
+    )
+
+
+def test_finalization_gives_an_observation_free_keyed_write_a_missing_target_shortfall() -> None:
+    # An unversioned keyed write observed nothing, so a shortfall says only that
+    # the addressed rows are not there. The policy is carried, not yet enforced.
+    steps = _finalize(KeyedWrite("delete", "Wallet", ({"id": 1}, {"id": 2})), WALLET)
+    assert steps is not None
+    (step,) = steps
+    assert isinstance(step, PlannedDelete)
+    assert step.concurrency == UNVERSIONED
+    assert step.affected_rows == ExactCount(expected=2, on_shortfall=MISSING_TARGET)
+
+
+def test_finalization_gives_a_readless_predicate_write_an_unbounded_expectation() -> None:
+    # A readless predicate write matching zero rows succeeds (`m-batch-write`),
+    # which is what an unbounded expected effect says; it carries the typed
+    # predicate and nothing else.
+    predicate = oa.Comparison(
+        op="lessThan", subject=oa.FieldSubject("Wallet.balance"), value="200.00"
+    )
+    steps = _finalize(PredicateWrite("delete", PredicateSelection("Wallet", predicate)), WALLET)
+    assert steps is not None
+    (step,) = steps
+    assert isinstance(step, PlannedDelete)
+    assert isinstance(step.target, ResolvedMutationSelection)
+    assert step.target.predicate == oa.validate_predicate(step.target.target, predicate, WALLET)
+    assert step.affected_rows == ANY_COUNT
+
+
+def test_a_predicate_verb_with_no_readless_template_is_refused() -> None:
+    # `terminate` and the `*Until` forms name a milestone, and every temporal
+    # target materializes to keyed writes at buffer time, so no readless
+    # statement shape exists for one — refused rather than settled into a step
+    # no statement could render.
+    with pytest.raises(ValueError, match="do not support 'terminate_where'"):
+        _finalize(PredicateWrite("terminate", PredicateSelection("Wallet", oa.TrueNode())), WALLET)
+
+
+def test_a_keyed_write_row_omitting_its_primary_key_addresses_nothing() -> None:
+    # Refused where the target is settled, rather than lowered into an identity
+    # predicate whose bind was never supplied.
+    with pytest.raises(WritePlanningError, match="omits the primary-key member"):
+        _finalize(KeyedWrite("delete", "Wallet", ({"owner": "Mira"},)), WALLET)
+
+
+def test_finalization_classifies_a_registry_advance_into_a_generated_value() -> None:
+    # The `increment` marker is the update-position `m-pk-gen` allocation: the
+    # database computes the new value from the row being written, so the settled
+    # assignment names the allocation rather than a literal to bind.
+    steps = _finalize(
+        KeyedWrite("amend", "PkSequence", ({"name": "badge_seq", "nextVal": {"increment": 3}},)),
+        PK_SEQUENCE,
+    )
+    assert steps is not None
+    (step,) = steps
+    assert isinstance(step, PlannedUpdate)
+    assert step.assignments.attributes[
+        _attribute(PK_SEQUENCE, "PkSequence", "nextVal")
+    ] == SelfIncrement(amount=3)
+
+
+def test_step_lowering_reads_column_participation_and_order_from_the_layout() -> None:
+    # Built by hand, with no instruction and no finalization behind it: the
+    # emitted column list is the target's Table Layout slot selection filtered to
+    # the step's own members, in slot order — never the row's member order.
+    step = PlannedInsert(
+        entity=_identity(ORDERS, "OrderItem"),
+        entries=(
+            WriteRow(
+                row=PlannedRow(
+                    attributes={
+                        _attribute(ORDERS, "OrderItem", "quantity"): 3,
+                        _attribute(ORDERS, "OrderItem", "id"): 200,
+                        _attribute(ORDERS, "OrderItem", "orderId"): 100,
+                    }
+                ),
+                origin=NEW_LINEAGE,
+            ),
+        ),
+    )
+    statement = lowered(step, LayoutPayloadPreparer(ORDERS), ORDERS, POSTGRES)
+    assert statement.sql == "insert into order_item(id, order_id, quantity) values (?, ?, ?)"
+    assert statement.binds == (200, 100, 3)
+
+
+def test_step_lowering_derives_the_table_per_hierarchy_tag_no_entry_names() -> None:
+    # The tag is a layout fact, so it lands at its own slot in every value tuple
+    # while no entry carries it — the one cell lowering adds rather than reads.
+    row = PlannedRow(
+        attributes={
+            _attribute(PAYMENT, "CardPayment", "id"): 1,
+            _attribute(PAYMENT, "CardPayment", "amount"): Decimal("10.00"),
+            _attribute(PAYMENT, "CardPayment", "cardNetwork"): "Visa",
+        }
+    )
+    step = PlannedInsert(
+        entity=_identity(PAYMENT, "CardPayment"),
+        entries=(WriteRow(row=row, origin=NEW_LINEAGE),),
+    )
+    statement = lowered(step, LayoutPayloadPreparer(PAYMENT), PAYMENT, POSTGRES)
+    assert (
+        statement.sql == "insert into payment(id, kind, amount, card_network) values (?, ?, ?, ?)"
+    )
+    assert statement.binds == (1, "card", 10.00, "Visa")
+
+
+# No corpus model declares a top-level `many` occurrence — every one of them nests a
+# `many` inside a `one`, where the codec composes the array while building the outer
+# document. Here the array IS the column, so the cell has to be composed by the
+# lowering itself, which is what this synthetic owner isolates.
+_CRATE = identity("Crate")
+_CRATE_MODEL = form_metamodel(
+    source(
+        Declaration(
+            identity=_CRATE,
+            container=CoreTable("crate"),
+            attributes=(key(_CRATE), attribute(_CRATE, "note", type=STRING)),
+            value_objects=(
+                ValueObjectOccurrenceDeclaration(
+                    name="labels",
+                    storage=CoreColumn("labels"),
+                    multiplicity=Multiplicity.MANY,
+                    shape=ValueObjectShapeDeclaration(
+                        key=ValueObjectShapeKey(),
+                        attributes=(ValueObjectAttributeDeclaration("text", type=STRING),),
+                    ),
+                ),
+            ),
+        )
+    )
+)
+_CRATE_ID = AttributeIdentity(_CRATE, "id")
+_CRATE_NOTE = AttributeIdentity(_CRATE, "note")
+
+
+def test_an_insert_binds_the_empty_array_for_a_many_occurrence_the_row_never_names() -> None:
+    # Absence and `[]` are one logical zero state, so the occurrence's own `NOT NULL`
+    # column still binds — the empty array the codec composes, never a skipped column
+    # (m-value-object "Writing").
+    step = PlannedInsert(
+        entity=_CRATE,
+        entries=(WriteRow(row=PlannedRow(attributes={_CRATE_ID: 7}), origin=NEW_LINEAGE),),
+    )
+    statement = lowered(step, LayoutPayloadPreparer(_CRATE_MODEL), _CRATE_MODEL, POSTGRES)
+    assert statement.sql == "insert into crate(id, labels) values (?, ?)"
+    assert statement.binds == (7, JsonDocument(()))
+
+
+def test_an_update_leaves_a_many_occurrence_its_assignments_never_name_alone() -> None:
+    # The zero state is what an opening statement writes, not what a revising one
+    # imposes: a patch touches only what it assigns, so an unnamed occurrence keeps
+    # whatever the stored row holds.
+    step = PlannedUpdate(
+        entity=_CRATE,
+        target=KeyTarget(key_attributes=(_CRATE_ID,), key_values=((7,),)),
+        assignments=PlannedAssignments(attributes={_CRATE_NOTE: "fragile"}),
+        concurrency=UNVERSIONED,
+        affected_rows=ExactCount(expected=1, on_shortfall=MISSING_TARGET),
+    )
+    statement = lowered(step, LayoutPayloadPreparer(_CRATE_MODEL), _CRATE_MODEL, POSTGRES)
+    assert statement.sql == "update crate set note = ? where id = ?"
+    assert statement.binds == ("fragile", 7)
+
+
+def test_step_lowering_refuses_a_multi_entry_generated_value() -> None:
+    # A generated value folds into the statement's own SELECT rather than
+    # binding, and one such statement carries exactly one row — so a step
+    # holding several is refused instead of rendered as a value list that could
+    # not express it. Batch grouping never produces one (a pk-gen-managed target
+    # does not collapse), so this is a hand-built shape.
+    row = PlannedRow(attributes={_attribute(PK_MAX, "Attendee", "id"): MAX_PLUS_ONE})
+    step = PlannedInsert(
+        entity=_identity(PK_MAX, "Attendee"),
+        entries=(
+            WriteRow(row=row, origin=NEW_LINEAGE),
+            WriteRow(row=row, origin=NEW_LINEAGE),
+        ),
+    )
+    with pytest.raises(SqlGenError, match="one row at a time"):
+        lowered(step, LayoutPayloadPreparer(PK_MAX), PK_MAX, POSTGRES)
+
+
+@pytest.mark.parametrize(
+    ("gate", "sql", "binds"),
+    [
+        (
+            VersionGate(observed_version=5),
+            "update vehicle set name = ?, version = ? where id = ? and kind = ? and version = ?",
+            ("Coupe", 6, 1, "car", 5),
+        ),
+        (
+            UNGATED,
+            "update vehicle set name = ?, version = ? where id = ? and kind = ?",
+            ("Coupe", 6, 1, "car"),
+        ),
+    ],
+    ids=["optimistic", "locking"],
+)
+def test_step_lowering_places_the_settled_version_from_the_versioned_decision(
+    monkeypatch: pytest.MonkeyPatch,
+    gate: VersionGate | Ungated,
+    sql: str,
+    binds: tuple[object, ...],
+) -> None:
+    # Planning named the family's version Attribute on the decision, so lowering
+    # renders its advance after every other assignment, and any gate after the
+    # tag guard, without asking a declared Attribute whether it is the version.
+    # The advance leads the assignments here, so its place is not dict order.
+    version = _attribute(VEHICLE, "Car", "version")
+    step = PlannedUpdate(
+        entity=_identity(VEHICLE, "Car"),
+        target=KeyTarget(key_attributes=(_attribute(VEHICLE, "Car", "id"),), key_values=((1,),)),
+        assignments=PlannedAssignments(
+            attributes={version: 6, _attribute(VEHICLE, "Car", "name"): "Coupe"}
+        ),
+        concurrency=Versioned(attribute=version, gate=gate),
+        affected_rows=ExactCount(
+            expected=1,
+            on_shortfall=OPTIMISTIC_CONFLICT if isinstance(gate, VersionGate) else STALE_WRITE,
+        ),
+    )
+
+    def undiscoverable(attribute: AttributeMetadata) -> object:
+        raise AssertionError(f"lowering asked {attribute.identity} whether it is the version")
+
+    monkeypatch.setattr(AttributeMetadata, "optimistic_locking", property(undiscoverable))
+    statement = lowered(step, LayoutPayloadPreparer(VEHICLE), VEHICLE, POSTGRES)
+    assert (statement.sql, statement.binds) == (sql, binds)
+
+
+# --------------------------------------------------------------------------- #
+# The compiler renders prepared payloads strictly; the shared path prepares    #
+# only what the statement demands and reuses what settlement already holds.   #
+# --------------------------------------------------------------------------- #
+def _crate_insert(*keys: int) -> PlannedInsert:
+    return PlannedInsert(
+        entity=_CRATE,
+        entries=tuple(
+            WriteRow(
+                row=PlannedRow(attributes={_CRATE_ID: key, _CRATE_NOTE: "n"}), origin=NEW_LINEAGE
+            )
+            for key in keys
+        ),
+    )
+
+
+def _crate_update(note: str = "fragile") -> PlannedUpdate:
+    return PlannedUpdate(
+        entity=_CRATE,
+        target=KeyTarget(key_attributes=(_CRATE_ID,), key_values=((7,),)),
+        assignments=PlannedAssignments(attributes={_CRATE_NOTE: note}),
+        concurrency=UNVERSIONED,
+        affected_rows=ExactCount(expected=1, on_shortfall=MISSING_TARGET),
+    )
+
+
+def test_the_compiler_refuses_a_payload_not_prepared_from_its_own_step() -> None:
+    # Lowering never assembles a payload: a missing one, one prepared from
+    # another entry or assignment set, or one in another entry order is a broken
+    # caller contract rather than a request to prepare.
+    payloads = LayoutPayloadPreparer(_CRATE_MODEL)
+    insert = _crate_insert(1, 2)
+    first, second = (payloads.row(_CRATE, entry) for entry in insert.entries)
+    update = _crate_update()
+    foreign = payloads.assignments(_CRATE, _crate_update().assignments)
+    refused: list[tuple[PlannedStep, StepPayload]] = [
+        (insert, None),
+        (insert, (first,)),
+        (insert, (second, first)),
+        (insert, (first, payloads.row(_CRATE, _crate_insert(2).entries[0]))),
+        (update, None),
+        (update, foreign),
+        (
+            PlannedDelete(
+                entity=_CRATE,
+                target=update.target,
+                concurrency=UNVERSIONED,
+                affected_rows=update.affected_rows,
+            ),
+            foreign,
+        ),
+    ]
+    for step, payload in refused:
+        with pytest.raises(SqlGenError):
+            compile_write_step(step, payload, _CRATE_MODEL, POSTGRES)
+    narrower = dataclasses.replace(
+        second, contributors=second.contributors[:-1], values=second.values[:-1]
+    )
+    with pytest.raises(SqlGenError, match="every entry of one insert stores the same cells"):
+        compile_write_step(insert, (first, narrower), _CRATE_MODEL, POSTGRES)
+    assert compile_write_step(insert, (first, second), _CRATE_MODEL, POSTGRES).binds == (
+        1,
+        "n",
+        JsonDocument(()),
+        2,
+        "n",
+        JsonDocument(()),
+    )
+
+
+def test_lowering_reuses_backing_an_entry_already_carries() -> None:
+    class _Unprepared(LayoutPayloadPreparer):
+        def row(self, entity: EntityIdentity, write_row: WriteRow) -> RowPayload:
+            raise AssertionError(f"lowering prepared {entity} again")
+
+    (entry,) = _crate_insert(7).entries
+    carried = entry.with_prepared(LayoutPayloadPreparer(_CRATE_MODEL).row(_CRATE, entry))
+    step = PlannedInsert(entity=_CRATE, entries=(carried,))
+
+    statement = lowered(step, _Unprepared(_CRATE_MODEL), _CRATE_MODEL, POSTGRES)
+
+    assert statement.binds == (7, "n", JsonDocument(()))
+    assert carried == entry
+    with pytest.raises(ValueError, match="the payload prepared from it"):
+        entry.with_prepared(
+            LayoutPayloadPreparer(_CRATE_MODEL).row(_CRATE, _crate_insert(8).entries[0])
+        )
+
+
+def test_backing_a_row_inherits_through_another_input_is_refused() -> None:
+    # Copying a carrier keeps its backing, so the same row reached with another
+    # executed selection or origin still holds cells prepared from the old one.
+    (entry,) = _crate_insert(7).entries
+    backing = LayoutPayloadPreparer(_CRATE_MODEL).row(_CRATE, entry)
+    carried = entry.with_prepared(backing)
+    for restated in (
+        dataclasses.replace(carried, executed=(_CRATE_NOTE,)),
+        dataclasses.replace(carried, origin=NewLineage()),
+    ):
+        assert restated.prepared is backing
+        step = PlannedInsert(entity=_CRATE, entries=(restated,))
+        with pytest.raises(SqlGenError, match="belongs to another entry"):
+            lowered(step, LayoutPayloadPreparer(_CRATE_MODEL), _CRATE_MODEL, POSTGRES)
+        with pytest.raises(ValueError, match="the payload prepared from it"):
+            restated.with_prepared(backing)
+
+
+def test_a_narrow_update_prepares_its_assignments_alone() -> None:
+    class _AssignmentsOnly(LayoutPayloadPreparer):
+        def row(self, entity: EntityIdentity, write_row: WriteRow) -> RowPayload:
+            raise AssertionError("a narrow update demanded a complete row")
+
+    statement = lowered(_crate_update(), _AssignmentsOnly(_CRATE_MODEL), _CRATE_MODEL, POSTGRES)
+    assert statement.sql == "update crate set note = ? where id = ?"
+
+
+def test_a_revision_binds_the_very_values_its_prepared_patches_encode() -> None:
+    # The document paths a revising statement assigns are the prepared patches'
+    # own encoded values, so a successor document patched from the same
+    # preparation and this statement store one encoding.
+    document = document_model()
+    address = ValueObjectIdentity(PERSON, ("address",))
+    step = PlannedUpdate(
+        entity=PERSON,
+        target=KeyTarget(key_attributes=(AttributeIdentity(PERSON, "id"),), key_values=((1,),)),
+        assignments=PlannedAssignments(
+            attributes={AttributeIdentity(PERSON, "displayName"): "Ada"},
+            value_objects={address: {"city": "Oslo", "geo": None}},
+        ),
+        concurrency=UNVERSIONED,
+        affected_rows=ExactCount(expected=1, on_shortfall=MISSING_TARGET),
+    )
+    payload = LayoutPayloadPreparer(document).assignments(PERSON, step.assignments)
+    (patched,) = payload.values
+    assert isinstance(patched, PatchedDocument)
+    name, occurrence = patched.patches
+
+    statement = compile_write_step(step, payload, document, POSTGRES)
+
+    assert JsonDocument(occurrence.value) in statement.binds
+    (bound,) = (bind for bind in statement.binds if isinstance(bind, JsonDocument))
+    assert bound.value is occurrence.value
+    assert name.value == "Ada"
+
+
+def test_the_compiler_places_no_cell_its_layout_does_not_hold() -> None:
+    # A cell is placed by its contributor's slot; one naming a member the Table
+    # does not hold, or a document key removal no assignment can express, is
+    # refused rather than silently dropped.
+    update = _crate_update()
+    stray = AttributeIdentity(_CRATE, "missing")
+    misplaced = AssignmentPayload(
+        entity=_CRATE, assignments=update.assignments, contributors=(stray,), values=("value",)
+    )
+    with pytest.raises(SqlGenError, match="occupies no Column"):
+        compile_write_step(update, misplaced, _CRATE_MODEL, POSTGRES)
+    with pytest.raises(ValueError, match="aligns one value with each contributor"):
+        dataclasses.replace(misplaced, values=())
+    (entry,) = _crate_insert(7).entries
+    with pytest.raises(ValueError, match="aligns one value with each contributor"):
+        RowPayload(entity=_CRATE, source=entry, contributors=(stray,), values=())
+
+    document = document_model()
+    step = PlannedUpdate(
+        entity=PERSON,
+        target=KeyTarget(key_attributes=(AttributeIdentity(PERSON, "id"),), key_values=((1,),)),
+        assignments=PlannedAssignments(attributes={AttributeIdentity(PERSON, "score"): None}),
+        concurrency=UNVERSIONED,
+        affected_rows=ExactCount(expected=1, on_shortfall=MISSING_TARGET),
+    )
+    prepared = LayoutPayloadPreparer(document).assignments(PERSON, step.assignments)
+    (root,) = prepared.contributors
+    (patched,) = prepared.values
+    assert isinstance(patched, PatchedDocument)
+    (score,) = patched.patches
+    removal = AssignmentPayload(
+        entity=PERSON,
+        assignments=step.assignments,
+        contributors=(root,),
+        values=(PatchedDocument((dataclasses.replace(score, removes=True),)),),
+    )
+    with pytest.raises(SqlGenError, match="removes no document key"):
+        compile_write_step(step, removal, document, POSTGRES)
+    tagged = RowPayload(
+        entity=_CRATE,
+        source=entry,
+        contributors=(_CRATE_ID, InheritanceDiscriminator(_CRATE)),
+        values=(7, "crate"),
+    )
+    with pytest.raises(SqlGenError, match="names no tag slot"):
+        compile_write_step(
+            PlannedInsert(entity=_CRATE, entries=(entry,)), (tagged,), _CRATE_MODEL, POSTGRES
+        )
+
+
+def _noted_crate(column: str) -> Metamodel:
+    return form_metamodel(
+        source(
+            Declaration(
+                identity=_CRATE,
+                container=CoreTable("crate"),
+                attributes=(key(_CRATE), attribute(_CRATE, "note", type=STRING, column=column)),
+            )
+        )
+    )
+
+
+def _crate_row(attributes: Mapping[AttributeIdentity, object]) -> PlannedInsert:
+    return PlannedInsert(
+        entity=_CRATE,
+        entries=(WriteRow(row=PlannedRow(attributes=attributes), origin=NEW_LINEAGE),),
+    )
+
+
+def test_each_model_places_one_entity_identitys_cells_in_its_own_columns() -> None:
+    noted, remarked = _noted_crate("note"), _noted_crate("remark")
+    insert = _crate_row({_CRATE_ID: 1, _CRATE_NOTE: "n"})
+    for model, column in ((noted, "note"), (remarked, "remark"), (noted, "note")):
+        payloads = LayoutPayloadPreparer(model)
+        assert lowered(insert, payloads, model, POSTGRES).sql == (
+            f"insert into crate(id, {column}) values (?, ?)"
+        )
+        assert lowered(_crate_update(), payloads, model, POSTGRES).sql == (
+            f"update crate set {column} = ? where id = ?"
+        )
+
+
+def test_each_statement_is_placed_by_its_own_cells_as_shapes_alternate() -> None:
+    model = _noted_crate("note")
+    payloads = LayoutPayloadPreparer(model)
+    narrow, full = _crate_row({_CRATE_ID: 1}), _crate_row({_CRATE_ID: 2, _CRATE_NOTE: "n"})
+    update = _crate_update()
+    stray = AssignmentPayload(
+        entity=_CRATE,
+        assignments=update.assignments,
+        contributors=(AttributeIdentity(_CRATE, "missing"),),
+        values=("value",),
+    )
+    for _ in range(2):
+        assert lowered(narrow, payloads, model, POSTGRES).sql == "insert into crate(id) values (?)"
+        assert lowered(full, payloads, model, POSTGRES).sql == (
+            "insert into crate(id, note) values (?, ?)"
+        )
+        assert lowered(update, payloads, model, POSTGRES).sql == (
+            "update crate set note = ? where id = ?"
+        )
+        with pytest.raises(SqlGenError, match="occupies no Column"):
+            compile_write_step(update, stray, model, POSTGRES)
+
+
+def test_lowering_keeps_no_model_alive() -> None:
+    model = _noted_crate("note")
+    payloads = LayoutPayloadPreparer(model)
+    lowered(_crate_row({_CRATE_ID: 1, _CRATE_NOTE: "n"}), payloads, model, POSTGRES)
+    lowered(_crate_update(), payloads, model, POSTGRES)
+    layout = weakref.ref(storage_layout.view(model))
+    del model, payloads
+    gc.collect()
+    assert layout() is None
+
+
+# --------------------------------------------------------------------------- #
+# One insert statement compiles entry by entry, and a refused entry leaves the #
+# entries before it as they were; a logical insert still refuses as a whole,  #
+# in the order its preparation and validation barriers already decided.       #
+# --------------------------------------------------------------------------- #
+class BuilderShelf(ValueObject):
+    label: Attr[str]
+
+
+class BuilderLedger(TxTemporal, table="builder_ledger", namespace="lowering.insert_builder"):
+    id: Attr[int] = attr(primary_key=True)
+    amount: Attr[int]
+    memo: Attr[str | None]
+    shelf: Attr[BuilderShelf]
+
+
+_BUILDER_MODEL = model_of(DomainModel(BuilderLedger))
+_BUILDER_LEDGER = EntityIdentity("lowering.insert_builder", "BuilderLedger")
+_BUILDER_SHELF = ValueObjectIdentity(_BUILDER_LEDGER, ("shelf",))
+_BUILDER_OPENED = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+
+
+def _ledger_entry(key: int, memo: str | None = "kept") -> WriteRow:
+    shape = temporal_read.view(_BUILDER_MODEL).shape(_BUILDER_LEDGER)
+    assert isinstance(shape, TransactionTimeOnly)
+    return WriteRow(
+        row=PlannedRow(
+            attributes={
+                AttributeIdentity(_BUILDER_LEDGER, "id"): key,
+                AttributeIdentity(_BUILDER_LEDGER, "amount"): key * 10,
+                AttributeIdentity(_BUILDER_LEDGER, "memo"): memo,
+                shape.transaction_time.start_attribute: _BUILDER_OPENED,
+                shape.transaction_time.end_attribute: OPEN_BOUND,
+            },
+            value_objects={_BUILDER_SHELF: {"label": f"shelf-{key}"}},
+        ),
+        origin=NEW_LINEAGE,
+    )
+
+
+def _ledger_payload(entry: WriteRow) -> RowPayload:
+    return LayoutPayloadPreparer(_BUILDER_MODEL).row(_BUILDER_LEDGER, entry)
+
+
+def _ledger_builder(*entries: WriteRow) -> InsertStatementBuilder:
+    first, *rest = entries
+    builder = InsertStatementBuilder(
+        _BUILDER_LEDGER, first, _ledger_payload(first), _BUILDER_MODEL, POSTGRES
+    )
+    for entry in rest:
+        builder.append(entry, _ledger_payload(entry))
+    return builder
+
+
+def _with_value(payload: RowPayload, index: int, value: object) -> RowPayload:
+    values = list(payload.values)
+    values[index] = value
+    return dataclasses.replace(payload, values=tuple(values))
+
+
+def test_an_insert_compiles_each_entrys_cells_and_compacts_equal_signature_runs() -> None:
+    entries = (
+        _ledger_entry(1),
+        _ledger_entry(2),
+        _ledger_entry(3, memo=None),
+        _ledger_entry(4),
+    )
+
+    statement = lowered(
+        PlannedInsert(entity=_BUILDER_LEDGER, entries=entries),
+        LayoutPayloadPreparer(_BUILDER_MODEL),
+        _BUILDER_MODEL,
+        POSTGRES,
+    )
+
+    row = "(?, ?, ?, ?, ?, ?)"
+    assert statement.sql == (
+        f"insert into builder_ledger(id, amount, memo, in_z, out_z, shelf) values "
+        f"{row}, {row}, {row}, {row}"
+    )
+    assert statement == _ledger_builder(*entries).finish()
+    assert statement.binds[12:] == (
+        3,
+        30,
+        None,
+        _BUILDER_OPENED,
+        OPEN_BOUND,
+        JsonDocument(FrozenMap({"label": "shelf-3"})),
+        4,
+        40,
+        "kept",
+        _BUILDER_OPENED,
+        OPEN_BOUND,
+        JsonDocument(FrozenMap({"label": "shelf-4"})),
+    )
+    assert statement.typed_bind_spans == (
+        _RepeatedTypedBindSpan(0, 2, 6, 2, INT64, "MANAGED"),
+        _RepeatedTypedBindSpan(2, 1, 6, 2, STRING, "MANAGED"),
+        _RepeatedTypedBindSpan(3, 1, 6, 2, TIMESTAMP, "MANAGED"),
+        _TypedBindSpan(12, 14, INT64, "MANAGED"),
+        _TypedBindSpan(15, 16, TIMESTAMP, "MANAGED"),
+        _TypedBindSpan(18, 20, INT64, "MANAGED"),
+        _TypedBindSpan(20, 21, STRING, "MANAGED"),
+        _TypedBindSpan(21, 22, TIMESTAMP, "MANAGED"),
+    )
+    assert [override.index for override in statement.wire_bind_overrides] == [4, 10, 16, 22]
+    assert statement.wire_binds()[16:18] == ("infinity", {"label": "shelf-3"})
+
+
+@pytest.mark.parametrize(
+    ("refusal", "message"),
+    [
+        ("another entry's payload", "belongs to another entry"),
+        ("other cells", "every entry of one insert stores the same cells"),
+        ("an invalid scalar cell", "does not match MANAGED slot"),
+        ("an invalid open bound after valid scalar cells", "does not match MANAGED slot"),
+    ],
+)
+def test_a_refused_entry_leaves_the_compiled_prefix_unchanged(refusal: str, message: str) -> None:
+    entries = (_ledger_entry(1), _ledger_entry(2, memo=None))
+    candidate = _ledger_entry(3)
+    payload = _ledger_payload(candidate)
+    match refusal:
+        case "another entry's payload":
+            payload = _ledger_payload(_ledger_entry(3))
+        case "other cells":
+            payload = dataclasses.replace(
+                payload, contributors=payload.contributors[:-1], values=payload.values[:-1]
+            )
+        case "an invalid scalar cell":
+            payload = _with_value(payload, 1, "thirty")
+        case _:
+            payload = _with_value(payload, 4, "infinity")
+    builder = _ledger_builder(*entries)
+
+    with pytest.raises(SqlGenError, match=message):
+        builder.append(candidate, payload)
+
+    statement = builder.finish()
+    expected = _ledger_builder(*entries).finish()
+    assert statement == expected
+    assert statement.wire_binds() == expected.wire_binds()
+    assert statement.sql.endswith("values (?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?)")
+
+
+class _PreparationFailure(Exception):
+    pass
+
+
+def _scripted_rows(
+    script: Mapping[int, Callable[[WriteRow, RowPayload], RowPayload]],
+    demanded: list[int] | None = None,
+) -> LayoutPayloadPreparer:
+    """A preparer whose payload for each ledger key ``script`` may replace."""
+
+    class _Scripted(LayoutPayloadPreparer):
+        def row(self, entity: EntityIdentity, write_row: WriteRow) -> RowPayload:
+            key = cast("int", write_row.row.attributes[AttributeIdentity(_BUILDER_LEDGER, "id")])
+            if demanded is not None:
+                demanded.append(key)
+            prepared = super().row(entity, write_row)
+            return script.get(key, lambda _entry, payload: payload)(write_row, prepared)
+
+    return _Scripted(_BUILDER_MODEL)
+
+
+def _invalid_cell(_entry: WriteRow, payload: RowPayload) -> RowPayload:
+    return _with_value(payload, 1, "invalid")
+
+
+def _foreign(_entry: WriteRow, _payload: RowPayload) -> RowPayload:
+    return _ledger_payload(_ledger_entry(99))
+
+
+def _narrower(_entry: WriteRow, payload: RowPayload) -> RowPayload:
+    return dataclasses.replace(
+        payload, contributors=payload.contributors[:-1], values=payload.values[:-1]
+    )
+
+
+def _unprepared(_entry: WriteRow, _payload: RowPayload) -> RowPayload:
+    raise _PreparationFailure
+
+
+@pytest.mark.parametrize(
+    ("script", "winner", "message"),
+    [
+        pytest.param(
+            {1: _invalid_cell, 2: _unprepared}, _PreparationFailure, "", id="type-vs-prep"
+        ),
+        pytest.param({1: _foreign, 2: _unprepared}, _PreparationFailure, "", id="source-vs-prep"),
+        pytest.param({1: _narrower, 3: _unprepared}, _PreparationFailure, "", id="cells-vs-prep"),
+        pytest.param(
+            {1: _invalid_cell, 2: _foreign}, SqlGenError, "another entry", id="type-vs-source"
+        ),
+        pytest.param(
+            {2: _narrower, 3: _foreign}, SqlGenError, "another entry", id="cells-vs-source"
+        ),
+        pytest.param(
+            {1: _invalid_cell, 3: _narrower}, SqlGenError, "same cells", id="type-vs-cells"
+        ),
+    ],
+)
+def test_an_earlier_entrys_refusal_never_overtakes_a_later_higher_priority_one(
+    script: Mapping[int, Callable[[WriteRow, RowPayload], RowPayload]],
+    winner: type[Exception],
+    message: str,
+) -> None:
+    # A logical insert prepares every entry, then proves every payload its
+    # own, then checks every entry for the first entry's cells, and only then
+    # binds values — so whichever barrier an entry fails first decides the
+    # error, wherever that entry sits in the step.
+    demanded: list[int] = []
+    step = PlannedInsert(
+        entity=_BUILDER_LEDGER, entries=tuple(_ledger_entry(key) for key in (1, 2, 3))
+    )
+
+    with pytest.raises(winner, match=message or None):
+        lowered(step, _scripted_rows(script, demanded), _BUILDER_MODEL, POSTGRES)
+
+    unprepared = [key for key, prepare in script.items() if prepare is _unprepared]
+    assert demanded == [key for key in (1, 2, 3) if key <= min(unprepared, default=3)]
+
+
+def test_an_ordinary_insert_yields_no_statement_until_every_entry_compiles() -> None:
+    step = PlannedInsert(
+        entity=_BUILDER_LEDGER, entries=tuple(_ledger_entry(key) for key in (1, 2, 3))
+    )
+    statements = lowered_steps(
+        (step,), _scripted_rows({3: _invalid_cell}), _BUILDER_MODEL, POSTGRES
+    )
+
+    with pytest.raises(SqlGenError, match="does not match MANAGED slot"):
+        next(statements)
+
+
+def test_a_multi_entry_generated_value_refusal_follows_the_shared_cells_check() -> None:
+    attendee = _identity(PK_MAX, "Attendee")
+    row = PlannedRow(attributes={_attribute(PK_MAX, "Attendee", "id"): MAX_PLUS_ONE})
+    entries = (WriteRow(row=row, origin=NEW_LINEAGE), WriteRow(row=row, origin=NEW_LINEAGE))
+    payloads = LayoutPayloadPreparer(PK_MAX)
+    first, second = (payloads.row(attendee, entry) for entry in entries)
+    narrower = dataclasses.replace(
+        second, contributors=second.contributors[:-1], values=second.values[:-1]
+    )
+
+    with pytest.raises(SqlGenError, match="every entry of one insert stores the same cells"):
+        compile_write_step(
+            PlannedInsert(entity=attendee, entries=entries), (first, narrower), PK_MAX, POSTGRES
+        )

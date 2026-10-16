@@ -21,15 +21,15 @@ from parallax.core import (
     attr,
     rel,
 )
+from parallax.core._execution._preflight import preflight
+from parallax.core._execution._publication import SelectedReadModel, read_projection
+from parallax.core._execution._read_policy import interpreted
 from parallax.core.base import INT64, STRING, DocumentValue, NeutralType, PresentDocument
 from parallax.core.base import Decimal as DecimalType
 from parallax.core.dialect import POSTGRES
 from parallax.core.document_codec import Leaf, decode_scalar_many_classified, encode_scalar_many
 from parallax.core.entity._expressions import AuthoredQuery
 from parallax.core.execution import prepare_model
-from parallax.core.execution._preflight import preflight
-from parallax.core.execution._publication import SelectedReadModel, read_projection
-from parallax.core.execution._read_policy import interpreted
 from parallax.core.metamodel import Multiplicity, TablePerConcreteSubtype
 from parallax.core.object_query._fluent import typed_read_query
 from parallax.core.object_query._resolved import ResolvedObjectQuery

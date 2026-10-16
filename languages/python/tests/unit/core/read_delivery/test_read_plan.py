@@ -19,11 +19,11 @@ import pytest
 from parallax.conformance.dormant_position_models import DORMANT_POSITION_COLUMNS
 from parallax.conformance.story_models import ORDERS_MODEL, Order
 from parallax.core import continuation, deep_fetch
+from parallax.core._execution._page_origins import ObservedPageProjections
+from parallax.core._execution._preflight import preflight
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
-from parallax.core.execution._page_origins import ObservedPageProjections
-from parallax.core.execution._preflight import preflight
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity, Metamodel
 from parallax.core.object_query import deserialize
 from parallax.core.object_query._resolved import ContinuationCoordinate, ResolvedObjectQuery

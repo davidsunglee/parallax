@@ -13,9 +13,10 @@ from typing import Any
 import pytest
 
 from parallax.core import inheritance, temporal_read
+from parallax.core._execution._unit_work.strategy import NO_AUDIT, AuditDecoration
+from parallax.core._execution._write_lowering import lowered
 from parallax.core.base import INFINITY
 from parallax.core.dialect import POSTGRES
-from parallax.core.execution._write_lowering import lowered
 from parallax.core.metamodel import (
     AttributeIdentity,
     EntityIdentity,
@@ -30,7 +31,6 @@ from parallax.core.temporal_write.expansion import (
     RowAudit,
     TemporalFacts,
 )
-from parallax.core.unit_work.strategy import NO_AUDIT, AuditDecoration
 from parallax.core.wire._json import loads
 from parallax.core.write_payload import LayoutPayloadPreparer
 from parallax.core.write_plan import ObjectKey, PredecessorRow
@@ -61,7 +61,7 @@ from parallax.core.write_plan.steps import (
 from tests._support.clock_probes import inert_instant
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
 from tests.unit._corpus_model_support import model
-from tests.unit.core.unit_work._ownership_support import OpenedRows
+from tests.unit.core._execution._unit_work._ownership_support import OpenedRows
 
 _COLUMNS = model("buffered-sequence-layout-twin-columns")
 _DOCUMENT = model("buffered-sequence-layout-twin-document")

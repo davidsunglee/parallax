@@ -22,12 +22,12 @@ from parallax.conformance.class_models import MODELS
 from parallax.conformance.read_models import CardPayment, CashPayment, Payment
 from parallax.conformance.story_models import Wallet
 from parallax.core import Attr, Entity, attr
+from parallax.core._execution._unit_work.instructions import deserialize, prepare_typed_write
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity import AttributeAssignment, DomainModel
 from parallax.core.entity._expressions import AttributeRef
 from parallax.core.entity._model import model_of
 from parallax.core.unit_work import TargetWrite, WriteInstructionError, WriteRejectedError
-from parallax.core.unit_work.instructions import deserialize, prepare_typed_write
 from parallax.core.write_plan.steps import UNVERSIONED
 from parallax.snapshot import Transaction, WireEntity
 from parallax.snapshot._handle._wire import WireTransactionView

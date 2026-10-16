@@ -15,6 +15,9 @@ import pytest
 
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import Attr, Bitemporal, DomainModel, attr
+from parallax.core._execution._unit_work import acquisition as acquisition_module
+from parallax.core._execution._unit_work import ranges as ranges_module
+from parallax.core._execution._unit_work.uow import UnitOfWork
 from parallax.core.base import INFINITY, DocumentValue, PresentDocument
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import JsonDocument, MappingRow
@@ -25,9 +28,6 @@ from parallax.core.unit_work import (
     OptimisticLockConflictError,
     WriteEvidenceError,
 )
-from parallax.core.unit_work import acquisition as acquisition_module
-from parallax.core.unit_work import ranges as ranges_module
-from parallax.core.unit_work.uow import UnitOfWork
 from parallax.core.write_plan import PredecessorRows
 from parallax.core.write_plan.plan import UnitEffects
 from parallax.snapshot import Database, Transaction

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Literal
 from uuid import UUID
 
+from parallax.core._execution._unit_work.uow import Concurrency, WriteBatchReason
 from parallax.core.db_port import AcquisitionReason, CleanupResult, IsolationLevel
 from parallax.core.diagnostics import FailureDiagnostic
 from parallax.core.execution_lifecycle._diagnostics import (
@@ -11,7 +12,6 @@ from parallax.core.execution_lifecycle._diagnostics import (
     DatabaseFailureDiagnostic,
 )
 from parallax.core.sql_gen import LoweredStatement
-from parallax.core.unit_work import Concurrency, WriteBatchReason
 
 type RootExecutionKind = Literal["read", "transaction_invocation", "stream"]
 """Which outermost Handle operation a Root Execution describes."""

@@ -7,7 +7,7 @@ from contextlib import ExitStack, contextmanager
 from contextvars import ContextVar
 from typing import Any
 
-from parallax.core.execution._root import DatabaseRoot
+from parallax.core._execution._root import DatabaseRoot
 
 _ROOTS: ContextVar[ExitStack | None] = ContextVar("parallax_test_database_roots", default=None)
 

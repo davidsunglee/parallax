@@ -7,6 +7,7 @@ from types import MappingProxyType
 from typing import Any, Protocol, cast, overload
 
 from parallax.core import deep_fetch
+from parallax.core._execution._unit_work.uow import Concurrency
 from parallax.core.db_port import DatabaseConnection, PipelineStatement, Row
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.execution_lifecycle._activity import (
@@ -44,7 +45,6 @@ from parallax.core.read_delivery._row_converter import ReadRowConverter, bind
 from parallax.core.sql_gen import SqlGenError
 from parallax.core.sql_gen._compile import CompiledRead
 from parallax.core.temporal_read import Pin, TemporalShape, resolved_query_pin
-from parallax.core.unit_work import Concurrency
 
 __all__ = [
     "EagerPageRequest",

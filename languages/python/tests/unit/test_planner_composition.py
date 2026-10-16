@@ -1,6 +1,6 @@
 """Every write lane plans through the composition-root factory.
 
-``parallax.core.execution._planning.build_write_planner`` is the one place the optional
+``parallax.core._execution._planning.build_write_planner`` is the one place the optional
 policy modules are wired into a Write Planner, so a lane that built a planner of
 its own would plan under a second set of strategies free to drift from
 production's. This grades that as behavior: the factory is made to hand back
@@ -61,19 +61,20 @@ from types import ModuleType
 import pytest
 
 from parallax.conformance import case_format, engine
-from parallax.core.dialect import Dialect
-from parallax.core.execution import _planning, prepare_model
-from parallax.core.execution._publication import write_projection
-from parallax.core.execution._write_lowering import LoweringCursor
-from parallax.core.metamodel import Metamodel
-from parallax.core.sql_gen import LoweredStatement
-from parallax.core.sql_gen._write import StepPayload, compile_write_step
-from parallax.core.unit_work import NO_AUDIT, WritePlanner, WritePlanningRequest
-from parallax.core.unit_work.strategy import (
+from parallax.core._execution import _planning
+from parallax.core._execution._publication import write_projection
+from parallax.core._execution._unit_work.strategy import (
     AuditStrategy,
     BatchingStrategy,
     ConcurrencyStrategy,
 )
+from parallax.core._execution._write_lowering import LoweringCursor
+from parallax.core.dialect import Dialect
+from parallax.core.execution import prepare_model
+from parallax.core.metamodel import Metamodel
+from parallax.core.sql_gen import LoweredStatement
+from parallax.core.sql_gen._write import StepPayload, compile_write_step
+from parallax.core.unit_work import NO_AUDIT, WritePlanner, WritePlanningRequest
 from parallax.core.write_plan import WritePlan
 from parallax.core.write_plan.payload import WritePayloadPreparer
 from parallax.core.write_plan.plan import WriteStepView

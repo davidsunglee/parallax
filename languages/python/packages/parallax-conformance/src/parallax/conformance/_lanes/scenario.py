@@ -56,6 +56,22 @@ from parallax.core import (
     read_delivery,
     storage_layout,
 )
+from parallax.core._execution._keyed_writes import validate_source_pin
+from parallax.core._execution._planning import build_write_planner
+from parallax.core._execution._unit_work import instructions
+from parallax.core._execution._unit_work.instructions import (
+    ExpectedTxStart,
+    ExpectedVersion,
+    PreparedKeyedWrite,
+    PreparedPredicateWrite,
+    PreparedTargetWrite,
+    PreparedWrite,
+    WriteInstruction,
+)
+from parallax.core._execution._unit_work.materialized import readless_write, target_write
+from parallax.core._execution._unit_work.uow import bind_deferred_range
+from parallax.core._execution._unit_work.write_planner import compose_writes
+from parallax.core._execution._write_lowering import stream_physical
 from parallax.core.base import (
     INFINITY,
     normalize_instant,
@@ -71,9 +87,6 @@ from parallax.core.execution import (
     ServingModel,
     TransactionTimePinReadOnlyError,
 )
-from parallax.core.execution._keyed_writes import validate_source_pin
-from parallax.core.execution._planning import build_write_planner
-from parallax.core.execution._write_lowering import stream_physical
 from parallax.core.metamodel import (
     AbstractRoot,
     AbstractSubtype,
@@ -107,28 +120,15 @@ from parallax.core.unit_work import (
     SettledEvidence,
     StaleWriteError,
     SubjectActor,
+    TargetWrite,
     TransactionInstant,
     WriteEffectError,
     WriteEvidenceError,
     WritePlanningRequest,
     WritePreconditionError,
     buffered_write,
-    instructions,
     object_key,
 )
-from parallax.core.unit_work.instructions import (
-    ExpectedTxStart,
-    ExpectedVersion,
-    PreparedKeyedWrite,
-    PreparedPredicateWrite,
-    PreparedTargetWrite,
-    PreparedWrite,
-    TargetWrite,
-    WriteInstruction,
-)
-from parallax.core.unit_work.materialized import readless_write, target_write
-from parallax.core.unit_work.uow import bind_deferred_range
-from parallax.core.unit_work.write_planner import compose_writes
 from parallax.core.write_plan import (
     ObjectKey,
     ObservedStateKey,
@@ -964,7 +964,7 @@ def _seed_insert_version(
     value
     — every reachable insert witness already authors an explicit `version`
     matching this SAME constant (`m-unit-work-001`/`-008`), coincidentally
-    satisfying `~parallax.core.unit_work.write_validate.validate_write`'s
+    satisfying `~parallax.core._execution._unit_work.write_validate.validate_write`'s
     required-attribute check along the way, but a same-transaction coalescing
     pair whose insert never survives to ANY golden DML
     (`m-unit-work-010`'s insert-then-delete cancellation) has no golden bind

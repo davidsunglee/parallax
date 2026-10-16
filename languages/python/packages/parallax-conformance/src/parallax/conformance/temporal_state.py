@@ -7,6 +7,12 @@ from dataclasses import dataclass
 from typing import Final, cast
 
 from parallax.core import inheritance, temporal_read
+from parallax.core._execution._unit_work.acquisition import (
+    AcquireRows,
+    CoverageReadRequest,
+    RowConsumer,
+    RowRequest,
+)
 from parallax.core.base import INFINITY, normalize_instant
 from parallax.core.inheritance import EntityMemberSelection
 from parallax.core.metamodel import (
@@ -20,12 +26,6 @@ from parallax.core.metamodel import (
     PrimaryKey,
     TemporalDimension,
     ValueObjectIdentity,
-)
-from parallax.core.unit_work.acquisition import (
-    AcquireRows,
-    CoverageReadRequest,
-    RowConsumer,
-    RowRequest,
 )
 from parallax.core.write_plan import (
     ObservedStateKey,

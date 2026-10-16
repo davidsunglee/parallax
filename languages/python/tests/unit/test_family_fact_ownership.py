@@ -37,13 +37,19 @@ from parallax.core import (
     temporal_read,
 )
 from parallax.core import predicate as predicate_algebra
+from parallax.core._execution._concurrency import CONCURRENCY
+from parallax.core._execution._planning import build_write_planner
+from parallax.core._execution._unit_work.instructions import (
+    PreparedPredicateWrite,
+    prepare_typed_write,
+)
+from parallax.core._execution._unit_work.ranges import DeferredGroupRange
+from parallax.core._execution._unit_work.write_settlement import OrderedWrite
+from parallax.core._execution._write_lowering import lowered as lower
 from parallax.core.deep_fetch._include_tree import build_include_tree
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
-from parallax.core.execution._concurrency import CONCURRENCY
-from parallax.core.execution._planning import build_write_planner
-from parallax.core.execution._write_lowering import lowered as lower
 from parallax.core.metamodel import AttributeMetadata, EntityIdentity, Metamodel
 from parallax.core.object_query import LATEST, TX_TIME
 from parallax.core.object_query._fluent import ObjectQuery
@@ -66,9 +72,6 @@ from parallax.core.unit_work import (
     object_key,
     run_unit_of_work,
 )
-from parallax.core.unit_work.instructions import PreparedPredicateWrite, prepare_typed_write
-from parallax.core.unit_work.ranges import DeferredGroupRange
-from parallax.core.unit_work.write_settlement import OrderedWrite
 from parallax.core.write_payload import LayoutPayloadPreparer
 from parallax.core.write_plan import (
     ObjectKey,

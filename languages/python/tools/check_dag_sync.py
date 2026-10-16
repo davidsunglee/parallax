@@ -113,7 +113,7 @@ MODULE_SCOPE: Mapping[str, str] = {
     "m-dialect": "parallax.core.dialect",
     "m-db-port": "parallax.core.db_port",
     "m-db-error": "parallax.core.db_error",
-    "m-unit-work": "parallax.core.unit_work",
+    "m-unit-work": "parallax.core._execution._unit_work",
     "m-write-plan": "parallax.core.write_plan",
     "m-write-payload": "parallax.core.write_payload",
     "m-read-lock": "parallax.core.read_lock",
@@ -121,7 +121,7 @@ MODULE_SCOPE: Mapping[str, str] = {
     "m-execution-authority": "parallax.core.execution_authority",
     "m-execution-lifecycle": "parallax.core.execution_lifecycle",
     "m-read-delivery": "parallax.core.read_delivery",
-    "m-execution": "parallax.core.execution",
+    "m-execution": "parallax.core._execution",
     "m-opt-lock": "parallax.core.opt_lock",
     "m-temporal-read": "parallax.core.temporal_read",
     "m-temporal-write": "parallax.core.temporal_write",
@@ -303,7 +303,7 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
     # no SQL, and no dialect. The Database Port is NOT one of those: the granted
     # Entity frontend reaches it through `_formation_profile -> opt_lock ->
     # unit_work -> db_port`, and a forbidden row is the complement of a closure,
-    # so this row admits it — `parallax.core.execution._preflight` below is the
+    # so this row admits it — `parallax.core._execution._preflight` below is the
     # scope whose grant is narrowed for exactly the boundary this one cannot
     # state.
     "parallax.snapshot._inspection": frozenset(
@@ -365,7 +365,13 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
     # Execution names the Entity frontend directly: model preparation reads the
     # accepted Metamodel and class index a Domain Model carries, and a prepared
     # selection retains the row codec and graph construction derived over them.
-    "parallax.core.execution": frozenset({"parallax.core.entity"}),
+    "parallax.core._execution": frozenset({"parallax.core.entity"}),
+    # The two public facades re-export what their implementation owners define
+    # and are granted exactly those owners. No production scope is granted a
+    # facade, so framework modules name the defining owner and an implementation
+    # can never need its own facade to import.
+    "parallax.core.execution": frozenset({"parallax.core._execution"}),
+    "parallax.core.unit_work": frozenset({"parallax.core._execution._unit_work"}),
     # The read gate is scoped apart from its own package so the generated
     # contract proves what its module docstring claims: a preflight that resolves
     # a target and validates a query names no SQL generation, no dialect, no
@@ -375,7 +381,7 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
     # reaches one through `_formation_profile -> opt_lock -> unit_work ->
     # db_port`, and a forbidden row is the complement of a closure, so a grant
     # wide enough to include that chain could never forbid its endpoint.
-    "parallax.core.execution._preflight": frozenset(
+    "parallax.core._execution._preflight": frozenset(
         {
             "parallax.core.metamodel",
             "parallax.core.predicate",
@@ -399,14 +405,14 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
     # `modules.md`'s own edges, so retry and SQL generation are inherited here
     # rather than forbidden. Write lowering is a sibling child scope, which the
     # general target set excludes, so no row can name it either way.
-    "parallax.core.execution._read_policy": frozenset(
+    "parallax.core._execution._read_policy": frozenset(
         {
             "parallax.core.entity",
             "parallax.core.read_delivery",
             "parallax.core.object_query",
             "parallax.core.temporal_read",
             "parallax.core.db_port",
-            "parallax.core.unit_work",
+            "parallax.core._execution._unit_work",
             "parallax.core.execution_authority",
             "parallax.core.execution_lifecycle",
         }
@@ -429,20 +435,20 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
     # closure, so each rides in whatever this composition itself imports. What
     # the row says about them is that this scope inherits them, not that they are
     # forbidden.
-    "parallax.core.execution._keyed_writes": frozenset(
+    "parallax.core._execution._keyed_writes": frozenset(
         {
             "parallax.core.entity",
             "parallax.core.metamodel",
             "parallax.core.document_codec",
             "parallax.core.temporal_read",
-            "parallax.core.unit_work",
+            "parallax.core._execution._unit_work",
             "parallax.core.write_plan",
             "parallax.core.execution_lifecycle",
         }
     ),
-    "parallax.core.execution._family": _LOWERING_GROUP_DEPS,
-    "parallax.core.execution._keyed_sql": _LOWERING_GROUP_DEPS,
-    "parallax.core.execution._write_lowering": _LOWERING_GROUP_DEPS,
+    "parallax.core._execution._family": _LOWERING_GROUP_DEPS,
+    "parallax.core._execution._keyed_sql": _LOWERING_GROUP_DEPS,
+    "parallax.core._execution._write_lowering": _LOWERING_GROUP_DEPS,
     # A prepared Model Selection is process-local and holds no transaction,
     # connection, Clock, or Execution Lifecycle Provider. Granting the scope the
     # Entity frontend — for the Domain Model, the cataloged model, the row
@@ -451,10 +457,10 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
     # three of those absences structural rather than asserted: no attempt, no
     # port, and no activity is nameable here. Sealed, because the execution
     # package beside it holds every one of them.
-    "parallax.core.execution._publication": frozenset(
+    "parallax.core._execution._publication": frozenset(
         {
             "parallax.core.entity",
-            "parallax.core.unit_work",
+            "parallax.core._execution._unit_work",
         }
     ),
     # Write-observation retention is scoped apart from its own package so the
@@ -479,9 +485,9 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
     # parent scope, so a row naming it overlaps its own source and is silently
     # skipped. That is what the SEALED policy below is for:
     # `check_scope_ownership.py` walks this scope's files and refuses every import
-    # into `parallax.core.execution` no grant covers, and no grant here covers any
+    # into `parallax.core._execution` no grant covers, and no grant here covers any
     # module of it.
-    "parallax.core.execution._retention": frozenset(
+    "parallax.core._execution._retention": frozenset(
         {
             "parallax.core.entity._construction_input",
             "parallax.core.entity._layout",
@@ -489,7 +495,7 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
             "parallax.core.metamodel",
             "parallax.core.inheritance",
             "parallax.core.temporal_read",
-            "parallax.core.unit_work",
+            "parallax.core._execution._unit_work",
             "parallax.core.write_plan",
             "parallax.core.opt_lock",
         }
@@ -628,17 +634,17 @@ CHILD_SCOPES: Mapping[str, ChildScope] = {
     "parallax.core.entity._pydantic_storage": ChildScope(
         parent="parallax.core.entity", policy="sealed"
     ),
-    "parallax.core.execution._family": ChildScope(
-        parent="parallax.core.execution", policy="ordinary"
+    "parallax.core._execution._family": ChildScope(
+        parent="parallax.core._execution", policy="ordinary"
     ),
-    "parallax.core.execution._keyed_sql": ChildScope(
-        parent="parallax.core.execution", policy="ordinary"
+    "parallax.core._execution._keyed_sql": ChildScope(
+        parent="parallax.core._execution", policy="ordinary"
     ),
-    "parallax.core.execution._keyed_writes": ChildScope(
-        parent="parallax.core.execution", policy="ordinary"
+    "parallax.core._execution._keyed_writes": ChildScope(
+        parent="parallax.core._execution", policy="ordinary"
     ),
-    "parallax.core.execution._preflight": ChildScope(
-        parent="parallax.core.execution", policy="ordinary"
+    "parallax.core._execution._preflight": ChildScope(
+        parent="parallax.core._execution", policy="ordinary"
     ),
     # Model publication is sealed for what a prepared selection must not hold:
     # the root, the scopes, the Attempt, the read policy, the keyed write
@@ -647,11 +653,11 @@ CHILD_SCOPES: Mapping[str, ChildScope] = {
     # would no longer be process-local state a Serving Model can hand to any
     # execution. The seal is what grades that absence over the package the
     # selection lives in.
-    "parallax.core.execution._publication": ChildScope(
-        parent="parallax.core.execution", policy="sealed"
+    "parallax.core._execution._publication": ChildScope(
+        parent="parallax.core._execution", policy="sealed"
     ),
-    "parallax.core.execution._read_policy": ChildScope(
-        parent="parallax.core.execution", policy="ordinary"
+    "parallax.core._execution._read_policy": ChildScope(
+        parent="parallax.core._execution", policy="ordinary"
     ),
     # Write-observation retention is sealed for the same reason read the other
     # way: the Page collector DRIVES it, and the dependency going only that way
@@ -661,11 +667,17 @@ CHILD_SCOPES: Mapping[str, ChildScope] = {
     # merely stated — and it holds the rest of the package out with it, which is
     # what makes retention's grants its whole reach rather than its whole
     # intent.
-    "parallax.core.execution._retention": ChildScope(
-        parent="parallax.core.execution", policy="sealed"
+    "parallax.core._execution._retention": ChildScope(
+        parent="parallax.core._execution", policy="sealed"
     ),
-    "parallax.core.execution._write_lowering": ChildScope(
-        parent="parallax.core.execution", policy="ordinary"
+    # The unit of work is `m-unit-work`'s scope, nested in the execution package
+    # it has no edge to. Its row cannot name that enclosing package, so the seal
+    # is what refuses every import of an execution module beyond its grants.
+    "parallax.core._execution._unit_work": ChildScope(
+        parent="parallax.core._execution", policy="sealed"
+    ),
+    "parallax.core._execution._write_lowering": ChildScope(
+        parent="parallax.core._execution", policy="ordinary"
     ),
     # The Page child of read delivery is sealed because what it must not reach
     # is the rest of its own package: planning, the reader, and delivery all

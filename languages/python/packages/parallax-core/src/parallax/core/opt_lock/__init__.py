@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from typing import Final
 
+from parallax.core._execution._unit_work.claims import SettledEvidence
+from parallax.core._execution._unit_work.instructions import KeyedMutation
+from parallax.core._execution._unit_work.retain import RetainedObservation
+from parallax.core._execution._unit_work.uow import Concurrency
 from parallax.core.metamodel import EntityIdentity, Metamodel
 from parallax.core.opt_lock._compile import MODEL_COMPILER
 from parallax.core.opt_lock._facet import (
@@ -14,7 +18,6 @@ from parallax.core.opt_lock._facet import (
     view,
 )
 from parallax.core.opt_lock._rules import ISSUE_CODES, RULE_SET
-from parallax.core.unit_work import Concurrency, KeyedMutation, RetainedObservation, SettledEvidence
 from parallax.core.write_plan import ObjectKey, VersionObservation, WriteObservation
 
 __all__ = [
