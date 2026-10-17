@@ -16,7 +16,7 @@ from parallax.core.sql_gen._write import (
     InsertStatementBuilder,
     StepPayload,
     compile_write_step,
-    effect_bind_bound,
+    effect_parameter_ceiling,
 )
 from parallax.core.write_plan.payload import RowPayload, WritePayloadPreparer
 from parallax.core.write_plan.steps import (
@@ -36,7 +36,7 @@ __all__ = [
     "LoweringCursor",
     "lowered",
     "lowered_within",
-    "ordered_bind_bound",
+    "ordered_parameter_ceiling",
     "stream_physical",
 ]
 
@@ -87,11 +87,11 @@ class LoweringCursor:
     def lowered(self, step: PlannedStep) -> LoweredStatement:
         return lowered(step, self._payloads, self._meta, self._dialect)
 
-    def ordered_bound(self, step: PlannedStep) -> int | None:
-        return ordered_bind_bound(step, self._dialect)
+    def ordered_parameter_ceiling(self, step: PlannedStep) -> int | None:
+        return ordered_parameter_ceiling(step, self._dialect)
 
-    def lowered_within(self, step: PlannedStep, bound: int) -> LoweredStatement:
-        return lowered_within(step, bound, self._payloads, self._meta, self._dialect)
+    def lowered_within(self, step: PlannedStep, parameter_ceiling: int) -> LoweredStatement:
+        return lowered_within(step, parameter_ceiling, self._payloads, self._meta, self._dialect)
 
     def opening(self, step: PlannedStep) -> PlannedInsert | None:
         """``step`` where it can begin a grouped opening statement — a temporal
@@ -178,14 +178,15 @@ def lowered(
     return compile_write_step(step, _demanded(step, payloads), meta, dialect)
 
 
-def ordered_bind_bound(step: PlannedStep, dialect: Dialect) -> int | None:
-    """The most binds ``step``'s statement may carry where ordered write
-    transport can present it, decided before its payload is demanded; ``None``
-    where it cannot.
+def ordered_parameter_ceiling(step: PlannedStep, dialect: Dialect) -> int | None:
+    """A conservative upper bound on the SQL parameters ``step``'s statement
+    carries where ordered write transport can present it, computed before its
+    payload is demanded; ``None`` where the step must run alone.
 
     Only a count-only temporal effect qualifies — a close, guard, revision, or
-    removal — and only one whose statement fits the dialect's bind limit on its
-    own. Every other step, and one whose bound exceeds that limit, runs alone.
+    removal — and only one whose ceiling fits the dialect's configured parameter
+    limit. Every other step, and one whose ceiling exceeds that limit, runs
+    alone.
     """
     match step:
         case (
@@ -194,31 +195,31 @@ def ordered_bind_bound(step: PlannedStep, dialect: Dialect) -> int | None:
             | PlannedTemporalRemoval()
             | PlannedTemporalGuard()
         ):
-            bound = effect_bind_bound(step)
-            return bound if bound <= dialect.max_bind_parameters else None
+            ceiling = effect_parameter_ceiling(step)
+            return ceiling if ceiling <= dialect.max_bind_parameters else None
         case _:
             return None
 
 
 def lowered_within(
     step: PlannedStep,
-    bound: int,
+    parameter_ceiling: int,
     payloads: WritePayloadPreparer,
     meta: Metamodel,
     dialect: Dialect,
 ) -> LoweredStatement:
-    """``step``'s one statement, which carries no more than the ``bound`` binds
-    its shape promised before its payload was demanded.
+    """``step``'s one statement, which carries no more SQL parameters than the
+    ``parameter_ceiling`` its shape promised before its payload was demanded.
 
     A statement exceeding its promise is refused as a lowering failure rather
     than presented to transport selected on the strength of that promise.
     """
     statement = lowered(step, payloads, meta, dialect)
     binds = len(statement.binds)
-    if binds > bound:
+    if binds > parameter_ceiling:
         raise SqlGenError(
             f"{step.entity.canonical}: a statement carrying {binds} binds exceeds the "
-            f"{bound} its shape promised before its payload was prepared"
+            f"{parameter_ceiling} its shape promised before its payload was prepared"
         )
     return statement
 
