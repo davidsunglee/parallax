@@ -1215,9 +1215,14 @@ class _SimulatedUnit:
     (:func:`_buffered`), so it consumes no authority a real read retained, and
     a write that unit of work refuses to admit is refused as the case's
     composition rather than leaked as the production refusal.
+
+    ``inserted`` holds the keys temporal inserts opened in this unit's pending
+    buffer: a later write of one, resolved into the same buffer, composes onto
+    that insert (:func:`_build_temporal_instruction`). It spans every step a
+    held group buffers before the unit's next flush, which empties it.
     """
 
-    __slots__ = ("_model", "_steps", "_uow")
+    __slots__ = ("_model", "_steps", "_uow", "inserted")
 
     def __init__(
         self, model: AcceptedMetamodel, uow: UnitOfWork, steps: SimulatedWriteSteps
@@ -1225,6 +1230,7 @@ class _SimulatedUnit:
         self._model = model
         self._uow = uow
         self._steps = steps
+        self.inserted: set[ObjectKey] = set()
 
     @property
     def statements(self) -> tuple[LoweredStatement, ...]:
@@ -1246,7 +1252,9 @@ class _SimulatedUnit:
     def read[T](self, read_fn: Callable[[], T]) -> T:
         """``read_fn``'s answer, run once everything buffered has flushed, as a
         read depending on the buffer flushes it first."""
-        return self._uow.read(read_fn)
+        answer = self._uow.read(read_fn)
+        self.inserted.clear()
+        return answer
 
 
 @contextlib.contextmanager
@@ -3311,7 +3319,7 @@ def run_group_step(
         published = _published_claims(state.published)
         resolved: list[_ResolvedWrite] = []
         sources: list[Sequence[WireEntity] | None] = []
-        unit_inserted: set[ObjectKey] = set()
+        unit_inserted: set[ObjectKey] = set() if tracked is None else tracked.inserted
         for entry in entries:
             named = _source_find_nodes(entry, index, state.finds)
             source = None if named is None else tuple(_published_claims(named))
