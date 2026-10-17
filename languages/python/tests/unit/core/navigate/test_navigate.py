@@ -15,7 +15,7 @@ from __future__ import annotations
 import dataclasses
 import datetime as dt
 import decimal
-from typing import TYPE_CHECKING, assert_type
+from typing import TYPE_CHECKING, Never, assert_type, cast
 
 import pytest
 
@@ -457,7 +457,11 @@ def test_existing_root_conditions_add_nothing_but_still_resolve_each_hop_at_late
 # --------------------------------------------------------------------------- #
 def test_the_closed_product_is_obtained_only_by_resolving() -> None:
     with pytest.raises(TypeError):
+        TemporallyResolvedPredicate()  # pyright: ignore[reportCallIssue]
+    with pytest.raises(TypeError):
         TemporallyResolvedPredicate(ResolvedConstant(True), None)  # pyright: ignore[reportCallIssue]
+    with pytest.raises(TypeError):
+        TemporallyResolvedPredicate(cast("Never", ResolvedConstant(True)))
 
 
 if TYPE_CHECKING:

@@ -2415,10 +2415,16 @@ def test_typed_and_wire_reads_share_resolved_include_work_within_each_delivery_m
         assert [node["id"] for node in wire_stream] == [1, 2, 3]
 
     # The first page plans apart from the eager read and compiles its own child
-    # read; the later page borrows that compiled work, and Wire reuses each
-    # Typed plan without resolving or compiling anything again.
+    # read; the later page plans only its root and borrows that closed, compiled
+    # child work, and Wire reuses each Typed plan without resolving or compiling
+    # anything again.
     assert len(child_compiles) == paged[1] == 2
     assert len(resolutions) == paged[0]
+    assert [type(resolution).__name__ for resolution in resolutions[eager[0] :]] == [
+        "RootSelections",
+        "PropagatedRootSelections",
+        "RootSelections",
+    ]
     assert child_compiles[1] == eager_child
     statistics = root._resources.planner._statistics()  # pyright: ignore[reportPrivateUsage] - the cache's own census
     assert (statistics.misses, statistics.hits) == (3, 3)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from typing import Never
 
 from parallax.core import inheritance
 from parallax.core.metamodel import EntityMetadata, Metamodel
@@ -76,6 +77,9 @@ class TemporallyResolvedPredicate:
 
     predicate: ResolvedPredicate
     root_perspective: TemporalPerspective | None
+
+    def __init__(self, _unconstructible: Never) -> None:
+        raise TypeError("a TemporallyResolvedPredicate is obtained only by resolving")
 
 
 def resolve_temporal_visibility(
