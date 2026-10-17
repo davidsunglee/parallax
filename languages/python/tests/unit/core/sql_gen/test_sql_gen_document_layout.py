@@ -22,15 +22,34 @@ from collections.abc import Callable, Iterable
 
 import pytest
 
+from parallax.core import deep_fetch
 from parallax.core import object_query as oq
 from parallax.core import predicate as oa
-from parallax.core.base import SQL_NULL, DocumentValue, PresentDocument
+from parallax.core.base import (
+    INT64,
+    SQL_NULL,
+    STRING,
+    TIMESTAMP,
+    DocumentValue,
+    PresentDocument,
+)
 from parallax.core.dialect import POSTGRES
 from parallax.core.document_codec import MemberShape
 from parallax.core.metamodel import EntityMetadata
-from parallax.core.sql_gen import SqlGenError
-from parallax.core.sql_gen._compile import CompiledRead
+from parallax.core.navigate import (
+    PropagatedRootSelections,
+    RootSelections,
+    resolve_temporal_visibility,
+)
+from parallax.core.object_query._nodes import IncludePathNode, TemporalDimension
+from parallax.core.sql_gen import LoweredStatement, SqlGenError
+from parallax.core.sql_gen._compile import CompiledRead, compile_template
+from parallax.core.sql_gen._compile import (
+    compile_write_predicate as compile_validated_write_predicate,
+)
+from parallax.descriptor._ingest import ingest_document
 from tests._support.sql import compile_projected_read, compile_read, compile_write_predicate
+from tests.unit._corpus_model_support import formed
 from tests.unit._document_layout_support import columns_model, document_model, entity
 
 DOCUMENT = document_model()
@@ -444,3 +463,182 @@ def test_a_write_predicate_extracts_from_the_bare_structured_column() -> None:
     )
     assert compiled.sql == "jsonb_extract_path_text(payload, ?) = ?"
     assert compiled.binds == ("displayName", "Ada")
+
+
+# --------------------------------------------------------------------------- #
+# Temporal visibility beside document-resident reads: an axis bound keeps a   #
+# Column of its own, so a perspective binds managed instants after whatever    #
+# path segments and comparison text the predicate beside it bound.            #
+# --------------------------------------------------------------------------- #
+_KEY = {"name": "id", "type": "int64", "primaryKey": True}
+_PAYLOAD = {"document": {"column": "payload"}}
+_FLEETS = formed(
+    ingest_document(
+        {
+            "entities": [
+                {
+                    "name": "Fleet",
+                    "table": "fleet",
+                    "layout": _PAYLOAD,
+                    "temporality": "bitemporal",
+                    "attributes": [
+                        _KEY,
+                        {"name": "name", "type": "string", "maxLength": 32, "nullable": True},
+                    ],
+                    "relationships": [
+                        {
+                            "name": "ships",
+                            "cardinality": "one-to-many",
+                            "join": {
+                                "source": "id",
+                                "target": {"entity": "Ship", "attribute": "fleetId"},
+                            },
+                        }
+                    ],
+                },
+                {
+                    "name": "Ship",
+                    "table": "ship",
+                    "layout": _PAYLOAD,
+                    "temporality": "bitemporal",
+                    "attributes": [
+                        _KEY,
+                        {"name": "fleetId", "type": "int64"},
+                        {"name": "flag", "type": "string", "maxLength": 8, "nullable": True},
+                    ],
+                    "relationships": [{"name": "fleet", "reverseOf": "Fleet.ships"}],
+                },
+            ]
+        }
+    )
+)
+_VALID = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
+_TX = dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
+_VALID_WIRE, _TX_WIRE = "2024-03-01T00:00:00.000000Z", "2024-02-01T00:00:00.000000Z"
+_PINNED: dict[TemporalDimension, oq.TemporalSelection] = {
+    "valid-time": oq.AsOf("2024-03-01T00:00:00Z"),
+    "transaction-time": oq.AsOf("2024-02-01T00:00:00Z"),
+}
+_PINNED_BINDS = (_VALID, _VALID, _TX, _TX)
+_PINNED_WIRE = (_VALID_WIRE, _VALID_WIRE, _TX_WIRE, _TX_WIRE)
+
+
+def _spans(statement: LoweredStatement) -> list[tuple[range, object, str]]:
+    """Each typed span as the bind positions it covers, its type, and its form."""
+    return [
+        (range(min(indexes), max(indexes) + 1), span.neutral_type, span.form)
+        for span in statement.typed_bind_spans
+        if (indexes := tuple(span.indexes()))
+    ]
+
+
+def _visible(alias: str) -> str:
+    return f"{alias}from_z <= ? and {alias}thru_z > ? and {alias}in_z <= ? and {alias}out_z > ?"
+
+
+def test_a_correlated_perspective_binds_after_the_document_path_and_operand_before_it() -> None:
+    statement = compile_read(
+        oa.Quantifier(
+            "any", "Fleet.ships", oa.Comparison(op="eq", subject=oa.FieldSubject("flag"), value="X")
+        ),
+        _FLEETS,
+        POSTGRES,
+        entity(_FLEETS, "Fleet"),
+        temporal=_PINNED,
+    ).statement
+
+    assert statement.sql.endswith(
+        "from fleet t0 where exists (select 1 from ship t1 where t1.fleet_id = t0.id and "
+        f"jsonb_extract_path_text(t1.payload, ?) = ? and {_visible('t1.')}) and {_visible('t0.')}"
+    )
+    assert statement.binds == ("flag", "X", *_PINNED_BINDS, *_PINNED_BINDS)
+    assert statement.wire_binds() == ("flag", "X", *_PINNED_WIRE, *_PINNED_WIRE)
+    assert _spans(statement) == [
+        (range(1, 2), STRING, "COMPARISON_TEXT"),
+        (range(2, 10), TIMESTAMP, "MANAGED"),
+    ]
+
+
+def test_a_shared_join_binds_its_perspective_before_the_document_read_beside_it() -> None:
+    statement = compile_read(
+        oa.Comparison(op="eq", subject=oa.FieldSubject("Ship.fleet.name"), value="N"),
+        _FLEETS,
+        POSTGRES,
+        entity(_FLEETS, "Ship"),
+        temporal=_PINNED,
+    ).statement
+
+    assert statement.sql.endswith(
+        f"from ship t0 left join fleet t1 on t1.id = t0.fleet_id and {_visible('t1.')} "
+        f"where jsonb_extract_path_text(t1.payload, ?) = ? and {_visible('t0.')}"
+    )
+    assert statement.binds == (*_PINNED_BINDS, "name", "N", *_PINNED_BINDS)
+    assert statement.wire_binds() == (*_PINNED_WIRE, "name", "N", *_PINNED_WIRE)
+    assert _spans(statement) == [
+        (range(4), TIMESTAMP, "MANAGED"),
+        (range(5, 6), STRING, "COMPARISON_TEXT"),
+        (range(6, 10), TIMESTAMP, "MANAGED"),
+    ]
+
+
+def test_an_include_child_binds_its_retained_perspective_after_its_keys() -> None:
+    fleet = entity(_FLEETS, "Fleet")
+    query = oq.validate_object_query(
+        fleet,
+        oq.object_query(
+            fleet.identity,
+            oa.TrueNode(),
+            temporal=_PINNED,
+            includes=(IncludePathNode(segments=(oq.IncludeSegment(rel="Fleet.ships"),)),),
+        ),
+        _FLEETS,
+    )
+    (step,) = deep_fetch.plan(
+        query, _FLEETS, projection=deep_fetch.ReadProjectionRequest("all", True)
+    ).fetch_steps
+    assert isinstance(step, deep_fetch.QueryFetchStep)
+
+    statement = (
+        compile_template(step.query, _FLEETS, POSTGRES, result_form="instance")
+        .render([1, 2])
+        .statement
+    )
+
+    assert statement.sql.endswith(f"from ship t0 where t0.fleet_id = any(?) and {_visible('t0.')}")
+    assert statement.binds == ([1, 2], *_PINNED_BINDS)
+    assert statement.wire_binds() == ([1, 2], *_PINNED_WIRE)
+    assert _spans(statement) == [
+        (range(1), INT64, "MANAGED_ARRAY"),
+        (range(1, 5), TIMESTAMP, "MANAGED"),
+    ]
+
+
+@pytest.mark.parametrize(
+    "resolution", [RootSelections, PropagatedRootSelections], ids=["injected", "retained"]
+)
+def test_a_write_root_perspective_follows_a_document_predicate_in_place(
+    resolution: type[RootSelections | PropagatedRootSelections],
+) -> None:
+    ship = entity(_FLEETS, "Ship")
+    query = oq.validate_object_query(
+        ship,
+        oq.object_query(
+            ship.identity,
+            oa.Comparison(op="eq", subject=oa.FieldSubject("Ship.flag"), value="X"),
+            temporal=_PINNED,
+        ),
+        _FLEETS,
+    )
+    closed = resolve_temporal_visibility(
+        query.predicate, target=ship, model=_FLEETS, resolution=resolution(query.temporal)
+    )
+
+    compiled = compile_validated_write_predicate(closed, _FLEETS, POSTGRES, ship)
+
+    assert compiled.sql == f"jsonb_extract_path_text(payload, ?) = ? and {_visible('')}"
+    assert compiled.binds == ("flag", "X", *_PINNED_BINDS)
+    assert compiled.lowered is not None
+    assert _spans(compiled.lowered) == [
+        (range(1, 2), STRING, "COMPARISON_TEXT"),
+        (range(2, 6), TIMESTAMP, "MANAGED"),
+    ]

@@ -1,30 +1,69 @@
-"""Relationship-navigation hop-term propagation unit tests (m-navigate).
+"""Temporal resolution of relationship hops (m-navigate).
 
-Exercises `parallax.core.navigate.propagate_hop_terms` independently of the
-Docker-gated compile/run sweeps: per-hop as-of propagation (declared-axis
-matching, the latest default, a non-temporal hop carrying no term, a temporal
-hop reached from a polymorphic position resolving through the family root),
-multi-hop propagation of the SAME root pin, and the strict-identity rule for a
-navigation-free predicate. The as-of assertions read the `where` clause the
-resolved planning path lowers each read to.
+Exercises `parallax.core.navigate.resolve_temporal_visibility` independently of
+the Docker-gated compile/run sweeps. The typed half asserts the perspective each
+reached relationship carries across every predicate position, the root
+treatment each resolution mode finishes with, and the static lifecycle the
+closed product enforces. The SQL half reads the `where` clause the resolved
+planning path lowers each read to: declared-axis matching, the latest default,
+a non-temporal hop carrying no term, a temporal hop reached from a polymorphic
+position resolving through the family root, and the SAME root pin on every hop.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import datetime as dt
 import decimal
+from typing import TYPE_CHECKING, assert_type
 
 import pytest
 
 from parallax.conformance import models
 from parallax.core import predicate as oa
 from parallax.core.base import INFINITY
+from parallax.core.deep_fetch import PlannedEntityQuery, ResolvedReadProjection
 from parallax.core.dialect import POSTGRES
-from parallax.core.metamodel import EntityMetadata, Metamodel
-from parallax.core.navigate import propagate_hop_terms
-from parallax.core.object_query import AsOf, TemporalSelection
+from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
+from parallax.core.navigate import (
+    ExistingRootConditions,
+    PropagatedRootSelections,
+    RootSelections,
+    TemporallyResolvedPredicate,
+    TemporalResolution,
+    resolve_temporal_visibility,
+)
+from parallax.core.object_query import AsOf, History, TemporalSelection, validate_object_query
+from parallax.core.object_query import object_query as authored_query
 from parallax.core.object_query._nodes import TemporalDimension as QueryTemporalDimension
-from parallax.core.predicate._resolved import ResolvedPredicate, ResolvedQuantifier
+from parallax.core.object_query._resolved import ResolvedObjectQuery
+from parallax.core.predicate._perspective import (
+    AtPerspective,
+    LatestPerspective,
+    TemporalPerspective,
+)
+from parallax.core.predicate._resolved import (
+    RelatedObject,
+    ResolvedAnd,
+    ResolvedComparison,
+    ResolvedConstant,
+    ResolvedGroup,
+    ResolvedMembership,
+    ResolvedNarrow,
+    ResolvedNot,
+    ResolvedNullCheck,
+    ResolvedOr,
+    ResolvedPredicate,
+    ResolvedPresence,
+    ResolvedQuantifier,
+    ResolvedRange,
+    ResolvedRelationship,
+    ResolvedStringMatch,
+    SubjectPosition,
+)
+from parallax.core.sql_gen._compile import compile_write_predicate
+from parallax.core.temporal_read import Bitemporal, TransactionTimeOnly
+from parallax.core.temporal_read import view as temporal_view
 from tests._support.sql import compile_read
 from tests.unit._corpus_model_support import model as accepted_model
 from tests.unit._corpus_model_support import target
@@ -42,14 +81,6 @@ _P_MANAGED = dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
 # reference is written against, so every resolution names the read's own queried
 # Entity alongside its model.
 ORDER = target(ORDERS, "Order")
-LEASE_ENTITY = target(LEASE, "Lease")
-
-
-def _propagated(
-    op: oa.PredicateNode, model: Metamodel, entity: EntityMetadata
-) -> ResolvedPredicate:
-    """``op`` resolved against ``entity`` with its hop terms propagated."""
-    return propagate_hop_terms(oa.validate_predicate(entity, op, model), model)
 
 
 def _where(
@@ -71,8 +102,239 @@ def _where(
     return where, statement.binds
 
 
+def _query(
+    op: oa.PredicateNode,
+    model: Metamodel,
+    name: str,
+    temporal: dict[QueryTemporalDimension, TemporalSelection] | None = None,
+) -> ResolvedObjectQuery:
+    entity = target(model, name)
+    return validate_object_query(
+        entity, authored_query(entity.identity, op, temporal=temporal), model
+    )
+
+
+def _relationships(predicate: ResolvedPredicate) -> list[ResolvedRelationship]:
+    """Every relationship ``predicate`` reaches, in the order its nodes hold them."""
+    match predicate:
+        case ResolvedAnd(operands=operands) | ResolvedOr(operands=operands):
+            return [found for operand in operands for found in _relationships(operand)]
+        case ResolvedNot(operand=operand) | ResolvedGroup(operand=operand):
+            return _relationships(operand)
+        case (
+            ResolvedComparison()
+            | ResolvedRange()
+            | ResolvedMembership()
+            | ResolvedStringMatch()
+            | ResolvedNullCheck()
+        ):
+            return _hops(predicate.position)
+        case ResolvedQuantifier(collection=collection, where=where, position=position):
+            reached = [collection] if isinstance(collection, ResolvedRelationship) else []
+            return [*_hops(position), *reached, *_operand(where)]
+        case ResolvedPresence(target=target_, where=where, position=position):
+            reached = [target_] if isinstance(target_, ResolvedRelationship) else []
+            return [*_hops(position), *reached, *_operand(where)]
+        case ResolvedNarrow(operand=operand, target=position):
+            return [*_hops(position), *_operand(operand)]
+        case ResolvedConstant():
+            return []
+
+
+def _operand(predicate: ResolvedPredicate | None) -> list[ResolvedRelationship]:
+    return [] if predicate is None else _relationships(predicate)
+
+
+def _hops(position: SubjectPosition) -> list[ResolvedRelationship]:
+    if isinstance(position, RelatedObject):
+        return [*_hops(position.source), position.relationship]
+    return []
+
+
+def _bitemporal(model: Metamodel, name: str) -> Bitemporal:
+    shape = temporal_view(model).shape(target(model, name).identity)
+    assert isinstance(shape, Bitemporal)
+    return shape
+
+
+def _pinned(model: Metamodel, name: str) -> TemporalPerspective:
+    shape = _bitemporal(model, name)
+    return TemporalPerspective(
+        valid_time=AtPerspective(shape.valid_time, _B_MANAGED),
+        transaction_time=AtPerspective(shape.transaction_time, _P_MANAGED),
+    )
+
+
+def _latest(model: Metamodel, name: str) -> TemporalPerspective:
+    shape = temporal_view(model).shape(target(model, name).identity)
+    if isinstance(shape, TransactionTimeOnly):
+        return TemporalPerspective(transaction_time=LatestPerspective(shape.transaction_time))
+    assert isinstance(shape, Bitemporal)
+    return TemporalPerspective(
+        valid_time=LatestPerspective(shape.valid_time),
+        transaction_time=LatestPerspective(shape.transaction_time),
+    )
+
+
+_PINNED: dict[QueryTemporalDimension, TemporalSelection] = {
+    "valid-time": AsOf(_B),
+    "transaction-time": AsOf(_P),
+}
+
+
 # --------------------------------------------------------------------------- #
-# Strict identity for navigation-free predicates.                             #
+# Every reached relationship carries its target's perspective.                #
+# --------------------------------------------------------------------------- #
+_AUTO = oa.Comparison(op="eq", subject=oa.FieldSubject("Claim.coverage.policy.name"), value="Auto")
+_POSITIONS: list[tuple[str, oa.PredicateNode, tuple[str, ...]]] = [
+    ("Claim", _AUTO, ("Coverage", "Policy")),
+    (
+        "Claim",
+        oa.Range(subject=oa.FieldSubject("Claim.coverage.amount"), lower="1.00", upper="9.00"),
+        ("Coverage",),
+    ),
+    (
+        "Claim",
+        oa.Membership(op="in", subject=oa.FieldSubject("Claim.coverage.amount"), values=("1.00",)),
+        ("Coverage",),
+    ),
+    (
+        "Claim",
+        oa.StringMatch(
+            op="startsWith", subject=oa.FieldSubject("Claim.coverage.policy.name"), value="A"
+        ),
+        ("Coverage", "Policy"),
+    ),
+    (
+        "OrderItem",
+        oa.NullCheck(op="isNull", subject=oa.FieldSubject("OrderItem.order.sku")),
+        ("Order",),
+    ),
+    (
+        "Policy",
+        oa.Quantifier(
+            "any",
+            "Policy.coverages",
+            oa.Quantifier(
+                "all",
+                "claims",
+                oa.Comparison(op="greaterThan", subject=oa.FieldSubject("reserve"), value="1.00"),
+            ),
+        ),
+        ("Coverage", "Claim"),
+    ),
+    ("Claim", oa.Quantifier("none", "Claim.coverage.claims"), ("Coverage", "Claim")),
+    (
+        "Claim",
+        oa.Presence(
+            "exists",
+            "Claim.coverage",
+            oa.Presence(
+                "notExists",
+                "policy",
+                oa.Comparison(op="eq", subject=oa.FieldSubject("name"), value="Auto"),
+            ),
+        ),
+        ("Coverage", "Policy"),
+    ),
+    ("Claim", oa.Presence("exists", "Claim.coverage.policy"), ("Coverage", "Policy")),
+    (
+        "Claim",
+        oa.Narrow(
+            path="Claim.coverage",
+            to=("Coverage",),
+            operand=oa.Comparison(op="eq", subject=oa.FieldSubject("policy.name"), value="Auto"),
+        ),
+        ("Coverage", "Policy"),
+    ),
+    (
+        "Claim",
+        oa.And(
+            operands=(
+                oa.Or(operands=(oa.Not(operand=_AUTO), oa.Group(operand=_AUTO))),
+                oa.Comparison(op="eq", subject=oa.FieldSubject("Claim.reserve"), value="1.00"),
+            )
+        ),
+        ("Coverage", "Policy", "Coverage", "Policy"),
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("name", "op", "reached"),
+    _POSITIONS,
+    ids=[
+        "comparison-chain",
+        "range",
+        "membership",
+        "string-match",
+        "null-check",
+        "nested-quantifiers",
+        "quantifier-past-a-hop",
+        "match-operand",
+        "presence-past-a-hop",
+        "narrowed-target-operand",
+        "boolean-wrappers",
+    ],
+)
+def test_every_reached_relationship_carries_its_target_perspective(
+    name: str, op: oa.PredicateNode, reached: tuple[str, ...]
+) -> None:
+    temporal_root = name != "OrderItem"
+    model = POLICY if temporal_root else ORDERS
+    query = _query(op, model, name, _PINNED if temporal_root else None)
+    assert all(found.temporal_visibility is None for found in _relationships(query.predicate))
+
+    closed = resolve_temporal_visibility(
+        query.predicate,
+        target=query.root,
+        model=model,
+        resolution=PropagatedRootSelections(query.temporal),
+    )
+
+    relationships = _relationships(closed.predicate)
+    assert tuple(found.target.identity.name for found in relationships) == reached
+    for found in relationships:
+        assert found.temporal_visibility == (
+            _pinned(model, found.target.identity.name) if temporal_root else TemporalPerspective()
+        )
+
+
+def test_each_target_shape_selects_its_own_perspective() -> None:
+    op = oa.Quantifier("any", "Tenant.leases", oa.Quantifier("any", "notes"))
+    query = _query(op, LEASE, "Tenant")
+
+    closed = resolve_temporal_visibility(
+        query.predicate, target=query.root, model=LEASE, resolution=RootSelections(query.temporal)
+    )
+
+    lease, note = _relationships(closed.predicate)
+    assert lease.temporal_visibility == _latest(LEASE, "Lease")
+    assert note.temporal_visibility == TemporalPerspective()
+
+
+def test_a_scanned_root_axis_sees_every_hop_at_latest_on_it() -> None:
+    query = _query(
+        oa.Quantifier("any", "Policy.coverages"),
+        POLICY,
+        "Policy",
+        {"valid-time": History(), "transaction-time": AsOf(_P)},
+    )
+
+    closed = resolve_temporal_visibility(
+        query.predicate, target=query.root, model=POLICY, resolution=RootSelections(query.temporal)
+    )
+
+    (coverage,) = _relationships(closed.predicate)
+    shape = _bitemporal(POLICY, "Coverage")
+    assert coverage.temporal_visibility == TemporalPerspective(
+        valid_time=LatestPerspective(shape.valid_time),
+        transaction_time=AtPerspective(shape.transaction_time, _P_MANAGED),
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Unresolved absence versus resolved non-temporal visibility.                 #
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize(
     "op",
@@ -87,42 +349,140 @@ def _where(
     ],
     ids=["navigation-free", "unfiltered"],
 )
-def test_propagation_is_identity_without_any_navigation_node(op: oa.PredicateNode) -> None:
+@pytest.mark.parametrize(
+    "resolution",
+    [RootSelections(()), PropagatedRootSelections(()), ExistingRootConditions()],
+    ids=["root", "propagated", "existing"],
+)
+def test_a_navigation_free_predicate_is_retained_by_every_resolution(
+    op: oa.PredicateNode, resolution: TemporalResolution
+) -> None:
     product = oa.validate_predicate(ORDER, op, ORDERS)
-    assert propagate_hop_terms(product, ORDERS) is product
+    closed = resolve_temporal_visibility(product, target=ORDER, model=ORDERS, resolution=resolution)
+    assert closed.predicate is product
 
 
-def test_a_hop_gaining_no_term_leaves_every_enclosing_combinator_as_it_is() -> None:
+def test_a_non_temporal_hop_is_resolved_to_a_perspective_without_axes() -> None:
     hop = oa.Quantifier("any", "Order.items")
-    wrapped_ops: list[oa.PredicateNode] = [
+    for op in (
+        hop,
         oa.Or(operands=(hop, oa.TrueNode())),
         oa.Not(operand=hop),
         oa.Group(operand=hop),
         oa.Narrow(to=("Order",), operand=hop),
-    ]
-    for op in wrapped_ops:
+    ):
         product = oa.validate_predicate(ORDER, op, ORDERS)
-        propagated = propagate_hop_terms(product, ORDERS)
-        assert propagated is product, op
+        closed = resolve_temporal_visibility(
+            product, target=ORDER, model=ORDERS, resolution=ExistingRootConditions()
+        )
+        assert closed.predicate is not product
+        assert type(closed.predicate) is type(product)
+        ((before,), (after,)) = _relationships(product), _relationships(closed.predicate)
+        assert before.temporal_visibility is None
+        assert after.temporal_visibility == TemporalPerspective()
+        assert after == dataclasses.replace(before, temporal_visibility=TemporalPerspective())
 
 
 # --------------------------------------------------------------------------- #
-# Non-temporal relationship target: no as-of term at all.                     #
+# Each resolution mode finishes its own root treatment.                       #
 # --------------------------------------------------------------------------- #
-def test_non_temporal_target_carries_no_as_of_term() -> None:
-    op = oa.Quantifier(
-        "any",
-        "Order.items",
-        oa.Comparison(op="eq", subject=oa.FieldSubject("sku"), value="A-100"),
+def _root_terms(model: Metamodel, name: str) -> tuple[tuple[str, str], ...]:
+    """The (operator, member) of each current-object comparison ``name``'s
+    pinned root restriction appends, in canonical axis order."""
+    shape = _bitemporal(model, name)
+    return tuple(
+        (op, attribute.name)
+        for axis in (shape.valid_time, shape.transaction_time)
+        for op, attribute in (
+            ("lessThanEquals", axis.start_attribute),
+            ("greaterThan", axis.end_attribute),
+        )
     )
-    product = oa.validate_predicate(ORDER, op, ORDERS)
-    assert propagate_hop_terms(product, ORDERS) is product
 
 
-def test_non_temporal_bare_hop_stays_without_an_interior() -> None:
-    propagated = _propagated(oa.Quantifier("any", "Order.items"), ORDERS, ORDER)
-    assert isinstance(propagated, ResolvedQuantifier)
-    assert propagated.where is None
+def test_root_selections_append_the_root_terms_after_resolving_the_hops() -> None:
+    query = _query(oa.Quantifier("any", "Policy.coverages"), POLICY, "Policy", _PINNED)
+
+    closed = resolve_temporal_visibility(
+        query.predicate, target=query.root, model=POLICY, resolution=RootSelections(query.temporal)
+    )
+
+    assert closed.root_perspective is None
+    assert isinstance(closed.predicate, ResolvedAnd)
+    hop, *terms = closed.predicate.operands
+    assert isinstance(hop, ResolvedQuantifier)
+    assert isinstance(hop.collection, ResolvedRelationship)
+    assert hop.collection.temporal_visibility == _pinned(POLICY, "Coverage")
+    assert all(isinstance(term, ResolvedComparison) for term in terms)
+    assert tuple(
+        (term.op, term.member.identity.name)
+        for term in terms
+        if isinstance(term, ResolvedComparison)
+    ) == _root_terms(POLICY, "Policy")
+
+
+def test_propagated_root_selections_retain_the_targets_perspective_beside_the_predicate() -> None:
+    query = _query(oa.Quantifier("any", "Coverage.claims"), POLICY, "Coverage", _PINNED)
+
+    closed = resolve_temporal_visibility(
+        query.predicate,
+        target=query.root,
+        model=POLICY,
+        resolution=PropagatedRootSelections(query.temporal),
+    )
+
+    assert closed.root_perspective == _pinned(POLICY, "Coverage")
+    assert isinstance(closed.predicate, ResolvedQuantifier)
+    assert _relationships(closed.predicate)[0].temporal_visibility == _pinned(POLICY, "Claim")
+
+
+def test_existing_root_conditions_add_nothing_but_still_resolve_each_hop_at_latest() -> None:
+    claim = target(POLICY, "Claim")
+    product = oa.validate_predicate(claim, _AUTO, POLICY)
+
+    closed = resolve_temporal_visibility(
+        product, target=claim, model=POLICY, resolution=ExistingRootConditions()
+    )
+
+    assert closed.root_perspective is None
+    assert isinstance(closed.predicate, ResolvedComparison)
+    assert [found.temporal_visibility for found in _relationships(closed.predicate)] == [
+        _latest(POLICY, "Coverage"),
+        _latest(POLICY, "Policy"),
+    ]
+
+
+# --------------------------------------------------------------------------- #
+# The closed product is a static lifecycle boundary.                          #
+# --------------------------------------------------------------------------- #
+def test_the_closed_product_is_obtained_only_by_resolving() -> None:
+    with pytest.raises(TypeError):
+        TemporallyResolvedPredicate(ResolvedConstant(True), None)  # pyright: ignore[reportCallIssue]
+
+
+if TYPE_CHECKING:
+
+    def _static_lifecycle_probes(  # pyright: ignore[reportUnusedFunction] - static contract probe
+        raw: ResolvedPredicate, entity: EntityMetadata, identity: EntityIdentity
+    ) -> None:
+        """Typechecked, never called: closure yields the only compiler input, and
+        neither a raw predicate nor a closed one crosses the wrong seam."""
+        closed = resolve_temporal_visibility(
+            raw, target=entity, model=POLICY, resolution=ExistingRootConditions()
+        )
+        assert_type(closed, TemporallyResolvedPredicate)
+        projection = ResolvedReadProjection((), False)
+        assert_type(PlannedEntityQuery(identity, entity, closed, projection), PlannedEntityQuery)
+        compile_write_predicate(closed, POLICY, POSTGRES, entity)
+
+        PlannedEntityQuery(identity, entity, raw, projection)  # pyright: ignore[reportArgumentType]
+        compile_write_predicate(raw, POLICY, POSTGRES, entity)  # pyright: ignore[reportArgumentType]
+        resolve_temporal_visibility(
+            closed,  # pyright: ignore[reportArgumentType]
+            target=entity,
+            model=POLICY,
+            resolution=ExistingRootConditions(),
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -137,16 +497,6 @@ def test_non_temporal_root_reaching_a_temporal_target_defaults_every_axis_to_lat
     where, binds = _where(op, LEASE, "Tenant")
     assert where == "exists (select 1 from lease t1 where t1.tenant_id = t0.id and t1.out_z = ?)"
     assert binds == (INFINITY,)
-
-
-def test_temporal_root_reaching_a_non_temporal_target_carries_no_as_of_term() -> None:
-    op = oa.Quantifier(
-        "any",
-        "Lease.notes",
-        oa.Comparison(op="eq", subject=oa.FieldSubject("text"), value="renewed"),
-    )
-    product = oa.validate_predicate(LEASE_ENTITY, op, LEASE)
-    assert propagate_hop_terms(product, LEASE) is product
 
 
 # --------------------------------------------------------------------------- #
@@ -349,10 +699,6 @@ def test_polymorphic_temporal_relationship_target_resolves_axes_via_the_family_r
 # --------------------------------------------------------------------------- #
 # To-one hops: the reached candidate is filtered by the same visibility.      #
 # --------------------------------------------------------------------------- #
-_PINNED: dict[QueryTemporalDimension, TemporalSelection] = {
-    "valid-time": AsOf(_B),
-    "transaction-time": AsOf(_P),
-}
 _COVERAGE_VISIBLE = "t1.from_z <= ? and t1.thru_z > ? and t1.in_z <= ? and t1.out_z > ?"
 _CLAIM_VISIBLE = "t0.from_z <= ? and t0.thru_z > ? and t0.in_z <= ? and t0.out_z > ?"
 
@@ -399,26 +745,3 @@ def test_a_match_and_every_hop_its_operand_reaches_carry_their_terms() -> None:
     )
     assert binds[0] == "Auto"
     assert binds[1:5] == (_B_MANAGED, _B_MANAGED, _P_MANAGED, _P_MANAGED)
-
-
-def test_a_match_over_non_temporal_targets_is_retained_as_resolved() -> None:
-    item = target(ORDERS, "OrderItem")
-    op = oa.Presence(
-        "notExists",
-        "OrderItem.order",
-        oa.Comparison(op="eq", subject=oa.FieldSubject("name"), value="Ada"),
-    )
-    product = oa.validate_predicate(item, op, ORDERS)
-    assert propagate_hop_terms(product, ORDERS) is product
-
-
-def test_a_negated_hop_and_a_narrowed_target_carry_the_hops_terms() -> None:
-    claim = target(POLICY, "Claim")
-    for op in (
-        oa.Not(operand=oa.Presence("exists", "Claim.coverage")),
-        oa.Narrow(path="Claim.coverage", to=("Coverage",), operand=oa.TrueNode()),
-    ):
-        product = oa.validate_predicate(claim, op, POLICY)
-        propagated = propagate_hop_terms(product, POLICY)
-        assert propagated is not product
-        assert type(propagated) is type(product)

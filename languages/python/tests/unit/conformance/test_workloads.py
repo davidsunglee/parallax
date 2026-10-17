@@ -52,9 +52,9 @@ def test_every_workload_loads_and_compiles_its_query_and_delivery_sizes() -> Non
         for step in plan.fetch_steps:
             if isinstance(step, deep_fetch.BackReferenceFetchStep):
                 continue
-            compile_template(
-                step.query_template(), workload.model, POSTGRES, result_form="instance"
-            ).render([0])
+            compile_template(step.query, workload.model, POSTGRES, result_form="instance").render(
+                [0]
+            )
 
 
 def test_generated_workloads_preserve_the_fixture_scale_and_fanout() -> None:

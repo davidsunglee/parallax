@@ -26,6 +26,8 @@ from parallax.conformance import vo_models as vo
 from parallax.conformance.composed_beast_models import COMPOSED_BEAST_READER
 from parallax.conformance.composed_beast_models import Keeper as BeastKeeper
 from parallax.conformance.graph_models import POLICY_MODEL, Policy
+from parallax.conformance.story_models import ORDERS_MODEL
+from parallax.conformance.story_models import Order as StoryOrder
 from parallax.core import (
     LATEST,
     ONE_TO_MANY,
@@ -77,7 +79,14 @@ from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.object_query._fluent import ObjectQuery, typed_read_query
 from parallax.core.predicate import ModelRejectedError
-from parallax.core.read_delivery import InvalidData, InvalidDataError, PublishedRow, StoredDataIssue
+from parallax.core.predicate._perspective import TemporalPerspective
+from parallax.core.read_delivery import (
+    InvalidData,
+    InvalidDataError,
+    PublishedRow,
+    StoredDataIssue,
+    _read_plan,
+)
 from parallax.core.read_delivery._delivery import find, find_history
 from parallax.core.read_delivery._fetch import slot_table
 from parallax.core.read_delivery._page import (
@@ -2336,3 +2345,80 @@ def test_a_delayed_refusal_from_a_keeps_a_inside_a_transaction_under_b() -> None
         "stored-data-required-member-absent",
         "stored-data-leaf-undecodable",
     }
+
+
+def _item_row(item_id: int, order_id: int) -> MappingRow:
+    return {
+        "id": item_id,
+        "order_id": order_id,
+        "sku": "SKU",
+        "quantity": 1,
+        "shipped_on": dt.date(2024, 2, 1),
+    }
+
+
+def _page(orders: tuple[int, ...], parents: tuple[int, ...]) -> tuple[Read, Read]:
+    """A page's root rows, then one item for each parent it delivers."""
+    return (
+        Read(rows=[{**_ORDER_ROW, "id": order} for order in orders]),
+        Read(rows=[_item_row(parent * 10, parent) for parent in parents]),
+    )
+
+
+def test_typed_and_wire_reads_share_resolved_include_work_within_each_delivery_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    resolutions: list[object] = []
+    child_compiles: list[deep_fetch.PlannedEntityQuery] = []
+    resolve = cast("Callable[..., Any]", vars(deep_fetch)["resolve_temporal_visibility"])
+    compile_child = cast("Callable[..., Any]", vars(_read_plan)["compile_template"])
+
+    def counting_resolution(*args: Any, **kwargs: Any) -> Any:
+        resolutions.append(kwargs["resolution"])
+        return resolve(*args, **kwargs)
+
+    def counting_child(query: deep_fetch.PlannedEntityQuery, *args: Any, **kwargs: Any) -> Any:
+        child_compiles.append(query)
+        return compile_child(query, *args, **kwargs)
+
+    monkeypatch.setattr(deep_fetch, "resolve_temporal_visibility", counting_resolution)
+    monkeypatch.setattr(_read_plan, "compile_template", counting_child)
+    eager_read, first_page, last_page = (
+        _page((1, 2), (1, 2)),
+        _page((1, 2, 3), (1, 2)),
+        _page((3,), (3,)),
+    )
+    port = ScriptedAdapter(
+        *eager_read, *eager_read, *first_page, *last_page, *first_page, *last_page
+    )
+    root = own_root(Database.connect(port, ORDERS_MODEL))
+    db = root.using_database_login()
+    query = StoryOrder.where(StoryOrder.active == True).include(StoryOrder.items)  # noqa: E712
+
+    typed = db.find(query).results()
+    eager = (len(resolutions), len(child_compiles))
+    wire = db.wire.find(query).results()
+
+    assert [order.id for order in typed] == [node["id"] for node in wire] == [1, 2]
+    assert eager == (2, 1)
+    assert [type(resolution).__name__ for resolution in resolutions] == [
+        "RootSelections",
+        "PropagatedRootSelections",
+    ]
+    (eager_child,) = child_compiles
+    assert eager_child.predicate.root_perspective == TemporalPerspective()
+
+    with db.stream(query, batch_size=2) as stream:
+        assert [order.id for order in stream] == [1, 2, 3]
+    paged = (len(resolutions), len(child_compiles))
+    with db.wire.stream(query, batch_size=2) as wire_stream:
+        assert [node["id"] for node in wire_stream] == [1, 2, 3]
+
+    # The first page plans apart from the eager read and compiles its own child
+    # read; the later page borrows that compiled work, and Wire reuses each
+    # Typed plan without resolving or compiling anything again.
+    assert len(child_compiles) == paged[1] == 2
+    assert len(resolutions) == paged[0]
+    assert child_compiles[1] == eager_child
+    statistics = root._resources.planner._statistics()  # pyright: ignore[reportPrivateUsage] - the cache's own census
+    assert (statistics.misses, statistics.hits) == (3, 3)

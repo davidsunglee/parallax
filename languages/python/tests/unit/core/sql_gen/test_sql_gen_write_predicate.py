@@ -17,20 +17,27 @@ and nowhere else.
 
 from __future__ import annotations
 
+import datetime as dt
 from decimal import Decimal
 
 import pytest
 
 from parallax.core import predicate as oa
-from parallax.core.base import INFINITY
+from parallax.core.base import INFINITY, TIMESTAMP
 from parallax.core.dialect import POSTGRES
-from parallax.core.navigate import propagate_hop_terms
-from parallax.core.object_query import AsOf, object_query, validate_object_query
+from parallax.core.metamodel import EntityMetadata, Metamodel
+from parallax.core.navigate import (
+    PropagatedRootSelections,
+    RootSelections,
+    TemporalResolution,
+    resolve_temporal_visibility,
+)
+from parallax.core.object_query import AsOf, TemporalSelection, object_query, validate_object_query
+from parallax.core.object_query._nodes import TemporalDimension
 from parallax.core.sql_gen._compile import CompiledPredicate
 from parallax.core.sql_gen._compile import (
     compile_write_predicate as compile_validated_write_predicate,
 )
-from parallax.core.temporal_read import inject_resolved_as_of
 from tests._support.sql import compile_read, compile_write_predicate
 from tests.unit._corpus_model_support import model, target
 
@@ -41,6 +48,30 @@ PAYMENT = model("payment")
 POLICY = model("policy")
 LEASE = model("lease")
 POSITION = model("position")
+
+_LATEST: dict[TemporalDimension, TemporalSelection] = {
+    "valid-time": AsOf("latest"),
+    "transaction-time": AsOf("latest"),
+}
+
+
+def _compiled_as(
+    op: oa.PredicateNode,
+    meta: Metamodel,
+    entity: EntityMetadata,
+    temporal: dict[TemporalDimension, TemporalSelection],
+    resolution: type[RootSelections | PropagatedRootSelections],
+) -> CompiledPredicate:
+    """``op`` over ``entity`` read through ``temporal``, resolved as
+    ``resolution`` directs from the read's validated selections."""
+    query = validate_object_query(
+        entity, object_query(entity.identity, op, temporal=temporal), meta
+    )
+    mode: TemporalResolution = resolution(query.temporal)
+    closed = resolve_temporal_visibility(
+        query.predicate, target=entity, model=meta, resolution=mode
+    )
+    return compile_validated_write_predicate(closed, meta, POSTGRES, entity)
 
 
 # --------------------------------------------------------------------------- #
@@ -86,19 +117,9 @@ def test_all_renders_the_empty_fragment_and_none_renders_unsatisfiable() -> None
 
 
 def test_a_current_row_term_binds_managed_infinity_and_publishes_its_literal() -> None:
-    position = target(POSITION, "Position")
-    query = validate_object_query(
-        position,
-        object_query(
-            position.identity,
-            oa.TrueNode(),
-            temporal={"valid-time": AsOf("latest"), "transaction-time": AsOf("latest")},
-        ),
-        POSITION,
+    predicate = _compiled_as(
+        oa.TrueNode(), POSITION, target(POSITION, "Position"), _LATEST, RootSelections
     )
-    current = inject_resolved_as_of(query.predicate, query.temporal, position)
-
-    predicate = compile_validated_write_predicate(current, POSITION, POSTGRES, position)
 
     assert predicate.sql == "thru_z = ? and out_z = ?"
     assert predicate.binds == (INFINITY, INFINITY)
@@ -246,22 +267,21 @@ def test_a_shared_to_one_hop_selects_the_target_s_keys_instead() -> None:
     assert predicate.binds == ("Ada",)
 
 
-def test_a_key_selection_projects_every_physical_key_column() -> None:
-    coverage = target(POLICY, "Coverage")
-    query = validate_object_query(
-        coverage,
-        object_query(
-            coverage.identity,
-            oa.Comparison(op="eq", subject=oa.FieldSubject("Coverage.policy.name"), value="P"),
-            temporal={"valid-time": AsOf("latest"), "transaction-time": AsOf("latest")},
-        ),
+@pytest.mark.parametrize(
+    "resolution", [RootSelections, PropagatedRootSelections], ids=["injected", "retained"]
+)
+def test_a_key_selection_projects_every_physical_key_column(
+    resolution: type[RootSelections | PropagatedRootSelections],
+) -> None:
+    # A root perspective retained beside the predicate restricts the selection
+    # exactly as the injected current-row terms do.
+    predicate = _compiled_as(
+        oa.Comparison(op="eq", subject=oa.FieldSubject("Coverage.policy.name"), value="P"),
         POLICY,
+        target(POLICY, "Coverage"),
+        _LATEST,
+        resolution,
     )
-    current = propagate_hop_terms(
-        inject_resolved_as_of(query.predicate, query.temporal, coverage), POLICY
-    )
-
-    predicate = compile_validated_write_predicate(current, POLICY, POSTGRES, coverage)
 
     assert predicate.selection
     assert predicate.sql == (
@@ -270,6 +290,52 @@ def test_a_key_selection_projects_every_physical_key_column() -> None:
         "where t1.name = ? and t0.thru_z = ? and t0.out_z = ?"
     )
     assert predicate.binds == (INFINITY, INFINITY, "P", INFINITY, INFINITY)
+
+
+def test_a_retained_root_perspective_restricts_every_alternative_in_place() -> None:
+    amount = target(POLICY, "Coverage").attribute("amount")
+    assert amount is not None
+    valid, transaction = (
+        dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
+        dt.datetime(2024, 2, 1, tzinfo=dt.UTC),
+    )
+    predicate = _compiled_as(
+        oa.Or(
+            operands=(
+                oa.Comparison(
+                    op="lessThan", subject=oa.FieldSubject("Coverage.amount"), value="1.00"
+                ),
+                oa.Comparison(
+                    op="greaterThan", subject=oa.FieldSubject("Coverage.amount"), value="9.00"
+                ),
+            )
+        ),
+        POLICY,
+        target(POLICY, "Coverage"),
+        {
+            "valid-time": AsOf("2024-03-01T00:00:00Z"),
+            "transaction-time": AsOf("2024-02-01T00:00:00Z"),
+        },
+        PropagatedRootSelections,
+    )
+
+    assert not predicate.selection
+    assert predicate.sql == (
+        "(amount < ? or amount > ?) and from_z <= ? and thru_z > ? and in_z <= ? and out_z > ?"
+    )
+    assert predicate.binds == (
+        Decimal("1.00"),
+        Decimal("9.00"),
+        valid,
+        valid,
+        transaction,
+        transaction,
+    )
+    assert predicate.lowered is not None
+    assert tuple(
+        (tuple(span.indexes()), span.neutral_type, span.form)
+        for span in predicate.lowered.typed_bind_spans
+    ) == (((0, 1), amount.type, "MANAGED"), ((2, 3, 4, 5), TIMESTAMP, "MANAGED"))
 
 
 def test_a_temporal_target_joins_at_latest_in_the_key_selection() -> None:

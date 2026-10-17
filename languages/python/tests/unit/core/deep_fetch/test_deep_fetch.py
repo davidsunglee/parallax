@@ -3,7 +3,7 @@
 Exercises `parallax.core.deep_fetch.plan` independently of the Docker-gated
 compile/run sweeps: shared-prefix dedup, broad-vs-narrowed distinct hops,
 equivalent-narrowing convergence, the `1 + L` accounting, child-query
-composition (`in` membership + propagated as-of + declared relationship
+composition (`in` membership + retained root perspective + declared relationship
 `orderBy`), narrowed view-key derivation, each level's correlation members
 beside their correlation columns, and back-reference (ancestor-revisit) cycle
 detection. The planner never compiles or executes anything — every assertion
@@ -40,6 +40,7 @@ from parallax.core.deep_fetch._include_tree import EMPTY_RENDER, IncludePosition
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import (
+    AsOfAxisMetadata,
     AttributeIdentity,
     AttributeMetadata,
     EntityIdentity,
@@ -48,6 +49,7 @@ from parallax.core.metamodel import (
 )
 from parallax.core.object_query import (
     AsOf,
+    History,
     IncludeSegment,
     TemporalSelection,
     object_query,
@@ -65,6 +67,12 @@ from parallax.core.predicate import (
     TrueNode,
     validate_predicate,
 )
+from parallax.core.predicate._perspective import (
+    AtPerspective,
+    AxisPerspective,
+    LatestPerspective,
+    TemporalPerspective,
+)
 from parallax.core.predicate._resolved import (
     DeferredKeySet,
     ResolvedAnd,
@@ -74,7 +82,8 @@ from parallax.core.predicate._resolved import (
     managed_comparison,
 )
 from parallax.core.sql_gen._compile import compile_read, compile_template
-from parallax.core.temporal_read import TimeInterval
+from parallax.core.temporal_read import Bitemporal, TimeInterval
+from parallax.core.temporal_read import view as temporal_view
 from parallax.core.unit_work import PredicateSelection, PredicateWrite, WriteAssignment
 from tests.unit._corpus_model_support import model as accepted_model
 from tests.unit._corpus_model_support import target as entity_of
@@ -109,6 +118,27 @@ _BITEMPORAL_LATEST: dict[TemporalDimension, TemporalSelection] = {
     "transaction-time": AsOf("latest"),
     "valid-time": AsOf("latest"),
 }
+_VALID = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
+_TX = dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
+_PINNED: dict[TemporalDimension, TemporalSelection] = {
+    "valid-time": AsOf("2024-03-01T00:00:00Z"),
+    "transaction-time": AsOf("2024-02-01T00:00:00Z"),
+}
+
+
+def _at(
+    model: Metamodel, name: str, valid: dt.datetime | None, tx: dt.datetime | None
+) -> TemporalPerspective:
+    """``name``'s family perspective: At each instant given, else Latest."""
+    shape = temporal_view(model).shape(entity_of(model, name).identity)
+    assert isinstance(shape, Bitemporal)
+
+    def axis(metadata: AsOfAxisMetadata, instant: dt.datetime | None) -> AxisPerspective:
+        return LatestPerspective(metadata) if instant is None else AtPerspective(metadata, instant)
+
+    return TemporalPerspective(
+        valid_time=axis(shape.valid_time, valid), transaction_time=axis(shape.transaction_time, tx)
+    )
 
 
 def _order_attr(term: object) -> str:
@@ -150,7 +180,7 @@ def _rendered_keys(
 ) -> object:
     """The key-set bind ``step``'s compiled child read carries once ``keys`` are
     rendered into it."""
-    template = compile_template(step.query_template(), model, POSTGRES, result_form="instance")
+    template = compile_template(step.query, model, POSTGRES, result_form="instance")
     (index,) = (
         index
         for index, value in enumerate(template.compiled.statement.binds)
@@ -355,7 +385,7 @@ def test_broad_and_a_redundant_narrow_are_distinct_levels_filling_both_views() -
     plan = _plan(ANIMAL, "Person", paths)
     assert [_attach_key(plan, step) for step in plan.fetch_steps] == ["pets", "pets[Cat,Dog]"]
     assert {
-        step.child_target
+        step.query.target
         for step in plan.fetch_steps
         if isinstance(step, deep_fetch.QueryFetchStep)
     } == {EntityIdentity("parallax.compatibility", "Pet")}
@@ -422,29 +452,29 @@ def test_narrow_and_broad_both_count_toward_l() -> None:
 def test_child_query_is_a_plain_in_membership() -> None:
     plan = _plan(ORDERS, "Order", (_path(_seg("Order.statuses")),))
     step = _query_step(plan)
-    query = step.query_template()
+    query = step.query
     assert query.target == EntityIdentity("parallax.compatibility", "OrderStatus")
-    assert isinstance(query.predicate, ResolvedMembership)
-    assert query.predicate.op == "in"
-    assert query.predicate.member.identity == AttributeIdentity(
+    assert isinstance(query.predicate.predicate, ResolvedMembership)
+    assert query.predicate.predicate.op == "in"
+    assert query.predicate.predicate.member.identity == AttributeIdentity(
         EntityIdentity("parallax.compatibility", "OrderStatus"), "orderId"
     )
-    assert isinstance(query.predicate.values, DeferredKeySet)
+    assert isinstance(query.predicate.predicate.values, DeferredKeySet)
     assert _rendered_keys(ORDERS, step, [1, 2, 3]) == [1, 2, 3]
 
 
 def test_child_query_carries_declared_relationship_order_by() -> None:
     plan = _plan(ORDERS, "Order", (_path(_seg("Order.items")),))
-    query = _query_step(plan).query_template()
+    query = _query_step(plan).query
     assert query.target == EntityIdentity("parallax.compatibility", "OrderItem")
     assert _order_attr(query.order_by[0]) == "parallax.compatibility.OrderItem.id"
     assert query.order_by[0].direction == "desc"
-    assert isinstance(query.predicate, ResolvedMembership)
+    assert isinstance(query.predicate.predicate, ResolvedMembership)
 
 
 def test_child_query_multi_key_order_by_preserves_declared_sequence() -> None:
     plan = _plan(ORDERS, "Order", (_path(_seg("Order.tags")),))
-    query = _query_step(plan).query_template()
+    query = _query_step(plan).query
     assert [(_order_attr(key), key.direction) for key in query.order_by] == [
         ("parallax.compatibility.OrderTag.priority", "desc"),
         ("parallax.compatibility.OrderTag.label", "asc"),
@@ -456,37 +486,36 @@ def test_child_query_carries_the_declared_null_placement_of_each_key() -> None:
     # authors `first` while `items` leaves placement unauthored, which the accepted
     # model has already normalized to `last`.
     placed = _plan(ORDERS, "Order", (_path(_seg("Order.notesDescNullsFirst")),))
-    query = _query_step(placed).query_template()
+    query = _query_step(placed).query
     assert [(_order_attr(key), key.direction, key.nulls) for key in query.order_by] == [
         ("parallax.compatibility.OrderNote.resolvedOn", "desc", "first")
     ]
     defaulted = _plan(ORDERS, "Order", (_path(_seg("Order.items")),))
-    default_query = _query_step(defaulted).query_template()
+    default_query = _query_step(defaulted).query
     assert default_query.order_by[0].nulls == "last"
 
 
 def test_child_query_has_no_order_by_when_relationship_declares_none() -> None:
     plan = _plan(ORDERS, "Order", (_path(_seg("Order.statuses")),))
-    query = _query_step(plan).query_template()
+    query = _query_step(plan).query
     assert query.order_by == ()
-    assert isinstance(query.predicate, ResolvedMembership)
+    assert isinstance(query.predicate.predicate, ResolvedMembership)
 
 
-def test_child_query_appends_propagated_as_of_after_the_in_membership() -> None:
-    plan = _plan(POLICY, "Policy", (_path(_seg("Policy.coverages")),), _BITEMPORAL_LATEST)
+def test_child_query_retains_the_propagated_root_perspective_beside_the_in_membership() -> None:
+    plan = _plan(POLICY, "Policy", (_path(_seg("Policy.coverages")),), _PINNED)
     step = _query_step(plan)
-    child_query = step.query_template()
-    assert isinstance(child_query.predicate, ResolvedAnd)
-    membership, *as_of_terms = child_query.predicate.operands
-    assert isinstance(membership, ResolvedMembership)
+    child_query = step.query
+    assert isinstance(child_query.predicate.predicate, ResolvedMembership)
+    assert isinstance(child_query.predicate.predicate.values, DeferredKeySet)
+    assert child_query.predicate.root_perspective == _at(POLICY, "Coverage", _VALID, _TX)
     assert _rendered_keys(POLICY, step, [1, 2]) == [1, 2]
-    assert len(as_of_terms) == 2  # Valid Time then Transaction Time (AXIS_ORDER)
 
 
 def test_a_back_reference_step_exposes_no_query_construction() -> None:
     plan = _plan(ORDERS, "Order", (_path(_seg("Order.items"), _seg("OrderItem.order")),))
     back_reference = _back_reference_step(plan, 1)
-    assert not hasattr(back_reference, "query_template")
+    assert not hasattr(back_reference, "query")
 
 
 # --------------------------------------------------------------------------- #
@@ -497,37 +526,37 @@ def test_a_back_reference_step_exposes_no_query_construction() -> None:
 def test_single_concrete_narrow_targets_the_concrete_directly_no_narrow_node() -> None:
     plan = _plan(ANIMAL, "Person", (_path(_seg("Person.pets", ("Dog",))),))
     level = _query_step(plan)
-    assert level.child_target == EntityIdentity("parallax.compatibility", "Dog")
-    assert level.narrow_to is None
-    query = level.query_template()
-    assert isinstance(query.predicate, ResolvedMembership)
-    assert query.predicate.member.identity.name == "ownerId"
+    assert level.query.target == EntityIdentity("parallax.compatibility", "Dog")
+    assert level.query.narrow_to is None
+    query = level.query
+    assert isinstance(query.predicate.predicate, ResolvedMembership)
+    assert query.predicate.predicate.member.identity.name == "ownerId"
 
 
 def test_multi_concrete_narrow_wraps_a_narrow_node() -> None:
     plan = _plan(ANIMAL, "Person", (_path(_seg("Person.pets", ("Cat", "Dog"))),))
     level = _query_step(plan)
-    assert level.child_target == EntityIdentity("parallax.compatibility", "Pet")
-    assert level.narrow_to == (
+    assert level.query.target == EntityIdentity("parallax.compatibility", "Pet")
+    assert level.query.narrow_to == (
         EntityIdentity("parallax.compatibility", "Cat"),
         EntityIdentity("parallax.compatibility", "Dog"),
     )
-    query = level.query_template()
-    assert query.narrow_to == level.narrow_to
-    assert isinstance(query.predicate, ResolvedMembership)
+    query = level.query
+    assert query.narrow_to == level.query.narrow_to
+    assert isinstance(query.predicate.predicate, ResolvedMembership)
 
 
 def test_broad_polymorphic_hop_targets_the_relationship_position_no_narrow() -> None:
     plan = _plan(ANIMAL, "Person", (_path(_seg("Person.animals")),))
     level = _query_step(plan)
-    assert level.child_target == EntityIdentity("parallax.compatibility", "Animal")
-    assert level.narrow_to is None
+    assert level.query.target == EntityIdentity("parallax.compatibility", "Animal")
+    assert level.query.narrow_to is None
 
 
 def _child_sql(
     model: Metamodel, level: deep_fetch.QueryFetchStep
 ) -> tuple[str, tuple[object, ...]]:
-    template = compile_template(level.query_template(), model, POSTGRES, result_form="instance")
+    template = compile_template(level.query, model, POSTGRES, result_form="instance")
     statement = template.compiled.statement
     return statement.sql, tuple(
         "<keys>" if isinstance(bind, DeferredKeySet) else bind for bind in statement.binds
@@ -539,8 +568,8 @@ def test_a_broad_hop_keeps_its_abstract_root_target_over_one_composed_concrete()
     # row the reader does not compose, unlike a root read of Beast (m-sql).
     plan = _plan(BEAST, "Keeper", (_path(_seg("Keeper.beasts")),))
     level = _query_step(plan)
-    assert level.child_target == EntityIdentity("parallax.compatibility", "Beast")
-    assert level.narrow_to is None
+    assert level.query.target == EntityIdentity("parallax.compatibility", "Beast")
+    assert level.query.narrow_to is None
     assert _child_sql(BEAST, level) == (
         "select t0.id, t0.kind, t0.name, t0.keeper_id, t0.howl from beast t0 "
         "where t0.keeper_id = any(?) order by t0.id asc",
@@ -551,8 +580,8 @@ def test_a_broad_hop_keeps_its_abstract_root_target_over_one_composed_concrete()
 def test_a_singleton_narrow_keeps_its_guard_over_every_composed_concrete() -> None:
     plan = _plan(BEAST, "Keeper", (_path(_seg("Keeper.beasts", ("Wolf",))),))
     level = _query_step(plan)
-    assert level.child_target == EntityIdentity("parallax.compatibility", "Wolf")
-    assert level.narrow_to is None
+    assert level.query.target == EntityIdentity("parallax.compatibility", "Wolf")
+    assert level.query.narrow_to is None
     assert _child_sql(BEAST, level) == (
         "select t0.id, t0.name, t0.keeper_id, t0.howl from beast t0 "
         "where t0.keeper_id = any(?) and t0.kind = ? order by t0.id asc",
@@ -563,7 +592,7 @@ def test_a_singleton_narrow_keeps_its_guard_over_every_composed_concrete() -> No
 def test_a_broad_hop_keeps_an_abstract_subtype_target_and_its_guard() -> None:
     model = model_of(DomainModel(AnimalOwner, Animal, Pet, Dog, WildBoar))
     level = _query_step(_plan(model, "Person", (_path(_seg("Person.pets")),)))
-    assert level.child_target == EntityIdentity("parallax.compatibility", "Pet")
+    assert level.query.target == EntityIdentity("parallax.compatibility", "Pet")
     assert _child_sql(model, level) == (
         "select t0.id, t0.kind, t0.name, t0.owner_id, t0.license_id, t0.bark_volume "
         "from animal t0 where t0.owner_id = any(?) and t0.kind = ?",
@@ -574,7 +603,7 @@ def test_a_broad_hop_keeps_an_abstract_subtype_target_and_its_guard() -> None:
 def test_a_broad_tpcs_hop_over_one_composed_concrete_reads_its_one_table() -> None:
     model = model_of(DomainModel(Document, FinancialDocument, Invoice, Folder))
     level = _query_step(_plan(model, "Folder", (_path(_seg("Folder.documents")),)))
-    assert level.child_target == EntityIdentity("parallax.compatibility", "Document")
+    assert level.query.target == EntityIdentity("parallax.compatibility", "Document")
     assert _child_sql(model, level) == (
         "select t0.id, t0.title, t0.folder_id, t0.currency, t0.amount_due from invoice t0 "
         "where t0.folder_id = any(?)",
@@ -584,7 +613,189 @@ def test_a_broad_tpcs_hop_over_one_composed_concrete_reads_its_one_table() -> No
 
 def test_non_polymorphic_child_target_is_the_related_entity_itself() -> None:
     plan = _plan(ORDERS, "Order", (_path(_seg("Order.items")),))
-    assert _query_step(plan).child_target == EntityIdentity("parallax.compatibility", "OrderItem")
+    assert _query_step(plan).query.target == EntityIdentity("parallax.compatibility", "OrderItem")
+
+
+# --------------------------------------------------------------------------- #
+# Every level is visible at the original root's perspective, at any depth.    #
+# --------------------------------------------------------------------------- #
+def _id(column: str = "id") -> dict[str, object]:
+    return {
+        "name": column,
+        "type": "int64",
+        "column": column,
+        "primaryKey": True,
+        "pkGeneration": "application-assigned",
+    }
+
+
+def _key(name: str, column: str) -> dict[str, object]:
+    return {"name": name, "type": "int64", "column": column}
+
+
+def _own(name: str) -> dict[str, object]:
+    return {"name": name, "type": "int64", "column": name, "nullable": True}
+
+
+def _to_many(name: str, entity: str, attribute: str) -> dict[str, object]:
+    return {
+        "name": name,
+        "cardinality": "one-to-many",
+        "join": {"source": "id", "target": {"entity": entity, "attribute": attribute}},
+    }
+
+
+_PROGRAM_MODEL: dict[str, object] = {
+    "entities": [
+        {
+            "name": "Program",
+            "table": "program",
+            "temporality": "bitemporal",
+            "attributes": [_id()],
+            "relationships": [
+                _to_many("rosters", "Roster", "programId"),
+                _to_many("rates", "Rate", "programId"),
+                _to_many("creatures", "Creature", "programId"),
+            ],
+        },
+        {
+            "name": "Roster",
+            "table": "roster",
+            "attributes": [_id(), _key("programId", "program_id")],
+            "relationships": [_to_many("members", "Member", "rosterId")],
+        },
+        {
+            "name": "Member",
+            "table": "member",
+            "temporality": "bitemporal",
+            "attributes": [_id(), _key("rosterId", "roster_id")],
+        },
+        {
+            "name": "Rate",
+            "inheritance": {"role": "root", "strategy": "table-per-concrete-subtype"},
+            "temporality": "bitemporal",
+            "attributes": [_id(), _key("programId", "program_id")],
+        },
+        {
+            "name": "DepositRate",
+            "table": "deposit_rate",
+            "inheritance": {"role": "concrete-subtype", "parent": "Rate"},
+            "attributes": [_own("deposit")],
+        },
+        {
+            "name": "LoanRate",
+            "table": "loan_rate",
+            "inheritance": {"role": "concrete-subtype", "parent": "Rate"},
+            "attributes": [_own("loan")],
+        },
+        {
+            "name": "Creature",
+            "table": "creature",
+            "temporality": "bitemporal",
+            "inheritance": {
+                "role": "root",
+                "strategy": "table-per-hierarchy",
+                "tag": {"column": "kind"},
+            },
+            "attributes": [_id(), _key("programId", "program_id")],
+        },
+        {
+            "name": "Lion",
+            "inheritance": {
+                "role": "concrete-subtype",
+                "parent": "Creature",
+                "tagValue": "lion",
+            },
+            "attributes": [_own("roar")],
+        },
+        {
+            "name": "Tiger",
+            "inheritance": {
+                "role": "concrete-subtype",
+                "parent": "Creature",
+                "tagValue": "tiger",
+            },
+            "attributes": [_own("stripes")],
+        },
+    ]
+}
+_PROGRAM = models.accepted_model(_PROGRAM_MODEL)
+_PINNED_WHERE = "t0.from_z <= ? and t0.thru_z > ? and t0.in_z <= ? and t0.out_z > ?"
+
+
+def _child_where(level: deep_fetch.QueryFetchStep) -> tuple[list[str], tuple[object, ...]]:
+    """Each physical branch's `where` clause of ``level``'s compiled child read,
+    and its binds, the deferred key set named."""
+    sql, binds = _child_sql(_PROGRAM, level)
+    return [branch.partition(" where ")[2] for branch in sql.split(" union all ")], binds
+
+
+def test_original_root_coordinates_survive_a_non_temporal_middle_level() -> None:
+    plan = _plan(
+        _PROGRAM, "Program", (_path(_seg("Program.rosters"), _seg("Roster.members")),), _PINNED
+    )
+    rosters, members = _query_step(plan, 0), _query_step(plan, 1)
+
+    assert rosters.query.predicate.root_perspective == TemporalPerspective()
+    assert _child_where(rosters) == (["t0.program_id = any(?)"], ("<keys>",))
+    assert members.query.predicate.root_perspective == _at(_PROGRAM, "Member", _VALID, _TX)
+    assert _child_where(members) == (
+        [f"t0.roster_id = any(?) and {_PINNED_WHERE}"],
+        ("<keys>", _VALID, _VALID, _TX, _TX),
+    )
+
+
+@pytest.mark.parametrize(
+    ("segment", "where", "target"),
+    [
+        (_seg("Program.rates"), [f"t0.program_id = any(?) and {_PINNED_WHERE}"] * 2, "Rate"),
+        (
+            _seg("Program.rates", ("DepositRate",)),
+            [f"t0.program_id = any(?) and {_PINNED_WHERE}"],
+            "DepositRate",
+        ),
+        (
+            _seg("Program.creatures", ("Lion",)),
+            [f"t0.program_id = any(?) and {_PINNED_WHERE} and t0.kind = ?"],
+            "Lion",
+        ),
+        (
+            _seg("Program.creatures", ("Lion", "Tiger")),
+            [f"t0.program_id = any(?) and {_PINNED_WHERE} and t0.kind in (?, ?)"],
+            "Creature",
+        ),
+    ],
+    ids=["tpcs-union", "tpcs-narrowed", "tph-narrowed", "tph-multi-narrowed"],
+)
+def test_an_inherited_child_is_restricted_on_its_family_axes_in_every_branch(
+    segment: IncludeSegment, where: list[str], target: str
+) -> None:
+    level = _query_step(_plan(_PROGRAM, "Program", (_path(segment),), _PINNED))
+
+    assert level.query.target.name == target
+    family = "Rate" if segment.rel == "Program.rates" else "Creature"
+    assert level.query.predicate.root_perspective == _at(_PROGRAM, family, _VALID, _TX)
+    branches, binds = _child_where(level)
+    assert branches == where
+    branch_binds = ("<keys>", _VALID, _VALID, _TX, _TX)
+    assert binds[: len(branch_binds) * len(where)] == branch_binds * len(where)
+
+
+def test_a_scanned_root_axis_leaves_every_level_at_latest_on_it() -> None:
+    scanned: dict[TemporalDimension, TemporalSelection] = {
+        "valid-time": History(),
+        "transaction-time": AsOf("2024-02-01T00:00:00Z"),
+    }
+    plan = _plan(
+        _PROGRAM, "Program", (_path(_seg("Program.rosters"), _seg("Roster.members")),), scanned
+    )
+    members = _query_step(plan, 1)
+
+    assert members.query.predicate.root_perspective == _at(_PROGRAM, "Member", None, _TX)
+    assert _child_where(members) == (
+        ["t0.roster_id = any(?) and t0.thru_z = ? and t0.in_z <= ? and t0.out_z > ?"],
+        ("<keys>", INFINITY, _TX, _TX),
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -1049,7 +1260,7 @@ def test_inherited_back_reference_uses_the_ancestor_key_namespace(
     assert sum(isinstance(step, deep_fetch.QueryFetchStep) for step in plan.fetch_steps) == (
         len(segments) - 1
     )
-    assert not hasattr(back_reference, "query_template")
+    assert not hasattr(back_reference, "query")
 
 
 @pytest.mark.parametrize("target_position", ["ConcreteParent", "AbstractParent", "Child"])
@@ -1073,7 +1284,7 @@ def test_abstract_declared_tpcs_back_reference_uses_the_logical_family(
     assert back_reference.family == EntityIdentity(None, "AbstractParent")
     assert _position(plan, back_reference).target == (EntityIdentity(None, "ConcreteParent"),)
     assert back_reference.parent == deep_fetch.LevelRef(len(segments) - 2)
-    assert not hasattr(back_reference, "query_template")
+    assert not hasattr(back_reference, "query")
 
 
 def test_the_inverse_edge_is_recognized_below_the_first_level_too() -> None:
@@ -1105,7 +1316,7 @@ def test_a_to_one_revisit_over_another_association_is_an_ordinary_queried_level(
     )
     assert all(isinstance(step, deep_fetch.QueryFetchStep) for step in plan.fetch_steps)
     order = _query_step(plan, 2)
-    assert order.child_target == EntityIdentity("parallax.compatibility", "Order")
+    assert order.query.target == EntityIdentity("parallax.compatibility", "Order")
     assert order.related.identity == AttributeIdentity(
         EntityIdentity("parallax.compatibility", "Order"), "id"
     )
@@ -1125,7 +1336,7 @@ def test_a_to_many_hop_revisiting_a_family_is_an_ordinary_queried_level() -> Non
     owner, pets = plan.fetch_steps
     assert isinstance(owner, deep_fetch.QueryFetchStep)
     assert isinstance(pets, deep_fetch.QueryFetchStep)
-    assert pets.child_target == EntityIdentity("parallax.compatibility", "Pet")
+    assert pets.query.target == EntityIdentity("parallax.compatibility", "Pet")
 
 
 def test_a_to_one_revisit_of_a_one_way_arrival_is_an_ordinary_queried_level() -> None:
@@ -1164,7 +1375,9 @@ def test_a_query_with_no_includes_plans_zero_levels_and_keeps_its_predicate() ->
     literal = Comparison(op="eq", subject=FieldSubject("Order.id"), value=1)
     plan = _plan(ORDERS, "Order", (), predicate=literal)
     assert plan.fetch_steps == ()
-    assert plan.root.predicate == validate_predicate(entity_of(ORDERS, "Order"), literal, ORDERS)
+    assert plan.root.predicate.predicate == validate_predicate(
+        entity_of(ORDERS, "Order"), literal, ORDERS
+    )
 
 
 def test_plan_resolves_result_narrowing_and_leaves_a_predicate_narrow_alone() -> None:
@@ -1176,7 +1389,7 @@ def test_plan_resolves_result_narrowing_and_leaves_a_predicate_narrow_alone() ->
         narrow_to=("Order",),
     )
     assert plan.root.narrow_to == (entity_of(ORDERS, "Order").identity,)
-    assert plan.root.predicate == validate_predicate(
+    assert plan.root.predicate.predicate == validate_predicate(
         entity_of(ORDERS, "Order"), Narrow(to=("Order",), operand=TrueNode()), ORDERS
     )
 
@@ -1198,7 +1411,7 @@ def test_concrete_target_root_query_injects_explicit_latest_on_every_axis() -> N
     plan = _plan(RATE, "DepositRate", (), _BITEMPORAL_LATEST)
     # Valid-Time-first (m-temporal-read), both explicitly select the current
     # milestone: `thru_z = infinity`, `out_z = infinity`.
-    assert plan.root.predicate == ResolvedAnd(
+    assert plan.root.predicate.predicate == ResolvedAnd(
         (
             framework_comparison(op="eq", member=_rate("validEnd"), value=INFINITY),
             framework_comparison(op="eq", member=_rate("txEnd"), value=INFINITY),
@@ -1223,10 +1436,11 @@ def test_an_acquisition_read_selects_current_transaction_time_by_managed_infinit
         else deep_fetch.plan_target_read(rate, model=RATE, key="id", key_value=1, valid_from=jan)
     )
 
-    assert isinstance(query.predicate, ResolvedAnd)
+    assert query.predicate.root_perspective is None
+    assert isinstance(query.predicate.predicate, ResolvedAnd)
     (current,) = (
         term
-        for term in query.predicate.operands
+        for term in query.predicate.predicate.operands
         if isinstance(term, ResolvedComparison) and term.framework
     )
     assert current == framework_comparison(op="eq", member=_rate("txEnd"), value=INFINITY)
@@ -1244,10 +1458,10 @@ def test_a_coverage_read_bounds_valid_time_by_the_endpoints_of_the_window_it_is_
 
     def valid_time_terms(window: TimeInterval) -> dict[str, object]:
         query = deep_fetch.plan_coverage_read(rate, model=RATE, key="id", terms=((1, (window,)),))
-        assert isinstance(query.predicate, ResolvedAnd)
+        assert isinstance(query.predicate.predicate, ResolvedAnd)
         return {
             f"{term.member.identity.name} {term.op}": term.value
-            for term in query.predicate.operands
+            for term in query.predicate.predicate.operands
             if isinstance(term, ResolvedComparison)
             and term.member.identity.name in ("validStart", "validEnd")
         }
@@ -1325,7 +1539,7 @@ def test_concrete_target_root_query_injects_a_pinned_axis() -> None:
     }
     plan = _plan(RATE, "DepositRate", (), pinned)
     pin = dt.datetime(2024, 1, 15, tzinfo=dt.UTC)
-    assert plan.root.predicate == ResolvedAnd(
+    assert plan.root.predicate.predicate == ResolvedAnd(
         (
             # Valid Time explicitly selects latest.
             framework_comparison(op="eq", member=_rate("validEnd"), value=INFINITY),

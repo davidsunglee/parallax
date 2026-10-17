@@ -5,7 +5,6 @@ from dataclasses import dataclass, field, replace
 from itertools import chain
 from typing import Literal, assert_never
 
-from parallax.core import navigate
 from parallax.core.base import (
     Bytes,
     DocumentReadOrdinals,
@@ -14,7 +13,7 @@ from parallax.core.base import (
     inert_scalar,
 )
 from parallax.core.db_port import Row
-from parallax.core.deep_fetch import ResolvedEntityQuery
+from parallax.core.deep_fetch import PlannedEntityQuery
 from parallax.core.dialect import Dialect, LockMode, projection_result_key
 from parallax.core.document_codec import DocumentFinding, MemberShape, is_text_compared
 from parallax.core.inheritance import InheritanceFacet
@@ -28,12 +27,13 @@ from parallax.core.metamodel import (
     Multiplicity,
     ValueObjectMetadata,
 )
+from parallax.core.navigate import TemporallyResolvedPredicate
 from parallax.core.object_query._resolved import (
     ContinuationCoordinate,
     Paging,
     ResolvedSeek,
 )
-from parallax.core.predicate._resolved import ResolvedPredicate, disjunctive
+from parallax.core.predicate._resolved import disjunctive
 from parallax.core.sql_gen._context import (
     LoweredStatement,
     SqlGenError,
@@ -70,6 +70,7 @@ from parallax.core.sql_gen._inheritance import tag_guard as _tph_tag_guard
 # aliasing-down convention as the family lane above.
 from parallax.core.sql_gen._predicate import EntityScope as _EntityScope
 from parallax.core.sql_gen._predicate import MemberSubject as _MemberSubject
+from parallax.core.sql_gen._predicate import lower_perspective as _lower_perspective
 from parallax.core.sql_gen._predicate import lower_predicate as _lower_predicate
 from parallax.core.sql_gen._predicate import plan_shared_sources as _plan_shared_sources
 from parallax.core.sql_gen._predicate import render_shared_sources as _render_shared_sources
@@ -173,8 +174,7 @@ class CompiledRead:
     table-per-concrete-subtype position resolving to exactly one concrete emits
     no `familyVariant` column at all, so this is what lets
     :meth:`row_identity` still names the row's own concrete identity. A deep-fetch
-    CHILD level takes its narrow from its own
-    ``QueryFetchStep.narrow_to`` instead.
+    CHILD level's narrow is its own planned child query's.
 
     ``documents`` is the top-level Value Object occurrences the resolved position
     can carry, in Position Layout order — the scalar/document provenance a
@@ -402,7 +402,7 @@ class CompiledTemplate:
 
 
 def compile_template(
-    query: ResolvedEntityQuery,
+    query: PlannedEntityQuery,
     model: Metamodel,
     dialect: Dialect,
     *,
@@ -521,14 +521,14 @@ def _scalar_read_contracts(
 
 
 def compile_read(
-    query: ResolvedEntityQuery,
+    query: PlannedEntityQuery,
     model: Metamodel,
     dialect: Dialect,
     *,
     result_form: _ResultForm = "row",
     lock: LockMode | None = None,
 ) -> CompiledRead:
-    """Compile one resolved Entity Query into a self-contained read.
+    """Compile one planned Entity Query into a self-contained read.
 
     ``result_form`` chooses only the materialization contract. Projection membership is
     already present on ``query``; ``lock`` is the caller-derived effective read lock.
@@ -653,7 +653,7 @@ def _locking_base_join(
 
 
 def _compile_read_arm(
-    query: ResolvedEntityQuery,
+    query: PlannedEntityQuery,
     model: Metamodel,
     dialect: Dialect,
     terms: tuple[_LoweredTerm, ...],
@@ -751,25 +751,22 @@ def _compile_read_arm(
 
 
 def compile_write_predicate(
-    op: ResolvedPredicate, model: Metamodel, dialect: Dialect, target: EntityMetadata
+    op: TemporallyResolvedPredicate, model: Metamodel, dialect: Dialect, target: EntityMetadata
 ) -> CompiledPredicate:
     """Render an already-validated write predicate: unaliased, every demand in
     its local form, unless a demand reads through a shared source; then the
     selection of the target's physical key from the rows it matches, planned
-    and rendered as a read of the target's own Table selects them.
-
-    A readless target pins no temporal coordinate, so every temporal Entity the
-    predicate reaches is visible at Latest on each of its axes (`m-navigate`).
+    and rendered as a read of the target's own Table selects them. A present
+    root perspective restricts the target's rows beside the predicate either way.
     """
-    op = navigate.propagate_hop_terms(op, model)
     facet = _inheritance_view(model)
     storage = _storage_view(model)
     layout = _table_layout(storage, facet, target.identity)
     ctx = StatementBuilder(model, facet, storage, dialect)
-    planned = _plan_shared_sources(op, _EntityScope(ctx, target, layout))
+    planned = _plan_shared_sources(op.predicate, _EntityScope(ctx, target, layout))
     if planned.sources is None or not planned.sources.shares():
         scope = _EntityScope(ctx, target, layout, unaliased=True, local=True)
-        statement = ctx.finish(_lower_predicate(op, scope))
+        statement = ctx.finish(_restricted(op, scope))
         return CompiledPredicate(statement.sql, statement.binds, statement)
     keys = ", ".join(planned.own_column(slot.column.name) for slot in layout.physical_primary_key)
     parts = [f"select {keys}", f"from {layout.table.name} {planned.alias}"]
@@ -779,24 +776,38 @@ def compile_write_predicate(
     return CompiledPredicate(statement.sql, statement.binds, statement, selection=True)
 
 
-def _selection(predicate: ResolvedPredicate, scope: _EntityScope, parts: list[str]) -> str:
-    """Append the joins of ``predicate``'s shared sources to ``parts`` and lower
-    ``predicate`` beside them, so every alias and bind follows the text.
+def _selection(temporal: TemporallyResolvedPredicate, scope: _EntityScope, parts: list[str]) -> str:
+    """Append the joins of ``temporal``'s shared sources to ``parts`` and lower
+    it beside them, so every alias and bind follows the text.
 
     The read forms selecting from one physical Table or one of its partitions
     share this seam with a readless write's key selection.
     """
-    return _planned_selection(predicate, _plan_shared_sources(predicate, scope), parts)
+    return _planned_selection(temporal, _plan_shared_sources(temporal.predicate, scope), parts)
 
 
 def _planned_selection(
-    predicate: ResolvedPredicate, planned: _EntityScope, parts: list[str]
+    temporal: TemporallyResolvedPredicate, planned: _EntityScope, parts: list[str]
 ) -> str:
-    """:func:`_selection` over a scope that already planned ``predicate``."""
+    """:func:`_selection` over a scope that already planned ``temporal``."""
     joins = _render_shared_sources(planned)
     if joins:
         parts.append(joins)
-    return _lower_predicate(predicate, planned)
+    return _restricted(temporal, planned)
+
+
+def _restricted(temporal: TemporallyResolvedPredicate, scope: _EntityScope) -> str:
+    """``temporal``'s predicate, then the comparisons of its root perspective,
+    over the rows of ``scope``; a disjunctive predicate is grouped beside them
+    so they restrict every one of its alternatives."""
+    where_sql = _lower_predicate(temporal.predicate, scope)
+    perspective = temporal.root_perspective
+    restriction = () if perspective is None else _lower_perspective(perspective, scope)
+    if not restriction:
+        return where_sql
+    if where_sql and disjunctive(temporal.predicate):
+        where_sql = f"({where_sql})"
+    return " and ".join((where_sql, *restriction) if where_sql else restriction)
 
 
 def _reserved_result_keys(model: Metamodel, storage: _StorageLayoutFacet) -> frozenset[str]:
@@ -862,15 +873,22 @@ def _sought(
     )
 
 
-def _beside_a_guard(predicate: ResolvedPredicate, where_sql: str, *, guarded: bool) -> str:
-    """The authored `where` fragment as a conjunct standing beside a seek or a
-    tag guard.
+def _beside_a_guard(temporal: TemporallyResolvedPredicate, where_sql: str, *, guarded: bool) -> str:
+    """The selection's `where` fragment as a conjunct standing beside a seek or
+    a tag guard.
 
     An `or` binds looser than the enclosing `and`, so a top-level disjunction
     conjoined with either would silently re-associate the caller's own
-    predicate into the framework term's first branch.
+    predicate into the framework term's first branch. A nonempty root
+    perspective has already grouped the predicate it follows.
     """
-    if guarded and where_sql and disjunctive(predicate):
+    perspective = temporal.root_perspective
+    if (
+        guarded
+        and where_sql
+        and disjunctive(temporal.predicate)
+        and (perspective is None or not perspective.is_temporal)
+    ):
         return f"({where_sql})"
     return where_sql
 
@@ -920,7 +938,7 @@ def _append_result_shape(
 
 def _compile_inheritance_read(
     entity: EntityMetadata,
-    predicate: ResolvedPredicate,
+    predicate: TemporallyResolvedPredicate,
     narrow_to: tuple[EntityIdentity, ...] | None,
     terms: tuple[_LoweredTerm, ...],
     paging: Paging | None,
@@ -1020,7 +1038,7 @@ def _compile_inheritance_read(
 
 def _compile_tph_read(
     plan: _TphPlan,
-    predicate: ResolvedPredicate,
+    predicate: TemporallyResolvedPredicate,
     entity: EntityMetadata,
     terms: tuple[_LoweredTerm, ...],
     paging: Paging | None,
@@ -1092,7 +1110,7 @@ def _compile_tph_read(
 
 def _compile_tph_partitioned(
     plan: _TphPlan,
-    predicate: ResolvedPredicate,
+    predicate: TemporallyResolvedPredicate,
     entity: EntityMetadata,
     terms: tuple[_LoweredTerm, ...],
     paging: Paging | None,
@@ -1235,7 +1253,7 @@ def _compile_tph_partitioned(
 
 def _compile_tpcs_read(
     plan: _TpcsUnionPlan,
-    predicate: ResolvedPredicate,
+    predicate: TemporallyResolvedPredicate,
     entity: EntityMetadata,
     terms: tuple[_LoweredTerm, ...],
     paging: Paging | None,
@@ -1395,7 +1413,7 @@ def _tpcs_order_subject(
 
 def _compile_tpcs_single(
     plan: _TpcsSinglePlan,
-    predicate: ResolvedPredicate,
+    predicate: TemporallyResolvedPredicate,
     entity: EntityMetadata,
     terms: tuple[_LoweredTerm, ...],
     paging: Paging | None,

@@ -28,6 +28,7 @@ from parallax.core.sql_gen._predicate import EntityScope
 from parallax.core.unit_work import KeyedWrite
 from parallax.core.wire import loads
 from tests._support.lowering_probes import lower_instruction
+from tests._support.sql import resolved_as_stated
 from tests.unit._corpus_model_support import model as corpus_model
 
 WALLET = corpus_model("wallet")
@@ -45,10 +46,10 @@ def _builder() -> StatementBuilder:
 def _template(statement: LoweredStatement, *, postgres_array: bool) -> CompiledTemplate:
     entity = WALLET.entities[0]
     compiled = compile_read(
-        deep_fetch.ResolvedEntityQuery(
+        deep_fetch.PlannedEntityQuery(
             target=entity.identity,
             entity=entity,
-            predicate=ResolvedConstant(True),
+            predicate=resolved_as_stated(ResolvedConstant(True), WALLET, entity),
             projection=deep_fetch.ResolvedReadProjection((), False),
         ),
         WALLET,

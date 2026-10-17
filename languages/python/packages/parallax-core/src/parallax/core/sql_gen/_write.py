@@ -23,6 +23,7 @@ from parallax.core.metamodel import (
     EntityMetadata,
     Metamodel,
 )
+from parallax.core.navigate import ExistingRootConditions, resolve_temporal_visibility
 from parallax.core.sql_gen._compile import compile_write_predicate
 from parallax.core.sql_gen._context import (
     LoweredStatement,
@@ -529,11 +530,16 @@ def _target_predicate(
     bounds after that guard, so the whole address renders before any gate. A
     Resolved Mutation Selection renders its predicate in place, or tests the
     membership of the Table's physical key in the key selection its compiled
-    predicate is, inside this one statement.
+    predicate is, inside this one statement. A readless target pins no temporal
+    coordinate, so every temporal Entity its predicate reaches is visible at
+    Latest on each of its axes (`m-navigate`).
     """
     match target:
         case ResolvedMutationSelection(predicate=predicate):
-            compiled = compile_write_predicate(predicate, meta, dialect, entity)
+            temporal = resolve_temporal_visibility(
+                predicate, target=entity, model=meta, resolution=ExistingRootConditions()
+            )
+            compiled = compile_write_predicate(temporal, meta, dialect, entity)
             if compiled.lowered is None:  # pragma: no cover - compiler always retains proof
                 raise SqlGenError("compiled predicate carries no lowered statement")
             ctx.append_fragment(compiled.lowered)

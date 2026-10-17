@@ -430,13 +430,13 @@ class SourcePlan[Candidate, Scope]:
 
 
 def _same_occurrence(first: ResolvedRelationship, second: ResolvedRelationship) -> bool:
-    """One direction, endpoints, target family, and generated visibility."""
+    """One direction, endpoints, target family, and temporal visibility."""
     return (
         first.identity == second.identity
         and first.source.identity == second.source.identity
         and first.related.identity == second.related.identity
         and first.target.identity == second.target.identity
-        and first.visibility == second.visibility
+        and first.temporal_visibility == second.temporal_visibility
     )
 
 

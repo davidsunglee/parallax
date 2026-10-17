@@ -1,18 +1,15 @@
 from __future__ import annotations
 
 import datetime as _dt
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Literal, Protocol, assert_never
 
 from parallax.core.base import (
     INFINITY,
-    ManagedValue,
     TemporalBound,
     normalize_instant,
 )
-from parallax.core.inheritance import root_metadata
-from parallax.core.inheritance import view as inheritance_view
 from parallax.core.metamodel import AsOfAxisMetadata, AttributeIdentity, EntityMetadata, Metamodel
 from parallax.core.metamodel import TemporalDimension as AcceptedDimension
 from parallax.core.object_query import LATEST, Latest
@@ -75,8 +72,6 @@ __all__ = [
     "milestone_edge",
     "ranked_axes",
     "resolve_perspective",
-    "resolved_hop_as_of_terms",
-    "resolved_pinned_instants",
     "resolved_query_pin",
     "scans_resolved_axis",
     "valid_time_coverage",
@@ -459,16 +454,6 @@ def inject_resolved_as_of(
     return predicate if not terms else _conjunction(predicate, *terms)
 
 
-def resolved_pinned_instants(
-    selections: tuple[ResolvedTemporalSelection, ...],
-) -> dict[AcceptedDimension, ManagedValue]:
-    return {
-        selection.axis.dimension: selection.coordinate
-        for selection in selections
-        if isinstance(selection, ResolvedAsOfSelection)
-    }
-
-
 def resolved_query_pin(selections: tuple[ResolvedTemporalSelection, ...]) -> Pin:
     """Return the pin already decoded by Object Query validation."""
     tx_time: _dt.datetime | Latest | None = None
@@ -537,39 +522,3 @@ def _axis_perspective(
                 raise TemporalReadError("a temporal coordinate is not a managed datetime")
             return AtPerspective(axis, selection.coordinate)
     return LatestPerspective(axis)
-
-
-def resolved_hop_as_of_terms(
-    target: EntityMetadata,
-    model: Metamodel,
-    root_pins: Mapping[AcceptedDimension, ManagedValue],
-) -> tuple[ResolvedPredicate, ...]:
-    """Build managed per-hop terms; an absent pin means the framework Latest sentinel."""
-    shape = view(model).shape(target.identity)
-    if shape is None:  # pragma: no cover - accepted metadata is total
-        raise TemporalReadError(f"{target.identity.canonical}: no temporal shape")
-    axes = ranked_axes(shape)
-    if not axes:
-        return ()
-    declarer = root_metadata(inheritance_view(model), model, target.identity)
-    terms: list[ResolvedPredicate] = []
-    for axis in axes:
-        instant = root_pins.get(axis.dimension)
-        end = declarer.attribute(axis.end_attribute.name)
-        if instant is None:
-            if end is None:
-                raise TemporalReadError(
-                    f"{declarer.identity.name}: temporal axis member is undeclared"
-                )
-            terms.append(_framework_comparison(op="eq", member=end, value=INFINITY))
-            continue
-        start = declarer.attribute(axis.start_attribute.name)
-        if start is None or end is None:
-            raise TemporalReadError(f"{declarer.identity.name}: temporal axis member is undeclared")
-        terms.extend(
-            (
-                _managed_comparison(op="lessThanEquals", member=start, value=instant),
-                _managed_comparison(op="greaterThan", member=end, value=instant),
-            )
-        )
-    return tuple(terms)

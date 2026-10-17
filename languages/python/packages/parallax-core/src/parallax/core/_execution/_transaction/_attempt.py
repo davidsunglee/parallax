@@ -73,7 +73,7 @@ from parallax.core.db_port import (
     StatementFailed,
     StatementNotExecuted,
 )
-from parallax.core.deep_fetch import ResolvedEntityQuery
+from parallax.core.deep_fetch import PlannedEntityQuery
 from parallax.core.diagnostics import qualified_type
 from parallax.core.dialect import LockMode
 from parallax.core.entity import EntityRowCodec
@@ -823,7 +823,7 @@ class TxnAttempt(_TxnAttemptBase):
         )
         return self._row_read(query, "locking" if request.locking else None)
 
-    def _row_read(self, query: ResolvedEntityQuery, lock: LockMode | None) -> CompiledRead:
+    def _row_read(self, query: PlannedEntityQuery, lock: LockMode | None) -> CompiledRead:
         return compile_read(
             query, self._write.model.meta, self._connection.dialect, result_form="row", lock=lock
         )

@@ -1,8 +1,9 @@
 """Navigation lowering (m-sql "Joins by navigation" / "Polymorphic navigation").
 
-These feed already-canonicalized queries directly (the per-hop as-of rewrite
-is `parallax.core.navigate`'s job, tested in `test_navigate.py`) — this module
-only lowers whatever Predicate tree it receives.
+These lower temporally resolved queries (resolving each hop's visibility is
+`parallax.core.navigate`'s job, tested in `test_navigate.py`) — this module
+only lowers whatever Predicate tree it receives, and decides join sharing from
+the perspective each hop carries.
 
 Beyond the correlated `EXISTS` and scalar-subquery shapes themselves, this suite pins the ALIAS
 sequence: one statement allocates one depth-first, source-ordered sequence
@@ -12,17 +13,38 @@ the private-module split must preserve.
 
 from __future__ import annotations
 
+import dataclasses
+import datetime as dt
 from typing import Literal
 
 import pytest
 
 from parallax.conformance.models import accepted_model
+from parallax.core import inheritance, storage_layout
 from parallax.core import predicate as oa
 from parallax.core.base import INFINITY
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import Metamodel
 from parallax.core.object_query import AsOf
 from parallax.core.predicate import ModelRejectedError
+from parallax.core.predicate._perspective import (
+    AtPerspective,
+    LatestPerspective,
+    TemporalPerspective,
+)
+from parallax.core.predicate._resolved import (
+    ResolvedPresence,
+    ResolvedQuantifier,
+    ResolvedRelationship,
+)
+from parallax.core.sql_gen._context import StatementBuilder, table_layout
+from parallax.core.sql_gen._navigation import (
+    plan_relationship_candidates,
+    shared_relationship_is_eligible,
+)
+from parallax.core.sql_gen._predicate import EntityScope
+from parallax.core.temporal_read import Bitemporal
+from parallax.core.temporal_read import view as temporal_view
 from tests._support.sql import compile_read, compile_write_predicate
 from tests.unit._corpus_model_support import formed, model, target
 
@@ -1108,6 +1130,119 @@ def test_only_a_unique_key_proves_a_declared_one_to_one_target(unique: bool, exp
     op = oa.Comparison(op="eq", subject=oa.FieldSubject("Holder.badge.code"), value="B")
     compiled = compile_read(op, family, POSTGRES, target(family, "Holder"))
     assert compiled.statement.sql.endswith(expected)
+
+
+# --------------------------------------------------------------------------- #
+# Eligibility read directly from a hop's typed visibility.                    #
+# --------------------------------------------------------------------------- #
+def _hop(model: Metamodel, source: str, path: str) -> ResolvedRelationship:
+    """The unresolved to-many relationship ``path`` reaches from ``source``."""
+    resolved = oa.validate_predicate(target(model, source), oa.Quantifier("any", path), model)
+    assert isinstance(resolved, ResolvedQuantifier)
+    assert isinstance(resolved.collection, ResolvedRelationship)
+    return resolved.collection
+
+
+def _to_one(model: Metamodel, source: str, path: str) -> ResolvedRelationship:
+    resolved = oa.validate_predicate(target(model, source), oa.Presence("exists", path), model)
+    assert isinstance(resolved, ResolvedPresence)
+    assert isinstance(resolved.target, ResolvedRelationship)
+    return resolved.target
+
+
+def _eligible(
+    model: Metamodel, source: str, hop: ResolvedRelationship, visibility: TemporalPerspective
+) -> bool:
+    entity = target(model, source)
+    facet, storage = inheritance.view(model), storage_layout.view(model)
+    scope = EntityScope(
+        StatementBuilder(model, facet, storage, POSTGRES),
+        entity,
+        table_layout(storage, facet, entity.identity),
+    )
+    seen = dataclasses.replace(hop, temporal_visibility=visibility)
+    candidates = plan_relationship_candidates(seen, position=None, scope=scope)
+    return shared_relationship_is_eligible(seen, candidates, scope)
+
+
+_INSTANT = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
+
+
+def _axes(model: Metamodel, name: str) -> Bitemporal:
+    shape = temporal_view(model).shape(target(model, name).identity)
+    assert isinstance(shape, Bitemporal)
+    return shape
+
+
+def _seen(model: Metamodel, name: str, *, valid: bool, tx: bool) -> TemporalPerspective:
+    """``name``'s visibility: Latest on each axis flagged, else At one instant."""
+    shape = _axes(model, name)
+    return TemporalPerspective(
+        valid_time=(
+            LatestPerspective(shape.valid_time)
+            if valid
+            else AtPerspective(shape.valid_time, _INSTANT)
+        ),
+        transaction_time=(
+            LatestPerspective(shape.transaction_time)
+            if tx
+            else AtPerspective(shape.transaction_time, _INSTANT)
+        ),
+    )
+
+
+def _temporal_badges(*, unique: bool) -> Metamodel:
+    return _document_model(
+        _entity("Holder", relationships=[_rel("badge", "id", "Badge", "holderId", "one-to-one")]),
+        _entity(
+            "Badge",
+            "holderId",
+            temporality="bitemporal",
+            indices=[{"name": "badge_holder", "attributes": ["holderId"], "unique": unique}],
+        ),
+    )
+
+
+def test_a_physical_unique_key_the_correlation_fixes_proves_a_non_temporal_hop() -> None:
+    hop = _to_one(ORDERS, "OrderItem", "OrderItem.order")
+    assert _eligible(ORDERS, "OrderItem", hop, TemporalPerspective())
+
+
+@pytest.mark.parametrize("unique", [True, False])
+def test_a_nullable_correlated_column_is_proven_only_by_a_unique_key(unique: bool) -> None:
+    family = _badge_model(unique=unique)
+    hop = _to_one(family, "Holder", "Holder.badge")
+    assert _eligible(family, "Holder", hop, TemporalPerspective()) is unique
+
+
+@pytest.mark.parametrize(
+    ("valid", "tx"),
+    [(True, True), (False, True), (True, False), (False, False)],
+    ids=["latest-latest", "at-latest", "latest-at", "at-at"],
+)
+def test_a_temporal_hop_correlated_by_its_logical_key_is_proven_at_any_perspective(
+    valid: bool, tx: bool
+) -> None:
+    # Latest ends complete the physical key; an instant fixes no end, so the
+    # logical key and the perspective's one milestone per axis prove it instead.
+    hop = _to_one(POLICY, "Claim", "Claim.coverage")
+    assert _eligible(POLICY, "Claim", hop, _seen(POLICY, "Coverage", valid=valid, tx=tx))
+
+
+@pytest.mark.parametrize("latest", [True, False], ids=["latest", "at"])
+def test_a_temporal_hop_off_its_logical_key_needs_a_unique_key_the_correlation_fixes(
+    latest: bool,
+) -> None:
+    for unique in (True, False):
+        family = _temporal_badges(unique=unique)
+        hop = _to_one(family, "Holder", "Holder.badge")
+        visibility = _seen(family, "Badge", valid=latest, tx=latest)
+        assert _eligible(family, "Holder", hop, visibility) is unique
+
+
+def test_several_physical_candidates_are_never_proven_unique() -> None:
+    hop = _hop(DOCUMENT, "Folder", "Folder.documents")
+    assert not _eligible(DOCUMENT, "Folder", hop, TemporalPerspective())
 
 
 def test_a_locking_read_locks_only_its_root_beside_a_shared_join() -> None:

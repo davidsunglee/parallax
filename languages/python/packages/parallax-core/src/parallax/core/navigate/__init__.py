@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
-from dataclasses import replace
-from types import MappingProxyType
+from dataclasses import dataclass, replace
 
-from parallax.core.base import ManagedValue
-from parallax.core.metamodel import EntityIdentity, Metamodel, TemporalDimension
+from parallax.core import inheritance
+from parallax.core.metamodel import EntityMetadata, Metamodel
+from parallax.core.object_query._resolved import ResolvedTemporalSelection
+from parallax.core.predicate._perspective import TemporalPerspective
 from parallax.core.predicate._resolved import (
     CurrentObject,
     ObjectPosition,
@@ -28,36 +28,104 @@ from parallax.core.predicate._resolved import (
     ScalarElement,
     SubjectPosition,
 )
-from parallax.core.temporal_read import resolved_hop_as_of_terms
+from parallax.core.temporal_read import inject_resolved_as_of, resolve_perspective
 
-__all__ = ["propagate_hop_terms"]
+__all__ = [
+    "ExistingRootConditions",
+    "PropagatedRootSelections",
+    "RootSelections",
+    "TemporalResolution",
+    "TemporallyResolvedPredicate",
+    "resolve_temporal_visibility",
+]
 
-_EMPTY_MANAGED_PINS: Mapping[TemporalDimension, ManagedValue] = MappingProxyType({})
+
+@dataclass(frozen=True, slots=True)
+class RootSelections:
+    """Restrict the root to its own resolved selections, and see each reached
+    target at the finite coordinates they select."""
+
+    selections: tuple[ResolvedTemporalSelection, ...]
 
 
-def propagate_hop_terms(
+@dataclass(frozen=True, slots=True)
+class PropagatedRootSelections:
+    """Restrict an Include child, and each target it reaches, to the perspective
+    the original root's selections propagate."""
+
+    selections: tuple[ResolvedTemporalSelection, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ExistingRootConditions:
+    """Keep the root conditions the predicate already states, and see each
+    reached target at Latest."""
+
+
+type TemporalResolution = RootSelections | PropagatedRootSelections | ExistingRootConditions
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class TemporallyResolvedPredicate:
+    """A predicate whose every reached relationship carries its temporal
+    visibility, with the root restriction its resolution established.
+
+    Only :func:`resolve_temporal_visibility` constructs one. A present
+    ``root_perspective`` restricts the root rows beside ``predicate``.
+    """
+
+    predicate: ResolvedPredicate
+    root_perspective: TemporalPerspective | None
+
+
+def resolve_temporal_visibility(
     predicate: ResolvedPredicate,
+    *,
+    target: EntityMetadata,
     model: Metamodel,
-    root_pins: Mapping[TemporalDimension, ManagedValue] = _EMPTY_MANAGED_PINS,
-) -> ResolvedPredicate:
-    """Give each relationship the predicate reaches the temporal terms its
-    candidates are visible under, retaining every other resolved term as it is."""
-    if not _reaches_relationship(predicate):
-        return predicate
-    return _Propagation(model, root_pins).predicate(predicate)
+    resolution: TemporalResolution,
+) -> TemporallyResolvedPredicate:
+    """``predicate`` over ``target`` with temporal visibility established as
+    ``resolution`` directs.
+
+    Every relationship the predicate reaches is seen at the perspective the
+    resolution's selections propagate, or at Latest without any; nodes that
+    reach none are retained as they are. Root restrictions follow, so the
+    terms they add are never traversed.
+    """
+    match resolution:
+        case RootSelections(selections=selections):
+            resolved = _Resolution(model, selections).predicate(predicate)
+            family_root = inheritance.root_metadata(inheritance.view(model), model, target.identity)
+            return _closed(inject_resolved_as_of(resolved, selections, family_root), None)
+        case PropagatedRootSelections(selections=selections):
+            resolved = _Resolution(model, selections).predicate(predicate)
+            return _closed(
+                resolved, resolve_perspective(target, model=model, root_selections=selections)
+            )
+        case ExistingRootConditions():
+            return _closed(_Resolution(model, ()).predicate(predicate), None)
 
 
-class _Propagation:
-    __slots__ = ("_model", "_pins", "_terms")
+def _closed(
+    predicate: ResolvedPredicate, root_perspective: TemporalPerspective | None
+) -> TemporallyResolvedPredicate:
+    closed = object.__new__(TemporallyResolvedPredicate)
+    object.__setattr__(closed, "predicate", predicate)
+    object.__setattr__(closed, "root_perspective", root_perspective)
+    return closed
 
-    def __init__(self, model: Metamodel, pins: Mapping[TemporalDimension, ManagedValue]) -> None:
+
+class _Resolution:
+    __slots__ = ("_model", "_selections")
+
+    def __init__(self, model: Metamodel, selections: tuple[ResolvedTemporalSelection, ...]) -> None:
         self._model = model
-        self._pins = pins
-        self._terms: dict[EntityIdentity, tuple[ResolvedPredicate, ...]] = {}
+        self._selections = selections
 
     def predicate(self, predicate: ResolvedPredicate) -> ResolvedPredicate:  # noqa: C901 - exhaustive dispatcher
-        """``predicate`` with its relationships' terms filled in — the very
-        object wherever nothing in it changed."""
+        """``predicate`` with its relationships' visibility established — the
+        very object wherever nothing in it changed."""
         match predicate:
             case ResolvedAnd(operands=operands) | ResolvedOr(operands=operands):
                 children = tuple(self.predicate(operand) for operand in operands)
@@ -129,52 +197,18 @@ class _Propagation:
     def _position(self, position: ObjectPosition) -> ObjectPosition:
         if isinstance(position, CurrentObject):
             return position
-        source = self._position(position.source)
-        relationship = self._relationship(position.relationship)
-        if source is position.source and relationship is position.relationship:
-            return position
-        return RelatedObject(source, relationship)
+        return RelatedObject(
+            self._position(position.source), self._relationship(position.relationship)
+        )
 
     def _relationship(self, relationship: ResolvedRelationship) -> ResolvedRelationship:
-        identity = relationship.target.identity
-        terms = self._terms.get(identity)
-        if terms is None:
-            terms = resolved_hop_as_of_terms(relationship.target, self._model, self._pins)
-            self._terms[identity] = terms
-        return relationship if not terms else replace(relationship, visibility=terms)
+        perspective = resolve_perspective(
+            relationship.target, model=self._model, root_selections=self._selections
+        )
+        return replace(relationship, temporal_visibility=perspective)
 
 
 def _unchanged(
     children: tuple[ResolvedPredicate, ...], operands: tuple[ResolvedPredicate, ...]
 ) -> bool:
     return all(child is operand for child, operand in zip(children, operands, strict=True))
-
-
-def _reaches_relationship(predicate: ResolvedPredicate) -> bool:
-    match predicate:
-        case ResolvedAnd(operands=operands) | ResolvedOr(operands=operands):
-            return any(_reaches_relationship(operand) for operand in operands)
-        case ResolvedNot(operand=operand) | ResolvedGroup(operand=operand):
-            return _reaches_relationship(operand)
-        case (
-            ResolvedComparison()
-            | ResolvedRange()
-            | ResolvedMembership()
-            | ResolvedStringMatch()
-            | ResolvedNullCheck()
-        ):
-            return isinstance(predicate.position, RelatedObject)
-        case ResolvedQuantifier(collection=collection, where=where, position=position):
-            return (
-                isinstance(collection, ResolvedRelationship)
-                or isinstance(position, RelatedObject)
-                or (where is not None and _reaches_relationship(where))
-            )
-        case ResolvedPresence(target=target, position=position):
-            return isinstance(target, ResolvedRelationship) or isinstance(position, RelatedObject)
-        case ResolvedNarrow(operand=operand, target=target):
-            return isinstance(target, RelatedObject) or (
-                operand is not None and _reaches_relationship(operand)
-            )
-        case ResolvedConstant():
-            return False
