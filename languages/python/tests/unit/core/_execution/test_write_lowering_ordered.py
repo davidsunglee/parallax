@@ -1,10 +1,11 @@
 """Which steps ordered write transport may carry, decided before payload demand
 (execution's lowering seam, `m-execution`, `m-dialect`).
 
-A count-only temporal effect promises an upper bound on its statement's binds
-from the step alone, and qualifies only where that bound fits the dialect's
-limit. The promise is checked against what lowering actually produced, so a
-statement exceeding it is refused as a lowering failure rather than presented.
+A count-only temporal effect promises a conservative ceiling on its statement's
+SQL parameters from the step alone, and qualifies only where that ceiling fits
+the dialect's configured limit. The promise is checked against what lowering
+actually produced, so a statement exceeding it is refused as a lowering failure
+rather than presented.
 """
 
 from __future__ import annotations
@@ -17,7 +18,11 @@ from typing import Final
 import pytest
 
 from parallax.core._execution._planning import build_write_planner
-from parallax.core._execution._write_lowering import lowered, lowered_within, ordered_bind_bound
+from parallax.core._execution._write_lowering import (
+    lowered,
+    lowered_within,
+    ordered_parameter_ceiling,
+)
 from parallax.core.base import INFINITY as OPEN
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity, Metamodel
@@ -131,14 +136,14 @@ def _cases() -> list[tuple[str, Metamodel, PlannedWrite]]:
 @pytest.mark.parametrize(
     ("label", "meta", "step"), _cases(), ids=[label for label, _meta, _step in _cases()]
 )
-def test_every_temporal_effect_promises_a_bound_its_statement_keeps(
+def test_every_temporal_effect_promises_a_parameter_ceiling_its_statement_keeps(
     label: str, meta: Metamodel, step: PlannedWrite
 ) -> None:
     del label
-    bound = ordered_bind_bound(step, POSTGRES)
-    assert bound is not None
-    statement = lowered_within(step, bound, build_write_planner(meta).payloads, meta, POSTGRES)
-    assert len(statement.binds) <= bound
+    ceiling = ordered_parameter_ceiling(step, POSTGRES)
+    assert ceiling is not None
+    statement = lowered_within(step, ceiling, build_write_planner(meta).payloads, meta, POSTGRES)
+    assert len(statement.binds) <= ceiling
     assert statement == lowered(step, build_write_planner(meta).payloads, meta, POSTGRES)
 
 
@@ -161,20 +166,20 @@ def test_an_insert_never_qualifies_for_ordered_transport() -> None:
         }
     )
     insert = PlannedInsert(entity=entity, entries=(WriteRow(row=row, origin=NEW_LINEAGE),))
-    assert ordered_bind_bound(insert, POSTGRES) is None
+    assert ordered_parameter_ceiling(insert, POSTGRES) is None
 
 
-def test_an_effect_whose_bound_exceeds_the_dialect_limit_runs_alone() -> None:
+def test_an_effect_whose_ceiling_exceeds_the_dialect_limit_runs_alone() -> None:
     meta = model("position")
     entity = entity_of(meta, "Position").identity
     close, guard, *_ = _effects(entity, entity, {AttributeIdentity(entity, "value"): Decimal("1")})
-    # A close's bound is six and a guard's five.
+    # A close's ceiling is six parameters and a guard's five.
     narrow = replace(POSTGRES, max_bind_parameters=5)
-    assert ordered_bind_bound(close, narrow) is None
-    assert ordered_bind_bound(guard, narrow) == 5
+    assert ordered_parameter_ceiling(close, narrow) is None
+    assert ordered_parameter_ceiling(guard, narrow) == 5
 
 
-def test_a_statement_exceeding_the_bound_it_promised_is_a_lowering_failure() -> None:
+def test_a_statement_exceeding_the_ceiling_it_promised_is_a_lowering_failure() -> None:
     meta = model("position")
     entity = entity_of(meta, "Position").identity
     close, *_ = _effects(entity, entity, {AttributeIdentity(entity, "value"): Decimal("1")})

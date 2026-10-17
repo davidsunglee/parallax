@@ -99,7 +99,7 @@ _CARRIER_NEUTRAL_PRIVATE_SQL_REACHES: dict[tuple[str, str], frozenset[str]] = {
         "parallax.core._execution._write_lowering",
         "parallax.core.sql_gen._write",
     ): frozenset(
-        {"InsertStatementBuilder", "StepPayload", "compile_write_step", "effect_bind_bound"}
+        {"InsertStatementBuilder", "StepPayload", "compile_write_step", "effect_parameter_ceiling"}
     ),
 }
 
@@ -372,11 +372,12 @@ def test_the_sql_gen_reach_inventory_names_a_new_reach_and_passes_the_public_doo
 # the installed-lifecycle handle every runtime opens activities through, and the
 # pool-observation registry a root owns, stay in private modules. Who reaches
 # them is therefore a topology decision rather than a use of the package's
-# interface: execution opens roots, attempts, reads, and connection brackets;
-# read delivery opens the Database Calls and Stream Batches it executes; and
-# Snapshot's Wire editable-data copy refuses re-entry before it reads a node,
-# its write verbs entering the attempt's doors, which refuse it. Keyed by reaching
-# module and private module, so another importer is a new §7 decision.
+# interface: execution opens roots, attempts, reads, connection brackets, and
+# the calls a Write Batch executes; read delivery opens the Database Calls and
+# Stream Batches it executes; and Snapshot's Wire editable-data copy refuses
+# re-entry before it reads a node, its write verbs entering the attempt's doors,
+# which refuse it. Keyed by reaching module and private module, so another
+# importer is a new §7 decision.
 ACCEPTED_PRIVATE_LIFECYCLE_REACHES: frozenset[tuple[str, str]] = frozenset(
     {
         *(
@@ -389,6 +390,7 @@ ACCEPTED_PRIVATE_LIFECYCLE_REACHES: frozenset[tuple[str, str]] = frozenset(
                 "_scope",
                 "_transaction._attempt",
                 "_transaction._runner",
+                "_write_step_executor",
             )
         ),
         ("parallax.core._execution._root", "parallax.core.execution_lifecycle._pool_observation"),

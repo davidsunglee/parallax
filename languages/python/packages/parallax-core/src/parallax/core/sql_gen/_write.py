@@ -67,7 +67,12 @@ from parallax.core.write_plan.steps import (
     WriteTarget,
 )
 
-__all__ = ["InsertStatementBuilder", "StepPayload", "compile_write_step", "effect_bind_bound"]
+__all__ = [
+    "InsertStatementBuilder",
+    "StepPayload",
+    "compile_write_step",
+    "effect_parameter_ceiling",
+]
 
 type StepPayload = tuple[RowPayload, ...] | AssignmentPayload | None
 """The prepared values one step's statement stores: one Row Payload per insert
@@ -153,11 +158,11 @@ def compile_write_step(
             return _lower_milestone_guard(step, meta, dialect)
 
 
-def effect_bind_bound(
+def effect_parameter_ceiling(
     step: PlannedClose | PlannedTemporalRevision | PlannedTemporalRemoval | PlannedTemporalGuard,
 ) -> int:
-    """The most binds ``step``'s statement carries, known before its payload is
-    prepared.
+    """A conservative upper bound on the SQL parameters ``step``'s statement
+    carries, computed before its payload is prepared.
 
     The milestone address binds each key value, at most one table-per-hierarchy
     tag, and each axis end, and a gate binds once more. Each member a revising
@@ -165,13 +170,13 @@ def effect_bind_bound(
     a value in the shared Structured Column's mutation expression (`m-dialect`).
     """
     target = step.target
-    bound = len(target.key_values) + 1 + len(target.end_values)
+    ceiling = len(target.key_values) + 1 + len(target.end_values)
     if isinstance(step.concurrency, TemporalGate):
-        bound += 1
+        ceiling += 1
     if isinstance(step, PlannedClose | PlannedTemporalRevision):
         assignments = step.assignments
-        bound += 2 * (len(assignments.attributes) + len(assignments.value_objects))
-    return bound
+        ceiling += 2 * (len(assignments.attributes) + len(assignments.value_objects))
+    return ceiling
 
 
 def _row_payloads(step: PlannedInsert, payload: StepPayload) -> tuple[RowPayload, ...]:

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Callable, Sequence
-from typing import Any, Final, Literal, Protocol, Self, cast, overload
+from collections.abc import Callable
+from typing import Any, Literal, Protocol, Self, cast, overload
 
 from parallax.core import deep_fetch, inheritance
 from parallax.core._execution._family import entity_layout
@@ -38,11 +38,6 @@ from parallax.core._execution._unit_work.acquisition import (
     TargetReadRequest,
 )
 from parallax.core._execution._unit_work.clock import Clock
-from parallax.core._execution._unit_work.effects import (
-    allocated_keys,
-    enforce_affected_rows,
-    returns_rows,
-)
 from parallax.core._execution._unit_work.instructions import (
     KeyedMutation,
     PredicateMutation,
@@ -61,20 +56,10 @@ from parallax.core._execution._unit_work.uow import (
     UnitOfWork,
     WriteBatchReason,
 )
-from parallax.core._execution._write_lowering import LoweringCursor
+from parallax.core._execution._write_step_executor import WriteStepExecutor
 from parallax.core.base import ManagedValue
-from parallax.core.db_port import (
-    DatabaseConnection,
-    OrderedWriteResult,
-    OrderedWriteResultComplete,
-    OrderedWriteResultIntegrityError,
-    OrderedWriteResultInterrupted,
-    OrderedWriteTransport,
-    StatementFailed,
-    StatementNotExecuted,
-)
+from parallax.core.db_port import DatabaseConnection
 from parallax.core.deep_fetch import PlannedEntityQuery
-from parallax.core.diagnostics import qualified_type
 from parallax.core.dialect import LockMode
 from parallax.core.entity import EntityRowCodec
 from parallax.core.entity._layout import CatalogedModel
@@ -85,7 +70,6 @@ from parallax.core.execution_lifecycle._activity import (
     DatabaseCallScope,
     InstalledLifecycle,
     JoinedInvocationActivity,
-    OrderedCallObservation,
     ReadActivity,
     StreamActivity,
     StreamBatchActivity,
@@ -113,13 +97,10 @@ from parallax.core.read_delivery._row_lane import (
     publishable_member_rows,
 )
 from parallax.core.read_delivery._stream import StreamDelivery, check_batch_size
-from parallax.core.sql_gen import LoweredStatement
 from parallax.core.sql_gen._compile import CompiledRead, compile_read
 from parallax.core.temporal_read import Pin
 from parallax.core.write_plan import WritePlan
 from parallax.core.write_plan.plan import BoundRange, ExecutionUnit, UnitEffects, WriteStepView
-from parallax.core.write_plan.steps import PlannedInsert
-from parallax.core.write_plan.steps import PlannedWrite as PlannedStep
 
 __all__ = [
     "PredicateWriteAdapter",
@@ -129,12 +110,6 @@ __all__ = [
     "TargetWriteVerb",
     "TxnAttempt",
 ]
-
-_ORDERED_STATEMENTS: Final = 64
-"""The most statements one ordered write transport invocation presents. It
-bounds the original and lowered statement pairs live at once, and how far past
-a shortfall not yet enforced the database may already have run; a longer run of
-effects continues in another invocation once this one is enforced."""
 
 
 PredicateWriteVerb = Literal["amend", "delete", "terminate"]
@@ -491,7 +466,7 @@ class TxnAttempt(_TxnAttemptBase):
     about what it stores.
     """
 
-    __slots__ = ("_batch", "_options", "_ordered", "_uow", "_write")
+    __slots__ = ("_batch", "_options", "_step_executor", "_uow", "_write")
 
     def __init__(
         self,
@@ -510,10 +485,12 @@ class TxnAttempt(_TxnAttemptBase):
         super().__init__(
             connection, read, activity, lifecycle=lifecycle, planner=planner, lifetime=lifetime
         )
-        # Read once: a connection's transport capability is fixed for its
-        # lifetime, and every flush of this attempt runs on this connection.
-        self._ordered = connection.ordered_write_transport
         self._write = write
+        # Every flush of this attempt executes its steps on this connection
+        # through this one executor, handing it the flush's own Write Batch.
+        self._step_executor = WriteStepExecutor(
+            connection, payloads=write.planner.payloads, meta=write.model.meta
+        )
         # The invocation's resolved record, shared by reference across every
         # attempt of the invocation: what a joining call is compared against,
         # and what a caller inspects, without ambient state on either path.
@@ -936,360 +913,6 @@ class TxnAttempt(_TxnAttemptBase):
         return effects
 
     def _execute_steps(self, steps: WriteStepView, /, *, allocates: bool) -> tuple[object, ...]:
-        """Lower, execute, and enforce each of ``steps`` in order, and answer
-        the keys the database allocated, in step order, where the unit
-        ``allocates`` any.
-
-        Each statement stores the payload the adopted planner's preparer
-        prepares for it when its turn comes. A temporal mutation's effect on
-        its predecessor precedes the rows it opens, so a failure there aborts
-        BEFORE those rows ever execute. A step that runs alone is lowered only
-        once every earlier step has been enforced, and nothing is lowered ahead
-        of that but the one step a run takes to find where it ends, which waits
-        unprepared. Where the connection has ordered write transport, a run of
-        two or more contiguous count-only temporal effects is instead lowered
-        whole and presented together before any of it is enforced
-        (:meth:`_run_ordered`). A run of contiguous compatible temporal
-        openings is inserted by one multi-row statement (:meth:`_run_openings`),
-        each opening remaining its own step.
-
-        This performs NO classification of its own: the adopted Write Planner
-        already spent the concurrency mode while settling each step, and this
-        reports only the driver's count to
-        :func:`~parallax.core.unit_work.enforce_affected_rows`, which owns the
-        authoritative reading of the step's Affected Rows Policy (ADR 0048).
-        That enforcement runs inside its own attribution bracket, because a
-        shortfall is judged AFTER the call it judges has already completed: the
-        bracket is what lets the batch's failure name that completed call
-        instead of the enforcement being read as a failure of the batch itself.
-
-        An insert whose key the database allocates for a row the unit records
-        answers that key: it runs as row-producing DML, core reads the key from
-        the rows it returned (:func:`~parallax.core.unit_work.allocated_keys`)
-        inside the same bracket, and the unit is reported with it.
-        """
-        allocated: list[object] = []
-        transport = self._ordered
-        cursor = LoweringCursor(
-            steps, self._write.planner.payloads, self._write.model.meta, self._connection.dialect
-        )
-        step = cursor.take()
-        while step is not None:
-            if transport is not None:
-                bound = cursor.ordered_bound(step)
-                if bound is not None:
-                    step = self._run_ordered(step, bound, cursor, transport)
-                    continue
-            first = cursor.opening(step)
-            if first is not None:
-                step = self._run_openings(first, cursor)
-                continue
-            statement = cursor.lowered(step)
-            if allocates and returns_rows(step):
-                allocated.extend(self._run_returning(step, statement))
-            else:
-                self._run(step, statement)
-            step = cursor.take()
-        return tuple(allocated)
-
-    def _run_ordered(
-        self,
-        first: PlannedStep,
-        bound: int,
-        cursor: LoweringCursor,
-        transport: OrderedWriteTransport,
-    ) -> PlannedStep | None:
-        """Present ``first`` and the effects following it in one ordered
-        transport invocation, enforce what it established, and answer the step
-        after the run — taken from ``cursor`` but not lowered — or ``None``
-        where ``cursor`` ran out.
-
-        The step after ``first`` is taken before anything is lowered: where
-        transport cannot carry it, or none remains, ``first`` would be the
-        run's only effect and runs alone instead. Taking it may fail
-        ordinarily, and ``first`` then runs alone before that failure
-        propagates, exactly as it would have without the look ahead.
-
-        Otherwise the run ends before a step transport cannot carry, and at
-        :data:`_ORDERED_STATEMENTS` before another step is even taken. Taking
-        or lowering a later effect may fail ordinarily: the effects already
-        lowered are then presented and enforced as they were selected, and only
-        if they succeed does that failure propagate. ``first`` failing presents
-        nothing, and a control-flow or fatal exception presents none of them.
-        """
-        following, following_bound, failure = _look_ahead(cursor)
-        if following is None or following_bound is None:
-            try:
-                self._run_alone(first, cursor, failure)
-            finally:
-                # Where the lone effect's own failure overtakes this one, this
-                # frame must not keep it reachable from that failure either.
-                failure = None
-            return following
-        chunk = _LoweredWriteChunk()
-        chunk.append(first, cursor.lowered_within(first, bound))
-        capped = True
-        while True:
-            try:
-                chunk.append(following, cursor.lowered_within(following, following_bound))
-                following = None
-                if len(chunk) >= _ORDERED_STATEMENTS:
-                    break
-                following = cursor.take()
-                if following is None:
-                    capped = False
-                    break
-                following_bound = cursor.ordered_bound(following)
-                if following_bound is None:
-                    capped = False
-                    break
-            except Exception as error:
-                failure = error
-                break
-        try:
-            self._present(chunk, transport)
-        except BaseException:
-            # The prefix's own failure is the one raised; the lowering failure
-            # it overtook is dropped rather than kept reachable from it.
-            failure = None
-            raise
-        if failure is not None:
-            raise failure
-        return cursor.take() if capped else following
-
-    def _run_alone(
-        self, step: PlannedStep, cursor: LoweringCursor, failure: Exception | None
-    ) -> None:
-        """Run ``step`` alone, then raise ``failure`` — the ordinary failure
-        taking the step after it raised — only where ``step`` succeeded."""
-        try:
-            self._run(step, cursor.lowered(step))
-        except BaseException:
-            failure = None
-            raise
-        if failure is not None:
-            raise failure
-
-    def _present(self, chunk: _LoweredWriteChunk, transport: OrderedWriteTransport) -> None:
-        """Present ``chunk`` through ``transport`` in one invocation, then
-        enforce, in original order, what the result established.
-
-        The whole result is proved well formed before any call finishes from
-        it or any count is enforced, so a malformed entry outranks an earlier
-        shortfall.
-        """
-        chunk.seal()
-        with self._batch.ordered_calls(chunk) as observation:
-            result = observation.invoke(transport, chunk)
-            _validate_ordered_result(result, len(chunk))
-            observation.finish_calls(result)
-            _enforce_ordered_result(chunk, result, observation)
-
-    def _run_openings(self, first: PlannedInsert, cursor: LoweringCursor) -> PlannedStep | None:
-        """Insert ``first`` and the compatible openings following it with one
-        statement (:meth:`LoweringCursor.lowered_opening`), and answer the step
-        after the run — taken from ``cursor`` but not lowered — or ``None``
-        where ``cursor`` ran out.
-
-        The statement is one ordinary Database Call, enforced as an insert is,
-        and its failure is the whole statement's own: it is neither attributed
-        to one of the openings nor replayed one opening at a time. A later
-        opening failing ordinarily to be taken or prepared ends the run: the
-        openings appended before it are inserted as selected, and only if they
-        succeed does that failure propagate. ``first`` failing inserts nothing,
-        and a control-flow or fatal exception inserts none of the run. The step
-        after a run that reached its capacity is taken only once the run's
-        statement has run.
-        """
-        statement, following, failure = cursor.lowered_opening(first)
-        try:
-            self._run(first, statement)
-        except BaseException:
-            # The statement's own failure is the one raised; the preparation
-            # failure it overtook is dropped rather than kept reachable from it.
-            failure = None
-            raise
-        if failure is not None:
-            raise failure
-        return cursor.take() if following is None else following
-
-    def _run(self, step: PlannedStep, statement: LoweredStatement) -> None:
-        batch = self._batch
-        connection = self._connection
-        with batch.database_call(statement, "write", step.entity) as call:
-            affected = connection.execute_write(
-                connection.dialect.to_driver_sql(statement.sql), list(statement.binds)
-            )
-            call.write_completed(affected)
-        with batch.enforcing(call):
-            enforce_affected_rows(step, affected)
-
-    def _run_returning(
-        self, step: PlannedInsert, statement: LoweredStatement
-    ) -> tuple[object, ...]:
-        batch = self._batch
-        connection = self._connection
-        with batch.database_call(statement, "write", step.entity) as call:
-            rows = connection.execute(
-                connection.dialect.to_driver_sql(statement.sql), list(statement.binds)
-            )
-            call.write_rows_completed(rows)
-        with batch.enforcing(call):
-            return allocated_keys(step, rows)
-
-
-class _LoweredWriteChunk(Sequence[LoweredStatement]):
-    """The statements one ordered transport invocation presents, each held
-    with the exact original step it was lowered from.
-
-    Transport and observation read it as the statements; enforcement reads
-    each original back by position, so a lazily built step is never rebuilt
-    to be enforced. It is sealed before it is presented and stays unchanged
-    until its result has been enforced.
-    """
-
-    __slots__ = ("_sealed", "_statements", "_steps")
-
-    def __init__(self) -> None:
-        self._steps: list[PlannedStep] = []
-        self._statements: list[LoweredStatement] = []
-        self._sealed = False
-
-    def append(self, step: PlannedStep, statement: LoweredStatement) -> None:
-        if self._sealed:
-            raise RuntimeError("a presented write chunk admits no further statement")
-        self._steps.append(step)
-        self._statements.append(statement)
-
-    def seal(self) -> None:
-        self._sealed = True
-
-    def __len__(self) -> int:
-        return len(self._statements)
-
-    @overload
-    def __getitem__(self, index: int, /) -> LoweredStatement: ...
-
-    @overload
-    def __getitem__(self, index: slice, /) -> Sequence[LoweredStatement]: ...
-
-    def __getitem__(self, index: int | slice, /) -> LoweredStatement | Sequence[LoweredStatement]:
-        return self._statements[index]
-
-    def step(self, index: int) -> PlannedStep:
-        return self._steps[index]
-
-    def target(self, index: int) -> ActivityTarget:
-        return self._steps[index].entity
-
-
-def _look_ahead(cursor: LoweringCursor) -> tuple[PlannedStep | None, int | None, Exception | None]:
-    """The step after an effect, taken from ``cursor`` but not lowered, with
-    the bound ordered transport would carry it within, or else the ordinary
-    failure taking it raised."""
-    try:
-        following = cursor.take()
-        return following, None if following is None else cursor.ordered_bound(following), None
-    except Exception as error:
-        return None, None, error
-
-
-def _integrity(problem: str) -> OrderedWriteResultIntegrityError:
-    return OrderedWriteResultIntegrityError(f"an ordered write transport result {problem}")
-
-
-def _validate_ordered_result(result: object, presented: int) -> None:
-    """Refuse ``result`` unless it is a well-formed answer for ``presented``
-    statements.
-
-    The whole structure is checked before anything reads it: its closed form,
-    an outcome or partition for exactly the statements presented, nonnegative
-    integer counts, Exception failures, and confirmed non-execution only after
-    a confirmed failure. An interrupted result's unsent suffix is explained by
-    the interruption itself.
-    """
-    failed = False
-    for index, outcome in enumerate(_confirmed(result, presented)):
-        if type(outcome) is int:
-            if outcome < 0:
-                raise _integrity(f"counts a negative number of rows for statement {index}")
-        elif isinstance(outcome, StatementFailed):
-            _require_exception(outcome.error, f"statement {index}'s failure")
-            failed = True
-        elif isinstance(outcome, StatementNotExecuted):
-            if not failed:
-                raise _integrity(
-                    f"reports statement {index} not executed after no confirmed failure"
-                )
-        else:
-            raise _integrity(f"reports a {qualified_type(outcome)} for statement {index}")
-
-
-def _confirmed(result: object, presented: int) -> tuple[object, ...]:
-    """``result``'s confirmed outcomes, once its form accounts for exactly
-    ``presented`` statements."""
-    match result:
-        case OrderedWriteResultComplete():
-            confirmed = _outcomes(result.outcomes)
-            if len(confirmed) != presented:
-                raise _integrity(f"answers {len(confirmed)} outcomes for {presented} statements")
-        case OrderedWriteResultInterrupted():
-            confirmed = _outcomes(result.confirmed)
-            unconfirmed = _span(result.unconfirmed_count, "unconfirmed")
-            unsent = _span(result.unsent_count, "unsent")
-            if len(confirmed) + unconfirmed + unsent != presented:
-                raise _integrity(
-                    f"partitions {len(confirmed)} confirmed, {unconfirmed} unconfirmed, and "
-                    f"{unsent} unsent statements of {presented}"
-                )
-            _require_exception(result.error, "its interruption")
-        case _:
-            raise _integrity(
-                f"is a {qualified_type(result)}, neither a complete nor an interrupted result"
-            )
-    return confirmed
-
-
-def _outcomes(outcomes: object) -> tuple[object, ...]:
-    if type(outcomes) is not tuple:
-        raise _integrity(f"holds its outcomes in a {qualified_type(outcomes)}, not a tuple")
-    return cast("tuple[object, ...]", outcomes)
-
-
-def _span(count: object, name: str) -> int:
-    if type(count) is not int or count < 0:
-        raise _integrity(
-            f"counts its {name} statements with a {qualified_type(count)} that is no "
-            "nonnegative integer"
-        )
-    return count
-
-
-def _require_exception(error: object, name: str) -> None:
-    if not isinstance(error, Exception):
-        raise _integrity(f"reports {name} as a {qualified_type(error)}, not an Exception")
-
-
-def _enforce_ordered_result(
-    chunk: _LoweredWriteChunk, result: OrderedWriteResult, observation: OrderedCallObservation
-) -> None:
-    """Interpret ``result``'s confirmed outcomes in original order, each
-    against its own original, then raise the interruption that ended it.
-
-    A count goes to the unit of work's enforcement, and a statement failure is
-    raised as itself, each attributed to its own call. An earlier shortfall
-    therefore outranks a later statement failure or interruption, and nothing
-    runs after the first failure.
-    """
-    confirmed = (
-        result.outcomes if isinstance(result, OrderedWriteResultComplete) else result.confirmed
-    )
-    for index, outcome in enumerate(confirmed):
-        with observation.enforcing(index):
-            if isinstance(outcome, StatementFailed):
-                raise outcome.error
-            # Confirmed non-execution only ever follows a confirmed failure,
-            # which has already been raised.
-            enforce_affected_rows(chunk.step(index), cast("int", outcome))
-    if isinstance(result, OrderedWriteResultInterrupted):
-        raise result.error
+        """Execute ``steps`` as calls of the Write Batch the current flush runs
+        inside."""
+        return self._step_executor.execute(steps, allocates=allocates, batch=self._batch)
