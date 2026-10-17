@@ -30,8 +30,8 @@ from parallax.core._execution._unit_work.materialized import (
     TemporalContribution,
     target_write,
 )
-from parallax.core._execution._unit_work.uow import bind_deferred_range
 from parallax.core._execution._unit_work.write_planner import compose_writes
+from parallax.core._execution._unit_work.write_runner import acquire_and_bind_range
 from parallax.core.base import INFINITY
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.unit_work import (
@@ -338,7 +338,7 @@ def test_a_deferred_range_its_planner_did_not_finalize_is_refused_before_any_rea
 
     held = HeldRows(_SPANS)
     with pytest.raises(TypeError, match="did not finalize"):
-        bind_deferred_range(
+        acquire_and_bind_range(
             _Foreign(),
             acquire_rows=held,
             planner=build_write_planner(_SPANS),

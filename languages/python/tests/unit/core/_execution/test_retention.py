@@ -26,6 +26,7 @@ from typing import Any, cast
 import pytest
 
 from parallax.conformance import models
+from parallax.conformance._simulated_write_steps import SimulatedWriteSteps
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import inheritance, opt_lock, temporal_read
 from parallax.core._execution._page_origins import ReadEvidenceCollector
@@ -38,6 +39,7 @@ from parallax.core._execution._retention import (
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
 from parallax.core._execution._unit_work.instructions import prepare_typed_write
 from parallax.core.base import INFINITY
+from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.read_delivery._page import (
@@ -55,14 +57,12 @@ from parallax.core.unit_work import (
     RetainedObservation,
     TransactionSettings,
     UnitOfWork,
-    WriteBatchReason,
     buffered_write,
 )
 from parallax.core.write_plan import (
     ObjectStateKey,
     TemporalObservation,
     VersionObservation,
-    WritePlan,
     object_state_key_from_observation,
 )
 from parallax.core.write_plan.keys import TemporalObjectStateKey, VersionedObjectStateKey
@@ -82,13 +82,6 @@ _TX_START = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 _VALID_START = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 _RATE_TX_START = dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
 _INFINITY = INFINITY
-
-
-def _no_flush(
-    _plan: WritePlan, *, trigger: WriteBatchReason, bind_deferred: object, completed: object
-) -> None:
-    """A flush sink for a test that never flushes."""
-    return None
 
 
 def _accepted(model_name: str) -> AcceptedMetamodel:
@@ -139,14 +132,15 @@ _VOYAGE_DOCUMENT: Mapping[str, object] = {
 
 
 def _unit_of_work(model: AcceptedMetamodel) -> UnitOfWork:
+    planner = build_write_planner(model)
     return UnitOfWork(
         lifetime=TxnAttemptLifetime(),
         settings=TransactionSettings(),
         clock=FixedClock(_FIXED),
         meta=model,
-        flush_executor=_no_flush,
+        execute_write_steps=SimulatedWriteSteps(planner.payloads, model, POSTGRES),
         acquire_rows=NO_ROW_READS,
-        planner=build_write_planner(model),
+        planner=planner,
         actor_identity=TEST_ACTOR_IDENTITY,
         evidence_policy_for=opt_lock.view(model).required_key,
     )

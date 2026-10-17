@@ -521,12 +521,17 @@ ACCEPTED_CONFORMANCE_PRIVATE_REACHES: dict[tuple[str, str], frozenset[str]] = {
     ),
     # The conformance-only runtime names the scenario and snapshot lanes drive the
     # production planner, lowering, and source-pin check through, read from the
-    # modules that own them, and the family-variant key a Wire node is spelled with.
+    # modules that own them, the dry lowering simulated step execution shares, and
+    # the family-variant key a Wire node is spelled with.
     ("parallax.conformance._lanes.scenario", "parallax.core._execution._planning"): frozenset(
         {"build_write_planner"}
     ),
     (
         "parallax.conformance._lanes.scenario",
+        "parallax.core._execution._write_lowering",
+    ): frozenset({"stream_physical"}),
+    (
+        "parallax.conformance._simulated_write_steps",
         "parallax.core._execution._write_lowering",
     ): frozenset({"stream_physical"}),
     ("parallax.conformance._lanes.scenario", "parallax.core._execution._keyed_writes"): frozenset(
@@ -573,13 +578,14 @@ ACCEPTED_CONFORMANCE_PRIVATE_REACHES: dict[tuple[str, str], frozenset[str]] = {
         "parallax.conformance._lanes.scenario",
         "parallax.core._execution._unit_work.materialized",
     ): frozenset({"readless_write", "target_write"}),
-    ("parallax.conformance._lanes.scenario", "parallax.core._execution._unit_work.uow"): frozenset(
-        {"bind_deferred_range"}
-    ),
     (
         "parallax.conformance._lanes.scenario",
         "parallax.core._execution._unit_work.write_planner",
     ): frozenset({"compose_writes"}),
+    (
+        "parallax.conformance._lanes.scenario",
+        "parallax.core._execution._unit_work.write_runner",
+    ): frozenset({"acquire_and_bind_range"}),
     (
         "parallax.conformance.temporal_state",
         "parallax.core._execution._unit_work.acquisition",

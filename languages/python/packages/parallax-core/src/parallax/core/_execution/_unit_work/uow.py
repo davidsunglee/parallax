@@ -15,7 +15,6 @@ from parallax.core._execution._unit_work.acquisition import (
     AcquireRows,
     SelectionReadRequest,
     TargetReadRequest,
-    consume_coverage,
     consume_selection,
     consume_target,
 )
@@ -57,12 +56,6 @@ from parallax.core._execution._unit_work.materialized import (
     readless_write,
     target_write,
 )
-from parallax.core._execution._unit_work.ranges import (
-    DeferredGroupRange,
-    DeferredTemporalRange,
-    coverage_reads,
-    retained_completion,
-)
 from parallax.core._execution._unit_work.retain import (
     InsertionIdentity,
     ParticipationToken,
@@ -80,6 +73,7 @@ from parallax.core._execution._unit_work.write_planner import (
     WritePlanner,
     WritePlanningRequest,
 )
+from parallax.core._execution._unit_work.write_runner import ExecuteWriteSteps, run_write_plan
 from parallax.core.base import INFINITY, TemporalBound, normalize_instant
 from parallax.core.inheritance import InheritanceEntityView
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
@@ -101,17 +95,12 @@ from parallax.core.write_plan.materialized import PredecessorRows
 from parallax.core.write_plan.observe import PredecessorRow
 from parallax.core.write_plan.plan import (
     AllocatedOpening,
-    BoundRange,
-    DeferredRange,
     Derivation,
     Descent,
     ExecutionUnit,
     Openings,
     OwnedEndpoint,
-    PlannedWrites,
-    TemporalWriteOwnership,
     UnitEffects,
-    WritePlan,
 )
 from parallax.core.write_plan.steps import Finite, KeyTarget
 
@@ -119,14 +108,10 @@ __all__ = [
     "NO_INSERTION_AUTHORITY",
     "WRITE_EVIDENCE_CODES",
     "AttemptLifetime",
-    "BindDeferredRange",
     "BufferOutcome",
     "Concurrency",
-    "DeferredWriteContinuation",
-    "ExecuteFlush",
     "NoInsertionAuthority",
     "OpenWriteBatch",
-    "ReportUnitCompletion",
     "RollbackOnlyError",
     "StoredTarget",
     "TransactionSettings",
@@ -135,7 +120,6 @@ __all__ = [
     "WriteBatchReason",
     "WriteEvidenceError",
     "WriteEvidenceErrorCode",
-    "bind_deferred_range",
 ]
 
 type WriteBatchReason = Literal["read_dependency", "pre_commit"]
@@ -152,85 +136,6 @@ The second trigger is named for WHEN it runs rather than for what it does,
 because "finalization" already names the planner stage every batch of either
 trigger goes through.
 """
-
-
-class ReportUnitCompletion(Protocol):
-    """How a :class:`ExecuteFlush` reports one execution unit it completed:
-    with the effects its deferred range's binding produced, if deferred, and
-    the key each of its inserts answered for a row whose key the database
-    allocated, in step order."""
-
-    def __call__(
-        self,
-        unit: ExecutionUnit,
-        bound: UnitEffects | None,
-        /,
-        *,
-        allocated: tuple[object, ...] = (),
-    ) -> None: ...
-
-
-class DeferredWriteContinuation(Protocol):
-    """A deferred unit's preparation, run in successive rounds at its turn:
-    each :meth:`pull` acquires and settles the next writes only after every
-    write the previous one answered has executed and been enforced.
-
-    ``None`` means no round remains; an empty collection is a round that
-    executes nothing. :meth:`finish` is legal only after that, and hands over
-    what the whole unit's success publishes without preparing anything more.
-    :meth:`close` releases whatever preparation still holds, however the unit
-    ended, without preparing or publishing anything.
-    """
-
-    def pull(self) -> PlannedWrites | None: ...
-
-    def finish(self) -> UnitEffects: ...
-
-    def close(self) -> None: ...
-
-
-class BindDeferredRange(Protocol):
-    """How a :class:`ExecuteFlush` has the unit of work bind a deferred range
-    at its unit's turn, once every earlier unit of the flush has completed: the
-    unit of work reads the range's coverage through its :class:`AcquireRows`
-    and binds the range to it, or answers the continuation that prepares it in
-    rounds."""
-
-    def __call__(self, description: DeferredRange, /) -> BoundRange | DeferredWriteContinuation: ...
-
-
-class ExecuteFlush(Protocol):
-    """The composition-layer sink a Write Plan is handed to for lowering and
-    execution. It is neutral because m-unit-work takes no m-sql edge.
-
-    ``trigger`` travels with the plan rather than being inferred by the sink: the
-    unit of work is the only participant that knows why it flushed, and an
-    observer downstream would otherwise have to reconstruct the reason from the
-    order it saw batches arrive in.
-
-    ``completed`` is called with each of the plan's execution units, in order,
-    as soon as every step of that unit has executed and been enforced, and
-    before any step of a later unit executes. A unit with a deferred range is
-    reached with no step: the executor binds it through ``bind_deferred`` once,
-    executes and enforces every bound step, and reports the unit with that
-    bound range — or, where binding answers a continuation, executes and
-    enforces each round it pulls until none remains and reports the unit with
-    what it finishes with, closing it however the unit ends. Every other unit
-    is reported with ``None``.
-    A unit opening rows whose keys the database allocates is reported with
-    those keys. A normal return reports every unit not yet reported; an
-    exception reports none after it.
-    """
-
-    def __call__(
-        self,
-        plan: WritePlan,
-        /,
-        *,
-        trigger: WriteBatchReason,
-        bind_deferred: BindDeferredRange,
-        completed: ReportUnitCompletion,
-    ) -> None: ...
 
 
 class WriteBatchScope(Protocol):
@@ -259,7 +164,7 @@ class OpenWriteBatch(Protocol):
     Called once per flush that has something to flush, BEFORE the buffered
     writes are planned and therefore before any statement exists, and the scope
     it answers spans planning as well as execution. A flush that fails in
-    planning is therefore inside the scope and never reaches the executor, which
+    planning is therefore inside the scope and never executes a step, which
     is the whole distinction this exists to make available: an observer can tell
     a batch that failed before it ran anything from work that is not a batch at
     all. Optional, because the shell itself needs nothing from it.
@@ -1034,13 +939,11 @@ class UnitOfWork:
         "_participation",
         "_pending",
         "_planner",
-        "_reported",
-        "_reporting",
         "_targets",
         "_transaction_instant",
         "acquire_rows",
         "clock",
-        "flush_executor",
+        "execute_write_steps",
         "meta",
         "settings",
         "write_batch_opening",
@@ -1053,7 +956,7 @@ class UnitOfWork:
         lifetime: AttemptLifetime,
         clock: Clock,
         meta: Metamodel,
-        flush_executor: ExecuteFlush,
+        execute_write_steps: ExecuteWriteSteps,
         acquire_rows: AcquireRows,
         planner: WritePlanner,
         actor_identity: ActorIdentity,
@@ -1064,7 +967,7 @@ class UnitOfWork:
         self._lifetime = lifetime
         self.clock = clock
         self.meta = meta
-        self.flush_executor = flush_executor
+        self.execute_write_steps = execute_write_steps
         self.acquire_rows = acquire_rows
         self.write_batch_opening = write_batch_opening
         # The injected Write Planner (`m-unit-work`'s single finalization
@@ -1110,8 +1013,6 @@ class UnitOfWork:
         # already holds, is known to predate any change completed in between.
         self._freshness = 0
         self._changed: dict[ObjectStateKey, int] = {}
-        self._reporting: tuple[ExecutionUnit, ...] = ()
-        self._reported = 0
         # This scope's participation identity: what a read of THIS unit of work
         # stamps on the values it produces, and what a keyed write tests its
         # source against.
@@ -1780,7 +1681,9 @@ class UnitOfWork:
         return read_fn()
 
     def flush(self, *, trigger: WriteBatchReason) -> None:
-        """Plan and execute the buffered writes (the injected executor lowers them).
+        """Plan the buffered writes and run the plan unit by unit, each span of
+        its steps executed and enforced through the injected
+        :class:`~parallax.core._execution._unit_work.write_runner.ExecuteWriteSteps`.
 
         ``trigger`` names which of the two flush reasons this call is, and every
         caller already knows its own: :meth:`read` serves a read dependency and
@@ -1790,16 +1693,17 @@ class UnitOfWork:
         planning reduces to no DML at all still ends the way it began.
 
         Each execution unit of the plan completes as soon as its steps succeed,
-        before the next unit executes: it spends the evidence every write it
-        composed was admitted through — an overwritten or physically empty one
-        included — invalidates evidence of the states it changed, retires the
-        owned rows it removed, and registers the rows it opened. Sources that
-        carry no observation are spent once the whole flush succeeds. Only an
-        update that assigns no member leaves its evidence eligible, because it
-        stated no write at all. Spending is idempotent, so a claim several
-        units carry is spent once.
+        before any step of the next unit is taken: it spends the evidence every
+        write it composed was admitted through — an overwritten or physically
+        empty one included — invalidates evidence of the states it changed,
+        retires the owned rows it removed, and registers the rows it opened. A
+        deferred unit binds at its turn against what every earlier unit
+        published. Sources that carry no observation are spent once the whole
+        flush succeeds. Only an update that assigns no member leaves its
+        evidence eligible, because it stated no write at all. Spending is
+        idempotent, so a claim several units carry is spent once.
 
-        A failure while executing, enforcing, or completing dooms the attempt's
+        A failure while executing, binding, or completing dooms the attempt's
         lifetime before it propagates, so a caller that catches it can do no
         further work and cannot commit. A planning refusal precedes
         execution and leaves the transaction usable.
@@ -1812,12 +1716,12 @@ class UnitOfWork:
             return
         opening = self.write_batch_opening
         if opening is None:
-            self._flush_buffer(trigger)
+            self._flush_buffer()
             return
         with opening(trigger):
-            self._flush_buffer(trigger)
+            self._flush_buffer()
 
-    def _flush_buffer(self, trigger: WriteBatchReason) -> None:
+    def _flush_buffer(self) -> None:
         # The planning request is the flush's last reference to the writes it
         # planned, so it ends with the call: once planning succeeds and the
         # buffer clears, what a plan's deferred unit took over is released as
@@ -1837,84 +1741,22 @@ class UnitOfWork:
         self._pending.clear()
         self._claims.clear()
         self._targets.end_flush(removed)
-        units = plan.units
-        self._reporting = units
-        self._reported = 0
         try:
-            self.flush_executor(
-                plan,
-                trigger=trigger,
-                bind_deferred=self._bind_deferred,
-                completed=self._report,
-            )
-            for unit in units[self._reported :]:
-                self._report(unit, None)
+            run_write_plan(self, plan, self.execute_write_steps)
             for source in sources:
                 source.consume()
         except BaseException as failure:
             self._lifetime.doom(failure)
             raise
         finally:
-            self._reporting = ()
             self._targets.release_continuity()
-
-    def _bind_deferred(
-        self, description: DeferredRange, /
-    ) -> BoundRange | DeferredWriteContinuation:
-        """Bind a deferred range of the running flush under this attempt's
-        current ownership and continuity proofs — those every earlier unit
-        published — and its configured audit; a deferred group answers the
-        continuation that settles it in batches."""
-        if isinstance(description, DeferredGroupRange):
-            return self._planner.continue_group(
-                description,
-                acquire_rows=self.acquire_rows,
-                ownership=self._targets,
-                actor_identity=self._actor_identity,
-                transaction_instant=self._transaction_instant,
-            )
-        return bind_deferred_range(
-            description,
-            acquire_rows=self.acquire_rows,
-            planner=self._planner,
-            ownership=self._targets,
-            actor_identity=self._actor_identity,
-            transaction_instant=self._transaction_instant,
-            current=self._current,
-        )
-
-    def _report(
-        self,
-        unit: ExecutionUnit,
-        bound: UnitEffects | None,
-        /,
-        *,
-        allocated: tuple[object, ...] = (),
-    ) -> None:
-        reported = self._reported
-        units = self._reporting
-        if reported >= len(units) or unit is not units[reported]:
-            raise UnitOfWorkError(
-                "an execution unit was reported out of order, or was not one of the plan's"
-            )
-        if (unit.deferred is None) != (bound is None):
-            raise UnitOfWorkError(
-                "a deferred range is reported with the effects its binding produced, and no "
-                "other unit is"
-            )
-        if len(allocated) != len(unit.opened.allocated):
-            raise UnitOfWorkError(
-                f"an execution unit opening {len(unit.opened.allocated)} row(s) whose keys the "
-                f"database allocates was reported with {len(allocated)} key(s)"
-            )
-        self._reported = reported + 1
-        self._complete(unit, unit if bound is None else bound, allocated)
 
     def _complete(
         self, unit: ExecutionUnit, effects: UnitEffects, allocated: tuple[object, ...]
     ) -> None:
-        """Publish one successful execution unit's ``effects``: its own, or
-        those of the range its deferred coverage bound.
+        """Publish one successful execution unit's ``effects``: its own, those
+        of the range its deferred coverage bound, or what its deferred group
+        finished with.
 
         Every source authority the unit's writes settled against is spent;
         live evidence of every state it changed is invalidated and the change
@@ -1973,56 +1815,6 @@ class UnitOfWork:
         self._targets.clear()
         self._observations.clear()
         self._changed.clear()
-
-
-def bind_deferred_range(
-    description: DeferredRange,
-    /,
-    *,
-    acquire_rows: AcquireRows,
-    planner: WritePlanner,
-    ownership: TemporalWriteOwnership,
-    actor_identity: ActorIdentity,
-    transaction_instant: TransactionInstant,
-    current: Callable[[ObjectStateKey, int], bool] | None = None,
-) -> BoundRange:
-    """``description`` read and bound: the starting rows it retained that are
-    still ``current`` completed through ``acquire_rows``, which reads nothing
-    for them, then only the coverage nothing it holds covers read through
-    ``acquire_rows``, every row sealed as Predecessor Rows while its read's
-    resources are live, then bound by the ``planner`` that finalized it under
-    ``ownership``, each row it produces and close it emits audited once.
-
-    Without ``current`` no retained row is judged current, so each is
-    discarded unjudged and its coverage read instead.
-
-    The one interpreter of a deferred description: a description ``planner``
-    did not finalize is refused before anything is read.
-    """
-    if not isinstance(description, DeferredTemporalRange):
-        raise TypeError(
-            f"a deferred range this planner did not finalize cannot be bound: {description!r}"
-        )
-    completion = retained_completion(description, current or _never_current)
-    reused = None if completion is None else acquire_rows(completion, consume_coverage)
-    acquired: list[PredecessorRows] = []
-    for request in coverage_reads(description, reused):
-        rows = acquire_rows(request, consume_coverage)
-        if rows is not None:
-            acquired.append(rows)
-    return planner.bind_deferred(
-        description,
-        reused,
-        acquired,
-        ownership=ownership,
-        actor_identity=actor_identity,
-        transaction_instant=transaction_instant,
-    )
-
-
-def _never_current(state: ObjectStateKey, read_at: int) -> bool:
-    del state, read_at
-    return False
 
 
 def _require_one_start(

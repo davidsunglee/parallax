@@ -92,7 +92,7 @@ from tests.unit._corpus_identity_support import corpus_entity
 from tests.unit._gc_reachability import reachable_objects
 from tests.unit._temporal_group_support import temporal_group
 from tests.unit.core import _milestone_rows_support as milestone_rows
-from tests.unit.core._execution._unit_work._acquired_rows_support import drive_group
+from tests.unit.core._execution._unit_work._acquired_rows_support import HeldRows, prepared_group
 from tests.unit.core._execution._unit_work._audit_support import RecordingAudit
 from tests.unit.core._execution._unit_work._ownership_support import OpenedRows
 
@@ -797,7 +797,10 @@ def test_a_materialized_plan_shares_an_assigned_document_and_the_retained_predec
         )
     )
     (unit,) = plan.units
-    steps = drive_group(_BRANCH, unit, transaction_instant=instant).steps
+    continuation = prepared_group(_BRANCH, unit, HeldRows(_BRANCH), transaction_instant=instant)
+    writes = continuation.pull()
+    assert writes is not None
+    steps = list(writes)
     changed = cast("PlannedInsert", steps[2])
     (entry,) = changed.entries
     assert isinstance(entry.origin, ChangedFrom)

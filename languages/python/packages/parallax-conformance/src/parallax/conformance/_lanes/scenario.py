@@ -69,8 +69,8 @@ from parallax.core._execution._unit_work.instructions import (
     WriteInstruction,
 )
 from parallax.core._execution._unit_work.materialized import readless_write, target_write
-from parallax.core._execution._unit_work.uow import bind_deferred_range
 from parallax.core._execution._unit_work.write_planner import compose_writes
+from parallax.core._execution._unit_work.write_runner import acquire_and_bind_range
 from parallax.core._execution._write_lowering import stream_physical
 from parallax.core.base import (
     INFINITY,
@@ -1318,7 +1318,7 @@ def _planned(
                 "a range write reached coverage no observation of its unit holds, and "
                 "this lane tracks no case state to bind it to"
             )
-        bound = bind_deferred_range(
+        bound = acquire_and_bind_range(
             deferred,
             acquire_rows=acquire_rows,
             planner=planner,

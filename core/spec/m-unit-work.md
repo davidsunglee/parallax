@@ -11,8 +11,8 @@ Write algebra it produces and the Write Observations it carries, on
 derivation, but **not** on `m-sql`. The
 dialect-specific SQL the unit of work executes (the read-lock suffix, the
 set-based forms) is produced by `m-sql` and run by the execution runtime
-(`m-execution`) through the flush, write-batch, and row-acquisition ports this
-module declares, so `m-unit-work` takes no direct edge to SQL generation. (`m-op-list` and
+(`m-execution`) through the step-execution, write-batch, and row-acquisition
+ports this module declares, so `m-unit-work` takes no direct edge to SQL generation. (`m-op-list` and
 `m-navigate` in turn depend on `m-unit-work`, because a list is an
 query-backed view resolved within a unit of work.)
 
@@ -852,7 +852,7 @@ semantics already decided.
   assignments over that range, the source conditions, and the resolved instant —
   together with the one coverage read that range needs. Such a unit carries no
   planned step, and its meaning is data: it retains no binder, Attempt
-  Ownership, clock, strategy, or Actor Identity. When the executor reaches it,
+  Ownership, clock, strategy, or Actor Identity. When the flush reaches it,
   the unit of work acquires the object's current rows over the range not
   already covered (*Row acquisition*) — inside the write batch and under
   `m-read-lock`'s shared lock when the effective strategy is Locking — and binds
@@ -893,9 +893,10 @@ semantics already decided.
   answers a **continuation** rather than steps: preparation in rounds, each
   round the Planned Writes of the next batch of complete objects — possibly
   none — settled only after every step of the round before it has executed and
-  been enforced. Iterating or indexing a round's Planned Writes acquires and
-  settles nothing. Once no round remains the continuation hands over what the
-  whole unit's success publishes, and however the unit ends its preparation is
+  been enforced, and nothing of that round is still held. Iterating or
+  indexing a round's Planned Writes acquires and settles nothing. Once no
+  round remains the continuation hands over what the whole unit's success
+  publishes, and however the unit ends its preparation is
   released without preparing or publishing anything more; a failure releasing
   it after an earlier failure leaves that earlier failure the one reported, and
   one with no earlier failure refuses the unit's success.
@@ -918,10 +919,13 @@ semantics already decided.
 
 ### Execution units complete before later work runs
 
-The executor runs a Write Plan's steps in order and reports each execution unit
-as soon as every step of that unit has executed and its effect has been
-enforced, before any step of a later unit runs. The unit of work then completes
-the unit synchronously:
+The unit of work runs a finalized Write Plan unit by unit, in order. It hands
+each span of Planned Writes — a unit's planned steps, the steps its deferred
+range bound, or one round of its deferred group — to the step-execution port,
+which executes every step of the span and has its effect enforced. As soon as
+every step of a unit has succeeded — at once for a unit with no step — and
+before any step of a later unit is taken, the unit of work completes the unit
+synchronously:
 
 ```text
 spend the source authority of every write the unit composed

@@ -645,7 +645,9 @@ which `tools/check_scope_ownership.py` demands (*Filesystem ownership*, below).
   ones a real write settles against; both are implementation-private, so no
   exported name reaches them. The scenario lane lowers a bound deferred range's
   steps through that same `stream_physical` rather than reaching the `m-sql`
-  write-step compiler, and the case loader's `wire._json.authored_number` reach is the production YAML
+  write-step compiler, as does conformance support's simulated step
+  execution, which lowers each span a unit of work hands it without a
+  database. The case loader's `wire._json.authored_number` reach is the production YAML
   token-preservation seam. Compatibility inputs use canonical Wire literals, so
   case ingress needs no private token-inspection reach. Case ingress does reach
   `parallax.core.document_codec._authoring` for exactly `prepare_authoring` and

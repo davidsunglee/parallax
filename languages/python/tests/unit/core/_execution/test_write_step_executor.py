@@ -34,7 +34,8 @@ from parallax.core.execution_lifecycle import (
 from parallax.core.metamodel import AttributeIdentity, entity_by_name
 from parallax.core.sql_gen import LoweredStatement, SqlGenError
 from parallax.core.unit_work import KeyedWrite, MissingTargetError, WritePlanningRequest
-from parallax.core.write_plan.plan import PlannedWrites
+from parallax.core.write_plan import WritePlan
+from parallax.core.write_plan.plan import ExecutionUnit, PlannedWrites
 from parallax.core.write_plan.steps import (
     MISSING_TARGET,
     UNVERSIONED,
@@ -54,6 +55,7 @@ from tests.unit.core._execution._write_step_support import (
     close,
     opening,
     physical,
+    run_plan,
     step_executor,
     write_batch,
 )
@@ -260,6 +262,52 @@ def test_the_statements_a_span_runs_are_the_ones_its_dry_traversal_answers(
     assert executed.raised is None
     assert port.calls == statements
     assert all(isinstance(call, WriteCall) for call in port.calls)
+
+
+@dataclass
+class _Claim:
+    """Source authority recording how many port calls had been made when a
+    unit spent it."""
+
+    port: ScriptedAdapter
+    spent_at: int | None = None
+
+    def consume(self) -> None:
+        self.spent_at = len(self.port.calls)
+
+
+def test_a_run_of_openings_never_reaches_into_a_later_units_span() -> None:
+    first = (close(1), opening(1), opening(2), opening(3))
+    second = (opening(5),)
+    port = ScriptedAdapter(Write(), Write(affected=3), Write())
+    claims = (_Claim(port), _Claim(port))
+    plan = WritePlan(
+        steps=PlannedWrites((HeldSteps(port, (*first, *second)),)),
+        units=(ExecutionUnit(end=4, claim=claims[0]), ExecutionUnit(end=5, claim=claims[1])),
+    )
+    with write_batch() as batch:
+        run_plan(port, plan, batch)
+    assert port.calls == [*physical(*first), *physical(*second)]
+    # Each unit completed once its own statements ran.
+    assert [claim.spent_at for claim in claims] == [2, 3]
+
+
+def test_a_unit_whose_grouped_statement_fails_completes_nothing_and_takes_no_later_step() -> None:
+    violation = DatabaseError(
+        category="uniqueViolation", native_code="23505", message="duplicate key"
+    )
+    port = ScriptedAdapter(Write(), Write(raises=violation))
+    segment = HeldSteps(port, (close(1), opening(1), opening(2), opening(3), opening(5)))
+    claims = (_Claim(port), _Claim(port))
+    plan = WritePlan(
+        steps=PlannedWrites((segment,)),
+        units=(ExecutionUnit(end=4, claim=claims[0]), ExecutionUnit(end=5, claim=claims[1])),
+    )
+    with pytest.raises(DatabaseError) as raised, write_batch() as batch:
+        run_plan(port, plan, batch)
+    assert raised.value is violation
+    assert segment.taken == [0, 1, 2, 3]
+    assert [claim.spent_at for claim in claims] == [None, None]
 
 
 def _builders() -> set[int]:
