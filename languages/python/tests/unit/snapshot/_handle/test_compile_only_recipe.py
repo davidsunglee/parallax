@@ -1,9 +1,10 @@
 """The compile-only recipe, and the runtime Write Plan that is never published.
 
-Two halves of one contract. The compile lane reaches production's planning path
-DIRECTLY — ``buffered_write`` into ``build_write_planner(model).finalize(...)`` into
-``stream_physical(...)`` — so the emission oracle and the executed SQL are one
-computation rather than two that agree. And runtime returns and retains no
+Two halves of one contract. The compile lane reaches production's write path
+DIRECTLY — each simulated transaction buffers into an ordinary ``UnitOfWork``
+planned by ``build_write_planner(model)``, whose steps simulated step execution
+lowers through ``stream_physical(...)`` — so the emission oracle and the
+executed SQL are one computation rather than two that agree. And runtime returns and retains no
 ``WritePlan``: there is no ``plan_neutral``, no ``compile_neutral``, no
 ``connect_neutral``, and no public flush, so a caller can neither reach a plan nor
 decide when one executes.
@@ -22,12 +23,12 @@ from typing import Any, cast
 import pytest
 
 import parallax.snapshot
-from parallax.conformance import case_format, engine
+from parallax.conformance import _simulated_write_steps, case_format, engine
 from parallax.conformance._lanes import scenario
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._write_lowering import stream_physical
 from parallax.core.dialect import POSTGRES
-from parallax.core.unit_work import WritePlanner, WritePlanningRequest
+from parallax.core.unit_work import UnitOfWork, WritePlanner, WritePlanningRequest
 from parallax.core.write_payload import LayoutPayloadPreparer
 from parallax.core.write_plan import WritePlan
 from parallax.snapshot import Database, TxnContext
@@ -48,11 +49,14 @@ _CASE: Path = (
 
 def test_the_compile_lane_names_the_same_seams_the_runtime_flush_does() -> None:
     """Not "an equivalent planner" — the identical factory ``ScopedDatabase.transact``
-    injects, and the lowering traversal over execution's own cursor operations,
-    reached under their own names."""
+    injects, the unit of work an attempt runs its flushes through, and the
+    lowering traversal over execution's own cursor operations, reached under
+    their own names."""
     lane: Mapping[str, object] = vars(scenario)
     assert lane["build_write_planner"] is build_write_planner
-    assert lane["stream_physical"] is stream_physical
+    assert lane["UnitOfWork"] is UnitOfWork
+    execution: Mapping[str, object] = vars(_simulated_write_steps)
+    assert execution["stream_physical"] is stream_physical
 
 
 def test_the_compile_lane_emits_exactly_one_plans_own_lowering(

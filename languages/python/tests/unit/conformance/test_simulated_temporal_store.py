@@ -5,9 +5,8 @@ observed current milestone are proven end to end through the engine's own
 writeSequence/scenario tests (``test_engine.py``, ``test_compile_sweep.py``,
 ``test_run_sweep.py``); this module pins the store's OWN seam directly —
 fixture seeding, resolution, addressing a row by its complete address, applying
-planned steps to the rows, the transaction that restores them, and the legacy
-advance-from-plan-output path — including the disambiguation refusals no
-reachable corpus case witnesses.
+planned steps to the rows, and the transaction that restores them — including
+the disambiguation refusals no reachable corpus case witnesses.
 """
 
 from __future__ import annotations
@@ -33,7 +32,12 @@ from parallax.core._execution._unit_work.acquisition import CoverageReadRequest,
 from parallax.core._execution._unit_work.instructions import KeyedWrite, PreparedKeyedWrite
 from parallax.core._execution._unit_work.write_planner import compose_writes
 from parallax.core.base import INFINITY
-from parallax.core.metamodel import AttributeIdentity, EntityIdentity, ValueObjectIdentity
+from parallax.core.metamodel import (
+    AttributeIdentity,
+    EntityIdentity,
+    Metamodel,
+    ValueObjectIdentity,
+)
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.unit_work import (
     SubjectActor,
@@ -41,8 +45,6 @@ from parallax.core.unit_work import (
     WritePlanningRequest,
     buffered_write,
 )
-from parallax.core.write_plan import PredecessorRow, TemporalObservation
-from parallax.core.write_plan.keys import ObjectKey, VersionedObjectStateKey
 from parallax.core.write_plan.plan import PlannedWrites
 from parallax.core.write_plan.steps import INFINITY as OPEN_END
 from parallax.core.write_plan.steps import (
@@ -186,7 +188,7 @@ def _planned(
 ) -> PlannedWrites:
     """The Write Plan an insert of ``members`` produces, through the SAME
     ``build_write_planner`` factory the engine's own write lanes plan with — so
-    what the ledger tracks is what a flush would actually write."""
+    what the store holds is what a flush would actually write."""
     instruction = instructions.deserialize(
         {"mutation": "insert", "entity": entity_name, "rows": [members], "validFrom": valid_from}
     )
@@ -206,32 +208,21 @@ def _planned(
     )
 
 
-def test_retire_drops_only_the_milestone_the_write_observed() -> None:
-    # A rectangle split closes ONE rectangle and chains its successors; the key's
-    # other current rectangle was neither closed nor superseded by that write, so
-    # it stays tracked. Under a pk-keyed tracker the successors replace the whole
-    # key and the untouched rectangle silently disappears.
-    store = SimulatedTemporalStore()
-    store.seed_fixtures(POSITION, POSITION_ENTITY, [_HEAD, _TAIL])
-    store.retire(
-        POSITION, POSITION_ENTITY, TemporalObservation(predecessor=PredecessorRow(members=_TAIL))
-    )
-    survivor = store.predecessor_for(POSITION, POSITION_ENTITY, {"id": 1})
-    assert survivor is not None
-    assert survivor.predecessor.member("value") == 100.00
+def _apply_all(store: SimulatedTemporalStore, model: Metamodel, steps: PlannedWrites) -> None:
+    for step in steps:
+        store.apply(model, step)
 
 
 @pytest.mark.parametrize(
     ("value", "kept"), [("100.00", True), ("150.00", False)], ids=["kept", "closed"]
 )
-def test_a_milestone_no_step_closes_is_tracked_again_after_its_write_resolved(
-    value: str, kept: bool
-) -> None:
+def test_a_milestone_no_planned_step_closes_stays_stored_as_it_was(value: str, kept: bool) -> None:
+    # A write leaving a milestone as it was keeps it current (`m-temporal-write`):
+    # its plan guards the row rather than closing it, and a guard changes nothing.
     store = SimulatedTemporalStore()
     store.seed_fixtures(POSITION, POSITION_ENTITY, [_HEAD])
     observed = store.predecessor_for(POSITION, POSITION_ENTITY, {"id": 1})
     assert observed is not None
-    store.retire(POSITION, POSITION_ENTITY, observed)
     prepared = instructions.prepare_wire_write(
         KeyedWrite(
             "amendUntil",
@@ -256,38 +247,21 @@ def test_a_milestone_no_step_closes_is_tracked_again_after_its_write_resolved(
         )
         .steps
     )
-    store.keep_unchanged(POSITION, steps, [(POSITION_ENTITY, observed)])
-    assert (store.predecessor_for(POSITION, POSITION_ENTITY, {"id": 1}) is observed) is kept
+    for step in steps:
+        store.apply(POSITION, step)
+    assert (_stored(store) == [_HEAD_ROW]) is kept
+    if kept:
+        assert store.predecessor_for(POSITION, POSITION_ENTITY, {"id": 1}) is observed
 
 
-def test_a_doomed_units_retirement_and_re_accounting_are_both_discarded() -> None:
-    # `retire` drops a milestone and `_track` clears the doubt out-of-band
-    # statements left on its slot. A doomed unit does both and then aborts, so
-    # both must be undone: the milestone is tracked again AND is once more a
-    # milestone `has_complete_stored_row` refuses, since the row the abort
-    # restored is the one those statements may have overtaken, not the one the
-    # plan opened.
-    store = SimulatedTemporalStore()
-    store.seed_fixtures(POSITION, POSITION_ENTITY, [_HEAD])
-    store.note_out_of_band_write()
-    assert not store.has_complete_stored_row(POSITION, POSITION_ENTITY, _HEAD)
-    observed = store.predecessor_for(POSITION, POSITION_ENTITY, {"id": 1})
-    assert observed is not None
-    with store.staged(doomed=True):
-        store.retire(POSITION, POSITION_ENTITY, observed)
-        store.seed_fixtures(POSITION, POSITION_ENTITY, [_HEAD])
-        assert store.has_complete_stored_row(POSITION, POSITION_ENTITY, _HEAD)
-    assert store.predecessor_for(POSITION, POSITION_ENTITY, {"id": 1}) is not None
-    assert not store.has_complete_stored_row(POSITION, POSITION_ENTITY, _HEAD)
-
-
-def test_track_opened_tracks_the_milestones_the_plan_actually_opens() -> None:
-    # The tracker advances from the plan the write lane already produced, so a
-    # plain insert's one opened rectangle is tracked with the framework-owned
+def test_an_applied_insert_stores_the_milestone_its_plan_opens() -> None:
+    # The store advances by the plan the write lane already produced, so a
+    # plain insert's one opened rectangle is stored with the framework-owned
     # interval bounds the plan stamped on it — never a second expansion of the
     # same topology computed beside it.
     store = SimulatedTemporalStore()
-    store.track_opened(
+    _apply_all(
+        store,
         POSITION,
         _planned(
             "Position",
@@ -309,8 +283,8 @@ def test_track_opened_tracks_the_milestones_the_plan_actually_opens() -> None:
     }
 
 
-def test_track_opened_ignores_a_non_temporal_plan() -> None:
-    # A non-temporal insert opens no milestone, so a ledger entry for it would
+def test_an_applied_non_temporal_insert_stores_nothing() -> None:
+    # A non-temporal insert opens no milestone, so a stored row for it would
     # answer no question a later step can ask.
     store = SimulatedTemporalStore()
     instruction = instructions.deserialize(
@@ -333,7 +307,7 @@ def test_track_opened_ignores_a_non_temporal_plan() -> None:
             buffered_writes=[prepared],
         )
     )
-    store.track_opened(account, plan.steps)
+    _apply_all(store, account, plan.steps)
     entity = account.entity(EntityIdentity("parallax.compatibility", "Account"))
     assert entity is not None
     assert store.predecessor_for(account, entity, {"id": 1}) is None
@@ -392,9 +366,10 @@ def _acquisition(valid_from: dt.datetime, until: dt.datetime | None) -> Coverage
     )
 
 
-def test_coverage_answers_the_tracked_rectangles_of_one_object_inside_the_window() -> None:
+def test_coverage_answers_the_stored_rectangles_of_one_object_inside_the_window() -> None:
     store = SimulatedTemporalStore()
-    store.track_opened(
+    _apply_all(
+        store,
         POSITION,
         _rectangles(
             (1, "2024-01-01T00:00:00Z", "2024-03-01T00:00:00Z", "1.00"),
@@ -413,9 +388,10 @@ def test_coverage_answers_the_tracked_rectangles_of_one_object_inside_the_window
     assert [row["value"] for row in coverage_members(covered)] == [decimal.Decimal("2.00")]
 
 
-def test_coverage_reaches_a_tracked_opening_whose_end_is_the_open_bound() -> None:
+def test_coverage_reaches_a_stored_opening_whose_end_is_the_open_bound() -> None:
     store = SimulatedTemporalStore()
-    store.track_opened(
+    _apply_all(
+        store,
         POSITION,
         _rectangles(
             (1, "2024-01-01T00:00:00Z", "2024-03-01T00:00:00Z", "1.00"),
@@ -461,29 +437,7 @@ def test_coverage_reaches_a_fixture_row_decoded_at_case_ingress() -> None:
     ]
 
 
-def test_coverage_reaches_a_database_observation_kept_unchanged() -> None:
-    # A grouped read's observation carries the port's managed open bound, and a
-    # write that leaves the milestone unchanged keeps tracking that observation.
-    observed = TemporalObservation(predecessor=PredecessorRow(members=_TAIL))
-    store = SimulatedTemporalStore()
-    store.keep_unchanged(POSITION, (), [(POSITION_ENTITY, observed)])
-    covered = read_coverage(
-        store, POSITION, _acquisition(dt.datetime(2024, 7, 1, tzinfo=dt.UTC), None)
-    )
-    assert [dict(row) for row in coverage_members(covered)] == [dict(observed.predecessor.members)]
-
-
-def test_retiring_a_state_with_no_milestone_leaves_the_tracker_alone() -> None:
-    store = SimulatedTemporalStore()
-    store.track_opened(
-        POSITION,
-        _rectangles((1, "2024-01-01T00:00:00Z", None, "1.00")),
-        retired=(VersionedObjectStateKey(ObjectKey(POSITION_ENTITY.identity, (("id", 1),)), 1),),
-    )
-    assert store.predecessor_for(POSITION, POSITION_ENTITY, {"id": 1}) is not None
-
-
-def test_coverage_answers_a_tracked_milestones_value_objects_positionally() -> None:
+def test_coverage_answers_a_stored_milestones_value_objects_positionally() -> None:
     model = models.load_models()["document-layout"]
     entity = model.entity(EntityIdentity("parallax.compatibility", "Voyage"))
     assert entity is not None
@@ -497,9 +451,7 @@ def test_coverage_answers_a_tracked_milestones_value_objects_positionally() -> N
         "txEnd": INFINITY,
     }
     store = SimulatedTemporalStore()
-    store.keep_unchanged(
-        model, (), [(entity, TemporalObservation(predecessor=PredecessorRow(members)))]
-    )
+    store.seed_fixtures(model, entity, [members])
     covered = read_coverage(
         store,
         model,
@@ -775,12 +727,7 @@ def test_rows_sharing_one_complete_address_are_refused_rather_than_guessed() -> 
     store.seed_fixtures(POSITION, POSITION_ENTITY, [_TAIL, later])
     with pytest.raises(AmbiguousObservationError, match="share both"):
         store.apply(POSITION, _close(None))
-    # Once one of them is gone, the address names the other alone.
-    store.retire(
-        POSITION, POSITION_ENTITY, TemporalObservation(predecessor=PredecessorRow(members=later))
-    )
-    store.apply(POSITION, _close(None))
-    assert _stored(store) == []
+    assert _stored(store) == [_TAIL_ROW, (_SEP, INFINITY, _TAIL["value"])]
 
 
 def test_an_axis_end_neither_finite_nor_open_is_refused() -> None:
@@ -788,18 +735,6 @@ def test_an_axis_end_neither_finite_nor_open_is_refused() -> None:
         SimulatedTemporalStore().seed_fixtures(
             POSITION, POSITION_ENTITY, [{**_HEAD, "validEnd": "2024-06-01"}]
         )
-
-
-def test_the_legacy_advances_keep_every_row_addressable() -> None:
-    store = SimulatedTemporalStore()
-    store.seed_fixtures(POSITION, POSITION_ENTITY, [_HEAD, _TAIL])
-    store.retire(
-        POSITION, POSITION_ENTITY, TemporalObservation(predecessor=PredecessorRow(members=_TAIL))
-    )
-    store.track_opened(POSITION, _rectangles((2, "2024-01-01T00:00:00Z", None, "9.00")))
-    store.apply(POSITION, _close(None))
-    store.apply(POSITION, _close(None, key=2))
-    assert (_stored(store), _stored(store, 2)) == ([_HEAD_ROW], [])
 
 
 # --------------------------------------------------------------------------- #

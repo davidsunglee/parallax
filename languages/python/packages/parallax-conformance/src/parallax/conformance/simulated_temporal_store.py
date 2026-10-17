@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import datetime as dt
-from collections.abc import Generator, Iterable, Mapping, Sequence
+from collections.abc import Generator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Final, cast
 
@@ -29,12 +29,10 @@ from parallax.core.metamodel import (
     ValueObjectIdentity,
 )
 from parallax.core.write_plan import (
-    ObjectStateKey,
     PlannedInsert,
     PredecessorRow,
     TemporalObservation,
 )
-from parallax.core.write_plan.keys import TemporalObjectStateKey
 from parallax.core.write_plan.steps import (
     Finite,
     MilestoneTarget,
@@ -219,25 +217,6 @@ class SimulatedTemporalStore:
         if rollback:
             self._restore(snapshot)
 
-    @contextlib.contextmanager
-    def staged(self, *, doomed: bool) -> Generator[None]:
-        """One choreography unit's advances, staged on that unit's own
-        transaction outcome (`m-unit-work` abort contract).
-
-        A unit's writes retire and open milestones as they resolve, so a later
-        step of the SAME unit observes them — read-your-own-writes holds for this
-        store exactly as it holds for the rows. A DOOMED unit's transaction
-        then erases the rows it wrote, and this discards the advances it made
-        with them: a step AFTER the abort resolves the milestone the abort left
-        standing, never a successor no transaction ever stored, and a milestone
-        the aborted unit retired or re-accounted for is restored to what it was.
-        """
-        if not doomed:
-            yield
-            return
-        with self.transaction(rollback=True):
-            yield
-
     def note_materialized_write(self, entity: EntityMetadata) -> None:
         """Record that a materializing predicate write over ``entity`` committed —
         it resolved its own rows and, for each, retired the milestone it found and
@@ -420,76 +399,6 @@ class SimulatedTemporalStore:
             "ends, and these share both"
         )
 
-    def retire(
-        self, model: Metamodel, entity: EntityMetadata, observed: TemporalObservation
-    ) -> None:
-        """Drop the milestone a close addressed.
-
-        Exactly that one: a key's OTHER current rectangles are untouched, because
-        the write neither closed nor superseded them. The retirement is driven by
-        the observation the close CONSUMED rather than by the Planned Close the
-        plan carries.
-        """
-        layout = _layout(model, entity)
-        assert layout is not None  # only a temporal write consumes a temporal observation
-        self._forget(layout.key(observed.predecessor.members))
-
-    def track_opened(
-        self,
-        model: Metamodel,
-        steps: Iterable[PlannedWrite],
-        *,
-        retired: Iterable[ObjectStateKey] = (),
-    ) -> None:
-        """Store every milestone ``steps`` OPENS as the current state a later step
-        observes, once every milestone in ``retired`` — the states a bound range
-        changed — has been dropped.
-
-        The successor rows come off the plan the write lane already produced, so
-        the store holds exactly what the flush will write rather than a second
-        expansion of the same topology computed beside it. A Planned Insert's
-        entry row is the whole milestone, axis bounds and framework-owned values
-        included, which is exactly the Predecessor Row a later close addresses,
-        gates on, and carries state forward from.
-
-        Rows of a NON-temporal entity are skipped: they open no milestone, and a
-        ledger of them would answer no question a later step can ask.
-        """
-        for state in retired:
-            if not isinstance(state, TemporalObjectStateKey):
-                continue
-            self._forget(
-                (
-                    state.object.entity.name,
-                    tuple(value for _name, value in state.object.primary_key),
-                    state.milestone,
-                )
-            )
-        for step in steps:
-            if isinstance(step, PlannedInsert):
-                self._open(model, step)
-
-    def keep_unchanged(
-        self,
-        model: Metamodel,
-        steps: Iterable[PlannedWrite],
-        observed: Iterable[tuple[EntityMetadata, TemporalObservation]],
-    ) -> None:
-        """Store again each ``observed`` milestone — retired as its write
-        resolved (:meth:`retire`) — that no step of ``steps`` closes, revises, or
-        removes: a write that leaves a milestone as it was keeps it current
-        (`m-temporal-write`)."""
-        changed = {
-            _target_address(step.entity, step.target)
-            for step in steps
-            if isinstance(step, PlannedClose | PlannedTemporalRevision | PlannedTemporalRemoval)
-        }
-        for entity, observation in observed:
-            layout = _layout(model, entity)
-            assert layout is not None  # only a temporal write observes a milestone
-            if layout.address(observation.predecessor.members) not in changed:
-                self._track(layout, observation)
-
     def coverage_acquisition(self, model: Metamodel) -> AcquireRows:
         """The row acquisition a unit of work planning against this case state
         reads its coverage through: each coverage read answers the stored
@@ -559,13 +468,10 @@ class SimulatedTemporalStore:
         return key
 
     def _forget(self, slot: _ObjectKey) -> None:
-        stored = self._current.pop(slot, None)
-        if stored is not None:
-            remaining = tuple(other for other in self._located[stored.address] if other != slot)
-            if remaining:
-                self._located[stored.address] = remaining
-            else:
-                del self._located[stored.address]
+        """Drop the row at ``slot``, which its address names alone
+        (:meth:`_addressed`)."""
+        stored = self._current.pop(slot)
+        del self._located[stored.address]
         self._overtaken.discard(slot)
         self._materialized.discard(slot)
 

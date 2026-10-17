@@ -1052,6 +1052,13 @@ class UnitOfWork:
         releases the source value it came from, and what a successful flush
         spends it through.
 
+        A caller-addressed carrier
+        (:class:`~parallax.core._execution._unit_work.materialized.TargetKeyedWrite`)
+        is appended at the object its condition names and claims nothing: its
+        caller's stated revision is its whole condition, and this judges none of
+        it. :meth:`buffer_target` is the admission that does, and it buffers
+        through here once that admission succeeds.
+
         An insert admits an insertion of the object it opens and issues that
         insertion's identity (:meth:`insertion_identity`), which ``opener``
         labels with the interface that opened it. Where an earlier insertion of
@@ -1067,6 +1074,9 @@ class UnitOfWork:
         recognized when the pair is complete rather than when it is planned.
         """
         self._ensure_open()
+        if isinstance(item, TargetKeyedWrite):
+            self._pending.add(item, claimed_object(item.scope))
+            return BufferOutcome.BUFFERED
         if isinstance(item, InsertionKeyedWrite):
             item = self._authorized(item)
         instruction = buffered_instruction(item)
@@ -1235,7 +1245,7 @@ class UnitOfWork:
                     raise WritePreconditionError(
                         target.identity, dict(key.primary_key), expectation.version
                     )
-        self._pending.add(item, key)
+        self.buffer(item)
 
     def _acquire_temporal(
         self, item: TargetKeyedWrite, key: ObjectKey, expectation: ExpectedTxStart
