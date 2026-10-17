@@ -1498,6 +1498,53 @@ def test_a_document_milestone_opened_after_out_of_band_statements_still_chains()
     assert port.writes[0][0].startswith("insert into unrelated")
 
 
+def test_a_later_group_step_composes_onto_a_pending_document_insert() -> None:
+    # The insert is still pending in the group's buffer when the next step
+    # amends its key, so the amendment composes onto it as an entry of the
+    # same step would, and out-of-band statements raise no stored-milestone
+    # refusal for a row the store has not yet been handed.
+    def voyage(mutation: str, title: str) -> dict[str, object]:
+        return {
+            "uow": "g",
+            "write": [
+                {
+                    "mutation": mutation,
+                    "entity": "parallax.compatibility.Voyage",
+                    "rows": [
+                        {
+                            "id": 1,
+                            "title": title,
+                            "crew": 4,
+                            "manifest": {"cargo": "timber"},
+                            "legs": [],
+                        }
+                    ],
+                    "at": "2026-01-01T00:00:00.000000Z",
+                }
+            ],
+        }
+
+    case = _synthetic_write(
+        "scenario",
+        {
+            "model": "models/document-layout.yaml",
+            "given": {"apply": [{"sql": "insert into unrelated(id) values (1)"}]},
+            "when": {
+                "uow": {"concurrency": "locking"},
+                "scenario": [voyage("insert", "Northern Run"), voyage("amend", "Southern Run")],
+            },
+            "then": {"units": {"g": {"outcome": "committed"}}},
+        },
+    )
+    port = FakeWritePort()
+    run = scenario.run_scenario_case(case, port)
+    assert [
+        (emission.case_pointer, emission.sql.split(" ", 1)[0]) for emission in run.emissions
+    ] == [("/scenario/1/write", "insert")]
+    (document,) = (bind.value for bind in run.emissions[0].binds if isinstance(bind, JsonDocument))
+    assert cast("Mapping[str, object]", document)["title"] == "Southern Run"
+
+
 def test_the_lane_assigns_a_restated_occurrence_literally_and_keeps_unassigned_keys() -> None:
     # The lane pairs each keyed instruction with its evidence directly. A row
     # restating `manifest` exactly as the milestone's declared members hold it
