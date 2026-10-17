@@ -85,9 +85,9 @@ read what a class carries from `parallax.core.entity._declaration`
 member-name correspondences `wire_names_of`); `parallax.core._execution._planning`
 reads the accepted Metamodel and the class index from `parallax.core.entity._model`
 (`model_of`, `class_index`), the two facts model preparation prepares a selection
-over, and the selection's projections and the attempt borrow that index
-(`ClassIndex`); and the read policy and the Typed predicate-write ingress reach
-the Typed predicate adapter in `parallax.core.entity._authored_resolver`
+over, and the selection's projections borrow that index (`ClassIndex`); and the
+read policy and the Typed predicate-write ingress reach the Typed predicate
+adapter in `parallax.core.entity._authored_resolver`
 (`typed_interpretation`). Each is a seam between two first-party packages that a developer
 never needs, so exporting the names to spell the reach publicly would widen the
 developer surface to serve the runtime and one lifecycle package.

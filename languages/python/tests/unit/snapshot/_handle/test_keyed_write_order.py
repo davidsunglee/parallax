@@ -39,7 +39,7 @@ from parallax.core.execution import (
     TransactionTimePinReadOnlyError,
 )
 from parallax.core.unit_work import WriteEvidenceError, WriteInstructionError
-from tests.unit.snapshot._handle._keyed_write_drivers import (
+from tests.unit.snapshot._handle._write_order_drivers import (
     ACCOUNT_TARGET,
     BALANCE_TARGET,
     BLANK_CONTACT_TARGET,
@@ -59,9 +59,9 @@ from tests.unit.snapshot._handle._keyed_write_drivers import (
     Change,
     Completed,
     Concurrency,
+    KeyedWriteScenario,
     Profile,
     Representation,
-    Scenario,
     Source,
     Target,
     Verb,
@@ -138,7 +138,7 @@ def _refused(
     return Answer(error, code, message, "verb", statements)
 
 
-def _applicability_refusal(scenario: Scenario, *, statements: int = 0) -> Answer | None:
+def _applicability_refusal(scenario: KeyedWriteScenario, *, statements: int = 0) -> Answer | None:
     """The refusal ``scenario``'s target gives its verb, or ``None`` for a call the
     target admits and whose window it accepts.
 
@@ -192,7 +192,7 @@ def _applicability_refusal(scenario: Scenario, *, statements: int = 0) -> Answer
     return None
 
 
-def _answers(scenario: Scenario, expected: Answer) -> None:
+def _answers(scenario: KeyedWriteScenario, expected: Answer) -> None:
     """Assert both representations answer ``scenario`` with ``expected``.
 
     One expectation asserted twice rather than one lane measured against the
@@ -216,9 +216,9 @@ def _grid(
     source: Source = "participating",
     change: Change = "ordinary",
     window: Window = "stated",
-) -> tuple[Scenario, ...]:
+) -> tuple[KeyedWriteScenario, ...]:
     return tuple(
-        Scenario(
+        KeyedWriteScenario(
             target=target,
             verb=verb,
             concurrency=concurrency,
@@ -238,7 +238,9 @@ def _grid(
 # refusal row rather than an omission.                                         #
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize("scenario", _grid(targets=_ALL_TARGETS), ids=str)
-def test_one_verb_over_a_participating_source_answers_its_target(scenario: Scenario) -> None:
+def test_one_verb_over_a_participating_source_answers_its_target(
+    scenario: KeyedWriteScenario,
+) -> None:
     _answers(
         scenario,
         _applicability_refusal(scenario)
@@ -260,7 +262,7 @@ def test_one_verb_over_a_participating_source_answers_its_target(scenario: Scena
     _grid(targets=_ALL_TARGETS, verbs=("amend", "bounded_update"), change="untouched"),
     ids=str,
 )
-def test_an_update_expressing_no_member_buffers_nothing(scenario: Scenario) -> None:
+def test_an_update_expressing_no_member_buffers_nothing(scenario: KeyedWriteScenario) -> None:
     _answers(scenario, _applicability_refusal(scenario) or _wrote(0))
 
 
@@ -270,7 +272,7 @@ def test_an_update_expressing_no_member_buffers_nothing(scenario: Scenario) -> N
     ids=str,
 )
 def test_a_net_zero_chain_writes_its_member_and_keeps_a_milestone_that_holds_it(
-    scenario: Scenario,
+    scenario: KeyedWriteScenario,
 ) -> None:
     profile = scenario.target.profile
     kept = 0 if scenario.concurrency == "locking" else 1
@@ -309,7 +311,7 @@ def _unusable_evidence(target: Target) -> Answer:
     ),
     ids=str,
 )
-def test_a_source_read_outside_the_attempt_licenses_no_write(scenario: Scenario) -> None:
+def test_a_source_read_outside_the_attempt_licenses_no_write(scenario: KeyedWriteScenario) -> None:
     _answers(scenario, _applicability_refusal(scenario) or _unusable_evidence(scenario.target))
 
 
@@ -320,10 +322,12 @@ def test_a_source_read_outside_the_attempt_licenses_no_write(scenario: Scenario)
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize(
     "scenario",
-    tuple(Scenario(target=POSITION_TARGET, verb=verb, source="pinned") for verb in VERBS),
+    tuple(KeyedWriteScenario(target=POSITION_TARGET, verb=verb, source="pinned") for verb in VERBS),
     ids=str,
 )
-def test_a_pinned_source_is_read_only_whatever_verb_was_aimed_at_it(scenario: Scenario) -> None:
+def test_a_pinned_source_is_read_only_whatever_verb_was_aimed_at_it(
+    scenario: KeyedWriteScenario,
+) -> None:
     _answers(
         scenario,
         _refused(
@@ -351,7 +355,7 @@ def test_a_pinned_source_is_read_only_whatever_verb_was_aimed_at_it(scenario: Sc
     ids=str,
 )
 def test_a_reversed_window_is_refused_before_the_change_set_is_weighed(
-    scenario: Scenario,
+    scenario: KeyedWriteScenario,
 ) -> None:
     refusal = _applicability_refusal(scenario)
     assert refusal is not None  # every bounded verb states the reversed pair
@@ -370,7 +374,7 @@ def test_a_reversed_window_is_refused_before_the_change_set_is_weighed(
 # different scenario rather than the same one spelled differently (see         #
 # `reachable`).                                                               #
 # --------------------------------------------------------------------------- #
-def _over_a_buffered_insert(scenario: Scenario) -> Answer:
+def _over_a_buffered_insert(scenario: KeyedWriteScenario) -> Answer:
     """What a write over a row this unit of work still holds buffered answers.
 
     The opening's insert is the only statement: an assignment merges into the
@@ -389,7 +393,7 @@ def _over_a_buffered_insert(scenario: Scenario) -> Answer:
 @pytest.mark.parametrize(
     "scenario",
     tuple(
-        Scenario(target=target, verb=verb, change=change, opened_by=opener)
+        KeyedWriteScenario(target=target, verb=verb, change=change, opened_by=opener)
         for target in _ALL_TARGETS
         for verb in _SOURCE_VERBS
         for change in ("ordinary", "net_zero")
@@ -398,7 +402,7 @@ def _over_a_buffered_insert(scenario: Scenario) -> Answer:
     ids=str,
 )
 def test_a_same_transaction_insert_licenses_the_write_whoever_opened_it(
-    scenario: Scenario,
+    scenario: KeyedWriteScenario,
 ) -> None:
     _answers(scenario, _applicability_refusal(scenario) or _over_a_buffered_insert(scenario))
 
@@ -428,7 +432,7 @@ then read at its own start: a revision in place, a removal, or — for a bounded
 update — a revision of the kept tail's start beside the new head."""
 
 
-def _over_a_reread_insert(scenario: Scenario) -> Answer:
+def _over_a_reread_insert(scenario: KeyedWriteScenario) -> Answer:
     profile = scenario.target.profile
     if (
         scenario.change == "net_zero"
@@ -442,7 +446,9 @@ def _over_a_reread_insert(scenario: Scenario) -> Answer:
 @pytest.mark.parametrize(
     "scenario",
     tuple(
-        Scenario(target=target, verb=verb, change=change, source="reread", opened_by=opener)
+        KeyedWriteScenario(
+            target=target, verb=verb, change=change, source="reread", opened_by=opener
+        )
         for target in _ALL_TARGETS
         for verb in _SOURCE_VERBS
         for change in ("ordinary", "net_zero")
@@ -451,7 +457,7 @@ def _over_a_reread_insert(scenario: Scenario) -> Answer:
     ids=str,
 )
 def test_a_write_over_a_reread_insert_settles_against_the_read_whoever_opened_it(
-    scenario: Scenario,
+    scenario: KeyedWriteScenario,
 ) -> None:
     _answers(
         scenario, _applicability_refusal(scenario, statements=1) or _over_a_reread_insert(scenario)
@@ -484,7 +490,7 @@ one primary key open one row, `tx.insert` answers nothing, and a Wire payload is
 no keyed source at all."""
 
 
-def _repeated_insert(scenario: Scenario, *, statements: int = 0) -> Answer:
+def _repeated_insert(scenario: KeyedWriteScenario, *, statements: int = 0) -> Answer:
     """What a second insert of an object this unit of work already opened answers."""
     # Only an opened row can be re-opened, so every row reaching here states its
     # opener — which is the interface whose update verb the advice names.
@@ -503,7 +509,7 @@ def _repeated_insert(scenario: Scenario, *, statements: int = 0) -> Answer:
 @pytest.mark.parametrize(
     "scenario",
     tuple(
-        Scenario(target=target, verb=verb, opened_by=opener)
+        KeyedWriteScenario(target=target, verb=verb, opened_by=opener)
         for target in _ALL_TARGETS
         for verb in _INSERT_VERBS
         for opener in REPRESENTATIONS
@@ -511,7 +517,7 @@ def _repeated_insert(scenario: Scenario, *, statements: int = 0) -> Answer:
     ids=str,
 )
 def test_a_second_insert_of_an_object_this_unit_of_work_opened_is_refused_whoever_opened_it(
-    scenario: Scenario,
+    scenario: KeyedWriteScenario,
 ) -> None:
     _answers(scenario, _applicability_refusal(scenario) or _repeated_insert(scenario))
 
@@ -519,14 +525,16 @@ def test_a_second_insert_of_an_object_this_unit_of_work_opened_is_refused_whoeve
 @pytest.mark.parametrize(
     "scenario",
     tuple(
-        Scenario(target=target, verb=verb, source="reread", opened_by=opener)
+        KeyedWriteScenario(target=target, verb=verb, source="reread", opened_by=opener)
         for target in TARGETS
         for verb in _INSERT_VERBS
         for opener in REPRESENTATIONS
     ),
     ids=str,
 )
-def test_a_flushed_insert_still_refuses_a_second_insert_of_its_object(scenario: Scenario) -> None:
+def test_a_flushed_insert_still_refuses_a_second_insert_of_its_object(
+    scenario: KeyedWriteScenario,
+) -> None:
     # A flush retires nothing from the ledger — only a destructive write that
     # cancels an insert still PENDING in the buffer does, and a flushed insert is
     # not pending — so the participating read that force-flushed the insert
@@ -542,7 +550,7 @@ def test_a_flushed_insert_still_refuses_a_second_insert_of_its_object(scenario: 
 # --------------------------------------------------------------------------- #
 # Two defects at once: which one the caller hears.                            #
 # --------------------------------------------------------------------------- #
-_PINNED_AND_REVERSED: Final = Scenario(
+_PINNED_AND_REVERSED: Final = KeyedWriteScenario(
     target=POSITION_TARGET,
     verb="bounded_update",
     source="pinned",
@@ -569,7 +577,7 @@ def test_a_pinned_source_beats_the_window_it_stated() -> None:
 @pytest.mark.parametrize(
     "scenario",
     tuple(
-        Scenario(
+        KeyedWriteScenario(
             target=target,
             verb="amend",
             source=source,
@@ -583,7 +591,7 @@ def test_a_pinned_source_beats_the_window_it_stated() -> None:
     ),
     ids=str,
 )
-def test_stating_nothing_does_not_admit_an_unusable_source(scenario: Scenario) -> None:
+def test_stating_nothing_does_not_admit_an_unusable_source(scenario: KeyedWriteScenario) -> None:
     # The source is admitted before an update expressing no member is dropped,
     # so an empty amendment over a source that licenses nothing is refused like
     # any write over it rather than passing in silence; a net-zero chain
@@ -596,9 +604,9 @@ def test_stating_nothing_does_not_admit_an_unusable_source(scenario: Scenario) -
 # every opener the source admits: whichever representation opened the row, the #
 # window refusal and the net-zero no-op land in the same order.                #
 # --------------------------------------------------------------------------- #
-_INSERT_SOURCE_DEFECTS: Final[tuple[tuple[Scenario, Answer], ...]] = (
+_INSERT_SOURCE_DEFECTS: Final[tuple[tuple[KeyedWriteScenario, Answer], ...]] = (
     (
-        Scenario(
+        KeyedWriteScenario(
             target=POSITION_TARGET,
             verb="bounded_update",
             window="reversed",
@@ -607,7 +615,7 @@ _INSERT_SOURCE_DEFECTS: Final[tuple[tuple[Scenario, Answer], ...]] = (
         _wrote(0),
     ),
     (
-        Scenario(
+        KeyedWriteScenario(
             target=POSITION_TARGET,
             verb="bounded_update",
             window="reversed",
@@ -617,7 +625,7 @@ _INSERT_SOURCE_DEFECTS: Final[tuple[tuple[Scenario, Answer], ...]] = (
         _wrote(0),
     ),
     (
-        Scenario(
+        KeyedWriteScenario(
             target=POSITION_TARGET,
             verb="bounded_update",
             window="reversed",
@@ -627,7 +635,7 @@ _INSERT_SOURCE_DEFECTS: Final[tuple[tuple[Scenario, Answer], ...]] = (
         _wrote(0),
     ),
     (
-        Scenario(
+        KeyedWriteScenario(
             target=POSITION_TARGET,
             verb="bounded_update",
             window="reversed",
@@ -637,7 +645,7 @@ _INSERT_SOURCE_DEFECTS: Final[tuple[tuple[Scenario, Answer], ...]] = (
         _wrote(1),
     ),
     (
-        Scenario(
+        KeyedWriteScenario(
             target=POSITION_TARGET,
             verb="bounded_insert",
             window="reversed",
@@ -658,7 +666,7 @@ heard before the ledger is asked about that object."""
 )
 @pytest.mark.parametrize("opener", REPRESENTATIONS)
 def test_the_window_is_judged_over_an_inserted_source_too(
-    scenario: Scenario, already: Answer, opener: Representation
+    scenario: KeyedWriteScenario, already: Answer, opener: Representation
 ) -> None:
     opened = replace(scenario, opened_by=opener)
     refusal = _applicability_refusal(opened, statements=already.statements)
@@ -670,7 +678,7 @@ def test_the_window_is_judged_over_an_inserted_source_too(
     ("scenario", "expected"),
     (
         (
-            Scenario(
+            KeyedWriteScenario(
                 target=ACCOUNT_TARGET,
                 verb="amend",
                 change="net_zero",
@@ -679,7 +687,7 @@ def test_the_window_is_judged_over_an_inserted_source_too(
             _wrote(1),
         ),
         (
-            Scenario(
+            KeyedWriteScenario(
                 target=ACCOUNT_TARGET,
                 verb="amend",
                 change="net_zero",
@@ -689,11 +697,11 @@ def test_the_window_is_judged_over_an_inserted_source_too(
             _wrote(2),
         ),
     ),
-    ids=lambda value: str(value) if isinstance(value, Scenario) else "",
+    ids=lambda value: str(value) if isinstance(value, KeyedWriteScenario) else "",
 )
 @pytest.mark.parametrize("opener", REPRESENTATIONS)
 def test_a_net_zero_write_of_an_inserted_row_is_the_write_an_ordinary_one_is(
-    scenario: Scenario, expected: Answer, opener: Representation
+    scenario: KeyedWriteScenario, expected: Answer, opener: Representation
 ) -> None:
     # A net-zero chain expresses its member: over a pending insert it folds into
     # the insert's one statement, and over a reread one it settles against the
@@ -716,9 +724,9 @@ def test_a_net_zero_write_of_an_inserted_row_is_the_write_an_ordinary_one_is(
 # members NAME is a judgement about the model that the source is resolved      #
 # before.                                                                     #
 # --------------------------------------------------------------------------- #
-_MALFORMED: tuple[tuple[Scenario, str], ...] = (
+_MALFORMED: tuple[tuple[KeyedWriteScenario, str], ...] = (
     (
-        Scenario(
+        KeyedWriteScenario(
             target=POSITION_TARGET,
             verb="bounded_update",
             window="reversed",
@@ -728,7 +736,7 @@ _MALFORMED: tuple[tuple[Scenario, str], ...] = (
         "requires valid_from < until",
     ),
     (
-        Scenario(
+        KeyedWriteScenario(
             target=ACCOUNT_TARGET,
             verb="amend",
             opened_by="wire",
@@ -738,7 +746,7 @@ _MALFORMED: tuple[tuple[Scenario, str], ...] = (
         "undeclared member(s) ['nope']",
     ),
     (
-        Scenario(
+        KeyedWriteScenario(
             target=ACCOUNT_TARGET,
             verb="insert",
             opened_by="wire",
@@ -748,7 +756,7 @@ _MALFORMED: tuple[tuple[Scenario, str], ...] = (
         "framework-owned fields may not be assigned",
     ),
     (
-        Scenario(
+        KeyedWriteScenario(
             target=ACCOUNT_TARGET,
             verb="amend",
             source="standalone",
@@ -759,7 +767,7 @@ _MALFORMED: tuple[tuple[Scenario, str], ...] = (
         "framework-owned fields may not be assigned",
     ),
     (
-        Scenario(
+        KeyedWriteScenario(
             target=ACCOUNT_TARGET,
             verb="amend",
             source="standalone",
@@ -770,7 +778,7 @@ _MALFORMED: tuple[tuple[Scenario, str], ...] = (
         "undeclared member(s) ['nope']",
     ),
     (
-        Scenario(
+        KeyedWriteScenario(
             target=ACCOUNT_TARGET,
             verb="amend",
             source="standalone",
@@ -781,7 +789,7 @@ _MALFORMED: tuple[tuple[Scenario, str], ...] = (
         "is not one",
     ),
     (
-        Scenario(
+        KeyedWriteScenario(
             target=ACCOUNT_TARGET,
             verb="amend",
             source="standalone",
@@ -792,7 +800,7 @@ _MALFORMED: tuple[tuple[Scenario, str], ...] = (
         "is not one",
     ),
     (
-        Scenario(
+        KeyedWriteScenario(
             target=ACCOUNT_TARGET,
             verb="amend",
             source="standalone",
@@ -806,7 +814,9 @@ _MALFORMED: tuple[tuple[Scenario, str], ...] = (
 
 
 @pytest.mark.parametrize(("scenario", "expected"), _MALFORMED, ids=lambda value: str(value))
-def test_malformed_wire_input_earns_a_static_refusal(scenario: Scenario, expected: str) -> None:
+def test_malformed_wire_input_earns_a_static_refusal(
+    scenario: KeyedWriteScenario, expected: str
+) -> None:
     refused = answer(scenario, "wire")
     assert refused.error is WriteInstructionError
     assert refused.phase == "verb"
@@ -828,9 +838,9 @@ _TYPED_AUTHORINGS: tuple[tuple[Mapping[str, object], str], ...] = (
     ({"id": 2}, "edit-primary-key"),
 )
 
-_TYPED_AUTHORING_SOURCES: tuple[Scenario, ...] = (
-    Scenario(target=ACCOUNT_TARGET, verb="amend", label="over-a-read-source"),
-    Scenario(
+_TYPED_AUTHORING_SOURCES: tuple[KeyedWriteScenario, ...] = (
+    KeyedWriteScenario(target=ACCOUNT_TARGET, verb="amend", label="over-a-read-source"),
+    KeyedWriteScenario(
         target=ACCOUNT_TARGET, verb="amend", opened_by="typed", label="over-a-typed-insert-source"
     ),
 )
@@ -843,7 +853,7 @@ _TYPED_AUTHORING_SOURCES: tuple[Scenario, ...] = (
 )
 @pytest.mark.parametrize("source", _TYPED_AUTHORING_SOURCES, ids=str)
 def test_the_typed_lane_refuses_that_authoring_before_a_verb_receives_it(
-    source: Scenario, assignment: Mapping[str, object], expected: str
+    source: KeyedWriteScenario, assignment: Mapping[str, object], expected: str
 ) -> None:
     refused = answer(replace(source, typed_changes=assignment), "typed")
     assert refused.error is EditError
@@ -863,17 +873,17 @@ def test_the_typed_lane_refuses_that_authoring_before_a_verb_receives_it(
 @pytest.mark.parametrize(
     "scenario",
     (
-        Scenario(
+        KeyedWriteScenario(
             target=ACCOUNT_TARGET, verb="terminate", source="standalone", concurrency="locking"
         ),
-        Scenario(
+        KeyedWriteScenario(
             target=PERSON_TARGET, verb="terminate", source="standalone", concurrency="locking"
         ),
     ),
     ids=str,
 )
 def test_a_milestone_verb_on_a_non_temporal_target_beats_unusable_evidence(
-    scenario: Scenario,
+    scenario: KeyedWriteScenario,
 ) -> None:
     refusal = _applicability_refusal(scenario)
     assert refusal is not None  # `terminate` closes a history a non-temporal row has none of
@@ -895,20 +905,22 @@ _TEMPORAL_DELETE_SOURCES: tuple[tuple[Source, Concurrency, Representation | None
     ("participating", "optimistic", "typed"),
 )
 
-_TEMPORAL_DELETE_ROWS: tuple[Scenario, ...] = tuple(
-    Scenario(target=target, verb="delete", source=source, concurrency=concurrency, opened_by=opener)
+_TEMPORAL_DELETE_ROWS: tuple[KeyedWriteScenario, ...] = tuple(
+    KeyedWriteScenario(
+        target=target, verb="delete", source=source, concurrency=concurrency, opened_by=opener
+    )
     for target in (BALANCE_TARGET, POSITION_TARGET)
     for source, concurrency, opener in _TEMPORAL_DELETE_SOURCES
 ) + tuple(
     # Only a Bitemporal target admits a bounded opener, and the exemption the
     # bounded insert records is the same one a plain insert records.
-    Scenario(target=POSITION_TARGET, verb="delete", opened_by=opener, opened_until=True)
+    KeyedWriteScenario(target=POSITION_TARGET, verb="delete", opened_by=opener, opened_until=True)
     for opener in REPRESENTATIONS
 )
 
 
 @pytest.mark.parametrize("scenario", _TEMPORAL_DELETE_ROWS, ids=str)
-def test_a_temporal_target_refuses_delete_at_the_verb(scenario: Scenario) -> None:
+def test_a_temporal_target_refuses_delete_at_the_verb(scenario: KeyedWriteScenario) -> None:
     refusal = _applicability_refusal(scenario)
     assert refusal is not None  # a milestoning target spells its removal `terminate`
     _answers(scenario, refusal)
@@ -918,7 +930,7 @@ def test_a_temporal_target_refuses_delete_at_the_verb(scenario: Scenario) -> Non
 # The one crossing no caller can spell, and the read that makes it spellable.  #
 # --------------------------------------------------------------------------- #
 def test_a_wire_verb_cannot_write_a_row_a_typed_insert_still_holds_buffered() -> None:
-    scenario = Scenario(target=ACCOUNT_TARGET, verb="amend", opened_by="typed")
+    scenario = KeyedWriteScenario(target=ACCOUNT_TARGET, verb="amend", opened_by="typed")
     assert reachable(scenario, "typed")
     assert not reachable(scenario, "wire")
     assert reachable(replace(scenario, source="reread"), "wire")
@@ -927,7 +939,7 @@ def test_a_wire_verb_cannot_write_a_row_a_typed_insert_still_holds_buffered() ->
 
 
 def test_a_wire_read_of_a_typed_insert_flushes_it_before_the_write() -> None:
-    scenario = Scenario(
+    scenario = KeyedWriteScenario(
         target=BLANK_CONTACT_TARGET, verb="amend", source="reread", opened_by="typed"
     )
     emitted = outcome(scenario, "wire")

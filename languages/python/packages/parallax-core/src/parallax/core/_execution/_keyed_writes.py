@@ -45,7 +45,7 @@ __all__ = [
     "Provenance",
     "ResolvedKeyedInsert",
     "ResolvedKeyedWriteSource",
-    "TargetCondition",
+    "TargetRevisionArguments",
     "TransactionTimePinReadOnlyError",
     "WriteRepresentation",
     "keyed_insert",
@@ -53,7 +53,7 @@ __all__ = [
     "keyed_write",
     "retained",
     "stated_valid_from",
-    "target_condition",
+    "target_revision_arguments",
     "validate_source_pin",
     "window_mutation",
 ]
@@ -534,21 +534,23 @@ def window_mutation[M: KeyedMutation | TargetMutation](
 
 
 @dataclass(frozen=True, slots=True)
-class TargetCondition:
-    """The condition keywords a caller-conditioned write was handed, as the
-    canonical instruction carries them beside the names its caller stated, so
-    preparation can judge presence apart from value in its fixed order."""
+class TargetRevisionArguments:
+    """The revision keywords a caller-conditioned write was handed, unjudged, as
+    the canonical instruction carries them beside the names its caller stated,
+    so preparation can judge presence apart from value in its fixed order."""
 
     if_version: int | None
     if_tx_start: dt.datetime | None
     stated: tuple[str, ...]
 
 
-def target_condition(*, version: object = OMITTED, tx_start: object = OMITTED) -> TargetCondition:
-    """The condition a ``_if`` write's keywords state, unjudged.
+def target_revision_arguments(
+    *, version: object = OMITTED, tx_start: object = OMITTED
+) -> TargetRevisionArguments:
+    """The revision a ``_if`` write's keywords state, unjudged.
 
     Omission is the one absence: a keyword stated as ``None`` or as any other
-    value is a stated condition, so preparation refuses more than one stated,
+    value is a stated revision, so preparation refuses more than one stated,
     a missing one, and an invalid value — a ``None`` included — and never
     falls back on a source's authority.
     """
@@ -557,7 +559,7 @@ def target_condition(*, version: object = OMITTED, tx_start: object = OMITTED) -
         stated += ("version",)
     if not isinstance(tx_start, Omitted):
         stated += ("tx_start",)
-    return TargetCondition(
+    return TargetRevisionArguments(
         if_version=None if isinstance(version, Omitted) else cast("int", version),
         if_tx_start=None if isinstance(tx_start, Omitted) else cast("dt.datetime", tx_start),
         stated=stated,

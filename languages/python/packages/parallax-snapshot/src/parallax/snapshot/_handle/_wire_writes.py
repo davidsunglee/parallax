@@ -11,12 +11,12 @@ from parallax.core._execution._keyed_writes import (
     PreparedSourceWrite,
     ResolvedKeyedInsert,
     ResolvedKeyedWriteSource,
-    TargetCondition,
+    TargetRevisionArguments,
     keyed_instruction,
     retained,
-    stated_valid_from,
 )
 from parallax.core._execution._options import OMITTED, Omitted
+from parallax.core._execution._publication import SelectedWriteModel
 from parallax.core._execution._transaction._attempt import TxnAttempt
 from parallax.core._execution._unit_work import instructions
 from parallax.core._execution._unit_work.instructions import (
@@ -27,6 +27,8 @@ from parallax.core._execution._unit_work.instructions import (
     PredicateSelection,
     PredicateWrite,
     PreparedKeyedWrite,
+    PreparedPredicateWrite,
+    PreparedTargetWrite,
     TargetMutation,
     TargetWrite,
     WriteAssignment,
@@ -49,12 +51,12 @@ from parallax.snapshot._publication._wire import (
 __all__ = [
     "WireChanges",
     "WirePredicateTarget",
+    "WirePredicateWriteAdapter",
+    "WireTargetWriteAdapter",
     "editable_wire_data",
     "published_entity",
     "wire_insert",
     "wire_keyed_write",
-    "wire_predicate_write",
-    "wire_target_write",
 ]
 
 type WireChanges = Mapping[str, object]
@@ -170,116 +172,131 @@ def wire_keyed_write(
     attempt.keyed_write(WireKeyedWriteSource(observed, changes), mutation, until=until)
 
 
-def wire_predicate_write(
-    attempt: TxnAttempt,
-    mutation: PredicateMutation,
-    target: WirePredicateTarget,
-    changes: WireChanges | None = None,
-    *,
-    valid_from: dt.datetime | Omitted = OMITTED,
-    until: dt.datetime | None = None,
-) -> None:
-    """Buffer a Wire predicate-selected write over ``target``.
+class WirePredicateWriteAdapter:
+    """The Wire predicate-selected write over ``target``.
 
     The Wire spelling of the ``_where`` family: the canonical ``{entity,
     predicate}`` selection plus an authored changes document, lowered to the
-    SAME :class:`~parallax.core.unit_work.PredicateWrite` the Typed verbs build
-    and handed to the one seam that dispatches readless or materializing. No
-    second set-based write semantics are introduced — this ingress only states
-    the target and the assignments differently.
+    SAME :class:`~parallax.core.unit_work.PredicateWrite` the Typed verbs build.
+    No second set-based write semantics are introduced — this adapter only
+    states the target and the assignments differently.
 
-    Both caller documents are captured and judged for shape before anything is
-    resolved from the model, the same lead the keyed verb gives them — and a
-    selection's shape runs to the bottom of its predicate, so a malformed node
-    is `m-predicate`'s own refusal rather than whatever the model happens to say
+    Inert when constructed. Once :meth:`prepare` is asked, both caller
+    documents are captured and judged for shape before anything is resolved
+    from the model, the same lead the keyed verb gives them — and a selection's
+    shape runs to the bottom of its predicate, so a malformed node is
+    `m-predicate`'s own refusal rather than whatever the model happens to say
     about the Entity, the window, or the assignments beside it. The predicate
     parsed there is the one the instruction carries, and each change is an
     assignment owned by the target's own spelling; preparation then judges the
     target, the window, the predicate, and each assignment in authored order.
     """
-    refuse_reentry(attempt.lifecycle)
-    start = stated_valid_from(valid_from)
-    selection = _selection_shape(
-        _authored_document(target, "a predicate-selected write's canonical target")
-    )
-    authored = _authored_changes(mutation, changes)
-    instruction = PredicateWrite(
-        mutation,
-        selection,
-        tuple(
-            WriteAssignment(f"{selection.entity}.{member}", value)
-            for member, value in authored.items()
-        ),
-        start,
-        until,
-    )
-    prepared = instructions.prepare_wire_write(instruction, attempt.model.meta)
-    attempt.predicate_write(prepared)
+
+    __slots__ = ("_changes", "_target")
+
+    def __init__(self, target: WirePredicateTarget, changes: WireChanges | None = None) -> None:
+        self._target = target
+        self._changes = changes
+
+    def prepare(
+        self,
+        write_model: SelectedWriteModel,
+        mutation: PredicateMutation,
+        *,
+        valid_from: dt.datetime | None,
+        until: dt.datetime | None,
+    ) -> PreparedPredicateWrite:
+        selection = _selection_shape(
+            _authored_document(self._target, "a predicate-selected write's canonical target")
+        )
+        authored = _authored_changes(mutation, self._changes)
+        instruction = PredicateWrite(
+            mutation,
+            selection,
+            tuple(
+                WriteAssignment(f"{selection.entity}.{member}", value)
+                for member, value in authored.items()
+            ),
+            valid_from,
+            until,
+        )
+        return instructions.prepare_wire_write(instruction, write_model.model.meta)
 
 
-def wire_target_write(
-    attempt: TxnAttempt,
-    mutation: TargetMutation,
-    target: object,
-    document: object,
-    condition: TargetCondition,
-    *,
-    valid_from: dt.datetime | Omitted,
-    until: dt.datetime | None,
-) -> None:
-    """Buffer a Wire caller-conditioned write of the object ``document``
-    names by its primary key.
+class WireTargetWriteAdapter:
+    """The Wire caller-conditioned write of the object ``document`` names by
+    its primary key.
 
     ``target`` is an Entity spelling, or — for a replacement alone — a node
     Parallax published, whose own Entity and published writable state,
-    historical or current, are the write's target and data. ``document`` is an
-    amendment's change set, a replacement's complete data, or a destructive
-    write's key, in accepted wire spellings, and its own shape is judged first;
-    it must be omitted when a published node states the data. Its primary-key
+    historical or current, are the write's target and data, borrowed rather
+    than copied. ``document`` is an amendment's change set, a replacement's
+    complete data, or a destructive write's key, in accepted wire spellings; it
+    must be omitted when a published node states the data. Its primary-key
     entries name the object and are no assignment; every other entry is
     assigned, a framework-owned one refused, and a destructive write states
-    none. ``condition`` is the write's whole condition: nothing ``document`` or
-    ``target`` carries, and no read's evidence, stands in for it.
+    none. The revision the attempt hands :meth:`prepare` is the write's whole
+    condition: nothing ``document`` or ``target`` carries, and no read's
+    evidence, stands in for it.
+
+    Inert when constructed. Once :meth:`prepare` is asked, the addressing and
+    the document's own shape are judged first, and constructing the canonical
+    instruction refuses a reserved observation key; preparation then judges
+    the target, the window, the revision, and the payload.
     """
-    refuse_reentry(attempt.lifecycle)
-    start = stated_valid_from(valid_from)
-    meta = attempt.model.meta
-    if isinstance(target, str):
-        if isinstance(document, Omitted):
+
+    __slots__ = ("_document", "_target")
+
+    def __init__(self, target: object, document: object) -> None:
+        self._target = target
+        self._document = document
+
+    def prepare(
+        self,
+        write_model: SelectedWriteModel,
+        mutation: TargetMutation,
+        revision_arguments: TargetRevisionArguments,
+        *,
+        valid_from: dt.datetime | None,
+        until: dt.datetime | None,
+    ) -> PreparedTargetWrite:
+        meta = write_model.model.meta
+        target, document = self._target, self._document
+        if isinstance(target, str):
+            if isinstance(document, Omitted):
+                raise instructions.WriteInstructionError(
+                    f"a Wire `{mutation}` of an Entity spelling states the data it writes"
+                )
+            described = f"a Wire `{mutation}`'s {_target_document(mutation)}"
+            entity_name = target
+            row = _authored_document(document, described)
+        elif isinstance(target, WireEntity) and mutation in REPLACE_MUTATIONS:
+            if not isinstance(document, Omitted):
+                raise instructions.WriteInstructionError(
+                    f"a Wire `{mutation}` of a published node writes the state that node "
+                    "published, so it takes no data beside it; to state other data, name the "
+                    "Entity instead"
+                )
+            entity = published_entity(meta, target, f"`{mutation}`")
+            entity_name = entity.identity.canonical
+            row = _published_writable(meta, entity, target, copy=False)
+        else:
             raise instructions.WriteInstructionError(
-                f"a Wire `{mutation}` of an Entity spelling states the data it writes"
+                f"a Wire `{mutation}` addresses an Entity spelling"
+                + (" or a node Parallax published" if mutation in REPLACE_MUTATIONS else "")
+                + f", and {type(target).__name__} is neither"
             )
-        described = f"a Wire `{mutation}`'s {_target_document(mutation)}"
-        entity_name = target
-        row = _authored_document(document, described)
-    elif isinstance(target, WireEntity) and mutation in REPLACE_MUTATIONS:
-        if not isinstance(document, Omitted):
-            raise instructions.WriteInstructionError(
-                f"a Wire `{mutation}` of a published node writes the state that node published, "
-                "so it takes no data beside it; to state other data, name the Entity instead"
-            )
-        entity = published_entity(meta, target, f"`{mutation}`")
-        entity_name = entity.identity.canonical
-        row = _published_writable(meta, entity, target, copy=False)
-    else:
-        raise instructions.WriteInstructionError(
-            f"a Wire `{mutation}` addresses an Entity spelling"
-            + (" or a node Parallax published" if mutation in REPLACE_MUTATIONS else "")
-            + f", and {type(target).__name__} is neither"
+        instruction = TargetWrite(
+            mutation,
+            entity_name,
+            row,
+            revision_arguments.if_version,
+            revision_arguments.if_tx_start,
+            valid_from,
+            until,
+            revision_arguments.stated,
         )
-    instruction = TargetWrite(
-        mutation,
-        entity_name,
-        row,
-        condition.if_version,
-        condition.if_tx_start,
-        start,
-        until,
-        condition.stated,
-    )
-    attempt.target_write(
-        instructions.prepare_wire_write(instruction, meta, authored_members=row.keys())
-    )
+        return instructions.prepare_wire_write(instruction, meta, authored_members=row.keys())
 
 
 def _target_document(mutation: TargetMutation) -> str:

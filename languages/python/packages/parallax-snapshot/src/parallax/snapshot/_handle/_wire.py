@@ -4,7 +4,7 @@ import datetime as dt
 from collections.abc import Mapping
 from typing import Any
 
-from parallax.core._execution._keyed_writes import target_condition, window_mutation
+from parallax.core._execution._keyed_writes import window_mutation
 from parallax.core._execution._options import OMITTED, Omitted
 from parallax.core._execution._read_policy import ReadQuery
 from parallax.core._execution._scope import ExecutionScope
@@ -16,11 +16,11 @@ from parallax.snapshot._handle._stream import SnapshotStream
 from parallax.snapshot._handle._wire_writes import (
     WireChanges,
     WirePredicateTarget,
+    WirePredicateWriteAdapter,
+    WireTargetWriteAdapter,
     editable_wire_data,
     wire_insert,
     wire_keyed_write,
-    wire_predicate_write,
-    wire_target_write,
 )
 from parallax.snapshot._publication._wire import WireEntity
 
@@ -251,16 +251,13 @@ class WireTransactionView(WireDatabaseView):
         its window, every interval keeping what it does not assign, and leaves
         gaps and coverage after a scheduled termination absent.
         """
-        mutation, bound = window_mutation("amend", "amendUntil", until)
-        condition = target_condition(version=version, tx_start=tx_start)
-        wire_target_write(
-            self._attempt,
-            mutation,
-            entity_name,
-            changes,
-            condition,
+        self._attempt.target_write(
+            WireTargetWriteAdapter(entity_name, changes),
+            "amend",
+            version=version,
+            tx_start=tx_start,
             valid_from=valid_from,
-            until=bound,
+            until=until,
         )
 
     def replace(
@@ -309,16 +306,13 @@ class WireTransactionView(WireDatabaseView):
         replacement, and ``data`` is not taken. Nothing the node carries stands
         in for the revision, and its provenance licenses nothing.
         """
-        mutation, bound = window_mutation("replace", "replaceUntil", until)
-        condition = target_condition(version=version, tx_start=tx_start)
-        wire_target_write(
-            self._attempt,
-            mutation,
-            target,
-            data,
-            condition,
+        self._attempt.target_write(
+            WireTargetWriteAdapter(target, data),
+            "replace",
+            version=version,
+            tx_start=tx_start,
             valid_from=valid_from,
-            until=bound,
+            until=until,
         )
 
     def delete_if(
@@ -334,9 +328,8 @@ class WireTransactionView(WireDatabaseView):
         primary-key entries name, under the one revision its caller states,
         exactly as ``tx.delete_if`` does. ``key`` states the primary key alone;
         any other member is refused."""
-        condition = target_condition(version=version, tx_start=tx_start)
-        wire_target_write(
-            self._attempt, "delete", entity_name, key, condition, valid_from=OMITTED, until=None
+        self._attempt.target_write(
+            WireTargetWriteAdapter(entity_name, key), "delete", version=version, tx_start=tx_start
         )
 
     def terminate_if(
@@ -354,16 +347,13 @@ class WireTransactionView(WireDatabaseView):
         ``key``'s primary-key entries name, under the one revision its caller
         states, exactly as ``tx.terminate_if`` does. ``key`` states the primary
         key alone; any other member is refused."""
-        mutation, bound = window_mutation("terminate", "terminateUntil", until)
-        condition = target_condition(version=version, tx_start=tx_start)
-        wire_target_write(
-            self._attempt,
-            mutation,
-            entity_name,
-            key,
-            condition,
+        self._attempt.target_write(
+            WireTargetWriteAdapter(entity_name, key),
+            "terminate",
+            version=version,
+            tx_start=tx_start,
             valid_from=valid_from,
-            until=bound,
+            until=until,
         )
 
     def editable_data(self, source: WireEntity) -> dict[str, object]:
@@ -423,14 +413,11 @@ class WireTransactionView(WireDatabaseView):
         that algebra's list is non-empty, so ``{}`` is refused here rather than
         being the no-op it is for a keyed amendment — which addresses one row a
         caller already holds, where a selection holds none."""
-        mutation, bound = window_mutation("amend", "amendUntil", until)
-        wire_predicate_write(
-            self._attempt,
-            mutation,
-            target,
-            changes,
+        self._attempt.predicate_write(
+            WirePredicateWriteAdapter(target, changes),
+            "amend",
             valid_from=valid_from,
-            until=bound,
+            until=until,
         )
 
     def delete_where(self, target: WirePredicateTarget) -> None:
@@ -440,7 +427,7 @@ class WireTransactionView(WireDatabaseView):
         the caller means to remove whatever matches, rather than arriving there
         by building a value nothing was read into.
         """
-        wire_predicate_write(self._attempt, "delete", target)
+        self._attempt.predicate_write(WirePredicateWriteAdapter(target), "delete")
 
     def terminate_where(
         self,
@@ -452,11 +439,9 @@ class WireTransactionView(WireDatabaseView):
         """A predicate-selected Wire terminate over a TEMPORAL ``target``:
         Transaction-Time-Only takes no ``valid_from``; Bitemporal requires it, and
         both bounds follow :meth:`insert`'s rules."""
-        mutation, bound = window_mutation("terminate", "terminateUntil", until)
-        wire_predicate_write(
-            self._attempt,
-            mutation,
-            target,
+        self._attempt.predicate_write(
+            WirePredicateWriteAdapter(target),
+            "terminate",
             valid_from=valid_from,
-            until=bound,
+            until=until,
         )

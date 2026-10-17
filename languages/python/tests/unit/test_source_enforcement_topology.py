@@ -189,7 +189,6 @@ def test_carrier_neutral_lowering_requires_producer_owned_semantic_products() ->
 # resolves Python member names through.
 ACCEPTED_PRIVATE_ENTITY_REACHES: dict[tuple[str, str], frozenset[str]] = {
     ("parallax.core._execution._transaction._attempt", "_layout"): frozenset({"CatalogedModel"}),
-    ("parallax.core._execution._transaction._attempt", "_model"): frozenset({"ClassIndex"}),
     ("parallax.core._execution._keyed_writes", "_layout"): frozenset({"CatalogedModel"}),
     ("parallax.core._execution._page_origins", "_layout"): frozenset({"EntityLayout"}),
     ("parallax.core._execution._planning", "_layout"): frozenset({"CatalogedModel"}),
@@ -375,7 +374,8 @@ def test_the_sql_gen_reach_inventory_names_a_new_reach_and_passes_the_public_doo
 # them is therefore a topology decision rather than a use of the package's
 # interface: execution opens roots, attempts, reads, and connection brackets;
 # read delivery opens the Database Calls and Stream Batches it executes; and
-# Snapshot's write doors refuse re-entry before value ingress. Keyed by reaching
+# Snapshot's Wire editable-data copy refuses re-entry before it reads a node,
+# its write verbs entering the attempt's doors, which refuse it. Keyed by reaching
 # module and private module, so another importer is a new §7 decision.
 ACCEPTED_PRIVATE_LIFECYCLE_REACHES: frozenset[tuple[str, str]] = frozenset(
     {
@@ -396,10 +396,7 @@ ACCEPTED_PRIVATE_LIFECYCLE_REACHES: frozenset[tuple[str, str]] = frozenset(
             (f"parallax.core.read_delivery.{module}", "parallax.core.execution_lifecycle._activity")
             for module in ("_delivery", "_fetch", "_page_reader", "_row_lane", "_stream")
         ),
-        *(
-            (f"parallax.snapshot._handle.{module}", "parallax.core.execution_lifecycle._activity")
-            for module in ("_typed_writes", "_wire_writes")
-        ),
+        ("parallax.snapshot._handle._wire_writes", "parallax.core.execution_lifecycle._activity"),
     }
 )
 

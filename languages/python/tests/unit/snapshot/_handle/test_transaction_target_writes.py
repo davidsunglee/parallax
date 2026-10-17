@@ -12,7 +12,6 @@ attempt inserted, and the non-retriable precondition failure.
 
 from __future__ import annotations
 
-import datetime as dt
 import gc
 import inspect
 from collections.abc import Callable
@@ -28,7 +27,6 @@ from parallax.core.entity import DomainModel
 from parallax.core.unit_work import (
     RollbackOnlyError,
     WriteEvidenceError,
-    WriteInstructionError,
     WritePreconditionError,
     WriteRejectedError,
 )
@@ -144,17 +142,6 @@ def test_a_net_equal_patch_chain_still_advances_the_version_once() -> None:
     assert _calls(port) == [WriteCall(_GATED_BALANCE, (Decimal("100.00"), 4, 1, 3))]
 
 
-@pytest.mark.parametrize("concurrency", ["optimistic", "locking"])
-def test_an_identity_only_patch_reads_writes_and_checks_nothing(
-    concurrency: Literal["optimistic", "locking"],
-) -> None:
-    port = ScriptedAdapter(Transact())
-    account_db(port).transact(
-        lambda tx: tx.wire.amend_if("Account", {"id": 1}, version=99), concurrency=concurrency
-    )
-    assert _calls(port) == []
-
-
 @_REPRESENTATIONS
 def test_a_deletion_gates_on_its_callers_version_and_reads_nothing(
     representation: _Representation,
@@ -190,29 +177,6 @@ def test_an_identity_only_patch_neither_cancels_nor_changes_earlier_work() -> No
 
     account_db(port).transact(fn)
     assert _calls(port) == [WriteCall(_GATED_BALANCE, (Decimal("150.00"), 4, 1, 3))]
-
-
-@pytest.mark.parametrize("until", [FIXED, None], ids=["finite", "explicit-none"])
-@pytest.mark.parametrize("operation", ["amend", "replace-typed", "replace-wire"])
-def test_a_non_temporal_target_refuses_until_before_an_empty_patch_is_dropped(
-    operation: str, until: dt.datetime | None
-) -> None:
-    port = ScriptedAdapter(Transact())
-    bound = cast("dt.datetime", until)
-
-    def fn(tx: TxnContext) -> None:
-        with pytest.raises(WriteInstructionError, match="until"):
-            if operation == "amend":
-                tx.wire.amend_if("Account", {"id": 1}, until=bound, version=3)
-            elif operation == "replace-typed":
-                tx.replace_if(mm.Account(id=1, owner="Zed", balance=Decimal(1)), until=bound)
-            else:
-                tx.wire.replace_if(
-                    "Account", {"id": 1, "owner": "Zed", "balance": "1"}, until=bound
-                )
-
-    account_db(port).transact(fn)
-    assert _calls(port) == []
 
 
 # --------------------------------------------------------------------------- #
@@ -376,33 +340,6 @@ def test_a_locking_deletion_refuses_a_stale_or_missing_start_at_the_call(
 
     account_db(port).transact(fn, concurrency="locking")
     assert _calls(port) == [ReadCall(FIND_SQL_LOCKED, (1,))]
-
-
-def test_a_target_writes_window_outranks_its_revision_which_outranks_its_payload() -> None:
-    port = ScriptedAdapter(Transact())
-    unknown = {"id": 1, "nickname": "Bo"}
-
-    def fn(tx: TxnContext) -> None:
-        refusals: list[str] = []
-        for call in (
-            lambda: tx.wire.amend_if("Account", unknown, valid_from=FIXED),
-            lambda: tx.wire.amend_if("Account", unknown),
-            lambda: tx.wire.amend_if("Account", unknown, version=3),
-            lambda: tx.wire.amend_if("Account", {"id": 1}, tx_start=FIXED),
-            lambda: tx.wire.replace_if("Account", {"id": 1, "owner": "Zed"}, version=3),
-        ):
-            with pytest.raises(ValueError) as refused:
-                call()
-            refusals.append(str(refused.value))
-        window, missing, undeclared, misstated, incomplete = refusals
-        assert "valid_from" in window
-        assert "requires version" in missing
-        assert "undeclared" in undeclared and "nickname" in undeclared
-        assert "takes version, not tx_start" in misstated
-        assert "balance" in incomplete
-
-    account_db(port).transact(fn)
-    assert _calls(port) == []
 
 
 # --------------------------------------------------------------------------- #

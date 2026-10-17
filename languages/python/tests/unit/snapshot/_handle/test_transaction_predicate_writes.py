@@ -115,7 +115,6 @@ from parallax.snapshot import (
 )
 from parallax.snapshot._handle import _typed_writes as typed_writes
 from parallax.snapshot._publication._root import RootView
-from tests._support import inheritance_models as im
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
@@ -573,48 +572,6 @@ def test_where_verb_rejects_a_query_that_is_not_mutation_compatible() -> None:
     assert not any(isinstance(op, WriteCall) for op in port.calls)
 
 
-def test_where_verb_rejects_an_inheritance_family_target() -> None:
-    # The assignment names a member `CardPayment` itself declares, so the
-    # composition step accepts it and the family rejection is what refuses the
-    # write — which is the point: a set-based write over an inheritance family is
-    # unsupported whatever it assigns.
-    port = ScriptedAdapter(Transact())
-
-    def fn(tx: TxnContext) -> None:
-        tx.amend_where(
-            im.CardPayment.where(im.CardPayment.id == 1), im.CardPayment.card_network.set("visa")
-        )
-
-    with raises_contextualized(
-        inheritance.InheritanceError, match="subtype-write-set-based-unsupported"
-    ):
-        own_root(
-            Database.connect(port, PAYMENT, clock=FixedClock(FIXED))
-        ).using_database_login().transact(fn)
-    assert not any(isinstance(op, (ReadCall, WriteCall)) for op in port.calls)
-
-
-def test_the_family_refusal_precedes_an_assignment_addressing_another_entity() -> None:
-    # An inherited member's Assignment addresses the DECLARING Entity — here the
-    # family root — so it names no member of the exact target. Preparation judges
-    # the predicate and the family before any assignment, so a set-based write
-    # over a family is refused as one whatever it assigns.
-    port = ScriptedAdapter(Transact())
-
-    def fn(tx: TxnContext) -> None:
-        tx.amend_where(
-            im.CardPayment.where(im.CardPayment.id == 1), im.Payment.amount.set(Decimal("1.00"))
-        )
-
-    with raises_contextualized(
-        inheritance.InheritanceError, match="subtype-write-set-based-unsupported"
-    ):
-        own_root(
-            Database.connect(port, PAYMENT, clock=FixedClock(FIXED))
-        ).using_database_login().transact(fn)
-    assert not any(isinstance(op, (ReadCall, WriteCall)) for op in port.calls)
-
-
 def test_where_verb_rejects_an_assignment_addressing_another_entity() -> None:
     # A set-based write assigns members of its exact target; an Assignment built
     # through another Entity of the same model names none.
@@ -630,21 +587,6 @@ def test_where_verb_rejects_an_assignment_addressing_another_entity() -> None:
     ):
         own_root(
             Database.connect(port, mm.PK_SEQUENCE_MODEL, clock=FixedClock(FIXED))
-        ).using_database_login().transact(fn)
-    assert not any(isinstance(op, (ReadCall, WriteCall)) for op in port.calls)
-
-
-def test_an_assignment_bearing_verb_requires_an_assignment() -> None:
-    port = ScriptedAdapter(Transact())
-
-    def fn(tx: TxnContext) -> None:
-        tx.amend_where(mm.Person.where(mm.Person.id == 1))
-
-    with raises_contextualized(
-        instructions.WriteInstructionError, match="requires at least one assignment"
-    ):
-        own_root(
-            Database.connect(port, PERSON, clock=FixedClock(FIXED))
         ).using_database_login().transact(fn)
     assert not any(isinstance(op, (ReadCall, WriteCall)) for op in port.calls)
 
@@ -758,78 +700,6 @@ def test_a_typed_predicate_write_over_python_names_is_refused_by_a_classless_mod
             Database.connect(port, _classless(PERSON), clock=FixedClock(FIXED))
         ).using_database_login().transact(fn)
     assert not any(isinstance(op, (ReadCall, WriteCall)) for op in port.calls)
-
-
-def test_the_window_precedes_binding_the_typed_predicate() -> None:
-    port = ScriptedAdapter(Transact())
-
-    def fn(tx: TxnContext) -> None:
-        tx.amend_where(
-            WherePosition.where(_unfinished(WherePosition, "missing", operands=(1,))),
-            WherePosition.value.set(Decimal("1.00")),
-        )
-
-    with raises_contextualized(ValueError, match="requires valid_from"):
-        own_root(
-            Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
-        ).using_database_login().transact(fn)
-
-
-def test_binding_the_typed_predicate_precedes_the_family_refusal() -> None:
-    port = ScriptedAdapter(Transact())
-
-    def fn(tx: TxnContext) -> None:
-        tx.amend_where(
-            im.CardPayment.where(_unfinished(im.CardPayment, "missing", operands=(1,))),
-            im.CardPayment.card_network.set("visa"),
-        )
-
-    with raises_contextualized(QueryDefinitionError, match="declares no member") as caught:
-        own_root(
-            Database.connect(port, PAYMENT, clock=FixedClock(FIXED))
-        ).using_database_login().transact(fn)
-    assert caught.value.code == "query-path-invalid"
-    assert not any(isinstance(op, (ReadCall, WriteCall)) for op in port.calls)
-
-
-def test_bitemporal_where_verb_requires_valid_from() -> None:
-    port = ScriptedAdapter(Transact())
-
-    def fn(tx: TxnContext) -> None:
-        tx.amend_where(
-            WherePosition.where(WherePosition.id == 1), WherePosition.value.set(Decimal("1.00"))
-        )
-
-    with raises_contextualized(ValueError, match="requires valid_from"):
-        own_root(
-            Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
-        ).using_database_login().transact(fn)
-
-
-def test_audit_only_where_verb_forbids_valid_from() -> None:
-    port = ScriptedAdapter(Transact())
-
-    def fn(tx: TxnContext) -> None:
-        tx.terminate_where(mm.Balance.where(mm.Balance.id == 1), valid_from=FIXED)
-
-    with raises_contextualized(ValueError, match="takes no valid_from"):
-        own_root(
-            Database.connect(port, BALANCE, clock=FixedClock(FIXED))
-        ).using_database_login().transact(fn)
-
-
-def test_non_temporal_where_verb_forbids_valid_from() -> None:
-    port = ScriptedAdapter(Transact())
-
-    def fn(tx: TxnContext) -> None:
-        tx.amend_where(
-            mm.Person.where(mm.Person.id == 1), mm.Person.name.set("Ada"), valid_from=FIXED
-        )
-
-    with raises_contextualized(ValueError, match="takes no valid_from"):
-        own_root(
-            Database.connect(port, PERSON, clock=FixedClock(FIXED))
-        ).using_database_login().transact(fn)
 
 
 def test_materializing_update_where_skips_no_op_rows_and_gates_the_rest(
@@ -1038,56 +908,6 @@ def test_materializing_terminate_where_audit_only_gates_under_optimistic_concurr
         "infinity",
         dt.datetime(2024, 2, 1, tzinfo=dt.UTC),
     )
-
-
-# `delete_where` physically removes every row it resolved, and a target that
-# milestones its rows spells that removal `terminate_where`. Whether the target
-# takes the verb needs the model and nothing else, so the call is refused before
-# it resolves anything: the script holds no read at all, so a refusal deferred to
-# the buffered group's flush would fail at the read it would first have to make.
-#
-# BOTH temporal profiles are driven, because the verb's refusal has to beat the
-# window gate to be heard. `delete_where` states no bound in either spelling, so
-# a Bitemporal target reaching that gate first would answer with the `valid_from`
-# a bitemporal write requires — an argument neither `tx.delete_where` nor
-# `tx.wire.delete_where` offers, leaving the caller a refusal no call can
-# satisfy. A Transaction-Time-Only target reaches the same refusal without
-# needing the ordering, which is what makes the Bitemporal rows discriminating.
-@pytest.mark.parametrize(
-    ("model", "entity", "query"),
-    [
-        (BALANCE, "Balance", mm.Balance.where(mm.Balance.id == 1)),
-        (WHERE_POSITION_META, "WherePosition", WherePosition.where(WherePosition.id == 1)),
-    ],
-    ids=["transaction-time-only", "bitemporal"],
-)
-@pytest.mark.parametrize("representation", ["typed", "wire"])
-def test_delete_where_over_a_temporal_target_is_refused_at_the_verb(
-    model: DomainModel, entity: str, query: ObjectQuery[Any, Any], representation: str
-) -> None:
-    port = ScriptedAdapter(Transact())
-    target: dict[str, object] = {
-        "entity": f"parallax.compatibility.{entity}",
-        "predicate": {"eq": {"path": f"parallax.compatibility.{entity}.id", "value": 1}},
-    }
-
-    def fn(tx: TxnContext) -> None:
-        with pytest.raises(instructions.WriteInstructionError) as refusal:
-            if representation == "typed":
-                tx.delete_where(query)
-            else:
-                tx.wire.delete_where(target)
-        assert str(refusal.value) == (
-            f"Temporal objects like {entity!r} do not support 'delete_where', which physically "
-            "removes rows. Use 'terminate_where' instead."
-        )
-        assert port.calls == [BeginCall()]
-        raise _Abandon
-
-    with raises_contextualized(_Abandon):
-        own_root(
-            Database.connect(port, model, clock=FixedClock(FIXED))
-        ).using_database_login().transact(fn)
 
 
 def test_materializing_update_where_audit_only_chains_the_new_value() -> None:
@@ -1887,25 +1707,6 @@ def test_materializing_bounded_update_where_rejects_an_equal_window_bound() -> N
     )  # never reached the resolve
 
 
-def test_materializing_bounded_terminate_where_rejects_a_reversed_window_bound() -> None:
-    port = ScriptedAdapter(Transact())
-    valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
-    until = dt.datetime(2024, 4, 1, tzinfo=dt.UTC)  # BEFORE valid_from — reversed
-
-    def fn(tx: TxnContext) -> None:
-        tx.terminate_where(
-            WherePosition.where(WherePosition.id == 1), valid_from=valid_from, until=until
-        )
-
-    with raises_contextualized(ValueError, match="requires valid_from < until"):
-        own_root(
-            Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
-        ).using_database_login().transact(fn, concurrency="optimistic")
-    assert not any(
-        isinstance(op, (ReadCall, WriteCall)) for op in port.calls
-    )  # never reached the resolve
-
-
 def test_a_where_window_bound_of_no_datetime_type_is_no_instant_either() -> None:
     # A bound of no datetime type is no `m-core` instant, and the shared window
     # gate answers it with that module's own class rather than with a bare
@@ -1925,40 +1726,6 @@ def test_a_where_window_bound_of_no_datetime_type_is_no_instant_either() -> None
             Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
         ).using_database_login().transact(fn, concurrency="optimistic")
     assert not any(isinstance(op, (ReadCall, WriteCall)) for op in port.calls)
-
-
-def test_a_where_bounded_verb_states_its_window_as_a_pair() -> None:
-    # A bounded `_where` window is a PAIR, judged by the one gate the keyed
-    # verbs and both representations run, so half of one earns the verb's own
-    # `WriteInstructionError` rather than a complaint about the missing half's
-    # type. A stated `until` of `None` is that missing half, never omission.
-    account = ScriptedAdapter(Transact())
-    position = ScriptedAdapter(Transact())
-
-    def absent_valid_from(tx: TxnContext) -> None:
-        tx.amend_where(
-            WherePosition.where(WherePosition.id == 1),
-            WherePosition.value.set(Decimal("300.00")),
-            until=dt.datetime(2024, 9, 1, tzinfo=dt.UTC),
-        )
-
-    def absent_until(tx: TxnContext) -> None:
-        tx.terminate_where(
-            WherePosition.where(WherePosition.id == 1),
-            valid_from=dt.datetime(2024, 7, 1, tzinfo=dt.UTC),
-            until=cast("dt.datetime", None),
-        )
-
-    with raises_contextualized(instructions.WriteInstructionError, match="valid_from is absent"):
-        own_root(
-            Database.connect(account, WHERE_POSITION_META, clock=FixedClock(FIXED))
-        ).using_database_login().transact(absent_valid_from, concurrency="optimistic")
-    with raises_contextualized(instructions.WriteInstructionError, match="until is absent"):
-        own_root(
-            Database.connect(position, WHERE_POSITION_META, clock=FixedClock(FIXED))
-        ).using_database_login().transact(absent_until, concurrency="optimistic")
-    assert not any(isinstance(op, (ReadCall, WriteCall)) for op in account.calls)
-    assert not any(isinstance(op, (ReadCall, WriteCall)) for op in position.calls)
 
 
 # --------------------------------------------------------------------------- #
@@ -2082,105 +1849,13 @@ def test_delete_where_refuses_an_attribute_outside_the_written_position() -> Non
 # builds the canonical instruction, so a `PredicateWrite` holds an ISO-8601 UTC #
 # instant in a temporal slot from the moment it exists —                        #
 # `write-instruction.schema.json`'s own definition of an instant — never a      #
-# caller's spelling and never anything else standing in for one.                #
-#                                                                               #
-# A call that is invalid in BOTH places therefore classifies by its BOUND.      #
-# Both refusals are correct and neither is lost; only their order is fixed, and #
-# it is fixed by the point at which the instruction must already be canonical.  #
-# The predicate's own refusal is undiminished — the SAME predicate under a      #
-# RENDERABLE bound still classifies `between-bounds-inverted`, which is also    #
-# what the conformance ingress gives the same instruction (it takes no          #
-# `dt.datetime` at all, so it has no other candidate).                          #
-#                                                                               #
-# The kinds below stand for the whole argument space by VERDICT — a bound whose #
-# rendering refuses it as naive and one whose UTC normalization has no          #
-# representable answer, against one that renders cleanly — on each of the two   #
-# bound slots. The refusing kinds are ONE refusal, and rendering is total over  #
-# `datetime`, so every other way a bound can fail to render (a tzinfo answering #
-# no usable offset) joins them rather than adding a verdict.                    #
+# caller's spelling and never anything else standing in for one. Which bound   #
+# refusal outranks which predicate refusal is `test_predicate_write_order.py`'s #
+# subject; what is pinned here is the canonical value an admitted bound binds.  #
 # --------------------------------------------------------------------------- #
-_NAIVE = dt.datetime(2024, 7, 1)
-_AWARE = dt.datetime(2024, 8, 1, tzinfo=dt.UTC)
 _EXTREME_OFFSET = dt.datetime.min.replace(tzinfo=dt.timezone(dt.timedelta(hours=14)))
 _NON_UTC_VALID_FROM = dt.datetime(2024, 7, 1, 5, tzinfo=dt.timezone(dt.timedelta(hours=5)))
 _NON_UTC_UNTIL = dt.datetime(2024, 9, 1, 2, tzinfo=dt.timezone(dt.timedelta(hours=2)))
-
-
-@pytest.mark.parametrize(
-    ("valid_from", "until", "expected", "rule"),
-    [
-        (_NAIVE, None, InstantError, None),
-        (_AWARE, None, ModelRejectedError, "between-bounds-inverted"),
-        (_EXTREME_OFFSET, None, InstantError, None),
-        (_AWARE, _NAIVE, InstantError, None),
-        (
-            _AWARE,
-            dt.datetime(2024, 9, 1, tzinfo=dt.UTC),
-            ModelRejectedError,
-            "between-bounds-inverted",
-        ),
-        (_AWARE, _EXTREME_OFFSET, InstantError, None),
-    ],
-    ids=[
-        "naive-valid-from",
-        "aware-valid-from",
-        "extreme-offset-valid-from",
-        "naive-until",
-        "aware-until",
-        "extreme-offset-until",
-    ],
-)
-def test_a_temporal_bound_is_judged_before_an_invalid_predicate(
-    valid_from: dt.datetime,
-    until: dt.datetime | None,
-    expected: type[Exception],
-    rule: str | None,
-) -> None:
-    def fn(tx: TxnContext) -> None:
-        _bounded_write(tx, WherePosition.where(WherePosition.id.between(10, 1)), valid_from, until)
-
-    with raises_contextualized(expected) as caught:
-        own_root(
-            Database.connect(
-                ScriptedAdapter(Transact()), WHERE_POSITION_META, clock=FixedClock(FIXED)
-            )
-        ).using_database_login().transact(fn)
-    if rule is not None:
-        assert cast("ModelRejectedError", caught.value).rule == rule
-
-
-@pytest.mark.parametrize(
-    ("valid_from", "until", "expected"),
-    [
-        (_NAIVE, None, InstantError),
-        (_EXTREME_OFFSET, None, InstantError),
-        (_AWARE, _NAIVE, InstantError),
-        (_AWARE, _EXTREME_OFFSET, InstantError),
-    ],
-    ids=[
-        "naive-valid-from",
-        "extreme-offset-valid-from",
-        "naive-until",
-        "extreme-offset-until",
-    ],
-)
-def test_an_unrenderable_bound_is_refused_before_any_buffering(
-    valid_from: dt.datetime, until: dt.datetime | None, expected: type[Exception]
-) -> None:
-    # A bound is judged by the same step that renders it and that decides
-    # whether the target's profile admits a bound at all, so an unrenderable one
-    # is refused before the instruction exists — and therefore before the
-    # buffering seam, the resolving read, and every statement.
-    port = ScriptedAdapter(Transact())
-
-    def fn(tx: TxnContext) -> None:
-        _bounded_write(tx, WherePosition.where(WherePosition.id == 1), valid_from, until)
-
-    with raises_contextualized(expected):
-        own_root(
-            Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
-        ).using_database_login().transact(fn)
-    assert port.calls == [BeginCall(), RollbackCall()]
 
 
 def test_a_non_utc_bound_reaches_the_buffer_as_its_managed_utc_instant() -> None:
@@ -2424,58 +2099,6 @@ def test_the_wire_predicate_ingress_refuses_an_unvalidated_inheritance_family_ta
         ).using_database_login().transact(fn)
 
 
-# The ingress's second refusal, driven the same way: a milestone verb the
-# target's temporal profile does not admit. `Account` is versioned and
-# non-temporal, so the instruction MATERIALIZES — without a refusal it reaches
-# the resolving read (real SQL, which `port.calls` would show) and then settles as
-# an ordinary versioned update that consumes each matched row's version while
-# dropping the window the caller bounded. A zero-match resolve would not even
-# reach that: it buffers no group, so the flush would refuse nothing at all.
-#
-# WHICH refusal fires depends on what the call states, and both are the fixed
-# order working. A bounded form states a Valid-Time window, and a target
-# declaring no Valid-Time dimension takes no `until` — judged with the window,
-# ahead of the verb's own applicability. Plain `terminate` states no window at all, so
-# the verb is what preparation refuses.
-@pytest.mark.parametrize(
-    ("mutation", "message"),
-    [
-        ("amendUntil", "takes no until"),
-        ("terminate", "do not support 'terminate_where'"),
-        ("terminateUntil", "takes no until"),
-    ],
-)
-def test_the_wire_predicate_ingress_refuses_a_milestone_verb_on_a_non_temporal_target(
-    mutation: str, message: str
-) -> None:
-    target: dict[str, object] = {
-        "entity": "Account",
-        "predicate": {"eq": {"path": "Account.id", "value": 1}},
-    }
-    window = {
-        "valid_from": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
-        "until": dt.datetime(2024, 6, 1, tzinfo=dt.UTC),
-    }
-    port = ScriptedAdapter(Transact())
-
-    def fn(tx: TxnContext) -> None:
-        with pytest.raises(instructions.WriteInstructionError, match=message):
-            match mutation:
-                case "amendUntil":
-                    tx.wire.amend_where(target, {"balance": Decimal("5.00")}, **window)
-                case "terminate":
-                    tx.wire.terminate_where(target)
-                case _:
-                    tx.wire.terminate_where(target, **window)
-        assert port.calls == [BeginCall()]
-        raise _Abandon
-
-    with raises_contextualized(_Abandon):
-        own_root(
-            Database.connect(port, ACCOUNT, clock=FixedClock(FIXED))
-        ).using_database_login().transact(fn)
-
-
 # A materializing family instruction never reaches the buffering seam: the one
 # producer of prepared writes refuses it, so no seam re-judges the family.
 def test_preparation_refuses_an_inheritance_family_predicate_instruction() -> None:
@@ -2494,66 +2117,9 @@ def test_preparation_refuses_an_inheritance_family_predicate_instruction() -> No
         instructions.prepare_wire_write(instruction, model_of(RATE))
 
 
-def test_where_verb_rejection_precedes_a_pending_writes_force_flush() -> None:
-    # The ordering established for reads holds for a predicate write
-    # too: the resolving read a materializing verb performs force-flushes
-    # pending writes, so a refused predicate write must be refused before
-    # `uow.read` and before `uow.buffer` — otherwise an invalid write flushes
-    # a valid one.
-    port = ScriptedAdapter(Transact())
-    valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
-
-    def fn(tx: TxnContext) -> None:
-        tx.insert(WherePosition(id=9, acct_num="A", value=Decimal("1.00")), valid_from=valid_from)
-        with pytest.raises(ModelRejectedError):
-            tx.amend_where(
-                WherePosition.where(WherePosition.id.between(10, 1)),
-                WherePosition.value.set(Decimal("300.00")),
-                valid_from=valid_from,
-            )
-        assert port.calls == [BeginCall()]
-        raise _Abandon
-
-    with raises_contextualized(_Abandon):
-        own_root(
-            Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
-        ).using_database_login().transact(fn)
-
-
 class _Abandon(Exception):
-    """Abandons the transaction once the ordering above is proven, so the
-    pending insert never has to be a valid committed write."""
-
-
-# --------------------------------------------------------------------------- #
-# The query refusal and an assignment refusal precede adapter access, proven   #
-# by a boundary whose script holds no statement rather than by a recorded      #
-# absence. An empty recording says a call was never made; an empty script says #
-# a call would have failed at the call, which is the stronger reading of       #
-# "before Unit of Work or adapter access" and the one the refusals' own        #
-# contract states.                                                             #
-# --------------------------------------------------------------------------- #
-def test_query_not_mutation_compatible_precedes_every_adapter_call() -> None:
-    def fn(tx: TxnContext) -> None:
-        tx.delete_where(mm.Person.where(mm.Person.id == 1).limit(1))
-
-    with raises_contextualized(QueryDefinitionError) as caught:
-        own_root(
-            Database.connect(ScriptedAdapter(Transact()), PERSON, clock=FixedClock(FIXED))
-        ).using_database_login().transact(fn)
-    assert caught.value.code == "query-not-mutation-compatible"
-
-
-def test_an_assignment_addressing_another_entity_precedes_every_adapter_call() -> None:
-    def fn(tx: TxnContext) -> None:
-        tx.amend_where(mm.Ticket.where(mm.Ticket.id == 1), mm.Badge.holder.set("Ada"))
-
-    with raises_contextualized(instructions.WriteInstructionError, match="declared member"):
-        own_root(
-            Database.connect(
-                ScriptedAdapter(Transact()), mm.PK_SEQUENCE_MODEL, clock=FixedClock(FIXED)
-            )
-        ).using_database_login().transact(fn)
+    """Abandons the transaction once the refusal at the verb is proven, so
+    nothing the transaction holds has to become a valid committed write."""
 
 
 # --------------------------------------------------------------------------- #

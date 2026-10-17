@@ -3,7 +3,7 @@ from __future__ import annotations
 import datetime as dt
 from typing import Any
 
-from parallax.core._execution._keyed_writes import target_condition, window_mutation
+from parallax.core._execution._keyed_writes import window_mutation
 from parallax.core._execution._options import OMITTED, Omitted, ReadOnlyTxnOptions, TxnOptions
 from parallax.core._execution._transaction._attempt import ReadOnlyTxnAttempt, TxnAttempt
 from parallax.core.entity import AttributeAssignment, EntityRowCodec
@@ -14,11 +14,11 @@ from parallax.core.read_delivery import RowsResult
 from parallax.snapshot._handle._read import Snapshot, typed_publication_for
 from parallax.snapshot._handle._stream import SnapshotStream
 from parallax.snapshot._handle._typed_writes import (
+    TypedInstanceTargetWriteAdapter,
     TypedKeyedInsertSource,
     TypedKeyedWriteSource,
-    typed_addressed_write,
-    typed_predicate_write,
-    typed_target_write,
+    TypedKeyTargetWriteAdapter,
+    TypedPredicateWriteAdapter,
 )
 from parallax.snapshot._handle._wire import WireDatabaseView, WireTransactionView
 
@@ -239,17 +239,13 @@ class TxnContext:
         it does not assign; gaps and coverage after a scheduled termination
         stay absent. ``valid_from`` and ``until`` follow :meth:`insert`'s
         rules."""
-        mutation, bound = window_mutation("amend", "amendUntil", until)
-        condition = target_condition(version=version, tx_start=tx_start)
-        typed_addressed_write(
-            self._attempt,
-            mutation,
-            entity,
-            assignments,
-            key,
-            condition,
+        self._attempt.target_write(
+            TypedKeyTargetWriteAdapter(entity, assignments, key),
+            "amend",
+            version=version,
+            tx_start=tx_start,
             valid_from=valid_from,
-            until=bound,
+            until=until,
         )
 
     def replace(self, source: EntityBase, *, until: dt.datetime | Omitted = OMITTED) -> None:
@@ -299,16 +295,13 @@ class TxnContext:
         coverage the window reaches. ``valid_from`` and ``until`` follow
         :meth:`insert`'s rules. Returns ``None``; a read reports the saved
         state."""
-        mutation, bound = window_mutation("replace", "replaceUntil", until)
-        condition = target_condition(version=version, tx_start=tx_start)
-        typed_target_write(
-            self._attempt,
-            mutation,
-            payload,
-            self._codec,
-            condition,
+        self._attempt.target_write(
+            TypedInstanceTargetWriteAdapter(payload),
+            "replace",
+            version=version,
+            tx_start=tx_start,
             valid_from=valid_from,
-            until=bound,
+            until=until,
         )
 
     def delete_if(
@@ -331,16 +324,11 @@ class TxnContext:
         read under the shared lock now, and a mismatch or a missing row raises
         that error here. A temporal ``entity`` refuses the verb and names
         :meth:`terminate_if`, which closes its history instead."""
-        condition = target_condition(version=version, tx_start=tx_start)
-        typed_addressed_write(
-            self._attempt,
+        self._attempt.target_write(
+            TypedKeyTargetWriteAdapter(entity, (), key),
             "delete",
-            entity,
-            (),
-            key,
-            condition,
-            valid_from=OMITTED,
-            until=None,
+            version=version,
+            tx_start=tx_start,
         )
 
     def terminate_if(
@@ -371,17 +359,13 @@ class TxnContext:
         empty termination. A non-temporal ``entity`` refuses the verb and names
         :meth:`delete_if`. ``valid_from`` and ``until`` follow :meth:`insert`'s
         rules."""
-        mutation, bound = window_mutation("terminate", "terminateUntil", until)
-        condition = target_condition(version=version, tx_start=tx_start)
-        typed_addressed_write(
-            self._attempt,
-            mutation,
-            entity,
-            (),
-            key,
-            condition,
+        self._attempt.target_write(
+            TypedKeyTargetWriteAdapter(entity, (), key),
+            "terminate",
+            version=version,
+            tx_start=tx_start,
             valid_from=valid_from,
-            until=bound,
+            until=until,
         )
 
     def delete(self, node_or_instance: EntityBase) -> None:
@@ -520,20 +504,18 @@ class TxnContext:
         the query's exact target. Readless (one statement) for an unversioned,
         non-temporal target; a versioned or temporal target MATERIALIZES
         (`m-opt-lock`, ADR 0014) — see
-        :func:`~parallax.snapshot._handle._typed_writes.typed_predicate_write`,
-        the Typed predicate ingress every ``_where`` verb here delegates to.
+        :class:`~parallax.snapshot._handle._typed_writes.TypedPredicateWriteAdapter`,
+        the Typed predicate representation every ``_where`` verb here enters
+        the attempt with.
 
         A Bitemporal target requires ``valid_from``; ``until`` bounds the
         correction to ``[valid_from, until)``, and both follow :meth:`insert`'s
         rules."""
-        mutation, bound = window_mutation("amend", "amendUntil", until)
-        typed_predicate_write(
-            self._attempt,
-            mutation,
-            query,
-            assignments,
+        self._attempt.predicate_write(
+            TypedPredicateWriteAdapter(query, assignments),
+            "amend",
             valid_from=valid_from,
-            until=bound,
+            until=until,
         )
 
     def delete_where(self, query: ObjectQuery[Any, Any]) -> None:
@@ -543,7 +525,7 @@ class TxnContext:
          — in both modes, since each row's write requires that row's own prior
          observation — with no no-op elimination, because a delete changes a
          row's existence, never a value (`m-opt-lock`)."""
-        typed_predicate_write(self._attempt, "delete", query, ())
+        self._attempt.predicate_write(TypedPredicateWriteAdapter(query, ()), "delete")
 
     def terminate_where(
         self,
@@ -557,14 +539,11 @@ class TxnContext:
         Transaction-Time-Only takes no ``valid_from``; Bitemporal requires it, and
         ``until`` bounds the window to ``[valid_from, until)``, both under
         :meth:`insert`'s rules."""
-        mutation, bound = window_mutation("terminate", "terminateUntil", until)
-        typed_predicate_write(
-            self._attempt,
-            mutation,
-            query,
-            (),
+        self._attempt.predicate_write(
+            TypedPredicateWriteAdapter(query, ()),
+            "terminate",
             valid_from=valid_from,
-            until=bound,
+            until=until,
         )
 
 
