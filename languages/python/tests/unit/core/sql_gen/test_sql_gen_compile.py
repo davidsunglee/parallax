@@ -18,6 +18,7 @@ import dataclasses
 import inspect
 import pickle
 from collections.abc import Callable, Mapping
+from decimal import Decimal
 from typing import Any, Literal, cast
 
 import pytest
@@ -25,7 +26,7 @@ import pytest
 from parallax.core import deep_fetch, inheritance, relationship, storage_layout, temporal_read
 from parallax.core import object_query as oq
 from parallax.core import predicate as oa
-from parallax.core.base import ManagedValue
+from parallax.core.base import INFINITY, ManagedValue
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.inheritance import _compile as inheritance_compile
@@ -36,8 +37,16 @@ from parallax.core.metamodel import (
     ValueObjectAttributeMetadata,
     ValueObjectIdentity,
 )
+from parallax.core.navigate import (
+    ExistingRootConditions,
+    PropagatedRootSelections,
+    RootSelections,
+    TemporalResolution,
+    resolve_temporal_visibility,
+)
 from parallax.core.object_query import TemporalSelection
 from parallax.core.object_query._nodes import TemporalDimension
+from parallax.core.object_query._resolved import latest_temporal_selections
 from parallax.core.predicate import ModelRejectedError
 from parallax.core.predicate._resolved import (
     ResolvedComparison,
@@ -61,7 +70,7 @@ from parallax.core.storage_layout import _compile as storage_layout_compile
 from parallax.core.temporal_read import _compile as temporal_read_compile
 from tests._support import fake_metamodel
 from tests._support.binary32 import narrowed
-from tests._support.sql import compile_read
+from tests._support.sql import compile_read, resolved_as_stated
 from tests.unit._corpus_model_support import model, target
 
 ORDERS = model("orders")
@@ -76,10 +85,10 @@ def _compile_resolved_product(
     product: ResolvedPredicate, meta: Metamodel = ACCOUNT
 ) -> CompiledRead:
     entity = target(meta, "Account") if meta is ACCOUNT else target(meta, "Customer")
-    query = deep_fetch.ResolvedEntityQuery(
+    query = deep_fetch.PlannedEntityQuery(
         target=entity.identity,
         entity=entity,
-        predicate=product,
+        predicate=resolved_as_stated(product, meta, entity),
         projection=deep_fetch.ResolvedReadProjection((), False),
     )
     return compile_entity_query(query, meta, POSTGRES)
@@ -447,10 +456,10 @@ def _child_template(
     entity = target(meta, name)
     member = entity.attribute(attr)
     assert member is not None
-    query = deep_fetch.ResolvedEntityQuery(
+    query = deep_fetch.PlannedEntityQuery(
         target=entity.identity,
         entity=entity,
-        predicate=deferred_membership(member=member),
+        predicate=resolved_as_stated(deferred_membership(member=member), meta, entity),
         projection=deep_fetch.ResolvedReadProjection((), False),
     )
     return sql_compile.compile_template(query, meta, dialect)
@@ -516,10 +525,10 @@ def test_child_template_refuses_an_empty_set_that_should_issue_no_statement() ->
 @pytest.mark.parametrize("dialect", [POSTGRES, _MARIADB], ids=["postgres", "mariadb"])
 def test_child_template_refuses_a_query_without_one_deferred_key_set(dialect: Dialect) -> None:
     entity = target(ACCOUNT, "Account")
-    query = deep_fetch.ResolvedEntityQuery(
+    query = deep_fetch.PlannedEntityQuery(
         target=entity.identity,
         entity=entity,
-        predicate=ResolvedConstant(True),
+        predicate=resolved_as_stated(ResolvedConstant(True), ACCOUNT, entity),
         projection=deep_fetch.ResolvedReadProjection((), False),
     )
 
@@ -534,12 +543,16 @@ def test_child_template_refuses_distinct_markers_even_when_their_types_match(
     entity = target(ORDERS, "OrderItem")
     member = entity.attribute("orderId")
     assert member is not None
-    query = deep_fetch.ResolvedEntityQuery(
+    query = deep_fetch.PlannedEntityQuery(
         target=entity.identity,
         entity=entity,
-        predicate=conjunction(
-            deferred_membership(member=member),
-            deferred_membership(member=member),
+        predicate=resolved_as_stated(
+            conjunction(
+                deferred_membership(member=member),
+                deferred_membership(member=member),
+            ),
+            ORDERS,
+            entity,
         ),
         projection=deep_fetch.ResolvedReadProjection((), False),
     )
@@ -557,13 +570,17 @@ def test_tpcs_child_template_renders_each_occurrence_without_recompilation(
     member = entity.attribute("folderId")
     title = entity.attribute("title")
     assert member is not None and title is not None
-    query = deep_fetch.ResolvedEntityQuery(
+    query = deep_fetch.PlannedEntityQuery(
         target=entity.identity,
         entity=entity,
-        predicate=conjunction(
-            managed_comparison(op="eq", member=title, value="before"),
-            deferred_membership(member=member),
-            managed_comparison(op="notEq", member=title, value="after"),
+        predicate=resolved_as_stated(
+            conjunction(
+                managed_comparison(op="eq", member=title, value="before"),
+                deferred_membership(member=member),
+                managed_comparison(op="notEq", member=title, value="after"),
+            ),
+            meta,
+            entity,
         ),
         narrow_to=(target(meta, "Invoice").identity,) if narrow else None,
         limit=7,
@@ -759,3 +776,81 @@ def test_a_record_free_model_lowers_navigation_and_value_object_paths() -> None:
     )
     assert nested.statement.sql.endswith("where jsonb_extract_path_text(t0.contact_doc, ?, ?) = ?")
     assert nested.statement.binds == ("address", "city", "Oslo")
+
+
+# --------------------------------------------------------------------------- #
+# A retained root perspective joins the selection exactly where injected      #
+# current-row terms would, before the family guard and grouping the predicate. #
+# --------------------------------------------------------------------------- #
+INSTRUMENT = model("instrument")
+_EITHER_PRICE = oa.Or(
+    operands=(
+        oa.Comparison(op="lessThan", subject=oa.FieldSubject("Bond.price"), value="1.00"),
+        oa.Comparison(op="greaterThan", subject=oa.FieldSubject("Bond.price"), value="9.00"),
+    )
+)
+
+
+def _guarded_read(
+    meta: Metamodel, name: str, op: oa.PredicateNode, resolution: str
+) -> CompiledRead:
+    entity = target(meta, name)
+    root = inheritance.root_metadata(inheritance.view(meta), meta, entity.identity)
+    selections = latest_temporal_selections(root)
+    modes: dict[str, TemporalResolution] = {
+        "injected": RootSelections(selections),
+        "retained": PropagatedRootSelections(selections),
+        "stated": ExistingRootConditions(),
+    }
+    query = deep_fetch.PlannedEntityQuery(
+        target=entity.identity,
+        entity=entity,
+        predicate=resolve_temporal_visibility(
+            oa.validate_predicate(entity, op, meta),
+            target=entity,
+            model=meta,
+            resolution=modes[resolution],
+        ),
+        projection=deep_fetch.ResolvedReadProjection((), False),
+    )
+    return compile_entity_query(query, meta, POSTGRES)
+
+
+@pytest.mark.parametrize("resolution", ["injected", "retained"])
+def test_a_root_perspective_restricts_a_grouped_disjunction_before_the_tag_guard(
+    resolution: str,
+) -> None:
+    statement = _guarded_read(INSTRUMENT, "Bond", _EITHER_PRICE, resolution).statement
+    assert statement.sql.endswith(
+        "from instrument t0 where (t0.price < ? or t0.price > ?) "
+        "and t0.thru_z = ? and t0.out_z = ? and t0.kind = ?"
+    )
+    assert statement.binds == (Decimal("1.00"), Decimal("9.00"), INFINITY, INFINITY, "bond")
+
+
+def test_a_disjunction_without_a_root_restriction_is_grouped_beside_the_tag_guard() -> None:
+    statement = _guarded_read(INSTRUMENT, "Bond", _EITHER_PRICE, "stated").statement
+    assert statement.sql.endswith(
+        "from instrument t0 where (t0.price < ? or t0.price > ?) and t0.kind = ?"
+    )
+    assert statement.binds == (Decimal("1.00"), Decimal("9.00"), "bond")
+
+
+def test_an_empty_root_perspective_adds_no_term_or_grouping() -> None:
+    either = oa.Or(
+        operands=(
+            oa.Comparison(
+                op="eq", subject=oa.FieldSubject("CardPayment.cardNetwork"), value="Visa"
+            ),
+            oa.Comparison(
+                op="eq", subject=oa.FieldSubject("CardPayment.cardNetwork"), value="Amex"
+            ),
+        )
+    )
+    retained = _guarded_read(PAYMENT, "CardPayment", either, "retained").statement
+    stated = _guarded_read(PAYMENT, "CardPayment", either, "stated").statement
+    assert retained.sql == stated.sql
+    assert retained.sql.endswith(
+        "where (t0.card_network = ? or t0.card_network = ?) and t0.kind = ?"
+    )
+    assert retained.binds == stated.binds == ("Visa", "Amex", "card")

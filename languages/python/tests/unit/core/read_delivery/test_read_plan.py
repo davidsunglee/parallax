@@ -1027,6 +1027,60 @@ def test_a_warm_hit_repeats_no_planning_compilation_or_binding(
     assert calls == {"plan": 1, "compile": 1, "bind": 1}
 
 
+def _with_items() -> ResolvedObjectQuery:
+    return preflight(
+        deserialize(
+            {
+                "target": "Order",
+                "predicate": {"true": {}},
+                "includes": [{"segments": [{"rel": "Order.items"}]}],
+            }
+        ),
+        model=_META,
+        form="graph",
+    )
+
+
+def _child_work(plan: _read_plan.ReadPlan) -> object:
+    prepared = plan.prepared_fetch(0)
+    assert isinstance(prepared, tuple)
+    return prepared[0]
+
+
+def test_retained_child_work_is_resolved_and_compiled_once_per_plan_family(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = {"resolve": 0, "child": 0}
+    resolve = cast("Callable[..., Any]", vars(deep_fetch)["resolve_temporal_visibility"])
+    compile_template = cast("Callable[..., Any]", vars(_read_plan)["compile_template"])
+
+    def counting_resolve(*args: Any, **kwargs: Any) -> Any:
+        calls["resolve"] += 1
+        return resolve(*args, **kwargs)
+
+    def counting_child(*args: Any, **kwargs: Any) -> Any:
+        calls["child"] += 1
+        return compile_template(*args, **kwargs)
+
+    monkeypatch.setattr(deep_fetch, "resolve_temporal_visibility", counting_resolve)
+    monkeypatch.setattr(_read_plan, "compile_template", counting_child)
+    cache = ReadPlanCache()
+    pages = continuation.plan(_with_items(), _META)
+
+    first = _plan(cache, pages.first(limit=2))
+    assert calls == {"resolve": 2, "child": 1}
+    assert _plan(cache, pages.first(limit=3)).fetch_step(0) is first.fetch_step(0)
+    assert calls == {"resolve": 2, "child": 1}
+
+    after = _plan(cache, pages.after(ContinuationCoordinate((1,)), limit=2))
+    assert calls["child"] == 1
+    assert _child_work(after) is _child_work(first)
+    step, retained = after.fetch_step(0), first.fetch_step(0)
+    assert isinstance(step, deep_fetch.QueryFetchStep)
+    assert isinstance(retained, deep_fetch.QueryFetchStep)
+    assert step.query == retained.query
+
+
 def test_database_transactions_share_read_plans_across_connections(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

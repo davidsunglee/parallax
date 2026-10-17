@@ -8,7 +8,7 @@ bare name two namespaces share is a miss rather than a silent first match. The
 seams resolve through the same ``entity_by_name`` helper, and so — the second
 suite below — do the three lowering seams an accepted query reaches next:
 ``m-sql``'s family reads and hops, ``m-deep-fetch``'s levels, and
-``m-navigate``'s hop-term propagation. One rule across validation and lowering is
+``m-navigate``'s temporal resolution. One rule across validation and lowering is
 what makes "preflight accepted this reference" imply "lowering resolves it".
 """
 
@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import pytest
 
-from parallax.core import deep_fetch, navigate
+from parallax.core import deep_fetch
 from parallax.core import predicate as oa
 from parallax.core._execution._preflight import preflight
 from parallax.core._execution._unit_work import instructions
@@ -24,9 +24,12 @@ from parallax.core._formation_profile import form_metamodel
 from parallax.core.dialect import POSTGRES
 from parallax.core.execution import QueryTargetError
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel, entity_by_name
+from parallax.core.navigate import ExistingRootConditions, resolve_temporal_visibility
 from parallax.core.object_query import IncludeSegment, ObjectQueryNode, validate_object_query
 from parallax.core.object_query._nodes import IncludePathNode
 from parallax.core.predicate import ModelRejectedError, Narrow, TrueNode, validate_predicate
+from parallax.core.predicate._perspective import TemporalPerspective
+from parallax.core.predicate._resolved import ResolvedPresence, ResolvedRelationship
 from parallax.descriptor import _records as records
 from parallax.descriptor._adapter import unresolved_metamodel
 from tests._support.sql import compile_read
@@ -336,18 +339,36 @@ def test_deep_fetch_planning_resolves_every_reference_across_namespaces() -> Non
     ] == ["den"]
 
 
-def test_hop_term_propagation_resolves_a_hop_from_another_namespace() -> None:
+def _resolved_hop(model: Metamodel, position: EntityMetadata, op: oa.PredicateNode) -> object:
+    """The target of the one presence ``op`` reaches, once its visibility resolved."""
+    product = validate_predicate(position, op, model)
+    closed = resolve_temporal_visibility(
+        product, target=position, model=model, resolution=ExistingRootConditions()
+    ).predicate
+    assert isinstance(product, ResolvedPresence) and isinstance(closed, ResolvedPresence)
+    assert isinstance(closed.target, ResolvedRelationship)
+    assert closed.target.temporal_visibility == TemporalPerspective()
+    assert closed == ResolvedPresence(
+        product.negated,
+        closed.target,
+        product.position,
+        product.where,
+    )
+    return closed.target.target.identity
+
+
+def test_temporal_resolution_resolves_a_hop_from_another_namespace() -> None:
     # The hop's `Class` prefix names the family ROOT while the queried position is
     # the ownerless concrete subtype, so the owner-relative rule looked for a
-    # `Beast` that does not exist. There is no as-of term to inject on this model,
-    # so propagation returning the predicate unchanged is the whole proof that
-    # the reference resolved.
+    # `Beast` that does not exist. The model is non-temporal, so resolution
+    # reaching the hop's own target with no axis is the proof that the reference
+    # resolved.
     model = _cross_namespace_model()
     wolf = _named(model, "Wolf")
 
-    op = oa.Presence("exists", "Beast.den")
-    product = validate_predicate(wolf, op, model)
-    assert navigate.propagate_hop_terms(product, model) is product
+    assert _resolved_hop(model, wolf, oa.Presence("exists", "Beast.den")) == (
+        _named(model, "den.Den").identity
+    )
 
 
 def test_every_lowering_seam_resolves_a_canonically_spelled_reference() -> None:
@@ -382,6 +403,6 @@ def test_every_lowering_seam_resolves_a_canonically_spelled_reference() -> None:
         (wolf.identity,)
     ]
 
-    navigation = oa.Presence("exists", "zoo.Beast.den")
-    product = validate_predicate(wolf, navigation, model)
-    assert navigate.propagate_hop_terms(product, model) is product
+    assert _resolved_hop(model, wolf, oa.Presence("exists", "zoo.Beast.den")) == (
+        _named(model, "den.Den").identity
+    )

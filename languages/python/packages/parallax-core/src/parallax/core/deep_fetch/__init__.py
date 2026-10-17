@@ -4,7 +4,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Final, Literal, NamedTuple
 
-from parallax.core import inheritance, navigate, relationship
+from parallax.core import inheritance, relationship
 from parallax.core._execution._unit_work.instructions import PreparedPredicateWrite
 from parallax.core.base import INFINITY, ManagedValue
 from parallax.core.inheritance import InheritanceEntityView, InheritanceFacet
@@ -19,6 +19,13 @@ from parallax.core.metamodel import (
     SortDirection,
     TemporalDimension,
     ValueObjectMetadata,
+)
+from parallax.core.navigate import (
+    ExistingRootConditions,
+    PropagatedRootSelections,
+    RootSelections,
+    TemporallyResolvedPredicate,
+    resolve_temporal_visibility,
 )
 from parallax.core.object_query._resolved import (
     Paging,
@@ -40,12 +47,7 @@ from parallax.core.predicate._resolved import disjunction as _disjunction
 from parallax.core.predicate._resolved import framework_comparison as _framework_comparison
 from parallax.core.predicate._resolved import managed_comparison as _managed_comparison
 from parallax.core.relationship import RelationshipMetadata
-from parallax.core.temporal_read import (
-    TimeInterval,
-    inject_resolved_as_of,
-    resolved_hop_as_of_terms,
-    resolved_pinned_instants,
-)
+from parallax.core.temporal_read import TimeInterval
 
 from ._include_tree import (
     IncludeTree,
@@ -62,12 +64,12 @@ __all__ = [
     "IncludeTree",
     "ObjectQueryPlan",
     "ParentRef",
+    "PlannedEntityQuery",
     "PositionId",
     "QueryFetchStep",
     "ReadProjectionRequest",
     "RelationshipViewKey",
     "RenderToken",
-    "ResolvedEntityQuery",
     "RootRef",
     "plan",
     "plan_coverage_read",
@@ -126,7 +128,7 @@ class CorrelationMember:
 
 @dataclass(frozen=True, slots=True)
 class QueryCorrelationMember:
-    """A child-side correlation with every input required to build its query."""
+    """A child-side correlation and the Attribute its child query keys on."""
 
     identity: AttributeIdentity
     column: str
@@ -134,12 +136,12 @@ class QueryCorrelationMember:
 
 
 @dataclass(frozen=True, slots=True)
-class ResolvedEntityQuery:
-    """One resolved flat read accepted by the private SQL compiler."""
+class PlannedEntityQuery:
+    """One planned flat read accepted by the private SQL compiler."""
 
     target: EntityIdentity
     entity: EntityMetadata
-    predicate: ResolvedPredicate
+    predicate: TemporallyResolvedPredicate
     projection: ResolvedReadProjection
     narrow_to: tuple[EntityIdentity, ...] | None = None
     order_by: tuple[ResolvedOrderTerm, ...] = ()
@@ -149,32 +151,16 @@ class ResolvedEntityQuery:
 
 @dataclass(frozen=True, slots=True)
 class QueryFetchStep:
-    """Execution instruction for one include position that issues a child query."""
+    """Execution instruction for one include position that issues a child query.
+
+    ``query`` is the level's complete child read, its gathered key set deferred.
+    """
 
     position: PositionId
     parent: ParentRef
     owner: CorrelationMember
-    child_target: EntityIdentity
-    child: EntityMetadata
     related: QueryCorrelationMember
-    as_of_terms: tuple[ResolvedPredicate, ...] = ()
-    order_terms: tuple[ResolvedOrderTerm, ...] = ()
-    narrow_to: tuple[EntityIdentity, ...] | None = None
-
-    def query_template(self) -> ResolvedEntityQuery:
-        """Build this level's child query with its gathered key set deferred."""
-        membership = _deferred_membership(member=self.related.member)
-        predicate = (
-            membership if not self.as_of_terms else _conjunction(membership, *self.as_of_terms)
-        )
-        return ResolvedEntityQuery(
-            target=self.child.identity,
-            entity=self.child,
-            predicate=predicate,
-            narrow_to=self.narrow_to,
-            order_by=self.order_terms,
-            projection=_projection_for(self.child, None, ReadProjectionRequest("all", True)),
-        )
+    query: PlannedEntityQuery
 
 
 @dataclass(frozen=True, slots=True)
@@ -194,7 +180,7 @@ type FetchStep = QueryFetchStep | BackReferenceFetchStep
 class ObjectQueryPlan:
     """A root query, one logical include tree, and execution-only fetch steps."""
 
-    root: ResolvedEntityQuery
+    root: PlannedEntityQuery
     includes: IncludeTree
     fetch_steps: tuple[FetchStep, ...]
 
@@ -208,14 +194,13 @@ def plan(
     """Plan validated Includes and resolve the caller's projection request."""
     entity = query.root
     families = inheritance.view(model)
-    family_root = inheritance.root_metadata(families, model, entity.identity)
-    root_pins = resolved_pinned_instants(query.temporal)
-    root_injected = inject_resolved_as_of(query.predicate, query.temporal, family_root)
-    predicate = navigate.propagate_hop_terms(root_injected, model, root_pins)
+    predicate = resolve_temporal_visibility(
+        query.predicate, target=entity, model=model, resolution=RootSelections(query.temporal)
+    )
     narrow_to = (
         None if query.narrow_to is None else tuple(item.identity for item in query.narrow_to)
     )
-    root = ResolvedEntityQuery(
+    root = PlannedEntityQuery(
         target=entity.identity,
         entity=entity,
         predicate=predicate,
@@ -226,7 +211,7 @@ def plan(
         paging=query.paging,
     )
 
-    builder = _PlanBuilder(model=model, families=families, root_pins=root_pins)
+    builder = _PlanBuilder(model=model, families=families, root_selections=query.temporal)
     builder.seed_root(entity)
     for path in query.includes:
         builder.add_path(path)
@@ -247,14 +232,13 @@ def plan_mutation_read(
     model: Metamodel,
     temporal: tuple[ResolvedTemporalSelection, ...],
     projection: ReadProjectionRequest,
-) -> ResolvedEntityQuery:
-    """Produce the one resolved flat read required to materialize a predicate write."""
+) -> PlannedEntityQuery:
+    """Produce the one planned flat read required to materialize a predicate write."""
     entity = write.selection.target
     families = inheritance.view(model)
-    family_root = inheritance.root_metadata(families, model, entity.identity)
-    root_pins = resolved_pinned_instants(temporal)
-    injected = inject_resolved_as_of(write.selection.predicate, temporal, family_root)
-    predicate = navigate.propagate_hop_terms(injected, model, root_pins)
+    predicate = resolve_temporal_visibility(
+        write.selection.predicate, target=entity, model=model, resolution=RootSelections(temporal)
+    )
     assigned = frozenset(
         assignment.member.identity.path[-1]
         for assignment in write.managed_assignments
@@ -272,7 +256,7 @@ def plan_mutation_read(
         families,
         ReadProjectionRequest(value_objects, projection.observe_structured_document),
     )
-    return ResolvedEntityQuery(
+    return PlannedEntityQuery(
         target=entity.identity,
         entity=entity,
         predicate=predicate,
@@ -286,7 +270,7 @@ def plan_coverage_read(
     model: Metamodel,
     key: str,
     terms: Sequence[tuple[ManagedValue, tuple[TimeInterval, ...]]],
-) -> ResolvedEntityQuery:
+) -> PlannedEntityQuery:
     """The one flat read of the current coverage execution-bound ranges
     transform: for each object ``terms`` names by its ``key`` value, its rows
     overlapping any of the Valid-Time windows named beside it, each window
@@ -345,10 +329,12 @@ def plan_coverage_read(
             ),
             *(term for term in axes if term is not None),
         )
-    return ResolvedEntityQuery(
+    return PlannedEntityQuery(
         target=entity.identity,
         entity=entity,
-        predicate=conjunction,
+        predicate=resolve_temporal_visibility(
+            conjunction, target=entity, model=model, resolution=ExistingRootConditions()
+        ),
         projection=_projection_for(entity, families, ReadProjectionRequest("all", True)),
     )
 
@@ -373,7 +359,7 @@ def plan_target_read(
     key_value: ManagedValue,
     valid_from: ManagedValue | None = None,
     whole: bool = False,
-) -> ResolvedEntityQuery:
+) -> PlannedEntityQuery:
     """The one flat point read of the stored row a caller-addressed write starts
     from: the object ``key`` names — on a temporal object its current row, at
     Valid-Time ``valid_from`` on a Bitemporal one — projected with no document,
@@ -392,10 +378,12 @@ def plan_target_read(
         assert valid_from is not None  # a Bitemporal target states its start
         terms.append(_managed_comparison(op="lessThanEquals", member=start, value=valid_from))
         terms.append(_managed_comparison(op="greaterThan", member=end, value=valid_from))
-    return ResolvedEntityQuery(
+    return PlannedEntityQuery(
         target=entity.identity,
         entity=entity,
-        predicate=_conjunction(*terms),
+        predicate=resolve_temporal_visibility(
+            _conjunction(*terms), target=entity, model=model, resolution=ExistingRootConditions()
+        ),
         projection=_projection_for(
             entity,
             families,
@@ -458,7 +446,8 @@ def _new_owners() -> dict[int, EntityMetadata]:
 class _PlanBuilder:
     model: Metamodel
     families: InheritanceFacet
-    root_pins: Mapping[TemporalDimension, ManagedValue]
+    # Every level's visibility propagates from the original root's selections.
+    root_selections: tuple[ResolvedTemporalSelection, ...]
     steps: list[FetchStep] = field(default_factory=_new_steps)
     positions: list[PositionSeed] = field(default_factory=_new_positions)
     _children: dict[_TrieKey, int] = field(default_factory=_new_children)
@@ -556,22 +545,30 @@ class _PlanBuilder:
             child_target = (
                 position[0] if narrowed and len(position) == 1 else direction.join.target.entity
             )
-            narrow_to = position if len(position) > 1 and narrowed else None
             child = _entity(self.model, child_target)
+            related = QueryCorrelationMember(
+                identity=direction.join.target,
+                column=_attribute_column(self.families, direction.join.target),
+                member=_attribute_metadata(self.families, direction.join.target),
+            )
             step = QueryFetchStep(
                 position=position_id,
                 parent=parent_ref,
                 owner=owner,
-                child_target=child_target,
-                child=child,
-                related=QueryCorrelationMember(
-                    identity=direction.join.target,
-                    column=_attribute_column(self.families, direction.join.target),
-                    member=_attribute_metadata(self.families, direction.join.target),
+                related=related,
+                query=PlannedEntityQuery(
+                    target=child.identity,
+                    entity=child,
+                    predicate=resolve_temporal_visibility(
+                        _deferred_membership(member=related.member),
+                        target=child,
+                        model=self.model,
+                        resolution=PropagatedRootSelections(self.root_selections),
+                    ),
+                    narrow_to=position if len(position) > 1 and narrowed else None,
+                    order_by=_resolved_order_terms(direction, child, self.families),
+                    projection=_projection_for(child, None, ReadProjectionRequest("all", True)),
                 ),
-                as_of_terms=resolved_hop_as_of_terms(related_entity, self.model, self.root_pins),
-                order_terms=_resolved_order_terms(direction, child, self.families),
-                narrow_to=narrow_to,
             )
 
         index = len(self.steps)

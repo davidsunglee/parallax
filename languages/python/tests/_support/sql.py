@@ -9,6 +9,11 @@ from parallax.core import deep_fetch
 from parallax.core.dialect import Dialect
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
+from parallax.core.navigate import (
+    ExistingRootConditions,
+    TemporallyResolvedPredicate,
+    resolve_temporal_visibility,
+)
 from parallax.core.object_query import (
     OrderKey,
     TemporalSelection,
@@ -18,6 +23,7 @@ from parallax.core.object_query import (
 from parallax.core.object_query._nodes import TemporalDimension
 from parallax.core.object_query._resolved import ResolvedObjectQuery
 from parallax.core.predicate import PredicateNode, validate_predicate
+from parallax.core.predicate._resolved import ResolvedPredicate
 from parallax.core.read_delivery._read_plan import UNCACHED_READ_PLANNER, EmptyRead
 from parallax.core.sql_gen._compile import CompiledPredicate, CompiledRead
 from parallax.core.sql_gen._compile import compile_read as compile_entity_query
@@ -114,7 +120,21 @@ def compile_write_predicate(
     dialect: Dialect,
     target: EntityMetadata,
 ) -> CompiledPredicate:
-    """Elaborate an authored test predicate before private write lowering."""
+    """Elaborate an authored test predicate and resolve its temporal visibility
+    as readless write lowering does before compiling it."""
     return compile_validated_write_predicate(
-        validate_predicate(target, predicate, model), model, dialect, target
+        resolved_as_stated(validate_predicate(target, predicate, model), model, target),
+        model,
+        dialect,
+        target,
+    )
+
+
+def resolved_as_stated(
+    predicate: ResolvedPredicate, model: Metamodel, target: EntityMetadata
+) -> TemporallyResolvedPredicate:
+    """``predicate`` temporally resolved with its own root conditions kept, as
+    specialized reads and readless writes resolve theirs."""
+    return resolve_temporal_visibility(
+        predicate, target=target, model=model, resolution=ExistingRootConditions()
     )

@@ -20,7 +20,7 @@ from typing import Any, cast
 import pytest
 
 from parallax.conformance import models
-from parallax.core import Edge, Pin, UndeclaredAxisError, deep_fetch, inheritance
+from parallax.core import Edge, Pin, UndeclaredAxisError, deep_fetch
 from parallax.core import object_query as oq
 from parallax.core import predicate as oa
 from parallax.core.base import INFINITY
@@ -59,7 +59,6 @@ from parallax.core.predicate._resolved import (
 )
 from parallax.core.sql_gen._compile import compile_read
 from parallax.core.temporal_read import (
-    FACET_KEY,
     Bitemporal,
     TemporalReadError,
     TemporalShape,
@@ -67,7 +66,6 @@ from parallax.core.temporal_read import (
     inject_resolved_as_of,
     milestone_edge,
     resolve_perspective,
-    resolved_hop_as_of_terms,
     resolved_query_pin,
     scans_resolved_axis,
     valid_time_coverage,
@@ -177,51 +175,6 @@ def test_temporal_injection_rejects_incomplete_resolved_products() -> None:
         )
 
 
-def test_hop_temporal_injection_rejects_axes_with_missing_members() -> None:
-    axis = POSITION.declared_as_of_axes[0]
-    without_end = cast(
-        "EntityMetadata",
-        dataclasses.replace(
-            cast("Any", POSITION),
-            declared_attributes=tuple(
-                member
-                for member in POSITION.declared_attributes
-                if member.identity.name != axis.end_attribute.name
-            ),
-        ),
-    )
-
-    class Family:
-        @staticmethod
-        def entity(_identity: object) -> Any:
-            return type("Position", (), {"root": without_end.identity})()
-
-    facets: dict[object, object] = {
-        inheritance.FACET_KEY: Family(),
-        FACET_KEY: temporal_view(_ACCEPTED["Position"]),
-    }
-
-    class Model:
-        @staticmethod
-        def facet(key: object) -> object:
-            return facets[key]
-
-        @staticmethod
-        def entity(_identity: object) -> EntityMetadata:
-            return without_end
-
-    malformed_model = cast("Any", Model())
-
-    with pytest.raises(TemporalReadError, match="temporal axis member is undeclared"):
-        resolved_hop_as_of_terms(without_end, malformed_model, {})
-    with pytest.raises(TemporalReadError, match="temporal axis member is undeclared"):
-        resolved_hop_as_of_terms(
-            without_end,
-            malformed_model,
-            {axis.dimension: dt.datetime(2024, 1, 1, tzinfo=dt.UTC)},
-        )
-
-
 def _undeclared_axes(monkeypatch: pytest.MonkeyPatch, entity: EntityMetadata) -> None:
     """Fail any read of an Entity's declared As-Of Axes."""
 
@@ -230,42 +183,6 @@ def _undeclared_axes(monkeypatch: pytest.MonkeyPatch, entity: EntityMetadata) ->
 
     monkeypatch.setattr(type(entity), "declared_as_of_axes", property(refuse))
     monkeypatch.setattr(type(entity), "as_of_axis", refuse)
-
-
-@pytest.mark.parametrize("pinned", [False, True], ids=["latest", "pinned"])
-def test_hop_terms_at_an_inherited_position_come_from_the_family_shape(
-    monkeypatch: pytest.MonkeyPatch, pinned: bool
-) -> None:
-    model = accepted_model("rate")
-    deposit_rate = target(model, "DepositRate")
-    root = target(model, "Rate")
-    shape = temporal_view(model).shape(deposit_rate.identity)
-    assert isinstance(shape, Bitemporal)
-    instant = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
-    pins = (
-        {TemporalDimension.VALID_TIME: instant, TemporalDimension.TRANSACTION_TIME: instant}
-        if pinned
-        else {}
-    )
-    _undeclared_axes(monkeypatch, deposit_rate)
-
-    terms = resolved_hop_as_of_terms(deposit_rate, model, pins)
-
-    members = [
-        attribute
-        for axis in (shape.valid_time, shape.transaction_time)
-        for attribute in (
-            (axis.start_attribute, axis.end_attribute) if pinned else (axis.end_attribute,)
-        )
-    ]
-    assert all(isinstance(term, ResolvedComparison) for term in terms)
-    assert [cast("ResolvedComparison", term).member for term in terms] == [
-        root.attribute(member.name) for member in members
-    ]
-    assert all(
-        cast("ResolvedComparison", term).member is root.attribute(member.name)
-        for term, member in zip(terms, members, strict=True)
-    )
 
 
 def test_temporal_query_validation_reports_an_invalid_wire_coordinate() -> None:
@@ -304,7 +221,7 @@ def test_result_narrowing_survives_temporal_selection_lowering() -> None:
     )
     plan = deep_fetch.plan(query, model, projection=deep_fetch.ReadProjectionRequest("all", True))
     assert plan.root.narrow_to == (BALANCE.identity,)
-    assert plan.root.predicate == ResolvedComparison(
+    assert plan.root.predicate.predicate == ResolvedComparison(
         "eq", _attribute(BALANCE, "txEnd"), INFINITY, framework=True
     )
 
@@ -393,10 +310,9 @@ def test_latest_terms_bind_managed_infinity_and_publish_its_canonical_literal() 
     model = _ACCEPTED["Position"]
     query = _validated(POSITION, _bitemporal("latest", "latest"))
     injected = inject_resolved_as_of(query.predicate, query.temporal, POSITION)
-    hop_terms = resolved_hop_as_of_terms(POSITION, model, {})
 
     assert isinstance(injected, ResolvedAnd)
-    for term in (*injected.operands, *hop_terms):
+    for term in injected.operands:
         assert isinstance(term, ResolvedComparison)
         assert term.framework
         assert term.value is INFINITY
@@ -467,7 +383,7 @@ def test_result_directives_survive_injection() -> None:
     ).root
     assert root.limit == 2
     assert root.order_by[0].member.identity.name == "id"
-    assert root.predicate == ResolvedComparison(
+    assert root.predicate.predicate == ResolvedComparison(
         "eq", _attribute(BALANCE, "txEnd"), INFINITY, framework=True
     )
 

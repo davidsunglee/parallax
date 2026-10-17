@@ -5,11 +5,12 @@ from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, replace
 from typing import Final, Literal, assert_never
 
-from parallax.core.base import STRING, Bytes, ManagedValue, NeutralType
+from parallax.core.base import INFINITY, STRING, Bytes, ManagedValue, NeutralType
 from parallax.core.dialect import Dialect, projection_result_key
 from parallax.core.document_codec import comparison_text, is_text_compared
 from parallax.core.inheritance import InheritanceFacet
 from parallax.core.metamodel import (
+    AttributeIdentity,
     AttributeMetadata,
     EntityIdentity,
     EntityMetadata,
@@ -20,7 +21,12 @@ from parallax.core.metamodel import (
     ValueObjectMetadata,
     entity_by_name,
 )
-from parallax.core.predicate import MembershipOp, StringOp
+from parallax.core.predicate import ComparisonOp, MembershipOp, StringOp
+from parallax.core.predicate._perspective import (
+    AtPerspective,
+    LatestPerspective,
+    TemporalPerspective,
+)
 from parallax.core.predicate._resolved import (
     CurrentObject,
     DeferredKeySet,
@@ -88,6 +94,7 @@ from parallax.core.sql_gen._navigation import (
 from parallax.core.sql_gen._navigation import (
     shared_relationship_is_eligible as _shared_relationship_is_eligible,
 )
+from parallax.core.sql_gen._navigation import temporal_visibility as _temporal_visibility
 from parallax.core.storage_layout import (
     ColumnContributor,
     DirectColumn,
@@ -715,6 +722,40 @@ def _bind_operand(
         scope.ctx.bind_managed(value, subject.type)
 
 
+def lower_perspective(perspective: TemporalPerspective, scope: EntityScope) -> list[str]:
+    """The comparisons restricting ``scope``'s current object to ``perspective``,
+    in canonical axis rank, each pushing its binds as its text lands.
+
+    Latest fixes the axis end to the open bound; an instant lies within the
+    axis's half-open interval, its start compared before its end.
+    """
+    terms: list[str] = []
+    for axis_perspective in perspective.ranked_perspectives():
+        match axis_perspective:
+            case LatestPerspective(axis=axis):
+                terms.append(_endpoint(axis.end_attribute, "eq", INFINITY, scope, framework=True))
+            case AtPerspective(axis=axis, instant=instant):
+                terms.append(_endpoint(axis.start_attribute, "lessThanEquals", instant, scope))
+                terms.append(_endpoint(axis.end_attribute, "greaterThan", instant, scope))
+    return terms
+
+
+def _endpoint(
+    endpoint: AttributeIdentity,
+    op: ComparisonOp,
+    value: object,
+    scope: EntityScope,
+    *,
+    framework: bool = False,
+) -> str:
+    attribute = _entity_view(scope.facet, endpoint.entity).applicable_attribute(endpoint.name)
+    if attribute is None:  # pragma: no cover - an accepted axis names declared Attributes
+        raise SqlGenError(f"{endpoint}: an As-Of Axis endpoint is undeclared")
+    subject = scope.subject_for(attribute)
+    _bind_operand(value, subject, scope, framework=framework)
+    return f"{subject.compared} {_COMPARATORS[op]} ?"
+
+
 def _lower_like(
     kind: StringOp,
     value: str,
@@ -947,13 +988,13 @@ def _candidate_where(
     reach: tuple[_SharedSource, ...] = (),
 ) -> str:
     """The correlated `where` of one candidate branch: correlation, then the
-    interior (if any), then the hop's visibility terms, then its family guard —
-    the guard's binds pushed last because its text comes last — then the join
-    terms of each ``reach`` source in join order."""
+    interior (if any), then the hop's temporal visibility, then its family
+    guard — the guard's binds pushed last because its text comes last — then
+    the join terms of each ``reach`` source in join order."""
     terms = [rendered.correlation_sql]
     if interior:
         terms.append(interior)
-    terms.extend(_term(term, scope) for term in relationship.visibility)
+    terms.extend(lower_perspective(_temporal_visibility(relationship), scope))
     if rendered.family_guard_sql is not None:
         terms.append(rendered.family_guard_sql)
     scope.ctx.bind_framework_all(rendered.family_guard_binds)
@@ -971,10 +1012,10 @@ def _join_terms(
     target: EntityScope,
     rendered: _RenderedRelationshipCandidate,
 ) -> str:
-    """A joined target's `on`: its correlation, its visibility terms, then its
-    family guard, each pushing its binds as its text lands."""
+    """A joined target's `on`: its correlation, its temporal visibility, then
+    its family guard, each pushing its binds as its text lands."""
     terms = [rendered.correlation_sql]
-    terms.extend(_term(term, target) for term in relationship.visibility)
+    terms.extend(lower_perspective(_temporal_visibility(relationship), target))
     if rendered.family_guard_sql is not None:
         terms.append(rendered.family_guard_sql)
     target.ctx.bind_framework_all(rendered.family_guard_binds)
@@ -1700,8 +1741,8 @@ def render_shared_sources(scope: EntityScope) -> str:
 
     Each source takes the next alias and pushes its `on` binds as it renders,
     so a join's aliases and binds precede the predicate beside it: its
-    correlation against the source reaching it, its visibility terms, then its
-    family guard. A left join keeps every row of the scope and supplies null
+    correlation against the source reaching it, its temporal visibility, then
+    its family guard. A left join keeps every row of the scope and supplies null
     where the target is missing.
     """
     plan = scope.sources

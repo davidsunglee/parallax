@@ -1,12 +1,9 @@
 from __future__ import annotations
 
-from collections.abc import Iterator
 from dataclasses import dataclass
 
-from parallax.core.base import INFINITY
 from parallax.core.metamodel import (
     AbstractRoot,
-    AsOfAxisMetadata,
     AttributeIdentity,
     AttributeMetadata,
     EntityIdentity,
@@ -14,12 +11,8 @@ from parallax.core.metamodel import (
     Metamodel,
     TablePerHierarchy,
 )
-from parallax.core.predicate._resolved import (
-    CurrentObject,
-    ResolvedComparison,
-    ResolvedPredicate,
-    ResolvedRelationship,
-)
+from parallax.core.predicate._perspective import TemporalPerspective
+from parallax.core.predicate._resolved import ResolvedRelationship
 from parallax.core.sql_gen._context import PlanScope as _PlanScope
 from parallax.core.sql_gen._context import SqlGenError
 from parallax.core.sql_gen._context import table_layout as _table_layout
@@ -27,8 +20,6 @@ from parallax.core.sql_gen._inheritance import TagPredicate as _TagPredicate
 from parallax.core.sql_gen._inheritance import entity_view as _entity_view
 from parallax.core.sql_gen._inheritance import tag_column as _tag_column
 from parallax.core.sql_gen._inheritance import tag_guard as _tag_guard
-from parallax.core.temporal_read import ranked_axes as _ranked_axes
-from parallax.core.temporal_read import view as _temporal_view
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,6 +128,14 @@ def render_relationship_candidate(
     )
 
 
+def temporal_visibility(relationship: ResolvedRelationship) -> TemporalPerspective:
+    """The perspective ``relationship``'s candidates are visible under."""
+    visibility = relationship.temporal_visibility
+    if visibility is None:  # pragma: no cover - temporal resolution reaches every relationship
+        raise SqlGenError(f"{relationship.identity}: the relationship's visibility is unresolved")
+    return visibility
+
+
 def shared_relationship_is_eligible(
     relationship: ResolvedRelationship,
     candidates: RelationshipCandidatePlan,
@@ -147,14 +146,14 @@ def shared_relationship_is_eligible(
 
     Only one physical branch qualifies, because a Table's unique key says
     nothing about another concrete Table of the same family. Then either the
-    strict equalities of its correlation and generated visibility fix every
+    strict equalities of its correlation and temporal visibility fix every
     Column of one of that Table's unique keys — strict equality never matches a
-    null component, so a nullable unique Column qualifies too, and a Latest end
-    equality fixes a temporal end — or the correlation fixes the target family's
-    logical key and the visibility selects one perspective on every temporal
-    axis, which the full-history non-overlap invariant (`m-temporal-write`)
-    makes one milestone. Declared cardinality, authored conditions, and
-    operand-local subtype selection prove nothing.
+    null component, so a nullable unique Column qualifies too, and an axis seen
+    at Latest fixes its end — or the correlation fixes the target family's
+    logical key and the target is temporal: its visibility selects one
+    perspective on every axis, which the full-history non-overlap invariant
+    (`m-temporal-write`) makes one milestone. Declared cardinality, authored
+    conditions, and operand-local subtype selection prove nothing.
     """
     if len(candidates.branches) != 1:
         return False
@@ -162,54 +161,21 @@ def shared_relationship_is_eligible(
     guard = branch.family_guard
     if guard is not None and not guard.position:  # pragma: no cover - an empty family is unplanned
         return False
-    visibility = relationship.visibility
+    visibility = temporal_visibility(relationship)
+    related = branch.related.identity
     layout = _table_layout(scope.storage, scope.facet, branch.entity.identity)
-    fixed = {branch.related.identity, *_latest_ends(visibility)}
     if any(
-        key.columns and all(slot.contributor in fixed for slot in key.columns)
+        key.columns
+        and all(
+            slot.contributor == related
+            or (
+                isinstance(slot.contributor, AttributeIdentity)
+                and visibility.is_latest_end(slot.contributor)
+            )
+            for slot in key.columns
+        )
         for key in layout.unique_keys
     ):
         return True
-    shape = _temporal_view(scope.meta).shape(relationship.target.identity)
-    axes = () if shape is None else _ranked_axes(shape)
     logical_key = _entity_view(scope.facet, relationship.target.identity).primary_key
-    return (
-        bool(axes)
-        and branch.related.identity == logical_key.identity
-        and all(_one_perspective(axis, visibility) for axis in axes)
-    )
-
-
-def _latest_ends(visibility: tuple[ResolvedPredicate, ...]) -> Iterator[AttributeIdentity]:
-    for term in visibility:
-        if (
-            isinstance(term, ResolvedComparison)
-            and term.op == "eq"
-            and term.framework
-            and term.value is INFINITY
-            and isinstance(term.position, CurrentObject)
-            and isinstance(term.member, AttributeMetadata)
-        ):
-            yield term.member.identity
-
-
-def _one_perspective(axis: AsOfAxisMetadata, visibility: tuple[ResolvedPredicate, ...]) -> bool:
-    """Whether ``visibility`` selects ``axis`` at one coordinate: its Latest end
-    equality, or the containment pair of one finite instant."""
-    if axis.end_attribute in set(_latest_ends(visibility)):
-        return True
-    starts: list[object] = []
-    ends: list[object] = []
-    for term in visibility:
-        if (
-            not isinstance(term, ResolvedComparison)
-            or term.framework
-            or not isinstance(term.position, CurrentObject)
-        ):
-            continue
-        member = term.member.identity
-        if term.op == "lessThanEquals" and member == axis.start_attribute:
-            starts.append(term.value)
-        elif term.op == "greaterThan" and member == axis.end_attribute:
-            ends.append(term.value)
-    return any(start == end for start in starts for end in ends)
+    return visibility.is_temporal and related == logical_key.identity

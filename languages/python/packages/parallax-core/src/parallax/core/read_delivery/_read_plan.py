@@ -594,14 +594,13 @@ def _fetch_work(
         elif isinstance(step, deep_fetch.BackReferenceFetchStep):
             work.append(None)
         else:
-            template = step.query_template()
             work.append(
                 compile_template(
-                    template,
+                    step.query,
                     model.meta,
                     dialect,
                     result_form=result_form,
-                    lock=entity_read_lock(model.meta, template.target, preference),
+                    lock=entity_read_lock(model.meta, step.query.target, preference),
                 )
             )
     return tuple(work)

@@ -19,6 +19,7 @@ from parallax.core.predicate._nodes import (
     QuantifierKind,
     StringOp,
 )
+from parallax.core.predicate._perspective import TemporalPerspective
 
 type ResolvedPredicateMember = AttributeMetadata | ValueObjectAttributeMetadata
 """A scalar member read from an object position.
@@ -52,15 +53,16 @@ class ResolvedRelationship:
     """One relationship direction reached from an object position.
 
     ``source`` and ``related`` are its join endpoints at the source position
-    and at ``target``. ``visibility`` holds the generated temporal terms its
-    candidates are visible under; it is empty until a read propagates them.
+    and at ``target``. ``temporal_visibility`` is the perspective its
+    candidates are visible under: absent until temporal resolution reaches the
+    relationship, and a perspective with no axis for a non-temporal target.
     """
 
     identity: RelationshipIdentity
     target: EntityMetadata
     source: AttributeMetadata
     related: AttributeMetadata
-    visibility: tuple[ResolvedPredicate, ...] = ()
+    temporal_visibility: TemporalPerspective | None = None
 
 
 @dataclass(frozen=True, slots=True)
