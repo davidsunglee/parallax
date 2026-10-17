@@ -48,10 +48,7 @@ from parallax.core._execution._unit_work.instructions import (
 from parallax.core._execution._unit_work.retain import ReadEvidence
 from parallax.core._execution._unit_work.strategy import ActorIdentity
 from parallax.core._execution._unit_work.uow import (
-    BindDeferredRange,
     Concurrency,
-    DeferredWriteContinuation,
-    ReportUnitCompletion,
     TransactionSettings,
     UnitOfWork,
     WriteBatchReason,
@@ -99,8 +96,7 @@ from parallax.core.read_delivery._row_lane import (
 from parallax.core.read_delivery._stream import StreamDelivery, check_batch_size
 from parallax.core.sql_gen._compile import CompiledRead, compile_read
 from parallax.core.temporal_read import Pin
-from parallax.core.write_plan import WritePlan
-from parallax.core.write_plan.plan import BoundRange, ExecutionUnit, UnitEffects, WriteStepView
+from parallax.core.write_plan.plan import WriteStepView
 
 __all__ = [
     "PredicateWriteAdapter",
@@ -454,10 +450,10 @@ class TxnAttempt(_TxnAttemptBase):
 
     Constructed inside the port's transaction callback, after the attempt
     adopted and opened: every execution field is set before the unit of work is
-    constructed over this attempt's own flush and row-acquisition methods, so
-    neither a lifecycle factory nor a callback can observe a partially wired
-    attempt. A retry constructs a fresh one; a joining call reuses the active
-    attempt and never constructs another.
+    constructed over this attempt's own step-execution, write-batch, and
+    row-acquisition methods, so neither a lifecycle factory nor a callback can
+    observe a partially wired attempt. A retry constructs a fresh one; a joining
+    call reuses the active attempt and never constructs another.
 
     It is the attempt's participating read as well as its write door. Every
     read is admitted through the unit of work's read gate, so pending writes
@@ -496,9 +492,9 @@ class TxnAttempt(_TxnAttemptBase):
         # and what a caller inspects, without ambient state on either path.
         self._options = options
         # One flush is ONE Write Batch however many statements its plan lowers
-        # to. The unit of work announces a flush before planning it and hands
-        # the finished plan over afterwards, so the batch opened by the first
-        # call is the one the second runs under; a flush never nests.
+        # to. The unit of work opens it before planning and executes every span
+        # of the plan inside it, so each span runs under the batch its flush
+        # opened; a flush never nests.
         self._batch: WriteBatchActivity = INERT
         self._uow = UnitOfWork(
             settings=TransactionSettings(
@@ -508,7 +504,7 @@ class TxnAttempt(_TxnAttemptBase):
             lifetime=lifetime,
             clock=clock,
             meta=write.model.meta,
-            flush_executor=self._execute_flush,
+            execute_write_steps=self._execute_steps,
             write_batch_opening=self._open_write_batch,
             acquire_rows=self._acquire_rows,
             # The adopted selection's Write Planner: retained by this unit of
@@ -822,95 +818,6 @@ class TxnAttempt(_TxnAttemptBase):
         batch = self._activity.write_batch(trigger)
         self._batch = batch
         return batch
-
-    def _execute_flush(
-        self,
-        plan: WritePlan,
-        /,
-        *,
-        trigger: WriteBatchReason,
-        bind_deferred: BindDeferredRange,
-        completed: ReportUnitCompletion,
-    ) -> None:
-        """Execute each execution unit's steps in order, hand each result back
-        to the unit of work to interpret, and report each unit to it as soon as
-        its last step has been enforced.
-
-        Every unit's steps run through one driver (:meth:`_execute_steps`) on
-        the transaction's own connection, inside the still-open
-        ``port.transaction`` scope — so an abort rolls back force-flushed writes
-        with everything else. A unit is reported before any step of the next one
-        is even lowered, so what it changed is published before later work
-        proceeds, and a later step's lowering failure cannot overtake an earlier
-        deferred unit.
-
-        A unit with a deferred range reaches its turn with no planned step: the
-        unit of work reads its coverage and binds the range
-        (``bind_deferred``), and the bound steps execute and are enforced
-        exactly as planned ones are before the unit is reported with what it
-        bound. Where binding answers a continuation, each round it prepares
-        executes the same way before the next is prepared, and the unit is
-        reported once, with what the continuation finishes with, after the last.
-        """
-        # The trigger is the batch's, and the batch this runs inside already
-        # carries it; taking it again here would be a second spelling of one
-        # fact.
-        del trigger
-        steps = plan.steps
-        start = 0
-        for unit in plan.units:
-            allocated = self._execute_steps(
-                steps.view(start, unit.end), allocates=bool(unit.opened.allocated)
-            )
-            start = unit.end
-            self._complete(unit, bind_deferred, completed, allocated)
-
-    def _complete(
-        self,
-        unit: ExecutionUnit,
-        bind_deferred: BindDeferredRange,
-        completed: ReportUnitCompletion,
-        allocated: tuple[object, ...],
-    ) -> None:
-        deferred = unit.deferred
-        if deferred is None:
-            completed(unit, None, allocated=allocated)
-            return
-        bound = bind_deferred(deferred)
-        if isinstance(bound, BoundRange):
-            self._execute_steps(bound.steps.view(0, len(bound.steps)), allocates=False)
-            completed(unit, bound)
-            return
-        completed(unit, self._continued(bound))
-
-    def _continued(self, continuation: DeferredWriteContinuation) -> UnitEffects:
-        """Execute every round ``continuation`` prepares, each only once the
-        previous one's steps have all succeeded, and answer what it finishes
-        with; close it however that ends.
-
-        A round's writes are released before the next is pulled, so nothing
-        executed stays reachable from here while later work is prepared. A
-        failure closing the continuation after an earlier failure is noted on
-        the earlier one, which propagates; one with no earlier failure refuses
-        the unit's success itself.
-        """
-        try:
-            writes = continuation.pull()
-            while writes is not None:
-                self._execute_steps(writes.view(0, len(writes)), allocates=False)
-                writes = None
-                writes = continuation.pull()
-            effects = continuation.finish()
-        except BaseException as failure:
-            try:
-                continuation.close()
-            except BaseException as cleanup:
-                failure.add_note(
-                    f"closing the deferred unit's preparation also failed: {cleanup!r}"
-                )
-            raise
-        continuation.close()
-        return effects
 
     def _execute_steps(self, steps: WriteStepView, /, *, allocates: bool) -> tuple[object, ...]:
         """Execute ``steps`` as calls of the Write Batch the current flush runs

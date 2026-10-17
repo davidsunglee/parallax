@@ -1,6 +1,6 @@
-"""An in-memory row acquisition answering the rows a database holds, and
-deferred ranges read and bound through the unit of work's own acquisition and
-binding over it."""
+"""An in-memory row acquisition answering the rows a database holds, deferred
+ranges read and bound through the unit of work's own acquisition and binding
+over it, and the continuation a deferred group settles through."""
 
 from __future__ import annotations
 
@@ -11,13 +11,14 @@ from dataclasses import dataclass, field
 from parallax.core import inheritance, temporal_read
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work.acquisition import (
+    AcquireRows,
     CompletionRequest,
     CoverageReadRequest,
     RowConsumer,
     RowRequest,
 )
-from parallax.core._execution._unit_work.ranges import DeferredGroupRange
-from parallax.core._execution._unit_work.uow import bind_deferred_range
+from parallax.core._execution._unit_work.ranges import DeferredGroupRange, GroupContinuation
+from parallax.core._execution._unit_work.write_runner import acquire_and_bind_range
 from parallax.core.entity._construction_input import ABSENT
 from parallax.core.metamodel import Metamodel
 from parallax.core.temporal_read import valid_time_coverage
@@ -27,15 +28,12 @@ from parallax.core.write_plan.plan import (
     NO_TEMPORAL_WRITE_OWNERSHIP,
     BoundRange,
     ExecutionUnit,
-    PlannedWrites,
     TemporalWriteOwnership,
-    UnitEffects,
 )
-from parallax.core.write_plan.steps import PlannedWrite
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
 from tests.unit._positional_row_support import positional_row
 
-__all__ = ["DrivenGroup", "HeldRows", "bind_held", "coverage_read", "drive_group"]
+__all__ = ["HeldRows", "bind_held", "coverage_read", "prepared_group"]
 
 
 @dataclass(slots=True)
@@ -97,7 +95,7 @@ def bind_held(
     execution, to a coverage read finding ``rows`` under ``ownership``."""
     deferred = unit.deferred
     assert deferred is not None
-    return bind_deferred_range(
+    return acquire_and_bind_range(
         deferred,
         acquire_rows=HeldRows(model, rows),
         planner=build_write_planner(model),
@@ -116,7 +114,7 @@ def coverage_read(
     assert deferred is not None
     observed = _ObservedRead()
     with contextlib.suppress(_ObservedRead):
-        bind_deferred_range(
+        acquire_and_bind_range(
             deferred,
             acquire_rows=observed,
             planner=build_write_planner(model),
@@ -142,45 +140,23 @@ class _ObservedRead(Exception):
         raise self
 
 
-@dataclass(frozen=True, slots=True)
-class DrivenGroup:
-    """What driving one deferred group to exhaustion did: each round's
-    writes, in order, every read asked of its acquisition, and the effects it
-    finished with."""
-
-    rounds: tuple[PlannedWrites, ...]
-    reads: tuple[RowRequest, ...]
-    effects: UnitEffects
-
-    @property
-    def steps(self) -> list[PlannedWrite]:
-        return [step for writes in self.rounds for step in writes]
-
-
-def drive_group(
+def prepared_group(
     model: Metamodel,
     unit: ExecutionUnit,
-    rows: Sequence[PredecessorRow] = (),
+    acquire_rows: AcquireRows,
     *,
     transaction_instant: TransactionInstant,
     ownership: TemporalWriteOwnership = NO_TEMPORAL_WRITE_OWNERSHIP,
-) -> DrivenGroup:
-    """``unit``'s deferred group driven as the executor drives it — every round
-    pulled until none remains, then finished and closed — each coverage read
-    answering the rows of ``rows`` it overlaps under ``ownership``."""
+) -> GroupContinuation:
+    """The continuation ``unit``'s deferred group settles through, as the
+    unit of work prepares it at the unit's turn, each batch's coverage read
+    through ``acquire_rows`` under ``ownership``."""
     deferred = unit.deferred
     assert isinstance(deferred, DeferredGroupRange)
-    held = HeldRows(model, rows, overlapping=True)
-    continuation = build_write_planner(model).continue_group(
+    return build_write_planner(model).prepare_group(
         deferred,
-        acquire_rows=held,
+        acquire_rows=acquire_rows,
         ownership=ownership,
         actor_identity=TEST_ACTOR_IDENTITY,
         transaction_instant=transaction_instant,
     )
-    rounds: list[PlannedWrites] = []
-    while (writes := continuation.pull()) is not None:
-        rounds.append(writes)
-    effects = continuation.finish()
-    continuation.close()
-    return DrivenGroup(tuple(rounds), tuple(held.requests), effects)

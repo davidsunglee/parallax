@@ -126,9 +126,10 @@ class WritePlanner:
     """The model-scoped, stateless Write Planner (`m-unit-work`).
 
     Constructed once per accepted Metamodel with its strategy adapters already
-    wired; :meth:`finalize` plans a flush, and :meth:`bind_deferred` binds a
-    deferred range of a plan it finalized once that range's coverage is read.
-    No caller sequences coalescing, batching, ordering, temporal expansion,
+    wired; :meth:`finalize` plans a flush, :meth:`bind_deferred` binds a
+    deferred range of a plan it finalized once that range's coverage is read,
+    and :meth:`prepare_group` answers the continuation a deferred group of such
+    a plan settles through. No caller sequences coalescing, batching, ordering, temporal expansion,
     observation validation, instant acquisition, or audit by hand.
 
     The compiler it constructs here is its own, built over the same model and
@@ -262,7 +263,7 @@ class WritePlanner:
             payloads=self._payloads,
         )
 
-    def continue_group(
+    def prepare_group(
         self,
         description: DeferredGroupRange,
         /,

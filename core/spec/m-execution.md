@@ -5,11 +5,11 @@
 derived from it, the resolution of transaction options, the serving and adoption
 of Model Editions, and the **Attempts**, writable or read-only, that run each
 physical transaction attempt. It executes reads by handing them to `m-read-delivery` under the
-conditions it establishes, and executes writes by running the Write Plan
-`m-unit-work` finalizes, acquiring the rows a write needs to read, and reporting
-each completed unit back. Per the dependency graph it depends on `m-unit-work`
+conditions it establishes, and executes writes by running each span of Planned
+Writes the unit of work hands it from the Write Plan `m-unit-work` finalizes and
+acquiring the rows a write needs to read. Per the dependency graph it depends on `m-unit-work`
 for admission, evidence, finalization, and effects; `m-read-delivery` for every
-read it executes; `m-write-plan` for the plan and units it runs;
+read it executes; `m-write-plan` for the Planned Writes it runs;
 `m-write-payload` for the payload preparer model preparation wires into the
 Write Planner and every statement stores; `m-sql` for the statements it lowers; `m-deep-fetch` for the row reads acquisition plans;
 `m-execution-authority` for the authority a scope captures; `m-auto-retry` for
@@ -225,26 +225,22 @@ row alone, with the judgement and refusal the read would have applied to them.
 
 ### Flush execution
 
-Execution runs the Write Plan a flush finalizes, unit by unit in plan order,
-inside the Write Batch the unit of work opened for it. It lowers each unit's
-Planned Writes through one shared path — the planner's payload preparer prepares
-what the statement about to run stores, and `m-sql` renders it — executes them
-through the port, and has the unit of work enforce each step's affected rows. A
-deferred unit is bound first: the runtime asks the unit of work to complete the
-retained rows it reuses, acquire the coverage they leave, and bind both against
-the ownership earlier units published, then executes the bound steps. Where
-binding answers a continuation instead (`m-unit-work` *Write Plan and Planned
-Writes*), the runtime asks it for one round of Planned Writes at a time,
-executes and enforces every step of a round before asking for the next, and
-holds nothing of a round once it has run; when no round remains it takes the
-unit's effects from the continuation, and it releases the continuation however
-the unit ended, keeping an earlier failure as the one raised. After a unit's
-steps all succeed — including a unit with no steps — the runtime reports it to
-the unit of work, once, which publishes its effects before the next unit binds
-(`m-unit-work` *Execution units complete before later work runs*). No later unit's statement is prepared or lowered
-before the earlier unit completes, so a later step's lowering failure cannot
-overtake it. A unit that fails is never reported, and the failure dooms the
-attempt.
+The unit of work runs the Write Plan a flush finalizes unit by unit, binding
+each deferred unit at its turn and completing each unit before the next
+(`m-unit-work` *Execution units complete before later work runs*). Execution
+implements the step-execution port: it runs each span of Planned Writes the
+unit of work hands it — a unit's planned steps, the steps a deferred range
+bound, or one round of a deferred group — inside the Write Batch the unit of
+work opened for the flush. It lowers the span's Planned Writes through one
+shared path — the planner's payload preparer prepares what the statement about
+to run stores, and `m-sql` renders it — executes them through the port, and has
+the unit of work enforce each step's affected rows; for a unit opening rows
+whose keys the database allocates, it answers those keys in step order. A span
+returns once every step of it has succeeded, and nothing of it is held
+afterwards. Execution neither walks a plan's units nor interprets their
+effects, so no later unit's statement is prepared or lowered before the earlier
+unit completes, and a later step's lowering failure cannot overtake it. A
+failed span completes no unit, and the failure dooms the attempt.
 
 Where the connection holds ordered write transport (`m-db-port`), a run of two
 or more contiguous count-only temporal effects — closes, guards, revisions, and

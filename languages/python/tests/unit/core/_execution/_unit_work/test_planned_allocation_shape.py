@@ -45,7 +45,8 @@ from parallax.core.unit_work import (
     UnitOfWork,
     WriteAssignment,
 )
-from parallax.core.write_plan import PredecessorRow, WritePlan
+from parallax.core.write_plan import PredecessorRow
+from parallax.core.write_plan.plan import WriteStepView
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
 from tests.unit.core._execution._unit_work._acquired_rows_support import HeldRows
 
@@ -66,10 +67,8 @@ def _selected_rows(count: int) -> list[PredecessorRow]:
     ]
 
 
-def _unflushed(
-    plan: WritePlan, *, trigger: object, bind_deferred: object, completed: object
-) -> None:  # pragma: no cover - nothing flushes
-    del plan, trigger, bind_deferred, completed
+def _unflushed(steps: WriteStepView, /, *, allocates: bool) -> tuple[object, ...]:
+    del steps, allocates
     raise AssertionError("materialization flushes nothing")
 
 
@@ -114,7 +113,7 @@ def test_materialization_constructs_no_keyed_write_regardless_of_row_count(
             settings=TransactionSettings(concurrency="optimistic"),
             clock=FixedClock(dt.datetime(2024, 6, 1, tzinfo=dt.UTC)),
             meta=_ACCOUNT,
-            flush_executor=_unflushed,
+            execute_write_steps=_unflushed,
             acquire_rows=selected,
             planner=build_write_planner(_ACCOUNT),
             actor_identity=TEST_ACTOR_IDENTITY,

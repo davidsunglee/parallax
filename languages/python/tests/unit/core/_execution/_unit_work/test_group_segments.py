@@ -5,7 +5,7 @@ settled backing, rows the attempt opened revised or removed at their address,
 the effective members a surviving row overlays, and agreement with the same
 row written by a keyed write. A Bitemporal amendment group settles at
 execution instead, each object a range from the row it was selected by, and is
-driven here as execution drives it."""
+read here from the rounds its continuation prepares."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ from parallax.core._execution._unit_work.instructions import (
     PreparedPredicateWrite,
     prepare_typed_write,
 )
-from parallax.core._execution._unit_work.ranges import DeferredGroupRange
+from parallax.core._execution._unit_work.ranges import GroupContinuation
 from parallax.core._execution._write_lowering import lowered
 from parallax.core.base import INFINITY, FrozenMap
 from parallax.core.db_port import JsonDocument
@@ -84,8 +84,8 @@ from parallax.core.write_plan.plan import (
     BoundRange,
     Derivation,
     Descent,
-    ExecutionUnit,
     OwnedEndpoint,
+    PlannedWrites,
     TemporalWriteOwnership,
     UnitEffects,
 )
@@ -110,7 +110,7 @@ from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._gc_reachability import reachable_objects
 from tests.unit._positional_row_support import positional_row
 from tests.unit._temporal_group_support import temporal_group
-from tests.unit.core._execution._unit_work._acquired_rows_support import drive_group
+from tests.unit.core._execution._unit_work._acquired_rows_support import HeldRows, prepared_group
 from tests.unit.core._execution._unit_work._audit_support import RecordingAudit
 from tests.unit.core._execution._unit_work._ownership_support import OpenedRows
 
@@ -147,32 +147,26 @@ def _plan(
     )
 
 
-def _executed(
+def _settled(
     plan: WritePlan,
     model: Metamodel,
     *,
     ownership: TemporalWriteOwnership = NO_TEMPORAL_WRITE_OWNERSHIP,
     rows: Sequence[PredecessorRow] = (),
-) -> tuple[list[PlannedWrite], list[ExecutionUnit | object]]:
-    """Every step ``plan`` executes, in order, beside what each unit's success
-    publishes: a deferred group driven as execution drives it, under
-    ``ownership``, its coverage reads finding the rows of ``rows`` they reach."""
-    planned = list(plan.steps)
-    steps: list[PlannedWrite] = []
-    effects: list[ExecutionUnit | object] = []
-    position = 0
-    for unit in plan.units:
-        steps.extend(planned[position : unit.end])
-        position = unit.end
-        if isinstance(unit.deferred, DeferredGroupRange):
-            driven = drive_group(
-                model, unit, rows, transaction_instant=_INSTANT, ownership=ownership
-            )
-            steps.extend(driven.steps)
-            effects.append(driven.effects)
-        else:
-            effects.append(unit)
-    return steps, effects
+) -> tuple[list[PlannedWrite], UnitEffects]:
+    """The steps ``plan``'s one unit settles to, beside what its success
+    publishes: its planned steps, or those of the one round its deferred group
+    settles in under ``ownership``, coverage reads finding the rows of ``rows``
+    they reach."""
+    (unit,) = plan.units
+    if unit.deferred is None:
+        return list(plan.steps), unit
+    held = HeldRows(model, rows, overlapping=True)
+    continuation = prepared_group(
+        model, unit, held, transaction_instant=_INSTANT, ownership=ownership
+    )
+    (writes,) = _rounds(continuation)
+    return list(writes), continuation.finish()
 
 
 def _row_values(row: PlannedRow) -> dict[str, object]:
@@ -606,7 +600,7 @@ def test_a_surviving_multi_assignment_row_executes_the_member_it_restores() -> N
         account="".join(("ACC", "-1")),
     )
     assert isinstance(group.evidence, PredecessorRows)
-    steps, _ = _executed(_plan([group], _POSITION), _POSITION)
+    steps, _ = _settled(_plan([group], _POSITION), _POSITION)
 
     changed = [
         entry
@@ -741,9 +735,9 @@ def test_a_keyed_and_a_materialized_successor_lower_to_the_same_statements() -> 
 
     eager = statements_of(_plan([keyed], model, observations={key_: observation}))
     materialized = statements_of_steps(
-        _executed(
-            _plan([MaterializedWriteGroup(mutation=mutation, evidence=sealed)], model), model
-        )[0]
+        _settled(_plan([MaterializedWriteGroup(mutation=mutation, evidence=sealed)], model), model)[
+            0
+        ]
     )
     assert materialized == eager
     for statements in (eager, materialized):
@@ -881,7 +875,7 @@ def test_a_surviving_row_executes_a_restored_leaf_beside_an_effective_value_obje
     assert len(group) == 1
     (changed,) = (
         entry
-        for step in _executed(_plan([group], branch), branch)[0]
+        for step in _settled(_plan([group], branch), branch)[0]
         if isinstance(step, PlannedInsert)
         for entry in step.entries
         if isinstance(entry.origin, ChangedFrom)
@@ -925,11 +919,11 @@ def _group_steps(
     *,
     owned: tuple[int, ...] = (),
     inserted: tuple[int, ...] = (),
-) -> tuple[list[PlannedWrite], list[ExecutionUnit | object]]:
-    """The steps a group of ``mutation`` executes over three rows and what its
-    success publishes, settled at planning or driven at execution alike."""
+) -> tuple[list[PlannedWrite], UnitEffects]:
+    """The steps a group of ``mutation`` settles to over three rows and what its
+    success publishes, settled at planning or at execution alike."""
     model = _POSITION if entity == "Position" else _BALANCE
-    return _executed(
+    return _settled(
         _planned_group(entity, mutation, owned=owned, inserted=inserted),
         model,
         ownership=_ownership(entity, owned=owned, inserted=inserted),
@@ -1009,8 +1003,7 @@ def test_a_transaction_time_group_unit_opens_one_current_row_per_rewritten_row()
 
 
 def test_a_bitemporal_amendment_of_rows_the_attempt_never_opened_opens_every_successor() -> None:
-    _steps, (effects,) = _group_steps("Position", "amend")
-    assert isinstance(effects, UnitEffects)
+    _steps, effects = _group_steps("Position", "amend")
     assert list(effects.removed) == []
     assert len(list(effects.opened.fresh)) == 6
 
@@ -1052,7 +1045,7 @@ def test_a_group_never_opens_a_successor_that_covers_no_valid_time() -> None:
         )
     )
     # Row 1 starts where the update does, so it has no head; row 2 keeps one.
-    assert [type(step).__name__ for step in _executed(plan, model)[0]] == [
+    assert [type(step).__name__ for step in _settled(plan, model)[0]] == [
         "PlannedClose",
         "PlannedInsert",
         "PlannedClose",
@@ -1121,6 +1114,14 @@ def _finalized(
     )
 
 
+def _rounds(continuation: GroupContinuation) -> list[PlannedWrites]:
+    """Every round ``continuation`` settles, in order, until none remains."""
+    rounds: list[PlannedWrites] = []
+    while (writes := continuation.pull()) is not None:
+        rounds.append(writes)
+    return rounds
+
+
 def _windows(steps: Iterable[PlannedWrite]) -> list[tuple[str, object, object]]:
     windows: list[tuple[str, object, object]] = []
     for step in steps:
@@ -1187,13 +1188,12 @@ def test_each_selected_object_is_amended_from_its_start_through_its_later_covera
     plan = _finalized(_POSITION, group)
     assert len(plan.steps) == 0
     (unit,) = plan.units
-    driven = drive_group(
-        _POSITION,
-        unit,
-        [PredecessorRow(members=later)],
-        transaction_instant=instant_at("2024-06-01T00:00:00+00:00"),
+    held = HeldRows(_POSITION, [PredecessorRow(members=later)], overlapping=True)
+    continuation = prepared_group(
+        _POSITION, unit, held, transaction_instant=instant_at("2024-06-01T00:00:00+00:00")
     )
-    assert _windows(driven.steps) == [
+    (writes,) = _rounds(continuation)
+    assert _windows(writes) == [
         ("PlannedClose", None, None),
         ("CarriedFrom", _OPENED_AT, _WINDOW_FROM),
         ("ChangedFrom", _WINDOW_FROM, _WINDOW_UNTIL),
@@ -1207,16 +1207,17 @@ def test_each_selected_object_is_amended_from_its_start_through_its_later_covera
         ("ChangedFrom", _WINDOW_FROM, _WINDOW_UNTIL),
         ("CarriedFrom", _WINDOW_UNTIL, INFINITY),
     ]
-    (read,) = driven.reads
+    (read,) = held.requests
     assert isinstance(read, CoverageReadRequest)
     assert [(term.key_value, term.valid_time_windows) for term in read.terms] == [
         (2, (TimeInterval(_MAY, _WINDOW_UNTIL),))
     ]
-    assert [state.object for state in driven.effects.changed] == [
+    effects = continuation.finish()
+    assert [state.object for state in effects.changed] == [
         corpus_object_key("Position", ("id", key)) for key in (1, 2, 2, 3)
     ]
     head, tail = Finite(instant=_WINDOW_FROM), Finite(instant=_WINDOW_UNTIL)
-    assert list(driven.effects.opened.fresh) == [
+    assert list(effects.opened.fresh) == [
         _endpoint("Position", 1, head, OPEN_END),
         _endpoint("Position", 1, tail, OPEN_END),
         _endpoint("Position", 1, OPEN_END, OPEN_END),
@@ -1226,7 +1227,7 @@ def test_each_selected_object_is_amended_from_its_start_through_its_later_covera
         _endpoint("Position", 3, tail, OPEN_END),
         _endpoint("Position", 3, OPEN_END, OPEN_END),
     ]
-    assert list(driven.effects.removed) == []
+    assert list(effects.removed) == []
 
 
 def test_a_round_combines_each_objects_settled_steps_rather_than_flattening_them() -> None:
@@ -1240,15 +1241,16 @@ def test_a_round_combines_each_objects_settled_steps_rather_than_flattening_them
         _position_row(3, _WINDOW_FROM),
     )
     (unit,) = _finalized(_POSITION, group).units
-    driven = drive_group(
-        _POSITION,
-        unit,
-        [PredecessorRow(members=_position_row(2, _MAY, _OCT))],
-        transaction_instant=instant_at("2024-06-01T00:00:00+00:00"),
+    held = HeldRows(
+        _POSITION, [PredecessorRow(members=_position_row(2, _MAY, _OCT))], overlapping=True
     )
-    (writes,) = driven.rounds
+    (writes,) = _rounds(
+        prepared_group(
+            _POSITION, unit, held, transaction_instant=instant_at("2024-06-01T00:00:00+00:00")
+        )
+    )
     assert [len(segment) for segment in writes.segments] == [4, 5, 3]
-    assert list(writes.view(4, 9)) == driven.steps[4:9]
+    assert list(writes.view(4, 9)) == list(writes)[4:9]
 
 
 def test_a_later_row_the_attempt_opened_is_revised_from_its_own_start() -> None:
@@ -1264,25 +1266,27 @@ def test_a_later_row_the_attempt_opened_is_revised_from_its_own_start() -> None:
         ownership=ownership,
     )
     (unit,) = plan.units
-    driven = drive_group(
+    continuation = prepared_group(
         _POSITION,
         unit,
-        [PredecessorRow(members=later)],
+        HeldRows(_POSITION, [PredecessorRow(members=later)], overlapping=True),
         transaction_instant=instant_at("2024-06-01T00:00:00+00:00"),
         ownership=ownership,
     )
-    assert _windows(driven.steps) == [
+    (writes,) = _rounds(continuation)
+    steps = list(writes)
+    assert _windows(steps) == [
         ("PlannedClose", None, None),
         ("PlannedTemporalRevision", None, None),
         ("CarriedFrom", _OPENED_AT, _WINDOW_FROM),
         ("ChangedFrom", _WINDOW_FROM, _WINDOW_UNTIL),
     ]
-    revision = driven.steps[1]
+    revision = steps[1]
     assert isinstance(revision, PlannedTemporalRevision)
     assert {
         identity.name: value for identity, value in revision.assignments.attributes.items()
     } == {"validStart": _WINDOW_UNTIL}
-    assert list(driven.effects.removed) == []
+    assert list(continuation.finish().removed) == []
 
 
 @pytest.mark.parametrize(
@@ -1557,12 +1561,11 @@ def test_an_owned_row_settles_identically_through_a_keyed_write_and_a_group(
         model,
         [row],
     )
-    materialized, (group_effects,) = _executed(
+    materialized, group_effects = _settled(
         _finalized(model, group, ownership=ownership), model, ownership=ownership
     )
     assert materialized == list(eager.steps)
     (eager_unit,) = eager.units
-    assert isinstance(group_effects, UnitEffects)
     assert _effects(group_effects)[1:] == _effects(eager_unit)[1:]
 
 
@@ -1872,7 +1875,7 @@ def test_an_owned_row_revised_by_a_group_assigns_the_occurrence_and_the_leaf_it_
         ],
     )
     ownership = OpenedRows(frozenset({_endpoint("Branch", 1, OPEN_END, OPEN_END)}))
-    (revision,), _ = _executed(
+    (revision,), _ = _settled(
         _finalized(branch, group, ownership=ownership), branch, ownership=ownership
     )
     assert isinstance(revision, PlannedTemporalRevision)

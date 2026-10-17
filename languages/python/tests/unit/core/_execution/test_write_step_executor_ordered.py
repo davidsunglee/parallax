@@ -59,7 +59,8 @@ from parallax.core.unit_work import (
     OptimisticLockConflictError,
     StaleWriteError,
 )
-from parallax.core.write_plan.plan import PlannedWrites
+from parallax.core.write_plan import WritePlan
+from parallax.core.write_plan.plan import ExecutionUnit, PlannedWrites
 from parallax.core.write_plan.steps import PlannedInsert, PlannedWrite
 from tests._support.db_port import (
     Ordered,
@@ -78,6 +79,7 @@ from tests.unit.core._execution._write_step_support import (
     ordered,
     removal,
     revision,
+    run_plan,
     slot,
     statement,
     step_executor,
@@ -177,6 +179,53 @@ def _lowering_recorded(
     monkeypatch.setattr(LoweringCursor, "lowered", lowering)
     monkeypatch.setattr(LoweringCursor, "lowered_opening", grouping)
     return lowered_at
+
+
+@dataclass
+class _Claim:
+    """Source authority recording how many port calls had been made when a
+    unit spent it."""
+
+    port: ScriptedAdapter
+    spent_at: int | None = None
+
+    def consume(self) -> None:
+        self.spent_at = len(self.port.calls)
+
+
+def _units(port: ScriptedAdapter, *ends: int) -> tuple[tuple[ExecutionUnit, ...], list[_Claim]]:
+    claims = [_Claim(port) for _end in ends]
+    return tuple(
+        ExecutionUnit(end=end, claim=claim) for end, claim in zip(ends, claims, strict=True)
+    ), claims
+
+
+def test_a_run_never_reaches_into_a_later_units_span() -> None:
+    steps = (close(1), close(2), close(3), close(4))
+    port = ScriptedAdapter(
+        Write(), Ordered(OrderedWriteResultComplete((1, 1))), Write(), ordered=True
+    )
+    units, claims = _units(port, 1, 3, 4)
+    plan = WritePlan(steps=PlannedWrites((HeldSteps(port, steps),)), units=units)
+    with write_batch() as batch:
+        run_plan(port, plan, batch)
+    # The first unit's close would be the only one of its run, since a run
+    # never reaches into the next unit, so it runs alone; so does the last's.
+    assert port.calls == [alone(steps[0]), ordered(*steps[1:3]), alone(steps[3])]
+    assert [claim.spent_at for claim in claims] == [1, 2, 3]
+
+
+def test_a_failed_run_completes_its_unit_never_and_takes_no_later_units_step() -> None:
+    segment = HeldSteps(
+        ScriptedAdapter(Ordered(OrderedWriteResultComplete((1, 0))), ordered=True),
+        (close(1), close(2), close(3)),
+    )
+    units, claims = _units(segment.port, 2, 3)
+    plan = WritePlan(steps=PlannedWrites((segment,)), units=units)
+    with pytest.raises(StaleWriteError), write_batch() as batch:
+        run_plan(segment.port, plan, batch)
+    assert segment.taken == [0, 1]
+    assert [claim.spent_at for claim in claims] == [None, None]
 
 
 def test_a_step_transport_cannot_carry_ends_the_run_untouched_until_the_run_is_enforced(

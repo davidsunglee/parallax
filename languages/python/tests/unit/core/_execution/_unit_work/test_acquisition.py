@@ -4,15 +4,17 @@ evidence, and target cardinality and revision, without SQL or a database."""
 
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
 from collections.abc import Iterator, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from decimal import Decimal
 from typing import Final
 
 import pytest
 
 from parallax.conformance import models
+from parallax.conformance._simulated_write_steps import SimulatedWriteSteps
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import inheritance, opt_lock
 from parallax.core import predicate as predicate_algebra
@@ -33,7 +35,8 @@ from parallax.core._execution._unit_work.instructions import (
     prepare_wire_write,
 )
 from parallax.core._execution._unit_work.materialized import VersionedEvidence
-from parallax.core._execution._unit_work.uow import BindDeferredRange, ReportUnitCompletion
+from parallax.core._execution._unit_work.uow import WriteBatchScope
+from parallax.core.dialect import POSTGRES
 from parallax.core.inheritance import EntityMemberSelection
 from parallax.core.metamodel import EntityIdentity, Metamodel
 from parallax.core.unit_work import (
@@ -50,8 +53,7 @@ from parallax.core.unit_work import (
     WriteBatchReason,
     WritePreconditionError,
 )
-from parallax.core.write_plan import ObjectKey, PredecessorRow, PredecessorRows, WritePlan
-from parallax.core.write_plan.steps import UNVERSIONED, PlannedDelete
+from parallax.core.write_plan import ObjectKey, PredecessorRow, PredecessorRows
 from tests._support.planner_probes import NO_ROW_READS, TEST_ACTOR_IDENTITY
 from tests.unit.core._execution._unit_work._acquired_rows_support import HeldRows
 
@@ -64,26 +66,17 @@ _ABSENT: Final = object()
 
 @dataclass(slots=True)
 class _Flushes:
-    """Records what each flush planned, entering each in ``log`` beside the row
-    reads it orders against."""
+    """Each flush's Write Batch entered in ``log`` beside the row reads it
+    orders against, and every statement its spans lowered to."""
 
     log: list[str]
-    plans: list[WritePlan] = field(default_factory=list[WritePlan])
+    simulated: SimulatedWriteSteps
+    batches: int = 0
 
-    def __call__(
-        self,
-        plan: WritePlan,
-        /,
-        *,
-        trigger: WriteBatchReason,
-        bind_deferred: BindDeferredRange,
-        completed: ReportUnitCompletion,
-    ) -> None:
-        del bind_deferred
+    def __call__(self, trigger: WriteBatchReason, /) -> WriteBatchScope:
+        self.batches += 1
         self.log.append(f"flush:{trigger}")
-        self.plans.append(plan)
-        for unit in plan.units:
-            completed(unit, None)
+        return contextlib.nullcontext()
 
 
 @dataclass(slots=True)
@@ -107,17 +100,21 @@ def _uow(
     concurrency: Concurrency = "optimistic",
     log: list[str] | None = None,
 ) -> tuple[UnitOfWork, _Flushes]:
-    flushes = _Flushes([] if log is None else log)
+    planner = build_write_planner(meta)
+    flushes = _Flushes(
+        [] if log is None else log, SimulatedWriteSteps(planner.payloads, meta, POSTGRES)
+    )
     uow = UnitOfWork(
         lifetime=TxnAttemptLifetime(),
         settings=TransactionSettings(concurrency=concurrency),
         clock=FixedClock(dt.datetime(2024, 6, 1, tzinfo=dt.UTC)),
         meta=meta,
-        flush_executor=flushes,
+        execute_write_steps=flushes.simulated,
         acquire_rows=NO_ROW_READS if rows is None else rows,
-        planner=build_write_planner(meta),
+        planner=planner,
         actor_identity=TEST_ACTOR_IDENTITY,
         evidence_policy_for=opt_lock.view(meta).required_key,
+        write_batch_opening=flushes,
     )
     return uow, flushes
 
@@ -169,10 +166,9 @@ def test_an_unversioned_non_temporal_predicate_write_is_routed_readless_and_read
     uow, flushes = _uow(_PERSON)
     uow.buffer_predicate(_predicate(_PERSON, "Person"))
     uow.flush(trigger="pre_commit")
-    (plan,) = flushes.plans
-    (step,) = plan.steps
-    assert isinstance(step, PlannedDelete)
-    assert step.concurrency is UNVERSIONED
+    # One unconditioned delete of the matching rows, which nothing read.
+    (statement,) = flushes.simulated.statements
+    assert statement.sql == "delete from person where id = ?"
 
 
 def test_a_versioned_predicate_write_reads_its_selection_once_after_pending_writes_flush() -> None:
@@ -200,7 +196,7 @@ def test_a_temporal_predicate_write_reads_its_selected_rows_whole() -> None:
     assert request.predecessors
     # A selection leaving no row buffers nothing.
     uow.flush(trigger="pre_commit")
-    assert flushes.plans == []
+    assert flushes.batches == 0
 
 
 # --------------------------------------------------------------------------- #
@@ -267,8 +263,7 @@ def test_a_versioned_selection_keeps_each_rows_key_and_observed_version() -> Non
     uow, flushes = _uow(_ACCOUNT, held)
     uow.buffer_predicate(_predicate(_ACCOUNT, "Account"))
     uow.flush(trigger="pre_commit")
-    (plan,) = flushes.plans
-    assert len(plan.steps) == 2
+    assert len(flushes.simulated.statements) == 2
     (request,) = held.requests
     assert isinstance(request, SelectionReadRequest)
     rows = held.rows
@@ -342,7 +337,7 @@ def test_a_locking_target_reading_several_rows_is_corruption_with_their_exact_co
         uow.buffer_target(_account_patch())
     assert (corrupt.value.expected, corrupt.value.actual) == (1, 3)
     uow.flush(trigger="pre_commit")
-    assert flushes.plans == []
+    assert flushes.batches == 0
 
 
 def test_a_locking_target_reading_no_row_fails_its_callers_precondition() -> None:
@@ -360,7 +355,7 @@ def test_a_locking_target_compares_the_unique_rows_version_with_its_callers(
     if admitted:
         uow.buffer_target(_account_patch())
         uow.flush(trigger="pre_commit")
-        assert len(flushes.plans) == 1
+        assert len(flushes.simulated.statements) == 1
     else:
         with pytest.raises(WritePreconditionError):
             uow.buffer_target(_account_patch())
@@ -372,4 +367,4 @@ def test_an_effectively_optimistic_target_reads_nothing() -> None:
     uow, flushes = _uow(_ACCOUNT, concurrency="optimistic")
     uow.buffer_target(_account_patch())
     uow.flush(trigger="pre_commit")
-    assert len(flushes.plans) == 1
+    assert len(flushes.simulated.statements) == 1

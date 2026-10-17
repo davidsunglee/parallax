@@ -1,6 +1,6 @@
 """Planned Writes of the corpus Position model, a span handing them out lazily,
-the production step executor over a scripted port, and the Write Batch it
-executes inside."""
+the production step executor over a scripted port, the Write Batch it executes
+inside, and a Write Plan's units run through it."""
 
 from __future__ import annotations
 
@@ -12,7 +12,11 @@ from decimal import Decimal
 from typing import Final
 
 from parallax.conformance.class_models import MODELS
+from parallax.conformance.scripted_clock import FixedClock
+from parallax.core import opt_lock
 from parallax.core._execution._planning import build_write_planner
+from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
+from parallax.core._execution._unit_work.write_runner import run_write_plan
 from parallax.core._execution._write_lowering import lowered, stream_physical
 from parallax.core._execution._write_step_executor import WriteStepExecutor
 from parallax.core.base import INFINITY as OPEN
@@ -26,7 +30,9 @@ from parallax.core.execution_lifecycle._activity import (
 )
 from parallax.core.metamodel import AttributeIdentity, Metamodel, entity_by_name
 from parallax.core.sql_gen import LoweredStatement
-from parallax.core.write_plan import SUPERSEDED
+from parallax.core.unit_work import TransactionSettings, UnitOfWork
+from parallax.core.write_plan import SUPERSEDED, WritePlan
+from parallax.core.write_plan.plan import WriteStepView
 from parallax.core.write_plan.steps import (
     INFINITY,
     NEW_LINEAGE,
@@ -47,6 +53,7 @@ from parallax.core.write_plan.steps import (
     WriteRow,
 )
 from tests._support.db_port import OrderedCall, ScriptedAdapter, WriteCall
+from tests._support.planner_probes import NO_ROW_READS, TEST_ACTOR_IDENTITY
 
 POSITIONS: Final = MODELS["position"]
 POSITION_META: Final = model_of(POSITIONS)
@@ -194,6 +201,35 @@ def write_batch(
         with attempt.write_batch("pre_commit") as batch:
             yield batch
         attempt.committed()
+
+
+def run_plan(
+    port: ScriptedAdapter,
+    plan: WritePlan,
+    batch: WriteBatchActivity,
+    meta: Metamodel = POSITION_META,
+) -> None:
+    """``plan`` run unit by unit by a fresh unit of work, each span executed by
+    the production executor of an attempt over ``port`` as calls of
+    ``batch``."""
+    executor = step_executor(port, meta)
+
+    def execute(steps: WriteStepView, /, *, allocates: bool) -> tuple[object, ...]:
+        return executor.execute(steps, allocates=allocates, batch=batch)
+
+    planner = build_write_planner(meta)
+    uow = UnitOfWork(
+        settings=TransactionSettings(),
+        lifetime=TxnAttemptLifetime(),
+        clock=FixedClock(T1),
+        meta=meta,
+        execute_write_steps=execute,
+        acquire_rows=NO_ROW_READS,
+        planner=planner,
+        actor_identity=TEST_ACTOR_IDENTITY,
+        evidence_policy_for=opt_lock.view(meta).required_key,
+    )
+    run_write_plan(uow, plan, execute)
 
 
 def statement(step: PlannedWrite) -> LoweredStatement:

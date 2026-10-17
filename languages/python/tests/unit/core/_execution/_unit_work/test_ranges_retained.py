@@ -19,8 +19,8 @@ from parallax.core._execution._unit_work.acquisition import CompletionRequest, C
 from parallax.core._execution._unit_work.materialized import BufferItem, TargetKeyedWrite, chained
 from parallax.core._execution._unit_work.ranges import DeferredTemporalRange
 from parallax.core._execution._unit_work.retain import RetainedTargetState
-from parallax.core._execution._unit_work.uow import bind_deferred_range
 from parallax.core._execution._unit_work.write_planner import compose_writes
+from parallax.core._execution._unit_work.write_runner import acquire_and_bind_range
 from parallax.core.base import INFINITY
 from parallax.core.entity._construction_input import ABSENT
 from parallax.core.temporal_read import TimeInterval
@@ -113,7 +113,7 @@ def _bind(
     deferred = unit.deferred
     assert isinstance(deferred, DeferredTemporalRange)
     held = HeldRows(POSITION, stored, overlapping=True)
-    bound = bind_deferred_range(
+    bound = acquire_and_bind_range(
         deferred,
         acquire_rows=held,
         planner=build_write_planner(POSITION),
@@ -179,7 +179,7 @@ def test_a_row_two_reads_both_return_is_bound_once() -> None:
     held_rows = HeldRows(POSITION, [_START, _LATER])
     deferred = unit.deferred
     assert isinstance(deferred, DeferredTemporalRange)
-    bound = bind_deferred_range(
+    bound = acquire_and_bind_range(
         deferred,
         acquire_rows=held_rows,
         planner=build_write_planner(POSITION),
@@ -307,7 +307,7 @@ def test_without_a_freshness_judge_every_retained_row_is_discarded() -> None:
     deferred = unit.deferred
     assert isinstance(deferred, DeferredTemporalRange)
     held = HeldRows(POSITION, [_START, _LATER], overlapping=True)
-    bind_deferred_range(
+    acquire_and_bind_range(
         deferred,
         acquire_rows=held,
         planner=build_write_planner(POSITION),

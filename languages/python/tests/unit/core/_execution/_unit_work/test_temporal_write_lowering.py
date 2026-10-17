@@ -59,7 +59,6 @@ from parallax.core.unit_work import (
     KeyedWrite,
     TransactionSettings,
     UnitOfWork,
-    WriteBatchReason,
 )
 from parallax.core.write_payload import LayoutPayloadPreparer
 from parallax.core.write_plan import (
@@ -71,11 +70,10 @@ from parallax.core.write_plan import (
     PredecessorRow,
     TemporalObservation,
     WriteObservation,
-    WritePlan,
     WritePlanningError,
 )
 from parallax.core.write_plan.keys import TemporalObjectStateKey
-from parallax.core.write_plan.plan import OwnedEndpoint
+from parallax.core.write_plan.plan import OwnedEndpoint, WriteStepView
 from parallax.core.write_plan.steps import (
     INFINITY,
     NEW_LINEAGE,
@@ -105,11 +103,9 @@ from tests.unit._judged_evidence_support import judged_evidence
 from tests.unit.core._execution._unit_work._ownership_support import OpenedRows
 
 
-def _no_flush(
-    _plan: WritePlan, *, trigger: WriteBatchReason, bind_deferred: object, completed: object
-) -> None:
-    """A flush sink for a test that never flushes."""
-    return None
+def _no_flush(steps: WriteStepView, /, *, allocates: bool) -> tuple[object, ...]:
+    """Step execution for a test that never flushes."""
+    raise AssertionError(f"no span executes, yet {len(steps)} step(s) were handed over")
 
 
 def _accepted(name: str, meta: Metamodel) -> tuple[AcceptedMetamodel, EntityMetadata]:
@@ -924,7 +920,7 @@ def test_a_temporal_concrete_observes_its_own_declared_members_not_the_roots() -
             settings=TransactionSettings(),
             clock=FixedClock(dt.datetime(2024, 6, 1, tzinfo=dt.UTC)),
             meta=model,
-            flush_executor=_no_flush,
+            execute_write_steps=_no_flush,
             acquire_rows=NO_ROW_READS,
             planner=build_write_planner(model),
             actor_identity=TEST_ACTOR_IDENTITY,
@@ -967,7 +963,7 @@ def test_a_real_find_retains_the_rows_raw_structured_column_for_its_observation(
             settings=TransactionSettings(),
             clock=FixedClock(dt.datetime(2024, 6, 1, tzinfo=dt.UTC)),
             meta=model,
-            flush_executor=_no_flush,
+            execute_write_steps=_no_flush,
             acquire_rows=NO_ROW_READS,
             planner=build_write_planner(model),
             actor_identity=TEST_ACTOR_IDENTITY,

@@ -67,7 +67,6 @@ from parallax.core.unit_work import (
     UnitOfWork,
     VersionedEvidenceBuilder,
     WriteAssignment,
-    WriteBatchReason,
     WritePlanningRequest,
     object_key,
 )
@@ -78,10 +77,9 @@ from parallax.core.write_plan import (
     TemporalObservation,
     VersionObservation,
     WriteObservation,
-    WritePlan,
 )
 from parallax.core.write_plan.keys import TemporalObjectStateKey, VersionedObjectStateKey
-from parallax.core.write_plan.plan import NO_TEMPORAL_WRITE_OWNERSHIP
+from parallax.core.write_plan.plan import NO_TEMPORAL_WRITE_OWNERSHIP, WriteStepView
 from parallax.core.write_plan.steps import (
     PlannedClose,
     PlannedDelete,
@@ -381,7 +379,7 @@ def test_admitting_planning_and_lowering_temporal_writes_take_axes_from_the_fami
     # cover its window, so it reads nothing.
     (deferred,) = (unit.deferred for unit in plan.units if unit.deferred is not None)
     assert isinstance(deferred, DeferredGroupRange)
-    continuation = planner.continue_group(
+    continuation = planner.prepare_group(
         deferred,
         acquire_rows=NO_ROW_READS,
         ownership=NO_TEMPORAL_WRITE_OWNERSHIP,
@@ -588,10 +586,9 @@ def test_materializing_an_inherited_milestone_page_reads_axes_from_the_family_sh
         assert pin_of(conforming) == Pin(tx_time=_OPENED, valid_time=_VALID_FROM)
 
 
-def _no_flush(
-    _plan: WritePlan, *, trigger: WriteBatchReason, bind_deferred: object, completed: object
-) -> None:
-    return None
+def _no_flush(steps: WriteStepView, /, *, allocates: bool) -> tuple[object, ...]:
+    """Step execution for a test that never flushes."""
+    raise AssertionError(f"no span executes, yet {len(steps)} step(s) were handed over")
 
 
 _EVIDENCE: Final = {
@@ -627,7 +624,7 @@ def test_retaining_read_evidence_reads_each_familys_locator_from_its_owner(
         settings=TransactionSettings(),
         clock=FixedClock(_OPENED),
         meta=meta,
-        flush_executor=_no_flush,
+        execute_write_steps=_no_flush,
         acquire_rows=NO_ROW_READS,
         planner=planner,
         actor_identity=TEST_ACTOR_IDENTITY,

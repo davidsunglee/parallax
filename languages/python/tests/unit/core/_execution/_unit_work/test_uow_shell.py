@@ -1,32 +1,40 @@
 """Unit-of-work coordination unit tests (m-unit-work, Docker-free).
 
 Exercises the writable coordinator of one attempt independently of any real
-port, runner, or SQL lowering (the flush is an injected neutral executor and
-row acquisition an injected reader): the pre-commit and read-dependency
-flushes, discarding buffered effects, read-your-own-writes force-flush, Clock
-injection, the attempt lifetime it consults and dooms, and what buffering
-admits: the claim each carrier names, all or nothing, and the pending-insert
-transition it reports. The attempt's own lifecycle — commit admission, joins,
-and rollback — is the managed runner's, and is tested there.
+port or runner (each span a flush executes is simulated, lowering through the
+dry traversal and running nothing, and row acquisition is an injected
+reader): the pre-commit and read-dependency flushes, discarding buffered
+effects, read-your-own-writes force-flush, Clock injection, the attempt
+lifetime it consults and dooms, and what buffering admits: the claim each
+carrier names, all or nothing, and the pending-insert transition it reports.
+The attempt's own lifecycle — commit admission, joins, and rollback — is the
+managed runner's, and is tested there.
 """
 
 from __future__ import annotations
 
 import datetime as dt
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from decimal import Decimal
 from types import TracebackType
 
 import pytest
 
 from parallax.conformance import models
+from parallax.conformance._simulated_write_steps import SimulatedWriteSteps
 from parallax.conformance.class_models import MODELS as CLASS_MODELS
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import Attr, DomainModel, Entity, attr, opt_lock, temporal_read
 from parallax.core import predicate as predicate_algebra
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
-from parallax.core._execution._unit_work.acquisition import AcquireRows, CoverageReadRequest
+from parallax.core._execution._unit_work.acquisition import (
+    AcquireRows,
+    CoverageReadRequest,
+    RowConsumer,
+    RowRequest,
+)
 from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedWrite,
     PreparedPredicateWrite,
@@ -43,15 +51,14 @@ from parallax.core._execution._unit_work.materialized import (
 from parallax.core._execution._unit_work.retain import InsertionIdentity, ReadEvidence
 from parallax.core._execution._unit_work.uow import (
     NO_INSERTION_AUTHORITY,
-    BindDeferredRange,
     EscapedTransactionError,
-    ExecuteFlush,
     OpenWriteBatch,
-    ReportUnitCompletion,
     _TargetWriteState,  # pyright: ignore[reportPrivateUsage] - the owner of the removal window and lineage it is tested at
 )
 from parallax.core._execution._unit_work.write_planner import PendingWrites, compose_writes
+from parallax.core._execution._unit_work.write_runner import ExecuteWriteSteps
 from parallax.core.base import INFINITY
+from parallax.core.dialect import POSTGRES
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import AttributeIdentity, Metamodel
 from parallax.core.temporal_read import TemporalReadError, TimeInterval
@@ -80,8 +87,6 @@ from parallax.core.unit_work import (
     buffered_write,
 )
 from parallax.core.write_plan import (
-    SUPERSEDED,
-    TERMINATED,
     ObjectStateKey,
     PlannedInsert,
     PredecessorRow,
@@ -95,16 +100,13 @@ from parallax.core.write_plan.keys import VersionedObjectStateKey
 from parallax.core.write_plan.plan import (
     NO_OPENINGS,
     OPEN_BITEMPORAL_ENDS,
-    BoundRange,
     Derivation,
     DerivedRow,
-    ExecutionUnit,
     Openings,
     OwnedEndpoint,
-    PlannedWrites,
 )
 from parallax.core.write_plan.steps import INFINITY as PLANNED_INFINITY
-from parallax.core.write_plan.steps import NEW_LINEAGE, Finite, PlannedClose, PlannedUpdate
+from parallax.core.write_plan.steps import NEW_LINEAGE, Finite, PlannedUpdate
 from tests._support.clock_probes import CountingClock
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
 from tests.unit._corpus_identity_support import corpus_object_key
@@ -113,6 +115,7 @@ from tests.unit._where_position_model import (
     WherePosition,
 )
 from tests.unit.core._execution._unit_work._acquired_rows_support import HeldRows
+from tests.unit.core._execution._unit_work._flush_support import ObservedSteps, statement_kinds
 
 PERSON = CLASS_MODELS["person"]
 
@@ -123,50 +126,21 @@ _BALANCE = _MODELS["balance"]
 _FIXED = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 
 
-class _Recorder:
-    """Records each Write Plan the shell hands the executor, with the flush
-    trigger it travelled under, binding each deferred range through the unit
-    of work to whatever coverage its row acquisition holds."""
-
-    def __init__(self) -> None:
-        self.plans: list[WritePlan] = []
-        self.triggers: list[WriteBatchReason] = []
-        self.bound: list[BoundRange] = []
-
-    def __call__(
-        self,
-        plan: WritePlan,
-        *,
-        trigger: WriteBatchReason,
-        bind_deferred: BindDeferredRange,
-        completed: Callable[[ExecutionUnit, BoundRange | None], None],
-    ) -> None:
-        self.plans.append(plan)
-        self.triggers.append(trigger)
-        for unit in plan.units:
-            deferred = unit.deferred
-            bound = None if deferred is None else bind_deferred(deferred)
-            if bound is not None:
-                assert isinstance(bound, BoundRange)  # no group reaches this recorder
-                self.bound.append(bound)
-            completed(unit, bound)
+def _simulated(meta: Metamodel = _ACCOUNT) -> SimulatedWriteSteps:
+    """Step execution recording the statements each span of ``meta``'s writes
+    lowers to, and running none."""
+    return SimulatedWriteSteps(build_write_planner(meta).payloads, meta, POSTGRES)
 
 
-def _noop(
-    plan: WritePlan,
-    *,
-    trigger: WriteBatchReason,
-    bind_deferred: BindDeferredRange,
-    completed: Callable[[ExecutionUnit, BoundRange | None], None],
-) -> None:
-    return None
+def _kinds(simulated: SimulatedWriteSteps) -> list[str]:
+    return statement_kinds(simulated.statements)
 
 
 def _run[T](
     body: Callable[[UnitOfWork], T],
     *,
     clock: Clock | None = None,
-    executor: ExecuteFlush | None = None,
+    steps: ExecuteWriteSteps | None = None,
     settings: TransactionSettings | None = None,
     meta: Metamodel | None = None,
     opening: OpenWriteBatch | None = None,
@@ -174,8 +148,9 @@ def _run[T](
     lifetime: TxnAttemptLifetime | None = None,
 ) -> T:
     """Drive ``body`` against a unit of work whose row reads answer ``rows``, or
-    find no row at all, then flush what it left as the attempt's pre-commit
-    batch, and end the attempt's lifetime either way.
+    find no row at all, and whose spans ``steps`` executes, then flush what it
+    left as the attempt's pre-commit batch, and end the attempt's lifetime
+    either way.
 
     Coordination only: what an attempt does around that flush — refusing a
     doomed commit, discarding on failure, binding joins — is the runner's.
@@ -187,7 +162,7 @@ def _run[T](
         lifetime=attempt,
         clock=clock or FixedClock(_FIXED),
         meta=resolved_meta,
-        flush_executor=executor or _noop,
+        execute_write_steps=steps or _simulated(resolved_meta),
         acquire_rows=rows or HeldRows(resolved_meta),
         planner=build_write_planner(resolved_meta),
         actor_identity=TEST_ACTOR_IDENTITY,
@@ -230,30 +205,31 @@ def _member_value(attributes: Mapping[AttributeIdentity, object], name: str) -> 
 # The pre-commit flush, discarding, and the lifetime it consults.              #
 # --------------------------------------------------------------------------- #
 def test_the_pre_commit_flush_plans_what_is_buffered() -> None:
-    recorder = _Recorder()
+    simulated = _simulated()
 
     def body(tx: UnitOfWork) -> str:
         tx.buffer(_account_insert(9))
         return "ok"
 
-    assert _run(body, executor=recorder) == "ok"
-    assert len(recorder.plans) == 1
-    assert len(recorder.plans[0].steps) == 1
+    assert _run(body, steps=simulated) == "ok"
+    assert _kinds(simulated) == ["insert"]
 
 
 def test_discarding_drops_every_buffered_write() -> None:
-    recorder = _Recorder()
+    order: list[str] = []
+    simulated = _simulated()
 
     def body(tx: UnitOfWork) -> None:
         tx.buffer(_account_insert(9))
         tx.discard()
 
-    _run(body, executor=recorder)
-    assert recorder.plans == []  # nothing buffered survives to be planned
+    _run(body, steps=simulated, opening=_opener(order))
+    # Nothing buffered survives to be planned, so no batch opens.
+    assert (order, simulated.statements) == ([], ())
 
 
 def test_a_doomed_lifetime_refuses_the_pre_commit_flush_with_its_first_cause() -> None:
-    recorder = _Recorder()
+    order: list[str] = []
     lifetime = TxnAttemptLifetime()
     first = RuntimeError("first")
 
@@ -266,9 +242,9 @@ def test_a_doomed_lifetime_refuses_the_pre_commit_flush_with_its_first_cause() -
         return "withheld"
 
     with pytest.raises(RollbackOnlyError) as exc:
-        _run(body, executor=recorder, lifetime=lifetime)
+        _run(body, lifetime=lifetime, opening=_opener(order))
     assert exc.value.__cause__ is first
-    assert recorder.plans == []  # the flush was refused before it planned
+    assert order == []  # the flush was refused before it planned
 
 
 def test_settings_are_carried_on_the_unit_of_work() -> None:
@@ -283,17 +259,7 @@ def test_settings_are_carried_on_the_unit_of_work() -> None:
 # --------------------------------------------------------------------------- #
 def test_read_force_flushes_pending_writes_first() -> None:
     order: list[str] = []
-    recorder = _Recorder()
-
-    def executor(
-        plan: WritePlan,
-        *,
-        trigger: WriteBatchReason,
-        bind_deferred: BindDeferredRange,
-        completed: Callable[[ExecutionUnit, BoundRange | None], None],
-    ) -> None:
-        order.append("flush")
-        recorder(plan, trigger=trigger, bind_deferred=bind_deferred, completed=completed)
+    simulated = _simulated()
 
     def body(tx: UnitOfWork) -> str:
         tx.buffer(_account_insert(9))
@@ -301,19 +267,21 @@ def test_read_force_flushes_pending_writes_first() -> None:
         order.append("after")
         return result
 
-    assert _run(body, executor=executor) == "row"
-    assert order == ["flush", "read", "after"]  # the dependent read observes the flushed write
-    assert len(recorder.plans) == 1  # the outermost flush finds an empty buffer
+    assert _run(body, steps=simulated, opening=_opener(order)) == "row"
+    # The dependent read observes the flushed write, and the outermost flush
+    # finds an empty buffer.
+    assert order == ["opened:read_dependency", "left:read_dependency", "read", "after"]
+    assert _kinds(simulated) == ["insert"]
 
 
 def test_read_without_pending_writes_does_not_flush() -> None:
-    recorder = _Recorder()
+    order: list[str] = []
 
     def body(tx: UnitOfWork) -> str:
         return tx.read(lambda: "row")
 
-    assert _run(body, executor=recorder) == "row"
-    assert recorder.plans == []
+    assert _run(body, opening=_opener(order)) == "row"
+    assert order == []
 
 
 # --------------------------------------------------------------------------- #
@@ -323,7 +291,7 @@ def test_clock_supplies_the_flush_transaction_time_instant() -> None:
     # `WritePlan` retains no Transaction Instant of its own (`m-unit-work`):
     # the captured value survives only where a settled step already carries
     # it, so the audit-only insert's own `txStart` cell is the observable.
-    recorder = _Recorder()
+    simulated = _simulated(_BALANCE)
 
     def body(tx: UnitOfWork) -> None:
         tx.buffer(
@@ -335,11 +303,10 @@ def test_clock_supplies_the_flush_transaction_time_instant() -> None:
             )
         )
 
-    _run(body, clock=FixedClock(_FIXED), executor=recorder, meta=_BALANCE)
-    (step,) = recorder.plans[0].steps
-    assert isinstance(step, PlannedInsert)
-    (entry,) = step.entries
-    assert _member_value(entry.row.attributes, "txStart") == _FIXED
+    _run(body, clock=FixedClock(_FIXED), steps=simulated, meta=_BALANCE)
+    (statement,) = simulated.statements
+    assert statement.sql.startswith("insert")
+    assert _FIXED in statement.binds
 
 
 def test_system_clock_reads_an_aware_utc_instant() -> None:
@@ -353,8 +320,8 @@ def test_an_observation_a_buffered_write_carries_binds_into_its_settled_step() -
     # the state its read observed, a reread of that state answers the recorded
     # evidence before the write is buffered, and it travels to planning ON the
     # write. `PlannedUpdate` carries no raw observation — the recorded version
-    # survives only as the settled step's own advanced assignment.
-    recorder = _Recorder()
+    # survives only as the statement's own advanced assignment.
+    simulated = _simulated()
     state = VersionedObjectStateKey(corpus_object_key("Account", ("id", 1)), 7)
     retained = RetainedObservation(state, VersionObservation(observed_version=7), None)
 
@@ -373,10 +340,10 @@ def test_an_observation_a_buffered_write_carries_binds_into_its_settled_step() -
             )
         )
 
-    _run(body, executor=recorder)
-    (step,) = recorder.plans[0].steps
-    assert isinstance(step, PlannedUpdate)
-    assert _member_value(step.assignments.attributes, "version") == 8
+    _run(body, steps=simulated)
+    (statement,) = simulated.statements
+    assert _kinds(simulated) == ["update"]
+    assert statement.binds == (Decimal("0.00"), 8, 1, 7)
 
 
 def test_an_insert_refuses_to_carry_a_write_observation() -> None:
@@ -548,7 +515,7 @@ def test_transaction_time_instant_is_captured_once_per_transaction() -> None:
     clock = CountingClock(
         [dt.datetime(2024, 6, 1, tzinfo=dt.UTC), dt.datetime(2025, 1, 1, tzinfo=dt.UTC)]
     )
-    recorder = _Recorder()
+    simulated = _simulated(_BALANCE)
 
     def body(tx: UnitOfWork) -> None:
         tx.buffer(
@@ -569,19 +536,14 @@ def test_transaction_time_instant_is_captured_once_per_transaction() -> None:
             )
         )
 
-    _run(body, clock=clock, executor=recorder, meta=_BALANCE)
+    _run(body, clock=clock, steps=simulated, meta=_BALANCE)
     # The forced flush and the commit flush carry the SAME holder, so consuming
     # either yields one Transaction-Time instant for the whole transaction
-    # (Reladomo's per-transaction timestamp) — observable only through the
-    # settled step's own stamped `txStart`, since a Write Plan retains no
+    # (Reladomo's per-transaction timestamp) — observable only through each
+    # insert's own stamped `txStart`, since a Write Plan retains no
     # Transaction Instant of its own.
-    tx_starts: list[object] = []
-    for plan in recorder.plans:
-        (step,) = plan.steps
-        assert isinstance(step, PlannedInsert)
-        (entry,) = step.entries
-        tx_starts.append(_member_value(entry.row.attributes, "txStart"))
-    assert tx_starts == [_FIXED] * 2
+    assert _kinds(simulated) == ["insert", "insert"]
+    assert all(_FIXED in statement.binds for statement in simulated.statements)
     assert clock.calls == 1
 
 
@@ -615,40 +577,32 @@ def _opener(order: list[str]) -> OpenWriteBatch:
 
 def test_each_batch_is_a_scope_around_its_own_planning_and_execution() -> None:
     order: list[str] = []
-
-    def executor(
-        plan: WritePlan,
-        *,
-        trigger: WriteBatchReason,
-        bind_deferred: BindDeferredRange,
-        completed: Callable[[ExecutionUnit, BoundRange | None], None],
-    ) -> None:
-        order.append(f"executed:{trigger}")
+    steps = ObservedSteps(_simulated(), observe=lambda _span: order.append("executed"))
 
     def body(tx: UnitOfWork) -> None:
         tx.buffer(_account_insert(1))
         tx.read(lambda: None)
         tx.buffer(_account_insert(2))
 
-    _run(body, executor=executor, opening=_opener(order))
+    _run(body, steps=steps, opening=_opener(order))
     assert order == [
         "opened:read_dependency",
-        "executed:read_dependency",
+        "executed",
         "left:read_dependency",
         "opened:pre_commit",
-        "executed:pre_commit",
+        "executed",
         "left:pre_commit",
     ]
 
 
 def test_a_unit_of_work_without_a_batch_opening_still_flushes() -> None:
-    recorder = _Recorder()
+    simulated = _simulated()
 
     def body(tx: UnitOfWork) -> None:
         tx.buffer(_account_insert(3))
 
-    _run(body, executor=recorder)
-    assert recorder.triggers == ["pre_commit"]
+    _run(body, steps=simulated)
+    assert _kinds(simulated) == ["insert"]
 
 
 # --------------------------------------------------------------------------- #
@@ -783,12 +737,8 @@ def _refused_as_claimed(uow: UnitOfWork, item: BufferItem) -> WriteEvidenceError
     return refusal.value
 
 
-def _step_kinds(recorder: _Recorder) -> list[str]:
-    return [type(step).__name__ for plan in recorder.plans for step in plan.steps]
-
-
 def test_buffering_a_group_claims_every_state_it_selected_as_a_keyed_read_would_key_it() -> None:
-    recorder = _Recorder()
+    simulated = _simulated()
 
     def body(uow: UnitOfWork) -> None:
         assert uow.buffer(_account_group((1, 7), (2, 3))) is BufferOutcome.BUFFERED
@@ -797,8 +747,8 @@ def test_buffering_a_group_claims_every_state_it_selected_as_a_keyed_read_would_
         # Another state of a selected object is another claim scope.
         assert uow.buffer(_account_write("amend", 2, 7)) is BufferOutcome.BUFFERED
 
-    _run(body, executor=recorder)
-    assert sorted(_step_kinds(recorder)) == ["PlannedDelete", "PlannedDelete", "PlannedUpdate"]
+    _run(body, steps=simulated)
+    assert sorted(_kinds(simulated)) == ["delete", "delete", "update"]
 
     def temporal(uow: UnitOfWork) -> None:
         uow.buffer(_balance_group(_balance_members(1), _balance_members(2)))
@@ -812,7 +762,7 @@ def test_a_late_milestone_edge_failure_withdraws_only_the_admitted_prefix() -> N
     # The third row's axis start is no instant, so deriving its state key fails
     # after two claims were admitted. Those two are withdrawn, the claim held
     # before the group is untouched, and the group is never buffered.
-    recorder = _Recorder()
+    simulated = _simulated(_BALANCE)
 
     def body(uow: UnitOfWork) -> None:
         uow.buffer(_balance_update(9))
@@ -825,15 +775,18 @@ def test_a_late_milestone_edge_failure_withdraws_only_the_admitted_prefix() -> N
         with pytest.raises(UnitOfWorkError, match="collides with a claim"):
             uow.buffer(_balance_group(_balance_members(9)))
 
-    _run(body, meta=_BALANCE, executor=recorder)
-    closes = [
-        step for plan in recorder.plans for step in plan.steps if isinstance(step, PlannedClose)
-    ]
-    assert {type(close.cause) for close in closes} == {type(SUPERSEDED), type(TERMINATED)}
+    _run(body, meta=_BALANCE, steps=simulated)
+    # The amendment of 9 closes and reopens it; the group terminates 1 and 2.
+    assert _kinds(simulated) == ["close", "insert", "close", "close"]
+    assert [
+        statement.binds[1]
+        for statement in simulated.statements
+        if statement.sql.startswith("update")
+    ] == [9, 1, 2]
 
 
 def test_a_late_collision_leaves_the_pending_claim_it_met_standing() -> None:
-    recorder = _Recorder()
+    simulated = _simulated()
 
     def body(uow: UnitOfWork) -> None:
         uow.buffer(_account_write("amend", 3, 7))
@@ -844,16 +797,16 @@ def test_a_late_collision_leaves_the_pending_claim_it_met_standing() -> None:
         for account_id in (1, 2, 4):
             uow.buffer(_account_write("delete", account_id, 7))
 
-    _run(body, executor=recorder)
-    assert set(_step_kinds(recorder)) == {"PlannedUpdate", "PlannedDelete"}
+    _run(body, steps=simulated)
+    assert set(_kinds(simulated)) == {"update", "delete"}
     (update,) = (
-        step for plan in recorder.plans for step in plan.steps if isinstance(step, PlannedUpdate)
+        statement for statement in simulated.statements if statement.sql.startswith("update")
     )
-    assert _member_value(update.assignments.attributes, "version") == 8
+    assert update.binds == (Decimal("1.00"), 8, 3, 7)
 
 
 def test_a_group_selecting_one_state_twice_is_refused_and_leaves_no_claim() -> None:
-    recorder = _Recorder()
+    simulated = _simulated()
 
     def body(uow: UnitOfWork) -> None:
         with pytest.raises(UnitOfWorkError, match="incompatible"):
@@ -861,8 +814,8 @@ def test_a_group_selecting_one_state_twice_is_refused_and_leaves_no_claim() -> N
         uow.buffer(_account_write("amend", 1, 7))
         uow.buffer(_account_write("amend", 2, 7))
 
-    _run(body, executor=recorder)
-    assert set(_step_kinds(recorder)) == {"PlannedUpdate"}
+    _run(body, steps=simulated)
+    assert set(_kinds(simulated)) == {"update"}
 
 
 # --------------------------------------------------------------------------- #
@@ -885,7 +838,7 @@ def _person_write(mutation: KeyedMutation, person_id: int) -> BufferItem:
 
 
 def test_a_retained_observation_claims_its_state_and_compatible_intents_combine() -> None:
-    recorder = _Recorder()
+    simulated = _simulated()
 
     def body(uow: UnitOfWork) -> None:
         uow.buffer(_account_write("amend", 1, 7))
@@ -896,8 +849,8 @@ def test_a_retained_observation_claims_its_state_and_compatible_intents_combine(
         assert refusal.object_key == corpus_object_key("Account", ("id", 1))
         assert "parallax.compatibility.Account" in refusal.message
 
-    _run(body, executor=recorder)
-    assert _step_kinds(recorder) == ["PlannedDelete"]
+    _run(body, steps=simulated)
+    assert _kinds(simulated) == ["delete"]
 
 
 def test_a_retained_claim_is_taken_at_the_exact_observed_state() -> None:
@@ -926,7 +879,7 @@ def test_a_caller_held_observation_claims_nothing() -> None:
 
 
 def test_an_object_claimed_write_claims_its_instructions_object() -> None:
-    recorder = _Recorder()
+    simulated = _simulated(_PERSON_META)
 
     def body(uow: UnitOfWork) -> None:
         uow.buffer(_person_write("amend", 1))
@@ -935,8 +888,8 @@ def test_an_object_claimed_write_claims_its_instructions_object() -> None:
         assert refusal.object_key == corpus_object_key("Person", ("id", 1))
         uow.buffer(_person_write("amend", 2))
 
-    _run(body, executor=recorder, meta=_PERSON_META)
-    assert sorted(_step_kinds(recorder)) == ["PlannedDelete", "PlannedUpdate"]
+    _run(body, steps=simulated, meta=_PERSON_META)
+    assert sorted(_kinds(simulated)) == ["delete", "update"]
 
 
 def test_a_refused_carrier_or_claim_leaves_claims_and_pending_inserts_as_they_were() -> None:
@@ -973,7 +926,7 @@ def _account_delete(account_id: int) -> PreparedKeyedWrite:
 
 
 def test_a_destructive_write_of_a_pending_insert_reports_the_cancellation() -> None:
-    recorder = _Recorder()
+    simulated = _simulated()
 
     def body(uow: UnitOfWork) -> None:
         assert uow.buffer(_account_insert(9)) is BufferOutcome.BUFFERED
@@ -985,8 +938,8 @@ def test_a_destructive_write_of_a_pending_insert_reports_the_cancellation() -> N
         raise _Abandoned
 
     with pytest.raises(_Abandoned):
-        _run(body, executor=recorder)
-    assert recorder.plans == []
+        _run(body, steps=simulated)
+    assert simulated.statements == ()
 
 
 def test_every_other_accepted_item_reports_plain_buffering() -> None:
@@ -1024,7 +977,7 @@ def test_every_other_accepted_item_reports_plain_buffering() -> None:
 
 
 def test_a_destructive_write_after_the_insert_flushed_cancels_nothing() -> None:
-    recorder = _Recorder()
+    simulated = _simulated()
 
     def body(uow: UnitOfWork) -> None:
         uow.buffer(_account_insert(9))
@@ -1033,8 +986,8 @@ def test_a_destructive_write_after_the_insert_flushed_cancels_nothing() -> None:
             BufferOutcome.BUFFERED
         )
 
-    _run(body, executor=recorder)
-    assert _step_kinds(recorder) == ["PlannedInsert", "PlannedDelete"]
+    _run(body, steps=simulated)
+    assert _kinds(simulated) == ["insert", "delete"]
 
 
 # --------------------------------------------------------------------------- #
@@ -1070,15 +1023,15 @@ def _balance_shape() -> temporal_read.TemporalShape:
 
 
 def test_a_row_an_earlier_flush_opened_is_revised_rather_than_closed() -> None:
-    recorder = _Recorder()
+    simulated = _simulated(_BALANCE)
 
     def body(uow: UnitOfWork) -> None:
         uow.buffer(_balance_insert(1))
         uow.read(lambda: None)
         uow.buffer(_balance_update_from(1, _FIXED))
 
-    _run(body, meta=_BALANCE, executor=recorder)
-    assert _step_kinds(recorder) == ["PlannedInsert", "PlannedTemporalRevision"]
+    _run(body, meta=_BALANCE, steps=simulated)
+    assert _kinds(simulated) == ["insert", "update"]
 
 
 def _balance_terminate_from(key: int, tx_start: object) -> BufferItem:
@@ -1094,7 +1047,7 @@ def _balance_terminate_from(key: int, tx_start: object) -> BufferItem:
 
 
 def test_a_row_its_unit_removed_is_no_longer_owned() -> None:
-    recorder = _Recorder()
+    simulated = _simulated(_BALANCE)
 
     def body(uow: UnitOfWork) -> None:
         uow.buffer(_balance_insert(1))
@@ -1108,25 +1061,18 @@ def test_a_row_its_unit_removed_is_no_longer_owned() -> None:
         # is one the attempt does not own.
         uow.buffer(_balance_update_from(1, _FIXED))
 
-    _run(body, meta=_BALANCE, executor=recorder)
-    assert _step_kinds(recorder) == [
-        "PlannedInsert",
-        "PlannedInsert",
-        "PlannedTemporalRemoval",
-        "PlannedTemporalRemoval",
-        "PlannedClose",
-        "PlannedInsert",
-    ]
+    _run(body, meta=_BALANCE, steps=simulated)
+    assert _kinds(simulated) == ["insert", "insert", "delete", "delete", "close", "insert"]
 
 
 def test_a_row_whose_start_is_the_attempts_instant_is_not_owned_without_its_opening() -> None:
-    recorder = _Recorder()
+    simulated = _simulated(_BALANCE)
 
     def body(uow: UnitOfWork) -> None:
         uow.buffer(_balance_update_from(1, _FIXED))
 
-    _run(body, meta=_BALANCE, executor=recorder)
-    assert _step_kinds(recorder) == ["PlannedClose", "PlannedInsert"]
+    _run(body, meta=_BALANCE, steps=simulated)
+    assert _kinds(simulated) == ["close", "insert"]
 
 
 def test_each_unit_spends_its_evidence_before_the_next_unit_executes() -> None:
@@ -1136,97 +1082,22 @@ def test_each_unit_spends_its_evidence_before_the_next_unit_executes() -> None:
     claims = (first.claim, second.claim)
     seen: list[tuple[bool, ...]] = []
 
-    def executor(
-        plan: WritePlan,
-        *,
-        trigger: WriteBatchReason,
-        bind_deferred: BindDeferredRange,
-        completed: Callable[[ExecutionUnit, BoundRange | None], None],
-    ) -> None:
-        for unit in plan.units:
-            seen.append(tuple(claim is not None and claim.consumed for claim in claims))
-            completed(unit, None)
-        seen.append(tuple(claim is not None and claim.consumed for claim in claims))
+    def spent() -> tuple[bool, ...]:
+        return tuple(claim is not None and claim.consumed for claim in claims)
 
     def body(uow: UnitOfWork) -> None:
         uow.buffer(first)
         uow.buffer(second)
 
-    _run(body, executor=executor)
-    assert seen == [(False, False), (True, False), (True, True)]
-
-
-def test_a_unit_reported_out_of_order_dooms_the_attempt() -> None:
-    def executor(
-        plan: WritePlan,
-        *,
-        trigger: WriteBatchReason,
-        bind_deferred: BindDeferredRange,
-        completed: Callable[[ExecutionUnit, BoundRange | None], None],
-    ) -> None:
-        completed(plan.units[1], None)
-
-    def body(uow: UnitOfWork) -> None:
-        uow.buffer(_account_write("amend", 1, 7))
-        uow.buffer(_account_write("amend", 2, 3))
-        with pytest.raises(UnitOfWorkError, match="out of order"):
-            uow.read(lambda: None)
-
-    with pytest.raises(RollbackOnlyError):
-        _run(body, executor=executor)
-
-
-def test_a_bound_range_reported_for_a_planned_unit_dooms_the_attempt() -> None:
-    def executor(
-        plan: WritePlan,
-        *,
-        trigger: WriteBatchReason,
-        bind_deferred: BindDeferredRange,
-        completed: Callable[[ExecutionUnit, BoundRange | None], None],
-    ) -> None:
-        completed(plan.units[0], BoundRange(steps=PlannedWrites()))
-
-    def body(uow: UnitOfWork) -> None:
-        uow.buffer(_account_write("amend", 1, 7))
-        with pytest.raises(UnitOfWorkError, match="deferred range"):
-            uow.read(lambda: None)
-
-    with pytest.raises(RollbackOnlyError):
-        _run(body, executor=executor)
-
-
-def test_a_unit_reported_with_keys_it_never_allocated_dooms_the_attempt() -> None:
-    def executor(
-        plan: WritePlan,
-        *,
-        trigger: WriteBatchReason,
-        bind_deferred: BindDeferredRange,
-        completed: ReportUnitCompletion,
-    ) -> None:
-        completed(plan.units[0], None, allocated=(8,))
-
-    def body(uow: UnitOfWork) -> None:
-        uow.buffer(_account_write("amend", 1, 7))
-        with pytest.raises(UnitOfWorkError, match=r"opening 0 row\(s\).*with 1 key"):
-            uow.read(lambda: None)
-
-    with pytest.raises(RollbackOnlyError):
-        _run(body, executor=executor)
+    _run(body, steps=ObservedSteps(_simulated(), observe=lambda _span: seen.append(spent())))
+    assert [*seen, spent()] == [(False, False), (True, False), (True, True)]
 
 
 def test_a_caught_execution_failure_still_dooms_the_attempt() -> None:
     failure = RuntimeError("the statement failed")
     claimed = _account_write("amend", 1, 7)
     assert isinstance(claimed, ObservedKeyedWrite) and claimed.claim is not None
-
-    def executor(
-        plan: WritePlan,
-        *,
-        trigger: WriteBatchReason,
-        bind_deferred: BindDeferredRange,
-        completed: Callable[[ExecutionUnit, BoundRange | None], None],
-    ) -> None:
-        raise failure
+    steps = ObservedSteps(_simulated(), failing=0, failure=failure)
 
     def body(uow: UnitOfWork) -> str:
         uow.buffer(claimed)
@@ -1240,7 +1111,7 @@ def test_a_caught_execution_failure_still_dooms_the_attempt() -> None:
         return "withheld"
 
     with pytest.raises(RollbackOnlyError) as exc:
-        _run(body, executor=executor)
+        _run(body, steps=steps)
     assert exc.value.__cause__ is failure
     assert claimed.claim is not None and not claimed.claim.consumed
 
@@ -1312,7 +1183,8 @@ def test_a_unit_that_changes_nothing_spends_its_evidence_and_leaves_its_state_fr
     state = object_state_key_from_observation(
         corpus_object_key("Position", ("id", 1)), observation, shape
     )
-    recorder = _Recorder()
+    simulated = _simulated(_POSITION)
+    coverage = HeldRows(_POSITION)
 
     def body(uow: UnitOfWork) -> None:
         uow.buffer(
@@ -1343,9 +1215,10 @@ def test_a_unit_that_changes_nothing_spends_its_evidence_and_leaves_its_state_fr
         late = uow.retain(RetainedObservation(state, observation, None), read_at=read_at)
         assert not late.invalidated and not late.consumed
 
-    _run(body, meta=_POSITION, executor=recorder)
-    assert _step_kinds(recorder) == ["PlannedInsert"]
-    assert [tuple(bound.steps) for bound in recorder.bound] == [()]
+    _run(body, meta=_POSITION, steps=simulated, rows=coverage)
+    # The range read its coverage and bound to nothing to execute.
+    assert _kinds(simulated) == ["insert"]
+    assert [type(request) for request in coverage.requests] == [CoverageReadRequest]
 
 
 @pytest.mark.parametrize(
@@ -1366,7 +1239,7 @@ def test_a_guarded_unit_spends_its_source_and_leaves_an_unchanged_state_fresh(
     shape = temporal_read.view(_BALANCE).shape(key.entity)
     assert shape is not None
     state = object_state_key_from_observation(key, observation, shape)
-    recorder = _Recorder()
+    simulated = _simulated(_BALANCE)
 
     def body(uow: UnitOfWork) -> None:
         read_at = uow.freshness
@@ -1391,55 +1264,54 @@ def test_a_guarded_unit_spends_its_source_and_leaves_an_unchanged_state_fresh(
     _run(
         body,
         meta=_BALANCE,
-        executor=recorder,
+        steps=simulated,
         settings=TransactionSettings(counts_unchanged_rows=True),
     )
-    assert _step_kinds(recorder) == (
-        ["PlannedTemporalGuard"] if kept else ["PlannedClose", "PlannedInsert"]
+    assert _kinds(simulated) == (["guard"] if kept else ["close", "insert"])
+
+
+def _account_amend(account_id: int, claim: RetainedObservation) -> BufferItem:
+    row = {"id": account_id, "balance": Decimal("1.00")}
+    return buffered_write(_prepared_keyed(KeyedWrite("amend", "Account", (row,)), _ACCOUNT), claim)
+
+
+def _account_claim(account_id: int, version: int) -> RetainedObservation:
+    return RetainedObservation(
+        _account_state(account_id, version), VersionObservation(observed_version=version), None
     )
 
 
-def test_a_unit_names_its_sources_state_and_a_failed_unit_publishes_nothing() -> None:
+def test_each_unit_names_its_sources_state_itself() -> None:
+    first, second = _account_claim(1, 7), _account_claim(2, 3)
+    plan = build_write_planner(_ACCOUNT).finalize(
+        WritePlanningRequest(
+            actor_identity=TEST_ACTOR_IDENTITY,
+            transaction_instant=TransactionInstant(FixedClock(_FIXED)),
+            concurrency="optimistic",
+            buffered_writes=compose_writes(
+                _ACCOUNT, [_account_amend(1, first), _account_amend(2, second)]
+            ),
+        )
+    )
+    # Nothing infers a unit's changed state from a step.
+    assert [tuple(unit.changed) for unit in plan.units] == [(first.key,), (second.key,)]
+
+
+def test_a_failed_unit_publishes_nothing_while_the_unit_before_it_stays_published() -> None:
     failure = RuntimeError("the second unit failed")
-    named: list[tuple[ObjectStateKey, ...]] = []
-
-    def executor(
-        plan: WritePlan,
-        *,
-        trigger: WriteBatchReason,
-        bind_deferred: BindDeferredRange,
-        completed: Callable[[ExecutionUnit, BoundRange | None], None],
-    ) -> None:
-        named.extend(tuple(unit.changed) for unit in plan.units)
-        completed(plan.units[0], None)
-        raise failure
-
     claims: list[RetainedObservation] = []
 
     def body(uow: UnitOfWork) -> None:
         for account_id, version in ((1, 7), (2, 3)):
-            claim = uow.retain(
-                RetainedObservation(
-                    _account_state(account_id, version),
-                    VersionObservation(observed_version=version),
-                    None,
-                )
-            )
+            claim = uow.retain(_account_claim(account_id, version))
             claims.append(claim)
-            row = {"id": account_id, "balance": Decimal("1.00")}
-            uow.buffer(
-                buffered_write(
-                    _prepared_keyed(KeyedWrite("amend", "Account", (row,)), _ACCOUNT), claim
-                )
-            )
+            uow.buffer(_account_amend(account_id, claim))
         with pytest.raises(RuntimeError, match="the second unit failed"):
             uow.read(lambda: None)
 
     with pytest.raises(RollbackOnlyError):
-        _run(body, executor=executor)
+        _run(body, steps=ObservedSteps(_simulated(), failing=1, failure=failure))
     first, second = claims
-    # Each unit names the state it changes itself; nothing infers it from a step.
-    assert named == [(first.key,), (second.key,)]
     assert (first.consumed, first.invalidated) == (True, True)
     assert (second.consumed, second.invalidated) == (False, False)
 
@@ -1455,7 +1327,7 @@ def test_a_unit_with_no_step_spends_its_source_and_changes_nothing() -> None:
     observation = TemporalObservation(predecessor=PredecessorRow(members))
     key = corpus_object_key("Balance", ("id", 1))
     state = object_state_key_from_observation(key, observation, _balance_shape())
-    recorder = _Recorder()
+    simulated = _simulated(_BALANCE)
 
     def body(uow: UnitOfWork) -> None:
         claim = uow.retain(RetainedObservation(state, observation, uow.participation))
@@ -1474,95 +1346,21 @@ def test_a_unit_with_no_step_spends_its_source_and_changes_nothing() -> None:
     _run(
         body,
         meta=_BALANCE,
-        executor=recorder,
+        steps=simulated,
         settings=TransactionSettings(concurrency="locking"),
     )
-    ((unit,),) = (plan.units for plan in recorder.plans)
-    assert (unit.end, tuple(unit.changed)) == (0, ())
-
-
-def _position_write(
-    mutation: KeyedMutation,
-    claim: RetainedObservation,
-    *,
-    valid_from: dt.datetime,
-    until: dt.datetime | None = None,
-    **members: object,
-) -> BufferItem:
-    return buffered_write(
-        _prepared_keyed(
-            KeyedWrite(mutation, "Position", ({"id": 1, **members},), valid_from, until),
-            _POSITION,
-        ),
-        claim,
-    )
+    assert simulated.statements == ()
 
 
 def test_a_row_a_unit_removes_and_reopens_at_one_address_stays_owned() -> None:
-    # The attempt opens [January, December); a termination reaching past it is
-    # bound at execution, and here its bound range removes that row and reopens
-    # it at the same address.
-    members = {
-        "id": 1,
-        "acctNum": "A",
-        "value": Decimal("1.00"),
-        "txStart": _FIXED,
-        "txEnd": INFINITY,
-        "validStart": _JAN,
-        "validEnd": _DEC,
-    }
-    observation = TemporalObservation(predecessor=PredecessorRow(members))
+    # Removals are retired before openings register, so the row a unit
+    # reopened at the address it removed is still the attempt's to revise.
     key = corpus_object_key("Position", ("id", 1))
-    shape = temporal_read.view(_POSITION).shape(key.entity)
-    assert shape is not None
-    state = object_state_key_from_observation(key, observation, shape)
     endpoint = OwnedEndpoint(key.entity, (1,), (Finite(instant=_DEC), PLANNED_INFINITY))
-    recorder = _Recorder()
-
-    def executor(
-        plan: WritePlan,
-        *,
-        trigger: WriteBatchReason,
-        bind_deferred: BindDeferredRange,
-        completed: Callable[[ExecutionUnit, BoundRange | None], None],
-    ) -> None:
-        (unit,) = plan.units
-        if unit.deferred is None:
-            recorder(plan, trigger=trigger, bind_deferred=bind_deferred, completed=completed)
-            return
-        completed(
-            unit,
-            BoundRange(
-                steps=PlannedWrites(), removed=(endpoint,), opened=Openings(fresh=(endpoint,))
-            ),
-        )
-
-    def body(uow: UnitOfWork) -> None:
-        uow.buffer(
-            _prepared_keyed(
-                KeyedWrite(
-                    "insertUntil",
-                    "Position",
-                    ({"id": 1, "acctNum": "A", "value": Decimal("1.00")},),
-                    valid_from=_JAN,
-                    until=_DEC,
-                ),
-                _POSITION,
-            )
-        )
-        uow.read(lambda: None)
-        claim = uow.retain(RetainedObservation(state, observation, None))
-        uow.buffer(_position_write("terminate", claim, valid_from=_DEC))
-        uow.read(lambda: None)
-        later = uow.retain(RetainedObservation(state, observation, None))
-        uow.buffer(
-            _position_write("amendUntil", later, valid_from=_JAN, until=_DEC, value=Decimal("2.00"))
-        )
-
-    _run(body, meta=_POSITION, executor=executor)
-    # The removal was retired before the opening registered, so the row the
-    # unit reopened at its own address is still the attempt's to revise.
-    assert _step_kinds(recorder) == ["PlannedInsert", "PlannedTemporalRevision"]
+    targets = _TargetWriteState()
+    targets.complete((), Openings(fresh=(endpoint,)))
+    targets.complete((endpoint,), Openings(fresh=(endpoint,)))
+    assert targets.owns(endpoint)
 
 
 class ShellTag(Entity, table="shell_tag", namespace="parallax.compatibility"):
@@ -1591,17 +1389,18 @@ def _position_row(start: dt.datetime, tx_start: dt.datetime) -> PredecessorRow:
     )
 
 
-def _bind(
-    bind_deferred: BindDeferredRange, held: HeldRows, unit: ExecutionUnit, start: dt.datetime
-) -> BoundRange:
-    """``unit``'s deferred range bound through the flush's own binder, its
-    coverage read finding the one current row starting at ``start``."""
-    deferred = unit.deferred
-    assert deferred is not None
-    held.rows = [_position_row(start, _FIXED)]
-    bound = bind_deferred(deferred)
-    assert isinstance(bound, BoundRange)
-    return bound
+@dataclass(slots=True)
+class _Watched:
+    """``held``'s answers, ``watch`` called as each read is asked for."""
+
+    held: HeldRows
+    watch: Callable[[], object]
+
+    def __call__[Request: RowRequest, Result](
+        self, request: Request, consumer: RowConsumer[Request, Result], /
+    ) -> Result:
+        self.watch()
+        return self.held(request, consumer)
 
 
 def _position_target(start: dt.datetime, until: dt.datetime) -> PreparedTargetWrite:
@@ -1620,6 +1419,21 @@ def _position_target(start: dt.datetime, until: dt.datetime) -> PreparedTargetWr
     return prepared
 
 
+def _observed_amendment(claim: RetainedObservation) -> BufferItem:
+    observed = prepare_wire_write(
+        KeyedWrite(
+            "amendUntil",
+            "WherePosition",
+            ({"id": 1, "acctNum": "O"},),
+            valid_from=_FEB,
+            until=_APR,
+        ),
+        _BARRIERED,
+    )
+    assert isinstance(observed, PreparedKeyedWrite)
+    return buffered_write(observed, claim)
+
+
 def test_a_unit_a_barrier_kept_back_binds_on_what_the_earlier_unit_spent_and_proved() -> None:
     original = TemporalObservation(predecessor=_position_row(_JAN, _T0))
     key = corpus_object_key("WherePosition", ("id", 1))
@@ -1627,141 +1441,66 @@ def test_a_unit_a_barrier_kept_back_binds_on_what_the_earlier_unit_spent_and_pro
     assert shape is not None
     state = object_state_key_from_observation(key, original, shape)
     held: list[RetainedObservation] = []
-    seen: list[tuple[bool, bool]] = []
+    coverage = HeldRows(_BARRIERED)
+    simulated = _simulated(_BARRIERED)
+    seen: list[tuple[bool, bool, int]] = []
 
-    def executor(
-        plan: WritePlan,
-        *,
-        trigger: WriteBatchReason,
-        bind_deferred: BindDeferredRange,
-        completed: Callable[[ExecutionUnit, BoundRange | None], None],
-    ) -> None:
-        if len(plan.units) == 1:
-            (unit,) = plan.units
-            assert unit.deferred is not None
-            # A later flush carries no proof: the original's token is stale.
-            _bind(bind_deferred, coverage, unit, _AUG)
-            return
-        first, barrier, later = plan.units
-        assert first.derived and not barrier.derived
-        completed(first, None)
-        completed(barrier, None)
+    def reading() -> None:
         (claim,) = held
-        seen.append((claim.consumed, claim.invalidated))
-        assert later.deferred is not None
-        bound = _bind(bind_deferred, coverage, later, _APR)
-        assert not any(isinstance(step, PlannedClose) for step in bound.steps)
-        completed(later, bound)
+        seen.append((claim.consumed, claim.invalidated, len(simulated.statements)))
+
+    later: list[str] = []
 
     def body(uow: UnitOfWork) -> None:
         claim = uow.retain(RetainedObservation(state, original, uow.participation))
         held.append(claim)
-        observed = prepare_wire_write(
-            KeyedWrite(
-                "amendUntil",
-                "WherePosition",
-                ({"id": 1, "acctNum": "O"},),
-                valid_from=_FEB,
-                until=_APR,
-            ),
-            _BARRIERED,
-        )
-        assert isinstance(observed, PreparedKeyedWrite)
-        uow.buffer(buffered_write(observed, claim))
-        barrier = prepare_wire_write(
-            PredicateWrite(
-                "amend",
-                PredicateSelection(
-                    "ShellTag",
-                    predicate_algebra.Comparison(
-                        "eq", predicate_algebra.FieldSubject("ShellTag.id"), 1
-                    ),
-                ),
-                assignments=(WriteAssignment("ShellTag.label", "q"),),
-            ),
-            _BARRIERED,
-        )
-        assert isinstance(barrier, PreparedPredicateWrite)
-        uow.buffer_predicate(barrier)
+        uow.buffer(_observed_amendment(claim))
+        uow.buffer_predicate(_shell_barrier())
         uow.buffer_target(_position_target(_JUN, _AUG))
+        coverage.rows = [_position_row(_APR, _FIXED)]
         uow.read(lambda: None)
+        later.extend(statement_kinds(simulated.statements[seen[0][2] :]))
+        # A later flush carries no proof: the original's token is stale.
+        coverage.rows = [_position_row(_AUG, _FIXED)]
         uow.buffer_target(_position_target(_SEP, _OCT))
 
-    coverage = HeldRows(_BARRIERED)
     with pytest.raises(WritePreconditionError):
-        _run(body, meta=_BARRIERED, executor=executor, rows=coverage)
+        _run(body, meta=_BARRIERED, steps=simulated, rows=_Watched(coverage, reading))
     # The earlier unit spent the shared source and invalidated its state
-    # before the later one bound.
-    assert seen == [(True, True)]
+    # before the later one bound, which then ran no close of its own.
+    assert seen[0][:2] == (True, True)
+    assert later and "close" not in later
     _assert_optimistic_targets_read_nothing(coverage)
 
 
-def test_an_objects_proofs_end_when_its_last_following_unit_completes() -> None:
+def test_an_objects_proofs_serve_every_unit_following_it_in_the_flush() -> None:
     original = TemporalObservation(predecessor=_position_row(_JAN, _T0))
     key = corpus_object_key("WherePosition", ("id", 1))
     shape = temporal_read.view(_BARRIERED).shape(key.entity)
     assert shape is not None
     state = object_state_key_from_observation(key, original, shape)
+    held = HeldRows(_BARRIERED)
+    answers = iter([[_position_row(_APR, _FIXED)], [_position_row(_AUG, _FIXED)]])
+    reached: list[int] = []
+    simulated = _simulated(_BARRIERED)
 
-    def executor(
-        plan: WritePlan,
-        *,
-        trigger: WriteBatchReason,
-        bind_deferred: BindDeferredRange,
-        completed: Callable[[ExecutionUnit, BoundRange | None], None],
-    ) -> None:
-        first, barrier, middle, again, last = plan.units
-        completed(first, None)
-        completed(barrier, None)
-        assert middle.deferred is not None and last.deferred is not None
-        bound = _bind(bind_deferred, held, middle, _APR)
-        assert bound.concludes is None  # a later region still follows it
-        completed(middle, bound)
-        completed(again, None)
-        bound = _bind(bind_deferred, held, last, _AUG)
-        assert bound.concludes == key
-        assert not any(isinstance(step, PlannedClose) for step in bound.steps)
-        completed(last, bound)
-        # Nothing the earlier units proved survives the last consumer, even
-        # before the flush ends.
-        with pytest.raises(WritePreconditionError):
-            _bind(bind_deferred, held, last, _AUG)
+    def reading() -> None:
+        reached.append(len(simulated.statements))
+        held.rows = next(answers)
 
     def body(uow: UnitOfWork) -> None:
         claim = uow.retain(RetainedObservation(state, original, uow.participation))
-        observed = prepare_wire_write(
-            KeyedWrite(
-                "amendUntil",
-                "WherePosition",
-                ({"id": 1, "acctNum": "O"},),
-                valid_from=_FEB,
-                until=_APR,
-            ),
-            _BARRIERED,
-        )
-        assert isinstance(observed, PreparedKeyedWrite)
-        uow.buffer(buffered_write(observed, claim))
+        uow.buffer(_observed_amendment(claim))
         for window in ((_JUN, _AUG), (_SEP, _OCT)):
-            barrier = prepare_wire_write(
-                PredicateWrite(
-                    "amend",
-                    PredicateSelection(
-                        "ShellTag",
-                        predicate_algebra.Comparison(
-                            "eq", predicate_algebra.FieldSubject("ShellTag.id"), 1
-                        ),
-                    ),
-                    assignments=(WriteAssignment("ShellTag.label", "q"),),
-                ),
-                _BARRIERED,
-            )
-            assert isinstance(barrier, PreparedPredicateWrite)
-            uow.buffer_predicate(barrier)
+            uow.buffer_predicate(_shell_barrier())
             uow.buffer_target(_position_target(*window))
         uow.read(lambda: None)
 
-    held = HeldRows(_BARRIERED)
-    _run(body, meta=_BARRIERED, executor=executor, rows=held)
+    _run(body, meta=_BARRIERED, steps=simulated, rows=_Watched(held, reading))
+    # Each unit a barrier kept back read its own coverage and bound on what
+    # the earlier unit proved; the last ran no close of its own.
+    assert len(reached) == 2
+    assert "close" not in statement_kinds(simulated.statements[reached[1] :])
     _assert_optimistic_targets_read_nothing(held)
 
 
