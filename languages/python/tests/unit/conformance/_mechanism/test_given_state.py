@@ -24,7 +24,7 @@ from parallax.conformance._mechanism.envelope import EngineError
 from parallax.conformance._mechanism.given_state import (
     apply_given_apply,
     apply_given_corrupt,
-    seed_shadow_from_fixtures,
+    seed_store_from_fixtures,
 )
 from parallax.conformance._mechanism.model_facts import (
     case_entity,
@@ -32,7 +32,7 @@ from parallax.conformance._mechanism.model_facts import (
     load_case_metamodel,
     load_case_setup_metamodel,
 )
-from parallax.conformance.temporal_state import TemporalShadow
+from parallax.conformance.simulated_temporal_store import SimulatedTemporalStore
 from parallax.core._execution._unit_work.acquisition import CoverageReadRequest, CoverageTerm
 from parallax.core.base import INFINITY
 from parallax.core.db_port import (
@@ -356,30 +356,30 @@ def test_apply_given_apply_is_a_no_op_when_given_carries_no_apply_list() -> None
         document={"model": "models/account.yaml", "given": {"fixtures": True}},
     )
     port = FakeWritePort()
-    shadow = TemporalShadow()
+    store = SimulatedTemporalStore()
     meta = load_case_metamodel(_load_case("m-temporal-write-002"))
     model = meta
-    apply_given_apply(case, port, shadow)
+    apply_given_apply(case, port, store)
     assert port.writes == []
     # A case that applies nothing leaves the tracker's account of the stored rows
     # whole — including for a key it tracks no milestone of — which is what a keyed
     # temporal write over a document-mapped target depends on.
-    assert shadow.accounts_for(
+    assert store.has_complete_stored_row(
         model, case_entity(model, "parallax.compatibility.Balance"), {"id": 1}
     )
 
 
 def test_fixture_seeding_tracks_current_milestones_with_managed_axis_ends() -> None:
     # The `position` fixtures spell the open bound as the published literal; the
-    # shadow holds the managed bound, so the milestone current on both axes covers
+    # store holds the managed bound, so the milestone current on both axes covers
     # an open window, and the superseded correction is not tracked at all.
     case = _load_case("m-temporal-write-020")
     model = load_case_metamodel(case)
     entity = case_entity(model, "parallax.compatibility.Position")
-    shadow = TemporalShadow()
-    seed_shadow_from_fixtures(case, model, shadow)
+    store = SimulatedTemporalStore()
+    seed_store_from_fixtures(case, model, store)
     covered = read_coverage(
-        shadow,
+        store,
         model,
         CoverageReadRequest(
             entity=entity,

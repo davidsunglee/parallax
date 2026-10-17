@@ -10,7 +10,7 @@ from parallax.conformance import (
     _case_ingress,
     case_format,
     models,
-    temporal_state,
+    simulated_temporal_store,
 )
 from parallax.conformance._actual_wire import ActualWireProjection
 from parallax.conformance._database_control import (
@@ -31,7 +31,7 @@ from parallax.conformance._mechanism.envelope import (
 )
 from parallax.conformance._mechanism.given_state import (
     apply_given_apply,
-    seed_shadow_from_fixtures,
+    seed_store_from_fixtures,
 )
 from parallax.conformance._mechanism.model_facts import (
     case_entity,
@@ -49,7 +49,7 @@ from parallax.conformance._mechanism.transaction_control import (
     write_connection,
 )
 from parallax.conformance.scripted_clock import FixedClock
-from parallax.conformance.temporal_state import TemporalShadow
+from parallax.conformance.simulated_temporal_store import SimulatedTemporalStore
 from parallax.core import (
     batch_write,
     inheritance,
@@ -204,7 +204,7 @@ __all__ = [
 # so the adapter reports a ``*-failed`` diagnostic rather than leaking a lower-layer
 # exception type across the conformance seam. `opt_lock.UnobservedVersionError` /
 # `.CallerAuthoredVersionError` are m-opt-lock's own
-# forward-error posture; `temporal_state.AmbiguousObservationError` /
+# forward-error posture; `simulated_temporal_store.AmbiguousObservationError` /
 # `.MilestoneEdgeError` are this engine's own (shapes no reachable case
 # exercises). A deferred witness (the
 # materializing / auto-retry-
@@ -217,8 +217,8 @@ LOWERING_ERRORS: Final[tuple[type[Exception], ...]] = (
     inheritance.InheritanceError,
     opt_lock.UnobservedVersionError,
     opt_lock.CallerAuthoredVersionError,
-    temporal_state.AmbiguousObservationError,
-    temporal_state.MilestoneEdgeError,
+    simulated_temporal_store.AmbiguousObservationError,
+    simulated_temporal_store.MilestoneEdgeError,
     CanonicalDocumentError,
     SqlGenError,
     TemporalReadError,
@@ -350,7 +350,7 @@ def _refuse_unaccounted_document_milestone(
     model: AcceptedMetamodel,
     entity: EntityMetadata,
     row: Mapping[str, object],
-    shadow: TemporalShadow,
+    store: SimulatedTemporalStore,
 ) -> None:
     """Refuse a keyed temporal write over a Relational Document Layout target
     whose observation would be rebuilt from a tracked milestone the tracker can no
@@ -378,14 +378,14 @@ def _refuse_unaccounted_document_milestone(
     wrong.
 
     Which milestone the write addresses is what decides it
-    (:meth:`~parallax.conformance.temporal_state.TemporalShadow.accounts_for`),
+    (:meth:`SimulatedTemporalStore.has_complete_stored_row`),
     never merely whether the case ran such statements somewhere: a milestone this
     case's own later write opened is a whole account of its row again, so an
     insert-then-update chain over a document-mapped target stays legal beside any
     out-of-band statement (`m-case-format`: a keyed write consumes the milestone
     the case's own fixtures and earlier entries left current).
     """
-    if shadow.accounts_for(model, entity, row):
+    if store.has_complete_stored_row(model, entity, row):
         return
     entity_name = entity.identity.canonical
     column = _shared_document_column(model, entity_name)
@@ -404,11 +404,11 @@ def _refuse_materialized_case_state(
     model: AcceptedMetamodel,
     entity: EntityMetadata,
     row: Mapping[str, object],
-    shadow: TemporalShadow,
+    store: SimulatedTemporalStore,
 ) -> None:
     """Refuse a keyed temporal write whose observation would come from case state
     a materializing predicate write of this same case already moved
-    (:meth:`~parallax.conformance.temporal_state.TemporalShadow.moved_by_materialization`).
+    (:meth:`SimulatedTemporalStore.moved_by_materialization`).
 
     That write resolved its own rows inside production, retired the milestone it
     found for each and opened a successor, and returned neither the plan nor the
@@ -428,7 +428,7 @@ def _refuse_materialized_case_state(
     keeps its tracked state, and a milestone this case's own later write opens for
     the moved key is a current account of it again.
     """
-    if not shadow.moved_by_materialization(model, entity, row):
+    if not store.moved_by_materialization(model, entity, row):
         return
     raise EngineError(
         f"a keyed temporal write on {entity.identity.canonical!r} settles against case state "
@@ -523,7 +523,7 @@ class TemporalEvidence(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class CaseStateEvidence:
-    """Evidence for a lane that models case state: the milestone ``shadow``
+    """Evidence for a lane that models case state: the milestone ``store``
     tracks for the key (`m-temporal-write` "the engine supplies
     observed rows from case state" — never an implicit resolving read), or, where
     the entry named a find of its `uow` group with ``on``, the claim that find
@@ -538,7 +538,7 @@ class CaseStateEvidence:
     """
 
     model: AcceptedMetamodel
-    shadow: TemporalShadow
+    store: SimulatedTemporalStore
     named: ObservedNodes | None
 
     def settle(
@@ -550,9 +550,9 @@ class CaseStateEvidence:
     ) -> tuple[TemporalObservation | None, WireEntity | None]:
         observation: TemporalObservation | None
         if self.named is None:
-            _refuse_materialized_case_state(self.model, entity, row, self.shadow)
-            _refuse_unaccounted_document_milestone(self.model, entity, row, self.shadow)
-            observation = self.shadow.resolve(self.model, entity, row)
+            _refuse_materialized_case_state(self.model, entity, row, self.store)
+            _refuse_unaccounted_document_milestone(self.model, entity, row, self.store)
+            observation = self.store.predecessor_for(self.model, entity, row)
         else:
             settled = _settled_against_source(entity.identity.canonical, key, self.named)
             # A temporal row's evidence is its whole predecessor milestone; a
@@ -561,7 +561,7 @@ class CaseStateEvidence:
             assert isinstance(settled, TemporalObservation)
             observation = settled
         if observation is not None:
-            self.shadow.retire(self.model, entity, observation)
+            self.store.retire(self.model, entity, observation)
         return observation, None
 
 
@@ -756,7 +756,7 @@ def _observation_refusal(
       coordinate the author meant to observe.
     - a TEMPORAL target's write observes a whole predecessor MILESTONE, which no
       flat row cell can name. It resolves either from tracked case state
-      (:class:`~parallax.conformance.temporal_state.TemporalShadow`) or, where the
+      (:class:`~parallax.conformance.simulated_temporal_store.SimulatedTemporalStore`) or, where the
       write's own step named the find it settles against, from the observations
       that `uow` group's reads filled (:func:`_settled_against_source`). Which of
       the two supplies it changes nothing here: neither is a cell the row may
@@ -810,7 +810,7 @@ def _durable_row(
     unobserved write, one whose observation instead comes from this SAME `uow`
     group's own prior find step (:func:`_observed_nodes`), or a temporal
     write, whose observation is a whole milestone — held by
-    :class:`TemporalShadow`, or, where the step named the find it settles against,
+    :class:`SimulatedTemporalStore`, or, where the step named the find it settles against,
     by that same group's observations).
 
     THE seam a case row becomes a durable row through — the only one. Every
@@ -1128,11 +1128,11 @@ def _observed_for(observations: GroupObservations, key: ObjectKey) -> RetainedOb
 def _resolve_entries(
     entries: Sequence[Mapping[str, object]],
     model: AcceptedMetamodel,
-    shadow: TemporalShadow,
+    store: SimulatedTemporalStore,
     group_observations: GroupObservations,
 ) -> list[_ResolvedWrite]:
     """Every entry in one choreography unit's buffer -> its resolved
-    instructions (retiring from ``shadow`` the milestone each close consumes) —
+    instructions (retiring from ``store`` the milestone each close consumes) —
     the shared core both the PURE planning (:func:`_settle_resolved`) and the
     RUN lane's real `db.transact` execution (:func:`_execute_write_unit`)
     consume, so a temporal write's observation is never resolved (or its
@@ -1148,7 +1148,7 @@ def _resolve_entries(
     its own ``on`` names (:func:`run_group_step`)."""
     resolved: list[_ResolvedWrite] = []
     unit_inserted: set[ObjectKey] = set()
-    evidence = CaseStateEvidence(model, shadow, None)
+    evidence = CaseStateEvidence(model, store, None)
     for entry in entries:
         resolved.extend(
             _build_instructions(entry, model, evidence, unit_inserted, group_observations, None)
@@ -1212,7 +1212,7 @@ def _lower_resolved(
     dialect: Dialect,
     concurrency: Concurrency,
     tx_instant: str,
-    advances: TemporalShadow | None,
+    advances: SimulatedTemporalStore | None,
 ) -> tuple[LoweredStatement, ...]:
     """Plan one write buffer (:func:`_settle_resolved`) and lower each survivor
     through the production lowering seam — PURE, no database. The planner is the
@@ -1238,20 +1238,20 @@ def _settle_resolved(
     dialect: Dialect,
     concurrency: Concurrency,
     tx_instant: str,
-    advances: TemporalShadow | None,
+    advances: SimulatedTemporalStore | None,
 ) -> ExecutedPlan:
     """Plan one write buffer through the SAME ``build_write_planner`` factory
     model preparation uses (`parallax.core.execution.prepare_model`), and advance
     the case state by what that plan settles.
 
     The case-state ledger, ``advances``, moves HERE, from THIS plan's own opened rows
-    (:meth:`TemporalShadow.track_opened`), and keeps every milestone a write left
-    unchanged (:meth:`TemporalShadow.keep_unchanged`) — the milestone a later choreography
+    (:meth:`SimulatedTemporalStore.track_opened`), and keeps every milestone a write left
+    unchanged (:meth:`SimulatedTemporalStore.keep_unchanged`) — the milestone a later choreography
     unit observes is the one this write actually plans, so there is no second
     expansion of the same topology to drift from it. The close's retirement
     happened at resolution, where the observation it consumed is known. Both
     advances belong to the boundary the caller stages them on
-    (:meth:`TemporalShadow.staged`), so a doomed unit's are discarded with its
+    (:meth:`SimulatedTemporalStore.staged`), so a doomed unit's are discarded with its
     rows. A lane that models no case state passes ``None``: nothing advances, and
     a range whose coverage no observation holds is refused rather than bound.
     """
@@ -1280,7 +1280,7 @@ def _planned(
     tx_instant: str,
     buffered_writes: Sequence[BufferItem],
     *,
-    coverage: TemporalShadow | None = None,
+    coverage: SimulatedTemporalStore | None = None,
 ) -> ExecutedPlan:
     """Plan one write buffer through the SAME ``build_write_planner`` factory the
     composition layer uses, beside every span of settled steps its execution
@@ -1304,7 +1304,7 @@ def _planned(
             counts_unchanged_rows=dialect.counts_unchanged_rows,
         )
     )
-    acquire_rows = None if coverage is None else coverage.acquisition(model)
+    acquire_rows = None if coverage is None else coverage.coverage_acquisition(model)
     executed = ExecutedPlan(plan, planner.payloads)
     start = 0
     for unit in plan.units:
@@ -1338,7 +1338,7 @@ def _plan_and_lower(
     tx_instant: str,
     buffered_writes: Sequence[BufferItem],
     *,
-    coverage: TemporalShadow | None = None,
+    coverage: SimulatedTemporalStore | None = None,
 ) -> tuple[ExecutedPlan, tuple[LoweredStatement, ...]]:
     """Plan one write buffer (:func:`_planned`) and lower every surviving step
     PURELY, in execution order, beside the plan they came from."""
@@ -1378,14 +1378,14 @@ def lower_writes(
     model: AcceptedMetamodel,
     dialect: Dialect,
     concurrency: Concurrency,
-    shadow: TemporalShadow,
+    store: SimulatedTemporalStore,
     tx_instant: str,
     group_observations: GroupObservations,
 ) -> tuple[LoweredStatement, ...]:
     """Resolve and PURE-lower one write buffer — the COMPILE lane's own
     lowering."""
-    resolved = _resolve_entries(entries, model, shadow, group_observations)
-    return _lower_resolved(resolved, entries, model, dialect, concurrency, tx_instant, shadow)
+    resolved = _resolve_entries(entries, model, store, group_observations)
+    return _lower_resolved(resolved, entries, model, dialect, concurrency, tx_instant, store)
 
 
 def _prepared_case_predicate_write(
@@ -1777,9 +1777,9 @@ def _doomed_group_spans(
 def _scenario_lowered(case: case_format.Case, dialect_name: str) -> list[LoweredStep]:
     """Lower every scenario step to its pointer + DML — pure (no database).
 
-    One :class:`TemporalShadow` spans the whole scenario, seeded from the case's
+    One :class:`SimulatedTemporalStore` spans the whole scenario, seeded from the case's
     own fixture documents
-    (:func:`~parallax.conformance._mechanism.given_state.seed_shadow_from_fixtures`)
+    (:func:`~parallax.conformance._mechanism.given_state.seed_store_from_fixtures`)
     and then advanced by each step's plan: a write step's temporal close/chain
     observes the
     milestone persisted history declares or one an earlier step opened, and no
@@ -1802,7 +1802,7 @@ def _scenario_lowered(case: case_format.Case, dialect_name: str) -> list[Lowered
 
     A DOOMED unit's advances are staged on that unit's own outcome, exactly as
     the run lane stages them
-    (:meth:`~parallax.conformance.temporal_state.TemporalShadow.staged`): a
+    (:meth:`~parallax.conformance.simulated_temporal_store.SimulatedTemporalStore.staged`): a
     doomed group's own later steps observe them and the group's last step
     restores them, and an ungrouped `rollback: true` write step restores them
     after itself. Both lanes must reach the same DML for the same case, and a
@@ -1812,16 +1812,16 @@ def _scenario_lowered(case: case_format.Case, dialect_name: str) -> list[Lowered
     model = models.accepted_model_of(serving.current().model)
     concurrency = case_document.concurrency(case)
     dialect = dialect_for(dialect_name)
-    shadow = TemporalShadow()
+    store = SimulatedTemporalStore()
     context = CaseContext(
         serving,
         model,
         concurrency,
-        shadow,
+        store,
         case_format.transaction_keywords(case),
         case_format.database_options(case),
     )
-    seed_shadow_from_fixtures(case, model, shadow)
+    seed_store_from_fixtures(case, model, store)
     group_observations: GroupObservations = []
     lowered: list[LoweredStep] = []
     try:
@@ -1831,7 +1831,7 @@ def _scenario_lowered(case: case_format.Case, dialect_name: str) -> list[Lowered
         while index < len(steps):
             end = doomed_spans.get(index)
             if end is not None:
-                with shadow.staged(doomed=True):
+                with store.staged(doomed=True):
                     for grouped in range(index, end + 1):
                         lowered.append(
                             _lower_scenario_step(
@@ -1841,7 +1841,7 @@ def _scenario_lowered(case: case_format.Case, dialect_name: str) -> list[Lowered
                 index = end + 1
                 continue
             step = steps[index]
-            with shadow.staged(doomed=step.get("rollback") is True):
+            with store.staged(doomed=step.get("rollback") is True):
                 lowered.append(
                     _lower_scenario_step(context, dialect, step, index, group_observations)
                 )
@@ -1855,9 +1855,9 @@ def _write_sequence_lowered(
     case: case_format.Case, dialect_name: str
 ) -> list[tuple[str, tuple[LoweredStatement, ...]]]:
     """Lower each writeSequence entry independently to ``(pointer, statements)`` —
-    pure. One :class:`TemporalShadow` spans the whole sequence, seeded from the
+    pure. One :class:`SimulatedTemporalStore` spans the whole sequence, seeded from the
     case's own fixture documents where it opted in
-    (:func:`~parallax.conformance._mechanism.given_state.seed_shadow_from_fixtures`):
+    (:func:`~parallax.conformance._mechanism.given_state.seed_store_from_fixtures`):
     an entry's temporal close/chain observes the milestone that opt-in declares
     or one an earlier entry opened,
     and no query answers either. A writeSequence carries no find steps at all
@@ -1867,12 +1867,12 @@ def _write_sequence_lowered(
     model = load_case_metamodel(case)
     dialect = dialect_for(dialect_name)
     concurrency = case_document.concurrency(case)
-    shadow = TemporalShadow()
+    store = SimulatedTemporalStore()
     # The same seeding the RUN lane applies: a case opting into `given.fixtures`
     # starts from persisted history, and its first temporal close observes a
     # fixture milestone rather than one an earlier entry opened. Both lanes must
     # start from the same tracked state or they are not the same computation.
-    seed_shadow_from_fixtures(case, model, shadow)
+    seed_store_from_fixtures(case, model, store)
     group_observations: GroupObservations = []
     try:
         return [
@@ -1883,7 +1883,7 @@ def _write_sequence_lowered(
                     model,
                     dialect,
                     concurrency,
-                    shadow,
+                    store,
                     entry_instant(entry),
                     group_observations,
                 ),
@@ -2282,7 +2282,7 @@ def execute_keyed_unit(
     ungrouped write step on either scenario lane, and a writeSequence entry — so
     the order the three operations happen in, and the boundary they are staged
     on, are stated once. The staging is the unit's own outcome
-    (:meth:`~parallax.conformance.temporal_state.TemporalShadow.staged`): a
+    (:meth:`~parallax.conformance.simulated_temporal_store.SimulatedTemporalStore.staged`): a
     doomed unit's tracked advances are discarded with the rows its abort erases.
 
     Resolution happens ONCE and both consumers read it, so a temporal write's
@@ -2295,9 +2295,9 @@ def execute_keyed_unit(
     reports (:func:`_execute_framework_write_unit`).
     """
     tx_instant = entry_instant(entries[0])
-    shadow = context.case_state()
-    with shadow.staged(doomed=rollback):
-        resolved = _resolve_entries(entries, context.model, shadow, group_observations)
+    store = context.case_state()
+    with store.staged(doomed=rollback):
+        resolved = _resolve_entries(entries, context.model, store, group_observations)
         if _framework_unit(resolved, context.model):
             statements = _lower_resolved(
                 resolved,
@@ -2306,11 +2306,11 @@ def execute_keyed_unit(
                 port.dialect,
                 context.concurrency,
                 tx_instant,
-                shadow,
+                store,
             )
             return statements, _execute_framework_write_unit(port, statements, rollback=rollback)
         _settle_resolved(
-            resolved, context.model, port.dialect, context.concurrency, tx_instant, shadow
+            resolved, context.model, port.dialect, context.concurrency, tx_instant, store
         )
         ran, unit_trips = _execute_write_unit(
             port,
@@ -2441,7 +2441,7 @@ def _run_materializing_pair(
     what ran and what is reported.
 
     What this transaction did to a TEMPORAL target's milestones is recorded on
-    ``shadow`` rather than tracked into it: the rows it closed and opened were
+    ``store`` rather than tracked into it: the rows it closed and opened were
     resolved and planned inside production, so no later step can settle against
     them from case state, and one that tries is refused
     (:func:`_refuse_materialized_case_state`). The record is staged on this
@@ -2449,7 +2449,7 @@ def _run_materializing_pair(
     aborted pair moved nothing.
     """
     model = context.model
-    shadow = context.case_state()
+    store = context.case_state()
     find_step = steps[index]
     write_step = steps[index + 1]
     instruction = is_materializing_write_step(write_step, model)
@@ -2502,10 +2502,10 @@ def _run_materializing_pair(
                 instruction,
             )
 
-        with shadow.staged(doomed=rollback):
+        with store.staged(doomed=rollback):
             with absorbing_rollback():
                 transact(database, body, **context.requests)
-            shadow.note_materialized_write(case_entity(model, write_target))
+            store.note_materialized_write(case_entity(model, write_target))
         # The split is the port method each statement ran through rather than a
         # position in one flat list, so a resolve that issued more than one call, or
         # a batch the planner split, still lands where the corpus authors it: the
@@ -2616,7 +2616,7 @@ class CaseContext:
     Serving Model a Snapshot connection adopts from — the case's Domain Model
     prepared once under the case's edition — and the accepted Metamodel every
     neutral lowering surface is stated over. The tracker is the ONE case-spanning
-    :class:`TemporalShadow` every unit shares rather than a per-unit copy — a
+    :class:`SimulatedTemporalStore` every unit shares rather than a per-unit copy — a
     later unit's temporal close observes the milestone an earlier one's write
     opened. It is ``None`` on a lane that models no case state, and that alone
     selects how a grouped temporal write settles: against the tracker
@@ -2651,18 +2651,18 @@ class CaseContext:
     serving: ServingModel
     model: AcceptedMetamodel
     concurrency: Concurrency
-    shadow: TemporalShadow | None
+    store: SimulatedTemporalStore | None
     requests: case_format.TransactionKeywords
     options: TxnOptions
 
-    def case_state(self) -> TemporalShadow:
+    def case_state(self) -> SimulatedTemporalStore:
         """The tracker of a lane that models case state."""
-        if self.shadow is None:
+        if self.store is None:
             raise EngineError(
                 "this choreography unit settles against tracked case state, which a lane "
                 "modeling none cannot supply"
             )
-        return self.shadow
+        return self.store
 
 
 def _empty_published() -> list[WireEntity]:
@@ -3244,8 +3244,8 @@ def run_group_step(
             source = None if named is None else tuple(_published_claims(named))
             evidence: TemporalEvidence = (
                 GroupEvidence(state, named)
-                if context.shadow is None
-                else CaseStateEvidence(model, context.shadow, source)
+                if context.store is None
+                else CaseStateEvidence(model, context.store, source)
             )
             written = _build_instructions(entry, model, evidence, unit_inserted, published, source)
             resolved.extend(written)
@@ -3258,7 +3258,7 @@ def run_group_step(
                 "of its own — a `uow` group's held transaction has no verb to buffer one through"
             )
         _settle_resolved(
-            resolved, model, session.dialect, context.concurrency, tx_instant, context.shadow
+            resolved, model, session.dialect, context.concurrency, tx_instant, context.store
         )
         for write, named in zip(resolved, sources, strict=True):
             _buffer_wire_write(tx, model, state, write, named)
@@ -3317,7 +3317,7 @@ def _run_uow_group(
     DML on the wire before the provider rolls it back (the `m-unit-work` abort
     contract applied to the group rather than to one step). The group's case-state
     advances are staged on that same outcome
-    (:meth:`~parallax.conformance.temporal_state.TemporalShadow.staged`): visible
+    (:meth:`~parallax.conformance.simulated_temporal_store.SimulatedTemporalStore.staged`): visible
     to the group's own later steps, discarded with the rows when it aborts.
 
     What each read step published is reported twice over, from the one value the
@@ -3575,7 +3575,7 @@ def _run_state_graded_case(
         serving,
         model,
         case_document.concurrency(case),
-        TemporalShadow(),
+        SimulatedTemporalStore(),
         case_format.transaction_keywords(case),
         case_format.database_options(case),
     )
@@ -3584,7 +3584,7 @@ def _run_state_graded_case(
     rows_observed: list[dict[str, object]] = []
     round_trips = 0
     try:
-        apply_given_apply(case, port, context.shadow)
+        apply_given_apply(case, port, context.store)
         index = 0
         while index < len(steps):
             group = starts.get(index)
@@ -3654,7 +3654,7 @@ def run_scenario_case(
     serving = case_serving_model(case)
     model = models.accepted_model_of(serving.current().model)
     concurrency = case_document.concurrency(case)
-    shadow = TemporalShadow()
+    store = SimulatedTemporalStore()
     rows_observed: list[dict[str, object]] = []
     step_graphs: list[dict[str, object]] = []
     spans = _scenario_uow_spans(case.path.name, steps)
@@ -3669,7 +3669,7 @@ def run_scenario_case(
         serving,
         model,
         concurrency,
-        shadow,
+        store,
         case_format.transaction_keywords(case),
         case_format.database_options(case),
     )
@@ -3677,7 +3677,7 @@ def run_scenario_case(
     units: dict[str, dict[str, object]] = {}
     round_trips = 0
     try:
-        seed_shadow_from_fixtures(case, model, shadow)
+        seed_store_from_fixtures(case, model, store)
         # After the fixtures and before the first step, exactly where every other
         # lane applies it
         # (:func:`~parallax.conformance._mechanism.given_state.apply_given_apply`).
@@ -3688,7 +3688,7 @@ def run_scenario_case(
         # and where that state can no longer be the whole stored row the write is
         # refused rather than silently rebuilt
         # (:func:`_refuse_unaccounted_document_milestone`).
-        apply_given_apply(case, port, shadow)
+        apply_given_apply(case, port, store)
         index = 0
         while index < len(steps):
             label = span_start_labels.get(index)
@@ -3798,12 +3798,12 @@ def run_write_sequence_case(
     serving = case_serving_model(case)
     model = models.accepted_model_of(serving.current().model)
     lifecycle = lifecycle_run(lifecycle)
-    shadow = TemporalShadow()
+    store = SimulatedTemporalStore()
     context = CaseContext(
         serving,
         model,
         case_document.concurrency(case),
-        shadow,
+        store,
         case_format.transaction_keywords(case),
         case_format.database_options(case),
     )
@@ -3811,8 +3811,8 @@ def run_write_sequence_case(
     lowered: list[tuple[str, tuple[LoweredStatement, ...]]] = []
     round_trips = 0
     try:
-        seed_shadow_from_fixtures(case, model, shadow)
-        apply_given_apply(case, port, shadow)
+        seed_store_from_fixtures(case, model, store)
+        apply_given_apply(case, port, store)
         for index, entry in enumerate(case_document.write_sequence_entries(case)):
             statements, unit_trips = execute_keyed_unit(
                 port, context, [entry], group_observations, lifecycle, rollback=False

@@ -587,7 +587,7 @@ ACCEPTED_CONFORMANCE_PRIVATE_REACHES: dict[tuple[str, str], frozenset[str]] = {
         "parallax.core._execution._unit_work.write_runner",
     ): frozenset({"acquire_and_bind_range"}),
     (
-        "parallax.conformance.temporal_state",
+        "parallax.conformance.simulated_temporal_store",
         "parallax.core._execution._unit_work.acquisition",
     ): frozenset({"AcquireRows", "CoverageReadRequest", "RowConsumer", "RowRequest"}),
     ("parallax.conformance.another_source", "parallax.core._execution._publication"): frozenset(

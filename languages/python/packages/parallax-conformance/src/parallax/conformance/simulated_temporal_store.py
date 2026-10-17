@@ -18,6 +18,7 @@ from parallax.core.inheritance import EntityMemberSelection
 from parallax.core.metamodel import (
     AttributeIdentity,
     DocumentMember,
+    EntityIdentity,
     EntityMetadata,
     Leaf,
     MemberShape,
@@ -36,6 +37,8 @@ from parallax.core.write_plan import (
 from parallax.core.write_plan.keys import TemporalObjectStateKey
 from parallax.core.write_plan.steps import (
     Finite,
+    MilestoneTarget,
+    PlannedAssignments,
     PlannedClose,
     PlannedTemporalRemoval,
     PlannedTemporalRevision,
@@ -45,11 +48,12 @@ from parallax.core.write_plan.steps import (
 __all__ = [
     "AmbiguousObservationError",
     "MilestoneEdgeError",
-    "TemporalShadow",
+    "SimulatedStoreError",
+    "SimulatedTemporalStore",
     "predecessor_row",
 ]
 
-# A tracked milestone's slot: its object identity plus the milestone's own edge —
+# A stored milestone's slot: its object identity plus the milestone's own edge —
 # `parallax.core.temporal_read.Edge`, the same value the production read side
 # keys an observation by, since every coordinate reaching this module is
 # normalized to a UTC instant before it is stored (:func:`_coordinate`).
@@ -58,49 +62,91 @@ __all__ = [
 # pk-keyed slot silently loses every rectangle but the last one written.
 _ObjectKey = tuple[str, tuple[object, ...], temporal_read.Edge]
 
-
-class AmbiguousObservationError(ValueError):
-    """This tracker cannot name one milestone, so it refuses rather than
-    silently guessing which one a later step means. Two shapes reach it: several
-    current milestones are tracked for one (entity, pk) — several disjoint
-    Valid-Time rectangles of one key may be current on Transaction Time
-    (`m-temporal-write.md`), and a step's row names the object rather than the
-    rectangle, so the remedy is a write naming the find it settles against
-    (`m-case-format` "Settling against a grouped find"); or two tracked
-    milestones of one key carry the SAME edge, which no edge could tell apart, so
-    the state itself is unaddressable."""
+# A stored milestone's complete physical address: its object identity plus
+# each declared axis END in canonical axis order, the open bound spelled
+# `None` — what a Milestone Target names a row by. A planned step carries no
+# axis start, so this, not the slot, is how a step finds the row it acts on.
+_Address = tuple[str, tuple[object, ...], tuple[dt.datetime | None, ...]]
 
 
-class MilestoneEdgeError(ValueError):
+class SimulatedStoreError(ValueError):
+    """What a case asks of the simulated rows names no one stored row, so the
+    store refuses rather than guess: a refusal of the case's composition, not
+    a defect of the store."""
+
+
+class AmbiguousObservationError(SimulatedStoreError):
+    """This store cannot name one milestone, so it refuses rather than
+    silently guessing which one a later step means. Three shapes reach it:
+    several current milestones are stored for one (entity, pk) — several
+    disjoint Valid-Time rectangles of one key may be current on Transaction
+    Time (`m-temporal-write.md`), and a step's row names the object rather
+    than the rectangle, so the remedy is a write naming the find it settles
+    against (`m-case-format` "Settling against a grouped find"); two stored
+    milestones of one key carry the SAME edge, which no edge could tell apart;
+    or two of them share one complete address, which no planned step could
+    tell apart. Either of the last two leaves the state itself
+    unaddressable."""
+
+
+class MilestoneEdgeError(SimulatedStoreError):
     """A milestone's as-of axis start is not a finite instant, so it keys no
-    edge. An edge is the guaranteed-selecting start instant per declared axis
-    (`m-temporal-read`); the open bound belongs to an axis END alone."""
+    edge, or an axis end is neither a finite instant nor the open bound, so it
+    addresses no row. An edge is the guaranteed-selecting start instant per
+    declared axis (`m-temporal-read`); the open bound belongs to an axis END
+    alone."""
 
 
-class TemporalShadow:
-    """The case-local map of (entity, primary key, milestone edge) -> that tracked
-    CURRENT (``out_z = infinity``) milestone, advanced as each temporal write
-    plans.
+@dataclass(frozen=True, slots=True)
+class _StoredRow:
+    """One current stored milestone: the observation a later write consumes,
+    and the complete address a planned step names it by."""
 
-    Keying by the milestone's own edge rather than by identity alone is what lets
-    one key hold every rectangle it genuinely has current.
+    observation: TemporalObservation
+    address: _Address
+
+
+@dataclass(frozen=True, slots=True)
+class _Snapshot:
+    """The canonical rows and accounting flags one simulated transaction
+    restores; the address view is rebuilt from the rows rather than kept."""
+
+    current: dict[_ObjectKey, _StoredRow]
+    overtaken: set[_ObjectKey]
+    materialized: set[_ObjectKey]
+    out_of_band: bool
+
+
+class SimulatedTemporalStore:
+    """The case-local stored rows of a case's temporal Entities: each CURRENT
+    (``out_z = infinity``) milestone, keyed by (entity, primary key, milestone
+    edge), as the database holds it once the case's own fixtures and writes
+    have run.
+
+    Keying by the milestone's own edge rather than by identity alone is what
+    lets one key hold every rectangle it genuinely has current. A view from
+    each row's complete address to its slot is maintained beside the rows with
+    every change, so a planned step finds the row it acts on without a scan.
+    These are simulated database rows, not an attempt's ownership: what a unit
+    of work owns is its own to track.
     """
 
-    __slots__ = ("_current", "_materialized", "_out_of_band", "_overtaken")
+    __slots__ = ("_current", "_located", "_materialized", "_out_of_band", "_overtaken")
 
     def __init__(self) -> None:
-        self._current: dict[_ObjectKey, TemporalObservation] = {}
+        self._current: dict[_ObjectKey, _StoredRow] = {}
+        self._located: dict[_Address, tuple[_ObjectKey, ...]] = {}
         self._out_of_band = False
         self._overtaken: set[_ObjectKey] = set()
         self._materialized: set[_ObjectKey] = set()
 
-    def accounts_for(
+    def has_complete_stored_row(
         self,
         model: Metamodel,
         entity: EntityMetadata,
         row: Mapping[str, object],
     ) -> bool:
-        """Whether what this tracker holds for the milestone ``row`` addresses is
+        """Whether what this store holds for the milestone ``row`` addresses is
         the WHOLE stored row.
 
         A milestone stays ADDRESSABLE whatever the answer — the key is the case's
@@ -110,20 +156,20 @@ class TemporalShadow:
         ``False`` in exactly two states, both of them consequences of out-of-band
         statements (:meth:`note_out_of_band_write`):
 
-        - the milestone was tracked when those statements ran, so they may have
+        - the milestone was stored when those statements ran, so they may have
           stored something no member of it names; and
-        - no milestone of this key is tracked at all, which after such statements
-          means the row they may have left is one the tracker has no account of
+        - no milestone of this key is stored at all, which after such statements
+          means the row they may have left is one the store has no account of
           whatsoever.
 
         A milestone the case's own writes opened AFTERWARDS is ``True`` again: a
-        Planned Insert's entry row IS the whole row the flush writes, so tracking
+        Planned Insert's entry row IS the whole row the flush writes, so storing
         it establishes a complete account of that milestone even though this
-        tracker never re-reads. Overtaking is per MILESTONE for that reason, not
+        store never re-reads. Overtaking is per MILESTONE for that reason, not
         per case.
 
         The bound is the tightest one available without reading the statements:
-        which rows a naive ``sql`` string touched is not something this tracker
+        which rows a naive ``sql`` string touched is not something this store
         can know, so every milestone it held when they ran is treated as
         overtaken even if they named another target.
         """
@@ -142,13 +188,36 @@ class TemporalShadow:
         predicate write of this case already retired
         (:meth:`note_materialized_write`).
 
-        ``True`` means the tracked milestone is stale in the strongest sense: the
+        ``True`` means the stored milestone is stale in the strongest sense: the
         database holds a successor of it opened at that write's own instant, and a
-        close addressed at what this tracker still holds current would match no
+        close addressed at what this store still holds current would match no
         row at all.
         """
         slot = self._slot(model, entity, row)
         return slot is not None and slot in self._materialized
+
+    @contextlib.contextmanager
+    def transaction(self, *, rollback: bool) -> Generator[None]:
+        """One simulated database transaction over these rows: what runs inside
+        it changes them as it runs, and they keep those changes only if it
+        commits.
+
+        A declared ``rollback``, and any exception escaping the transaction —
+        an interruption included — restore every row and accounting flag to
+        what they were when it began. The canonical rows are captured once,
+        shallowly, which is exact because a stored row is replaced rather than
+        changed in place.
+        """
+        snapshot = _Snapshot(
+            dict(self._current), set(self._overtaken), set(self._materialized), self._out_of_band
+        )
+        try:
+            yield
+        except BaseException:
+            self._restore(snapshot)
+            raise
+        if rollback:
+            self._restore(snapshot)
 
     @contextlib.contextmanager
     def staged(self, *, doomed: bool) -> Generator[None]:
@@ -157,30 +226,17 @@ class TemporalShadow:
 
         A unit's writes retire and open milestones as they resolve, so a later
         step of the SAME unit observes them — read-your-own-writes holds for this
-        tracker exactly as it holds for the rows. A DOOMED unit's transaction
+        store exactly as it holds for the rows. A DOOMED unit's transaction
         then erases the rows it wrote, and this discards the advances it made
         with them: a step AFTER the abort resolves the milestone the abort left
         standing, never a successor no transaction ever stored, and a milestone
         the aborted unit retired or re-accounted for is restored to what it was.
-
-        The whole tracker is captured rather than a per-key undo log, which is
-        exact because one unit at a time advances it: the state before a doomed
-        unit IS the state its abort restores.
         """
         if not doomed:
             yield
             return
-        current = dict(self._current)
-        overtaken = set(self._overtaken)
-        materialized = set(self._materialized)
-        out_of_band = self._out_of_band
-        try:
+        with self.transaction(rollback=True):
             yield
-        finally:
-            self._current = current
-            self._overtaken = overtaken
-            self._materialized = materialized
-            self._out_of_band = out_of_band
 
     def note_materialized_write(self, entity: EntityMetadata) -> None:
         """Record that a materializing predicate write over ``entity`` committed —
@@ -188,13 +244,13 @@ class TemporalShadow:
         opened a successor (`m-opt-lock` predicate-selected writes materialize).
 
         Production performs that resolve and plans those rows internally, and
-        hands back neither, so this tracker cannot advance to what the write left:
+        hands back neither, so this store cannot advance to what the write left:
         which of ``entity``'s milestones its predicate selected is not derivable
-        here at all. Every milestone of ``entity`` tracked right now is therefore
+        here at all. Every milestone of ``entity`` stored right now is therefore
         recorded as MOVED, which is a stronger statement than the doubt
-        out-of-band statements raise (:meth:`accounts_for`) — the row it names is
-        not merely unaccounted for, it is no longer the current one — and it is
-        the tightest bound available without the plan.
+        out-of-band statements raise (:meth:`has_complete_stored_row`) — the row
+        it names is not merely unaccounted for, it is no longer the current one —
+        and it is the tightest bound available without the plan.
 
         Milestones of OTHER entities are untouched: a predicate names one target,
         and a write of that target moves no other table's rows.
@@ -203,15 +259,15 @@ class TemporalShadow:
         self._materialized |= {key for key in self._current if key[0] == name}
 
     def note_out_of_band_write(self) -> None:
-        """Record that statements outside this tracker's own accounting ran
-        against the tables it shadows (`m-case-format` ``given.apply``).
+        """Record that statements outside this store's own accounting ran
+        against the tables it simulates (`m-case-format` ``given.apply``).
 
         Every milestone held right now MAY have been overtaken by them and is
-        treated as though it were (:meth:`accounts_for` states the bound), and
-        every key with none is left with no account of a row they may have
-        written. Both states are one-way for the milestones they name — the
-        tracker never re-reads — and both end for a key the moment a later write
-        opens a milestone of it.
+        treated as though it were (:meth:`has_complete_stored_row` states the
+        bound), and every key with none is left with no account of a row they
+        may have written. Both states are one-way for the milestones they name —
+        the store never re-reads — and both end for a key the moment a later
+        write opens a milestone of it.
         """
         self._out_of_band = True
         self._overtaken |= set(self._current)
@@ -219,7 +275,7 @@ class TemporalShadow:
     def seed_fixtures(
         self, model: Metamodel, entity: EntityMetadata, rows: Sequence[Mapping[str, object]]
     ) -> None:
-        """Seed the tracker from a case's loaded fixture rows for ``entity``
+        """Seed the store from a case's loaded fixture rows for ``entity``
         (`given.fixtures: true`, or a scenario case's own default
         lifecycle load). A non-temporal entity's rows are a no-op.
 
@@ -229,28 +285,24 @@ class TemporalShadow:
         Predecessor Row a later close addresses, gates on, and carries state
         forward from.
         """
-        shape = temporal_read.view(model).shape(entity.identity)
-        if shape is None or isinstance(shape, temporal_read.NonTemporal):
+        layout = _layout(model, entity)
+        if layout is None:
             return
-        entity_name = entity.identity.name
         _tx_start, tx_end = _axis_names(model, entity, TemporalDimension.TRANSACTION_TIME)
-        pk_names = _primary_key_names(model, entity)
-        start_names = _axis_start_names(model, entity)
         for row in rows:
             if row.get(tx_end) is not INFINITY:
                 continue  # not current on Transaction Time
-            key = self._key(entity_name, pk_names, start_names, row)
-            self._track(key, TemporalObservation(predecessor=PredecessorRow(members=row)))
+            self._track(layout, TemporalObservation(predecessor=PredecessorRow(members=row)))
 
-    def resolve(
+    def predecessor_for(
         self,
         model: Metamodel,
         entity: EntityMetadata,
         row: Mapping[str, object],
     ) -> TemporalObservation | None:
-        """The tracked observation a temporal amend/terminate/amendUntil/
+        """The stored observation a temporal amend/terminate/amendUntil/
         terminateUntil instruction's close/chain consumes, or ``None`` for a
-        milestone this tracker has never seen open (an insert, or a genuinely
+        milestone this store has never seen open (an insert, or a genuinely
         unobserved close the write itself will surface as a conflict/stale
         error at execution).
 
@@ -259,7 +311,7 @@ class TemporalShadow:
         :class:`AmbiguousObservationError`.
         """
         slot = self._slot(model, entity, row)
-        return None if slot is None else self._current[slot]
+        return None if slot is None else self._current[slot].observation
 
     def _slot(
         self,
@@ -267,8 +319,8 @@ class TemporalShadow:
         entity: EntityMetadata,
         row: Mapping[str, object],
     ) -> _ObjectKey | None:
-        """The one tracked slot ``row`` addresses, or ``None`` for a key this
-        tracker holds no current milestone of.
+        """The one stored slot ``row`` addresses, or ``None`` for a key this
+        store holds no current milestone of.
 
         The ONE place an input's identity is turned into a slot, so every question
         asked about the addressed milestone — what it is, and whether it is still
@@ -282,12 +334,91 @@ class TemporalShadow:
             return None
         if len(candidates) > 1:
             raise AmbiguousObservationError(
-                f"{entity_name}: {len(candidates)} current milestones are tracked for "
+                f"{entity_name}: {len(candidates)} current milestones are stored for "
                 f"{dict(zip(pk_names, identity[1], strict=True))!r}, at the edges "
                 f"{sorted(str(key[2]) for key in candidates)} — this input names none of "
                 "them, and an observation is keyed by the milestone it observed"
             )
         return candidates[0]
+
+    def apply(self, model: Metamodel, step: PlannedWrite) -> None:
+        """Change the stored rows as executing ``step`` changes the rows a
+        database holds.
+
+        An insert stores each temporal row it opens, as planned; a close or a
+        removal retires the row its target addresses; a revision replaces the
+        members it assigns, keeps every other member, and moves the row to its
+        new edge where its Valid-Time start moved, a Value Object occurrence it
+        assigns replacing the stored one whole. A guard, and every Non-Temporal
+        step, leaves the stored rows as they are. Nothing a database would
+        enforce is simulated: a target no stored row answers changes nothing.
+        """
+        match step:
+            case PlannedInsert():
+                self._open(model, step)
+            case PlannedClose() | PlannedTemporalRemoval():
+                slot = self._addressed(step.target, step.entity)
+                if slot is not None:
+                    self._forget(slot)
+            case PlannedTemporalRevision():
+                slot = self._addressed(step.target, step.entity)
+                if slot is not None:
+                    self._revise(model, step.entity, slot, step.assignments)
+            case _:
+                return
+
+    def _open(self, model: Metamodel, step: PlannedInsert) -> None:
+        entity = model.entity(step.entity)
+        if entity is None:  # pragma: no cover - a planned step names an accepted Entity
+            return
+        layout = _layout(model, entity)
+        if layout is None:
+            return
+        for entry in step.entries:
+            predecessor = predecessor_row(entry.row.attributes, entry.row.value_objects)
+            self._track(layout, TemporalObservation(predecessor=predecessor))
+
+    def _revise(
+        self,
+        model: Metamodel,
+        entity_identity: EntityIdentity,
+        slot: _ObjectKey,
+        assignments: PlannedAssignments,
+    ) -> None:
+        entity = model.entity(entity_identity)
+        layout = None if entity is None else _layout(model, entity)
+        assert layout is not None  # only a temporal row is ever stored and revised
+        members = {
+            **self._current[slot].observation.predecessor.members,
+            **_members_by_name(assignments.attributes, assignments.value_objects),
+        }
+        overtaken = slot in self._overtaken
+        materialized = slot in self._materialized
+        self._forget(slot)
+        revised = self._track(
+            layout, TemporalObservation(predecessor=PredecessorRow(members=members))
+        )
+        # Revising assigns some members, so it re-accounts for none the store
+        # had already lost track of.
+        if overtaken:
+            self._overtaken.add(revised)
+        if materialized:
+            self._materialized.add(revised)
+
+    def _addressed(self, target: MilestoneTarget, entity: EntityIdentity) -> _ObjectKey | None:
+        """The slot of the one stored row ``target`` addresses, or ``None``
+        where it addresses none."""
+        address = _target_address(entity, target)
+        located = self._located.get(address)
+        if located is None:
+            return None
+        if len(located) == 1:
+            return located[0]
+        raise AmbiguousObservationError(
+            f"{entity.name}: {len(located)} current milestones of {target.key_values!r} "
+            f"end at {address[2]!r} — a planned step addresses one row by its key and axis "
+            "ends, and these share both"
+        )
 
     def retire(
         self, model: Metamodel, entity: EntityMetadata, observed: TemporalObservation
@@ -297,19 +428,11 @@ class TemporalShadow:
         Exactly that one: a key's OTHER current rectangles are untouched, because
         the write neither closed nor superseded them. The retirement is driven by
         the observation the close CONSUMED rather than by the Planned Close the
-        plan carries, because a Milestone Target addresses a milestone by its
-        axis ENDS while a tracked milestone is keyed by its own edge — the axis
-        STARTS — and the plan carries no way back from one to the other.
+        plan carries.
         """
-        key = self._key(
-            entity.identity.name,
-            _primary_key_names(model, entity),
-            _axis_start_names(model, entity),
-            observed.predecessor.members,
-        )
-        self._current.pop(key, None)
-        self._overtaken.discard(key)
-        self._materialized.discard(key)
+        layout = _layout(model, entity)
+        assert layout is not None  # only a temporal write consumes a temporal observation
+        self._forget(layout.key(observed.predecessor.members))
 
     def track_opened(
         self,
@@ -318,12 +441,12 @@ class TemporalShadow:
         *,
         retired: Iterable[ObjectStateKey] = (),
     ) -> None:
-        """Track every milestone ``steps`` OPENS as the current state a later step
+        """Store every milestone ``steps`` OPENS as the current state a later step
         observes, once every milestone in ``retired`` — the states a bound range
         changed — has been dropped.
 
         The successor rows come off the plan the write lane already produced, so
-        the tracker holds exactly what the flush will write rather than a second
+        the store holds exactly what the flush will write rather than a second
         expansion of the same topology computed beside it. A Planned Insert's
         entry row is the whole milestone, axis bounds and framework-owned values
         included, which is exactly the Predecessor Row a later close addresses,
@@ -335,29 +458,16 @@ class TemporalShadow:
         for state in retired:
             if not isinstance(state, TemporalObjectStateKey):
                 continue
-            key = (
-                state.object.entity.name,
-                tuple(value for _name, value in state.object.primary_key),
-                state.milestone,
+            self._forget(
+                (
+                    state.object.entity.name,
+                    tuple(value for _name, value in state.object.primary_key),
+                    state.milestone,
+                )
             )
-            self._current.pop(key, None)
-            self._overtaken.discard(key)
-            self._materialized.discard(key)
         for step in steps:
-            if not isinstance(step, PlannedInsert):
-                continue
-            entity = model.entity(step.entity)
-            if entity is None:  # pragma: no cover - a planned step names an accepted Entity
-                continue
-            shape = temporal_read.view(model).shape(entity.identity)
-            if shape is None or isinstance(shape, temporal_read.NonTemporal):
-                continue
-            pk_names = _primary_key_names(model, entity)
-            start_names = _axis_start_names(model, entity)
-            for entry in step.entries:
-                predecessor = predecessor_row(entry.row.attributes, entry.row.value_objects)
-                key = self._key(entity.identity.name, pk_names, start_names, predecessor.members)
-                self._track(key, TemporalObservation(predecessor=predecessor))
+            if isinstance(step, PlannedInsert):
+                self._open(model, step)
 
     def keep_unchanged(
         self,
@@ -365,49 +475,34 @@ class TemporalShadow:
         steps: Iterable[PlannedWrite],
         observed: Iterable[tuple[EntityMetadata, TemporalObservation]],
     ) -> None:
-        """Track again each ``observed`` milestone — retired as its write
+        """Store again each ``observed`` milestone — retired as its write
         resolved (:meth:`retire`) — that no step of ``steps`` closes, revises, or
         removes: a write that leaves a milestone as it was keeps it current
         (`m-temporal-write`)."""
-        changed: set[tuple[str, tuple[object, ...], tuple[dt.datetime | None, ...]]] = set()
-        for step in steps:
-            if isinstance(step, PlannedClose | PlannedTemporalRevision | PlannedTemporalRemoval):
-                target = step.target
-                changed.add(
-                    (
-                        step.entity.name,
-                        target.key_values,
-                        tuple(
-                            _end_coordinate(end.instant) if isinstance(end, Finite) else None
-                            for end in target.end_values
-                        ),
-                    )
-                )
+        changed = {
+            _target_address(step.entity, step.target)
+            for step in steps
+            if isinstance(step, PlannedClose | PlannedTemporalRevision | PlannedTemporalRemoval)
+        }
         for entity, observation in observed:
-            members = observation.predecessor.members
-            pk_names = _primary_key_names(model, entity)
-            ends: list[dt.datetime | None] = []
-            for dimension in _declared_dimensions(model, entity):
-                ends.append(_end_coordinate(members[_axis_names(model, entity, dimension)[1]]))
-            address = (entity.identity.name, tuple(members[name] for name in pk_names))
-            if (*address, tuple(ends)) in changed:
-                continue
-            key = self._key(
-                entity.identity.name, pk_names, _axis_start_names(model, entity), members
-            )
-            self._track(key, observation)
+            layout = _layout(model, entity)
+            assert layout is not None  # only a temporal write observes a milestone
+            if layout.address(observation.predecessor.members) not in changed:
+                self._track(layout, observation)
 
-    def acquisition(self, model: Metamodel) -> AcquireRows:
+    def coverage_acquisition(self, model: Metamodel) -> AcquireRows:
         """The row acquisition a unit of work planning against this case state
-        reads its coverage through: each coverage read answers the tracked
+        reads its coverage through: each coverage read answers the stored
         current milestones of its object that overlap any of its Valid-Time
-        windows, or all of them where it names none — what the execution's own coverage read
-        returns from the rows this tracker accounts for, through the same
+        windows, or all of them where it names none — what the execution's own
+        coverage read returns from the rows this store holds, through the same
         consumer."""
         return _CaseStateAcquisition(self, model)
 
-    def covering(self, model: Metamodel, request: CoverageReadRequest) -> list[tuple[object, ...]]:
-        """The tracked current milestones ``request`` reads, each positional
+    def coverage_rows(
+        self, model: Metamodel, request: CoverageReadRequest
+    ) -> list[tuple[object, ...]]:
+        """The stored current milestones ``request`` reads, each positional
         over its target's member selection."""
         entity = request.entity
         windows_of: dict[tuple[str, tuple[object, ...]], tuple[temporal_read.TimeInterval, ...]] = {
@@ -418,11 +513,11 @@ class TemporalShadow:
         assert shape is not None  # the facet covers every accepted Entity
         members = _member_selection(model, entity).shape
         rows: list[tuple[object, ...]] = []
-        for slot, observation in self._current.items():
+        for slot, stored in self._current.items():
             windows = windows_of.get((slot[0], slot[1]))
             if windows is None:
                 continue
-            predecessor = observation.predecessor
+            predecessor = stored.observation.predecessor
             if windows:
                 coverage = temporal_read.valid_time_coverage(shape, predecessor, None)
                 if coverage is None or not any(coverage.overlaps(window) for window in windows):
@@ -430,8 +525,9 @@ class TemporalShadow:
             rows.append(_positional(members, predecessor.members))
         return rows
 
-    def _track(self, key: _ObjectKey, observation: TemporalObservation) -> None:
-        """Store one milestone in its own slot, refusing a slot already taken.
+    def _track(self, layout: _Layout, observation: TemporalObservation) -> _ObjectKey:
+        """Store one milestone in its own slot, refusing a slot already taken,
+        and answer that slot.
 
         A slot is keyed by the milestone's edge, so two current milestones of one
         key sharing an edge are a state no write can address: overwriting would
@@ -443,37 +539,107 @@ class TemporalShadow:
         an earlier materializing write's displacement can still stand for the slot
         it occupies.
         """
+        members = observation.predecessor.members
+        key = layout.key(members)
         existing = self._current.get(key)
-        if existing is not None and existing.predecessor.members != observation.predecessor.members:
+        if existing is None:
+            address = layout.address(members)
+            self._located[address] = (*self._located.get(address, ()), key)
+        elif existing.observation.predecessor.members != members:
             entity_name, pk, edge = key
             raise AmbiguousObservationError(
                 f"{entity_name}: two current milestones of {pk!r} carry the edge {edge!r} — "
                 "an edge names exactly one milestone, so no observation could tell them apart"
             )
-        self._current[key] = observation
+        else:
+            address = existing.address
+        self._current[key] = _StoredRow(observation, address)
         self._overtaken.discard(key)
         self._materialized.discard(key)
+        return key
 
-    @staticmethod
-    def _key(
-        entity_name: str,
-        pk_names: Sequence[str],
-        start_names: Mapping[TemporalDimension, str],
-        row: Mapping[str, object],
-    ) -> _ObjectKey:
+    def _forget(self, slot: _ObjectKey) -> None:
+        stored = self._current.pop(slot, None)
+        if stored is not None:
+            remaining = tuple(other for other in self._located[stored.address] if other != slot)
+            if remaining:
+                self._located[stored.address] = remaining
+            else:
+                del self._located[stored.address]
+        self._overtaken.discard(slot)
+        self._materialized.discard(slot)
+
+    def _restore(self, snapshot: _Snapshot) -> None:
+        self._current = snapshot.current
+        self._overtaken = snapshot.overtaken
+        self._materialized = snapshot.materialized
+        self._out_of_band = snapshot.out_of_band
+        located: dict[_Address, tuple[_ObjectKey, ...]] = {}
+        for slot, stored in self._current.items():
+            located[stored.address] = (*located.get(stored.address, ()), slot)
+        self._located = located
+
+
+@dataclass(frozen=True, slots=True)
+class _Layout:
+    """How one temporal Entity's stored milestones are keyed and addressed:
+    its family-effective primary-key, axis-start, and axis-end Attribute
+    names."""
+
+    entity: str
+    keys: tuple[str, ...]
+    starts: Mapping[TemporalDimension, str]
+    ends: tuple[str, ...]
+
+    def key(self, members: Mapping[str, object]) -> _ObjectKey:
         return (
-            entity_name,
-            tuple(row[name] for name in pk_names),
-            _edge({dimension: _coordinate(row[name]) for dimension, name in start_names.items()}),
+            self.entity,
+            tuple(members[name] for name in self.keys),
+            _edge(
+                {dimension: _coordinate(members[name]) for dimension, name in self.starts.items()}
+            ),
         )
+
+    def address(self, members: Mapping[str, object]) -> _Address:
+        return (
+            self.entity,
+            tuple(members[name] for name in self.keys),
+            tuple(_end_coordinate(members[name]) for name in self.ends),
+        )
+
+
+def _target_address(entity: EntityIdentity, target: MilestoneTarget) -> _Address:
+    return (
+        entity.name,
+        target.key_values,
+        tuple(
+            _end_coordinate(end.instant) if isinstance(end, Finite) else None
+            for end in target.end_values
+        ),
+    )
+
+
+def _layout(model: Metamodel, entity: EntityMetadata) -> _Layout | None:
+    """``entity``'s layout, or ``None`` for a Non-Temporal Entity, which opens
+    no milestone."""
+    shape = temporal_read.view(model).shape(entity.identity)
+    if shape is None or isinstance(shape, temporal_read.NonTemporal):
+        return None
+    dimensions = _declared_dimensions(model, entity)
+    return _Layout(
+        entity.identity.name,
+        tuple(_primary_key_names(model, entity)),
+        _axis_start_names(model, entity),
+        tuple(_axis_names(model, entity, dimension)[1] for dimension in dimensions),
+    )
 
 
 @dataclass(frozen=True, slots=True)
 class _CaseStateAcquisition:
-    """:meth:`TemporalShadow.acquisition`'s answer: coverage reads over the
-    tracked milestones, which hold no raw Structured Column."""
+    """:meth:`SimulatedTemporalStore.coverage_acquisition`'s answer: coverage
+    reads over the stored milestones, which hold no raw Structured Column."""
 
-    shadow: TemporalShadow
+    store: SimulatedTemporalStore
     model: Metamodel
 
     def __call__[Request: RowRequest, Result](
@@ -483,7 +649,7 @@ class _CaseStateAcquisition:
             request, CoverageReadRequest
         ):  # pragma: no cover - planning reads coverage alone
             raise TypeError(f"case state answers coverage reads alone, not {request!r}")
-        rows = self.shadow.covering(self.model, request)
+        rows = self.store.coverage_rows(self.model, request)
         selection = _member_selection(self.model, request.entity)
         return consumer(request, selection, iter(rows), _ABSENT, None, len(rows))
 
@@ -505,7 +671,7 @@ def predecessor_row(
     :class:`~parallax.core.metamodel.AttributeIdentity` beside a Value Object map
     keyed by :class:`~parallax.core.metamodel.ValueObjectIdentity`, and a
     Predecessor Row is read by DECLARED MEMBER NAME, which is also the spelling a
-    milestone edge is keyed by. Both carriers convert here so the tracked
+    milestone edge is keyed by. Both carriers convert here so the stored
     milestone and the observed one can never be flattened two different ways.
 
     The row it builds is purely LOGICAL: neither carrier retains the raw
@@ -514,15 +680,24 @@ def predecessor_row(
     successor is patched from the declared members rather than from what the row
     physically held.
     """
+    return PredecessorRow(members=_members_by_name(attributes, value_objects))
+
+
+def _members_by_name(
+    attributes: Mapping[AttributeIdentity, object],
+    value_objects: Mapping[ValueObjectIdentity, object],
+) -> dict[str, object]:
+    """Identity-keyed members by declared name, each top-level Value Object
+    occurrence whole under its member's name."""
     members: dict[str, object] = {identity.name: value for identity, value in attributes.items()}
     for identity, value in value_objects.items():
         members[identity.path[-1]] = value
-    return PredecessorRow(members=members)
+    return members
 
 
 _ABSENT: Final = object()
-"""The member a tracked milestone does not hold, in the positional rows
-:meth:`TemporalShadow.covering` answers."""
+"""The member a stored milestone does not hold, in the positional rows
+:meth:`SimulatedTemporalStore.coverage_rows` answers."""
 
 
 def _positional(shape: MemberShape, members: Mapping[str, object]) -> tuple[object, ...]:
@@ -547,10 +722,17 @@ def _positional_cell(member: DocumentMember, value: object) -> object:
 
 
 _NOT_AN_INSTANT = "an as-of axis start is a finite instant, and {value!r} is not one"
+_NOT_AN_END = "an as-of axis end is a finite instant or the open bound, and {value!r} is neither"
 
 
 def _end_coordinate(value: object) -> dt.datetime | None:
-    return None if value is INFINITY else _coordinate(value)
+    """One managed axis-end value as the comparable an address is keyed by: the
+    open bound as ``None``, and a finite end normalized as a start is."""
+    if value is INFINITY:
+        return None
+    if not isinstance(value, dt.datetime):
+        raise MilestoneEdgeError(_NOT_AN_END.format(value=value))
+    return normalize_instant(value)
 
 
 def _coordinate(value: object) -> dt.datetime:

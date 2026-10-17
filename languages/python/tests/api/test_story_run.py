@@ -32,9 +32,9 @@ from parallax.conformance.graph_stories import (
 )
 from parallax.conformance.read_models import Animal, Cat, Dog
 from parallax.conformance.read_stories import READ_STORIES, ReadStory
+from parallax.conformance.simulated_temporal_store import SimulatedTemporalStore
 from parallax.conformance.stories import WRITE_STORIES, WriteStory
 from parallax.conformance.story_models import Order, OrderStatus
-from parallax.conformance.temporal_state import TemporalShadow
 from parallax.core import LATEST, DomainModel, ObjectQuery
 from parallax.core._execution._options import (
     OMITTED,
@@ -104,7 +104,7 @@ def _reset_for(case_id: str, profile_run: Any) -> DomainModel:
     """
     case = _CASES[case_id]
     profile_run.reset(engine.load_case_setup_metamodel(case), case_fixtures(case))
-    apply_given_apply(case, profile_run.port, TemporalShadow())
+    apply_given_apply(case, profile_run.port, SimulatedTemporalStore())
     return MODELS[Path(case.model).stem]
 
 

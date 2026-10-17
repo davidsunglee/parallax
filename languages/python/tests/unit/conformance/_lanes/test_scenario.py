@@ -29,7 +29,7 @@ from parallax.conformance._lifecycle_observation import (
 )
 from parallax.conformance._mechanism import case_document, model_facts
 from parallax.conformance._mechanism.envelope import EngineError
-from parallax.conformance.temporal_state import TemporalShadow
+from parallax.conformance.simulated_temporal_store import SimulatedTemporalStore
 from parallax.core import predicate
 from parallax.core._execution._unit_work import instructions
 from parallax.core._execution._unit_work.instructions import PreparedKeyedWrite
@@ -1173,7 +1173,7 @@ def test_a_settled_write_names_a_versioned_targets_own_read_generation() -> None
         write = scenario._build_instructions(  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helper directly
             {"mutation": "amend", "entity": "Account", "rows": [{"id": 1, "balance": "5.00"}]},
             meta,
-            scenario.CaseStateEvidence(meta, TemporalShadow(), (node,)),
+            scenario.CaseStateEvidence(meta, SimulatedTemporalStore(), (node,)),
             set(),
             [],
             (node,),
@@ -1192,7 +1192,7 @@ def test_a_settled_write_is_refused_when_its_named_find_observed_no_such_row() -
         scenario._build_instructions(  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helper directly
             {"mutation": "amend", "entity": "Account", "rows": [{"id": 1, "balance": "5.00"}]},
             meta,
-            scenario.CaseStateEvidence(meta, TemporalShadow(), ()),
+            scenario.CaseStateEvidence(meta, SimulatedTemporalStore(), ()),
             set(),
             [],
             (),
@@ -1238,7 +1238,7 @@ def test_a_settled_write_resolves_a_transaction_time_only_targets_named_mileston
                 "rows": [{"id": 1, "value": "5.00"}],
             },
             meta,
-            scenario.CaseStateEvidence(meta, TemporalShadow(), (node,)),
+            scenario.CaseStateEvidence(meta, SimulatedTemporalStore(), (node,)),
             set(),
             [],
             (node,),
@@ -1366,8 +1366,8 @@ def test_a_range_beyond_its_observation_binds_the_coverage_the_tracker_reads() -
     jun = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
     head = milestone(dt.datetime(2024, 1, 1, tzinfo=dt.UTC), jun, "100.00")
     tail = milestone(jun, INFINITY, "200.00")
-    shadow = TemporalShadow()
-    shadow.keep_unchanged(meta, (), [(entity, head), (entity, tail)])
+    store = SimulatedTemporalStore()
+    store.keep_unchanged(meta, (), [(entity, head), (entity, tail)])
     instruction = instructions.prepare_wire_write(
         KeyedWrite(
             "amend",
@@ -1384,7 +1384,7 @@ def test_a_range_beyond_its_observation_binds_the_coverage_the_tracker_reads() -
         "optimistic",
         scenario.INERT_CLOCK_INSTANT,
         [scenario._buffered(instruction, head, meta)],  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helpers directly
-        coverage=shadow,
+        coverage=store,
     )
 
     (unit,) = executed.plan.units
@@ -1424,13 +1424,13 @@ def test_a_tracked_milestone_under_columns_survives_out_of_band_statements() -> 
     # very thing a conflict case authors on purpose — never unrepresentable.
     meta = model_facts.load_case_metamodel(_load_case("m-temporal-write-002"))
     model = meta
-    shadow = TemporalShadow()
-    shadow.note_out_of_band_write()
+    store = SimulatedTemporalStore()
+    store.note_out_of_band_write()
     scenario._refuse_unaccounted_document_milestone(  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helper directly
         model,
         model_facts.case_entity(model, "parallax.compatibility.Balance"),
         {"id": 1},
-        shadow,
+        store,
     )
 
 
@@ -2560,7 +2560,9 @@ def test_run_materializing_pair_rejects_a_mismatched_preceding_find_target() -> 
             }
         },
     ]
-    context = scenario.CaseContext(serving, meta, "locking", TemporalShadow(), {}, TxnOptions())
+    context = scenario.CaseContext(
+        serving, meta, "locking", SimulatedTemporalStore(), {}, TxnOptions()
+    )
     with pytest.raises(EngineError, match="not preceded by"):
         scenario._run_materializing_pair(  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helper directly
             FakeWritePort(),
@@ -3787,7 +3789,7 @@ def test_the_case_context_carries_the_root_record_beside_the_sparse_request() ->
         serving,
         models.accepted_model_of(serving.current().model),
         case_document.concurrency(case),
-        TemporalShadow(),
+        SimulatedTemporalStore(),
         case_format.transaction_keywords(case),
         case_format.database_options(case),
     )

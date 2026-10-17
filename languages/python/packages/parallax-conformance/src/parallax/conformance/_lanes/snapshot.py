@@ -37,7 +37,7 @@ from parallax.conformance._mechanism.envelope import (
 )
 from parallax.conformance._mechanism.given_state import (
     apply_given_apply,
-    seed_shadow_from_fixtures,
+    seed_store_from_fixtures,
 )
 from parallax.conformance._mechanism.model_facts import (
     case_entity,
@@ -47,7 +47,7 @@ from parallax.conformance._mechanism.planned_reads import planned_read
 from parallax.conformance._mechanism.transaction_control import (
     underlying,
 )
-from parallax.conformance.temporal_state import TemporalShadow
+from parallax.conformance.simulated_temporal_store import SimulatedTemporalStore
 from parallax.core import (
     inheritance,
     relationship,
@@ -169,12 +169,12 @@ def compile_scenario(
     options = case_format.database_options(case)
     dialect = dialect_for(dialect_name)
     concurrency = case_document.concurrency(case)
-    shadow = TemporalShadow()
+    store = SimulatedTemporalStore()
     # The same seeding the RUN lane applies: this lane's cases load their model's
     # fixtures, so a temporal close observes the milestone that persisted history
     # holds rather than none at all. Both lanes must start from the same tracked
     # state or they are not the same computation.
-    seed_shadow_from_fixtures(case, model, shadow)
+    seed_store_from_fixtures(case, model, store)
     emissions: list[Emission] = []
     try:
         for index, step in enumerate(steps):
@@ -183,13 +183,13 @@ def compile_scenario(
                     _check_action_step(case, step)
                 case "write":
                     entries = _snapshot_write_entries(case, model, step)
-                    with shadow.staged(doomed=step.get("rollback") is True):
+                    with store.staged(doomed=step.get("rollback") is True):
                         statements = lower_writes(
                             entries,
                             model,
                             dialect,
                             concurrency,
-                            shadow,
+                            store,
                             entry_instant(entries[0]),
                             [],
                         )
@@ -286,12 +286,12 @@ def run_scenario(
     group."""
     serving = case_serving_model(case)
     model = models.accepted_model_of(serving.current().model)
-    shadow = TemporalShadow()
+    store = SimulatedTemporalStore()
     context = CaseContext(
         serving,
         model,
         case_document.concurrency(case),
-        shadow,
+        store,
         case_format.transaction_keywords(case),
         case_format.database_options(case),
     )
@@ -299,8 +299,8 @@ def run_scenario(
     # plan, so a temporal close observes the milestone the persisted history (or
     # an earlier step) actually holds — the SAME order every other lane applies:
     # fixtures, then `given.apply`, then the first step.
-    seed_shadow_from_fixtures(case, model, shadow)
-    apply_given_apply(case, port, shadow)
+    seed_store_from_fixtures(case, model, store)
+    apply_given_apply(case, port, store)
     observation = lifecycle.observation()
     with Database.connect(
         port, serving, options=context.options, lifecycle_provider=observation.provider
