@@ -74,6 +74,7 @@ __all__ = [
     "plan",
     "plan_coverage_read",
     "plan_mutation_read",
+    "plan_root",
     "plan_target_read",
 ]
 
@@ -194,23 +195,7 @@ def plan(
     """Plan validated Includes and resolve the caller's projection request."""
     entity = query.root
     families = inheritance.view(model)
-    predicate = resolve_temporal_visibility(
-        query.predicate, target=entity, model=model, resolution=RootSelections(query.temporal)
-    )
-    narrow_to = (
-        None if query.narrow_to is None else tuple(item.identity for item in query.narrow_to)
-    )
-    root = PlannedEntityQuery(
-        target=entity.identity,
-        entity=entity,
-        predicate=predicate,
-        narrow_to=narrow_to,
-        order_by=query.order_by,
-        projection=_projection_for(entity, families, projection),
-        limit=query.limit,
-        paging=query.paging,
-    )
-
+    root = plan_root(query, model, projection=projection)
     builder = _PlanBuilder(model=model, families=families, root_selections=query.temporal)
     builder.seed_root(entity)
     for path in query.includes:
@@ -219,10 +204,35 @@ def plan(
         root=root,
         includes=build_include_tree(
             queried=entity.identity,
-            root=builder.root_admission(narrow_to),
+            root=builder.root_admission(root.narrow_to),
             positions=builder.positions,
         ),
         fetch_steps=tuple(builder.steps),
+    )
+
+
+def plan_root(
+    query: ResolvedObjectQuery,
+    model: Metamodel,
+    *,
+    projection: ReadProjectionRequest,
+) -> PlannedEntityQuery:
+    """The root read :func:`plan` plans for ``query``, without planning its
+    Includes."""
+    entity = query.root
+    return PlannedEntityQuery(
+        target=entity.identity,
+        entity=entity,
+        predicate=resolve_temporal_visibility(
+            query.predicate, target=entity, model=model, resolution=RootSelections(query.temporal)
+        ),
+        narrow_to=None
+        if query.narrow_to is None
+        else tuple(item.identity for item in query.narrow_to),
+        order_by=query.order_by,
+        projection=_projection_for(entity, inheritance.view(model), projection),
+        limit=query.limit,
+        paging=query.paging,
     )
 
 

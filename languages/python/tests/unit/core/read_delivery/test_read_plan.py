@@ -24,6 +24,7 @@ from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity, Metamodel
+from parallax.core.navigate import PropagatedRootSelections
 from parallax.core.object_query import deserialize
 from parallax.core.object_query._resolved import ContinuationCoordinate, ResolvedObjectQuery
 from parallax.core.predicate._resolved import ResolvedComparison
@@ -1050,16 +1051,17 @@ def _child_work(plan: _read_plan.ReadPlan) -> object:
 def test_retained_child_work_is_resolved_and_compiled_once_per_plan_family(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    calls = {"resolve": 0, "child": 0}
+    calls = {"root": 0, "child": 0, "compile": 0}
     resolve = cast("Callable[..., Any]", vars(deep_fetch)["resolve_temporal_visibility"])
     compile_template = cast("Callable[..., Any]", vars(_read_plan)["compile_template"])
 
     def counting_resolve(*args: Any, **kwargs: Any) -> Any:
-        calls["resolve"] += 1
+        propagated = isinstance(kwargs["resolution"], PropagatedRootSelections)
+        calls["child" if propagated else "root"] += 1
         return resolve(*args, **kwargs)
 
     def counting_child(*args: Any, **kwargs: Any) -> Any:
-        calls["child"] += 1
+        calls["compile"] += 1
         return compile_template(*args, **kwargs)
 
     monkeypatch.setattr(deep_fetch, "resolve_temporal_visibility", counting_resolve)
@@ -1068,17 +1070,15 @@ def test_retained_child_work_is_resolved_and_compiled_once_per_plan_family(
     pages = continuation.plan(_with_items(), _META)
 
     first = _plan(cache, pages.first(limit=2))
-    assert calls == {"resolve": 2, "child": 1}
+    assert calls == {"root": 1, "child": 1, "compile": 1}
     assert _plan(cache, pages.first(limit=3)).fetch_step(0) is first.fetch_step(0)
-    assert calls == {"resolve": 2, "child": 1}
+    assert calls == {"root": 1, "child": 1, "compile": 1}
 
     after = _plan(cache, pages.after(ContinuationCoordinate((1,)), limit=2))
-    assert calls["child"] == 1
+    assert calls == {"root": 2, "child": 1, "compile": 1}
+    assert after.fetch_step(0) is first.fetch_step(0)
+    assert after.include_tree() is first.include_tree()
     assert _child_work(after) is _child_work(first)
-    step, retained = after.fetch_step(0), first.fetch_step(0)
-    assert isinstance(step, deep_fetch.QueryFetchStep)
-    assert isinstance(retained, deep_fetch.QueryFetchStep)
-    assert step.query == retained.query
 
 
 def test_database_transactions_share_read_plans_across_connections(

@@ -472,13 +472,17 @@ def _plan_uncached(
     compiled_query, markers, limit_marker = (
         (query, (), None) if empty_root else _template_query(query)
     )
-    planned = deep_fetch.plan(
-        compiled_query,
-        model.meta,
-        projection=deep_fetch.ReadProjectionRequest(
-            "none" if result_form == "row" else "all",
-            result_form == "instance",
-        ),
+    projection = deep_fetch.ReadProjectionRequest(
+        "none" if result_form == "row" else "all",
+        result_form == "instance",
+    )
+    planned = (
+        deep_fetch.plan(compiled_query, model.meta, projection=projection)
+        if reusable is None
+        else replace(
+            reusable._query_plan,  # pyright: ignore[reportPrivateUsage] - same-module plan reuse
+            root=deep_fetch.plan_root(compiled_query, model.meta, projection=projection),
+        )
     )
     root: CompiledRead | EmptyRead = (
         EMPTY_READ
