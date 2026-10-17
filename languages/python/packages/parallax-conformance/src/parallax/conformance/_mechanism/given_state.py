@@ -11,7 +11,7 @@ from parallax.conformance._mechanism.model_facts import (
     case_setup_model_ref,
     family_declarer,
 )
-from parallax.conformance.temporal_state import TemporalShadow
+from parallax.conformance.simulated_temporal_store import SimulatedTemporalStore
 from parallax.core import inheritance, storage_layout
 from parallax.core.db_port import DatabaseConnection, JsonDocument
 from parallax.core.metamodel import EntityMetadata, PrimaryKey
@@ -19,7 +19,7 @@ from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.storage_layout import ColumnTier, DirectColumn, DocumentPath
 from parallax.core.wire import WireValue, decode_wire
 
-__all__ = ["apply_given_apply", "apply_given_corrupt", "seed_shadow_from_fixtures"]
+__all__ = ["apply_given_apply", "apply_given_corrupt", "seed_store_from_fixtures"]
 
 
 def apply_given_corrupt(
@@ -234,10 +234,10 @@ def _corruption_key(
     return placement.slot.column.name, decode_wire(declared.type, cast("WireValue", key))
 
 
-def seed_shadow_from_fixtures(
-    case: case_format.Case, model: AcceptedMetamodel, shadow: TemporalShadow
+def seed_store_from_fixtures(
+    case: case_format.Case, model: AcceptedMetamodel, store: SimulatedTemporalStore
 ) -> None:
-    """Seed ``shadow`` from the case's OWN fixture-loading rule (`m-case-format`):
+    """Seed ``store`` from the case's OWN fixture-loading rule (`m-case-format`):
     a writeSequence starts EMPTY unless it opts in with ``given.fixtures: true``;
     every other shape (scenario, conflict) loads the model's default fixtures —
     mirrored from ``tests/_support/corpus.py``'s ``case_fixtures`` rule, kept independent
@@ -252,13 +252,13 @@ def seed_shadow_from_fixtures(
     for entity_name, rows in fixtures.items():
         entity = case_entity(model, entity_name)
         if not family_declarer(model, entity).declared_as_of_axes:
-            shadow.seed_fixtures(
+            store.seed_fixtures(
                 model,
                 entity,
                 cast("list[Mapping[str, object]]", rows),
             )
             continue
-        shadow.seed_fixtures(
+        store.seed_fixtures(
             model,
             entity,
             [
@@ -269,10 +269,10 @@ def seed_shadow_from_fixtures(
 
 
 def apply_given_apply(
-    case: case_format.Case, port: DatabaseConnection, shadow: TemporalShadow | None
+    case: case_format.Case, port: DatabaseConnection, store: SimulatedTemporalStore | None
 ) -> None:
     """Apply a case's out-of-band ``given.apply`` naive statements VERBATIM,
-    immediately (never inside our own transaction), and tell ``shadow`` they ran
+    immediately (never inside our own transaction), and tell ``store`` they ran
     — where the lane models case state at all; one that models none passes
     ``None`` and has nothing to tell.
 
@@ -293,8 +293,8 @@ def apply_given_apply(
     entries = cast("Mapping[str, object]", given).get("apply")
     if not isinstance(entries, list):
         return
-    if shadow is not None:
-        shadow.note_out_of_band_write()
+    if store is not None:
+        store.note_out_of_band_write()
     for entry in cast("list[Mapping[str, object]]", entries):
         sql = cast("str", entry["sql"])
         binds = cast("list[object]", entry.get("binds", []))

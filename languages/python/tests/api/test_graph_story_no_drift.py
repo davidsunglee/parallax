@@ -45,8 +45,8 @@ from parallax.conformance._lanes import scenario as scenario_lane
 from parallax.conformance._mechanism import envelope
 from parallax.conformance._mechanism.given_state import apply_given_apply
 from parallax.conformance.class_models import MODELS
+from parallax.conformance.simulated_temporal_store import SimulatedTemporalStore
 from parallax.conformance.story_models import Order, OrderStatus
-from parallax.conformance.temporal_state import TemporalShadow
 from parallax.core import DomainModel, ObjectQuery
 from parallax.core._execution._options import (
     OMITTED,
@@ -930,7 +930,7 @@ def _assert_authored_observation(
 def _reset_audit_story(story: graph_stories.GraphStory, profile_run: Any) -> None:
     case = _CASES[story.case_id]
     profile_run.reset(engine.load_case_setup_metamodel(case), case_fixtures(case))
-    apply_given_apply(case, profile_run.port, TemporalShadow())
+    apply_given_apply(case, profile_run.port, SimulatedTemporalStore())
 
 
 @pytest.mark.parametrize(

@@ -8,7 +8,9 @@ retained that are still current; a deferred group executes round by round,
 each round released before the next is prepared, and publishes once, after its
 last round, closing its preparation however it ends; and a unit whose span
 answers another number of allocated keys than the rows it opens completes
-nothing.
+nothing. Against simulated stored rows, each span changes them as it
+executes, so a later unit or round reads what earlier ones left, while what
+the attempt owns changes only as each unit completes.
 """
 
 from __future__ import annotations
@@ -19,13 +21,14 @@ import weakref
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from decimal import Decimal
-from typing import Final
+from typing import Final, cast
 
 import pytest
 
 from parallax.conformance._simulated_write_steps import SimulatedWriteSteps
 from parallax.conformance.scripted_clock import FixedClock
-from parallax.core import MAX, Attr, Bitemporal, DomainModel, attr, opt_lock, temporal_read
+from parallax.conformance.simulated_temporal_store import SimulatedTemporalStore
+from parallax.core import MAX, Attr, Bitemporal, DomainModel, Entity, attr, opt_lock, temporal_read
 from parallax.core import predicate as predicate_algebra
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
@@ -34,12 +37,15 @@ from parallax.core._execution._unit_work.acquisition import (
     AcquireRows,
     CompletionRequest,
     CoverageReadRequest,
+    CoverageTerm,
     RowConsumer,
     RowRequest,
     TargetReadRequest,
+    consume_coverage,
 )
 from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedWrite,
+    PreparedPredicateWrite,
     PreparedTargetWrite,
     prepare_typed_write,
     prepare_wire_write,
@@ -49,7 +55,7 @@ from parallax.core._execution._unit_work.write_runner import ExecuteWriteSteps, 
 from parallax.core.base import INFINITY
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._model import model_of
-from parallax.core.metamodel import Metamodel
+from parallax.core.metamodel import AttributeIdentity, EntityMetadata, Metamodel, entity_by_name
 from parallax.core.unit_work import (
     BufferItem,
     Concurrency,
@@ -81,6 +87,7 @@ from tests._support.planner_probes import NO_ROW_READS, TEST_ACTOR_IDENTITY
 from tests.unit._corpus_identity_support import corpus_object_key
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._temporal_group_support import temporal_group
+from tests.unit._where_position_model import WherePosition
 from tests.unit.core._execution._unit_work._acquired_rows_support import HeldRows
 from tests.unit.core._execution._unit_work._flush_support import ObservedSteps, statement_kinds
 from tests.unit.core._execution._unit_work._temporal_targets_support import (
@@ -336,7 +343,7 @@ def test_a_flush_whose_unit_answered_the_wrong_keys_dooms_the_attempt() -> None:
 class _Watched:
     """``held``'s answers, ``watch`` called with each read as it is asked for."""
 
-    held: HeldRows
+    held: AcquireRows
     watch: Callable[[RowRequest], object]
 
     def __call__[Request: RowRequest, Result](
@@ -429,6 +436,9 @@ def test_a_retained_row_still_current_at_its_units_turn_is_completed_without_a_r
 # A deferred group executes round by round and publishes once.                #
 # --------------------------------------------------------------------------- #
 _GROUPED: Final = corpus_model("position")
+_GROUPED_ENTITY: Final = entity_by_name(_GROUPED, "Position")
+assert _GROUPED_ENTITY is not None
+_GROUPED_POSITION: Final = _GROUPED_ENTITY
 _SELECTED_FROM: Final = dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
 _SELECTED_UNTIL: Final = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 
@@ -481,13 +491,13 @@ class _Tracked(PlannedWrites):
 
 @dataclass
 class _Lifecycle:
-    """What the group's continuation saw: at each pull, how many statements
-    had run, whether the round before it was still alive, and whether the
+    """What the group's continuation saw: at each pull, what ``progress``
+    answered, whether the round before it was still alive, and whether the
     group's selected states had been published as changed; and how often it
     finished and closed."""
 
     observations: tuple[RetainedObservation, ...]
-    statements: Callable[[], int]
+    progress: Callable[[], int]
     pulls: list[tuple[int, bool, bool]] = field(default_factory=list[tuple[int, bool, bool]])
     previous: weakref.ref[_Tracked] | None = None
     finished: int = 0
@@ -505,7 +515,7 @@ class _Lifecycle:
             previous = lifecycle.previous
             lifecycle.pulls.append(
                 (
-                    lifecycle.statements(),
+                    lifecycle.progress(),
                     previous is not None and previous() is not None,
                     any(observation.invalidated for observation in lifecycle.observations),
                 )
@@ -535,13 +545,23 @@ def _grouped(
     monkeypatch: pytest.MonkeyPatch,
     steps: Callable[[SimulatedWriteSteps], ExecuteWriteSteps],
     *rows: dict[str, object],
+    store: SimulatedTemporalStore | None = None,
 ) -> tuple[UnitOfWork, SimulatedWriteSteps, _Lifecycle]:
     """A unit of work holding the amendment of ``rows`` as one deferred group
     settled one object a round, each selected state retained, with what its
-    continuation sees recorded."""
+    continuation sees recorded: how many statements had run, or with a
+    ``store`` holding ``rows``, how many rows it held."""
     monkeypatch.setattr(ranges_module, "_GROUP_OBJECTS", 1)
-    simulated = _simulated(_GROUPED)
-    uow = _uow(_GROUPED, steps(simulated), rows=HeldRows(_GROUPED), concurrency="locking")
+    payloads = build_write_planner(_GROUPED).payloads
+    acquire_rows: AcquireRows
+    if store is None:
+        simulated = _simulated(_GROUPED)
+        acquire_rows = HeldRows(_GROUPED)
+    else:
+        store.seed_fixtures(_GROUPED, _GROUPED_POSITION, rows)
+        simulated = SimulatedWriteSteps(payloads, _GROUPED, POSTGRES, store=store)
+        acquire_rows = store.coverage_acquisition(_GROUPED)
+    uow = _uow(_GROUPED, steps(simulated), rows=acquire_rows, concurrency="locking")
     observations = tuple(
         uow.retain(
             RetainedObservation(
@@ -551,7 +571,14 @@ def _grouped(
         for row in rows
     )
     uow.buffer(_amended(*rows))
-    lifecycle = _Lifecycle(observations, lambda: len(simulated.statements))
+    if store is None:
+        lifecycle = _Lifecycle(observations, lambda: len(simulated.statements))
+    else:
+        keys = [cast("int", row["id"]) for row in rows]
+        lifecycle = _Lifecycle(
+            observations,
+            lambda: sum(len(_stored(store, _GROUPED, _GROUPED_POSITION, key)) for key in keys),
+        )
     lifecycle.install(monkeypatch)
     return uow, simulated, lifecycle
 
@@ -673,3 +700,200 @@ def test_a_finish_failing_closes_the_group_and_publishes_nothing(
     assert raised.value is finishing
     assert lifecycle.closed == 1
     assert not any(observation.invalidated for observation in lifecycle.observations)
+
+
+# --------------------------------------------------------------------------- #
+# Simulated rows change as each span executes; ownership as each unit         #
+# completes.                                                                   #
+# --------------------------------------------------------------------------- #
+def _stored(
+    store: SimulatedTemporalStore, meta: Metamodel, entity: EntityMetadata, key: int
+) -> list[tuple[object, ...]]:
+    """Every row ``store`` holds current for ``entity`` ``key``, as
+    ``(validStart, validEnd, txStart, acctNum, value)``, by Valid-Time start."""
+    covered = store.coverage_acquisition(meta)(
+        CoverageReadRequest(
+            entity=entity,
+            key_attribute=AttributeIdentity(entity.identity, "id"),
+            terms=(CoverageTerm(key, ()),),
+            locking=False,
+        ),
+        consume_coverage,
+    )
+    if covered is None:
+        return []
+    members = [
+        PredecessorRow.over_row(
+            covered.selection, covered.rows[index], covered.document(index), covered.absent
+        ).members
+        for index in range(len(covered))
+    ]
+    return sorted(
+        (
+            (row["validStart"], row["validEnd"], row["txStart"], row["acctNum"], row["value"])
+            for row in members
+        ),
+        key=lambda stored: cast("dt.datetime", stored[0]),
+    )
+
+
+class RunnerTag(Entity, table="runner_tag", namespace="parallax.compatibility"):
+    id: Attr[int] = attr(primary_key=True)
+    label: Attr[str] = attr(max_length=16)
+
+
+_BARRIERED: Final = model_of(DomainModel(WherePosition, RunnerTag))
+_BARRIERED_ENTITY: Final = entity_by_name(_BARRIERED, "WherePosition")
+assert _BARRIERED_ENTITY is not None
+_BARRIERED_POSITION: Final = _BARRIERED_ENTITY
+_T0: Final = dt.datetime(2023, 12, 1, tzinfo=dt.UTC)
+_FEB, _AUG = (dt.datetime(2024, month, 1, tzinfo=dt.UTC) for month in (2, 8))
+
+
+def _barrier() -> PreparedPredicateWrite:
+    barrier = prepare_wire_write(
+        PredicateWrite(
+            "amend",
+            PredicateSelection(
+                "RunnerTag",
+                predicate_algebra.Comparison(
+                    "eq", predicate_algebra.FieldSubject("RunnerTag.id"), 1
+                ),
+            ),
+            assignments=(WriteAssignment("RunnerTag.label", "q"),),
+        ),
+        _BARRIERED,
+    )
+    assert isinstance(barrier, PreparedPredicateWrite)
+    return barrier
+
+
+def test_a_unit_kept_behind_a_barrier_binds_on_the_rows_and_ownership_earlier_units_left() -> None:
+    store = SimulatedTemporalStore()
+    store.seed_fixtures(
+        _BARRIERED,
+        _BARRIERED_POSITION,
+        [
+            {
+                "id": 1,
+                "acctNum": "A",
+                "value": Decimal("100.00"),
+                "validStart": _JAN,
+                "validEnd": INFINITY,
+                "txStart": _T0,
+                "txEnd": INFINITY,
+            }
+        ],
+    )
+    observation = store.predecessor_for(_BARRIERED, _BARRIERED_POSITION, {"id": 1})
+    assert observation is not None
+    simulated = SimulatedWriteSteps(
+        build_write_planner(_BARRIERED).payloads, _BARRIERED, POSTGRES, store=store
+    )
+    seen: list[tuple[int, list[tuple[object, ...]]]] = []
+
+    def watch(request: RowRequest) -> None:
+        seen.append((len(simulated.statements), _stored(store, _BARRIERED, _BARRIERED_POSITION, 1)))
+
+    uow = _uow(
+        _BARRIERED,
+        simulated,
+        rows=_Watched(store.coverage_acquisition(_BARRIERED), watch),
+    )
+    amendment = prepare_wire_write(
+        KeyedWrite(
+            "amendUntil",
+            "WherePosition",
+            ({"id": 1, "acctNum": "O"},),
+            valid_from=_FEB,
+            until=_APR,
+        ),
+        _BARRIERED,
+    )
+    assert isinstance(amendment, PreparedKeyedWrite)
+    target = prepare_wire_write(
+        TargetWrite(
+            "amendUntil",
+            "WherePosition",
+            {"id": 1, "value": "175.00"},
+            if_tx_start=_T0,
+            valid_from=_JUN,
+            until=_AUG,
+        ),
+        _BARRIERED,
+    )
+    assert isinstance(target, PreparedTargetWrite)
+    with store.transaction(rollback=False):
+        uow.buffer(buffered_write(amendment, observation))
+        uow.buffer_predicate(_barrier())
+        uow.buffer_target(target)
+        uow.flush(trigger="pre_commit")
+    hundred, changed = Decimal("100.00"), Decimal("175.00")
+    # The kept-back unit read its coverage once the earlier unit had executed,
+    # and found the row that unit opened.
+    ((executed, stored),) = seen
+    assert executed > 0
+    assert (_APR, INFINITY, _FIXED, "A", hundred) in stored
+    # That row is the attempt's own, so it is revised rather than closed.
+    assert "close" not in statement_kinds(simulated.statements[executed:])
+    assert _stored(store, _BARRIERED, _BARRIERED_POSITION, 1) == [
+        (_JAN, _FEB, _FIXED, "A", hundred),
+        (_FEB, _APR, _FIXED, "O", hundred),
+        (_APR, _JUN, _FIXED, "A", hundred),
+        (_JUN, _AUG, _FIXED, "A", changed),
+        (_AUG, INFINITY, _FIXED, "A", hundred),
+    ]
+
+
+def test_each_round_advances_the_stored_rows_before_the_next_while_the_group_publishes_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = SimulatedTemporalStore()
+    uow, _simulated_steps, lifecycle = _grouped(
+        monkeypatch,
+        lambda simulated: simulated,
+        _member_row(1),
+        _member_row(2),
+        _member_row(3),
+        store=store,
+    )
+    with store.transaction(rollback=False):
+        uow.flush(trigger="pre_commit")
+    # Each round's object closes and opens three rows in its place before the
+    # next round is prepared; nothing is published before the last.
+    assert lifecycle.pulls == [
+        (3, False, False),
+        (5, False, False),
+        (7, False, False),
+        (9, False, False),
+    ]
+    assert all(observation.invalidated for observation in lifecycle.observations)
+    assert [len(_stored(store, _GROUPED, _GROUPED_POSITION, key)) for key in (1, 2, 3)] == [3, 3, 3]
+
+
+def test_a_later_rounds_failure_restores_the_rows_earlier_rounds_advanced(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = SimulatedTemporalStore()
+    failure = RuntimeError("the third round failed")
+    uow, _simulated_steps, lifecycle = _grouped(
+        monkeypatch,
+        # The group's own empty span, then its first, second, and third rounds.
+        lambda simulated: ObservedSteps(simulated, failing=3, failure=failure),
+        _member_row(1),
+        _member_row(2),
+        _member_row(3),
+        store=store,
+    )
+    with (
+        pytest.raises(RuntimeError, match="third round") as raised,
+        store.transaction(rollback=False),
+    ):
+        uow.flush(trigger="pre_commit")
+    assert raised.value is failure
+    assert [progress for progress, _alive, _published in lifecycle.pulls] == [3, 5, 7]
+    assert (lifecycle.finished, lifecycle.closed) == (0, 1)
+    assert not any(observation.invalidated for observation in lifecycle.observations)
+    assert [_stored(store, _GROUPED, _GROUPED_POSITION, key) for key in (1, 2, 3)] == [
+        [(_JAN, INFINITY, _JAN, "A", Decimal("100.00"))]
+    ] * 3
