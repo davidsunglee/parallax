@@ -189,11 +189,13 @@ A behavioral module maps to the scope that needs its whole edge set.
 `m-execution-lifecycle` is owned by `parallax.core.execution_lifecycle`.
 `parallax.core._execution` opens its roots, attempts, reads, and connection
 brackets, and `parallax.core.read_delivery` opens the Database Calls and Stream
-Batches it executes; `parallax.snapshot` refuses re-entry at its write doors and
-supplies the Publication delivery reports. None retains event history. Read
-delivery's Page child and Snapshot's value-publication child import neither the
-lifecycle module nor SQL generation, which keeps observation at the delivery
-boundary without granting either to Page or Root View representation.
+Batches it executes; `parallax.snapshot` refuses re-entry before its Wire
+editable-data copy reads a node, and supplies the Publication delivery reports;
+its write verbs enter the attempt's doors, which refuse it. None retains event
+history. Read delivery's Page child and Snapshot's value-publication child
+import neither the lifecycle module nor SQL generation, which keeps observation
+at the delivery boundary without granting either to Page or Root View
+representation.
 
 import-linter forbids every production scope-pair import the DAG does not
 permit — the generated forbidden-edge complement below, with the
@@ -595,8 +597,8 @@ which `tools/check_scope_ownership.py` demands (*Filesystem ownership*, below).
   `parallax.core.sql_gen` module as exactly this importer/name set, so an
   implementation cannot widen either set silently. The same holds for the
   execution lifecycle's private activity and pool-observation modules: only
-  execution, read delivery, and Snapshot's re-entry refusal at its write doors
-  reach them, and the topology test holds that importer/module set exactly.
+  execution, read delivery, and Snapshot's Wire editable-data copy reach them,
+  and the topology test holds that importer/module set exactly.
 - **The conformance family's accepted private reaches.** The enforcement unit is
   the scope, so the importing-side exemption above already reaches a granted
   scope's private modules; what the exemption does not decide is *which* of them
