@@ -2,8 +2,9 @@
 
 Exercises the injection templates (current-row / containment / range / scan), the
 explicit per-dimension selection rule, the Valid-Time-first bitemporal
-composition, the milestone edge-pin, and the ``Pin`` / ``Edge`` value model —
-independently of the Docker-gated compile/run sweeps. Each injection assertion
+composition, relationship-hop perspective construction, the milestone edge-pin,
+and the ``Pin`` / ``Edge`` value model — independently of the Docker-gated
+compile/run sweeps. Each injection assertion
 compiles the rewritten predicate through ``m-sql`` so the fragment and bind order
 are checked against the same canonical form the corpus goldens fix.
 """
@@ -25,19 +26,31 @@ from parallax.core import predicate as oa
 from parallax.core.base import INFINITY
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import (
+    AsOfAxisMetadata,
     AttributeIdentity,
     AttributeMetadata,
+    EntityIdentity,
     EntityMetadata,
+    Metamodel,
     TemporalDimension,
 )
 from parallax.core.object_query import LATEST
 from parallax.core.object_query._nodes import TemporalDimension as QueryTemporalDimension
 from parallax.core.object_query._resolved import (
     ResolvedAsOfSelection,
+    ResolvedHistorySelection,
     ResolvedLatestSelection,
     ResolvedObjectQuery,
+    ResolvedRangeSelection,
+    ResolvedTemporalSelection,
 )
 from parallax.core.predicate import ModelRejectedError
+from parallax.core.predicate._perspective import (
+    AtPerspective,
+    AxisPerspective,
+    LatestPerspective,
+    TemporalPerspective,
+)
 from parallax.core.predicate._resolved import (
     ResolvedAnd,
     ResolvedComparison,
@@ -53,6 +66,7 @@ from parallax.core.temporal_read import (
     TimeInterval,
     inject_resolved_as_of,
     milestone_edge,
+    resolve_perspective,
     resolved_hop_as_of_terms,
     resolved_query_pin,
     scans_resolved_axis,
@@ -1179,3 +1193,180 @@ def test_coverage_is_computed_on_demand_and_retains_only_its_endpoints() -> None
     assert first is not None
     held = [referent for referent in gc.get_referents(first) if referent is not TimeInterval]
     assert sorted(map(id, held)) == sorted((id(JAN), id(MAY)))
+
+
+# --------------------------------------------------------------------------- #
+# Perspective construction from a root read's resolved selections.             #
+# --------------------------------------------------------------------------- #
+_POLICY_MODEL = accepted_model("policy")
+_LEASE_MODEL = accepted_model("lease")
+POLICY = target(_POLICY_MODEL, "Policy")
+COVERAGE = target(_POLICY_MODEL, "Coverage")
+TENANT = target(_LEASE_MODEL, "Tenant")
+LEASE = target(_LEASE_MODEL, "Lease")
+
+
+def _policy_selections(valid_time: str, tx_time: str) -> tuple[ResolvedTemporalSelection, ...]:
+    query = _query(POLICY, _bitemporal(valid_time, tx_time))
+    return oq.validate_object_query(POLICY, query, _POLICY_MODEL).temporal
+
+
+def _shape_axes(model: Metamodel, entity: EntityMetadata) -> Bitemporal:
+    shape = temporal_view(model).shape(entity.identity)
+    assert isinstance(shape, Bitemporal)
+    return shape
+
+
+def _source_axis(dimension: TemporalDimension) -> AsOfAxisMetadata:
+    source = EntityIdentity("parallax.test", "Source")
+    return AsOfAxisMetadata(
+        dimension,
+        AttributeIdentity(source, "rootStart"),
+        AttributeIdentity(source, "rootEnd"),
+    )
+
+
+def test_a_non_temporal_target_has_the_empty_perspective_whatever_the_root_pins() -> None:
+    selections = _policy_selections(_B, _P)
+
+    assert (
+        resolve_perspective(TENANT, model=_LEASE_MODEL, root_selections=selections)
+        == TemporalPerspective()
+    )
+    assert (
+        resolve_perspective(TENANT, model=_LEASE_MODEL, root_selections=()) == TemporalPerspective()
+    )
+
+
+@pytest.mark.parametrize(
+    "valid_time", [_B, "latest"], ids=["valid-time-pinned", "valid-time-latest"]
+)
+def test_a_transaction_time_target_reads_only_the_transaction_time_pin(valid_time: str) -> None:
+    axis = temporal_view(_LEASE_MODEL).axis(LEASE.identity, TemporalDimension.TRANSACTION_TIME)
+    assert axis is not None
+
+    perspective = resolve_perspective(
+        LEASE, model=_LEASE_MODEL, root_selections=_policy_selections(valid_time, _P)
+    )
+
+    assert perspective == TemporalPerspective(transaction_time=AtPerspective(axis, _instant(_P)))
+
+
+def test_a_transaction_time_target_without_a_pin_is_latest() -> None:
+    axis = temporal_view(_LEASE_MODEL).axis(LEASE.identity, TemporalDimension.TRANSACTION_TIME)
+    assert axis is not None
+
+    perspective = resolve_perspective(
+        LEASE, model=_LEASE_MODEL, root_selections=_policy_selections(_B, "latest")
+    )
+
+    assert perspective == TemporalPerspective(transaction_time=LatestPerspective(axis))
+
+
+@pytest.mark.parametrize(
+    ("valid_time", "tx_time"),
+    [(_B, _P), (_B, "latest"), ("latest", _P), ("latest", "latest")],
+    ids=["both-finite", "valid-time-only-pinned", "tx-time-only-pinned", "both-latest"],
+)
+def test_a_bitemporal_target_pins_each_axis_its_root_pins_by_dimension(
+    valid_time: str, tx_time: str
+) -> None:
+    shape = _shape_axes(_POLICY_MODEL, COVERAGE)
+
+    def expected(axis: AsOfAxisMetadata, coordinate: str) -> AxisPerspective:
+        if coordinate == "latest":
+            return LatestPerspective(axis)
+        return AtPerspective(axis, _instant(coordinate))
+
+    perspective = resolve_perspective(
+        COVERAGE, model=_POLICY_MODEL, root_selections=_policy_selections(valid_time, tx_time)
+    )
+
+    assert perspective == TemporalPerspective(
+        valid_time=expected(shape.valid_time, valid_time),
+        transaction_time=expected(shape.transaction_time, tx_time),
+    )
+
+
+def test_perspectives_reference_the_targets_canonical_axes_and_the_selected_instants() -> None:
+    shape = _shape_axes(_POLICY_MODEL, COVERAGE)
+    valid_instant = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
+    tx_instant = dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
+    selections: tuple[ResolvedTemporalSelection, ...] = (
+        ResolvedAsOfSelection(_source_axis(TemporalDimension.VALID_TIME), valid_instant),
+        ResolvedAsOfSelection(_source_axis(TemporalDimension.TRANSACTION_TIME), tx_instant),
+    )
+
+    perspective = resolve_perspective(COVERAGE, model=_POLICY_MODEL, root_selections=selections)
+
+    assert isinstance(perspective.valid_time, AtPerspective)
+    assert isinstance(perspective.transaction_time, AtPerspective)
+    assert perspective.valid_time.axis is shape.valid_time
+    assert perspective.transaction_time.axis is shape.transaction_time
+    assert perspective.valid_time.instant is valid_instant
+    assert perspective.transaction_time.instant is tx_instant
+
+
+def test_an_inherited_target_is_visible_on_its_family_roots_axes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = accepted_model("rate")
+    deposit_rate = target(model, "DepositRate")
+    root = target(model, "Rate")
+    shape = _shape_axes(model, deposit_rate)
+    instant = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+    selections: tuple[ResolvedTemporalSelection, ...] = (
+        ResolvedAsOfSelection(_source_axis(TemporalDimension.VALID_TIME), instant),
+        ResolvedLatestSelection(_source_axis(TemporalDimension.TRANSACTION_TIME)),
+    )
+    _undeclared_axes(monkeypatch, deposit_rate)
+
+    perspective = resolve_perspective(deposit_rate, model=model, root_selections=selections)
+
+    assert perspective == TemporalPerspective(
+        valid_time=AtPerspective(shape.valid_time, instant),
+        transaction_time=LatestPerspective(shape.transaction_time),
+    )
+    assert all(
+        axis.end_attribute.entity == root.identity
+        for axis in (shape.valid_time, shape.transaction_time)
+    )
+
+
+@pytest.mark.parametrize(
+    "scan",
+    [
+        ResolvedHistorySelection(_source_axis(TemporalDimension.VALID_TIME)),
+        ResolvedRangeSelection(
+            _source_axis(TemporalDimension.VALID_TIME),
+            dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+            dt.datetime(2024, 2, 1, tzinfo=dt.UTC),
+        ),
+    ],
+    ids=["history", "range"],
+)
+def test_a_scanned_root_axis_leaves_the_target_at_latest(
+    scan: ResolvedTemporalSelection,
+) -> None:
+    shape = _shape_axes(_POLICY_MODEL, COVERAGE)
+    instant = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
+    selections = (
+        scan,
+        ResolvedAsOfSelection(_source_axis(TemporalDimension.TRANSACTION_TIME), instant),
+    )
+
+    perspective = resolve_perspective(COVERAGE, model=_POLICY_MODEL, root_selections=selections)
+
+    assert perspective == TemporalPerspective(
+        valid_time=LatestPerspective(shape.valid_time),
+        transaction_time=AtPerspective(shape.transaction_time, instant),
+    )
+
+
+def test_perspective_construction_refuses_a_coordinate_that_is_not_a_managed_datetime() -> None:
+    selections: tuple[ResolvedTemporalSelection, ...] = (
+        ResolvedAsOfSelection(_source_axis(TemporalDimension.TRANSACTION_TIME), 1),
+    )
+
+    with pytest.raises(TemporalReadError, match="not a managed datetime"):
+        resolve_perspective(LEASE, model=_LEASE_MODEL, root_selections=selections)

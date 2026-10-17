@@ -13,7 +13,7 @@ from parallax.core.base import (
 )
 from parallax.core.inheritance import root_metadata
 from parallax.core.inheritance import view as inheritance_view
-from parallax.core.metamodel import AttributeIdentity, EntityMetadata, Metamodel
+from parallax.core.metamodel import AsOfAxisMetadata, AttributeIdentity, EntityMetadata, Metamodel
 from parallax.core.metamodel import TemporalDimension as AcceptedDimension
 from parallax.core.object_query import LATEST, Latest
 from parallax.core.object_query._resolved import (
@@ -22,6 +22,12 @@ from parallax.core.object_query._resolved import (
     ResolvedLatestSelection,
     ResolvedRangeSelection,
     ResolvedTemporalSelection,
+)
+from parallax.core.predicate._perspective import (
+    AtPerspective,
+    AxisPerspective,
+    LatestPerspective,
+    TemporalPerspective,
 )
 from parallax.core.predicate._resolved import (
     ResolvedPredicate,
@@ -68,6 +74,7 @@ __all__ = [
     "inject_resolved_as_of",
     "milestone_edge",
     "ranked_axes",
+    "resolve_perspective",
     "resolved_hop_as_of_terms",
     "resolved_pinned_instants",
     "resolved_query_pin",
@@ -488,6 +495,48 @@ def scans_resolved_axis(selections: tuple[ResolvedTemporalSelection, ...]) -> bo
         isinstance(selection, ResolvedHistorySelection | ResolvedRangeSelection)
         for selection in selections
     )
+
+
+def resolve_perspective(
+    target: EntityMetadata,
+    *,
+    model: Metamodel,
+    root_selections: tuple[ResolvedTemporalSelection, ...],
+) -> TemporalPerspective:
+    """The perspective ``target`` is visible under from a root read through
+    ``root_selections``.
+
+    Each As-Of Axis of ``target``'s family is At the coordinate of a finite
+    AsOf selection in the same dimension, and otherwise Latest; selections in a
+    dimension the family does not declare are ignored.
+    """
+    match view(model).shape(target.identity):
+        case Bitemporal(valid_time=valid_time, transaction_time=transaction_time):
+            return TemporalPerspective(
+                valid_time=_axis_perspective(valid_time, root_selections),
+                transaction_time=_axis_perspective(transaction_time, root_selections),
+            )
+        case TransactionTimeOnly(transaction_time=transaction_time):
+            return TemporalPerspective(
+                transaction_time=_axis_perspective(transaction_time, root_selections)
+            )
+        case NonTemporal():
+            return TemporalPerspective()
+        case None:  # pragma: no cover - accepted metadata is total
+            raise TemporalReadError(f"{target.identity.canonical}: no temporal shape")
+
+
+def _axis_perspective(
+    axis: AsOfAxisMetadata, root_selections: tuple[ResolvedTemporalSelection, ...]
+) -> AxisPerspective:
+    for selection in root_selections:
+        if selection.axis.dimension is axis.dimension and isinstance(
+            selection, ResolvedAsOfSelection
+        ):
+            if not isinstance(selection.coordinate, _dt.datetime):
+                raise TemporalReadError("a temporal coordinate is not a managed datetime")
+            return AtPerspective(axis, selection.coordinate)
+    return LatestPerspective(axis)
 
 
 def resolved_hop_as_of_terms(
