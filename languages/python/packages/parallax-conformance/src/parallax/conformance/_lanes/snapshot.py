@@ -158,12 +158,11 @@ def compile_scenario(
 ) -> tuple[list[Emission], int]:
     """Compile a snapshot-read scenario's own find steps (instance-form,
     unlocked — a snapshot materialization is not a locking object find) and its
-    write steps (each its own choreography unit, lowered through the SAME
-    planner the unit-of-work lane's ungrouped write step uses, staged on that
-    unit's own outcome so a `rollback: true` step's advances are restored after
-    it); `mutate` and `access` contribute no emissions and no round trips at all
-    (m-snapshot-read: an in-memory-only change and a closed-world navigation,
-    never SQL)."""
+    write steps (each its own simulated transaction, lowered exactly as the
+    unit-of-work lane's ungrouped write step is, so a `rollback: true` step's
+    advances are restored after it); `mutate` and `access` contribute no
+    emissions and no round trips at all (m-snapshot-read: an in-memory-only
+    change and a closed-world navigation, never SQL)."""
     serving = case_serving_model(case)
     model = models.accepted_model_of(serving.current().model)
     options = case_format.database_options(case)
@@ -183,16 +182,16 @@ def compile_scenario(
                     _check_action_step(case, step)
                 case "write":
                     entries = _snapshot_write_entries(case, model, step)
-                    with store.staged(doomed=step.get("rollback") is True):
-                        statements = lower_writes(
-                            entries,
-                            model,
-                            dialect,
-                            concurrency,
-                            store,
-                            entry_instant(entries[0]),
-                            [],
-                        )
+                    statements = lower_writes(
+                        entries,
+                        model,
+                        dialect,
+                        concurrency,
+                        store,
+                        entry_instant(entries[0]),
+                        [],
+                        rollback=step.get("rollback") is True,
+                    )
                     emissions.extend(
                         Emission(f"/scenario/{index}/write", statement) for statement in statements
                     )
@@ -296,7 +295,7 @@ def run_scenario(
         case_format.database_options(case),
     )
     # Seeded from the case's own fixtures and then advanced by each write step's
-    # plan, so a temporal close observes the milestone the persisted history (or
+    # execution, so a temporal close observes the milestone the persisted history (or
     # an earlier step) actually holds — the SAME order every other lane applies:
     # fixtures, then `given.apply`, then the first step.
     seed_store_from_fixtures(case, model, store)

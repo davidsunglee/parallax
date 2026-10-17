@@ -20,7 +20,7 @@ from typing import Any, Final, cast
 
 import pytest
 
-from parallax.conformance import case_format, models, sweep
+from parallax.conformance import _simulated_write_steps, case_format, models, sweep
 from parallax.conformance._actual_wire import ActualWireProjection
 from parallax.conformance._lanes import scenario
 from parallax.conformance._lifecycle_observation import (
@@ -29,9 +29,14 @@ from parallax.conformance._lifecycle_observation import (
 )
 from parallax.conformance._mechanism import case_document, model_facts
 from parallax.conformance._mechanism.envelope import EngineError
-from parallax.conformance.simulated_temporal_store import SimulatedTemporalStore
+from parallax.conformance.simulated_temporal_store import (
+    SimulatedStoreError,
+    SimulatedTemporalStore,
+)
 from parallax.core import predicate
 from parallax.core._execution._unit_work import instructions
+from parallax.core._execution._unit_work import ranges as ranges_module
+from parallax.core._execution._unit_work.acquisition import CoverageReadRequest, CoverageTerm
 from parallax.core._execution._unit_work.instructions import PreparedKeyedWrite
 from parallax.core.base import (
     INFINITY,
@@ -46,6 +51,7 @@ from parallax.core.entity._model import model_of
 from parallax.core.execution import TxnOptions
 from parallax.core.execution_lifecycle import DatabaseCallStarted
 from parallax.core.metamodel import (
+    AttributeIdentity,
     EntityIdentity,
 )
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
@@ -53,12 +59,17 @@ from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.temporal_read import Edge
 from parallax.core.unit_work import (
+    BufferItem,
     Concurrency,
     KeyedWrite,
     MissingTargetError,
     OptimisticLockConflictError,
+    PredicateSelection,
+    PredicateWrite,
     RetainedObservation,
     StaleWriteError,
+    UnitOfWork,
+    WriteAssignment,
     WriteEffectError,
     WriteEvidenceError,
     WriteRejectedError,
@@ -70,7 +81,10 @@ from parallax.core.write_plan import (
     VersionObservation,
 )
 from parallax.core.write_plan.keys import TemporalObjectStateKey, VersionedObjectStateKey
+from tests._support.sweep_goldens import write_golden_statements
+from tests.unit._temporal_group_support import temporal_group
 from tests.unit._transact_support import PERSON
+from tests.unit.conformance._coverage_rows_support import coverage_members, read_coverage
 from tests.unit.conformance._lanes._scripted_port import ScriptedPort
 from tests.unit.conformance._recording_ports import FakeWritePort
 
@@ -861,18 +875,14 @@ def test_scenario_compile_lane_discards_an_aborted_ungrouped_writes_case_state()
     ]
 
 
-def test_scenario_compile_lane_stages_a_doomed_uow_groups_case_state() -> None:
-    # Staging, not simply "do not advance", in the compile lane too: step 2
-    # closes step 1's own successor because both belong to the SAME doomed
-    # group (gating on 2026-01-01), while the ungrouped step 3 that follows the
-    # group's rollback is back on the insert's milestone (2025-01-01).
-    #
-    # The compile lane is where a chained pair like this can be stated at all:
-    # the run lane writes through the public keyed verbs, where two writes
-    # settling against one observed state COALESCE rather than chain
-    # (`m-unit-work-025`), so a later write settling against an earlier write's
-    # own successor is not something a caller can express. Both lanes stage a
-    # doomed group by the same rule, which is what this asserts.
+def test_scenario_compile_lane_runs_a_doomed_uow_group_as_one_transaction_it_restores() -> None:
+    # The doomed group's two updates of key 9 share one transaction, so both
+    # settle against the milestone the insert left (2025-01-01) and COALESCE,
+    # as two writes settling against one observed state do through the public
+    # keyed verbs (`m-unit-work-025`): one close and one successor carrying the
+    # later value, delivered by the group's pre-commit flush under its last
+    # write step. The group then rolls back, so the ungrouped step 3 after it is
+    # back on the insert's milestone too.
     case = _synthetic_ledger_scenario(
         [
             _ledger_insert("2025-01-01T00:00:00+00:00"),
@@ -883,13 +893,13 @@ def test_scenario_compile_lane_stages_a_doomed_uow_groups_case_state() -> None:
         {"doomed": {"outcome": "rolledBack"}},
     )
     compiled, _round_trips = scenario.compile_scenario_case(case, "postgres")
-    _insert, doomed_close, _doomed_successor, own_close, _own_successor, close, _successor = (
-        compiled
-    )
+    _insert, doomed_close, doomed_successor, close, successor = compiled
+    assert [doomed_close.case_pointer, doomed_successor.case_pointer] == ["/scenario/2/write"] * 2
     assert doomed_close.binds[3] == _instant("2025-01-01T00:00:00+00:00")
-    assert own_close.binds[3] == _instant("2026-01-01T00:00:00+00:00")
+    assert doomed_successor.binds[2] == decimal.Decimal("888.00")
     assert close.case_pointer == "/scenario/3/write"
     assert close.binds[3] == _instant("2025-01-01T00:00:00+00:00")
+    assert successor.binds[2] == decimal.Decimal("300.00")
 
 
 def _two_group_interleave_steps() -> list[dict[str, object]]:
@@ -1082,7 +1092,7 @@ def _policy_node(valid_start: dt.datetime, valid_end: object, name: str) -> Any:
 
 
 def _settled(source: Any) -> Any:
-    return scenario._settled_against_source(  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helper directly
+    return scenario._observation_from_source(  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helper directly
         "Policy", _POLICY, source
     )
 
@@ -1090,7 +1100,7 @@ def _settled(source: Any) -> Any:
 def test_a_settled_write_settles_against_the_node_the_named_find_observed() -> None:
     # A milestone chain holds more than one row per primary key, so one find may
     # return several and each is evidence about the milestone it actually is. The
-    # pure oracle plans with the ONE the write step's own `on` reference named —
+    # write is supplied the ONE the write step's own `on` reference named —
     # production's own retained record rather than a coordinate this engine
     # re-derived.
     head = _policy_node(_JAN, _JUN, "head")
@@ -1173,12 +1183,12 @@ def test_a_settled_write_names_a_versioned_targets_own_read_generation() -> None
         write = scenario._build_instructions(  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helper directly
             {"mutation": "amend", "entity": "Account", "rows": [{"id": 1, "balance": "5.00"}]},
             meta,
-            scenario.CaseStateEvidence(meta, SimulatedTemporalStore(), (node,)),
+            scenario.CaseStateEvidenceResolver(meta, SimulatedTemporalStore(), (node,)),
             set(),
             [],
             (node,),
         )[0]
-        return write.oracle_observation
+        return write.supplied_observation
 
     assert settle(_account_node(1)) == _account_node(1).evidence
     assert settle(_account_node(4)) == _account_node(4).evidence
@@ -1192,7 +1202,7 @@ def test_a_settled_write_is_refused_when_its_named_find_observed_no_such_row() -
         scenario._build_instructions(  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helper directly
             {"mutation": "amend", "entity": "Account", "rows": [{"id": 1, "balance": "5.00"}]},
             meta,
-            scenario.CaseStateEvidence(meta, SimulatedTemporalStore(), ()),
+            scenario.CaseStateEvidenceResolver(meta, SimulatedTemporalStore(), ()),
             set(),
             [],
             (),
@@ -1238,12 +1248,12 @@ def test_a_settled_write_resolves_a_transaction_time_only_targets_named_mileston
                 "rows": [{"id": 1, "value": "5.00"}],
             },
             meta,
-            scenario.CaseStateEvidence(meta, SimulatedTemporalStore(), (node,)),
+            scenario.CaseStateEvidenceResolver(meta, SimulatedTemporalStore(), (node,)),
             set(),
             [],
             (node,),
         )[0]
-        observation = write.oracle_observation
+        observation = write.supplied_observation
         assert isinstance(observation, TemporalObservation)
         return observation.predecessor.members["txStart"]
 
@@ -1310,100 +1320,109 @@ def test_a_grouped_write_starting_away_from_its_finds_pin_is_an_engine_error() -
         scenario.run_scenario_case(case, FakeWritePort(read_script=[[row], [row]]))
 
 
-def test_a_range_beyond_its_observation_needs_tracked_coverage_to_bind() -> None:
-    meta = models.load_models()["position"]
-    tracked = TemporalObservation(
+def _position_amendment() -> PreparedKeyedWrite:
+    instruction = instructions.prepare_wire_write(
+        KeyedWrite(
+            "amend",
+            "parallax.compatibility.Position",
+            ({"id": 1, "value": "150.00"},),
+            dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
+        ),
+        models.load_models()["position"],
+    )
+    assert isinstance(instruction, PreparedKeyedWrite)
+    return instruction
+
+
+def _position_milestone(start: dt.datetime, end: object, value: str) -> TemporalObservation:
+    return TemporalObservation(
         predecessor=PredecessorRow(
             members={
                 "id": 1,
                 "acctNum": "A",
-                "value": decimal.Decimal("100.00"),
-                "validStart": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
-                "validEnd": dt.datetime(2024, 6, 1, tzinfo=dt.UTC),
+                "value": decimal.Decimal(value),
+                "validStart": start,
+                "validEnd": end,
                 "txStart": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
                 "txEnd": INFINITY,
             }
         )
     )
-    instruction = instructions.prepare_wire_write(
-        KeyedWrite(
-            "amend",
-            "parallax.compatibility.Position",
-            ({"id": 1, "value": "150.00"},),
-            dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
-        ),
+
+
+def _simulated_unit(
+    meta: AcceptedMetamodel,
+    store: SimulatedTemporalStore,
+    *,
+    concurrency: Concurrency = "optimistic",
+    rollback: bool = False,
+) -> Any:
+    return scenario._simulated_unit(  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's simulated transaction directly
         meta,
+        POSTGRES,
+        concurrency,
+        scenario.INERT_CLOCK_INSTANT,
+        store,
+        rollback=rollback,
+        record_statements=True,
     )
+
+
+def _resolved(instruction: Any, observation: TemporalObservation | None) -> Any:
+    return scenario._ResolvedWrite(instruction, observation)  # pyright: ignore[reportPrivateUsage] - unit test builds the scenario lane's private record directly
+
+
+def test_a_range_beyond_its_observation_needs_tracked_coverage_to_bind() -> None:
+    # A lane tracking no case state only plans its writes, and refuses a range
+    # whose coverage its observation does not hold: that flush would read the
+    # coverage itself.
+    meta = models.load_models()["position"]
+    tracked = _position_milestone(dt.datetime(2024, 1, 1, tzinfo=dt.UTC), _JUN, "100.00")
     with pytest.raises(EngineError, match="no observation of its unit holds"):
-        scenario._plan_and_lower(  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helpers directly
+        scenario._refuse_unread_coverage(  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helper directly
             meta,
             POSTGRES,
             "optimistic",
             scenario.INERT_CLOCK_INSTANT,
-            [scenario._buffered(instruction, tracked, meta)],  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helpers directly
+            [_resolved(_position_amendment(), tracked)],
         )
 
 
-def test_a_range_beyond_its_observation_binds_the_coverage_the_tracker_reads() -> None:
+def test_a_range_beyond_its_observation_binds_the_coverage_the_store_holds() -> None:
     meta = models.load_models()["position"]
     entity = model_facts.case_entity(meta, "parallax.compatibility.Position")
-
-    def milestone(start: dt.datetime, end: object, value: str) -> TemporalObservation:
-        return TemporalObservation(
-            predecessor=PredecessorRow(
-                members={
-                    "id": 1,
-                    "acctNum": "A",
-                    "value": decimal.Decimal(value),
-                    "validStart": start,
-                    "validEnd": end,
-                    "txStart": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
-                    "txEnd": INFINITY,
-                }
-            )
-        )
-
-    jun = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
-    head = milestone(dt.datetime(2024, 1, 1, tzinfo=dt.UTC), jun, "100.00")
-    tail = milestone(jun, INFINITY, "200.00")
+    head = _position_milestone(dt.datetime(2024, 1, 1, tzinfo=dt.UTC), _JUN, "100.00")
+    tail = _position_milestone(_JUN, INFINITY, "200.00")
     store = SimulatedTemporalStore()
-    store.keep_unchanged(meta, (), [(entity, head), (entity, tail)])
-    instruction = instructions.prepare_wire_write(
-        KeyedWrite(
-            "amend",
-            "parallax.compatibility.Position",
-            ({"id": 1, "value": "150.00"},),
-            dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
-        ),
-        meta,
-    )
-
-    executed, statements = scenario._plan_and_lower(  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helpers directly
-        meta,
-        POSTGRES,
-        "optimistic",
-        scenario.INERT_CLOCK_INSTANT,
-        [scenario._buffered(instruction, head, meta)],  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helpers directly
-        coverage=store,
-    )
-
-    (unit,) = executed.plan.units
-    assert unit.deferred is not None and len(executed.plan.steps) == 0
-    # The head's changed part and the tail's hold one state: one row.
-    assert [type(step).__name__ for step in executed.steps] == [
-        "PlannedClose",
-        "PlannedClose",
-        "PlannedInsert",
-        "PlannedInsert",
-    ]
-    # The two closes lower alone and the two openings share one statement.
+    store.seed_fixtures(meta, entity, [head.predecessor.members, tail.predecessor.members])
+    with store.transaction(rollback=False), _simulated_unit(meta, store) as unit:
+        unit.buffer(_resolved(_position_amendment(), head))
+    # The tail the observation does not hold is read from the store at the
+    # flush, and closed beside the head: the head's changed part and the
+    # tail's hold one state, so the two openings share one statement.
+    statements = unit.statements
     assert [statement.sql.split(" ", 1)[0] for statement in statements] == [
         "update",
         "update",
         "insert",
     ]
     assert statements[2].sql.count("), (") == 1
-    assert len(executed.changed) == 2
+    stored = coverage_members(
+        read_coverage(
+            store,
+            meta,
+            CoverageReadRequest(
+                entity=entity,
+                key_attribute=AttributeIdentity(entity.identity, "id"),
+                terms=(CoverageTerm(1, ()),),
+                locking=False,
+            ),
+        )
+    )
+    assert sorted((row["validStart"], row["value"]) for row in stored) == [
+        (dt.datetime(2024, 1, 1, tzinfo=dt.UTC), decimal.Decimal("100.00")),
+        (dt.datetime(2024, 3, 1, tzinfo=dt.UTC), decimal.Decimal("150.00")),
+    ]
 
 
 def test_a_tracked_milestone_of_a_document_target_is_refused_after_out_of_band_statements() -> None:
@@ -1516,13 +1535,13 @@ def test_the_lane_assigns_a_restated_occurrence_literally_and_keeps_unassigned_k
     )
     assert isinstance(instruction, PreparedKeyedWrite)
 
-    _plan, (_close, successor) = scenario._plan_and_lower(  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helpers directly
-        meta,
-        POSTGRES,
-        "locking",
-        scenario.INERT_CLOCK_INSTANT,
-        [scenario._buffered(instruction, tracked, meta)],  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helpers directly
-    )
+    store = SimulatedTemporalStore()
+    with (
+        store.transaction(rollback=False),
+        _simulated_unit(meta, store, concurrency="locking") as unit,
+    ):
+        unit.buffer(_resolved(instruction, tracked))
+    _close, successor = unit.statements
 
     (document,) = (bind.value for bind in successor.binds if isinstance(bind, JsonDocument))
     assert dict(cast("Mapping[str, object]", document)) == {
@@ -1531,6 +1550,376 @@ def test_the_lane_assigns_a_restated_occurrence_literally_and_keeps_unassigned_k
         "manifest": {"cargo": "grain"},
         "legs": ({"port": "Oslo"},),
     }
+
+
+# --------------------------------------------------------------------------- #
+# Each lane transaction is one ordinary unit of work over simulated step       #
+# execution: the compile lane records what its flushes lower to, and the run  #
+# lane tracks case state through the same unit of work, lowering nothing.     #
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize(
+    ("case_id", "pointers"),
+    [
+        pytest.param(
+            "m-batch-write-011",
+            ["/scenario/0/objectQuery", *["/scenario/3/write"] * 4],
+            id="barrier-group",
+        ),
+        pytest.param("m-execution-lifecycle-002", ["/scenario/1/write"] * 2, id="pre-commit"),
+    ],
+)
+def test_a_flushes_statements_are_reported_under_the_last_write_buffered_before_it(
+    case_id: str, pointers: list[str]
+) -> None:
+    # Each case's group buffers every write before one pre-commit flush, so
+    # everything that flush emits belongs to the group's last write step — the
+    # rule the run lane reports a held group's delivered writes by.
+    compiled, round_trips = scenario.compile_scenario_case(_load_case(case_id), "postgres")
+    assert [emission.case_pointer for emission in compiled] == pointers
+    assert round_trips == len(pointers)
+
+
+def _account_insert(account_id: int) -> dict[str, object]:
+    return {
+        "mutation": "insert",
+        "entity": "Account",
+        "rows": [{"id": account_id, "owner": "Noether", "balance": "5.00", "version": 1}],
+    }
+
+
+def _account_insert_step(account_id: int, *, uow: str = "g") -> dict[str, object]:
+    return {"uow": uow, "write": [_account_insert(account_id)]}
+
+
+def _account_find_step(account_id: int, *, uow: str = "g") -> dict[str, object]:
+    return {
+        "uow": uow,
+        "objectQuery": {
+            "target": "Account",
+            "predicate": {"eq": {"path": "Account.id", "value": account_id}},
+        },
+    }
+
+
+def test_a_committing_groups_read_flushes_what_its_earlier_steps_buffered() -> None:
+    # One transaction for the whole committing group: a find step's read
+    # flushes the insert buffered before it, and the group's end flushes the
+    # one after it; each flush's statements belong to the last write step
+    # buffered before it.
+    case = _synthetic_write(
+        "scenario",
+        {
+            "when": {
+                "scenario": [
+                    _account_insert_step(90),
+                    _account_find_step(90),
+                    _account_insert_step(91),
+                ]
+            }
+        },
+    )
+    compiled, _round_trips = scenario.compile_scenario_case(case, "postgres")
+    assert [(emission.case_pointer, emission.sql.split(" ", 1)[0]) for emission in compiled] == [
+        ("/scenario/0/write", "insert"),
+        ("/scenario/1/objectQuery", "select"),
+        ("/scenario/2/write", "insert"),
+    ]
+    assert [emission.binds[0] for emission in compiled if emission.sql.startswith("insert")] == [
+        90,
+        91,
+    ]
+
+
+def test_a_groups_writes_buffered_before_one_flush_compose_in_its_one_buffer() -> None:
+    compiled, _round_trips = scenario.compile_scenario_case(
+        _synthetic_write(
+            "scenario",
+            {"when": {"scenario": [_account_insert_step(90), _account_insert_step(91)]}},
+        ),
+        "postgres",
+    )
+    ungrouped, _ = scenario.compile_scenario_case(
+        _synthetic_write(
+            "scenario",
+            {"when": {"scenario": [{"write": [_account_insert(90), _account_insert(91)]}]}},
+        ),
+        "postgres",
+    )
+    # Two steps of one group compose exactly as two entries of one step do.
+    assert [(emission.sql, emission.binds) for emission in compiled] == [
+        (emission.sql, emission.binds) for emission in ungrouped
+    ]
+    assert {emission.case_pointer for emission in compiled} == {"/scenario/1/write"}
+
+
+@pytest.mark.parametrize("case_id", ["m-opt-lock-027", "m-temporal-write-042"])
+def test_a_caller_addressed_entry_compiles_through_buffering_rather_than_its_admission(
+    case_id: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The compile lane buffers a target carrier as it stands: an authored
+    # `ifVersion` or `ifTxStart` is the caller's condition, never proof of
+    # stored state, so the admission that reads and judges a stored row is
+    # never reached.
+    def refused(*_arguments: object) -> None:
+        raise AssertionError("compiling a target entry reads no stored row")
+
+    monkeypatch.setattr(UnitOfWork, "buffer_target", refused)
+    case = _load_case(case_id)
+    compiled, _round_trips = scenario.compile_write_sequence_case(case, "postgres")
+    assert [emission.sql for emission in compiled] == [
+        sql for sql, _binds in write_golden_statements(case)
+    ]
+
+
+def test_a_write_its_simulated_unit_of_work_refuses_to_admit_is_an_engine_error() -> None:
+    case = _synthetic_write(
+        "scenario",
+        {
+            "model": "models/orders.yaml",
+            "when": {
+                "scenario": [
+                    {
+                        "write": [
+                            {"mutation": "delete", "entity": "OrderItem", "rows": [{"id": 12}]},
+                            {
+                                "mutation": "amend",
+                                "entity": "OrderItem",
+                                "rows": [{"id": 12, "sku": "Z"}],
+                            },
+                        ]
+                    }
+                ]
+            },
+        },
+    )
+    with pytest.raises(EngineError, match="cannot admit this write") as raised:
+        scenario.compile_scenario_case(case, "postgres")
+    refusal = raised.value.__cause__
+    assert isinstance(refusal, WriteEvidenceError)
+    assert refusal.code == "write-evidence-already-claimed"
+
+
+@pytest.mark.parametrize(
+    ("failure", "translated"),
+    [
+        pytest.param(SimulatedStoreError("no one stored row"), True, id="store-diagnostic"),
+        pytest.param(RuntimeError("a defect"), False, id="defect"),
+        pytest.param(KeyboardInterrupt(), False, id="interruption"),
+    ],
+)
+def test_only_a_simulated_store_diagnostic_becomes_an_engine_error(
+    failure: BaseException, translated: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def failing(store: SimulatedTemporalStore, model: object, step: object) -> None:
+        raise failure
+
+    monkeypatch.setattr(SimulatedTemporalStore, "apply", failing)
+    case = _load_case("m-temporal-write-002")
+    if translated:
+        with pytest.raises(EngineError, match="no one stored row") as engine_error:
+            scenario.compile_write_sequence_case(case, "postgres")
+        assert engine_error.value.__cause__ is failure
+        return
+    with pytest.raises(type(failure)) as raised:
+        scenario.compile_write_sequence_case(case, "postgres")
+    assert raised.value is failure
+
+
+def test_a_supplied_materialized_group_executes_round_by_round_in_a_simulated_transaction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Coverage a supplied group's rounds bind against comes from the store,
+    # and each round's executed writes advance it before the next is read.
+    monkeypatch.setattr(ranges_module, "_GROUP_OBJECTS", 1)
+    meta = models.load_models()["position"]
+    entity = model_facts.case_entity(meta, "parallax.compatibility.Position")
+    rows = [
+        {
+            "id": key,
+            "acctNum": "A",
+            "value": decimal.Decimal("100.00"),
+            "validStart": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+            "validEnd": INFINITY,
+            "txStart": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+            "txEnd": INFINITY,
+        }
+        for key in (1, 2)
+    ]
+    store = SimulatedTemporalStore()
+    store.seed_fixtures(meta, entity, rows)
+    group = temporal_group(
+        PredicateWrite(
+            "amendUntil",
+            PredicateSelection(
+                "Position",
+                predicate.Comparison("eq", predicate.FieldSubject("Position.value"), "100.00"),
+            ),
+            (WriteAssignment("Position.value", decimal.Decimal("150.00")),),
+            dt.datetime(2024, 2, 1, tzinfo=dt.UTC),
+            _JUN,
+        ),
+        meta,
+        rows,
+    )
+    with (
+        store.transaction(rollback=False),
+        _simulated_unit(meta, store, concurrency="locking") as unit,
+    ):
+        # A supplied group has no case form, so it is buffered into the
+        # transaction's own unit of work.
+        unit._uow.buffer(group)
+    assert [statement.sql.split(" ", 1)[0] for statement in unit.statements] == [
+        "update",
+        "insert",
+    ] * 2
+    for key in (1, 2):
+        stored = coverage_members(
+            read_coverage(
+                store,
+                meta,
+                CoverageReadRequest(
+                    entity=entity,
+                    key_attribute=AttributeIdentity(entity.identity, "id"),
+                    terms=(CoverageTerm(key, ()),),
+                    locking=False,
+                ),
+            )
+        )
+        assert sorted(cast("decimal.Decimal", row["value"]) for row in stored) == [
+            decimal.Decimal("100.00"),
+            decimal.Decimal("100.00"),
+            decimal.Decimal("150.00"),
+        ]
+
+
+def _tracked_ledger_unit(
+    port: FakeWritePort, entries: list[dict[str, object]]
+) -> tuple[scenario.CaseContext, Callable[[], object]]:
+    case = _synthetic_ledger_scenario([])
+    serving = model_facts.case_serving_model(case)
+    meta = models.accepted_model_of(serving.current().model)
+    store = SimulatedTemporalStore()
+    store.seed_fixtures(
+        meta,
+        model_facts.case_entity(meta, "parallax.compatibility.Ledger"),
+        [
+            {
+                "id": 2,
+                "acctNum": "B",
+                "value": decimal.Decimal("200.00"),
+                "txStart": _instant("2024-02-01T00:00:00+00:00"),
+                "txEnd": INFINITY,
+            }
+        ],
+    )
+    context = scenario.CaseContext(serving, meta, "optimistic", store, {}, TxnOptions())
+
+    def execute() -> object:
+        return scenario.execute_keyed_unit(
+            port, context, entries, [], LifecycleRun(), rollback=False
+        )
+
+    return context, execute
+
+
+def _ledger_entries(step: dict[str, object]) -> list[dict[str, object]]:
+    return cast("list[dict[str, object]]", step["write"])
+
+
+def _ledger_value(context: scenario.CaseContext) -> object:
+    ledger = model_facts.case_entity(context.model, "parallax.compatibility.Ledger")
+    observation = context.case_state().predecessor_for(context.model, ledger, {"id": 2})
+    assert observation is not None
+    return observation.predecessor.member("value")
+
+
+def test_a_tracked_unit_resolves_once_and_advances_its_rows_without_lowering(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def refused(*_arguments: object) -> object:
+        raise AssertionError("tracking case state lowers nothing")
+
+    monkeypatch.setattr(_simulated_write_steps, "stream_physical", refused)
+    resolutions: list[object] = []
+    resolve = scenario.CaseStateEvidenceResolver.resolve
+
+    def counted(self: scenario.CaseStateEvidenceResolver, *arguments: Any) -> Any:
+        resolutions.append(arguments)
+        return resolve(self, *arguments)
+
+    monkeypatch.setattr(scenario.CaseStateEvidenceResolver, "resolve", counted)
+    port = FakeWritePort(find_rows=[_ledger_row(2, "200.00", in_z="2024-02-01T00:00:00+00:00")])
+    context, execute = _tracked_ledger_unit(
+        port,
+        _ledger_entries(_ledger_update("300.00", "2024-05-01T00:00:00+00:00")),
+    )
+    execute()
+    assert len(resolutions) == 1
+    assert len(port.writes) == 2
+    assert _ledger_value(context) == decimal.Decimal("300.00")
+
+
+def test_a_tracked_unit_whose_production_execution_fails_advances_no_row() -> None:
+    port = FakeWritePort(
+        find_rows=[_ledger_row(2, "200.00", in_z="2024-02-01T00:00:00+00:00")],
+        zero_affected_for=("update ledger",),
+    )
+    context, execute = _tracked_ledger_unit(
+        port,
+        _ledger_entries(_ledger_update("300.00", "2024-05-01T00:00:00+00:00")),
+    )
+    with pytest.raises(WriteEffectError):
+        execute()
+    assert port.writes
+    assert _ledger_value(context) == decimal.Decimal("200.00")
+
+
+def test_a_held_groups_case_state_advances_where_its_own_reads_flush_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The group's two updates of one milestone compose in its simulated unit
+    # of work, as they do in production's, and that unit flushes at the read
+    # that flushes the group's own buffer, before the read reaches the port.
+    port = FakeWritePort(find_rows=[_ledger_row(2, "200.00", in_z="2024-02-01T00:00:00+00:00")])
+    applied: list[tuple[str, int, int]] = []
+    apply = SimulatedTemporalStore.apply
+
+    def recorded(store: SimulatedTemporalStore, model: Any, step: Any) -> None:
+        applied.append((type(step).__name__, len(port.reads), len(port.writes)))
+        apply(store, model, step)
+
+    monkeypatch.setattr(SimulatedTemporalStore, "apply", recorded)
+    supplied: list[BufferItem] = []
+    buffered = scenario._buffered  # pyright: ignore[reportPrivateUsage] - observes what the lane hands its simulated unit of work
+
+    def watched(*arguments: Any) -> BufferItem:
+        item = buffered(*arguments)
+        supplied.append(item)
+        return item
+
+    monkeypatch.setattr(scenario, "_buffered", watched)
+    find: dict[str, object] = {
+        "uow": "g",
+        "objectQuery": {
+            "target": "parallax.compatibility.Ledger",
+            "predicate": {"eq": {"path": "parallax.compatibility.Ledger.id", "value": 2}},
+            "temporal": {"transaction-time": {"asOf": "latest"}},
+        },
+    }
+    case = _synthetic_ledger_scenario(
+        [
+            find,
+            _ledger_update("300.00", "2024-05-01T00:00:00+00:00", uow="g"),
+            _ledger_update("400.00", "2024-05-01T00:00:00+00:00", uow="g"),
+            find,
+        ],
+        {"g": {"outcome": "committed"}},
+    )
+    scenario.run_scenario_case(case, port)
+    assert applied == [("PlannedClose", 1, 0), ("PlannedInsert", 1, 0)]
+    # The simulated unit of work is handed plain observations, never the
+    # authority the group's real read retained.
+    assert supplied and all(getattr(item, "claim", None) is None for item in supplied)
 
 
 def test_a_read_step_names_its_own_object_query() -> None:

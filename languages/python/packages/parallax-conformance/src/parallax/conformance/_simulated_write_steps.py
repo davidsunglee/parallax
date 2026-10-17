@@ -78,10 +78,10 @@ class SimulatedWriteSteps:
         if store is None:
             lowered = self._lowered(steps)
         elif self._record:
-            application = _Application(store, self._meta)
-            lowered = self._lowered(application.applying(steps))
-            if application.refusal is not None:
-                raise application.refusal
+            applied = _Applied(steps, store, self._meta)
+            lowered = self._lowered(applied)
+            if applied.refusal is not None:
+                raise applied.refusal
         else:
             for step in steps:
                 store.apply(self._meta, step)
@@ -101,22 +101,24 @@ class SimulatedWriteSteps:
         return tuple(stream_physical(steps, self._payloads, self._meta, self._dialect))
 
 
-class _Application:
-    """One recorded span's steps applied to ``store`` as lowering takes them.
+class _Applied:
+    """One recorded ``span``, each of its steps applied to ``store`` as
+    lowering takes it from the one traversal.
 
     The store's first refusal is kept, with no traceback into the span, and
     stops every later change; any other failure propagates as the step is
     taken."""
 
-    __slots__ = ("_meta", "_store", "refusal")
+    __slots__ = ("_meta", "_store", "refusal", "span")
 
-    def __init__(self, store: SimulatedTemporalStore, meta: Metamodel) -> None:
+    def __init__(self, span: WriteStepView, store: SimulatedTemporalStore, meta: Metamodel) -> None:
+        self.span = span
         self._store = store
         self._meta = meta
         self.refusal: SimulatedStoreError | None = None
 
-    def applying(self, steps: Iterable[PlannedWrite]) -> Iterator[PlannedWrite]:
-        for step in steps:
+    def __iter__(self) -> Iterator[PlannedWrite]:
+        for step in self.span:
             if self.refusal is None:
                 try:
                     self._store.apply(self._meta, step)

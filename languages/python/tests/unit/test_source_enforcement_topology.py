@@ -520,16 +520,17 @@ ACCEPTED_CONFORMANCE_PRIVATE_REACHES: dict[tuple[str, str], frozenset[str]] = {
         {"authoring_of", "read_evidence_of"}
     ),
     # The conformance-only runtime names the scenario and snapshot lanes drive the
-    # production planner, lowering, and source-pin check through, read from the
-    # modules that own them, the dry lowering simulated step execution shares, and
-    # the family-variant key a Wire node is spelled with.
+    # production planner and source-pin check through, read from the modules that
+    # own them, the attempt lifetime a simulated transaction's unit of work runs
+    # over, the dry lowering simulated step execution lowers each span through,
+    # and the family-variant key a Wire node is spelled with.
     ("parallax.conformance._lanes.scenario", "parallax.core._execution._planning"): frozenset(
         {"build_write_planner"}
     ),
     (
         "parallax.conformance._lanes.scenario",
-        "parallax.core._execution._write_lowering",
-    ): frozenset({"stream_physical"}),
+        "parallax.core._execution._transaction._lifetime",
+    ): frozenset({"TxnAttemptLifetime"}),
     (
         "parallax.conformance._simulated_write_steps",
         "parallax.core._execution._write_lowering",
@@ -543,11 +544,12 @@ ACCEPTED_CONFORMANCE_PRIVATE_REACHES: dict[tuple[str, str], frozenset[str]] = {
     ("parallax.conformance._lanes.snapshot", "parallax.snapshot._publication._wire"): frozenset(
         {"FAMILY_VARIANT_KEY"}
     ),
-    # The unit of work's implementation leaves the case lanes compose writes
-    # through: the instruction vocabulary and its prepared forms, the materialized
-    # and readless write builders, deferred-range binding, write composition, and
-    # the row-acquisition requests a temporal stored state is read by. The facade
-    # exports none of them, so each lane names the private owner.
+    # The unit of work's implementation leaves the case lanes build writes
+    # through: the instruction vocabulary and its prepared forms, the
+    # caller-addressed write builder, the composition a lane tracking no case
+    # state plans through, and the row-acquisition requests a stored temporal
+    # state is read by. The facade exports none of them, so each lane names the
+    # private owner.
     **{
         (lane, "parallax.core._execution._unit_work"): frozenset({"instructions"})
         for lane in (
@@ -577,15 +579,11 @@ ACCEPTED_CONFORMANCE_PRIVATE_REACHES: dict[tuple[str, str], frozenset[str]] = {
     (
         "parallax.conformance._lanes.scenario",
         "parallax.core._execution._unit_work.materialized",
-    ): frozenset({"readless_write", "target_write"}),
+    ): frozenset({"target_write"}),
     (
         "parallax.conformance._lanes.scenario",
         "parallax.core._execution._unit_work.write_planner",
     ): frozenset({"compose_writes"}),
-    (
-        "parallax.conformance._lanes.scenario",
-        "parallax.core._execution._unit_work.write_runner",
-    ): frozenset({"acquire_and_bind_range"}),
     (
         "parallax.conformance.simulated_temporal_store",
         "parallax.core._execution._unit_work.acquisition",

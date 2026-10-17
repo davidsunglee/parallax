@@ -25,7 +25,7 @@ from parallax.conformance import models
 from parallax.conformance._simulated_write_steps import SimulatedWriteSteps
 from parallax.conformance.class_models import MODELS as CLASS_MODELS
 from parallax.conformance.scripted_clock import FixedClock
-from parallax.core import Attr, DomainModel, Entity, attr, opt_lock, temporal_read
+from parallax.core import Attr, DomainModel, Entity, attr, inheritance, opt_lock, temporal_read
 from parallax.core import predicate as predicate_algebra
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
@@ -34,6 +34,7 @@ from parallax.core._execution._unit_work.acquisition import (
     CoverageReadRequest,
     RowConsumer,
     RowRequest,
+    TargetReadRequest,
 )
 from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedWrite,
@@ -47,6 +48,7 @@ from parallax.core._execution._unit_work.materialized import (
     InsertionKeyedWrite,
     ObservedKeyedWrite,
     readless_write,
+    target_write,
 )
 from parallax.core._execution._unit_work.retain import InsertionIdentity, ReadEvidence
 from parallax.core._execution._unit_work.uow import (
@@ -1502,6 +1504,80 @@ def test_an_objects_proofs_serve_every_unit_following_it_in_the_flush() -> None:
     assert len(reached) == 2
     assert "close" not in statement_kinds(simulated.statements[reached[1] :])
     _assert_optimistic_targets_read_nothing(held)
+
+
+def _account_target(version: int) -> PreparedTargetWrite:
+    prepared = prepare_wire_write(
+        TargetWrite("amend", "Account", {"id": 1, "balance": "6.00"}, if_version=version),
+        _ACCOUNT,
+    )
+    assert isinstance(prepared, PreparedTargetWrite)
+    return prepared
+
+
+@pytest.mark.parametrize(
+    ("meta", "target", "rows"),
+    [
+        pytest.param(_ACCOUNT, lambda: _account_target(3), (), id="non-temporal"),
+        pytest.param(
+            _BARRIERED,
+            lambda: _position_target(_JUN, _AUG),
+            (_position_row(_JAN, _T0),),
+            id="temporal",
+        ),
+    ],
+)
+def test_a_caller_addressed_carrier_buffers_as_its_admission_appends_it(
+    meta: Metamodel,
+    target: Callable[[], PreparedTargetWrite],
+    rows: tuple[PredecessorRow, ...],
+) -> None:
+    # Its caller's condition is the whole of what it is: buffering it judges
+    # none of that and reads nothing, and what the flush makes of it is what
+    # the admission that does judge it buffers.
+    def flushed(
+        buffering: Callable[[UnitOfWork, PreparedTargetWrite], object],
+    ) -> tuple[list[object], tuple[object, ...], list[RowRequest]]:
+        simulated = _simulated(meta)
+        held = HeldRows(meta, rows)
+        outcomes: list[object] = []
+        _run(
+            lambda uow: outcomes.append(buffering(uow, target())),
+            meta=meta,
+            steps=simulated,
+            rows=held,
+        )
+        return outcomes, simulated.statements, held.requests
+
+    outcomes, carried, carried_reads = flushed(
+        lambda uow, prepared: uow.buffer(target_write(prepared, inheritance.view(meta)))
+    )
+    _admitted, admitted, admitted_reads = flushed(lambda uow, prepared: uow.buffer_target(prepared))
+    assert outcomes == [BufferOutcome.BUFFERED]
+    assert carried and carried == admitted
+    assert carried_reads == admitted_reads
+    assert not any(isinstance(request, TargetReadRequest) for request in carried_reads)
+
+
+def test_a_locking_admission_still_reads_and_judges_the_row_its_carrier_does_not() -> None:
+    stored = PredecessorRow(
+        members={"id": 1, "owner": "Ada", "balance": Decimal("5.00"), "version": 2}
+    )
+    held = HeldRows(_ACCOUNT, (stored,))
+    locking = TransactionSettings(concurrency="locking")
+    with pytest.raises(WritePreconditionError):
+        _run(lambda uow: uow.buffer_target(_account_target(3)), settings=locking, rows=held)
+    assert [type(request) for request in held.requests] == [TargetReadRequest]
+    held.requests.clear()
+    simulated = _simulated()
+    _run(
+        lambda uow: uow.buffer(target_write(_account_target(3), inheritance.view(_ACCOUNT))),
+        settings=locking,
+        steps=simulated,
+        rows=held,
+    )
+    assert held.requests == []
+    assert _kinds(simulated) == ["update"]
 
 
 def _assert_optimistic_targets_read_nothing(held: HeldRows) -> None:

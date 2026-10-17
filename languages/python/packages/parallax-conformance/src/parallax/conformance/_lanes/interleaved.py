@@ -123,7 +123,7 @@ def _run_interleaved_group(
     ``context`` carries no case-state tracker, and that is the invariant two
     concurrent sessions rest on: a temporal write settles against what its own
     group's reads retained — the value production's verb is handed, through
-    :class:`~parallax.conformance._lanes.scenario.GroupEvidence` — so the lane
+    :class:`~parallax.conformance._lanes.scenario.GroupEvidenceResolver` — so the lane
     models nothing the other session could have changed, the two threads share
     no mutable state, and a group's abort leaves nothing behind to discard. A
     write whose plan would need more than those reads retained — a coverage read
@@ -156,7 +156,15 @@ def _run_interleaved_group(
             running.append(index)
             is_last = position == len(indices) - 1
             lowered[index], read = run_group_step(
-                tx, session, context, state, steps[index], index, tx_instant, observation
+                tx,
+                session,
+                context,
+                state,
+                steps[index],
+                index,
+                tx_instant,
+                observation,
+                tracked=None,
             )
             if read is not None:
                 result.rows[index] = step_rows(

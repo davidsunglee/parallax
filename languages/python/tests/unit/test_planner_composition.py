@@ -10,8 +10,10 @@ the drive is then followed all the way to the statements it emits.
 The chain is closed link by link. Every planning the drive performed ran on a
 planner the factory built. Every step sequence taken through a
 ``LoweringCursor`` is by identity the steps of a plan one of those plannings
-returned, or a span borrowed from them, and the plans streamed are the plans
-planned, in order, so a factory plan the lane discarded is named too. Every step
+returned, or a span borrowed from them — directly, or as the span a simulated
+step execution applies to its store while lowering takes it — and the plans
+streamed are the plans planned, in order, so a factory plan the lane discarded
+is named too. Every step
 rendered by ``compile_write_step`` — the function that turns a settled step into
 a statement of its own — is by identity a step of one of those streamed
 sequences; the drives here settle no run of temporal openings, which the cursor
@@ -41,8 +43,8 @@ The `Database` lane is graded on identity as well as provenance. One planner
 serves the whole transaction, so a Typed verb and ``tx.wire`` verb are held to
 feeding the SAME object rather than two equivalently wired ones — the direct
 statement of `m-unit-work`'s shared Unit of Work. The conformance engine builds a
-planner per lowering and holds none, so its drives claim provenance rather than
-identity.
+planner per simulated transaction and holds none, so its drives claim provenance
+rather than identity.
 
 The factory's own wiring is graded here too, for the one strategy whose
 production value is a decision rather than an implementation: the audit port it
@@ -60,7 +62,7 @@ from types import ModuleType
 
 import pytest
 
-from parallax.conformance import case_format, engine
+from parallax.conformance import _simulated_write_steps, case_format, engine
 from parallax.core._execution import _planning
 from parallax.core._execution._publication import write_projection
 from parallax.core._execution._unit_work.strategy import (
@@ -140,7 +142,7 @@ class _Composition:
         """Each sequence the streams read from, a span standing for the sequence
         it was borrowed from, once per run of streams reading the same one."""
         sources: list[object] = []
-        for streamed in self.lowered:
+        for streamed in map(_span_of, self.lowered):
             source = streamed.owner if isinstance(streamed, WriteStepView) else streamed
             if not sources or sources[-1] is not source:
                 sources.append(source)
@@ -156,7 +158,18 @@ class _Composition:
 
     def steps_of_lowered_plans(self) -> list[PlannedWrite]:
         """Every step the streamed sequences hold, in the order streaming reaches them."""
-        return [step for streamed in self.lowered for step in streamed]
+        return [step for streamed in self.lowered for step in _span_of(streamed)]
+
+
+def _span_of(streamed: Iterable[PlannedWrite]) -> Iterable[PlannedWrite]:
+    """What ``streamed`` takes its steps from: the span a simulated step
+    execution applies as lowering takes it, or the sequence itself.
+
+    Iterating the applied span itself would apply its steps again, so the span
+    is what is read back.
+    """
+    applied = _simulated_write_steps._Applied  # pyright: ignore[reportPrivateUsage] - the support adapter's own span wrapper
+    return streamed.span if isinstance(streamed, applied) else streamed
 
 
 def _bindings_of(original: object) -> list[tuple[ModuleType, str]]:

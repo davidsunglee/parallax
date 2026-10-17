@@ -634,20 +634,22 @@ which `tools/check_scope_ownership.py` demands (*Filesystem ownership*, below).
   `find` over that token and publishes the sealed `Page` it returns through
   Snapshot's own `publish_roots`, `RootView`, and `require_publishable`, so the
   delivery and stored-data refusal it grades are production's. The scenario and
-  snapshot lanes drive the production write planner, lowering, and source-pin
-  check through the conformance-only `build_write_planner`, `stream_physical`,
-  and `validate_source_pin`, read from the execution modules that define them,
-  and the snapshot lane spells a Wire family variant with `FAMILY_VARIANT_KEY`
-  from the Wire publication module. The scenario lane reads each published Wire value's Read Evidence
+  snapshot lanes drive the production write planner and source-pin check
+  through the conformance-only `build_write_planner` and `validate_source_pin`,
+  read from the execution modules that define them, and the snapshot lane
+  spells a Wire family variant with `FAMILY_VARIANT_KEY` from the Wire
+  publication module. The scenario lane runs each simulated transaction through
+  an ordinary unit of work over the attempt's own lifetime implementation,
+  `parallax.core._execution._transaction._lifetime.TxnAttemptLifetime`, rather
+  than a second lifetime of its own. The scenario lane reads each published Wire value's Read Evidence
   through `parallax.snapshot._publication._wire.read_evidence_of`, and the
   insertion authority a Wire insert's node carries through `authoring_of`, the
   readers the Wire write verbs use, so the claims and keys it settles are the
   ones a real write settles against; both are implementation-private, so no
-  exported name reaches them. The scenario lane lowers a bound deferred range's
-  steps through that same `stream_physical` rather than reaching the `m-sql`
-  write-step compiler, as does conformance support's simulated step
-  execution when it records the statements of each span a unit of work hands
-  it without a database. The case loader's `wire._json.authored_number` reach is the production YAML
+  exported name reaches them. Conformance support's simulated step execution
+  lowers each span a unit of work hands it without a database through
+  execution's `stream_physical` when it records the statements, rather than
+  reaching the `m-sql` write-step compiler. The case loader's `wire._json.authored_number` reach is the production YAML
   token-preservation seam. Compatibility inputs use canonical Wire literals, so
   case ingress needs no private token-inspection reach. Case ingress does reach
   `parallax.core.document_codec._authoring` for exactly `prepare_authoring` and
@@ -656,11 +658,12 @@ which `tools/check_scope_ownership.py` demands (*Filesystem ownership*, below).
   share, rather than through a second decoder, and the canonical Leaf that
   traversal hands its normalizer is what identifies a declared axis end. The
   traversal stays out of `parallax.core.document_codec`'s package interface, since
-  no developer-facing surface needs it. The case lanes compose instructions,
-  materialized and readless writes, deferred ranges, and temporal row
-  acquisitions through the unit of work's implementation leaves under
-  `parallax.core._execution._unit_work`, which the `parallax.core.unit_work`
-  facade deliberately does not export. Each remaining reach stays
+  no developer-facing surface needs it. The case lanes build instructions,
+  caller-addressed writes, and temporal row acquisitions through the unit of
+  work's implementation leaves under `parallax.core._execution._unit_work`, which
+  the `parallax.core.unit_work` facade deliberately does not export, and a lane
+  tracking no case state composes a buffer it only plans through the same
+  leaves' `compose_writes`. Each remaining reach stays
   keyed by its exact importing module and imported names in the source inventory.
   Widening
   `parallax.core.entity`'s shipped surface to serve a development-only consumer
