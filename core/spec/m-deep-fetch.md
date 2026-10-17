@@ -306,9 +306,10 @@ graph is closed-world and never issues SQL after materialization.
 ## Resolved flat reads and generated key membership
 
 The deep-fetch planner consumes only the resolved products of
-`m-object-query`. A root or child `ResolvedEntityQuery` is the private
+`m-object-query`. A root or child `PlannedEntityQuery` is the private
 **resolved flat read**: it carries exact modeled identities, a resolved
-Predicate containing managed values, resolved temporal coordinates, resolved
+Predicate containing managed values and closed over its temporal visibility
+(`m-navigate`), resolved
 ordering and projection, and compact result metadata. It contains no authored
 path, raw literal, or public predicate node requiring another semantic pass.
 
