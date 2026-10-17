@@ -3,11 +3,12 @@
 The method names a write's authority: ``amend`` and ``replace`` take a source,
 while ``amend_if``, ``replace_if``, ``delete_if``, and ``terminate_if`` take
 exactly one revision their caller states. These tests grade the revision rules
-in their fixed order, the refusal of a target with no revision, each verb's
-temporal applicability, the Typed conditional verbs' class-and-key addressing
-and assignment judgment, the Typed source amendment's two exclusive authoring
-forms, the stated-``None`` refusals of every start, and the retired spellings —
-each against what the call puts on the wire, which for a refusal is nothing.
+in their fixed order, the refusal of a target with no revision, the Typed
+conditional verbs' class-and-key addressing and assignment judgment, the Typed
+source amendment's two exclusive authoring forms, the stated-``None`` refusals
+of every start, and the retired spellings — each against what the call puts on
+the wire, which for a refusal is nothing. Where each conditional verb's
+refusals fall relative to one another is ``test_target_write_order.py``'s.
 """
 
 from __future__ import annotations
@@ -48,13 +49,11 @@ from tests._support.db_port import (
     WriteCall,
 )
 from tests.unit._transact_support import (
-    BALANCE,
     FIND_SQL_UNLOCKED,
     FIXED,
     account_db,
     db_for,
 )
-from tests.unit._where_position_model import WHERE_POSITION_META
 from tests.unit.snapshot._handle._vessel_model import VESSEL, Ferry, Tug, Vessel
 
 _GATED_BALANCE = POSTGRES.to_driver_sql(
@@ -178,59 +177,9 @@ def test_no_conditional_verb_takes_an_unversioned_assertion(method: Callable[...
     assert "unversioned" not in inspect.signature(method).parameters
 
 
-def test_a_window_is_refused_before_a_missing_condition() -> None:
-    _refused(lambda tx: tx.wire.amend_if("Account", {"id": 1, "owner": "Bo"}, until=FIXED), "until")
-
-
-def test_a_temporal_target_requires_its_start_condition() -> None:
-    port = ScriptedAdapter(Transact())
-
-    def fn(tx: TxnContext) -> None:
-        with pytest.raises(WriteInstructionError, match="takes tx_start, not version"):
-            tx.wire.amend_if("WherePosition", {"id": 1}, version=1, valid_from=FIXED)
-        with pytest.raises(WriteInstructionError, match="takes tx_start, not version"):
-            tx.wire.terminate_if("WherePosition", {"id": 1}, version=1, valid_from=FIXED)
-        with pytest.raises(WriteInstructionError, match="requires tx_start"):
-            tx.wire.terminate_if("WherePosition", {"id": 1}, valid_from=FIXED)
-        with pytest.raises(WriteInstructionError, match=r"tx_start=None"):
-            tx.wire.amend_if(
-                "WherePosition", {"id": 1}, tx_start=cast("Any", None), valid_from=FIXED
-            )
-
-    db_for(WHERE_POSITION_META, port).transact(fn)
-    assert _calls(port) == []
-
-
 # --------------------------------------------------------------------------- #
-# A destructive verb names its object's history: `delete_if` removes a         #
-# non-temporal object and `terminate_if` ends a temporal one's coverage.       #
+# A conditional deletion names its object by its primary key alone.           #
 # --------------------------------------------------------------------------- #
-def test_a_temporal_target_refuses_a_conditional_deletion_before_its_window() -> None:
-    port = ScriptedAdapter(Transact())
-
-    def fn(tx: TxnContext) -> None:
-        with pytest.raises(WriteInstructionError, match="Use 'terminate_if' instead"):
-            tx.wire.delete_if("Balance", {"id": 1}, tx_start=FIXED)
-        with pytest.raises(WriteInstructionError, match="Use 'terminate_if' instead"):
-            tx.delete_if(mm.Balance, key=1)
-
-    db_for(BALANCE, port).transact(fn)
-    assert _calls(port) == []
-
-
-def test_a_non_temporal_target_refuses_a_conditional_termination_after_its_window() -> None:
-    port = ScriptedAdapter(Transact())
-
-    def fn(tx: TxnContext) -> None:
-        with pytest.raises(WriteInstructionError, match="Use 'delete_if' instead"):
-            tx.terminate_if(mm.Account, key=1, version=3)
-        with pytest.raises(WriteInstructionError, match="takes no until"):
-            tx.wire.terminate_if("Account", {"id": 1}, version=3, until=FIXED)
-
-    account_db(port).transact(fn)
-    assert _calls(port) == []
-
-
 @pytest.mark.parametrize(
     ("document", "match"),
     [
@@ -547,31 +496,8 @@ def test_a_wire_source_key_that_is_no_key_value_is_refused() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# A payload is judged only after the window and the condition admit the write. #
+# A source payload is judged only after the window admits the write.          #
 # --------------------------------------------------------------------------- #
-_DUPLICATED = (mm.Account.owner.set("Bo"), mm.Account.owner.set("Cy"))
-_CONDITIONAL_PAYLOADS: dict[str, tuple[Callable[[TxnContext], object], str]] = {
-    "missing-condition": (
-        lambda tx: tx.amend_if(mm.Account, *_DUPLICATED, key=1),
-        "requires version",
-    ),
-    "inadmissible-window": (
-        lambda tx: tx.amend_if(mm.Account, *_DUPLICATED, key=1, until=FIXED),
-        "takes no until",
-    ),
-    "mapping-key": (
-        lambda tx: tx.amend_if(mm.Account, mm.Account.owner.set("Bo"), key={"id": 1}),
-        "requires version",
-    ),
-}
-
-
-@pytest.mark.parametrize("payload", list(_CONDITIONAL_PAYLOADS))
-def test_a_conditional_payload_is_judged_after_its_window_and_condition(payload: str) -> None:
-    call, match = _CONDITIONAL_PAYLOADS[payload]
-    _refused(call, match)
-
-
 _SOURCE_PAYLOADS: dict[str, Callable[[TxnContext, WireEntity, mm.Account], object]] = {
     "wire-mismatching-key": lambda tx, node, found: tx.wire.amend(node, {"id": 2}, until=FIXED),
     "typed-undeclared-assignment": lambda tx, node, found: tx.amend(

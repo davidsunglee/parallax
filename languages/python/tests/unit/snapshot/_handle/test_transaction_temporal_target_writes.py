@@ -6,8 +6,8 @@ one, and the Transaction-Time start its caller last observed. These tests grade
 what each call puts on the wire and when: nothing at an Optimistic call and the
 coverage read at flush, the Locking acquisition and its reuse, the start's gate
 — a guard keeping an unchanged start included — that fails as the caller's
-precondition while a later row's loss retries, the empty patch, bounds
-validation, the exact-window composition matrix with observed writes, and the
+precondition while a later row's loss retries, the bounded form ``until``
+selects, the exact-window composition matrix with observed writes, and the
 refusals that leave earlier work executable.
 """
 
@@ -17,7 +17,7 @@ import datetime as dt
 import gc
 from collections.abc import Callable
 from decimal import Decimal
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 import pytest
 
@@ -602,95 +602,8 @@ def test_an_acquired_starting_row_lives_only_while_its_write_is_pending(ends: st
 
 
 # --------------------------------------------------------------------------- #
-# Empty patches and bounds: validated, then nothing.                           #
+# Bounds: `until` alone selects the bounded form.                              #
 # --------------------------------------------------------------------------- #
-@_STRATEGIES
-def test_an_identity_only_temporal_patch_reads_writes_and_checks_nothing(
-    concurrency: _Concurrency,
-) -> None:
-    transaction_time = ScriptedAdapter(Transact())
-    db_for(BALANCE, transaction_time).transact(
-        lambda tx: tx.wire.amend_if("Balance", {"id": 1}, tx_start=_T0), concurrency=concurrency
-    )
-    bitemporal = ScriptedAdapter(Transact())
-    _db(bitemporal).transact(
-        lambda tx: tx.wire.amend_if("WherePosition", {"id": 1}, valid_from=_MAR, tx_start=_T0),
-        concurrency=concurrency,
-    )
-    assert _calls(transaction_time) == _calls(bitemporal) == []
-
-
-_BALANCE_REFUSALS: dict[str, tuple[Callable[[TxnContext], None], str]] = {
-    "until": (
-        lambda tx: tx.wire.amend_if("Balance", {"id": 1}, until=_SEP, tx_start=_T0),
-        "takes no until",
-    ),
-    "valid-from": (
-        lambda tx: tx.wire.amend_if("Balance", {"id": 1}, valid_from=_MAR, tx_start=_T0),
-        "takes no valid_from",
-    ),
-    "a-version": (
-        lambda tx: tx.wire.amend_if("Balance", {"id": 1}, version=3),
-        "takes tx_start, not version",
-    ),
-    "no-revision": (
-        lambda tx: tx.replace_if(mm.Balance(id=1, acct_num="B", value=Decimal("1.00"))),
-        "requires tx_start",
-    ),
-}
-_POSITION_REFUSALS: dict[str, tuple[Callable[[TxnContext], None], str]] = {
-    "explicit-none": (
-        lambda tx: tx.wire.amend_if(
-            "WherePosition",
-            {"id": 1},
-            valid_from=_MAR,
-            until=cast("dt.datetime", None),
-            tx_start=_T0,
-        ),
-        "until is absent",
-    ),
-    "until-not-after-start": (
-        lambda tx: tx.wire.replace_if(
-            "WherePosition",
-            {"id": 1, "acctNum": "Z", "value": "1.00"},
-            valid_from=_MAR,
-            until=_MAR,
-            tx_start=_T0,
-        ),
-        "valid_from < until",
-    ),
-    "no-start": (
-        lambda tx: tx.wire.amend_if("WherePosition", {"id": 1}, tx_start=_T0),
-        "requires valid_from",
-    ),
-    "no-revision": (
-        lambda tx: tx.wire.amend_if("WherePosition", {"id": 1}, valid_from=_MAR),
-        "requires tx_start",
-    ),
-}
-_REFUSALS = [
-    pytest.param(BALANCE, *refusal, id=f"transaction-time-{name}")
-    for name, refusal in _BALANCE_REFUSALS.items()
-] + [
-    pytest.param(WHERE_POSITION_META, *refusal, id=f"bitemporal-{name}")
-    for name, refusal in _POSITION_REFUSALS.items()
-]
-
-
-@pytest.mark.parametrize(("model", "verb", "match"), _REFUSALS)
-def test_a_temporal_targets_window_and_revision_are_judged_before_an_empty_patch_drops(
-    model: Any, verb: Callable[[TxnContext], None], match: str
-) -> None:
-    port = ScriptedAdapter(Transact())
-
-    def fn(tx: TxnContext) -> None:
-        with pytest.raises(WriteInstructionError, match=match):
-            verb(tx)
-
-    db_for(model, port).transact(fn, concurrency="locking")
-    assert _calls(port) == []
-
-
 def test_a_typed_replacement_selects_its_bounded_form_by_until_alone() -> None:
     port = ScriptedAdapter(
         Transact(Read(rows=[_rectangle(_JAN, INFINITY_INSTANT)]), Write(times=2)),

@@ -780,34 +780,6 @@ def test_one_method_per_operation_selects_its_bound_by_keyword(
     assert not any(hasattr(owner, name) for name in suffixed)
 
 
-def test_a_bounded_predicate_write_states_its_window_as_a_pair() -> None:
-    port = ScriptedAdapter(Transact())
-    target = WherePosition.where(WherePosition.id == 1)
-
-    def fn(tx: TxnContext) -> None:
-        with pytest.raises(WriteInstructionError, match="until is absent"):
-            tx.amend_where(
-                target,
-                WherePosition.value.set(Decimal("200.00")),
-                valid_from=FIXED,
-                until=cast("dt.datetime", None),
-            )
-        with pytest.raises(WriteInstructionError, match="until is absent"):
-            tx.wire.terminate_where(
-                {
-                    "entity": "WherePosition",
-                    "predicate": {"eq": {"path": "WherePosition.id", "value": 1}},
-                },
-                valid_from=FIXED,
-                until=cast("dt.datetime", None),
-            )
-
-    own_root(
-        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
-    ).using_database_login().transact(fn, concurrency="optimistic")
-    assert port.calls == [BeginCall(), CommitCall()]
-
-
 def _rectangle(start: dt.datetime, end: object, value: str) -> MappingRow:
     return {
         "id": 1,

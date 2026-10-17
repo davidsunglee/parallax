@@ -10,13 +10,11 @@ from parallax.core._execution._keyed_writes import (
     Provenance,
     ResolvedKeyedInsert,
     ResolvedKeyedWriteSource,
-    TargetCondition,
+    TargetRevisionArguments,
     keyed_instruction,
     retained,
-    stated_valid_from,
 )
-from parallax.core._execution._options import OMITTED, Omitted
-from parallax.core._execution._transaction._attempt import TxnAttempt
+from parallax.core._execution._publication import SelectedWriteModel
 from parallax.core._execution._unit_work import instructions
 from parallax.core._execution._unit_work.instructions import (
     ASSIGNMENT_MUTATIONS,
@@ -26,6 +24,8 @@ from parallax.core._execution._unit_work.instructions import (
     PredicateSelection,
     PredicateWrite,
     PreparedKeyedWrite,
+    PreparedPredicateWrite,
+    PreparedTargetWrite,
     TargetMutation,
     TargetWrite,
     WriteAssignment,
@@ -39,7 +39,6 @@ from parallax.core.entity import (
 from parallax.core.entity import Entity as EntityBase
 from parallax.core.entity._authored_resolver import typed_interpretation
 from parallax.core.entity._declaration import declaration_of
-from parallax.core.execution_lifecycle._activity import refuse_reentry
 from parallax.core.metamodel import EntityMetadata, Metamodel
 from parallax.core.object_query._fluent import ObjectQuery, mutation_selection
 from parallax.core.temporal_read import Pin
@@ -53,12 +52,12 @@ from parallax.core.write_plan import ObjectKey
 from parallax.snapshot._inspection import RootConformance, insertion_of, snapshot_state_of
 
 __all__ = [
+    "TypedInstanceTargetWriteAdapter",
+    "TypedKeyTargetWriteAdapter",
     "TypedKeyedInsertSource",
     "TypedKeyedWriteSource",
+    "TypedPredicateWriteAdapter",
     "provenance_of",
-    "typed_addressed_write",
-    "typed_predicate_write",
-    "typed_target_write",
 ]
 
 
@@ -373,135 +372,158 @@ class TypedKeyedInsertSource:
         )
 
 
-def typed_predicate_write(
-    attempt: TxnAttempt,
-    mutation: PredicateMutation,
-    query: ObjectQuery[Any, Any],
-    assignments: Sequence[AttributeAssignment[Any]],
-    *,
-    valid_from: dt.datetime | Omitted = OMITTED,
-    until: dt.datetime | None = None,
-) -> None:
-    """The Typed entry to the predicate-write lane: a mutation-compatible
+class TypedPredicateWriteAdapter:
+    """The Typed predicate-selected write: a mutation-compatible
     :class:`~parallax.core.object_query.ObjectQuery` plus ``Attr.set(...)``
     assignments, stated as the :class:`~parallax.core.unit_work.PredicateWrite`
     every ingress prepares.
 
-    Only the query's own form is judged here: a query carrying a result-shaping,
-    temporal, narrowing, or deep-fetch clause is no write target
-    (:func:`~parallax.core.object_query.mutation_selection`,
+    Inert when constructed and private to one verb call. The query's own form is
+    its one representation judgment, made once :meth:`prepare` is asked: a query
+    carrying a result-shaping, temporal, narrowing, or deep-fetch clause is no
+    write target (:func:`~parallax.core.object_query.mutation_selection`,
     ``query-not-mutation-compatible``), and no instruction has a spelling for
     such a clause. The authored predicate is captured, never encoded: the
-    instruction carries the Typed adapter over it, borrowing the attempt's
-    adopted write projection. Everything the instruction states — its target,
-    verb, window, predicate, and assignments — is judged by
-    :func:`~parallax.core._execution._unit_work.instructions.prepare_typed_write` before
-    the attempt dispatches the prepared product.
+    instruction carries the Typed adapter over it, bound lazily against the
+    write projection the attempt lends. Everything the instruction states is
+    judged by
+    :func:`~parallax.core._execution._unit_work.instructions.prepare_typed_write`.
     """
-    refuse_reentry(attempt.lifecycle)
-    start = stated_valid_from(valid_from)
-    selection = mutation_selection(query)
-    meta = attempt.model.meta
-    instruction = PredicateWrite(
-        mutation,
-        PredicateSelection(
-            selection.target.canonical,
-            typed_interpretation(selection.predicate, meta, attempt.classes),
-        ),
-        write_assignments(assignments),
-        start,
-        until,
-    )
-    prepared = instructions.prepare_typed_write(instruction, meta)
-    attempt.predicate_write(prepared)
+
+    __slots__ = ("_assignments", "_query")
+
+    def __init__(
+        self, query: ObjectQuery[Any, Any], assignments: Sequence[AttributeAssignment[Any]]
+    ) -> None:
+        self._query = query
+        self._assignments = assignments
+
+    def prepare(
+        self,
+        write_model: SelectedWriteModel,
+        mutation: PredicateMutation,
+        *,
+        valid_from: dt.datetime | None,
+        until: dt.datetime | None,
+    ) -> PreparedPredicateWrite:
+        selection = mutation_selection(self._query)
+        meta = write_model.model.meta
+        instruction = PredicateWrite(
+            mutation,
+            PredicateSelection(
+                selection.target.canonical,
+                typed_interpretation(selection.predicate, meta, write_model.classes),
+            ),
+            write_assignments(self._assignments),
+            valid_from,
+            until,
+        )
+        return instructions.prepare_typed_write(instruction, meta)
 
 
-def typed_target_write(
-    attempt: TxnAttempt,
-    mutation: TargetMutation,
-    instance: EntityBase,
-    codec: EntityRowCodec,
-    condition: TargetCondition,
-    *,
-    valid_from: dt.datetime | Omitted,
-    until: dt.datetime | None,
-) -> None:
-    """The Typed entry to caller-conditioned replacement: ``instance``'s every
-    populated writable member as the row a
-    :class:`~parallax.core.unit_work.TargetWrite` states, beside the caller's own
-    condition.
+class TypedInstanceTargetWriteAdapter:
+    """The Typed caller-conditioned replacement: ``instance``'s every populated
+    writable member as the row a :class:`~parallax.core.unit_work.TargetWrite`
+    states, beside the caller's own revision.
 
-    What produced the instance is not asked: the write addresses the object its
-    key names, under the condition its caller states, so neither a read's
-    evidence nor an insertion's authority the instance carries is consulted —
-    which is what lets a historical observation supply a replacement's state.
+    Inert when constructed and private to one verb call. What produced the
+    instance is not asked: the write addresses the object its key names, under
+    the revision its caller states, so neither a read's evidence nor an
+    insertion's authority the instance carries is consulted — which is what
+    lets a historical observation supply a replacement's state. The row comes
+    through the codec of the write projection the attempt lends.
     """
-    refuse_reentry(attempt.lifecycle)
-    start = stated_valid_from(valid_from)
-    meta = attempt.model.meta
-    entity = metadata_of_instance(meta, instance)
-    instruction = TargetWrite(
-        mutation,
-        entity.identity.canonical,
-        codec.writable_row(instance),
-        condition.if_version,
-        condition.if_tx_start,
-        start,
-        until,
-        condition.stated,
-    )
-    attempt.target_write(instructions.prepare_typed_write(instruction, meta))
+
+    __slots__ = ("_instance",)
+
+    def __init__(self, instance: EntityBase) -> None:
+        self._instance = instance
+
+    def prepare(
+        self,
+        write_model: SelectedWriteModel,
+        mutation: TargetMutation,
+        revision_arguments: TargetRevisionArguments,
+        *,
+        valid_from: dt.datetime | None,
+        until: dt.datetime | None,
+    ) -> PreparedTargetWrite:
+        meta = write_model.model.meta
+        entity = metadata_of_instance(meta, self._instance)
+        instruction = TargetWrite(
+            mutation,
+            entity.identity.canonical,
+            write_model.codec.writable_row(self._instance),
+            revision_arguments.if_version,
+            revision_arguments.if_tx_start,
+            valid_from,
+            until,
+            revision_arguments.stated,
+        )
+        return instructions.prepare_typed_write(instruction, meta)
 
 
-def typed_addressed_write(
-    attempt: TxnAttempt,
-    mutation: TargetMutation,
-    entity_class: type[EntityBase],
-    assignments: Sequence[AttributeAssignment[Any]],
-    key: object,
-    condition: TargetCondition,
-    *,
-    valid_from: dt.datetime | Omitted,
-    until: dt.datetime | None,
-) -> None:
-    """The Typed entry to a caller-conditioned amendment, deletion, or
-    termination of the object of concrete ``entity_class`` its scalar ``key``
-    names: ``assignments`` for an amendment, none for a destructive verb, under
-    the caller's own condition, with no instance, read, or source consulted.
+class TypedKeyTargetWriteAdapter:
+    """The Typed caller-conditioned amendment, deletion, or termination of the
+    object of concrete ``entity_class`` its scalar ``key`` names:
+    ``assignments`` for an amendment, none for a destructive verb, under the
+    caller's own revision, with no instance, read, or source consulted.
 
-    ``key`` addresses the family's one primary-key Attribute whatever its
-    declared name; a mapping or tuple is no key here. The key and assignments
-    are the write's payload, judged only once its verb, window, and condition
-    admit it. Each assignment's reference is judged against the class's own
-    ancestry before any is flattened into the row, so an inherited member
-    applies and a foreign one is refused.
+    Inert when constructed and private to one verb call. ``key`` addresses the
+    family's one primary-key Attribute whatever its declared name; a mapping or
+    tuple is no key here. The key and assignments are the write's payload,
+    judged only once its verb, window, and revision admit it. Each assignment's
+    reference is judged against the class's own ancestry before any is
+    flattened into the row, so an inherited member applies and a foreign one is
+    refused.
     """
-    refuse_reentry(attempt.lifecycle)
-    start = stated_valid_from(valid_from)
-    meta = attempt.model.meta
-    entity = metadata_of_class(meta, entity_class)
 
-    def members() -> Mapping[str, object]:
-        if isinstance(key, Mapping | tuple | list | set | frozenset):
-            kind = type(cast("object", key)).__name__
-            raise instructions.WriteInstructionError(
-                f"{entity.identity.name}: key is the object's one scalar primary-key value, and "
-                f"a {kind} is no such value"
-            )
-        return instructions.assigned_members(meta, entity, write_assignments(assignments))
+    __slots__ = ("_assignments", "_entity_class", "_key")
 
-    key_name = family_view(meta, entity).primary_key.identity.name
-    instruction = TargetWrite(
-        mutation,
-        entity.identity.canonical,
-        {key_name: key},
-        condition.if_version,
-        condition.if_tx_start,
-        start,
-        until,
-        condition.stated,
-    )
-    attempt.target_write(instructions.prepare_typed_write(instruction, meta, members=members))
+    def __init__(
+        self,
+        entity_class: type[EntityBase],
+        assignments: Sequence[AttributeAssignment[Any]],
+        key: object,
+    ) -> None:
+        self._entity_class = entity_class
+        self._assignments = assignments
+        self._key = key
+
+    def prepare(
+        self,
+        write_model: SelectedWriteModel,
+        mutation: TargetMutation,
+        revision_arguments: TargetRevisionArguments,
+        *,
+        valid_from: dt.datetime | None,
+        until: dt.datetime | None,
+    ) -> PreparedTargetWrite:
+        meta = write_model.model.meta
+        entity = metadata_of_class(meta, self._entity_class)
+        key, assignments = self._key, self._assignments
+
+        def members() -> Mapping[str, object]:
+            if isinstance(key, Mapping | tuple | list | set | frozenset):
+                kind = type(cast("object", key)).__name__
+                raise instructions.WriteInstructionError(
+                    f"{entity.identity.name}: key is the object's one scalar primary-key value, "
+                    f"and a {kind} is no such value"
+                )
+            return instructions.assigned_members(meta, entity, write_assignments(assignments))
+
+        key_name = family_view(meta, entity).primary_key.identity.name
+        instruction = TargetWrite(
+            mutation,
+            entity.identity.canonical,
+            {key_name: key},
+            revision_arguments.if_version,
+            revision_arguments.if_tx_start,
+            valid_from,
+            until,
+            revision_arguments.stated,
+        )
+        return instructions.prepare_typed_write(instruction, meta, members=members)
 
 
 def metadata_of_class(meta: Metamodel, entity_class: object) -> EntityMetadata:

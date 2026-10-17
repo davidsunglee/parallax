@@ -9,13 +9,13 @@ they share, the intents they merge, and the source each licenses the other's wri
 with.
 
 The refusal precedence the two representations share is not asked here. One order
-stands behind both, so that precedence is `test_keyed_write_order.py`'s subject
-and the facts a Wire source answers into that order are
-`test_wire_keyed_source.py`'s. The Typed lane is driven here only beside a Wire
-lowering it has to answer identically — an authored occurrence stating exactly
-what the row already holds, which both lanes answer with no DML at all. What a
-Wire READ publishes is `test_wire_reads.py`'s subject; the claim algebra itself is
-`test_write_claims.py`'s.
+stands behind both, so that precedence is `test_keyed_write_order.py`'s and
+`test_predicate_write_order.py`'s subject, and the facts a Wire source answers
+into the keyed order are `test_wire_keyed_source.py`'s. The Typed lane is driven
+here only beside a Wire lowering it has to answer identically — an authored
+occurrence stating exactly what the row already holds, which both lanes answer
+with no DML at all. What a Wire READ publishes is `test_wire_reads.py`'s
+subject; the claim algebra itself is `test_write_claims.py`'s.
 """
 
 from __future__ import annotations
@@ -40,7 +40,7 @@ from parallax.core.execution import (
     KeyedWriteValueError,
     TransactionTimePinReadOnlyError,
 )
-from parallax.core.predicate import CanonicalDocumentError, ModelRejectedError
+from parallax.core.predicate import CanonicalDocumentError
 from parallax.core.read_delivery import InvalidData
 from parallax.core.unit_work import Concurrency, WriteEvidenceError, WriteRejectedError
 from parallax.snapshot import Database, ScopedDatabase, Snapshot, TxnContext, WireEntity, connect
@@ -666,6 +666,8 @@ def test_a_predicate_target_carries_exactly_entity_and_predicate() -> None:
             tx.wire.delete_where({"entity": "parallax.compatibility.Person"})
         with pytest.raises(instructions.WriteInstructionError, match="non-empty entity name"):
             tx.wire.delete_where({"entity": "", "predicate": {"true": {}}})
+        with pytest.raises(instructions.WriteInstructionError, match="must be a mapping"):
+            tx.wire.delete_where({**_PERSON_TARGET, "predicate": []})
 
     db_for(PERSON, port).transact(fn)
     assert _writes(port) == []
@@ -750,29 +752,6 @@ def test_an_insert_payload_that_is_not_a_document_is_refused() -> None:
     assert _writes(port) == []
 
 
-def test_a_malformed_predicate_is_judged_before_anything_the_model_decides() -> None:
-    # A selection's shape runs to the bottom of its predicate, so a node
-    # `m-predicate`'s algebra does not admit is that module's refusal rather than
-    # whatever the model would have said about the Entity or the assignments
-    # standing beside it. The envelope around the node stays the verb's own.
-    port = ScriptedAdapter(Transact())
-    malformed: dict[str, object] = {"entity": "Unknown", "predicate": {"nonsense": {}}}
-
-    def fn(tx: TxnContext) -> None:
-        with pytest.raises(CanonicalDocumentError, match="unknown predicate node"):
-            tx.wire.delete_where(malformed)
-        with pytest.raises(CanonicalDocumentError, match="unknown predicate node"):
-            tx.wire.amend_where(
-                {**malformed, "entity": "parallax.compatibility.Person"},
-                {"undeclared": 1},
-            )
-        with pytest.raises(instructions.WriteInstructionError, match="must be a mapping"):
-            tx.wire.delete_where({**_PERSON_TARGET, "predicate": []})
-
-    db_for(PERSON, port).transact(fn)
-    assert _writes(port) == []
-
-
 def test_predicate_write_rejects_valid_selection_changes_that_name_unknown_members() -> None:
     port = ScriptedAdapter(Transact())
 
@@ -800,29 +779,6 @@ def test_a_predicate_writes_first_failing_assignment_is_the_one_refused() -> Non
         assert value_fault.value.rule == "neutral-literal-type-mismatch"
 
     db_for(PERSON, port).transact(fn)
-    assert _writes(port) == []
-
-
-def test_a_predicate_writes_window_is_judged_before_its_predicate() -> None:
-    port = ScriptedAdapter(Transact())
-    inverted: dict[str, object] = {
-        "entity": "parallax.compatibility.WherePosition",
-        "predicate": {
-            "between": {
-                "path": "parallax.compatibility.WherePosition.id",
-                "lower": 10,
-                "upper": 1,
-            }
-        },
-    }
-
-    def fn(tx: TxnContext) -> None:
-        with pytest.raises(instructions.WriteInstructionError, match="requires valid_from"):
-            tx.wire.amend_where(inverted, {"value": "1.00"})
-        with pytest.raises(ModelRejectedError):
-            tx.wire.amend_where(inverted, {"value": "1.00"}, valid_from=_VALID_FROM)
-
-    db_for(WHERE_POSITION_META, port).transact(fn)
     assert _writes(port) == []
 
 

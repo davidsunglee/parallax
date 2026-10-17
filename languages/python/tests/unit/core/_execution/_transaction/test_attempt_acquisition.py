@@ -123,7 +123,7 @@ def _ledger_patch() -> PreparedTargetWrite:
 def _ledger_write(rows: Sequence[MappingRow], recorder: RecordingLifecycleProvider) -> None:
     port = ScriptedAdapter(Transact(Read(rows=rows), Write()))
     scope(port, _LEDGER, provider=recorder).transact(
-        lambda tx: tx.target_write(_ledger_patch()), itself, concurrency="locking"
+        lambda tx: tx.uow.buffer_target(_ledger_patch()), itself, concurrency="locking"
     )
 
 
@@ -157,7 +157,9 @@ def test_a_failing_target_read_fails_before_any_count_is_taken() -> None:
     failure = DatabaseError(category="connectionDead", native_code="08006", message="gone")
     port = ScriptedAdapter(Transact(Read(raises=failure)))
     with raises_contextualized(DatabaseError):
-        scope(port).transact(lambda tx: tx.target_write(_patch()), itself, concurrency="locking")
+        scope(port).transact(
+            lambda tx: tx.uow.buffer_target(_patch()), itself, concurrency="locking"
+        )
 
 
 def test_a_conversion_failure_of_a_several_root_target_read_precedes_its_count(
@@ -175,7 +177,9 @@ def test_a_conversion_failure_of_a_several_root_target_read_precedes_its_count(
     monkeypatch.setattr(ReadRowConverter, "convert_row", failing)
     port = ScriptedAdapter(Transact(Read(rows=[_account(), _account()])))
     with raises_contextualized(ValueError, match="does not convert"):
-        scope(port).transact(lambda tx: tx.target_write(_patch()), itself, concurrency="locking")
+        scope(port).transact(
+            lambda tx: tx.uow.buffer_target(_patch()), itself, concurrency="locking"
+        )
 
 
 def test_a_target_read_is_a_read_of_its_own_that_flushes_nothing_pending() -> None:
@@ -184,7 +188,7 @@ def test_a_target_read_is_a_read_of_its_own_that_flushes_nothing_pending() -> No
 
     def fn(tx: TxnAttempt) -> None:
         tx.uow.buffer(account_insert())
-        tx.target_write(_patch())
+        tx.uow.buffer_target(_patch())
 
     scope(port, provider=recorder).transact(fn, itself, concurrency="locking")
     names = _names(recorder.roots[-1].events)
@@ -310,7 +314,7 @@ def test_a_coverage_read_is_a_read_call_of_the_write_batch_reaching_its_range() 
         model_of(_BALANCE),
     )
     scope(port, _BALANCE, provider=recorder).transact(
-        lambda tx: tx.target_write(patch), itself, concurrency="optimistic"
+        lambda tx: tx.uow.buffer_target(patch), itself, concurrency="optimistic"
     )
     events = recorder.roots[-1].events
     assert not any(isinstance(event, ReadStarted) for event in events)
@@ -356,7 +360,7 @@ def test_each_deferred_range_reads_its_coverage_only_once_the_unit_before_it_ran
 
     def fn(tx: TxnAttempt) -> None:
         for patch in patches:
-            tx.target_write(patch)
+            tx.uow.buffer_target(patch)
 
     scope(port, _BALANCE, provider=recorder).transact(fn, itself, concurrency="optimistic")
     assert [type(call) for call in port.calls] == [
@@ -600,9 +604,9 @@ def test_a_write_reusing_a_pending_participation_reads_and_judges_nothing_again(
         )
 
     def fn(tx: TxnAttempt) -> None:
-        tx.target_write(amend(["a"]))
+        tx.uow.buffer_target(amend(["a"]))
         assert interpreted == ["tags"]
-        tx.target_write(amend(["b", "b"]))
+        tx.uow.buffer_target(amend(["b", "b"]))
         assert interpreted == ["tags"]
         assert [type(call) for call in port.calls] == [BeginCall, ReadCall]
         raise _Stopped
@@ -623,7 +627,7 @@ def test_an_optimistic_target_reads_no_collection_until_its_flush_covers_it(
     called: list[str] = []
 
     def fn(tx: TxnAttempt) -> None:
-        tx.target_write(
+        tx.uow.buffer_target(
             prepare_wire_write(
                 TargetWrite(
                     "amend",
@@ -712,7 +716,7 @@ def test_a_retained_rows_invalid_occurrence_fails_at_its_flush_not_its_call(
     called: list[str] = []
 
     def fn(tx: TxnAttempt) -> None:
-        tx.target_write(
+        tx.uow.buffer_target(
             prepare_wire_write(
                 TargetWrite(
                     "amend",
@@ -805,7 +809,7 @@ def test_a_retaining_reads_invalid_attribute_is_refused_at_its_call(
 
     def fn(tx: TxnAttempt) -> None:
         with pytest.raises(StoredDataDecodingError) as caught:
-            tx.target_write(
+            tx.uow.buffer_target(
                 prepare_wire_write(
                     TargetWrite(
                         "amend",

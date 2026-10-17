@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 from collections.abc import Callable, Sequence
-from typing import Any, Final, Self, cast, overload
+from typing import Any, Final, Literal, Protocol, Self, cast, overload
 
 from parallax.core import deep_fetch, inheritance
 from parallax.core._execution._family import entity_layout
@@ -10,8 +10,12 @@ from parallax.core._execution._keyed_writes import (
     KeyedInsertSource,
     KeyedWriteSource,
     OpenedKeyedWrite,
+    TargetRevisionArguments,
     keyed_insert,
     keyed_write,
+    stated_valid_from,
+    target_revision_arguments,
+    window_mutation,
 )
 from parallax.core._execution._options import OMITTED, Omitted, ReadOnlyTxnOptions, TxnOptions
 from parallax.core._execution._publication import SelectedReadModel, SelectedWriteModel
@@ -41,8 +45,10 @@ from parallax.core._execution._unit_work.effects import (
 )
 from parallax.core._execution._unit_work.instructions import (
     KeyedMutation,
+    PredicateMutation,
     PreparedPredicateWrite,
     PreparedTargetWrite,
+    TargetMutation,
 )
 from parallax.core._execution._unit_work.retain import ReadEvidence
 from parallax.core._execution._unit_work.strategy import ActorIdentity
@@ -72,7 +78,6 @@ from parallax.core.diagnostics import qualified_type
 from parallax.core.dialect import LockMode
 from parallax.core.entity import EntityRowCodec
 from parallax.core.entity._layout import CatalogedModel
-from parallax.core.entity._model import ClassIndex
 from parallax.core.execution_lifecycle import ReadInterface
 from parallax.core.execution_lifecycle._activity import (
     INERT,
@@ -116,13 +121,101 @@ from parallax.core.write_plan.plan import BoundRange, ExecutionUnit, UnitEffects
 from parallax.core.write_plan.steps import PlannedInsert
 from parallax.core.write_plan.steps import PlannedWrite as PlannedStep
 
-__all__ = ["ReadOnlyTxnAttempt", "TxnAttempt"]
+__all__ = [
+    "PredicateWriteAdapter",
+    "PredicateWriteVerb",
+    "ReadOnlyTxnAttempt",
+    "TargetWriteAdapter",
+    "TargetWriteVerb",
+    "TxnAttempt",
+]
 
 _ORDERED_STATEMENTS: Final = 64
 """The most statements one ordered write transport invocation presents. It
 bounds the original and lowered statement pairs live at once, and how far past
 a shortfall not yet enforced the database may already have run; a longer run of
 effects continues in another invocation once this one is enforced."""
+
+
+PredicateWriteVerb = Literal["amend", "delete", "terminate"]
+"""The intent a predicate-selected write states: the base verb, never its
+bounded token, which the attempt selects from the caller's ``until``."""
+
+
+class PredicateWriteAdapter(Protocol):
+    """A representation's predicate-selected write, inert until the attempt asks
+    for it.
+
+    Constructed around the caller's original selection and assignments, judging
+    nothing, so no representation refusal precedes the attempt's re-entry and
+    stated-start checks. :meth:`prepare` is asked once, after both: it captures
+    that input, authors the canonical instruction, and returns what the one
+    write preparation produced for it, borrowing ``write_model`` for the call
+    alone.
+    """
+
+    def prepare(
+        self,
+        write_model: SelectedWriteModel,
+        mutation: PredicateMutation,
+        *,
+        valid_from: dt.datetime | None,
+        until: dt.datetime | None,
+    ) -> PreparedPredicateWrite: ...
+
+
+TargetWriteVerb = Literal["amend", "replace", "delete", "terminate"]
+"""The intent a caller-addressed conditional write states: the base verb,
+never its bounded token, which the attempt selects from the caller's
+``until``."""
+
+
+class TargetWriteAdapter(Protocol):
+    """A representation's caller-addressed conditional write, inert until the
+    attempt asks for it.
+
+    Constructed around the caller's original addressed input, judging nothing,
+    so no representation refusal precedes the attempt's re-entry and
+    stated-start checks. :meth:`prepare` is asked once, after both, with the
+    caller's revision keywords encoded but unjudged: it captures that input,
+    authors the canonical instruction under ``revision_arguments``, and returns
+    what the one write preparation produced for it, borrowing ``write_model``
+    for the call alone. No source evidence, pin, provenance, or insertion
+    authority admits the write.
+    """
+
+    def prepare(
+        self,
+        write_model: SelectedWriteModel,
+        mutation: TargetMutation,
+        revision_arguments: TargetRevisionArguments,
+        *,
+        valid_from: dt.datetime | None,
+        until: dt.datetime | None,
+    ) -> PreparedTargetWrite: ...
+
+
+@overload
+def _bounded_mutation(
+    verb: PredicateWriteVerb, until: dt.datetime | Omitted
+) -> tuple[PredicateMutation, dt.datetime | None]: ...
+@overload
+def _bounded_mutation(
+    verb: TargetWriteVerb, until: dt.datetime | Omitted
+) -> tuple[TargetMutation, dt.datetime | None]: ...
+def _bounded_mutation(
+    verb: TargetWriteVerb, until: dt.datetime | Omitted
+) -> tuple[TargetMutation, dt.datetime | None]:
+    """The instruction token and bound a base verb and its ``until`` select."""
+    if verb == "amend":
+        return window_mutation("amend", "amendUntil", until)
+    if verb == "replace":
+        return window_mutation("replace", "replaceUntil", until)
+    if verb == "terminate":
+        return window_mutation("terminate", "terminateUntil", until)
+    # Deletion has no bounded form, so a stated bound reaches preparation beside
+    # the unbounded verb, which refuses it.
+    return window_mutation("delete", "delete", until)
 
 
 class _TxnAttemptBase:
@@ -469,12 +562,6 @@ class TxnAttempt(_TxnAttemptBase):
         """The Entity Row Codec the adopted selection derives write rows through."""
         return self._write.codec
 
-    @property
-    def classes(self) -> ClassIndex | None:
-        """The class index the adopted write projection borrows, which Typed
-        predicate writes resolve Python member names through."""
-        return self._write.classes
-
     def complete(self) -> None:
         """Flush what is still buffered as the boundary's pre-commit batch, while
         the lifetime still admits work."""
@@ -526,14 +613,57 @@ class TxnAttempt(_TxnAttemptBase):
             until=until,
         )
 
-    def predicate_write(self, prepared: PreparedPredicateWrite, /) -> None:
-        """Buffer a prepared predicate-selected write, readless or
-        materializing through a Read of its own under this attempt."""
+    def predicate_write(
+        self,
+        adapter: PredicateWriteAdapter,
+        verb: PredicateWriteVerb,
+        /,
+        *,
+        valid_from: dt.datetime | Omitted = OMITTED,
+        until: dt.datetime | Omitted = OMITTED,
+    ) -> None:
+        """Run one predicate-selected write in its ingress order, then buffer it
+        readless or materializing through a Read of its own under this attempt.
+
+        Re-entry is refused first, then a stated start judged, and only then is
+        ``adapter`` asked to prepare the write under this attempt's write
+        projection: the window and the predicate, the family, and the
+        assignments are preparation's to judge. A stated ``until``, ``None``
+        included, selects the bounded verb.
+        """
+        refuse_reentry(self._lifecycle)
+        start = stated_valid_from(valid_from)
+        mutation, bound = _bounded_mutation(verb, until)
+        prepared = adapter.prepare(self._write, mutation, valid_from=start, until=bound)
         self._uow.buffer_predicate(prepared)
 
-    def target_write(self, prepared: PreparedTargetWrite, /) -> None:
-        """Buffer a prepared caller-addressed write, reading the state it starts
-        from where its Effective Concurrency Strategy needs participation."""
+    def target_write(
+        self,
+        adapter: TargetWriteAdapter,
+        verb: TargetWriteVerb,
+        /,
+        *,
+        version: object = OMITTED,
+        tx_start: object = OMITTED,
+        valid_from: dt.datetime | Omitted = OMITTED,
+        until: dt.datetime | Omitted = OMITTED,
+    ) -> None:
+        """Run one caller-addressed conditional write in its ingress order, then
+        buffer it, reading the state it starts from where its Effective
+        Concurrency Strategy needs participation.
+
+        Re-entry is refused first, then a stated start judged, and only then is
+        ``adapter`` asked to prepare the write under this attempt's write
+        projection: the target, the window, the revision, and the payload are
+        preparation's to judge. A stated ``until``, ``None`` included, selects
+        the bounded verb, and every revision keyword stated, ``None`` included,
+        reaches preparation as stated.
+        """
+        refuse_reentry(self._lifecycle)
+        start = stated_valid_from(valid_from)
+        mutation, bound = _bounded_mutation(verb, until)
+        revision = target_revision_arguments(version=version, tx_start=tx_start)
+        prepared = adapter.prepare(self._write, mutation, revision, valid_from=start, until=bound)
         self._uow.buffer_target(prepared)
 
     # Row acquisition.

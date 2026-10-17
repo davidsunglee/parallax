@@ -795,7 +795,7 @@ def test_inheritance_family_predicate_write_is_rejected_before_sql(
     # inheritance family is REJECTED BEFORE SQL with the corpus's
     # `subtype-write-set-based-unsupported` classification (m-inheritance-089)".
     #
-    # The buffer-time seams (`_typed_writes.typed_predicate_write` /
+    # The buffer-time seams (`TxnAttempt.predicate_write` /
     # `UnitOfWork.buffer_predicate`) guard the developer `_where` verbs and the
     # engine's buffering translation — but they are NOT on every road here.
     # The conformance engine's readless predicate-write step
