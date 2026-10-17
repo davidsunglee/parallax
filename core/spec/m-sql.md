@@ -10,9 +10,9 @@ It reads canonical model identities from `m-metamodel`, family and
 discriminator semantics from `m-inheritance`, physical Tables and slots from
 `m-storage-layout`, and compiled relationship directions from `m-relationship`.
 
-The read compiler accepts one `ResolvedEntityQuery`: the exact target Entity
-Identity, a resolved predicate with temporal terms already injected, optional
-query-wide narrowing, ordered result keys, resolved projection, and an optional
+The read compiler accepts one `PlannedEntityQuery`: the exact target Entity
+Identity, a resolved predicate whose temporal visibility `m-navigate` has
+already closed, optional query-wide narrowing, ordered result keys, resolved projection, and an optional
 row cap. Compilation lowers those already-resolved fields; it does not discover
 them by peeling query-wide clauses out of a public query and does not receive an
 accepted model to perform another resolution pass.
@@ -22,16 +22,18 @@ accepted model to perform another resolution pass.
 SQL compilation is private behind two closed entry points:
 
 ```text
-compileResolvedRead(ResolvedEntityQuery, Dialect) -> CompiledRead
+compilePlannedRead(PlannedEntityQuery, Dialect) -> CompiledRead
 compilePlannedWrite(PlannedWrite, StepPayload, Dialect) -> LoweredStatement
 
 StepPayload = [RowPayload] | AssignmentPayload | none
 ```
 
 Neither entry point accepts a public Object Query, Predicate, Write Instruction,
-authored member name, or raw serialized literal. A `ResolvedEntityQuery` carries
-exact target/member identities, an elaborated predicate of managed values,
-resolved temporal terms and ordering, and compact result metadata sufficient for
+authored member name, or raw serialized literal, and the read entry point accepts
+no predicate whose temporal visibility is unclosed. A `PlannedEntityQuery`
+carries exact target/member identities, an elaborated predicate of managed values
+with its relationships' temporal perspectives and any root perspective it
+retains (`m-navigate`), resolved ordering, and compact result metadata sufficient for
 row decoding and deep-fetch key gathering. A `PlannedWrite` carries the closed
 `m-write-plan` variant, exact member identities, managed values or generated-value
 expressions, target, concurrency decision, and affected-row policy. Its
@@ -776,17 +778,17 @@ A hop is **proven unique** when it reads exactly one physical candidate table â€
 standalone target, a table-per-hierarchy family, or a table-per-concrete-subtype
 family with one effective concrete â€” and either
 
-- the strict equalities of its correlation and its generated visibility fix every
+- the strict equalities of its correlation and its temporal perspective fix every
   Column of one of that table's unique keys (`m-storage-layout` *Physical
-  indexes*), a Latest visibility term `to = ?` (infinity) fixing a temporal end; or
-- its correlation fixes the target family's logical primary key and its generated
-  visibility selects one coordinate on every As-Of Axis the target declares: the
-  Latest term, or the containment pair `from <= ? and to > ?` of one finite
-  instant.
+  indexes*), an axis at **latest** fixing its end `to = ?` (infinity); or
+- its correlation fixes the target family's logical primary key and its temporal
+  perspective selects one coordinate on every As-Of Axis the target declares:
+  **latest**, or **at** one finite instant, lowered to the containment pair
+  `from <= ? and to > ?`.
 
 Strict equality matches no `NULL`, so a nullable unique Column qualifies. The
-visibility is the one generated for the hop (`m-navigate`), not the read's own
-temporal selection. Declared cardinality, an authored field condition, and
+perspective is the one navigation closed onto the hop (`m-navigate`), not the
+read's own temporal selection. Declared cardinality, an authored field condition, and
 operand-local subtype selection prove nothing, and one concrete table's unique key
 proves nothing about another's rows. The second proof rests on the full-history
 non-overlap invariant (`m-temporal-write` *Milestones of one object never

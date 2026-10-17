@@ -102,12 +102,18 @@ temporally coherent — a graph's pointers cannot silently cross temporal
 contexts, and a view materialized from a `history` read (edge-pinned at its
 milestone's from-instant, `m-temporal-read`) dereferences at its own edge.
 
-Propagated coordinates are managed Timestamp values. Navigation appends them to
-the resolved child read, and conjoins them into each resolved relationship a
-predicate reaches, through `m-predicate`'s generated-term operations, which adopt each
-managed value directly without encoding or decoding a literal. Generated
-relationship-key membership follows the same rule, and no consumer resolves a
-generated term's member or operand again.
+Propagated coordinates are managed Timestamp values. Navigation **closes** a
+resolved predicate's temporal visibility in one pass: every resolved relationship
+the predicate reaches retains a **temporal perspective** — for each axis its
+target's family declares, **latest** or **at** one propagated instant, and no
+axis for a non-temporal target — and a child read retains the perspective of its
+own target. A query root's own selections remain the injected terms of
+`m-temporal-read`. Every predicate is closed through this operation before it is
+lowered, and a closed predicate is not closed again. A perspective names exact
+canonical axes and adopts each managed value directly, so neither navigation nor
+`m-sql`, which lowers it as above, encodes or decodes a literal or resolves a
+member again. Generated relationship-key membership adopts managed keys through
+`m-predicate`'s generated-term operations.
 
 ## Polymorphic navigation
 

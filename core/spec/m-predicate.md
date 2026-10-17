@@ -670,7 +670,8 @@ comparison, two ordered bounds for `between`, or one managed tuple for membershi
 rather than one wrapper per element. A string match retains its pattern text and
 whether it folds case, and a null check its member alone. A related position
 retains each resolved relationship direction, its target, both join endpoints,
-and the temporal terms its candidates are visible under. Recursive variants retain
+and, once `m-navigate` closes the predicate, the temporal perspective its
+candidates are visible under. Recursive variants retain
 resolved children, and no variant carries storage placement or precomputed SQL
 text. Reusing one authored node at
 two semantic positions creates two resolved occurrences; repeating one resolved

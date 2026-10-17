@@ -362,7 +362,7 @@ the ordering clause that was emitted, which is `m-sql`'s own answer.
 
 `m-deep-fetch` is the mandatory next phase. It consumes
 `ResolvedObjectQuery` and produces the resolved flat-read products for the root
-and each non-empty child level. Each such private `ResolvedEntityQuery` may
+and each non-empty child level. Each such private `PlannedEntityQuery` may
 exist without an authored Object Query behind it, but consumers never substitute
 one for the complete resolved parent at the public preflight boundary.
 
