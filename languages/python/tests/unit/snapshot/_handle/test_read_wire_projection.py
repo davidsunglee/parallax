@@ -15,6 +15,7 @@ from pydantic import computed_field, field_serializer
 from parallax.conformance import vo_models as vo
 from parallax.conformance.animal_owner import ANIMAL_MODEL
 from parallax.conformance.animal_owner import Person as AnimalOwnerPerson
+from parallax.conformance.graph_models import POLICY_MODEL, Policy
 from parallax.conformance.read_models import (
     BALANCE_MODEL,
     Animal,
@@ -40,7 +41,7 @@ from parallax.core import (
     deep_fetch as deep_fetch_module,
 )
 from parallax.core._execution import _preflight as preflight_module
-from parallax.core.base import INFINITY
+from parallax.core.base import INFINITY, TIMESTAMP
 from parallax.core.entity._expressions import IncludeTraversal
 from parallax.core.entity._graph_construction import require_correspondence
 from parallax.core.execution import ServingModel, prepare_model
@@ -48,6 +49,8 @@ from parallax.core.metamodel import EntityIdentity
 from parallax.core.object_query import IncludeSegment
 from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.read_delivery import InvalidData
+from parallax.core.temporal_read import Edge
+from parallax.core.wire import decode_canonical_wire
 from parallax.snapshot import (
     Database,
     ScopedDatabase,
@@ -55,6 +58,7 @@ from parallax.snapshot import (
     SnapshotInspectionError,
     SnapshotStream,
     WireEntity,
+    edge_of,
     view,
 )
 from parallax.snapshot._inspection import snapshot_state_of
@@ -643,3 +647,117 @@ def test_failed_projection_releases_successful_inputs(
     gc.collect()
     assert first_ref() is None
     assert failure.value.args == ("second projection failed",)
+
+
+_OPENED = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+_COVERAGE_OPENED = dt.datetime(2024, 4, 1, tzinfo=dt.UTC)
+_EFFECTIVE = dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
+_COVERED = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
+_OPEN_ENDS = {"thru_z": INFINITY, "out_z": INFINITY}
+_POLICY_READS = (
+    Read(rows=[{"id": 1, "name": "Home", "from_z": _EFFECTIVE, "in_z": _OPENED, **_OPEN_ENDS}]),
+    Read(
+        rows=[
+            {
+                "id": 10,
+                "policy_id": 1,
+                "amount": Decimal("5.00"),
+                "from_z": _COVERED,
+                "in_z": _COVERAGE_OPENED,
+                **_OPEN_ENDS,
+            }
+        ]
+    ),
+)
+_POLICY_QUERY = (
+    Policy.where(Policy.all)
+    .include(Policy.coverages)
+    .as_of(valid_time=dt.datetime(2024, 6, 1, tzinfo=dt.UTC))
+)
+
+
+def _projected_policy(delivery: str) -> tuple[Any, WireEntity]:
+    """One Typed Policy read with its coverage, and its Wire projection."""
+    root = cast("Database[Any]", Database.connect(ScriptedAdapter(*_POLICY_READS), POLICY_MODEL))
+    db = root.using_database_login()
+    if delivery == "eager":
+        typed = db.find(_POLICY_QUERY)
+        policy = typed.result()
+        projected = typed.wire(policy)
+    else:
+        with db.stream(_POLICY_QUERY, batch_size=10) as stream:
+            streamed = [(node, stream.wire(node)) for node in stream]
+        ((policy, projected),) = streamed
+    root.close()
+    return policy, projected
+
+
+@pytest.mark.parametrize("delivery", ["eager", "streamed"])
+def test_a_projected_node_answers_its_typed_sources_milestone_without_typed_edge_work(
+    delivery: str,
+) -> None:
+    policy, projected = _projected_policy(delivery)
+    (coverage,) = policy.coverages
+    (projected_coverage,) = cast("list[WireEntity]", projected["coverages"])
+
+    assert edge_of(projected) == Edge(tx_time=_OPENED, valid_time=_EFFECTIVE)
+    assert edge_of(projected_coverage) == Edge(tx_time=_COVERAGE_OPENED, valid_time=_COVERED)
+    # Neither projection nor Wire inspection resolved the Typed sources' Edges:
+    # both still retain the family's Temporal Shape.
+    for source in (policy, coverage):
+        state = snapshot_state_of(source)
+        assert state is not None
+        assert not isinstance(state.edge_cache, Edge)
+    assert edge_of(policy) == edge_of(projected)
+    assert edge_of(coverage) == edge_of(projected_coverage)
+
+
+@pytest.mark.parametrize(
+    ("model", "query", "reads", "starts"),
+    [
+        pytest.param(
+            BALANCE_MODEL,
+            Balance.where(Balance.id == 1),
+            (
+                Read(
+                    rows=[
+                        {
+                            "bal_id": 1,
+                            "acct_num": "A-1",
+                            "val": Decimal("5.00"),
+                            "in_z": _OPENED,
+                            "out_z": INFINITY,
+                        }
+                    ]
+                ),
+            ),
+            ("txStart",),
+            id="transaction-time",
+        ),
+        pytest.param(
+            POLICY_MODEL, _POLICY_QUERY, _POLICY_READS, ("txStart", "validStart"), id="bitemporal"
+        ),
+    ],
+)
+def test_wire_inspection_decodes_exactly_the_milestone_starts_on_every_call(
+    monkeypatch: pytest.MonkeyPatch,
+    model: DomainModel,
+    query: Any,
+    reads: tuple[Read, ...],
+    starts: tuple[str, ...],
+) -> None:
+    root = cast("Database[Any]", Database.connect(ScriptedAdapter(*reads), model))
+    projected = root.using_database_login().find(query).wire().result()
+    root.close()
+    decoded: list[tuple[object, object]] = []
+
+    def recording(neutral_type: Any, value: Any) -> Any:
+        decoded.append((neutral_type, value))
+        return decode_canonical_wire(neutral_type, value)
+
+    monkeypatch.setattr(wire_materialize, "decode_canonical_wire", recording)
+    edge_of(projected)
+    edge_of(projected)
+
+    expected = [(TIMESTAMP, projected[start]) for start in starts]
+    assert decoded == expected + expected

@@ -1033,6 +1033,31 @@ def test_inspecting_an_edge_changes_none_of_the_facts_a_write_or_projection_read
     db.transact(inspected)
 
 
+def test_inspecting_a_wire_nodes_edge_changes_none_of_the_facts_a_write_reads() -> None:
+    row, _document = _census_row()
+    db = db_for(_CENSUS_MODEL, ScriptedAdapter(Transact(Read(rows=[row]))))
+    query = _CensusCharter.where(_CensusCharter.id == 1).as_of(valid_time=_CENSUS_AT)
+
+    def inspected(tx: TxnContext) -> None:
+        node = tx.wire.find(query).result()
+        evidence = read_evidence_of(node)
+        assert evidence is not None
+
+        def facts() -> tuple[object, ...]:
+            return (stored_entity_of(node), wire_pin_of(node), read_evidence_of(node), dict(node))
+
+        before = facts()
+
+        assert edge_of(node) == Edge(tx_time=_CENSUS_START, valid_time=_CENSUS_START)
+
+        after = facts()
+        assert after == before
+        assert after[2] is evidence
+        assert after[1] is before[1]
+
+    db.transact(inspected)
+
+
 def test_a_classified_roots_nodes_are_published_as_no_stored_value() -> None:
     # The other side of the conformance verdict: a hydratable invalid root's
     # nodes carry their Entity and pin for inspection, yet are no stored value

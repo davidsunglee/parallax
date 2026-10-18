@@ -212,8 +212,8 @@ def pin_of(node: object) -> Pin:
 
 
 def edge_of(node: object) -> Edge:
-    """``node``'s own milestone :class:`~parallax.core.temporal_read.Edge` — the
-    finite from-instant on every axis its family declares.
+    """A Typed ``node``'s own milestone :class:`~parallax.core.temporal_read.Edge`
+    — the finite from-instant on every axis its family declares.
 
     The first inspection reads the node's milestone starts and retains the
     Edge on the lifecycle state the node shares with every edit of it, so
