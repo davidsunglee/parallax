@@ -868,8 +868,6 @@ def _family_root(model: Metamodel, entity: EntityIdentity) -> EntityIdentity:
 
 
 def _initial_member_names(model: Metamodel, entity: EntityMetadata) -> tuple[str, ...]:
-    """The members a Non-Temporal row's initial account holds: its key, and
-    its optimistic-lock version where its family declares one."""
     position = inheritance.view(model).entity(entity.identity)
     members = entity.declared_attributes if position is None else position.applicable_attributes
     return (

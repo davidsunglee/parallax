@@ -839,8 +839,6 @@ _LINUS = {"id": 2, "owner": "Linus", "balance": "250.00", "version": 3}
 
 
 def _accounts(*rows: Mapping[str, object]) -> SimulatedTemporalStore:
-    """A store knowing ``rows`` as the case's initial Account fixtures, each
-    decoded as case ingress decodes a fixture."""
     store = SimulatedTemporalStore()
     store.seed_initial_rows(
         ACCOUNT,
@@ -876,8 +874,6 @@ def _every_row(
     documents: Sequence[object | None] | None,
     root_count: int,
 ) -> _Answer:
-    """How many roots the read answered, each row's present members by
-    declared name, and the documents beside them."""
     del request
     members = [PredecessorRow.over_row(selection, row, None, absent).members for row in rows]
     return (
