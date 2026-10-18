@@ -306,13 +306,18 @@ class ScopePlanView(Protocol):
     rendered before the statement finishes."""
 
     @property
-    def scope_id(self) -> int: ...
-
-    @property
     def sources(self) -> tuple[object, ...]: ...
 
     @property
     def owner_results(self) -> tuple[object, ...]: ...
+
+
+class StatementPlanView(Protocol):
+    """A statement plan as the statement builder holds it: the lexical plans
+    its scope ids index."""
+
+    @property
+    def lexical_scopes(self) -> Sequence[ScopePlanView]: ...
 
 
 class PlanEntryRefView[Kind: str](Protocol):
@@ -344,8 +349,8 @@ class StatementBuilder[RowScope = object]:
         "_row_count",
         "_row_signature",
         "_row_start",
-        "_scope_plans",
         "_source_bindings",
+        "_statement_plan",
         "_typed_spans",
         "_wire_overrides",
         "dialect",
@@ -374,7 +379,7 @@ class StatementBuilder[RowScope = object]:
         self._row_count = 0
         self._next_alias_index = 1
         self._next_relation_index = 0
-        self._scope_plans: dict[int, ScopePlanView] = {}
+        self._statement_plan: StatementPlanView | None = None
         self._source_bindings: dict[int, list[RenderedSourceBinding[RowScope] | None]] = {}
         self._owner_results_bindings: dict[int, list[RenderedOwnerResultsBinding | None]] = {}
 
@@ -390,21 +395,23 @@ class StatementBuilder[RowScope = object]:
         self._next_relation_index = index + 1
         return f"r{index}"
 
-    def select_scope_plan(self, plan: ScopePlanView) -> None:
-        """Take on rendering ``plan``'s shared sources and owner results, which
-        :meth:`finish` then requires; selecting the same plan again is a no-op.
+    def select_scope_plan(self, statement: StatementPlanView, scope_id: int) -> None:
+        """Take on rendering the shared sources and owner results of
+        ``statement``'s lexical plan ``scope_id``, which :meth:`finish` then
+        requires; selecting the same lexical plan again is a no-op.
 
-        A builder renders lexical plans of one statement plan, so a different
-        plan under a selected scope id is refused.
+        A builder renders lexical plans of one statement plan, so a lexical plan
+        of any other statement plan is refused.
         """
-        selected = self._scope_plans.get(plan.scope_id)
-        if selected is plan:
-            return
-        if selected is not None:
+        if self._statement_plan is None:
+            self._statement_plan = statement
+        elif self._statement_plan is not statement:
             raise SqlGenError("a statement renders the lexical plans of one statement plan")
-        self._scope_plans[plan.scope_id] = plan
-        self._source_bindings[plan.scope_id] = [None] * len(plan.sources)
-        self._owner_results_bindings[plan.scope_id] = [None] * len(plan.owner_results)
+        if scope_id in self._source_bindings:
+            return
+        plan = statement.lexical_scopes[scope_id]
+        self._source_bindings[scope_id] = [None] * len(plan.sources)
+        self._owner_results_bindings[scope_id] = [None] * len(plan.owner_results)
 
     def record_source_binding(
         self, ref: PlanEntryRefView[Literal["source"]], *, target: RowScope, origin: RowScope
