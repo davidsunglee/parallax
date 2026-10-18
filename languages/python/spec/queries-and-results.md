@@ -155,6 +155,18 @@ returns the same value and pickling produces plain domain data. Domain members
 do not contain framework metadata. Typed and Wire results use the same invalid
 data verdicts and envelope edition.
 
+`edge_of` is the one inspection operation that also accepts a Wire node. Any
+node a Wire read published answers its own milestone `Edge`, decoded from its
+published starts: direct or projected, root or included, eager or streamed,
+including a hydrated node of an invalid root. Repeated calls return equal
+`Edge` values, not necessarily one object. A non-temporal node raises
+`SnapshotInspectionError(snapshot-edge-unavailable)`. The node an insert
+returned, plain or unpickled data, a nested Value Object mapping, and an
+`InvalidData` record raise `snapshot-node-required`; inspect a record's
+hydrated `data` instead. Inspection performs no I/O and grants no write
+authority. A caller may state the `Edge`'s `tx_time` as a target write's
+`tx_start`, which applies only while that milestone still stands.
+
 A Typed Snapshot supports whole-result `wire()` and element
 `wire(value, at=...)` projection without I/O or revalidation of stored data.
 Projection preserves read provenance and invalid verdicts; it ignores Pydantic

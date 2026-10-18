@@ -4,11 +4,12 @@ from collections.abc import Callable
 from decimal import Decimal
 from typing import Any
 
-from parallax.conformance.read_models import Document, Payment
+from parallax.conformance.read_models import Balance, Document, Payment
 from parallax.conformance.story_models import Account, Order, OrderStatus
-from parallax.snapshot import ScopedDatabase, Snapshot, TxnContext, WireEntity
+from parallax.snapshot import ScopedDatabase, Snapshot, TxnContext, WireEntity, edge_of
 
 __all__ = [
+    "condition_a_wire_write_on_the_milestone_it_read",
     "publish_typed_read_as_wire",
     "publish_typed_stream_as_wire",
     "read_a_table_per_concrete_subtype_family",
@@ -44,6 +45,26 @@ def publish_typed_read_as_wire(db: ScopedDatabase) -> Snapshot[Any]:
     """
     typed = db.find(Account.where(Account.id == 1))
     return typed.wire()
+
+
+def condition_a_wire_write_on_the_milestone_it_read(
+    db: ScopedDatabase, balance_id: int, value: str
+) -> None:
+    """State the milestone a Wire node stands on as a later write's condition.
+
+    The read's pin is where it looked; edge_of answers where the node's own
+    milestone starts. The read grants no write authority: the amendment applies
+    only while that milestone is still current.
+    """
+    node = db.wire.find(Balance.where(Balance.id == balance_id)).result()
+    milestone = edge_of(node)
+    db.transact(
+        lambda tx: tx.wire.amend_if(
+            "parallax.compatibility.Balance",
+            {"id": balance_id, "value": value},
+            tx_start=milestone.tx_time,
+        )
+    )
 
 
 def publish_typed_stream_as_wire(

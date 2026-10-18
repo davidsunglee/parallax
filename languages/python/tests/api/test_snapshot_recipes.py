@@ -16,13 +16,16 @@ import pytest
 from parallax.conformance import snapshot_recipes
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.read_models import (
+    Balance,
     CardPayment,
     CashPayment,
     Invoice,
     Memo,
     Receipt,
 )
+from parallax.conformance.scripted_clock import ScriptedClock
 from parallax.conformance.snapshot_recipes import (
+    condition_a_wire_write_on_the_milestone_it_read,
     publish_typed_read_as_wire,
     publish_typed_stream_as_wire,
     read_a_table_per_concrete_subtype_family,
@@ -32,6 +35,8 @@ from parallax.conformance.snapshot_recipes import (
     stream_and_write_inside_one_transaction,
 )
 from parallax.conformance.story_models import Account, Order, OrderItem, OrderStatus
+from parallax.core import TX_TIME
+from parallax.core.base import INFINITY
 from parallax.core.db_port import (
     Bind,
     Committed,
@@ -43,12 +48,15 @@ from parallax.core.db_port import (
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity import UnloadedRelationshipError
 from parallax.core.entity._model import model_of
+from parallax.core.execution import ExecutionFailure
 from parallax.core.read_delivery import StreamStateError
-from parallax.snapshot import Database, ScopedDatabase, connect, is_view_loaded
+from parallax.core.unit_work import WritePreconditionError
+from parallax.snapshot import Database, ScopedDatabase, connect, edge_of, is_view_loaded
 from tests._support.db_port import ConnectsAsItself, projected_row
 from tests._support.root_ownership import own_root
 
 _ACCOUNT = MODELS["account"]
+_BALANCE = MODELS["balance"]
 _ORDERS = MODELS["orders"]
 _PAYMENT = MODELS["payment"]
 _DOCUMENT = MODELS["document"]
@@ -293,6 +301,45 @@ def test_a_participating_delivery_writes_every_root_exactly_once(profile_run: An
     assert sorted(account.balance for account in committed) == [Decimal("110.00")] * 5
 
 
+_OPENED = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+_AMENDED = dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
+_LATER = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
+
+
+def test_a_write_conditioned_on_a_read_milestone_applies_only_while_it_stands(
+    profile_run: Any,
+) -> None:
+    profile_run.reset(model_of(_BALANCE), {})
+    db = own_root(
+        connect(profile_run.port, _BALANCE, clock=ScriptedClock([_OPENED, _AMENDED, _LATER]))
+    ).using_database_login()
+    db.transact(lambda tx: tx.insert(Balance(id=1, acct_num="A-1", value=Decimal("5.00"))))
+    displayed = db.wire.find(Balance.where(Balance.id == 1)).result()
+
+    condition_a_wire_write_on_the_milestone_it_read(db, 1, "9.00")
+
+    history = db.wire.find(Balance.where(Balance.id == 1).history(TX_TIME)).results()
+    assert [(node["value"], node["txStart"], node["txEnd"]) for node in history] == [
+        ("5.00", "2024-01-01T00:00:00.000000Z", "2024-02-01T00:00:00.000000Z"),
+        ("9.00", "2024-02-01T00:00:00.000000Z", "infinity"),
+    ]
+    # The node read before the write still names the milestone it stood on,
+    # which the write closed, so stating it again conditions nothing.
+    assert edge_of(displayed).tx_time == _OPENED
+    with pytest.raises(ExecutionFailure) as failed:
+        db.transact(
+            lambda tx: tx.wire.amend_if(
+                "parallax.compatibility.Balance",
+                {"id": 1, "value": "1.00"},
+                tx_start=edge_of(displayed).tx_time,
+            )
+        )
+    assert isinstance(failed.value.cause, WritePreconditionError)
+    assert [node["value"] for node in db.wire.find(Balance.where(Balance.id == 1)).results()] == [
+        "9.00"
+    ]
+
+
 # --------------------------------------------------------------------------- #
 # Database-free run-through of every recipe body.                              #
 # --------------------------------------------------------------------------- #
@@ -425,6 +472,48 @@ class _CannedOrderPort(ConnectsAsItself):
         raise AssertionError("a read recipe opens no transaction")
 
 
+_BALANCE_ROW: MappingRow = {
+    "bal_id": 1,
+    "acct_num": "A-1",
+    "val": Decimal("5.00"),
+    "in_z": _OPENED,
+    "out_z": INFINITY,
+}
+
+
+class _CannedBalancePort(ConnectsAsItself):
+    """A fake `m-db-port` answering the recipe's Wire read and then its
+    conditional write's own read of the stated milestone with one standing
+    Balance row, and every write with one affected row."""
+
+    dialect: Dialect = POSTGRES
+
+    def __init__(self) -> None:
+        self.scripted = [[_BALANCE_ROW], [_BALANCE_ROW]]
+
+    def execute(
+        self, sql: str, binds: Sequence[Bind], document_reads: Sequence[tuple[int, int]] = ()
+    ) -> list[Row]:
+        answered = self.scripted.pop(0) if self.scripted else []
+        return [projected_row(sql, row) for row in answered]
+
+    def execute_write(self, sql: str, binds: Sequence[Bind]) -> int:
+        return 1
+
+    def transaction[T](
+        self,
+        body: Callable[[DatabaseConnection], T],
+        *,
+        isolation: str | None = None,
+        access_mode: str | None = None,
+    ) -> TransactionOutcome[T]:
+        return Committed(body(cast("DatabaseConnection", self)))
+
+
+def _conditioned_write_of_one_balance(db: ScopedDatabase) -> None:
+    condition_a_wire_write_on_the_milestone_it_read(db, 1, "9.00")
+
+
 @pytest.mark.parametrize(
     ("recipe", "model", "port"),
     [
@@ -451,6 +540,12 @@ class _CannedOrderPort(ConnectsAsItself):
         pytest.param(
             _streamed_write_at_page_two, "account", _CannedAccountPort, id="participating-delivery"
         ),
+        pytest.param(
+            _conditioned_write_of_one_balance,
+            "balance",
+            _CannedBalancePort,
+            id="milestone-conditioned-write",
+        ),
     ],
 )
 def test_every_recipe_runs_through_the_shipped_surface(
@@ -463,6 +558,7 @@ def test_every_recipe_the_module_exports_has_a_driver() -> None:
     assert sorted(snapshot_recipes.__all__) == sorted(
         recipe.__name__
         for recipe in (
+            condition_a_wire_write_on_the_milestone_it_read,
             read_to_one_relationship_states,
             read_a_table_per_hierarchy_family,
             publish_typed_read_as_wire,

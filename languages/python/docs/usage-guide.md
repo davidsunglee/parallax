@@ -551,6 +551,40 @@ def publish_typed_read_as_wire(db: ScopedDatabase) -> Snapshot[Any]:
     return typed.wire()
 ```
 
+### Condition a Wire write on the milestone a read returned
+
+```python
+class Balance(
+    TxTemporal,
+    table="balance",
+    namespace=_NS,
+    indices=(index("balance_acct", "acct_num"),),
+):
+    id: Attr[int] = attr(primary_key=True, column="bal_id")
+    acct_num: Attr[str] = attr(max_length=32)
+    value: Attr[Decimal] = attr(column="val", precision=18, scale=2)
+
+
+def condition_a_wire_write_on_the_milestone_it_read(
+    db: ScopedDatabase, balance_id: int, value: str
+) -> None:
+    """State the milestone a Wire node stands on as a later write's condition.
+
+    The read's pin is where it looked; edge_of answers where the node's own
+    milestone starts. The read grants no write authority: the amendment applies
+    only while that milestone is still current.
+    """
+    node = db.wire.find(Balance.where(Balance.id == balance_id)).result()
+    milestone = edge_of(node)
+    db.transact(
+        lambda tx: tx.wire.amend_if(
+            "parallax.compatibility.Balance",
+            {"id": balance_id, "value": value},
+            tx_start=milestone.tx_time,
+        )
+    )
+```
+
 ### Stream results
 
 ```python

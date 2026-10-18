@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as dt
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -7,7 +8,13 @@ from typing import Any, Final, Protocol, Self, SupportsIndex, cast
 
 from parallax.core import temporal_read
 from parallax.core._execution._unit_work.retain import InsertionIdentity, ReadEvidence
-from parallax.core.base import INFINITY_LITERAL, ManagedValue, NeutralType, TemporalBound
+from parallax.core.base import (
+    INFINITY_LITERAL,
+    TIMESTAMP,
+    ManagedValue,
+    NeutralType,
+    TemporalBound,
+)
 from parallax.core.deep_fetch import IncludeTree, RelationshipViewKey, RenderToken
 from parallax.core.document_codec import (
     MemberShape,
@@ -36,10 +43,12 @@ from parallax.core.metamodel import (
     Metamodel,
     Multiplicity,
     OccurrenceMetadata,
+    TemporalDimension,
 )
+from parallax.core.metamodel._temporal_structure import TEMPORAL_MEMBERS
 from parallax.core.read_delivery._page import ABSENT, InvalidData, VersionAttributes
-from parallax.core.temporal_read import Pin, TemporalFacet
-from parallax.core.wire import encode_wire
+from parallax.core.temporal_read import Edge, Pin, TemporalFacet
+from parallax.core.wire import decode_canonical_wire, encode_wire
 from parallax.core.wire._codec import encode_managed_wire
 from parallax.snapshot._inspection import (
     RootConformance,
@@ -63,6 +72,7 @@ __all__ = [
     "read_evidence_of",
     "shared_wire_encoder",
     "stored_entity_of",
+    "wire_edge_of",
     "wire_pin_of",
     "wire_roots",
 ]
@@ -354,6 +364,55 @@ def wire_pin_of(entity: WireEntity) -> Pin | None:
     """The as-of coordinates a read-published node was read at, or ``None``
     where its family declares no As-Of Axis or no read published it."""
     return getattr(entity, "_pin", None)
+
+
+_TX_START: Final = TEMPORAL_MEMBERS[TemporalDimension.TRANSACTION_TIME][0].name
+_VALID_START: Final = TEMPORAL_MEMBERS[TemporalDimension.VALID_TIME][0].name
+
+
+def wire_edge_of(node: object) -> Edge:
+    """The milestone :class:`~parallax.core.temporal_read.Edge` of a node a
+    Wire read published, conforming or diagnostic, decoded from its own
+    published milestone starts on every call.
+
+    Only the read-published carrier answers; matching keys on any other mapping
+    never do. The Pin decides whether the node is temporal at all, never where
+    its milestone starts. Every Entity reserves the framework endpoint names in
+    its top-level members, so a published ``validStart`` is the Valid-Time
+    start and only a Bitemporal node publishes one.
+    """
+    if type(node) is not _WireEntityNode or getattr(node, "_root_conformance", None) is None:
+        raise _not_read_published(node)
+    if getattr(node, "_pin", None) is None:
+        entity = cast("EntityIdentity", getattr(node, "_entity", None))
+        raise SnapshotInspectionError(
+            code="snapshot-edge-unavailable",
+            message=f"{entity.canonical} is not temporal, so it stands on no milestone",
+            operation="edge_of",
+            entity=entity,
+        )
+    valid_start = node.get(_VALID_START)
+    return Edge(
+        tx_time=cast("dt.datetime", decode_canonical_wire(TIMESTAMP, node[_TX_START])),
+        valid_time=None
+        if valid_start is None
+        else cast("dt.datetime", decode_canonical_wire(TIMESTAMP, valid_start)),
+    )
+
+
+def _not_read_published(node: object) -> SnapshotInspectionError:
+    entity: EntityIdentity | None = getattr(node, "_entity", None)
+    held = (
+        f"{type(node).__name__} carries no read publication"
+        if entity is None or getattr(node, "_authoring", None) is None
+        else f"the {entity.canonical} node an insert answered stands on no read milestone"
+    )
+    return SnapshotInspectionError(
+        code="snapshot-node-required",
+        message=f"edge_of inspects a node a Snapshot read published; {held}",
+        operation="edge_of",
+        entity=entity,
+    )
 
 
 type _Provenance = tuple[Pin | None, RootConformance, ReadEvidence | None]

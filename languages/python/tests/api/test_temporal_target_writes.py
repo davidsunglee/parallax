@@ -47,12 +47,14 @@ from parallax.core.execution_lifecycle import (
     RootExecution,
 )
 from parallax.core.read_delivery import StoredDataDecodingError
+from parallax.core.temporal_read import Edge
 from parallax.core.unit_work import (
     OptimisticLockConflictError,
     WriteEvidenceError,
     WritePreconditionError,
 )
-from parallax.snapshot import ScopedDatabase, TxnContext, connect
+from parallax.descriptor import domain_model_from_document, export_document
+from parallax.snapshot import ScopedDatabase, TxnContext, connect, edge_of
 from tests._support.root_ownership import own_root
 from tests.api._coverage_interleaving import AfterCoverageRead
 from tests.api._peer_commit import commit_as_a_peer
@@ -1525,3 +1527,112 @@ def test_a_reused_start_a_flush_keeps_leaves_an_observation_of_it_writable(
         (_TA, None, _FEB, _MAR, 100, "z"),
         (_TA, None, _MAR, _APR, 100, "a"),
     ]
+
+
+# --------------------------------------------------------------------------- #
+# A Wire read's milestone Edge is what a caller states as a later target's     #
+# condition. Inspection lends no authority: a standalone read conditions a     #
+# write only while its milestone stands, and a historical one stays stale.     #
+# --------------------------------------------------------------------------- #
+_DESCRIPTOR_MODEL = domain_model_from_document(export_document(_MODEL))
+_PROVENANCES = pytest.mark.parametrize("provenance", ["class", "descriptor"])
+
+
+def _provenance_db(profile_run: Any, provenance: str, *instants: dt.datetime) -> ScopedDatabase:
+    model = _MODEL if provenance == "class" else _DESCRIPTOR_MODEL
+    return own_root(
+        connect(profile_run.port, model, clock=ScriptedClock(list(instants)))
+    ).using_database_login()
+
+
+def _wire_log_query(entity: type[Any]) -> dict[str, object]:
+    return {
+        "target": _name(entity),
+        "predicate": {"eq": {"path": f"{_name(entity)}.id", "value": 1}},
+        "temporal": {"transaction-time": {"asOf": "latest"}},
+    }
+
+
+@_LOG_AXES
+@_PROVENANCES
+def test_a_wire_read_milestone_conditions_a_later_transaction_time_target(
+    profile_run: Any, entity: type[Any], provenance: str
+) -> None:
+    profile_run.reset(model_of(_MODEL), {})
+    _db(profile_run, _T0).transact(
+        lambda tx: tx.insert(entity(id=1, label="seed", spec=Spec(title="s1")))
+    )
+    db = _provenance_db(profile_run, provenance, _TA, _TB)
+    node = db.wire.find(_wire_log_query(entity)).result()
+    milestone = edge_of(node)
+    assert milestone == Edge(tx_time=_T0)
+
+    db.transact(
+        lambda tx: tx.wire.amend_if(
+            _name(entity), {"id": 1, "label": "patched"}, tx_start=milestone.tx_time
+        )
+    )
+    patched: list[tuple[object, ...]] = [
+        (_T0, _TA, "seed", _S1, []),
+        (_TA, None, "patched", _S1, []),
+    ]
+    assert _log_rows(profile_run, entity) == patched
+
+    # The node still answers the milestone it was read at, which no longer stands.
+    with pytest.raises(ExecutionFailure) as failed:
+        db.transact(
+            lambda tx: tx.wire.amend_if(
+                _name(entity), {"id": 1, "label": "stale"}, tx_start=edge_of(node).tx_time
+            )
+        )
+    assert isinstance(failed.value.cause, WritePreconditionError)
+    assert failed.value.cause.expected == _T0
+    assert _log_rows(profile_run, entity) == patched
+
+
+@_SPAN_AXES
+@_PROVENANCES
+def test_a_wire_read_milestone_conditions_a_bitemporal_target_and_a_historical_one_is_stale(
+    profile_run: Any, entity: type[Any], provenance: str
+) -> None:
+    _seeded_spans(profile_run, entity)
+    db = _provenance_db(profile_run, provenance, _TA, _TB)
+    current = db.wire.find(_wire_span_query(entity, _FEB)).result()
+    assert edge_of(current) == Edge(tx_time=_T0, valid_time=_JAN)
+
+    db.transact(
+        lambda tx: tx.wire.amend_if(
+            _name(entity),
+            {"id": 1, "amount": 150},
+            valid_from=_FEB,
+            until=_APR,
+            tx_start=edge_of(current).tx_time,
+        )
+    )
+    amended: list[_SpanRow] = [
+        *_SEED_HISTORY[:1],
+        (_T1, None, _JUN, _AUG, 200, "b", _S2, []),
+        (_TA, None, _JAN, _FEB, 100, "a", _S1, _M),
+        (_TA, None, _FEB, _APR, 150, "a", _S1, _M),
+    ]
+    assert _span_rows(profile_run, entity) == amended
+
+    # A read as of an earlier Transaction Time looks from that instant, but
+    # its node stands on the milestone the amendment closed.
+    query = _wire_span_query(entity, _FEB)
+    cast("dict[str, object]", query["temporal"])["transaction-time"] = {"asOf": _instant(_T1)}
+    historical = db.wire.find(query).result()
+    assert edge_of(historical) == Edge(tx_time=_T0, valid_time=_JAN)
+    with pytest.raises(ExecutionFailure) as failed:
+        db.transact(
+            lambda tx: tx.wire.amend_if(
+                _name(entity),
+                {"id": 1, "amount": 175},
+                valid_from=_FEB,
+                until=_APR,
+                tx_start=edge_of(historical).tx_time,
+            )
+        )
+    assert isinstance(failed.value.cause, WritePreconditionError)
+    assert failed.value.cause.expected == _T0
+    assert _span_rows(profile_run, entity) == amended

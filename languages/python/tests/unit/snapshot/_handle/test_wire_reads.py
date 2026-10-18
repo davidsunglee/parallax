@@ -30,7 +30,7 @@ import pytest
 from parallax.conformance import class_models, models
 from parallax.conformance.read_models import Animal, Cat, Dog, Pet
 from parallax.conformance.story_models import Order
-from parallax.core import Attr, DomainModel, Entity, attr
+from parallax.core import LATEST, Attr, DomainModel, Entity, attr
 from parallax.core._execution._concurrency import CONCURRENCY
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import INFINITY, JSON, STRING, TIMESTAMP, ManagedValue, PresentDocument
@@ -67,8 +67,17 @@ from parallax.core.predicate import TrueNode
 from parallax.core.read_delivery import InvalidData
 from parallax.core.read_delivery._page import ABSENT, ROOT_LEVEL, PageBuilder, ViewSchema
 from parallax.core.read_delivery._row_converter import bind
-from parallax.core.temporal_read import Pin
-from parallax.snapshot import Database, ScopedDatabase, SnapshotConnectionError, WireEntity, connect
+from parallax.core.temporal_read import Edge, Pin
+from parallax.snapshot import (
+    Database,
+    ScopedDatabase,
+    SnapshotConnectionError,
+    SnapshotInspectionError,
+    TxnContext,
+    WireEntity,
+    connect,
+    edge_of,
+)
 from parallax.snapshot._handle._read import wire_publication
 from parallax.snapshot._handle._wire import WireDatabaseView, wire_read_query
 from parallax.snapshot._publication import (
@@ -81,11 +90,15 @@ from parallax.snapshot._publication._wire import (
     read_evidence_of,
     shared_wire_encoder,
     stored_entity_of,
+    wire_pin_of,
     wire_roots,
 )
 from tests._support.db_port import (
     ConnectsAsItself,
     RefusingAdapter,
+    ScriptedAdapter,
+    Transact,
+    Write,
     body_outcome,
 )
 from tests._support.document_reads import fold_mapping_rows
@@ -93,6 +106,7 @@ from tests._support.root_ownership import own_root
 from tests._support.sql import compile_read
 from tests.unit._metamodel_support import Declaration, key, source
 from tests.unit._prepared_read_support import bound_read, compiled_read
+from tests.unit._transact_support import BALANCE, db_for
 from tests.unit.snapshot._snapshot_page_support import (
     driver_row,
     identity_of,
@@ -1223,3 +1237,233 @@ def _root_of(model: Any) -> Any:
     entity = model.entity(_VARIANT_ROOT)
     assert entity is not None
     return entity
+
+
+# --------------------------------------------------------------------------- #
+# Milestone Edge inspection follows read publication, not write authority.     #
+# --------------------------------------------------------------------------- #
+
+
+POLICY = _MODELS["policy"]
+BRANCH = _MODELS["branch"]
+_OPENED = dt.datetime(2024, 1, 1, tzinfo=_UTC)
+_LINE_OPENED = dt.datetime(2024, 4, 1, tzinfo=_UTC)
+_EFFECTIVE = dt.datetime(2024, 2, 1, tzinfo=_UTC)
+_COVERED = dt.datetime(2024, 3, 1, tzinfo=_UTC)
+_READ_AT = dt.datetime(2024, 6, 1, tzinfo=_UTC)
+
+
+def _invoice_port() -> QueuePort:
+    return QueuePort(
+        [
+            [{"id": 100, "name": "Q1", "in_z": _OPENED, "out_z": INFINITY}],
+            [
+                {
+                    "id": 1000,
+                    "invoice_id": 100,
+                    "amount": Decimal("75.00"),
+                    "in_z": _LINE_OPENED,
+                    "out_z": INFINITY,
+                }
+            ],
+        ]
+    )
+
+
+_INVOICE_QUERY: Mapping[str, object] = {
+    "target": "Invoice",
+    "predicate": {"true": {}},
+    "includes": [{"segments": [{"rel": "Invoice.lines"}]}],
+    "temporal": {"transaction-time": {"asOf": "latest"}},
+}
+
+
+def _policy_port() -> QueuePort:
+    temporal = {"thru_z": INFINITY, "out_z": INFINITY}
+    return QueuePort(
+        [
+            [{"id": 1, "name": "Home", "from_z": _EFFECTIVE, "in_z": _OPENED, **temporal}],
+            [
+                {
+                    "id": 10,
+                    "policy_id": 1,
+                    "amount": Decimal("5.00"),
+                    "from_z": _COVERED,
+                    "in_z": _LINE_OPENED,
+                    **temporal,
+                }
+            ],
+        ]
+    )
+
+
+_POLICY_QUERY: Mapping[str, object] = {
+    "target": "Policy",
+    "predicate": {"true": {}},
+    "includes": [{"segments": [{"rel": "Policy.coverages"}]}],
+    "temporal": {
+        "valid-time": {"asOf": "2024-06-01T00:00:00.000000Z"},
+        "transaction-time": {"asOf": "latest"},
+    },
+}
+
+
+def _published_roots(
+    model: DomainModel, port: QueuePort, query: Mapping[str, object], delivery: str
+) -> list[WireEntity]:
+    db = own_root(Database.connect(port, model)).using_database_login()
+    if delivery == "eager":
+        return [_entity(root) for root in db.wire.find(query).results()]
+    with db.wire.stream(query, batch_size=10) as stream:
+        return [_entity(root) for root in stream]
+
+
+_TEMPORAL_READS = pytest.mark.parametrize(
+    ("model", "port", "query", "root_edge", "child_key", "child_edge", "pin"),
+    [
+        pytest.param(
+            INVOICE,
+            _invoice_port,
+            _INVOICE_QUERY,
+            Edge(tx_time=_OPENED),
+            "lines",
+            Edge(tx_time=_LINE_OPENED),
+            Pin(tx_time=LATEST),
+            id="transaction-time",
+        ),
+        pytest.param(
+            POLICY,
+            _policy_port,
+            _POLICY_QUERY,
+            Edge(tx_time=_OPENED, valid_time=_EFFECTIVE),
+            "coverages",
+            Edge(tx_time=_LINE_OPENED, valid_time=_COVERED),
+            Pin(tx_time=LATEST, valid_time=_READ_AT),
+            id="bitemporal",
+        ),
+    ],
+)
+
+
+@_TEMPORAL_READS
+@pytest.mark.parametrize("delivery", ["eager", "streamed"])
+def test_a_wire_read_node_answers_its_own_milestone_rather_than_its_pin(
+    model: DomainModel,
+    port: Callable[[], QueuePort],
+    query: Mapping[str, object],
+    root_edge: Edge,
+    child_key: str,
+    child_edge: Edge,
+    pin: Pin,
+    delivery: str,
+) -> None:
+    (root,) = _published_roots(model, port(), query, delivery)
+    (child,) = (_entity(node) for node in _sequence(root[child_key]))
+    # Root and included node each stand on their own milestone, while both
+    # carry the one perspective the read looked from.
+    assert edge_of(root) == root_edge
+    assert edge_of(child) == child_edge
+    assert wire_pin_of(root) == wire_pin_of(child) == pin
+
+
+def test_wire_inspection_reconstructs_an_equal_edge_and_leaves_the_node_as_published() -> None:
+    port = _policy_port()
+    (root,) = _published_roots(POLICY, port, _POLICY_QUERY, "eager")
+    published = dict(root)
+    first = edge_of(root)
+    assert edge_of(root) == first
+    assert dict(root) == published
+    assert stored_entity_of(root) == EntityIdentity("parallax.compatibility", "Policy")
+    assert len(port.executed) == 2
+
+
+def _hydrated_branch() -> InvalidData[WireEntity]:
+    port = QueuePort(
+        [
+            [
+                {
+                    "br_id": 1,
+                    "name": "Central",
+                    "address": {"street": "1 Main", "city": "Oslo", "phones": {"type": "x"}},
+                    "from_z": _EFFECTIVE,
+                    "thru_z": INFINITY,
+                    "in_z": _OPENED,
+                    "out_z": INFINITY,
+                }
+            ]
+        ]
+    )
+    query: Mapping[str, object] = {
+        "target": "Branch",
+        "predicate": {"true": {}},
+        "temporal": {"valid-time": {"asOf": "latest"}, "transaction-time": {"asOf": "latest"}},
+    }
+    db = own_root(Database.connect(port, BRANCH)).using_database_login()
+    published = db.wire.find(query).checked().result()
+    assert isinstance(published, InvalidData)
+    return published
+
+
+def test_a_hydrated_diagnostic_node_answers_its_milestone_without_write_authority() -> None:
+    record = _hydrated_branch()
+    assert record.data is not None
+    assert {issue.code for issue in record.issues} == {"stored-data-many-wrong-kind"}
+    assert edge_of(record.data) == Edge(tx_time=_OPENED, valid_time=_EFFECTIVE)
+    # Inspection is structural: the node remains no keyed write source.
+    assert stored_entity_of(record.data) is None
+    assert read_evidence_of(record.data) is None
+
+
+def test_a_non_temporal_wire_read_node_stands_on_no_milestone() -> None:
+    root = _entity(
+        _wire_database(QueuePort([[_order_row()]]))
+        .wire.find({"target": "Order", "predicate": {"true": {}}})
+        .result()
+    )
+    with pytest.raises(SnapshotInspectionError) as refusal:
+        edge_of(root)
+    assert refusal.value.code == "snapshot-edge-unavailable"
+    assert refusal.value.operation == "edge_of"
+    assert refusal.value.entity == EntityIdentity("parallax.compatibility", "Order")
+
+
+def _unpublished_inputs() -> dict[str, object]:
+    (root,) = _published_roots(POLICY, _policy_port(), _POLICY_QUERY, "eager")
+    record = _hydrated_branch()
+    assert record.data is not None
+    return {
+        "converted": dict(root),
+        "pickled": pickle.loads(pickle.dumps(root)),
+        "matching-keys": {"txStart": root["txStart"], "validStart": root["validStart"]},
+        "nested-value-object": record.data["address"],
+        "invalid-record": record,
+    }
+
+
+@pytest.mark.parametrize(
+    "name", ["converted", "pickled", "matching-keys", "nested-value-object", "invalid-record"]
+)
+def test_a_value_no_wire_read_published_is_not_inspectable(name: str) -> None:
+    with pytest.raises(SnapshotInspectionError) as refusal:
+        edge_of(_unpublished_inputs()[name])
+    assert refusal.value.code == "snapshot-node-required"
+    assert refusal.value.operation == "edge_of"
+    assert refusal.value.entity is None
+
+
+def test_the_node_an_insert_answered_is_not_inspectable_even_for_a_temporal_entity() -> None:
+    refusals: list[SnapshotInspectionError] = []
+
+    def fn(tx: TxnContext) -> None:
+        node = tx.wire.insert(
+            "parallax.compatibility.Balance", {"id": 1, "acctNum": "A-1", "value": "5.00"}
+        )
+        with pytest.raises(SnapshotInspectionError) as refusal:
+            edge_of(node)
+        refusals.append(refusal.value)
+
+    db_for(BALANCE, ScriptedAdapter(Transact(Write()))).transact(fn)
+    (refusal,) = refusals
+    assert refusal.code == "snapshot-node-required"
+    assert refusal.operation == "edge_of"
+    assert refusal.entity == EntityIdentity("parallax.compatibility", "Balance")

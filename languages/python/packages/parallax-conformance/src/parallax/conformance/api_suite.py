@@ -19,6 +19,7 @@ from parallax.conformance import (
 )
 from parallax.conformance.claim import SNAPSHOT_CLAIM, Claim
 from parallax.conformance.graph_stories import GRAPH_STORIES, graph_story_snippet
+from parallax.conformance.read_models import Balance
 from parallax.conformance.read_stories import READ_STORIES, read_story_snippet
 from parallax.conformance.stories import WRITE_STORIES, story_snippet
 from parallax.conformance.story_models import Account, OrderStatus
@@ -71,6 +72,14 @@ RECIPES: Final[list[Recipe]] = [
             inspect.getsource(Account)
             + "\n\n"
             + inspect.getsource(snapshot_recipes.publish_typed_read_as_wire)
+        ),
+    ),
+    Recipe(
+        title="Condition a Wire write on the milestone a read returned",
+        snippet=(
+            inspect.getsource(Balance)
+            + "\n\n"
+            + inspect.getsource(snapshot_recipes.condition_a_wire_write_on_the_milestone_it_read)
         ),
     ),
     Recipe(
