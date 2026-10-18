@@ -68,7 +68,6 @@ from parallax.core.unit_work import (
     PredicateWrite,
     RetainedObservation,
     StaleWriteError,
-    UnitOfWork,
     WriteAssignment,
     WriteEffectError,
     WriteEvidenceError,
@@ -1699,23 +1698,89 @@ def test_a_groups_writes_buffered_before_one_flush_compose_in_its_one_buffer() -
     assert {emission.case_pointer for emission in compiled} == {"/scenario/1/write"}
 
 
-@pytest.mark.parametrize("case_id", ["m-opt-lock-027", "m-temporal-write-042"])
-def test_a_caller_addressed_entry_compiles_through_buffering_rather_than_its_admission(
-    case_id: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # The compile lane buffers a target carrier as it stands: an authored
-    # `ifVersion` or `ifTxStart` is the caller's condition, never proof of
-    # stored state, so the admission that reads and judges a stored row is
-    # never reached.
-    def refused(*_arguments: object) -> None:
-        raise AssertionError("compiling a target entry reads no stored row")
+def _counting_case_state_reads(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
+    """How many target and coverage reads every case state answers from here
+    on, by kind."""
+    counts = {"target": 0, "coverage": 0}
 
-    monkeypatch.setattr(UnitOfWork, "buffer_target", refused)
+    def counted(kind: str, read: Callable[..., list[tuple[object, ...]]]) -> Any:
+        def counting(*arguments: object) -> list[tuple[object, ...]]:
+            counts[kind] += 1
+            return read(*arguments)
+
+        return counting
+
+    monkeypatch.setattr(
+        SimulatedTemporalStore,
+        "target_rows",
+        counted("target", SimulatedTemporalStore.target_rows),
+    )
+    monkeypatch.setattr(
+        SimulatedTemporalStore,
+        "coverage_rows",
+        counted("coverage", SimulatedTemporalStore.coverage_rows),
+    )
+    return counts
+
+
+@pytest.mark.parametrize(
+    ("case_id", "reads"),
+    [
+        pytest.param("m-opt-lock-027", {"target": 0, "coverage": 0}, id="optimistic-version"),
+        pytest.param("m-temporal-write-042", {"target": 0, "coverage": 1}, id="optimistic-window"),
+        pytest.param("m-opt-lock-029", {"target": 1, "coverage": 0}, id="locking-amend"),
+        pytest.param("m-opt-lock-040", {"target": 1, "coverage": 0}, id="locking-delete"),
+        pytest.param("m-temporal-write-043", {"target": 1, "coverage": 0}, id="locking-replace"),
+    ],
+)
+def test_a_caller_addressed_entry_compiles_through_target_admission(
+    case_id: str, reads: dict[str, int], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # An authored `ifVersion` or `ifTxStart` is the caller's condition, never
+    # proof of stored state: under Locking the attempt's own admission confirms
+    # it against the row the case state holds, and a temporal row it read
+    # whole is the flush's coverage, so no other read follows. Optimistic
+    # admission reads nothing.
+    counts = _counting_case_state_reads(monkeypatch)
     case = _load_case(case_id)
     compiled, _round_trips = scenario.compile_write_sequence_case(case, "postgres")
     assert [emission.sql for emission in compiled] == [
         sql for sql, _binds in write_golden_statements(case)
     ]
+    assert counts == reads
+
+
+def test_a_locking_target_entry_whose_stored_row_moved_is_refused_rather_than_compiled() -> None:
+    # The case state knows a Non-Temporal row only as its fixtures stored it, so
+    # once an earlier entry may have changed it a Locking confirmation has no
+    # row to answer with.
+    case = _synthetic_write(
+        "writeSequence",
+        {
+            "given": {"fixtures": True},
+            "when": {
+                "uow": {"concurrency": "locking"},
+                "writeSequence": [
+                    {
+                        "mutation": "amend",
+                        "entity": "parallax.compatibility.Account",
+                        "statements": 1,
+                        "row": {"id": 1, "balance": "90.00"},
+                        "ifVersion": 1,
+                    },
+                    {
+                        "mutation": "amend",
+                        "entity": "parallax.compatibility.Account",
+                        "statements": 1,
+                        "row": {"id": 1, "balance": "80.00"},
+                        "ifVersion": 2,
+                    },
+                ],
+            },
+        },
+    )
+    with pytest.raises(EngineError, match="no current account of the row"):
+        scenario.compile_write_sequence_case(case, "postgres")
 
 
 def test_a_write_its_simulated_unit_of_work_refuses_to_admit_is_an_engine_error() -> None:
@@ -4429,17 +4494,54 @@ def test_a_target_replacement_step_completes_what_its_row_omits() -> None:
     assert successor[1][-2:] == [JsonDocument(None), JsonDocument(())]
 
 
-def test_a_locking_target_step_acquires_its_row_before_it_writes() -> None:
+@pytest.mark.parametrize(
+    ("case_id", "written"),
+    [
+        ("m-opt-lock-029", "update account set balance = ?, version = ? where id = ?"),
+        ("m-opt-lock-040", "delete from account where id = ?"),
+    ],
+)
+def test_a_locking_target_step_acquires_its_row_before_it_writes(
+    case_id: str, written: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    counts = _counting_case_state_reads(monkeypatch)
     port = FakeWritePort(
         find_rows=[{"id": 1, "owner": "Ada", "balance": decimal.Decimal("100.00"), "version": 1}]
     )
     _emissions, _table_state, round_trips = scenario.run_write_sequence_case(
-        _load_case("m-opt-lock-029"), port
+        _load_case(case_id), port
     )
     assert round_trips == 2
-    assert [sql for sql, _ in port.writes] == [
-        POSTGRES.to_driver_sql("update account set balance = ?, version = ? where id = ?")
-    ]
+    assert [sql for sql, _ in port.writes] == [POSTGRES.to_driver_sql(written)]
+    # The case state tracking the step confirmed it against its own initial
+    # row, not against the row the execution read.
+    assert counts == {"target": 1, "coverage": 0}
+
+
+def test_a_locking_target_replacement_step_reuses_the_row_it_acquired(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    counts = _counting_case_state_reads(monkeypatch)
+    jan = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+    port = FakeWritePort(
+        find_rows=[
+            {
+                "pos_id": 1,
+                "acct_num": "A",
+                "val": decimal.Decimal("100.00"),
+                "from_z": jan,
+                "thru_z": INFINITY,
+                "in_z": jan,
+                "out_z": INFINITY,
+            }
+        ]
+    )
+    _emissions, _table_state, round_trips = scenario.run_write_sequence_case(
+        _load_case("m-temporal-write-043"), port
+    )
+    assert round_trips == 4
+    assert [sql.split(" ", 1)[0] for sql, _ in port.writes] == ["insert", "update", "insert"]
+    assert counts == {"target": 1, "coverage": 0}
 
 
 def test_a_bounded_temporal_target_step_reads_its_coverage_then_writes_its_window() -> None:

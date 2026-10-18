@@ -1214,7 +1214,10 @@ class _SimulatedUnit:
     A write it buffers carries its supplied observation as a plain value
     (:func:`_buffered`), so it consumes no authority a real read retained, and
     a write that unit of work refuses to admit is refused as the case's
-    composition rather than leaked as the production refusal.
+    composition rather than leaked as the production refusal. A
+    caller-addressed write is buffered as the attempt's own is, through
+    :meth:`~parallax.core.unit_work.UnitOfWork.buffer_target`: under Locking it
+    is confirmed against the case state's stored row.
 
     ``inserted`` holds the keys temporal inserts opened in this unit's pending
     buffer: a later write of one, resolved into the same buffer, composes onto
@@ -1238,8 +1241,12 @@ class _SimulatedUnit:
         return self._steps.statements
 
     def buffer(self, write: _ResolvedWrite) -> None:
+        instruction = write.instruction
         try:
-            self._uow.buffer(_buffered(write.instruction, write.supplied_observation, self._model))
+            if isinstance(instruction, PreparedTargetWrite):
+                self._uow.buffer_target(instruction)
+            else:
+                self._uow.buffer(_buffered(instruction, write.supplied_observation, self._model))
         except WriteEvidenceError as refusal:
             raise EngineError(
                 f"a simulated transaction cannot admit this write beside the ones it already "
@@ -1275,9 +1282,10 @@ def _simulated_unit(
     ``build_write_planner`` factory, over the attempt's lifetime
     implementation, at ``tx_instant``. Its steps run through simulated step
     execution over ``store``, which records the statements they lower to where
-    ``record_statements``; a deferred range or group reads its coverage from
-    ``store``. ``store`` is the caller's to stage: a transaction's rows advance
-    as its flushes execute and stand or fall with the caller's
+    ``record_statements``; a deferred range or group reads its coverage, and a
+    Locking caller-addressed write its stored row, from ``store``. ``store``
+    is the caller's to stage: a transaction's rows advance as its flushes
+    execute and stand or fall with the caller's
     :meth:`~SimulatedTemporalStore.transaction`. The lifetime closes however
     the transaction ends, and a failure or ``rollback`` discards what the unit
     of work holds.
@@ -1295,7 +1303,7 @@ def _simulated_unit(
         clock=_pinned_clock(tx_instant),
         meta=model,
         execute_write_steps=steps,
-        acquire_rows=store.coverage_acquisition(model),
+        acquire_rows=store.acquisition(model),
         planner=planner,
         actor_identity=_PLANNING_ACTOR,
         evidence_policy_for=opt_lock.view(model).required_key,

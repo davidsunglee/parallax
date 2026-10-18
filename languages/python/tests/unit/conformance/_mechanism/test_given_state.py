@@ -33,7 +33,13 @@ from parallax.conformance._mechanism.model_facts import (
     load_case_setup_metamodel,
 )
 from parallax.conformance.simulated_temporal_store import SimulatedTemporalStore
-from parallax.core._execution._unit_work.acquisition import CoverageReadRequest, CoverageTerm
+from parallax.core import inheritance
+from parallax.core._execution._unit_work.acquisition import (
+    CoverageReadRequest,
+    CoverageTerm,
+    TargetReadRequest,
+    consume_target,
+)
 from parallax.core.base import INFINITY
 from parallax.core.db_port import (
     DatabaseConnection,
@@ -46,6 +52,7 @@ from parallax.core.db_port import (
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.metamodel import AttributeIdentity
 from parallax.core.temporal_read import TimeInterval
+from parallax.core.write_plan import ObjectKey
 from tests._support.db_port import body_outcome
 from tests.unit.conformance._coverage_rows_support import coverage_members, read_coverage
 from tests.unit.conformance._recording_ports import FakeWritePort
@@ -394,3 +401,36 @@ def test_fixture_seeding_tracks_current_milestones_with_managed_axis_ends() -> N
         (decimal.Decimal("100.00"), dt.datetime(2024, 6, 1, tzinfo=dt.UTC), INFINITY),
         (decimal.Decimal("200.00"), INFINITY, INFINITY),
     ]
+
+
+@pytest.mark.parametrize(
+    ("given", "stored"),
+    [({"fixtures": True}, 1), ({}, 0)],
+    ids=["fixtures", "starts-empty"],
+)
+def test_fixture_seeding_establishes_the_initial_non_temporal_rows(
+    given: dict[str, object], stored: int
+) -> None:
+    # A writeSequence loads the model's fixtures only when it opts in; without
+    # them its initial state is known empty rather than unknown.
+    case = case_format.Case(
+        path=Path("m-unit-work-999-synthetic.yaml"),
+        case_id="m-unit-work-999",
+        shape="writeSequence",
+        tags=("m-unit-work", "slice-snapshot-1"),
+        model="models/account.yaml",
+        document={"model": "models/account.yaml", "given": given},
+    )
+    model = load_case_metamodel(case)
+    entity = case_entity(model, "parallax.compatibility.Account")
+    store = SimulatedTemporalStore()
+    seed_store_from_fixtures(case, model, store)
+    request = TargetReadRequest(entity, ObjectKey(entity.identity, (("id", 1),)), None)
+    count, row, _document = store.acquisition(model)(request, consume_target)
+    assert count == stored
+    if stored:
+        assert row is not None
+        position = inheritance.view(model).entity(entity.identity)
+        assert position is not None
+        version = position.member_selection.position(AttributeIdentity(entity.identity, "version"))
+        assert row[version] == 1

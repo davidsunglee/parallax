@@ -5,8 +5,9 @@ observed current milestone are proven end to end through the engine's own
 writeSequence/scenario tests (``test_engine.py``, ``test_compile_sweep.py``,
 ``test_run_sweep.py``); this module pins the store's OWN seam directly —
 fixture seeding, resolution, addressing a row by its complete address, applying
-planned steps to the rows, and the transaction that restores them — including
-the disambiguation refusals no reachable corpus case witnesses.
+planned steps to the rows, the row acquisition it answers, and the transaction
+that restores them — including the disambiguation refusals no reachable corpus
+case witnesses.
 """
 
 from __future__ import annotations
@@ -14,8 +15,8 @@ from __future__ import annotations
 import contextlib
 import datetime as dt
 import decimal
-from collections.abc import Generator, Mapping
-from typing import cast
+from collections.abc import Callable, Generator, Iterator, Mapping, Sequence
+from typing import Final, cast
 
 import pytest
 
@@ -24,17 +25,26 @@ from parallax.conformance.scripted_clock import FixedClock
 from parallax.conformance.simulated_temporal_store import (
     AmbiguousObservationError,
     MilestoneEdgeError,
+    SimulatedStoreError,
     SimulatedTemporalStore,
 )
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work import instructions
-from parallax.core._execution._unit_work.acquisition import CoverageReadRequest, CoverageTerm
+from parallax.core._execution._unit_work.acquisition import (
+    CompletionRequest,
+    CoverageReadRequest,
+    CoverageTerm,
+    RowRequest,
+    TargetReadRequest,
+)
 from parallax.core._execution._unit_work.instructions import KeyedWrite, PreparedKeyedWrite
 from parallax.core._execution._unit_work.write_planner import compose_writes
 from parallax.core.base import INFINITY
+from parallax.core.inheritance import EntityMemberSelection
 from parallax.core.metamodel import (
     AttributeIdentity,
     EntityIdentity,
+    EntityMetadata,
     Metamodel,
     ValueObjectIdentity,
 )
@@ -45,9 +55,11 @@ from parallax.core.unit_work import (
     WritePlanningRequest,
     buffered_write,
 )
+from parallax.core.write_plan import ObjectKey, PredecessorRow
 from parallax.core.write_plan.plan import PlannedWrites
 from parallax.core.write_plan.steps import INFINITY as OPEN_END
 from parallax.core.write_plan.steps import (
+    MAX_PLUS_ONE,
     MISSING_TARGET,
     NEW_LINEAGE,
     OPTIMISTIC_CONFLICT,
@@ -67,7 +79,9 @@ from parallax.core.write_plan.steps import (
     PlannedTemporalGuard,
     PlannedTemporalRemoval,
     PlannedTemporalRevision,
+    PlannedUpdate,
     TemporalGate,
+    Versioned,
     WriteRow,
 )
 from tests.unit.conformance._coverage_rows_support import coverage_members, read_coverage
@@ -811,3 +825,253 @@ def test_an_uncommitted_transaction_forgets_the_out_of_band_statements_it_ran(
         store.note_out_of_band_write()
         assert not store.has_complete_stored_row(POSITION, POSITION_ENTITY, {"id": 1})
     assert store.has_complete_stored_row(POSITION, POSITION_ENTITY, {"id": 1})
+
+
+# --------------------------------------------------------------------------- #
+# A caller-addressed write's target read answers what the case state holds.   #
+# --------------------------------------------------------------------------- #
+ACCOUNT = models.load_models()["account"]
+_ACCOUNT_ENTITY = ACCOUNT.entity(EntityIdentity("parallax.compatibility", "Account"))
+assert _ACCOUNT_ENTITY is not None
+ACCOUNT_ENTITY = _ACCOUNT_ENTITY
+_ADA = {"id": 1, "owner": "Ada", "balance": "100.00", "version": 1}
+_LINUS = {"id": 2, "owner": "Linus", "balance": "250.00", "version": 3}
+
+
+def _accounts(*rows: Mapping[str, object]) -> SimulatedTemporalStore:
+    """A store knowing ``rows`` as the case's initial Account fixtures, each
+    decoded as case ingress decodes a fixture."""
+    store = SimulatedTemporalStore()
+    store.seed_initial_rows(
+        ACCOUNT,
+        [
+            (
+                ACCOUNT_ENTITY,
+                [_case_ingress.decode_case_row(row, ACCOUNT, ACCOUNT_ENTITY) for row in rows],
+            )
+        ],
+    )
+    return store
+
+
+def _target(
+    entity: EntityMetadata, key: int, valid_from: dt.datetime | None = None
+) -> TargetReadRequest:
+    return TargetReadRequest(
+        entity,
+        ObjectKey(entity.identity, (("id", key),)),
+        valid_from,
+        retains=valid_from is not None,
+    )
+
+
+type _Answer = tuple[int, list[dict[str, object]], Sequence[object | None] | None]
+
+
+def _every_row(
+    request: RowRequest,
+    selection: EntityMemberSelection,
+    rows: Iterator[tuple[object, ...]],
+    absent: object,
+    documents: Sequence[object | None] | None,
+    root_count: int,
+) -> _Answer:
+    """How many roots the read answered, each row's present members by
+    declared name, and the documents beside them."""
+    del request
+    members = [PredecessorRow.over_row(selection, row, None, absent).members for row in rows]
+    return (
+        root_count,
+        [{name: value for name, value in row.items() if value is not absent} for row in members],
+        documents,
+    )
+
+
+def _read(store: SimulatedTemporalStore, model: Metamodel, request: RowRequest) -> _Answer:
+    return store.acquisition(model)(request, _every_row)
+
+
+def test_a_non_temporal_target_read_answers_the_initial_key_and_revision() -> None:
+    store = _accounts(_ADA, _LINUS)
+    assert _read(store, ACCOUNT, _target(ACCOUNT_ENTITY, 2)) == (
+        1,
+        [{"id": 2, "version": 3}],
+        None,
+    )
+
+
+def test_a_non_temporal_target_read_counts_every_initial_row_of_its_key() -> None:
+    # The count is the consumer's to judge before any revision: two stored rows
+    # of one key are Cardinality Corruption whatever versions they hold.
+    store = _accounts(_ADA, {**_ADA, "owner": "Twin", "version": 7})
+    count, rows, _documents = _read(store, ACCOUNT, _target(ACCOUNT_ENTITY, 1))
+    assert (count, [row["version"] for row in rows]) == (2, [1, 7])
+
+
+@pytest.mark.parametrize("fixtures", [(), (_LINUS,)], ids=["no-fixtures", "other-key"])
+def test_a_non_temporal_target_read_of_a_key_no_fixture_stores_finds_no_row(
+    fixtures: tuple[Mapping[str, object], ...],
+) -> None:
+    assert _read(_accounts(*fixtures), ACCOUNT, _target(ACCOUNT_ENTITY, 1)) == (0, [], None)
+
+
+def test_a_non_temporal_target_read_of_a_row_stored_without_its_revision_is_refused() -> None:
+    store = _accounts({"id": 1, "owner": "Ada", "balance": "100.00"})
+    with pytest.raises(SimulatedStoreError, match="without its revision"):
+        _read(store, ACCOUNT, _target(ACCOUNT_ENTITY, 1))
+
+
+def test_a_non_temporal_target_read_of_unseeded_state_is_refused_rather_than_empty() -> None:
+    with pytest.raises(SimulatedStoreError, match="no current account"):
+        _read(SimulatedTemporalStore(), ACCOUNT, _target(ACCOUNT_ENTITY, 1))
+
+
+def _account(name: str) -> AttributeIdentity:
+    return AttributeIdentity(ACCOUNT_ENTITY.identity, name)
+
+
+def _account_update(key: int) -> PlannedUpdate:
+    return PlannedUpdate(
+        entity=ACCOUNT_ENTITY.identity,
+        target=KeyTarget((_account("id"),), ((key,),)),
+        assignments=PlannedAssignments(attributes={_account("balance"): decimal.Decimal("1.00")}),
+        concurrency=Versioned(_account("version"), UNGATED),
+        affected_rows=ExactCount(1, STALE_WRITE),
+    )
+
+
+def _account_insert(key: object) -> PlannedInsert:
+    row = PlannedRow(
+        attributes={
+            _account("id"): key,
+            _account("owner"): "New",
+            _account("balance"): decimal.Decimal("0.00"),
+            _account("version"): 1,
+        }
+    )
+    return PlannedInsert(entity=ACCOUNT_ENTITY.identity, entries=(WriteRow(row, NEW_LINEAGE),))
+
+
+_ACCOUNT_DELETE: Final = PlannedDelete(
+    entity=ACCOUNT_ENTITY.identity,
+    target=KeyTarget((_account("id"),), ((1,),)),
+    concurrency=UNVERSIONED,
+    affected_rows=ExactCount(1, MISSING_TARGET),
+)
+_CHANGES: Final[Mapping[str, tuple[Callable[[SimulatedTemporalStore], None], set[int]]]] = {
+    "update": (lambda store: store.apply(ACCOUNT, _account_update(1)), {1}),
+    "delete": (lambda store: store.apply(ACCOUNT, _ACCOUNT_DELETE), {1}),
+    "insert": (lambda store: store.apply(ACCOUNT, _account_insert(3)), {3}),
+    "generated-insert": (
+        lambda store: store.apply(ACCOUNT, _account_insert(MAX_PLUS_ONE)),
+        {1, 2, 3},
+    ),
+    "materialized": (lambda store: store.note_materialized_write(ACCOUNT_ENTITY), {1, 2, 3}),
+    "out-of-band": (lambda store: store.note_out_of_band_write(), {1, 2, 3}),
+}
+"""Each change that may move an initial Account row, beside the keys whose
+initial rows it leaves unknown."""
+
+
+@pytest.mark.parametrize("change", list(_CHANGES))
+def test_a_change_that_may_move_an_initial_row_leaves_its_target_read_unavailable(
+    change: str,
+) -> None:
+    # A Non-Temporal row's later state is never simulated: once a change may
+    # have moved it, its fixtures are neither returned stale nor taken as absent.
+    store = _accounts(_ADA, _LINUS)
+    applied, changed = _CHANGES[change]
+    applied(store)
+    for key in (1, 2, 3):
+        request = _target(ACCOUNT_ENTITY, key)
+        if key in changed:
+            with pytest.raises(SimulatedStoreError, match="no current account"):
+                _read(store, ACCOUNT, request)
+        else:
+            assert _read(store, ACCOUNT, request)[0] == (0 if key == 3 else 1)
+
+
+@pytest.mark.parametrize("ending", _ENDINGS)
+def test_an_uncommitted_transaction_restores_what_the_initial_rows_still_answer(
+    ending: str,
+) -> None:
+    store = _accounts(_ADA, _LINUS)
+    with _ended(store, ending):
+        store.apply(ACCOUNT, _account_update(1))
+        store.note_materialized_write(ACCOUNT_ENTITY)
+    assert _read(store, ACCOUNT, _target(ACCOUNT_ENTITY, 1))[1] == [{"id": 1, "version": 1}]
+
+
+@pytest.mark.parametrize("ending", _ENDINGS)
+def test_out_of_band_statements_before_a_transaction_outlast_its_rollback(ending: str) -> None:
+    store = _accounts(_ADA)
+    store.note_out_of_band_write()
+    with _ended(store, ending):
+        pass
+    with pytest.raises(SimulatedStoreError, match="no current account"):
+        _read(store, ACCOUNT, _target(ACCOUNT_ENTITY, 1))
+
+
+@pytest.mark.parametrize(
+    ("valid_from", "values"),
+    [
+        pytest.param(_JAN, ["100.00"], id="head-start"),
+        pytest.param(_MAR, ["100.00"], id="inside-head"),
+        pytest.param(_JUN, ["200.00"], id="half-open-at-tail"),
+        pytest.param(dt.datetime(2023, 1, 1, tzinfo=dt.UTC), [], id="before-every-rectangle"),
+    ],
+)
+def test_a_temporal_target_read_selects_the_rectangles_current_at_its_valid_from(
+    valid_from: dt.datetime, values: list[str]
+) -> None:
+    store = SimulatedTemporalStore()
+    store.seed_fixtures(POSITION, POSITION_ENTITY, [_HEAD, _TAIL, {**_TAIL, "id": 2}])
+    count, rows, documents = _read(store, POSITION, _target(POSITION_ENTITY, 1, valid_from))
+    assert (count, documents) == (len(values), None)
+    assert [row["value"] for row in rows] == [float(value) for value in values]
+    assert all(row.keys() == _HEAD.keys() for row in rows)
+
+
+def test_a_temporal_target_read_counts_every_rectangle_holding_its_valid_from() -> None:
+    overlapping = {**_TAIL, "validStart": _MAR, "value": 300.00}
+    store = SimulatedTemporalStore()
+    store.seed_fixtures(POSITION, POSITION_ENTITY, [_HEAD, overlapping])
+    assert _read(store, POSITION, _target(POSITION_ENTITY, 1, _JUN))[0] == 1
+    assert (
+        _read(store, POSITION, _target(POSITION_ENTITY, 1, dt.datetime(2024, 4, 1, tzinfo=dt.UTC)))[
+            0
+        ]
+        == 2
+    )
+
+
+def test_a_completion_answers_the_retained_rows_without_reading_the_store(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = SimulatedTemporalStore()
+    store.seed_fixtures(POSITION, POSITION_ENTITY, [_HEAD])
+    taken: list[tuple[object, ...]] = []
+
+    def retained(
+        request: TargetReadRequest,
+        selection: EntityMemberSelection,
+        rows: Iterator[tuple[object, ...]],
+        absent: object,
+        documents: Sequence[object | None] | None,
+        root_count: int,
+    ) -> None:
+        del request, selection, absent, documents, root_count
+        taken.extend(rows)
+
+    store.acquisition(POSITION)(_target(POSITION_ENTITY, 1, _MAR), retained)
+
+    def unread(*_arguments: object) -> list[tuple[object, ...]]:
+        raise AssertionError("a completion reads nothing")
+
+    monkeypatch.setattr(SimulatedTemporalStore, "coverage_rows", unread)
+    monkeypatch.setattr(SimulatedTemporalStore, "target_rows", unread)
+    documents = (None,)
+    completion = CompletionRequest(POSITION_ENTITY, _position("id"), tuple(taken), documents)
+    count, rows, answered = _read(store, POSITION, completion)
+    assert (count, answered) == (1, documents)
+    assert rows[0]["value"] == _HEAD["value"]

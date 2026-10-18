@@ -2,16 +2,18 @@ from __future__ import annotations
 
 import contextlib
 import datetime as dt
-from collections.abc import Generator, Mapping, Sequence
+from collections.abc import Generator, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Final, cast
 
 from parallax.core import inheritance, temporal_read
 from parallax.core._execution._unit_work.acquisition import (
     AcquireRows,
+    CompletionRequest,
     CoverageReadRequest,
     RowConsumer,
     RowRequest,
+    TargetReadRequest,
 )
 from parallax.core.base import INFINITY, normalize_instant
 from parallax.core.inheritance import EntityMemberSelection
@@ -35,12 +37,17 @@ from parallax.core.write_plan import (
 )
 from parallax.core.write_plan.steps import (
     Finite,
+    KeyTarget,
+    MaxPlusOne,
     MilestoneTarget,
     PlannedAssignments,
     PlannedClose,
+    PlannedDelete,
     PlannedTemporalRemoval,
     PlannedTemporalRevision,
+    PlannedUpdate,
     PlannedWrite,
+    SelfIncrement,
 )
 
 __all__ = [
@@ -65,6 +72,11 @@ _ObjectKey = tuple[str, tuple[object, ...], temporal_read.Edge]
 # `None` — what a Milestone Target names a row by. A planned step carries no
 # axis start, so this, not the slot, is how a step finds the row it acts on.
 _Address = tuple[str, tuple[object, ...], tuple[dt.datetime | None, ...]]
+
+# One Non-Temporal object as the case's initial stored state knows it: its
+# family root and key values. The key is declared on the family root, so it
+# names one object whichever family member stores it.
+_InitialObject = tuple[EntityIdentity, tuple[object, ...]]
 
 
 class SimulatedStoreError(ValueError):
@@ -105,6 +117,15 @@ class _StoredRow:
 
 
 @dataclass(frozen=True, slots=True)
+class _InitialRow:
+    """One Non-Temporal row the case's fixtures stored: the family member it
+    is stored as, and its key and revision members by declared name."""
+
+    entity: EntityIdentity
+    members: Mapping[str, object]
+
+
+@dataclass(frozen=True, slots=True)
 class _Snapshot:
     """The canonical rows and accounting flags one simulated transaction
     restores; the address view is rebuilt from the rows rather than kept."""
@@ -113,6 +134,8 @@ class _Snapshot:
     overtaken: set[_ObjectKey]
     materialized: set[_ObjectKey]
     out_of_band: bool
+    changed_objects: set[_InitialObject]
+    changed_families: set[EntityIdentity]
 
 
 class SimulatedTemporalStore:
@@ -127,9 +150,24 @@ class SimulatedTemporalStore:
     every change, so a planned step finds the row it acts on without a scan.
     These are simulated database rows, not an attempt's ownership: what a unit
     of work owns is its own to track.
+
+    Of a Non-Temporal Entity it holds only what the case's initial fixtures
+    stored of each object's key and revision (:meth:`seed_initial_rows`), and
+    only until a change may have moved it: no later state of such a row is
+    simulated, so what a write may have changed is unknown rather than
+    recomputed.
     """
 
-    __slots__ = ("_current", "_located", "_materialized", "_out_of_band", "_overtaken")
+    __slots__ = (
+        "_changed_families",
+        "_changed_objects",
+        "_current",
+        "_initial",
+        "_located",
+        "_materialized",
+        "_out_of_band",
+        "_overtaken",
+    )
 
     def __init__(self) -> None:
         self._current: dict[_ObjectKey, _StoredRow] = {}
@@ -137,6 +175,9 @@ class SimulatedTemporalStore:
         self._out_of_band = False
         self._overtaken: set[_ObjectKey] = set()
         self._materialized: set[_ObjectKey] = set()
+        self._initial: Mapping[_InitialObject, tuple[_InitialRow, ...]] | None = None
+        self._changed_objects: set[_InitialObject] = set()
+        self._changed_families: set[EntityIdentity] = set()
 
     def has_complete_stored_row(
         self,
@@ -207,7 +248,12 @@ class SimulatedTemporalStore:
         changed in place.
         """
         snapshot = _Snapshot(
-            dict(self._current), set(self._overtaken), set(self._materialized), self._out_of_band
+            dict(self._current),
+            set(self._overtaken),
+            set(self._materialized),
+            self._out_of_band,
+            set(self._changed_objects),
+            set(self._changed_families),
         )
         try:
             yield
@@ -232,10 +278,12 @@ class SimulatedTemporalStore:
         and it is the tightest bound available without the plan.
 
         Milestones of OTHER entities are untouched: a predicate names one target,
-        and a write of that target moves no other table's rows.
+        and a write of that target moves no other table's rows. What the initial
+        fixtures stored of a Non-Temporal ``entity`` is no longer known either.
         """
         name = entity.identity.name
         self._materialized |= {key for key in self._current if key[0] == name}
+        self._changed_families.add(entity.identity)
 
     def note_out_of_band_write(self) -> None:
         """Record that statements outside this store's own accounting ran
@@ -246,7 +294,8 @@ class SimulatedTemporalStore:
         bound), and every key with none is left with no account of a row they
         may have written. Both states are one-way for the milestones they name —
         the store never re-reads — and both end for a key the moment a later
-        write opens a milestone of it.
+        write opens a milestone of it. No initial Non-Temporal row is known
+        afterwards.
         """
         self._out_of_band = True
         self._overtaken |= set(self._current)
@@ -256,7 +305,8 @@ class SimulatedTemporalStore:
     ) -> None:
         """Seed the store from a case's loaded fixture rows for ``entity``
         (`given.fixtures: true`, or a scenario case's own default
-        lifecycle load). A non-temporal entity's rows are a no-op.
+        lifecycle load). A non-temporal entity's rows are ignored here: what is
+        known of them is :meth:`seed_initial_rows`'s.
 
         Each row holds managed members, its open axis ends
         :data:`~parallax.core.base.INFINITY`, as case ingress decodes a fixture.
@@ -272,6 +322,33 @@ class SimulatedTemporalStore:
             if row.get(tx_end) is not INFINITY:
                 continue  # not current on Transaction Time
             self._track(layout, TemporalObservation(predecessor=PredecessorRow(members=row)))
+
+    def seed_initial_rows(
+        self,
+        model: Metamodel,
+        fixtures: Iterable[tuple[EntityMetadata, Sequence[Mapping[str, object]]]],
+    ) -> None:
+        """Retain the key and revision of each Non-Temporal row the case's
+        fixture-loading rule stored, each row already decoded as case ingress
+        decodes it, and establish that the case's initial stored state is
+        known: an object no fixture row stores is known absent.
+
+        Until this is called no Non-Temporal row is known at all, so a target
+        read of one is refused rather than answered empty. A temporal Entity's
+        rows are :meth:`seed_fixtures`'s, and are never read from here.
+        """
+        initial: dict[_InitialObject, tuple[_InitialRow, ...]] = {}
+        for entity, rows in fixtures:
+            names = _initial_member_names(model, entity)
+            family = _family_root(model, entity.identity)
+            key_names = _primary_key_names(model, entity)
+            for row in rows:
+                address = (family, tuple(row[name] for name in key_names))
+                stored = _InitialRow(
+                    entity.identity, {name: row[name] for name in names if name in row}
+                )
+                initial[address] = (*initial.get(address, ()), stored)
+        self._initial = initial
 
     def predecessor_for(
         self,
@@ -328,9 +405,12 @@ class SimulatedTemporalStore:
         removal retires the row its target addresses; a revision replaces the
         members it assigns, keeps every other member, and moves the row to its
         new edge where its Valid-Time start moved, a Value Object occurrence it
-        assigns replacing the stored one whole. A guard, and every Non-Temporal
-        step, leaves the stored rows as they are. Nothing a database would
-        enforce is simulated: a target no stored row answers changes nothing.
+        assigns replacing the stored one whole. A guard leaves the stored rows as
+        they are. A Non-Temporal step stores nothing, but what the initial
+        fixtures stored of each object it may change is no longer known: the
+        objects its key target or concrete inserted keys name, or its whole
+        family where it names none. Nothing a database would enforce is
+        simulated: a target no stored row answers changes nothing.
         """
         match step:
             case PlannedInsert():
@@ -343,8 +423,25 @@ class SimulatedTemporalStore:
                 slot = self._addressed(step.target, step.entity)
                 if slot is not None:
                     self._revise(model, step.entity, slot, step.assignments)
+            case PlannedUpdate() | PlannedDelete():
+                target = step.target
+                self._change_initial(
+                    model, step.entity, target.key_values if isinstance(target, KeyTarget) else None
+                )
             case _:
                 return
+
+    def _change_initial(
+        self, model: Metamodel, entity: EntityIdentity, keys: Iterable[tuple[object, ...]] | None
+    ) -> None:
+        """Forget what the initial fixtures stored of each Non-Temporal object
+        of ``entity`` that ``keys`` name, or of its whole family without
+        them."""
+        family = _family_root(model, entity)
+        if keys is None:
+            self._changed_families.add(family)
+        else:
+            self._changed_objects.update((family, key) for key in keys)
 
     def _open(self, model: Metamodel, step: PlannedInsert) -> None:
         entity = model.entity(step.entity)
@@ -352,6 +449,7 @@ class SimulatedTemporalStore:
             return
         layout = _layout(model, entity)
         if layout is None:
+            self._change_initial(model, step.entity, _inserted_keys(model, entity, step))
             return
         for entry in step.entries:
             predecessor = predecessor_row(entry.row.attributes, entry.row.value_objects)
@@ -399,13 +497,14 @@ class SimulatedTemporalStore:
             "ends, and these share both"
         )
 
-    def coverage_acquisition(self, model: Metamodel) -> AcquireRows:
+    def acquisition(self, model: Metamodel) -> AcquireRows:
         """The row acquisition a unit of work planning against this case state
-        reads its coverage through: each coverage read answers the stored
-        current milestones of its object that overlap any of its Valid-Time
-        windows, or all of them where it names none — what the execution's own
-        coverage read returns from the rows this store holds, through the same
-        consumer."""
+        reads through, answering each request from the rows this store holds
+        through the consumer the request came with, as execution's own read
+        would: a coverage read with :meth:`coverage_rows`, a caller-addressed
+        write's target read with :meth:`target_rows`, and the completion of
+        rows such a read retained with those rows as they are, read again from
+        nowhere. Any other request is refused."""
         return _CaseStateAcquisition(self, model)
 
     def coverage_rows(
@@ -432,6 +531,68 @@ class SimulatedTemporalStore:
                 if coverage is None or not any(coverage.overlaps(window) for window in windows):
                     continue
             rows.append(_positional(members, predecessor.members))
+        return rows
+
+    def target_rows(self, model: Metamodel, request: TargetReadRequest) -> list[tuple[object, ...]]:
+        """Every stored row ``request``'s object holds where its read selects,
+        each positional over its target's member selection; how many there are,
+        and what the one row's revision is, are for the consumer to judge.
+
+        A temporal object's rows are its current milestones, those covering
+        the request's Valid-Time ``valid_from`` where it names one. A
+        Non-Temporal object's are the rows the initial fixtures stored of it,
+        holding only its key and revision, while nothing since may have changed
+        it; otherwise its rows are unknown and the read is refused
+        (:class:`SimulatedStoreError`), as it is where no initial state was
+        seeded at all or the rows are stored as another family member.
+        """
+        entity = request.entity
+        key = tuple(value for _name, value in request.key.primary_key)
+        members = _member_selection(model, entity).shape
+        if _layout(model, entity) is None:
+            return [
+                _positional(members, row.members) for row in self._initial_rows(model, entity, key)
+            ]
+        shape = temporal_read.view(model).shape(entity.identity)
+        assert shape is not None  # the facet covers every accepted Entity
+        identity = (entity.identity.name, key)
+        valid_from = cast("dt.datetime | None", request.valid_from)
+        rows: list[tuple[object, ...]] = []
+        for slot, stored in self._current.items():
+            if slot[:2] != identity:
+                continue
+            predecessor = stored.observation.predecessor
+            if valid_from is not None:
+                coverage = temporal_read.valid_time_coverage(shape, predecessor, None)
+                if coverage is not None and not coverage.contains(valid_from):
+                    continue
+            rows.append(_positional(members, predecessor.members))
+        return rows
+
+    def _initial_rows(
+        self, model: Metamodel, entity: EntityMetadata, key: tuple[object, ...]
+    ) -> tuple[_InitialRow, ...]:
+        family = _family_root(model, entity.identity)
+        initial = self._initial
+        if (
+            initial is None
+            or self._out_of_band
+            or family in self._changed_families
+            or (family, key) in self._changed_objects
+        ):
+            raise SimulatedStoreError(
+                f"{entity.identity.canonical} {key!r}: this case state holds no current account "
+                "of the row, since only its initial fixtures are known and a change may have "
+                "moved them"
+            )
+        rows = initial.get((family, key), ())
+        names = _initial_member_names(model, entity)
+        if any(row.entity != entity.identity or len(row.members) != len(names) for row in rows):
+            raise SimulatedStoreError(
+                f"{entity.identity.canonical} {key!r}: the initial fixtures store this object "
+                "as another family member or without its revision, which this case state "
+                "cannot answer a read of"
+            )
         return rows
 
     def _track(self, layout: _Layout, observation: TemporalObservation) -> _ObjectKey:
@@ -480,6 +641,8 @@ class SimulatedTemporalStore:
         self._overtaken = snapshot.overtaken
         self._materialized = snapshot.materialized
         self._out_of_band = snapshot.out_of_band
+        self._changed_objects = snapshot.changed_objects
+        self._changed_families = snapshot.changed_families
         located: dict[_Address, tuple[_ObjectKey, ...]] = {}
         for slot, stored in self._current.items():
             located[stored.address] = (*located.get(stored.address, ()), slot)
@@ -542,8 +705,8 @@ def _layout(model: Metamodel, entity: EntityMetadata) -> _Layout | None:
 
 @dataclass(frozen=True, slots=True)
 class _CaseStateAcquisition:
-    """:meth:`SimulatedTemporalStore.coverage_acquisition`'s answer: coverage
-    reads over the stored milestones, which hold no raw Structured Column."""
+    """:meth:`SimulatedTemporalStore.acquisition`'s answer, over rows that
+    hold no raw Structured Column."""
 
     store: SimulatedTemporalStore
     model: Metamodel
@@ -551,12 +714,20 @@ class _CaseStateAcquisition:
     def __call__[Request: RowRequest, Result](
         self, request: Request, consumer: RowConsumer[Request, Result], /
     ) -> Result:
-        if not isinstance(
-            request, CoverageReadRequest
-        ):  # pragma: no cover - planning reads coverage alone
-            raise TypeError(f"case state answers coverage reads alone, not {request!r}")
-        rows = self.store.coverage_rows(self.model, request)
         selection = _member_selection(self.model, request.entity)
+        if isinstance(request, CompletionRequest):
+            completed = request.rows
+            return consumer(
+                request, selection, iter(completed), _ABSENT, request.documents, len(completed)
+            )
+        if isinstance(request, CoverageReadRequest):
+            rows = self.store.coverage_rows(self.model, request)
+        elif isinstance(request, TargetReadRequest):
+            rows = self.store.target_rows(self.model, request)
+        else:  # pragma: no cover - planning and target confirmation request nothing else
+            raise TypeError(
+                f"case state answers coverage, target, and completion requests, not {request!r}"
+            )
         return consumer(request, selection, iter(rows), _ABSENT, None, len(rows))
 
 
@@ -689,6 +860,38 @@ def _axis_names(
     axis = temporal_read.view(model).axis(entity.identity, dimension)
     assert axis is not None  # every caller asks for a dimension the entity declares
     return axis.start_attribute.name, axis.end_attribute.name
+
+
+def _family_root(model: Metamodel, entity: EntityIdentity) -> EntityIdentity:
+    position = inheritance.view(model).entity(entity)
+    return entity if position is None else position.root
+
+
+def _initial_member_names(model: Metamodel, entity: EntityMetadata) -> tuple[str, ...]:
+    """The members a Non-Temporal row's initial account holds: its key, and
+    its optimistic-lock version where its family declares one."""
+    position = inheritance.view(model).entity(entity.identity)
+    members = entity.declared_attributes if position is None else position.applicable_attributes
+    return (
+        *_primary_key_names(model, entity),
+        *(attribute.identity.name for attribute in members if attribute.optimistic_locking),
+    )
+
+
+def _inserted_keys(
+    model: Metamodel, entity: EntityMetadata, step: PlannedInsert
+) -> list[tuple[object, ...]] | None:
+    """The key of every row ``step`` inserts, or ``None`` where one is
+    generated rather than stated."""
+    names = _primary_key_names(model, entity)
+    keys: list[tuple[object, ...]] = []
+    for entry in step.entries:
+        stated = {identity.name: value for identity, value in entry.row.attributes.items()}
+        key = tuple(stated.get(name) for name in names)
+        if any(value is None or isinstance(value, MaxPlusOne | SelfIncrement) for value in key):
+            return None
+        keys.append(key)
+    return keys
 
 
 def _primary_key_names(model: Metamodel, entity: EntityMetadata) -> list[str]:

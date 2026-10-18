@@ -241,31 +241,29 @@ def seed_store_from_fixtures(
     a writeSequence starts EMPTY unless it opts in with ``given.fixtures: true``;
     every other shape (scenario, conflict) loads the model's default fixtures —
     mirrored from ``tests/_support/corpus.py``'s ``case_fixtures`` rule, kept independent
-    (production/adapter code never imports the test suite)."""
+    (production/adapter code never imports the test suite). Each row is decoded
+    once, at case ingress: a temporal Entity's become stored milestones, and every
+    other Entity's are the initial state ``store`` knows, an empty one included."""
     given = case.document.get("given")
     fixtures_flag = (
         isinstance(given, Mapping) and cast("Mapping[str, object]", given).get("fixtures") is True
     )
     if case.shape == "writeSequence" and not fixtures_flag:
+        store.seed_initial_rows(model, ())
         return
     fixtures = provision.load_fixtures(case_setup_model_ref(case))
+    initial: list[tuple[EntityMetadata, list[Mapping[str, object]]]] = []
     for entity_name, rows in fixtures.items():
         entity = case_entity(model, entity_name)
-        if not family_declarer(model, entity).declared_as_of_axes:
-            store.seed_fixtures(
-                model,
-                entity,
-                cast("list[Mapping[str, object]]", rows),
-            )
-            continue
-        store.seed_fixtures(
-            model,
-            entity,
-            [
-                _case_ingress.decode_case_row(row, model, entity)
-                for row in cast("list[Mapping[str, object]]", rows)
-            ],
-        )
+        decoded = [
+            _case_ingress.decode_case_row(row, model, entity)
+            for row in cast("list[Mapping[str, object]]", rows)
+        ]
+        if family_declarer(model, entity).declared_as_of_axes:
+            store.seed_fixtures(model, entity, decoded)
+        else:
+            initial.append((entity, decoded))
+    store.seed_initial_rows(model, initial)
 
 
 def apply_given_apply(
