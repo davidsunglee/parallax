@@ -1701,6 +1701,7 @@
             "abstract-write-target",
             "subtype-write-set-based-unsupported",
             "metamodel-index-identity-duplicate",
+            "metamodel-temporal-member-reserved",
             "inheritance-unknown-parent",
             "inheritance-cycle",
             "inheritance-missing-root",

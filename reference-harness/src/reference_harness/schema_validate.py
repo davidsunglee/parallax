@@ -57,7 +57,7 @@ from .keyed_write_validate import (
     undeclared_row_members,
     validate_keyed_write,
 )
-from .metamodel import validate_index_identities
+from .metamodel import validate_index_identities, validate_temporal_member_names
 from .predicate_write_validate import (
     PredicateWriteValidationError,
     requires_predicate_write_materialization,
@@ -1214,6 +1214,7 @@ def _validate_models(
         model_entities[model_path.name] = entity_defs
         try:
             validate_index_identities(entity_defs)
+            validate_temporal_member_names(entity_defs)
             validate_family_defs(entity_defs)
             validate_storage_layout(entity_defs)
             validate_relationship_types(entity_defs)

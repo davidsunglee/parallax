@@ -11,8 +11,11 @@ from parallax.core.metamodel import (
     RESOLVER_ISSUE_CODES,
     AbstractRoot,
     AbstractSubtype,
+    AsOfAxisLocation,
     AsOfAxisMetadata,
     AttributeIdentity,
+    AttributeLocation,
+    AttributeMetadata,
     AttributeReference,
     Cardinality,
     Column,
@@ -23,6 +26,7 @@ from parallax.core.metamodel import (
     ExactEntityReference,
     IndexIdentity,
     IndexMetadata,
+    MetamodelIssue,
     Multiplicity,
     NestedValueObjectOccurrenceDeclaration,
     RelationshipIdentity,
@@ -41,9 +45,12 @@ from parallax.core.metamodel import (
     UnresolvedRelationshipOrder,
     UnresolvedReverseRelationshipDeclaration,
     ValueObjectAttributeDeclaration,
+    ValueObjectIdentity,
+    ValueObjectLocation,
     ValueObjectOccurrenceDeclaration,
     ValueObjectShapeDeclaration,
     ValueObjectShapeKey,
+    default_column_name,
 )
 from parallax.core.metamodel._resolve import (
     AS_OF_ATTRIBUTE_DUPLICATE,
@@ -594,52 +601,254 @@ def test_a_shape_graph_that_re_enters_one_key_stops_the_collision_walk() -> None
     assert accepted(source(declaration)).entity(_ORDER) is not None
 
 
-def test_a_temporal_shape_reserves_its_conventional_member_names() -> None:
-    entity = identity("Ledger")
+_RESERVED_NAMES = ("validStart", "validEnd", "txStart", "txEnd")
+_NAME_DIMENSIONS = {
+    "validStart": TemporalDimension.VALID_TIME,
+    "validEnd": TemporalDimension.VALID_TIME,
+    "txStart": TemporalDimension.TRANSACTION_TIME,
+    "txEnd": TemporalDimension.TRANSACTION_TIME,
+}
+# Each profile's axes run over endpoints the convention does not name, so every
+# reserved name is free for a business member to claim.
+_PROFILE_ENDPOINTS: dict[str, tuple[tuple[TemporalDimension, str, str], ...]] = {
+    "non-temporal": (),
+    "transaction-time": ((TemporalDimension.TRANSACTION_TIME, "openedAt", "closedAt"),),
+    "bitemporal": (
+        (TemporalDimension.VALID_TIME, "effectiveFrom", "effectiveTo"),
+        (TemporalDimension.TRANSACTION_TIME, "openedAt", "closedAt"),
+    ),
+}
+_LEDGER = identity("Ledger")
+_LINE = identity("Line")
+
+
+def _ledger(
+    profile: str,
+    *,
+    attributes: tuple[AttributeMetadata, ...] = (),
+    relationships: tuple[UnresolvedDefiningRelationshipDeclaration, ...] = (),
+    value_objects: tuple[ValueObjectOccurrenceDeclaration, ...] = (),
+    inheritance: AbstractRoot | None = None,
+) -> Declaration:
+    endpoints = _PROFILE_ENDPOINTS[profile]
+    return Declaration(
+        identity=_LEDGER,
+        container=Table("ledger"),
+        attributes=(
+            key(_LEDGER),
+            *(instant(_LEDGER, name) for _, start, end in endpoints for name in (start, end)),
+            *attributes,
+        ),
+        relationships=relationships,
+        value_objects=value_objects,
+        as_of_axes=tuple(
+            AsOfAxisMetadata(
+                dimension, AttributeIdentity(_LEDGER, start), AttributeIdentity(_LEDGER, end)
+            )
+            for dimension, start, end in endpoints
+        ),
+        inheritance=inheritance,
+    )
+
+
+def _line() -> Declaration:
+    """A peer a Ledger relationship can join to."""
+    return Declaration(
+        identity=_LINE,
+        container=Table("line"),
+        attributes=(key(_LINE), attribute(_LINE, "ledgerId", column="ledger_id")),
+    )
+
+
+def _to_lines(name: str) -> UnresolvedDefiningRelationshipDeclaration:
+    return UnresolvedDefiningRelationshipDeclaration(
+        identity=RelationshipIdentity(_LEDGER, name),
+        cardinality=Cardinality.ONE_TO_MANY,
+        join=UnresolvedRelationshipJoin(
+            source=AttributeIdentity(_LEDGER, "id"),
+            target=AttributeReference(RelativeEntityReference("Line"), "ledgerId"),
+        ),
+    )
+
+
+def _occurrence(
+    name: str, *nested: ValueObjectAttributeDeclaration
+) -> ValueObjectOccurrenceDeclaration:
+    shape = nested or (ValueObjectAttributeDeclaration("city", base.STRING),)
+    return ValueObjectOccurrenceDeclaration(name, Column(default_column_name(name)), _shape(*shape))
+
+
+def _related_axis(profile: str, name: str) -> tuple[AsOfAxisLocation, ...]:
+    """The As-Of Axis an issue relates: only a dimension the profile declares."""
+    dimension = _NAME_DIMENSIONS[name]
+    declared = {axis for axis, _, _ in _PROFILE_ENDPOINTS[profile]}
+    return (AsOfAxisLocation(_LEDGER, dimension),) if dimension in declared else ()
+
+
+@pytest.mark.parametrize("profile", list(_PROFILE_ENDPOINTS))
+@pytest.mark.parametrize("name", _RESERVED_NAMES)
+def test_every_profile_reserves_every_endpoint_name_from_a_business_attribute(
+    profile: str, name: str
+) -> None:
+    declaration = _ledger(profile, attributes=(instant(_LEDGER, name),))
+    assert rejection(source(declaration)) == (
+        MetamodelIssue(
+            TEMPORAL_MEMBER_RESERVED,
+            AttributeLocation(AttributeIdentity(_LEDGER, name)),
+            _related_axis(profile, name),
+        ),
+    )
+
+
+@pytest.mark.parametrize("profile", list(_PROFILE_ENDPOINTS))
+@pytest.mark.parametrize("name", _RESERVED_NAMES)
+def test_every_profile_reserves_every_endpoint_name_from_a_relationship(
+    profile: str, name: str
+) -> None:
+    declaration = _ledger(profile, relationships=(_to_lines(name),))
+    assert rejection(source(declaration, _line())) == (
+        MetamodelIssue(
+            TEMPORAL_MEMBER_RESERVED,
+            RelationshipLocation(RelationshipIdentity(_LEDGER, name)),
+            _related_axis(profile, name),
+        ),
+    )
+
+
+@pytest.mark.parametrize("profile", list(_PROFILE_ENDPOINTS))
+@pytest.mark.parametrize("name", _RESERVED_NAMES)
+def test_every_profile_reserves_every_endpoint_name_from_a_top_level_value_object(
+    profile: str, name: str
+) -> None:
+    declaration = _ledger(profile, value_objects=(_occurrence(name),))
+    assert rejection(source(declaration)) == (
+        MetamodelIssue(
+            TEMPORAL_MEMBER_RESERVED,
+            ValueObjectLocation(ValueObjectIdentity(_LEDGER, (name,))),
+            _related_axis(profile, name),
+        ),
+    )
+
+
+def test_every_member_kind_is_reported_at_its_own_position() -> None:
+    declaration = _ledger(
+        "transaction-time",
+        attributes=(attribute(_LEDGER, "txStart", type=base.STRING),),
+        relationships=(_to_lines("validEnd"),),
+        value_objects=(_occurrence("txEnd"),),
+    )
+    transaction = (AsOfAxisLocation(_LEDGER, TemporalDimension.TRANSACTION_TIME),)
+    assert rejection(source(declaration, _line())) == (
+        MetamodelIssue(
+            TEMPORAL_MEMBER_RESERVED,
+            AttributeLocation(AttributeIdentity(_LEDGER, "txStart")),
+            transaction,
+        ),
+        MetamodelIssue(
+            TEMPORAL_MEMBER_RESERVED,
+            RelationshipLocation(RelationshipIdentity(_LEDGER, "validEnd")),
+        ),
+        MetamodelIssue(
+            TEMPORAL_MEMBER_RESERVED,
+            ValueObjectLocation(ValueObjectIdentity(_LEDGER, ("txEnd",))),
+            transaction,
+        ),
+    )
+
+
+def test_a_reserved_name_repeated_across_member_kinds_also_collides() -> None:
+    declaration = _ledger(
+        "non-temporal",
+        attributes=(attribute(_LEDGER, "txStart", type=base.STRING),),
+        value_objects=(_occurrence("txStart"),),
+    )
+    reported = codes(source(declaration))
+    assert reported.count(TEMPORAL_MEMBER_RESERVED) == 2
+    assert LOCAL_MEMBER_COLLISION in reported
+
+
+def test_an_inheritance_descendant_declaration_reserves_the_endpoint_names() -> None:
+    root, middle, leaf = _family()
+    descendant = Declaration(
+        identity=_DOG,
+        attributes=(*leaf.attributes, instant(_DOG, "validStart")),
+        inheritance=leaf.inheritance,
+    )
+    assert rejection(source(root, middle, descendant)) == (
+        MetamodelIssue(
+            TEMPORAL_MEMBER_RESERVED, AttributeLocation(AttributeIdentity(_DOG, "validStart"))
+        ),
+    )
+
+
+def test_nested_value_object_members_may_bear_an_endpoint_name() -> None:
+    nested = _shape(ValueObjectAttributeDeclaration("txStart", base.TIMESTAMP))
+    declaration = _ledger(
+        "bitemporal",
+        value_objects=(
+            ValueObjectOccurrenceDeclaration(
+                "audit",
+                Column("audit"),
+                ValueObjectShapeDeclaration(
+                    ValueObjectShapeKey(),
+                    attributes=(ValueObjectAttributeDeclaration("validStart", base.TIMESTAMP),),
+                    value_objects=(NestedValueObjectOccurrenceDeclaration("txEnd", nested),),
+                ),
+            ),
+        ),
+    )
+    assert accepted(source(declaration)).entity(_LEDGER) is not None
+
+
+@pytest.mark.parametrize("profile", ["transaction-time", "bitemporal"])
+def test_nonconventional_axis_endpoints_need_no_reserved_name(profile: str) -> None:
+    accepted_entity = accepted(source(_ledger(profile))).entity(_LEDGER)
+    assert accepted_entity is not None
+    assert {
+        name
+        for axis in accepted_entity.as_of_axes
+        for name in (axis.start_attribute.name, axis.end_attribute.name)
+    } == {name for _, start, end in _PROFILE_ENDPOINTS[profile] for name in (start, end)}
+
+
+def test_conventional_axis_attributes_are_exempt_by_identity() -> None:
+    entity = identity("Balance")
     declaration = Declaration(
         identity=entity,
         attributes=(
             key(entity),
-            instant(entity, "from_ts"),
-            instant(entity, "to_ts"),
-            attribute(entity, "txStart", type=base.STRING),
-        ),
-        relationships=(
-            UnresolvedReverseRelationshipDeclaration(
-                identity=RelationshipIdentity(entity, "txEnd"),
-                reverse_of=RelationshipReference(RelativeEntityReference("Order"), "items"),
-            ),
-        ),
-        value_objects=(
-            ValueObjectOccurrenceDeclaration(
-                "txEnd",
-                Column("txEnd"),
-                _shape(ValueObjectAttributeDeclaration("city", base.STRING)),
-            ),
+            instant(entity, "validStart"),
+            instant(entity, "validEnd"),
+            instant(entity, "txStart"),
+            instant(entity, "txEnd"),
         ),
         as_of_axes=(
             AsOfAxisMetadata(
-                TemporalDimension.TRANSACTION_TIME,
-                AttributeIdentity(entity, "from_ts"),
-                AttributeIdentity(entity, "to_ts"),
+                TemporalDimension.VALID_TIME,
+                AttributeIdentity(entity, "validStart"),
+                AttributeIdentity(entity, "validEnd"),
             ),
-        ),
-    )
-    reported = codes(source(declaration, _order(), _item()))
-    assert reported.count(TEMPORAL_MEMBER_RESERVED) == 3
-    assert LOCAL_MEMBER_COLLISION in reported
-
-
-def test_conventional_axis_attributes_are_not_reserved_against_their_own_axis() -> None:
-    entity = identity("Balance")
-    declaration = Declaration(
-        identity=entity,
-        attributes=(key(entity), instant(entity, "txStart"), instant(entity, "txEnd")),
-        as_of_axes=(
             AsOfAxisMetadata(
                 TemporalDimension.TRANSACTION_TIME,
                 AttributeIdentity(entity, "txStart"),
                 AttributeIdentity(entity, "txEnd"),
+            ),
+        ),
+    )
+    assert accepted(source(declaration)).entity(entity) is not None
+
+
+def test_an_endpoint_name_on_another_dimensions_axis_is_still_exempt_by_identity() -> None:
+    """The exemption is the axis's own Attribute, not a name-to-dimension match."""
+    entity = identity("Balance")
+    declaration = Declaration(
+        identity=entity,
+        attributes=(key(entity), instant(entity, "validStart"), instant(entity, "validEnd")),
+        as_of_axes=(
+            AsOfAxisMetadata(
+                TemporalDimension.TRANSACTION_TIME,
+                AttributeIdentity(entity, "validStart"),
+                AttributeIdentity(entity, "validEnd"),
             ),
         ),
     )

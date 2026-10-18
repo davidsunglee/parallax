@@ -724,13 +724,18 @@ def _write_handle_and_axis(*, concrete: bool, dated: bool) -> Metamodel:
     """An `Instrument` family whose `Note` holds the concrete-subtype role or the
     abstract one, gaining a Transaction-Time axis over Instants it already
     declared in the same evolution."""
+    axis = AsOfAxisMetadata(
+        TemporalDimension.TRANSACTION_TIME,
+        AttributeIdentity(_ROOT, "openedAt"),
+        AttributeIdentity(_ROOT, "closedAt"),
+    )
     return form_metamodel(
         source(
             Declaration(
                 identity=_ROOT,
                 container=Table("instrument"),
-                attributes=(key(_ROOT), instant(_ROOT, "txStart"), instant(_ROOT, "txEnd")),
-                as_of_axes=(_TRANSACTION_TIME,) if dated else (),
+                attributes=(key(_ROOT), instant(_ROOT, "openedAt"), instant(_ROOT, "closedAt")),
+                as_of_axes=(axis,) if dated else (),
                 inheritance=AbstractRoot(TablePerHierarchy("kind")),
             ),
             Declaration(

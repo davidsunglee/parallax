@@ -2667,6 +2667,8 @@ carried inline under `when.model`):
 `metamodel-index-identity-duplicate`: two Indices of one Entity bear one name,
 counting the derived primary-key Index a frontend hands over
 (see `m-metamodel`),
+`metamodel-temporal-member-reserved`: a top-level member other than an As-Of Axis
+endpoint bears a reserved temporal endpoint name (see `m-metamodel`),
 `inheritance-unknown-parent`, `inheritance-cycle`,
 `inheritance-missing-root`,
 `inheritance-concrete-without-abstract-root`,

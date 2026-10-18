@@ -53,12 +53,12 @@ def test_real_prose_and_schema_vocabularies_match() -> None:
     assert check(_real_markdown(), _real_evolution_markdown(), _real_schema()) == []
 
 
-def test_real_prose_vocabulary_is_the_full_fifty_five_rule_set() -> None:
+def test_real_prose_vocabulary_is_the_full_fifty_six_rule_set() -> None:
     # A sanity floor: the parser found every bulleted group PLUS the
     # comma-separated Model-rules paragraph, not an accidentally-truncated
     # subset (a parsing-anchor regression would silently shrink this).
     prose = prose_rejected_rules(_real_markdown())
-    assert len(prose) == 55
+    assert len(prose) == 56
     assert "relationship-join-type-mismatch" in prose
     assert {
         "neutral-literal-type-mismatch",
@@ -69,6 +69,7 @@ def test_real_prose_vocabulary_is_the_full_fifty_five_rule_set() -> None:
     assert "nested-literal-type-mismatch" not in prose
     assert "write-value-object-shape-mismatch" not in prose
     assert "metamodel-index-identity-duplicate" in prose  # the foundational resolver rule
+    assert "metamodel-temporal-member-reserved" in prose  # the endpoint-name reservation
     assert "inheritance-temporality-not-root-owned" in prose  # a root-owned family rule
     assert "inheritance-optimistic-locking-not-root-owned" in prose  # the D-25 rule
     assert "path-crosses-many" in prose  # a Predicate-rule bullet
@@ -95,9 +96,10 @@ def test_real_prose_vocabulary_is_the_full_fifty_five_rule_set() -> None:
     assert "storage-layout-index-over-document-member" in prose
 
 
-def test_real_schema_enum_is_the_full_fifty_five_rule_set() -> None:
+def test_real_schema_enum_is_the_full_fifty_six_rule_set() -> None:
     rules = schema_rejected_rules(_real_schema())
-    assert len(rules) == 55
+    assert len(rules) == 56
+    assert "metamodel-temporal-member-reserved" in rules
     assert "relationship-join-type-mismatch" in rules
     assert {
         "neutral-literal-type-mismatch",

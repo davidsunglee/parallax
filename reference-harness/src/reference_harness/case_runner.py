@@ -97,6 +97,7 @@ from .metamodel import (
 )
 from .metamodel import (
     validate_index_identities,
+    validate_temporal_member_names,
 )
 from .object_query_oracle import assert_case_read
 from .object_query_oracle import row as object_query_row
@@ -683,8 +684,8 @@ def _assert_rejected(case: Case) -> None:
     can never be mistaken for one and this dispatch cannot re-read a row as an
     instruction. Membership can decide the form only for an OBJECT, so
     :func:`_rejected_write_input` refuses anything else before dispatch. Inline
-    models run the foundational
-    ``validate_index_identities`` before the semantic rule sets — Inheritance's
+    models run the foundational ``validate_index_identities`` and
+    ``validate_temporal_member_names`` before the semantic rule sets — Inheritance's
     ``validate_family`` and Storage Layout’s ``validate_storage_layout``, including
     standalone Table ownership and Column claims, then defining-join type equality.
     The referenced top-level model
@@ -734,6 +735,7 @@ def _assert_rejected(case: Case) -> None:
                 inline_entity = inline_model.get("entity")
                 inline_entities = [inline_entity] if isinstance(inline_entity, dict) else []
             validate_index_identities(inline_entities)
+            validate_temporal_member_names(inline_entities)
             validate_family(inline_model)
             validate_storage_layout(inline_entities)
             validate_relationship_types(inline_entities)

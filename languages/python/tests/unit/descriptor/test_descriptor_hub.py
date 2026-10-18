@@ -237,6 +237,159 @@ def test_schema_valid_join_type_mismatch_reaches_shared_formation(door: str) -> 
 
 
 # --------------------------------------------------------------------------- #
+# Temporal endpoint names are reserved whatever the Temporality Profile.       #
+# --------------------------------------------------------------------------- #
+_TEMPORAL_ENDPOINT_NAMES = ("validStart", "validEnd", "txStart", "txEnd")
+
+
+def _ledger(
+    temporality: str | None = None, *, extra: Mapping[str, object] | None = None
+) -> dict[str, object]:
+    entity: dict[str, object] = {
+        "name": "Ledger",
+        "table": "ledger",
+        "attributes": [{"name": "id", "type": "int64", "primaryKey": True}],
+    }
+    if temporality is not None:
+        entity["temporality"] = temporality
+    entity.update(extra or {})
+    return {"entity": entity}
+
+
+def _with_attribute(document: dict[str, object], name: str) -> dict[str, object]:
+    entity = cast("dict[str, list[object]]", document["entity"])
+    entity["attributes"].append({"name": name, "type": "timestamp"})
+    return document
+
+
+def _formation_codes(document: Mapping[str, object]) -> list[str]:
+    with pytest.raises(MetamodelValidationError) as caught:
+        domain_model_from_document(document)
+    assert not isinstance(caught.value, DescriptorError)
+    return [issue.code for issue in caught.value.issues]
+
+
+@pytest.mark.parametrize("name", _TEMPORAL_ENDPOINT_NAMES)
+def test_a_non_temporal_descriptor_attribute_may_not_bear_an_endpoint_name(name: str) -> None:
+    document = _with_attribute(_ledger(), name)
+    assert _formation_codes(document) == ["metamodel-temporal-member-reserved"]
+
+
+@pytest.mark.parametrize("name", ["validStart", "validEnd"])
+def test_a_transaction_time_descriptor_attribute_may_not_bear_a_valid_time_name(
+    name: str,
+) -> None:
+    # The profile derives no Valid-Time endpoint, so ingestion's duplicate-endpoint
+    # rule does not apply; the name still belongs to the framework.
+    document = _with_attribute(_ledger("transaction-time"), name)
+    assert _formation_codes(document) == ["metamodel-temporal-member-reserved"]
+
+
+@pytest.mark.parametrize(
+    ("temporality", "name"),
+    [("transaction-time", "txStart"), ("bitemporal", "validEnd"), ("bitemporal", "txEnd")],
+)
+def test_authoring_a_derived_endpoint_stays_an_ingestion_value_defect(
+    temporality: str, name: str
+) -> None:
+    document = _with_attribute(_ledger(temporality), name)
+    with pytest.raises(DescriptorValueError) as caught:
+        domain_model_from_document(document)
+    assert [v.rule for v in caught.value.violations] == ["temporal-attribute-declared"]
+
+
+def test_a_non_temporal_descriptor_relationship_may_not_bear_an_endpoint_name() -> None:
+    document = {
+        "entities": [
+            {
+                "name": "Owner",
+                "table": "owner",
+                "attributes": [{"name": "id", "type": "int64", "primaryKey": True}],
+            },
+            {
+                "name": "Lot",
+                "table": "lot",
+                "attributes": [
+                    {"name": "id", "type": "int64", "primaryKey": True},
+                    {"name": "ownerId", "type": "int64"},
+                ],
+                "relationships": [
+                    {
+                        "name": "validEnd",
+                        "cardinality": "many-to-one",
+                        "join": {
+                            "source": "ownerId",
+                            "target": {"entity": "Owner", "attribute": "id"},
+                        },
+                    }
+                ],
+            },
+        ]
+    }
+    assert _formation_codes(document) == ["metamodel-temporal-member-reserved"]
+
+
+def test_a_non_temporal_descriptor_value_object_may_not_bear_an_endpoint_name() -> None:
+    document = _ledger(
+        extra={
+            "valueObjects": [
+                {"name": "txEnd", "attributes": [{"name": "opened", "type": "timestamp"}]}
+            ]
+        }
+    )
+    assert _formation_codes(document) == ["metamodel-temporal-member-reserved"]
+
+
+def test_a_descriptor_subtype_of_a_temporal_root_may_not_bear_an_endpoint_name() -> None:
+    document = {
+        "entities": [
+            {
+                "name": "Account",
+                "table": "account",
+                "temporality": "transaction-time",
+                "inheritance": {
+                    "role": "root",
+                    "strategy": "table-per-hierarchy",
+                    "tag": {"column": "kind"},
+                },
+                "attributes": [{"name": "id", "type": "int64", "primaryKey": True}],
+            },
+            {
+                "name": "Savings",
+                "inheritance": {
+                    "role": "concrete-subtype",
+                    "parent": "Account",
+                    "tagValue": "savings",
+                },
+                "attributes": [{"name": "txStart", "type": "timestamp", "nullable": True}],
+            },
+        ]
+    }
+    assert _formation_codes(document) == ["metamodel-temporal-member-reserved"]
+
+
+@pytest.mark.parametrize("temporality", [None, "transaction-time", "bitemporal"])
+def test_a_nested_descriptor_value_object_member_may_bear_an_endpoint_name(
+    temporality: str | None,
+) -> None:
+    document = _ledger(
+        temporality,
+        extra={
+            "valueObjects": [
+                {
+                    "name": "audit",
+                    "attributes": [
+                        {"name": name, "type": "timestamp"} for name in _TEMPORAL_ENDPOINT_NAMES
+                    ],
+                }
+            ]
+        },
+    )
+    model = domain_model_from_document(document)
+    assert [entity.identity.name for entity in model.entities] == ["Ledger"]
+
+
+# --------------------------------------------------------------------------- #
 # Export over both frontends.                                                 #
 # --------------------------------------------------------------------------- #
 def test_both_frontends_export_the_same_canonical_document() -> None:

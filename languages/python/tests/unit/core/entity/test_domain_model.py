@@ -8,6 +8,7 @@ appear in as many models as any test cares to build.
 
 from __future__ import annotations
 
+import datetime as _dt
 from collections.abc import Callable
 
 import pytest
@@ -17,6 +18,7 @@ from parallax.core import (
     ONE_TO_ONE,
     AbstractRoot,
     Attr,
+    Bitemporal,
     ConcreteSubtype,
     DomainModel,
     Entity,
@@ -154,6 +156,102 @@ def test_a_declared_index_may_not_claim_the_derived_primary_key_name() -> None:
     with pytest.raises(MetamodelValidationError) as caught:
         DomainModel(Person)
     assert [issue.code for issue in caught.value.issues] == ["metamodel-index-identity-duplicate"]
+
+
+_TEMPORAL_ENDPOINT_NAMES = ("validStart", "validEnd", "txStart", "txEnd")
+
+
+class _Window(ValueObject):
+    opened: Attr[_dt.datetime]
+
+
+class _Stamp(ValueObject):
+    tx_start: Attr[_dt.datetime]
+    valid_end: Attr[_dt.datetime]
+
+
+def _reserved_codes(*classes: type[Entity]) -> list[str]:
+    with pytest.raises(MetamodelValidationError) as caught:
+        DomainModel(*classes)
+    return [issue.code for issue in caught.value.issues]
+
+
+@pytest.mark.parametrize("name", _TEMPORAL_ENDPOINT_NAMES)
+def test_a_non_temporal_class_may_not_name_an_attribute_after_a_temporal_endpoint(
+    name: str,
+) -> None:
+    class Ledger(Entity, table="ledger"):
+        id: Attr[int] = attr(primary_key=True)
+        stamp: Attr[_dt.datetime] = attr(name=name)
+
+    assert _reserved_codes(Ledger) == ["metamodel-temporal-member-reserved"]
+
+
+def test_a_non_temporal_class_reaches_the_reservation_through_ordinary_spelling() -> None:
+    class Ledger(Entity, table="ledger"):
+        id: Attr[int] = attr(primary_key=True)
+        tx_start: Attr[_dt.datetime]
+
+    assert _reserved_codes(Ledger) == ["metamodel-temporal-member-reserved"]
+
+
+def test_a_non_temporal_class_may_not_name_a_relationship_after_a_temporal_endpoint() -> None:
+    class Owner(Entity, table="owner"):
+        id: Attr[int] = attr(primary_key=True)
+
+    class Lot(Entity, table="lot"):
+        id: Attr[int] = attr(primary_key=True)
+        owner_id: Attr[int]
+        valid_end: Rel[Owner] = rel(cardinality=MANY_TO_ONE, join=("owner_id", "id"))
+
+    assert _reserved_codes(Owner, Lot) == ["metamodel-temporal-member-reserved"]
+
+
+def test_a_non_temporal_class_may_not_name_a_value_object_after_a_temporal_endpoint() -> None:
+    class Lease(Entity, table="lease"):
+        id: Attr[int] = attr(primary_key=True)
+        tx_end: Attr[_Window]
+
+    assert _reserved_codes(Lease) == ["metamodel-temporal-member-reserved"]
+
+
+def test_a_non_temporal_subtype_may_not_name_a_member_after_a_temporal_endpoint() -> None:
+    class Asset(
+        Entity, table="asset", inheritance=AbstractRoot(TablePerHierarchy(tag_column="kind"))
+    ):
+        id: Attr[int] = attr(primary_key=True)
+
+    class Vehicle(Asset, inheritance=ConcreteSubtype(tag_value="vehicle")):
+        valid_start: Attr[_dt.datetime]
+
+    assert _reserved_codes(Asset, Vehicle) == ["metamodel-temporal-member-reserved"]
+
+
+def test_a_transaction_time_base_refuses_a_valid_time_endpoint_name_before_formation() -> None:
+    # The pre-injection guard still owns every temporal-base case, including a
+    # dimension the base does not derive: it refuses at class definition, before
+    # the shared resolver could judge the same name.
+    with pytest.raises(EntityDefinitionError) as caught:
+
+        class Reading(TxTemporal, table="reading"):  # pyright: ignore[reportUnusedClass] - class creation itself is the rejection, so nothing binds
+            id: Attr[int] = attr(primary_key=True)
+            valid_start: Attr[_dt.datetime]
+
+    assert caught.value.code == "entity-reserved-member-name"
+    assert "temporal base" in caught.value.message
+
+
+def test_a_nested_value_object_member_may_bear_a_temporal_endpoint_name() -> None:
+    class Receipt(Bitemporal, table="receipt"):
+        id: Attr[int] = attr(primary_key=True)
+        stamp: Attr[_Stamp]
+
+    class Note(Entity, table="note"):
+        id: Attr[int] = attr(primary_key=True)
+        stamp: Attr[_Stamp]
+
+    models = DomainModel(Receipt, Note)
+    assert [entity.identity.name for entity in models.entities] == ["Note", "Receipt"]
 
 
 def test_a_target_outside_the_candidate_set_is_a_model_defect() -> None:

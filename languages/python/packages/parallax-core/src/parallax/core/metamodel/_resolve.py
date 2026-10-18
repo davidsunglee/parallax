@@ -109,9 +109,10 @@ scalars and nested occurrences share one shape's. Shadowing an inherited member
 is ``m-inheritance``'s rule."""
 
 TEMPORAL_MEMBER_RESERVED: Final[IssueCode] = "metamodel-temporal-member-reserved"
-"""A member that is not the axis's own endpoint bears a conventional temporal
-name the Entity's declared dimensions reserve. Reservation follows the declared
-axes, so the same name is free on a non-temporal Entity."""
+"""A top-level member that is not an axis's own endpoint bears a conventional
+temporal endpoint name. Every Entity reserves all of them whatever its declared
+dimensions, so a member name alone identifies a framework endpoint; nested Value
+Object members are outside the reservation."""
 
 PRIMARY_KEY_MISSING: Final[IssueCode] = "metamodel-primary-key-missing"
 """A standalone Entity declares no primary-key Attribute. An inheritance
@@ -437,38 +438,45 @@ def _shape_collision_issues(
     return issues
 
 
+_RESERVED_TEMPORAL_NAMES: Final[Mapping[str, TemporalDimension]] = MappingProxyType(
+    {name: dimension for dimension, names in CONVENTIONAL_TEMPORAL_NAMES.items() for name in names}
+)
+
+
 def _temporal_reservation_issues(
     declaration: UnresolvedEntityDeclaration,
 ) -> list[MetamodelIssue]:
-    """The members bearing a name this Entity's temporal shape reserves.
+    """The top-level members bearing a conventional temporal endpoint name.
 
-    Members repeating one name share a Model Location, so the reservation is
-    reported for the position rather than for each repetition.
+    An issue relates the As-Of Axis of the name's dimension only when the Entity
+    declares that dimension. Members repeating one name share a Model Location,
+    so the reservation is reported for the position rather than for each
+    repetition.
     """
-    reserved: dict[str, TemporalDimension] = {}
+    declared: set[TemporalDimension] = set()
     framework: set[AttributeIdentity] = set()
     for axis in declaration.as_of_axes:
-        for name in CONVENTIONAL_TEMPORAL_NAMES[axis.dimension]:
-            reserved[name] = axis.dimension
+        declared.add(axis.dimension)
         framework.add(axis.start_attribute)
         framework.add(axis.end_attribute)
-    if not reserved:
-        return []
 
     issues: list[MetamodelIssue] = []
     rejected: set[ModelLocation] = set()
 
     def reject(name: str, location: ModelLocation) -> None:
-        dimension = reserved.get(name)
+        dimension = _RESERVED_TEMPORAL_NAMES.get(name)
         if dimension is None or location in rejected:
             return
         rejected.add(location)
+        related = (
+            (AsOfAxisLocation(declaration.identity, dimension),) if dimension in declared else ()
+        )
         issues.append(
             MetamodelIssue(
                 TEMPORAL_MEMBER_RESERVED,
                 location,
-                (AsOfAxisLocation(declaration.identity, dimension),),
-                message=f"the member name {name!r} is reserved by this Entity's temporal shape",
+                related,
+                message=f"the member name {name!r} is reserved for a framework temporal endpoint",
             )
         )
 
