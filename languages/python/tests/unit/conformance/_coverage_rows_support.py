@@ -17,7 +17,7 @@ def read_coverage(
     store: SimulatedTemporalStore, model: Metamodel, request: CoverageReadRequest
 ) -> PredecessorRows | None:
     """What reading ``request`` over ``store`` seals as coverage evidence."""
-    return store.coverage_acquisition(model)(request, consume_coverage)
+    return store.acquisition(model)(request, consume_coverage)
 
 
 def coverage_members(covered: PredecessorRows | None) -> list[Mapping[str, object]]:

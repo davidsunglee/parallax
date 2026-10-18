@@ -560,7 +560,7 @@ def _grouped(
     else:
         store.seed_fixtures(_GROUPED, _GROUPED_POSITION, rows)
         simulated = SimulatedWriteSteps(payloads, _GROUPED, POSTGRES, store=store)
-        acquire_rows = store.coverage_acquisition(_GROUPED)
+        acquire_rows = store.acquisition(_GROUPED)
     uow = _uow(_GROUPED, steps(simulated), rows=acquire_rows, concurrency="locking")
     observations = tuple(
         uow.retain(
@@ -711,7 +711,7 @@ def _stored(
 ) -> list[tuple[object, ...]]:
     """Every row ``store`` holds current for ``entity`` ``key``, as
     ``(validStart, validEnd, txStart, acctNum, value)``, by Valid-Time start."""
-    covered = store.coverage_acquisition(meta)(
+    covered = store.acquisition(meta)(
         CoverageReadRequest(
             entity=entity,
             key_attribute=AttributeIdentity(entity.identity, "id"),
@@ -798,7 +798,7 @@ def test_a_unit_kept_behind_a_barrier_binds_on_the_rows_and_ownership_earlier_un
     uow = _uow(
         _BARRIERED,
         simulated,
-        rows=_Watched(store.coverage_acquisition(_BARRIERED), watch),
+        rows=_Watched(store.acquisition(_BARRIERED), watch),
     )
     amendment = prepare_wire_write(
         KeyedWrite(

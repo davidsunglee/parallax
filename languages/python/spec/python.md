@@ -661,7 +661,7 @@ which `tools/check_scope_ownership.py` demands (*Filesystem ownership*, below).
   traversal hands its normalizer is what identifies a declared axis end. The
   traversal stays out of `parallax.core.document_codec`'s package interface, since
   no developer-facing surface needs it. The case lanes build instructions,
-  caller-addressed writes, and temporal row acquisitions through the unit of
+  caller-addressed writes, and case-state row acquisitions through the unit of
   work's implementation leaves under `parallax.core._execution._unit_work`, which
   the `parallax.core.unit_work` facade deliberately does not export, and a lane
   tracking no case state composes a buffer it only plans through the same
