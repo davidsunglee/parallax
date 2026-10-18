@@ -33,6 +33,7 @@ from parallax.core.sql_gen._inheritance import (
 from parallax.core.sql_gen._predicate import render_predicate
 from tests._support.sql import compile_read
 from tests.unit._corpus_model_support import formed, model, target
+from tests.unit.core.sql_gen._plan_reuse_support import record_plan_reuse
 
 PAYMENT = model("payment")
 ANIMAL = model("animal")
@@ -437,7 +438,9 @@ def rendered_roots(monkeypatch: pytest.MonkeyPatch) -> list[tuple[bool, tuple[An
 
 def test_a_partitioning_tph_read_renders_only_its_planned_partitions(
     rendered_roots: list[tuple[bool, tuple[Any, ...], int]],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    reuse = record_plan_reuse(monkeypatch)
     compile_read(
         _heterogeneous_payment_predicate(),
         DOCUMENT_LAYOUT,
@@ -449,6 +452,11 @@ def test_a_partitioning_tph_read_renders_only_its_planned_partitions(
         (True, concretes)
     ] * 2
     assert len({root for _partitions, _keys, root in rendered_roots}) == 2
+    (plan,) = reuse.plans
+    assert [(root.statement_plan, root.scope_id) for root in reuse.roots] == [
+        (plan, plan.root_scopes[concrete]) for concrete in concretes
+    ]
+    assert len({id(root.row.ctx) for root in reuse.roots}) == 2
 
 
 @pytest.mark.parametrize(

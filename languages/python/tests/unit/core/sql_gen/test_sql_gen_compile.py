@@ -72,6 +72,10 @@ from tests._support import fake_metamodel
 from tests._support.binary32 import narrowed
 from tests._support.sql import compile_read, resolved_as_stated
 from tests.unit._corpus_model_support import model, target
+from tests.unit.core.sql_gen._plan_reuse_support import (
+    reaches_compilation_state,
+    record_plan_reuse,
+)
 
 ORDERS = model("orders")
 CUSTOMER = model("customer")
@@ -586,8 +590,15 @@ def test_tpcs_child_template_renders_each_occurrence_without_recompilation(
         limit=7,
         projection=deep_fetch.ResolvedReadProjection((), False),
     )
+    reuse = record_plan_reuse(monkeypatch)
     template = sql_compile.compile_template(query, meta, dialect, result_form="instance")
     original = template.compiled.statement
+    branches = 1 if narrow else 3
+    (plan,) = reuse.plans
+    assert len(reuse.roots) == branches
+    assert all(root.statement_plan is plan for root in reuse.roots)
+    assert len({id(root.row.ctx) for root in reuse.roots}) == branches
+    assert not reaches_compilation_state(template)
 
     def forbidden(*args: object, **kwargs: object) -> Any:
         raise AssertionError("render must reuse prepared access and assemble only once")
@@ -598,7 +609,6 @@ def test_tpcs_child_template_renders_each_occurrence_without_recompilation(
         original_keys = tuple(keys)
         gathered = cast("list[ManagedValue]", keys)
         rendered = template.render(gathered)
-        branches = 1 if narrow else 3
         key_binds: tuple[object, ...] = (keys,) if dialect.name == "postgres" else tuple(keys)
         assert rendered.statement.binds == ("before", *key_binds, "after") * branches + (7,)
         assert rendered.statement.wire_binds() == rendered.statement.binds

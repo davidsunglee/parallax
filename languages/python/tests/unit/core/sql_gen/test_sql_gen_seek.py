@@ -33,17 +33,23 @@ from parallax.core.predicate import Comparison, FieldSubject, TrueNode
 from parallax.core.sql_gen import SqlGenError
 from parallax.core.sql_gen._compile import compile_read as compile_entity_query
 from parallax.core.sql_gen._context import LoweredStatement
+from parallax.core.sql_gen._planning import SharedSourceRef
 from parallax.core.sql_gen._seek import lowered_terms
 from parallax.core.wire import WireEncodingError
 from parallax.descriptor import _records
 from tests.unit._corpus_model_support import formed
 from tests.unit._corpus_model_support import model as accepted_model
 from tests.unit._corpus_model_support import target as entity_of
+from tests.unit.core.sql_gen._plan_reuse_support import (
+    reaches_compilation_state,
+    record_plan_reuse,
+)
 
 DOCUMENT_LAYOUT = accepted_model("document-layout")
 ORDERS = accepted_model("orders")
 PAYMENT = accepted_model("payment")
 POSITIONS = accepted_model("position")
+TRAVERSAL = accepted_model("predicate-traversal")
 
 _TRAVELER_JOINED = "parallax.compatibility.Traveler.joinedOn"
 _ORDER_NAME = "parallax.compatibility.Order.name"
@@ -551,10 +557,14 @@ def test_a_direct_column_carrier_outside_its_declared_type_has_no_reported_form(
         statement.wire_binds()
 
 
-def test_each_continuing_arm_joins_its_own_shared_sources_beneath_the_root_lock() -> None:
+def test_each_continuing_arm_joins_its_own_shared_sources_beneath_the_root_lock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # Both arms of a nullable leading term's continuing page select from their own
     # statement, so each joins the shared order itself, binds the predicate where
     # its own text puts it, and leaves the shared lock to the reattached base row.
+    # They render the read's one statement plan, each through its own builder,
+    # and the compiled read retains neither.
     entity = entity_of(ORDERS, "OrderItem")
     query = object_query(
         entity.identity,
@@ -564,7 +574,11 @@ def test_each_continuing_arm_joins_its_own_shared_sources_beneath_the_root_lock(
     node = continuation.plan(validate_object_query(entity, query, ORDERS), ORDERS).after(
         ContinuationCoordinate((dt.date(2024, 2, 15), 11)), limit=2
     )
-    statement = _lowered(ORDERS, node, lock="locking")
+    reuse = record_plan_reuse(monkeypatch)
+    compiled = compile_entity_query(
+        deep_fetch.plan(node, ORDERS, projection=_PROJECTION).root, ORDERS, POSTGRES, lock="locking"
+    )
+    statement = compiled.statement
     joined = "from order_item t0 left join orders t1 on t1.id = t0.order_id where t1.name = ? and "
     assert statement.sql.count(joined) == 2
     assert f"{joined}t0.shipped_on is null order by" in statement.sql
@@ -574,3 +588,57 @@ def test_each_continuing_arm_joins_its_own_shared_sources_beneath_the_root_lock(
     )
     february = dt.date(2024, 2, 15)
     assert statement.binds == ("Ada", february, february, february, 11, 2, "Ada", 2, 2)
+
+    (plan,) = reuse.plans
+    ordinary, null_tail = reuse.roots
+    assert ordinary.statement_plan is plan and null_tail.statement_plan is plan
+    assert ordinary.scope_id == null_tail.scope_id == plan.root_scopes[None]
+    assert ordinary.row.ctx is not null_tail.row.ctx
+    source = SharedSourceRef(plan.root_scopes[None], 0)
+    bindings = [root.row.ctx.source_binding(source) for root in reuse.roots]
+    assert [binding.origin for binding in bindings] == [root.row for root in reuse.roots]
+    assert bindings[0].target is not bindings[1].target
+    assert all(binding.target.alias == "t1" for binding in bindings)
+    assert reaches_compilation_state(ordinary.row)
+    assert not reaches_compilation_state(compiled)
+
+
+def test_both_continuing_arms_of_a_union_render_its_branch_roots_through_fresh_builders(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A table-per-concrete-subtype page over a nullable direct leading term
+    # assembles each arm as its own union, and every branch of either arm
+    # restarts its aliases at `t0`, joins the shared dealer itself, and binds
+    # only its own branch root's sources.
+    entity = entity_of(TRAVERSAL, "Vehicle")
+    query = object_query(
+        entity.identity,
+        Comparison(op="eq", subject=FieldSubject("Vehicle.dealer.name"), value="Ada"),
+        order_by=(OrderKey(attr="parallax.compatibility.Vehicle.dealerId"),),
+    )
+    node = continuation.plan(validate_object_query(entity, query, TRAVERSAL), TRAVERSAL).after(
+        ContinuationCoordinate((3, 1)), limit=2
+    )
+    reuse = record_plan_reuse(monkeypatch)
+    statement = _lowered(TRAVERSAL, node)
+    for table in ("traversal_bike", "traversal_car"):
+        branch = (
+            f"from {table} t0 left join traversal_dealer t1 on t1.id = t0.dealer_id "
+            "where t1.name = ?"
+        )
+        assert statement.sql.count(branch) == 2
+    assert "u where u.dealer_id is null order by" in statement.sql
+    assert statement.binds == ("Ada", "Ada", 3, 3, 3, 1, 2, "Ada", "Ada", 2, 2)
+
+    (plan,) = reuse.plans
+    branch_roots = tuple(plan.root_scopes.values())
+    assert len(branch_roots) == 2
+    assert all(root.statement_plan is plan for root in reuse.roots)
+    assert [root.scope_id for root in reuse.roots] == [*branch_roots, *branch_roots]
+    assert len({id(root.row.ctx) for root in reuse.roots}) == len(reuse.roots)
+    for root in reuse.roots:
+        builder = root.row.ctx
+        assert builder.source_binding(SharedSourceRef(root.scope_id, 0)).origin is root.row
+        (sibling,) = (scope_id for scope_id in branch_roots if scope_id != root.scope_id)
+        with pytest.raises(SqlGenError, match="no selected lexical plan"):
+            builder.source_binding(SharedSourceRef(sibling, 0))
