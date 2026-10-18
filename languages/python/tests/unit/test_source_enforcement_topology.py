@@ -223,7 +223,7 @@ ACCEPTED_PRIVATE_ENTITY_REACHES: dict[tuple[str, str], frozenset[str]] = {
         {"IncludeTraversal", "include_traversal"}
     ),
     ("parallax.snapshot._inspection", "_declaration"): frozenset(
-        {"declaration_of", "is_entity_class", "members_of"}
+        {"declaration_of", "is_entity_class", "members_of", "wire_names_of"}
     ),
     ("parallax.snapshot._inspection", "_entity"): frozenset(
         {"DetachedLifecycleState", "attach_lifecycle_state"}

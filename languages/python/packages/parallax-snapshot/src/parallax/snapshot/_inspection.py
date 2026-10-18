@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Final, cast
 
@@ -9,12 +9,25 @@ from parallax.core._execution._unit_work.retain import InsertionIdentity, ReadEv
 from parallax.core.entity import UNLOADED, Entity, IncludePath, UnloadedRelationshipError
 from parallax.core.entity import lifecycle_state_of as _lifecycle_state_of
 from parallax.core.entity import relationship_value_of as _relationship_value_of
-from parallax.core.entity._declaration import declaration_of, is_entity_class, members_of
+from parallax.core.entity._declaration import (
+    declaration_of,
+    is_entity_class,
+    members_of,
+    wire_names_of,
+)
 from parallax.core.entity._entity import DetachedLifecycleState, attach_lifecycle_state
 from parallax.core.entity._expressions import IncludeTraversal, include_traversal
-from parallax.core.metamodel import EntityIdentity, RelationshipIdentity
+from parallax.core.metamodel import AttributeIdentity, EntityIdentity, RelationshipIdentity
 from parallax.core.object_query import IncludeSegment
-from parallax.core.temporal_read import Edge, Pin
+from parallax.core.temporal_read import (
+    Bitemporal,
+    Edge,
+    NonTemporal,
+    Pin,
+    TemporalShape,
+    TransactionTimeOnly,
+    milestone_edge,
+)
 
 __all__ = [
     "SNAPSHOT_INSPECTION_CODES",
@@ -25,6 +38,7 @@ __all__ = [
     "edge_of",
     "insertion_of",
     "is_view_loaded",
+    "pin_for_shape",
     "pin_of",
     "snapshot_state_of",
     "view",
@@ -95,8 +109,13 @@ class SnapshotNodeState:
     view key (relationship name plus effective concrete-subtype set); a broad
     view's loaded state lives in the relationship slot itself, since installing
     the unloaded sentinel there is what makes ordinary attribute access raise.
-    ``pin`` and ``edge`` are present exactly for a node whose family declares
-    as-of axes.
+    ``pin`` and ``edge_cache`` are present exactly for a node whose family
+    declares as-of axes.
+
+    ``edge_cache`` holds the family's Temporal Shape until :func:`edge_of` first
+    resolves it into the node's milestone Edge, which then replaces it. That
+    rewrite changes only the form of one fact the node already determines, so
+    the field takes no part in comparison.
 
     ``read_evidence`` is the private Read Evidence a writable attempt's read
     retained for this node — the object it denotes, the participation its read
@@ -111,7 +130,7 @@ class SnapshotNodeState:
     views: Mapping[str, object]
     root_conformance: RootConformance
     pin: Pin | None = None
-    edge: Edge | None = None
+    edge_cache: Edge | TransactionTimeOnly | Bitemporal | None = field(default=None, compare=False)
     read_evidence: ReadEvidence | None = None
 
 
@@ -194,16 +213,56 @@ def pin_of(node: object) -> Pin:
 
 def edge_of(node: object) -> Edge:
     """``node``'s own milestone :class:`~parallax.core.temporal_read.Edge` — the
-    finite from-instant on every axis its family declares."""
+    finite from-instant on every axis its family declares.
+
+    The first inspection reads the node's milestone starts and retains the
+    Edge on the lifecycle state the node shares with every edit of it, so
+    later inspections through the node or any of its edits answer that same
+    Edge. The cache is unsynchronized: concurrent first inspections answer
+    equal Edges, not necessarily one object.
+    """
     state = _required_state(node, "edge_of")
-    if state.edge is None:
+    cached = state.edge_cache
+    if cached is None:
         raise SnapshotInspectionError(
             code="snapshot-edge-unavailable",
             message=f"{state.entity.canonical} is not temporal, so it stands on no milestone",
             operation="edge_of",
             entity=state.entity,
         )
-    return state.edge
+    if isinstance(cached, Edge):
+        return cached
+    edge = milestone_edge(cached, _TYPED_MILESTONE_ROWS, node)
+    # Replacing the field rather than the state keeps the one lifecycle object
+    # every edit of this node carries, so an edit made earlier sees it too.
+    object.__setattr__(state, "edge_cache", edge)
+    return edge
+
+
+def pin_for_shape(shape: TemporalShape | None, root_pin: Pin) -> Pin | None:
+    """The Pin a node of ``shape`` publishes under a root read at ``root_pin``:
+    that Pin itself for a temporal shape, and none for a non-temporal or
+    unknown one."""
+    return None if shape is None or isinstance(shape, NonTemporal) else root_pin
+
+
+class _TypedMilestoneRows:
+    """A published Typed node as the carrier of its own milestone members.
+
+    An axis Attribute's canonical name reaches the node's Python member through
+    the family-merged name map, so a concrete descendant reads the axes its
+    family root declares.
+    """
+
+    __slots__ = ()
+
+    def axis_start(self, node: object, attribute: AttributeIdentity, /) -> object:
+        return getattr(node, wire_names_of(type(node)).name_to_py[attribute.name])
+
+    axis_end = axis_start
+
+
+_TYPED_MILESTONE_ROWS: Final = _TypedMilestoneRows()
 
 
 def is_view_loaded(node: object, path: IncludePath[Any, Any]) -> bool:

@@ -106,7 +106,7 @@ from parallax.core.read_delivery._page_reader import (
 from parallax.core.read_delivery._read_plan import UNCACHED_READ_PLANNER, ReadPlanCache, ReadPlanner
 from parallax.core.read_delivery._row_lane import find_rows
 from parallax.core.sql_gen._compile import CompiledRead
-from parallax.core.temporal_read import Pin, TemporalReadError, valid_time_coverage
+from parallax.core.temporal_read import Pin, valid_time_coverage
 from parallax.core.unit_work import ReadEvidence
 from parallax.core.write_plan import ObjectKey
 from parallax.descriptor._records import Attribute as DescriptorAttribute
@@ -1439,13 +1439,12 @@ def test_row_form_publishes_a_member_stored_at_another_members_result_key() -> N
 def test_a_per_node_state_failure_is_translated_once_and_publishes_nothing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # The read and the conversion both succeed; what fails is deriving the node's
-    # own milestone edge, because the row carries no Transaction-Time start at
-    # all. State attachment and root publication are atomic, so the whole result
-    # is refused rather than partly published.
+    # The read and the conversion both succeed; what fails is building one
+    # node's state. State attachment and root publication are atomic, so the
+    # whole result is refused rather than partly published.
     def refuse_materialization(*args: object, **kwargs: object) -> object:
         del args, kwargs
-        raise TemporalReadError("missing Tx start for Balance[id=1]")
+        raise ValueError("no state for Balance[id=1]")
 
     monkeypatch.setattr(_read, "typed_root", refuse_materialization)
     port = QueuePort(
@@ -1465,7 +1464,7 @@ def test_a_per_node_state_failure_is_translated_once_and_publishes_nothing(
     with raises_contextualized(SnapshotMaterializationError) as refusal:
         db.find(read_models.Balance.where(read_models.Balance.id == 1))
     assert refusal.value.code == "snapshot-materialization-failed"
-    assert isinstance(refusal.value.cause, TemporalReadError)
+    assert isinstance(refusal.value.cause, ValueError)
 
 
 # --------------------------------------------------------------------------- #

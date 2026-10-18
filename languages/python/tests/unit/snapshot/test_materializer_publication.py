@@ -39,11 +39,12 @@ from parallax.core import (
     Entity,
     Rel,
     TablePerHierarchy,
+    TxTemporal,
     attr,
     rel,
 )
 from parallax.core._execution._concurrency import CONCURRENCY
-from parallax.core.base import PresentDocument
+from parallax.core.base import INFINITY, PresentDocument
 from parallax.core.deep_fetch import RelationshipViewKey
 from parallax.core.entity import GraphConstructionError, IncludePath
 from parallax.core.entity._expressions import IncludeTraversal
@@ -70,7 +71,7 @@ from parallax.core.read_delivery._page_reader import FlatPageResult
 from parallax.core.read_delivery._row_lane import (
     _published_rows,  # pyright: ignore[reportPrivateUsage]
 )
-from parallax.core.temporal_read import Pin
+from parallax.core.temporal_read import Edge, Pin
 from parallax.core.write_plan import ObjectKey
 from parallax.snapshot import (
     SnapshotConsistencyError,
@@ -990,6 +991,74 @@ def test_a_temporal_concrete_reads_its_edge_off_the_family_roots_own_axes() -> N
     assert pin_of(root) is pin
     assert edge_of(root).valid_time == dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
     assert edge_of(root).tx_time == dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+
+
+# A temporal Entity and a non-temporal one related in both directions, so one
+# graph mixes nodes that stand on a milestone with nodes that do not. A
+# relationship's stringized target names an Entity, so the class names are the
+# Entity names.
+class MixedLedger(TxTemporal, table="mixed_ledger", namespace=_NAMESPACE):
+    id: Attr[int] = attr(primary_key=True)
+    entries: Rel[tuple[MixedEntry, ...]] = rel(cardinality=ONE_TO_MANY, join=("id", "ledger_id"))
+
+
+class MixedEntry(Entity, table="mixed_entry", namespace=_NAMESPACE):
+    id: Attr[int] = attr(primary_key=True)
+    ledger_id: Attr[int]
+    ledger: Rel[MixedLedger | None] = rel(reverse_of="entries")
+
+
+_MIXED = DomainModel(MixedLedger, MixedEntry)
+_LEDGER_ENTRIES = f"{_NAMESPACE}.MixedLedger.entries"
+_ENTRY_LEDGER = f"{_NAMESPACE}.MixedEntry.ledger"
+_MIXED_PIN = Pin(tx_time=dt.datetime(2024, 6, 1, tzinfo=dt.UTC))
+
+
+def _ledger_row(start: dt.datetime) -> dict[str, object]:
+    return {"id": 1, "in_z": start, "out_z": INFINITY}
+
+
+def _assert_stands_on_no_milestone(node: object) -> None:
+    with pytest.raises(SnapshotInspectionError) as no_pin:
+        pin_of(node)
+    assert no_pin.value.code == "snapshot-pin-unavailable"
+    with pytest.raises(SnapshotInspectionError) as no_edge:
+        edge_of(node)
+    assert no_edge.value.code == "snapshot-edge-unavailable"
+
+
+def test_a_temporal_root_s_non_temporal_children_stand_at_no_pin_or_edge() -> None:
+    fixture = PageFixture(_MIXED, _LEDGER_ENTRIES)
+    start = dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
+    ledger = fixture.node("MixedLedger", _ledger_row(start))
+    entries = tuple(fixture.node("MixedEntry", {"id": i, "ledger_id": 1}) for i in (11, 12))
+    fixture.attach(ledger, _LEDGER_ENTRIES, entries)
+
+    (root,) = fixture.materialize(ledger, pin=_MIXED_PIN)
+
+    assert isinstance(root, MixedLedger)
+    assert pin_of(root) is _MIXED_PIN
+    assert edge_of(root) == Edge(tx_time=start)
+    assert [entry.id for entry in root.entries] == [11, 12]
+    for entry in root.entries:
+        _assert_stands_on_no_milestone(entry)
+
+
+def test_a_non_temporal_root_s_temporal_child_stands_on_its_own_edge_at_the_root_pin() -> None:
+    fixture = PageFixture(_MIXED, _ENTRY_LEDGER)
+    start = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
+    entry = fixture.node("MixedEntry", {"id": 11, "ledger_id": 1})
+    ledger = fixture.node("MixedLedger", _ledger_row(start))
+    fixture.attach(entry, _ENTRY_LEDGER, ledger)
+
+    (root,) = fixture.materialize(entry, pin=_MIXED_PIN)
+
+    assert isinstance(root, MixedEntry)
+    _assert_stands_on_no_milestone(root)
+    child = root.ledger
+    assert isinstance(child, MixedLedger)
+    assert pin_of(child) is _MIXED_PIN
+    assert edge_of(child) == Edge(tx_time=start)
 
 
 # --------------------------------------------------------------------------- #

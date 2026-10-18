@@ -38,12 +38,13 @@ from parallax.core.metamodel import (
     OccurrenceMetadata,
 )
 from parallax.core.read_delivery._page import ABSENT, InvalidData, VersionAttributes
-from parallax.core.temporal_read import NonTemporal, Pin, TemporalFacet
+from parallax.core.temporal_read import Pin, TemporalFacet
 from parallax.core.wire import encode_wire
 from parallax.core.wire._codec import encode_managed_wire
 from parallax.snapshot._inspection import (
     RootConformance,
     SnapshotInspectionError,
+    pin_for_shape,
     snapshot_state_of,
 )
 from parallax.snapshot._publication._classify import NonConformingRoot, classify_roots
@@ -496,9 +497,8 @@ class RootViewReader:
 
     def provenance(self, node: int) -> _Provenance:
         root = self._root
-        shape = self._temporal.shape(root.layout(node).concrete)
         return (
-            None if shape is None or isinstance(shape, NonTemporal) else root.pin,
+            pin_for_shape(self._temporal.shape(root.layout(node).concrete), root.pin),
             self._conformance,
             root.projection_value(node, self._origins),
         )

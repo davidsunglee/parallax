@@ -16,8 +16,8 @@ from parallax.core.entity import (
 )
 from parallax.core.metamodel import EntityIdentity, Metamodel, RelationshipIdentity
 from parallax.core.read_delivery._page import ABSENT, InvalidData, VersionAttributes
-from parallax.core.temporal_read import Edge, NonTemporal, TemporalFacet, milestone_edge
-from parallax.snapshot._inspection import RootConformance, SnapshotNodeState
+from parallax.core.temporal_read import NonTemporal, TemporalFacet
+from parallax.snapshot._inspection import RootConformance, SnapshotNodeState, pin_for_shape
 from parallax.snapshot._publication._classify import (
     ConformingRoot,
     NonConformingRoot,
@@ -175,12 +175,18 @@ class _Materialization:
         Every handle resolves to its final instance here, so a narrowed view that
         points back at an ancestor closes without any partially built object
         having been exposed.
+
+        As-of axes are family-wide, so the concrete's shared Temporal Shape is
+        what a temporal node retains for :func:`~parallax.snapshot.edge_of` to
+        read its milestone starts against, at the family root's own Attribute
+        Identities.
         """
         del handle
         index = next(self._pending)
-        edge = self._edge(index)
+        concrete = self._root.layout(index).concrete
+        shape = self._temporal.shape(concrete)
         return SnapshotNodeState(
-            entity=self._root.layout(index).concrete,
+            entity=concrete,
             views={
                 key.narrowed_view: self._resolved(view, value)
                 for slot, key in enumerate(self._root.view_layout(index).slots)
@@ -188,8 +194,8 @@ class _Materialization:
                 and (value := self._root.view(index, slot)) is not ABSENT
             },
             root_conformance=self._conformance,
-            pin=self._root.pin if edge is not None else None,
-            edge=edge,
+            pin=pin_for_shape(shape, self._root.pin),
+            edge_cache=None if isinstance(shape, NonTemporal) else shape,
             read_evidence=self._origins.get(index),
         )
 
@@ -208,19 +214,6 @@ class _Materialization:
             one=lambda index: view.resolve(self._handles[index]),
             many=lambda indices: tuple(view.resolve(self._handles[index]) for index in indices),
         )
-
-    def _edge(self, index: int) -> Edge | None:
-        """One node's milestone edge, or absence for a non-temporal family.
-
-        As-of axes are family-wide, so the family's shared Temporal Shape names
-        the start Attributes read from this node's member row, at the root's own
-        Attribute Identities an inherited member reaches every concrete
-        descendant under.
-        """
-        shape = self._temporal.shape(self._root.layout(index).concrete)
-        if shape is None or isinstance(shape, NonTemporal):
-            return None
-        return milestone_edge(shape, self._root, index)
 
 
 def _undeclared_direction(
