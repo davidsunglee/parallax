@@ -31,6 +31,7 @@ from parallax.core.navigate import TemporallyResolvedPredicate
 from parallax.core.object_query._resolved import (
     ContinuationCoordinate,
     Paging,
+    ResolvedOrderTerm,
     ResolvedSeek,
 )
 from parallax.core.predicate._resolved import disjunctive
@@ -65,14 +66,21 @@ from parallax.core.sql_gen._inheritance import storage_entity_view as _storage_e
 from parallax.core.sql_gen._inheritance import tag_column as _tag_column
 from parallax.core.sql_gen._inheritance import tag_guard as _tph_tag_guard
 
-# The predicate lane: an entity resolution scope in, one `where`-clause fragment
-# out, with this statement's binds pushed on the shared context in order. Same
-# aliasing-down convention as the family lane above.
-from parallax.core.sql_gen._predicate import EntityScope as _EntityScope
+# The planning lane: one immutable statement plan per read arm or write filter,
+# decided before anything renders. Same aliasing-down convention as above.
+from parallax.core.sql_gen._planning import EvaluationContext as _EvaluationContext
+from parallax.core.sql_gen._planning import LexicalScopeId as _LexicalScopeId
+from parallax.core.sql_gen._planning import StatementPlan as _StatementPlan
+from parallax.core.sql_gen._planning import WriteFilterForm as _WriteFilterForm
+from parallax.core.sql_gen._planning import plan_statement as _plan_statement
+
+# The predicate lane: a planned lexical scope and an entity row in, one
+# `where`-clause fragment out, with this statement's binds pushed on the shared
+# context in order.
+from parallax.core.sql_gen._predicate import EntityRowScope as _EntityRowScope
 from parallax.core.sql_gen._predicate import MemberSubject as _MemberSubject
-from parallax.core.sql_gen._predicate import lower_perspective as _lower_perspective
-from parallax.core.sql_gen._predicate import lower_predicate as _lower_predicate
-from parallax.core.sql_gen._predicate import plan_shared_sources as _plan_shared_sources
+from parallax.core.sql_gen._predicate import render_perspective as _render_perspective
+from parallax.core.sql_gen._predicate import render_predicate as _render_predicate
 from parallax.core.sql_gen._predicate import render_shared_sources as _render_shared_sources
 
 # The continuation lane: one resolver per read shape, feeding the order clause,
@@ -677,6 +685,7 @@ def _compile_read_arm(
             target,
             predicate,
             narrow_to,
+            query.order_by,
             terms,
             paging,
             limit,
@@ -703,11 +712,20 @@ def _compile_read_arm(
             _scalar_read_contracts(model, facet, storage, dialect, plan_position),
             stages,
         )
-    # One context per statement (the mutable accumulator), one resolution scope
-    # over it (the immutable "what does a leaf resolve against" half).
-    ctx = StatementBuilder(model, facet, storage, dialect)
+    statement_plan = _plan_statement(
+        predicate,
+        evaluation_context=_EvaluationContext.SHARING_ALLOWED,
+        entity=target,
+        meta=model,
+        facet=facet,
+        storage=storage,
+        order_terms=query.order_by,
+    )
+    # One context per statement (the mutable accumulator), one row scope over it
+    # (the immutable "what does a leaf resolve against" half).
+    ctx: StatementBuilder[_EntityRowScope] = StatementBuilder(model, facet, storage, dialect)
     layout = _table_layout(storage, facet, target.identity)
-    scope = _EntityScope(ctx, target, layout)
+    scope = _EntityRowScope(ctx, target, layout)
 
     proj_sql, proj_binds, document_reads, result_keys, stages = _projection(
         target,
@@ -723,7 +741,7 @@ def _compile_read_arm(
         f"from {layout.table.name} {scope.alias}",
     ]
 
-    where_sql = _selection(predicate, scope, parts)
+    where_sql = _selection(statement_plan, statement_plan.root_scopes[None], scope, parts)
     seek_sql = _sought(terms, scope, scope.subject_for, paging, ctx, null_tail=null_tail)
     _append_where(parts, _beside_a_guard(predicate, where_sql, guarded=bool(seek_sql)), seek_sql)
     _append_result_shape(parts, scope, terms, scope.subject_for, limit, lock)
@@ -753,56 +771,75 @@ def _compile_read_arm(
 def compile_write_predicate(
     op: TemporallyResolvedPredicate, model: Metamodel, dialect: Dialect, target: EntityMetadata
 ) -> CompiledPredicate:
-    """Render an already-validated write predicate: unaliased, every demand in
-    its local form, unless a demand reads through a shared source; then the
-    selection of the target's physical key from the rows it matches, planned
-    and rendered as a read of the target's own Table selects them. A present
-    root perspective restricts the target's rows beside the predicate either way.
+    """Render an already-validated write predicate in the form its plan selects:
+    unaliased, every occurrence unshared, unless an occurrence reads through a
+    shared source; then the selection of the target's physical key from the
+    rows it matches, rendered as a read of the target's own Table selects them.
+    A present root perspective restricts the target's rows beside the predicate
+    either way.
     """
     facet = _inheritance_view(model)
     storage = _storage_view(model)
     layout = _table_layout(storage, facet, target.identity)
-    ctx = StatementBuilder(model, facet, storage, dialect)
-    planned = _plan_shared_sources(op.predicate, _EntityScope(ctx, target, layout))
-    if planned.sources is None or not planned.sources.shares():
-        scope = _EntityScope(ctx, target, layout, unaliased=True, local=True)
-        statement = ctx.finish(_restricted(op, scope))
-        return CompiledPredicate(statement.sql, statement.binds, statement)
-    keys = ", ".join(planned.own_column(slot.column.name) for slot in layout.physical_primary_key)
-    parts = [f"select {keys}", f"from {layout.table.name} {planned.alias}"]
-    where_sql = _planned_selection(op, planned, parts)
-    _append_where(parts, where_sql)
-    statement = _normalize(ctx.finish(" ".join(parts)))
-    return CompiledPredicate(statement.sql, statement.binds, statement, selection=True)
+    statement_plan = _plan_statement(
+        op,
+        evaluation_context=_EvaluationContext.WRITE_FILTER,
+        entity=target,
+        meta=model,
+        facet=facet,
+        storage=storage,
+    )
+    root = statement_plan.root_scopes[None]
+    ctx: StatementBuilder[_EntityRowScope] = StatementBuilder(model, facet, storage, dialect)
+    match statement_plan.write_filter_form:
+        case _WriteFilterForm.DIRECT_PREDICATE:
+            scope = _EntityRowScope(ctx, target, layout, unaliased=True)
+            statement = ctx.finish(_restricted(statement_plan, root, scope))
+            return CompiledPredicate(statement.sql, statement.binds, statement)
+        case _WriteFilterForm.PRIMARY_KEY_SUBQUERY:
+            scope = _EntityRowScope(ctx, target, layout)
+            keys = ", ".join(
+                scope.own_column(slot.column.name) for slot in layout.physical_primary_key
+            )
+            parts = [f"select {keys}", f"from {layout.table.name} {scope.alias}"]
+            _append_where(parts, _selection(statement_plan, root, scope, parts))
+            statement = _normalize(ctx.finish(" ".join(parts)))
+            return CompiledPredicate(statement.sql, statement.binds, statement, selection=True)
+        case None:  # pragma: no cover - a write filter plan always selects its form
+            raise SqlGenError("a write filter was planned without a form")
 
 
-def _selection(temporal: TemporallyResolvedPredicate, scope: _EntityScope, parts: list[str]) -> str:
-    """Append the joins of ``temporal``'s shared sources to ``parts`` and lower
-    it beside them, so every alias and bind follows the text.
+def _selection(
+    statement_plan: _StatementPlan,
+    scope_id: _LexicalScopeId,
+    scope: _EntityRowScope,
+    parts: list[str],
+) -> str:
+    """Append the joins of lexical plan ``scope_id``'s shared sources to
+    ``parts`` and render its predicate beside them, so every alias and bind
+    follows the text.
 
     The read forms selecting from one physical Table or one of its partitions
     share this seam with a readless write's key selection.
     """
-    return _planned_selection(temporal, _plan_shared_sources(temporal.predicate, scope), parts)
-
-
-def _planned_selection(
-    temporal: TemporallyResolvedPredicate, planned: _EntityScope, parts: list[str]
-) -> str:
-    """:func:`_selection` over a scope that already planned ``temporal``."""
-    joins = _render_shared_sources(planned)
+    joins = _render_shared_sources(statement_plan, scope_id, scope)
     if joins:
         parts.append(joins)
-    return _restricted(temporal, planned)
+    return _restricted(statement_plan, scope_id, scope)
 
 
-def _restricted(temporal: TemporallyResolvedPredicate, scope: _EntityScope) -> str:
-    """``temporal``'s predicate, then the comparisons of its root perspective,
+def _restricted(
+    statement_plan: _StatementPlan, scope_id: _LexicalScopeId, scope: _EntityRowScope
+) -> str:
+    """The planned predicate, then the comparisons of its root perspective,
     over the rows of ``scope``; a disjunctive predicate is grouped beside them
     so they restrict every one of its alternatives."""
-    where_sql = _lower_predicate(temporal.predicate, scope)
+    temporal = statement_plan.predicate
+    where_sql = _render_predicate(
+        statement_plan=statement_plan, scope_id=scope_id, path=(), scope=scope
+    )
     perspective = temporal.root_perspective
-    restriction = () if perspective is None else _lower_perspective(perspective, scope)
+    restriction = () if perspective is None else _render_perspective(perspective, scope)
     if not restriction:
         return where_sql
     if where_sql and disjunctive(temporal.predicate):
@@ -844,10 +881,10 @@ def _captured(terms: tuple[_LoweredTerm, ...], subject: _TermSubject, paging: Pa
 
 def _sought(
     terms: tuple[_LoweredTerm, ...],
-    scope: _EntityScope,
+    scope: _EntityRowScope,
     subject: _TermSubject,
     paging: Paging | None,
-    ctx: StatementBuilder,
+    ctx: StatementBuilder[_EntityRowScope],
     *,
     null_tail: bool = False,
 ) -> str:
@@ -902,7 +939,7 @@ def _append_where(parts: list[str], *fragments: str) -> None:
 
 def _append_result_shape(
     parts: list[str],
-    scope: _EntityScope,
+    scope: _EntityRowScope,
     terms: tuple[_LoweredTerm, ...],
     subject: _TermSubject,
     limit: int | None,
@@ -940,6 +977,7 @@ def _compile_inheritance_read(
     entity: EntityMetadata,
     predicate: TemporallyResolvedPredicate,
     narrow_to: tuple[EntityIdentity, ...] | None,
+    order_by: tuple[ResolvedOrderTerm, ...],
     terms: tuple[_LoweredTerm, ...],
     paging: Paging | None,
     limit: int | None,
@@ -974,6 +1012,16 @@ def _compile_inheritance_read(
         result_form == "instance",
         lock,
     )
+    statement_plan = _plan_statement(
+        predicate,
+        evaluation_context=_EvaluationContext.SHARING_ALLOWED,
+        entity=entity,
+        meta=model,
+        facet=facet,
+        storage=storage,
+        inheritance_read=plan,
+        order_terms=order_by,
+    )
     result_keys = (
         (*(column.result_alias for column in plan.columns), "family_variant")
         if isinstance(plan, _TpcsUnionPlan)
@@ -988,7 +1036,7 @@ def _compile_inheritance_read(
         case _TphPlan():
             statement, document_reads, stages = _compile_tph_read(
                 plan,
-                predicate,
+                statement_plan,
                 entity,
                 terms,
                 paging,
@@ -1004,7 +1052,7 @@ def _compile_inheritance_read(
         case _TpcsSinglePlan():
             statement, document_reads, stages = _compile_tpcs_single(
                 plan,
-                predicate,
+                statement_plan,
                 entity,
                 terms,
                 paging,
@@ -1020,7 +1068,7 @@ def _compile_inheritance_read(
         case _TpcsUnionPlan():
             statement, document_reads, stages = _compile_tpcs_read(
                 plan,
-                predicate,
+                statement_plan,
                 entity,
                 terms,
                 paging,
@@ -1038,7 +1086,7 @@ def _compile_inheritance_read(
 
 def _compile_tph_read(
     plan: _TphPlan,
-    predicate: TemporallyResolvedPredicate,
+    statement_plan: _StatementPlan,
     entity: EntityMetadata,
     terms: tuple[_LoweredTerm, ...],
     paging: Paging | None,
@@ -1054,43 +1102,15 @@ def _compile_tph_read(
     single-table SELECT (m-sql "Inheritance — table-per-hierarchy lowering").
 
     Everything family-shaped — the resolved position, the tag-predicate kind, what
-    is projected — is decided by :func:`_plan_inheritance_read`; this builds the
+    is projected — is decided by :func:`_plan_inheritance_read`, and whether the
+    read partitions by variant by the statement plan; this builds the
     statement's context and sequences the four bind phases.
     """
-    ctx = StatementBuilder(model, facet, storage, dialect)
-    scope = _EntityScope(
-        ctx,
-        entity,
-        _table_layout(storage, facet, entity.identity),
-        position=plan.position,
-    )
-    proj_sql, proj_binds, document_reads = plan.projection(dialect, scope.alias)
-    ctx.bind_structural_all(proj_binds)
-
-    parts = [
-        f"select {proj_sql}{_captured(terms, scope.subject_for, paging)}",
-        f"from {plan.table} {scope.alias}",
-    ]
-
-    inner_sql = _selection(predicate, scope, parts)
-    seek_sql = _sought(terms, scope, scope.subject_for, paging, ctx, null_tail=null_tail)
-    guarded = bool(seek_sql) or plan.tag is not None
-    where_terms = [_beside_a_guard(predicate, inner_sql, guarded=guarded), seek_sql]
-    if plan.tag is not None:
-        # Planned, then bound HERE — after the user predicate and the seek above
-        # have pushed their own binds (m-sql "Grouped branch predicates":
-        # branch-predicate-first, then tag).
-        tag_sql, tag_binds = _tph_tag_guard(scope, facet, plan.tag)
-        where_terms.append(tag_sql)
-        ctx.bind_framework_all(tag_binds)
-    _append_where(parts, *where_terms)
-
-    _append_result_shape(parts, scope, terms, scope.subject_for, limit, lock)
-    if ctx.requires_variant_partition:
+    if statement_plan.requires_tph_partition:
         return (
             *_compile_tph_partitioned(
                 plan,
-                predicate,
+                statement_plan,
                 entity,
                 terms,
                 paging,
@@ -1104,13 +1124,38 @@ def _compile_tph_read(
             ),
             plan.stages,
         )
+    predicate = statement_plan.predicate
+    ctx: StatementBuilder[_EntityRowScope] = StatementBuilder(model, facet, storage, dialect)
+    scope = _EntityRowScope(ctx, entity, _table_layout(storage, facet, entity.identity))
+    proj_sql, proj_binds, document_reads = plan.projection(dialect, scope.alias)
+    ctx.bind_structural_all(proj_binds)
+
+    parts = [
+        f"select {proj_sql}{_captured(terms, scope.subject_for, paging)}",
+        f"from {plan.table} {scope.alias}",
+    ]
+
+    inner_sql = _selection(statement_plan, statement_plan.root_scopes[None], scope, parts)
+    seek_sql = _sought(terms, scope, scope.subject_for, paging, ctx, null_tail=null_tail)
+    guarded = bool(seek_sql) or plan.tag is not None
+    where_terms = [_beside_a_guard(predicate, inner_sql, guarded=guarded), seek_sql]
+    if plan.tag is not None:
+        # Planned, then bound HERE — after the user predicate and the seek above
+        # have pushed their own binds (m-sql "Grouped branch predicates":
+        # branch-predicate-first, then tag).
+        tag_sql, tag_binds = _tph_tag_guard(scope, facet, plan.tag)
+        where_terms.append(tag_sql)
+        ctx.bind_framework_all(tag_binds)
+    _append_where(parts, *where_terms)
+
+    _append_result_shape(parts, scope, terms, scope.subject_for, limit, lock)
     statement = _normalize(ctx.finish(" ".join(parts)))
     return statement, document_reads, plan.stages
 
 
 def _compile_tph_partitioned(
     plan: _TphPlan,
-    predicate: TemporallyResolvedPredicate,
+    statement_plan: _StatementPlan,
     entity: EntityMetadata,
     terms: tuple[_LoweredTerm, ...],
     paging: Paging | None,
@@ -1128,14 +1173,14 @@ def _compile_tph_partitioned(
     layout = _table_layout(storage, facet, entity.identity)
     key_columns = tuple(slot.column.name for slot in layout.physical_primary_key)
     for branch_index, concrete in enumerate(plan.position):
-        branch_ctx = StatementBuilder(model, facet, storage, dialect)
-        base_scope = _EntityScope(
+        branch_ctx: StatementBuilder[_EntityRowScope] = StatementBuilder(
+            model, facet, storage, dialect
+        )
+        base_scope = _EntityRowScope(
             branch_ctx,
             entity,
             layout,
             alias=f"t{branch_index + 1}" if lock is not None else "t0",
-            position=plan.position,
-            variant=concrete,
         )
         tag = _TagPredicate(
             _tag_column(layout, _entity_view(facet, entity.identity).root),
@@ -1145,14 +1190,7 @@ def _compile_tph_partitioned(
         tagged_alias = f"p{branch_index + 1}"
         fence_sql, fence_binds = dialect.optimizer_fence()
         tagged = f"select * from {plan.table} {base_scope.alias} where {tag_sql} {fence_sql}"
-        branch_scope = _EntityScope(
-            branch_ctx,
-            entity,
-            layout,
-            alias=tagged_alias,
-            position=plan.position,
-            variant=concrete,
-        )
+        branch_scope = _EntityRowScope(branch_ctx, entity, layout, alias=tagged_alias)
         if lock is not None:
             projection = ", ".join(
                 dialect.qualified(branch_scope.alias, column) for column in key_columns
@@ -1167,7 +1205,9 @@ def _compile_tph_partitioned(
         branch_ctx.bind_framework_all(tag_binds)
         branch_ctx.bind_framework_all(fence_binds)
         parts = [f"select {projection}", f"from ({tagged}) {tagged_alias}"]
-        inner = _selection(predicate, branch_scope, parts)
+        inner = _selection(
+            statement_plan, statement_plan.root_scopes[concrete], branch_scope, parts
+        )
         if inner:
             parts.append(f"where {inner}")
         branch_sql = " ".join(parts)
@@ -1176,13 +1216,10 @@ def _compile_tph_partitioned(
 
     union = " union all ".join(branch_sqls)
     if lock is not None:
-        statement_ctx = StatementBuilder(model, facet, storage, dialect)
-        outer_scope = _EntityScope(
-            statement_ctx,
-            entity,
-            layout,
-            position=plan.position,
+        statement_ctx: StatementBuilder[_EntityRowScope] = StatementBuilder(
+            model, facet, storage, dialect
         )
+        outer_scope = _EntityRowScope(statement_ctx, entity, layout)
         projection, projection_binds, document_reads = plan.projection(dialect, outer_scope.alias)
         statement_ctx.bind_structural_all(projection_binds)
         join_terms = " and ".join(
@@ -1218,14 +1255,7 @@ def _compile_tph_partitioned(
         return _normalize(statement_ctx.finish(union)), document_reads
 
     statement_ctx = StatementBuilder(model, facet, storage, dialect)
-    outer_scope = _EntityScope(
-        statement_ctx,
-        entity,
-        layout,
-        alias="u",
-        position=plan.position,
-        wrapped=True,
-    )
+    outer_scope = _EntityRowScope(statement_ctx, entity, layout, alias="u", wrapped=True)
     projection, projection_binds, document_reads = plan.projection(
         dialect, outer_scope.alias, wrapped=True
     )
@@ -1253,7 +1283,7 @@ def _compile_tph_partitioned(
 
 def _compile_tpcs_read(
     plan: _TpcsUnionPlan,
-    predicate: TemporallyResolvedPredicate,
+    statement_plan: _StatementPlan,
     entity: EntityMetadata,
     terms: tuple[_LoweredTerm, ...],
     paging: Paging | None,
@@ -1285,13 +1315,11 @@ def _compile_tpcs_read(
     branch_statements: list[LoweredStatement] = []
     document_reads: tuple[DocumentReadOrdinals, ...] | None = None
     for branch in plan.branches:
-        branch_ctx = StatementBuilder(model, facet, storage, dialect)
-        branch_scope = _EntityScope(
-            branch_ctx,
-            entity,
-            _table_layout(storage, facet, branch.identity),
-            position=plan.position,
-            variant=branch.identity,
+        branch_ctx: StatementBuilder[_EntityRowScope] = StatementBuilder(
+            model, facet, storage, dialect
+        )
+        branch_scope = _EntityRowScope(
+            branch_ctx, entity, _table_layout(storage, facet, branch.identity)
         )
         proj_sql, proj_binds, branch_document_reads = branch.projection(
             dialect, branch_scope.alias, document_pairs=not wrapped
@@ -1302,7 +1330,9 @@ def _compile_tpcs_read(
             raise SqlGenError("table-per-concrete-subtype branches disagree on document ordinals")
         branch_ctx.bind_structural_all(proj_binds)
         parts = [f"select {proj_sql}", f"from {branch.table} {branch_scope.alias}"]
-        where_sql = _selection(predicate, branch_scope, parts)
+        where_sql = _selection(
+            statement_plan, statement_plan.root_scopes[branch.identity], branch_scope, parts
+        )
         if where_sql:
             parts.append(f"where {where_sql}")
         branch_sql = " ".join(parts)
@@ -1323,12 +1353,12 @@ def _compile_tpcs_read(
     # branches. One context for the whole outer select would push both halves
     # after the branches and send branch data to a capture-cell placeholder.
     outer_layout = _table_layout(storage, facet, plan.branches[0].identity)
-    capture_ctx = StatementBuilder(model, facet, storage, dialect)
-    capture_scope = _EntityScope(
-        capture_ctx, entity, outer_layout, alias="u", position=plan.position
+    capture_ctx: StatementBuilder[_EntityRowScope] = StatementBuilder(
+        model, facet, storage, dialect
     )
-    tail_ctx = StatementBuilder(model, facet, storage, dialect)
-    outer_scope = _EntityScope(tail_ctx, entity, outer_layout, alias="u", position=plan.position)
+    capture_scope = _EntityRowScope(capture_ctx, entity, outer_layout, alias="u")
+    tail_ctx: StatementBuilder[_EntityRowScope] = StatementBuilder(model, facet, storage, dialect)
+    outer_scope = _EntityRowScope(tail_ctx, entity, outer_layout, alias="u")
     projection, _projection_binds, outer_document_reads = plan.projection(
         dialect, outer_scope.alias
     )
@@ -1358,7 +1388,7 @@ def _compile_tpcs_read(
     return statement, outer_document_reads, plan.stages
 
 
-def _tpcs_subject(plan: _TpcsUnionPlan, scope: _EntityScope) -> _TermSubject:
+def _tpcs_subject(plan: _TpcsUnionPlan, scope: _EntityRowScope) -> _TermSubject:
     """How a wrapped union resolves one Continuation Order term.
 
     One thing differs from the generic scope resolver: a member is named by the
@@ -1377,7 +1407,7 @@ def _tpcs_subject(plan: _TpcsUnionPlan, scope: _EntityScope) -> _TermSubject:
 
 
 def _tpcs_order_subject(
-    plan: _TpcsUnionPlan, scope: _EntityScope, attribute: AttributeMetadata
+    plan: _TpcsUnionPlan, scope: _EntityRowScope, attribute: AttributeMetadata
 ) -> _MemberSubject:
     """The expression a wrapped union's ordering key compares, against the union alias.
 
@@ -1413,7 +1443,7 @@ def _tpcs_order_subject(
 
 def _compile_tpcs_single(
     plan: _TpcsSinglePlan,
-    predicate: TemporallyResolvedPredicate,
+    statement_plan: _StatementPlan,
     entity: EntityMetadata,
     terms: tuple[_LoweredTerm, ...],
     paging: Paging | None,
@@ -1430,7 +1460,7 @@ def _compile_tpcs_single(
     no union, no `familyVariant` — attribute resolution still widens across the
     family (the RESOLUTION SCOPE's entity stays the read's own queried `target`,
     e.g. an abstract position narrowed down to this one concrete, so
-    :meth:`_EntityScope._searchable_attributes` searches the whole family rather
+    :meth:`_EntityRowScope.entity_attribute` searches the whole family rather
     than only that entity's own declared attributes), matching the
     table-per-hierarchy concrete-target form.
 
@@ -1438,15 +1468,16 @@ def _compile_tpcs_single(
     sequences its bind phases explicitly — here projection, then user predicate,
     then limit; there is no framework tag guard on this lane.
     """
-    ctx = StatementBuilder(model, facet, storage, dialect)
-    scope = _EntityScope(ctx, entity, _table_layout(storage, facet, plan.position[0]))
+    predicate = statement_plan.predicate
+    ctx: StatementBuilder[_EntityRowScope] = StatementBuilder(model, facet, storage, dialect)
+    scope = _EntityRowScope(ctx, entity, _table_layout(storage, facet, plan.position[0]))
     proj_sql, proj_binds, document_reads = plan.projection(dialect, scope.alias)
     ctx.bind_structural_all(proj_binds)
     parts = [
         f"select {proj_sql}{_captured(terms, scope.subject_for, paging)}",
         f"from {plan.table} {scope.alias}",
     ]
-    where_sql = _selection(predicate, scope, parts)
+    where_sql = _selection(statement_plan, statement_plan.root_scopes[None], scope, parts)
     seek_sql = _sought(terms, scope, scope.subject_for, paging, ctx, null_tail=null_tail)
     _append_where(parts, _beside_a_guard(predicate, where_sql, guarded=bool(seek_sql)), seek_sql)
     _append_result_shape(parts, scope, terms, scope.subject_for, limit, lock)

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import itertools
-from collections.abc import Callable, Iterator, Sequence
-from dataclasses import dataclass, replace
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from typing import Final, Literal, assert_never
 
 from parallax.core.base import INFINITY, STRING, Bytes, ManagedValue, NeutralType
@@ -12,11 +12,9 @@ from parallax.core.inheritance import InheritanceFacet
 from parallax.core.metamodel import (
     AttributeIdentity,
     AttributeMetadata,
-    EntityIdentity,
     EntityMetadata,
     Metamodel,
     OccurrenceMetadata,
-    TablePerHierarchy,
     ValueObjectAttributeMetadata,
     ValueObjectMetadata,
     entity_by_name,
@@ -30,8 +28,6 @@ from parallax.core.predicate._perspective import (
 from parallax.core.predicate._resolved import (
     CurrentObject,
     DeferredKeySet,
-    ObjectPosition,
-    RelatedObject,
     ResolvedAnd,
     ResolvedComparison,
     ResolvedConstant,
@@ -50,17 +46,9 @@ from parallax.core.predicate._resolved import (
     ResolvedStringMatch,
     ScalarCollection,
     ScalarElement,
-    SubjectPosition,
     disjunctive,
 )
-from parallax.core.sql_gen._context import (
-    DemandPlacement,
-    OwnerResults,
-    SharedSource,
-    SourcePlan,
-    SqlGenError,
-    StatementBuilder,
-)
+from parallax.core.sql_gen._context import SqlGenError, StatementBuilder
 from parallax.core.sql_gen._context import table_layout as _table_layout
 
 # The family LANE of the compiler — distinct from `parallax.core.inheritance`
@@ -68,46 +56,53 @@ from parallax.core.sql_gen._context import table_layout as _table_layout
 # spelling, so a use site below never confuses the two.
 from parallax.core.sql_gen._inheritance import TagPredicate as _TagPredicate
 from parallax.core.sql_gen._inheritance import entity_view as _entity_view
-from parallax.core.sql_gen._inheritance import (
-    plan_resolved_branch_narrow as _plan_resolved_branch_narrow,
-)
-from parallax.core.sql_gen._inheritance import tag_column as _tag_column
 from parallax.core.sql_gen._inheritance import tag_guard as _tph_tag_guard
 
-# The navigation LANE renders planned candidates; the planning lane plans them
-# and proves their eligibility. Same aliasing-down convention as the family lane.
+# The navigation LANE renders planned candidates; the planning lane decides
+# every placement before anything renders. Same aliasing-down convention as
+# the family lane.
 from parallax.core.sql_gen._navigation import (
     RenderedRelationshipCandidate as _RenderedRelationshipCandidate,
 )
 from parallax.core.sql_gen._navigation import (
     render_relationship_candidate as _render_relationship_candidate,
 )
+from parallax.core.sql_gen._planning import BranchSelection as _BranchSelection
+from parallax.core.sql_gen._planning import CandidateExistence as _CandidateExistence
+from parallax.core.sql_gen._planning import CandidateOperand as _CandidateOperand
+from parallax.core.sql_gen._planning import (
+    ConfinedScalarEvaluation as _ConfinedScalarEvaluation,
+)
+from parallax.core.sql_gen._planning import Continuation as _Continuation
+from parallax.core.sql_gen._planning import JoinedTargetMatch as _JoinedTargetMatch
+from parallax.core.sql_gen._planning import LexicalScopeId as _LexicalScopeId
+from parallax.core.sql_gen._planning import LexicalScopePlan as _LexicalScopePlan
+from parallax.core.sql_gen._planning import NoCandidate as _NoCandidate
+from parallax.core.sql_gen._planning import OwnerResultEvaluation as _OwnerResultEvaluation
+from parallax.core.sql_gen._planning import OwnerResultsPlan as _OwnerResultsPlan
+from parallax.core.sql_gen._planning import OwnerResultsRef as _OwnerResultsRef
+from parallax.core.sql_gen._planning import PlannedHop as _PlannedHop
+from parallax.core.sql_gen._planning import PredicatePath as _PredicatePath
+from parallax.core.sql_gen._planning import PredicatePlacement as _PredicatePlacement
 from parallax.core.sql_gen._planning import (
     RelationshipCandidateBranch as _RelationshipCandidateBranch,
 )
-from parallax.core.sql_gen._planning import (
-    RelationshipCandidatePlan as _RelationshipCandidatePlan,
-)
-from parallax.core.sql_gen._planning import (
-    plan_relationship_candidates as _plan_relationship_candidates,
-)
-from parallax.core.sql_gen._planning import (
-    shared_relationship_is_eligible as _shared_relationship_is_eligible,
-)
+from parallax.core.sql_gen._planning import SharedRowEvaluation as _SharedRowEvaluation
+from parallax.core.sql_gen._planning import SharedSourcePlan as _SharedSourcePlan
+from parallax.core.sql_gen._planning import SharedSourceRef as _SharedSourceRef
+from parallax.core.sql_gen._planning import StatementPlan as _StatementPlan
+from parallax.core.sql_gen._planning import SubtypeSelection as _SubtypeSelection
+from parallax.core.sql_gen._planning import TargetSelection as _TargetSelection
+from parallax.core.sql_gen._planning import Terminal as _Terminal
+from parallax.core.sql_gen._planning import UnsharedEvaluation as _UnsharedEvaluation
 from parallax.core.sql_gen._planning import temporal_visibility as _temporal_visibility
 from parallax.core.storage_layout import (
     ColumnContributor,
     DirectColumn,
     DocumentPath,
-    StorageLayoutFacet,
     TableLayout,
 )
 from parallax.core.wire._codec import encoded_json_kind
-
-type _SourcePlan = SourcePlan[_RelationshipCandidateBranch, EntityScope]
-type _SharedSource = SharedSource[_RelationshipCandidateBranch, EntityScope]
-type _DemandPlacement = DemandPlacement[_RelationshipCandidateBranch, EntityScope]
-type _OwnerResults = OwnerResults[_RelationshipCandidateBranch, EntityScope]
 
 _HOP_TOKENS: Final = itertools.count()
 # Typed, because an untyped null a scalar subquery selects reads as text.
@@ -155,9 +150,9 @@ class MemberSubject:
 
 
 @dataclass(frozen=True, slots=True)
-class EntityScope:
-    """A predicate resolving against an ENTITY: the active target, its alias, and
-    whether this statement qualifies its own columns at all.
+class EntityRowScope:
+    """The ENTITY row a predicate renders against: the active target, its
+    alias, and how this statement names that row's columns.
 
     ``unaliased`` is the write lane (`m-batch-write.md` "Predicate-selected
     readless forms"): a write's rendered predicate is UNALIASED (`where balance
@@ -171,37 +166,21 @@ class EntityScope:
     reads, so every reference to a member's column is answered by a Storage
     Layout slot rather than by re-reading the member's own storage declaration.
     A branch of a table-per-concrete-subtype union carries its OWN branch layout
-    even though its active entity stays the read's queried `target`, which is what
-    makes "does this branch physically carry that member?" a question the scope
-    can answer at all.
+    even though its active entity stays the read's queried `target`.
 
     ``wrapped`` says :attr:`alias` is a derived table over a union of branches
     that already applied their own per-type projection, so a direct member is
     named by the RESULT key a branch projected it under rather than by the
     physical Column no such union yields — and a `bytes` member is then the
     hex-encoded text that key carries rather than octets.
-
-    ``sources`` is the lexical scope's plan of shared relationship sources and
-    the demands that read through them (:func:`plan_shared_sources`); a scope
-    without one evaluates every demand in its local form.
-
-    ``local`` marks a scope a database evaluates once per row of an enclosing
-    correlated scalar subquery, or the predicate readless DML evaluates in
-    place because none of its demands shares a source. It travels to
-    every nested scope, none of which plans shared sources, so a correlated
-    `exists` opened there keeps its operand's local form.
     """
 
-    ctx: StatementBuilder
+    ctx: StatementBuilder[EntityRowScope]
     entity: EntityMetadata
     layout: TableLayout
     alias: str = "t0"
     unaliased: bool = False
-    position: Sequence[EntityIdentity] | None = None
-    variant: EntityIdentity | None = None
     wrapped: bool = False
-    sources: _SourcePlan | None = None
-    local: bool = False
 
     @property
     def meta(self) -> Metamodel:
@@ -210,10 +189,6 @@ class EntityScope:
     @property
     def facet(self) -> InheritanceFacet:
         return self.ctx.facet
-
-    @property
-    def storage(self) -> StorageLayoutFacet:
-        return self.ctx.storage
 
     @property
     def dialect(self) -> Dialect:
@@ -285,7 +260,6 @@ class EntityScope:
             return MemberSubject(
                 column, column, attribute.type, document_resident=False, text_compared=encoded
             )
-        self.record_document_applicability(attribute.identity.entity)
         document = self.own_column(placement.slot.column.name)
         extraction, path_binds = self.dialect.nested_extract(document, placement.path)
         self.ctx.bind_structural_all(path_binds)
@@ -319,7 +293,6 @@ class EntityScope:
         """
         placement = self.layout.placement(vo.identity)
         if isinstance(placement, DocumentPath):
-            self.record_document_applicability(vo.identity.entity)
             return self.own_column(placement.slot.column.name), placement.path
         return self.own_column(self.slot_column(vo.identity)), ()
 
@@ -350,51 +323,31 @@ class EntityScope:
                 return attribute
         raise SqlGenError(f"{attr_ref!r} names no attribute on {self.entity.identity.name}")
 
-    def record_document_applicability(self, owner: EntityIdentity) -> None:
-        """Note that this statement reads a document member ``owner`` declares,
-        which partitions an abstract read whose variants do not all carry it."""
-        if self.position is None:
-            return
-        owner_view = _entity_view(self.facet, owner)
-        if self.variant is not None:
-            exposed = (self.variant,)
-        else:
-            root = _entity_view(self.facet, self.entity.identity).root
-            exposed = _entity_view(self.facet, root).concrete_subtypes
-        if not set(exposed) <= set(owner_view.concrete_subtypes):
-            self.ctx.requires_variant_partition = True
-
     def next_alias(self) -> str:
         return self.ctx.next_alias()
 
-    def child(
-        self, entity: EntityMetadata, alias: str, variant: EntityIdentity | None = None
-    ) -> EntityScope:
-        """A nested scope for a correlated hop's interior: the SAME statement
+    def child(self, entity: EntityMetadata, alias: str) -> EntityRowScope:
+        """A nested row for a correlated hop's interior: the SAME statement
         context (so a nested hop's binds and aliases continue this statement's
-        single sequence), a different active entity and alias, and — for one
-        concrete table of a table-per-concrete-subtype target — that ``variant``.
+        single sequence), a different active entity and alias.
 
         ``unaliased`` deliberately does NOT travel: the subquery this scope
         describes declares `alias` itself, so its columns are alias-qualified
         even inside a write's otherwise-unaliased predicate (`t1.folder_id = id`
-        — the child correlation qualified, the parent column bare). Nor does a
-        source plan, which belongs to the lexical scope that planned it. The
-        child's own Table Layout does travel, because the hop selects from the
-        child's own table, and so does :attr:`local`.
+        — the child correlation qualified, the parent column bare). The child's
+        own Table Layout does travel, because the hop selects from the child's
+        own table.
         """
-        return EntityScope(
+        return EntityRowScope(
             ctx=self.ctx,
             entity=entity,
             layout=_table_layout(self.ctx.storage, self.ctx.facet, entity.identity),
             alias=alias,
-            variant=variant,
-            local=self.local,
         )
 
 
 @dataclass(frozen=True, slots=True)
-class ElementScope:
+class ValueObjectElementScope:
     """A predicate resolving against ONE UNNESTED value-object array element
     (m-value-object same-element semantics).
 
@@ -406,7 +359,7 @@ class ElementScope:
     in a read's.
     """
 
-    ctx: StatementBuilder
+    ctx: StatementBuilder[EntityRowScope]
     container: OccurrenceMetadata
     alias: str
 
@@ -425,11 +378,11 @@ class ScalarElementScope:
 
     Every operation a scalar quantifier's `where` holds reads this element, a
     scalar of :attr:`member`'s declared type, through the alias the unnest
-    declared — always alias-qualified, for the reason :class:`ElementScope`'s
-    is.
+    declared — always alias-qualified, for the reason
+    :class:`ValueObjectElementScope`'s is.
     """
 
-    ctx: StatementBuilder
+    ctx: StatementBuilder[EntityRowScope]
     member: ResolvedPredicateMember
     alias: str
 
@@ -441,7 +394,7 @@ class ScalarElementScope:
         return self.dialect.qualified(self.alias, "value")
 
 
-ResolutionScope = EntityScope | ElementScope | ScalarElementScope
+type PredicateScope = EntityRowScope | ValueObjectElementScope | ScalarElementScope
 
 type _Operation = (
     ResolvedComparison
@@ -450,26 +403,80 @@ type _Operation = (
     | ResolvedStringMatch
     | ResolvedNullCheck
 )
-type _Demand = Callable[[ResolutionScope], str]
+type _Value = Callable[[PredicateScope], str]
+type _Emit = Callable[[PredicateScope, _Terminal], str]
 
 
-def lower_predicate(predicate: ResolvedPredicate, scope: ResolutionScope) -> str:
-    """Lower one resolved predicate to a SQL fragment, appending binds in order.
+def render_predicate(
+    *,
+    statement_plan: _StatementPlan,
+    scope_id: _LexicalScopeId,
+    path: _PredicatePath,
+    scope: PredicateScope,
+) -> str:
+    """Render the occurrence at ``path`` of lexical plan ``scope_id`` against
+    ``scope``, appending binds in order.
 
-    A constant true lowers to the empty fragment, which a caller omits from its
-    `where`; composed inside another term it renders as an always-true one.
+    A constant true renders as the empty fragment, which a caller omits from
+    its `where`; composed inside another term it renders as an always-true one.
     """
+    lexical = statement_plan.lexical_scopes[scope_id]
+    return _render(_occurrence(lexical.predicate, path), statement_plan, lexical, path, scope)
+
+
+def _occurrence(predicate: ResolvedPredicate, path: _PredicatePath) -> ResolvedPredicate:
+    """The occurrence ``path`` addresses within one lexical plan's predicate: an
+    operand index of `and`/`or`, else slot ``0`` of a unary operand, a narrowing
+    of the row, or a document collection's element body."""
+    for slot in path:
+        match predicate:
+            case ResolvedAnd(operands=operands) | ResolvedOr(operands=operands) if (
+                0 <= slot < len(operands)
+            ):
+                predicate = operands[slot]
+            case (
+                ResolvedNot(operand=child)
+                | ResolvedGroup(operand=child)
+                | ResolvedNarrow(target=CurrentObject(), operand=child)
+                | ResolvedQuantifier(where=child)
+            ) if slot == 0 and child is not None and not _relationship_body(predicate):
+                predicate = child
+            case _:
+                raise SqlGenError(f"predicate path {path} addresses no occurrence")
+    return predicate
+
+
+def _relationship_body(predicate: ResolvedPredicate) -> bool:
+    """Whether ``predicate``'s body is planned at related rows of its own."""
+    return isinstance(predicate, ResolvedQuantifier) and isinstance(
+        predicate.collection, ResolvedRelationship
+    )
+
+
+def _render(
+    predicate: ResolvedPredicate,
+    plan: _StatementPlan,
+    lexical: _LexicalScopePlan,
+    path: _PredicatePath,
+    scope: PredicateScope,
+) -> str:
     match predicate:
         case ResolvedConstant(truth=truth):
             return "" if truth else "1 = 0"
         case ResolvedAnd(operands=operands):
-            return " and ".join(_term(operand, scope) for operand in operands)
+            return " and ".join(
+                _term(operand, plan, lexical, (*path, index), scope)
+                for index, operand in enumerate(operands)
+            )
         case ResolvedOr(operands=operands):
-            return " or ".join(_term(operand, scope) for operand in operands)
+            return " or ".join(
+                _term(operand, plan, lexical, (*path, index), scope)
+                for index, operand in enumerate(operands)
+            )
         case ResolvedNot(operand=operand):
-            return _negated(operand, scope)
+            return f"not {_whole(operand, plan, lexical, (*path, 0), scope)}"
         case ResolvedGroup(operand=operand):
-            return f"({_term(operand, scope)})"
+            return f"({_term(operand, plan, lexical, (*path, 0), scope)})"
         case (
             ResolvedComparison()
             | ResolvedRange()
@@ -477,69 +484,97 @@ def lower_predicate(predicate: ResolvedPredicate, scope: ResolutionScope) -> str
             | ResolvedStringMatch()
             | ResolvedNullCheck()
         ):
-            return _lower_operation(predicate, scope)
+            return _render_operation(predicate, _placement(lexical, path), lexical, scope)
         case ResolvedQuantifier():
-            return _lower_reached_quantifier(predicate, scope)
+            return _render_quantifier(predicate, plan, lexical, path, scope)
         case ResolvedPresence():
-            return _lower_presence(predicate, scope)
+            return _render_presence(predicate, plan, lexical, path, scope)
         case ResolvedNarrow():
-            return _lower_narrow(predicate, scope)
+            return _render_narrow(predicate, plan, lexical, path, scope)
         case _:  # pragma: no cover - exhaustiveness guard
             assert_never(predicate)
 
 
-def _term(predicate: ResolvedPredicate, scope: ResolutionScope) -> str:
-    return lower_predicate(predicate, scope) or "1 = 1"
+def _term(
+    predicate: ResolvedPredicate,
+    plan: _StatementPlan,
+    lexical: _LexicalScopePlan,
+    path: _PredicatePath,
+    scope: PredicateScope,
+) -> str:
+    return _render(predicate, plan, lexical, path, scope) or "1 = 1"
 
 
-def _negated(operand: ResolvedPredicate, scope: ResolutionScope) -> str:
-    return f"not {_whole(operand, scope)}"
-
-
-def _whole(predicate: ResolvedPredicate, scope: ResolutionScope) -> str:
-    """``predicate`` lowered as one term, a conjunction or disjunction grouped
+def _whole(
+    predicate: ResolvedPredicate,
+    plan: _StatementPlan,
+    lexical: _LexicalScopePlan,
+    path: _PredicatePath,
+    scope: PredicateScope,
+) -> str:
+    """``predicate`` rendered as one term, a conjunction or disjunction grouped
     so neither a `not` nor a neighbouring operator re-associates it."""
-    sql = _term(predicate, scope)
+    sql = _term(predicate, plan, lexical, path, scope)
     return f"({sql})" if isinstance(predicate, ResolvedAnd | ResolvedOr) else sql
 
 
-def _conjunct(predicate: ResolvedPredicate, scope: ResolutionScope) -> str:
-    """``predicate`` lowered to stand complete beside an `and`: a disjunction is
-    grouped so a conjoined framework term cannot re-associate it."""
-    sql = lower_predicate(predicate, scope)
+def _conjunct(
+    predicate: ResolvedPredicate,
+    plan: _StatementPlan,
+    lexical: _LexicalScopePlan,
+    path: _PredicatePath,
+    scope: PredicateScope,
+) -> str:
+    """``predicate`` rendered to stand complete beside an `and`: a disjunction
+    is grouped so a conjoined framework term cannot re-associate it."""
+    sql = _render(predicate, plan, lexical, path, scope)
     return f"({sql})" if sql and disjunctive(predicate) else sql
 
 
-def _lower_operation(operation: _Operation, scope: ResolutionScope) -> str:
+def _operand_term(plan: _StatementPlan, scope_id: _LexicalScopeId, scope: EntityRowScope) -> str:
+    """The root of operand plan ``scope_id`` rendered as one term at ``scope``."""
+    lexical = plan.lexical_scopes[scope_id]
+    return _term(lexical.predicate, plan, lexical, (), scope)
+
+
+def _placement(lexical: _LexicalScopePlan, path: _PredicatePath) -> _PredicatePlacement:
+    placement = lexical.placements.get(path)
+    if placement is None:
+        raise SqlGenError(
+            f"predicate occurrence {path} of lexical plan {lexical.scope_id} has no placement"
+        )
+    return placement
+
+
+def _render_operation(
+    operation: _Operation,
+    placement: _PredicatePlacement,
+    lexical: _LexicalScopePlan,
+    scope: PredicateScope,
+) -> str:
     """One scalar operation over its member's subject expression.
 
     The subject resolves FIRST: a document-resident member's path segments, and
     every bind a related position's subqueries carry, bind ahead of the
     compared values, which is the order the emitted text puts their holes in.
-    A demand planned onto a shared source reads its member from that source's
-    joined row, where a missing target supplies SQL null, or through the
-    confined scalar subqueries of the hops past it.
+    An occurrence placed on a shared source reads its member from that
+    source's joined row, where a missing target supplies SQL null, or through
+    the confined scalar subqueries past a shared prefix.
     """
-    placement = _placement(operation, scope)
-    reads_text = isinstance(operation, ResolvedStringMatch | ResolvedNullCheck)
-    if placement is not None and placement.hops:
-        subject = _subject_reached(
-            operation.member,
-            lambda demand: _confined(placement, demand, None),
-            reads_text=reads_text,
-        )
-    elif placement is not None:
-        subject = _subject(operation.member, _reached(placement))
+    member = operation.member
+    if not isinstance(placement, _UnsharedEvaluation):
+        subject = _subject_reached_by(operation, placement, lexical, scope)
+    elif not placement.continuation.reaches_target:
+        return _absent_operation(operation, placement.continuation, scope)
+    elif placement.continuation.hops:
+        subject = _subject_reached_by(operation, placement, lexical, scope)
     else:
-        before = _before_empty_target(operation.position, scope)
-        if before is not None:
-            return _absent_operation(operation, before, scope)
-        subject = _subject_at(operation.member, operation.position, scope, reads_text=reads_text)
+        subject = _subject_here(member, operation.position, scope)
     match operation:
         case ResolvedComparison(op=tag, value=value, framework=framework):
             _bind_operand(value, subject, scope, framework=framework)
             # A Value Object leaf's inequality keeps its negated-equality form.
-            if tag == "notEq" and not isinstance(operation.member, AttributeMetadata):
+            if tag == "notEq" and not isinstance(member, AttributeMetadata):
                 return f"not {subject.compared} = ?"
             return f"{subject.compared} {_COMPARATORS[tag]} ?"
         case ResolvedRange(lower=lower, upper=upper):
@@ -547,9 +582,9 @@ def _lower_operation(operation: _Operation, scope: ResolutionScope) -> str:
             _bind_operand(upper, subject, scope)
             return f"{subject.compared} between ? and ?"
         case ResolvedMembership(op=tag, values=values):
-            return _lower_membership(tag, values, subject, scope)
+            return _render_membership(tag, values, subject, scope)
         case ResolvedStringMatch(op=tag, pattern=pattern, case_insensitive=folded):
-            return _lower_like(tag, pattern, folded, subject.extraction, scope)
+            return _render_like(tag, pattern, folded, subject.extraction, scope)
         case ResolvedNullCheck(op=tag):
             column = subject.extraction
             return f"{column} is null" if tag == "isNull" else f"not {column} is null"
@@ -557,54 +592,78 @@ def _lower_operation(operation: _Operation, scope: ResolutionScope) -> str:
             assert_never(operation)
 
 
-def _absent_operation(operation: _Operation, before: ObjectPosition, scope: ResolutionScope) -> str:
+def _subject_reached_by(
+    operation: _Operation,
+    placement: _PredicatePlacement,
+    lexical: _LexicalScopePlan,
+    scope: PredicateScope,
+) -> MemberSubject:
+    """The operation's member at the related row its placement reaches."""
+    reads_text = isinstance(operation, ResolvedStringMatch | ResolvedNullCheck)
+    member = operation.member
+    match placement:
+        case _SharedRowEvaluation(source=source):
+            return _subject(member, _target(scope, source))
+        case _ConfinedScalarEvaluation(prefix=prefix, continuation=continuation):
+            return _subject_reached(
+                member,
+                lambda value: _confined(
+                    lexical, prefix, continuation, scope, _valued(value), None, None
+                ),
+                reads_text=reads_text,
+            )
+        case _UnsharedEvaluation(continuation=continuation):
+            return _subject_reached(
+                member,
+                lambda value: _continue(continuation, scope, _valued(value), None, None),
+                reads_text=reads_text,
+            )
+        case _OwnerResultEvaluation():  # pragma: no cover - owner results hold quantifiers
+            raise SqlGenError("a scalar operation reads no owner result")
+
+
+def _valued(value: _Value) -> _Emit:
+    return lambda reached, _terminal: value(reached)
+
+
+def _absent_operation(
+    operation: _Operation, continuation: _Continuation, scope: PredicateScope
+) -> str:
     """An operation over a field no candidate can supply: a null check sees the
-    missing value, and every other operation is unknown. The answer is read at
-    ``before``, the position preceding the empty target, so every hop reaching
+    missing value, and every other operation is unknown. The answer is read
+    where the continuation stops, before the empty target, so every hop reaching
     it still asserts its cardinality."""
     if isinstance(operation, ResolvedNullCheck):
         answer = "1 = 1" if operation.op == "isNull" else "1 = 0"
-        return _at(before, scope, lambda _: answer, answer)
-    return _at(before, scope, lambda _: _UNKNOWN, None)
+        return _continue(continuation, scope, _valued(lambda _: answer), answer, answer)
+    return _continue(continuation, scope, _valued(lambda _: _UNKNOWN), _UNKNOWN, None)
 
 
-def _subject_at(
-    member: ResolvedPredicateMember,
-    position: SubjectPosition,
-    scope: ResolutionScope,
-    *,
-    reads_text: bool,
+def _subject_here(
+    member: ResolvedPredicateMember, position: object, scope: PredicateScope
 ) -> MemberSubject:
-    """``member`` as read at ``position`` from ``scope``.
-
-    A related position is reached through the hops' correlated scalar
-    subqueries (:func:`_hop_chain`), selecting what the operation demands — its
-    extraction when it reads text, else its compared value — so absence at any
-    hop reads as SQL null.
-    """
+    """``member`` as read from ``scope``'s current object or bound element."""
     if isinstance(position, ScalarElement):
         if not isinstance(scope, ScalarElementScope):  # pragma: no cover - validated scopes
             raise SqlGenError(f"{member.identity} element is read outside its quantifier")
         return _element_subject(member, scope)
-    if isinstance(position, CurrentObject):
-        return _subject(member, scope)
-    return _subject_reached(
-        member, lambda demand: _at(position, scope, demand, None), reads_text=reads_text
-    )
+    return _subject(member, scope)
 
 
 def _subject_reached(
-    member: ResolvedPredicateMember, chain: Callable[[_Demand], str], *, reads_text: bool
+    member: ResolvedPredicateMember, chain: Callable[[_Value], str], *, reads_text: bool
 ) -> MemberSubject:
-    """``member`` read at the end of ``chain``, as the operation demands it."""
+    """``member`` read at the end of ``chain``, as the operation demands it —
+    its extraction when it reads text, else its compared value — so absence at
+    any hop reads as SQL null."""
     reached: list[MemberSubject] = []
 
-    def demand(inner: ResolutionScope) -> str:
+    def value(inner: PredicateScope) -> str:
         subject = _subject(member, inner)
         reached.append(subject)
         return subject.extraction if reads_text else subject.compared
 
-    expression = chain(demand)
+    expression = chain(value)
     first = reached[0]
     return MemberSubject(
         expression,
@@ -615,7 +674,7 @@ def _subject_reached(
     )
 
 
-def _subject(member: ResolvedPredicateMember, scope: ResolutionScope) -> MemberSubject:
+def _subject(member: ResolvedPredicateMember, scope: PredicateScope) -> MemberSubject:
     """``member`` as read from ``scope``'s current object.
 
     An Attribute is read through its Member Placement. A Value Object leaf is a
@@ -625,10 +684,10 @@ def _subject(member: ResolvedPredicateMember, scope: ResolutionScope) -> MemberS
     if isinstance(scope, ScalarElementScope):  # pragma: no cover - validated scopes
         raise SqlGenError(f"{member.identity} is not read from a scalar element")
     if isinstance(member, AttributeMetadata):
-        if isinstance(scope, ElementScope):
+        if isinstance(scope, ValueObjectElementScope):
             raise SqlGenError(f"{member.identity} is not read from a Value Object element")
         return scope.subject_for(member)
-    if isinstance(scope, EntityScope):
+    if isinstance(scope, EntityRowScope):
         vo, segments = _resolved_vo_path(member, scope)
         document, prefix = scope.document_root(vo)
         reference, path = document, (*prefix, *segments)
@@ -677,11 +736,11 @@ def _relative_path(path: tuple[str, ...], container: OccurrenceMetadata) -> tupl
     return path[len(base) :]
 
 
-def _lower_membership(
+def _render_membership(
     tag: MembershipOp,
     values: tuple[ManagedValue, ...] | DeferredKeySet,
     subject: MemberSubject,
-    scope: ResolutionScope,
+    scope: PredicateScope,
 ) -> str:
     if isinstance(values, DeferredKeySet):
         if tag != "in":  # pragma: no cover - generated child reads are positive
@@ -699,7 +758,7 @@ def _lower_membership(
 
 
 def _bind_operand(
-    value: object, subject: MemberSubject, scope: ResolutionScope, *, framework: bool = False
+    value: object, subject: MemberSubject, scope: PredicateScope, *, framework: bool = False
 ) -> None:
     """Bind one compared operand in the form ``subject``'s expression compares.
 
@@ -722,7 +781,7 @@ def _bind_operand(
         scope.ctx.bind_managed(value, subject.type)
 
 
-def lower_perspective(perspective: TemporalPerspective, scope: EntityScope) -> list[str]:
+def render_perspective(perspective: TemporalPerspective, scope: EntityRowScope) -> list[str]:
     """The comparisons restricting ``scope``'s current object to ``perspective``,
     in canonical axis rank, each pushing its binds as its text lands.
 
@@ -744,7 +803,7 @@ def _endpoint(
     endpoint: AttributeIdentity,
     op: ComparisonOp,
     value: object,
-    scope: EntityScope,
+    scope: EntityRowScope,
     *,
     framework: bool = False,
 ) -> str:
@@ -756,12 +815,12 @@ def _endpoint(
     return f"{subject.compared} {_COMPARATORS[op]} ?"
 
 
-def _lower_like(
+def _render_like(
     kind: StringOp,
     value: str,
     case_insensitive: bool,
     subject_sql: str,
-    scope: ResolutionScope,
+    scope: PredicateScope,
 ) -> str:
     """Render one string predicate over an ALREADY-RESOLVED subject expression.
 
@@ -795,7 +854,7 @@ def _lower_like(
 
 # The three AFFIX kinds, whose `value` is literal text this module wraps in
 # wildcards. `like` / `notLike` are deliberately absent: their value is already a
-# pattern, and `_lower_like` routes them away before any affix rendering — so the
+# pattern, and `_render_like` routes them away before any affix rendering — so the
 # narrower domain makes that contract unrepresentable rather than merely documented.
 _AffixOp = Literal["startsWith", "endsWith", "contains"]
 
@@ -812,119 +871,98 @@ def _affix_pattern(kind: _AffixOp, value: str) -> tuple[str, bool]:
     assert_never(kind)  # pragma: no cover - exhaustiveness guard
 
 
-def _at(
-    position: ObjectPosition, scope: ResolutionScope, demand: _Demand, default: str | None
-) -> str:
-    """``demand`` evaluated at ``position`` from ``scope`` in its local form,
-    through the hops' correlated scalar subqueries (:func:`_hop_chain`)."""
-    if isinstance(position, CurrentObject):
-        return demand(scope)
-    if not isinstance(scope, EntityScope):  # pragma: no cover - validated scopes
-        raise SqlGenError("a relationship is reached only from an Entity position")
-    return _hop_chain(tuple(_hops(position)), scope, demand, default)
+# --------------------------------------------------------------------------- #
+# Planned navigation                                                           #
+# --------------------------------------------------------------------------- #
 
 
-def _before_empty_target(
-    position: SubjectPosition, scope: ResolutionScope
-) -> ObjectPosition | None:
-    """The position preceding the first hop toward ``position`` whose target has
-    no concrete subtype, so no candidate can exist past it; ``None`` when every
-    hop can reach one."""
-    before: ObjectPosition | None = None
-    current = position
-    while isinstance(current, RelatedObject):
-        if _reaches_nothing(current.relationship, _entity_scope(scope)):
-            before = current.source
-        current = current.source
-    return before
-
-
-def _reaches_nothing(relationship: ResolvedRelationship, scope: EntityScope) -> bool:
-    target = relationship.target
-    if target.inheritance is None:
-        return False
-    return not _entity_view(scope.facet, target.identity).concrete_subtypes
-
-
-def _hop_chain(
-    hops: tuple[ResolvedRelationship, ...],
-    scope: EntityScope,
-    demand: _Demand,
+def _continue(
+    continuation: _Continuation,
+    scope: PredicateScope,
+    emit: _Emit,
+    absent: str | None,
     default: str | None,
     *,
-    reach: tuple[_SharedSource, ...] = (),
+    reach: tuple[tuple[_SharedSourceRef, _SharedSourcePlan], ...] = (),
 ) -> str:
-    """``demand`` evaluated past ``hops`` from ``scope``.
+    """An occurrence evaluated through ``continuation`` from ``scope``.
 
-    Each to-one hop is one correlated scalar subquery over every candidate the
-    relationship declares, so it asserts its own cardinality where it is
-    evaluated: no candidate is SQL null — or ``default`` — and several fail.
-    A hop whose target has no concrete subtype answers ``default`` inside the
-    hop before it. Hops nest rather than join, so an absent later target never
-    hides an earlier hop's candidates, and a subquery a database runs once per
-    row never plans a join of its own. ``reach`` confines the first hop's
-    candidates to the shared sources the scope's row joined (:func:`_confined`).
+    Past no hop it is evaluated at ``scope`` itself. Otherwise each to-one hop
+    is one correlated scalar subquery over every planned candidate, so it
+    asserts its own cardinality where it is evaluated: no candidate is SQL
+    null — or ``default`` — and several fail. Hops nest rather than join, so an
+    absent later target never hides an earlier hop's candidates, and a subquery
+    a database runs once per row never plans a join of its own. Where the
+    continuation stops before a target with no candidate, the occurrence
+    answers ``absent`` there. ``reach`` confines the first hop's candidates to
+    the shared sources the row joined (:func:`_confined`).
     """
-    first, rest = hops[0], hops[1:]
-    if _reaches_nothing(first, scope):
-        if default is None:  # pragma: no cover - an operation answers before the empty target
-            raise SqlGenError("a field is read through a relationship with no candidate")
-        return default
-    if not rest:
-        return _scalar_hop(first, scope, demand, default, reach)
-    return _scalar_hop(
-        first,
-        scope,
-        lambda reached: _hop_chain(rest, _entity_scope(reached), demand, default),
-        default,
-        reach,
+    hops = continuation.hops
+    if not hops:
+        terminal = continuation.terminals[0]
+        if isinstance(terminal, _NoCandidate):
+            return _absence(absent)
+        return emit(scope, terminal)
+    return _hop_chain(
+        hops, continuation.terminals, _entity_row(scope), emit, absent, default, reach
     )
 
 
-def _proven_prefix(
-    hops: tuple[ResolvedRelationship, ...], scope: EntityScope
-) -> tuple[tuple[ResolvedRelationship, _RelationshipCandidateBranch], ...]:
-    """The leading ``hops`` proven unique, each with its one candidate branch."""
-    proven: list[tuple[ResolvedRelationship, _RelationshipCandidateBranch]] = []
-    for hop in hops:
-        candidates = _candidates(hop, scope)
-        if not _shared_relationship_is_eligible(
-            hop, candidates, facet=scope.facet, storage=scope.storage
-        ):
-            break
-        proven.append((hop, candidates.branches[0]))
-    return tuple(proven)
+def _absence(absent: str | None) -> str:
+    if absent is None:  # pragma: no cover - an operation answers before the empty target
+        raise SqlGenError("a field is read through a relationship with no candidate")
+    return absent
 
 
-def _entity_scope(scope: ResolutionScope) -> EntityScope:
-    if not isinstance(scope, EntityScope):  # pragma: no cover - a hop's candidate is an Entity
-        raise SqlGenError("a relationship is reached only from an Entity position")
-    return scope
+def _hop_chain(
+    hops: tuple[_PlannedHop, ...],
+    terminals: tuple[_Terminal, ...],
+    scope: EntityRowScope,
+    emit: _Emit,
+    absent: str | None,
+    default: str | None,
+    reach: tuple[tuple[_SharedSourceRef, _SharedSourcePlan], ...],
+) -> str:
+    first, rest = hops[0], hops[1:]
+    if rest:
+        return _scalar_hop(
+            first,
+            scope,
+            lambda reached, _index: _hop_chain(rest, terminals, reached, emit, absent, default, ()),
+            default,
+            reach,
+        )
+
+    def terminal(reached: EntityRowScope, index: int) -> str:
+        planned = terminals[index]
+        if isinstance(planned, _NoCandidate):
+            return _absence(absent)
+        return emit(reached, planned)
+
+    return _scalar_hop(first, scope, terminal, default, reach)
 
 
 def _scalar_hop(
-    relationship: ResolvedRelationship,
-    scope: EntityScope,
-    inner: _Demand,
+    hop: _PlannedHop,
+    scope: EntityRowScope,
+    inner: Callable[[EntityRowScope, int], str],
     default: str | None,
-    reach: tuple[_SharedSource, ...] = (),
+    reach: tuple[tuple[_SharedSourceRef, _SharedSourcePlan], ...],
 ) -> str:
     """One correlated scalar subquery selecting ``inner`` from each candidate
-    ``relationship`` reaches; a table-per-concrete-subtype target contributes
-    every declared branch with `union all`."""
-    plan = _candidates(relationship, scope)
+    ``hop`` plans; a table-per-concrete-subtype target contributes every
+    declared branch with `union all`."""
     branches: list[str] = []
-    for branch in plan.branches:
+    for index, branch in enumerate(hop.candidates.branches):
         # The branch's value precedes its own table in the text, so every alias the
         # value declares is allocated first and this branch's alias after it,
         # keeping aliases in source order (m-sql rule 1); a placeholder stands in
         # for the alias until then.
         token = _hop_token()
-        rendered, branch_scope = _rendered_candidate(branch, relationship, scope, alias=token)
-        branch_scope = replace(branch_scope, local=True)
-        value = inner(branch_scope)
+        rendered, branch_scope = _rendered_candidate(branch, scope, alias=token)
+        value = inner(branch_scope, index)
         alias = scope.next_alias()
-        where = _candidate_where(relationship, branch_scope, rendered, None, reach)
+        where = _candidate_where(hop.relationship, branch_scope, rendered, None, reach)
         selected = f"select {value} from {rendered.table} {token} where {where}"
         branches.append(selected.replace(token, alias))
     subquery = f"({' union all '.join(branches)})"
@@ -935,65 +973,59 @@ def _hop_token() -> str:
     return f"__hop{next(_HOP_TOKENS)}__"
 
 
-def _candidates(
-    relationship: ResolvedRelationship,
-    scope: EntityScope,
-    *,
-    position: tuple[EntityIdentity, ...] | None = None,
-) -> _RelationshipCandidatePlan:
-    return _plan_relationship_candidates(
-        relationship,
-        position=position,
-        meta=scope.meta,
-        facet=scope.facet,
-        storage=scope.storage,
+def _confined(
+    lexical: _LexicalScopePlan,
+    prefix: _SharedSourceRef,
+    continuation: _Continuation,
+    scope: PredicateScope,
+    emit: _Emit,
+    absent: str | None,
+    default: str | None,
+) -> str:
+    """An occurrence evaluated past its shared ``prefix`` through its own hops,
+    the first hop's candidates confined to the prefix the row joined."""
+    return _continue(
+        continuation,
+        _target(scope, prefix),
+        emit,
+        absent,
+        default,
+        reach=_reach(lexical, prefix),
     )
+
+
+def _reach(
+    lexical: _LexicalScopePlan, prefix: _SharedSourceRef
+) -> tuple[tuple[_SharedSourceRef, _SharedSourcePlan], ...]:
+    """The shared sources ``prefix`` is reached through, in join order."""
+    chain: list[tuple[_SharedSourceRef, _SharedSourcePlan]] = []
+    ref: _SharedSourceRef | None = prefix
+    while ref is not None:
+        source = lexical.sources[ref.index]
+        chain.append((ref, source))
+        ref = source.parent
+    chain.reverse()
+    return tuple(chain)
 
 
 def _rendered_candidate(
     branch: _RelationshipCandidateBranch,
-    relationship: ResolvedRelationship,
-    scope: EntityScope,
+    scope: EntityRowScope,
     *,
     alias: str | None = None,
-) -> tuple[_RenderedRelationshipCandidate, EntityScope]:
-    """``branch`` rendered against ``scope``, with the scope its target resolves
-    under; a concrete table of a table-per-concrete-subtype target carries its
-    own variant."""
+) -> tuple[_RenderedRelationshipCandidate, EntityRowScope]:
+    """``branch`` rendered against ``scope``, with the row its target resolves
+    under."""
     rendered = _render_relationship_candidate(branch, scope, alias)
-    variant = rendered.entity.identity if _is_tpcs(relationship.target, scope) else None
-    return rendered, scope.child(rendered.entity, rendered.alias, variant)
-
-
-def _opened_branches(
-    plan: _RelationshipCandidatePlan, relationship: ResolvedRelationship, scope: EntityScope
-) -> Iterator[tuple[_RenderedRelationshipCandidate, EntityScope]]:
-    """Each planned branch with its alias and scope, opened lazily: a branch
-    takes its alias immediately before its own interior lowers, so a later
-    branch's alias follows everything the preceding one allocated."""
-    for branch in plan.branches:
-        yield _rendered_candidate(branch, relationship, scope)
-
-
-def _existential(fragments: Sequence[str], *, negate: bool) -> str:
-    """Branch-local `exists` fragments as one family-wide answer: a candidate in
-    any branch answers it, and its negation is the whole answer negated."""
-    answer = fragments[0] if len(fragments) == 1 else f"({' or '.join(fragments)})"
-    return f"not {answer}" if negate else answer
-
-
-def _is_tpcs(target: EntityMetadata, scope: EntityScope) -> bool:
-    if target.inheritance is None:
-        return False
-    return not isinstance(_entity_view(scope.facet, target.identity).strategy, TablePerHierarchy)
+    return rendered, scope.child(rendered.entity, rendered.alias)
 
 
 def _candidate_where(
     relationship: ResolvedRelationship,
-    scope: EntityScope,
+    scope: EntityRowScope,
     rendered: _RenderedRelationshipCandidate,
     interior: str | None,
-    reach: tuple[_SharedSource, ...] = (),
+    reach: tuple[tuple[_SharedSourceRef, _SharedSourcePlan], ...] = (),
 ) -> str:
     """The correlated `where` of one candidate branch: correlation, then the
     interior (if any), then the hop's temporal visibility, then its family
@@ -1002,58 +1034,147 @@ def _candidate_where(
     terms = [rendered.correlation_sql]
     if interior:
         terms.append(interior)
-    terms.extend(lower_perspective(_temporal_visibility(relationship), scope))
+    terms.extend(render_perspective(_temporal_visibility(relationship), scope))
     if rendered.family_guard_sql is not None:
         terms.append(rendered.family_guard_sql)
     scope.ctx.bind_framework_all(rendered.family_guard_binds)
-    for source in reach:
-        origin, target = source.origin, _rendered_scope(source)
-        if origin is None:  # pragma: no cover - a rendered source records its origin
-            raise SqlGenError("a shared source is confined to before its join renders")
-        rejoined = _render_relationship_candidate(source.candidate, origin, target.alias)
+    for ref, source in reach:
+        binding = scope.ctx.source_binding(ref)
+        target = binding.target
+        rejoined = _render_relationship_candidate(source.candidate, binding.origin, target.alias)
         terms.append(_join_terms(source.relationship, target, rejoined))
     return " and ".join(terms)
 
 
 def _join_terms(
     relationship: ResolvedRelationship,
-    target: EntityScope,
+    target: EntityRowScope,
     rendered: _RenderedRelationshipCandidate,
 ) -> str:
     """A joined target's `on`: its correlation, its temporal visibility, then
     its family guard, each pushing its binds as its text lands."""
     terms = [rendered.correlation_sql]
-    terms.extend(lower_perspective(_temporal_visibility(relationship), target))
+    terms.extend(render_perspective(_temporal_visibility(relationship), target))
     if rendered.family_guard_sql is not None:
         terms.append(rendered.family_guard_sql)
     target.ctx.bind_framework_all(rendered.family_guard_binds)
     return " and ".join(terms)
 
 
-def _lower_reached_quantifier(quantifier: ResolvedQuantifier, scope: ResolutionScope) -> str:
-    """A quantifier at its position: read from its owner results, evaluated at
-    its shared owner's joined row, continued through the confined hops past a
-    shared prefix, or evaluated through its own hops. A missing owner holds no
-    element: owner results and hops default to the empty collection's answer,
-    and a missing joined owner correlates no element."""
-    default = "false" if quantifier.kind == "any" else "true"
-    placement = _placement(quantifier, scope)
-    if placement is None:
-        return _at(
-            quantifier.position,
-            scope,
-            lambda reached: _lower_quantifier(quantifier, reached),
-            default,
+def _existential(fragments: Sequence[str], *, negate: bool) -> str:
+    """Branch-local `exists` fragments as one family-wide answer: a candidate in
+    any branch answers it, and its negation is the whole answer negated. With
+    no candidate at all nothing exists."""
+    if not fragments:
+        return "1 = 1" if negate else "1 = 0"
+    answer = fragments[0] if len(fragments) == 1 else f"({' or '.join(fragments)})"
+    return f"not {answer}" if negate else answer
+
+
+def _existence(
+    plan: _StatementPlan,
+    relationship: ResolvedRelationship,
+    existence: _Terminal,
+    scope: EntityRowScope,
+    *,
+    negate: bool,
+    counterexample: bool = False,
+) -> str:
+    """One correlated `exists` per planned candidate of ``relationship``, each
+    taking its alias as it opens, so a later branch's alias follows everything
+    the preceding one allocated."""
+    if not isinstance(existence, _CandidateExistence):  # pragma: no cover - planned evaluations
+        raise SqlGenError("a relationship is evaluated without planned candidates")
+    fragments = [
+        _candidate_exists(plan, relationship, candidate, scope, counterexample=counterexample)
+        for candidate in existence.candidates
+    ]
+    return _existential(fragments, negate=negate)
+
+
+def _candidate_exists(
+    plan: _StatementPlan,
+    relationship: ResolvedRelationship,
+    candidate: _CandidateOperand,
+    scope: EntityRowScope,
+    *,
+    counterexample: bool,
+) -> str:
+    """One candidate branch's `exists`: its complete operand — or, for a
+    universal, its counterexample — beside the candidate test, the operand's
+    shared sources joined to the candidate as its own lexical row."""
+    rendered, branch_scope = _rendered_candidate(candidate.branch, scope)
+    source = f"{rendered.table} {rendered.alias}"
+    interior: str | None = None
+    operand_scope = candidate.operand_scope
+    if operand_scope is not None:
+        joins = render_shared_sources(plan, operand_scope, branch_scope)
+        source = f"{source} {joins}" if joins else source
+        operand = plan.lexical_scopes[operand_scope]
+        interior = (
+            _counterexample(operand.predicate, plan, operand, (), branch_scope)
+            if counterexample
+            else _conjunct(operand.predicate, plan, operand, (), branch_scope)
         )
-    if placement.results is not None:
-        return f"coalesce({placement.results.column(quantifier)}, {default})"
-    if placement.hops:
-        return _confined(placement, lambda reached: _lower_quantifier(quantifier, reached), default)
-    return _lower_quantifier(quantifier, _reached(placement))
+    where_sql = _candidate_where(relationship, branch_scope, rendered, interior)
+    return f"exists (select 1 from {source} where {where_sql})"
 
 
-def _lower_quantifier(quantifier: ResolvedQuantifier, scope: ResolutionScope) -> str:
-    """A quantifier at the current object of ``scope``.
+def _counterexample(
+    where: ResolvedPredicate,
+    plan: _StatementPlan,
+    lexical: _LexicalScopePlan,
+    path: _PredicatePath,
+    scope: PredicateScope,
+) -> str:
+    """An element the complete predicate ``where`` does not make true."""
+    return f"not ({_term(where, plan, lexical, path, scope)}) is true"
+
+
+# --------------------------------------------------------------------------- #
+# Quantifiers, presences, and narrowings                                       #
+# --------------------------------------------------------------------------- #
+
+
+def _render_quantifier(
+    quantifier: ResolvedQuantifier,
+    plan: _StatementPlan,
+    lexical: _LexicalScopePlan,
+    path: _PredicatePath,
+    scope: PredicateScope,
+) -> str:
+    """A quantifier at its placement: read from its owner-result cell,
+    evaluated at its shared owner's joined row, continued through the confined
+    hops past a shared prefix, or evaluated through its own hops. A missing
+    owner holds no element: owner results and hops default to the empty
+    collection's answer, and a missing joined owner correlates no element."""
+    default = "false" if quantifier.kind == "any" else "true"
+    placement = _placement(lexical, path)
+    if isinstance(placement, _OwnerResultEvaluation):
+        binding = scope.ctx.owner_results_binding(placement.results)
+        return f"coalesce({binding.alias}.{binding.columns[placement.cell]}, {default})"
+
+    def at(reached: PredicateScope, terminal: _Terminal) -> str:
+        return _quantify(quantifier, terminal, plan, lexical, path, reached)
+
+    match placement:
+        case _SharedRowEvaluation(source=source, terminal=terminal):
+            return at(_target(scope, source), terminal)
+        case _ConfinedScalarEvaluation(prefix=prefix, continuation=continuation):
+            return _confined(lexical, prefix, continuation, scope, at, default, default)
+        case _UnsharedEvaluation(continuation=continuation):
+            return _continue(continuation, scope, at, default, default)
+
+
+def _quantify(
+    quantifier: ResolvedQuantifier,
+    terminal: _Terminal,
+    plan: _StatementPlan,
+    lexical: _LexicalScopePlan,
+    path: _PredicatePath,
+    scope: PredicateScope,
+) -> str:
+    """A quantifier at the object of ``scope`` holding its collection.
 
     ``any`` is a true-matching existence, ``none`` its complement, and ``all``
     the absence of a counterexample — an element for which the COMPLETE
@@ -1062,49 +1183,51 @@ def _lower_quantifier(quantifier: ResolvedQuantifier, scope: ResolutionScope) ->
     """
     collection = quantifier.collection
     if isinstance(collection, ResolvedRelationship):
-        if not isinstance(scope, EntityScope):  # pragma: no cover - validated scopes
-            raise SqlGenError("a relationship is quantified only from an Entity position")
-        return _lower_relationship_quantifier(quantifier, collection, scope)
+        return _existence(
+            plan,
+            collection,
+            terminal,
+            _entity_row(scope),
+            negate=quantifier.kind != "any",
+            counterexample=quantifier.kind == "all",
+        )
     if isinstance(collection, ScalarCollection):
         guard = _scalar_array_guard(collection.member, scope)
-        element: ResolutionScope = ScalarElementScope(
+        element: PredicateScope = ScalarElementScope(
             ctx=scope.ctx, member=collection.member, alias=scope.ctx.next_alias()
         )
     else:
         guard = _occurrence_array_guard(collection, scope)
-        element = ElementScope(ctx=scope.ctx, container=collection, alias=scope.ctx.next_alias())
+        element = ValueObjectElementScope(
+            ctx=scope.ctx, container=collection, alias=scope.ctx.next_alias()
+        )
     inner = f"select 1 from jsonb_array_elements({guard}) {element.alias}"
     where = quantifier.where
+    body = (*path, 0)
     if quantifier.kind == "all":
         assert where is not None
-        return f"not exists ({inner} where {_counterexample(where, element)})"
+        return f"not exists ({inner} where {_counterexample(where, plan, lexical, body, element)})"
     if where is not None:
-        interior = lower_predicate(where, element)
+        interior = _render(where, plan, lexical, body, element)
         if interior:
             inner = f"{inner} where {interior}"
     keyword = "not exists" if quantifier.kind == "none" else "exists"
     return f"{keyword} ({inner})"
 
 
-def _counterexample(where: ResolvedPredicate, scope: ResolutionScope) -> str:
-    """An element the complete predicate ``where`` does not make true."""
-    return f"not ({_term(where, scope)}) is true"
-
-
-def _scalar_array_guard(member: ResolvedPredicateMember, scope: ResolutionScope) -> str:
+def _scalar_array_guard(member: ResolvedPredicateMember, scope: PredicateScope) -> str:
     """The guarded array a scalar collection's elements are unnested from."""
     if isinstance(scope, ScalarElementScope):  # pragma: no cover - validated scopes
         raise SqlGenError("a scalar element holds no collection")
     if isinstance(member, AttributeMetadata):
-        if not isinstance(scope, EntityScope):  # pragma: no cover - validated scopes
+        if not isinstance(scope, EntityRowScope):  # pragma: no cover - validated scopes
             raise SqlGenError(f"{member.identity} is not read from a Value Object element")
         placement = scope.layout.placement(member.identity)
         if isinstance(placement, DocumentPath):
-            scope.record_document_applicability(member.identity.entity)
             document, segments = scope.own_column(placement.slot.column.name), placement.path
         else:
             document, segments = scope.own_column(scope.slot_column(member.identity)), ()
-    elif isinstance(scope, EntityScope):
+    elif isinstance(scope, EntityRowScope):
         vo, path = _resolved_vo_path(member, scope)
         document, prefix = scope.document_root(vo)
         segments = (*prefix, *path)
@@ -1119,7 +1242,7 @@ def _scalar_array_guard(member: ResolvedPredicateMember, scope: ResolutionScope)
     return guard
 
 
-def _occurrence_array_guard(occurrence: OccurrenceMetadata, scope: ResolutionScope) -> str:
+def _occurrence_array_guard(occurrence: OccurrenceMetadata, scope: PredicateScope) -> str:
     """The guarded array a ``many`` Value Object's elements are unnested from."""
     document, segments = _occurrence_carrier(occurrence, scope)
     guard, binds = scope.dialect.array_guard(document, segments)
@@ -1128,11 +1251,11 @@ def _occurrence_array_guard(occurrence: OccurrenceMetadata, scope: ResolutionSco
 
 
 def _occurrence_carrier(
-    occurrence: OccurrenceMetadata, scope: ResolutionScope
+    occurrence: OccurrenceMetadata, scope: PredicateScope
 ) -> tuple[str, tuple[str, ...]]:
     """The rendered document carrying ``occurrence`` and the path reaching it."""
     identity = occurrence.identity
-    if isinstance(scope, EntityScope):
+    if isinstance(scope, EntityRowScope):
         vo = _entity_view(scope.facet, identity.entity).applicable_value_object(identity.path[0])
         if vo is None:
             raise SqlGenError(
@@ -1145,130 +1268,65 @@ def _occurrence_carrier(
     return scope.element_reference(), _relative_path(identity.path, scope.container)
 
 
-def _lower_relationship_quantifier(
-    quantifier: ResolvedQuantifier, relationship: ResolvedRelationship, scope: EntityScope
+def _render_presence(
+    presence: ResolvedPresence,
+    plan: _StatementPlan,
+    lexical: _LexicalScopePlan,
+    path: _PredicatePath,
+    scope: PredicateScope,
 ) -> str:
-    """One correlated `exists` per planned branch of the related Entity.
-
-    An ``any`` or ``none`` whose ``where`` is itself a narrowing of the bound
-    element selects the branches the hop plans rather than lowering a guard in
-    each: an element outside the selection makes that narrowing false, so it
-    can neither match ``any`` nor spoil ``none``. A universal keeps every
-    branch, because such an element is its counterexample.
-    """
-    if _reaches_nothing(relationship, scope):
-        return "1 = 0" if quantifier.kind == "any" else "1 = 1"
-    where = quantifier.where
-    narrowed = (
-        where
-        if quantifier.kind != "all"
-        and isinstance(where, ResolvedNarrow)
-        and isinstance(where.target, CurrentObject)
-        else None
-    )
-    inner = where if narrowed is None else narrowed.operand
-    plan = _candidates(
-        relationship, scope, position=None if narrowed is None else narrowed.selection
-    )
-    fragments = [
-        _candidate_exists(
-            relationship, branch_scope, rendered, inner, counterexample=quantifier.kind == "all"
-        )
-        for rendered, branch_scope in _opened_branches(plan, relationship, scope)
-    ]
-    return _existential(fragments, negate=quantifier.kind != "any")
-
-
-def _candidate_exists(
-    relationship: ResolvedRelationship,
-    scope: EntityScope,
-    rendered: _RenderedRelationshipCandidate,
-    operand: ResolvedPredicate | None,
-    *,
-    counterexample: bool = False,
-) -> str:
-    """One candidate branch's `exists`: its complete ``operand`` — or, for a
-    universal, its counterexample — beside the candidate test. Outside a
-    :attr:`~EntityScope.local` scope the operand's shared sources join the
-    candidate as its own lexical scope."""
-    source = f"{rendered.table} {rendered.alias}"
-    interior: str | None = None
-    body = scope
-    if operand is not None:
-        if not scope.local:
-            body = plan_shared_sources(operand, scope)
-            joins = render_shared_sources(body)
-            source = f"{source} {joins}" if joins else source
-        interior = _counterexample(operand, body) if counterexample else _conjunct(operand, body)
-    where_sql = _candidate_where(relationship, body, rendered, interior)
-    return f"exists (select 1 from {source} where {where_sql})"
-
-
-def _lower_presence(presence: ResolvedPresence, scope: ResolutionScope) -> str:
     """Whether a single object is present, two-valued: an absent target at any
     preceding hop reads as absent. A matching operand is evaluated whole in
-    each candidate's own scope, so only a candidate making it true matches."""
-    placement = _placement(presence, scope)
-    if placement is not None:
-        return _planned_presence(presence, placement)
-    target = presence.target
-    if isinstance(presence.position, CurrentObject):
-        if isinstance(target, ResolvedRelationship):
-            if not isinstance(scope, EntityScope):  # pragma: no cover - validated scopes
-                raise SqlGenError("a relationship is reached only from an Entity position")
-            return _relationship_presence(target, scope, presence.where, negate=presence.negated)
-        sql = _object_presence(target, scope)
-        return f"not {sql}" if presence.negated else sql
-    sql = _at(presence.position, scope, lambda reached: _present(presence, reached), "false")
+    each candidate's own row, so only a candidate making it true matches; a
+    presence whose target is itself shared reads that target's join."""
+
+    def present(reached: PredicateScope, terminal: _Terminal) -> str:
+        return _present(presence, terminal, plan, reached, negate=False)
+
+    match _placement(lexical, path):
+        case _SharedRowEvaluation(source=source, terminal=_JoinedTargetMatch() as joined):
+            return _joined_presence(
+                plan, joined.operand_scope, _target(scope, source), negated=presence.negated
+            )
+        case _SharedRowEvaluation(source=source, terminal=terminal):
+            return _present(
+                presence, terminal, plan, _target(scope, source), negate=presence.negated
+            )
+        case _ConfinedScalarEvaluation(prefix=prefix, continuation=continuation):
+            sql = _confined(lexical, prefix, continuation, scope, present, "false", "false")
+        case _UnsharedEvaluation(continuation=continuation):
+            if not continuation.hops and continuation.reaches_target:
+                return _present(
+                    presence, continuation.terminals[0], plan, scope, negate=presence.negated
+                )
+            sql = _continue(continuation, scope, present, "false", "false")
+        case _OwnerResultEvaluation():  # pragma: no cover - owner results hold quantifiers
+            raise SqlGenError("a presence reads no owner result")
     return f"not {sql}" if presence.negated else sql
 
 
-def _present(presence: ResolvedPresence, reached: ResolutionScope) -> str:
-    """``presence``'s positive test at the object its position reaches."""
-    target = presence.target
-    if isinstance(target, ResolvedRelationship):
-        return _relationship_presence(target, _entity_scope(reached), presence.where, negate=False)
-    return _object_presence(target, reached)
-
-
-def _relationship_presence(
-    relationship: ResolvedRelationship,
-    scope: EntityScope,
-    where: ResolvedPredicate | None,
+def _present(
+    presence: ResolvedPresence,
+    terminal: _Terminal,
+    plan: _StatementPlan,
+    reached: PredicateScope,
     *,
     negate: bool,
 ) -> str:
-    if _reaches_nothing(relationship, scope):
-        return "1 = 1" if negate else "1 = 0"
-    fragments = [
-        _candidate_exists(relationship, branch_scope, rendered, where)
-        for rendered, branch_scope in _opened_branches(
-            _candidates(relationship, scope), relationship, scope
-        )
-    ]
-    return _existential(fragments, negate=negate)
-
-
-def _planned_presence(presence: ResolvedPresence, placement: _DemandPlacement) -> str:
-    """A presence evaluated at its planned source: through a shared target's
-    join where it reuses one, through the confined hops past the shared
-    prefix where it has any, else as its own test at the shared prefix it
-    reaches, where a missing prefix correlates nothing and so is absent."""
-    if placement.reuses is not None:
-        return _joined_presence(placement.reuses, presence.where, negated=presence.negated)
-    if placement.hops:
-        sql = _confined(placement, lambda reached: _present(presence, reached), "false")
-        return f"not {sql}" if presence.negated else sql
-    reached = _reached(placement)
+    """``presence``'s test at the object it reaches."""
     target = presence.target
     if isinstance(target, ResolvedRelationship):
-        return _relationship_presence(target, reached, presence.where, negate=presence.negated)
+        return _existence(plan, target, terminal, _entity_row(reached), negate=negate)
     sql = _object_presence(target, reached)
-    return f"not {sql}" if presence.negated else sql
+    return f"not {sql}" if negate else sql
 
 
 def _joined_presence(
-    source: _SharedSource, where: ResolvedPredicate | None, *, negated: bool
+    plan: _StatementPlan,
+    operand_scope: _LexicalScopeId | None,
+    target: EntityRowScope,
+    *,
+    negated: bool,
 ) -> str:
     """Presence, or a match, read from a shared target's joined row.
 
@@ -1277,15 +1335,17 @@ def _joined_presence(
     only beneath that presence, so an absent target is false rather than the
     operand's unknown.
     """
-    target = _rendered_scope(source)
     absent = _absent(target)
-    if where is None:
+    if operand_scope is None:
         return absent if negated else f"not {absent}"
-    match = f"case when {absent} then false else ({_term(where, target)}) is true end"
+    match = (
+        f"case when {absent} then false else ({_operand_term(plan, operand_scope, target)}) "
+        "is true end"
+    )
     return f"not {match}" if negated else match
 
 
-def _absent(target: EntityScope) -> str:
+def _absent(target: EntityRowScope) -> str:
     """Whether a joined target is missing: its first physical primary-key
     Column, which no row holds null, reads null."""
     key = target.layout.physical_primary_key
@@ -1294,101 +1354,113 @@ def _absent(target: EntityScope) -> str:
     return f"{target.own_column(key[0].column.name)} is null"
 
 
-def _object_presence(occurrence: OccurrenceMetadata, scope: ResolutionScope) -> str:
+def _object_presence(occurrence: OccurrenceMetadata, scope: PredicateScope) -> str:
     document, segments = _occurrence_carrier(occurrence, scope)
     sql, binds = scope.dialect.object_presence(document, segments)
     scope.ctx.bind_framework_all(binds)
     return sql
 
 
-def _lower_narrow(narrow: ResolvedNarrow, scope: ResolutionScope) -> str:
+def _render_narrow(
+    narrow: ResolvedNarrow,
+    plan: _StatementPlan,
+    lexical: _LexicalScopePlan,
+    path: _PredicatePath,
+    scope: PredicateScope,
+) -> str:
     """A narrowing of the current Entity, or of a reached target: at a shared
     target's joined row where one is planned, else as its own candidate's
     result in the target's correlated scalar subquery, which keeps every
     declared candidate under its cardinality assertion."""
-    target = narrow.target
-    if isinstance(target, CurrentObject):
-        if not isinstance(scope, EntityScope):  # pragma: no cover - validated scopes
-            raise SqlGenError("a narrow addresses an Entity position, not a bound element")
-        return _lower_branch_narrow(narrow, scope)
-    relationship = target.relationship
-    placement = _placement(narrow, scope)
-    if placement is not None and not placement.hops:
-        return _joined_narrow(narrow, relationship, _reached(placement))
+    placement = _placement(lexical, path)
+    if isinstance(narrow.target, CurrentObject):
+        return _branch_narrow(narrow, placement, plan, lexical, path, _entity_row(scope))
+    if isinstance(placement, _SharedRowEvaluation):
+        return _joined_narrow(narrow, placement.terminal, plan, _target(scope, placement.source))
 
-    def chain(demand: _Demand, default: str) -> str:
-        if placement is not None:
-            return _confined(placement, demand, default)
-        return _at(target, scope, demand, default)
+    def chain(emit: _Emit, default: str) -> str:
+        match placement:
+            case _ConfinedScalarEvaluation(prefix=prefix, continuation=continuation):
+                return _confined(lexical, prefix, continuation, scope, emit, default, default)
+            case _UnsharedEvaluation(continuation=continuation):
+                return _continue(continuation, scope, emit, default, default)
+            case _:  # pragma: no cover - a reached narrowing holds no owner result
+                raise SqlGenError("a narrowing reads no owner result")
 
-    operand = narrow.operand
-    if operand is None:
+    if narrow.operand is None:
         return chain(
-            lambda candidate: _selected(narrow, relationship, _entity_scope(candidate)), "false"
+            lambda candidate, terminal: _selected(
+                _target_selection(terminal).selection, _entity_row(candidate)
+            ),
+            "false",
         )
     dialect = scope.dialect
     envelope = chain(
-        lambda candidate: dialect.boolean_envelope(
-            _selected_operand(narrow, relationship, _entity_scope(candidate), operand)
+        lambda candidate, terminal: dialect.boolean_envelope(
+            _selected_operand(_target_selection(terminal), plan, _entity_row(candidate))
         ),
         dialect.absent_envelope(),
     )
     return dialect.envelope_value(envelope)
 
 
+def _target_selection(terminal: _Terminal) -> _TargetSelection:
+    if not isinstance(terminal, _TargetSelection):  # pragma: no cover - planned narrowings
+        raise SqlGenError("a narrowed target is evaluated without a planned selection")
+    return terminal
+
+
 def _joined_narrow(
-    narrow: ResolvedNarrow, relationship: ResolvedRelationship, target: EntityScope
+    narrow: ResolvedNarrow, terminal: _Terminal, plan: _StatementPlan, target: EntityRowScope
 ) -> str:
     """A narrowing over a shared target's joined row: false where the target is
     missing or outside the selection, else its operand's own truth, unknown
     included."""
+    selection = _target_selection(terminal)
     guard = f"not {_absent(target)}"
-    selected = _selected(narrow, relationship, target)
+    selected = _selected(selection.selection, target)
     if selected != "true":
         guard = f"{guard} and {selected}"
-    if narrow.operand is None:
+    if selection.operand_scope is None:
         return f"({guard})"
-    return f"case when {guard} then {_term(narrow.operand, target)} else false end"
+    return (
+        f"case when {guard} then {_operand_term(plan, selection.operand_scope, target)} "
+        "else false end"
+    )
 
 
-def _selected(
-    narrow: ResolvedNarrow, relationship: ResolvedRelationship, candidate: EntityScope
-) -> str:
+def _selected(selection: _SubtypeSelection, candidate: EntityRowScope) -> str:
     """Whether ``candidate`` belongs to the narrowing's selection: its tag
     guard in a hierarchy table, its branch's own answer in a concrete table."""
-    target = relationship.target
-    if target.inheritance is None:
-        return "true"
-    if candidate.variant is not None:
-        return "true" if candidate.variant in narrow.selection else "false"
-    root = _entity_view(candidate.facet, target.identity).root
-    layout = _table_layout(candidate.storage, candidate.facet, root)
-    tag_sql, tag_binds = _tph_tag_guard(
-        candidate, candidate.facet, _TagPredicate(_tag_column(layout, root), narrow.selection)
-    )
-    candidate.ctx.bind_framework_all(tag_binds)
-    return tag_sql
+    if isinstance(selection, _TagPredicate):
+        tag_sql, tag_binds = _tph_tag_guard(candidate, candidate.facet, selection)
+        candidate.ctx.bind_framework_all(tag_binds)
+        return tag_sql
+    return "true" if selection else "false"
 
 
 def _selected_operand(
-    narrow: ResolvedNarrow,
-    relationship: ResolvedRelationship,
-    candidate: EntityScope,
-    operand: ResolvedPredicate,
+    selection: _TargetSelection, plan: _StatementPlan, candidate: EntityRowScope
 ) -> str:
     """The narrowing's complete result at one candidate: the operand where the
     candidate is selected, false where it is not."""
-    if candidate.variant is not None:
-        if candidate.variant not in narrow.selection:
-            return "false"
-        return _term(operand, candidate)
-    selected = _selected(narrow, relationship, candidate)
-    if selected == "true":
-        return _term(operand, candidate)
-    return f"case when {selected} then {_term(operand, candidate)} else false end"
+    if selection.selection is False or selection.operand_scope is None:
+        return "false"
+    if selection.selection is True:
+        return _operand_term(plan, selection.operand_scope, candidate)
+    selected = _selected(selection.selection, candidate)
+    operand = _operand_term(plan, selection.operand_scope, candidate)
+    return f"case when {selected} then {operand} else false end"
 
 
-def _lower_branch_narrow(narrow: ResolvedNarrow, scope: EntityScope) -> str:
+def _branch_narrow(
+    narrow: ResolvedNarrow,
+    placement: _PredicatePlacement,
+    plan: _StatementPlan,
+    lexical: _LexicalScopePlan,
+    path: _PredicatePath,
+    scope: EntityRowScope,
+) -> str:
     """A `narrow` of the current Entity — a **grouped branch predicate** (m-sql
     "Grouped branch predicates"): the branch's own operand composes with its
     own tag guard via `and`, and the composition is wrapped in parens whenever
@@ -1396,18 +1468,22 @@ def _lower_branch_narrow(narrow: ResolvedNarrow, scope: EntityScope) -> str:
     by `or` (`m-inheritance-015`). In a concrete table's branch the operand
     stands in for the narrow as one term.
     """
-    plan = _plan_resolved_branch_narrow(scope.facet, scope.storage, scope.entity, narrow.selection)
+    terminal = (
+        placement.continuation.terminals[0] if isinstance(placement, _UnsharedEvaluation) else None
+    )
+    if not isinstance(terminal, _BranchSelection):  # pragma: no cover - planned narrowings
+        raise SqlGenError("a narrowing of the row is rendered without a planned selection")
+    selection = terminal.selection
     operand = narrow.operand
-    if scope.variant is not None:
-        if scope.variant not in plan.position:
-            return "1 = 0"
-        return "1 = 1" if operand is None else _whole(operand, scope)
-    if plan.tag is None:  # pragma: no cover - TPCS union branches always carry a variant
-        raise SqlGenError("a TPCS branch narrow requires a concrete branch scope")
+    body = (*path, 0)
+    if selection is False:
+        return "1 = 0"
+    if selection is True:
+        return "1 = 1" if operand is None else _whole(operand, plan, lexical, body, scope)
     # Branch predicate first, THEN the guard's binds — the same explicit ordering
     # the top-level read states, for the same reason.
-    branch_sql = "" if operand is None else _conjunct(operand, scope)
-    tag_sql, tag_binds = _tph_tag_guard(scope, scope.facet, plan.tag)
+    branch_sql = "" if operand is None else _conjunct(operand, plan, lexical, body, scope)
+    tag_sql, tag_binds = _tph_tag_guard(scope, scope.facet, selection)
     scope.ctx.bind_framework_all(tag_binds)
     if not branch_sql:
         return tag_sql
@@ -1415,7 +1491,7 @@ def _lower_branch_narrow(narrow: ResolvedNarrow, scope: EntityScope) -> str:
 
 
 def _resolved_vo_path(
-    leaf: ValueObjectAttributeMetadata, scope: EntityScope
+    leaf: ValueObjectAttributeMetadata, scope: EntityRowScope
 ) -> tuple[ValueObjectMetadata, tuple[str, ...]]:
     identity = leaf.identity.value_object
     vo = _entity_view(scope.facet, identity.entity).applicable_value_object(identity.path[0])
@@ -1424,328 +1500,27 @@ def _resolved_vo_path(
     return vo, (*identity.path[1:], leaf.identity.name)
 
 
+def _entity_row(scope: PredicateScope) -> EntityRowScope:
+    if not isinstance(scope, EntityRowScope):  # pragma: no cover - a hop starts at an Entity
+        raise SqlGenError("a relationship is reached only from an Entity position")
+    return scope
+
+
+def _target(scope: PredicateScope, source: _SharedSourceRef) -> EntityRowScope:
+    """The joined target row ``source`` rendered as."""
+    return scope.ctx.source_binding(source).target
+
+
 # --------------------------------------------------------------------------- #
-# Shared relationship sources: SQL demand planning                             #
+# Shared relationship sources                                                  #
 # --------------------------------------------------------------------------- #
 
 
-def plan_shared_sources(predicate: ResolvedPredicate, scope: EntityScope) -> EntityScope:
-    """``scope`` owning the shared relationship sources ``predicate`` reads through.
-
-    Scalar operations, presence tests, target narrowings, and collection
-    quantifiers reached through to-one hops at this scope, and those in the
-    operand of a narrowing of the scope's own row, plan sources
-    (:func:`_plan_reached`); a quantifier's, match's, or narrowing's operand
-    evaluated in a subquery plans its own when it renders. A presence whose
-    target another demand shares reads that target's join. Planning allocates
-    no alias and pushes no bind.
-    """
-    plan: _SourcePlan = SourcePlan()
-    scope.ctx.own_source_plan(plan)
-    planned = replace(scope, sources=plan)
-    presences: list[tuple[ResolvedPresence, _SharedSource | None]] = []
-    _plan_demands(predicate, planned, plan, presences)
-    for presence, reached in presences:
-        _plan_reuse(presence, reached, planned, plan)
-    return planned
-
-
-def _plan_demands(
-    predicate: ResolvedPredicate,
-    scope: EntityScope,
-    plan: _SourcePlan,
-    presences: list[tuple[ResolvedPresence, _SharedSource | None]],
-) -> None:
-    match predicate:
-        case ResolvedAnd(operands=operands) | ResolvedOr(operands=operands):
-            for operand in operands:
-                _plan_demands(operand, scope, plan, presences)
-        case ResolvedNot(operand=operand) | ResolvedGroup(operand=operand):
-            _plan_demands(operand, scope, plan, presences)
-        case (
-            ResolvedComparison()
-            | ResolvedRange()
-            | ResolvedMembership()
-            | ResolvedStringMatch()
-            | ResolvedNullCheck()
-            | ResolvedQuantifier()
-        ):
-            _plan_positioned(predicate, scope, plan)
-        case ResolvedPresence():
-            _plan_presence(predicate, scope, plan, presences)
-        case ResolvedNarrow(target=RelatedObject() as target):
-            _plan_reached(predicate, tuple(_hops(target)), scope, plan)
-        case ResolvedNarrow(target=CurrentObject(), operand=operand) if operand is not None:
-            if _narrow_lowers_operand(predicate, scope):
-                _plan_demands(operand, scope, plan, presences)
-        case _:
-            pass
-
-
-def _plan_presence(
-    presence: ResolvedPresence,
-    scope: EntityScope,
-    plan: _SourcePlan,
-    presences: list[tuple[ResolvedPresence, _SharedSource | None]],
-) -> None:
-    """Place ``presence`` past its hops, and note a relationship presence whose
-    own target a shared source might already join."""
-    position = presence.position
-    if isinstance(position, RelatedObject):
-        placement = _plan_reached(presence, tuple(_hops(position)), scope, plan)
-        if placement is None or placement.hops:
-            return
-        reached = placement.reached
-    else:
-        reached = None
-    if isinstance(presence.target, ResolvedRelationship):
-        presences.append((presence, reached))
-
-
-def _plan_positioned(
-    demand: _Operation | ResolvedQuantifier, scope: EntityScope, plan: _SourcePlan
-) -> None:
-    """Place a scalar operation or a quantifier reached through to-one hops."""
-    position = demand.position
-    if not isinstance(position, RelatedObject):
-        return
-    hops = tuple(_hops(position))
-    if isinstance(demand, ResolvedQuantifier):
-        _plan_collection(demand, hops, scope, plan)
-    else:
-        _plan_reached(demand, hops, scope, plan)
-
-
-def _plan_collection(
-    quantifier: ResolvedQuantifier,
-    hops: tuple[ResolvedRelationship, ...],
-    scope: EntityScope,
-    plan: _SourcePlan,
-) -> None:
-    """Place a quantifier over a collection its shared owner holds.
-
-    A related Entity collection is quantified at the owner's joined row, its
-    correlated `exists` one a database can evaluate set-wise. A document
-    collection — a scalar collection or a ``many`` Value Object — reads the
-    owner's results instead: its elements come from the owner row itself, so
-    the quantifier is evaluated once per owner row the result relation reads
-    rather than once per row of the scope. A relationship with no candidate
-    answers inside its hops.
-    """
-    collection = quantifier.collection
-    if isinstance(collection, ResolvedRelationship) and _reaches_nothing(collection, scope):
-        return
-    placement = _plan_reached(quantifier, hops, scope, plan)
-    if placement is None or placement.hops or isinstance(collection, ResolvedRelationship):
-        return
-    owner = placement.reached
-    if owner is None:  # pragma: no cover - a placement past every hop reaches its owner
-        raise SqlGenError("a collection quantifier reaches no shared owner")
-    plan.place(quantifier, replace(placement, results=plan.collect(owner, quantifier)))
-
-
-def _narrow_lowers_operand(narrow: ResolvedNarrow, scope: EntityScope) -> bool:
-    """Whether a narrowing of ``scope``'s own row lowers its operand there: a
-    concrete branch outside the selection answers false without it."""
-    if scope.variant is None:
-        return True
-    selected = _plan_resolved_branch_narrow(
-        scope.facet, scope.storage, scope.entity, narrow.selection
-    ).position
-    return scope.variant in selected
-
-
-def _plan_reached(
-    demand: ResolvedPredicate,
-    hops: tuple[ResolvedRelationship, ...],
-    scope: EntityScope,
-    plan: _SourcePlan,
-) -> _DemandPlacement | None:
-    """Place ``demand`` on the shared sources of its leading proven ``hops``.
-
-    Where every hop is proven and the demand is safe over the last target's
-    joined row, it reads that row. Otherwise the proven prefix — every hop but
-    the demand's last where all are proven — is shared, and the demand
-    continues through its own scalar subqueries confined to that prefix, so it
-    evaluates exactly the candidates its local form would. With no shared
-    prefix, or past a target with no concrete subtype, it stays local.
-    """
-    if any(_reaches_nothing(hop, scope) for hop in hops):
-        return None
-    branches = [branch for _, branch in _proven_prefix(hops, scope)]
-    target = (
-        _table_layout(scope.storage, scope.facet, branches[-1].entity.identity)
-        if branches
-        else None
-    )
-    if len(branches) == len(hops) and _evaluation_is_safe(demand, target, scope, "joined-row"):
-        shared = len(hops)
-    else:
-        shared = min(len(branches), len(hops) - 1)
-        if not shared or not _evaluation_is_safe(demand, None, scope, "confined"):
-            return None
-    reached: _SharedSource | None = None
-    for hop, branch in zip(hops[:shared], branches, strict=False):
-        reached = plan.adopt(reached, hop, branch)
-    placement: _DemandPlacement = DemandPlacement(reached, hops=hops[shared:])
-    plan.place(demand, placement)
-    return placement
-
-
-def _plan_reuse(
-    presence: ResolvedPresence,
-    reached: _SharedSource | None,
-    scope: EntityScope,
-    plan: _SourcePlan,
-) -> None:
-    """Let ``presence`` read its target's join where another demand shares that
-    target; matching alone opens no join."""
-    target = presence.target
-    if not isinstance(target, ResolvedRelationship):  # pragma: no cover - planned relationships
-        return
-    shared = plan.find(reached, target)
-    if shared is None:
-        return
-    where = presence.where
-    layout = _table_layout(scope.storage, scope.facet, shared.candidate.entity.identity)
-    if where is None or _operand_is_safe(where, layout):
-        plan.place(presence, DemandPlacement(reached, shared))
-
-
-def _hops(position: RelatedObject) -> list[ResolvedRelationship]:
-    hops: list[ResolvedRelationship] = []
-    current: ObjectPosition = position
-    while isinstance(current, RelatedObject):
-        hops.append(current.relationship)
-        current = current.source
-    hops.reverse()
-    return hops
-
-
-type _Exposure = Literal["joined-row", "confined"]
-
-
-def _evaluation_is_safe(
-    demand: ResolvedPredicate,
-    target: TableLayout | None,
-    scope: EntityScope,
-    exposure: _Exposure,
-) -> bool:
-    """Whether evaluating ``demand`` under ``exposure`` evaluates nothing that
-    can fail where its local form would not have.
-
-    Uniqueness says how many rows a target has, not what a demand evaluates
-    over them; this is the one place that second question is answered. A local
-    demand reads its target inside a correlated subquery, over only the
-    candidates that subquery admitted.
-
-    A ``"joined-row"`` demand is a term over ``target``'s joined row instead: a
-    filter a database may test against any target row it scans — including
-    rows no source row reaches, which neither a presence guard nor a `case`
-    excludes. A collection quantifier there, or in the owner results that read
-    every row of ``target``'s table they are joined to, has its operand tested
-    against every element of any such row. So a projection that can fail on
-    stored data keeps its local form there: a document-resident member
-    converted to its declared type, a scalar element projected to a type its
-    comparison casts to, and a presence's, match's, narrowing's, or
-    quantifier's operand that evaluates anything :func:`_operand_is_safe`
-    cannot establish. A direct Column, extracted text, and a presence or null
-    test cannot fail.
-
-    A ``"confined"`` demand continues from a joined row through its own scalar
-    subqueries, the first of which repeats the join terms of every shared
-    source it is reached through. It therefore yields — and asserts the
-    cardinality of — only the candidates of the joined row the evaluating row
-    reaches, and every later hop and the demand's projection are evaluated in
-    its select list: exactly what the local form evaluates, wherever the
-    database tests the term.
-    """
-    if exposure == "confined":
-        return True
-    if target is None:  # pragma: no cover - a joined-row demand reads a planned target
-        raise SqlGenError("a joined-row demand reads no target")
-    match demand:
-        case ResolvedComparison(member=member) | ResolvedRange(member=member):
-            return not _converts(member, target)
-        case ResolvedMembership(member=member):
-            return not _converts(member, target)
-        case ResolvedPresence(target=ResolvedRelationship() as relationship, where=where) if (
-            where is not None
-        ):
-            return all(
-                _operand_is_safe(
-                    where, _table_layout(scope.storage, scope.facet, branch.entity.identity)
-                )
-                for branch in _candidates(relationship, scope).branches
-            )
-        case ResolvedNarrow(operand=operand) if operand is not None:
-            return _operand_is_safe(operand, target)
-        case ResolvedQuantifier(collection=ResolvedRelationship() as collection, where=where) if (
-            where is not None
-        ):
-            return all(
-                _operand_is_safe(
-                    where, _table_layout(scope.storage, scope.facet, branch.entity.identity)
-                )
-                for branch in _candidates(collection, scope).branches
-            )
-        case ResolvedQuantifier(where=where) if where is not None:
-            return _operand_is_safe(where, target)
-        case _:
-            return True
-
-
-def _operand_is_safe(operand: ResolvedPredicate, target: TableLayout) -> bool:
-    """Whether a match's, narrowing's, or quantifier's ``operand``, resolved at
-    ``target`` or at an element of a collection it holds, reads only that row
-    or element without a projection that can fail.
-
-    A further hop's scalar subquery asserts its cardinality and a quantifier,
-    narrowing, or match evaluates an operand of its own over other rows, so an
-    operand reaching any of them keeps its local form.
-    """
-    match operand:
-        case ResolvedAnd(operands=operands) | ResolvedOr(operands=operands):
-            return all(_operand_is_safe(inner, target) for inner in operands)
-        case ResolvedNot(operand=inner) | ResolvedGroup(operand=inner):
-            return _operand_is_safe(inner, target)
-        case (
-            ResolvedComparison(member=member, position=CurrentObject())
-            | ResolvedRange(member=member, position=CurrentObject())
-            | ResolvedMembership(member=member, position=CurrentObject())
-        ):
-            return not _converts(member, target)
-        case (
-            ResolvedComparison(member=member, position=ScalarElement())
-            | ResolvedRange(member=member, position=ScalarElement())
-            | ResolvedMembership(member=member, position=ScalarElement())
-        ):
-            return is_text_compared(member.type)
-        case (
-            ResolvedConstant()
-            | ResolvedStringMatch(position=CurrentObject() | ScalarElement())
-            | ResolvedNullCheck(position=CurrentObject() | ScalarElement())
-            | ResolvedPresence(position=CurrentObject(), where=None)
-            | ResolvedNarrow(target=CurrentObject(), operand=None)
-        ):
-            return True
-        case _:
-            return False
-
-
-def _converts(member: ResolvedPredicateMember, layout: TableLayout) -> bool:
-    """Whether comparing ``member`` read from a row of ``layout``, or from a
-    Value Object element, converts extracted document text to its type."""
-    if is_text_compared(member.type):
-        return False
-    if isinstance(member, AttributeMetadata):
-        return isinstance(layout.placement(member.identity), DocumentPath)
-    return True
-
-
-def render_shared_sources(scope: EntityScope) -> str:
-    """The joins of ``scope``'s planned sources, in plan order, then its owner
-    results.
+def render_shared_sources(
+    statement_plan: _StatementPlan, scope_id: _LexicalScopeId, scope: EntityRowScope
+) -> str:
+    """The joins of lexical plan ``scope_id``'s shared sources at ``scope``, in
+    plan order, then its owner results.
 
     Each source takes the next alias and pushes its `on` binds as it renders,
     so a join's aliases and binds precede the predicate beside it: its
@@ -1753,51 +1528,55 @@ def render_shared_sources(scope: EntityScope) -> str:
     its family guard. A left join keeps every row of the scope and supplies null
     where the target is missing.
     """
-    plan = scope.sources
-    if plan is None:  # pragma: no cover - only a planned scope renders its sources
-        raise SqlGenError("shared sources render only from the scope that planned them")
+    lexical = statement_plan.lexical_scopes[scope_id]
+    if not lexical.sources and not lexical.owner_results:
+        return ""
+    ctx = scope.ctx
+    ctx.select_scope_plan(lexical)
     joins: list[str] = []
-    for source in plan.sources:
-        parent = scope if source.parent is None else _rendered_scope(source.parent)
-        rendered, target = _rendered_candidate(source.candidate, source.relationship, parent)
-        source.scope, source.origin = target, parent
+    for index, source in enumerate(lexical.sources):
+        parent = scope if source.parent is None else ctx.source_binding(source.parent).target
+        rendered, target = _rendered_candidate(source.candidate, parent)
+        ctx.record_source_binding(_SharedSourceRef(scope_id, index), target=target, origin=parent)
         terms = _join_terms(source.relationship, target, rendered)
         joins.append(f"left join {rendered.table} {rendered.alias} on {terms}")
-    joins.extend(_owner_results(results) for results in plan.results)
+    joins.extend(
+        _owner_results(statement_plan, _OwnerResultsRef(scope_id, index), results, scope)
+        for index, results in enumerate(lexical.owner_results)
+    )
     return " ".join(joins)
 
 
-def _owner_results(results: _OwnerResults) -> str:
+def _owner_results(
+    plan: _StatementPlan,
+    ref: _OwnerResultsRef,
+    results: _OwnerResultsPlan,
+    scope: EntityRowScope,
+) -> str:
     """One owner's results: a relation reading the owner's Table again, one
     row per physical row, projecting every physical primary-key Column and
-    each quantifier evaluated over that row, left joined to the owner's join
-    on the complete key. A missing owner then reads no result.
+    each quantifier cell evaluated over that row, left joined to the owner's
+    join on the complete key. A missing owner then reads no result.
 
-    Each quantifier is rendered as it is at its own owner row, the relation's
-    table alias taken after the aliases its select list declares (m-sql rule
-    1), and is evaluated once per row the relation reads; the owner join's own
-    terms need not repeat, because a row's collection is that row's alone.
+    Each cell is rendered from its own lexical plan at its own owner row, the
+    relation's table alias taken after the aliases its select list declares
+    (m-sql rule 1), and is evaluated once per row the relation reads; the owner
+    join's own terms need not repeat, because a row's collection is that row's
+    alone.
     """
-    owner = _rendered_scope(results.owner)
+    ctx = scope.ctx
+    owner = ctx.source_binding(results.owner).target
     token = _hop_token()
-    row = EntityScope(
-        ctx=owner.ctx,
-        entity=owner.entity,
-        layout=owner.layout,
-        alias=token,
-        variant=owner.variant,
-        local=True,
-    )
+    row = EntityRowScope(ctx=ctx, entity=owner.entity, layout=owner.layout, alias=token)
     keys = [slot.column.name for slot in owner.layout.physical_primary_key]
-    names = _result_columns(keys, len(results.demands))
+    names = _result_columns(keys, len(results.cells))
     cells = [row.own_column(key) for key in keys]
-    cells.extend(
-        f"{_lower_quantifier(demand, row)} {name}"
-        for demand, name in zip(results.demands, names, strict=True)
-    )
+    for cell, name in zip(results.cells, names, strict=True):
+        cell_plan = plan.lexical_scopes[cell.scope_id]
+        cells.append(f"{_render(cell_plan.predicate, plan, cell_plan, (), row)} {name}")
     alias = owner.next_alias()
-    relation = owner.ctx.next_relation_alias()
-    results.alias, results.columns = relation, names
+    relation = ctx.next_relation_alias()
+    ctx.record_owner_results_binding(ref, alias=relation, columns=tuple(names))
     dialect = owner.dialect
     on = " and ".join(
         f"{dialect.qualified(relation, key)} = {owner.own_column(key)}" for key in keys
@@ -1812,38 +1591,3 @@ def _result_columns(keys: Sequence[str], count: int) -> list[str]:
     taken = set(keys)
     names = (f"q{index}" for index in itertools.count())
     return list(itertools.islice((name for name in names if name not in taken), count))
-
-
-def _confined(placement: _DemandPlacement, demand: _Demand, default: str | None) -> str:
-    """``demand`` evaluated past ``placement``'s shared prefix through its own
-    hops, the first hop's candidates confined to the prefix the row joined."""
-    return _hop_chain(placement.hops, _reached(placement), demand, default, reach=_reach(placement))
-
-
-def _reach(placement: _DemandPlacement) -> tuple[_SharedSource, ...]:
-    """The shared sources ``placement`` is reached through, in join order."""
-    chain: list[_SharedSource] = []
-    source = placement.reached
-    while source is not None:
-        chain.append(source)
-        source = source.parent
-    chain.reverse()
-    return tuple(chain)
-
-
-def _placement(predicate: ResolvedPredicate, scope: ResolutionScope) -> _DemandPlacement | None:
-    if not isinstance(scope, EntityScope) or scope.sources is None:
-        return None
-    return scope.sources.placement(predicate)
-
-
-def _reached(placement: _DemandPlacement) -> EntityScope:
-    if placement.reached is None:  # pragma: no cover - only a reusing presence plans no hop
-        raise SqlGenError("a planned demand reaches no shared source")
-    return _rendered_scope(placement.reached)
-
-
-def _rendered_scope(source: _SharedSource) -> EntityScope:
-    if source.scope is None:  # pragma: no cover - sources render before their demands
-        raise SqlGenError("a shared source is read before its join renders")
-    return source.scope

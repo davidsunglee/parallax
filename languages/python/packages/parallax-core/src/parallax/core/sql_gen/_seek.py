@@ -139,11 +139,11 @@ def order_clause(terms: Sequence[LoweredTerm], subject: TermSubject, dialect: Di
     return f"order by {rendered}"
 
 
-def lower_seek(
+def lower_seek[RowScope](
     seek: ResolvedSeek,
     terms: Sequence[LoweredTerm],
     subject: TermSubject,
-    ctx: StatementBuilder,
+    ctx: StatementBuilder[RowScope],
     *,
     leading_resident: bool,
 ) -> str:
@@ -297,12 +297,12 @@ def _hoists_a_leading_range(
     return bool(terms) and not resident and carriers[0] is not None
 
 
-def _after(
+def _after[RowScope](
     term: ContinuationTerm,
     lowered: LoweredTerm,
     subject: TermSubject,
     carrier: object,
-    ctx: StatementBuilder,
+    ctx: StatementBuilder[RowScope],
 ) -> str:
     """Everything ``lowered`` orders strictly after ``carrier``.
 
@@ -323,20 +323,20 @@ def _after(
     return f"{comparison} or {subject(lowered.member).extraction} is null"
 
 
-def _ties_with(
-    lowered: LoweredTerm, subject: TermSubject, carrier: object, ctx: StatementBuilder
+def _ties_with[RowScope](
+    lowered: LoweredTerm, subject: TermSubject, carrier: object, ctx: StatementBuilder[RowScope]
 ) -> str:
     if carrier is None:
         return f"{subject(lowered.member).extraction} is null"
     return _compared(lowered, subject, carrier, "=", ctx)
 
 
-def _compared(
+def _compared[RowScope](
     lowered: LoweredTerm,
     subject: TermSubject,
     carrier: object,
     comparator: str,
-    ctx: StatementBuilder,
+    ctx: StatementBuilder[RowScope],
 ) -> str:
     """One comparison of ``lowered``'s expression against its own carrier.
 

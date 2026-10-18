@@ -13,20 +13,30 @@ the private-module split must preserve.
 
 from __future__ import annotations
 
+import dataclasses
+from types import MappingProxyType
 from typing import Literal
 
 import pytest
 
-from parallax.conformance.models import accepted_model
+from parallax.core import deep_fetch, inheritance, storage_layout
 from parallax.core import predicate as oa
 from parallax.core.base import INFINITY
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import Metamodel
+from parallax.core.navigate import _closed  # pyright: ignore[reportPrivateUsage]
 from parallax.core.object_query import AsOf
 from parallax.core.predicate import ModelRejectedError
-from tests._support.sql import compile_read, compile_write_predicate
+from parallax.core.predicate._resolved import ResolvedAnd
+from parallax.core.sql_gen import SqlGenError
+from parallax.core.sql_gen import _compile as sql_compile
+from parallax.core.sql_gen._context import StatementBuilder
+from parallax.core.sql_gen._planning import EvaluationContext, StatementPlan, plan_statement
+from parallax.core.sql_gen._predicate import EntityRowScope, render_predicate, render_shared_sources
+from tests._support.sql import compile_read, compile_write_predicate, resolved_as_stated
 from tests.unit._corpus_model_support import formed, model, target
 from tests.unit.core.sql_gen._badge_model_support import badge_model
+from tests.unit.core.sql_gen._dormant_model_support import dormant_target_model
 
 ORDERS = model("orders")
 ANIMAL = model("animal")
@@ -513,96 +523,6 @@ def test_presence_of_a_single_value_object_inside_an_element_reads_the_element()
     )
 
 
-def _dormant_target_model(strategy: Literal["tph", "tpcs"]) -> Metamodel:
-    """``Holder`` relates to ``Empty``, an abstract subtype with no concrete
-    descendant beside the concrete sibling ``Leaf``."""
-    shared = strategy == "tph"
-    root: dict[str, object] = {
-        "name": "Thing",
-        "namespace": "probe",
-        "inheritance": {
-            "role": "root",
-            "strategy": "table-per-hierarchy" if shared else "table-per-concrete-subtype",
-            **({"tag": {"column": "kind"}} if shared else {}),
-        },
-        "attributes": [
-            {"name": "id", "type": "int64", "primaryKey": True},
-            {"name": "title", "type": "string", "maxLength": 16},
-            {"name": "holderId", "type": "int64", "nullable": True},
-        ],
-        "relationships": [
-            {
-                "name": "holder",
-                "cardinality": "many-to-one",
-                "join": {
-                    "source": "holderId",
-                    "target": {"entity": "probe.Holder", "attribute": "id"},
-                },
-            }
-        ],
-        **({"table": "thing"} if shared else {}),
-    }
-    leaf: dict[str, object] = {
-        "name": "Leaf",
-        "namespace": "probe",
-        "inheritance": {
-            "role": "concrete-subtype",
-            "parent": "probe.Thing",
-            **({"tagValue": "leaf"} if shared else {}),
-        },
-        **({} if shared else {"table": "leaf"}),
-    }
-    return accepted_model(
-        {
-            "entities": [
-                root,
-                leaf,
-                {
-                    "name": "Empty",
-                    "namespace": "probe",
-                    "inheritance": {"role": "abstract-subtype", "parent": "probe.Thing"},
-                },
-                {
-                    "name": "Holder",
-                    "namespace": "probe",
-                    "table": "holder",
-                    "attributes": [
-                        {"name": "id", "type": "int64", "primaryKey": True},
-                        {"name": "emptyId", "type": "int64", "nullable": True},
-                        {"name": "nextId", "type": "int64", "nullable": True},
-                    ],
-                    "relationships": [
-                        {
-                            "name": "empties",
-                            "cardinality": "one-to-many",
-                            "join": {
-                                "source": "id",
-                                "target": {"entity": "probe.Empty", "attribute": "holderId"},
-                            },
-                        },
-                        {
-                            "name": "empty",
-                            "cardinality": "many-to-one",
-                            "join": {
-                                "source": "emptyId",
-                                "target": {"entity": "probe.Empty", "attribute": "id"},
-                            },
-                        },
-                        {
-                            "name": "next",
-                            "cardinality": "many-to-one",
-                            "join": {
-                                "source": "nextId",
-                                "target": {"entity": "probe.Holder", "attribute": "id"},
-                            },
-                        },
-                    ],
-                },
-            ]
-        }
-    )
-
-
 def _title(path: str, value: str = "x") -> oa.Comparison:
     return oa.Comparison(op="eq", subject=oa.FieldSubject(path), value=value)
 
@@ -627,7 +547,7 @@ def _title(path: str, value: str = "x") -> oa.Comparison:
 def test_a_relationship_to_a_target_without_concrete_subtypes_reaches_no_candidate(
     strategy: Literal["tph", "tpcs"], predicate: oa.PredicateNode, expected: str
 ) -> None:
-    model = _dormant_target_model(strategy)
+    model = dormant_target_model(strategy)
     compiled = compile_read(predicate, model, POSTGRES, target(model, "Holder"))
     assert compiled.statement.sql.endswith(f"from holder t0 where {expected}")
     assert compiled.statement.binds == ()
@@ -646,14 +566,14 @@ def test_a_relationship_to_a_target_without_concrete_subtypes_reaches_no_candida
 def test_a_position_past_a_target_without_candidates_answers_its_absence(
     strategy: Literal["tph", "tpcs"], predicate: oa.PredicateNode, expected: str
 ) -> None:
-    model = _dormant_target_model(strategy)
+    model = dormant_target_model(strategy)
     compiled = compile_read(predicate, model, POSTGRES, target(model, "Holder"))
     assert compiled.statement.sql.endswith(f"from holder t0 where {expected}")
     assert compiled.statement.binds == ()
 
 
 def test_a_relationship_to_a_target_without_candidates_answers_inside_a_hop() -> None:
-    model = _dormant_target_model("tpcs")
+    model = dormant_target_model("tpcs")
     compiled = compile_read(
         oa.Quantifier("none", "Holder.next.empties"), model, POSTGRES, target(model, "Holder")
     )
@@ -687,7 +607,7 @@ _NEXT = "from holder t1 where t1.id = t0.next_id)"
 def test_a_target_without_candidates_answers_inside_every_preceding_hop(
     strategy: Literal["tph", "tpcs"], predicate: oa.PredicateNode, expected: str
 ) -> None:
-    model = _dormant_target_model(strategy)
+    model = dormant_target_model(strategy)
     compiled = compile_read(predicate, model, POSTGRES, target(model, "Holder"))
     assert compiled.statement.sql.endswith(f"from holder t0 where {expected}")
     assert compiled.statement.binds == ()
@@ -1661,6 +1581,72 @@ def test_document_collections_of_a_shared_target_read_one_owner_result_relation(
         *("array", "[]", "string", "{}", "a"),
         *("array", "[]", "sku", "s"),
     )
+
+
+def test_one_quantifier_object_in_two_predicate_slots_reads_each_slot_s_own_cell() -> None:
+    family = model("predicate-collections")
+    basket = target(family, "Basket")
+    authored = oa.Quantifier(
+        "any",
+        "Basket.owner.tags",
+        oa.StringMatch(op="startsWith", subject=oa.CURRENT_SCALAR_ELEMENT, value="n"),
+    )
+    quantifier = resolved_as_stated(
+        oa.validate_predicate(basket, authored, family), family, basket
+    ).predicate
+    compiled = sql_compile.compile_read(
+        deep_fetch.PlannedEntityQuery(
+            target=basket.identity,
+            entity=basket,
+            predicate=_closed(ResolvedAnd((quantifier, quantifier)), None),
+            projection=deep_fetch.ResolvedReadProjection((), False),
+        ),
+        family,
+        POSTGRES,
+    )
+    assert compiled.statement.sql.count(" end like ?) q") == 2
+    assert compiled.statement.sql.endswith(
+        "r0 on r0.id = t1.id where coalesce(r0.q0, false) and coalesce(r0.q1, false)"
+    )
+
+
+def _rendered_at(plan: StatementPlan, family: Metamodel, root: str, path: tuple[int, ...]) -> str:
+    entity = target(family, root)
+    builder: StatementBuilder[EntityRowScope] = StatementBuilder(
+        family, inheritance.view(family), storage_layout.view(family), POSTGRES
+    )
+    view = storage_layout.view(family).entity(entity.identity)
+    assert view is not None
+    row = EntityRowScope(builder, entity, view.layout)
+    scope_id = plan.root_scopes[None]
+    render_shared_sources(plan, scope_id, row)
+    return render_predicate(statement_plan=plan, scope_id=scope_id, path=path, scope=row)
+
+
+def test_a_rendered_path_names_one_planned_occurrence_and_refuses_any_other() -> None:
+    family = model("predicate-collections")
+    basket = target(family, "Basket")
+    grouped = oa.Group(operand=oa.Quantifier("any", "Basket.tags", _element("eq", "a")))
+    op = oa.And(operands=(_title("Basket.label"), oa.Not(grouped)))
+    plan = plan_statement(
+        resolved_as_stated(oa.validate_predicate(basket, op, family), family, basket),
+        evaluation_context=EvaluationContext.SHARING_ALLOWED,
+        entity=basket,
+        meta=family,
+        facet=inheritance.view(family),
+        storage=storage_layout.view(family),
+    )
+    assert _rendered_at(plan, family, "Basket", (1, 0, 0)).startswith(
+        "exists (select 1 from jsonb_array_elements(case when jsonb_typeof(t0.tags) = ?"
+    )
+    with pytest.raises(SqlGenError, match="addresses no occurrence"):
+        _rendered_at(plan, family, "Basket", (2,))
+    root = plan.lexical_scopes[plan.root_scopes[None]]
+    unplaced = dataclasses.replace(
+        plan, lexical_scopes=(dataclasses.replace(root, placements=MappingProxyType({})),)
+    )
+    with pytest.raises(SqlGenError, match="has no placement"):
+        _rendered_at(unplaced, family, "Basket", ())
 
 
 def test_owner_results_are_keyed_by_every_physical_primary_key_column() -> None:

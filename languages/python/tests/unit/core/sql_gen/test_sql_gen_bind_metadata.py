@@ -8,10 +8,12 @@ from decimal import Decimal
 import pytest
 
 from parallax.core import deep_fetch, inheritance, storage_layout
+from parallax.core import predicate as oa
 from parallax.core.base import DATE, FLOAT32, INFINITY, INT64, STRING, TIMESTAMP, ManagedValue
 from parallax.core.base import Decimal as DecimalType
 from parallax.core.db_port import JsonDocument
 from parallax.core.dialect import POSTGRES
+from parallax.core.metamodel import Metamodel
 from parallax.core.predicate._resolved import DeferredKeySet, ResolvedConstant
 from parallax.core.sql_gen import _compile as sql_compile
 from parallax.core.sql_gen._compile import CompiledTemplate, compile_read
@@ -24,7 +26,15 @@ from parallax.core.sql_gen._context import (
     _TypedBindSpan,  # pyright: ignore[reportPrivateUsage]
     _WireBindOverride,  # pyright: ignore[reportPrivateUsage]
 )
-from parallax.core.sql_gen._predicate import EntityScope
+from parallax.core.sql_gen._inheritance import TpcsUnionPlan, plan_inheritance_read
+from parallax.core.sql_gen._planning import (
+    EvaluationContext,
+    OwnerResultsRef,
+    SharedSourceRef,
+    StatementPlan,
+    plan_statement,
+)
+from parallax.core.sql_gen._predicate import EntityRowScope, render_shared_sources
 from parallax.core.unit_work import KeyedWrite
 from parallax.core.wire import loads
 from tests._support.lowering_probes import lower_instruction
@@ -68,16 +78,158 @@ def test_statement_builder_rejects_a_bind_that_bypassed_role_classification() ->
         builder.finish("select ?")
 
 
-def test_entity_scope_reference_front_doors_resolve_direct_members() -> None:
+def test_entity_row_scope_reference_front_doors_resolve_direct_members() -> None:
     entity = WALLET.entities[0]
     view = storage_layout.view(WALLET).entity(entity.identity)
     assert view is not None
-    scope = EntityScope(_builder(), entity, view.layout)
+    builder: StatementBuilder[EntityRowScope] = StatementBuilder(
+        WALLET, inheritance.view(WALLET), storage_layout.view(WALLET), POSTGRES
+    )
+    scope = EntityRowScope(builder, entity, view.layout)
 
     assert scope.column_of(f"{entity.identity.canonical}.id") == "t0.id"
     assert scope.subject_for(
         scope.entity_attribute(f"{entity.identity.canonical}.id")
     ).compared == ("t0.id")
+
+
+COLLECTIONS = corpus_model("predicate-collections")
+TRAVERSAL = corpus_model("predicate-traversal")
+
+
+def _row_builder(family: Metamodel) -> StatementBuilder[EntityRowScope]:
+    return StatementBuilder(family, inheritance.view(family), storage_layout.view(family), POSTGRES)
+
+
+def _statement_plan(family: Metamodel, root: str, node: oa.PredicateNode) -> StatementPlan:
+    entity = next(entity for entity in family.entities if entity.identity.name == root)
+    facet, storage = inheritance.view(family), storage_layout.view(family)
+    read = (
+        None
+        if entity.inheritance is None
+        else plan_inheritance_read(entity, None, family, facet, storage, False, None)
+    )
+    return plan_statement(
+        resolved_as_stated(oa.validate_predicate(entity, node, family), family, entity),
+        evaluation_context=EvaluationContext.SHARING_ALLOWED,
+        entity=entity,
+        meta=family,
+        facet=facet,
+        storage=storage,
+        inheritance_read=read,
+    )
+
+
+_OWNER_TAGGED = oa.And(
+    operands=(
+        oa.Comparison(op="eq", subject=oa.FieldSubject("Basket.owner.name"), value="Ada"),
+        oa.Quantifier(
+            "any",
+            "Basket.owner.tags",
+            oa.StringMatch(op="startsWith", subject=oa.CURRENT_SCALAR_ELEMENT, value="n"),
+        ),
+    )
+)
+
+
+def _basket_row(builder: StatementBuilder[EntityRowScope]) -> EntityRowScope:
+    basket = next(entity for entity in COLLECTIONS.entities if entity.identity.name == "Basket")
+    view = storage_layout.view(COLLECTIONS).entity(basket.identity)
+    assert view is not None
+    return EntityRowScope(builder, basket, view.layout)
+
+
+def test_rendered_sources_retain_their_actual_target_and_origin_rows() -> None:
+    plan = _statement_plan(COLLECTIONS, "Basket", _OWNER_TAGGED)
+    root = plan.root_scopes[None]
+    builder = _row_builder(COLLECTIONS)
+    row = _basket_row(builder)
+    joins = render_shared_sources(plan, root, row)
+    binding = builder.source_binding(SharedSourceRef(root, 0))
+    assert binding.origin is row
+    assert binding.target.alias == "t1"
+    assert f"left join basket_owner {binding.target.alias} " in joins
+    results = builder.owner_results_binding(OwnerResultsRef(root, 0))
+    assert (results.alias, results.columns) == ("r0", ("q0",))
+    builder.finish(joins)
+
+
+def test_selecting_a_scope_plan_is_idempotent_but_one_builder_renders_one_plan() -> None:
+    plan = _statement_plan(COLLECTIONS, "Basket", _OWNER_TAGGED)
+    root = plan.lexical_scopes[plan.root_scopes[None]]
+    builder = _row_builder(COLLECTIONS)
+    builder.select_scope_plan(root)
+    builder.select_scope_plan(root)
+    other = _statement_plan(COLLECTIONS, "Basket", _OWNER_TAGGED)
+    with pytest.raises(SqlGenError, match="one statement plan"):
+        builder.select_scope_plan(other.lexical_scopes[root.scope_id])
+
+
+def test_a_source_reference_never_addresses_an_owner_result_binding() -> None:
+    plan = _statement_plan(COLLECTIONS, "Basket", _OWNER_TAGGED)
+    root = plan.root_scopes[None]
+    builder = _row_builder(COLLECTIONS)
+    render_shared_sources(plan, root, _basket_row(builder))
+    with pytest.raises(SqlGenError, match="owner_results reference addresses no source"):
+        builder.source_binding(OwnerResultsRef(root, 0))  # pyright: ignore[reportArgumentType]
+    with pytest.raises(SqlGenError, match="source reference addresses no owner_results"):
+        builder.owner_results_binding(SharedSourceRef(root, 0))  # pyright: ignore[reportArgumentType]
+
+
+def test_a_selected_plan_s_missing_bindings_fail_early_and_at_finish() -> None:
+    plan = _statement_plan(COLLECTIONS, "Basket", _OWNER_TAGGED)
+    root = plan.lexical_scopes[plan.root_scopes[None]]
+    builder = _row_builder(COLLECTIONS)
+    with pytest.raises(SqlGenError, match="no selected lexical plan"):
+        builder.source_binding(SharedSourceRef(root.scope_id, 0))
+    builder.select_scope_plan(root)
+    with pytest.raises(SqlGenError, match="read before its join renders"):
+        builder.source_binding(SharedSourceRef(root.scope_id, 0))
+    with pytest.raises(SqlGenError, match="shared source was never rendered"):
+        builder.finish("")
+    partial = _row_builder(COLLECTIONS)
+    partial.select_scope_plan(root)
+    owner = _basket_row(partial)
+    partial.record_source_binding(SharedSourceRef(root.scope_id, 0), target=owner, origin=owner)
+    with pytest.raises(SqlGenError, match="owner-results relation was never rendered"):
+        partial.finish("")
+
+
+def test_each_planned_entry_renders_once_per_statement() -> None:
+    plan = _statement_plan(COLLECTIONS, "Basket", _OWNER_TAGGED)
+    root = plan.root_scopes[None]
+    builder = _row_builder(COLLECTIONS)
+    builder.select_scope_plan(plan.lexical_scopes[root])
+    with pytest.raises(SqlGenError, match="read before their relation renders"):
+        builder.owner_results_binding(OwnerResultsRef(root, 0))
+    row = _basket_row(builder)
+    builder.record_source_binding(SharedSourceRef(root, 0), target=row, origin=row)
+    with pytest.raises(SqlGenError, match="renders once per statement"):
+        builder.record_source_binding(SharedSourceRef(root, 0), target=row, origin=row)
+    builder.record_owner_results_binding(OwnerResultsRef(root, 0), alias="r0", columns=("q0",))
+    with pytest.raises(SqlGenError, match="renders once per statement"):
+        builder.record_owner_results_binding(OwnerResultsRef(root, 0), alias="r1", columns=("q0",))
+    builder.finish("")
+
+
+def test_each_union_branch_builder_finishes_its_own_root_alone() -> None:
+    op = oa.Comparison(op="eq", subject=oa.FieldSubject("Vehicle.dealer.name"), value="x")
+    plan = _statement_plan(TRAVERSAL, "Vehicle", op)
+    vehicle = next(entity for entity in TRAVERSAL.entities if entity.identity.name == "Vehicle")
+    facet, storage = inheritance.view(TRAVERSAL), storage_layout.view(TRAVERSAL)
+    read = plan_inheritance_read(vehicle, None, TRAVERSAL, facet, storage, False, None)
+    assert isinstance(read, TpcsUnionPlan)
+    assert list(plan.root_scopes) == [branch.identity for branch in read.branches]
+    union = _row_builder(TRAVERSAL)
+    for branch in read.branches:
+        builder = _row_builder(TRAVERSAL)
+        layout = storage.entity(branch.identity)
+        assert layout is not None
+        row = EntityRowScope(builder, vehicle, layout.layout)
+        joins = render_shared_sources(plan, plan.root_scopes[branch.identity], row)
+        builder.bind_managed(7, INT64)
+        union.append_fragment(builder.finish(f"select 1 {joins} where ?"))
+    assert union.finish("").binds == (7, 7)
 
 
 def test_statement_metadata_preserves_ranges_gaps_forms_offsets_and_overrides() -> None:
