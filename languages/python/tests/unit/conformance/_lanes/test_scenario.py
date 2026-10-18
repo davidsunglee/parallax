@@ -1699,8 +1699,6 @@ def test_a_groups_writes_buffered_before_one_flush_compose_in_its_one_buffer() -
 
 
 def _counting_case_state_reads(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
-    """How many target and coverage reads every case state answers from here
-    on, by kind."""
     counts = {"target": 0, "coverage": 0}
 
     def counted(kind: str, read: Callable[..., list[tuple[object, ...]]]) -> Any:
