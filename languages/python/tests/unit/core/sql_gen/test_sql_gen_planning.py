@@ -58,6 +58,7 @@ from tests._support.sql import compile_read, compile_write_predicate, resolved_a
 from tests.unit._corpus_model_support import model, target
 from tests.unit.core.sql_gen._badge_model_support import badge_model, temporal_badge_model
 from tests.unit.core.sql_gen._dormant_model_support import dormant_target_model
+from tests.unit.core.sql_gen._plan_reuse_support import record_plan_reuse
 
 ORDERS = model("orders")
 DOCUMENT = model("document")
@@ -642,6 +643,32 @@ def test_rendering_reads_planned_decisions_without_reentering_analysis(
     assert {name for name, _ in planning_calls} >= {*analysis, "next_alias", "_append"}
     assert all(during for name, during in planning_calls if name in analysis)
     assert not any(during for name, during in planning_calls if name not in analysis)
+
+
+@pytest.mark.parametrize(
+    ("op", "form", "roots"),
+    [
+        (_eq("Ticket.parking.vehicle.maker"), None, 1),
+        (_eq("Ticket.id", 7), WriteFilterForm.DIRECT_PREDICATE, 0),
+        (_eq("Ticket.parking.vehicle.maker"), WriteFilterForm.PRIMARY_KEY_SUBQUERY, 1),
+    ],
+    ids=["ordinary-read", "direct-write-filter", "key-selecting-write-filter"],
+)
+def test_each_compilation_plans_its_statement_once(
+    op: oa.PredicateNode,
+    form: WriteFilterForm | None,
+    roots: int,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reuse = record_plan_reuse(monkeypatch)
+    ticket = target(TRAVERSAL, "Ticket")
+    if form is None:
+        compile_read(op, TRAVERSAL, POSTGRES, ticket)
+    else:
+        compile_write_predicate(op, TRAVERSAL, POSTGRES, ticket)
+    (plan,) = reuse.plans
+    assert plan.write_filter_form is form
+    assert [root.statement_plan for root in reuse.roots] == [plan] * roots
 
 
 def test_rendering_leaves_its_statement_plan_unchanged(monkeypatch: pytest.MonkeyPatch) -> None:

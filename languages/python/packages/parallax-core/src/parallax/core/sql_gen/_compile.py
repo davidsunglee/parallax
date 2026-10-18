@@ -31,7 +31,6 @@ from parallax.core.navigate import TemporallyResolvedPredicate
 from parallax.core.object_query._resolved import (
     ContinuationCoordinate,
     Paging,
-    ResolvedOrderTerm,
     ResolvedSeek,
 )
 from parallax.core.predicate._resolved import disjunctive
@@ -66,8 +65,9 @@ from parallax.core.sql_gen._inheritance import storage_entity_view as _storage_e
 from parallax.core.sql_gen._inheritance import tag_column as _tag_column
 from parallax.core.sql_gen._inheritance import tag_guard as _tph_tag_guard
 
-# The planning lane: one immutable statement plan per read arm or write filter,
-# decided before anything renders. Same aliasing-down convention as above.
+# The planning lane: one immutable statement plan per read or write filter,
+# decided before anything renders and shared by every arm of a read. Same
+# aliasing-down convention as above.
 from parallax.core.sql_gen._planning import EvaluationContext as _EvaluationContext
 from parallax.core.sql_gen._planning import LexicalScopeId as _LexicalScopeId
 from parallax.core.sql_gen._planning import StatementPlan as _StatementPlan
@@ -543,21 +543,62 @@ def compile_read(
     """
 
     storage = _storage_view(model)
+    facet = _inheritance_view(model)
     terms = _lowered_terms(query.order_by, _reserved_result_keys(model, storage))
     seek = None if query.paging is None else query.paging.seek
-    if seek is None or query.limit is None or not _needs_null_tail(seek, storage, dialect):
-        return _compile_read_arm(
-            query, model, dialect, terms, result_form=result_form, lock=lock, null_tail=False
-        )
-    outer_lock = lock == "locking" and dialect.name == "postgres"
+    two_arms = (
+        seek is not None and query.limit is not None and _needs_null_tail(seek, storage, dialect)
+    )
+    outer_lock = two_arms and lock == "locking" and dialect.name == "postgres"
     arm_lock = None if outer_lock else lock
+    target = query.entity
+    inheritance_read = (
+        None
+        if target.inheritance is None
+        else _plan_inheritance_read(
+            target,
+            query.narrow_to,
+            model,
+            facet,
+            storage,
+            result_form == "instance",
+            arm_lock,
+        )
+    )
+    statement_plan = _plan_statement(
+        query.predicate,
+        evaluation_context=_EvaluationContext.SHARING_ALLOWED,
+        entity=target,
+        meta=model,
+        facet=facet,
+        storage=storage,
+        inheritance_read=inheritance_read,
+        order_terms=query.order_by,
+    )
     compiled = _compile_read_arm(
-        query, model, dialect, terms, result_form=result_form, lock=arm_lock, null_tail=False
+        query,
+        statement_plan,
+        inheritance_read,
+        model,
+        dialect,
+        terms,
+        result_form=result_form,
+        lock=arm_lock,
+        null_tail=False,
     )
+    if not two_arms:
+        return compiled
     null_tail = _compile_read_arm(
-        query, model, dialect, terms, result_form=result_form, lock=arm_lock, null_tail=True
+        query,
+        statement_plan,
+        inheritance_read,
+        model,
+        dialect,
+        terms,
+        result_form=result_form,
+        lock=arm_lock,
+        null_tail=True,
     )
-    facet = _inheritance_view(model)
     statement_ctx = StatementBuilder(model, facet, storage, dialect)
     statement_ctx.append_fragment(compiled.statement)
     statement_ctx.append_fragment(null_tail.statement)
@@ -662,6 +703,8 @@ def _locking_base_join(
 
 def _compile_read_arm(
     query: PlannedEntityQuery,
+    statement_plan: _StatementPlan,
+    inheritance_read: _TphPlan | _TpcsSinglePlan | _TpcsUnionPlan | None,
     model: Metamodel,
     dialect: Dialect,
     terms: tuple[_LoweredTerm, ...],
@@ -670,22 +713,21 @@ def _compile_read_arm(
     lock: LockMode | None,
     null_tail: bool,
 ) -> CompiledRead:
-    """Compile one ordinary or NULL-tail arm of a read ordered by ``terms``."""
+    """Compile one ordinary or NULL-tail arm of a read ordered by ``terms`` from
+    the read's one statement plan, through builders of this arm's own."""
 
     target = query.entity
     facet = _inheritance_view(model)
     storage = _storage_view(model)
-    predicate = query.predicate
     paging = query.paging
     limit = query.limit
     narrow_to = query.narrow_to
     captured = _coordinate_reads(terms) if paging is not None else ()
-    if target.inheritance is not None:
-        statement, plan, document_reads, result_keys, stages = _compile_inheritance_read(
+    if inheritance_read is not None:
+        statement, document_reads, result_keys, stages = _compile_inheritance_read(
+            inheritance_read,
+            statement_plan,
             target,
-            predicate,
-            narrow_to,
-            query.order_by,
             terms,
             paging,
             limit,
@@ -693,12 +735,11 @@ def _compile_read_arm(
             facet,
             storage,
             dialect,
-            result_form,
             lock,
             null_tail,
         )
-        plan_position = tuple(plan.position)
-        position_documents = _position_documents(plan.resolved, plan.layout)
+        plan_position = tuple(inheritance_read.position)
+        position_documents = _position_documents(inheritance_read.resolved, inheritance_read.layout)
         return CompiledRead(
             statement,
             narrow_to,
@@ -712,15 +753,6 @@ def _compile_read_arm(
             _scalar_read_contracts(model, facet, storage, dialect, plan_position),
             stages,
         )
-    statement_plan = _plan_statement(
-        predicate,
-        evaluation_context=_EvaluationContext.SHARING_ALLOWED,
-        entity=target,
-        meta=model,
-        facet=facet,
-        storage=storage,
-        order_terms=query.order_by,
-    )
     # One context per statement (the mutable accumulator), one row scope over it
     # (the immutable "what does a leaf resolve against" half).
     ctx: StatementBuilder[_EntityRowScope] = StatementBuilder(model, facet, storage, dialect)
@@ -743,7 +775,11 @@ def _compile_read_arm(
 
     where_sql = _selection(statement_plan, statement_plan.root_scopes[None], scope, parts)
     seek_sql = _sought(terms, scope, scope.subject_for, paging, ctx, null_tail=null_tail)
-    _append_where(parts, _beside_a_guard(predicate, where_sql, guarded=bool(seek_sql)), seek_sql)
+    _append_where(
+        parts,
+        _beside_a_guard(statement_plan.predicate, where_sql, guarded=bool(seek_sql)),
+        seek_sql,
+    )
     _append_result_shape(parts, scope, terms, scope.subject_for, limit, lock)
 
     statement = _normalize(ctx.finish(" ".join(parts)))
@@ -974,10 +1010,9 @@ def _append_result_shape(
 
 
 def _compile_inheritance_read(
+    plan: _TphPlan | _TpcsSinglePlan | _TpcsUnionPlan,
+    statement_plan: _StatementPlan,
     entity: EntityMetadata,
-    predicate: TemporallyResolvedPredicate,
-    narrow_to: tuple[EntityIdentity, ...] | None,
-    order_by: tuple[ResolvedOrderTerm, ...],
     terms: tuple[_LoweredTerm, ...],
     paging: Paging | None,
     limit: int | None,
@@ -985,43 +1020,21 @@ def _compile_inheritance_read(
     facet: InheritanceFacet,
     storage: _StorageLayoutFacet,
     dialect: Dialect,
-    result_form: _ResultForm,
     lock: LockMode | None,
     null_tail: bool,
 ) -> tuple[
     LoweredStatement,
-    _TphPlan | _TpcsSinglePlan | _TpcsUnionPlan,
     tuple[DocumentReadOrdinals, ...],
     tuple[str, ...],
     _RowStages,
 ]:
-    """Assemble an inheritance-family read from its plan.
+    """Assemble an inheritance-family read from its inheritance plan and its
+    statement plan.
 
     Returns the statement AND its row materialization stages together: whether a
     read carries `familyVariant` is decided by the very same resolved position
-    that decides what it projects, so the two travel together on one plan. The
-    plan comes back as well, carrying the position's Inheritance and Storage
-    Layout answers its planning resolved, so the caller never resolves them again.
+    that decides what it projects, so the two travel together on one plan.
     """
-    plan = _plan_inheritance_read(
-        entity,
-        narrow_to,
-        model,
-        facet,
-        storage,
-        result_form == "instance",
-        lock,
-    )
-    statement_plan = _plan_statement(
-        predicate,
-        evaluation_context=_EvaluationContext.SHARING_ALLOWED,
-        entity=entity,
-        meta=model,
-        facet=facet,
-        storage=storage,
-        inheritance_read=plan,
-        order_terms=order_by,
-    )
     result_keys = (
         (*(column.result_alias for column in plan.columns), "family_variant")
         if isinstance(plan, _TpcsUnionPlan)
@@ -1048,7 +1061,7 @@ def _compile_inheritance_read(
                 lock,
                 null_tail,
             )
-            return statement, plan, document_reads, result_keys, stages
+            return statement, document_reads, result_keys, stages
         case _TpcsSinglePlan():
             statement, document_reads, stages = _compile_tpcs_single(
                 plan,
@@ -1064,7 +1077,7 @@ def _compile_inheritance_read(
                 lock,
                 null_tail,
             )
-            return statement, plan, document_reads, result_keys, stages
+            return statement, document_reads, result_keys, stages
         case _TpcsUnionPlan():
             statement, document_reads, stages = _compile_tpcs_read(
                 plan,
@@ -1079,7 +1092,7 @@ def _compile_inheritance_read(
                 dialect,
                 null_tail,
             )
-            return statement, plan, document_reads, result_keys, stages
+            return statement, document_reads, result_keys, stages
         case _:  # pragma: no cover - exhaustiveness guard
             assert_never(plan)
 
