@@ -638,6 +638,18 @@ Time maps `txStart`/`txEnd` to `in_z`/`out_z`. Both endpoint Attributes carry
 the derived `framework_owned` designation, which is where that membership is
 observable to a surface holding one Attribute and no axis.
 
+The four conventional endpoint names `validStart`, `validEnd`, `txStart`, and
+`txEnd` are reserved for As-Of Axis endpoints in every Entity's top-level member
+namespace, whatever Temporal Dimensions the Entity declares, including none. An
+Attribute, Relationship, or top-level Value Object occurrence bearing one is
+refused as `metamodel-temporal-member-reserved` unless it is the start or end
+Attribute of one of the Entity's own As-Of Axes. The exemption is by
+`AttributeIdentity`, not by name, so an axis may still run over endpoints bearing
+any other names. The issue relates the `AsOfAxisLocation` of the reserved name's
+dimension only when the Entity declares that dimension. Value Object scalar and
+nested member names are outside the reservation. Every declaration, inheritance
+participants included, is judged over its own local members.
+
 ## Issues and locations
 
 `m-metamodel` owns the dependency-free issue value used by the resolver and
@@ -684,7 +696,7 @@ in [`m-model-formation`](m-model-formation.md). No other module may emit a
 | `metamodel-unresolved-attribute-reference` | An Attribute Reference does not resolve to a declared local Attribute. |
 | `metamodel-unresolved-relationship-reference` | A Relationship Reference does not resolve to a declared local Relationship. |
 | `metamodel-local-member-collision` | Attribute, Relationship, or top-level Value Object names collide in one Entity, or scalar/nested names collide in one Value Object. |
-| `metamodel-temporal-member-reserved` | A non-framework member uses a derived temporal Attribute name reserved by the Entity's temporal shape. |
+| `metamodel-temporal-member-reserved` | A top-level member other than an As-Of Axis endpoint bears a reserved temporal endpoint name, whatever the Entity's declared dimensions. |
 | `metamodel-primary-key-missing` | A standalone Entity has no local primary-key Attribute. |
 | `metamodel-primary-key-multiple` | A standalone Entity has more than one local primary-key Attribute. |
 | `metamodel-index-identity-duplicate` | Two Indices of one Entity bear the same name. |

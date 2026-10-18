@@ -1,0 +1,19 @@
+# Negative (m-metamodel): a non-temporal Entity names a top-level Value Object
+# occurrence `txEnd`. Members nested inside a Value Object may bear the reserved
+# names; a top-level occurrence may not.
+model: models/person.yaml
+tags: [m-metamodel, m-model-formation, m-descriptor, rejected, negative, temporal, nested, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  model:
+    entity:
+      name: Ledger
+      table: ledger
+      attributes:
+        - { name: id, type: int64, primaryKey: true }
+      valueObjects:
+        - name: txEnd
+          attributes:
+            - { name: txStart, type: timestamp }
+then:
+  rejectedRule: metamodel-temporal-member-reserved

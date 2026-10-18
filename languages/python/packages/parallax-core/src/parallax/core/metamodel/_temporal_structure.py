@@ -70,8 +70,9 @@ is ``tx_start``, not ``in_z``, so no naming operation can produce them.
 CONVENTIONAL_TEMPORAL_NAMES: Final[Mapping[TemporalDimension, tuple[str, str]]] = MappingProxyType(
     {dimension: (start.name, end.name) for dimension, (start, end) in TEMPORAL_MEMBERS.items()}
 )
-"""The Attribute names each Temporal Dimension reserves once an Entity declares
-that dimension. Only the axis's own start and end Attributes may bear them."""
+"""Each Temporal Dimension's canonical endpoint names. Every Entity reserves all
+of them in its top-level member namespace, whatever dimensions it declares; only
+an As-Of Axis's own start and end Attributes may bear them."""
 
 TEMPORALITY_PROFILES: Final[Mapping[str, tuple[TemporalDimension, ...]]] = MappingProxyType(
     {

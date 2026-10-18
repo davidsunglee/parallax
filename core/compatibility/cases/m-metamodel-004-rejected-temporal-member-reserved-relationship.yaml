@@ -1,0 +1,26 @@
+# Negative (m-metamodel): a non-temporal Entity names a relationship `validEnd`.
+# The reservation spans the whole top-level member namespace, not Attributes
+# alone.
+model: models/person.yaml
+tags: [m-metamodel, m-model-formation, m-descriptor, rejected, negative, temporal, relationship, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  model:
+    entities:
+      - name: Owner
+        table: owner
+        attributes:
+          - { name: id, type: int64, primaryKey: true }
+      - name: Lot
+        table: lot
+        attributes:
+          - { name: id, type: int64, primaryKey: true }
+          - { name: ownerId, type: int64 }
+        relationships:
+          - name: validEnd
+            cardinality: many-to-one
+            join:
+              source: ownerId
+              target: { entity: Owner, attribute: id }
+then:
+  rejectedRule: metamodel-temporal-member-reserved

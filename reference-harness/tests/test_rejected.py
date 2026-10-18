@@ -55,6 +55,8 @@ from reference_harness.keyed_write_validate import (
 )
 from reference_harness.metamodel import (
     METAMODEL_INDEX_IDENTITY_DUPLICATE,
+    METAMODEL_TEMPORAL_MEMBER_RESERVED,
+    validate_temporal_member_names,
 )
 from reference_harness.metamodel import (
     MODEL_REJECTED_RULES as METAMODEL_MODEL_REJECTED_RULES,
@@ -164,8 +166,72 @@ def test_model_negatives_use_closed_owner_vocabularies() -> None:
         STORAGE_LAYOUT_TABLE_MAPPING_COLLISION,
         STORAGE_LAYOUT_COLUMN_COLLISION,
     } <= used
-    assert METAMODEL_INDEX_IDENTITY_DUPLICATE in used
+    assert {METAMODEL_INDEX_IDENTITY_DUPLICATE, METAMODEL_TEMPORAL_MEMBER_RESERVED} <= used
     assert RELATIONSHIP_MODEL_REJECTED_RULES <= used
+
+
+# --- the foundational temporal endpoint-name reservation (m-metamodel) ---------
+
+
+def _ledger(temporality: str | None = None, **members: list[dict[str, Any]]) -> dict[str, Any]:
+    """One Ledger definition with its profile's endpoints derived, as a case loads it."""
+    definition: dict[str, Any] = {
+        "name": "Ledger",
+        "table": "ledger",
+        "attributes": [{"name": "id", "type": "int64", "primaryKey": True}],
+    }
+    if temporality is not None:
+        definition["temporality"] = temporality
+    for kind, declared in members.items():
+        definition[kind] = [*definition.get(kind, []), *declared]
+    return derive_temporal_structure({"entity": definition})["entity"]
+
+
+@pytest.mark.parametrize("temporality", [None, "transaction-time", "bitemporal"])
+def test_derived_endpoints_and_nested_value_object_members_bear_reserved_names_freely(
+    temporality: str | None,
+) -> None:
+    nested = [{"name": name, "type": "timestamp"} for name in ("validStart", "txEnd")]
+    validate_temporal_member_names(
+        [_ledger(temporality, valueObjects=[{"name": "audit", "attributes": nested}])]
+    )
+
+
+@pytest.mark.parametrize(
+    ("temporality", "members"),
+    [
+        pytest.param(
+            None,
+            {"attributes": [{"name": "txStart", "type": "timestamp"}]},
+            id="nontemporal-attribute",
+        ),
+        pytest.param(
+            "transaction-time",
+            {"attributes": [{"name": "validEnd", "type": "timestamp"}]},
+            id="undeclared-dimension-attribute",
+        ),
+        pytest.param(
+            "bitemporal",
+            {"relationships": [{"name": "validStart", "reverseOf": "Owner.ledgers"}]},
+            id="relationship",
+        ),
+        pytest.param(
+            None,
+            {
+                "valueObjects": [
+                    {"name": "txEnd", "attributes": [{"name": "at", "type": "timestamp"}]}
+                ]
+            },
+            id="value-object",
+        ),
+    ],
+)
+def test_a_top_level_member_bearing_an_endpoint_name_it_is_not_is_refused(
+    temporality: str | None, members: dict[str, list[dict[str, Any]]]
+) -> None:
+    with pytest.raises(RejectionError) as caught:
+        validate_temporal_member_names([_ledger(temporality, **members)])
+    assert caught.value.rule == METAMODEL_TEMPORAL_MEMBER_RESERVED
 
 
 # --- inheritance family invariants -------------------------------------------

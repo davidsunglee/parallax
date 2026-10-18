@@ -1296,6 +1296,16 @@ _METAMODEL_MODEL_REJECT_UNREACHABLE_REASON: Final[str] = (
     "observable is a rejected model, not a developer verb an idiomatic story can narrate"
 )
 
+_TEMPORAL_MEMBER_RESERVED_UNREACHABLE_REASON: Final[str] = (
+    "a `when.model` foundational Metamodel invariant the fixed resolver classifies at "
+    "model construction (a `MetamodelValidationError` issue), not a query or write the "
+    "Usage Guide's statement- and verb-level examples could spell. The class frontend "
+    "reaches the SAME issue for a member a non-temporal class names after a temporal "
+    "endpoint, and refuses one below a temporal base earlier, at class definition "
+    "(`test_domain_model.py` exercises both at that seam) — but the observable is a "
+    "rejected model, not a developer verb an idiomatic story can narrate"
+)
+
 _TEMPORAL_KEYED_SINGLETON_UNREACHABLE_REASON: Final[str] = (
     "the rule is live and enforced on the developer path — prepared-write production refuses a "
     "plural keyed instruction on a temporal target before `TxnContext._buffer` buffers it, "
@@ -1821,6 +1831,10 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-inheritance-138": _INHERITANCE_CONCRETE_LEAF_REJECT_UNREACHABLE_REASON,
     # -- m-metamodel: foundational model-declaration reject ------------------ #
     "m-metamodel-001": _METAMODEL_MODEL_REJECT_UNREACHABLE_REASON,
+    "m-metamodel-002": _TEMPORAL_MEMBER_RESERVED_UNREACHABLE_REASON,
+    "m-metamodel-003": _TEMPORAL_MEMBER_RESERVED_UNREACHABLE_REASON,
+    "m-metamodel-004": _TEMPORAL_MEMBER_RESERVED_UNREACHABLE_REASON,
+    "m-metamodel-005": _TEMPORAL_MEMBER_RESERVED_UNREACHABLE_REASON,
     # -- m-navigate: relationship quantifier siblings -------------------------- #
     "m-navigate-001": _RELATIONSHIP_QUANTIFIER_SIBLING_REASON,
     "m-navigate-005": _RELATIONSHIP_QUANTIFIER_SIBLING_REASON,

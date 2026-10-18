@@ -1,0 +1,18 @@
+# Negative (m-metamodel): a Transaction-Time Entity names a business Attribute
+# `validStart`. Its profile derives no Valid-Time axis, so the Attribute is not a
+# derived endpoint the descriptor refuses as authored; the name is still reserved
+# for a framework endpoint.
+model: models/person.yaml
+tags: [m-metamodel, m-model-formation, m-descriptor, rejected, negative, temporal, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  model:
+    entity:
+      name: Ledger
+      table: ledger
+      temporality: transaction-time
+      attributes:
+        - { name: id, type: int64, primaryKey: true }
+        - { name: validStart, type: timestamp }
+then:
+  rejectedRule: metamodel-temporal-member-reserved

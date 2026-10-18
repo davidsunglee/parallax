@@ -32,6 +32,11 @@ conditional-reservation pattern to temporal vocabulary: any temporal shape
 reserves all four conventional axis properties, while a Non-Temporal Entity may
 use them ordinarily.
 
+*Superseded in part (2026-10, [ADR 0074](0074-temporal-endpoint-names-are-reserved-on-every-entity.md)):*
+every Entity now reserves the four temporal endpoint names, whatever its temporal
+shape. The audit-provenance decision, including its conditional audit-vocabulary
+reservation, stands.
+
 Applicable Audit Attributes participate in full entity reads, relationship fetches, snapshots, inheritance projections, predicates, and ordering like ordinary scalar attributes. They materialize from the same row rather than through a hidden or lazy secondary fetch. Enabling the audit modules in a Conformance Slice therefore updates that slice's complete read projections, golden SQL, fixtures, and physical schemas; opting out removes the attributes entirely.
 
 The default also applies to read-only Entities because Audit Metadata describes mapped row shape rather than write permission. Reads never synthesize or backfill absent provenance: fixtures and physical tables supply every applicable non-null value, and a legacy read-only mapping without those columns opts out explicitly.
