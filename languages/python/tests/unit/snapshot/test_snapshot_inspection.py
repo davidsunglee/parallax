@@ -8,8 +8,10 @@ operations require is exactly what a Snapshot read attaches and nothing else.
 
 from __future__ import annotations
 
+import dataclasses
 import datetime as dt
-from collections.abc import Callable
+import threading
+from collections.abc import Callable, Iterator
 from decimal import Decimal
 from typing import Any, cast
 
@@ -19,15 +21,16 @@ from parallax.conformance import animal_owner, read_models
 from parallax.core.entity import IncludePath, UnloadedRelationshipError
 from parallax.core.entity._expressions import IncludeTraversal
 from parallax.core.object_query import IncludeSegment
-from parallax.core.temporal_read import Pin
+from parallax.core.temporal_read import Edge, Pin, TemporalReadError, milestone_edge
 from parallax.snapshot import (
     SnapshotInspectionError,
+    _inspection,
     edge_of,
     is_view_loaded,
     pin_of,
     view,
 )
-from parallax.snapshot._inspection import SNAPSHOT_INSPECTION_CODES
+from parallax.snapshot._inspection import SNAPSHOT_INSPECTION_CODES, snapshot_state_of
 from tests._support import snapshot_models as sm
 from tests.unit.snapshot._snapshot_page_support import PageFixture
 
@@ -419,3 +422,135 @@ def test_an_edited_copy_of_a_temporal_node_answers_the_same_pin_and_edge() -> No
     copy = root.edit(value=Decimal("9.00"))
     assert pin_of(copy) is _MILESTONE_PIN
     assert edge_of(copy) is edge_of(root)
+
+
+# --------------------------------------------------------------------------- #
+# The milestone Edge is derived on first inspection and then shared by the     #
+# node and every edit of it, whichever of them asked first.                    #
+# --------------------------------------------------------------------------- #
+
+
+_BALANCE_EDGE = Edge(tx_time=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))
+
+
+@pytest.fixture
+def edges_built(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[Edge]]:
+    """Every Edge constructed while the test runs, in construction order."""
+    built: list[Edge] = []
+    construct = Edge.__init__
+
+    def recording(edge: Edge, **coordinates: Any) -> None:
+        construct(edge, **coordinates)
+        built.append(edge)
+
+    monkeypatch.setattr(Edge, "__init__", recording)
+    yield built
+
+
+def test_publication_builds_no_edge_and_the_first_inspection_builds_one(
+    edges_built: list[Edge],
+) -> None:
+    root = _balance_graph()
+    assert edges_built == []
+
+    edge = edge_of(root)
+
+    assert edge == _BALANCE_EDGE
+    assert len(edges_built) == 1
+    assert edge_of(root) is edge
+    assert len(edges_built) == 1
+
+
+def test_an_edit_made_after_inspection_answers_the_edge_its_source_resolved(
+    edges_built: list[Edge],
+) -> None:
+    root = _balance_graph()
+    edge = edge_of(root)
+    copy = root.edit(value=Decimal("9.00"))
+    assert edge_of(copy) is edge
+    assert len(edges_built) == 1
+
+
+def test_inspecting_an_edit_first_resolves_the_edge_for_its_source_and_siblings(
+    edges_built: list[Edge],
+) -> None:
+    root = _balance_graph()
+    first = root.edit(value=Decimal("9.00"))
+    second = root.edit(value=Decimal("8.00"))
+
+    edge = edge_of(first)
+
+    assert edge == _BALANCE_EDGE
+    assert edge_of(root) is edge
+    assert edge_of(second) is edge
+    assert edge_of(first.edit(value=Decimal("7.00"))) is edge
+    assert len(edges_built) == 1
+
+
+def test_a_failed_first_inspection_leaves_the_edge_to_a_later_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = _balance_graph()
+    attempts: list[object] = []
+
+    def failing_once(*arguments: Any) -> Edge:
+        attempts.append(arguments)
+        if len(attempts) == 1:
+            raise TemporalReadError("the first attempt fails")
+        return milestone_edge(*arguments)
+
+    monkeypatch.setattr(_inspection, "milestone_edge", failing_once)
+
+    with pytest.raises(TemporalReadError, match="first attempt"):
+        edge_of(root)
+    edge = edge_of(root)
+
+    assert edge == _BALANCE_EDGE
+    assert edge_of(root) is edge
+    assert len(attempts) == 2
+
+
+def test_concurrent_first_inspections_answer_equal_edges_and_later_ones_share_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Holding both callers inside the derivation until each has started makes
+    # them both find the Edge unresolved, which is the race the cache permits.
+    root = _balance_graph()
+    copy = root.edit(value=Decimal("9.00"))
+    both_deriving = threading.Barrier(2, timeout=10)
+
+    def rendezvous(*arguments: Any) -> Edge:
+        both_deriving.wait()
+        return milestone_edge(*arguments)
+
+    monkeypatch.setattr(_inspection, "milestone_edge", rendezvous)
+    answers: dict[str, Edge] = {}
+
+    def inspect(name: str, node: object) -> None:
+        answers[name] = edge_of(node)
+
+    callers = [
+        threading.Thread(target=inspect, args=("root", root)),
+        threading.Thread(target=inspect, args=("copy", copy)),
+    ]
+    for caller in callers:
+        caller.start()
+    for caller in callers:
+        caller.join(timeout=10)
+
+    assert answers["root"] == answers["copy"] == _BALANCE_EDGE
+    settled = edge_of(root)
+    assert any(settled is answer for answer in answers.values())
+    assert edge_of(copy) is settled
+
+
+def test_resolving_the_edge_leaves_the_node_state_equal_to_what_publication_built() -> None:
+    root = _balance_graph()
+    state = snapshot_state_of(root)
+    assert state is not None
+    published = dataclasses.replace(state)
+
+    edge_of(root)
+
+    assert snapshot_state_of(root) is state
+    assert state == published

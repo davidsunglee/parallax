@@ -996,6 +996,43 @@ def test_a_value_no_writable_attempt_read_keeps_its_published_provenance(placeme
     assert wire_pin_of(projected) == pin_of(node)
 
 
+def test_inspecting_an_edge_changes_none_of_the_facts_a_write_or_projection_reads() -> None:
+    row, _document = _census_row()
+    db = db_for(_CENSUS_MODEL, ScriptedAdapter(Transact(Read(rows=[row]))))
+    query = _CensusCharter.where(_CensusCharter.id == 1).as_of(valid_time=_CENSUS_AT)
+
+    def inspected(tx: TxnContext) -> None:
+        snapshot = tx.find(query)
+        node = snapshot.result()
+        edit = node.edit(title="Southbound")
+        state = snapshot_state_of(node)
+        assert state is not None and state.read_evidence is not None
+
+        def facts() -> tuple[object, ...]:
+            return (
+                state.entity,
+                state.views,
+                state.root_conformance,
+                state.pin,
+                state.read_evidence,
+            )
+
+        before = facts()
+
+        assert edge_of(edit) == Edge(tx_time=_CENSUS_START, valid_time=_CENSUS_START)
+
+        assert snapshot_state_of(node) is state
+        assert snapshot_state_of(edit) is state
+        assert all(after is held for after, held in zip(facts(), before, strict=True))
+        projected = snapshot.wire().result()
+        assert isinstance(projected, WireEntity)
+        assert read_evidence_of(projected) is state.read_evidence
+        assert wire_pin_of(projected) is state.pin
+        assert stored_entity_of(projected) == state.entity
+
+    db.transact(inspected)
+
+
 def test_a_classified_roots_nodes_are_published_as_no_stored_value() -> None:
     # The other side of the conformance verdict: a hydratable invalid root's
     # nodes carry their Entity and pin for inspection, yet are no stored value
