@@ -257,9 +257,10 @@ class ColumnScope(Protocol):
     def own_column(self, column: str) -> str: ...
 
 
-class PlanScope(ColumnScope, Protocol):
-    """What a plan-only module may do: resolve against the model, render its own
-    and its children's columns, and ALLOCATE an alias — nothing else.
+class CandidateRenderScope(ColumnScope, Protocol):
+    """What rendering one relationship candidate may do: render its parent's
+    and its own columns, read the family's tag values, and ALLOCATE an alias —
+    nothing else.
 
     Alias allocation is deliberately included: a relationship candidate takes its
     alias at the point it renders, before anything descends into its interior,
@@ -268,33 +269,22 @@ class PlanScope(ColumnScope, Protocol):
     is consumed by the very fragment that took it.
 
     Binding is the opposite, and is deliberately absent: `bind` / `binds` appear
-    nowhere here, so a planner cannot push a bind even by accident. Guard binds
-    travel out of a plan as VALUES and are pushed by the caller, after it has
-    lowered its own interior predicate.
+    nowhere here, so candidate rendering cannot push a bind even by accident.
+    Guard binds travel out as VALUES and are pushed by the caller, after it has
+    rendered its own interior predicate.
 
-    :meth:`child` returns another ``PlanScope`` rather than the concrete scope,
-    so descending never widens the capability back out.
+    :meth:`child` returns another ``CandidateRenderScope`` rather than the
+    concrete scope, so descending never widens the capability back out.
     """
 
     @property
-    def meta(self) -> Metamodel: ...
-
-    @property
     def facet(self) -> InheritanceFacet: ...
-
-    @property
-    def storage(self) -> StorageLayoutFacet: ...
-
-    @property
-    def entity(self) -> EntityMetadata: ...
-
-    def column_of(self, attr_ref: str) -> str: ...
 
     def column_for(self, attribute: AttributeMetadata) -> str: ...
 
     def next_alias(self) -> str: ...
 
-    def child(self, entity: EntityMetadata, alias: str) -> PlanScope: ...
+    def child(self, entity: EntityMetadata, alias: str) -> CandidateRenderScope: ...
 
 
 @dataclass(eq=False, slots=True)
