@@ -218,8 +218,9 @@ def edge_of(node: object) -> Edge:
     The first inspection reads the node's milestone starts and retains the
     Edge on the lifecycle state the node shares with every edit of it, so
     later inspections through the node or any of its edits answer that same
-    Edge. The cache is unsynchronized: concurrent first inspections answer
-    equal Edges, not necessarily one object.
+    Edge. The cache is unsynchronized: concurrent first inspections may each
+    retain an equal Edge, and identity is stable only once every first
+    inspection has returned.
     """
     state = _required_state(node, "edge_of")
     cached = state.edge_cache

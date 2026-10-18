@@ -425,8 +425,8 @@ def test_an_edited_copy_of_a_temporal_node_answers_the_same_pin_and_edge() -> No
 
 
 # --------------------------------------------------------------------------- #
-# The milestone Edge is derived on first inspection and then shared by the     #
-# node and every edit of it, whichever of them asked first.                    #
+# Sequential inspections derive the milestone Edge once and then share it     #
+# across the node and every edit of it, whichever of them asked first.        #
 # --------------------------------------------------------------------------- #
 
 

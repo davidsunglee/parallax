@@ -113,10 +113,10 @@ loaded-null is `None`. Inspection uses `is_view_loaded`, `view`, `pin_of`, and
 from broad relationship fields.
 
 `edge_of` derives a temporal node's milestone `Edge` on first inspection, and a
-node shares that answer with every edit of it. Once an inspection through any of
-them has returned, later inspections through any of them return that same `Edge`
-object. Concurrent first inspections return equal `Edge` values, not necessarily
-one object.
+node shares that answer with every edit of it. Concurrent first inspections
+through any of them may each derive and retain an equal `Edge`; once every first
+inspection has returned, later inspections through any of them return one `Edge`
+object.
 
 The envelope is not iterable, indexable, or sized, and exposes no lazy behavior.
 `result()` requires exactly one root; `result_or_none()` permits zero or one;

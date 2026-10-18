@@ -61,8 +61,10 @@ def edge_of(node: object) -> Edge:
     """``node``'s own milestone :class:`~parallax.core.temporal_read.Edge` — the
     finite from-instant on every axis its family declares.
 
-    A Typed node a Snapshot read materialized, or any edit of it, shares one
-    Edge derived on first inspection. A Wire node a read published, a
+    A Typed node a Snapshot read materialized, or any edit of it, shares the
+    Edge derived on first inspection; concurrent first inspections may each
+    derive an equal Edge, so identity is stable once they have all returned.
+    A Wire node a read published, a
     diagnostic node of an invalid root included, answers equal Edges on
     repeated calls, not necessarily one object. Inspection grants no write
     authority; a caller may state the Edge's ``tx_time`` as a target write's
