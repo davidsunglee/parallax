@@ -1532,7 +1532,7 @@ def render_shared_sources(
     if not lexical.sources and not lexical.owner_results:
         return ""
     ctx = scope.ctx
-    ctx.select_scope_plan(lexical)
+    ctx.select_scope_plan(statement_plan, scope_id)
     joins: list[str] = []
     for index, source in enumerate(lexical.sources):
         parent = scope if source.parent is None else ctx.source_binding(source.parent).target

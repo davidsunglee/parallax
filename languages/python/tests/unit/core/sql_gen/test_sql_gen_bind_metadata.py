@@ -156,13 +156,15 @@ def test_rendered_sources_retain_their_actual_target_and_origin_rows() -> None:
 
 def test_selecting_a_scope_plan_is_idempotent_but_one_builder_renders_one_plan() -> None:
     plan = _statement_plan(COLLECTIONS, "Basket", _OWNER_TAGGED)
-    root = plan.lexical_scopes[plan.root_scopes[None]]
+    root = plan.root_scopes[None]
     builder = _row_builder(COLLECTIONS)
-    builder.select_scope_plan(root)
-    builder.select_scope_plan(root)
+    builder.select_scope_plan(plan, root)
+    builder.select_scope_plan(plan, root)
     other = _statement_plan(COLLECTIONS, "Basket", _OWNER_TAGGED)
-    with pytest.raises(SqlGenError, match="one statement plan"):
-        builder.select_scope_plan(other.lexical_scopes[root.scope_id])
+    unselected = next(scope.scope_id for scope in other.lexical_scopes if scope.scope_id != root)
+    for scope_id in (root, unselected):
+        with pytest.raises(SqlGenError, match="one statement plan"):
+            builder.select_scope_plan(other, scope_id)
 
 
 def test_a_source_reference_never_addresses_an_owner_result_binding() -> None:
@@ -178,19 +180,19 @@ def test_a_source_reference_never_addresses_an_owner_result_binding() -> None:
 
 def test_a_selected_plan_s_missing_bindings_fail_early_and_at_finish() -> None:
     plan = _statement_plan(COLLECTIONS, "Basket", _OWNER_TAGGED)
-    root = plan.lexical_scopes[plan.root_scopes[None]]
+    root = plan.root_scopes[None]
     builder = _row_builder(COLLECTIONS)
     with pytest.raises(SqlGenError, match="no selected lexical plan"):
-        builder.source_binding(SharedSourceRef(root.scope_id, 0))
-    builder.select_scope_plan(root)
+        builder.source_binding(SharedSourceRef(root, 0))
+    builder.select_scope_plan(plan, root)
     with pytest.raises(SqlGenError, match="read before its join renders"):
-        builder.source_binding(SharedSourceRef(root.scope_id, 0))
+        builder.source_binding(SharedSourceRef(root, 0))
     with pytest.raises(SqlGenError, match="shared source was never rendered"):
         builder.finish("")
     partial = _row_builder(COLLECTIONS)
-    partial.select_scope_plan(root)
+    partial.select_scope_plan(plan, root)
     owner = _basket_row(partial)
-    partial.record_source_binding(SharedSourceRef(root.scope_id, 0), target=owner, origin=owner)
+    partial.record_source_binding(SharedSourceRef(root, 0), target=owner, origin=owner)
     with pytest.raises(SqlGenError, match="owner-results relation was never rendered"):
         partial.finish("")
 
@@ -199,7 +201,7 @@ def test_each_planned_entry_renders_once_per_statement() -> None:
     plan = _statement_plan(COLLECTIONS, "Basket", _OWNER_TAGGED)
     root = plan.root_scopes[None]
     builder = _row_builder(COLLECTIONS)
-    builder.select_scope_plan(plan.lexical_scopes[root])
+    builder.select_scope_plan(plan, root)
     with pytest.raises(SqlGenError, match="read before their relation renders"):
         builder.owner_results_binding(OwnerResultsRef(root, 0))
     row = _basket_row(builder)
