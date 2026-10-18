@@ -1,10 +1,12 @@
-"""The Typed Keyed Write Source and Keyed Insert Source, asked what they answer.
+"""The Typed Keyed Write Source and Keyed Insert Source, asked what they author.
 
 The keyed write ingress owns the order; a source answers facts into it. This
-suite asks each Typed adapter the one question that is its own — given this
-Entity value and its Change Record, what did you answer — and nothing about what
-the order then does with the answer, which
-`test_keyed_write_order.py` fixes through the public verbs.
+suite asks each Typed adapter what is its own — which Entity its value's class
+names, and the row its value and Change Record author — and nothing about the
+provenance, Pin, evidence, and authority it resolves, which
+`test_sources.py` states once for both representations, or about what the order
+then does with the answer, which `test_keyed_write_order.py` fixes through the
+public verbs.
 
 Every case constructs the adapter directly, which is also how the two claims a
 verb cannot show are shown: that construction is inert, so nothing an adapter
@@ -27,7 +29,7 @@ from parallax.conformance.vo_models import (
     ContactGeo,
     ContactPoint,
 )
-from parallax.core import LATEST, Attr, DomainModel, attr
+from parallax.core import Attr, DomainModel, attr
 from parallax.core.base import INFINITY, DocumentValue, PresentDocument
 from parallax.core.db_port import MappingRow
 from parallax.core.entity import Entity as EntityBase
@@ -40,14 +42,12 @@ from parallax.core.write_plan import ObjectKey
 from parallax.snapshot._handle._typed_writes import (
     TypedKeyedInsertSource,
     TypedKeyedWriteSource,
-    provenance_of,
 )
 from tests._support import mirrored_models as mm
 from tests._support.db_port import Read, ScriptedAdapter
 from tests._support.model_capabilities import cataloged_for, row_codec_for
 from tests.unit._transact_support import (
     ACCOUNT,
-    INFINITY_INSTANT,
     db_for,
     new_account,
 )
@@ -57,21 +57,11 @@ from tests.unit._where_position_model import (
 )
 
 _TX_START: Final = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
-_TX_PIN: Final = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
 _ACCOUNT_ROW: Final[MappingRow] = {
     "id": 1,
     "owner": "Ada",
     "balance": Decimal("100.00"),
     "version": 4,
-}
-_POSITION_ROW: Final[MappingRow] = {
-    "id": 1,
-    "acct_num": "A",
-    "value": Decimal("100.00"),
-    "from_z": _TX_START,
-    "thru_z": INFINITY_INSTANT,
-    "in_z": _TX_START,
-    "out_z": INFINITY_INSTANT,
 }
 
 
@@ -130,55 +120,21 @@ def _published_contact() -> Contact:
 
 
 # --------------------------------------------------------------------------- #
-# What a value states about the state a write revises.                        #
+# Which Entity a value names.                                                 #
 # --------------------------------------------------------------------------- #
-def test_a_published_value_answers_the_facts_its_own_read_filed() -> None:
-    # A standalone read publishes a stored value of this source and leaves no
-    # Read Evidence on it, so the object the write addresses comes from the row
-    # the value authors.
+def test_a_value_names_the_entity_its_class_declares_in_the_connected_model() -> None:
     meta, codec = _accounts()
-    node = _published_account()
-    source = TypedKeyedWriteSource(node.edit(balance=Decimal("125.00")), codec)
 
-    resolved = source.resolve(meta, "amend")
-    prepared = source.prepare(resolved, valid_from=None, until=None)
+    resolved = TypedKeyedWriteSource(_published_account(), codec).resolve(meta, "amend")
 
     assert resolved.entity.identity == mm.Account.identity
-    assert resolved.provenance == "this"
-    assert resolved.representation == "typed"
-    assert resolved.read_evidence is None
-    assert resolved.pin is None  # an unpinned read stands at no instant
-    assert prepared.object_key == ObjectKey(mm.Account.identity, (("id", 1),))
 
 
-def test_a_plainly_constructed_value_answers_that_no_read_produced_it() -> None:
-    meta, codec = _accounts()
+def test_a_class_the_connected_model_does_not_declare_is_refused_while_resolving() -> None:
+    meta, _ = _accounts()
 
-    resolved = TypedKeyedWriteSource(new_account(), codec).resolve(meta, "amend")
-
-    assert resolved.provenance == "none"
-    assert resolved.read_evidence is None
-    assert resolved.pin is None
-    assert resolved.authoring is None
-
-
-def test_a_pinned_view_answers_the_instant_it_stands_at() -> None:
-    port = ScriptedAdapter(Read(rows=[dict(_POSITION_ROW)]))
-    query = WherePosition.where(WherePosition.id == 1).as_of(valid_time=LATEST, tx_time=_TX_PIN)
-    node = db_for(WHERE_POSITION_META, port).find(query).result()
-    meta = cataloged_for(WHERE_POSITION_META).meta
-
-    resolved = TypedKeyedWriteSource(node, row_codec_for(WHERE_POSITION_META)).resolve(
-        meta, "amend"
-    )
-
-    assert resolved.pin is not None
-    assert resolved.pin.tx_time == _TX_PIN
-
-
-def test_provenance_separates_this_lifecycle_from_another_and_from_none() -> None:
-    assert provenance_of(new_account()) == "none"
-    assert provenance_of(_published_account()) == "this"
+    with pytest.raises(TypeError, match="is not an Entity Class of this model"):
+        TypedKeyedWriteSource(_Twin(id=1, only="x"), row_codec_for(_TWIN)).resolve(meta, "amend")
 
 
 # --------------------------------------------------------------------------- #
@@ -267,15 +223,12 @@ def test_a_value_no_read_produced_keys_its_object_off_the_row_it_authors() -> No
 # --------------------------------------------------------------------------- #
 # The insert door's narrower peer.                                            #
 # --------------------------------------------------------------------------- #
-def test_an_insert_source_answers_the_entity_the_value_is_of_and_its_provenance() -> None:
+def test_an_insert_source_answers_the_entity_the_value_is_of() -> None:
     meta, codec = _accounts()
 
     resolved = TypedKeyedInsertSource(new_account(), codec).resolve(meta, "insert")
 
     assert resolved.entity.identity == mm.Account.identity
-    assert resolved.provenance == "none"
-    assert resolved.representation == "typed"
-    assert resolved.pin is None
 
 
 def test_an_insert_source_authors_the_whole_create_payload() -> None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Final, cast
 
 from parallax.core.metamodel import EntityIdentity
@@ -9,6 +10,7 @@ from parallax.core.write_plan.observe import WriteObservation
 
 __all__ = [
     "InsertionIdentity",
+    "KeyedWriteRefusalAdvice",
     "ParticipationToken",
     "ReadEvidence",
     "RetainedObservation",
@@ -33,6 +35,23 @@ class InsertionIdentity:
 
     def __init__(self, object_key: ObjectKey) -> None:
         self.object_key: Final = object_key
+
+
+@dataclass(frozen=True, slots=True)
+class KeyedWriteRefusalAdvice:
+    """The repair a keyed-write value refusal names, spelled in the interface
+    that supplied the carrier it concerns.
+
+    Each field completes one neutral refusal: ``not_stored`` a value no read
+    produced, ``already_stored`` a published value handed to an insert, and
+    ``repeated_insert`` an insert of an object whose insertion still stands. A
+    representation supplies one shared value; the refusal that is raised, its
+    code, and its order are decided without it.
+    """
+
+    not_stored: str
+    already_stored: str
+    repeated_insert: str
 
 
 class ParticipationToken:

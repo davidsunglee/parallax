@@ -1,10 +1,12 @@
-"""The two Wire keyed sources, asked what they answer.
+"""The two Wire keyed sources, asked what they capture and author.
 
 The keyed write ingress owns the order; a source answers facts into it. This
-suite asks each Wire adapter the one question that is its own — given this
-published node or change document, what did you answer — and nothing about what
-the order then does with the answer, which `test_keyed_write_order.py` fixes
-through the public verbs.
+suite asks each Wire adapter what is its own — the change document's shape,
+which Entity a node or spelling names, and the row a document authors — and
+nothing about the provenance, Pin, evidence, and authority it resolves, which
+`test_sources.py` states once for both representations, or about what the order
+then does with the answer, which `test_keyed_write_order.py` fixes through the
+public verbs.
 
 Every case constructs the adapter directly, which is how the claims a verb cannot
 show are shown: that construction is inert, so nothing an adapter could refuse
@@ -28,17 +30,17 @@ from parallax.core.db_port import MappingRow
 from parallax.core.metamodel import Metamodel
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.write_plan import ObjectKey
-from parallax.snapshot import WireEntity
+from parallax.snapshot import TxnContext, WireEntity
 from parallax.snapshot._handle._wire_writes import (
     WireKeyedInsertSource,
     WireKeyedWriteSource,
 )
+from parallax.snapshot._publication._wire import authoring_of
 from tests._support import mirrored_models as mm
-from tests._support.db_port import Read, ScriptedAdapter
+from tests._support.db_port import Read, ScriptedAdapter, Transact, Write
 from tests._support.model_capabilities import cataloged_for
 from tests.unit._transact_support import (
     ACCOUNT,
-    INFINITY_INSTANT,
     db_for,
 )
 from tests.unit._where_position_model import (
@@ -46,8 +48,6 @@ from tests.unit._where_position_model import (
 )
 
 _TX_START: Final = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
-_TX_PIN: Final = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
-_TX_PIN_WIRE: Final = "2024-03-01T00:00:00.000000Z"
 
 _ACCOUNT = "parallax.compatibility.Account"
 _CONTACT = "parallax.compatibility.Contact"
@@ -60,25 +60,13 @@ _ACCOUNT_ROW: Final[MappingRow] = {
     "version": 4,
 }
 _BLANK_CONTACT_ROW: Final[MappingRow] = {"id": 2, "name": "Ada", "address": SQL_NULL}
-_POSITION_ROW: Final[MappingRow] = {
-    "id": 1,
-    "acct_num": "A",
-    "value": Decimal("100.00"),
-    "from_z": _TX_START,
-    "thru_z": INFINITY_INSTANT,
-    "in_z": _TX_START,
-    "out_z": INFINITY_INSTANT,
-}
 
 
-def _query(entity: str, key: int, temporal: dict[str, object] | None = None) -> dict[str, object]:
-    query: dict[str, object] = {
+def _query(entity: str, key: int) -> dict[str, object]:
+    return {
         "target": entity,
         "predicate": {"eq": {"path": f"{entity}.id", "value": key}},
     }
-    if temporal is not None:
-        query["temporal"] = temporal
-    return query
 
 
 def _published(model: DomainModel, row: MappingRow, query: dict[str, object]) -> WireEntity:
@@ -131,9 +119,9 @@ def test_an_insert_payload_that_is_no_document_is_judged_at_capture() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Resolve: what a published node states about the state a write revises.      #
+# Resolve: which Entity a node names.                                         #
 # --------------------------------------------------------------------------- #
-def test_a_published_node_answers_the_facts_its_own_read_filed() -> None:
+def test_a_published_node_names_its_own_concrete_entity() -> None:
     # A standalone read publishes a stored node of this source and leaves no
     # Read Evidence on it, so the object the write addresses comes from the row
     # the node's own key authors.
@@ -144,10 +132,6 @@ def test_a_published_node_answers_the_facts_its_own_read_filed() -> None:
     prepared = source.prepare(resolved, valid_from=None, until=None)
 
     assert resolved.entity.identity == mm.Account.identity
-    assert resolved.provenance == "this"
-    assert resolved.representation == "wire"
-    assert resolved.read_evidence is None
-    assert resolved.pin is None
     assert prepared.object_key == ObjectKey(mm.Account.identity, (("id", 1),))
 
 
@@ -159,39 +143,28 @@ def test_a_projected_node_enters_the_existing_wire_keyed_source() -> None:
     resolved = source.resolve(_meta(ACCOUNT), "amend")
     prepared = source.prepare(resolved, valid_from=None, until=None)
 
-    assert resolved.provenance == "this"
-    assert resolved.representation == "wire"
+    assert resolved.entity.identity == mm.Account.identity
     assert prepared.instruction.rows[0] == {"id": 1, "balance": Decimal("125.00")}
     assert prepared.assigned == {"balance"}
 
 
-def test_a_node_a_pinned_read_published_answers_the_instant_it_stands_at() -> None:
-    node = _published(
-        WHERE_POSITION_META,
-        _POSITION_ROW,
-        _query(
-            _POSITION,
-            1,
-            {"transaction-time": {"asOf": _TX_PIN_WIRE}, "valid-time": {"asOf": "latest"}},
-        ),
-    )
-    source = WireKeyedWriteSource(node, {"value": "300.00"})
+def test_the_node_an_insert_answered_names_the_object_its_authority_opened() -> None:
+    def fn(tx: TxnContext) -> WireEntity:
+        return tx.wire.insert(_ACCOUNT, {"id": 7, "owner": "Newton", "balance": "5.00"})
+
+    opened = db_for(ACCOUNT, ScriptedAdapter(Transact(Write()))).transact(fn)
+    source = WireKeyedWriteSource(opened, {"id": 7, "balance": "6.00"})
     source.capture("amend")
 
-    resolved = source.resolve(_meta(WHERE_POSITION_META), "amend")
+    resolved = source.resolve(_meta(ACCOUNT), "amend")
+    prepared = source.prepare(resolved, valid_from=None, until=None)
 
-    assert resolved.pin is not None
-    assert resolved.pin.tx_time == _TX_PIN
-
-
-def test_an_argument_carrying_no_hint_is_refused_as_no_source_at_all() -> None:
-    # Provenance is never asked of a Wire keyed source, because a source that
-    # could answer anything but "this" is refused here first.
-    source = WireKeyedWriteSource(cast("object", dict(_account_node())), {})
-    source.capture("amend")
-
-    with pytest.raises(instructions.WriteInstructionError, match="carries no such provenance"):
-        source.resolve(_meta(ACCOUNT), "amend")
+    authority = authoring_of(opened)
+    assert authority is not None
+    assert resolved.entity.identity == mm.Account.identity
+    assert prepared.object_key is authority.object_key
+    assert prepared.instruction.rows[0] == {"id": 7, "balance": Decimal("6.00")}
+    assert prepared.assigned == {"balance"}
 
 
 # --------------------------------------------------------------------------- #
@@ -257,39 +230,13 @@ def test_a_destructive_verb_authors_its_identity_row_and_assigns_nothing() -> No
 # --------------------------------------------------------------------------- #
 # The insert door's narrower peer.                                            #
 # --------------------------------------------------------------------------- #
-def test_a_fresh_payload_answers_that_no_read_produced_it() -> None:
+def test_a_payload_names_the_entity_its_spelling_states() -> None:
     source = WireKeyedInsertSource(_ACCOUNT, {"id": 7, "owner": "Newton", "balance": "5.00"})
     source.capture("insert")
 
     resolved = source.resolve(_meta(ACCOUNT), "insert")
 
     assert resolved.entity.identity == mm.Account.identity
-    assert resolved.provenance == "none"
-    assert resolved.representation == "wire"
-    assert resolved.pin is None
-
-
-def test_a_payload_that_is_itself_a_published_node_answers_its_view_and_its_source() -> None:
-    # The one payload that carries a view is the one this door refuses for its
-    # provenance, and it answers BOTH facts: the pin is the more specific
-    # complaint and the order asks for it first, exactly as the Typed door does.
-    node = _published(
-        WHERE_POSITION_META,
-        _POSITION_ROW,
-        _query(
-            _POSITION,
-            1,
-            {"transaction-time": {"asOf": _TX_PIN_WIRE}, "valid-time": {"asOf": "latest"}},
-        ),
-    )
-    source = WireKeyedInsertSource(_POSITION, node)
-    source.capture("insert")
-
-    resolved = source.resolve(_meta(WHERE_POSITION_META), "insert")
-
-    assert resolved.provenance == "this"
-    assert resolved.pin is not None
-    assert resolved.pin.tx_time == _TX_PIN
 
 
 def test_an_insert_source_authors_the_whole_create_payload() -> None:

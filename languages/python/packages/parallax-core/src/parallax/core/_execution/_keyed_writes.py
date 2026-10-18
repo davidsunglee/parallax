@@ -23,7 +23,11 @@ from parallax.core._execution._unit_work.instructions import (
 )
 from parallax.core._execution._unit_work.keys import object_key
 from parallax.core._execution._unit_work.materialized import buffered_write
-from parallax.core._execution._unit_work.retain import InsertionIdentity, ReadEvidence
+from parallax.core._execution._unit_work.retain import (
+    InsertionIdentity,
+    KeyedWriteRefusalAdvice,
+    ReadEvidence,
+)
 from parallax.core._execution._unit_work.uow import (
     NO_INSERTION_AUTHORITY,
     NoInsertionAuthority,
@@ -47,7 +51,6 @@ __all__ = [
     "ResolvedKeyedWriteSource",
     "TargetRevisionArguments",
     "TransactionTimePinReadOnlyError",
-    "WriteRepresentation",
     "keyed_insert",
     "keyed_instruction",
     "keyed_write",
@@ -123,63 +126,10 @@ answers over the values a READ produced, so this answer alone never settles
 whether a row exists for a write to address; the unit of work's admitted
 insertions do, and :func:`validate_provenance` takes that answer as its own
 argument. Deriving the answer
-is the REPRESENTATION's job — a Typed value carries a lifecycle to read it from,
-and a Wire node the stored Entity a read published it under or the authority of
-the insert that opened it — so this is a fact a caller states rather than a
+belongs to whoever supplies the source — the lifecycle or node that published a
+value is what records it — so this is a fact a caller states rather than a
 value this module inspects. Read Evidence never decides it: a read can publish
 a value without leaving any."""
-
-
-type WriteRepresentation = Literal["typed", "wire"]
-"""Which interface stated a keyed write — the other fact a source answers that
-only the representation knows.
-
-A provenance refusal names the verb that DOES accept the value, and a caller
-spells that verb in the interface they called: an already-stored value is
-re-authored through ``value.edit(...)`` and ``tx.amend(...)`` where a Typed
-verb was handed it, and through ``tx.wire.amend(value, {...})`` where a Wire
-one was. The rule, its class, and its code are one; only the spelling of the way
-out is the representation's."""
-
-_ALREADY_STORED_ADVICE: Final[Mapping[WriteRepresentation, str]] = {
-    "typed": "change it with `value.edit(...)` and write it with `tx.amend(...)`",
-    "wire": "write the change with `tx.wire.amend(value, {...})`",
-}
-"""How each interface spells the verb that accepts a value already stored.
-
-A Wire keyed source never earns the foreign-lifecycle refusal: a node is a
-source only by the stored Entity a read published it under or by the authority
-of the insert that opened it, and anything carrying neither is refused as no
-source at all before provenance is asked."""
-
-_REPEATED_INSERT_ADVICE: Final[Mapping[WriteRepresentation, str]] = {
-    "typed": (
-        "write the change with `tx.amend(inserted.edit(...))`, where `inserted` is the value "
-        "the first insert took"
-    ),
-    "wire": (
-        "write the change with `tx.wire.amend(opened, {...})`, where `opened` is the node "
-        "the first insert answered"
-    ),
-}
-"""How each interface spells the verb that revises a row this transaction opened.
-
-Keyed by the interface that OPENED the row, never by the one being refused, and
-naming the carrier that first insert produced rather than the value just refused.
-Two things force both halves. The two values need not be the same object at all —
-two instances of one primary key open one row, and an edit of the refused
-instance authors its change against a value nothing buffered, so following that
-advice would commit the first insert unaltered. And only the opener has a carrier
-to name: ``tx.insert`` answers nothing and leaves the caller holding the instance
-it passed, while ``tx.wire.insert`` answers a frozen node and took a mapping that
-is no keyed source. Selecting by the refusing call would therefore send a Wire
-caller to a node no Typed insert produced, and a Typed caller to ``.edit`` on a
-payload that has no such method.
-
-The already-stored refusal keeps its own advice
-(:data:`_ALREADY_STORED_ADVICE`), where the value handed in IS the stored one and
-editing it is the whole repair — so it is the refusing call's spelling, because
-there is no earlier insert whose carrier could be named instead."""
 
 
 def validate_provenance(
@@ -188,7 +138,7 @@ def validate_provenance(
     mutation: KeyedMutation,
     *,
     inserted: bool,
-    representation: WriteRepresentation,
+    advice: KeyedWriteRefusalAdvice,
 ) -> None:
     """Refuse a value whose PROVENANCE ``mutation``'s verb does not accept
     (`m-unit-work` "Write value provenance"), before any row is derived from it.
@@ -197,8 +147,9 @@ def validate_provenance(
     (:data:`Provenance`) — never whether an author has since changed it, which
     decides what a write CONTAINS rather than which verb accepts it. The three answers partition
     the values a verb can be handed, so a refused value earns exactly one code and
-    the message names the verb that does accept it, spelled in the
-    ``representation`` the call arrived through (:data:`WriteRepresentation`).
+    the message names the verb that does accept it, in the ``advice`` of the
+    interface the call arrived through: the value handed in IS the one refused,
+    so that interface's spelling is its repair.
 
     On the amendment and replacement side this overlaps
     :meth:`~parallax.core.unit_work.UnitOfWork.resolve_read_evidence`: a value no
@@ -236,8 +187,7 @@ def validate_provenance(
             code="write-value-not-stored",
             message=(
                 f"{identity.canonical}: {mutation!r} was handed a value no read of this "
-                "store produced, so it addresses no stored row; write it with "
-                "`tx.insert(...)`, or amend or replace a value a `find` returned"
+                f"store produced, so it addresses no stored row; {advice.not_stored}"
             ),
             identity=identity,
         )
@@ -259,7 +209,7 @@ def validate_provenance(
                 f"{identity.canonical}: {mutation!r} was handed a value this store published "
                 "for a row it already holds — from its own read, or from an insert this "
                 "transaction buffered — so there is no row to open; "
-                f"{_ALREADY_STORED_ADVICE[representation]}"
+                f"{advice.already_stored}"
             ),
             identity=identity,
         )
@@ -269,7 +219,7 @@ def refuse_repeated_insert(
     identity: EntityIdentity,
     mutation: KeyedMutation,
     *,
-    opened_by: WriteRepresentation | None,
+    opener_advice: KeyedWriteRefusalAdvice | None,
 ) -> None:
     """Refuse an insert of an object whose insertion in this transaction still
     stands, whichever value spells the repeat and whichever representation
@@ -281,28 +231,33 @@ def refuse_repeated_insert(
     value's code, because what is wrong is the same thing. The database would
     otherwise refuse the pair at commit; the verb answers instead.
 
-    ``opened_by`` is the unit of work's answer for the object the PREPARED row
-    names, which is why this stands after preparation
+    ``opener_advice`` is the unit of work's answer for the object the PREPARED
+    row names, which is why this stands after preparation
     rather than beside the provenance question: a Wire payload's key members are
     canonical only once its row is prepared. A Typed instance could answer
     earlier and does not, so both representations hear pin, provenance, and
     preparation ahead of this. ``None`` is the whole "not held" answer, so
-    the refusal and the spelling of the way out come from one reading: the
-    advice names the amend verb over the carrier the OPENING interface produced
-    (:data:`_REPEATED_INSERT_ADVICE`), which is the only carrier that exists,
-    and the refusing call's own interface never decides it. The answer is about
-    an insertion that still STANDS: once everything it opened has been removed,
-    or a pending write removes all of it, an insert of the object is a first
-    opening and is not refused (`m-unit-work` *Insertion authority*).
+    the refusal and the spelling of the way out come from one reading. The
+    answer is about an insertion that still STANDS: once everything it opened
+    has been removed, or a pending write removes all of it, an insert of the
+    object is a first opening and is not refused (`m-unit-work` *Insertion
+    authority*).
+
+    The advice is the one the OPENING insert supplied, never the refusing
+    call's. The two values need not be the same object at all — two values of
+    one primary key open one row, so revising the refused one would author a
+    change against a value nothing buffered and commit the first insert
+    unaltered — and only the opening interface produced a carrier the repair
+    can name.
     """
-    if opened_by is None:
+    if opener_advice is None:
         return
     raise KeyedWriteValueError(
         code="write-value-already-stored",
         message=(
             f"{identity.canonical}: {mutation!r} was handed a value naming an object this "
             "transaction already buffered an insert of, so there is no row to open; "
-            f"{_REPEATED_INSERT_ADVICE[opened_by]}"
+            f"{opener_advice.repeated_insert}"
         ),
         identity=identity,
     )
@@ -325,9 +280,9 @@ class ResolvedKeyedWriteSource:
     A source pinned at a finite Transaction-Time instant is read-only whatever
     else is true of it.
 
-    ``representation`` is which interface stated the write, and is here for the
-    one thing a refusal cannot state without it: the verb that DOES accept the
-    value, in the spelling the caller would type.
+    ``advice`` is the repair wording of the interface that stated the write,
+    here for the one thing a refusal cannot state without it: the verb that
+    DOES accept the value, in the spelling the caller would type.
 
     ``authoring`` is the insertion authority the source privately carries — the
     instance an insertion was admitted through, a value derived from it since,
@@ -340,7 +295,7 @@ class ResolvedKeyedWriteSource:
     pin: Pin | None
     read_evidence: ReadEvidence | None
     provenance: Provenance
-    representation: WriteRepresentation
+    advice: KeyedWriteRefusalAdvice
     authoring: InsertionIdentity | None = None
 
 
@@ -375,16 +330,17 @@ class ResolvedKeyedInsert:
     a row it already holds — and the ``pin`` such a value carries,
     because the Transaction-Time past is read-only whatever verb was aimed at it.
 
-    ``representation`` is which interface stated the insert, for the same reason
-    its peer carries one: the value naming a row already held is refused by
-    naming the amend verb the caller reaches for, and each interface spells that
-    verb its own way.
+    ``advice`` is the repair wording of the interface that stated the insert,
+    for the same reason its peer carries one: the value naming a row already
+    held is refused by naming the amend verb the caller reaches for, and each
+    interface spells that verb its own way. An admitted insertion retains it,
+    so a later repeat names the way out this insert's carrier offers.
     """
 
     entity: EntityMetadata
     pin: Pin | None
     provenance: Provenance
-    representation: WriteRepresentation
+    advice: KeyedWriteRefusalAdvice
 
 
 @dataclass(frozen=True, slots=True)
@@ -633,7 +589,7 @@ def keyed_write(
         resolved.provenance,
         mutation,
         inserted=authorized,
-        representation=resolved.representation,
+        advice=resolved.advice,
     )
     validate_source_pin(resolved.entity.identity, resolved.pin)
     valid_from = source_start(meta, resolved, mutation, anchor)
@@ -729,7 +685,7 @@ def keyed_insert(
     key members are canonical only once the row is — so pin, provenance, and
     preparation are all heard ahead of it, on both lanes.
 
-    The insertion this admits is labelled with the representation that opened
+    The insertion this admits retains the advice of the interface that opened
     it, which is what a later repeat's refusal names the way out in: the caller
     is sent to the amend verb over the carrier THIS call produced, which the
     opposite interface has no spelling for. The answer carries the authority the
@@ -747,7 +703,7 @@ def keyed_insert(
         resolved.provenance,
         mutation,
         inserted=False,
-        representation=resolved.representation,
+        advice=resolved.advice,
     )
     prepared = opening.prepare(resolved, valid_from=start, until=until)
     opened = object_key(prepared, meta)
@@ -757,9 +713,9 @@ def keyed_insert(
     refuse_repeated_insert(
         resolved.entity.identity,
         mutation,
-        opened_by=_opener(uow.opened_by(opened)),
+        opener_advice=uow.insertion_advice(opened),
     )
-    uow.buffer(prepared, opener=resolved.representation)
+    uow.buffer(prepared, insertion_advice=resolved.advice)
     authority = uow.insertion_identity(opened)
     assert authority is not None  # the admission just issued it
     return OpenedKeyedWrite(
@@ -768,10 +724,3 @@ def keyed_insert(
         object_key=opened,
         authority=authority,
     )
-
-
-def _opener(label: object) -> WriteRepresentation | None:
-    if label is None:
-        return None
-    assert label in _REPEATED_INSERT_ADVICE  # this module labels every insertion it admits
-    return label

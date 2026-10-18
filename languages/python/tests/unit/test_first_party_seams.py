@@ -42,7 +42,7 @@ from parallax.core.unit_work import (
 from parallax.core.write_plan import ObjectKey, ObjectStateKey
 from parallax.core.write_plan.keys import TemporalObjectStateKey, VersionedObjectStateKey
 from parallax.snapshot import ScopedDatabase, TxnContext, WireEntity
-from parallax.snapshot._handle._typed_writes import instance_read_evidence
+from parallax.snapshot._inspection import snapshot_state_of
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
@@ -355,9 +355,10 @@ def test_a_failed_unversioned_write_leaves_its_source_unspent() -> None:
     with raises_contextualized(MissingTargetError):
         db_for(PERSON, port).transact(fn)
     (source,) = sources
-    origin = instance_read_evidence(source)
-    assert origin is not None
-    assert origin.consumed is False
+    state = snapshot_state_of(source)
+    assert state is not None
+    assert state.read_evidence is not None
+    assert state.read_evidence.consumed is False
 
 
 # --------------------------------------------------------------------------- #

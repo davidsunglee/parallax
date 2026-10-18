@@ -7,7 +7,6 @@ from typing import Any, cast
 from parallax.core._execution._family import family_view
 from parallax.core._execution._keyed_writes import (
     PreparedSourceWrite,
-    Provenance,
     ResolvedKeyedInsert,
     ResolvedKeyedWriteSource,
     TargetRevisionArguments,
@@ -30,26 +29,23 @@ from parallax.core._execution._unit_work.instructions import (
     TargetWrite,
     WriteAssignment,
 )
-from parallax.core._execution._unit_work.retain import ReadEvidence
-from parallax.core.entity import (
-    AttributeAssignment,
-    EntityRowCodec,
-    lifecycle_state_of,
-)
+from parallax.core.entity import AttributeAssignment, EntityRowCodec
 from parallax.core.entity import Entity as EntityBase
 from parallax.core.entity._authored_resolver import typed_interpretation
 from parallax.core.entity._declaration import declaration_of
 from parallax.core.metamodel import EntityMetadata, Metamodel
 from parallax.core.object_query._fluent import ObjectQuery, mutation_selection
-from parallax.core.temporal_read import Pin
-from parallax.core.write_plan import ObjectKey
 
 # Sibling implementation modules. None of these names carries a leading
 # underscore, precisely because it crosses a module boundary: privacy is carried
 # by the private MODULE names and by the package's frozen `__all__`, not by
 # per-name underscores, which under pyright strict would make every intra-package
 # import a reportPrivateUsage error.
-from parallax.snapshot._inspection import RootConformance, insertion_of, snapshot_state_of
+from parallax.snapshot._handle._sources import (
+    object_key_from_row,
+    resolve_keyed_insert,
+    resolve_keyed_write_source,
+)
 
 __all__ = [
     "TypedInstanceTargetWriteAdapter",
@@ -57,37 +53,7 @@ __all__ = [
     "TypedKeyedInsertSource",
     "TypedKeyedWriteSource",
     "TypedPredicateWriteAdapter",
-    "provenance_of",
 ]
-
-
-def provenance_of(value: EntityBase) -> Provenance:
-    """Which framework-managed source produced ``value``.
-
-    Read through :func:`~parallax.snapshot._inspection.snapshot_state_of` and the
-    un-narrowed :func:`~parallax.core.entity.lifecycle_state_of`, never through a
-    value's private state: the narrowed answer authenticates THIS Snapshot
-    lifecycle, and its root conformance says whether that lifecycle published
-    valid stored Entity State, whatever Read Evidence the value carries beside
-    it. Diagnostic data from an invalid root carries Snapshot state for
-    inspection but is nonconforming, so it is ``none`` rather than a stored
-    value of this source. The un-narrowed answer distinguishes another
-    framework-managed source's value from one no managed source produced at all.
-
-    It belongs to the Typed adapter because only a Typed value carries a
-    lifecycle to read: a Wire source answers the same fact from the provenance
-    the door that published it filed on the node, and what the keyed write
-    judges is the answer rather than either carrier.
-
-    The authority an admitted insertion bound to an instance is no read, so a
-    value carrying it alone is still one no managed source published.
-    """
-    if lifecycle_state_of(value) is None:
-        return "none"
-    state = snapshot_state_of(value)
-    if state is None:
-        return "none" if insertion_of(value) is not None else "foreign"
-    return "this" if state.root_conformance is RootConformance.CONFORMING else "none"
 
 
 def metadata_of_instance(meta: Metamodel, instance: EntityBase) -> EntityMetadata:
@@ -107,54 +73,6 @@ def metadata_of_instance(meta: Metamodel, instance: EntityBase) -> EntityMetadat
     if metadata is None:
         raise TypeError(f"{cls.__name__} is not an Entity Class of this model")
     return metadata
-
-
-def instance_read_evidence(instance: object) -> ReadEvidence | None:
-    """The private :class:`~parallax.core.unit_work.ReadEvidence` ``instance``
-    carries, or ``None`` for a value Parallax never published.
-
-    An edited copy answers the node's own hint, because an edit preserves every
-    kind of instance state outside the declared members (``Entity.edit``) — which
-    is what lets a developer read a row, change what they read, and write back
-    against the state they read. A value another framework-managed source
-    produced answers ``None`` here: its lifecycle state is that source's own, so
-    this lifecycle recognizes no hint on it.
-    """
-    state = snapshot_state_of(instance)
-    return None if state is None else state.read_evidence
-
-
-def source_pin(instance: object) -> Pin | None:
-    """The whole-graph as-of :class:`Pin` a materialized snapshot node carries,
-    or ``None`` for anything else — a plainly constructed instance, or an edit
-    of one.
-
-    An edited copy of a NODE answers the node's own pin: an edit preserves every
-    kind of instance state outside the declared members, lifecycle state among
-    them (``Entity.edit``), so the write a developer derives from a pinned view
-    is refused exactly as a write of the view itself is. What a value answers
-    here is therefore its provenance, not its editedness."""
-    state = snapshot_state_of(instance)
-    return None if state is None else state.pin
-
-
-def written_object_key(
-    record: EntityMetadata, meta: Metamodel, row: Mapping[str, object]
-) -> ObjectKey:
-    """The object a WRITTEN instance addresses — the same
-    :class:`~parallax.core.write_plan.ObjectKey` a source's own Read Evidence name
-    their objects by (the instance's OWN Entity Identity, never
-    family-normalized; its one pair keyed by the family key's canonical
-    attribute name) and `unit_work.object_key` computes at flush, so a
-    verb-time refusal and the flush-time settle can never name the object two
-    different ways.
-
-    ``row`` is that instance's identity row as the Entity Row Codec derived it,
-    passed in rather than derived here: the Inheritance Facet owns which member
-    is the family key, and the codec owns what an Entity value's canonical
-    primary key IS."""
-    name = family_view(meta, record).primary_key.identity.name
-    return ObjectKey(record.identity, ((name, row[name]),))
 
 
 def prepared_typed_write(
@@ -237,15 +155,7 @@ class TypedKeyedWriteSource:
         """The facts this value states about the state the write revises."""
         self._meta = model
         self._mutation = mutation
-        entity = metadata_of_instance(model, self._value)
-        return ResolvedKeyedWriteSource(
-            entity=entity,
-            pin=source_pin(self._value),
-            read_evidence=instance_read_evidence(self._value),
-            provenance=provenance_of(self._value),
-            representation="typed",
-            authoring=insertion_of(self._value),
-        )
+        return resolve_keyed_write_source(metadata_of_instance(model, self._value), self._value)
 
     def prepare(
         self,
@@ -288,7 +198,7 @@ class TypedKeyedWriteSource:
             object_key=(
                 resolved.read_evidence.object_key
                 if resolved.read_evidence is not None
-                else written_object_key(resolved.entity, meta, instruction.rows[0])
+                else object_key_from_row(resolved.entity, meta, instruction.rows[0])
             ),
             assigned=assigned,
         )
@@ -347,12 +257,7 @@ class TypedKeyedInsertSource:
     def resolve(self, model: Metamodel, mutation: KeyedMutation, /) -> ResolvedKeyedInsert:
         self._meta = model
         self._mutation = mutation
-        return ResolvedKeyedInsert(
-            entity=metadata_of_instance(model, self._instance),
-            pin=source_pin(self._instance),
-            provenance=provenance_of(self._instance),
-            representation="typed",
-        )
+        return resolve_keyed_insert(metadata_of_instance(model, self._instance), self._instance)
 
     def prepare(
         self,
