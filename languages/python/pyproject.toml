@@ -2864,6 +2864,7 @@ layers = [
     "parallax.core.sql_gen._seek",
     "parallax.core.sql_gen._predicate",
     "parallax.core.sql_gen._navigation",
+    "parallax.core.sql_gen._planning",
     "parallax.core.sql_gen._inheritance",
     "parallax.core.sql_gen._context",
 ]
@@ -2877,6 +2878,7 @@ source_modules = [
     "parallax.core.sql_gen._seek",
     "parallax.core.sql_gen._predicate",
     "parallax.core.sql_gen._navigation",
+    "parallax.core.sql_gen._planning",
     "parallax.core.sql_gen._inheritance",
     "parallax.core.sql_gen._context",
 ]

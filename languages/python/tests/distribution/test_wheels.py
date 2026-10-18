@@ -79,6 +79,7 @@ def test_core_wheel_ships_sql_gen_package(wheelhouse: Wheelhouse) -> None:
         "parallax/core/sql_gen/_context.py",
         "parallax/core/sql_gen/_inheritance.py",
         "parallax/core/sql_gen/_navigation.py",
+        "parallax/core/sql_gen/_planning.py",
         "parallax/core/sql_gen/_predicate.py",
         "parallax/core/sql_gen/_seek.py",
         "parallax/core/sql_gen/_write.py",

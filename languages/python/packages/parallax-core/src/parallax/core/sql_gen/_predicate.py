@@ -74,27 +74,27 @@ from parallax.core.sql_gen._inheritance import (
 from parallax.core.sql_gen._inheritance import tag_column as _tag_column
 from parallax.core.sql_gen._inheritance import tag_guard as _tph_tag_guard
 
-# The navigation LANE: candidate plans and their eligibility in, rendered
-# candidates out. Same aliasing-down convention as the family lane above.
-from parallax.core.sql_gen._navigation import (
-    RelationshipCandidateBranch as _RelationshipCandidateBranch,
-)
-from parallax.core.sql_gen._navigation import (
-    RelationshipCandidatePlan as _RelationshipCandidatePlan,
-)
+# The navigation LANE renders planned candidates; the planning lane plans them
+# and proves their eligibility. Same aliasing-down convention as the family lane.
 from parallax.core.sql_gen._navigation import (
     RenderedRelationshipCandidate as _RenderedRelationshipCandidate,
 )
 from parallax.core.sql_gen._navigation import (
-    plan_relationship_candidates as _plan_relationship_candidates,
-)
-from parallax.core.sql_gen._navigation import (
     render_relationship_candidate as _render_relationship_candidate,
 )
-from parallax.core.sql_gen._navigation import (
+from parallax.core.sql_gen._planning import (
+    RelationshipCandidateBranch as _RelationshipCandidateBranch,
+)
+from parallax.core.sql_gen._planning import (
+    RelationshipCandidatePlan as _RelationshipCandidatePlan,
+)
+from parallax.core.sql_gen._planning import (
+    plan_relationship_candidates as _plan_relationship_candidates,
+)
+from parallax.core.sql_gen._planning import (
     shared_relationship_is_eligible as _shared_relationship_is_eligible,
 )
-from parallax.core.sql_gen._navigation import temporal_visibility as _temporal_visibility
+from parallax.core.sql_gen._planning import temporal_visibility as _temporal_visibility
 from parallax.core.storage_layout import (
     ColumnContributor,
     DirectColumn,
@@ -888,7 +888,9 @@ def _proven_prefix(
     proven: list[tuple[ResolvedRelationship, _RelationshipCandidateBranch]] = []
     for hop in hops:
         candidates = _candidates(hop, scope)
-        if not _shared_relationship_is_eligible(hop, candidates, scope):
+        if not _shared_relationship_is_eligible(
+            hop, candidates, facet=scope.facet, storage=scope.storage
+        ):
             break
         proven.append((hop, candidates.branches[0]))
     return tuple(proven)
@@ -939,7 +941,13 @@ def _candidates(
     *,
     position: tuple[EntityIdentity, ...] | None = None,
 ) -> _RelationshipCandidatePlan:
-    return _plan_relationship_candidates(relationship, position=position, scope=scope)
+    return _plan_relationship_candidates(
+        relationship,
+        position=position,
+        meta=scope.meta,
+        facet=scope.facet,
+        storage=scope.storage,
+    )
 
 
 def _rendered_candidate(
