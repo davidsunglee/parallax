@@ -24,11 +24,13 @@ from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import AttributeMetadata, EntityIdentity
 from parallax.core.predicate import ModelRejectedError
 from parallax.core.sql_gen import SqlGenError
+from parallax.core.sql_gen import _compile as sql_compile
 from parallax.core.sql_gen._inheritance import (
     BranchColumn,
     TpcsBranchPlan,
     document_projection,
 )
+from parallax.core.sql_gen._predicate import render_predicate
 from tests._support.sql import compile_read
 from tests.unit._corpus_model_support import formed, model, target
 
@@ -415,6 +417,66 @@ def _heterogeneous_payment_predicate() -> oa.PredicateNode:
             ),
         )
     )
+
+
+@pytest.fixture
+def rendered_roots(monkeypatch: pytest.MonkeyPatch) -> list[tuple[bool, tuple[Any, ...], int]]:
+    """For each lexical root a compiled read renders: whether its plan
+    partitions, that plan's root keys, and the root rendered."""
+    roots: list[tuple[bool, tuple[Any, ...], int]] = []
+    real = render_predicate
+
+    def render(**kwargs: Any) -> str:
+        plan = kwargs["statement_plan"]
+        roots.append((plan.requires_tph_partition, tuple(plan.root_scopes), kwargs["scope_id"]))
+        return real(**kwargs)
+
+    monkeypatch.setattr(sql_compile, "_render_predicate", render)
+    return roots
+
+
+def test_a_partitioning_tph_read_renders_only_its_planned_partitions(
+    rendered_roots: list[tuple[bool, tuple[Any, ...], int]],
+) -> None:
+    compile_read(
+        _heterogeneous_payment_predicate(),
+        DOCUMENT_LAYOUT,
+        POSTGRES,
+        target(DOCUMENT_LAYOUT, "Payment"),
+    )
+    concretes = _narrow(DOCUMENT_LAYOUT, "CardPayment", "CashPayment")
+    assert [(partitions, keys) for partitions, keys, _root in rendered_roots] == [
+        (True, concretes)
+    ] * 2
+    assert len({root for _partitions, _keys, root in rendered_roots}) == 2
+
+
+@pytest.mark.parametrize(
+    ("order_by", "partitions"),
+    [
+        ((oq.OrderKey(attr="CashPayment.detail", direction="asc"),), True),
+        ((oq.OrderKey(attr="Payment.id", direction="asc"),), False),
+    ],
+    ids=["document-member", "direct-member"],
+)
+def test_a_tph_ordering_term_alone_decides_partitioning_before_rendering(
+    rendered_roots: list[tuple[bool, tuple[Any, ...], int]],
+    order_by: tuple[oq.OrderKey, ...],
+    partitions: bool,
+) -> None:
+    compiled = compile_read(
+        oa.TrueNode(),
+        DOCUMENT_LAYOUT,
+        POSTGRES,
+        target(DOCUMENT_LAYOUT, "Payment"),
+        narrow_to=_narrow(DOCUMENT_LAYOUT, "CashPayment"),
+        order_by=order_by,
+    )
+    (partitioned, keys, _root), *_ = rendered_roots
+    assert partitioned is partitions
+    assert keys == (_narrow(DOCUMENT_LAYOUT, "CashPayment") if partitions else (None,))
+    assert len(rendered_roots) == 1
+    assert ("offset 0) p1" in compiled.statement.sql) is partitions
 
 
 def test_tph_document_partition_wraps_result_shaping_around_the_union() -> None:

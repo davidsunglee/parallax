@@ -439,7 +439,7 @@ def test_inheritance_tag_guard_renders_unaliased() -> None:
     # entry point rejects inheritance families first" — was WRONG (the exported
     # write finalization and `scenario._lower_predicate_write_step` both bypassed the
     # buffer-time guards), which is the whole reason this renders through
-    # `EntityScope.own_column` now rather than trusting a caller.
+    # `EntityRowScope.own_column` now rather than trusting a caller.
     op = oa.Narrow(
         to=("CardPayment",),
         operand=oa.Comparison(
@@ -453,8 +453,8 @@ def test_inheritance_tag_guard_renders_unaliased() -> None:
     assert "t0." not in sql
     # The read lane is the control, and it must be the MID-predicate spelling to
     # compare like with like: a TOP-LEVEL narrow is intercepted by the TPH read
-    # compiler before `_lower_predicate` ever runs. Wrapped in a `group` both
-    # lanes reach `_lower_branch_narrow`; the read then additionally appends the
+    # compiler before `render_predicate` ever runs. Wrapped in a `group` both
+    # lanes reach `_branch_narrow`; the read then additionally appends the
     # concrete TARGET's own guard, which a bare write fragment has no analogue of
     # — so the comparison is against the read's leading grouped term, which does
     # coincide exactly modulo alias qualification, tag bind last in both.

@@ -19,11 +19,7 @@ from parallax.core.db_port import JsonDocument
 from parallax.core.dialect import Dialect
 from parallax.core.inheritance import InheritanceFacet
 from parallax.core.metamodel import AttributeMetadata, EntityIdentity, EntityMetadata, Metamodel
-from parallax.core.predicate._resolved import (
-    DeferredKeySet,
-    ResolvedQuantifier,
-    ResolvedRelationship,
-)
+from parallax.core.predicate._resolved import DeferredKeySet
 from parallax.core.storage_layout import StorageLayoutFacet, TableLayout
 from parallax.core.wire import (
     WireDecodingError,
@@ -287,167 +283,74 @@ class CandidateRenderScope(ColumnScope, Protocol):
     def child(self, entity: EntityMetadata, alias: str) -> CandidateRenderScope: ...
 
 
-@dataclass(eq=False, slots=True)
-class SharedSource[Candidate, Scope]:
-    """One relationship occurrence its lexical scope reads through one join.
+@dataclass(frozen=True, slots=True)
+class RenderedSourceBinding[RowScope]:
+    """A rendered shared source: the ``target`` scope its joined row resolves
+    under and the ``origin`` scope its correlation was rendered against."""
 
-    ``candidate`` is the occurrence's one physical candidate branch and
-    ``parent`` the shared source it is reached from, or ``None`` where the
-    scope's own row reaches it. Once the join has rendered and taken its alias,
-    ``scope`` resolves the target's members and ``origin`` is the scope its
-    correlation was rendered against.
-    """
-
-    relationship: ResolvedRelationship
-    candidate: Candidate
-    parent: SharedSource[Candidate, Scope] | None
-    scope: Scope | None = None
-    origin: Scope | None = None
-
-
-@dataclass(eq=False, slots=True)
-class OwnerResults[Candidate, Scope]:
-    """The collection quantifiers its lexical scope evaluates once per row of
-    one shared ``owner``, each its own result column.
-
-    ``demands`` are in first-demand order. Once rendered, ``alias`` names the
-    result relation and ``columns`` holds each demand's result column, in the
-    same order.
-    """
-
-    owner: SharedSource[Candidate, Scope]
-    demands: list[ResolvedQuantifier] = field(default_factory=list[ResolvedQuantifier])
-    alias: str | None = None
-    columns: list[str] = field(default_factory=list[str])
-
-    def column(self, demand: ResolvedQuantifier) -> str:
-        """``demand``'s result column, qualified by the relation's alias."""
-        index = next(index for index, held in enumerate(self.demands) if held is demand)
-        return f"{self.alias}.{self.columns[index]}"
+    target: RowScope
+    origin: RowScope
 
 
 @dataclass(frozen=True, slots=True)
-class DemandPlacement[Candidate, Scope]:
-    """Where one planned demand is evaluated: at ``reached``, or at its scope's
-    own row where that is ``None``. A presence whose target is itself shared
-    reads that target's join, ``reuses``, instead of opening a candidate, and a
-    collection quantifier of ``reached`` may read its column of ``results``.
+class RenderedOwnerResultsBinding:
+    """A rendered owner-results relation: its ``alias`` and its result
+    ``columns``, one per planned cell in cell order."""
 
-    ``hops`` continue past ``reached`` in the demand's own correlated scalar
-    subqueries, each candidate test confined to the row ``reached`` joined for
-    the row it is evaluated beside."""
-
-    reached: SharedSource[Candidate, Scope] | None
-    reuses: SharedSource[Candidate, Scope] | None = None
-    hops: tuple[ResolvedRelationship, ...] = ()
-    results: OwnerResults[Candidate, Scope] | None = None
+    alias: str
+    columns: tuple[str, ...]
 
 
-class _RenderedPlan(Protocol):
-    def rendered(self) -> bool: ...
+class ScopePlanView(Protocol):
+    """A lexical plan as the statement builder holds it: what it must find
+    rendered before the statement finishes."""
+
+    @property
+    def scope_id(self) -> int: ...
+
+    @property
+    def sources(self) -> tuple[object, ...]: ...
+
+    @property
+    def owner_results(self) -> tuple[object, ...]: ...
 
 
-class SourcePlan[Candidate, Scope]:
-    """One lexical scope's shared relationship sources and its planned demands.
+class PlanEntryRefView[Kind: str](Protocol):
+    """A reference to entry ``index`` of one kind in lexical plan ``scope_id``."""
 
-    Sources are kept in the order their joins render, each after the source it
-    is reached from, and owner results in the order their owners are first
-    quantified. A demand is identified by its resolved node object, which the
-    plan neither copies nor hashes; the plan lives only while its statement
-    compiles.
+    @property
+    def kind(self) -> Kind: ...
+
+    @property
+    def scope_id(self) -> int: ...
+
+    @property
+    def index(self) -> int: ...
+
+
+class StatementBuilder[RowScope = object]:
+    """One statement's aliases, role-classified bind sequence, and the rendered
+    bindings of the lexical plans it renders.
+
+    ``RowScope`` is the row-scope type its shared-source bindings retain.
     """
-
-    __slots__ = ("_placements", "results", "sources")
-
-    def __init__(self) -> None:
-        self.sources: list[SharedSource[Candidate, Scope]] = []
-        self.results: list[OwnerResults[Candidate, Scope]] = []
-        self._placements: dict[int, DemandPlacement[Candidate, Scope]] = {}
-
-    def find(
-        self, parent: SharedSource[Candidate, Scope] | None, relationship: ResolvedRelationship
-    ) -> SharedSource[Candidate, Scope] | None:
-        """The source already reaching ``relationship``'s occurrence from ``parent``."""
-        return next(
-            (
-                source
-                for source in self.sources
-                if source.parent is parent and _same_occurrence(source.relationship, relationship)
-            ),
-            None,
-        )
-
-    def adopt(
-        self,
-        parent: SharedSource[Candidate, Scope] | None,
-        relationship: ResolvedRelationship,
-        candidate: Candidate,
-    ) -> SharedSource[Candidate, Scope]:
-        """The source reaching ``relationship`` from ``parent``, opened if new."""
-        found = self.find(parent, relationship)
-        if found is not None:
-            return found
-        source: SharedSource[Candidate, Scope] = SharedSource(relationship, candidate, parent)
-        self.sources.append(source)
-        return source
-
-    def collect(
-        self, owner: SharedSource[Candidate, Scope], demand: ResolvedQuantifier
-    ) -> OwnerResults[Candidate, Scope]:
-        """``owner``'s results, opened if new, with ``demand`` among them."""
-        results = next((entry for entry in self.results if entry.owner is owner), None)
-        if results is None:
-            results = OwnerResults(owner)
-            self.results.append(results)
-        results.demands.append(demand)
-        return results
-
-    def place(self, demand: object, placement: DemandPlacement[Candidate, Scope]) -> None:
-        self._placements[id(demand)] = placement
-
-    def placement(self, demand: object) -> DemandPlacement[Candidate, Scope] | None:
-        return self._placements.get(id(demand))
-
-    def shares(self) -> bool:
-        """Whether any demand reads through a shared source."""
-        return bool(self.sources)
-
-    def rendered(self) -> bool:
-        """Whether every planned source and owner result has rendered."""
-        return all(source.scope is not None for source in self.sources) and all(
-            results.alias is not None for results in self.results
-        )
-
-
-def _same_occurrence(first: ResolvedRelationship, second: ResolvedRelationship) -> bool:
-    """One direction, endpoints, target family, and temporal visibility."""
-    return (
-        first.identity == second.identity
-        and first.source.identity == second.source.identity
-        and first.related.identity == second.related.identity
-        and first.target.identity == second.target.identity
-        and first.temporal_visibility == second.temporal_visibility
-    )
-
-
-class StatementBuilder:
-    """One statement's aliases and role-classified bind sequence."""
 
     __slots__ = (
         "_binds",
         "_classified",
         "_next_alias_index",
         "_next_relation_index",
+        "_owner_results_bindings",
         "_row_count",
         "_row_signature",
         "_row_start",
-        "_source_plans",
+        "_scope_plans",
+        "_source_bindings",
         "_typed_spans",
         "_wire_overrides",
         "dialect",
         "facet",
         "meta",
-        "requires_variant_partition",
         "storage",
     )
 
@@ -469,10 +372,11 @@ class StatementBuilder:
         self._row_signature: tuple[_TypedBindSlot | None, ...] = ()
         self._row_start = 0
         self._row_count = 0
-        self.requires_variant_partition = False
         self._next_alias_index = 1
         self._next_relation_index = 0
-        self._source_plans: list[_RenderedPlan] = []
+        self._scope_plans: dict[int, ScopePlanView] = {}
+        self._source_bindings: dict[int, list[RenderedSourceBinding[RowScope] | None]] = {}
+        self._owner_results_bindings: dict[int, list[RenderedOwnerResultsBinding | None]] = {}
 
     def next_alias(self) -> str:
         index = self._next_alias_index
@@ -486,10 +390,57 @@ class StatementBuilder:
         self._next_relation_index = index + 1
         return f"r{index}"
 
-    def own_source_plan(self, plan: _RenderedPlan) -> None:
-        """Hold a lexical scope's source plan for this statement's lifetime;
-        :meth:`finish` refuses the statement unless every planned join rendered."""
-        self._source_plans.append(plan)
+    def select_scope_plan(self, plan: ScopePlanView) -> None:
+        """Take on rendering ``plan``'s shared sources and owner results, which
+        :meth:`finish` then requires; selecting the same plan again is a no-op.
+
+        A builder renders lexical plans of one statement plan, so a different
+        plan under a selected scope id is refused.
+        """
+        selected = self._scope_plans.get(plan.scope_id)
+        if selected is plan:
+            return
+        if selected is not None:
+            raise SqlGenError("a statement renders the lexical plans of one statement plan")
+        self._scope_plans[plan.scope_id] = plan
+        self._source_bindings[plan.scope_id] = [None] * len(plan.sources)
+        self._owner_results_bindings[plan.scope_id] = [None] * len(plan.owner_results)
+
+    def record_source_binding(
+        self, ref: PlanEntryRefView[Literal["source"]], *, target: RowScope, origin: RowScope
+    ) -> None:
+        slots = _entry_slots(self._source_bindings, ref, "source")
+        if slots[ref.index] is not None:
+            raise SqlGenError("a shared source renders once per statement")
+        slots[ref.index] = RenderedSourceBinding(target, origin)
+
+    def source_binding(
+        self, ref: PlanEntryRefView[Literal["source"]]
+    ) -> RenderedSourceBinding[RowScope]:
+        binding = _entry_slots(self._source_bindings, ref, "source")[ref.index]
+        if binding is None:
+            raise SqlGenError("a shared source is read before its join renders")
+        return binding
+
+    def record_owner_results_binding(
+        self,
+        ref: PlanEntryRefView[Literal["owner_results"]],
+        *,
+        alias: str,
+        columns: tuple[str, ...],
+    ) -> None:
+        slots = _entry_slots(self._owner_results_bindings, ref, "owner_results")
+        if slots[ref.index] is not None:
+            raise SqlGenError("an owner-results relation renders once per statement")
+        slots[ref.index] = RenderedOwnerResultsBinding(alias, columns)
+
+    def owner_results_binding(
+        self, ref: PlanEntryRefView[Literal["owner_results"]]
+    ) -> RenderedOwnerResultsBinding:
+        binding = _entry_slots(self._owner_results_bindings, ref, "owner_results")[ref.index]
+        if binding is None:
+            raise SqlGenError("owner results are read before their relation renders")
+        return binding
 
     def bind_structural(self, value: object) -> None:
         self._append(value)
@@ -620,9 +571,10 @@ class StatementBuilder:
         self._seal_typed_rows()
         if self._classified != len(self._binds):
             raise SqlGenError("every compiler bind must be supplied through one role-specific API")
-        rendered = all(plan.rendered() for plan in self._source_plans)
-        if not rendered:  # pragma: no cover - a compiler renders every source it plans
+        if any(None in bindings for bindings in self._source_bindings.values()):
             raise SqlGenError("a planned shared source was never rendered")
+        if any(None in bindings for bindings in self._owner_results_bindings.values()):
+            raise SqlGenError("a planned owner-results relation was never rendered")
         occupied: set[int] = set()
         spans = tuple(sorted(self._typed_spans, key=lambda span: span.start))
         for span in spans:
@@ -692,3 +644,16 @@ class StatementBuilder:
             )
         else:
             self._typed_spans.append(span)
+
+
+def _entry_slots[Binding](
+    store: dict[int, list[Binding | None]], ref: PlanEntryRefView[str], kind: str
+) -> list[Binding | None]:
+    """The binding slots of ``ref``'s selected lexical plan, refusing a
+    reference of another kind or to an entry no selected plan holds."""
+    if ref.kind != kind:
+        raise SqlGenError(f"a {ref.kind} reference addresses no {kind} binding")
+    slots = store.get(ref.scope_id)
+    if slots is None or not 0 <= ref.index < len(slots):
+        raise SqlGenError(f"no selected lexical plan holds {kind} {ref.scope_id}.{ref.index}")
+    return slots
