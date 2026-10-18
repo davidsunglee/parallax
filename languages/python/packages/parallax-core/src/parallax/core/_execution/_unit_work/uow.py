@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import bisect
 import datetime as dt
-from collections.abc import Callable, Hashable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, replace
 from enum import Enum
 from itertools import islice
@@ -58,6 +58,7 @@ from parallax.core._execution._unit_work.materialized import (
 )
 from parallax.core._execution._unit_work.retain import (
     InsertionIdentity,
+    KeyedWriteRefusalAdvice,
     ParticipationToken,
     ReadEvidence,
     RetainedObservation,
@@ -301,10 +302,10 @@ class TransactionSettings:
 class _TargetRecord:
     """What one attempt holds about one object it inserted.
 
-    ``opener`` labels the interface that admitted the latest insertion, kept
-    for its caller's diagnostics, and ``valid_time_window`` is the window it was
-    admitted with, ``None`` for an object without Valid Time — its start is the
-    anchor every write it authorizes starts at. ``identity`` is the
+    ``insertion_advice`` is the refusal advice the latest insertion's opener
+    supplied, kept for a repeat's diagnostics, and ``valid_time_window`` is the
+    window it was admitted with, ``None`` for an object without Valid Time — its
+    start is the anchor every write it authorizes starts at. ``identity`` is the
     authority that insertion grants while it stands, and ``None`` once its
     complete removal retired it. ``pending_insert`` lasts until the next flush.
 
@@ -326,8 +327,8 @@ class _TargetRecord:
         "advanced_from",
         "floor",
         "identity",
+        "insertion_advice",
         "live",
-        "opener",
         "pending_insert",
         "removal",
         "valid_time_window",
@@ -335,11 +336,11 @@ class _TargetRecord:
 
     def __init__(
         self,
-        opener: Hashable | None,
+        insertion_advice: KeyedWriteRefusalAdvice | None,
         valid_time_window: TimeInterval | None,
         identity: InsertionIdentity,
     ) -> None:
-        self.opener = opener
+        self.insertion_advice = insertion_advice
         self.valid_time_window = valid_time_window
         self.identity: InsertionIdentity | None = identity
         self.pending_insert = True
@@ -485,20 +486,20 @@ class _TargetWriteState:
     def open_insert(
         self,
         target: ObjectKey,
-        opener: Hashable | None,
+        insertion_advice: KeyedWriteRefusalAdvice | None,
         valid_time_window: TimeInterval | None,
     ) -> InsertionIdentity:
         identity = InsertionIdentity(target)
         record = self._records.get(target)
         if record is None:
-            record = _TargetRecord(opener, valid_time_window, identity)
+            record = _TargetRecord(insertion_advice, valid_time_window, identity)
             self._records[target] = record
             if valid_time_window is not None:
                 self._addresses[_address(target)] = record
             return identity
         if not record.stored:
             record.set_floor(_window_start(valid_time_window))
-        record.opener = opener
+        record.insertion_advice = insertion_advice
         record.valid_time_window = valid_time_window
         record.identity = identity
         record.pending_insert = True
@@ -1030,7 +1031,9 @@ class UnitOfWork:
         self._ensure_open()
         return self._participation
 
-    def buffer(self, item: BufferItem, *, opener: Hashable | None = None) -> BufferOutcome:
+    def buffer(
+        self, item: BufferItem, *, insertion_advice: KeyedWriteRefusalAdvice | None = None
+    ) -> BufferOutcome:
         """Admit ``item``'s claim and buffer it for flush at the unit-of-work
         boundary — all of it, or nothing.
 
@@ -1060,10 +1063,10 @@ class UnitOfWork:
         through here once that admission succeeds.
 
         An insert admits an insertion of the object it opens and issues that
-        insertion's identity (:meth:`insertion_identity`), which ``opener``
-        labels with the interface that opened it. Where an earlier insertion of
-        the object is stored and a pending write removes all of it, the insert
-        executes after that removal. A write an insertion authorized
+        insertion's identity (:meth:`insertion_identity`), and retains
+        ``insertion_advice`` for a repeat of it (:meth:`insertion_advice`).
+        Where an earlier insertion of the object is stored and a pending write
+        removes all of it, the insert executes after that removal. A write an insertion authorized
         (:class:`~parallax.core._execution._unit_work.materialized.InsertionKeyedWrite`) is
         admitted only while that authority stands, and a write leaving nothing
         of what a still-unflushed insertion opened ends it.
@@ -1099,7 +1102,7 @@ class UnitOfWork:
             )
             targets.open_insert(
                 key,
-                opener,
+                insertion_advice,
                 instruction.valid_time_window,
             )
             return BufferOutcome.BUFFERED
@@ -1421,10 +1424,10 @@ class UnitOfWork:
         record = self._targets.authority(identity)
         return NO_INSERTION_AUTHORITY if record is None else record.valid_time_window
 
-    def opened_by(self, target: ObjectKey) -> Hashable | None:
-        """The label of the admitted insertion of ``target`` that a further
-        insertion of it would repeat, or ``None`` where an insertion of it is a
-        first opening.
+    def insertion_advice(self, target: ObjectKey) -> KeyedWriteRefusalAdvice | None:
+        """The refusal advice of the admitted insertion of ``target`` that a
+        further insertion of it would repeat, or ``None`` where an insertion of
+        it is a first opening or its opener supplied none.
 
         An insertion still pending is repeated by another; so is one whose
         coverage is stored and survives what is pending. Once everything the
@@ -1435,7 +1438,7 @@ class UnitOfWork:
         record = self._targets.record(target)
         if record is None or self._removed_whole(target, record):
             return None
-        return record.opener if record.pending_insert or record.stored else None
+        return record.insertion_advice if record.pending_insert or record.stored else None
 
     def _addressed_object(self, item: BufferItem) -> ObjectKey | None:
         """The one object ``item`` addresses where buffering needs it — to claim

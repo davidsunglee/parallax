@@ -27,18 +27,24 @@ provenance rather than leaving it unstated.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import replace
+from decimal import Decimal
 from typing import Final, cast
 
 import pytest
 
+from parallax.core.db_port import MappingRow
 from parallax.core.entity import EditError
 from parallax.core.execution import (
     KeyedWriteValueError,
     TransactionTimePinReadOnlyError,
 )
 from parallax.core.unit_work import WriteEvidenceError, WriteInstructionError
+from parallax.snapshot import TxnContext
+from tests._support import mirrored_models as mm
+from tests._support.db_port import Read, ScriptedAdapter, Transact, Write
+from tests.unit._transact_support import ACCOUNT, db_for, new_account
 from tests.unit.snapshot._handle._write_order_drivers import (
     ACCOUNT_TARGET,
     BALANCE_TARGET,
@@ -951,3 +957,111 @@ def test_a_wire_read_of_a_typed_insert_flushes_it_before_the_write() -> None:
         "WriteCall",
         "CommitCall",
     ]
+
+
+# --------------------------------------------------------------------------- #
+# The current input's own repair. A published value handed to an insert, or a #
+# value no read produced handed to an update, is refused with the advice of   #
+# the interface the refused call arrived through — the value handed in IS the #
+# one refused, so its own interface's spelling is the way out. These are the  #
+# rows whose answer differs by lane, so each states the lane it is driven on. #
+# --------------------------------------------------------------------------- #
+_ACCOUNT_NAME: Final = "parallax.compatibility.Account"
+_ACCOUNT_STORED: Final[MappingRow] = {
+    "id": 1,
+    "owner": "Ada",
+    "balance": Decimal("100.00"),
+    "version": 4,
+}
+_ALREADY_STORED: Final = (
+    f"write-value-already-stored: {_ACCOUNT_NAME}: 'insert' was handed a value this store "
+    "published for a row it already holds — from its own read, or from an insert this "
+    "transaction buffered — so there is no row to open; "
+)
+_NOT_STORED: Final = (
+    f"write-value-not-stored: {_ACCOUNT_NAME}: 'amend' was handed a value no read of this "
+    "store produced, so it addresses no stored row; write it with `tx.insert(...)`, or "
+    "amend or replace a value a `find` returned"
+)
+
+
+def _refusal_in(port: ScriptedAdapter, call: Callable[[TxnContext], object]) -> str:
+    refused: list[str] = []
+
+    def fn(tx: TxnContext) -> None:
+        try:
+            call(tx)
+        except KeyedWriteValueError as refusal:
+            refused.append(str(refusal))
+
+    db_for(ACCOUNT, port).transact(fn)
+    (message,) = refused
+    return message
+
+
+def _typed_read_reinserted(tx: TxnContext) -> object:
+    return tx.insert(tx.find(mm.Account.where(mm.Account.id == 1)).result())
+
+
+def _wire_read_reinserted(tx: TxnContext) -> object:
+    query = {
+        "target": _ACCOUNT_NAME,
+        "predicate": {"eq": {"path": f"{_ACCOUNT_NAME}.id", "value": 1}},
+    }
+    return tx.wire.insert(_ACCOUNT_NAME, tx.wire.find(query).result())
+
+
+def _wire_opened_reinserted(tx: TxnContext) -> object:
+    opened = tx.wire.insert(_ACCOUNT_NAME, {"id": 7, "owner": "Newton", "balance": "5.00"})
+    return tx.wire.insert(_ACCOUNT_NAME, opened)
+
+
+_STORED_READ: Final = Read(rows=[dict(_ACCOUNT_STORED)])
+
+
+@pytest.mark.parametrize(
+    ("call", "script", "advice"),
+    [
+        (
+            _typed_read_reinserted,
+            _STORED_READ,
+            "change it with `value.edit(...)` and write it with `tx.amend(...)`",
+        ),
+        (
+            _wire_read_reinserted,
+            _STORED_READ,
+            "write the change with `tx.wire.amend(value, {...})`",
+        ),
+        (
+            _wire_opened_reinserted,
+            Write(),
+            "write the change with `tx.wire.amend(value, {...})`",
+        ),
+    ],
+    ids=["typed-read", "wire-read", "wire-opened"],
+)
+def test_an_insert_of_a_published_value_names_the_refused_interfaces_amend(
+    call: Callable[[TxnContext], object], script: Read | Write, advice: str
+) -> None:
+    assert _refusal_in(ScriptedAdapter(Transact(script)), call) == _ALREADY_STORED + advice
+
+
+def _typed_constructed_amended(tx: TxnContext) -> None:
+    tx.amend(new_account().edit(balance=Decimal("9.00")))
+
+
+def _wire_retired_opening_amended(tx: TxnContext) -> None:
+    # Deleting the pending insert cancels it and retires its authority, so the
+    # node it answered is one no read published and nothing licenses.
+    opened = tx.wire.insert(_ACCOUNT_NAME, {"id": 7, "owner": "Newton", "balance": "5.00"})
+    tx.wire.delete(opened)
+    tx.wire.amend(opened, {"balance": "6.00"})
+
+
+@pytest.mark.parametrize(
+    "call", [_typed_constructed_amended, _wire_retired_opening_amended], ids=["typed", "wire"]
+)
+def test_an_update_of_a_value_no_read_produced_names_the_insert_verb(
+    call: Callable[[TxnContext], object],
+) -> None:
+    assert _refusal_in(ScriptedAdapter(Transact()), call) == _NOT_STORED

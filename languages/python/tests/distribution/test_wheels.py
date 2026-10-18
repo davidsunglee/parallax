@@ -136,6 +136,7 @@ def test_snapshot_wheel_ships_only_its_private_packages(wheelhouse: Wheelhouse) 
         "parallax/snapshot/_handle/_database.py",
         "parallax/snapshot/_handle/_errors.py",
         "parallax/snapshot/_handle/_read.py",
+        "parallax/snapshot/_handle/_sources.py",
         "parallax/snapshot/_handle/_stream.py",
         "parallax/snapshot/_handle/_transaction.py",
         "parallax/snapshot/_handle/_typed_writes.py",

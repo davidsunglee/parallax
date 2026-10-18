@@ -57,7 +57,6 @@ from parallax.core.write_plan import (
 from parallax.core.write_plan.keys import VersionedObjectStateKey
 from parallax.snapshot import TxnContext, WireEntity, connect, edge_of, pin_of
 from parallax.snapshot import _publication as publication
-from parallax.snapshot._handle._typed_writes import provenance_of
 from parallax.snapshot._inspection import RootConformance, snapshot_state_of
 from parallax.snapshot._publication._wire import read_evidence_of, stored_entity_of, wire_pin_of
 from tests._support import mirrored_models as mm
@@ -989,7 +988,6 @@ def test_a_value_no_writable_attempt_read_keeps_its_published_provenance(placeme
     assert state.root_conformance is RootConformance.CONFORMING
     assert pin_of(node) == Pin(tx_time=LATEST, valid_time=_CENSUS_AT)
     assert edge_of(node) == Edge(tx_time=_CENSUS_START, valid_time=_CENSUS_START)
-    assert provenance_of(node) == "this"
 
     projected = snapshot.wire().result()
     assert isinstance(projected, WireEntity)
@@ -1015,7 +1013,6 @@ def test_a_classified_roots_nodes_are_published_as_no_stored_value() -> None:
     state = snapshot_state_of(typed.data)
     assert state is not None
     assert state.root_conformance is RootConformance.NONCONFORMING
-    assert provenance_of(cast("Entity", typed.data)) == "none"
     assert isinstance(wire, InvalidData)
     assert isinstance(wire.data, WireEntity)
     assert stored_entity_of(wire.data) is None
