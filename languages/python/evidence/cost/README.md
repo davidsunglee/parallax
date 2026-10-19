@@ -38,8 +38,12 @@ The current collector completed on 2026-10-19, 11:59:25–12:58:45 UTC, in
 source hashes; [durations](current/durations.json) record collection telemetry.
 The dependency lock SHA-256 is
 `ba94b858fe8d97e5b38e66362623f67e2e6634515530972af4459e0dcee51334`.
-The portfolio SHA-256 is
-`2131a987df9a18e2c359ee45f0810ed2d3de681f4032b4e8d8fa75683e07f1fd`.
+The collected portfolio SHA-256 was
+`2131a987df9a18e2c359ee45f0810ed2d3de681f4032b4e8d8fa75683e07f1fd`. Its
+workload digest was later re-stated under the measured-content digest
+definition, as the adjustment in its conditions records, giving the current
+portfolio SHA-256
+`91f4d016b75056ea14911308e61b5ee603f6b7fa60c293e97a5e01df50a759eb`.
 
 No competing tests, measurements, or agents ran, and the OrbStack VM was
 restarted immediately before collection. The run does not establish whether

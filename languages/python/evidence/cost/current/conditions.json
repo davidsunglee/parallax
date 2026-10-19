@@ -1,4 +1,21 @@
 {
+  "adjustment": {
+    "date": "2026-10-19",
+    "redigested": {
+      "members": [
+        "instance-state",
+        "lifecycle-overhead",
+        "snapshot-delivery"
+      ],
+      "producingCommit": "bc9add4bea1bc740b60ed4e28bc3413e186f8f17",
+      "unchanged": "every reading, sample, comparison, and measurement condition; the measured workload inputs and code identity at the producing commit equal HEAD's",
+      "workloadDigest": {
+        "atCapture": "1484a076705bf0cd2a153bb5cd2794515caafe3c92a9d62babee6132ac86633c",
+        "redigestedUnder": "92a2d8278eba1ea762d4f9f49317ed33a7fa61a1907b8aa504ab11f4274858d0"
+      }
+    },
+    "schemaVersion": 1
+  },
   "members": {
     "feature-boundary": {
       "runtimes": {
