@@ -236,8 +236,6 @@ def _apply_all(store: SimulatedTemporalStore, model: Metamodel, steps: PlannedWr
 def _observed_write(
     prepared: PreparedKeyedWrite, observation: TemporalObservation
 ) -> ObservedKeyedWrite:
-    """``prepared`` settling against ``observation`` of Position 1, retained as
-    the planner's own input carries it."""
     shape = temporal_read.view(POSITION).shape(POSITION_ENTITY.identity)
     assert shape is not None
     key = ObjectKey(POSITION_ENTITY.identity, (("id", 1),))
