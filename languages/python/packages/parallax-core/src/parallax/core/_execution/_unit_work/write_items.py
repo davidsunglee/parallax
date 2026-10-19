@@ -220,11 +220,14 @@ _REQUIRES_SOURCE: Final = (
 class ObservedKeyedWrite:
     """Carries verb-time evidence through planning without resolving it again.
 
-    ``retained_observation`` is spent only if this write survives to
-    settlement, and a write coalesced into it was admitted through that same
-    retained observation. An update's row is its literal assignment set: the
-    identity plus every member its producer expressed, each written whatever
-    value the source observed for it.
+    ``retained_observation`` is spent by the successful execution of whichever
+    write survives composing with this one. Another observed write of that
+    state holds the same retained observation; a caller-conditioned write keeps
+    it beside its own, even where that write's deletion supersedes this one;
+    and a write an insertion authorized leaves this carrier holding it. An
+    update's row is its literal assignment set: the identity plus every member
+    its producer expressed, each written whatever value the source observed
+    for it.
     """
 
     instruction: PreparedKeyedWrite

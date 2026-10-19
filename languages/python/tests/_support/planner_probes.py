@@ -67,8 +67,6 @@ NO_ROW_READS: Final[AcquireRows] = _NoRowReads()
 
 
 class RecordingSource:
-    """Observation-free source authority recording whether a flush spent it."""
-
     __slots__ = ("consumed",)
 
     def __init__(self) -> None:

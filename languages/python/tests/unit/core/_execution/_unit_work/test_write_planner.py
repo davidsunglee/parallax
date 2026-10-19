@@ -212,8 +212,6 @@ def _prepared_keyed(write: KeyedWrite, model: Metamodel) -> PreparedKeyedWrite:
 def _observed(
     write: KeyedWrite, evidence: WriteObservation | RetainedObservation
 ) -> ObservedKeyedWrite:
-    """``write`` as an observation carrier, retaining ``evidence`` alone where
-    no shared retained observation is supplied."""
     prepared = _prepared_keyed(write, _ACCOUNT)
     if not isinstance(evidence, RetainedObservation):
         evidence = retained_observation(prepared, _ACCOUNT, evidence)

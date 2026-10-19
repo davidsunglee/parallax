@@ -1212,10 +1212,6 @@ def compose_writes(model: Metamodel, writes: Sequence[BufferItem]) -> tuple[Buff
 def _claim_scope(
     item: ClaimedKeyedWrite | InsertionKeyedWrite | TargetKeyedWrite, key: ObjectKey
 ) -> ClaimScope:
-    """The scope ``item``'s claim is filed under: the retained observation's
-    own Object State Key, the object for an object claim, the scope an
-    insertion-authorized write was admitted at, or the state a caller's
-    condition names."""
     if isinstance(item, ObjectClaimedWrite):
         return key
     if isinstance(item, TargetKeyedWrite):
