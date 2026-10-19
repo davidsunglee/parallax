@@ -51,4 +51,4 @@ then:
           label: whole
           tags: []
           route: null
-  roundTrips: 3
+  databaseCalls: 3

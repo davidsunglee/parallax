@@ -25,7 +25,7 @@ when:
             asOf: latest
           valid-time:
             asOf: "2024-03-01T00:00:00.000000Z"
-      roundTrips: 1
+      databaseCalls: 1
       note: pin id 1 at the finite Valid-Time instant 2024-03-01 with Transaction-Time Latest — the rectangle-split head (100.00), a WRITABLE view
       statements:
         - sql:
@@ -44,7 +44,7 @@ when:
             asOf: "2024-02-01T00:00:00.000000Z"
           valid-time:
             asOf: latest
-      roundTrips: 1
+      databaseCalls: 1
       note: pin the SAME primary key at the finite Transaction-Time instant 2024-02-01 — the superseded belief (90.00), a DIFFERENT milestone and a READ-ONLY view
       statements:
         - sql:
@@ -56,14 +56,14 @@ when:
       "on": 0
       set:
         value: "250.00"
-      roundTrips: 0
+      databaseCalls: 0
       note: the Valid-Time-pinned view stays WRITABLE — step 1's read of the same primary key observed another milestone and took nothing away from this one
     - action: mutate
       "on": 1
       set:
         value: "999.00"
-      roundTrips: 0
+      databaseCalls: 0
       expectError: transaction-time-pin-read-only
       note: the Transaction-Time-pinned view stays READ-ONLY — step 0's read of the same primary key licensed nothing here either
 then:
-  roundTrips: 2
+  databaseCalls: 2

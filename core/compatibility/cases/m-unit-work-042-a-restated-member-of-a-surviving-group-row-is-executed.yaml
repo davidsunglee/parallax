@@ -24,7 +24,7 @@ when:
         temporal:
           transaction-time:
             asOf: latest
-      roundTrips: 1
+      databaseCalls: 1
       note: the materializing read retains the stored document and reads `route` as its declared members
       statements:
         - sql:
@@ -46,7 +46,7 @@ when:
           - attr: parallax.compatibility.Expedition.route
             value: { name: Coastal, stops: [{ port: Oslo }] }
         at: "2026-06-01T00:00:00.000000Z"
-      roundTrips: 2
+      databaseCalls: 2
       note: >-
         the row survives because its title changes, so the successor executes every
         assignment: the restated route replaces its stored subtree whole, while the
@@ -70,7 +70,7 @@ when:
                 stops:
                   - { port: Oslo }
 then:
-  roundTrips: 3
+  databaseCalls: 3
   tableState:
     expedition:
       - id: 7

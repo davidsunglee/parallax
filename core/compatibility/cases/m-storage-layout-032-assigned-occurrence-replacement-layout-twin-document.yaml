@@ -17,7 +17,7 @@ when:
                 title: Pilot
               marks:
                 - { code: Z }
-      roundTrips: 2
+      databaseCalls: 2
       note: assign both occurrences, naming one leaf of the `one` and one element of the `many`
       statements:
         - sql:
@@ -42,7 +42,7 @@ when:
           eq:
             path: parallax.compatibility.WriteTwinItem.id
             value: 1
-      roundTrips: 1
+      databaseCalls: 1
       note: the dependent find observes the replaced occurrences and the untouched `label`
       statements:
         - sql:
@@ -58,7 +58,7 @@ when:
           marks:
             - { code: Z }
 then:
-  roundTrips: 3
+  databaseCalls: 3
   tableState:
     write_twin:
       - id: 1

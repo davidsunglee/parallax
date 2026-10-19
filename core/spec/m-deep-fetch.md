@@ -1,7 +1,7 @@
 # m-deep-fetch — Deep Fetch
 
 `m-deep-fetch` specifies how **deep fetch** eagerly populates an object graph
-while **eliminating N+1** round trips. It depends on `m-object-query` (the
+while **eliminating N+1** Database Calls. It depends on `m-object-query` (the
 validated query and **Includes** clause it realizes), `m-predicate` (elaborated
 selection products), `m-unit-work` (the owning transaction and read/write
 boundary), `m-wire` (managed keys already produced at ingress), `m-relationship`
@@ -98,7 +98,7 @@ The canonical witness is a two-hop fan-out: a root with `N` children, each child
 with `N` grandchildren. Naively this is `1 + N + N` statements; with deep fetch
 it is exactly **3** — root, one `IN` query for all children, one `IN` query for
 all grandchildren. The compatibility harness asserts the statement count equals
-the declared `roundTrips` and that the assembled graph equals the expected
+the declared `databaseCalls` and that the assembled graph equals the expected
 graph, so the N+1-elimination claim is verified **automatically**, not by
 inspection.
 
@@ -223,7 +223,7 @@ invalid because those two alternatives overlap within one selection, while the
 two separately authored guards in the table remain legal.
 
 The last three rows cost one statement more than a set-unioning planner would
-need. That cost is **deliberate**: it keeps `roundTrips` **compositional** — an
+need. That cost is **deliberate**: it keeps `databaseCalls` **compositional** — an
 authored path's statement cost does not depend on which other paths were authored
 beside it — and it keeps each hop's branch provenance explicit, so a path
 continuing past a guarded hop knows which parents it descends from. In the
@@ -245,7 +245,7 @@ alphabetical order — share the **same** parent-id `IN` list, so the hop stays 
 `1 + L` holds verbatim; the per-branch as-of binds propagate exactly as
 `m-navigate` specifies. Splitting a polymorphic hop into one statement per branch is
 **not** permitted — it would make the statement count strategy- and
-narrowing-dependent and weaken every `roundTrips` assertion.
+narrowing-dependent and weaken every `databaseCalls` assertion.
 
 ## Simplified `IN` vs. temp-table threshold
 
@@ -259,7 +259,7 @@ list (and per-dialect `IN`-clause limits) degrades.
 > contract is: when the gathered parent-key count exceeds the dialect's
 > threshold, the implementation **MAY** materialize the keys into a session
 > temp table and **join** against it instead of inlining an `IN` list — while
-> preserving the **same one-statement-per-level round-trip count** and the same
+> preserving the **same one-statement-per-level Database Call count** and the same
 > assembled graph. The threshold value and the temp-table DDL are `m-dialect`
 > concerns. Round 1 specifies and tests only the simplified `IN` form.
 
@@ -296,9 +296,9 @@ The normative rules, whatever the trigger:
   child statement per relationship level per distinct coordinate group. The
   common all-latest set collapses to exactly the deep-fetch form — one statement
   per level.
-- Round trips stay query-determined: a deferred load is an explicit resolution
-  point whose statement count follows the same one-statement-per-non-empty-level
-  contract, so scenario cases can declare it.
+- Database Calls stay query-determined: a deferred load is an explicit
+  resolution point whose statement count follows the same
+  one-statement-per-non-empty-level contract, so scenario cases can declare it.
 
 A plain-value graph (`m-snapshot-read`) has **no trigger at all**: a snapshot
 graph is closed-world and never issues SQL after materialization.
@@ -330,7 +330,7 @@ Query or authored predicate as a fallback.
 
 For each deep-fetch case the compatibility harness (`m-case-format`) asserts, in
 addition to the standard layers: the golden SQL statement count equals the
-declared `then.roundTrips`; each non-empty child level executes keyed by the parents
+declared `then.databaseCalls`; each non-empty child level executes keyed by the parents
 gathered from the previous level (with the authored `IN` binds matching the
 gathered keys); empty parent-key levels, and levels whose target position has no
 concrete subtype, execute no child SQL; and the

@@ -5,13 +5,13 @@ else. It either returns without a value or raises
 :class:`..case_assertions.CaseFailure` naming the case path — there is no partial
 pass and no result to inspect. A failure a step is answerable for names that
 step's authored position exactly once; a defect of the Scenario as a whole — a
-case declaring no steps at all, a case-level round-trip total disagreeing with
+case declaring no steps at all, a case-level Database Call total disagreeing with
 its steps' — names the case alone, because there is no one step it belongs to. A
 native database-driver exception is not an authored failure and arrives
 unchanged.
 
 Step interpretation, ordered semantic refusal, golden-SQL normalization,
-round-trip and statement accounting, write settlement against a named find,
+Database Call and statement accounting, write settlement against a named find,
 provisioning and ``given.apply`` at the Scenario-defined point, Unit Work
 grouping, each group's fate and the flush failure that ended it, transaction
 lifecycle, reader selection, publication sequencing, the final table state, and

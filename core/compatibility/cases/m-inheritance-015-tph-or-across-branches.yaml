@@ -31,4 +31,4 @@ then:
   rows:
     - { id: 1, name: Rex, owner_id: 10, license_id: L-100, bark_volume: 7, indoor: null, tusk_length: null, familyVariant: Dog }
     - { id: 3, name: Whiskers, owner_id: 10, license_id: L-200, bark_volume: null, indoor: true, tusk_length: null, familyVariant: Cat }
-  roundTrips: 1
+  databaseCalls: 1

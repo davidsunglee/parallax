@@ -19,4 +19,4 @@ then:
   tableState:
     attendee:
       - { id: 1, name: Ada }
-  roundTrips: 1
+  databaseCalls: 1

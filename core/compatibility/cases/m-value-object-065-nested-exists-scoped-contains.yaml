@@ -29,4 +29,4 @@ then:
     postgres: select id, name from customer where jsonb_typeof(address -> 'phones') = 'array' and exists (select 1 from jsonb_array_elements(address -> 'phones') e where e.value ->> 'type' = 'home' and position('-99' in e.value ->> 'number') > 0)
   rows:
     - { id: 2, name: Linus }
-  roundTrips: 1
+  databaseCalls: 1

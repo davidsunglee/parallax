@@ -111,7 +111,7 @@ observations are `given.apply`, every `statements` group (including its SQL and
 binds), `referenceSql`, `tableState`, and `execution`; each remains authored and
 graded independently in its own file. Everything else is layout-invariant,
 including the action, `rows`, `graph` / `graphs`, nested step observations,
-errors, affected-row outcomes, and `roundTrips`. The static equality gate plus
+errors, affected-row outcomes, and `databaseCalls`. The static equality gate plus
 the ordinary corpus sweep of both members is the proof: no harness provisions
 one descriptor under a layout it did not declare.
 
@@ -140,7 +140,7 @@ and routing (`model`, `tags`, `lane`) plus the explicit `shape` discriminator st
 - **`then`** — everything the case asserts: the golden `statements`, the naive
   `referenceSql`, the observed data (`rows` / `graph` / the per-milestone `graphs` /
   `tableState`), the counts and codes (`affectedRows` / `errorClass` / `nativeCode` /
-  `roundTrips`), the classified `storedDataIssues`, the portable boundary
+  `databaseCalls`), the classified `storedDataIssues`, the portable boundary
   `outcome`, the edit `result` / `carry` / preserved `source`, the described
   `evolution` and its per-dialect `schema`, the execution-provenance `execution`,
   and the numeric-comparison `tolerance`.
@@ -417,7 +417,7 @@ in decimal space under any authored `tolerance`.
 | `then.evolution` | `then` | evolution | the COMPLETE Evolution `evolve` returns for the two endpoints — its `kind`, `operations`, `behavioralImpacts`, `overlapVisibleOperations`, and `coordinationRequirements`, every member authored even when empty (see *Evolution cases*, below) |
 | `then.schema` | `then` | unilateral evolution | the Schema Delta expectation for every supported Dialect, keyed by Dialect Identity; each cell is exactly one of `delta` (that dialect's ordered `statements` and `createdIndices`) or `unsupported` (the complete ordered physical operations it cannot render). REQUIRED of a UNILATERAL `evolution` expectation, which is exactly what schema generation accepts, and FORBIDDEN on a coordinated one: a Coordinated Evolution is not an accepted input, so a coordinated expectation is dialect-independent |
 | `then.executionLifecycle` | `then` | no | the transient execution-lifecycle oracle (`m-execution-lifecycle`) — normalized Root Executions and their ordered Started and Finished events (see *The execution lifecycle oracle*, below); disallowed on a `rejected` case, which reaches no database |
-| `then.roundTrips` | `then` | no | the DATABASE CALLS the case costs — every statement presented to the port, a FAILED, not-executed, or unconfirmed one included, with transaction demarcation (begin, commit, rollback) counting none, exactly as `m-execution-lifecycle` counts them, so a case authoring both this and `then.executionLifecycle` states one number twice and the two MUST agree. Default `1` for the shapes that reach the database, `0` for a `rejected` case and for an `evolution` case. For a deep-fetch case it MUST equal the authored/executed `then.statements` count (child SQL is omitted after an empty parent-key level and at a level whose target position has no concrete subtype); for a write sequence it MUST equal the ordered DML statement count PLUS the resolving reads the sequence owes (see *Resolving reads a write owes*, below); for a scenario the SUM of per-step round trips — `0` where every step costs none; for a RETRY-shaped case (a `when.attempts` conflict, or a `boundary` case whose fault is retried) the sum across EVERY attempt, not the last one's alone, each attempt's own resolving read included. A `rejected` case is refused pre-SQL and an `evolution` case describes two accepted models without executing anything, so each costs `0` declared or not: the count a consumer derives for one that omits the field is `0`, not the global default, which is why every such case in the corpus omits it. Those three shapes, one outcome, and one read are the whole of the relaxation — a case whose `then.outcome` is `boundary-failed` costs `0` too, its boundary having never opened and its callback never run, in either form that outcome may be stated in: directly, or as a dialect-keyed map whose EVERY named dialect fails to open, since one count answers for every dialect the case claims anything about; and a read whose result position has no concrete subtype declares `0` beside its empty `then.statements` (see *Structurally empty reads*, below) — and every other case asserts one operation that reaches the database |
+| `then.databaseCalls` | `then` | no | the DATABASE CALLS the case costs — every statement presented to the port, a FAILED, not-executed, or unconfirmed one included, with transaction demarcation (begin, commit, rollback) counting none, exactly as `m-execution-lifecycle` counts them, so a case authoring both this and `then.executionLifecycle` states one number twice and the two MUST agree. Default `1` for the shapes that reach the database, `0` for a `rejected` case and for an `evolution` case. For a deep-fetch case it MUST equal the authored/executed `then.statements` count (child SQL is omitted after an empty parent-key level and at a level whose target position has no concrete subtype); for a write sequence it MUST equal the ordered DML statement count PLUS the resolving reads the sequence owes (see *Resolving reads a write owes*, below); for a scenario the SUM of per-step Database Calls — `0` where every step costs none; for a RETRY-shaped case (a `when.attempts` conflict, or a `boundary` case whose fault is retried) the sum across EVERY attempt, not the last one's alone, each attempt's own resolving read included. A `rejected` case is refused pre-SQL and an `evolution` case describes two accepted models without executing anything, so each costs `0` declared or not: the count a consumer derives for one that omits the field is `0`, not the global default, which is why every such case in the corpus omits it. Those three shapes, one outcome, and one read are the whole of the relaxation — a case whose `then.outcome` is `boundary-failed` costs `0` too, its boundary having never opened and its callback never run, in either form that outcome may be stated in: directly, or as a dialect-keyed map whose EVERY named dialect fails to open, since one count answers for every dialect the case claims anything about; and a read whose result position has no concrete subtype declares `0` beside its empty `then.statements` (see *Structurally empty reads*, below) — and every other case asserts one operation that reaches the database |
 | `then.tolerance` | `then` | no | absolute numeric comparison tolerance; omit for exact comparison (the default). Declare ONLY for inherently inexact results (stddev/variance, repeating-decimal avg) |
 
 #### How a case spells an Entity
@@ -573,10 +573,10 @@ when:
 then:
   statements: []
   rows: []
-  roundTrips: 0
+  databaseCalls: 0
 ```
 
-`then.statements` stays required and is empty, `then.roundTrips` is required and
+`then.statements` stays required and is empty, `then.databaseCalls` is required and
 `0`, and the result member is the empty observation its result form already has:
 `then.rows: []`, a `then.graph` whose root list is empty, or `then.graphs: []`.
 The case carries no `referenceSql`, since no naive statement can read a position
@@ -631,7 +631,7 @@ ways, keyed on **where** the read is asserted — never on a bare member name al
     value-object document column it declares), exactly as a deep-fetch / snapshot **child
     level** does (`m-sql`, *Read result form*). A **subsequent** `action: access` of an
     already-materialized relationship or list issues **no read** (a cache hit,
-    `roundTrips: 0`) — there is no projection to classify.
+    `databaseCalls: 0`) — there is no projection to classify.
   - A value-object-bearing target therefore projects its whole `Document` slot at
     **every** instance-form step above, even though the channel is `expectRows` /
     `observeRows`.
@@ -694,15 +694,16 @@ not a shared root pin**: `history` returns each milestone edge-pinned to its own
 from-instant, and `asOfRange` returns every overlapping milestone independently
 edge-pinned to its own from-instant (never to the window bounds) — the
 `m-temporal-read` edge-point read, now observed as a graph per milestone. The
-single root query returns the whole milestone set in one round trip; the harness
-partitions those rows by edge pin (matching each pin's per-axis from-instant to the
-row's from-column) and asserts each partition equals its declared graph. The pins
-are **pairwise disjoint** — every milestone belongs to **exactly one** declared
-graph, so an overlapping or duplicated pin (two graphs claiming the same milestone)
-is a loud failure, as is a milestone matched by no pin. (A v1
-milestone-set graph carries **no** deep-fetch includes — history-with-includes
-(`snapshot-history-includes`) is staged and claimed by neither object-lifecycle
-slice — so each graph is rooted at the read's own query `target`.)
+single root query returns the whole milestone set in one Database Call; the
+harness partitions those rows by edge pin (matching each pin's per-axis
+from-instant to the row's from-column) and asserts each partition equals its
+declared graph. The pins are **pairwise disjoint** — every milestone belongs to
+**exactly one** declared graph, so an overlapping or duplicated pin (two graphs
+claiming the same milestone) is a loud failure, as is a milestone matched by no
+pin. (A v1 milestone-set graph carries **no** deep-fetch includes —
+history-with-includes (`snapshot-history-includes`) is staged and claimed by
+neither object-lifecycle slice — so each graph is rooted at the read's own query
+`target`.)
 
 #### Streamed reads (`when.stream`)
 
@@ -786,7 +787,7 @@ primary oracle. Such a pair is named
 `<module>-<proof>`, and a static gate asserts the members agree on everything
 their shared claim covers.
 
-`then.roundTrips` needs no rule of its own: every authored page statement
+`then.databaseCalls` needs no rule of its own: every authored page statement
 executes, so the deep-fetch rule (the count equals the authored statement count)
 already holds across pages.
 
@@ -995,10 +996,10 @@ unconstrained: a provisioning model may add Entities, members, or concrete
 subtypes, and nothing requires the pair to be an evolution `m-model-evolution`
 classifies one way or another. The field states a freshly provisioned starting
 state, not a migration between the two, and no setup statement counts toward the
-read's statements or round trips. Storage the reader cannot execute against fails
-the case visibly; nothing repairs it. Expectations stay the reader's: an expected
-issue names the reader's Entities, never a subtype only the provisioning model
-declares, so an unknown tag is reported at the reader's family root:
+read's statements or Database Calls. Storage the reader cannot execute against
+fails the case visibly; nothing repairs it. Expectations stay the reader's: an
+expected issue names the reader's Entities, never a subtype only the provisioning
+model declares, so an unknown tag is reported at the reader's family root:
 
 ```yaml
 then:
@@ -1073,9 +1074,9 @@ the harness asserts:
    authoring defaults (including omitted Transaction Time becoming explicit
    Latest) in the fixture itself.
 
-A fifth layer — **round-trip-count consistency** — applies to relationship /
+A fifth layer — **Database Call count consistency** — applies to relationship /
 deep-fetch cases: the number of authored/executed golden SQL statements equals
-the declared `then.roundTrips`, each non-empty child level executes keyed by the
+the declared `then.databaseCalls`, each non-empty child level executes keyed by the
 distinct parent keys gathered from the previous level (an **unordered set** — the
 `IN`-list bind order is *not* part of the contract, since it never changes which
 children match, and child result order is fixed by the level's own `orderBy`; the
@@ -1110,12 +1111,12 @@ inferred. Its level's authored `IN` binds must equal the keys gathered from the
 **guarded** root objects alone, so a guard that a case declares but an
 implementation ignores fails on the bind comparison rather than passing quietly.
 And per-path statement counts follow the guard's **resolved source set**, so
-`then.roundTrips` must be derived under the new shape rather than carried over:
+`then.databaseCalls` must be derived under the new shape rather than carried over:
 two paths whose guards resolve to the same set are **one** hop, while every other
 relation between two guards — disjoint, overlapping, or one containing the other
 — is two, even where the second fetches nothing the first did not
 (`m-deep-fetch`). Since a guard creates no view key, a case whose extra hop is
-subsumed observes it in `roundTrips` and nowhere else: its `then.graph` is
+subsumed observes it in `databaseCalls` and nowhere else: its `then.graph` is
 identical to the covering path's alone, and a root object outside every guard
 carries **no** entry for that path's relationship rather than an empty one.
 
@@ -1149,7 +1150,7 @@ temporal writes (`insert` / `amend` / `terminate` and the bitemporal `*Until`
 trio), batched non-temporal writes, ordinary `delete`, and the minimal
 `cascadeDelete` witness over dependent relationships. The DML statement count MUST
 equal the sum of the `when.writeSequence` steps' declared statement counts, and
-`then.roundTrips` MUST equal that total plus the resolving reads the sequence owes
+`then.databaseCalls` MUST equal that total plus the resolving reads the sequence owes
 (*Resolving reads a write owes*, below). A step on a **temporal** entity carries **exactly one**
 neutral write input row (`m-unit-work`: each row closes its own milestone and
 chains its own successors, and a temporal entity never collapses into a set-based
@@ -1197,7 +1198,7 @@ and the asserted table state shows which rows changed or were removed.
 
 #### Resolving reads a write owes
 
-`then.roundTrips` counts every Database Call (`m-execution-lifecycle`), so a case's total
+`then.databaseCalls` counts every Database Call (`m-execution-lifecycle`), so a case's total
 is the DML it authors plus the **resolving reads** its choreography owes — the
 reads a unit runs to hold the state it writes against. This section states how
 many of those a case document accounts for and where they run, never what
@@ -1248,10 +1249,10 @@ state:
 
 A **grouped** scenario write step owes none of its own: its group's find steps
 are what publish the values it settles against, and those finds already declare
-their own `roundTrips`. A materializing predicate submission is the exception:
+their own `databaseCalls`. A materializing predicate submission is the exception:
 its verb runs its own selection and its flush the coverage reads its amendment
 needs, inside the step, and only a state-graded case carries one, which grades
-no round trip.
+no Database Calls.
 
 A **conflict attempt** owes one, and a `when.attempts` sequence owes one PER
 attempt, because every attempt settles against a state of its own (*Conflict
@@ -1264,8 +1265,8 @@ read per Entity becomes one per Entity and pin.
 
 A unit whose observed write reaches current coverage its sources did not observe
 also owes the **coverage read** its flush makes (`m-sql` *Requested ranges*),
-counted in the round trips of the step or entry that flushes it. Where a case's
-own fixtures and earlier entries leave that coverage known, the count is
+counted in the Database Calls of the step or entry that flushes it. Where a
+case's own fixtures and earlier entries leave that coverage known, the count is
 derivable like every other.
 
 A resolving or coverage read is counted and never authored: `then.statements` is
@@ -1288,7 +1289,7 @@ apply (there is no `when.objectQuery`).
 
 **The interference a conflict case describes must be one a correct client can
 meet.** A conflict write is settled against a value a real read of its own
-attempt published — one of the calls `then.roundTrips` counts (*Resolving reads
+attempt published — one of the calls `then.databaseCalls` counts (*Resolving reads
 a write owes*) — and `given.apply`'s concurrent writer commits, on another
 session, BETWEEN that read and the write it invalidates; a later attempt reads
 the state that writer left. That is why `when.write`'s `observedVersion` is a
@@ -1347,7 +1348,7 @@ the case.
 
 A **scenario** case proves the unit-of-work / identity / query-cache contract as
 an ordered list of steps over one provisioned database. A **read step** issues an
-`objectQuery` (naming its own `target`, as a read case does) with a declared round-trip
+`objectQuery` (naming its own `target`, as a read case does) with a declared Database Call
 count (a cache hit declares `0` and lists no golden SQL); a **write step**
 (`write`) **commits** golden DML between finds. The
 write step is what makes **read-your-own-writes** and **query-cache
@@ -1358,15 +1359,15 @@ its DML; with **`rollback: true`** an ungrouped step's DML is applied then **rol
 back** (through the provider's manual-commit session seam) — the observable form
 of the `m-unit-work` **abort contract**: a later find MUST re-resolve and observe
 the ORIGINAL rows, never the aborted write. A grouped step states no fate of its
-own: its group's is stated once, in `then.units` (*Unit fates*, below). A write step with **`roundTrips: 0`** and
+own: its group's is stated once, in `then.units` (*Unit fates*, below). A write step with **`databaseCalls: 0`** and
 no golden SQL is a **no-op** write — a versioned `UPDATE` whose `set` changes no
 attribute issues no DML (`m-opt-lock`) — and executes nothing, exactly like a
 cache-hit read step. The rolled-back DML still executes, so it counts its
-statements as round trips exactly as a committed write does. The harness asserts
-per-step round-trip / golden-SQL count consistency, executes each step, and checks
-`sameObjectAs` identity assertions; it never compiles a query to SQL. A scenario
-authoring `then.tableState` states the tables its writes leave once every step
-has run, and that state is graded too.
+statements as Database Calls exactly as a committed write does. The harness
+asserts per-step Database Call / golden-SQL count consistency, executes each step,
+and checks `sameObjectAs` identity assertions; it never compiles a query to SQL. A
+scenario authoring `then.tableState` states the tables its writes leave once every
+step has run, and that state is graded too.
 
 A scenario case MAY carry an out-of-band **`given.apply`**, applied after the
 model's fixtures load and **before the first step** — the same position the
@@ -1500,7 +1501,7 @@ case's `when` does, with the same sole field `batchSize` and the same meaning
 time in the Continuation Order over keyset-paged root statements rather than
 resolved eagerly. Its own `statements` are that delivery's pages, in delivery
 order, exactly as a streamed `read` case's `then.statements` are — so its
-declared `roundTrips` is the length of that list and the per-step count rule
+declared `databaseCalls` is the length of that list and the per-step count rule
 needs no clause of its own. The three properties graded independently of the SQL
 text are the same three, derived the same way: the size each page asks for, the
 Continuation Order coordinates each page after the first seeks from, and the
@@ -1571,7 +1572,7 @@ no translation alias is conforming.
         lessThan: { path: Account.balance, value: 200.00 }
     assignments:
       - { attr: Account.balance, value: 100.00 }
-  roundTrips: 1
+  databaseCalls: 1
 ```
 
 The canonical case pointer for this input is **`/scenario/<n>/write`**. Its fields
@@ -1604,18 +1605,19 @@ versions; the following write instruction independently states what the caller
 requested. For every versioned or temporal target, model-aware validation MUST
 require that prior read to use the same concrete query `target` and canonical
 predicate. It is a real resolving read, not a cache hit: it declares exactly one
-round trip and one authored golden read statement, plus `expectRows`. An empty
+Database Call and one authored golden read statement, plus `expectRows`. An empty
 `expectRows` is valid only as that real zero-match resolution (`1 + 0`); a
-zero-round-trip/no-SQL step cannot materialize a predicate write. An unversioned,
-non-temporal `amend` or `delete` is the sole readless exception. The read is not
-inferred from its SQL and the write is not inferred from the read. A Bitemporal
-amendment's resolving read is the selection its verb makes: as of the write's
-`validFrom` on Valid Time and at Latest on Transaction Time (`m-temporal-write`
-*Predicate-selected amendments span their requested extent*). Such a write step
-states only selections whose rows cover the write's whole window; one reaching
-coverage past them is state-graded, because its flush reads that coverage. A
-materializing predicate submission of a state-graded buffer resolves through its
-own verb instead, with no authored find (*Buffered keyed write instructions*).
+zero-Database-Call/no-SQL step cannot materialize a predicate write. An
+unversioned, non-temporal `amend` or `delete` is the sole readless exception. The
+read is not inferred from its SQL and the write is not inferred from the read. A
+Bitemporal amendment's resolving read is the selection its verb makes: as of the
+write's `validFrom` on Valid Time and at Latest on Transaction Time
+(`m-temporal-write` *Predicate-selected amendments span their requested extent*).
+Such a write step states only selections whose rows cover the write's whole
+window; one reaching coverage past them is state-graded, because its flush reads
+that coverage. A materializing predicate submission of a state-graded buffer
+resolves through its own verb instead, with no authored find (*Buffered keyed
+write instructions*).
 
 For every resolved materialized row, the projection is descriptor-derived rather
 than inferred from golden SQL. It MUST include identity, an explicit observed
@@ -1670,8 +1672,8 @@ objects, foreign-key-ordered at flush — and the **same-object coalescing** cas
 alike. **Same-object folding at flush is the coalescing rule**, a runtime/planner
 property rather than a structural one: when two buffered instructions name the
 **same** entity and primary-key identity the flush combines them — insert-then-amend
-writes the **final** value in place (`roundTrips: 1`), insert-then-delete **cancels**
-to **no** DML (`roundTrips: 0`, no `statements`). The two-keyed same-object
+writes the **final** value in place (`databaseCalls: 1`), insert-then-delete **cancels**
+to **no** DML (`databaseCalls: 0`, no `statements`). The two-keyed same-object
 insert-then-amend / insert-then-delete pair is that rule's **single-object special
 case**, not a separate shape. The JSON Schema pins only the structural shape (one or
 more keyed entries); it imposes **no** cross-entry same-object equality, and the
@@ -1708,7 +1710,7 @@ Schema cannot see either.
       entity: Balance
       rows: [{ id: 9, value: 150.00 }]
       at: "2024-06-01T00:00:00+00:00"
-  roundTrips: 1                             # same-object fold ⇒ ONE final-value INSERT (value 150)
+  databaseCalls: 1                             # same-object fold ⇒ ONE final-value INSERT (value 150)
 ```
 
 A case MAY carry a **`when.uow`** block (`{ concurrency: locking |
@@ -1732,9 +1734,9 @@ portable Isolation Level (`m-db-port`) in the core serialized spelling, and ever
 boundary the case opens is opened at it: each held session of a `when.concurrency`
 choreography, and each `uow` group of a scenario. It changes no authored SQL —
 setting a level is boundary mechanics like begin and commit, so it appears in no
-golden statement and costs no round trip — and a runner that opens no boundary at
-all carries it nowhere. A case names the portable level only; which statements or
-session variables an engine needs to forbid that level's anomalies is the
+golden statement and costs no Database Call — and a runner that opens no boundary
+at all carries it nowhere. A case names the portable level only; which statements
+or session variables an engine needs to forbid that level's anomalies is the
 adapter's, and the harness provider's, own work.
 
 #### State-graded scenarios (`grading: state`)
@@ -1750,7 +1752,7 @@ table a submission writes. Its steps are finds and buffered write steps, and eac
 keyed submission writes one row, so that its pointer names one verb call and the
 one value an insert answers. A step carries only what such a step is run by or
 graded on — a find its `objectQuery`, `equivalentEncodings`, `stream` and
-`expectRows`, a write step its `write`, and either its `uow` — beside `roundTrips`,
+`expectRows`, a write step its `write`, and either its `uow` — beside `databaseCalls`,
 which MAY be stated and is not graded, and `note`. Any other step member is refused:
 an action, golden SQL (`statements`, `referenceSql`), a graph or identity
 observable, and a step-level `on` or `expectError`, which belong to a submission,
@@ -1861,7 +1863,7 @@ an earlier step's result. This is the vocabulary the object-lifecycle modules
 SQL-oriented read/write steps cannot express. An action step carries an
 **`action`** verb, an **`on`** source (the earlier step's index, or an array of
 indices when the verb spans sources at different lowered coordinates), its own
-per-step golden `statements` and `roundTrips`, and the same per-step observables
+per-step golden `statements` and `databaseCalls`, and the same per-step observables
 as a read step. The **Targets** column below states whether the verb acts on a
 prior step's result (so `on` is REQUIRED) or on the unit of work as a whole (so
 `on` is inapplicable and MAY be omitted):
@@ -1936,7 +1938,7 @@ than the value. An implementation that can arrange no second source therefore
 does not witness `anotherSource` at all, and says so, rather than presenting a
 value it built to be classified.
 
-Such a step carries **no golden SQL** and declares `roundTrips: 0`: a refused
+Such a step carries **no golden SQL** and declares `databaseCalls: 0`: a refused
 value stops the verb before it buffers anything, and the one acceptance this
 shape admits — fixed below — buffers nothing either, so neither owes a statement.
 Its observable is the per-step `expectError`, and a step that declares no
@@ -1958,7 +1960,7 @@ requires that too. The suite that runs the case asserts no golden SQL
 neighbouring read / write / lifecycle step would carry an oracle nobody here can
 grade: the harness that owns golden SQL never runs the case, and the suite that
 runs it may not assert that SQL. The case's total is therefore the sum of its
-steps' zeros — **zero round trips end to end** — and that zero counts the
+steps' zeros — **zero Database Calls end to end** — and that zero counts the
 statements the steps' own verbs cost, never the reads that arrange a value of the
 stated provenance, which are the adapter's own affair. The suite verifies it the
 only way this lane can, as the absence of any durable effect: a statement that ran
@@ -1974,7 +1976,7 @@ has an oracle, never in this shape.
 ```yaml
 - action: amend
   value: unmanaged                          # no managed read produced it
-  roundTrips: 0
+  databaseCalls: 0
   expectError: write-value-not-stored       # ... so `amend` addresses no stored row
 ```
 
@@ -2035,8 +2037,8 @@ payload may carry no sibling field (`m-inheritance`).
 `items` or `items.statuses`) is legal only on `load` / `access`. Because golden SQL
 still lives per step, a scenario with action steps carries no top-level
 `then.statements`, and the harness executes a load / access as a relationship
-query, a flush / commit as committed DML, and counts each step's round
-trips against its listed statements exactly as for read / write steps. A deferred
+query, a flush / commit as committed DML, and counts each step's Database
+Calls against its listed statements exactly as for read / write steps. A deferred
 `load` over several source objects emits **one child statement per non-empty level**
 (never one per object), and one statement **per lowered coordinate group** when the
 sources are pinned at different as-of coordinates — the deep-fetch batching contract,
@@ -2408,7 +2410,7 @@ leaving one unnamed, contradicts its own goldens. Each index is named by a call
 of the KIND its own statement is — a query by a read, DML by a write — so a
 resolving read carrying a golden DML index leaves the write that ran it absent
 from a record whose coverage is otherwise complete. `then.statements` remains
-the sole SQL and bind oracle, and `then.roundTrips` the sole count oracle.
+the sole SQL and bind oracle, and `then.databaseCalls` the sole count oracle.
 
 An `outer` `transactionInvocationStarted` states the retry policy it runs
 under — and, for a read/write invocation, its resolved Concurrency Preference,
@@ -2898,7 +2900,7 @@ a silent pass. The cell stays authored, so the day that dialect's strategy lands
 it is graded with no corpus change.
 
 Describing two accepted models reaches no database and emits no DML, so an
-evolution case carries **no** golden SQL, costs `0` round trips, and is graded
+evolution case carries **no** golden SQL, costs `0` Database Calls, and is graded
 once rather than once per dialect. The harness checks the authored Evolution
 structurally — closed vocabularies, every identity resolving in the endpoint that
 must hold it, and every ordered sequence actually ordered — and a language

@@ -19,4 +19,4 @@ then:
   referenceSql: select id, vehicle_id from traversal_parking where vehicle_id in (select id from traversal_car where seats > 2)
   rows:
   - {id: 30, vehicle_id: 5}
-  roundTrips: 1
+  databaseCalls: 1

@@ -30,4 +30,4 @@ then:
     attendee:
       - { id: 5, name: Sol }
       - { id: 6, name: Ada }
-  roundTrips: 2
+  databaseCalls: 2

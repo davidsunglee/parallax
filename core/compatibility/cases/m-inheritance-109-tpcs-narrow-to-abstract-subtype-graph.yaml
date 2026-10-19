@@ -21,4 +21,4 @@ then:
       - { id: 1, title: Invoice-A, folderId: 100, currency: USD, amountDue: "120.00", familyVariant: Invoice }
       - { id: 2, title: Invoice-B, folderId: 101, currency: EUR, amountDue: "80.00", familyVariant: Invoice }
       - { id: 1, title: Receipt-A, folderId: 100, currency: USD, paidAmount: "120.00", familyVariant: Receipt }
-  roundTrips: 1
+  databaseCalls: 1

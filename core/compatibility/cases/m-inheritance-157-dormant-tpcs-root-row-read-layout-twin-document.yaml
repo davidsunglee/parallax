@@ -9,4 +9,4 @@ when:
 then:
   statements: []
   rows: []
-  roundTrips: 0
+  databaseCalls: 0

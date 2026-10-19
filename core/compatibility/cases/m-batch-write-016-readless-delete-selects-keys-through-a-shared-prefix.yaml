@@ -17,14 +17,14 @@ when:
                     path: parallax.compatibility.OrderStatus.orderItem
                     where:
                       lessThan: {path: quantity, value: 2}
-      roundTrips: 1
+      databaseCalls: 1
       statements:
         - sql:
             postgres: delete from order_status where id in (select t0.id from order_status t0 left join order_item t1 on t1.id = t0.order_item_id left join orders t2 on t2.id = t1.order_id where t2.name = ? and case when t1.id is null then false else (t1.quantity < ?) is true end)
             mariadb: delete from order_status where id in (select t0.id from order_status t0 left join order_item t1 on t1.id = t0.order_item_id left join orders t2 on t2.id = t1.order_id where t2.name = ? and case when t1.id is null then false else (t1.quantity < ?) is true end)
           binds: [Ada, 2]
 then:
-  roundTrips: 1
+  databaseCalls: 1
   tableState:
     order_status:
       - { id: 101, order_id: 1, order_item_id: null, code: NEW }

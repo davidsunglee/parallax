@@ -16,4 +16,4 @@ then:
   - {id: 52, parking_id: 32}
   - {id: 53, parking_id: 33}
   - {id: 54, parking_id: null}
-  roundTrips: 1
+  databaseCalls: 1

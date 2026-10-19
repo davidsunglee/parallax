@@ -19,7 +19,7 @@ when:
           greaterThan:
             path: parallax.compatibility.Ledger.id
             value: 0
-      roundTrips: 1
+      databaseCalls: 1
       note: the materialize read — both ledgers resolve, and `label` is decoded out of the Structured Column
       statements:
         - sql:
@@ -39,7 +39,7 @@ when:
               value: 0
         assignments:
           - { attr: parallax.compatibility.Ledger.label, value: null }
-      roundTrips: 1
+      databaseCalls: 1
       note: only row 100 changes — row 200's missing Document Path already IS the assigned state
       statements:
         - sql:
@@ -54,7 +54,7 @@ when:
           greaterThan:
             path: parallax.compatibility.Ledger.id
             value: 0
-      roundTrips: 1
+      databaseCalls: 1
       note: an explicit JSON null on 100 and a missing key on 200 read back as one absence; only 100's version moved
       statements:
         - sql:
@@ -65,4 +65,4 @@ when:
         - { id: 100, version: 2, label: null, balance: "250.00", details: { code: opening } }
         - { id: 200, version: 1, label: null, balance: "40.00", details: { code: settled } }
 then:
-  roundTrips: 3
+  databaseCalls: 3

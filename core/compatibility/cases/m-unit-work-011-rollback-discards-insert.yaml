@@ -11,7 +11,7 @@ when:
           rows:
             - { id: 7, owner: Newton, balance: "5.00", version: 1 }
       rollback: true
-      roundTrips: 1
+      databaseCalls: 1
       note: apply an insert of a new account 7, then ROLL BACK — the insert is discarded
       statements:
         - sql:
@@ -23,7 +23,7 @@ when:
           eq:
             path: parallax.compatibility.Account.id
             value: 7
-      roundTrips: 1
+      databaseCalls: 1
       note: the aborted insert never became durable — the find MUST observe NO rows
       statements:
         - sql:
@@ -31,4 +31,4 @@ when:
           binds: [7]
       expectRows: []
 then:
-  roundTrips: 2
+  databaseCalls: 2

@@ -214,7 +214,7 @@ After materialization a snapshot graph **never issues SQL**:
   reformulating it as an explicit write.
 - Wanting more data means issuing another read — including the batched
   second-query form (`find` with an `in` predicate over gathered keys), which
-  costs the same single round trip a deferred load would.
+  costs the same single Database Call a deferred load would.
 
 Every clause above survives **composition**. Deriving a node from a
 materialized one, and persisting a write, are the two things that happen to a
@@ -242,18 +242,18 @@ same way before and after. What composition fixes globally is the behavior —
 same objects, no SQL, the distinction preserved — because otherwise one authored
 program would answer differently per language.
 
-## Round trips
+## Database Calls
 
-A snapshot graph's statements are its delivery's (`m-read-delivery` *Round
-trips*): at most `1 + L` statements for `L` distinct relationship hops. (For the
-managed-object surface this round-trip observability rides the lazy query-backed
-list, `m-op-list`; a snapshot read is **not** a query-backed list — the count is
-pinned here instead, on the same golden statements.)
+A snapshot graph's statements are its delivery's (`m-read-delivery` *Database
+Calls*): at most `1 + L` statements for `L` distinct relationship hops. (For the
+managed-object surface this Database Call observability rides the lazy
+query-backed list, `m-op-list`; a snapshot read is **not** a query-backed list —
+the count is pinned here instead, on the same golden statements.)
 
 ## What the suite pins down
 
 Snapshot cases are **read**-shape deep-fetch cases (`m-case-format`): golden
-statements, the assembled `then.graph`, and the declared `then.roundTrips`. A
+statements, the assembled `then.graph`, and the declared `then.databaseCalls`. A
 **streamed** case is the same shape carrying `when.stream`, so the page
 partition its statements spell out — the requested size, lookahead root
 included, the seek each later page continues from, and the page that came back
@@ -269,5 +269,5 @@ API Conformance Suite (`m-api-conformance`), the same division of labor as
 
 | Case | What it proves |
 |---|---|
-| diamond identity resolution | two include paths reach the same rows (`Order.items` and `Order.itemsByShipDate` — one `OrderItem` row set behind two orderings); the graph carries them at both positions from one statement per level — `1 + L` round trips, values identical at both positions |
+| diamond identity resolution | two include paths reach the same rows (`Order.items` and `Order.itemsByShipDate` — one `OrderItem` row set behind two orderings); the graph carries them at both positions from one statement per level — `1 + L` Database Calls, values identical at both positions |
 | pinned graph consistency | a deep fetch pinned to a past instant materializes every temporal node at the propagated pin — a point-consistent graph containing now-superseded milestones |

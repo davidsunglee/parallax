@@ -91,8 +91,8 @@ def _load_case(case_id: str) -> case_format.Case:
 
 
 def test_compile_read_case_matches_golden() -> None:
-    emissions, round_trips = reads.compile_read_case(_case("m-value-object-001"), "postgres")
-    assert round_trips == 1
+    emissions, database_calls = reads.compile_read_case(_case("m-value-object-001"), "postgres")
+    assert database_calls == 1
     assert emissions[0].case_pointer == "/objectQuery"
     assert emissions[0].sql == (
         "select t0.id, t0.name from customer t0 where jsonb_extract_path_text(t0.address, ?) = ?"
@@ -103,8 +103,8 @@ def test_compile_read_case_matches_golden() -> None:
 
 def test_run_read_case_executes_driver_sql_and_records_rows() -> None:
     port = FakeDbPort([{"id": 1, "name": "Grace"}])
-    emissions, rows, round_trips = reads.run_read_case(_case("m-value-object-001"), port)
-    assert round_trips == 1
+    emissions, rows, database_calls = reads.run_read_case(_case("m-value-object-001"), port)
+    assert database_calls == 1
     assert rows == [{"id": 1, "name": "Grace"}]
     assert emissions[0].sql.count("?") == 2
     driver_sql, driver_binds = port.executed[0]
@@ -129,7 +129,7 @@ def test_run_read_case_materializes_family_variant_from_the_tph_tag_column() -> 
             }
         ]
     )
-    _emissions, rows, _round_trips = reads.run_read_case(_case("m-inheritance-003"), port)
+    _emissions, rows, _database_calls = reads.run_read_case(_case("m-inheritance-003"), port)
     assert rows == [
         {
             "id": 1,
@@ -159,7 +159,7 @@ def test_run_read_case_materializes_family_variant_from_the_tpcs_literal_column(
             }
         ]
     )
-    _emissions, rows, _round_trips = reads.run_read_case(_case("m-inheritance-050"), port)
+    _emissions, rows, _database_calls = reads.run_read_case(_case("m-inheritance-050"), port)
     assert rows[0]["familyVariant"] == "Invoice"
     assert "family_variant" not in rows[0]
 
@@ -168,7 +168,7 @@ def test_run_read_case_concrete_target_read_carries_no_family_variant() -> None:
     # m-inheritance-001 (CardPayment, concrete target): the compiled SELECT never
     # projects a tag/literal column, so the row passes through wire rendering alone.
     port = FakeDbPort([{"id": 1, "amount": decimal.Decimal("100.00"), "card_network": "Visa"}])
-    _emissions, rows, _round_trips = reads.run_read_case(_case("m-inheritance-001"), port)
+    _emissions, rows, _database_calls = reads.run_read_case(_case("m-inheritance-001"), port)
     assert rows == [{"id": 1, "amount": "100.00", "card_network": "Visa"}]
     assert "familyVariant" not in rows[0]
 
@@ -295,10 +295,10 @@ def test_run_graph_case_renders_root_class_keyed_graph_with_relationships() -> N
             ],
         ]
     )
-    emissions, graph, round_trips, stored_data_issues = reads.run_graph_case(
+    emissions, graph, database_calls, stored_data_issues = reads.run_graph_case(
         _case("m-snapshot-read-001"), port
     )
-    assert round_trips == 3
+    assert database_calls == 3
     assert len(emissions) == 3
     assert stored_data_issues is None
     assert [item["id"] for item in _rows(graph["Order"][0], "items")] == [12, 11]
@@ -331,10 +331,10 @@ def test_run_graph_case_unwinds_a_back_reference_finitely() -> None:
             ],
         ]
     )
-    _emissions, graph, round_trips, stored_data_issues = reads.run_graph_case(
+    _emissions, graph, database_calls, stored_data_issues = reads.run_graph_case(
         _case("m-snapshot-read-011"), port
     )
-    assert round_trips == 2
+    assert database_calls == 2
     assert stored_data_issues is None
     # The back-reference renders its target ONCE, in full, and terminates: the
     # include tree — not a cycle detector — is what bounds the value, so the
@@ -364,7 +364,7 @@ def test_run_graph_case_reports_the_records_a_classified_root_published() -> Non
             [{"id": 12, "item_id": 2, "profile": PresentDocument({"street": "12 Main"})}],
         ]
     )
-    _emissions, graph, _round_trips, stored_data_issues = reads.run_graph_case(
+    _emissions, graph, _database_calls, stored_data_issues = reads.run_graph_case(
         _load_case("m-storage-layout-027"), port
     )
     assert _node(graph["ClassificationTwinItem"], 0)["profile"] == {
@@ -404,7 +404,7 @@ def test_run_graph_case_publishes_null_where_nothing_could_be_hydrated() -> None
             [],
         ]
     )
-    _emissions, graph, _round_trips, stored_data_issues = reads.run_graph_case(
+    _emissions, graph, _database_calls, stored_data_issues = reads.run_graph_case(
         _load_case("m-storage-layout-027"), port
     )
     assert graph["ClassificationTwinItem"] == [None]
@@ -435,7 +435,7 @@ def test_a_diagnosis_names_its_member_by_the_path_the_corpus_addresses_one_by() 
 
 def test_run_read_case_accepts_provider_normalized_native_columns() -> None:
     port = FakeDbPort([{"id": 4, "name": None}])
-    _emissions, rows, _round_trips = reads.run_read_case(_load_case("m-value-object-007"), port)
+    _emissions, rows, _database_calls = reads.run_read_case(_load_case("m-value-object-007"), port)
     assert rows == [{"id": 4, "name": None}]
 
 
@@ -453,7 +453,7 @@ def test_run_graph_case_keys_value_objects_by_canonical_member_name() -> None:
             }
         ]
     )
-    _emissions, graph, _round_trips, _stored_data_issues = reads.run_graph_case(
+    _emissions, graph, _database_calls, _stored_data_issues = reads.run_graph_case(
         _case("m-descriptor-002"), port
     )
     row = _node(graph["MemberColumnDefaults"], 0)
@@ -522,8 +522,8 @@ def test_run_graphs_case_renders_ordered_milestone_pin_graphs() -> None:
             ]
         ]
     )
-    emissions, graphs, round_trips = reads.run_graphs_case(_case("m-snapshot-read-013"), port)
-    assert round_trips == 1
+    emissions, graphs, database_calls = reads.run_graphs_case(_case("m-snapshot-read-013"), port)
+    assert database_calls == 1
     assert len(emissions) == 1
     assert [_entry(g, "pin")["transaction-time"] for g in graphs] == [
         "2024-01-01T00:00:00.000000Z",
@@ -560,8 +560,8 @@ def test_run_streamed_graphs_case_groups_a_delivery_back_into_edge_ranked_graphs
         ]
     )
     case = _doctored("m-snapshot-read-013", stream={"batchSize": 1})
-    emissions, graphs, round_trips = reads.run_streamed_graphs_case(case, port)
-    assert round_trips == 3
+    emissions, graphs, database_calls = reads.run_streamed_graphs_case(case, port)
+    assert database_calls == 3
     assert len(emissions) == 3
     assert [_entry(g, "pin")["transaction-time"] for g in graphs] == [
         "2024-01-01T00:00:00.000000Z",
@@ -636,7 +636,7 @@ def test_render_value_recurses_into_a_nested_value_object_document() -> None:
             }
         ]
     )
-    _emissions, graph, _round_trips, _stored_data_issues = reads.run_graph_case(
+    _emissions, graph, _database_calls, _stored_data_issues = reads.run_graph_case(
         _case("m-value-object-024"), port
     )
     rendered = _node(graph["Customer"], 0)
@@ -753,7 +753,7 @@ def test_a_standalone_read_under_a_locking_root_opens_no_transaction_and_takes_n
     # no boundary is asked for at all and the emitted statement carries no lock
     # suffix — the root's defaults govern transactions, and this read opens none.
     port = FakeDbPort([{"id": 1, "name": "Grace"}])
-    emissions, rows, _trips = reads.run_read_case(_rooted("m-value-object-001"), port)
+    emissions, rows, _calls = reads.run_read_case(_rooted("m-value-object-001"), port)
     assert rows == [{"id": 1, "name": "Grace"}]
     assert port.levels == []
     assert "for share" not in emissions[0].sql
@@ -782,10 +782,10 @@ def test_a_read_carrying_an_empty_uow_block_under_a_locking_root_locks_in_both_l
     port = FakeDbPort(
         [{"id": 2, "owner": "Linus", "balance": decimal.Decimal("250.00"), "version": 1}]
     )
-    emissions, _rows, _trips = reads.run_read_case(locking, port)
+    emissions, _rows, _calls = reads.run_read_case(locking, port)
     assert port.levels == ["read_committed"]
     assert emissions[0].sql.endswith("for share of t0")
-    compiled, _trips = reads.compile_read_case(locking, "postgres")
+    compiled, _calls = reads.compile_read_case(locking, "postgres")
     assert compiled[0].sql == emissions[0].sql
     assert not reads.compile_read_case(standalone, "postgres")[0][0].sql.endswith("for share of t0")
 
@@ -803,7 +803,7 @@ def test_an_explicit_optimistic_request_under_a_locking_root_plans_and_runs_lock
     port = FakeDbPort(
         [{"id": 2, "owner": "Linus", "balance": decimal.Decimal("250.00"), "version": 1}]
     )
-    emissions, _rows, _trips = reads.run_read_case(case, port)
+    emissions, _rows, _calls = reads.run_read_case(case, port)
     assert port.levels == ["read_committed"]
     assert "for share" not in emissions[0].sql
     assert "for share" not in reads.compile_read_case(case, "postgres")[0][0].sql
@@ -815,10 +815,10 @@ def test_a_read_only_case_plans_and_runs_in_a_read_only_boundary_taking_no_lock(
 ) -> None:
     case = _load_case(case_id)
     port = FakeDbPort([{"id": 1, "owner": "Ada", "balance": decimal.Decimal("100.00")}])
-    emissions, _rows, _trips = reads.run_read_case(case, port)
+    emissions, _rows, _calls = reads.run_read_case(case, port)
     assert port.modes == ["read_only"]
     assert "for share" not in emissions[0].sql
-    compiled, _trips = reads.compile_read_case(case, "postgres")
+    compiled, _calls = reads.compile_read_case(case, "postgres")
     assert compiled[0].sql == emissions[0].sql
 
 

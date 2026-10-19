@@ -28,7 +28,7 @@ then:
         - label: Pilot
           spec: null
           marks: []
-  roundTrips: 3
+  databaseCalls: 3
   tableState:
     write_twin_log:
       - id: 5

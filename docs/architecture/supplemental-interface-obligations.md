@@ -68,7 +68,7 @@ Three structural reasons recur, and the entries name them by these labels.
 value is the `api-conformance` keyed-write action step (`m-case-format` *Keyed
 write action steps*). Its `value` token is drawn from a closed provenance
 partition (`unmanaged` / `thisSource` / `anotherSource`), it carries no golden SQL,
-it declares `roundTrips: 0`, and the suite verifies that zero as *the absence of
+it declares `databaseCalls: 0`, and the suite verifies that zero as *the absence of
 any durable effect*. A refusal that turns on a write the same unit of work already
 admitted therefore cannot be expressed there: the first write buffers something,
 which the lane's zero denies.
@@ -416,7 +416,7 @@ compatibility case is.
   single-row inserts by physical column set, which Relational Document Layout
   makes uniform, so four inserts whose authored members differ emit three
   statements under Columns and one under Document Layout. A twin pair's
-  round-trip count is layout-invariant by construction, which is why
+  Database Call count is layout-invariant by construction, which is why
   `m-storage-layout-029` / `-030` author one insert per step.
 
 ### SIO-021 — A Value Object copy records no provenance

@@ -220,8 +220,8 @@ def test_the_object_a_statement_settles_is_the_key_its_predicate_binds() -> None
 def test_a_settled_step_carries_one_existing_row_golden_per_object() -> None:
     case = _multi_object_settled_case()
     del case.when["scenario"][1]["statements"][1]
-    case.when["scenario"][1]["roundTrips"] = 1
-    case.then["roundTrips"] = 2
+    case.when["scenario"][1]["databaseCalls"] = 1
+    case.then["databaseCalls"] = 2
     with pytest.raises(CaseFailure, match="no existing-row statement"):
         assert_unit_work_scenario(case, RefusingProvider())
 
@@ -397,7 +397,7 @@ def _versioned_settled_case(
                             "eq": {"path": "parallax.compatibility.Account.id", "value": 1}
                         },
                     },
-                    "roundTrips": 1,
+                    "databaseCalls": 1,
                     "statements": [{"sql": {"postgres": _ACCOUNT_FIND}, "binds": [1]}],
                     "expectRows": (
                         [{"id": 1, "owner": "Ada", "balance": "125.00", "version": 2}]
@@ -415,12 +415,12 @@ def _versioned_settled_case(
                             "rows": [{"id": 1, "balance": "175.00"}],
                         }
                     ],
-                    "roundTrips": 1,
+                    "databaseCalls": 1,
                     "statements": [statement],
                 },
             ],
         },
-        "then": {"roundTrips": 2},
+        "then": {"databaseCalls": 2},
     }
     return _case(raw, _account_model(), "m-unit-work-996-synthetic")
 
@@ -453,7 +453,7 @@ def _reserved_version_column_case(*, advance: int) -> Case:
                             "eq": {"path": "parallax.compatibility.Account.id", "value": 1}
                         },
                     },
-                    "roundTrips": 1,
+                    "databaseCalls": 1,
                     "statements": [{"sql": {"postgres": find}, "binds": [1]}],
                     "expectRows": [{"id": 1, "owner": "Ada", "balance": "125.00", "order": 2}],
                 },
@@ -467,14 +467,14 @@ def _reserved_version_column_case(*, advance: int) -> Case:
                             "rows": [{"id": 1, "balance": "175.00"}],
                         }
                     ],
-                    "roundTrips": 1,
+                    "databaseCalls": 1,
                     "statements": [
                         {"sql": {"postgres": update}, "binds": ["175.00", advance, 1, 2]}
                     ],
                 },
             ],
         },
-        "then": {"roundTrips": 2},
+        "then": {"databaseCalls": 2},
     }
     return _case(raw, model, "m-unit-work-992-synthetic")
 
@@ -494,7 +494,7 @@ def _multi_object_settled_case(*, second_version: int = 5) -> Case:
                 {
                     "uow": "two-objects",
                     "objectQuery": {"target": "parallax.compatibility.Account"},
-                    "roundTrips": 1,
+                    "databaseCalls": 1,
                     "statements": [{"sql": {"postgres": _ACCOUNTS_FIND}, "binds": []}],
                     "expectRows": [
                         {"id": 1, "owner": "Ada", "balance": "100.00", "version": 2},
@@ -517,7 +517,7 @@ def _multi_object_settled_case(*, second_version: int = 5) -> Case:
                             "rows": [{"id": 2, "balance": "60.00"}],
                         },
                     ],
-                    "roundTrips": 2,
+                    "databaseCalls": 2,
                     "statements": [
                         {"sql": {"postgres": update}, "binds": ["175.00", 3, 1, 2]},
                         {
@@ -528,7 +528,7 @@ def _multi_object_settled_case(*, second_version: int = 5) -> Case:
                 },
             ],
         },
-        "then": {"roundTrips": 3},
+        "then": {"databaseCalls": 3},
     }
     return _case(raw, _account_model(), "m-unit-work-995-synthetic")
 
@@ -545,7 +545,7 @@ def _shared_table_settled_case(*, tag: str = "dog") -> Case:
                 {
                     "uow": "shared-table",
                     "objectQuery": {"target": "parallax.compatibility.Animal"},
-                    "roundTrips": 1,
+                    "databaseCalls": 1,
                     "statements": [{"sql": {"postgres": _ANIMAL_FIND}, "binds": []}],
                     "expectRows": [{"id": 1, "name": "Rex", "familyVariant": "Dog"}],
                 },
@@ -559,7 +559,7 @@ def _shared_table_settled_case(*, tag: str = "dog") -> Case:
                             "rows": [{"id": 1, "barkVolume": 9}],
                         }
                     ],
-                    "roundTrips": 1,
+                    "databaseCalls": 1,
                     "statements": [
                         {
                             "sql": {
@@ -572,7 +572,7 @@ def _shared_table_settled_case(*, tag: str = "dog") -> Case:
                 },
             ],
         },
-        "then": {"roundTrips": 2},
+        "then": {"databaseCalls": 2},
     }
     return _case(
         raw, load_model(COMPATIBILITY_ROOT, "models/animal.yaml"), "m-unit-work-994-synthetic"
@@ -663,7 +663,7 @@ def _settled_close_case(
                 {
                     "uow": "polymorphic",
                     "objectQuery": {"target": target},
-                    "roundTrips": 1,
+                    "databaseCalls": 1,
                     "statements": [
                         {"sql": {"postgres": find}, "binds": as_of * 2 if abstract else as_of}
                     ],
@@ -684,7 +684,7 @@ def _settled_close_case(
                             "at": at,
                         }
                     ],
-                    "roundTrips": 1,
+                    "databaseCalls": 1,
                     "statements": [
                         {
                             "sql": {
@@ -697,7 +697,7 @@ def _settled_close_case(
                 },
             ],
         },
-        "then": {"roundTrips": 2},
+        "then": {"databaseCalls": 2},
     }
     return _case(
         raw,
@@ -742,7 +742,7 @@ def _transaction_time_only_settled_case(*, on: int) -> Case:
                             "at": "2024-10-01T00:00:00.000000Z",
                         }
                     ],
-                    "roundTrips": 1,
+                    "databaseCalls": 1,
                     "statements": [
                         {
                             "sql": {
@@ -760,7 +760,7 @@ def _transaction_time_only_settled_case(*, on: int) -> Case:
                 },
             ],
         },
-        "then": {"roundTrips": 3},
+        "then": {"databaseCalls": 3},
     }
     return _case(
         raw, load_model(COMPATIBILITY_ROOT, "models/balance.yaml"), "m-unit-work-997-synthetic"
@@ -774,7 +774,7 @@ def _balance_find(pk: int, tx_start: str, tx_end: Any, value: str) -> dict[str, 
             "target": "Balance",
             "predicate": {"eq": {"path": "Balance.id", "value": pk}},
         },
-        "roundTrips": 1,
+        "databaseCalls": 1,
         "statements": [{"sql": {"postgres": _BALANCE_FIND}, "binds": [pk]}],
         "expectRows": [
             {

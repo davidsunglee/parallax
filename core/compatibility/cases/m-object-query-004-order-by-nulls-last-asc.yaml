@@ -23,4 +23,4 @@ then:
   rows:
     - { id: 1, name: Ada, sku: A-100, qty: 5, price: "10.50", active: true, ordered_on: 2024-01-05 }
     - { id: 3, name: ada, sku: A-300, qty: 15, price: "30.25", active: false, ordered_on: 2024-03-15 }
-  roundTrips: 1
+  databaseCalls: 1

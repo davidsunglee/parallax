@@ -22,7 +22,7 @@ when:
         temporal:
           transaction-time:
             asOf: latest
-      roundTrips: 1
+      databaseCalls: 1
       note: read the CURRENT milestone of id 1 (value 150, known from 2024-06-01) under the shared row lock this unit's locking mode takes
       statements:
         - sql:
@@ -40,7 +40,7 @@ when:
         temporal:
           transaction-time:
             asOf: "2024-04-01T00:00:00.000000Z"
-      roundTrips: 1
+      databaseCalls: 1
       note: audit the SAME key at the past Transaction-Time instant 2024-04-01 — the superseded milestone (value 100), a DIFFERENT milestone of the same primary key
       statements:
         - sql:
@@ -55,7 +55,7 @@ when:
           rows:
             - { id: 1, acctNum: A, value: "175.00" }
           at: "2024-10-01T00:00:00.000000Z"
-      roundTrips: 2
+      databaseCalls: 2
       note: the close is ACCEPTED and commits — no gate predicate (locking mode), addressing the milestone still open on Transaction Time rather than the historical one the audit read returned
       statements:
         - sql:
@@ -65,7 +65,7 @@ when:
             postgres: insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)
           binds: [1, A, "175.00", "2024-10-01T00:00:00.000000Z", infinity]
 then:
-  roundTrips: 4
+  databaseCalls: 4
   tableState:
     balance:
       - { bal_id: 1, acct_num: A, val: "100.00", in_z: "2024-01-01T00:00:00.000000Z", out_z: "2024-06-01T00:00:00.000000Z" }

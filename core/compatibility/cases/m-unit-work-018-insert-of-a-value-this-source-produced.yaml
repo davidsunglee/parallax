@@ -13,8 +13,8 @@ when:
   scenario:
     - action: insert
       value: thisSource
-      roundTrips: 0
+      databaseCalls: 0
       expectError: write-value-already-stored
       note: a read through this very source produced the value, so the row it names is already stored
 then:
-  roundTrips: 0
+  databaseCalls: 0

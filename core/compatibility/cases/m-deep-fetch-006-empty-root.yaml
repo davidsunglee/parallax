@@ -1,6 +1,6 @@
 # Deep fetch with an empty root result. Because the root query returns no parent
 # keys, the child levels are elided: no Order.items or OrderItem.statuses SQL is
-# authored or executed, and roundTrips is 1.
+# authored or executed, and databaseCalls is 1.
 model: models/orders.yaml
 tags: [m-deep-fetch, m-object-query, m-op-list, empty-root, relationship, slice-managed-1]
 shape: read
@@ -23,4 +23,4 @@ then:
   referenceSql: select id, name, sku, qty, price, active, ordered_on from orders where id = 999
   graph:
     Order: []
-  roundTrips: 1
+  databaseCalls: 1

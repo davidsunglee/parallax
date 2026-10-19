@@ -31,7 +31,7 @@ when:
       note: a joining call naming the root's preference is refused — the outer call overrode it
 then:
   outcome: option-conflict
-  roundTrips: 1
+  databaseCalls: 1
   executionLifecycle:
     roots:
       - execution: 1

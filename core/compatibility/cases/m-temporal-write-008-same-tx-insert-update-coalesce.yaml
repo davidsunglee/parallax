@@ -23,7 +23,7 @@ when:
           rows:
             - { id: 9, value: "150.00" }
           at: "2024-06-01T00:00:00.000000Z"
-      roundTrips: 1
+      databaseCalls: 1
       note: the buffered INSERT (value 100) then the buffered UPDATE (value 150) of the SAME new account 9 coalesce IN PLACE to ONE current-milestone INSERT carrying the final value 150 — no close, no superseded milestone
       statements:
         - sql:
@@ -38,7 +38,7 @@ when:
         temporal:
           transaction-time:
             asOf: latest
-      roundTrips: 1
+      databaseCalls: 1
       note: Latest over account 9 observes ONE current milestone at the coalesced value 150 (a single row, not a superseded 100 + current 150)
       statements:
         - sql:
@@ -48,4 +48,4 @@ when:
       expectRows:
         - { bal_id: 9, acct_num: D, val: "150.00", in_z: "2024-06-01T00:00:00.000000Z", out_z: infinity }
 then:
-  roundTrips: 2
+  databaseCalls: 2

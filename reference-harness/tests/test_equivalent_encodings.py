@@ -120,7 +120,7 @@ def test_scenario_step_normalizes_its_own_equivalent_encoding() -> None:
                         "temporal": {"transaction-time": {"asOf": "latest"}},
                     },
                     "equivalentEncodings": [{"target": "Balance", "predicate": {"true": {}}}],
-                    "roundTrips": 1,
+                    "databaseCalls": 1,
                 }
             ]
         },

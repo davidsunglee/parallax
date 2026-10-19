@@ -44,4 +44,4 @@ then:
           entity: parallax.compatibility.StreamCoordinate
           member: parallax.compatibility.StreamCoordinate.day
           objectKey: { entity: parallax.compatibility.StreamCoordinate, key: { id: 102 } }
-  roundTrips: 3
+  databaseCalls: 3

@@ -24,4 +24,4 @@ then:
     mariadb: select id, label from sample where nullif(json_unquote(json_extract(profile, '$.ratio')), 'null') + 0 > 2
   rows:
     - { id: 2, label: Bo }
-  roundTrips: 1
+  databaseCalls: 1

@@ -35,4 +35,4 @@ then:
   tableState:
     ticket:
       - { id: 1000, tier: gold }
-  roundTrips: 2
+  databaseCalls: 2

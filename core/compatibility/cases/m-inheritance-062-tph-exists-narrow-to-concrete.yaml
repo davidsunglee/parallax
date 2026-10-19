@@ -23,4 +23,4 @@ then:
   referenceSql: select id, name from person where id in (select owner_id from animal where kind = 'cat')
   rows:
     - { id: 10, name: Alice }
-  roundTrips: 1
+  databaseCalls: 1

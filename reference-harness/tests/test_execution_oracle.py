@@ -124,7 +124,7 @@ def _case(lifecycle: dict[str, Any], **overrides: Any) -> dict[str, Any]:
                 {"sql": {"postgres": "insert into account(id) values (?)"}, "binds": [9]}
             ],
             "tableState": {"account": [{"id": 9}]},
-            "roundTrips": 1,
+            "databaseCalls": 1,
             "executionLifecycle": lifecycle,
         },
     }
@@ -150,7 +150,7 @@ def _run_envelope(lifecycle: dict[str, Any]) -> dict[str, Any]:
                 "binds": [9],
             }
         ],
-        "observations": {"roundTrips": 1, "executionLifecycle": lifecycle},
+        "observations": {"databaseCalls": 1, "executionLifecycle": lifecycle},
     }
 
 
@@ -527,7 +527,7 @@ def _joined_root() -> dict[str, Any]:
 
 def test_a_joined_invocation_standing_as_a_root_is_flagged() -> None:
     case = _case(_lifecycle(_joined_root()))
-    case["then"]["roundTrips"] = 0
+    case["then"]["databaseCalls"] = 0
     problems = validate_execution(case)
     assert any(
         "opens transactionInvocationStarted:joined with no parent" in problem
@@ -559,7 +559,7 @@ def test_an_attempt_under_a_joined_invocation_is_flagged() -> None:
         ],
     )
     case = _case(_lifecycle(root))
-    case["then"]["roundTrips"] = 0
+    case["then"]["databaseCalls"] = 0
     problems = validate_execution(case)
     assert any(
         "transactionAttemptStarted is contained by transactionInvocationStarted:outer" in problem
@@ -632,7 +632,7 @@ def test_a_joined_invocation_finishing_in_the_outer_vocabulary_is_flagged() -> N
         ],
     )
     case = _case(_lifecycle(root))
-    case["then"]["roundTrips"] = 0
+    case["then"]["databaseCalls"] = 0
     problems = validate_execution(case)
     assert any("finishes transactionInvocationStarted:joined" in problem for problem in problems)
 
@@ -715,7 +715,7 @@ def test_a_cause_naming_a_child_that_had_not_finished_is_flagged() -> None:
         ],
     )
     case = _case(_lifecycle(root))
-    case["then"]["roundTrips"] = 0
+    case["then"]["databaseCalls"] = 0
     problems = validate_execution(case)
     assert any("had not finished" in problem for problem in problems)
 
@@ -1063,12 +1063,12 @@ def test_a_resolving_read_the_case_authors_no_golden_for_names_no_statement() ->
     """The one call beside `api-conformance` that omits its index.
 
     A keyed write is licensed by a value a read published, so the unit reads
-    before it writes; `then.roundTrips` counts that read and `then.statements`
+    before it writes; `then.databaseCalls` counts that read and `then.statements`
     authors only the DML. The read therefore has no index to name, while the
     write it licensed still names the golden it ran.
     """
     case = _case(_lifecycle(_read_then_write_root()))
-    case["then"]["roundTrips"] = 2
+    case["then"]["databaseCalls"] = 2
     assert validate_execution(case) == []
 
 
@@ -1082,7 +1082,7 @@ def test_a_resolving_read_taking_the_index_its_write_owes_is_flagged() -> None:
     root = _read_then_write_root(read_statement=0)
     del root["events"][9]["databaseCallStarted"]["statement"]
     case = _case(_lifecycle(root))
-    case["then"]["roundTrips"] = 2
+    case["then"]["databaseCalls"] = 2
     problems = validate_execution(case)
     assert any(
         "every golden DML statement is one a write call ran" in problem for problem in problems
@@ -1197,7 +1197,7 @@ def test_a_stepwise_case_indexes_the_goldens_its_own_steps_author() -> None:
         case = _case(_lifecycle(root), when=when, shape="scenario")
         del case["then"]["statements"]
         del case["then"]["tableState"]
-        case["then"]["roundTrips"] = 2
+        case["then"]["databaseCalls"] = 2
         return case
 
     assert validate_execution(stepwise(_two_write_root(1))) == []
@@ -1211,7 +1211,7 @@ def test_a_record_naming_one_golden_twice_is_flagged() -> None:
     case["then"]["statements"].append(
         {"sql": {"postgres": "insert into account(id) values (?)"}, "binds": [10]}
     )
-    case["then"]["roundTrips"] = 2
+    case["then"]["databaseCalls"] = 2
     problems = validate_execution(case)
     assert any("once each" in problem for problem in problems)
 
@@ -1219,9 +1219,9 @@ def test_a_record_naming_one_golden_twice_is_flagged() -> None:
 # --- the sole count oracle ----------------------------------------------------
 
 
-def test_a_record_disagreeing_with_the_case_round_trips_is_flagged() -> None:
+def test_a_record_disagreeing_with_the_case_database_calls_is_flagged() -> None:
     case = _case(_lifecycle(_write_root()))
-    case["then"]["roundTrips"] = 2
+    case["then"]["databaseCalls"] = 2
     problems = validate_execution(case)
     assert any("sole count oracle" in problem for problem in problems)
 
@@ -1293,7 +1293,7 @@ def _retry_case(root: dict[str, Any]) -> dict[str, Any]:
     """A case whose stream reaches the database not at all, so it authors no
     golden statement either: what these fixtures state is attempt history."""
     case = _case(_lifecycle(root))
-    case["then"]["roundTrips"] = 0
+    case["then"]["databaseCalls"] = 0
     del case["then"]["statements"]
     return case
 
@@ -1474,9 +1474,9 @@ def test_an_observed_call_omitting_its_statement_beside_emissions_is_flagged() -
     assert validate_execution_observation(_run_envelope(_lifecycle(root)))
 
 
-def test_an_observed_stream_disagreeing_with_the_observed_round_trips_is_flagged() -> None:
+def test_an_observed_stream_disagreeing_with_the_observed_database_calls_is_flagged() -> None:
     envelope = _run_envelope(_lifecycle(_write_root()))
-    envelope["observations"]["roundTrips"] = 3
+    envelope["observations"]["databaseCalls"] = 3
     assert validate_execution_observation(envelope)
 
 

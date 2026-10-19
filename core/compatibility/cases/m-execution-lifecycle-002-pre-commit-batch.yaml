@@ -11,7 +11,7 @@ when:
           entity: parallax.compatibility.Order
           rows:
             - { id: 300, name: Lovelace, sku: E-1, qty: 2, price: "12.50", active: true, orderedOn: "2024-08-01" }
-      roundTrips: 1
+      databaseCalls: 1
       note: buffer the parent Order; nothing reads it back, so nothing flushes yet
       statements:
         - sql:
@@ -23,14 +23,14 @@ when:
           entity: parallax.compatibility.OrderItem
           rows:
             - { id: 301, orderId: 300, sku: E-1, quantity: 4 }
-      roundTrips: 1
+      databaseCalls: 1
       note: buffer the child OrderItem in the SAME unit of work; the boundary flushes both in one pre-commit batch
       statements:
         - sql:
             postgres: insert into order_item(id, order_id, sku, quantity) values (?, ?, ?, ?)
           binds: [301, 300, E-1, 4]
 then:
-  roundTrips: 2
+  databaseCalls: 2
   executionLifecycle:
     roots:
       - execution: 1

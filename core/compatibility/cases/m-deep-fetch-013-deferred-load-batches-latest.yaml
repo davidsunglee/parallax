@@ -15,7 +15,7 @@ when:
               - 1
               - 2
               - 42
-      roundTrips: 1
+      databaseCalls: 1
       note: find the three source orders (one query)
       statements:
         - sql:
@@ -28,7 +28,7 @@ when:
     - action: load
       "on": 0
       path: items
-      roundTrips: 1
+      databaseCalls: 1
       note: explicit load of items over all three orders -> ONE batched child statement
       statements:
         - sql:
@@ -41,4 +41,4 @@ when:
         - { id: 421, order_id: 42, sku: A-999, quantity: 3, shipped_on: 2024-03-10 }
         - { id: 422, order_id: 42, sku: B-200, quantity: 5, shipped_on: 2024-02-05 }
 then:
-  roundTrips: 2
+  databaseCalls: 2

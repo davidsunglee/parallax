@@ -177,7 +177,7 @@ __all__ = [
 # ``rollback: true``, aborts) its coalesced DML, a `uow` group shares one
 # transaction across its steps, and a ``find`` reads through the read path. A
 # **writeSequence** runs each entry independently — no cross-entry coalescing
-# (an insert-then-delete pair across two entries is two round trips, not a
+# (an insert-then-delete pair across two entries is two Database Calls, not a
 # cancellation) — and each entry is its OWN transaction (not "the whole
 # sequence in one transaction").
 #
@@ -1010,7 +1010,7 @@ def _build_instructions(
 
     Otherwise, a write entry carries the instruction triple (``mutation`` /
     ``entity`` / ``rows``) beside case-authoring keys (``note`` / ``statements``
-    / ``roundTrips`` / ``rollback``). ``rows`` MAY batch several logical
+    / ``databaseCalls`` / ``rollback``). ``rows`` MAY batch several logical
     per-object writes into one entry (the write-instruction schema's "one or
     more rows" vocabulary), and this seam ALWAYS buffers one single-row
     instruction per row, exactly as that many separate ``TxnContext`` calls
@@ -2000,7 +2000,7 @@ def read_step_graph(
 
 def compile_scenario_case(case: case_format.Case, dialect_name: str) -> tuple[list[Emission], int]:
     """Compile a keyed unit-of-work scenario case to its ordered per-step
-    emissions and round-trip count; a scenario carrying an action step is the
+    emissions and Database Call count; a scenario carrying an action step is the
     snapshot lane's (:func:`~parallax.conformance._lanes.snapshot.compile_scenario`),
     which the façade dispatches to."""
     emissions = envelope.emissions(
@@ -2012,7 +2012,7 @@ def compile_scenario_case(case: case_format.Case, dialect_name: str) -> tuple[li
 def compile_write_sequence_case(
     case: case_format.Case, dialect_name: str
 ) -> tuple[list[Emission], int]:
-    """Compile a writeSequence case to its ordered per-entry emissions and round trips."""
+    """Compile a writeSequence case to its ordered per-entry emissions and Database Calls."""
     emissions = envelope.emissions(_write_sequence_lowered(case, dialect_name))
     return emissions, len(emissions)
 
@@ -2101,7 +2101,7 @@ def _execute_framework_write_unit(
     Executing the statements the caller reports is what keeps the two the same:
     this unit opens no Handle, so no lifecycle observes it, and a plan of its own
     would be a second derivation nothing could reconcile against the first. It is
-    the one write lane whose round trips are STATED — it reaches its last
+    the one write lane whose Database Calls are STATED — it reaches its last
     statement only by having issued every one before it, the same reasoning
     `run_error_case` carries for authored trigger DML.
 
@@ -2110,7 +2110,7 @@ def _execute_framework_write_unit(
     takes one entry's statements rather than a buffer: the unit is the entry. It honours the
     step's own abort contract like every other write path: a ``rollback: true``
     step runs on the aborting port, its statements reach the wire and count their
-    round trips, and the provider then rolls them back.
+    Database Calls, and the provider then rolls them back.
     """
 
     def run(conn: DatabaseConnection) -> None:
@@ -2144,7 +2144,7 @@ def _unit_source_query(
     Membership over the family-declared primary key, one read per target Entity
     however many rows the unit addresses, which is what a caller holding several
     writes of one Entity does: it reads them together and writes what the read
-    returned. Reading per row instead would cost the corpus a round trip per row
+    returned. Reading per row instead would cost the corpus a Database Call per row
     for no semantic gain, and reading between two writes would force-flush the
     first — destroying the very batch collapse the goldens pin.
 
@@ -2261,7 +2261,7 @@ def _execute_write_unit(
     first on the wire alone and destroy the batch collapse the goldens pin. They
     are charged to the observation's resolving reads
     (:meth:`~parallax.conformance._lifecycle_observation.LifecycleObservation.resolving_reads`):
-    a case counts them in `then.roundTrips` and authors no golden for them, so
+    a case counts them in `then.databaseCalls` and authors no golden for them, so
     they name no statement index in the lifecycle observation.
 
     Inside the same callback, each write the public verb accepts is tracked into
@@ -2273,7 +2273,7 @@ def _execute_write_unit(
 
     A ``rollback: true`` step runs on the aborting port (`m-unit-work` abort
     contract): the boundary's own pre-commit flush still puts the buffered DML
-    on the wire — and counts its round trips — before the provider rolls the
+    on the wire — and counts its Database Calls — before the provider rolls the
     transaction back.
     """
     model = context.model
@@ -2311,7 +2311,7 @@ def _execute_write_unit(
 
             with absorbing_rollback():
                 transact(database, body, **context.requests)
-        return observed.writes, observed.round_trips
+        return observed.writes, observed.database_calls
 
 
 def _framework_unit(resolved: Sequence[_ResolvedWrite], model: AcceptedMetamodel) -> bool:
@@ -2358,7 +2358,7 @@ def execute_keyed_unit(
     """One buffered-keyed-write choreography unit, whole: resolve its entries
     once, execute it as its own ``db.transact``, and advance the case state by
     what that execution accepted — reporting the DML its lifecycle delivered
-    beside the round trips the execution cost.
+    beside the Database Calls the execution cost.
 
     Every producer of an ungrouped keyed unit drives this — a scenario's
     ungrouped write step on either scenario lane, and a writeSequence entry — so
@@ -2398,11 +2398,11 @@ def execute_keyed_unit(
             statements = unit.statements
             _check_statement_count_consistency(entries, len(statements))
             return statements, _execute_framework_write_unit(port, statements, rollback=rollback)
-    ran, unit_trips = _execute_write_unit(
+    ran, unit_calls = _execute_write_unit(
         port, context, resolved, tx_instant, lifecycle, rollback=rollback
     )
     _check_statement_count_consistency(entries, len(ran))
-    return ran, unit_trips
+    return ran, unit_calls
 
 
 def _run_readless_predicate_write(
@@ -2439,7 +2439,7 @@ def _run_readless_predicate_write(
 
         with absorbing_rollback():
             transact(database, body, **context.requests)
-        return observed.writes, observed.round_trips
+        return observed.writes, observed.database_calls
 
 
 def is_materializing_write_step(
@@ -2508,8 +2508,8 @@ def _run_materializing_pair(
     resolve using the SAME predicate; with no concurrent writer between the
     two steps, that resolve observes the IDENTICAL rows the corpus's own
     preceding find step documents, so pairing them here reproduces the
-    corpus's own ``1 resolve + N per-row writes`` round-trip accounting
-    exactly — the resolve's round trip is charged to the FIND step's pointer
+    corpus's own ``1 resolve + N per-row writes`` Database Call accounting
+    exactly — the resolve's Database Call is charged to the FIND step's pointer
     (the corpus's own authoring convention), never double-counted against the
     write step.
 
@@ -2602,7 +2602,7 @@ def _run_materializing_pair(
         return [
             LoweredStep(f"/scenario/{index}/objectQuery", resolve, False, False),
             LoweredStep(f"/scenario/{index + 1}/write", observed.writes, True, rollback),
-        ], observed.round_trips
+        ], observed.database_calls
 
 
 def scenario_group_step_indices(steps: Sequence[Mapping[str, object]]) -> dict[str, list[int]]:
@@ -3258,11 +3258,11 @@ class _StepRead:
 @dataclass(frozen=True, slots=True)
 class _GroupRun:
     """One `uow` group's own report: its steps' lowered emissions in step order,
-    the round trips its single transaction made, and the per-step observations its
-    read steps filled, each in step order."""
+    the Database Calls its single transaction made, and the per-step observations
+    its read steps filled, each in step order."""
 
     lowered: list[LoweredStep]
-    round_trips: int
+    database_calls: int
     step_rows: list[dict[str, object]]
     step_graphs: list[dict[str, object]]
 
@@ -3435,7 +3435,7 @@ def _group_read(
     ``state`` the nodes it published, which a later write of the group is
     addressed by."""
     model = context.model
-    mark = observation.round_trips
+    mark = observation.database_calls
     batch_size = case_document.batch_size_of(step, f"/scenario/{index}/stream")
     if batch_size is None:
         snapshot = tx.wire.find(step_query(step, model))
@@ -3537,9 +3537,9 @@ def _run_uow_group(
             for index, step in zip(range(start, end + 1), lowered, strict=True)
         ]
         # Every statement this ONE transaction put on the wire, which is where the
-        # group's round trips come from rather than from a second count this lane
+        # group's Database Calls come from rather than from a second count this lane
         # keeps.
-        return _GroupRun(reported, observation.round_trips, rows_observed, step_graphs)
+        return _GroupRun(reported, observation.database_calls, rows_observed, step_graphs)
     finally:
         session.close()
 
@@ -3666,12 +3666,12 @@ def flush_failure(
 @dataclass(frozen=True, slots=True)
 class _StateGroupRun:
     """One state-graded group's report: its fate, the rows each of its finds
-    published, the refusals its submissions raised, and its round trips."""
+    published, the refusals its submissions raised, and its Database Calls."""
 
     fate: dict[str, object]
     step_rows: list[dict[str, object]]
     refusals: list[dict[str, object]]
-    round_trips: int
+    database_calls: int
 
 
 def _run_state_graded_group(
@@ -3728,7 +3728,7 @@ def _run_state_graded_group(
         outcome = {"outcome": "rolledBack", "flushFailure": reported}
     finally:
         session.close()
-    return _StateGroupRun(outcome, rows_observed, submitted.refusals, observation.round_trips)
+    return _StateGroupRun(outcome, rows_observed, submitted.refusals, observation.database_calls)
 
 
 def _run_state_graded_case(
@@ -3756,7 +3756,7 @@ def _run_state_graded_case(
     units: dict[str, dict[str, object]] = {}
     refusals: list[dict[str, object]] = []
     rows_observed: list[dict[str, object]] = []
-    round_trips = 0
+    database_calls = 0
     try:
         apply_given_apply(case, port, context.store)
         index = 0
@@ -3768,7 +3768,7 @@ def _run_state_graded_case(
                 units[label] = run.fate
                 refusals.extend(run.refusals)
                 rows_observed.extend(run.step_rows)
-                round_trips += run.round_trips
+                database_calls += run.database_calls
                 index = end + 1
                 continue
             step = steps[index]
@@ -3778,14 +3778,14 @@ def _run_state_graded_case(
                     "state-graded case states no fate for"
                 )
             read, read_observed = run_standalone_find(port, context, step, lifecycle)
-            round_trips += read_observed.round_trips
+            database_calls += read_observed.database_calls
             query = step_query(step, model)
             rows_observed.append(step_rows(model, index, query, read.checked().results()))
             index += 1
     except LOWERING_ERRORS as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
     return ScenarioRun(
-        [], round_trips, refusals, rows_observed, [], units, read_table_state(port, model)
+        [], database_calls, refusals, rows_observed, [], units, read_table_state(port, model)
     )
 
 
@@ -3849,7 +3849,7 @@ def run_scenario_case(
     )
     lowered: list[LoweredStep] = []
     units: dict[str, dict[str, object]] = {}
-    round_trips = 0
+    database_calls = 0
     try:
         seed_store_from_fixtures(case, model, store)
         # After the fixtures and before the first step, exactly where every other
@@ -3875,7 +3875,7 @@ def run_scenario_case(
                 lowered.extend(group.lowered)
                 rows_observed.extend(group.step_rows)
                 step_graphs.extend(group.step_graphs)
-                round_trips += group.round_trips
+                database_calls += group.database_calls
                 index = end + 1
                 continue
             step = steps[index]
@@ -3887,15 +3887,15 @@ def run_scenario_case(
                     step_query(step, model).target.canonical,
                     pairing.selection.target.identity.canonical,
                 ):
-                    pair_lowered, pair_trips = _run_materializing_pair(
+                    pair_lowered, pair_calls = _run_materializing_pair(
                         port, context, steps, index, lifecycle
                     )
                     lowered.extend(pair_lowered)
-                    round_trips += pair_trips
+                    database_calls += pair_calls
                     index += 2
                     continue
                 read, read_observed = run_standalone_find(port, context, step, lifecycle)
-                round_trips += read_observed.round_trips
+                database_calls += read_observed.database_calls
                 lowered.append(
                     LoweredStep(f"/scenario/{index}/objectQuery", read_observed.reads, False, False)
                 )
@@ -3918,7 +3918,7 @@ def run_scenario_case(
                 raw_predicate_write = cast("Mapping[str, object]", raw_write)
                 tx_instant = entry_instant(raw_predicate_write)
                 instruction = _prepared_case_predicate_write(raw_predicate_write, model)
-                ran, predicate_trips = _run_readless_predicate_write(
+                ran, predicate_calls = _run_readless_predicate_write(
                     port,
                     context,
                     raw_predicate_write,
@@ -3927,13 +3927,13 @@ def run_scenario_case(
                     lifecycle,
                     rollback=rollback,
                 )
-                round_trips += predicate_trips
+                database_calls += predicate_calls
                 lowered.append(LoweredStep(f"/scenario/{index}/write", ran, True, rollback))
             else:
-                statements, unit_trips = execute_keyed_unit(
+                statements, unit_calls = execute_keyed_unit(
                     port, context, write_entries(raw_write), [], lifecycle, rollback=rollback
                 )
-                round_trips += unit_trips
+                database_calls += unit_calls
                 lowered.append(LoweredStep(f"/scenario/{index}/write", statements, True, rollback))
             index += 1
     except LOWERING_ERRORS as exc:
@@ -3945,7 +3945,9 @@ def run_scenario_case(
         if isinstance(then, Mapping) and "tableState" in then
         else None
     )
-    return ScenarioRun(emissions, round_trips, [], rows_observed, step_graphs, units, table_state)
+    return ScenarioRun(
+        emissions, database_calls, [], rows_observed, step_graphs, units, table_state
+    )
 
 
 def run_write_sequence_case(
@@ -3956,11 +3958,11 @@ def run_write_sequence_case(
     """Run a writeSequence: each entry executes as its OWN unit of work through
     ``db.transact`` (one transaction per entry, never the whole sequence in
     one), then report the ordered per-entry
-    emissions, the committed table state, and the total round trips.
+    emissions, the committed table state, and the total Database Calls.
 
     The table read-back is the `m-conformance-adapter` write-sequence observation
     ("write-sequence cases report ``tableState``"): the runner grades it against
-    the case's ``then.tableState``. Observation reads are not case round trips.
+    the case's ``then.tableState``. Observation reads are not case Database Calls.
 
     ``given.apply`` is applied after the case's own fixture provisioning and
     before the first entry (`m-case-format` admits it on a writeSequence): the
@@ -3983,21 +3985,21 @@ def run_write_sequence_case(
     )
     group_observations: GroupRetainedObservations = []
     lowered: list[tuple[str, tuple[LoweredStatement, ...]]] = []
-    round_trips = 0
+    database_calls = 0
     try:
         seed_store_from_fixtures(case, model, store)
         apply_given_apply(case, port, store)
         for index, entry in enumerate(case_document.write_sequence_entries(case)):
-            statements, unit_trips = execute_keyed_unit(
+            statements, unit_calls = execute_keyed_unit(
                 port, context, [entry], group_observations, lifecycle, rollback=False
             )
-            round_trips += unit_trips
+            database_calls += unit_calls
             lowered.append((f"/writeSequence/{index}", statements))
     except LOWERING_ERRORS as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
     emissions = envelope.emissions(lowered)
     table_state = read_table_state(port, model)
-    return emissions, table_state, round_trips
+    return emissions, table_state, database_calls
 
 
 def read_table_state(
@@ -4219,7 +4221,7 @@ def _conflict_source_nodes(
     (:func:`_conflict_source_node`).
 
     The read is charged to the observation's resolving reads: a case counts it in
-    `then.roundTrips` and authors no golden for it, so it names no statement
+    `then.databaseCalls` and authors no golden for it, so it names no statement
     index (`m-case-format` "Resolving reads a write owes").
     """
     nodes: dict[ObjectKey, WireEntity] = {}
@@ -4324,7 +4326,7 @@ def _run_conflict_attempts(
     Answers each attempt's DML as the lifecycle delivered it, each statement in
     the canonical Lowered Statement form its Database Call borrowed, whose
     metadata projects native execution carriers into one canonical Wire
-    observation; the final affected-row count; and the round trips.
+    observation; the final affected-row count; and the Database Calls.
     """
     resolved_attempts = [
         _resolve_conflict_writes(model, target, mutation, rows) for rows in attempts
@@ -4350,7 +4352,7 @@ def _run_conflict_attempts(
                     f"{len(resolved_attempts)}; a case whose final attempt fails states the "
                     "bound that leaves it unreplayed (m-case-format 'Conflict cases')"
                 )
-            starts.append(observed.round_trips)
+            starts.append(observed.database_calls)
             resolved = resolved_attempts[len(starts) - 1]
             nodes = _conflict_source_nodes(tx, model, target, resolved, observed)
             sources = [_conflict_source_node(target, write, nodes) for write in resolved]
@@ -4477,7 +4479,7 @@ def run_conflict_case(
 
     Returns the ordered emissions, the FINAL attempt's affected-row count — the
     schema's one `affectedRows` slot, `m-conformance-adapter` — the resulting
-    table state when the case authors `then.tableState`, and the round trips.
+    table state when the case authors `then.tableState`, and the Database Calls.
     """
     serving = case_serving_model(case)
     model = models.accepted_model_of(serving.current().model)
@@ -4513,7 +4515,7 @@ def run_conflict_case(
             apply_given_apply(case, port, None)
 
     try:
-        writes, affected, round_trips = _run_conflict_attempts(
+        writes, affected, database_calls = _run_conflict_attempts(
             port,
             serving,
             model,
@@ -4539,10 +4541,10 @@ def run_conflict_case(
         if isinstance(then, Mapping) and "tableState" in then
         else None
     )
-    # The round trips are every call this case put on the wire: each attempt's
+    # The Database Calls are every call this case put on the wire: each attempt's
     # own DML, summed across all of them rather than the last one's alone, and
     # the resolving read each attempt's write is licensed by. The read reaches
     # the database, so it counts exactly as the DML does (`m-case-format`
-    # `then.roundTrips`), and the lifecycle stream this count must agree with
+    # `then.databaseCalls`), and the lifecycle stream this count must agree with
     # holds it too.
-    return emissions, affected, table_state, round_trips
+    return emissions, affected, table_state, database_calls

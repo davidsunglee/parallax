@@ -68,8 +68,8 @@ __all__ = [
 
 
 def compile_scenario_case(case: case_format.Case, dialect_name: str) -> tuple[list[Emission], int]:
-    """Compile a scenario case to its ordered per-step emissions and round-trip
-    count, on whichever scenario lane the case's steps select."""
+    """Compile a scenario case to its ordered per-step emissions and Database
+    Call count, on whichever scenario lane the case's steps select."""
     steps = case_document.scenario_steps(case)
     if case_document.has_action_step(steps):
         return snapshot.compile_scenario(case, dialect_name, steps)

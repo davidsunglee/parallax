@@ -18,7 +18,7 @@ when:
         includes:
           - segments:
               - rel: parallax.compatibility.Order.items
-      roundTrips: 2
+      databaseCalls: 2
       note: materialize a snapshot of order 1 WITH its line items (1 + L levels)
       statements:
         - sql:
@@ -34,7 +34,7 @@ when:
           entity: parallax.compatibility.OrderItem
           rows:
             - { id: 11 }
-      roundTrips: 2
+      databaseCalls: 2
       note: destroy the very row the loaded `items` view holds - one DML statement plus the resolving read the keyed delete owes
       statements:
         - sql:
@@ -43,7 +43,7 @@ when:
     - action: access
       "on": 0
       path: items
-      roundTrips: 0
+      databaseCalls: 0
       sameObjectAs: 0
       note: access the ALREADY-MATERIALIZED items after the delete -> ZERO SQL and the destroyed row still among them
       expectGraph:
@@ -56,7 +56,7 @@ when:
           eq:
             path: parallax.compatibility.OrderItem.orderId
             value: 1
-      roundTrips: 1
+      databaseCalls: 1
       note: observing the write means issuing another read - the same relationship's rows, re-read, hold item 12 alone
       expectRows:
         - { id: 12, order_id: 1, sku: B-200, quantity: 1, shipped_on: 2024-02-15 }
@@ -65,4 +65,4 @@ when:
             postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id = ?
           binds: [1]
 then:
-  roundTrips: 5
+  databaseCalls: 5

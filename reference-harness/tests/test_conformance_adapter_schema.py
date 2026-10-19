@@ -78,9 +78,9 @@ def _valid_benchmark() -> dict:
                                 "p50": 2.8,
                                 "p95": 4.7,
                             },
-                            "roundTrips": 1,
-                            "expectRoundTrips": 1,
-                            "roundTripsOk": True,
+                            "databaseCalls": 1,
+                            "expectDatabaseCalls": 1,
+                            "databaseCallsOk": True,
                         }
                     ],
                 }
@@ -117,7 +117,7 @@ def _valid_run(observations: dict) -> dict:
 
 def test_run_accepts_ordered_milestone_set_graph_observations() -> None:
     observations = {
-        "roundTrips": 1,
+        "databaseCalls": 1,
         "graphs": [
             {
                 "pin": {"transaction-time": "2024-01-01T00:00:00+00:00"},
@@ -135,7 +135,7 @@ def test_run_accepts_ordered_milestone_set_graph_observations() -> None:
 
 def test_run_rejects_milestone_set_graph_entry_without_graph() -> None:
     observations = {
-        "roundTrips": 1,
+        "databaseCalls": 1,
         "graphs": [
             {"pin": {"transaction-time": "2024-01-01T00:00:00+00:00"}},
         ],
@@ -149,7 +149,7 @@ def test_run_rejects_milestone_set_graph_entry_without_graph() -> None:
 
 def test_run_accepts_application_lifecycle_errors() -> None:
     observations = {
-        "roundTrips": 1,
+        "databaseCalls": 1,
         "identityChecks": [{"left": "/scenario/1", "right": "/scenario/0", "same": False}],
         "errors": [{"at": "/scenario/2", "errorClass": "transaction-time-pin-read-only"}],
     }
@@ -157,10 +157,10 @@ def test_run_accepts_application_lifecycle_errors() -> None:
 
 
 def test_run_still_valid_without_lifecycle_observations() -> None:
-    # The errors key is optional/additive: an existing run output (roundTrips plus
+    # The errors key is optional/additive: an existing run output (databaseCalls plus
     # rows / identityChecks) stays valid unchanged.
     observations = {
-        "roundTrips": 1,
+        "databaseCalls": 1,
         "rows": [{"id": 1}],
         "identityChecks": [{"left": "/scenario/1", "right": "/scenario/0", "same": True}],
     }
@@ -181,7 +181,7 @@ def test_run_accepts_every_application_lifecycle_error_class(error_class: str) -
     # `expectError` set: m-identity-map's finite-pin refusal plus m-unit-work's
     # three write-value provenance refusals.
     observations = {
-        "roundTrips": 1,
+        "databaseCalls": 1,
         "errors": [{"at": "/scenario/2", "errorClass": error_class}],
     }
     assert list(_validator().iter_errors(_valid_run(observations))) == []
@@ -189,7 +189,7 @@ def test_run_accepts_every_application_lifecycle_error_class(error_class: str) -
 
 def test_run_rejects_unknown_error_class() -> None:
     observations = {
-        "roundTrips": 1,
+        "databaseCalls": 1,
         "errors": [{"at": "/scenario/2", "errorClass": "not-a-real-error"}],
     }
     assert list(_validator().iter_errors(_valid_run(observations)))
@@ -203,7 +203,7 @@ def test_run_accepts_error_classification_observations() -> None:
     # classified to plus the preserved native witness (SQLSTATE string or errno
     # integer — both wire forms are legal).
     for native in ("23505", 1062):
-        observations = {"roundTrips": 2, "errorClass": "uniqueViolation", "nativeCode": native}
+        observations = {"databaseCalls": 2, "errorClass": "uniqueViolation", "nativeCode": native}
         assert list(_validator().iter_errors(_valid_run(observations))) == []
 
 
@@ -211,7 +211,7 @@ def test_run_rejects_application_lifecycle_class_in_error_classification() -> No
     # The scalar pair carries the m-db-error taxonomy only; the application-
     # lifecycle vocabulary lives in the `errors` observation, not here.
     observations = {
-        "roundTrips": 1,
+        "databaseCalls": 1,
         "errorClass": "transaction-time-pin-read-only",
         "nativeCode": "23505",
     }
@@ -221,8 +221,8 @@ def test_run_rejects_application_lifecycle_class_in_error_classification() -> No
 def test_run_rejects_unpaired_error_classification() -> None:
     # errorClass and nativeCode travel together (dependentRequired, both ways).
     for observations in (
-        {"roundTrips": 1, "errorClass": "deadlock"},
-        {"roundTrips": 1, "nativeCode": "40P01"},
+        {"databaseCalls": 1, "errorClass": "deadlock"},
+        {"databaseCalls": 1, "nativeCode": "40P01"},
     ):
         assert list(_validator().iter_errors(_valid_run(observations)))
 
@@ -232,20 +232,20 @@ def test_run_rejects_unpaired_error_classification() -> None:
 
 def test_run_accepts_rejected_rule_observation() -> None:
     # A rejected-case run touches no database: it reports the classified rule
-    # with roundTrips: 0 (m-conformance-adapter, resolved DQ3/DQ8).
-    observations = {"roundTrips": 0, "rejectedRule": "narrow-outside-position"}
+    # with databaseCalls: 0 (m-conformance-adapter, resolved DQ3/DQ8).
+    observations = {"databaseCalls": 0, "rejectedRule": "narrow-outside-position"}
     assert list(_validator().iter_errors(_valid_run(observations))) == []
 
 
 def test_run_still_valid_without_rejected_rule_observation() -> None:
     # Additive/optional at the schema layer: an existing run output that never
     # claims the `rejected` shape stays valid unchanged.
-    observations = {"roundTrips": 1, "rows": [{"id": 1}]}
+    observations = {"databaseCalls": 1, "rows": [{"id": 1}]}
     assert list(_validator().iter_errors(_valid_run(observations))) == []
 
 
 def test_run_rejects_non_string_rejected_rule() -> None:
-    observations = {"roundTrips": 0, "rejectedRule": 12345}
+    observations = {"databaseCalls": 0, "rejectedRule": 12345}
     assert list(_validator().iter_errors(_valid_run(observations)))
 
 
@@ -315,7 +315,7 @@ def test_benchmark_rejects_legacy_metrics_shape() -> None:
             "iterations": 100,
             "p50Ms": 2.8,
             "p95Ms": 4.7,
-            "roundTrips": 1,
+            "databaseCalls": 1,
         },
     }
 

@@ -34,7 +34,7 @@ def run_evolution_case(case: case_format.Case) -> dict[str, Any]:
 
     The run touches no database and no port: describing the difference between
     two accepted models and lowering it to statements are both pure, which is
-    what makes an evolution case cost zero round trips and carry no dialect of
+    what makes an evolution case cost zero Database Calls and carry no dialect of
     its own.
     """
     when = case.document.get("when")

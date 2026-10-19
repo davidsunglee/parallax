@@ -1,4 +1,4 @@
-# Cache-hit scenario (m-process-cache): two identical finds cost ONE round trip.
+# Cache-hit scenario (m-process-cache): two identical finds cost ONE Database Call.
 model: models/account.yaml
 tags: [m-process-cache, query cache, cache-hit, scenario]
 shape: scenario
@@ -10,7 +10,7 @@ when:
           eq:
             path: parallax.compatibility.Account.id
             value: 1
-      roundTrips: 1
+      databaseCalls: 1
       note: cache MISS — execute the find once against the database
       statements:
         - sql:
@@ -24,10 +24,10 @@ when:
           eq:
             path: parallax.compatibility.Account.id
             value: 1
-      roundTrips: 0
+      databaseCalls: 0
       sameObjectAs: 0
-      note: cache HIT — same query, served from the query cache, zero round trips
+      note: cache HIT — same query, served from the query cache, zero Database Calls
       expectRows:
         - { id: 1, owner: Ada, balance: "100.00", version: 1 }
 then:
-  roundTrips: 1
+  databaseCalls: 1

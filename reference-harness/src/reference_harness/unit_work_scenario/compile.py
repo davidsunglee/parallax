@@ -83,7 +83,7 @@ class _SettledOn:
 @dataclass(frozen=True)
 class _Step:
     """What every compiled step has, whatever kind it is: its authored position,
-    the `uow` group it belongs to, its declared round trips, its golden, and the
+    the `uow` group it belongs to, its declared Database Calls, its golden, and the
     step it was read from.
 
     ``group`` is on every kind because the held-session lifecycle is: a label
@@ -101,7 +101,7 @@ class _Step:
 
     index: int
     group: str | None
-    round_trips: Any
+    database_calls: Any
     statements: _Golden
 
 
@@ -200,8 +200,8 @@ class _RowPublishingStep(_Step):
 
 @dataclass(frozen=True)
 class _UnresolvedList(_Step):
-    """The construction of a query-backed list that has not resolved: zero round
-    trips, zero rows, and no observation until a later step accesses it."""
+    """The construction of a query-backed list that has not resolved: zero
+    Database Calls, zero rows, and no observation until a later step accesses it."""
 
 
 type _CompiledStep = (
@@ -304,7 +304,7 @@ def _compile_step(case: Case, index: int, step: dict[str, Any]) -> _CompiledStep
     "Does this publish rows?" is written as its complement: the closed set of
     kinds this package executes itself is a write, an action other than ``load``,
     ``access``, or a ``mutate`` declaring ``expectRows``, and the
-    zero-round-trip construction of a query-backed list that has not resolved —
+    zero-Database-Call construction of a query-backed list that has not resolved —
     which a state-graded Scenario's find, listing no golden of its own, is not.
     Every other step publishes rows, and the observation oracle grades whichever
     step it is handed rather than asking that question again.
@@ -317,7 +317,7 @@ def _compile_step(case: Case, index: int, step: dict[str, Any]) -> _CompiledStep
     """
     label = step.get("uow")
     group = label if isinstance(label, str) else None
-    common = (index, group, step.get("roundTrips"), _Golden(tuple(step.get("statements") or ())))
+    common = (index, group, step.get("databaseCalls"), _Golden(tuple(step.get("statements") or ())))
 
     _assert_on_sources(case, index, step)
 

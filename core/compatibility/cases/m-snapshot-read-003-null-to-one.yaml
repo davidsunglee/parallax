@@ -48,4 +48,4 @@ then:
         orderItemId: 421
         code: PICKED
         orderItem: { id: 421, orderId: 42, sku: A-999, quantity: 3, shippedOn: 2024-03-10 }
-  roundTrips: 2
+  databaseCalls: 2

@@ -34,4 +34,4 @@ then:
         mariadb: ['$.pages', 300, '$.minutes', 100]
   rows:
     - { id: 10, title: Systems, detail: ISBN-10, pages: 320, minutes: null, familyVariant: Book }
-  roundTrips: 1
+  databaseCalls: 1

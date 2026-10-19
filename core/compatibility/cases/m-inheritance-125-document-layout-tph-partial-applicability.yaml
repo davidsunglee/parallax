@@ -29,4 +29,4 @@ then:
     payment_document:
       - { id: 10, kind: card, payload: { detail: mc-1010, authorizationCode: AUTH-10 } }
       - { id: 11, kind: cash, payload: { detail: '25.00' } }
-  roundTrips: 2
+  databaseCalls: 2

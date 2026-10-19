@@ -16,4 +16,4 @@ then:
   referenceSql: select id, vehicle_id from traversal_parking where vehicle_id in (select b.id from traversal_bike b join traversal_dealer d on d.id = b.dealer_id where d.name = 'Velo')
   rows:
   - {id: 31, vehicle_id: 6}
-  roundTrips: 1
+  databaseCalls: 1

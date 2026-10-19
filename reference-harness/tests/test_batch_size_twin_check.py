@@ -43,7 +43,7 @@ def _case(
                 for page in range(pages)
             ],
             "graph": {"StreamItem": graph if graph is not None else [{"id": 1}, {"id": 2}]},
-            "roundTrips": pages,
+            "databaseCalls": pages,
         },
     }
 

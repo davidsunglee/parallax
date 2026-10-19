@@ -51,4 +51,4 @@ then:
           - { id: 55, orderId: 42, body: signature required, resolvedOn: 2024-06-06 }
           - { id: 56, orderId: 42, body: insured, resolvedOn: 2024-05-05 }
           - { id: 54, orderId: 42, body: expedite, resolvedOn: 2024-04-04 }
-  roundTrips: 2
+  databaseCalls: 2

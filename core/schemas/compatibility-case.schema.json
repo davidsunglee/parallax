@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://parallax.dev/schemas/compatibility-case.schema.json",
   "title": "Parallax Compatibility Case (m-case-format)",
-  "description": "The case envelope, grouped as given / when / then. Identity and routing (`model`, `tags`, `lane`) plus the explicit `shape` discriminator and the optional `compileEligibility` declaration (present only to mark a case RUN-ONLY for the compile sweep) stay top-level; everything else is bucketed into `given` (ambient world-state before the action: `fixtures`, `apply`, `corrupt`, `fault`, `sessionDefault`, and the Database Root's configured `databaseOptions`), `when` (the action under test and how the client performs it: `objectQuery` | `writeSequence` | `scenario` | `coherence` | `concurrency` | `boundary` | `edit` | `attempts` | `write`, plus context `uow` / `stream` / `mutation` / `equivalentEncodings`), and `then` (everything the case asserts: `statements`, `referenceSql`, `rows`, `graph`, `tableState`, `affectedRows`, `errorClass`, `nativeCode`, `outcome`, edit `result` / `carry` / `source`, `rejectedRule`, `evolution`, `schema`, `roundTrips`, `tolerance`). Every SQL statement — golden or naive — is a `{sql, binds}` statement entry (`$defs/statementEntry`): its `sql` is a dialect-keyed map (`postgres` / `mariadb`) at golden locations (`then.statements`, per-step `statements`) and a plain string at naive locations (`given.apply`); `binds` is authored once per statement and defaults to `[]`. A case is one of eleven shapes, named by the required top-level `shape`: a `read` case (a queryable `when.objectQuery`, asserting `then.rows` / `then.graph`); a `writeSequence` case (ordered DML under `when.writeSequence`, asserting `then.tableState`); a `scenario` case (m-unit-work — ordered steps under `when.scenario`, golden SQL per step); a `conflict` case (m-opt-lock — a single-attempt observation-requiring keyed write against a non-temporal target asserted by `then.affectedRows`, or an ordered `when.attempts` retry sequence); a `coherence` case (cross-process cache coherence — a two-node sequence under `when.coherence`); an `error` case (m-db-error — `then.errorClass` + `then.nativeCode`, triggered by top-level `then.statements` or a `when.concurrency` choreography); a `concurrencySuccess` case (a `when.concurrency` choreography with NO `then.errorClass` — the m-read-lock behavioral read lock and the two-session isolation witnesses); a `boundary` case (m-auto-retry/m-opt-lock bounded automatic retry — `when.boundary` ordered actions + `then.outcome`, on the `api-conformance` lane, carrying no golden SQL); an `edit` case (m-edit — one native edited value derived from `when.edit.source`, asserting `then.result`, `then.carry`, and `then.source`, on the `api-conformance` lane, carrying no golden SQL); or a `rejected` case (m-value-object / m-predicate / m-object-query negative validation — a schema-valid `when.objectQuery` OR a `when.write` a model-aware validator MUST refuse PRE-SQL, naming the violated normative rule in `then.rejectedRule`, carrying no golden SQL); or an `evolution` case (m-model-evolution — the complete difference between the two accepted models `when.evolve` names, asserted in `then.evolution` and, for a unilateral expectation, in `then.schema` keyed by Dialect Identity, carrying no top-level `model` and no golden SQL). Every case carries an optional `lane` (`harness` default | `api-conformance`): a `harness`-lane case executes as today, while an `api-conformance`-lane case (every boundary and edit case, plus the read-lock matrix reads) is schema-validated by the harness but satisfied by each language's API Conformance Suite.",
+  "description": "The case envelope, grouped as given / when / then. Identity and routing (`model`, `tags`, `lane`) plus the explicit `shape` discriminator and the optional `compileEligibility` declaration (present only to mark a case RUN-ONLY for the compile sweep) stay top-level; everything else is bucketed into `given` (ambient world-state before the action: `fixtures`, `apply`, `corrupt`, `fault`, `sessionDefault`, and the Database Root's configured `databaseOptions`), `when` (the action under test and how the client performs it: `objectQuery` | `writeSequence` | `scenario` | `coherence` | `concurrency` | `boundary` | `edit` | `attempts` | `write`, plus context `uow` / `stream` / `mutation` / `equivalentEncodings`), and `then` (everything the case asserts: `statements`, `referenceSql`, `rows`, `graph`, `tableState`, `affectedRows`, `errorClass`, `nativeCode`, `outcome`, edit `result` / `carry` / `source`, `rejectedRule`, `evolution`, `schema`, `databaseCalls`, `tolerance`). Every SQL statement — golden or naive — is a `{sql, binds}` statement entry (`$defs/statementEntry`): its `sql` is a dialect-keyed map (`postgres` / `mariadb`) at golden locations (`then.statements`, per-step `statements`) and a plain string at naive locations (`given.apply`); `binds` is authored once per statement and defaults to `[]`. A case is one of eleven shapes, named by the required top-level `shape`: a `read` case (a queryable `when.objectQuery`, asserting `then.rows` / `then.graph`); a `writeSequence` case (ordered DML under `when.writeSequence`, asserting `then.tableState`); a `scenario` case (m-unit-work — ordered steps under `when.scenario`, golden SQL per step); a `conflict` case (m-opt-lock — a single-attempt observation-requiring keyed write against a non-temporal target asserted by `then.affectedRows`, or an ordered `when.attempts` retry sequence); a `coherence` case (cross-process cache coherence — a two-node sequence under `when.coherence`); an `error` case (m-db-error — `then.errorClass` + `then.nativeCode`, triggered by top-level `then.statements` or a `when.concurrency` choreography); a `concurrencySuccess` case (a `when.concurrency` choreography with NO `then.errorClass` — the m-read-lock behavioral read lock and the two-session isolation witnesses); a `boundary` case (m-auto-retry/m-opt-lock bounded automatic retry — `when.boundary` ordered actions + `then.outcome`, on the `api-conformance` lane, carrying no golden SQL); an `edit` case (m-edit — one native edited value derived from `when.edit.source`, asserting `then.result`, `then.carry`, and `then.source`, on the `api-conformance` lane, carrying no golden SQL); or a `rejected` case (m-value-object / m-predicate / m-object-query negative validation — a schema-valid `when.objectQuery` OR a `when.write` a model-aware validator MUST refuse PRE-SQL, naming the violated normative rule in `then.rejectedRule`, carrying no golden SQL); or an `evolution` case (m-model-evolution — the complete difference between the two accepted models `when.evolve` names, asserted in `then.evolution` and, for a unilateral expectation, in `then.schema` keyed by Dialect Identity, carrying no top-level `model` and no golden SQL). Every case carries an optional `lane` (`harness` default | `api-conformance`): a `harness`-lane case executes as today, while an `api-conformance`-lane case (every boundary and edit case, plus the read-lock matrix reads) is schema-validated by the harness but satisfied by each language's API Conformance Suite.",
   "type": "object",
   "additionalProperties": false,
   "required": ["tags", "shape"],
@@ -56,7 +56,7 @@
       }
     },
     {
-      "description": "A scenario case (m-unit-work): ordered operation steps with per-step round-trip counts proving the cache/identity contract. Golden SQL lives per step, so `then.statements` is absent.",
+      "description": "A scenario case (m-unit-work): ordered operation steps with per-step Database Call counts proving the cache/identity contract. Golden SQL lives per step, so `then.statements` is absent.",
       "required": ["shape", "when"],
       "properties": {
         "shape": { "const": "scenario" },
@@ -233,7 +233,7 @@
       ]
     },
     {
-      "description": "An evolution case (m-model-evolution): the complete difference between two accepted Metamodels, asserted as one value. `when.evolve` names the earlier endpoint — a model descriptor, or `null` for the explicit fresh-provisioning sentinel — and the later one, so the case carries no top-level `model`; the later endpoint is the model every per-case check reads. `then.evolution` asserts the whole result together, because the returned Evolution is one internally consistent value and splitting a transition across classification-only or operation-only cases is not conforming. A unilateral expectation also carries `then.schema`, keyed by Dialect Identity; a coordinated expectation MUST omit it, because a Coordinated Evolution is not an accepted input to schema generation. The case is pure — it reaches no database and emits no DML — so it carries no golden SQL and costs zero round trips.",
+      "description": "An evolution case (m-model-evolution): the complete difference between two accepted Metamodels, asserted as one value. `when.evolve` names the earlier endpoint — a model descriptor, or `null` for the explicit fresh-provisioning sentinel — and the later one, so the case carries no top-level `model`; the later endpoint is the model every per-case check reads. `then.evolution` asserts the whole result together, because the returned Evolution is one internally consistent value and splitting a transition across classification-only or operation-only cases is not conforming. A unilateral expectation also carries `then.schema`, keyed by Dialect Identity; a coordinated expectation MUST omit it, because a Coordinated Evolution is not an accepted input to schema generation. The case is pure — it reaches no database and emits no DML — so it carries no golden SQL and costs zero Database Calls.",
       "required": ["shape", "when", "then"],
       "properties": {
         "shape": {"const": "evolution"},
@@ -268,7 +268,7 @@
   ],
   "allOf": [
     {
-      "description": "A state-graded case is a scenario carrying no golden SQL anywhere (m-case-format *State-graded scenarios*): no step lists `statements` or `referenceSql`, and `then` states no `executionLifecycle`, whose events index golden statements. Its steps are finds and buffers of submissions, each keyed submission writing one row. A step carries only the members such a step is run by or graded on, beside an ungraded `roundTrips` and `note`, and a write step states no `expectRows`: an action, a golden, a graph or identity observable, or a step-level `on` or `expectError` (a submission's own) is something nothing its run reports could grade. It states the complete final `then.tableState` and every group's fate in `then.units`, and is run-only, since no golden exists for a compile lane to compare against.",
+      "description": "A state-graded case is a scenario carrying no golden SQL anywhere (m-case-format *State-graded scenarios*): no step lists `statements` or `referenceSql`, and `then` states no `executionLifecycle`, whose events index golden statements. Its steps are finds and buffers of submissions, each keyed submission writing one row. A step carries only the members such a step is run by or graded on, beside an ungraded `databaseCalls` and `note`, and a write step states no `expectRows`: an action, a golden, a graph or identity observable, or a step-level `on` or `expectError` (a submission's own) is something nothing its run reports could grade. It states the complete final `then.tableState` and every group's fate in `then.units`, and is run-only, since no golden exists for a compile lane to compare against.",
       "if": { "required": ["grading"] },
       "then": {
         "required": ["compileEligibility", "then"],
@@ -279,7 +279,7 @@
               "scenario": {
                 "items": {
                   "propertyNames": {
-                    "enum": ["objectQuery", "equivalentEncodings", "stream", "write", "uow", "roundTrips", "expectRows", "note"]
+                    "enum": ["objectQuery", "equivalentEncodings", "stream", "write", "uow", "databaseCalls", "expectRows", "note"]
                   },
                   "if": { "required": ["write"] },
                   "then": { "not": { "required": ["expectRows"] } },
@@ -300,13 +300,13 @@
         }
       },
       "else": {
-        "description": "A golden-graded scenario's every step declares the round trips its golden SQL is graded against, and its buffered entries are keyed instructions whose verbs accept them: its golden SQL is the independent lowering of that keyed buffer. A source-authorized replacement is state-graded only: the coverage it establishes depends on what its flush reads. A state-graded step MAY omit `roundTrips`, which nothing grades.",
+        "description": "A golden-graded scenario's every step declares the Database Calls its golden SQL is graded against, and its buffered entries are keyed instructions whose verbs accept them: its golden SQL is the independent lowering of that keyed buffer. A source-authorized replacement is state-graded only: the coverage it establishes depends on what its flush reads. A state-graded step MAY omit `databaseCalls`, which nothing grades.",
         "properties": {
           "when": {
             "properties": {
               "scenario": {
                 "items": {
-                  "required": ["roundTrips"],
+                  "required": ["databaseCalls"],
                   "properties": {
                     "write": {
                       "if": { "type": "array" },
@@ -381,9 +381,9 @@
       "then": {"required": ["model"]}
     },
     {
-      "description": "An `evolution` case declares the round trips it actually costs, and describing a difference between two accepted models costs NONE: `evolve` and schema generation are pure, reaching no provider and no database, so `then.roundTrips` is pinned to `0` where it is declared at all rather than merely permitted to be. The property's own default of `1` describes the shapes that reach the database; this shape's effective default is `0`, the same number a declaration would carry.",
+      "description": "An `evolution` case declares the Database Calls it actually costs, and describing a difference between two accepted models costs NONE: `evolve` and schema generation are pure, reaching no provider and no database, so `then.databaseCalls` is pinned to `0` where it is declared at all rather than merely permitted to be. The property's own default of `1` describes the shapes that reach the database; this shape's effective default is `0`, the same number a declaration would carry.",
       "if": {"required": ["shape"], "properties": {"shape": {"const": "evolution"}}},
-      "then": {"properties": {"then": {"properties": {"roundTrips": {"const": 0}}}}}
+      "then": {"properties": {"then": {"properties": {"databaseCalls": {"const": 0}}}}}
     },
     {
       "description": "`then.evolution` and `then.schema` belong to the `evolution` shape alone. Both are assertions about a pure description of two models rather than about a run, so every other shape's executor walks past them and a case declaring one elsewhere would author an oracle nothing grades.",
@@ -468,7 +468,7 @@
       }
     },
     {
-      "description": "`then.roundTrips` may declare ZERO only where a case can cost nothing: a `read` stating an empty `then.statements`, which reads a position with no concrete subtype and so issues no statement (the conditional below pins it to zero); a `scenario`, whose total is the SUM of its steps' own counts and is therefore zero exactly when every step costs nothing (a keyed write action step observes a value's provenance and emits no statement either way); a `rejected` case, which a validator refuses PRE-SQL and which therefore always costs zero; and a case whose `then.outcome` is `boundary-failed`, whose boundary never opened — the callback never ran, and begin, commit, and rollback are no Database Call, so nothing it did reached the database as a counted round trip. The outcome qualifies in BOTH forms it may be stated in: directly, or as a dialect-keyed map whose EVERY named dialect fails to open, since a count states one number for every dialect the case claims anything about and a map naming one that opened states a case costing more there. Every other case asserts one operation that reaches the database — a read's golden SQL, a writeSequence's ordered DML, a conflict attempt, the statement an error case raises, a boundary case's own body — so zero states an impossible total there and stays a schema violation rather than a later harness failure.",
+      "description": "`then.databaseCalls` may declare ZERO only where a case can cost nothing: a `read` stating an empty `then.statements`, which reads a position with no concrete subtype and so issues no statement (the conditional below pins it to zero); a `scenario`, whose total is the SUM of its steps' own counts and is therefore zero exactly when every step costs nothing (a keyed write action step observes a value's provenance and emits no statement either way); a `rejected` case, which a validator refuses PRE-SQL and which therefore always costs zero; and a case whose `then.outcome` is `boundary-failed`, whose boundary never opened — the callback never ran, and begin, commit, and rollback are no Database Call, so nothing it did reached the database as a counted Database Call. The outcome qualifies in BOTH forms it may be stated in: directly, or as a dialect-keyed map whose EVERY named dialect fails to open, since a count states one number for every dialect the case claims anything about and a map naming one that opened states a case costing more there. Every other case asserts one operation that reaches the database — a read's golden SQL, a writeSequence's ordered DML, a conflict attempt, the statement an error case raises, a boundary case's own body — so zero states an impossible total there and stays a schema violation rather than a later harness failure.",
       "if": {
         "allOf": [
           {
@@ -513,11 +513,11 @@
         ]
       },
       "then": {
-        "properties": { "then": { "properties": { "roundTrips": { "minimum": 1 } } } }
+        "properties": { "then": { "properties": { "databaseCalls": { "minimum": 1 } } } }
       }
     },
     {
-      "description": "An empty `then.statements` belongs to the `read` shape alone (m-case-format *Structurally empty reads*). A read whose queried position has no concrete subtype issues no statement, and states so: zero declared round trips, no naive `referenceSql` (no statement can read a position no table describes), and no `storedDataIssues` (no row reaches delivery). Every other shape asserts at least one statement wherever it authors `then.statements`. Whether the queried position is in fact empty is a model-aware fact the schema cannot see, so a validator holding the model establishes it.",
+      "description": "An empty `then.statements` belongs to the `read` shape alone (m-case-format *Structurally empty reads*). A read whose queried position has no concrete subtype issues no statement, and states so: zero declared Database Calls, no naive `referenceSql` (no statement can read a position no table describes), and no `storedDataIssues` (no row reaches delivery). Every other shape asserts at least one statement wherever it authors `then.statements`. Whether the queried position is in fact empty is a model-aware fact the schema cannot see, so a validator holding the model establishes it.",
       "if": {
         "required": ["then"],
         "properties": {
@@ -531,8 +531,8 @@
         "properties": {
           "shape": { "const": "read" },
           "then": {
-            "required": ["roundTrips"],
-            "properties": { "roundTrips": { "const": 0 } },
+            "required": ["databaseCalls"],
+            "properties": { "databaseCalls": { "const": 0 } },
             "not": {
               "anyOf": [{ "required": ["referenceSql"] }, { "required": ["storedDataIssues"] }]
             }
@@ -541,13 +541,13 @@
       }
     },
     {
-      "description": "A `rejected` case declares the round trips it actually costs, and a pre-SQL refusal costs NONE: the validator refuses the input before any statement is composed, so `then.roundTrips` is pinned to `0` where it is declared at all rather than merely permitted to be. The property's own default of `1` describes the shapes that reach the database; this shape's effective default is `0`, the same number a declaration would carry, which is why every rejected case in the corpus omits it.",
+      "description": "A `rejected` case declares the Database Calls it actually costs, and a pre-SQL refusal costs NONE: the validator refuses the input before any statement is composed, so `then.databaseCalls` is pinned to `0` where it is declared at all rather than merely permitted to be. The property's own default of `1` describes the shapes that reach the database; this shape's effective default is `0`, the same number a declaration would carry, which is why every rejected case in the corpus omits it.",
       "if": {
         "required": ["shape"],
         "properties": { "shape": { "const": "rejected" } }
       },
       "then": {
-        "properties": { "then": { "properties": { "roundTrips": { "const": 0 } } } }
+        "properties": { "then": { "properties": { "databaseCalls": { "const": 0 } } } }
       }
     },
     {
@@ -601,7 +601,7 @@
       }
     },
     {
-      "description": "`then.outcome` belongs to the `boundary` shape alone (m-case-format field table). It is the portable verdict on a UNIT OF WORK — committed, aborted, a surfaced error kind, or a refused boundary option — and no other shape runs one to a verdict, so a case declaring it elsewhere would author an oracle its own executor never grades. Confining the member confines its whole vocabulary with it: the three refusals, the dialect-keyed form, and the zero-round-trip relaxation `boundary-failed` carries, which would otherwise let a case asserting golden SQL declare it cost nothing.",
+      "description": "`then.outcome` belongs to the `boundary` shape alone (m-case-format field table). It is the portable verdict on a UNIT OF WORK — committed, aborted, a surfaced error kind, or a refused boundary option — and no other shape runs one to a verdict, so a case declaring it elsewhere would author an oracle its own executor never grades. Confining the member confines its whole vocabulary with it: the three refusals, the dialect-keyed form, and the zero-Database-Call relaxation `boundary-failed` carries, which would otherwise let a case asserting golden SQL declare it cost nothing.",
       "if": {
         "required": ["then"],
         "properties": { "then": { "required": ["outcome"] } }
@@ -690,7 +690,7 @@
       }
     },
     "grading": {
-      "description": "scenario cases only. How the case is graded (m-case-format *State-graded scenarios*). Omitted, every step's golden SQL is graded. `state` — no step carries golden SQL: the case states its inputs, each submission its verb refuses (`expectError`), each `uow` group's fate (`then.units`), and the complete final `then.tableState`, and an adapter is graded on those observations. Round trips may be stated but are not graded.",
+      "description": "scenario cases only. How the case is graded (m-case-format *State-graded scenarios*). Omitted, every step's golden SQL is graded. `state` — no step carries golden SQL: the case states its inputs, each submission its verb refuses (`expectError`), each `uow` group's fate (`then.units`), and the complete final `then.tableState`, and an adapter is graded on those observations. Database Calls may be stated but are not graded.",
       "const": "state"
     },
     "given": {
@@ -973,7 +973,7 @@
           }
         },
         "scenario": {
-          "description": "A scenario (m-unit-work) case: an ordered list of steps proving the unit-of-work / identity / query-cache contract. A step is either a READ step (issues an `objectQuery`) or a WRITE step (commits DML via `write`). Golden SQL lives PER STEP (as `statements`), not at `then.statements`: each read costs a declared number of database round trips, and an interleaved committed write lets a later step prove read-your-own-writes or query-cache invalidation. The harness asserts the round-trip counts are internally consistent with the golden SQL each step lists.",
+          "description": "A scenario (m-unit-work) case: an ordered list of steps proving the unit-of-work / identity / query-cache contract. A step is either a READ step (issues an `objectQuery`) or a WRITE step (commits DML via `write`). Golden SQL lives PER STEP (as `statements`), not at `then.statements`: each read costs a declared number of Database Calls, and an interleaved committed write lets a later step prove read-your-own-writes or query-cache invalidation. The harness asserts the Database Call counts are internally consistent with the golden SQL each step lists.",
           "type": "array",
           "minItems": 1,
           "items": {
@@ -981,15 +981,15 @@
             "additionalProperties": false,
             "oneOf": [
               {
-                "description": "A read step: issues one Object Query. A cache miss costs >= 1 round trip and lists golden SQL; a cache hit costs 0 and lists none. It names its queried entity inside its own `objectQuery.target`, exactly as a read case does.",
+                "description": "A read step: issues one Object Query. A cache miss costs >= 1 Database Call and lists golden SQL; a cache hit costs 0 and lists none. It names its queried entity inside its own `objectQuery.target`, exactly as a read case does.",
                 "required": ["objectQuery"]
               },
               {
-                "description": "A write step: applies golden DML between finds. By default the DML is COMMITTED so a later find observes it; with `rollback: true` an UNGROUPED step's DML is applied and then ROLLED BACK; a grouped step's fate is its group's (`then.units`). A no-op write issues NO DML: it declares `roundTrips: 0` and lists no `statements`. A grouped write's submission MAY name the read step whose result it settles against with `on` (m-case-format *Settling against a grouped find*): the write then consumes the observation that read recorded, rather than one resolved from case state.",
+                "description": "A write step: applies golden DML between finds. By default the DML is COMMITTED so a later find observes it; with `rollback: true` an UNGROUPED step's DML is applied and then ROLLED BACK; a grouped step's fate is its group's (`then.units`). A no-op write issues NO DML: it declares `databaseCalls: 0` and lists no `statements`. A grouped write's submission MAY name the read step whose result it settles against with `on` (m-case-format *Settling against a grouped find*): the write then consumes the observation that read recorded, rather than one resolved from case state.",
                 "required": ["write"]
               },
               {
-                "description": "An ACTION step (m-case-format lifecycle vocabulary): performs a managed-object lifecycle verb named by `action` against the result of an earlier step (`on`). It carries per-step golden SQL (`statements`) when the verb hits the database (a `load` / `access` relationship query, or `flush` / `commit` DML) exactly as a read / write step does, and per-step observables: `expectRows` (rows a `load` returns or re-read observes, or the derived Wire value a `mutate` publishes), `expectError` (a neutral application-lifecycle error the verb raises), and `sameObjectAs` / `differentObjectFrom` reference-identity assertions. A `load` / first `access` resolving read is INSTANCE-FORM (m-case-format *Read result form*, m-sql *Read projection*): it materializes the loaded / accessed related objects, so a value-object-bearing target projects its applicable Storage Layout `Document` slot, exactly as a deep-fetch child level does. A cache-hit re-access lists no golden SQL and declares `roundTrips: 0`, exactly like a cache-hit read step. A `mutate` declaring `expectRows` publishes its in-memory derived mapping without a re-read or SQL. Golden SQL still lives PER STEP, so a scenario case with action steps carries no top-level `then.statements`.",
+                "description": "An ACTION step (m-case-format lifecycle vocabulary): performs a managed-object lifecycle verb named by `action` against the result of an earlier step (`on`). It carries per-step golden SQL (`statements`) when the verb hits the database (a `load` / `access` relationship query, or `flush` / `commit` DML) exactly as a read / write step does, and per-step observables: `expectRows` (rows a `load` returns or re-read observes, or the derived Wire value a `mutate` publishes), `expectError` (a neutral application-lifecycle error the verb raises), and `sameObjectAs` / `differentObjectFrom` reference-identity assertions. A `load` / first `access` resolving read is INSTANCE-FORM (m-case-format *Read result form*, m-sql *Read projection*): it materializes the loaded / accessed related objects, so a value-object-bearing target projects its applicable Storage Layout `Document` slot, exactly as a deep-fetch child level does. A cache-hit re-access lists no golden SQL and declares `databaseCalls: 0`, exactly like a cache-hit read step. A `mutate` declaring `expectRows` publishes its in-memory derived mapping without a re-read or SQL. Golden SQL still lives PER STEP, so a scenario case with action steps carries no top-level `then.statements`.",
                 "required": ["action"]
               }
             ],
@@ -1017,7 +1017,7 @@
                 "then": { "required": ["on"] }
               },
               {
-                "description": "A keyed write ACTION verb (`insert` / `amend`) is handed a value rather than a prior step's result, so it REQUIRES the `value` provenance token and names no `on` (m-unit-work *Write value provenance*). `value` is legal on no other step: provenance is a property of the value a verb is handed, and every other step form is handed none. Such a step carries NO golden SQL and declares `roundTrips: 0` (m-case-format *Keyed write action steps*): a refusal stops the verb before it buffers anything, and the one acceptance this shape admits — the `amend` of a value no author changed, per the sibling `insert` rule — buffers nothing either, so its whole observable is the per-step `expectError`.",
+                "description": "A keyed write ACTION verb (`insert` / `amend`) is handed a value rather than a prior step's result, so it REQUIRES the `value` provenance token and names no `on` (m-unit-work *Write value provenance*). `value` is legal on no other step: provenance is a property of the value a verb is handed, and every other step form is handed none. Such a step carries NO golden SQL and declares `databaseCalls: 0` (m-case-format *Keyed write action steps*): a refusal stops the verb before it buffers anything, and the one acceptance this shape admits — the `amend` of a value no author changed, per the sibling `insert` rule — buffers nothing either, so its whole observable is the per-step `expectError`.",
                 "if": {
                   "required": ["action"],
                   "properties": { "action": { "enum": ["insert", "amend"] } }
@@ -1028,12 +1028,12 @@
                     { "not": { "required": ["on"] } },
                     { "not": { "required": ["statements"] } }
                   ],
-                  "properties": { "roundTrips": { "const": 0 } }
+                  "properties": { "databaseCalls": { "const": 0 } }
                 },
                 "else": { "not": { "required": ["value"] } }
               },
               {
-                "description": "An `insert` keyed write action step REQUIRES `expectError`. Such a step declares `roundTrips: 0` and carries no golden SQL, so the only ACCEPTED write it can express is one that MATERIALIZES NOTHING (`m-case-format` *Keyed write action steps*) — the `amend` of a value no author changed, which buffers nothing. An accepted `insert` is never that: it opens a row, so the verb buffers a write the committing unit of work flushes, and the step emits DML. A step declaring acceptance (no `expectError`) beside that zero would assert two things that cannot both hold, and nothing could catch it: the wire harness never runs the case, the API Conformance Suite asserts no golden SQL, and it grades the zero as the absence of the very durable effect the acceptance produces. So an `insert` step states the refusal its value's provenance earns, and a keyed write whose acceptance is observable as an emitted statement is authored where that statement has an oracle, never here.",
+                "description": "An `insert` keyed write action step REQUIRES `expectError`. Such a step declares `databaseCalls: 0` and carries no golden SQL, so the only ACCEPTED write it can express is one that MATERIALIZES NOTHING (`m-case-format` *Keyed write action steps*) — the `amend` of a value no author changed, which buffers nothing. An accepted `insert` is never that: it opens a row, so the verb buffers a write the committing unit of work flushes, and the step emits DML. A step declaring acceptance (no `expectError`) beside that zero would assert two things that cannot both hold, and nothing could catch it: the wire harness never runs the case, the API Conformance Suite asserts no golden SQL, and it grades the zero as the absence of the very durable effect the acceptance produces. So an `insert` step states the refusal its value's provenance earns, and a keyed write whose acceptance is observable as an emitted statement is authored where that statement has an oracle, never here.",
                 "if": {
                   "required": ["action"],
                   "properties": { "action": { "const": "insert" } }
@@ -1139,7 +1139,7 @@
                 "items": { "type": "object" }
               },
               "stream": {
-                "description": "The streamed-delivery context member's SECOND placement (m-case-format *Streamed read steps*): this READ step's `objectQuery` is delivered one root at a time rather than resolved eagerly, and the step's own `statements` are the delivery's pages — each page's `1 + L` group, concatenated — so its `roundTrips` is that list's length. Its `expectRows` are the roots the delivery published across every page. This is what lets a `uow`-grouped write step name it with `on` and settle against the observation the DELIVERY recorded, which is the corpus's own statement that claim scope is derived from evidence data rather than from the value it travelled on.",
+                "description": "The streamed-delivery context member's SECOND placement (m-case-format *Streamed read steps*): this READ step's `objectQuery` is delivered one root at a time rather than resolved eagerly, and the step's own `statements` are the delivery's pages — each page's `1 + L` group, concatenated — so its `databaseCalls` is that list's length. Its `expectRows` are the roots the delivery published across every page. This is what lets a `uow`-grouped write step name it with `on` and settle against the observation the DELIVERY recorded, which is the corpus's own statement that claim scope is derived from evidence data rather than from the value it travelled on.",
                 "$ref": "#/$defs/streamContext"
               },
               "write": {
@@ -1151,21 +1151,21 @@
                 ]
               },
               "rollback": {
-                "description": "Optional (write steps only). When true, the step's golden DML is applied and then ROLLED BACK instead of committed — the observable form of the m-unit-work abort contract. It is the fate of an UNGROUPED step's own unit of work, which rolls back right after it; a grouped step states none, its group's fate being `then.units`'s. The rolled-back DML still executes, so the step's roundTrips count its statements exactly as a committed write does.",
+                "description": "Optional (write steps only). When true, the step's golden DML is applied and then ROLLED BACK instead of committed — the observable form of the m-unit-work abort contract. It is the fate of an UNGROUPED step's own unit of work, which rolls back right after it; a grouped step states none, its group's fate being `then.units`'s. The rolled-back DML still executes, so the step's databaseCalls count its statements exactly as a committed write does.",
                 "type": "boolean"
               },
               "uow": {
-                "description": "Optional per-step unit-of-work GROUPING label (m-unit-work; sibling of `objectQuery`/`write`/`roundTrips`, legal on a read or write step ONLY — the sibling `allOf` conditional forbids it on an action step, whose lifecycle-object engine path does not observe grouping). Steps sharing the SAME label execute inside ONE held transaction (one unit of work, one connection) instead of each step's own default boundary; steps carrying NO `uow` key keep today's semantics exactly (an ungrouped write step is its own commit/rollback boundary; an ungrouped find runs on the autocommit connection) — grouping is opt-in and changes the meaning of no existing (unlabeled) case. Steps execute in AUTHORED order; a group's own steps need NOT be contiguous — two groups MAY interleave (the classic optimistic-lock race: one unit of work's observing find, then a concurrent unit of work's observe-and-commit, then back to the first unit of work's own doomed write). The group COMMITS after its LAST step, UNLESS `then.units` states it `rolledBack`, in which case the group ROLLS BACK after its last step instead — the whole group is the abandoned unit of work, which is what lets a step later in the SAME group (e.g. a re-issued find) observe a force-flushed write the eventual abort then erases (`core/spec/m-unit-work.md` \"Abort\"). A read (`objectQuery`) step inside a group reads THROUGH the group's own transaction (read-your-own-writes): its `expectRows` are what THAT connection observes mid-transaction, not the post-commit / post-rollback state.",
+                "description": "Optional per-step unit-of-work GROUPING label (m-unit-work; sibling of `objectQuery`/`write`/`databaseCalls`, legal on a read or write step ONLY — the sibling `allOf` conditional forbids it on an action step, whose lifecycle-object engine path does not observe grouping). Steps sharing the SAME label execute inside ONE held transaction (one unit of work, one connection) instead of each step's own default boundary; steps carrying NO `uow` key keep today's semantics exactly (an ungrouped write step is its own commit/rollback boundary; an ungrouped find runs on the autocommit connection) — grouping is opt-in and changes the meaning of no existing (unlabeled) case. Steps execute in AUTHORED order; a group's own steps need NOT be contiguous — two groups MAY interleave (the classic optimistic-lock race: one unit of work's observing find, then a concurrent unit of work's observe-and-commit, then back to the first unit of work's own doomed write). The group COMMITS after its LAST step, UNLESS `then.units` states it `rolledBack`, in which case the group ROLLS BACK after its last step instead — the whole group is the abandoned unit of work, which is what lets a step later in the SAME group (e.g. a re-issued find) observe a force-flushed write the eventual abort then erases (`core/spec/m-unit-work.md` \"Abort\"). A read (`objectQuery`) step inside a group reads THROUGH the group's own transaction (read-your-own-writes): its `expectRows` are what THAT connection observes mid-transaction, not the post-commit / post-rollback state.",
                 "type": "string",
                 "minLength": 1
               },
-              "roundTrips": {
-                "description": "How many database round trips this step costs. A READ cache HIT costs 0; a read cache MISS that executes one statement costs 1. A WRITE step's round trips equal the committed DML statements it lists. MUST equal the number of golden SQL statements this step lists for each dialect.",
+              "databaseCalls": {
+                "description": "How many Database Calls this step costs. A READ cache HIT costs 0; a read cache MISS that executes one statement costs 1. A WRITE step's Database Calls equal the committed DML statements it lists. MUST equal the number of golden SQL statements this step lists for each dialect.",
                 "type": "integer",
                 "minimum": 0
               },
               "statements": {
-                "description": "The golden SQL this step emits, as an ordered list of `{sql, binds}` statement entries (dialect-keyed map form). Present only for steps that hit the database (roundTrips >= 1); absent for a cache hit (roundTrips 0).",
+                "description": "The golden SQL this step emits, as an ordered list of `{sql, binds}` statement entries (dialect-keyed map form). Present only for steps that hit the database (databaseCalls >= 1); absent for a cache hit (databaseCalls 0).",
                 "$ref": "#/$defs/goldenStatements"
               },
               "expectRows": {
@@ -1497,7 +1497,7 @@
       }
     },
     "then": {
-      "description": "Everything the case asserts after the action runs: the golden SQL an implementation is expected to emit (`statements`), the naive oracle (`referenceSql`), the observed data (`rows` / `graph` / `tableState`), the counts and codes (`affectedRows` / `errorClass` / `nativeCode` / `roundTrips`), the portable boundary `outcome`, the transient execution-lifecycle `executionLifecycle`, and the numeric-comparison `tolerance`.",
+      "description": "Everything the case asserts after the action runs: the golden SQL an implementation is expected to emit (`statements`), the naive oracle (`referenceSql`), the observed data (`rows` / `graph` / `tableState`), the counts and codes (`affectedRows` / `errorClass` / `nativeCode` / `databaseCalls`), the portable boundary `outcome`, the transient execution-lifecycle `executionLifecycle`, and the numeric-comparison `tolerance`.",
       "type": "object",
       "additionalProperties": false,
       "properties": {
@@ -1737,14 +1737,14 @@
             "reference-ambiguous-entity-name"
           ]
         },
-        "roundTrips": {
-          "description": "Declared number of SQL statements for the operation. For a deep-fetch read case this MUST equal the number of authored/executed `then.statements` for each dialect; child SQL is omitted when an earlier level gathers no parent keys or a level's target position has no concrete subtype. For a writeSequence case it MUST equal the number of ordered DML statements; for a scenario case it MUST equal the SUM of the steps' per-step roundTrips — which is ZERO for a scenario whose every step costs none (a keyed write action step observes a value's provenance and emits no statement either way). A `rejected` case costs zero too: its input is refused pre-SQL, so the top-level `allOf` pins it to 0 rather than merely admitting it. A case whose `then.outcome` is `boundary-failed` costs zero as well, its boundary having never opened and its callback never run, and so does a `read` stating an empty `then.statements`, whose queried position has no concrete subtype. Those two shapes, that one outcome, and that one read are the whole of the relaxation — the same `allOf` keeps the minimum of 1 everywhere else — and the default of 1 below describes the shapes that reach the database, so a consumer deriving an effective count for an undeclared `rejected` case reads ZERO rather than that default.",
+        "databaseCalls": {
+          "description": "Declared number of SQL statements for the operation. For a deep-fetch read case this MUST equal the number of authored/executed `then.statements` for each dialect; child SQL is omitted when an earlier level gathers no parent keys or a level's target position has no concrete subtype. For a writeSequence case it MUST equal the number of ordered DML statements; for a scenario case it MUST equal the SUM of the steps' per-step databaseCalls — which is ZERO for a scenario whose every step costs none (a keyed write action step observes a value's provenance and emits no statement either way). A `rejected` case costs zero too: its input is refused pre-SQL, so the top-level `allOf` pins it to 0 rather than merely admitting it. A case whose `then.outcome` is `boundary-failed` costs zero as well, its boundary having never opened and its callback never run, and so does a `read` stating an empty `then.statements`, whose queried position has no concrete subtype. Those two shapes, that one outcome, and that one read are the whole of the relaxation — the same `allOf` keeps the minimum of 1 everywhere else — and the default of 1 below describes the shapes that reach the database, so a consumer deriving an effective count for an undeclared `rejected` case reads ZERO rather than that default.",
           "type": "integer",
           "minimum": 0,
           "default": 1
         },
         "executionLifecycle": {
-          "description": "The transient execution-lifecycle oracle (m-execution-lifecycle): the ordered Root Executions a run opened and the complete Started/Finished stream each delivered to an installed Provider. The thing under assertion is the DELIVERY itself rather than a projection of it, which is why correlation is authored: a runtime that emitted the right transitions in the wrong tree fails here. A Database Call names its statement by INDEX into the case's flattened authored golden order and never repeats SQL or binds, so `then.statements` stays the sole SQL and bind oracle; `then.roundTrips` stays the sole count oracle and a case authoring both states one number twice, which the harness cross-checks. Durations, UUIDs, implementation type names, messages, stacks, and native database codes are not portable and are absent. This is a CASE ASSERTION FORMAT, not a public serialization contract, and the compatibility harness validates it without producing events of its own — each language grades it through the conformance adapter's matching `executionLifecycle` observation.",
+          "description": "The transient execution-lifecycle oracle (m-execution-lifecycle): the ordered Root Executions a run opened and the complete Started/Finished stream each delivered to an installed Provider. The thing under assertion is the DELIVERY itself rather than a projection of it, which is why correlation is authored: a runtime that emitted the right transitions in the wrong tree fails here. A Database Call names its statement by INDEX into the case's flattened authored golden order and never repeats SQL or binds, so `then.statements` stays the sole SQL and bind oracle; `then.databaseCalls` stays the sole count oracle and a case authoring both states one number twice, which the harness cross-checks. Durations, UUIDs, implementation type names, messages, stacks, and native database codes are not portable and are absent. This is a CASE ASSERTION FORMAT, not a public serialization contract, and the compatibility harness validates it without producing events of its own — each language grades it through the conformance adapter's matching `executionLifecycle` observation.",
           "type": "object",
           "additionalProperties": false,
           "required": ["roots"],
@@ -2446,7 +2446,7 @@
       "properties": {"trigger": {"enum": ["read-dependency", "pre-commit"]}}
     },
     "lifecycleDatabaseCallStarted": {
-      "description": "One Database Call is about to be presented to the port. `statement` is the zero-based index into the case's flattened authored golden-statement order — the call names the statement it ran rather than repeating its SQL or binds, which is what keeps `then.statements` the sole SQL and bind oracle — and is OMITTED where the authored order holds no statement to name: on a lane that authors no golden SQL at all (`api-conformance`), where `kind` and the outcome are the whole portable oracle, and on the resolving read a keyed write owes, which the case counts in `then.roundTrips` and authors no golden for. The indexes the remaining calls name are that order exactly, in delivery order and once each. `kind` keeps a FAILED call classifiable without parsing SQL. The index rides Started alone: its Finished peer is the same activity, so repeating it would state one fact twice.",
+      "description": "One Database Call is about to be presented to the port. `statement` is the zero-based index into the case's flattened authored golden-statement order — the call names the statement it ran rather than repeating its SQL or binds, which is what keeps `then.statements` the sole SQL and bind oracle — and is OMITTED where the authored order holds no statement to name: on a lane that authors no golden SQL at all (`api-conformance`), where `kind` and the outcome are the whole portable oracle, and on the resolving read a keyed write owes, which the case counts in `then.databaseCalls` and authors no golden for. The indexes the remaining calls name are that order exactly, in delivery order and once each. `kind` keeps a FAILED call classifiable without parsing SQL. The index rides Started alone: its Finished peer is the same activity, so repeating it would state one fact twice.",
       "type": "object",
       "additionalProperties": false,
       "required": ["target", "kind"],

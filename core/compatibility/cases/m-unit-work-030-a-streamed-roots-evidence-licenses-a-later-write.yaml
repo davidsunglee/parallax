@@ -18,7 +18,7 @@ when:
           "true": {}
       stream:
         batchSize: 2
-      roundTrips: 2
+      databaseCalls: 2
       note: the first delivery — two pages, the second short of the size it asked for
       statements:
         - sql:
@@ -41,7 +41,7 @@ when:
           entity: parallax.compatibility.Account
           rows:
             - { id: 1, balance: "125.00" }
-      roundTrips: 1
+      databaseCalls: 1
       note: settle against the FIRST delivery — the gate binds the version it published for a root it delivered on a page since released
       statements:
         - sql:
@@ -55,7 +55,7 @@ when:
           "true": {}
       stream:
         batchSize: 2
-      roundTrips: 2
+      databaseCalls: 2
       note: the second delivery — its first page force-flushes the pending intent and then observes account 1 at generation two
       statements:
         - sql:
@@ -78,7 +78,7 @@ when:
           entity: parallax.compatibility.Account
           rows:
             - { id: 1, balance: "175.00" }
-      roundTrips: 1
+      databaseCalls: 1
       note: settle against the SECOND delivery — the gate binds version 2; naming step 0 would gate on a version the row has left
       statements:
         - sql:
@@ -86,4 +86,4 @@ when:
             mariadb: update account set balance = ?, version = ? where id = ? and version = ?
           binds: ["175.00", 3, 1, 2]
 then:
-  roundTrips: 6
+  databaseCalls: 6

@@ -10,11 +10,11 @@ when:
         target: parallax.compatibility.Order
         predicate:
           "true": {}
-      roundTrips: 0
+      databaseCalls: 0
       note: construction -> a query-backed list, no DB work
     - action: access
       "on": 0
-      roundTrips: 1
+      databaseCalls: 1
       note: first access resolves the list once
       statements:
         - sql:
@@ -28,8 +28,8 @@ when:
         - { id: 42, name: Grace, sku: A-999, qty: 30, price: "99.99", active: true, ordered_on: 2024-06-30 }
     - action: access
       "on": 0
-      roundTrips: 0
+      databaseCalls: 0
       sameObjectAs: 1
       note: re-access (iterate / index / size again) -> zero SQL, the same resolved objects
 then:
-  roundTrips: 1
+  databaseCalls: 1

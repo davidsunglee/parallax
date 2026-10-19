@@ -36,4 +36,4 @@ then:
     Beast:
       - { id: 1, name: Akela, leaderId: null, howl: aroo, familyVariant: Wolf }
       - { id: 2, name: Bruno, leaderId: null, brush: red, familyVariant: Fox }
-  roundTrips: 1
+  databaseCalls: 1

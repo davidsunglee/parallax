@@ -27,4 +27,4 @@ then:
         legacy_ID: legacy
         mailingAddress:
           city: Oslo
-  roundTrips: 1
+  databaseCalls: 1

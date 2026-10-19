@@ -21,7 +21,7 @@ when:
       note: the joined body writes; the OUTER boundary flushes the shared buffer
 then:
   outcome: committed
-  roundTrips: 2
+  databaseCalls: 2
   executionLifecycle:
     roots:
       - execution: 1

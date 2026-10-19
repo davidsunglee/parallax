@@ -22,4 +22,4 @@ then:
   rows:
   - {id: 12, pet_id: 3}
   - {id: 13, pet_id: null}
-  roundTrips: 1
+  databaseCalls: 1

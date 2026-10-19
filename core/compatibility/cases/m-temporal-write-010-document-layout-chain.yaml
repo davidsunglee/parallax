@@ -82,4 +82,4 @@ then:
           manifest:
             cargo: timber
           legs: []
-  roundTrips: 4
+  databaseCalls: 4

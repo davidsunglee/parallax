@@ -25,4 +25,4 @@ then:
   referenceSql: select id, name, sku, qty, price, active, ordered_on from orders where id = 999
   graph:
     Order: []
-  roundTrips: 1
+  databaseCalls: 1

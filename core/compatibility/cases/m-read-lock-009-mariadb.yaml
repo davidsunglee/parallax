@@ -22,4 +22,4 @@ then:
   referenceSql: select id, owner, balance, version from account where id = 2
   rows:
     - { id: 2, owner: Linus, balance: "250.00", version: 1 }
-  roundTrips: 1
+  databaseCalls: 1

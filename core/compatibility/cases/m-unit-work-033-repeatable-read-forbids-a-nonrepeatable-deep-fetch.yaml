@@ -24,7 +24,7 @@ when:
         includes:
           - segments:
               - rel: parallax.compatibility.OrderItem.order
-      roundTrips: 2
+      databaseCalls: 2
       note: the reading unit of work materializes item 11 with its owning order (name Ada)
       statements:
         - sql:
@@ -49,7 +49,7 @@ when:
           entity: parallax.compatibility.Order
           rows:
             - { id: 1, name: Rewritten }
-      roundTrips: 1
+      databaseCalls: 1
       note: an ungated update of the INCLUDED row — Order is unversioned, so the mandatory Locking fallback emits no gate; the group COMMITS after this, its last step
       statements:
         - sql:
@@ -66,7 +66,7 @@ when:
         includes:
           - segments:
               - rel: parallax.compatibility.OrderItem.order
-      roundTrips: 2
+      databaseCalls: 2
       note: the SAME deep fetch again MUST materialize the same graph — the included order's name is still Ada; the group COMMITS after this, its last step
       statements:
         - sql:
@@ -91,7 +91,7 @@ when:
           eq:
             path: parallax.compatibility.Order.id
             value: 1
-      roundTrips: 1
+      databaseCalls: 1
       note: UNGROUPED, after both groups resolved — the peer's write is durable, order 1 reads Rewritten
       statements:
         - sql:
@@ -101,4 +101,4 @@ when:
       expectRows:
         - { id: 1, name: Rewritten, sku: A-100, qty: 5, price: "10.50", active: true, ordered_on: 2024-01-05 }
 then:
-  roundTrips: 6
+  databaseCalls: 6

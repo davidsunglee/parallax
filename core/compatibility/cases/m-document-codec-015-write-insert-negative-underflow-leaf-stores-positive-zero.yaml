@@ -32,4 +32,4 @@ then:
           ratio: 0.0
           measure: 0.0
           entries: []
-  roundTrips: 1
+  databaseCalls: 1

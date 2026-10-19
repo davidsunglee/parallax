@@ -111,4 +111,4 @@ then:
             shippedOn: 2024-03-10
             statuses:
               - { id: 204, orderId: 42, orderItemId: 421, code: PICKED }
-  roundTrips: 6
+  databaseCalls: 6

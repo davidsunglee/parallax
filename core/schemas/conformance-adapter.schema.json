@@ -517,7 +517,7 @@
       "properties": {"trigger": {"enum": ["read-dependency", "pre-commit"]}}
     },
     "lifecycleDatabaseCallStarted": {
-      "description": "One Database Call is about to be presented to the port. `statement` is the zero-based index into this envelope's own `emissions` array — the call names the statement it ran rather than repeating its SQL or binds, which is what keeps `then.statements` the sole SQL and bind oracle — and is omitted where `emissions` holds no statement to name: an envelope reporting no emission at all (an `api-conformance` case), where `kind` and the outcome are the whole portable oracle, and the resolving read a keyed write owes, which `roundTrips` counts and no emission states. The indexes the remaining calls name are the emission order exactly, in delivery order and once each. `kind` keeps a FAILED call classifiable without parsing SQL. The index rides Started alone: its Finished peer is the same activity, so repeating it would state one fact twice.",
+      "description": "One Database Call is about to be presented to the port. `statement` is the zero-based index into this envelope's own `emissions` array — the call names the statement it ran rather than repeating its SQL or binds, which is what keeps `then.statements` the sole SQL and bind oracle — and is omitted where `emissions` holds no statement to name: an envelope reporting no emission at all (an `api-conformance` case), where `kind` and the outcome are the whole portable oracle, and the resolving read a keyed write owes, which `databaseCalls` counts and no emission states. The indexes the remaining calls name are the emission order exactly, in delivery order and once each. `kind` keeps a FAILED call classifiable without parsing SQL. The index rides Started alone: its Finished peer is the same activity, so repeating it would state one fact twice.",
       "type": "object",
       "additionalProperties": false,
       "required": ["target", "kind"],
@@ -1200,7 +1200,7 @@
     "observations": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["roundTrips"],
+      "required": ["databaseCalls"],
       "properties": {
         "rows": {
           "$ref": "#/$defs/rows"
@@ -1227,7 +1227,7 @@
           "type": ["integer", "null"],
           "minimum": 0
         },
-        "roundTrips": {
+        "databaseCalls": {
           "type": "integer",
           "minimum": 0
         },
@@ -1274,7 +1274,7 @@
           "$ref": "#/$defs/executionLifecycleObservation"
         },
         "evolution": {
-          "description": "The complete Evolution an evolution-case run described for the two accepted endpoints `when.evolve` names, compared against the case's `then.evolution` whole. An adapter whose claim includes the `evolution` caseShape MUST report this observation on an evolution-case run, with `roundTrips: 0` and no provisioning or dialect: describing a difference between two accepted models reaches no database. Optional and additive at the schema layer — only evolution-shape runs report it, and existing run outputs stay valid.",
+          "description": "The complete Evolution an evolution-case run described for the two accepted endpoints `when.evolve` names, compared against the case's `then.evolution` whole. An adapter whose claim includes the `evolution` caseShape MUST report this observation on an evolution-case run, with `databaseCalls: 0` and no provisioning or dialect: describing a difference between two accepted models reaches no database. Optional and additive at the schema layer — only evolution-shape runs report it, and existing run outputs stay valid.",
           "$ref": "#/$defs/evolutionResult"
         },
         "schema": {
@@ -1282,7 +1282,7 @@
           "$ref": "#/$defs/schemaObservation"
         },
         "rejectedRule": {
-          "description": "The classified normative rule identifier a rejected-case run refused the input with (m-predicate / m-navigate / m-value-object / m-inheritance / m-storage-layout / m-relationship), compared against the case's `then.rejectedRule`. An adapter whose claim includes the `rejected` caseShape MUST report this observation on a rejected-case run, with `roundTrips: 0` and no provisioning or dialect. Optional and additive at the schema layer — only rejected-shape runs report it, and existing run outputs stay valid.",
+          "description": "The classified normative rule identifier a rejected-case run refused the input with (m-predicate / m-navigate / m-value-object / m-inheritance / m-storage-layout / m-relationship), compared against the case's `then.rejectedRule`. An adapter whose claim includes the `rejected` caseShape MUST report this observation on a rejected-case run, with `databaseCalls: 0` and no provisioning or dialect. Optional and additive at the schema layer — only rejected-shape runs report it, and existing run outputs stay valid.",
           "type": "string"
         }
       },
@@ -1309,7 +1309,7 @@
     "benchmarkWorkload": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "iterations", "wallTimeMs", "roundTrips"],
+      "required": ["name", "iterations", "wallTimeMs", "databaseCalls"],
       "properties": {
         "name": {
           "type": "string",
@@ -1322,15 +1322,15 @@
         "wallTimeMs": {
           "$ref": "#/$defs/wallTimeMs"
         },
-        "roundTrips": {
+        "databaseCalls": {
           "type": "integer",
           "minimum": 0
         },
-        "expectRoundTrips": {
+        "expectDatabaseCalls": {
           "type": "integer",
           "minimum": 0
         },
-        "roundTripsOk": {
+        "databaseCallsOk": {
           "type": "boolean"
         }
       }
@@ -1459,7 +1459,7 @@
         "dialect",
         "caseShape",
         "emissions",
-        "roundTrips"
+        "databaseCalls"
       ],
       "properties": {
         "schemaVersion": { "$ref": "#/$defs/schemaVersion" },
@@ -1470,7 +1470,7 @@
         "dialect": { "$ref": "#/$defs/dialect" },
         "caseShape": { "$ref": "#/$defs/caseShape" },
         "emissions": { "$ref": "#/$defs/emissions" },
-        "roundTrips": {
+        "databaseCalls": {
           "type": "integer",
           "minimum": 0
         }

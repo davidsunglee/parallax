@@ -1693,7 +1693,8 @@ because an isolation is a property of a boundary only at the moment it opens.
 ## What the suite pins down
 
 `m-unit-work`'s observable rules are expressed as **scenario** cases — ordered
-operation steps, each with a declared round-trip count — and plain write cases:
+operation steps, each with a declared Database Call count — and plain write
+cases:
 
 | Case | What it proves |
 |---|---|
@@ -1711,13 +1712,13 @@ observes is graded WHILE the writing one is live. Each closes with an ungrouped
 find stating only what both engines have committed: what the level permits is not
 what it requires, so no step may assert a phantom or a write skew.
 
-A scenario's declared round-trip counts **MUST** be internally consistent with
-the golden SQL it lists: each step's `roundTrips` equals the number of golden SQL
+A scenario's declared Database Call counts **MUST** be internally consistent with
+the golden SQL it lists: each step's `databaseCalls` equals the number of golden SQL
 statements that step emits. A scenario whose groups compose several submissions
 into one flush is graded on the state it states instead, because the statements a
 composed flush issues are this module's to choose (`m-case-format` *State-graded
 scenarios*). The harness asserts this consistency without ever
-compiling a query to SQL — proving the round-trip contract from the fixture
+compiling a query to SQL — proving the Database Call contract from the fixture
 itself — and executes the listed golden SQL against the real database to confirm
 result-correctness.
 

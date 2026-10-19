@@ -67,7 +67,7 @@ class _InterleavedGroupResult:
     fate: dict[str, object] = field(default_factory=_committed)
     failure: BaseException | None = None
     rows: dict[int, dict[str, object]] = field(default_factory=_empty_group_rows)
-    round_trips: int = 0
+    database_calls: int = 0
     state: GroupState = field(default_factory=GroupState)
 
 
@@ -183,7 +183,7 @@ def _run_interleaved_group(
         result.failure = exc
         turnstile.release_all()  # never leave a partner thread hanging on this thread's own defect
     result.lowered = lowered
-    result.round_trips = observation.round_trips
+    result.database_calls = observation.database_calls
     if committed:
         turnstile.advance()
 
@@ -286,7 +286,7 @@ def run_interleaved_scenario_case(
     :func:`_run_interleaved_group`).
 
     Reports a :class:`~parallax.conformance._mechanism.envelope.ScenarioRun`:
-    the ordered emissions, total round trips, EVERY find step's `stepRows`
+    the ordered emissions, total Database Calls, EVERY find step's `stepRows`
     observation (grouped or ungrouped, in scenario step order), each group's
     fate by label — committed, or rolled back by the conflict its flush
     reported — and, where the case states `then.tableState`, the tables read
@@ -401,7 +401,7 @@ def run_interleaved_scenario_case(
     rows_by_index: dict[int, dict[str, object]] = {**result_a.rows, **result_b.rows}
     # Each group's own transaction counted its own calls; the trailing ungrouped
     # verify finds add theirs below.
-    round_trips = sum(result.round_trips for result in (result_a, result_b))
+    database_calls = sum(result.database_calls for result in (result_a, result_b))
     for index in ungrouped:
         step = steps[index]
         if "write" in step:  # pragma: no cover - no witnessed ungrouped write is doomed-adjacent
@@ -414,7 +414,7 @@ def run_interleaved_scenario_case(
         rows_by_index[index] = step_rows(
             model, index, step_query(step, model), read.checked().results()
         )
-        round_trips += read_observed.round_trips
+        database_calls += read_observed.database_calls
         lowered[index] = LoweredStep(
             f"/scenario/{index}/objectQuery", read_observed.reads, False, False
         )
@@ -429,4 +429,4 @@ def run_interleaved_scenario_case(
         if isinstance(then, Mapping) and "tableState" in then
         else None
     )
-    return ScenarioRun(emissions, round_trips, [], observed_rows, [], units, table_state)
+    return ScenarioRun(emissions, database_calls, [], observed_rows, [], units, table_state)

@@ -319,13 +319,13 @@ def _as_a_one_step_scenario(case: Case, expect_rows: list[dict[str, Any]]) -> Ca
         "scenario": [
             {
                 "objectQuery": read,
-                "roundTrips": len(statements),
+                "databaseCalls": len(statements),
                 "statements": statements,
                 "expectRows": expect_rows,
             }
         ]
     }
-    case.raw["then"] = {"roundTrips": len(statements)}
+    case.raw["then"] = {"databaseCalls": len(statements)}
     return case
 
 
@@ -482,7 +482,7 @@ def _followed_by_a_materializing_predicate_write(case: Case) -> Case:
                 "mutation": "delete",
                 "target": {"entity": query["target"], "predicate": query["predicate"]},
             },
-            "roundTrips": 0,
+            "databaseCalls": 0,
         }
     )
     root = case.model.descriptor["entities"][0]
@@ -521,8 +521,8 @@ def test_a_find_listing_sql_for_levels_its_query_declares_none_of_is_refused(
     case = damaged_case(_POPULATED_LIST)
     step = _steps(case)[0]
     step["statements"].append(copy.deepcopy(_steps(case)[1]["statements"][0]))
-    step["roundTrips"] += 1
-    case.then["roundTrips"] += 1
+    step["databaseCalls"] += 1
+    case.then["databaseCalls"] += 1
 
     with pytest.raises(CaseFailure, match="its objectQuery declares no `includes`"):
         assert_unit_work_scenario(case, ScriptedProvider(script=_rows(_ORDERS)))
@@ -637,20 +637,20 @@ def _as_a_load_of_the_owners_animals(case: Case) -> Case:
                     "target": "parallax.compatibility.Person",
                     "predicate": {"eq": {"path": "parallax.compatibility.Person.id", "value": 10}},
                 },
-                "roundTrips": 1,
+                "databaseCalls": 1,
                 "statements": [{"sql": {"postgres": _OWNER_SQL}, "binds": [10]}],
             },
             {
                 "action": "load",
                 "on": 0,
                 "path": "animals",
-                "roundTrips": 1,
+                "databaseCalls": 1,
                 "statements": [{"sql": {"postgres": _ANIMALS_SQL}, "binds": [10]}],
                 "expectRows": _OWNED_ANIMAL_ROWS,
             },
         ]
     }
-    case.raw["then"] = {"roundTrips": 2}
+    case.raw["then"] = {"databaseCalls": 2}
     return case
 
 
@@ -700,20 +700,20 @@ def _as_a_load_of_the_folders_documents(case: Case) -> Case:
                     "target": "parallax.compatibility.Folder",
                     "predicate": {"eq": {"path": "parallax.compatibility.Folder.id", "value": 100}},
                 },
-                "roundTrips": 1,
+                "databaseCalls": 1,
                 "statements": [{"sql": {"postgres": _FOLDER_SQL}, "binds": [100]}],
             },
             {
                 "action": "load",
                 "on": 0,
                 "path": "documents",
-                "roundTrips": 1,
+                "databaseCalls": 1,
                 "statements": [{"sql": {"postgres": _keyed_by_folder(union_all)}, "binds": [100]}],
                 "expectRows": _DOCUMENT_FAMILY_ROWS,
             },
         ]
     }
-    case.raw["then"] = {"roundTrips": 2}
+    case.raw["then"] = {"databaseCalls": 2}
     return case
 
 
@@ -773,20 +773,20 @@ def _as_a_load_of_the_travelers_trips(case: Case) -> Case:
                     "target": "parallax.compatibility.Traveler",
                     "predicate": {"eq": {"path": "parallax.compatibility.Traveler.id", "value": 1}},
                 },
-                "roundTrips": 1,
+                "databaseCalls": 1,
                 "statements": [{"sql": {"postgres": _TRAVELER_SQL}, "binds": [1]}],
             },
             {
                 "action": "load",
                 "on": 0,
                 "path": "trips",
-                "roundTrips": 1,
+                "databaseCalls": 1,
                 "statements": [{"sql": {"postgres": _TRIPS_SQL}, "binds": [1]}],
                 "expectRows": _TRIP_ROWS_PUBLISHED,
             },
         ]
     }
-    case.raw["then"] = {"roundTrips": 2}
+    case.raw["then"] = {"databaseCalls": 2}
     return case
 
 
@@ -820,8 +820,8 @@ def test_a_load_running_more_statement_groups_than_sources_is_refused(
     step = _steps(case)[1]
     step["on"] = [0]
     step["statements"] = [*step["statements"], *step["statements"]]
-    step["roundTrips"] += 1
-    case.then["roundTrips"] += 1
+    step["databaseCalls"] += 1
+    case.then["databaseCalls"] += 1
 
     with pytest.raises(CaseFailure, match="coordinate source"):
         assert_unit_work_scenario(case, ScriptedProvider(script=_rows(_ORDERS)))
@@ -911,17 +911,17 @@ def _as_a_constructed_list_first_accessed(case: Case, expect_rows: list[dict[str
     case.raw["shape"] = "scenario"
     case.raw["when"] = {
         "scenario": [
-            {"objectQuery": read, "roundTrips": 0},
+            {"objectQuery": read, "databaseCalls": 0},
             {
                 "action": "access",
                 "on": 0,
-                "roundTrips": len(statements),
+                "databaseCalls": len(statements),
                 "statements": statements,
                 "expectRows": expect_rows,
             },
         ]
     }
-    case.raw["then"] = {"roundTrips": len(statements)}
+    case.raw["then"] = {"databaseCalls": len(statements)}
     return case
 
 
@@ -1064,8 +1064,8 @@ def test_a_reuse_naming_a_step_that_published_nothing_is_refused(
     del step["statements"]
     del step["referenceSql"]
     step["sameObjectAs"] = 1
-    case.then["roundTrips"] -= step["roundTrips"]
-    step["roundTrips"] = 0
+    case.then["databaseCalls"] -= step["databaseCalls"]
+    step["databaseCalls"] = 0
 
     with pytest.raises(CaseFailure, match="names step 1, which published no observation"):
         assert_unit_work_scenario(
@@ -1155,8 +1155,8 @@ def test_a_streamed_step_ending_on_a_full_page_is_refused(damaged_case: CaseLoad
     case = damaged_case(_STREAMED_EVIDENCE)
     step = _steps(case)[0]
     del step["statements"][1]
-    step["roundTrips"] -= 1
-    case.then["roundTrips"] -= 1
+    step["databaseCalls"] -= 1
+    case.then["databaseCalls"] -= 1
 
     with pytest.raises(CaseFailure, match="the delivery is not exhausted"):
         assert_unit_work_scenario(case, ScriptedProvider(script=_rows(_FIRST_DELIVERY[0])))
@@ -1299,18 +1299,18 @@ def _resolving_a_predicate_write_over_a_document_layout(case: Case) -> Case:
                 "objectQuery": query,
                 "statements": statements,
                 "expectRows": case.raw["then"]["rows"],
-                "roundTrips": len(statements),
+                "databaseCalls": len(statements),
             },
             {
                 "write": {
                     "mutation": "delete",
                     "target": {"entity": query["target"], "predicate": query["predicate"]},
                 },
-                "roundTrips": 0,
+                "databaseCalls": 0,
             },
         ]
     }
-    case.raw["then"] = {"roundTrips": len(statements)}
+    case.raw["then"] = {"databaseCalls": len(statements)}
     case.model.descriptor["entities"][0]["attributes"][0]["optimisticLocking"] = True
     return case
 

@@ -24,4 +24,4 @@ then:
   tableState:
     fridge:
       - { id: 1, name: Chill, version: 6, capacity_liters: 300 }
-  roundTrips: 2
+  databaseCalls: 2

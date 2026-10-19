@@ -23,7 +23,7 @@ when:
             asOf: "2024-02-01T00:00:00.000000Z"
           valid-time:
             asOf: latest
-      roundTrips: 1
+      databaseCalls: 1
       note: pin id 1 at the finite Transaction-Time instant 2024-02-01 with Valid-Time Latest — a READ-ONLY Transaction-Time-past view (the superseded belief, 90.00)
       statements:
         - sql:
@@ -35,8 +35,8 @@ when:
       "on": 0
       set:
         value: "999.00"
-      roundTrips: 0
+      databaseCalls: 0
       expectError: transaction-time-pin-read-only
       note: mutating a finite Transaction-Time-axis view raises transaction-time-pin-read-only and emits NO DML
 then:
-  roundTrips: 1
+  databaseCalls: 1

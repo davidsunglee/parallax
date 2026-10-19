@@ -136,14 +136,14 @@ def test_rejected_cases_exist() -> None:
         )
 
 
-def test_every_rejected_case_costs_zero_round_trips() -> None:
+def test_every_rejected_case_costs_zero_database_calls() -> None:
     """A pre-SQL refusal composes no statement, so every rejected case answers
     zero — the count `m-conformance-adapter` requires a rejected observation to
-    report. None of them declares `then.roundTrips`, so this is the shape's own
+    report. None of them declares `then.databaseCalls`, so this is the shape's own
     default rather than an authored value."""
     for case in _rejected_cases():
-        assert "roundTrips" not in case.then, case.path.name
-        assert case.round_trips == 0, case.path.name
+        assert "databaseCalls" not in case.then, case.path.name
+        assert case.database_calls == 0, case.path.name
 
 
 def test_model_negatives_use_closed_owner_vocabularies() -> None:

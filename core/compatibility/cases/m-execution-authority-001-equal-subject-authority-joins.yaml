@@ -26,4 +26,4 @@ when:
       note: an independently selected equal actor joins by value
 then:
   outcome: committed
-  roundTrips: 1
+  databaseCalls: 1

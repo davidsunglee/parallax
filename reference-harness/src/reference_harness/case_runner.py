@@ -12,8 +12,8 @@ provisioned database selected via the provider seam:
    then.statements[dialect]`` (per statement, for multi-statement cases).
 4. **Serde round-trip** — ``serialize(deserialize(x)) == x`` for BOTH the
    Object Query encoding AND the model descriptor, in BOTH JSON and YAML.
-5. **Round-trip-count consistency** — the number of golden SQL statements a case
-   declares equals its ``roundTrips``.
+5. **Database Call count consistency** — the number of golden SQL statements a case
+   declares equals its ``databaseCalls``.
 
 What this module owns beyond those shared layers is case-shape routing plus the
 lanes whose ordered steps have no owner of their own: rejected-case adjudication,
@@ -511,13 +511,13 @@ def _assert_equivalent_encodings(case: Case) -> None:
             )
 
 
-def _assert_round_trip_count(case: Case, dialect: str) -> None:
+def _assert_database_call_count(case: Case, dialect: str) -> None:
     statements = case.golden_statements(dialect)
-    if len(statements) != case.round_trips:
+    if len(statements) != case.database_calls:
         raise CaseFailure(
             f"{case.path.name}: then.statements ({dialect}) has {len(statements)} "
-            f"statement(s) but roundTrips is {case.round_trips}. The statement "
-            f"count MUST equal the declared round-trip count."
+            f"statement(s) but databaseCalls is {case.database_calls}. The statement "
+            f"count MUST equal the declared Database Call count."
         )
 
 
@@ -892,11 +892,11 @@ def _validate_rejected_predicate_write(case: Case, write: dict[str, Any]) -> Non
 
 def _assert_write_step_count(case: Case, dialect: str) -> None:
     """The DML statement count MUST equal the sum of the steps' declared counts,
-    and the round trips MUST be that plus every resolving read the sequence owes.
+    and the Database Calls MUST be that plus every resolving read the sequence owes.
 
     Each ``writeSequence`` step declares how many golden DML statements it emits
     (default 1); the total over the sequence is the DML statement count, which
-    MUST equal the number of then.statements for the dialect. ``roundTrips``
+    MUST equal the number of then.statements for the dialect. ``databaseCalls``
     counts every call that reached the database, so it is that total plus one
     resolving read per entry writing against existing state
     (:func:`write_plan.unit_resolving_reads`) — the read a keyed write verb's source
@@ -920,11 +920,11 @@ def _assert_write_step_count(case: Case, dialect: str) -> None:
         )
         for entry in case.write_sequence
     )
-    if len(statements) + reads != case.round_trips:
+    if len(statements) + reads != case.database_calls:
         raise CaseFailure(
             f"{case.path.name}: then.statements ({dialect}) has {len(statements)} DML "
-            f"statement(s) and the sequence owes {reads} resolving read(s), but roundTrips "
-            f"is {case.round_trips}."
+            f"statement(s) and the sequence owes {reads} resolving read(s), but databaseCalls "
+            f"is {case.database_calls}."
         )
 
 
@@ -3545,7 +3545,7 @@ def _run_statement_golden(case: Case, db: DatabaseProvider, dialect: str) -> Non
     # is a pre-SQL refusal: a read whose reference escapes its active position must fail
     # the case, not reach a database.
     validate_query_inheritance(case.model.entity_defs, case.object_query)
-    _assert_round_trip_count(case, dialect)  # layer 5 (count)
+    _assert_database_call_count(case, dialect)  # layer 5 (count)
     provision(case, db)
     assert_case_read(
         case, CaseExecution(case, db)

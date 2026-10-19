@@ -13,7 +13,7 @@ delivery:
 workloads:
   - name: current-versioned-document
     iterations: 50
-    expectRoundTrips: 1
+    expectDatabaseCalls: 1
     statements:
       - sql:
           postgres: select t0.id, t0.version, t0.payload from ledger t0

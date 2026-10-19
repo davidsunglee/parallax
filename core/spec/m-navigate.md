@@ -179,5 +179,5 @@ For each relationship-predicate case the compatibility harness (`m-case-format`)
 asserts the standard read layers: the golden SQL returns exactly `then.rows`, and
 the naive `key in (select fk …)` oracle returns the same rows. A to-one hop's
 refusal of several candidates is asserted against each provider's native error.
-The round-trip and object-graph assertions specific to eager loading are
+The Database Call and object-graph assertions specific to eager loading are
 `m-deep-fetch`.

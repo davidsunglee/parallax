@@ -253,26 +253,26 @@ def _read_observations(
     streamed = isinstance(when, Mapping) and "stream" in when
     if isinstance(then, Mapping) and "graphs" in then:
         run_graphs = engine.run_streamed_graphs_case if streamed else engine.run_graphs_case
-        emissions, graphs, round_trips = run_graphs(case, port, lifecycle)
+        emissions, graphs, database_calls = run_graphs(case, port, lifecycle)
         return {
             "emissions": emissions,
-            "observations": {"graphs": graphs, "roundTrips": round_trips},
+            "observations": {"graphs": graphs, "databaseCalls": database_calls},
         }
     if streamed or (isinstance(then, Mapping) and "graph" in then):
         run = engine.run_stream_case if streamed else engine.run_graph_case
-        graph_emissions, graph, round_trips, stored_data_issues = run(case, port, lifecycle)
-        observations: dict[str, Any] = {"graph": graph, "roundTrips": round_trips}
+        graph_emissions, graph, database_calls, stored_data_issues = run(case, port, lifecycle)
+        observations: dict[str, Any] = {"graph": graph, "databaseCalls": database_calls}
         if stored_data_issues is not None:
             observations["storedDataIssues"] = stored_data_issues
         return {"emissions": graph_emissions, "observations": observations}
-    emissions, rows, round_trips = engine.run_read_case(case, port, lifecycle)
-    return {"emissions": emissions, "observations": {"rows": rows, "roundTrips": round_trips}}
+    emissions, rows, database_calls = engine.run_read_case(case, port, lifecycle)
+    return {"emissions": emissions, "observations": {"rows": rows, "databaseCalls": database_calls}}
 
 
 def _scenario_observations(run: engine.ScenarioRun) -> dict[str, Any]:
-    """A scenario run's contract observations: ``roundTrips`` always, and each
+    """A scenario run's contract observations: ``databaseCalls`` always, and each
     per-step channel only where some step filled it."""
-    observations: dict[str, Any] = {"roundTrips": run.round_trips}
+    observations: dict[str, Any] = {"databaseCalls": run.database_calls}
     if run.errors:
         observations["errors"] = run.errors
     if run.step_rows:
@@ -325,7 +325,7 @@ def _run(
     sequence) and, when the case authors it, the resulting ``tableState``; an
     error run records the raised failure's classification (``errorClass`` /
     ``nativeCode``). A scenario run reports the contract observations
-    (``roundTrips``, plus one ``errors`` entry per `expectError` step whose
+    (``databaseCalls``, plus one ``errors`` entry per `expectError` step whose
     verb raised its declared application-lifecycle error, one ``stepGraphs``
     entry per step declaring `expectGraph` in either placement — an `access`
     step's retained view, or an include-bearing read step's own materialized
@@ -333,7 +333,7 @@ def _run(
     row-observing `mutate`, carrying the values that step published, which is what
     the run sweep grades against each step's ``expectRows``). A rejected run
     touches no database and no port: it reports
-    the classified ``rejectedRule`` with ``roundTrips: 0`` (m-conformance-
+    the classified ``rejectedRule`` with ``databaseCalls: 0`` (m-conformance-
     adapter), and an evolution run reports the complete described ``evolution``
     the same way, for the same reason — describing the difference between two
     accepted models is pure — together with the ``schema`` matrix a unilateral
@@ -345,30 +345,35 @@ def _run(
         run = engine.run_scenario_case(case, port, lifecycle)
         return run.emissions, _scenario_observations(run)
     if case.shape == "writeSequence":
-        emissions, table_state, round_trips = engine.run_write_sequence_case(case, port, lifecycle)
-        return emissions, {"tableState": table_state, "roundTrips": round_trips}
-    if case.shape == "conflict":
-        emissions, affected_rows, table_state, round_trips = engine.run_conflict_case(
+        emissions, table_state, database_calls = engine.run_write_sequence_case(
             case, port, lifecycle
         )
-        observations: dict[str, Any] = {"affectedRows": affected_rows, "roundTrips": round_trips}
+        return emissions, {"tableState": table_state, "databaseCalls": database_calls}
+    if case.shape == "conflict":
+        emissions, affected_rows, table_state, database_calls = engine.run_conflict_case(
+            case, port, lifecycle
+        )
+        observations: dict[str, Any] = {
+            "affectedRows": affected_rows,
+            "databaseCalls": database_calls,
+        }
         if table_state is not None:
             observations["tableState"] = table_state
         return emissions, observations
     if case.shape == "error":
-        emissions, error_class, native_code, round_trips = engine.run_error_case(case, port)
+        emissions, error_class, native_code, database_calls = engine.run_error_case(case, port)
         return emissions, {
             "errorClass": error_class,
             "nativeCode": native_code,
-            "roundTrips": round_trips,
+            "databaseCalls": database_calls,
         }
     if case.shape == "boundary":
         raise _boundary_lane_error(case)
     if case.shape == "rejected":
         rule = engine.run_rejected_case(case)
-        return [], {"rejectedRule": rule, "roundTrips": 0}
+        return [], {"rejectedRule": rule, "databaseCalls": 0}
     if case.shape == "evolution":
-        return [], {**engine.run_evolution_case(case), "roundTrips": 0}
+        return [], {**engine.run_evolution_case(case), "databaseCalls": 0}
     result = _read_observations(case, port, lifecycle)
     return result["emissions"], result["observations"]
 
@@ -405,8 +410,8 @@ def compile_case(
 
     A run-only case (`compileEligibility`, `m-case-format`) returns the defined
     ``run-only`` status with a ``compile-run-only`` diagnostic; a compile-eligible
-    claimed read case returns ``ok`` with its ordered ``emissions`` and round
-    trips. Compilation touches no database — the refusing port never sees a row
+    claimed read case returns ``ok`` with its ordered ``emissions`` and
+    Database Calls. Compilation touches no database — the refusing port never sees a row
     request from a well-declared read. A `rejected` and an `evolution` case
     answer the same ``run-only`` envelope unconditionally — their run-only status
     is shape-intrinsic, not authored per-case (see :data:`_RUN_GRADED_SHAPES`).
@@ -427,12 +432,12 @@ def compile_case(
         )
         return _echo(envelope, case, dialect)
     try:
-        emissions, round_trips = _compile(case, dialect)
+        emissions, database_calls = _compile(case, dialect)
     except engine.EngineError as exc:
         return _non_ok("compile", "error", Diagnostic("compile-failed", str(exc)), adapter)
     envelope = _common("compile", "ok", adapter)
     envelope["emissions"] = [e.to_json() for e in emissions]
-    envelope["roundTrips"] = round_trips
+    envelope["databaseCalls"] = database_calls
     return _echo(envelope, case, dialect)
 
 

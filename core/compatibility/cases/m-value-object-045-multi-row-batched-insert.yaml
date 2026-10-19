@@ -71,4 +71,4 @@ then:
             country: "NO"
           phones:
             - { type: work, number: '555-0202' }
-  roundTrips: 1
+  databaseCalls: 1

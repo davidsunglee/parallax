@@ -13,7 +13,7 @@ when:
             lessThan:
               path: parallax.compatibility.Wallet.balance
               value: "200.00"
-      roundTrips: 1
+      databaseCalls: 1
       statements:
         - sql:
             postgres: delete from wallet where balance < ?
@@ -24,7 +24,7 @@ when:
           lessThan:
             path: parallax.compatibility.Wallet.balance
             value: "200.00"
-      roundTrips: 1
+      databaseCalls: 1
       statements:
         - sql:
             postgres: select t0.id, t0.owner, t0.balance from wallet t0 where t0.balance < ? for share of t0
@@ -32,4 +32,4 @@ when:
       referenceSql: select id, owner, balance from wallet where balance < 200.00
       expectRows: []
 then:
-  roundTrips: 2
+  databaseCalls: 2

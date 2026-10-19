@@ -227,7 +227,7 @@ SQL.
 
 The command is valid for any case shape whose behavior can be represented as
 SQL emissions. Cache-hit scenario steps that perform no database work simply
-produce no emission for that step and still contribute `0` round trips.
+produce no emission for that step and still contribute `0` Database Calls.
 For a predicate-selected scenario write, the adapter consumes the structured
 `/scenario/<n>/write` instruction as the requested operation; it MUST NOT treat
 authored DML text as its only write input or reverse-engineer the operation from
@@ -312,7 +312,7 @@ Example:
       "binds": [1]
     }
   ],
-  "roundTrips": 1
+  "databaseCalls": 1
 }
 ```
 
@@ -362,9 +362,9 @@ The adapter is responsible for using a clean database according to its declared
 provisioning mode, applying schema and fixtures, executing the implementation's
 public behavior, and reporting observations. A runner may compare those
 observations to `then.rows`, `then.graph`, `then.graphs`, `then.tableState`,
-`then.affectedRows`, cache/identity expectations, and `then.roundTrips`.
+`then.affectedRows`, cache/identity expectations, and `then.databaseCalls`.
 
-The `roundTrips` a `run` reports is what its execution actually cost: every
+The `databaseCalls` a `run` reports is what its execution actually cost: every
 database call the run made, a failed, not-executed, or unconfirmed one included,
 with begin, commit, and rollback counting none (`m-execution-lifecycle`). It is
 therefore not a tally of the statements the adapter emitted — the two differ
@@ -411,7 +411,7 @@ Example:
         "name": "Alice"
       }
     ],
-    "roundTrips": 1
+    "databaseCalls": 1
   }
 }
 ```
@@ -429,7 +429,7 @@ assert different things:
   `storedDataIssues` for it on the same terms (see *Streamed reads*, below)
 - write-sequence cases report `tableState`
 - conflict cases report `affectedRows` and MAY report `tableState`
-- scenario cases report `identityChecks` and `roundTrips`, plus `stepRows` for the
+- scenario cases report `identityChecks` and `databaseCalls`, plus `stepRows` for the
   values their read steps and row-observing `mutate` steps published,
   `errors` for any step or submission declaring
   `expectError`, `units` for the fate of each `uow` group, and `tableState` where
@@ -441,7 +441,7 @@ assert different things:
   statement's raised failure classified to — paired with `nativeCode`, the
   preserved native witness (Postgres SQLSTATE string, MariaDB vendor errno
   integer), compared against the case's `then.errorClass` / per-dialect
-  `then.nativeCode`; `roundTrips` counts the executed trigger statements,
+  `then.nativeCode`; `databaseCalls` counts the executed trigger statements,
   including the raising one. This pair is distinct from the
   application-lifecycle `errors` observation. An error case whose trigger is a
   `when.concurrency` choreography needs two barrier-synchronized sessions
@@ -455,7 +455,7 @@ assert different things:
   dialect**: an adapter whose claim includes the `rejected` caseShape **MUST**
   report `rejectedRule` — the classified normative rule identifier
   (`m-predicate` / `m-navigate` / `m-value-object` / `m-inheritance`) the
-  input was refused with — with `roundTrips: 0`. This obligation is
+  input was refused with — with `databaseCalls: 0`. This obligation is
   unconditional for every claimant of the shape; the schema field itself stays
   optional and additive, exactly like `errorClass` before it, so an existing
   run output that never claims `rejected` stays valid unchanged.
@@ -508,7 +508,7 @@ exposes and reports:
   (`m-read-delivery` *Where a stream diverges from a whole-result read*) and is graded by each
   language's API Conformance Suite rather than here, where a result form has no
   place to state a delivery that raised.
-- **`observations.roundTrips`** — every database call the delivery made.
+- **`observations.databaseCalls`** — every database call the delivery made.
 - **`emissions`** — every statement the delivery executed, in execution order
   across pages: each page's root statement followed by the child levels that page
   ran. The list is the whole delivery's, not one page's. It is read off the
@@ -591,7 +591,7 @@ declaring `expectError`, and one per buffered submission declaring it, each
   case states (`m-case-format` *State-graded scenarios*).
 
 It is additive and optional: an adapter that observes no raised error simply
-omits it, so an existing `run` output (`roundTrips` plus
+omits it, so an existing `run` output (`databaseCalls` plus
 `rows` / `graph` / `identityChecks` / `storedDataIssues`) stays valid unchanged.
 
 ### Unit fates (`units`)
@@ -614,7 +614,7 @@ through its predicate verb — catches exactly the refusal a submission declares
 abandons a group whose fate is a plain rollback once its last step has run, and
 otherwise runs each group to commit, recording a flush failure where the flush
 ran. It reports `units`, `errors`, `stepRows`, and the `tableState` it reads back
-once every step has run, and no emissions; its `roundTrips` is reported and not
+once every step has run, and no emissions; its `databaseCalls` is reported and not
 graded.
 
 It is additive and optional in the same sense as `errors`: a run of a scenario
@@ -650,13 +650,13 @@ One read step reports no entry: the resolving read of a **materializing predicat
 write** (`m-case-format` *Materializing cases*). That read is the write's own
 internal resolve — an implementation performs it while planning the write and
 hands its rows to no caller, and an adapter that executed the find separately
-would resolve twice and report a round trip the case does not count. What holds an
-implementation to that step is what the case already states about it: its golden
-read statement, which fixes the projection the resolve carries, and the per-row
-binds the write then emits, which the planner derived from those very rows. Every
-other read step owns an entry. A `mutate` owns one exactly when it declares
-`expectRows`, and any step that owns an entry and is missing it is an unanswered
-oracle rather than a pass.
+would resolve twice and report a Database Call the case does not count. What
+holds an implementation to that step is what the case already states about it:
+its golden read statement, which fixes the projection the resolve carries, and
+the per-row binds the write then emits, which the planner derived from those very
+rows. Every other read step owns an entry. A `mutate` owns one exactly when it
+declares `expectRows`, and any step that owns an entry and is missing it is an
+unanswered oracle rather than a pass.
 
 It is additive and optional in the same sense as `errors` /
 `stepGraphs`: a run reporting no such step omits it, and every existing `run`
@@ -757,9 +757,9 @@ Example:
               "p50": 2.8,
               "p95": 4.7
             },
-            "roundTrips": 1,
-            "expectRoundTrips": 1,
-            "roundTripsOk": true
+            "databaseCalls": 1,
+            "expectDatabaseCalls": 1,
+            "databaseCallsOk": true
           }
         ]
       }
@@ -790,8 +790,8 @@ same rules as `m-case-format`:
   each observation's `pin` and `graph` compared to the corresponding oracle entry
 - write table state compares to `then.tableState`
 - conflict affected rows compare to `then.affectedRows`
-- round trips compare to the case's declared `then.roundTrips` or scenario step
-  counts
+- Database Calls compare to the case's declared `then.databaseCalls` or scenario
+  step counts
 - a rejected case's `rejectedRule` compares **string-equal** to `then.rejectedRule`;
   accepting the input, omitting the observation, or naming a different rule all
   fail

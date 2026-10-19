@@ -246,7 +246,7 @@ def _ledger_update(
                 "at": at,
             }
         ],
-        "roundTrips": 2,
+        "databaseCalls": 2,
     }
     if uow is not None:
         step["uow"] = uow
@@ -280,7 +280,7 @@ def test_run_scenario_case_commits_writes_and_reads_committed_state() -> None:
         find_rows=[{"id": 7, "owner": "Newton", "balance": decimal.Decimal("5.00"), "version": 1}]
     )
     run = scenario.run_scenario_case(_case("m-unit-work-001"), port)
-    assert run.round_trips == 2
+    assert run.database_calls == 2
     assert run.errors == []  # a keyed unit-of-work scenario reports no error observation
     assert [e.case_pointer for e in run.emissions] == [
         "/scenario/0/write",
@@ -298,10 +298,10 @@ def test_run_scenario_case_commits_writes_and_reads_committed_state() -> None:
     assert port.commits == 2 and port.rollbacks == 0
 
 
-def test_run_scenario_case_rollback_step_aborts_but_counts_the_round_trip() -> None:
+def test_run_scenario_case_rollback_step_aborts_but_counts_the_database_call() -> None:
     port = FakeWritePort(find_rows=[])
     run = scenario.run_scenario_case(_case("m-unit-work-011"), port)
-    assert run.round_trips == 2  # the aborted insert still counts one round trip
+    assert run.database_calls == 2  # the aborted insert still counts one Database Call
     assert len(port.writes) == 1  # the DML executed before the abort
     # An UNGROUPED find runs in its OWN transaction, exactly as `run_read_case`
     # does: every scenario resolves a Concurrency Preference (declared or the
@@ -332,7 +332,7 @@ def test_run_scenario_case_groups_a_committing_uow_span_into_one_transaction() -
         find_rows=[{"id": 1, "owner": "Ada", "balance": decimal.Decimal("100.00"), "version": 1}]
     )
     run = scenario.run_scenario_case(_case("m-unit-work-005"), port)
-    assert run.round_trips == 3
+    assert run.database_calls == 3
     assert [e.case_pointer for e in run.emissions] == [
         "/scenario/0/objectQuery",
         "/scenario/1/write",
@@ -367,7 +367,7 @@ def test_run_scenario_case_holds_a_grouped_readless_predicate_write_in_the_group
         ]
     )
     run = scenario.run_scenario_case(_case("m-batch-write-011"), port)
-    assert run.round_trips == 5
+    assert run.database_calls == 5
     assert [e.case_pointer for e in run.emissions] == [
         "/scenario/0/objectQuery",
         "/scenario/3/write",
@@ -465,7 +465,7 @@ def test_run_scenario_case_settles_a_write_against_the_delivery_that_published_i
         (125.00, 2, 1, 1),
         (175.00, 3, 1, 2),
     ]
-    assert run.round_trips == 6
+    assert run.database_calls == 6
     assert len(port.writes) == 2
 
 
@@ -749,7 +749,7 @@ def test_run_scenario_case_doomed_uow_span_rolls_back_as_one_unit() -> None:
         find_rows=[{"id": 1, "owner": "Ada", "balance": decimal.Decimal("100.00"), "version": 1}]
     )
     run = scenario.run_scenario_case(_case("m-unit-work-002"), port)
-    assert run.round_trips == 3
+    assert run.database_calls == 3
     assert [e.case_pointer for e in run.emissions] == [
         "/scenario/0/objectQuery",
         "/scenario/1/write",
@@ -807,7 +807,7 @@ def test_scenario_compile_lane_closes_the_fixture_milestone_the_run_lane_closes(
     case = _synthetic_ledger_scenario([_ledger_update("300.00", "2024-05-01T00:00:00+00:00")])
     port = FakeWritePort(find_rows=[_ledger_row(2, "200.00", in_z="2024-02-01T00:00:00+00:00")])
 
-    compiled, _round_trips = scenario.compile_scenario_case(case, "postgres")
+    compiled, _database_calls = scenario.compile_scenario_case(case, "postgres")
     run = scenario.run_scenario_case(case, port)
 
     assert [(e.case_pointer, e.sql, e.binds) for e in compiled] == [
@@ -837,7 +837,7 @@ def _ledger_insert(at: str) -> dict[str, object]:
                 "at": at,
             }
         ],
-        "roundTrips": 1,
+        "databaseCalls": 1,
     }
 
 
@@ -864,7 +864,7 @@ def test_scenario_compile_lane_discards_an_aborted_ungrouped_writes_case_state()
             _ledger_chain_update("400.00", "2026-02-01T00:00:00+00:00"),
         ]
     )
-    compiled, _round_trips = scenario.compile_scenario_case(case, "postgres")
+    compiled, _database_calls = scenario.compile_scenario_case(case, "postgres")
     _insert, aborted_close, _aborted_successor, close, successor = compiled
     assert aborted_close.binds[3] == _instant("2025-01-01T00:00:00+00:00")
     assert close.case_pointer == "/scenario/2/write"
@@ -899,7 +899,7 @@ def test_scenario_compile_lane_runs_a_doomed_uow_group_as_one_transaction_it_res
         ],
         {"doomed": {"outcome": "rolledBack"}},
     )
-    compiled, _round_trips = scenario.compile_scenario_case(case, "postgres")
+    compiled, _database_calls = scenario.compile_scenario_case(case, "postgres")
     _insert, doomed_close, doomed_successor, close, successor = compiled
     assert [doomed_close.case_pointer, doomed_successor.case_pointer] == ["/scenario/2/write"] * 2
     assert doomed_close.binds[3] == _instant("2025-01-01T00:00:00+00:00")
@@ -917,7 +917,7 @@ def _two_group_interleave_steps() -> list[dict[str, object]]:
                 "target": "Account",
                 "predicate": {"eq": {"path": "Account.id", "value": 1}},
             },
-            "roundTrips": 1,
+            "databaseCalls": 1,
             "statements": [{"sql": {"postgres": "select ... where t0.id = ?"}, "binds": [1]}],
         },
         {
@@ -926,13 +926,13 @@ def _two_group_interleave_steps() -> list[dict[str, object]]:
                 "target": "Account",
                 "predicate": {"eq": {"path": "Account.id", "value": 2}},
             },
-            "roundTrips": 1,
+            "databaseCalls": 1,
             "statements": [{"sql": {"postgres": "select ... where t0.id = ?"}, "binds": [2]}],
         },
         {
             "uow": "a",
             "write": [{"mutation": "amend", "entity": "Account", "rows": [{"id": 1}]}],
-            "roundTrips": 1,
+            "databaseCalls": 1,
             "statements": [
                 {
                     "sql": {"postgres": "update account set balance = ? where id = ?"},
@@ -969,10 +969,10 @@ def test_scenario_compile_lane_stages_nothing_for_a_doomed_interleaved_group() -
         "scenario",
         {
             "when": {"scenario": steps},
-            "then": {"roundTrips": 3, "units": {"a": {"outcome": "rolledBack"}}},
+            "then": {"databaseCalls": 3, "units": {"a": {"outcome": "rolledBack"}}},
         },
     )
-    emissions, _round_trips = scenario.compile_scenario_case(case, "postgres")
+    emissions, _database_calls = scenario.compile_scenario_case(case, "postgres")
     assert [e.case_pointer for e in emissions] == [
         "/scenario/0/objectQuery",
         "/scenario/1/objectQuery",
@@ -990,7 +990,7 @@ def test_run_scenario_case_routes_the_two_group_interleave_to_run_interleaved_sc
         "scenario",
         {
             "when": {"scenario": _two_group_interleave_steps()},
-            "then": {"roundTrips": 3},
+            "then": {"databaseCalls": 3},
         },
     )
     with pytest.raises(EngineError, match="run_interleaved_scenario_case"):
@@ -1299,7 +1299,7 @@ def test_run_scenario_case_settles_a_grouped_temporal_close_against_the_find_it_
     }
     port = FakeWritePort(read_script=[[r2], [r3], [r2, r3]])
     run = scenario.run_scenario_case(_load_case("m-unit-work-015"), port)
-    assert run.round_trips == 6
+    assert run.database_calls == 6
     assert [e.case_pointer for e in run.emissions] == [
         "/scenario/0/objectQuery",
         "/scenario/1/objectQuery",
@@ -1384,11 +1384,11 @@ def test_a_tracked_milestone_of_a_document_target_chains_when_the_case_authored_
     # so the tracked milestone IS the whole stored row and the successor chains.
     # This is what keeps the refusal above narrow enough to leave the corpus alone.
     port = FakeWritePort(find_rows=[_VOYAGE_MILESTONE])
-    emissions, _table_state, round_trips = scenario.run_write_sequence_case(
+    emissions, _table_state, database_calls = scenario.run_write_sequence_case(
         _load_case("m-temporal-write-010"), port
     )
     # Three DML statements plus the update entry's own resolving read.
-    assert round_trips == 4
+    assert database_calls == 4
     assert [e.case_pointer for e in emissions] == [
         "/writeSequence/0",
         "/writeSequence/1",
@@ -1413,8 +1413,8 @@ def test_a_document_milestone_opened_after_out_of_band_statements_still_chains()
         },
     )
     port = FakeWritePort(find_rows=[_VOYAGE_MILESTONE])
-    emissions, _table_state, round_trips = scenario.run_write_sequence_case(with_apply, port)
-    assert round_trips == 4
+    emissions, _table_state, database_calls = scenario.run_write_sequence_case(with_apply, port)
+    assert database_calls == 4
     assert [e.case_pointer for e in emissions] == [
         "/writeSequence/0",
         "/writeSequence/1",
@@ -1503,7 +1503,7 @@ def test_a_restated_occurrence_is_assigned_literally_beside_the_stored_keys_it_l
         },
         in_z="2026-01-01T00:00:00+00:00",
     )
-    emissions, _table_state, _round_trips = scenario.run_write_sequence_case(
+    emissions, _table_state, _database_calls = scenario.run_write_sequence_case(
         case, FakeWritePort(find_rows=[stored])
     )
     _close, successor = emissions
@@ -1540,9 +1540,9 @@ def test_a_flushes_statements_are_reported_under_the_last_write_buffered_before_
     # Each case's group buffers every write before one pre-commit flush, so
     # everything that flush emits belongs to the group's last write step — the
     # rule the run lane reports a held group's delivered writes by.
-    compiled, round_trips = scenario.compile_scenario_case(_load_case(case_id), "postgres")
+    compiled, database_calls = scenario.compile_scenario_case(_load_case(case_id), "postgres")
     assert [emission.case_pointer for emission in compiled] == pointers
-    assert round_trips == len(pointers)
+    assert database_calls == len(pointers)
 
 
 def _account_insert(account_id: int) -> dict[str, object]:
@@ -1584,7 +1584,7 @@ def test_a_committing_groups_read_flushes_what_its_earlier_steps_buffered() -> N
             }
         },
     )
-    compiled, _round_trips = scenario.compile_scenario_case(case, "postgres")
+    compiled, _database_calls = scenario.compile_scenario_case(case, "postgres")
     assert [(emission.case_pointer, emission.sql.split(" ", 1)[0]) for emission in compiled] == [
         ("/scenario/0/write", "insert"),
         ("/scenario/1/objectQuery", "select"),
@@ -1597,7 +1597,7 @@ def test_a_committing_groups_read_flushes_what_its_earlier_steps_buffered() -> N
 
 
 def test_a_groups_writes_buffered_before_one_flush_compose_in_its_one_buffer() -> None:
-    compiled, _round_trips = scenario.compile_scenario_case(
+    compiled, _database_calls = scenario.compile_scenario_case(
         _synthetic_write(
             "scenario",
             {"when": {"scenario": [_account_insert_step(90), _account_insert_step(91)]}},
@@ -1661,7 +1661,7 @@ def test_a_caller_addressed_entry_compiles_through_target_admission(
     # admission reads nothing.
     counts = _counting_case_state_reads(monkeypatch)
     case = _load_case(case_id)
-    compiled, _round_trips = scenario.compile_write_sequence_case(case, "postgres")
+    compiled, _database_calls = scenario.compile_write_sequence_case(case, "postgres")
     assert [emission.sql for emission in compiled] == [
         sql for sql, _binds in write_golden_statements(case)
     ]
@@ -2125,7 +2125,7 @@ def test_an_amendment_its_public_verb_drops_as_empty_is_never_tracked(
         find_rows=[{"id": 1, "owner": "Ada", "balance": decimal.Decimal("100.00"), "version": 1}]
     )
     run = scenario.run_scenario_case(case, port)
-    assert run.round_trips == 2
+    assert run.database_calls == 2
     assert len(port.writes) == 1 and port.commits == 1
     (tracked,) = admitted
     assert isinstance(tracked, ObservedKeyedWrite)
@@ -2134,22 +2134,22 @@ def test_an_amendment_its_public_verb_drops_as_empty_is_never_tracked(
 
 def test_a_read_step_names_its_own_object_query() -> None:
     with pytest.raises(EngineError, match="needs `objectQuery`"):
-        scenario.step_query({"roundTrips": 1}, models.load_models()["account"])
+        scenario.step_query({"databaseCalls": 1}, models.load_models()["account"])
 
 
 def test_run_write_sequence_case_executes_each_entry_as_its_own_transaction() -> None:
     # Each writeSequence entry is its
     # OWN `db.transact` unit, never the whole sequence in one transaction.
     port = FakeWritePort()
-    emissions, table_state, round_trips = scenario.run_write_sequence_case(
+    emissions, table_state, database_calls = scenario.run_write_sequence_case(
         _case("m-unit-work-003"), port
     )
-    assert round_trips == 2
+    assert database_calls == 2
     assert [e.case_pointer for e in emissions] == ["/writeSequence/0", "/writeSequence/1"]
     assert len(port.writes) == 2 and port.commits == 2
     # The committed table state is read back for every model table (the
     # m-conformance-adapter write-sequence observation); the read-back is an
-    # observation, so it never counts toward the case's round trips.
+    # observation, so it never counts toward the case's Database Calls.
     assert set(table_state) == {
         "orders",
         "order_item",
@@ -2163,7 +2163,7 @@ def test_a_run_reports_the_statements_its_database_calls_borrowed() -> None:
     # The run lane plans no second copy of a unit's DML to report: each emission
     # is the very Lowered Statement the delivered Database Call borrowed.
     lifecycle = LifecycleRun()
-    emissions, _table_state, _round_trips = scenario.run_write_sequence_case(
+    emissions, _table_state, _database_calls = scenario.run_write_sequence_case(
         _case("m-unit-work-003"), FakeWritePort(), lifecycle
     )
     delivered = [
@@ -2204,13 +2204,13 @@ def test_a_run_grades_an_authored_statement_count_against_what_it_delivered() ->
 def test_run_write_sequence_case_settles_a_temporal_write_against_its_resolving_read() -> None:
     # m-temporal-write-002: the update entry is its own choreography unit, so the
     # milestone it closes comes from the read that unit issues for it — the value
-    # `tx.wire.update` is addressed and licensed by — and the round trips count
+    # `tx.wire.update` is addressed and licensed by — and the Database Calls count
     # that read beside the three DML statements.
     port = FakeWritePort(find_rows=[_balance_row(1, "100.00", in_z="2024-01-01T00:00:00+00:00")])
-    emissions, table_state, round_trips = scenario.run_write_sequence_case(
+    emissions, table_state, database_calls = scenario.run_write_sequence_case(
         _load_case("m-temporal-write-002"), port
     )
-    assert round_trips == 4
+    assert database_calls == 4
     assert [e.case_pointer for e in emissions] == [
         "/writeSequence/0",
         "/writeSequence/1",
@@ -2223,7 +2223,7 @@ def test_run_write_sequence_case_settles_a_temporal_write_against_its_resolving_
 def test_a_units_resolving_read_names_no_statement_in_the_lifecycle_observation() -> None:
     """The one call inside a write unit that the emissions do not hold.
 
-    m-temporal-write-002 costs four round trips for three golden statements: the
+    m-temporal-write-002 costs four Database Calls for three golden statements: the
     update entry reads the milestone it closes before writing it. A case counts
     that read and authors no golden for it, so the delivered stream carries a
     Database Call the emission order has no entry for — and the remaining calls
@@ -2232,7 +2232,7 @@ def test_a_units_resolving_read_names_no_statement_in_the_lifecycle_observation(
     """
     port = FakeWritePort(find_rows=[_balance_row(1, "100.00", in_z="2024-01-01T00:00:00+00:00")])
     run = LifecycleRun()
-    emissions, _table_state, round_trips = scenario.run_write_sequence_case(
+    emissions, _table_state, database_calls = scenario.run_write_sequence_case(
         _load_case("m-temporal-write-002"), port, run
     )
     observed = execution_lifecycle_observation(
@@ -2250,7 +2250,7 @@ def test_a_units_resolving_read_names_no_statement_in_the_lifecycle_observation(
         ("write", 1),
         ("write", 2),
     ]
-    assert round_trips == len(calls)
+    assert database_calls == len(calls)
 
 
 def test_run_write_sequence_case_buffers_a_bounded_bitemporal_valid_time_window() -> None:
@@ -2264,10 +2264,10 @@ def test_run_write_sequence_case_buffers_a_bounded_bitemporal_valid_time_window(
             )
         ]
     )
-    _emissions, table_state, round_trips = scenario.run_write_sequence_case(
+    _emissions, table_state, database_calls = scenario.run_write_sequence_case(
         _load_case("m-temporal-write-017"), port
     )
-    assert round_trips == 4
+    assert database_calls == 4
     assert len(port.writes) == 3 and port.commits == 2
     assert table_state is not None and "position" in table_state
 
@@ -2275,10 +2275,10 @@ def test_run_write_sequence_case_buffers_a_bounded_bitemporal_valid_time_window(
 def test_compile_write_sequence_case_lowers_each_entry_without_cross_entry_coalescing() -> None:
     # m-unit-work-007 inserts then deletes the same rows across four entries; each entry is
     # its own flush, so it emits FOUR statements (never coalesced to a net-zero cancel).
-    emissions, round_trips = scenario.compile_write_sequence_case(
+    emissions, database_calls = scenario.compile_write_sequence_case(
         _case("m-unit-work-007"), "postgres"
     )
-    assert round_trips == 4
+    assert database_calls == 4
     assert [e.case_pointer for e in emissions] == [f"/writeSequence/{i}" for i in range(4)]
 
 
@@ -2355,8 +2355,8 @@ def test_versioned_delete_decomposes_per_row() -> None:
             }
         },
     )
-    emissions, round_trips = scenario.compile_write_sequence_case(case, "postgres")
-    assert round_trips == 2
+    emissions, database_calls = scenario.compile_write_sequence_case(case, "postgres")
+    assert database_calls == 2
     assert [(e.sql, e.binds) for e in emissions] == [
         ("delete from account where id = ? and version = ?", (1, 1)),
         ("delete from account where id = ? and version = ?", (2, 1)),
@@ -2477,8 +2477,8 @@ def test_uniform_multi_row_update_collapses_to_one_in_list_statement() -> None:
             },
         },
     )
-    emissions, round_trips = scenario.compile_write_sequence_case(case, "postgres")
-    assert round_trips == 1
+    emissions, database_calls = scenario.compile_write_sequence_case(case, "postgres")
+    assert database_calls == 1
     assert [e.sql for e in emissions] == ["update wallet set balance = ? where id in (?, ?)"]
     assert emissions[0].binds == (decimal.Decimal("500.00"), 10, 11)
 
@@ -2510,8 +2510,8 @@ def test_a_collapsed_multi_row_insert_decodes_its_wire_floats_before_real_execut
         },
     )
     port = FakeWritePort()
-    _emissions, _table_state, round_trips = scenario.run_write_sequence_case(case, port)
-    assert round_trips == 1
+    _emissions, _table_state, database_calls = scenario.run_write_sequence_case(case, port)
+    assert database_calls == 1
     assert len(port.writes) == 1
     sql, binds = port.writes[0]
     assert sql == "insert into wallet(id, owner, balance) values (%s, %s, %s), (%s, %s, %s)"
@@ -2575,8 +2575,8 @@ def test_update_entry_uniform_within_each_physical_group_collapses_per_group() -
             },
         },
     )
-    emissions, round_trips = scenario.compile_write_sequence_case(case, "postgres")
-    assert round_trips == 2
+    emissions, database_calls = scenario.compile_write_sequence_case(case, "postgres")
+    assert database_calls == 2
     assert [e.sql for e in emissions] == [
         "update wallet set balance = ? where id in (?, ?)",
         "update wallet set owner = ? where id in (?, ?)",
@@ -2638,8 +2638,8 @@ def test_non_uniform_multi_row_update_decomposes_per_distinct_key() -> None:
             },
         },
     )
-    emissions, round_trips = scenario.compile_write_sequence_case(case, "postgres")
-    assert round_trips == 2
+    emissions, database_calls = scenario.compile_write_sequence_case(case, "postgres")
+    assert database_calls == 2
     assert [e.sql for e in emissions] == [
         "update wallet set balance = ? where id = ?",
         "update wallet set balance = ? where id = ?",
@@ -2672,8 +2672,8 @@ def test_pk_gen_managed_insert_decomposes_per_row_even_with_literal_ids() -> Non
             },
         },
     )
-    emissions, round_trips = scenario.compile_write_sequence_case(case, "postgres")
-    assert round_trips == 2
+    emissions, database_calls = scenario.compile_write_sequence_case(case, "postgres")
+    assert database_calls == 2
     assert [e.sql for e in emissions] == [
         "insert into pass(id, zone) values (?, ?)",
         "insert into pass(id, zone) values (?, ?)",
@@ -2704,8 +2704,8 @@ def test_elided_no_op_row_is_not_counted_as_a_statement() -> None:
             }
         },
     )
-    emissions, round_trips = scenario.compile_write_sequence_case(case, "postgres")
-    assert round_trips == 1
+    emissions, database_calls = scenario.compile_write_sequence_case(case, "postgres")
+    assert database_calls == 1
     assert [e.sql for e in emissions] == [
         "update account set balance = ?, version = ? where id = ? and version = ?"
     ]
@@ -2722,8 +2722,8 @@ def test_an_entry_whose_every_row_elides_emits_no_statement() -> None:
         "writeSequence",
         {"when": {"writeSequence": [{"mutation": "amend", "entity": "Account", "rows": rows}]}},
     )
-    emissions, round_trips = scenario.compile_write_sequence_case(silent, "postgres")
-    assert round_trips == 0
+    emissions, database_calls = scenario.compile_write_sequence_case(silent, "postgres")
+    assert database_calls == 0
     assert emissions == []
     counted = _synthetic_write(
         "writeSequence",
@@ -2793,8 +2793,8 @@ def test_predicate_shaped_scenario_write_lowers_readless_not_a_keyerror() -> Non
             },
         },
     )
-    emissions, round_trips = scenario.compile_scenario_case(case, "postgres")
-    assert round_trips == 1
+    emissions, database_calls = scenario.compile_scenario_case(case, "postgres")
+    assert database_calls == 1
     assert [e.sql for e in emissions] == ["delete from wallet where balance < ?"]
     assert emissions[0].binds == (decimal.Decimal("200.00"),)
 
@@ -2855,7 +2855,7 @@ def test_run_scenario_case_executes_a_readless_predicate_write() -> None:
     )
     port = FakeWritePort()
     run = scenario.run_scenario_case(case, port)
-    assert run.round_trips == 1
+    assert run.database_calls == 1
     assert run.emissions[0].case_pointer == "/scenario/0/write"
     assert run.emissions[0].sql == "delete from wallet where balance < ?"
     assert len(port.writes) == 1 and port.commits == 1
@@ -2901,7 +2901,7 @@ def test_run_scenario_case_executes_a_materializing_predicate_write_pair() -> No
         find_rows=[{"id": 1, "owner": "Ada", "balance": decimal.Decimal("100.00"), "version": 1}]
     )
     run = scenario.run_scenario_case(case, port)
-    assert run.round_trips == 2
+    assert run.database_calls == 2
     assert [e.case_pointer for e in run.emissions] == [
         "/scenario/0/objectQuery",
         "/scenario/1/write",
@@ -2910,12 +2910,10 @@ def test_run_scenario_case_executes_a_materializing_predicate_write_pair() -> No
     assert len(port.writes) == 1 and len(port.reads) == 1 and port.commits == 1
 
 
-def test_run_scenario_case_readless_predicate_write_rollback_aborts_but_counts_the_round_trip() -> (
-    None
-):
+def test_run_scenario_case_readless_predicate_write_rollback_aborts_but_counts_the_call() -> None:
     # `_run_readless_predicate_write`'s own abort contract mirrors the keyed-
     # write one (`test_run_scenario_case_rollback_step_aborts_but_counts_the_
-    # round_trip`): the golden DML still executes (and counts its round trip)
+    # database_call`): the golden DML still executes (and counts its Database Call)
     # before the forced flush + intentional abort discards it.
     case = _synthetic_write(
         "scenario",
@@ -2941,16 +2939,16 @@ def test_run_scenario_case_readless_predicate_write_rollback_aborts_but_counts_t
     )
     port = FakeWritePort()
     run = scenario.run_scenario_case(case, port)
-    assert run.round_trips == 1
+    assert run.database_calls == 1
     assert run.emissions[0].sql == "delete from wallet where balance < ?"
     assert len(port.writes) == 1
     assert port.commits == 0 and port.rollbacks == 1
 
 
-def test_materializing_predicate_write_rollback_aborts_but_counts_the_round_trip() -> None:
+def test_materializing_predicate_write_rollback_aborts_but_counts_the_database_call() -> None:
     # `_run_materializing_pair`'s own abort contract: the resolve AND the
-    # per-row DML its observations license still execute (and count their round
-    # trips) before the forced flush + intentional abort discards them —
+    # per-row DML its observations license still execute (and count their
+    # Database Calls) before the forced flush + intentional abort discards them —
     # `_run_uow_group`'s doomed-group behavior, reproduced for a
     # materializing pair's own single held transaction.
     case = _synthetic_write(
@@ -2986,7 +2984,7 @@ def test_materializing_predicate_write_rollback_aborts_but_counts_the_round_trip
         find_rows=[{"id": 1, "owner": "Ada", "balance": decimal.Decimal("100.00"), "version": 1}]
     )
     run = scenario.run_scenario_case(case, port)
-    assert run.round_trips == 2
+    assert run.database_calls == 2
     assert [e.case_pointer for e in run.emissions] == [
         "/scenario/0/objectQuery",
         "/scenario/1/write",
@@ -3015,7 +3013,7 @@ def _ledger_materializing_pair(at: str, *, rollback: bool = False) -> list[dict[
             "assignments": [{"attr": "parallax.compatibility.Ledger.value", "value": "777.00"}],
             "at": at,
         },
-        "roundTrips": 3,
+        "databaseCalls": 3,
     }
     if rollback:
         write["rollback"] = True
@@ -3025,7 +3023,7 @@ def _ledger_materializing_pair(at: str, *, rollback: bool = False) -> list[dict[
                 "target": "parallax.compatibility.Ledger",
                 "predicate": _ledger_predicate(),
             },
-            "roundTrips": 1,
+            "databaseCalls": 1,
         },
         write,
     ]
@@ -3256,7 +3254,7 @@ _ACCOUNT_ROW_2: Final[MappingRow] = {
 
 def test_run_conflict_case_single_attempt() -> None:
     port = FakeWritePort(find_rows=[_ACCOUNT_ROW_2])
-    emissions, affected, table_state, _round_trips = scenario.run_conflict_case(
+    emissions, affected, table_state, _database_calls = scenario.run_conflict_case(
         _load_case("m-opt-lock-006"), port
     )
     assert [e.case_pointer for e in emissions] == ["/when/write"]
@@ -3270,7 +3268,7 @@ def test_run_conflict_case_reads_its_source_before_applying_given_apply() -> Non
     # invalidates: a read taken after it would observe the state it left, and
     # the stale gate the case grades would never be reachable.
     port = FakeWritePort(find_rows=[_ACCOUNT_ROW_2])
-    emissions, affected, table_state, _round_trips = scenario.run_conflict_case(
+    emissions, affected, table_state, _database_calls = scenario.run_conflict_case(
         _load_case("m-opt-lock-005"), port
     )
     assert [e.case_pointer for e in emissions] == ["/when/write"]
@@ -3295,7 +3293,7 @@ _ACCOUNT_WRITE_SHORTFALL: Final[tuple[str, ...]] = (
 
 def test_run_conflict_case_renders_a_gated_zero_row_update_as_a_conflict() -> None:
     port = FakeWritePort(find_rows=[_ACCOUNT_ROW_2], zero_affected_for=_ACCOUNT_WRITE_SHORTFALL)
-    _emissions, affected, _table_state, _round_trips = scenario.run_conflict_case(
+    _emissions, affected, _table_state, _database_calls = scenario.run_conflict_case(
         _load_case("m-opt-lock-005"), port
     )
     assert affected == 0
@@ -3334,7 +3332,7 @@ def test_a_conflict_attempt_writes_through_the_public_keyed_delete_verb() -> Non
         },
     )
     port = FakeWritePort(find_rows=[_ACCOUNT_ROW_2])
-    emissions, affected, _table_state, _round_trips = scenario.run_conflict_case(case, port)
+    emissions, affected, _table_state, _database_calls = scenario.run_conflict_case(case, port)
     assert [e.sql for e in emissions] == ["delete from account where id = ? and version = ?"]
     assert affected == 1
 
@@ -3504,7 +3502,7 @@ def test_run_conflict_case_attempts_form_is_productions_own_replay() -> None:
     port = FakeWritePort(
         read_script=[[_ACCOUNT_ROW_2], [_ACCOUNT_ROW_2_REVISED]], affected_script=[0, 1]
     )
-    emissions, affected, table_state, round_trips = scenario.run_conflict_case(
+    emissions, affected, table_state, database_calls = scenario.run_conflict_case(
         _load_case("m-opt-lock-009"), port
     )
     assert [e.case_pointer for e in emissions] == [
@@ -3518,7 +3516,7 @@ def test_run_conflict_case_attempts_form_is_productions_own_replay() -> None:
     assert len(port.writes) == 3  # given.apply + the gated write of each attempt
     assert (port.rollbacks, port.commits) == (1, 1)
     assert affected == 1
-    assert round_trips == 4
+    assert database_calls == 4
     assert table_state is not None
 
 
@@ -3671,7 +3669,7 @@ def test_a_multi_row_temporal_scenario_write_entry_is_refused() -> None:
                         "at": "2024-09-01T00:00:00+00:00",
                     }
                 ],
-                "roundTrips": 2,
+                "databaseCalls": 2,
             }
         ]
     }
@@ -3691,7 +3689,7 @@ def test_scenario_case_without_a_scenario_list_is_rejected() -> None:
 
 
 def test_scenario_read_step_missing_its_query_is_rejected() -> None:
-    bad = _synthetic_write("scenario", {"when": {"scenario": [{"roundTrips": 1}]}})
+    bad = _synthetic_write("scenario", {"when": {"scenario": [{"databaseCalls": 1}]}})
     with pytest.raises(EngineError, match="objectQuery"):
         scenario.compile_scenario_case(bad, "postgres")
 
@@ -3909,7 +3907,7 @@ def test_a_unit_reads_each_entity_it_writes_once_however_many_entries_address_it
         find_rows=[{"id": 21, "order_id": 2, "sku": "A-300", "quantity": 4, "shipped_on": None}]
     )
     run = scenario.run_scenario_case(_case("m-unit-work-026"), port)
-    assert run.round_trips == 3  # the step's own read + its one DELETE + the dependent find
+    assert run.database_calls == 3  # the step's own read + its one DELETE + the dependent find
     assert next(sql for sql, _binds in port.reads) == (
         "select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on"
         " from order_item t0 where t0.id in (%s) for share of t0"
@@ -3919,10 +3917,10 @@ def test_a_unit_reads_each_entity_it_writes_once_however_many_entries_address_it
 
 def test_a_temporal_terminate_entry_reaches_its_own_wire_verb() -> None:
     port = FakeWritePort(find_rows=[_balance_row(1, "100.00", in_z="2024-01-01T00:00:00+00:00")])
-    _emissions, _table_state, round_trips = scenario.run_write_sequence_case(
+    _emissions, _table_state, database_calls = scenario.run_write_sequence_case(
         _load_case("m-temporal-write-003"), port
     )
-    assert round_trips == 3  # insert, then the terminate entry's own read + its close
+    assert database_calls == 3  # insert, then the terminate entry's own read + its close
     assert port.writes[-1][0].startswith("update balance set out_z")
 
 
@@ -3934,10 +3932,10 @@ def test_a_bounded_bitemporal_terminate_entry_reaches_its_own_wire_verb() -> Non
             )
         ]
     )
-    _emissions, _table_state, round_trips = scenario.run_write_sequence_case(
+    _emissions, _table_state, database_calls = scenario.run_write_sequence_case(
         _load_case("m-temporal-write-018"), port
     )
-    assert round_trips == 4  # three statements plus the terminateUntil entry's own read
+    assert database_calls == 4  # three statements plus the terminateUntil entry's own read
     assert port.writes[1][0].startswith("update position set out_z")
 
 
@@ -3986,7 +3984,7 @@ def test_a_write_settles_against_a_row_its_own_unit_opened() -> None:
                         "at": "2025-01-01T00:00:00+00:00",
                     },
                 ],
-                "roundTrips": 1,
+                "databaseCalls": 1,
             }
         ]
     )
@@ -4012,7 +4010,7 @@ def test_a_grouped_write_addressing_a_key_no_read_published_is_refused() -> None
                     "predicate": {"eq": {"path": "parallax.compatibility.Ledger.id", "value": 2}},
                     "temporal": {"transaction-time": {"asOf": "latest"}},
                 },
-                "roundTrips": 1,
+                "databaseCalls": 1,
             },
             _ledger_update("300.00", "2026-02-01T00:00:00+00:00", uow="g"),
         ]
@@ -4037,7 +4035,7 @@ def test_a_named_find_publishing_no_row_of_a_writes_key_settles_nothing() -> Non
                             "target": "Account",
                             "predicate": {"eq": {"path": "Account.id", "value": 1}},
                         },
-                        "roundTrips": 1,
+                        "databaseCalls": 1,
                     },
                     {
                         "uow": "g",
@@ -4049,7 +4047,7 @@ def test_a_named_find_publishing_no_row_of_a_writes_key_settles_nothing() -> Non
                                 "rows": [{"id": 1, "balance": "5.00", "observedVersion": 1}],
                             }
                         ],
-                        "roundTrips": 1,
+                        "databaseCalls": 1,
                     },
                 ]
             }
@@ -4073,7 +4071,7 @@ def test_a_transaction_time_past_reading_is_skipped_as_a_write_source() -> None:
                     "predicate": {"eq": {"path": "parallax.compatibility.Ledger.id", "value": 2}},
                     "temporal": {"transaction-time": {"asOf": "latest"}},
                 },
-                "roundTrips": 1,
+                "databaseCalls": 1,
             },
             {
                 "uow": "g",
@@ -4084,7 +4082,7 @@ def test_a_transaction_time_past_reading_is_skipped_as_a_write_source() -> None:
                         "transaction-time": {"asOf": "2024-03-01T00:00:00.000000Z"},
                     },
                 },
-                "roundTrips": 1,
+                "databaseCalls": 1,
             },
             _ledger_update("300.00", "2026-02-01T00:00:00+00:00", uow="g"),
         ]
@@ -4135,7 +4133,7 @@ def test_one_entity_spelled_two_ways_owes_one_membership_read() -> None:
                         "rows": [{"id": 22}],
                     },
                 ],
-                "roundTrips": 3,
+                "databaseCalls": 3,
             }
         ],
     )
@@ -4170,7 +4168,7 @@ def test_a_unit_mixing_a_framework_marker_with_a_public_verb_write_is_refused() 
                         "rows": [{"id": 1, "holder": "Bo"}],
                     },
                 ],
-                "roundTrips": 2,
+                "databaseCalls": 2,
             }
         ],
     )
@@ -4189,7 +4187,7 @@ def test_a_unit_holding_two_framework_markers_is_refused() -> None:
         [
             {
                 "write": [_registry_advance("badge_seq"), _registry_advance("ticket_seq")],
-                "roundTrips": 2,
+                "databaseCalls": 2,
             }
         ],
     )
@@ -4198,13 +4196,13 @@ def test_a_unit_holding_two_framework_markers_is_refused() -> None:
 
 
 def _pk_sequence_advance(**step: object) -> dict[str, object]:
-    return {"write": [_registry_advance("badge_seq")], "roundTrips": 1, **step}
+    return {"write": [_registry_advance("badge_seq")], "databaseCalls": 1, **step}
 
 
 def test_an_aborted_framework_write_step_executes_its_dml_and_rolls_back() -> None:
     # A registry advance runs through the planner rather than a verb, but it is
     # still a whole choreography unit and answers to the same abort contract: the
-    # statement reaches the wire and counts its round trip, and the provider then
+    # statement reaches the wire and counts its Database Call, and the provider then
     # rolls it back. Committing it would leave a `rollback: true` step's DML
     # durable, which is the one thing the step declares it is not.
     port = FakeWritePort()
@@ -4214,7 +4212,7 @@ def test_an_aborted_framework_write_step_executes_its_dml_and_rolls_back() -> No
         ),
         port,
     )
-    assert run.round_trips == 1
+    assert run.database_calls == 1
     assert len(port.writes) == 1
     assert port.rollbacks == 1 and port.commits == 0
 
@@ -4492,7 +4490,7 @@ def _compiled(case: case_format.Case) -> list[str]:
         if case.shape == "writeSequence"
         else scenario.compile_scenario_case
     )
-    emissions, _round_trips = compile_case(case, "postgres")
+    emissions, _database_calls = compile_case(case, "postgres")
     return [emission.sql for emission in emissions]
 
 
@@ -4608,10 +4606,10 @@ def test_each_flush_of_a_compiled_group_spends_a_source_of_its_own(
 
 def test_a_target_step_is_written_from_its_callers_revision_with_no_source_read() -> None:
     port = FakeWritePort()
-    emissions, _table_state, round_trips = scenario.run_write_sequence_case(
+    emissions, _table_state, database_calls = scenario.run_write_sequence_case(
         _load_case("m-opt-lock-028"), port
     )
-    assert round_trips == 1
+    assert database_calls == 1
     assert not any(" where " in sql for sql, _ in port.reads)
     assert [sql for sql, _ in port.writes] == [
         POSTGRES.to_driver_sql(
@@ -4623,10 +4621,10 @@ def test_a_target_step_is_written_from_its_callers_revision_with_no_source_read(
 
 def test_a_target_deletion_step_is_written_through_its_conditional_verb() -> None:
     port = FakeWritePort()
-    _emissions, _table_state, round_trips = scenario.run_write_sequence_case(
+    _emissions, _table_state, database_calls = scenario.run_write_sequence_case(
         _load_case("m-opt-lock-039"), port
     )
-    assert round_trips == 1
+    assert database_calls == 1
     assert port.writes == [
         (POSTGRES.to_driver_sql("delete from account where id = ? and version = ?"), [2, 1])
     ]
@@ -4645,10 +4643,10 @@ def test_a_target_termination_step_reads_its_row_then_closes_it_and_chains_nothi
             }
         ]
     )
-    _emissions, _table_state, round_trips = scenario.run_write_sequence_case(
+    _emissions, _table_state, database_calls = scenario.run_write_sequence_case(
         _load_case("m-temporal-write-069"), port
     )
-    assert round_trips == 3
+    assert database_calls == 3
     insert, close = port.writes
     assert insert[0].startswith("insert into balance")
     assert close == (
@@ -4692,10 +4690,10 @@ def test_a_locking_target_step_acquires_its_row_before_it_writes(
     port = FakeWritePort(
         find_rows=[{"id": 1, "owner": "Ada", "balance": decimal.Decimal("100.00"), "version": 1}]
     )
-    _emissions, _table_state, round_trips = scenario.run_write_sequence_case(
+    _emissions, _table_state, database_calls = scenario.run_write_sequence_case(
         _load_case(case_id), port
     )
-    assert round_trips == 2
+    assert database_calls == 2
     assert [sql for sql, _ in port.writes] == [POSTGRES.to_driver_sql(written)]
     # The case state tracking the step confirmed it against its own initial
     # row, not against the row the execution read.
@@ -4720,10 +4718,10 @@ def test_a_locking_target_replacement_step_reuses_the_row_it_acquired(
             }
         ]
     )
-    _emissions, _table_state, round_trips = scenario.run_write_sequence_case(
+    _emissions, _table_state, database_calls = scenario.run_write_sequence_case(
         _load_case("m-temporal-write-043"), port
     )
-    assert round_trips == 4
+    assert database_calls == 4
     assert [sql.split(" ", 1)[0] for sql, _ in port.writes] == ["insert", "update", "insert"]
     assert counts == {"target": 1, "coverage": 0}
 
@@ -4743,10 +4741,10 @@ def test_a_bounded_temporal_target_step_reads_its_coverage_then_writes_its_windo
             }
         ]
     )
-    _emissions, _table_state, round_trips = scenario.run_write_sequence_case(
+    _emissions, _table_state, database_calls = scenario.run_write_sequence_case(
         _load_case("m-temporal-write-042"), port
     )
-    assert round_trips == 4
+    assert database_calls == 4
     (coverage,) = (binds for sql, binds in port.reads if "t0.thru_z > " in sql)
     assert coverage == [
         1,

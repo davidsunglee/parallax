@@ -18,4 +18,4 @@ then:
     Publication:
       - { id: 10, title: Systems, detail: ISBN-10, pages: 320, familyVariant: Book }
       - { id: 20, title: Frames, detail: 850, minutes: 95, familyVariant: Film }
-  roundTrips: 1
+  databaseCalls: 1

@@ -355,7 +355,7 @@ whether `Document` slots are selected:
   snapshot-graph read, an eager fetch (its root and every child level), a deferred
   relationship **`load`** or a query-backed list's **first `access`** (`m-op-list`), or any
   other find whose rows become objects. It projects Document slots, so a value-object-bearing
-  entity's whole document rides the owner's single statement (the one-round-trip
+  entity's whole document rides the owner's single statement (the one-Database-Call
   materialization contract, `m-value-object`). Deep-fetch and snapshot **child levels
   are instance-form** — each level projects the child entity's own instance-form list
   (its scalars, plus any value-object document columns it declares) — as does a deferred
@@ -1060,7 +1060,7 @@ Includes does **not** emit a single joined statement. It emits the **root
 query** followed by **one `IN`-keyed statement per distinct relationship hop**
 across the declared paths. Each child level selects the related rows whose
 foreign key is `in` the **distinct parent keys gathered from the previous
-level** — so the round-trip count is `1 + (number of relationship levels)`,
+level** — so the Database Call count is `1 + (number of relationship levels)`,
 never one query per parent (N+1 elimination):
 
 ```text
@@ -1350,7 +1350,7 @@ whole however little of it the part reaches, and a row two statements both
 return is one row. Its projection is the predecessor projection of a resolving
 read, the Structured Column included under Relational Document Layout, and under
 Locking it carries the read-lock suffix below. The read belongs to the write step: it is
-counted in that step's round trips, and a case authors no golden for it
+counted in that step's Database Calls, and a case authors no golden for it
 (`m-case-format`). Once the rectangles are known, every rectangle's inactivation,
 revision, or removal is emitted before any successor is inserted — rectangles in
 Valid-Time order, each rectangle's successors in Valid-Time order — so a lost
@@ -1549,7 +1549,7 @@ and, in `locking` mode, takes the shared lock), then **lowers to one keyed
 per-object `UPDATE` per resolved row** — the gated optimistic form or the ungated
 locking form above. The scenario golden lists those per-object statements in order
 (one per matched row), each statement entry carrying its own `binds`, and the
-declared round trips are `1` read + `N` updates. For a **non-versioned** entity the readless batched
+declared Database Calls are `1` read + `N` updates. For a **non-versioned** entity the readless batched
 forms above stand (ADR 0014); materialization applies only where a framework-owned
 version must ride each write.
 
@@ -2444,7 +2444,7 @@ move.
 the read is partitioned by variant** as one `union all` of tag-filtered branches,
 so each branch's extraction and cast see only rows of its concrete variant. The
 branches retain canonical concrete order and branch-local bind order; the read
-remains one statement and one round trip.
+remains one statement and one Database Call.
 
 The branches are exactly the statement's selected composed variants, so a row
 whose stored tag names no composed concrete subtype matches no branch. It never

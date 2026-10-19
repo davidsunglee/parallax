@@ -22,7 +22,7 @@ then:
         postgres: insert into write_twin_log(id, label, in_z, out_z, spec, marks) values (?, ?, ?, ?, ?, ?)
         mariadb: insert into write_twin_log(id, label, in_z, out_z, spec, marks) values (?, ?, ?, ?, ?, ?)
       binds: [5, Pilot, "2026-06-01T00:00:00.000000Z", infinity, null, []]
-  roundTrips: 3
+  databaseCalls: 3
   tableState:
     write_twin_log:
       - id: 5

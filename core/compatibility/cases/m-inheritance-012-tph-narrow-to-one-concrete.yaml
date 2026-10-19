@@ -20,4 +20,4 @@ then:
   referenceSql: select id, kind, name, owner_id, license_id, bark_volume from animal where bark_volume > 3 and kind = 'dog'
   rows:
     - { id: 1, name: Rex, owner_id: 10, license_id: L-100, bark_volume: 7, familyVariant: Dog }
-  roundTrips: 1
+  databaseCalls: 1

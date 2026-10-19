@@ -72,4 +72,4 @@ then:
         tuskLength: "12.50"
         familyVariant: WildBoar
         owner: { id: 12, name: Carol }
-  roundTrips: 3
+  databaseCalls: 3

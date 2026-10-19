@@ -21,7 +21,7 @@ when:
       note: the gated UPDATE conflicts once; the auto-retry re-reads and the second attempt commits
 then:
   outcome: committed
-  roundTrips: 4
+  databaseCalls: 4
   executionLifecycle:
     roots:
       - execution: 1

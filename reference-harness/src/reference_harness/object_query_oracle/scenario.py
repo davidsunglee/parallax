@@ -49,7 +49,7 @@ class ScenarioRowObservations:
         order, exactly once, with the reader its lifecycle selected. The steps
         that compilation keeps are never passed: a write, an action other than
         `load`, `access`, or a `mutate` declaring `expectRows`, and the
-        zero-round-trip construction of a query-backed list that has not resolved.
+        zero-Database-Call construction of a query-backed list that has not resolved.
         That every reference resolved
         here — a step's ``on`` and its ``sameObjectAs`` anchor — names an earlier
         step is settled there too, so what one resolves to is only ever a step
@@ -272,7 +272,7 @@ class ScenarioRowObservations:
     def _reused_rows(
         self, step_index: int, step: Mapping[str, Any]
     ) -> list[materialize.PublishedRow]:
-        """The rows a zero-round-trip step reuses from the earlier step it names.
+        """The rows a zero-Database-Call step reuses from the earlier step it names.
 
         A cache hit, a re-access, or a repeated find returns the SAME rows an
         earlier step published, named by ``sameObjectAs`` or — on an action step —
@@ -288,7 +288,7 @@ class ScenarioRowObservations:
         if not isinstance(source, int):
             raise CaseFailure(
                 f"{self._case.path.name}: scenario[{step_index}] issues no statement of its "
-                f"own and names no earlier step to reuse rows from — a zero-round-trip "
+                f"own and names no earlier step to reuse rows from — a zero-Database-Call "
                 f"cache hit / re-access answers with the rows an earlier step published."
             )
         return self._observation(step_index, source).rows
@@ -306,10 +306,10 @@ class ScenarioRowObservations:
         """Execute a find's child levels, or refuse SQL for levels it declares none of.
 
         A read step's own ``objectQuery`` carries Include Paths exactly as a read
-        case's does, so the step costs ``1 + L`` round trips and lists one golden
+        case's does, so the step costs ``1 + L`` Database Calls and lists one golden
         statement per non-empty level. Without Includes there is nothing after the
         root, so a second listed statement is SQL nobody executes and the step's
-        declared round trips would count a call it never made.
+        declared Database Calls would count a call it never made.
         """
         case = self._case
         query = step["objectQuery"]
@@ -318,8 +318,8 @@ class ScenarioRowObservations:
                 raise CaseFailure(
                     f"{case.path.name}: scenario[{step_index}] lists {len(pairs)} golden "
                     f"statements but its objectQuery declares no `includes`, so only the "
-                    f"root read has a level to run. A step that costs more than one round "
-                    f"trip MUST declare the include levels the extra statements fetch."
+                    f"root read has a level to run. A step that costs more than one Database "
+                    f"Call MUST declare the include levels the extra statements fetch."
                 )
             return None
         steps = includes.fetch_steps(case.model, query)

@@ -39,4 +39,4 @@ then:
         barkVolume: 7
         familyVariant: Dog
         owner: { id: 10, name: Alice }
-  roundTrips: 2
+  databaseCalls: 2

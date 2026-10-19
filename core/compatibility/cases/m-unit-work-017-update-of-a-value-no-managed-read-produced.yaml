@@ -12,8 +12,8 @@ when:
   scenario:
     - action: amend
       value: unmanaged
-      roundTrips: 0
+      databaseCalls: 0
       expectError: write-value-not-stored
       note: no managed read produced this value, so `update` addresses no stored row
 then:
-  roundTrips: 0
+  databaseCalls: 0

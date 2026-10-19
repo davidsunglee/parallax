@@ -32,7 +32,7 @@ __all__ = ["READ_STORIES", "ReadStory", "read_story_snippet"]
 @dataclass(frozen=True, slots=True)
 class ReadStory:
     """One case-driven idiomatic read example: build the statement, mirror one
-    corpus ``read``-shape case whose oracle is ``then.rows``/``then.roundTrips``.
+    corpus ``read``-shape case whose oracle is ``then.rows``/``then.databaseCalls``.
     ``snippet`` is the bare ``query = ...`` reading every entry authors (a plain
     assignment, matching every other example's presentation) — kept alongside
     ``build`` rather than derived via ``inspect.getsource`` (a lambda's own

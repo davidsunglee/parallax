@@ -24,4 +24,4 @@ then:
     mariadb: select id, label from sample where nullif(json_unquote(json_extract(profile, '$.flag')), 'null') = 'true'
   rows:
     - { id: 1, label: Ada }
-  roundTrips: 1
+  databaseCalls: 1

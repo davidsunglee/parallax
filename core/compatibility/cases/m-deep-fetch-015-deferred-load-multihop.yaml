@@ -14,7 +14,7 @@ when:
             values:
               - 1
               - 42
-      roundTrips: 1
+      databaseCalls: 1
       note: the two source orders (root level)
       statements:
         - sql:
@@ -26,7 +26,7 @@ when:
     - action: load
       "on": 0
       path: items.statuses
-      roundTrips: 2
+      databaseCalls: 2
       note: two-hop load -> one statement per non-empty level (items keyed by order id, statuses by item id)
       statements:
         - sql:
@@ -36,4 +36,4 @@ when:
             postgres: select t0.id, t0.order_id, t0.order_item_id, t0.code from order_status t0 where t0.order_item_id in (?, ?, ?, ?) order by t0.code asc
           binds: [11, 12, 421, 422]
 then:
-  roundTrips: 3
+  databaseCalls: 3

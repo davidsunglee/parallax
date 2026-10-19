@@ -17,4 +17,4 @@ then:
   rows:
     - { id: 1, tags: [t], bits: [8, 8], blades: null, familyVariant: TagDrill }
     - { id: 2, tags: [], bits: null, blades: [rip], familyVariant: TagSaw }
-  roundTrips: 1
+  databaseCalls: 1

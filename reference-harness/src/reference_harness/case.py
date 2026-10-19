@@ -751,7 +751,7 @@ class Case:
 
         Holds ``statements`` (the golden SQL entries), ``referenceSql``, the observed
         data (``rows`` / ``graph`` / ``tableState``), the counts/codes (``affectedRows``
-        / ``errorClass`` / ``nativeCode`` / ``roundTrips``), the boundary ``outcome``,
+        / ``errorClass`` / ``nativeCode`` / ``databaseCalls``), the boundary ``outcome``,
         and the comparison ``tolerance``.
         """
         return self.raw.get("then", {})
@@ -1038,7 +1038,7 @@ class Case:
         """True for a unit-of-work, cache, or identity scenario case.
 
         A scenario case carries ``when.scenario`` (an ordered list of
-        steps with per-step round-trip counts) instead of a single query;
+        steps with per-step Database Call counts) instead of a single query;
         golden SQL lives per step (as each step's ``statements``).
         """
         return self.shape == "scenario"
@@ -1363,20 +1363,20 @@ class Case:
         return self.then.get("graphs")
 
     @property
-    def round_trips(self) -> int:
-        """The statements this case costs: what ``then.roundTrips`` declares, or
+    def database_calls(self) -> int:
+        """The statements this case costs: what ``then.databaseCalls`` declares, or
         the shape's own default where it is absent.
 
         One for a shape that reaches the database, and ZERO for the two that do
         not: a ``rejected`` case, whose input a validator refuses before any
         statement is composed, and an ``evolution`` case, whose whole observable
         is a pure description of two accepted models
-        (``m-conformance-adapter``: both report ``roundTrips: 0``). The schema
+        (``m-conformance-adapter``: both report ``databaseCalls: 0``). The schema
         pins the declared value to ``0`` there, so the shape-aware default is the
         same number a declaration would carry — and it is the number those cases
         actually answer, since none of them declares the field.
         """
-        return self.then.get("roundTrips", 0 if self.is_rejected or self.is_evolution else 1)
+        return self.then.get("databaseCalls", 0 if self.is_rejected or self.is_evolution else 1)
 
     @property
     def tolerance(self) -> Decimal | None:

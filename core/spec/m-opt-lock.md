@@ -244,14 +244,14 @@ their requested extent*).
 
 The version advances on every `UPDATE` statement an implementation *issues*, but
 an amendment that assigns **no** attribute **MUST** issue **no DML** at all (zero
-round trips). A keyed amendment's assignments are literal sets (`m-unit-work`), so
-a keyed amendment assigning an attribute the value its source observed is not
-empty: it issues its `UPDATE`, gated as any other, and advances the version. A
-temporal one keeps a milestone it leaves unchanged, proven by a guard under
-Optimistic (*Temporal entities derive the version from Transaction Time*, below).
-A predicate-selected amendment instead compares each resolved row, below. Neither
-empty write needs to bump the version — the concurrent editor that races it
-advances the version itself, so nothing slips through.
+Database Calls). A keyed amendment's assignments are literal sets
+(`m-unit-work`), so a keyed amendment assigning an attribute the value its source
+observed is not empty: it issues its `UPDATE`, gated as any other, and advances
+the version. A temporal one keeps a milestone it leaves unchanged, proven by a
+guard under Optimistic (*Temporal entities derive the version from Transaction
+Time*, below). A predicate-selected amendment instead compares each resolved row,
+below. Neither empty write needs to bump the version — the concurrent editor that
+races it advances the version itself, so nothing slips through.
 
 ### Composed temporal writes keep every source condition
 
@@ -290,12 +290,13 @@ versioned entity has **no** single-statement versioned template: the gate binds 
 
 For assignment-bearing mutations, no-op elimination is **per resolved row**: when
 all assignments already equal that row's values, it issues no DML, advances no
-version, and contributes no round trip. `delete` and temporal `terminate` process
-**every** resolved row: they have no assignment equality to eliminate. The exact
-cost is therefore **`1 + N`**, where `N` is the number of rows actually written,
-not necessarily the number resolved. A per-object gate or temporal close that
-matches zero rows is the `updatedRows != 1` conflict signal and **MUST** abort the
-whole unit of work; a later row is never silently continued after that conflict.
+version, and contributes no Database Call. `delete` and temporal `terminate`
+process **every** resolved row: they have no assignment equality to eliminate. The
+exact cost is therefore **`1 + N`**, where `N` is the number of rows actually
+written, not necessarily the number resolved. A per-object gate or temporal close
+that matches zero rows is the `updatedRows != 1` conflict signal and **MUST**
+abort the whole unit of work; a later row is never silently continued after that
+conflict.
 
 A **Bitemporal amendment** is the exception to elimination at selection. It
 resolves each object by the rectangle current at its `validFrom` and reaches the
@@ -480,7 +481,7 @@ entries that simulate a concurrent transaction mutating the row — and a
 | versioned delete, effective Locking | locking | remove the row out of band | none — no gate | **0** (non-retriable stale write) |
 
 A companion **scenario** case pins the empty-update rule: a versioned update
-assigning no attribute declares `roundTrips: 0` and lists no golden DML (no
+assigning no attribute declares `databaseCalls: 0` and lists no golden DML (no
 statement issued). Predicate-selected witnesses use a materializing `find`, the
 structured `write` instruction, and a verification `find`; non-trivial finds carry
 their own naive `referenceSql` oracle.
@@ -494,7 +495,7 @@ their own naive `referenceSql` oracle.
 | `m-temporal-write-026`–`-029` | `Position` plain / bounded correction or termination | the materialized observed rectangle is closed and the required head/middle/tail chain is emitted |
 
 Each scenario's write step lists its ordered per-object golden statements
-(`roundTrips: N`); the declared total is the honest `1 + N` materialize cost plus
+(`databaseCalls: N`); the declared total is the honest `1 + N` materialize cost plus
 any explicit verification read. Optimistic corpus cases carry
 `when.uow: { concurrency: optimistic }`; locking cases carry
 `when.uow: { concurrency: locking }`.

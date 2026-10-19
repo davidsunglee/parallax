@@ -10,7 +10,7 @@ when:
         target: parallax.compatibility.Order
         predicate:
           "true": {}
-      roundTrips: 1
+      databaseCalls: 1
       note: the root orders
       statements:
         - sql:
@@ -25,7 +25,7 @@ when:
     - action: load
       "on": 0
       path: items
-      roundTrips: 1
+      databaseCalls: 1
       note: deep fetch populates the items lists in one batched query
       statements:
         - sql:
@@ -40,8 +40,8 @@ when:
     - action: access
       "on": 0
       path: items
-      roundTrips: 0
+      databaseCalls: 0
       sameObjectAs: 1
       note: accessing the populated list again -> zero SQL, the same objects
 then:
-  roundTrips: 2
+  databaseCalls: 2

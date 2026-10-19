@@ -47,22 +47,22 @@ def test_scenario_cases_are_discovered_and_self_describe(scenario_cases) -> None
                 # golden SQL.
                 assert not step.get("statements")
                 continue
-            assert "roundTrips" in step
+            assert "databaseCalls" in step
             if "write" in step:
                 # A committed / rolled-back write lists golden DML; a NO-OP write
                 # (a versioned UPDATE that changes no attribute, m-opt-lock) issues no DML,
-                # so it declares roundTrips 0 and lists none — like a cache hit.
-                if step["roundTrips"] == 0:
+                # so it declares databaseCalls 0 and lists none — like a cache hit.
+                if step["databaseCalls"] == 0:
                     assert not step.get("statements"), "a no-op write step lists no golden DML"
                 else:
                     assert step.get("statements"), (
-                        "a write step with round trips must list golden DML"
+                        "a write step with Database Calls must list golden DML"
                     )
 
 
 def test_every_authored_scenario_is_judged_clean_before_any_database(scenario_cases) -> None:
     # The whole executed corpus, graded against its own document on both dialects
-    # without a container: normalization, round-trip accounting, settled-write
+    # without a container: normalization, Database Call accounting, settled-write
     # cross-checks, and `on` references.
     for case in _executed(scenario_cases):
         for dialect in ("postgres", "mariadb"):
@@ -72,13 +72,13 @@ def test_every_authored_scenario_is_judged_clean_before_any_database(scenario_ca
                 pass  # judged clean, then asked for a database
 
 
-def test_cache_hit_scenario_has_a_zero_round_trip_step(corpus_case) -> None:
+def test_cache_hit_scenario_has_a_zero_database_call_step(corpus_case) -> None:
     case = corpus_case("m-process-cache-001-hit.yaml")
     assert "cache-hit" in case.tags
-    # A cache-hit scenario must contain a step that costs zero round trips and
+    # A cache-hit scenario must contain a step that costs zero Database Calls and
     # lists no golden SQL (it is served from the query cache).
-    hits = [step for step in case.scenario if step["roundTrips"] == 0]
-    assert hits, "cache-hit scenario has no zero-round-trip (hit) step"
+    hits = [step for step in case.scenario if step["databaseCalls"] == 0]
+    assert hits, "cache-hit scenario has no zero-Database-Call (hit) step"
     for hit in hits:
         assert not hit.get("statements"), "a cache-hit step must list no golden SQL"
     assert_judged(case)
@@ -95,25 +95,25 @@ def test_rollback_scenario_step_is_discovered_and_self_describes(corpus_case) ->
     assert rollback_steps, "no rollback scenario step discovered"
     for step in rollback_steps:
         # An ABORTED write step is still a write step that lists golden DML (it is
-        # applied then rolled back) and declares its round trips (the DML executes).
+        # applied then rolled back) and declares its Database Calls (the DML executes).
         assert "write" in step
         assert step.get("statements"), "a rollback write step must list golden DML"
-        assert step["roundTrips"] >= 1
-    # The rolled-back step's statements are counted as round trips exactly like a
+        assert step["databaseCalls"] >= 1
+    # The rolled-back step's statements are counted as Database Calls exactly like a
     # committed write, so the count-consistency check MUST still hold.
     assert_judged(case)
 
 
 def test_no_op_write_scenario_step_is_discovered_and_self_describes(corpus_case) -> None:
     case = corpus_case("m-opt-lock-001-no-op-update-no-dml.yaml")
-    no_ops = [step for step in case.scenario if "write" in step and step["roundTrips"] == 0]
+    no_ops = [step for step in case.scenario if "write" in step and step["databaseCalls"] == 0]
     assert no_ops, "no no-op-write scenario step discovered"
     for step in no_ops:
         # A NO-OP write (a versioned UPDATE that changes no attribute, m-opt-lock) issues
-        # NO DML: it lists no golden SQL and costs zero round trips, mirroring a
+        # NO DML: it lists no golden SQL and costs zero Database Calls, mirroring a
         # cache-hit read step.
         assert not step.get("statements"), "a no-op write step must list no golden DML"
-    # The zero-round-trip write step keeps the count-consistency check green.
+    # The zero-Database-Call write step keeps the count-consistency check green.
     assert_judged(case)
 
 
@@ -185,18 +185,18 @@ def test_a_scenario_with_no_steps_is_refused(damaged_case) -> None:
         assert_unit_work_scenario(case, RefusingProvider())
 
 
-def test_a_step_round_trip_mismatch_is_refused(damaged_case) -> None:
-    # Corrupt a step's declared roundTrips so it no longer matches the golden SQL
+def test_a_step_database_call_mismatch_is_refused(damaged_case) -> None:
+    # Corrupt a step's declared databaseCalls so it no longer matches the golden SQL
     # statement count it lists.
     case = damaged_case("m-unit-work-005-ryow-update.yaml")
-    case.when["scenario"][0]["roundTrips"] += 1
-    with pytest.raises(CaseFailure, match="declares roundTrips"):
+    case.when["scenario"][0]["databaseCalls"] += 1
+    with pytest.raises(CaseFailure, match="declares databaseCalls"):
         assert_unit_work_scenario(case, RefusingProvider())
 
 
-def test_a_case_level_round_trip_mismatch_is_refused(damaged_case) -> None:
+def test_a_case_level_database_call_mismatch_is_refused(damaged_case) -> None:
     case = damaged_case("m-unit-work-005-ryow-update.yaml")
-    case.then["roundTrips"] += 1
+    case.then["databaseCalls"] += 1
     with pytest.raises(CaseFailure, match="scenario steps total"):
         assert_unit_work_scenario(case, RefusingProvider())
 
@@ -243,7 +243,7 @@ def test_a_read_verbs_on_reference_must_name_an_earlier_step(damaged_case) -> No
 
 
 def test_a_reuse_naming_a_step_that_is_not_earlier_is_refused(damaged_case) -> None:
-    # The other half of the same rule: a zero-round-trip cache hit / re-access
+    # The other half of the same rule: a zero-Database-Call cache hit / re-access
     # names its source with `sameObjectAs`, and an empty reuse would let the
     # step's own identity and `expectRows` assertions pass against nothing.
     # Whether the step it names PUBLISHED anything only a run can answer, and the

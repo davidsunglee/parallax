@@ -51,7 +51,7 @@ def _case(arm: str, *, rows: list[dict[str, object]] | None = None) -> dict:
                 }
             ],
             "rows": rows if rows is not None else [{"id": 1, "label": "Ada"}],
-            "roundTrips": 1,
+            "databaseCalls": 1,
         },
     }
 

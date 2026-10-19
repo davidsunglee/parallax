@@ -12,8 +12,8 @@ when:
   scenario:
     - action: amend
       value: invalidRoot
-      roundTrips: 0
+      databaseCalls: 0
       expectError: write-value-not-stored
       note: diagnostic data from a hydratable invalid root was not admitted as a keyed source
 then:
-  roundTrips: 0
+  databaseCalls: 0

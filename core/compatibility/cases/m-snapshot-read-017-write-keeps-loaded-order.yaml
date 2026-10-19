@@ -25,7 +25,7 @@ when:
         includes:
           - segments:
               - rel: parallax.compatibility.OrderItem.order
-      roundTrips: 2
+      databaseCalls: 2
       note: materialize a snapshot of line item 11 WITH its owning order (1 + L levels)
       statements:
         - sql:
@@ -41,7 +41,7 @@ when:
           entity: parallax.compatibility.Order
           rows:
             - { id: 1, name: Rewritten }
-      roundTrips: 2
+      databaseCalls: 2
       note: commit an update to the very row the loaded `order` view holds - one DML statement plus the resolving read the keyed update owes
       statements:
         - sql:
@@ -50,11 +50,11 @@ when:
     - action: access
       "on": 0
       path: order
-      roundTrips: 0
+      databaseCalls: 0
       sameObjectAs: 0
       note: access the ALREADY-MATERIALIZED order after the write -> ZERO SQL and the contents the read paid for
       expectGraph:
         Order:
           - { id: 1, name: Ada, sku: A-100, qty: 5, price: "10.50", active: true, orderedOn: 2024-01-05 }
 then:
-  roundTrips: 4
+  databaseCalls: 4

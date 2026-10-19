@@ -47,4 +47,4 @@ then:
     tag_ledger:
       - { id: 1, version: 2, label: open, tags: [c, c], route: { stops: [x, y] } }
       - { id: 2, version: 5, label: whole, tags: [], route: null }
-  roundTrips: 3
+  databaseCalls: 3

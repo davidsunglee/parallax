@@ -18,7 +18,7 @@ when:
           eq:
             path: parallax.compatibility.Account.id
             value: 1
-      roundTrips: 1
+      databaseCalls: 1
       note: observe generation one — account 1 at balance 100.00, version 1
       statements:
         - sql:
@@ -33,7 +33,7 @@ when:
           entity: parallax.compatibility.Account
           rows:
             - { id: 1, balance: "125.00" }
-      roundTrips: 1
+      databaseCalls: 1
       note: settle against generation one — the gate binds version 1 and the advance writes 2
       statements:
         - sql:
@@ -46,7 +46,7 @@ when:
           eq:
             path: parallax.compatibility.Account.id
             value: 1
-      roundTrips: 1
+      databaseCalls: 1
       note: the dependent read force-flushes the pending intent and observes generation two (125.00, version 2)
       statements:
         - sql:
@@ -61,11 +61,11 @@ when:
           entity: parallax.compatibility.Account
           rows:
             - { id: 1, balance: "175.00" }
-      roundTrips: 1
+      databaseCalls: 1
       note: settle against generation TWO — the gate binds version 2; naming step 0 would gate on a version the row has left
       statements:
         - sql:
             postgres: update account set balance = ?, version = ? where id = ? and version = ?
           binds: ["175.00", 3, 1, 2]
 then:
-  roundTrips: 4
+  databaseCalls: 4

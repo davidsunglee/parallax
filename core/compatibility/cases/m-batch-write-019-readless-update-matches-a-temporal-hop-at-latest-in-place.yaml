@@ -16,14 +16,14 @@ when:
                 eq: {path: term, value: 12mo}
         assignments:
           - { attr: parallax.compatibility.LeaseNote.text, value: lapsed }
-      roundTrips: 1
+      databaseCalls: 1
       statements:
         - sql:
             postgres: update lease_note set note_text = ? where not exists (select 1 from lease t1 where t1.id = lease_id and t1.term = ? and t1.out_z = ?)
             mariadb: update lease_note set note_text = ? where not exists (select 1 from lease t1 where t1.id = lease_id and t1.term = ? and t1.out_z = ?)
           binds: [lapsed, 12mo, infinity]
 then:
-  roundTrips: 1
+  databaseCalls: 1
   tableState:
     lease_note:
       - { id: 100, lease_id: 10, note_text: lapsed }

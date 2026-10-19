@@ -19,4 +19,4 @@ then:
   rows:
   - {id: 30, vehicle_id: 5}
   - {id: 33, vehicle_id: 7}
-  roundTrips: 1
+  databaseCalls: 1

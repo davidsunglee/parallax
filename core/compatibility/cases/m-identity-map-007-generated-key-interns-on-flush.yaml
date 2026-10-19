@@ -10,11 +10,11 @@ when:
     concurrency: optimistic
   scenario:
     - write: insert
-      roundTrips: 0
+      databaseCalls: 0
       note: buffer the create of a Badge with a GENERATED primary key — no key yet, so NOT interned by key
     - action: flush
       "on": 0
-      roundTrips: 2
+      databaseCalls: 2
       note: flush -> reserve the sequence block (base id 1), then insert; the object interns at key generation
       statements:
         - sql:
@@ -29,7 +29,7 @@ when:
           eq:
             path: parallax.compatibility.Badge.id
             value: 1
-      roundTrips: 1
+      databaseCalls: 1
       identityAttr: id
       note: a subsequent find returns the now-interned generated-key object
       statements:
@@ -39,4 +39,4 @@ when:
       expectRows:
         - { id: 1, holder: Bo }
 then:
-  roundTrips: 3
+  databaseCalls: 3

@@ -80,7 +80,7 @@ def test_rejected_sweep(case: case_format.Case) -> None:
     assert envelope["status"] == "ok", envelope
     assert envelope["emissions"] == []
     observations = envelope["observations"]
-    assert observations["roundTrips"] == 0
+    assert observations["databaseCalls"] == 0
     assert observations["rejectedRule"] == case_document(case)["then"]["rejectedRule"]
 
 

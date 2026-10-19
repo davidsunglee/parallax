@@ -14,7 +14,7 @@ when:
           eq:
             path: parallax.compatibility.Customer.id
             value: 1
-      roundTrips: 1
+      databaseCalls: 1
       note: managed find materializes the owner WITH its address Document slot — INSTANCE-FORM (id, name, then address presence/value pair last)
       statements:
         - sql:
@@ -37,7 +37,7 @@ when:
     - action: load
       "on": 0
       path: locations
-      roundTrips: 1
+      databaseCalls: 1
       note: deferred load of the VO-bearing child Location — INSTANCE-FORM, projects Location's own list (id, customer_id, label, then address presence/value pair); each row's address decodes with LOCATION's descriptor
       statements:
         - sql:
@@ -62,4 +62,4 @@ when:
           label: Depot
           address: null
 then:
-  roundTrips: 2
+  databaseCalls: 2

@@ -23,4 +23,4 @@ then:
       - { id: 1, owner: Ada, balance: "100.00", version: 1 }
       - { id: 2, owner: Linus, balance: "250.00", version: 1 }
       - { id: 3, owner: Hopper, balance: "12.00", version: 2 }
-  roundTrips: 1
+  databaseCalls: 1

@@ -49,4 +49,4 @@ then:
           entity: parallax.compatibility.CollectionTwinItem
           member: parallax.compatibility.CollectionTwinItem.parts.marks
           objectKey: { entity: parallax.compatibility.CollectionTwinItem, key: { id: 2 } }
-  roundTrips: 1
+  databaseCalls: 1

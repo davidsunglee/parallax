@@ -19,4 +19,4 @@ then:
   tableState:
     payment:
       - { id: 10, kind: card, amount: "200.00", card_network: Mastercard, tendered: null }
-  roundTrips: 1
+  databaseCalls: 1

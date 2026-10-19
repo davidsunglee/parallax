@@ -96,4 +96,4 @@ then:
           entity: parallax.compatibility.Location
           member: parallax.compatibility.Location.address.street
           objectKey: { entity: parallax.compatibility.Location, key: { id: 100 } }
-  roundTrips: 2
+  databaseCalls: 2

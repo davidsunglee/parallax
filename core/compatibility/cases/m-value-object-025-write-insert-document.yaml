@@ -48,4 +48,4 @@ then:
           phones:
             - { type: home, number: '555-0001' }
             - { type: work, number: '555-0002' }
-  roundTrips: 1
+  databaseCalls: 1

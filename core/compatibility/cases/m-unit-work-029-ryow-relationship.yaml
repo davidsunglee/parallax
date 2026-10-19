@@ -20,7 +20,7 @@ when:
         includes:
           - segments:
               - rel: parallax.compatibility.Order.items
-      roundTrips: 2
+      databaseCalls: 2
       note: observe order 1 WITH its items inside the unit of work the write below shares
       statements:
         - sql:
@@ -51,7 +51,7 @@ when:
           entity: parallax.compatibility.OrderItem
           rows:
             - { id: 11, sku: Rewritten }
-      roundTrips: 2
+      databaseCalls: 2
       note: add a line item to the very relationship the find above materialized and rewrite one it already held; both settle inside the group, so neither owes a resolving read
       statements:
         - sql:
@@ -70,7 +70,7 @@ when:
         includes:
           - segments:
               - rel: parallax.compatibility.Order.items
-      roundTrips: 2
+      databaseCalls: 2
       note: the SAME read again, still inside the group - it MUST observe its own writes across the relationship; the group COMMITS after this, its last step
       expectGraph:
         Order:
@@ -93,4 +93,4 @@ when:
             postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id = any(?) order by t0.id desc for share of t0
           binds: [[1]]
 then:
-  roundTrips: 6
+  databaseCalls: 6

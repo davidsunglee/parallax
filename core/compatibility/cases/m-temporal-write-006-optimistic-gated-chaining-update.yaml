@@ -24,7 +24,7 @@ when:
         temporal:
           transaction-time:
             asOf: latest
-      roundTrips: 1
+      databaseCalls: 1
       note: observe balance 1's current milestone (150.00, known from 2024-06-01)
       statements:
         - sql:
@@ -41,7 +41,7 @@ when:
           rows:
             - { id: 1, value: "175.00" }
           at: "2024-09-01T00:00:00.000000Z"
-      roundTrips: 2
+      databaseCalls: 2
       note: the close gated on the observed in_z, then the chained successor carrying the new value and the observed acct_num from the same instant
       statements:
         - sql:
@@ -53,7 +53,7 @@ when:
             mariadb: insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)
           binds: [1, A, "175.00", "2024-09-01T00:00:00.000000Z", infinity]
 then:
-  roundTrips: 3
+  databaseCalls: 3
   tableState:
     balance:
       - { bal_id: 1, acct_num: A, val: "100.00", in_z: "2024-01-01T00:00:00.000000Z", out_z: "2024-06-01T00:00:00.000000Z" }

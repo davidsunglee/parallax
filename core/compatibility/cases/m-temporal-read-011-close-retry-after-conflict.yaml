@@ -16,4 +16,4 @@ when:
       note: the gated close conflicts once before its chained insert runs, then the replay re-reads, closes, and chains
 then:
   outcome: committed
-  roundTrips: 5
+  databaseCalls: 5

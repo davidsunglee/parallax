@@ -1026,8 +1026,8 @@ def test_a_scenario_story_builds_its_cases_object_queries(case_id: str) -> None:
     # each query the story builds must CANONICALIZE to the step it mirrors, not
     # merely answer the same rows at the same cost. A different predicate or a
     # different include shape over the same fixture is exactly what a row
-    # comparison and a round-trip count cannot see — a read-back keyed on the
-    # surviving item's own id returns the case's `expectRows` in one round trip
+    # comparison and a Database Call count cannot see — a read-back keyed on the
+    # surviving item's own id returns the case's `expectRows` in one Database Call
     # and still asks a different question from `orderId = 1`.
     story = next(s for s in graph_stories.GRAPH_STORIES if s.case_id == case_id)
     db = _recording_db(story)

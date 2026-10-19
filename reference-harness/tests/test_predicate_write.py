@@ -53,7 +53,7 @@ def _scenario_case(instruction: dict[str, object]) -> dict[str, object]:
             "scenario": [
                 {
                     "write": instruction,
-                    "roundTrips": 1,
+                    "databaseCalls": 1,
                     "statements": [
                         {
                             "sql": {"postgres": "update account set balance = ? where id = ?"},
@@ -63,7 +63,7 @@ def _scenario_case(instruction: dict[str, object]) -> dict[str, object]:
                 }
             ]
         },
-        "then": {"roundTrips": 1},
+        "then": {"databaseCalls": 1},
     }
 
 
@@ -92,7 +92,7 @@ def _materializing_find(
 ) -> dict[str, object]:
     return {
         "objectQuery": {"target": entity.name, "predicate": predicate},
-        "roundTrips": 1,
+        "databaseCalls": 1,
         "statements": [
             {
                 "sql": {"postgres": "select t0.id from account t0"},
@@ -209,8 +209,8 @@ def test_materialization_validator_rejects_unobservable_matching_find() -> None:
 @pytest.mark.parametrize(
     ("edit", "message"),
     [
-        ({"roundTrips": 0}, "roundTrips: 1"),
-        ({"roundTrips": 2}, "roundTrips: 1"),
+        ({"databaseCalls": 0}, "databaseCalls: 1"),
+        ({"databaseCalls": 2}, "databaseCalls: 1"),
         ({"statements": []}, "authored golden read statement"),
     ],
 )
@@ -495,7 +495,7 @@ def test_schema_validation_rejects_a_cache_hit_as_predicate_materialization(tmp_
     )
     case = yaml.safe_load(case_path.read_text(encoding="utf-8"))
     materialize = case["when"]["scenario"][0]
-    materialize["roundTrips"] = 0
+    materialize["databaseCalls"] = 0
     materialize.pop("statements")
     case_path.write_text(yaml.safe_dump(case, sort_keys=False), encoding="utf-8")
 

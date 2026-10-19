@@ -23,7 +23,7 @@ when:
               segment:
                 stops:
                   - { port: Oslo }
-      roundTrips: 1
+      databaseCalls: 1
       statements:
         - sql:
             postgres: update nested_route set payload = jsonb_set(payload, ?, cast(? as jsonb)) where id = ?
@@ -32,7 +32,7 @@ when:
             postgres: ['{route}', { name: Coastal, segment: { stops: [{ port: Oslo }] } }, 1]
             mariadb: ['$.route', { name: Coastal, segment: { stops: [{ port: Oslo }] } }, 1]
 then:
-  roundTrips: 1
+  databaseCalls: 1
   tableState:
     nested_route:
       - id: 1

@@ -4,7 +4,7 @@ These pin the DB-free invariants of the bitemporal slice: the bitemporal
 DDL (a two-axis temporal entity's physical primary key spans BOTH as-of
 start columns so the milestone rectangles are admissible), and the
 write-step-count consistency of the `*Until` rectangle-split write sequences (the
-sum of per-step counts == goldenSql DML count == roundTrips). The full
+sum of per-step counts == goldenSql DML count == databaseCalls). The full
 apply-DML-and-assert-rectangle-state behavior and the both-axis as-of reads are
 exercised end-to-end against real Postgres by the compatibility suite.
 """
@@ -123,7 +123,7 @@ def test_until_trio_write_step_counts_are_consistent() -> None:
     write_cases = [c for c in _phase8_cases() if c.is_write_sequence]
     assert write_cases, "no Phase 8 write-sequence cases discovered"
     for case in write_cases:
-        # Must not raise: per-step counts sum to the DML count and roundTrips,
+        # Must not raise: per-step counts sum to the DML count and databaseCalls,
         # including the 4-statement updateUntil and 3-statement terminateUntil.
         _assert_write_step_count(case, "postgres")
 

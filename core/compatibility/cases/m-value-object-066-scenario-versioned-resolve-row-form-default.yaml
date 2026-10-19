@@ -18,7 +18,7 @@ when:
         target: parallax.compatibility.Subscriber
         predicate:
           "true": {}
-      roundTrips: 1
+      databaseCalls: 1
       note: managed find materializes the owner WITH its address Document slot — INSTANCE-FORM
       statements:
         - sql:
@@ -37,7 +37,7 @@ when:
         target: parallax.compatibility.Subscriber
         predicate:
           "true": {}
-      roundTrips: 1
+      databaseCalls: 1
       note: the predicate-write resolving read is ROW-FORM and projects pk + version only — a Version Observation retains no predecessor row, so the address Document slot stays out
       statements:
         - sql:
@@ -52,7 +52,7 @@ when:
           entity: parallax.compatibility.Subscriber
           predicate:
             "true": {}
-      roundTrips: 1
+      databaseCalls: 1
       note: remove the resolved row under its own observed version — one keyed, version-gated delete per resolved row, planned from step 1's two columns alone
       statements:
         - sql:
@@ -63,7 +63,7 @@ when:
         target: parallax.compatibility.Subscriber
         predicate:
           "true": {}
-      roundTrips: 1
+      databaseCalls: 1
       note: verify (INSTANCE-FORM, the same golden as step 0) — the gated delete removed the row, so the read returns nothing
       statements:
         - sql:
@@ -72,4 +72,4 @@ when:
       referenceSql: select id, version, address from subscriber
       expectRows: []
 then:
-  roundTrips: 4
+  databaseCalls: 4

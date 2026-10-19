@@ -15,4 +15,4 @@ then:
   rows:
     - { id: 1, title: Quarterly audit, detail: Ingrid, familyVariant: LayoutAudit }
     - { id: 1, title: Annual survey, detail: Bjorn, familyVariant: LayoutSurvey }
-  roundTrips: 1
+  databaseCalls: 1

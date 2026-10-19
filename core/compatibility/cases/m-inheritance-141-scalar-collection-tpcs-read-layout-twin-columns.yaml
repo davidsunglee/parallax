@@ -23,4 +23,4 @@ then:
     TagKit:
       - { id: 1, tags: [t], bits: [8, 8], familyVariant: TagDrill }
       - { id: 2, tags: [], blades: [rip], familyVariant: TagSaw }
-  roundTrips: 1
+  databaseCalls: 1

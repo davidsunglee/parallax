@@ -17,7 +17,7 @@ when:
           eq:
             path: parallax.compatibility.Account.id
             value: 1
-      roundTrips: 1
+      databaseCalls: 1
       note: observe account 1 (balance 100.00, version 1) — the ONE state both buffered writes settle against
       statements:
         - sql:
@@ -37,7 +37,7 @@ when:
           entity: parallax.compatibility.Account
           rows:
             - { id: 1 }
-      roundTrips: 1
+      databaseCalls: 1
       note: the delete supersedes the buffered assignment; ONE gated DELETE is emitted and the UPDATE never reaches the wire
       statements:
         - sql:
@@ -50,7 +50,7 @@ when:
           eq:
             path: parallax.compatibility.Account.id
             value: 1
-      roundTrips: 1
+      databaseCalls: 1
       note: the dependent find MUST observe no rows; the group COMMITS after this, its last step
       statements:
         - sql:
@@ -58,4 +58,4 @@ when:
           binds: [1]
       expectRows: []
 then:
-  roundTrips: 3
+  databaseCalls: 3

@@ -35,4 +35,4 @@ then:
   tableState:
     pass:
       - { id: 1, zone: north }
-  roundTrips: 2
+  databaseCalls: 2

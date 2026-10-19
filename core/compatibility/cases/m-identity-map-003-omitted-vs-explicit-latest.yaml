@@ -23,7 +23,7 @@ when:
             eq:
               path: parallax.compatibility.Balance.id
               value: 1
-      roundTrips: 1
+      databaseCalls: 1
       note: OMITTED authoring coordinate canonicalizes to the explicit Latest find above (out_z = infinity)
       statements:
         - sql:
@@ -40,7 +40,7 @@ when:
         temporal:
           transaction-time:
             asOf: latest
-      roundTrips: 1
+      databaseCalls: 1
       sameObjectAs: 0
       identityAttr: bal_id
       note: EXPLICIT asOf(latest) — lowers to the SAME out_z = infinity coordinate, the SAME managed view as step 0
@@ -51,4 +51,4 @@ when:
       expectRows:
         - { bal_id: 1, acct_num: A, val: "150.00", in_z: "2024-06-01T00:00:00.000000Z", out_z: infinity }
 then:
-  roundTrips: 2
+  databaseCalls: 2

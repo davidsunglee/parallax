@@ -22,7 +22,7 @@ when:
       note: the write deadlocks on every attempt — the bound, not the classifier, ends the loop
 then:
   outcome: deadlock
-  roundTrips: 4
+  databaseCalls: 4
   executionLifecycle:
     roots:
       - execution: 1

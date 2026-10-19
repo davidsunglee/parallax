@@ -242,7 +242,7 @@ _READ_ROWS_BY_CASE: Final[dict[str, list[list[MappingRow]]]] = {
 }
 
 # Reads a flush makes to acquire temporal coverage carry no golden of their own
-# (m-case-format counts them in a step's round trips only), so the statement
+# (m-case-format counts them in a step's Database Calls only), so the statement
 # compare skips them by their position among the story's statements.
 _COVERAGE_READS_BY_CASE: Final[dict[str, frozenset[int]]] = {
     "m-unit-work-015": frozenset({2}),
@@ -466,7 +466,7 @@ def test_commit_story_emits_the_golden_dml(case_id: str) -> None:
 
 @pytest.mark.parametrize("case_id", _PLAIN_DISCARD_ABORT_IDS, ids=_PLAIN_DISCARD_ABORT_IDS)
 def test_abort_story_discards_the_buffer_and_keeps_the_reads_golden(case_id: str) -> None:
-    # The rolled-back step's DML round trip is graded by the conformance run
+    # The rolled-back step's DML Database Call is graded by the conformance run
     # lane (which executes then aborts); through the developer surface the
     # buffered write is discarded before it reaches the wire, so the guard here
     # is the abort CONTRACT: nothing written, the abort rolled back, reads golden.

@@ -18,7 +18,7 @@ __all__ = [
     "UNMANAGED_ID",
     "OutsideReads",
     "WriteValueStep",
-    "declared_round_trips",
+    "declared_database_calls",
     "grade_step",
     "graded_outcomes",
     "reachable_write_value_cases",
@@ -157,10 +157,10 @@ def _both(reader: ScopedDatabase | ReadOnlyTxnContext | TxnContext) -> tuple[Ent
     return typed, wire
 
 
-def declared_round_trips(case: case_format.Case) -> int:
+def declared_database_calls(case: case_format.Case) -> int:
     """The statements the case declares it costs, from its own oracle.
 
-    A scenario's `then.roundTrips` is the SUM of its steps' own counts
+    A scenario's `then.databaseCalls` is the SUM of its steps' own counts
     (`m-case-format`), so the two are read together and a case whose total
     disagrees with its steps is loud here — the compatibility harness executes no
     `api-conformance` case, so this is where that consistency is checked at all.
@@ -171,12 +171,12 @@ def declared_round_trips(case: case_format.Case) -> int:
     case's cost.
     """
     steps = _scenario_steps(case)
-    total = sum(cast("int", step["roundTrips"]) for step in steps)
+    total = sum(cast("int", step["databaseCalls"]) for step in steps)
     then = cast("dict[str, Any]", case.document.get("then") or {})
-    declared = cast("int", then.get("roundTrips", total))
+    declared = cast("int", then.get("databaseCalls", total))
     if declared != total:
         raise ValueError(
-            f"{case.case_id}: then.roundTrips is {declared} but its steps declare {total} "
+            f"{case.case_id}: then.databaseCalls is {declared} but its steps declare {total} "
             "between them; a scenario's total is the sum of its steps' own counts"
         )
     return total

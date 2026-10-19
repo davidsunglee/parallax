@@ -16,7 +16,7 @@ when:
         temporal:
           transaction-time:
             asOf: latest
-      roundTrips: 1
+      databaseCalls: 1
       note: source A -> invoice 100 pinned at Transaction-Time-latest (out_z = infinity)
       statements:
         - sql:
@@ -33,7 +33,7 @@ when:
         temporal:
           transaction-time:
             asOf: "2024-02-01T00:00:00.000000Z"
-      roundTrips: 1
+      databaseCalls: 1
       note: source B -> the SAME primary key pinned at instant 2024-02-01 (a distinct pinned view)
       statements:
         - sql:
@@ -44,7 +44,7 @@ when:
     - action: load
       "on": [0, 1]
       path: lines
-      roundTrips: 2
+      databaseCalls: 2
       note: load lines over BOTH pinned views -> one child statement per lowered coordinate group
       statements:
         - sql:
@@ -59,4 +59,4 @@ when:
         - { id: 1000, invoice_id: 100, amount: "50.00", in_z: "2024-01-01T00:00:00.000000Z", out_z: "2024-04-01T00:00:00.000000Z" }
         - { id: 1001, invoice_id: 100, amount: "25.00", in_z: "2024-01-01T00:00:00.000000Z", out_z: infinity }
 then:
-  roundTrips: 4
+  databaseCalls: 4

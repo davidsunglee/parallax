@@ -163,11 +163,11 @@ def _pointer_ok(shape: str, pointer: str) -> bool:
 
 def _assert_write_emissions(case: case_format.Case, envelope: dict[str, Any]) -> None:
     """Grade a keyed unit-of-work write case: per-step emissions == the golden DML,
-    round trips == the DML statement count, and every casePointer well-formed for
+    Database Calls == the DML statement count, and every casePointer well-formed for
     the shape.
 
     The compile lane lowers a write buffer and issues nothing, so what it can
-    report is the DML it emitted. `then.roundTrips` counts the RESOLVING READS a
+    report is the DML it emitted. `then.databaseCalls` counts the RESOLVING READS a
     keyed write verb's source requires beside that DML (`m-case-format`
     *Resolving reads a write owes*), which only the run lane performs — so the
     two numbers coincide for a case whose writes open rows and differ by exactly
@@ -176,7 +176,7 @@ def _assert_write_emissions(case: case_format.Case, envelope: dict[str, Any]) ->
     assert envelope["status"] == "ok", envelope
     model = engine.load_case_metamodel(case)
     golden_statements = write_golden_statements(case)
-    assert envelope["roundTrips"] == len(golden_statements), case.case_id
+    assert envelope["databaseCalls"] == len(golden_statements), case.case_id
     emissions = envelope["emissions"]
     assert len(emissions) == len(golden_statements), (case.case_id, emissions, golden_statements)
     for emission, (golden_sql, golden_binds) in zip(emissions, golden_statements, strict=True):
@@ -208,7 +208,7 @@ def test_compile_sweep(case: case_format.Case) -> None:
     assert envelope["status"] == "ok", envelope
     goldens = golden(case)
     emissions = envelope["emissions"]
-    assert envelope["roundTrips"] == len(goldens)
+    assert envelope["databaseCalls"] == len(goldens)
     assert [emission["sql"] for emission in emissions] == [sql for sql, _binds in goldens]
     model = engine.load_case_metamodel(case)
     for emission, (golden_sql, golden_binds) in zip(emissions, goldens, strict=True):

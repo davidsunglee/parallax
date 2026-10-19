@@ -23,4 +23,4 @@ then:
   referenceSql: select id, owner, balance from wallet where id = 1
   rows:
     - { id: 1, owner: Ada, balance: "100.00" }
-  roundTrips: 1
+  databaseCalls: 1

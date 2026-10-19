@@ -13,7 +13,7 @@ when:
             eq:
               path: parallax.compatibility.Customer.address.city
               value: Boston
-      roundTrips: 1
+      databaseCalls: 1
       statements:
         - sql:
             postgres: delete from customer where jsonb_extract_path_text(address, ?) = ?
@@ -24,7 +24,7 @@ when:
           eq:
             path: parallax.compatibility.Customer.address.city
             value: Boston
-      roundTrips: 1
+      databaseCalls: 1
       statements:
         - sql:
             postgres: select t0.id, t0.name, not t0.address is null, t0.address from customer t0 where jsonb_extract_path_text(t0.address, ?) = ? for share of t0
@@ -32,4 +32,4 @@ when:
       referenceSql: select id, name, address from customer where address ->> 'city' = 'Boston'
       expectRows: []
 then:
-  roundTrips: 2
+  databaseCalls: 2

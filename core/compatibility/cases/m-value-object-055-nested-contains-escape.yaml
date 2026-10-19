@@ -23,4 +23,4 @@ then:
     postgres: select id, name from customer where position('%' in address ->> 'street') > 0
     mariadb: select id, name from customer where locate('%', nullif(json_unquote(json_extract(address, '$.street')), 'null')) > 0
   rows: []
-  roundTrips: 1
+  databaseCalls: 1

@@ -23,7 +23,7 @@ when:
         includes:
           - segments:
               - rel: parallax.compatibility.Policy.coverages
-      roundTrips: 2
+      databaseCalls: 2
       note: materialize a snapshot of policy 2 at Valid Time 2024-05-01 / Transaction Time LATEST WITH its coverages (1 + L levels, the root pin propagating per hop and per axis)
       statements:
         - sql:
@@ -42,7 +42,7 @@ when:
           validFrom: "2024-03-01T00:00:00.000000Z"
           until: "2024-09-01T00:00:00.000000Z"
           at: "2024-07-01T00:00:00.000000Z"
-      roundTrips: 3
+      databaseCalls: 3
       note: split the very rectangle the loaded `coverages` view holds - inactivate it, chain head / middle / tail in one multi-row insert, plus the resolving read the keyed write owes
       statements:
         - sql:
@@ -54,7 +54,7 @@ when:
     - action: access
       "on": 0
       path: coverages
-      roundTrips: 0
+      databaseCalls: 0
       sameObjectAs: 0
       note: access the ALREADY-MATERIALIZED coverages after the split -> ZERO SQL and the inactivated rectangle still whole in the view
       expectGraph:
@@ -71,7 +71,7 @@ when:
             asOf: latest
           valid-time:
             asOf: "2024-05-01T00:00:00.000000Z"
-      roundTrips: 1
+      databaseCalls: 1
       note: observing the write means issuing another read - the same pin now selects the middle rectangle the split chained
       statements:
         - sql:
@@ -80,4 +80,4 @@ when:
       expectRows:
         - { id: 20, policy_id: 2, amount: "999.00", from_z: "2024-03-01T00:00:00.000000Z", thru_z: "2024-09-01T00:00:00.000000Z", in_z: "2024-07-01T00:00:00.000000Z", out_z: infinity }
 then:
-  roundTrips: 6
+  databaseCalls: 6

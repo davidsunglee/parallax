@@ -233,7 +233,7 @@ def _scenario_document(write: list[Any], **top: Any) -> dict[str, Any]:
         "tags": ["m-unit-work"],
         "shape": "scenario",
         **top,
-        "when": {"scenario": [{"uow": "g", "write": write, "roundTrips": 0}]},
+        "when": {"scenario": [{"uow": "g", "write": write, "databaseCalls": 0}]},
         "then": {
             "tableState": {"order_item": []},
             "units": {"g": {"outcome": "committed"}},

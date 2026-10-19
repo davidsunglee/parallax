@@ -17,7 +17,7 @@ when:
       note: the invocation names no option
 then:
   outcome: committed
-  roundTrips: 1
+  databaseCalls: 1
   executionLifecycle:
     roots:
       - execution: 1

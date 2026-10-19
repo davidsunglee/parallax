@@ -19,4 +19,4 @@ then:
   tableState:
     memo:
       - { id: 5, title: Memo-C, folder_id: null, body: Note, annotation: null }
-  roundTrips: 1
+  databaseCalls: 1

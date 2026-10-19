@@ -17,7 +17,7 @@ when:
         temporal:
           transaction-time:
             asOf: latest
-      roundTrips: 1
+      databaseCalls: 1
       note: explicit latest pin (current-row predicate)
       statements:
         - sql:
@@ -34,7 +34,7 @@ when:
         temporal:
           transaction-time:
             asOf: "2024-04-01T00:00:00.000000Z"
-      roundTrips: 1
+      databaseCalls: 1
       note: finite past pin — a DISTINCT pinned view of the same primary key (the superseded milestone)
       statements:
         - sql:
@@ -51,7 +51,7 @@ when:
         temporal:
           transaction-time:
             asOf: latest
-      roundTrips: 1
+      databaseCalls: 1
       sameObjectAs: 0
       identityAttr: bal_id
       note: latest pin again — same lowered coordinate, the SAME managed view as step 0
@@ -62,4 +62,4 @@ when:
       expectRows:
         - { bal_id: 1, acct_num: A, val: "150.00", in_z: "2024-06-01T00:00:00.000000Z", out_z: infinity }
 then:
-  roundTrips: 3
+  databaseCalls: 3

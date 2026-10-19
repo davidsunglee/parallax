@@ -565,7 +565,7 @@ def test_profile_gate_accepts_a_read_stating_it_issues_no_statement(tmp_path: Pa
     cases = tmp_path / "cases"
     _write_case(cases, "m-predicate-001.yaml", _clean_read_case(["m-core", "slice-example-1"]))
     statementless = _clean_read_case(["m-predicate", "slice-example-1"])
-    statementless["then"] = {"statements": [], "rows": [], "roundTrips": 0}
+    statementless["then"] = {"statements": [], "rows": [], "databaseCalls": 0}
     _write_case(cases, "m-predicate-002.yaml", statementless)
     errors = profile_errors(_synthetic_slices(), tmp_path)
     assert not any("m-predicate-002.yaml" in e for e in errors)
@@ -604,7 +604,7 @@ def test_profile_gate_accepts_a_scenario_with_per_step_golden(tmp_path: Path) ->
                 "scenario": [
                     {
                         "write": "insert",
-                        "roundTrips": 1,
+                        "databaseCalls": 1,
                         "statements": [
                             {
                                 "sql": {"postgres": "insert into account(id) values (?)"},
@@ -614,7 +614,7 @@ def test_profile_gate_accepts_a_scenario_with_per_step_golden(tmp_path: Path) ->
                     },
                     {
                         "find": {"eq": {"path": "Account.id", "value": 7}},
-                        "roundTrips": 1,
+                        "databaseCalls": 1,
                         "statements": [
                             {
                                 "sql": {"postgres": "select t0.id from account t0 where t0.id = ?"},
@@ -625,7 +625,7 @@ def test_profile_gate_accepts_a_scenario_with_per_step_golden(tmp_path: Path) ->
                     },
                 ],
             },
-            "then": {"roundTrips": 2},
+            "then": {"databaseCalls": 2},
         },
     )
     slices = _synthetic_slices(

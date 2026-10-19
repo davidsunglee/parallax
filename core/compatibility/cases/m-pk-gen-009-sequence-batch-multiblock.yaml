@@ -68,4 +68,4 @@ then:
       - { id: 2, zone: south }
       - { id: 3, zone: east }
       - { id: 4, zone: west }
-  roundTrips: 6
+  databaseCalls: 6

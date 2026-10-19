@@ -43,4 +43,4 @@ then:
           geo:
             country: "NO"
         tags: []
-  roundTrips: 1
+  databaseCalls: 1

@@ -13,7 +13,7 @@ when:
           eq:
             path: parallax.compatibility.Account.id
             value: 2
-      roundTrips: 1
+      databaseCalls: 1
       note: find by primary key
       statements:
         - sql:
@@ -27,7 +27,7 @@ when:
           eq:
             path: parallax.compatibility.Account.owner
             value: Linus
-      roundTrips: 1
+      databaseCalls: 1
       sameObjectAs: 0
       identityAttr: id
       note: find by unique owner — the SAME managed object as step 0 within this unit of work
@@ -38,4 +38,4 @@ when:
       expectRows:
         - { id: 2, owner: Linus, balance: "250.00", version: 1 }
 then:
-  roundTrips: 2
+  databaseCalls: 2

@@ -115,4 +115,4 @@ then:
           route: Oslo-Bergen
           terms:
             clause: standard
-  roundTrips: 4
+  databaseCalls: 4

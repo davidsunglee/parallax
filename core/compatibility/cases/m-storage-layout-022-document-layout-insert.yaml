@@ -86,4 +86,4 @@ then:
     beacon:
       - id: 12
         payload: {}
-  roundTrips: 3
+  databaseCalls: 3

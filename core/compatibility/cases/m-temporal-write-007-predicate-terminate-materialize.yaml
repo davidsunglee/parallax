@@ -20,7 +20,7 @@ when:
         temporal:
           transaction-time:
             asOf: latest
-      roundTrips: 1
+      databaseCalls: 1
       statements:
         - sql:
             postgres: select t0.bal_id, t0.acct_num, t0.val, t0.in_z, t0.out_z from balance t0 where t0.val < ? and t0.out_z = ? for share of t0
@@ -38,7 +38,7 @@ when:
               path: parallax.compatibility.Balance.value
               value: "250.00"
         at: "2024-10-01T00:00:00.000000Z"
-      roundTrips: 2
+      databaseCalls: 2
       statements:
         - sql:
             postgres: update balance set out_z = ? where bal_id = ? and out_z = ?
@@ -55,7 +55,7 @@ when:
         temporal:
           transaction-time:
             asOf: latest
-      roundTrips: 1
+      databaseCalls: 1
       statements:
         - sql:
             postgres: select t0.bal_id, t0.acct_num, t0.val, t0.in_z, t0.out_z from balance t0 where t0.val < ? and t0.out_z = ? for share of t0
@@ -63,4 +63,4 @@ when:
       referenceSql: select bal_id, acct_num, val, in_z, out_z from balance where val < 250.00 and out_z = 'infinity'::timestamptz for share of balance
       expectRows: []
 then:
-  roundTrips: 4
+  databaseCalls: 4

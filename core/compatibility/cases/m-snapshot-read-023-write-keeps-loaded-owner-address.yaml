@@ -18,7 +18,7 @@ when:
         includes:
           - segments:
               - rel: parallax.compatibility.Location.customer
-      roundTrips: 2
+      databaseCalls: 2
       note: materialize a snapshot of location 100 WITH its owning customer - both levels decode their own address document
       statements:
         - sql:
@@ -55,7 +55,7 @@ when:
                 phones:
                   - { type: work, number: '555-9999' }
                   - { type: home, number: '555-1234' }
-      roundTrips: 2
+      databaseCalls: 2
       note: rewrite the very document the loaded `customer` view holds - a changed city AND the two phones in the opposite order
       statements:
         - sql:
@@ -74,7 +74,7 @@ when:
     - action: access
       "on": 0
       path: customer
-      roundTrips: 0
+      databaseCalls: 0
       sameObjectAs: 0
       note: access the ALREADY-MATERIALIZED customer after the write -> ZERO SQL, the pre-write city, and the phones in the order the read decoded them
       expectGraph:
@@ -97,7 +97,7 @@ when:
           eq:
             path: parallax.compatibility.Customer.id
             value: 1
-      roundTrips: 1
+      databaseCalls: 1
       note: observing the write means issuing another read - the same customer, re-read, holds the rewritten document
       statements:
         - sql:
@@ -117,4 +117,4 @@ when:
               - { type: work, number: '555-9999' }
               - { type: home, number: '555-1234' }
 then:
-  roundTrips: 5
+  databaseCalls: 5

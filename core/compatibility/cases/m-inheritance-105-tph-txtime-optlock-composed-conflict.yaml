@@ -29,7 +29,7 @@ when:
         temporal:
           transaction-time:
             asOf: latest
-      roundTrips: 1
+      databaseCalls: 1
       note: OUR unit of work observes meter reading 1's current milestone (20.00, known from 2024-01-01) through the concrete subtype — tag-guarded
       statements:
         - sql:
@@ -48,7 +48,7 @@ when:
         temporal:
           transaction-time:
             asOf: latest
-      roundTrips: 1
+      databaseCalls: 1
       note: a CONCURRENT unit of work observes the SAME milestone — the classic race
       statements:
         - sql:
@@ -65,7 +65,7 @@ when:
           rows:
             - { id: 1, celsius: "25.00" }
           at: "2024-06-01T00:00:00.000000Z"
-      roundTrips: 2
+      databaseCalls: 2
       note: the concurrent unit of work commits FIRST — its tag-guarded close gated on the in_z it observed, then the chained successor with the tag stamped at its slot, from the same instant; the group COMMITS after this, its last step
       statements:
         - sql:
@@ -84,7 +84,7 @@ when:
           rows:
             - { id: 1 }
           at: "2024-09-01T00:00:00.000000Z"
-      roundTrips: 1
+      databaseCalls: 1
       note: "our close carries the tag guard among its identity predicates and gates LAST on OUR observed in_z 2024-01-01, which the concurrent commit closed — 0 rows; the commit's flush fails and the group ROLLS BACK after this, its last step"
       statements:
         - sql:
@@ -98,7 +98,7 @@ then:
       flushFailure: { at: commit, entity: parallax.compatibility.MeterReading, key: { id: 1 }, shortfall: optimisticConflict }
     concurrent:
       outcome: committed
-  roundTrips: 5
+  databaseCalls: 5
   tableState:
     reading:
       - { id: 1, kind: meter, celsius: "20.00", in_z: "2024-01-01T00:00:00.000000Z", out_z: "2024-06-01T00:00:00.000000Z" }

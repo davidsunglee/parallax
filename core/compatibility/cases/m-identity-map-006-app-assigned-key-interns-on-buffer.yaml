@@ -10,11 +10,11 @@ when:
     concurrency: optimistic
   scenario:
     - write: insert
-      roundTrips: 0
+      databaseCalls: 0
       note: buffer the create of Account id 4 with an APPLICATION-ASSIGNED primary key — interned in memory, no DML yet
     - action: flush
       "on": 0
-      roundTrips: 1
+      databaseCalls: 1
       note: flush the buffered create -> ONE plain insert (the primary key is already assigned, no key generation)
       statements:
         - sql:
@@ -26,7 +26,7 @@ when:
           eq:
             path: parallax.compatibility.Account.id
             value: 4
-      roundTrips: 1
+      databaseCalls: 1
       identityAttr: id
       note: a subsequent find observes the interned, flushed row
       statements:
@@ -36,4 +36,4 @@ when:
       expectRows:
         - { id: 4, owner: Dijkstra, balance: "75.00", version: 1 }
 then:
-  roundTrips: 2
+  databaseCalls: 2

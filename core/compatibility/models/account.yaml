@@ -5,7 +5,7 @@
 # expressed in operations and object state, not temporal milestoning, so Account
 # is deliberately simple: a primary key plus an owner and a numeric balance. It is
 # the subject of:
-#   - the cache-hit scenario   (two identical finds => one round trip),
+#   - the cache-hit scenario   (two identical finds => one Database Call),
 #   - the identity scenario     (same PK => the same logical object),
 #   - the read-lock case        (an in-transaction read with `for share of t0`),
 #   - the batched-write case     (a multi-row INSERT and a batched UPDATE).

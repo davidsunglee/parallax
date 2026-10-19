@@ -19,7 +19,7 @@ when:
       note: the callback never runs, so this observation never happens
 then:
   outcome: boundary-failed
-  roundTrips: 0
+  databaseCalls: 0
   executionLifecycle:
     roots:
       - execution: 1

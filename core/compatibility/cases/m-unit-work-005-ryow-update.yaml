@@ -16,7 +16,7 @@ when:
           eq:
             path: parallax.compatibility.Account.id
             value: 1
-      roundTrips: 1
+      databaseCalls: 1
       note: observe account 1 (balance 100.00, version 1) before the update, inside the SAME unit of work as the write below
       statements:
         - sql:
@@ -30,7 +30,7 @@ when:
           entity: parallax.compatibility.Account
           rows:
             - { id: 1, balance: "175.00" }
-      roundTrips: 1
+      databaseCalls: 1
       note: buffer a keyed update of account 1 (balance 175.00), advancing the OBSERVED version 1 -> 2; the unit of work commits at the group's last step below
       statements:
         - sql:
@@ -43,7 +43,7 @@ when:
           eq:
             path: parallax.compatibility.Account.id
             value: 1
-      roundTrips: 1
+      databaseCalls: 1
       note: a dependent find MUST observe the flushed update (read-your-own-writes); the group COMMITS after this, its last step
       statements:
         - sql:
@@ -52,4 +52,4 @@ when:
       expectRows:
         - { id: 1, owner: Ada, balance: "175.00", version: 2 }
 then:
-  roundTrips: 3
+  databaseCalls: 3

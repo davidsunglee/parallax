@@ -21,4 +21,4 @@ then:
   - {id: 3, name: Grace}
   - {id: 5, name: Kavi}
   - {id: 7, name: Nils}
-  roundTrips: 1
+  databaseCalls: 1

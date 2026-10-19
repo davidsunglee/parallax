@@ -22,4 +22,4 @@ when:
       note: the refused joining body must not reach this database call
 then:
   outcome: access-mode-mismatch
-  roundTrips: 1
+  databaseCalls: 1

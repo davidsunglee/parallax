@@ -16,7 +16,7 @@ delivery:
 workloads:
   - name: current-bitemporal-document
     iterations: 50
-    expectRoundTrips: 1
+    expectDatabaseCalls: 1
     statements:
       - sql:
           postgres: select t0.id, t0.from_z, t0.thru_z, t0.in_z, t0.out_z, t0.payload from charter t0 where t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?

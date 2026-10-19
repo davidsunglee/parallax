@@ -64,4 +64,4 @@ then:
             city: Bodo
           tags:
             - { label: pilot }
-  roundTrips: 3
+  databaseCalls: 3

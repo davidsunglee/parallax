@@ -28,7 +28,7 @@ when:
             asOf: latest
           valid-time:
             asOf: "2024-01-01T00:00:00.000000Z"
-      roundTrips: 1
+      databaseCalls: 1
       note: observe R2 — id 1 pinned at Valid Time 2024-01-01, its own start, the bounded current rectangle (100.00), valid [2024-01-01, 2024-06-01)
       statements:
         - sql:
@@ -47,7 +47,7 @@ when:
           validFrom: "2024-01-01T00:00:00.000000Z"
           until: "2024-06-01T00:00:00.000000Z"
           at: "2024-10-01T00:00:00.000000Z"
-      roundTrips: 1
+      databaseCalls: 1
       note: terminate over exactly the observed rectangle's extent — the close alone, addressed by R2's finite thru_z and gated on the observed in_z
       statements:
         - sql:
@@ -55,7 +55,7 @@ when:
             mariadb: update `position` set out_z = ? where pos_id = ? and thru_z = ? and out_z = ? and in_z = ?
           binds: ["2024-10-01T00:00:00.000000Z", 1, "2024-06-01T00:00:00.000000Z", infinity, "2024-04-01T00:00:00.000000Z"]
 then:
-  roundTrips: 2
+  databaseCalls: 2
   tableState:
     position:
       - pos_id: 1

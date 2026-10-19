@@ -75,7 +75,7 @@ from tests.compatibility._float_zero_support import (
 # decision rather than an adapter one.
 #
 # Everything else these cases assert still runs here — every level's SQL and
-# binds (the N+1-elimination proof they exist for) and the round-trip count. Exact
+# binds (the N+1-elimination proof they exist for) and the Database Call count. Exact
 # `then.graph` equality is withheld only for this child-shape partition; this audit
 # derives which recorded structural residuals explain the observed difference and
 # fails if any other mismatch remains. All but `m-inheritance-073` and `-077` also
@@ -294,7 +294,7 @@ def test_run_sweep(case: case_format.Case, profile: Profile, profile_run: Any) -
             ), (case.case_id, emission)
 
     observations = envelope["observations"]
-    assert observations["roundTrips"] == then.get("roundTrips", 1), case.case_id
+    assert observations["databaseCalls"] == then.get("databaseCalls", 1), case.case_id
     _grade_execution_lifecycle(then, observations)
 
     if "rows" in then:
@@ -460,7 +460,7 @@ _MATERIALIZING_PREDICATE_WRITE_SCENARIOS_EXERCISED: Final[frozenset[str]] = froz
 # (query-result-dependent) exactly as every deep-fetch read case is — which keeps
 # them out of `WRITE_EXERCISED`, whose membership couples compile grading in and
 # which a run-only case would fail. Run grades them here in full: the per-step
-# emissions against the authored golden levels, the round trips, and the
+# emissions against the authored golden levels, the Database Calls, and the
 # `stepGraphs` observation each `access` step's `expectGraph` asserts
 # (`_grade_step_graphs`).
 #
@@ -530,7 +530,7 @@ def test_write_run_sweep(case: case_format.Case, profile: Profile, profile_run: 
     possibly uncommitted mid-transaction state), committing or rolling back only at
     the group's own last step. A writeSequence executes the whole FK-ordered
     sequence in one transaction. Grading: the envelope's per-step emissions equal the
-    golden DML and its total round trips the case's `then.roundTrips`; every scenario
+    golden DML and its total Database Calls the case's `then.databaseCalls`; every scenario
     row-observing step's `stepRows` observation equals its `expectRows`
     (:func:`_grade_step_rows`), each group's fate the one `then.units` states, and
     the tables a scenario's `then.tableState` states hold its rows;
@@ -589,7 +589,7 @@ def _grade_write_run(
             statement_bind_positions(model, golden_sql, golden_binds),
         )
     assert_driver_write_zero_signs(model, port.dialect, golden_statements, port.writes)
-    assert envelope["observations"]["roundTrips"] == case_document(case)["then"]["roundTrips"]
+    assert envelope["observations"]["databaseCalls"] == case_document(case)["then"]["databaseCalls"]
     _grade_execution_lifecycle(case_document(case)["then"], envelope["observations"])
 
     if case.shape == "scenario":
@@ -673,7 +673,7 @@ def _grade_state_run(case: case_format.Case, model: Metamodel, envelope: dict[st
     """Grade a state-graded scenario on what it states: each find's published
     rows, each submission its verb refused, each group's fate, and the final
     tables. It authors no golden, so neither the statements a flush chose nor
-    the round trips they cost are graded."""
+    the Database Calls they cost are graded."""
     steps = cast("list[dict[str, Any]]", case_document(case)["when"]["scenario"])
     observations = envelope["observations"]
     assert envelope["emissions"] == [], (case.case_id, envelope["emissions"])
@@ -1017,7 +1017,7 @@ def test_run_scenario_case_pairs_a_materializing_write_spelled_bare(profile_run:
     leaves the same case: one transaction, the resolve plus its per-row keyed
     write, and no `stepRows` entry for the read that hands its rows to no caller.
     A lexical pairing runs that find on its own and lets the write resolve a
-    second time, which the round-trip count and the pointer list both state.
+    second time, which the Database Call count and the pointer list both state.
     """
     case = next(c for c in _WRITE_CASES if c.case_id == _STEP_ROWS_ORACLE_CASE)
     profile_run.reset(engine.load_case_setup_metamodel(case), case_fixtures(case))
@@ -1029,7 +1029,7 @@ def test_run_scenario_case_pairs_a_materializing_write_spelled_bare(profile_run:
 
     run = engine.run_scenario_case(dataclasses.replace(case, document=document), profile_run.port)
 
-    assert run.round_trips == case_document(case)["then"]["roundTrips"]
+    assert run.database_calls == case_document(case)["then"]["databaseCalls"]
     assert [entry["at"] for entry in run.step_rows] == ["/scenario/0", "/scenario/3"]
 
 
@@ -1105,7 +1105,7 @@ def test_interleaved_uow_group_run_sweep(case: case_format.Case, profile_run: An
     Grades the layers `test_write_run_sweep` grades for an ordinary scenario —
     the ordered per-step golden DML (flattened across both interleaved groups
     plus the trailing ungrouped verify find, in AUTHORED step order),
-    `then.roundTrips`, every find step's `stepRows` against its authored
+    `then.databaseCalls`, every find step's `stepRows` against its authored
     `expectRows` (the grouped observing finds AND the trailing ungrouped verify,
     through the same :func:`_grade_step_rows` every scenario lane's rows go
     through), each group's fate (`then.units`): the conflict a group's flush
@@ -1148,7 +1148,7 @@ def test_interleaved_uow_group_run_sweep(case: case_format.Case, profile_run: An
         )
 
     then = case_document(case)["then"]
-    assert run.round_trips == then["roundTrips"], case.case_id
+    assert run.database_calls == then["databaseCalls"], case.case_id
     observations: dict[str, Any] = {
         "stepRows": run.step_rows,
         "units": run.units,
@@ -1183,7 +1183,7 @@ def test_edit_occurrence_run_grades_each_derived_copy(
 
     validate_adapter_envelope(envelope)
     assert envelope["status"] == "ok", envelope
-    assert envelope["observations"]["roundTrips"] == case_document(case)["then"]["roundTrips"]
+    assert envelope["observations"]["databaseCalls"] == case_document(case)["then"]["databaseCalls"]
     steps = cast("list[dict[str, Any]]", case_document(case)["when"]["scenario"])
     _grade_step_rows(case, model, steps, envelope)
 
@@ -1228,7 +1228,7 @@ def test_error_run_sweep(case: case_format.Case, profile: Profile, profile_run: 
     then = doc["then"]
     assert envelope["observations"]["errorClass"] == then["errorClass"]
     assert envelope["observations"]["nativeCode"] == then["nativeCode"][profile.dialect.name]
-    assert envelope["observations"]["roundTrips"] == len(then["statements"])
+    assert envelope["observations"]["databaseCalls"] == len(then["statements"])
     golden_trigger = [
         (
             entry["sql"][profile.dialect.name] if isinstance(entry["sql"], dict) else entry["sql"],
@@ -1301,7 +1301,7 @@ def test_conflict_run_sweep(case: case_format.Case, profile: Profile, profile_ru
     or the count a refused write reached instead. The `when.attempts` replay form
     (`m-opt-lock-009`) grades each attempt's own statements flattened in order
     (proving the `0`-then-`1` transition through each attempt's own distinct gate
-    bind) and the FINAL affected-row count. A case authoring `then.roundTrips`
+    bind) and the FINAL affected-row count. A case authoring `then.databaseCalls`
     grades the calls that reached the database across every attempt — its
     resolving reads among them — and a case authoring
     `then.executionLifecycle` grades the delivered stream those calls came from,
@@ -1341,12 +1341,12 @@ def test_conflict_run_sweep(case: case_format.Case, profile: Profile, profile_ru
             assert_wire_binds(model, golden_sql, golden_binds, emission["binds"])
         assert observations["affectedRows"] == attempts[-1]["affectedRows"], case.case_id
 
-    # `then.roundTrips` where the case authors it: the calls that actually
+    # `then.databaseCalls` where the case authors it: the calls that actually
     # reached the database, summed across every attempt and counting each
     # attempt's own resolving read, which is a different number from the emission
     # count whenever a call ran no authored golden.
-    if "roundTrips" in then:
-        assert observations["roundTrips"] == then["roundTrips"], case.case_id
+    if "databaseCalls" in then:
+        assert observations["databaseCalls"] == then["databaseCalls"], case.case_id
 
     _grade_execution_lifecycle(then, observations)
 
@@ -1409,7 +1409,7 @@ def test_run_only_write_sequence_run_sweep(
     for emission, (golden_sql, golden_binds) in zip(emissions, golden_statements, strict=True):
         assert emission["sql"] == golden_sql, (case.case_id, emission)
         assert_wire_binds(model, golden_sql, golden_binds, emission["binds"])
-    assert envelope["observations"]["roundTrips"] == case_document(case)["then"]["roundTrips"]
+    assert envelope["observations"]["databaseCalls"] == case_document(case)["then"]["databaseCalls"]
 
     expected_state = cast(
         "dict[str, list[dict[str, Any]]]", case_document(case)["then"]["tableState"]

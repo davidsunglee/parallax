@@ -18,4 +18,4 @@ then:
       payload_hex: "01020304"
       local_time: "12:34:56"
       external_id: "123e4567-e89b-12d3-a456-426614174000"
-  roundTrips: 1
+  databaseCalls: 1

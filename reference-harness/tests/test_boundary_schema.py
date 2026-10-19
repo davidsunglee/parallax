@@ -145,20 +145,20 @@ def test_schema_rejects_a_session_default_inside_the_portable_vocabulary() -> No
     )
 
 
-def test_schema_admits_zero_round_trips_only_for_a_boundary_that_never_opened() -> None:
+def test_schema_admits_zero_database_calls_only_for_a_boundary_that_never_opened() -> None:
     unopened = _valid_boundary_case()
     unopened["given"] = {"fault": "isolation-setup-failure"}
-    unopened["then"] = {"outcome": "boundary-failed", "roundTrips": 0}
+    unopened["then"] = {"outcome": "boundary-failed", "databaseCalls": 0}
     assert list(_case_validator().iter_errors(unopened)) == []
 
     opened = _valid_boundary_case()
-    opened["then"]["roundTrips"] = 0
+    opened["then"]["databaseCalls"] = 0
     assert list(_case_validator().iter_errors(opened)), (
-        "Schema should reject zero round trips for a boundary that did open"
+        "Schema should reject zero Database Calls for a boundary that did open"
     )
 
 
-def test_schema_admits_zero_round_trips_for_a_dialect_keyed_unopened_boundary() -> None:
+def test_schema_admits_zero_database_calls_for_a_dialect_keyed_unopened_boundary() -> None:
     """The relaxation follows the OUTCOME, not the form it is stated in: a case
     whose every named dialect fails to open costs zero on each of them."""
     for outcome in (
@@ -167,20 +167,20 @@ def test_schema_admits_zero_round_trips_for_a_dialect_keyed_unopened_boundary() 
     ):
         case = _valid_boundary_case()
         case["given"] = {"fault": "isolation-setup-failure"}
-        case["then"] = {"outcome": outcome, "roundTrips": 0}
+        case["then"] = {"outcome": outcome, "databaseCalls": 0}
         assert list(_case_validator().iter_errors(case)) == [], outcome
 
 
-def test_schema_rejects_zero_round_trips_where_one_dialect_opened_its_boundary() -> None:
+def test_schema_rejects_zero_database_calls_where_one_dialect_opened_its_boundary() -> None:
     """One count answers for every dialect the case claims anything about, so a
     map naming a dialect whose boundary DID open states a case costing more."""
     case = _valid_boundary_case()
     case["then"] = {
         "outcome": {"postgres": "committed", "mariadb": "boundary-failed"},
-        "roundTrips": 0,
+        "databaseCalls": 0,
     }
     assert list(_case_validator().iter_errors(case)), (
-        "Schema should reject zero round trips where a named dialect's boundary opened"
+        "Schema should reject zero Database Calls where a named dialect's boundary opened"
     )
 
 

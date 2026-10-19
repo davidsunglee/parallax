@@ -136,12 +136,12 @@ def test_the_callers_shared_checks_precede_this_packages_own(corpus_case) -> Non
     Those checks belong to the caller and run before it delegates, so this is the
     order the pipeline states rather than an accident of where a call happened to
     sit. m-identity-map-003 declares an equivalent encoding on step 0; this breaks
-    that encoding AND the step's own round-trip accounting, and the encoding is
+    that encoding AND the step's own Database Call accounting, and the encoding is
     what surfaces.
     """
     case = copy.deepcopy(corpus_case("m-identity-map-003-omitted-vs-explicit-latest.yaml"))
     case.when["scenario"][0]["equivalentEncodings"][0]["target"] = "parallax.compatibility.Nope"
-    case.when["scenario"][0]["roundTrips"] += 1
+    case.when["scenario"][0]["databaseCalls"] += 1
 
     with pytest.raises(CaseFailure, match="does not canonicalize to the step query"):
         run_case(case, RefusingProvider())
@@ -154,7 +154,7 @@ def test_a_structural_defect_precedes_a_dialect_keyed_one(damaged_case) -> None:
     # identically on every dialect.
     case = damaged_case(_SETTLED)
     case.when["scenario"][2]["write"][0]["on"] = 1000
-    case.when["scenario"][2]["roundTrips"] += 1
+    case.when["scenario"][2]["databaseCalls"] += 1
 
     for dialect in ("postgres", "mariadb"):
         with pytest.raises(CaseFailure, match="not a real EARLIER step"):

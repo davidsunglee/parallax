@@ -16,7 +16,7 @@ then:
         postgres: update account set balance = ?, version = ? where id = ? and version = ?
       binds: ["500.00", 2, 2, 1]
   affectedRows: 1
-  roundTrips: 2
+  databaseCalls: 2
   executionLifecycle:
     roots:
       - execution: 1

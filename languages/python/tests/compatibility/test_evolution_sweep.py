@@ -81,7 +81,7 @@ def test_evolution_sweep(case: case_format.Case) -> None:
     assert envelope["status"] == "ok", envelope
     assert envelope["emissions"] == []
     observations = envelope["observations"]
-    assert observations["roundTrips"] == 0
+    assert observations["databaseCalls"] == 0
     assert observations["evolution"] == _expected(case)
     expected_schema = _expected_schema(case)
     if expected_schema is not None:

@@ -46,7 +46,7 @@ def run_error_case(
     category and preserved native code are the observations
     (``errorClass`` / ``nativeCode``). The trigger runs at the PORT rather than
     through a Handle — it is authored DML, not a write a verb buffers — so it
-    opens no Execution Activity and its round trips are stated rather than
+    opens no Execution Activity and its Database Calls are stated rather than
     observed: the lane reaches the final statement only by having issued every
     one before it, so the count is the trigger's own length. Every statement it
     issues counts, the failing one included, so what it reports is what reached

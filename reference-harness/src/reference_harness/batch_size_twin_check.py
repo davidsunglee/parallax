@@ -13,7 +13,7 @@ otherwise leave two cases passing and the invariance quietly evaporated.
 
 The arms are named ``<module>-NNN-<proof>-batch-size-twin-<batchSize>.yaml`` and
 paired by ``<module>-<proof>``. Each arm declares its own ``batchSize``, its own
-statements, and its own round-trip count; on everything else — the model, the
+statements, and its own Database Call count; on everything else — the model, the
 Object Query, the delivered graph, the compile-eligibility declaration — they
 must be equal.
 """
@@ -43,14 +43,14 @@ _CASE_TWIN_RE = re.compile(r"^(?P<prefix>.+)-batch-size-twin-(?P<arm>[0-9]+)\.ya
 def _is_page_size_member(path: tuple[str, ...], key: str) -> bool:
     """Every member a page size legitimately changes, on top of the physical ones.
 
-    ``when.stream.batchSize`` is the dial itself, and ``then.roundTrips`` is the
+    ``when.stream.batchSize`` is the dial itself, and ``then.databaseCalls`` is the
     statement count it moves — the same physical observation ``then.statements``
     already is, stated as a number.
     """
     if path == ("when", "stream"):
         return key == "batchSize"
     if path == ("then",):
-        return key == "roundTrips" or is_physical_case_member(path, key)
+        return key == "databaseCalls" or is_physical_case_member(path, key)
     return is_physical_case_member(path, key)
 
 

@@ -87,4 +87,4 @@ then:
           entity: parallax.compatibility.ClassificationTwinItem
           member: parallax.compatibility.ClassificationTwinItem.profile.street
           objectKey: { entity: parallax.compatibility.ClassificationTwinItem, key: { id: 4 } }
-  roundTrips: 2
+  databaseCalls: 2

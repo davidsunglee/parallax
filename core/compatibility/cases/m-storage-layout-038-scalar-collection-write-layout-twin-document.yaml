@@ -23,7 +23,7 @@ when:
                   marks: [7]
                   note:
                     words: [w, w]
-      roundTrips: 1
+      databaseCalls: 1
       note: name some collections, with duplicates and nested in each occurrence kind, and omit the rest
       statements:
         - sql:
@@ -56,7 +56,7 @@ when:
               parts:
                 - sku: d
                   marks: []
-      roundTrips: 2
+      databaseCalls: 2
       note: clear one collection, replace another, and replace the `many` occurrence holding nested collections
       statements:
         - sql:
@@ -80,7 +80,7 @@ when:
               - [{ sku: d, marks: [] }]
               - 1
 then:
-  roundTrips: 3
+  databaseCalls: 3
   tableState:
     collection_twin:
       - id: 1

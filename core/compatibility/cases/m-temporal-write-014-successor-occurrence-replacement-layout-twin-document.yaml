@@ -62,4 +62,4 @@ then:
             title: Coal Run
           marks:
             - { code: X }
-  roundTrips: 3
+  databaseCalls: 3

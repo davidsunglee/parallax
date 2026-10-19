@@ -34,4 +34,4 @@ then:
     Animal:
       - { id: 1, name: Rex, ownerId: 10, licenseId: L-100, barkVolume: 7, familyVariant: Dog }
       - { id: 3, name: Whiskers, ownerId: 10, licenseId: L-200, indoor: true, familyVariant: Cat }
-  roundTrips: 1
+  databaseCalls: 1

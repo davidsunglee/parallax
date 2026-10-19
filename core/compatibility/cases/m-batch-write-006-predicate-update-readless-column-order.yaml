@@ -16,7 +16,7 @@ when:
         assignments:
           - { attr: parallax.compatibility.Wallet.balance, value: "150.00" }
           - { attr: parallax.compatibility.Wallet.owner, value: Updated }
-      roundTrips: 1
+      databaseCalls: 1
       statements:
         - sql:
             postgres: update wallet set owner = ?, balance = ? where balance < ?
@@ -27,7 +27,7 @@ when:
           eq:
             path: parallax.compatibility.Wallet.owner
             value: Updated
-      roundTrips: 1
+      databaseCalls: 1
       statements:
         - sql:
             postgres: select t0.id, t0.owner, t0.balance from wallet t0 where t0.owner = ? for share of t0
@@ -37,4 +37,4 @@ when:
         - { id: 1, owner: Updated, balance: "150.00" }
         - { id: 3, owner: Updated, balance: "150.00" }
 then:
-  roundTrips: 2
+  databaseCalls: 2

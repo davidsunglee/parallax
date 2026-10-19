@@ -490,7 +490,7 @@ def test_compile_scenario_case_snapshot_lane_requires_an_object_query() -> None:
     when = {
         "scenario": [
             {"action": "mutate", "on": 0, "set": {"x": 1}},
-            {"roundTrips": 1},
+            {"databaseCalls": 1},
         ]
     }
     case = _synthetic_write("scenario", {"model": "models/orders.yaml", "when": when})
@@ -518,7 +518,7 @@ def test_compile_scenario_case_snapshot_lane_wraps_a_sql_gen_error() -> None:
 def test_run_scenario_case_snapshot_lane_requires_an_object_query() -> None:
     when = {
         "scenario": [
-            {"roundTrips": 1},
+            {"databaseCalls": 1},
             {"action": "mutate", "on": 0, "set": {"x": 1}},
         ]
     }
@@ -561,7 +561,7 @@ def test_run_scenario_case_snapshot_lane_mutates_in_memory_with_no_writeback() -
     document = copy.deepcopy(cast("dict[str, Any]", original.document))
     document["when"]["scenario"][1]["expectRows"] = [{**_ORDER_ROW, "name": "Mutant"}]
     run = _run(dataclasses.replace(original, document=document), port)
-    assert run.round_trips == 2
+    assert run.database_calls == 2
     assert [e.case_pointer for e in run.emissions] == [
         "/scenario/0/objectQuery",
         "/scenario/2/objectQuery",
@@ -647,7 +647,7 @@ _POSITION_R1_ROW: dict[str, object] = {
 def test_run_scenario_case_grades_a_transaction_time_pin_read_only_mutate() -> None:
     port = FakeDbPort([dict(_POSITION_R1_ROW)])
     run = _run(_case("m-temporal-write-032"), port)
-    assert run.round_trips == 1
+    assert run.database_calls == 1
     assert [e.case_pointer for e in run.emissions] == ["/scenario/0/objectQuery"]
     assert run.errors == [{"at": "/scenario/1", "errorClass": "transaction-time-pin-read-only"}]
 
@@ -659,7 +659,7 @@ def test_run_scenario_case_accepts_a_finite_valid_time_pin_mutate() -> None:
     row = dict(_POSITION_R1_ROW, val=decimal.Decimal("100.00"))
     port = FakeDbPort([row])
     run = _run(_case("m-temporal-write-031"), port)
-    assert run.round_trips == 1
+    assert run.database_calls == 1
     assert run.errors == []
 
 
@@ -746,7 +746,7 @@ def _include_scenario_port() -> QueueDbPort:
 def test_run_scenario_case_reports_an_access_step_graph_from_the_retained_view() -> None:
     run = _run(_case("m-snapshot-read-016"), _include_scenario_port())
     # The find's two levels are the only calls; the mutate and the access cost none.
-    assert run.round_trips == 2
+    assert run.database_calls == 2
     assert run.errors == []
     assert [entry["at"] for entry in run.step_graphs] == ["/scenario/2"]
     graph = cast("dict[str, list[dict[str, object]]]", run.step_graphs[0]["graph"])
@@ -802,7 +802,7 @@ def test_run_scenario_case_lets_an_edit_chain_name_the_copy_before_it() -> None:
     }
     case = _synthetic_write("scenario", {"model": "models/orders.yaml", "when": when})
     run = _run(case, _include_scenario_port())
-    assert run.round_trips == 2  # the find's two levels; no hop of the chain costs one
+    assert run.database_calls == 2  # the find's two levels; no hop of the chain costs one
     graph = cast("dict[str, list[dict[str, object]]]", run.step_graphs[0]["graph"])
     assert sorted(node["id"] for node in graph["OrderItem"]) == [11, 12]  # pyright: ignore[reportArgumentType] - the node ids are ints behind the graph's object typing
 
@@ -1060,7 +1060,7 @@ def _write_between_find_and_access(write: object) -> case_format.Case:
     when = {
         "scenario": [
             {"objectQuery": query},
-            {"write": write, "roundTrips": 2},
+            {"write": write, "databaseCalls": 2},
             {
                 "action": "access",
                 "on": 0,
@@ -1097,7 +1097,7 @@ def _ledger_write_after_find_and_mutate(write: object) -> case_format.Case:
                 }
             },
             {"action": "mutate", "on": 0, "set": {"acctNum": "Z"}},
-            {"write": write, "roundTrips": 2},
+            {"write": write, "databaseCalls": 2},
         ]
     }
     return _synthetic_write(
@@ -1148,7 +1148,7 @@ def test_run_scenario_case_write_step_commits_and_leaves_the_retained_view_stand
         "/scenario/1/write",
     ]
     assert [sql for sql, _binds in port.writes] == ["update orders set name = %s where id = %s"]
-    assert run.round_trips == 4  # the find's two levels, the write's resolve and its DML
+    assert run.database_calls == 4  # the find's two levels, the write's resolve and its DML
     graph = cast("dict[str, list[dict[str, object]]]", run.step_graphs[0]["graph"])
     assert sorted(node["id"] for node in graph["OrderItem"]) == [11, 12]  # pyright: ignore[reportArgumentType] - the node ids are ints behind the graph's object typing
 
@@ -1195,19 +1195,19 @@ def test_compile_scenario_case_lowers_a_snapshot_lane_write_step() -> None:
                 }
             },
             {"action": "mutate", "on": 0, "set": {"name": "Mutant"}},
-            {"write": _ORDER_NAME_UPDATE, "roundTrips": 2},
+            {"write": _ORDER_NAME_UPDATE, "databaseCalls": 2},
         ]
     }
     case = _synthetic_write("scenario", {"model": "models/orders.yaml", "when": when})
 
-    emissions, round_trips = _compile(case, "postgres")
+    emissions, database_calls = _compile(case, "postgres")
 
     assert [emission.case_pointer for emission in emissions] == [
         "/scenario/0/objectQuery",
         "/scenario/2/write",
     ]
     assert emissions[1].sql == "update orders set name = ? where id = ?"
-    assert round_trips == 2
+    assert database_calls == 2
 
 
 def test_run_scenario_case_refuses_a_materializing_predicate_write_on_the_snapshot_lane() -> None:
@@ -1261,7 +1261,7 @@ def test_snapshot_lane_compile_and_run_reach_the_same_temporal_dml() -> None:
     # The find, then the resolving read the keyed write's own unit of work owes.
     port = _QueueWritePort([[dict(_LEDGER_2_ROW)], [dict(_LEDGER_2_ROW)]])
 
-    compiled, _round_trips = _compile(case, "postgres")
+    compiled, _database_calls = _compile(case, "postgres")
     run = _run(case, port)
 
     assert [(e.case_pointer, e.sql, e.binds) for e in compiled] == [

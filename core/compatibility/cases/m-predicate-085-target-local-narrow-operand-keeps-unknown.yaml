@@ -19,4 +19,4 @@ then:
   referenceSql: select id, pet_id from traversal_collar where pet_id in (select id from traversal_pet where kind = 'dog' and bark_volume > 5)
   rows:
   - {id: 10, pet_id: 1}
-  roundTrips: 1
+  databaseCalls: 1

@@ -622,7 +622,7 @@ result rather than its root count, so a page of roots each carrying a large
 relationship fan-out is priced at what it carries; and `G_max` is one root's own
 graph, so a single root with a hundred thousand children dominates both terms at
 every page size. The page size is the dial over the first term alone, and it
-trades against round trips in the ordinary way: a smaller page holds less and
+trades against Database Calls in the ordinary way: a smaller page holds less and
 costs more statements.
 
 Three things are **excluded**, and naming them is part of the contract, because a
@@ -682,7 +682,7 @@ returns its lease, and fails if acquisition does; a participating one still
 forces out the writes its unit of work buffered before it reads. Issuing no
 statement is not connection-free execution.
 
-## Round trips
+## Database Calls
 
 Delivery is `m-deep-fetch`'s contract observed through the Page: **at most
 `1 + L` statements** for `L` distinct relationship hops, one statement per
@@ -696,13 +696,13 @@ When an Execution Lifecycle Provider accepts the Root Execution, the read
 publishes one transient Read activity containing its Database Call children
 (`m-execution-lifecycle`). A statement a read does not issue is no Database Call,
 and nothing stands in for one. The delivered result retains no trace or lifecycle
-record. The portable `then.roundTrips` oracle and authored statements continue
+record. The portable `then.databaseCalls` oracle and authored statements continue
 to pin the `1 + L` ceiling independently of whether observation is installed.
 
 ## What the suite pins down
 
 Delivery is graded through the read cases every Publication answers
-(`m-case-format`): golden statements and `then.roundTrips` pin the `1 + L`
+(`m-case-format`): golden statements and `then.databaseCalls` pin the `1 + L`
 ceiling, a streamed case's statements spell out its page partition, and a
 batch-size pair grades the invariance the page size promises.
 

@@ -21,7 +21,7 @@ when:
       note: the write raises an injected serialization failure — with the root's bound at 0 it surfaces
 then:
   outcome: serialization-failure
-  roundTrips: 2
+  databaseCalls: 2
   executionLifecycle:
     roots:
       - execution: 1

@@ -27,7 +27,7 @@ when:
       write: { id: 2, balance: "275.00", observedVersion: 2 }
       affectedRows: 1
 then:
-  roundTrips: 4
+  databaseCalls: 4
   tableState:
     account:
       - { id: 1, owner: Ada, balance: "100.00", version: 1 }

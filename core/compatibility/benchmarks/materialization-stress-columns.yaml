@@ -23,7 +23,7 @@ delivery:
 workloads:
   - name: materialization-stress-columns
     iterations: 20
-    expectRoundTrips: 4
+    expectDatabaseCalls: 4
     statements:
       - sql: { postgres: select t0.id from materialization_owner t0, mariadb: select t0.id from materialization_owner t0 }
       - sql: { postgres: select t0.id from materialization_node t0, mariadb: select t0.id from materialization_node t0 }
