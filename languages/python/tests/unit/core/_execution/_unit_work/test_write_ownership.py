@@ -90,8 +90,6 @@ def _insert(start: dt.datetime, until: dt.datetime | None = None) -> PreparedKey
 def _stored(
     start: dt.datetime, until: dt.datetime | None = None
 ) -> tuple[WriteAdmission, InsertionRecord]:
-    """An admission whose drained batch stored one insertion of the object
-    over ``[start, until)``."""
     admission = _admission()
     admission.admit(_insert(start, until), confirm_target=_confirmed)
     admission.drain_planned()
@@ -220,8 +218,6 @@ def test_an_insertions_part_running_on_without_end_leaves_its_removal_window_ope
 
 
 def _cancel_reinsertion(admission: WriteAdmission, start: dt.datetime) -> None:
-    """Admit a further insertion of the object from ``start``, superseding the
-    stored one's authority, then a termination it authorizes that cancels it."""
     admission.admit(_insert(start), confirm_target=_confirmed)
     identity = admission.insertion_identity(_KEY)
     assert identity is not None
@@ -488,7 +484,6 @@ def test_an_original_that_left_no_row_stays_proven_until_its_object_concludes() 
 # The fake planning suites read answers as production does.                   #
 # --------------------------------------------------------------------------- #
 def _fake_like(ownership: WriteOwnership, endpoints: tuple[OwnedEndpoint, ...]) -> OpenedRows:
-    """An ``OpenedRows`` holding exactly the descents ``ownership`` recorded."""
     descents = {
         endpoint: descent
         for endpoint in endpoints
