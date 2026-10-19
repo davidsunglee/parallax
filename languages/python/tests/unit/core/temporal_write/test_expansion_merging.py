@@ -685,19 +685,6 @@ def test_the_merged_rows_statements_store_the_addresses_its_effects_name(
     assert _JUL in tail.binds
 
 
-@dataclass(frozen=True)
-class _PartlyInserted(OpenedRows):
-    """An attempt whose admitted insertion contributed only ``parts`` of the
-    rows it tags."""
-
-    parts: tuple[TimeInterval, ...] = ()
-
-    def insertion_coverage(
-        self, endpoint: OwnedEndpoint, valid_time_coverage: TimeInterval | None, /
-    ) -> tuple[TimeInterval | None, ...]:
-        return self.parts if endpoint in self.inserted else ()
-
-
 @_LAYOUTS
 def test_a_row_revised_in_place_takes_the_parts_of_an_insertion_its_new_extent_keeps(
     meta: Metamodel,
@@ -706,8 +693,8 @@ def test_a_row_revised_in_place_takes_the_parts_of_an_insertion_its_new_extent_k
     # amendment from February revises it into [February, June), which keeps
     # [February, April) of it, while its new head keeps [January, February).
     owned = _endpoint(_JUN)
-    ownership = _PartlyInserted(
-        frozenset({owned}), frozenset({owned}), parts=(TimeInterval(_JAN, _APR),)
+    ownership = OpenedRows(
+        frozenset({owned}), frozenset({owned}), insertion_parts=(TimeInterval(_JAN, _APR),)
     )
     row = _span(meta, _JAN, _JUN, 100, tx_start=_NOW)
     settled = _settle(
@@ -724,8 +711,8 @@ def test_a_row_revised_in_place_takes_the_parts_of_an_insertion_its_new_extent_k
 @_LAYOUTS
 def test_a_row_revised_whole_keeps_the_parts_of_an_insertion_it_holds(meta: Metamodel) -> None:
     owned = _endpoint(_JUN)
-    ownership = _PartlyInserted(
-        frozenset({owned}), frozenset({owned}), parts=(TimeInterval(_JAN, _APR),)
+    ownership = OpenedRows(
+        frozenset({owned}), frozenset({owned}), insertion_parts=(TimeInterval(_JAN, _APR),)
     )
     row = _span(meta, _JAN, _JUN, 100, tx_start=_NOW)
     settled = _settle(
@@ -741,10 +728,10 @@ def test_a_row_revised_whole_keeps_the_parts_of_an_insertion_it_holds(meta: Meta
 @_LAYOUTS
 def test_rows_revised_apart_each_keep_their_own_parts_of_an_insertion(meta: Metamodel) -> None:
     first, second = _endpoint(_APR), _endpoint(_JUL)
-    ownership = _PartlyInserted(
+    ownership = OpenedRows(
         frozenset({first, second}),
         frozenset({first, second}),
-        parts=(TimeInterval(_JAN, _FEB), TimeInterval(_MAY, _JUN)),
+        insertion_parts=(TimeInterval(_JAN, _FEB), TimeInterval(_MAY, _JUN)),
     )
     settled = _settle(
         _expansion(meta, _amending(TimeInterval(_JAN, _JUL), {"amount": 150}), ownership=ownership),

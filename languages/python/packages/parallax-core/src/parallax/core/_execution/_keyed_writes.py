@@ -11,6 +11,10 @@ from typing import Final, Literal, Protocol, cast
 # per-name underscores.
 from parallax.core._execution._family import temporal_shape
 from parallax.core._execution._options import OMITTED, Omitted
+from parallax.core._execution._unit_work.admission import (
+    NO_INSERTION_AUTHORITY,
+    NoInsertionAuthority,
+)
 from parallax.core._execution._unit_work.instructions import (
     AMEND_MUTATIONS,
     ASSIGNMENT_MUTATIONS,
@@ -27,11 +31,7 @@ from parallax.core._execution._unit_work.retain import (
     KeyedWriteRefusalAdvice,
     ReadEvidence,
 )
-from parallax.core._execution._unit_work.uow import (
-    NO_INSERTION_AUTHORITY,
-    NoInsertionAuthority,
-    UnitOfWork,
-)
+from parallax.core._execution._unit_work.uow import UnitOfWork
 from parallax.core._execution._unit_work.write_items import buffered_write
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.execution_lifecycle._activity import InstalledLifecycle, refuse_reentry

@@ -23,7 +23,6 @@ from parallax.core._execution._unit_work.write_items import (
     TargetKeyedWrite,
     chained_temporal_write,
 )
-from parallax.core._execution._unit_work.write_planner import compose_writes
 from parallax.core._execution._unit_work.write_runner import acquire_and_bind_range
 from parallax.core.base import INFINITY
 from parallax.core.entity._construction_input import ABSENT
@@ -33,7 +32,7 @@ from parallax.core.write_plan import PlannedClose, PlannedInsert, PredecessorRow
 from parallax.core.write_plan.keys import ObjectStateKey, TemporalObjectStateKey
 from parallax.core.write_plan.plan import NO_TEMPORAL_WRITE_OWNERSHIP, BoundRange, ExecutionUnit
 from tests._support.clock_probes import instant_at
-from tests._support.planner_probes import TEST_ACTOR_IDENTITY
+from tests._support.planner_probes import TEST_ACTOR_IDENTITY, admitted_writes
 from tests.unit._positional_row_support import positional_row
 from tests.unit.core._execution._unit_work._acquired_rows_support import HeldRows
 from tests.unit.core._execution._unit_work._temporal_targets_support import (
@@ -78,7 +77,7 @@ def _holding(item: TargetKeyedWrite, state: RetainedTargetState) -> TargetKeyedW
 def _planned(
     *writes: BufferItem, concurrency: str = "locking", follows: bool = False
 ) -> ExecutionUnit:
-    buffered = compose_writes(POSITION, list(writes))
+    buffered = admitted_writes(POSITION, list(writes))
     if follows:
         (composed,) = buffered
         assert not isinstance(composed, RetainedObservation)

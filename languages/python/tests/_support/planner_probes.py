@@ -10,6 +10,7 @@ from typing import Final
 
 from parallax.core import temporal_read
 from parallax.core._execution._unit_work.acquisition import AcquireRows, RowConsumer, RowRequest
+from parallax.core._execution._unit_work.admission import WriteAdmission
 from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedWrite,
     PreparedPredicateWrite,
@@ -22,10 +23,10 @@ from parallax.core._execution._unit_work.write_items import (
     AfterRemoval,
     BufferedWrite,
     OrderedWrite,
+    TargetKeyedWrite,
     readless_write,
 )
-from parallax.core._execution._unit_work.write_planner import compose_writes
-from parallax.core.metamodel import Metamodel
+from parallax.core.metamodel import EntityIdentity, Metamodel
 from parallax.core.unit_work import (
     BufferItem,
     KeyedWrite,
@@ -41,6 +42,7 @@ __all__ = [
     "NO_ROW_READS",
     "TEST_ACTOR_IDENTITY",
     "RecordingSource",
+    "admitted_writes",
     "observed_buffer",
     "observed_write",
     "retained_observation",
@@ -82,7 +84,7 @@ def observed_buffer(
     observations: Mapping[ObjectKey, WriteObservation] | None,
 ) -> list[OrderedWrite]:
     """``buffer`` with every item ``observations`` names wrapped in its carrier,
-    composed in authored order as a unit of work composes what it admits.
+    admitted in authored order as a unit of work admits it.
 
     A planner-level suite states which objects the transaction observed, which
     is the readable way to author the scenario; the verb that would do the
@@ -109,7 +111,7 @@ def observed_buffer(
         if held is None:
             held = retained[key] = retained_observation(item, model, observation)
         resolved.append(buffered_write(item, held))
-    return [_settled(item) for item in compose_writes(model, resolved)]
+    return [_settled(item) for item in admitted_writes(model, resolved)]
 
 
 def observed_write(
@@ -124,8 +126,26 @@ def observed_write(
         item = instruction
     else:
         item = buffered_write(instruction, retained_observation(instruction, model, observation))
-    (only,) = compose_writes(model, [item])
+    (only,) = admitted_writes(model, [item])
     return _settled(only)
+
+
+def admitted_writes(model: Metamodel, writes: Sequence[BufferItem]) -> tuple[BufferedWrite, ...]:
+    """``writes`` admitted in authored order into one pending batch, and that
+    batch's composed writes, under the Optimistic strategy, whose confirmation
+    of a caller's revision reads nothing."""
+    admission = WriteAdmission(model, inserted_version=_no_insertion_authorizes)
+    for item in writes:
+        admission.admit(item, confirm_target=_optimistic)
+    return admission.composed_writes()
+
+
+def _optimistic(item: TargetKeyedWrite) -> TargetKeyedWrite:
+    return item
+
+
+def _no_insertion_authorizes(entity: EntityIdentity, advanced_from: int | None) -> int | None:
+    raise AssertionError(f"no write an insertion of {entity.canonical!r} authorized is admitted")
 
 
 def retained_observation(

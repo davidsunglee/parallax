@@ -4,6 +4,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Protocol
 
 from parallax.core._execution._unit_work.acquisition import AcquireRows, consume_coverage
+from parallax.core._execution._unit_work.admission import UnitOfWorkError
 from parallax.core._execution._unit_work.clock import TransactionInstant
 from parallax.core._execution._unit_work.ranges import (
     DeferredGroupRange,
@@ -58,7 +59,7 @@ def run_write_plan(owner: UnitOfWork, plan: WritePlan, execute: ExecuteWriteStep
     completes. A unit that fails completes nothing, and nothing after it is
     prepared, bound, or executed.
     """
-    complete = owner._complete  # pyright: ignore[reportPrivateUsage] - the owner's completion
+    complete = owner._complete_unit  # pyright: ignore[reportPrivateUsage] - the owner's completion
     steps = plan.steps
     start = 0
     for unit in plan.units:
@@ -72,9 +73,6 @@ def run_write_plan(owner: UnitOfWork, plan: WritePlan, execute: ExecuteWriteStep
 def _require_allocated(unit: ExecutionUnit, allocated: tuple[object, ...]) -> None:
     expected = len(unit.opened.allocated)
     if len(allocated) != expected:
-        # The unit of work imports this module, so its error is imported here.
-        from parallax.core._execution._unit_work.uow import UnitOfWorkError
-
         raise UnitOfWorkError(
             f"an execution unit opening {expected} row(s) whose keys the database allocates "
             f"executed answering {len(allocated)} key(s)"
@@ -88,7 +86,7 @@ def _deferred(
     ownership and executed: a range's bound effects, or what a group's
     continuation finishes with."""
     planner = owner._planner  # pyright: ignore[reportPrivateUsage] - the owner's binding inputs
-    ownership = owner._targets  # pyright: ignore[reportPrivateUsage] - the owner's binding inputs
+    ownership = owner._admission.ownership  # pyright: ignore[reportPrivateUsage] - the owner's binding inputs
     actor = owner._actor_identity  # pyright: ignore[reportPrivateUsage] - the owner's binding inputs
     instant = owner._transaction_instant  # pyright: ignore[reportPrivateUsage] - the owner's binding inputs
     if isinstance(deferred, DeferredGroupRange):

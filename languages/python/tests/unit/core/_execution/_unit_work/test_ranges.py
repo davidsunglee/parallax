@@ -30,7 +30,6 @@ from parallax.core._execution._unit_work.write_items import (
     TemporalContribution,
     target_write,
 )
-from parallax.core._execution._unit_work.write_planner import compose_writes
 from parallax.core._execution._unit_work.write_runner import acquire_and_bind_range
 from parallax.core.base import INFINITY
 from parallax.core.metamodel import EntityIdentity
@@ -74,7 +73,7 @@ from parallax.core.write_plan.steps import (
     WriteRow,
 )
 from tests._support.clock_probes import CountingClock, instant_at
-from tests._support.planner_probes import TEST_ACTOR_IDENTITY
+from tests._support.planner_probes import TEST_ACTOR_IDENTITY, admitted_writes
 from tests.unit._corpus_model_support import model
 from tests.unit.core._execution._unit_work._acquired_rows_support import (
     HeldRows,
@@ -160,7 +159,7 @@ def _plan(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=instant or instant_at(_PLANNED_AT.isoformat()),
             concurrency="optimistic",
-            buffered_writes=compose_writes(_SPANS, list(writes)),
+            buffered_writes=admitted_writes(_SPANS, list(writes)),
             ownership=ownership,
         )
     )
@@ -417,7 +416,7 @@ def test_a_lone_observed_write_inside_its_predecessor_binds_at_once_from_its_own
 ) -> None:
     head = _retained(_HEAD)
     built = _Compositions(monkeypatch)
-    (buffered,) = compose_writes(_SPANS, [_update(head, _MAR, _APR)])
+    (buffered,) = admitted_writes(_SPANS, [_update(head, _MAR, _APR)])
     assert isinstance(buffered, ObservedKeyedWrite)
     plan = _plan(buffered)
     assert built.built == 0

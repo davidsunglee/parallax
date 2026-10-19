@@ -21,7 +21,7 @@ import weakref
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from decimal import Decimal
-from typing import Final, cast
+from typing import Any, Final, cast
 
 import pytest
 
@@ -70,6 +70,7 @@ from parallax.core.unit_work import (
     UnitOfWork,
     UnitOfWorkError,
     WriteAssignment,
+    WritePlanner,
     WritePlanningRequest,
     buffered_write,
 )
@@ -80,7 +81,14 @@ from parallax.core.write_plan import (
     TemporalObservation,
     object_state_key_from_observation,
 )
-from parallax.core.write_plan.plan import DeferredRange, ExecutionUnit, PlannedWrites, WritePlan
+from parallax.core.write_plan.plan import (
+    BoundRange,
+    DeferredRange,
+    ExecutionUnit,
+    PlannedWrites,
+    TemporalWriteOwnership,
+    WritePlan,
+)
 from parallax.core.write_plan.steps import PlannedWrite
 from tests._support.clock_probes import instant_at
 from tests._support.planner_probes import (
@@ -415,6 +423,42 @@ def test_a_deferred_range_binds_only_once_every_earlier_unit_completed() -> None
     ((kind, spent, executed),) = reads
     assert (kind, spent) == (CoverageReadRequest, True)
     assert 0 < executed < len(simulated.statements)
+
+
+def test_planning_and_deferred_binding_borrow_the_one_live_ownership(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The flush drains its batch after planning, and the earlier unit's
+    # completion publishes into the very ownership the range then binds under.
+    planned: list[TemporalWriteOwnership] = []
+    bound: list[tuple[TemporalWriteOwnership, bool]] = []
+    finalize, bind = WritePlanner.finalize, WritePlanner.bind_deferred
+
+    def planning(planner: WritePlanner, request: WritePlanningRequest) -> WritePlan:
+        planned.append(request.ownership)
+        return finalize(planner, request)
+
+    def binding(planner: WritePlanner, *args: Any, **kwargs: Any) -> BoundRange:
+        ownership = kwargs["ownership"]
+        bound.append(
+            (ownership, ownership.owns_any(corpus_object_key("Position", ("id", 2)).entity))
+        )
+        return bind(planner, *args, **kwargs)
+
+    monkeypatch.setattr(WritePlanner, "finalize", planning)
+    monkeypatch.setattr(WritePlanner, "bind_deferred", binding)
+    simulated = _simulated(TARGET_POSITION)
+    held = HeldRows(TARGET_POSITION, [rectangle(_JAN, INFINITY, "100.00")], overlapping=True)
+    uow = _uow(TARGET_POSITION, simulated, rows=held)
+    uow.buffer(_observed_amend(2, _retained_row(2)))
+    uow.buffer_target(_target(_APR, _SEP, "150.00"))
+    live = uow._admission.ownership  # pyright: ignore[reportPrivateUsage] - the ownership both stages borrow
+    uow.flush(trigger="pre_commit")
+    assert planned == [live]
+    assert planned[0] is live
+    ((ownership, published),) = bound
+    assert ownership is live
+    assert published
 
 
 def test_a_retained_row_still_current_at_its_units_turn_is_completed_without_a_read() -> None:

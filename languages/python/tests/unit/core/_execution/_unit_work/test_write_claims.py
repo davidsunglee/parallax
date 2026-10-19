@@ -1,9 +1,10 @@
 """Write admission and Observed-State Coalescing (`m-unit-work`).
 
-One claim algebra backs two seams — the synchronous refusal a keyed verb raises
-and the merge finalization performs — so this module measures the algebra itself
-as a pure function; the choreography a caller performs through the real handles
-over a fake port is ``test_transaction_write_claims.py``'s subject.
+Admission judges each arriving write by one claim algebra and composes it by
+the verdict it reached, so this module measures the algebra itself as a pure
+function, beside the carriers a write is admitted in; the choreography a caller
+performs through the real handles over a fake port is
+``test_transaction_write_claims.py``'s subject.
 
 The evidence a source carries and how long it lives is `test_source_evidence.py`'s
 subject; what lives here is what a SECOND intent against the same evidence may do.
@@ -20,15 +21,17 @@ from parallax.conformance.class_models import MODELS as CLASS_MODELS
 from parallax.core import opt_lock
 from parallax.core._execution._unit_work import instructions
 from parallax.core._execution._unit_work.claims import (
-    SPANNING_SELECTION_INTENT,
-    ClaimTable,
     admits,
     admits_composed,
 )
-from parallax.core._execution._unit_work.instructions import PreparedKeyedWrite
+from parallax.core._execution._unit_work.instructions import (
+    ExpectedVersion,
+    PreparedKeyedWrite,
+)
 from parallax.core._execution._unit_work.write_items import (
     ObjectClaimedWrite,
     ObservedKeyedWrite,
+    TargetKeyedWrite,
     buffered_write,
 )
 from parallax.core.base import INFINITY
@@ -175,65 +178,6 @@ def test_the_claim_algebra_answers_one_verdict_per_pair(
     held: WriteIntent | None, arriving: WriteIntent, verdict: str
 ) -> None:
     assert admits(held, arriving) == verdict
-
-
-def test_the_claim_table_holds_what_the_buffer_will_carry() -> None:
-    # An unclaimed state admits; a compatible intent replaces what is held,
-    # because the merged write is what the flush will carry; a deduplicated or
-    # refused one leaves the held claim exactly as it was.
-    table = ClaimTable()
-    assert table.claim(_STATE, _ASSIGNMENT) == "admit"
-    assert table.held(_STATE) == _ASSIGNMENT
-    assert table.claim(_STATE, _DESTRUCTIVE) == "supersede"
-    assert table.held(_STATE) == _DESTRUCTIVE
-    assert table.claim(_STATE, _DESTRUCTIVE) == "deduplicate"
-    assert table.claim(_STATE, _ASSIGNMENT) == "incompatible"
-    assert table.held(_STATE) == _DESTRUCTIVE
-    table.clear()
-    assert table.held(_STATE) is None
-
-
-def test_releasing_claims_drops_exactly_the_named_scopes() -> None:
-    other = VersionedObjectStateKey(_STATE.object, _STATE.version + 1)
-    table = ClaimTable()
-    assert table.claim(_STATE, SELECTION_INTENT) == "admit"
-    assert table.claim(other, _ASSIGNMENT) == "admit"
-    table.release(iter((_STATE,)))
-    assert table.held(_STATE) is None
-    assert table.held(other) == _ASSIGNMENT
-
-
-def test_the_claim_table_answers_which_objects_it_claims_as_its_claims_change() -> None:
-    another = ObjectKey(_STATE.object.entity, (("id", 99),))
-    table = ClaimTable()
-    assert not table.claims_object(_STATE.object)
-    assert table.claim(_STATE, SELECTION_INTENT) == "admit"
-    assert table.claims_object(_STATE.object)
-    assert table.claim(another, SELECTION_INTENT) == "admit"
-    assert table.claims_object(another)
-    table.release(iter((_STATE,)))
-    assert not table.claims_object(_STATE.object)
-    assert table.claims_object(another)
-    table.clear()
-    assert not table.claims_object(another)
-
-
-def test_the_claim_table_answers_which_objects_a_claim_reaches_whole() -> None:
-    another = ObjectKey(_STATE.object.entity, (("id", 99),))
-    third = ObjectKey(_STATE.object.entity, (("id", 98),))
-    table = ClaimTable()
-    assert table.claim(_STATE, SELECTION_INTENT) == "admit"
-    assert not table.spans(_STATE.object)
-    assert table.claim(another, SPANNING_SELECTION_INTENT) == "admit"
-    assert table.spans(another)
-    assert table.claim(third, SPANNING_SELECTION_INTENT) == "admit"
-    assert table.spans(third)
-    assert table.claim(another, _ASSIGNMENT) == "incompatible"
-    table.release(iter((another,)))
-    assert not table.spans(another)
-    assert table.spans(third)
-    table.clear()
-    assert not table.spans(third)
 
 
 _S1 = "first observed state"
@@ -440,3 +384,15 @@ def test_an_observed_write_requires_a_retained_observation(evidence: object) -> 
     observed = buffered_write(prepared, _RETAINED)
     assert isinstance(observed, ObservedKeyedWrite)
     assert observed.observation is _RETAINED.evidence
+
+
+def test_a_target_carrier_refuses_an_insert_and_a_write_of_several_objects() -> None:
+    insert = instructions.prepare_wire_write(
+        KeyedWrite("insert", "Person", ({"id": 1, "name": "Ada"},)), _PERSON_META
+    )
+    several = _prepared_person_delete(1, 2)
+    person = ObjectKey(EntityIdentity("parallax.compatibility", "Person"), (("id", 1),))
+    for instruction in (insert, several):
+        assert isinstance(instruction, PreparedKeyedWrite)
+        with pytest.raises(ValueError, match="addresses one existing object"):
+            TargetKeyedWrite(instruction, ExpectedVersion(3), VersionedObjectStateKey(person, 3))
