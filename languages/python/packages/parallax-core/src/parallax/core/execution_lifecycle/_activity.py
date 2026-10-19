@@ -255,7 +255,7 @@ class ActivityTarget(Protocol):
 
 
 class DatabaseCallActivity(Protocol):
-    """One attempted round trip's scope.
+    """One attempted Database Call's scope.
 
     The completion methods are how the body reports the outcome only it holds.
     Neither announces failure: leaving the scope under an exception is what
@@ -1309,7 +1309,7 @@ class _LiveRead(_LiveConnectionOwner):
 
 
 class _LiveDatabaseCall(_LiveActivity):
-    """One observed round trip, timed around the port invocation alone.
+    """One observed Database Call, timed around the port invocation alone.
 
     The clock starts only after Started has been delivered and stops before
     Finished is constructed, so a slow Handler cannot inflate the duration of
