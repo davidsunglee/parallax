@@ -11,7 +11,7 @@ import pytest
 from parallax.core import temporal_read
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work.instructions import prepare_wire_write
-from parallax.core._execution._unit_work.materialized import (
+from parallax.core._execution._unit_work.write_items import (
     ComposedTemporalWrite,
     ObservedKeyedWrite,
 )
@@ -37,7 +37,11 @@ from parallax.core.write_plan import (
     VersionObservation,
     WritePlanningError,
 )
-from parallax.core.write_plan.keys import TemporalObjectStateKey
+from parallax.core.write_plan.keys import (
+    TemporalObjectStateKey,
+    VersionedObjectStateKey,
+    object_state_key_from_observation,
+)
 from parallax.core.write_plan.plan import CombinedSourceAuthority, WritePlan
 from tests._support.clock_probes import instant_at
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
@@ -182,15 +186,17 @@ def test_a_bitemporal_write_carrying_no_temporal_observation_is_refused_as_unobs
         ),
         model,
     )
+    position = ObjectKey(prepared.target.identity, (("id", 1),))
+    unobserved = RetainedObservation(
+        VersionedObjectStateKey(position, 1), VersionObservation(observed_version=1), None
+    )
     with pytest.raises(WritePlanningError, match="requires the Temporal Observation"):
         build_write_planner(model).finalize(
             WritePlanningRequest(
                 actor_identity=TEST_ACTOR_IDENTITY,
                 transaction_instant=instant_at("2024-06-01T00:00:00+00:00"),
                 concurrency="optimistic",
-                buffered_writes=compose_writes(
-                    model, [buffered_write(prepared, VersionObservation(observed_version=1))]
-                ),
+                buffered_writes=compose_writes(model, [buffered_write(prepared, unobserved)]),
             )
         )
 
@@ -218,11 +224,18 @@ def test_two_observed_rectangles_bind_at_planning_when_they_cover_the_range() ->
             )
         )
 
+    position = EntityIdentity("parallax.compatibility", "Position")
+    shape = temporal_read.view(model).shape(position)
+    assert shape is not None
+
     def update(valid_from: dt.datetime, value: str, observed: TemporalObservation) -> BufferItem:
         prepared = prepare_wire_write(
             KeyedWrite("amend", "Position", ({"id": 1, "value": value},), valid_from), model
         )
-        return buffered_write(prepared, observed)
+        state = object_state_key_from_observation(
+            ObjectKey(position, (("id", 1),)), observed, shape
+        )
+        return buffered_write(prepared, RetainedObservation(state, observed, None))
 
     writes = compose_writes(
         model,

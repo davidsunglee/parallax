@@ -41,7 +41,7 @@ from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedWrite,
     PreparedTargetWrite,
 )
-from parallax.core._execution._unit_work.materialized import (
+from parallax.core._execution._unit_work.write_items import (
     InsertionKeyedWrite,
     ObjectClaimedWrite,
     ObservedKeyedWrite,
@@ -2039,11 +2039,11 @@ def test_a_held_groups_case_state_advances_where_its_own_reads_flush_it(
     first, second = admitted
     assert isinstance(first, ObservedKeyedWrite)
     assert isinstance(second, ObservedKeyedWrite)
-    assert first.claim is second.claim
-    assert first.claim is not None and first.claim.participation is None
+    assert first.retained_observation is second.retained_observation
+    assert first.retained_observation.participation is None
     original, again = (source.observation for source in sources)
     assert original is not None
-    assert original is again and first.claim is not original
+    assert original is again and first.retained_observation is not original
     assert original.consumed
 
 
@@ -4524,9 +4524,7 @@ def test_a_compiled_observed_write_settles_against_a_detached_retained_observati
     assert [type(item) for item in admitted] == carriers
     for carrier in admitted:
         if isinstance(carrier, ObservedKeyedWrite):
-            assert carrier.claim is not None
-            assert carrier.claim.evidence is carrier.observation
-            assert carrier.claim.participation is None
+            assert carrier.retained_observation.participation is None
 
 
 @pytest.mark.parametrize(

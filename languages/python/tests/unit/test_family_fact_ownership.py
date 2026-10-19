@@ -45,7 +45,7 @@ from parallax.core._execution._unit_work.instructions import (
     prepare_typed_write,
 )
 from parallax.core._execution._unit_work.ranges import DeferredGroupRange
-from parallax.core._execution._unit_work.write_settlement import OrderedWrite
+from parallax.core._execution._unit_work.write_items import OrderedWrite
 from parallax.core._execution._write_lowering import lowered as lower
 from parallax.core.deep_fetch._include_tree import build_include_tree
 from parallax.core.dialect import POSTGRES

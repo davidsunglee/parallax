@@ -144,7 +144,7 @@ def settled_evidence(
     mutation: KeyedMutation,
     *,
     object_key: ObjectKey | None,
-    observation: WriteObservation | RetainedObservation | None,
+    observation: RetainedObservation | None,
 ) -> SettledEvidence | None:
     """What a keyed write settles against, and therefore claims — the total
     derivation over the write kind (`m-unit-work` "Observed-State Coalescing"),

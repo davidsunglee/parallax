@@ -20,7 +20,9 @@ from parallax.core._execution._unit_work.effects import (
     enforce_affected_rows,
 )
 from parallax.core._execution._unit_work.instructions import ExpectedTxStart
-from parallax.core._execution._unit_work.materialized import (
+from parallax.core._execution._unit_work.retain import RetainedObservation, RetainedTargetState
+from parallax.core._execution._unit_work.strategy import AuditDecoration
+from parallax.core._execution._unit_work.write_items import (
     ChainedTemporalWrite,
     ComposedTemporalWrite,
     InsertionKeyedWrite,
@@ -31,8 +33,6 @@ from parallax.core._execution._unit_work.materialized import (
     TemporalKeyedWrite,
     singleton_transform,
 )
-from parallax.core._execution._unit_work.retain import RetainedObservation, RetainedTargetState
-from parallax.core._execution._unit_work.strategy import AuditDecoration
 from parallax.core.base import ManagedValue
 from parallax.core.inheritance import InheritanceEntityView
 from parallax.core.metamodel import AttributeIdentity, EntityMetadata, ValueObjectIdentity
@@ -106,14 +106,14 @@ class _Original:
 def range_claims(item: ComposedTemporalWrite | TemporalKeyedWrite) -> SourceAuthority | None:
     """The distinct retained observations a range's unit spends, each once."""
     if isinstance(item, ObservedKeyedWrite):
-        return item.claim
+        return item.retained_observation
     if not isinstance(item, ComposedTemporalWrite):
         return None
-    claims = (contribution.claim for contribution in item.contributions)
     distinct: list[RetainedObservation] = []
-    for claim in claims:
-        if claim is not None and all(claim is not held for held in distinct):
-            distinct.append(claim)
+    for contribution in item.contributions:
+        retained = contribution.retained_observation
+        if retained is not None and all(retained is not held for held in distinct):
+            distinct.append(retained)
     if not distinct:
         return None
     if len(distinct) == 1:
@@ -139,18 +139,12 @@ def _known_originals(
     """
     distinct: list[_Original] = []
     for contribution in composed.contributions:
-        observation = contribution.observation
-        if observation is None:  # an insertion authorized it, and it observed nothing
+        retained = contribution.retained_observation
+        if retained is None:  # an insertion or a caller authorized it, and it observed nothing
             continue
+        observation = retained.evidence
         assert isinstance(observation, TemporalObservation)  # a temporal write observes a milestone
-        claim = contribution.claim
-        original = _original(
-            facts,
-            key_attribute,
-            key_value,
-            observation.predecessor,
-            None if claim is None else claim.key,
-        )
+        original = _original(facts, key_attribute, key_value, observation.predecessor, retained.key)
         if all(original.state != held.state for held in distinct):
             distinct.append(original)
     bound: list[_Original] = []
@@ -232,8 +226,9 @@ def _original(
     predecessor: PredecessorRow,
     state: ObjectStateKey | None,
 ) -> _Original:
-    """One current row as an original: its observed state is the claim's where
-    one names it, and otherwise the state its milestone edge keys."""
+    """One current row as an original: its observed state is the retained
+    observation's where one names it, and otherwise the state its milestone
+    edge keys."""
     shape = facts.shape
     if state is None:
         state = TemporalObjectStateKey(
@@ -720,7 +715,7 @@ def settle_range(
     releases each such row here.
 
     A composition an ordering barrier kept after earlier writes of the same
-    object (:class:`~parallax.core._execution._unit_work.materialized.ChainedTemporalWrite`)
+    object (:class:`~parallax.core._execution._unit_work.write_items.ChainedTemporalWrite`)
     always binds at execution: the units before the barrier changed coverage
     no planning input knows, and the conditions it was admitted with may
     already have been proven on the originals those units transformed. One a
@@ -885,16 +880,10 @@ def _known(
         )
         retained = () if item.retained is None else (item.retained,)
         return (), (), _UNANCHORED, conditions, retained
-    observation = item.observation
+    retained = item.retained_observation
+    observation = retained.evidence
     assert isinstance(observation, TemporalObservation)  # settlement refuses any other
-    claim = item.claim
-    original = _original(
-        facts,
-        key_attribute,
-        key_value,
-        observation.predecessor,
-        None if claim is None else claim.key,
-    )
+    original = _original(facts, key_attribute, key_value, observation.predecessor, retained.key)
     return (original,), (), _UNANCHORED, (), ()
 
 

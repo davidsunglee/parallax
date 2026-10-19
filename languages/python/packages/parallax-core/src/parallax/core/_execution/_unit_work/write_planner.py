@@ -9,10 +9,12 @@ from typing import Final, cast
 from parallax.core import inheritance, relationship, temporal_read
 from parallax.core._execution._unit_work.acquisition import AcquireRows
 from parallax.core._execution._unit_work.claims import (
+    ClaimScope,
     ClaimVerdict,
     WriteIntent,
     admits,
     admits_composed,
+    claimed_object,
     keyed_intent,
 )
 from parallax.core._execution._unit_work.clock import TransactionInstant
@@ -28,27 +30,6 @@ from parallax.core._execution._unit_work.instructions import (
     derive_keyed_write,
 )
 from parallax.core._execution._unit_work.keys import resolve_object_key
-from parallax.core._execution._unit_work.materialized import (
-    AfterRemoval,
-    BufferItem,
-    ChainedTemporalWrite,
-    ClaimedKeyedWrite,
-    ComposedTemporalWrite,
-    FollowingKeyedWrite,
-    InsertionKeyedWrite,
-    MaterializedWriteGroup,
-    ObjectClaimedWrite,
-    ObservedKeyedWrite,
-    PendingOpening,
-    ReadlessPredicateWrite,
-    TargetKeyedWrite,
-    TemporalContribution,
-    TemporalKeyedWrite,
-    buffered_instruction,
-    chained,
-    composed_temporal_write,
-    temporal_contribution,
-)
 from parallax.core._execution._unit_work.ranges import (
     DeferredGroupRange,
     DeferredTemporalRange,
@@ -65,11 +46,34 @@ from parallax.core._execution._unit_work.strategy import (
     ConcurrencyStrategy,
     UndecoratedAudit,
 )
-from parallax.core._execution._unit_work.write_settlement import OrderedWrite, WritePlanCompiler
+from parallax.core._execution._unit_work.write_items import (
+    AfterRemoval,
+    BufferedWrite,
+    BufferItem,
+    ChainedTemporalWrite,
+    ClaimedKeyedWrite,
+    ComposedTemporalWrite,
+    FollowingKeyedWrite,
+    InsertionKeyedWrite,
+    MaterializedWriteGroup,
+    ObjectClaimedWrite,
+    ObservedKeyedWrite,
+    OrderedWrite,
+    PendingOpening,
+    ReadlessPredicateWrite,
+    TargetKeyedWrite,
+    TemporalContribution,
+    TemporalKeyedWrite,
+    buffered_instruction,
+    chained_temporal_write,
+    composed_temporal_write,
+    temporal_contribution,
+)
+from parallax.core._execution._unit_work.write_settlement import WritePlanCompiler
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.temporal_read import TimeInterval, milestone_edge, valid_time_coverage
 from parallax.core.temporal_write.coverage import NO_TRANSFORM
-from parallax.core.write_plan.keys import ObjectKey, ObjectStateKey, VersionedObjectStateKey
+from parallax.core.write_plan.keys import ObjectKey, ObjectStateKey
 from parallax.core.write_plan.materialized import PredecessorRows
 from parallax.core.write_plan.observe import TemporalObservation
 from parallax.core.write_plan.payload import WritePayloadPreparer
@@ -82,16 +86,11 @@ from parallax.core.write_plan.plan import (
 )
 
 __all__ = [
-    "BufferedWrite",
     "PendingWrites",
     "WritePlanner",
     "WritePlanningRequest",
     "compose_writes",
 ]
-
-type BufferedWrite = OrderedWrite | AfterRemoval
-"""One composed buffered write as finalization receives it: what settlement
-reads, or inserts that must follow an earlier removal."""
 
 type BufferedWrites = Sequence[BufferedWrite]
 
@@ -456,31 +455,31 @@ class PendingWrites:
     * an amendment or replacement of an object whose insert is still pending
       folds into that insert, and a destructive write of it cancels the pair; a
       Bitemporal opening composes them over its coverage instead
-      (:class:`~parallax.core._execution._unit_work.materialized.PendingOpening`);
+      (:class:`~parallax.core._execution._unit_work.write_items.PendingOpening`);
     * writes claiming one non-temporal scope coalesce by the claim algebra
       (:func:`~parallax.core._execution._unit_work.claims.admits`);
     * a write a caller addressed with its own starting condition
-      (:class:`~parallax.core._execution._unit_work.materialized.TargetKeyedWrite`) claims
+      (:class:`~parallax.core._execution._unit_work.write_items.TargetKeyedWrite`) claims
       the scope that condition names and composes there like any claimed
       write, keeping the condition through every overwrite and destruction;
     * a temporal object's writes against its existing coverage — observed ones,
       those an admitted insertion authorized, and those a caller addressed
       alike — compose into one
-      :class:`~parallax.core._execution._unit_work.materialized.ComposedTemporalWrite`
+      :class:`~parallax.core._execution._unit_work.write_items.ComposedTemporalWrite`
       (:meth:`admits_temporal`), whose transform keeps only surviving values
       while every write's condition stays. Two writes of one observed state over
       one window simply coalesce, as a non-temporal pair does. Writes of the
       object over disjoint windows stay separate operations inside it, each with
       its own condition. A readless predicate write is an ordering barrier no
       write crosses, so the object's writes on each side of one compose apart
-      (:class:`~parallax.core._execution._unit_work.materialized.ChainedTemporalWrite`),
+      (:class:`~parallax.core._execution._unit_work.write_items.ChainedTemporalWrite`),
       though admission still judges each arriving write against all of them.
 
     No write composes across a readless predicate write, which is an ordering
     barrier: a write of an object whose insert stands before one is a write of
     the row that insert opens, and a Non-Temporal write of a scope whose
     earlier write stands before one follows it as a write of its own
-    (:class:`~parallax.core._execution._unit_work.materialized.FollowingKeyedWrite`).
+    (:class:`~parallax.core._execution._unit_work.write_items.FollowingKeyedWrite`).
 
     A pair the algebra calls incompatible is one no verb admitted — a caller
     reached the buffer another way — and both writes are left standing rather
@@ -512,7 +511,7 @@ class PendingWrites:
         # state, or the object itself for an object claim. Two observed
         # generations of one versioned row hold two independent claims, and
         # writes of them interleave freely.
-        self._claims: dict[Hashable, int] = {}
+        self._claims: dict[ClaimScope, int] = {}
         self._temporal: dict[ObjectKey, int] = {}
         self._sources: list[SourceAuthority] = []
         # Objects a pending write removes whole, and the positions of inserts
@@ -527,7 +526,7 @@ class PendingWrites:
         # object's pending caller-conditioned write — both allocated by the first
         # such write, since a buffer holding none needs neither.
         self._objects: dict[ObjectKey, Hashable] | None = None
-        self._targets: dict[ObjectKey, Hashable] | None = None
+        self._targets: dict[ObjectKey, ClaimScope] | None = None
         # Where the latest barrier stands and what the regions before it hold —
         # allocated by the first barrier, since most buffers carry none.
         self._regions: _Regions | None = None
@@ -591,20 +590,20 @@ class PendingWrites:
             return False
         return self.verdict(item, key) != "incompatible"
 
-    def target_scope(self, key: ObjectKey) -> Hashable | None:
+    def target_scope(self, key: ObjectKey) -> ClaimScope | None:
         """The scope of the caller-conditioned write of ``key`` still pending,
         if any — the one scope every other write of the object must share."""
         targets = self._targets
         return None if targets is None else targets.get(key)
 
-    def holds_scope(self, scope: Hashable) -> bool:
+    def holds_scope(self, scope: ClaimScope) -> bool:
         """Whether a pending keyed write claims ``scope``."""
         return scope in self._claims
 
     def _index_objects(self) -> dict[ObjectKey, Hashable]:
         objects: dict[ObjectKey, Hashable] = {}
         for scope in self._claims:
-            _note_scope(objects, _scope_object(scope), scope)
+            _note_scope(objects, claimed_object(scope), scope)
         self._objects = objects
         return objects
 
@@ -648,11 +647,7 @@ class PendingWrites:
             return True
         intent = keyed_intent(item.instruction)
         assert intent is not None  # a write against existing coverage is no insert
-        scope = (
-            item.claim.key
-            if isinstance(item, ObservedKeyedWrite) and item.claim is not None
-            else None
-        )
+        scope = item.retained_observation.key if isinstance(item, ObservedKeyedWrite) else None
         if not isinstance(item, TargetKeyedWrite) and not any(
             _targeted(held) for held in compositions
         ):
@@ -784,7 +779,7 @@ class PendingWrites:
             return streams[0]
         return heapq.merge(*streams, key=_START)
 
-    def _held_intent(self, scope: Hashable) -> WriteIntent | None:
+    def _held_intent(self, scope: ClaimScope) -> WriteIntent | None:
         index = self._claims.get(scope)
         held = None if index is None else self._items[index]
         assert held is None or isinstance(
@@ -819,7 +814,7 @@ class PendingWrites:
         of its object.
         """
         items = self._items
-        if isinstance(item, ObjectClaimedWrite) and item.source is not None:
+        if isinstance(item, ObjectClaimedWrite):
             self._sources.append(item.source)
         if isinstance(item, MaterializedWriteGroup):
             items.append(item)
@@ -858,10 +853,14 @@ class PendingWrites:
             self._removals.add(key)
         if self.is_temporal(item):
             assert isinstance(item, ObservedKeyedWrite | InsertionKeyedWrite | TargetKeyedWrite)
-            # A retained claim already holds its object's key, so the index
-            # shares it rather than keeping one of its own.
-            claim = item.claim if isinstance(item, ObservedKeyedWrite) else None
-            self._add_temporal(item, key if claim is None else claim.key.object)
+            # A retained observation already holds its object's key, so the
+            # index shares it rather than keeping one of its own.
+            self._add_temporal(
+                item,
+                item.retained_observation.key.object
+                if isinstance(item, ObservedKeyedWrite)
+                else key,
+            )
             return
         if isinstance(
             item, ObservedKeyedWrite | ObjectClaimedWrite | InsertionKeyedWrite | TargetKeyedWrite
@@ -1021,8 +1020,8 @@ class PendingWrites:
                 latest = sealed[-1]
                 earlier = items[latest]
                 assert isinstance(earlier, _TEMPORAL)
-                items[latest] = chained(earlier, key_name, leads=True)
-                items.append(chained(item, key_name, follows=True))
+                items[latest] = chained_temporal_write(earlier, key_name, leads=True)
+                items.append(chained_temporal_write(item, key_name, follows=True))
             self._temporal[key] = len(items) - 1
             return
         assert isinstance(held, _TEMPORAL)
@@ -1031,8 +1030,7 @@ class PendingWrites:
         if (
             isinstance(held, ObservedKeyedWrite)
             and isinstance(item, ObservedKeyedWrite)
-            and held.claim is item.claim
-            and held.observation == item.observation
+            and held.retained_observation is item.retained_observation
         ):
             held_intent = keyed_intent(held.instruction)
             assert held_intent is not None
@@ -1054,7 +1052,7 @@ class PendingWrites:
         key_name = _key_name(self._families, item.instruction.target)
         composed = composed_temporal_write(held, item, key_name)
         items[index] = (
-            chained(composed, key_name, leads=held.leads, follows=held.follows)
+            chained_temporal_write(composed, key_name, leads=held.leads, follows=held.follows)
             if isinstance(held, ChainedTemporalWrite)
             else composed
         )
@@ -1138,23 +1136,12 @@ _SEVERAL: Final = object()
 more than one scope."""
 
 
-def _note_scope(objects: dict[ObjectKey, Hashable], key: ObjectKey, scope: Hashable) -> None:
+def _note_scope(objects: dict[ObjectKey, Hashable], key: ObjectKey, scope: ClaimScope) -> None:
     held = objects.get(key)
     if held is None:
         objects[key] = scope
     elif held != scope:
         objects[key] = _SEVERAL
-
-
-def _scope_object(scope: Hashable) -> ObjectKey:
-    """The object a claimed scope addresses: itself, a state's object, or the
-    object beside a caller-held observation."""
-    if isinstance(scope, ObjectKey):
-        return scope
-    if isinstance(scope, VersionedObjectStateKey):
-        return scope.object
-    key, _evidence = cast("tuple[ObjectKey, object]", scope)
-    return key
 
 
 def composed_intents(
@@ -1165,15 +1152,16 @@ def composed_intents(
     if not isinstance(held, ComposedTemporalWrite):
         intent = keyed_intent(held.instruction)
         assert intent is not None  # a write against existing coverage is no insert
-        claim = held.claim if isinstance(held, ObservedKeyedWrite) else None
-        return ((None if claim is None else claim.key, intent),)
+        scope = held.retained_observation.key if isinstance(held, ObservedKeyedWrite) else None
+        return ((scope, intent),)
     return tuple(
         (_scope(contribution), _intent(contribution)) for contribution in held.contributions
     )
 
 
 def _scope(contribution: TemporalContribution) -> ObjectStateKey | None:
-    return None if contribution.claim is None else contribution.claim.key
+    retained = contribution.retained_observation
+    return None if retained is None else retained.key
 
 
 def _intent(contribution: TemporalContribution) -> WriteIntent:
@@ -1223,22 +1211,18 @@ def compose_writes(model: Metamodel, writes: Sequence[BufferItem]) -> tuple[Buff
 
 def _claim_scope(
     item: ClaimedKeyedWrite | InsertionKeyedWrite | TargetKeyedWrite, key: ObjectKey
-) -> Hashable:
-    """The scope ``item``'s claim is filed under: the retained claim's own
-    Object State Key, the object for an object claim, the scope an
-    insertion-authorized write was admitted at, the state a caller's condition
-    names, or — for a caller-held observation, which names no state key — the
-    object beside that evidence, since equal evidence about one object is one
-    state."""
+) -> ClaimScope:
+    """The scope ``item``'s claim is filed under: the retained observation's
+    own Object State Key, the object for an object claim, the scope an
+    insertion-authorized write was admitted at, or the state a caller's
+    condition names."""
     if isinstance(item, ObjectClaimedWrite):
         return key
     if isinstance(item, TargetKeyedWrite):
         return item.scope
     if isinstance(item, InsertionKeyedWrite):
         return key if item.scope is None else item.scope
-    if item.claim is not None:
-        return item.claim.key
-    return (key, item.observation)
+    return item.retained_observation.key
 
 
 type _Claimed = ClaimedKeyedWrite | InsertionKeyedWrite | TargetKeyedWrite
@@ -1277,21 +1261,21 @@ def _evidenced(first: _Claimed, second: _Claimed, instruction: PreparedKeyedWrit
         else None
     )
     if target is not None:
-        claims = target.claims
+        retained = target.retained_observations
         for write in (first, second):
-            for claim in _retained_claims(write):
-                if all(claim is not held for held in claims):
-                    claims = (*claims, claim)
-        return replace(target, instruction=instruction, claims=claims)
+            for observation in _retained_claims(write):
+                if all(observation is not held for held in retained):
+                    retained = (*retained, observation)
+        return replace(target, instruction=instruction, retained_observations=retained)
     carrier = second if isinstance(first, InsertionKeyedWrite) else first
     return replace(carrier, instruction=instruction)
 
 
 def _retained_claims(write: _Claimed) -> tuple[RetainedObservation, ...]:
     if isinstance(write, TargetKeyedWrite):
-        return write.claims
-    if isinstance(write, ObservedKeyedWrite) and write.claim is not None:
-        return (write.claim,)
+        return write.retained_observations
+    if isinstance(write, ObservedKeyedWrite):
+        return (write.retained_observation,)
     return ()
 
 

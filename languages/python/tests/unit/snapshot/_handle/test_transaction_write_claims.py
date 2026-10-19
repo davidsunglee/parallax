@@ -215,6 +215,36 @@ def test_an_assignment_after_a_destructive_intent_is_refused() -> None:
     assert refusal.value.object_key.primary_key == (("id", 1),)
 
 
+@pytest.mark.parametrize("representation", ["typed", "wire"])
+def test_a_refused_amendment_after_a_deletion_of_its_state_leaves_the_deletion_executable(
+    representation: str,
+) -> None:
+    port = ScriptedAdapter(Transact(_ACCOUNT_READ, Write()))
+
+    def fn(tx: TxnContext) -> None:
+        if representation == "typed":
+            node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
+            tx.delete(node)
+            with pytest.raises(WriteEvidenceError) as refusal:
+                tx.amend(node.edit(balance=Decimal("125.00")))
+        else:
+            source = tx.wire.find(
+                {"target": "Account", "predicate": {"eq": {"path": "Account.id", "value": 1}}}
+            ).result()
+            assert source is not None
+            tx.wire.delete(source)
+            with pytest.raises(WriteEvidenceError) as refusal:
+                tx.wire.amend(source, {"balance": "125.00"})
+        assert refusal.value.code == "write-evidence-already-claimed"
+
+    account_db(port).transact(fn)
+    assert _writes(port) == [
+        WriteCall(
+            POSTGRES.to_driver_sql("delete from account where id = ? and version = ?"), (1, 4)
+        )
+    ]
+
+
 def test_a_temporal_update_and_terminate_over_one_region_is_one_terminate() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[balance_row(in_z=_TX_START)]), Write()))
 

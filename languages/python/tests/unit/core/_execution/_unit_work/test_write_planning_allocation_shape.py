@@ -58,7 +58,7 @@ from parallax.core._execution._unit_work.instructions import (
     PreparedPredicateWrite,
     prepare_typed_write,
 )
-from parallax.core._execution._unit_work.write_settlement import OrderedWrite
+from parallax.core._execution._unit_work.write_items import OrderedWrite
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import INFINITY
 from parallax.core.metamodel import (

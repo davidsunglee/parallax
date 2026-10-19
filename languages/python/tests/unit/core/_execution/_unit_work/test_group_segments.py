@@ -103,7 +103,11 @@ from parallax.core.write_plan.steps import (
     WriteRow,
 )
 from tests._support.clock_probes import inert_instant, instant_at
-from tests._support.planner_probes import TEST_ACTOR_IDENTITY, observed_buffer
+from tests._support.planner_probes import (
+    TEST_ACTOR_IDENTITY,
+    observed_buffer,
+    retained_observation,
+)
 from tests.unit import _predicate_acquisition_support as acquisition_support
 from tests.unit._corpus_identity_support import corpus_entity, corpus_object_key
 from tests.unit._corpus_model_support import model as corpus_model
@@ -636,7 +640,7 @@ def test_a_literal_keyed_write_overlays_every_member_it_assigns(
         _BALANCE,
     )
     observation = TemporalObservation(predecessor=PredecessorRow(members=_BALANCE_PREDECESSOR))
-    literal = buffered_write(prepared, observation)
+    literal = buffered_write(prepared, retained_observation(prepared, _BALANCE, observation))
     (_close, successor) = _plan([literal], _BALANCE).steps
     # The successor overlays every member the row assigns, whatever it equals.
     assert _insert_rows(successor)[0]["acctNum"] == "B"
@@ -811,7 +815,8 @@ def test_a_restated_occurrence_is_assigned_whole_and_keeps_no_key_its_value_omit
         ),
         model,
     )
-    plan = _plan([buffered_write(prepared, TemporalObservation(predecessor))], model)
+    observed = retained_observation(prepared, model, TemporalObservation(predecessor))
+    plan = _plan([buffered_write(prepared, observed)], model)
 
     (changed,) = (
         step

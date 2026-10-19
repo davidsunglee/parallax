@@ -45,14 +45,6 @@ from parallax.core._execution._unit_work.instructions import (
     WriteInstructionError,
 )
 from parallax.core._execution._unit_work.keys import object_key
-from parallax.core._execution._unit_work.materialized import (
-    BufferItem,
-    ClaimedKeyedWrite,
-    MaterializedWriteGroup,
-    VersionedEvidence,
-    VersionedEvidenceBuilder,
-    buffered_write,
-)
 from parallax.core._execution._unit_work.retain import (
     ParticipationToken,
     ReadEvidence,
@@ -78,6 +70,14 @@ from parallax.core._execution._unit_work.uow import (
     WriteBatchReason,
     WriteEvidenceError,
     WriteEvidenceErrorCode,
+)
+from parallax.core._execution._unit_work.write_items import (
+    BufferItem,
+    ClaimedKeyedWrite,
+    MaterializedWriteGroup,
+    VersionedEvidence,
+    VersionedEvidenceBuilder,
+    buffered_write,
 )
 from parallax.core._execution._unit_work.write_planner import (
     WritePlanner,

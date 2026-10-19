@@ -9,7 +9,7 @@ from parallax.core._execution._unit_work.instructions import (
     PredicateMutation,
     PreparedPredicateWrite,
 )
-from parallax.core._execution._unit_work.materialized import (
+from parallax.core._execution._unit_work.write_items import (
     VersionedEvidence,
     VersionedEvidenceBuilder,
 )

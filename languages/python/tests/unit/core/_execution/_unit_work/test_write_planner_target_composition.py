@@ -13,7 +13,7 @@ from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedWrite,
     prepare_wire_write,
 )
-from parallax.core._execution._unit_work.materialized import TargetKeyedWrite, target_write
+from parallax.core._execution._unit_work.write_items import TargetKeyedWrite, target_write
 from parallax.core._execution._unit_work.write_planner import PendingWrites
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.unit_work import KeyedWrite, RetainedObservation, TargetWrite, buffered_write
@@ -57,7 +57,7 @@ def test_a_target_write_meets_the_writes_of_its_own_stated_state() -> None:
     assert pending.target_scope(_OBJECT) == VersionedObjectStateKey(_OBJECT, 3)
     (merged,) = pending.writes()
     assert isinstance(merged, TargetKeyedWrite)
-    assert merged.claims == (observed,)
+    assert merged.retained_observations == (observed,)
     assert dict(merged.instruction.rows[0]) == {
         "id": 1,
         "owner": "Bo",
@@ -65,10 +65,26 @@ def test_a_target_write_meets_the_writes_of_its_own_stated_state() -> None:
     }
 
 
+def test_a_target_deletion_superseding_an_observed_write_keeps_its_observation() -> None:
+    # The caller's deletion replaces the observed amendment's assignments, and
+    # its completion still spends the observation that amendment was admitted
+    # through.
+    pending = PendingWrites(_ACCOUNT)
+    observed = _retained(3)
+    pending.add(buffered_write(_update(owner="Bo"), observed), _OBJECT)
+    deletion = target_write(
+        prepare_wire_write(TargetWrite("delete", "Account", {"id": 1}, if_version=3), _ACCOUNT),
+        _FAMILIES,
+    )
+    assert pending.admits_target(deletion, _OBJECT)
+    pending.add(deletion, _OBJECT)
+    (survivor,) = pending.writes()
+    assert isinstance(survivor, TargetKeyedWrite)
+    assert survivor.instruction.mutation == "delete"
+    assert survivor.retained_observations == (observed,)
+
+
 def test_a_target_write_beside_writes_of_other_states_of_its_object_is_refused() -> None:
-    held = PendingWrites(_ACCOUNT)
-    held.add(buffered_write(_update(owner="Bo"), VersionObservation(3)), _OBJECT)
-    assert not held.admits_target(_target(3, balance="1.00"), _OBJECT)
     several = PendingWrites(_ACCOUNT)
     several.add(buffered_write(_update(owner="Bo"), _retained(2)), _OBJECT)
     several.add(buffered_write(_update(owner="Cy"), _retained(3)), _OBJECT)

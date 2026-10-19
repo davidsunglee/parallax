@@ -8,7 +8,6 @@ from parallax.core._execution._unit_work.instructions import INSERT_MUTATIONS, P
 from parallax.core._execution._unit_work.retain import RetainedObservation
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.write_plan.keys import ObjectKey, ObjectStateKey
-from parallax.core.write_plan.observe import WriteObservation
 
 __all__ = [
     "SELECTION_INTENT",
@@ -105,25 +104,22 @@ sweep it in.
 """
 
 
-type SettledEvidence = WriteObservation | RetainedObservation | ObjectKey
-"""What one keyed write against existing state settles against, in the three
-shapes a producer can hold — which is also what decides the buffer item it
+type SettledEvidence = RetainedObservation | ObjectKey
+"""What one keyed write against existing state settles against, in the two
+shapes a source can supply — which is also what decides the buffer item it
 becomes and the claim it takes:
 
 * a RETAINED observation is a read's own claim on one exact observed state: the
   write settles against that state, claims it, and a successful flush spends it;
-* a caller-HELD Write Observation is that same evidence as a plain value: the
-  write settles against the state it describes and claims nothing, because there
-  is no reference into this scope's ledger for a second intent to compete for;
 * an OBJECT KEY is what an unversioned Non-Temporal row's write settles against.
   Its evidence is the shared row lock, which is held on the object rather than on
-  a state, so the object is what it claims and there is nothing for a flush to
-  spend.
+  a state, so the object is what it claims; the source authority the write is
+  admitted through travels beside it, and a successful flush spends that.
 
-A write against existing state that addresses no single object is derived none of
-the three and settles against nothing: an instruction naming several rows, or a
+A write against existing state that addresses no single object is derived
+neither and settles against nothing: an instruction naming several rows, or a
 row naming no complete primary key, has neither a state nor an object for
-evidence to be about. A caller can still hold one of the three and supply it with
+evidence to be about. A caller can still hold one of the two and supply it with
 such a write, and the carrier it would travel in refuses that pairing rather than
 settling the write bare.
 """
@@ -133,7 +129,7 @@ def claim_scope(evidence: SettledEvidence | None) -> ClaimScope | None:
     """The scope the write settling against ``evidence`` claims, or ``None``
     where it claims nothing.
 
-    Total over the three shapes above, so a caller reads one answer rather than
+    Total over the two shapes above, so a caller reads one answer rather than
     pairing an evidence value with a separately derived address that could name
     a different state than the evidence it travels with.
     """

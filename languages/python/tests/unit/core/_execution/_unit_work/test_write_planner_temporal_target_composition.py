@@ -18,7 +18,8 @@ from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedWrite,
     prepare_wire_write,
 )
-from parallax.core._execution._unit_work.materialized import (
+from parallax.core._execution._unit_work.retain import InsertionIdentity
+from parallax.core._execution._unit_work.write_items import (
     BufferItem,
     ChainedTemporalWrite,
     ComposedTemporalWrite,
@@ -26,7 +27,6 @@ from parallax.core._execution._unit_work.materialized import (
     ReadlessPredicateWrite,
     readless_write,
 )
-from parallax.core._execution._unit_work.retain import InsertionIdentity
 from parallax.core._execution._unit_work.write_planner import PendingWrites
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.unit_work import (
@@ -85,7 +85,7 @@ def test_a_target_and_observed_writes_of_its_starting_state_compose_over_one_win
         ExpectedTxStart(T0),
         None,
     ]
-    assert [contribution.claim for contribution in composed.contributions] == [
+    assert [contribution.retained_observation for contribution in composed.contributions] == [
         START,
         None,
         START,

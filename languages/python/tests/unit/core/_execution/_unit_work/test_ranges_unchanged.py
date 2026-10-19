@@ -13,7 +13,7 @@ import pytest
 
 from parallax.core import inheritance, temporal_read
 from parallax.core._execution._unit_work.instructions import prepare_wire_write
-from parallax.core._execution._unit_work.materialized import target_write
+from parallax.core._execution._unit_work.write_items import target_write
 from parallax.core.base import INFINITY
 from parallax.core.unit_work import (
     RetainedObservation,

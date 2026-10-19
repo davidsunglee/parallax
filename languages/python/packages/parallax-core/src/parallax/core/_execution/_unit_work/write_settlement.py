@@ -21,18 +21,6 @@ from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedWrite,
     PreparedPredicateWrite,
 )
-from parallax.core._execution._unit_work.materialized import (
-    ComposedTemporalWrite,
-    FollowingKeyedWrite,
-    GroupStates,
-    InsertionKeyedWrite,
-    MaterializedWriteGroup,
-    ObservedKeyedWrite,
-    PendingOpening,
-    ReadlessPredicateWrite,
-    TargetKeyedWrite,
-    VersionedEvidence,
-)
 from parallax.core._execution._unit_work.ranges import (
     DeferredGroupRange,
     DeferredTemporalRange,
@@ -48,6 +36,19 @@ from parallax.core._execution._unit_work.strategy import (
     AuditStrategy,
     Concurrency,
     ConcurrencyStrategy,
+)
+from parallax.core._execution._unit_work.write_items import (
+    ComposedTemporalWrite,
+    FollowingKeyedWrite,
+    GroupStateKeys,
+    InsertionKeyedWrite,
+    MaterializedWriteGroup,
+    ObservedKeyedWrite,
+    OrderedWrite,
+    PendingOpening,
+    ReadlessPredicateWrite,
+    TargetKeyedWrite,
+    VersionedEvidence,
 )
 from parallax.core.inheritance import InheritanceFacet
 from parallax.core.metamodel import AttributeIdentity, AttributeMetadata, EntityMetadata, Metamodel
@@ -115,30 +116,7 @@ from parallax.core.write_plan.steps import (
 )
 from parallax.core.write_plan.steps import PlannedWrite as PlannedStep
 
-__all__ = [
-    "OrderedWrite",
-    "WritePlanCompiler",
-]
-
-type OrderedWrite = (
-    PreparedKeyedWrite
-    | ReadlessPredicateWrite
-    | ObservedKeyedWrite
-    | InsertionKeyedWrite
-    | TargetKeyedWrite
-    | FollowingKeyedWrite
-    | ComposedTemporalWrite
-    | PendingOpening
-    | MaterializedWriteGroup
-)
-"""One element of the sequence settlement reads: a buffer item once the
-planner's rewriting stages have finished with it.
-
-An object-claimed write is absent by construction rather than by convention:
-coalescing is the only stage that reads one, and it hands the survivor on as the
-ordinary instruction it always was, so batching, ordering, and settlement see an
-unversioned write as the bare instruction they measure every other one by.
-"""
+__all__ = ["WritePlanCompiler"]
 
 
 class WritePlanCompiler:
@@ -378,9 +356,10 @@ class WritePlanCompiler:
         claim: SourceAuthority | None = None
         source: ObjectStateKey | None = None
         if isinstance(item, ObservedKeyedWrite):
-            instruction, observation = item.instruction, item.observation
-            claim = item.claim
-            source = None if item.claim is None else item.claim.key
+            retained = item.retained_observation
+            instruction, observation = item.instruction, retained.evidence
+            claim = retained
+            source = retained.key
         elif isinstance(item, TargetKeyedWrite | InsertionKeyedWrite):
             instruction = item.instruction
             scope = item.scope
@@ -739,7 +718,7 @@ class WritePlanCompiler:
         An unversioned target has no version to advance from AND is entitled to
         no observation at all, so an observation arriving for one is refused
         rather than dropped: this is the model-aware half of the rule
-        :class:`~parallax.core._execution._unit_work.materialized.ObservedKeyedWrite`
+        :class:`~parallax.core._execution._unit_work.write_items.ObservedKeyedWrite`
         delegates here, and discarding the evidence instead would be the
         silently-unobserved mode `m-unit-work` forbids.
         """
@@ -854,7 +833,7 @@ class WritePlanCompiler:
             # One resolved row is one independently gated step, so every row of
             # the group shares this one expectation rather than building its own.
             affected_rows=ExactCount(expected=1, on_shortfall=addressed.shortfall),
-            changed=GroupStates(
+            changed=GroupStateKeys(
                 entity.identity, facts.view.primary_key.identity.name, evidence, NON_TEMPORAL
             ),
         )
@@ -927,10 +906,10 @@ def _unobserved_close(entity: EntityMetadata, mutation: str) -> WritePlanningErr
 def _target_claim(item: TargetKeyedWrite) -> SourceAuthority | None:
     """What a caller-conditioned write's unit spends: the observations of the
     observed writes composed into it, if any."""
-    claims = item.claims
-    if not claims:
+    retained = item.retained_observations
+    if not retained:
         return None
-    return claims[0] if len(claims) == 1 else CombinedSourceAuthority(claims)
+    return retained[0] if len(retained) == 1 else CombinedSourceAuthority(retained)
 
 
 def _changes(source: ObjectStateKey | None) -> tuple[ObjectStateKey, ...]:
@@ -1022,8 +1001,8 @@ def _require_unobserved(entity: EntityMetadata, mutation: str, observation: obje
     observationless ("unversioned Non-Temporal writes have no observation",
     absence structural). Whether a write may hold evidence at all needs the
     model, so the buffered carriers — a keyed
-    :class:`~parallax.core._execution._unit_work.materialized.ObservedKeyedWrite` and a
-    :class:`~parallax.core._execution._unit_work.materialized.MaterializedWriteGroup`'s
+    :class:`~parallax.core._execution._unit_work.write_items.ObservedKeyedWrite` and a
+    :class:`~parallax.core._execution._unit_work.write_items.MaterializedWriteGroup`'s
     evidence — can only refuse the instruction-local half and
     delegate this half to the model-aware settlement. This is that delegation:
     every carrier that IS settled crosses it, whatever produced it, so a

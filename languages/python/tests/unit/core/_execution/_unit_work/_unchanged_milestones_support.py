@@ -10,7 +10,7 @@ from decimal import Decimal
 from parallax.core import temporal_read
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work.instructions import prepare_wire_write
-from parallax.core._execution._unit_work.materialized import BufferItem
+from parallax.core._execution._unit_work.write_items import BufferItem
 from parallax.core._execution._unit_work.write_planner import compose_writes
 from parallax.core.base import INFINITY
 from parallax.core.metamodel import EntityIdentity, Metamodel

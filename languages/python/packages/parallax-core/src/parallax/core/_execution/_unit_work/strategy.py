@@ -194,8 +194,8 @@ class WriteEvidencePolicy(Protocol):
     Concurrency Preference with the family's version source, and
     :meth:`settled_evidence` names what a keyed write settles against — and so
     claims — from the mutation alone: nothing for an insert, the supplied
-    observation for a versioned or temporal family, and the supplied object
-    key for an unversioned Non-Temporal one. Neither reads participation,
+    retained observation for a versioned or temporal family, and the supplied
+    object key for an unversioned Non-Temporal one. Neither reads participation,
     consumption, or claims, which are the unit of work's own state, and
     neither refuses anything.
     """
@@ -208,7 +208,7 @@ class WriteEvidencePolicy(Protocol):
         /,
         *,
         object_key: ObjectKey | None,
-        observation: WriteObservation | RetainedObservation | None,
+        observation: RetainedObservation | None,
     ) -> SettledEvidence | None: ...
 
 

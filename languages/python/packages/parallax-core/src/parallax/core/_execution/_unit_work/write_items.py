@@ -3,7 +3,7 @@ from __future__ import annotations
 import datetime as dt
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
-from typing import Literal, cast
+from typing import Final, Literal, cast
 
 from parallax.core import inheritance, temporal_read
 from parallax.core._execution._unit_work.claims import SettledEvidence, WriteIntent, keyed_intent
@@ -48,15 +48,17 @@ from parallax.core.write_plan.plan import SourceAuthority
 __all__ = [
     "AfterRemoval",
     "BufferItem",
+    "BufferedWrite",
     "ChainedTemporalWrite",
     "ClaimedKeyedWrite",
     "ComposedTemporalWrite",
     "FollowingKeyedWrite",
-    "GroupStates",
+    "GroupStateKeys",
     "InsertionKeyedWrite",
     "MaterializedWriteGroup",
     "ObjectClaimedWrite",
     "ObservedKeyedWrite",
+    "OrderedWrite",
     "PendingOpening",
     "ReadlessPredicateWrite",
     "TargetKeyedWrite",
@@ -66,7 +68,7 @@ __all__ = [
     "VersionedEvidenceBuilder",
     "buffered_instruction",
     "buffered_write",
-    "chained",
+    "chained_temporal_write",
     "composed_temporal_write",
     "group_state_keys",
     "readless_write",
@@ -166,7 +168,7 @@ class VersionedEvidenceBuilder:
         return VersionedEvidence(whole(self._keys.build()), whole(self._versions.build()))
 
 
-def group_state_keys(group: MaterializedWriteGroup, meta: Metamodel) -> GroupStates:
+def group_state_keys(group: MaterializedWriteGroup, meta: Metamodel) -> GroupStateKeys:
     """Each exact state ``group`` selected, in resolution order, keyed as a
     keyed read's own observation of that row would be."""
     entity = group.mutation.selection.target
@@ -176,11 +178,13 @@ def group_state_keys(group: MaterializedWriteGroup, meta: Metamodel) -> GroupSta
     shape = temporal_read.view(meta).shape(entity.identity)
     if shape is None:  # pragma: no cover - the facet covers every accepted Entity
         raise ValueError(f"{entity.identity.canonical}: the model declares no such entity")
-    return GroupStates(entity.identity, position.primary_key.identity.name, group.evidence, shape)
+    return GroupStateKeys(
+        entity.identity, position.primary_key.identity.name, group.evidence, shape
+    )
 
 
 @dataclass(frozen=True, slots=True)
-class GroupStates:
+class GroupStateKeys:
     """Each exact state a group's ``evidence`` selected, in resolution order,
     read on demand from the facts a facet already answered for the group."""
 
@@ -202,22 +206,33 @@ class GroupStates:
             )
 
 
+_REQUIRES_RETAINED_OBSERVATION: Final = (
+    "An observed write requires the retained observation whose evidence successful "
+    "execution spends."
+)
+
+_REQUIRES_SOURCE: Final = (
+    "An object-claimed write requires the source whose authority successful execution spends."
+)
+
+
 @dataclass(frozen=True, slots=True)
 class ObservedKeyedWrite:
     """Carries verb-time evidence through planning without resolving it again.
 
-    A retained ``claim`` is spent only if this write survives to settlement,
-    and a write coalesced into it was admitted through that same claim. An
-    update's row is its literal assignment set: the identity plus every member
-    its producer expressed, each written whatever value the source observed for
-    it.
+    ``retained_observation`` is spent only if this write survives to
+    settlement, and a write coalesced into it was admitted through that same
+    retained observation. An update's row is its literal assignment set: the
+    identity plus every member its producer expressed, each written whatever
+    value the source observed for it.
     """
 
     instruction: PreparedKeyedWrite
-    observation: WriteObservation
-    claim: RetainedObservation | None = None
+    retained_observation: RetainedObservation
 
     def __post_init__(self) -> None:
+        if not isinstance(self.retained_observation, RetainedObservation):  # pyright: ignore[reportUnnecessaryIsInstance] - validates runtime callers
+            raise ValueError(_REQUIRES_RETAINED_OBSERVATION)
         if self.instruction.mutation in INSERT_MUTATIONS:
             raise ValueError(
                 f"an insert carries no Write Observation: `{self.instruction.mutation}` on "
@@ -232,14 +247,10 @@ class ObservedKeyedWrite:
                 f"{len(self.instruction.rows)} rows (m-unit-work: each observed version "
                 "belongs to exactly one row)"
             )
-        if self.claim is not None and self.claim.evidence is not self.observation:
-            raise ValueError(
-                "a claim is the retained form of the observation its carrier settles against: "
-                f"`{self.instruction.mutation}` on "
-                f"{self.instruction.target.identity.canonical!r} was built with a "
-                "claim naming other evidence (m-unit-work: one resolution serves the address, "
-                "the gate, and the license)"
-            )
+
+    @property
+    def observation(self) -> WriteObservation:
+        return self.retained_observation.evidence
 
 
 @dataclass(frozen=True, slots=True)
@@ -252,9 +263,11 @@ class ObjectClaimedWrite:
     """
 
     instruction: PreparedKeyedWrite
-    source: SourceAuthority | None = None
+    source: SourceAuthority
 
     def __post_init__(self) -> None:
+        if self.source is None:  # pyright: ignore[reportUnnecessaryComparison] - validates runtime callers
+            raise ValueError(_REQUIRES_SOURCE)
         if self.instruction.mutation in INSERT_MUTATIONS:
             raise ValueError(
                 f"an insert claims no object: `{self.instruction.mutation}` on "
@@ -312,17 +325,18 @@ class TargetKeyedWrite:
     versioned object is required to stand at, or the object itself when it is
     temporal — which is the scope an observed write of the same state takes, so
     the two compose there; a temporal object's writes compose by object
-    instead. ``claims`` are the retained observations of observed writes
-    composed into a Non-Temporal one, which its completion spends; the caller's
-    condition stays whatever values survive, and a destruction superseding the
-    write keeps it too. ``retained`` is the starting row a Locking temporal
-    write's admission read whole, which its range may reuse.
+    instead. ``retained_observations`` are those of the source-backed writes
+    composed into a Non-Temporal one, which its completion spends even where
+    a destruction superseded their assignments; the caller's condition stays
+    whatever values survive, and a destruction superseding the write keeps it
+    too. ``retained`` is the starting row a Locking temporal write's admission
+    read whole, which its range may reuse.
     """
 
     instruction: PreparedKeyedWrite
     expectation: TargetExpectation
     scope: VersionedObjectStateKey | ObjectKey
-    claims: tuple[RetainedObservation, ...] = ()
+    retained_observations: tuple[RetainedObservation, ...] = ()
     retained: RetainedTargetState | None = field(default=None, compare=False)
 
     def __post_init__(self) -> None:
@@ -369,24 +383,21 @@ def buffered_write(
 ) -> PreparedKeyedWrite | ClaimedKeyedWrite | InsertionKeyedWrite:
     """``instruction`` as the buffer item that settles against ``evidence``.
 
-    Retained observations travel with the write so settlement can spend them,
-    while a bare observation has no retained claim. With no evidence, the
-    instruction travels bare, or carries the insertion ``authority`` that
-    licenses it. ``source`` is the authority an object-claimed write's source
-    carries in place of an observation; any other evidence already is its
-    source's authority.
+    A retained observation travels with the write so settlement can spend it.
+    An object key requires ``source``, the authority an object-claimed write's
+    source carries in place of an observation; a retained observation already
+    is its source's authority. With no evidence, the instruction travels bare,
+    or carries the insertion ``authority`` that licenses it.
     """
     if evidence is None:
         if authority is not None:
             return InsertionKeyedWrite(instruction=instruction, identity=authority)
         return instruction
     if isinstance(evidence, ObjectKey):
+        if source is None:
+            raise ValueError(_REQUIRES_SOURCE)
         return ObjectClaimedWrite(instruction=instruction, source=source)
-    if isinstance(evidence, RetainedObservation):
-        return ObservedKeyedWrite(
-            instruction=instruction, observation=evidence.evidence, claim=evidence
-        )
-    return ObservedKeyedWrite(instruction=instruction, observation=evidence)
+    return ObservedKeyedWrite(instruction=instruction, retained_observation=evidence)
 
 
 @dataclass(frozen=True, slots=True)
@@ -394,25 +405,28 @@ class TemporalContribution:
     """What one admitted write of a temporal object keeps once it is composed:
     its source condition and requested window, not its values.
 
-    ``observation`` is the evidence an observed write settles against and
-    ``claim`` its retained form, which successful completion spends. A write a
-    caller addressed has neither, and ``condition`` is the Transaction-Time
-    start its caller requires of the coverage at its window's start. A write an
-    admitted insertion authorized has none of the three: its condition is the
-    coverage at its window's start, the insertion's own anchor, which execution
-    requires. Values the write assigned live in the composed transform, where a
-    later write may overwrite them; the condition stays required whatever
-    happens to them. ``retained`` is the starting row a caller-addressed
-    write's Locking admission read whole: data its range may reuse, not part of
-    what the write is.
+    ``retained_observation`` is the evidence an observed write settles against,
+    which successful completion spends. A write a caller addressed has none,
+    and ``condition`` is the Transaction-Time start its caller requires of the
+    coverage at its window's start. A write an admitted insertion authorized
+    has neither: its condition is the coverage at its window's start, the
+    insertion's own anchor, which execution requires. Values the write assigned
+    live in the composed transform, where a later write may overwrite them; the
+    condition stays required whatever happens to them. ``retained`` is the
+    starting row a caller-addressed write's Locking admission read whole: data
+    its range may reuse, not part of what the write is.
     """
 
     kind: Literal["assignment", "destructive"]
     valid_time_window: TimeInterval | None
-    observation: WriteObservation | None
-    claim: RetainedObservation | None
+    retained_observation: RetainedObservation | None
     condition: ExpectedTxStart | None = None
     retained: RetainedTargetState | None = field(default=None, compare=False)
+
+    @property
+    def observation(self) -> WriteObservation | None:
+        retained = self.retained_observation
+        return None if retained is None else retained.evidence
 
 
 @dataclass(frozen=True, slots=True)
@@ -454,7 +468,7 @@ class ChainedTemporalWrite(ComposedTemporalWrite):
     follows: bool = False
 
 
-def chained(
+def chained_temporal_write(
     held: TemporalKeyedWrite | ComposedTemporalWrite,
     key_name: str,
     *,
@@ -491,8 +505,7 @@ def temporal_contribution(item: TemporalKeyedWrite) -> TemporalContribution:
     return TemporalContribution(
         kind="assignment" if item.instruction.mutation in ASSIGNMENT_MUTATIONS else "destructive",
         valid_time_window=item.instruction.valid_time_window,
-        observation=item.observation if observed else None,
-        claim=item.claim if observed else None,
+        retained_observation=item.retained_observation if observed else None,
         condition=expectation if isinstance(expectation, ExpectedTxStart) else None,
         retained=item.retained if targeted else None,
     )
@@ -671,6 +684,31 @@ BufferItem = (
     | TargetKeyedWrite
     | MaterializedWriteGroup
 )
+
+
+type OrderedWrite = (
+    PreparedKeyedWrite
+    | ReadlessPredicateWrite
+    | ObservedKeyedWrite
+    | InsertionKeyedWrite
+    | TargetKeyedWrite
+    | FollowingKeyedWrite
+    | ComposedTemporalWrite
+    | PendingOpening
+    | MaterializedWriteGroup
+)
+"""One element of the sequence settlement reads: a buffer item once the
+planner's rewriting stages have finished with it.
+
+An object-claimed write is absent by construction rather than by convention:
+coalescing is the only stage that reads one, and it hands the survivor on as the
+ordinary instruction it always was, so batching, ordering, and settlement see an
+unversioned write as the bare instruction they measure every other one by.
+"""
+
+type BufferedWrite = OrderedWrite | AfterRemoval
+"""One composed buffered write as finalization receives it: what settlement
+reads, or inserts that must follow an earlier removal."""
 
 
 def buffered_instruction(item: BufferItem) -> PreparedWrite:

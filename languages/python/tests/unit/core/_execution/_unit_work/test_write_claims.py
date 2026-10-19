@@ -26,7 +26,11 @@ from parallax.core._execution._unit_work.claims import (
     admits_composed,
 )
 from parallax.core._execution._unit_work.instructions import PreparedKeyedWrite
-from parallax.core._execution._unit_work.materialized import ObjectClaimedWrite
+from parallax.core._execution._unit_work.write_items import (
+    ObjectClaimedWrite,
+    ObservedKeyedWrite,
+    buffered_write,
+)
 from parallax.core.base import INFINITY
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity
@@ -41,6 +45,7 @@ from parallax.core.unit_work import (
 )
 from parallax.core.write_plan import ObjectKey, VersionObservation
 from parallax.core.write_plan.keys import VersionedObjectStateKey
+from tests._support.planner_probes import RecordingSource
 from tests.unit._where_position_model import (
     WHERE_POSITION_META,
 )
@@ -398,6 +403,40 @@ def test_an_object_claim_refuses_to_wrap_an_insert_or_a_multi_row_write() -> Non
         )
         prepared = instructions.prepare_wire_write(insertion, _PERSON_META)
         assert isinstance(prepared, PreparedKeyedWrite)
-        ObjectClaimedWrite(prepared)
+        ObjectClaimedWrite(prepared, RecordingSource())
     with pytest.raises(ValueError, match="an object claim addresses one object"):
-        ObjectClaimedWrite(_prepared_person_delete(1, 2))
+        ObjectClaimedWrite(_prepared_person_delete(1, 2), RecordingSource())
+
+
+def test_an_object_claimed_write_requires_the_source_its_flush_spends() -> None:
+    # The object key is the claim; the source authority beside it is what a
+    # successful flush spends, so neither the factory nor the carrier admits a
+    # write without one.
+    prepared = _prepared_person_delete(1)
+    person = ObjectKey(EntityIdentity("parallax.compatibility", "Person"), (("id", 1),))
+    message = "An object-claimed write requires the source whose authority successful execution"
+    with pytest.raises(ValueError, match=message):
+        buffered_write(prepared, person)
+    with pytest.raises(ValueError, match=message):
+        ObjectClaimedWrite(prepared, None)  # pyright: ignore[reportArgumentType]
+    source = RecordingSource()
+    claimed = buffered_write(prepared, person, source=source)
+    assert isinstance(claimed, ObjectClaimedWrite) and claimed.source is source
+
+
+@pytest.mark.parametrize(
+    "evidence", [None, VersionObservation(observed_version=4)], ids=["missing", "plain"]
+)
+def test_an_observed_write_requires_a_retained_observation(evidence: object) -> None:
+    # Application ingress hands a write the retained observation its read
+    # produced; a plain Write Observation names no claim and spends nothing, so
+    # it is refused where the carrier is built, before anything is buffered.
+    prepared = _prepared_person_delete(1)
+    with pytest.raises(ValueError, match="requires the retained observation"):
+        ObservedKeyedWrite(prepared, evidence)  # pyright: ignore[reportArgumentType]
+    if evidence is not None:
+        with pytest.raises(ValueError, match="requires the retained observation"):
+            buffered_write(prepared, evidence)  # pyright: ignore[reportArgumentType]
+    observed = buffered_write(prepared, _RETAINED)
+    assert isinstance(observed, ObservedKeyedWrite)
+    assert observed.observation is _RETAINED.evidence

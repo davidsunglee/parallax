@@ -10,7 +10,7 @@ from parallax.core._execution._unit_work.instructions import INSERT_MUTATIONS, K
 from parallax.core._execution._unit_work.retain import RetainedObservation
 from parallax.core._execution._unit_work.uow import Concurrency
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity, FacetKey, Metamodel
-from parallax.core.write_plan import ObjectKey, WriteObservation
+from parallax.core.write_plan import ObjectKey
 
 __all__ = [
     "FACET_KEY",
@@ -52,7 +52,7 @@ class Unversioned:
         /,
         *,
         object_key: ObjectKey | None,
-        observation: WriteObservation | RetainedObservation | None,
+        observation: RetainedObservation | None,
     ) -> SettledEvidence | None:
         del observation
         return None if mutation in INSERT_MUTATIONS else object_key
@@ -84,7 +84,7 @@ class ExplicitVersion:
         /,
         *,
         object_key: ObjectKey | None,
-        observation: WriteObservation | RetainedObservation | None,
+        observation: RetainedObservation | None,
     ) -> SettledEvidence | None:
         del object_key
         return _observed_state(mutation, observation)
@@ -110,14 +110,14 @@ class TransactionTimeDerived:
         /,
         *,
         object_key: ObjectKey | None,
-        observation: WriteObservation | RetainedObservation | None,
+        observation: RetainedObservation | None,
     ) -> SettledEvidence | None:
         del object_key
         return _observed_state(mutation, observation)
 
 
 def _observed_state(
-    mutation: KeyedMutation, observation: WriteObservation | RetainedObservation | None
+    mutation: KeyedMutation, observation: RetainedObservation | None
 ) -> SettledEvidence | None:
     """A versioned family's settled evidence: nothing for an insert, which opens
     a row rather than writing against one, and otherwise whatever its source
