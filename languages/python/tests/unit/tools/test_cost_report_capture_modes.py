@@ -652,6 +652,38 @@ def test_the_code_identity_moves_with_a_generated_row(
     assert _code_identity_in_process(capsys) != unchanged
 
 
+def test_the_code_identity_moves_with_a_row_beyond_the_fixture_scale(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    unchanged = _code_identity_in_process(capsys)
+    original = workloads._orders_tree  # pyright: ignore[reportPrivateUsage] - recipe seam
+    order = "parallax.compatibility.Order"
+
+    def renamed_from_root_1000(roots: int, fanout: int) -> workloads.ScriptedRows:
+        rows = original(roots, fanout)
+        orders = tuple(
+            {**row, "name": "renamed"} if index >= 1_000 else row
+            for index, row in enumerate(rows.entity(order))
+        )
+        return replace(rows, entities={**rows.entities, order: orders})
+
+    monkeypatch.setattr(workloads, "_orders_tree", renamed_from_root_1000)
+    assert _code_identity_in_process(capsys) != unchanged
+
+
+def test_the_code_identity_moves_with_generated_fanout_metadata(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    unchanged = _code_identity_in_process(capsys)
+    original = workloads._orders_tree  # pyright: ignore[reportPrivateUsage] - recipe seam
+
+    def misreported(roots: int, fanout: int) -> workloads.ScriptedRows:
+        return replace(original(roots, fanout), fanout=fanout + 1)
+
+    monkeypatch.setattr(workloads, "_orders_tree", misreported)
+    assert _code_identity_in_process(capsys) != unchanged
+
+
 def test_redigest_is_exclusive(tmp_path: Path) -> None:
     with pytest.raises(SystemExit, match="2"):
         cost_report.main(["--redigest", str(tmp_path), "--reclassify", str(tmp_path)])

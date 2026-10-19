@@ -1754,14 +1754,23 @@ CODE_IDENTITY_PROGRAM: Final = """\
 import hashlib
 import json
 from parallax.conformance import workloads
+from parallax.conformance.budget import BudgetContract
+from tests.unit import _delivery_control_support as control_support
 
+scales = {*BudgetContract.load().memory_scaling_arms, control_support.HELD_ROOTS}
 generated = {}
 for workload_id, workload in workloads.catalog().items():
     if "generate" in workload.document["dataset"]:
-        rows = workload.rows(workload.roots).entities
-        payload = {entity: list(rows[entity]) for entity in rows}
-        text = json.dumps(payload, sort_keys=True, default=repr)
-        generated[workload_id] = hashlib.sha256(text.encode()).hexdigest()
+        for roots in sorted({workload.roots, *scales}):
+            rows = workload.rows(roots)
+            payload = {
+                "rootEntity": rows.root_entity,
+                "roots": rows.roots,
+                "fanout": rows.fanout,
+                "entities": {entity: list(rows.entities[entity]) for entity in rows.entities},
+            }
+            text = json.dumps(payload, sort_keys=True, default=repr)
+            generated[f"{workload_id}@{roots}"] = hashlib.sha256(text.encode()).hexdigest()
 print(json.dumps([
     workloads._GENERATED_KEY_OFFSET,
     workloads.structural_digest(),
@@ -1771,8 +1780,9 @@ print(json.dumps([
 """
 """Prints what a workload measures as code rather than as fixture text, as the
 checkout running it defines that code: the generated-key offset, the frozen
-manifests, and the digest of each generated dataset's rows at its fixture's
-scale."""
+manifests, and a digest of each generated dataset (its rows, root entity, root
+count, and fanout) at every scale a measurement reads it: its fixture's, the
+Budget Contract's scaling arms, and the held control's."""
 
 type CodeIdentityRunner = Callable[[Path], tuple[int, str, str]]
 """Runs :data:`CODE_IDENTITY_PROGRAM` in the checkout whose Python workspace is
