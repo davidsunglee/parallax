@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import contextlib
 import datetime as dt
-from collections.abc import Generator, Iterable, Mapping, Sequence
+import functools
+from collections.abc import Callable, Generator, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Final, cast
 
@@ -236,16 +237,17 @@ class SimulatedTemporalStore:
         return slot is not None and slot in self._materialized
 
     @contextlib.contextmanager
-    def transaction(self, *, rollback: bool) -> Generator[None]:
+    def transaction(self, *, rollback: bool) -> Generator[Callable[[], None]]:
         """One simulated database transaction over these rows: what runs inside
         it changes them as it runs, and they keep those changes only if it
         commits.
 
         A declared ``rollback``, and any exception escaping the transaction —
         an interruption included — restore every row and accounting flag to
-        what they were when it began. The canonical rows are captured once,
-        shallowly, which is exact because a stored row is replaced rather than
-        changed in place.
+        what they were when it began. So does the restart it yields, for an
+        attempt that begins the transaction again. The canonical rows are
+        captured once, shallowly, which is exact because a stored row is
+        replaced rather than changed in place.
         """
         snapshot = _Snapshot(
             dict(self._current),
@@ -255,13 +257,14 @@ class SimulatedTemporalStore:
             set(self._changed_objects),
             set(self._changed_families),
         )
+        restart = functools.partial(self._restore, snapshot)
         try:
-            yield
+            yield restart
         except BaseException:
-            self._restore(snapshot)
+            restart()
             raise
         if rollback:
-            self._restore(snapshot)
+            restart()
 
     def note_materialized_write(self, entity: EntityMetadata) -> None:
         """Record that a materializing predicate write over ``entity`` committed —
@@ -637,12 +640,12 @@ class SimulatedTemporalStore:
         self._materialized.discard(slot)
 
     def _restore(self, snapshot: _Snapshot) -> None:
-        self._current = snapshot.current
-        self._overtaken = snapshot.overtaken
-        self._materialized = snapshot.materialized
+        self._current = dict(snapshot.current)
+        self._overtaken = set(snapshot.overtaken)
+        self._materialized = set(snapshot.materialized)
         self._out_of_band = snapshot.out_of_band
-        self._changed_objects = snapshot.changed_objects
-        self._changed_families = snapshot.changed_families
+        self._changed_objects = set(snapshot.changed_objects)
+        self._changed_families = set(snapshot.changed_families)
         located: dict[_Address, tuple[_ObjectKey, ...]] = {}
         for slot, stored in self._current.items():
             located[stored.address] = (*located.get(stored.address, ()), slot)

@@ -15,10 +15,7 @@ from parallax.conformance import (
     simulated_temporal_store,
 )
 from parallax.conformance._actual_wire import ActualWireProjection
-from parallax.conformance._database_control import (
-    CaseDatabase,
-    ModeledExecution,
-)
+from parallax.conformance._database_control import CaseDatabase
 from parallax.conformance._lifecycle_observation import (
     LifecycleObservation,
     LifecycleRun,
@@ -59,6 +56,7 @@ from parallax.core import (
     opt_lock,
     read_delivery,
     storage_layout,
+    temporal_read,
 )
 from parallax.core._execution._keyed_writes import validate_source_pin
 from parallax.core._execution._planning import build_write_planner
@@ -72,8 +70,6 @@ from parallax.core._execution._unit_work.instructions import (
     PreparedWrite,
     WriteInstruction,
 )
-from parallax.core._execution._unit_work.materialized import target_write
-from parallax.core._execution._unit_work.write_planner import compose_writes
 from parallax.core.base import (
     INFINITY,
     normalize_instant,
@@ -119,26 +115,25 @@ from parallax.core.unit_work import (
     OptimisticLockConflictError,
     PredicateWrite,
     RetainedObservation,
-    SettledEvidence,
     StaleWriteError,
     SubjectActor,
     TargetWrite,
-    TransactionInstant,
     TransactionSettings,
     UnitOfWork,
     WriteEffectError,
     WriteEvidenceError,
-    WritePlanningRequest,
     WritePreconditionError,
     buffered_write,
     object_key,
 )
 from parallax.core.write_plan import (
     ObjectKey,
+    ObjectStateKey,
     TemporalObservation,
     VersionObservation,
     WriteObservation,
     WritePlanningError,
+    object_state_key_from_observation,
 )
 from parallax.core.write_plan.steps import KeyTarget
 from parallax.snapshot import Database, ScopedDatabase, Snapshot, TxnContext, WireEntity
@@ -308,13 +303,14 @@ class _ResolvedWrite:
     """One case write entry's row, resolved against whatever evidence its lane
     supplies and ready for BOTH consumers of a write buffer.
 
-    ``supplied_observation`` is the evidence as a plain VALUE, which a simulated
-    unit of work (:func:`_simulated_unit`) buffers the write with: a value
-    carries no retained claim, so nothing it settles against is spent anywhere
-    else. The real execution needs no peer of it: it states each write through
-    the public verb its mutation names, against the value this unit's own read
-    published, so what that write settles against is the claim the value
-    already carries. An entry needing no evidence at all carries none.
+    ``supplied_observation`` is the evidence a simulated transaction that
+    executes nothing settles the write against: its unit of work retains a copy
+    of its own (:meth:`_SimulatedUnit.buffer`), so nothing it settles against is
+    spent anywhere else. A run lane needs no peer of it: it states each write
+    through the public verb its mutation names, against the value this unit's
+    own read published, and tracks only what that verb accepted
+    (:func:`_submit_tracked_write`). An entry needing no evidence at all carries
+    none.
 
     ``source_node`` is that value, where the lane's evidence already resolved it
     (:class:`GroupEvidenceResolver`), so the real write is addressed by the very
@@ -1155,53 +1151,18 @@ def _resolve_entries(
     return resolved
 
 
-def instruction_evidence(
-    model: AcceptedMetamodel,
-    instruction: PreparedKeyedWrite,
-    *,
-    supplied: WriteObservation | RetainedObservation | None,
-) -> SettledEvidence | None:
-    """What a keyed write settles against, for a lane holding the INSTRUCTION
-    rather than the value it was derived from.
+class _SimulatedSourceAuthority:
+    """The consumption a simulated transaction's observation-free writes spend
+    in place of a real source's: it records consumption and grants nothing
+    else — no read, lock, or participation."""
 
-    Evidence the case supplied is what the write settles against, used as given:
-    it is the one licensed way a keyed write settles against a row no read of the
-    writing unit of work materialized, so a write that can hold none REFUSES it
-    at its carrier rather than having it dropped here. An entry that supplied
-    none reaches :func:`~parallax.core.opt_lock.settled_evidence` over the
-    instruction's own target and mutation, exactly what a typed verb reads off a
-    source value's hint, so this lane settles each write as the verb the same
-    write goes through would.
-    """
-    if supplied is not None:
-        return supplied
-    return opt_lock.settled_evidence(
-        opt_lock.optimistic_key(model, instruction.target.identity),
-        instruction.mutation,
-        object_key=object_key(instruction, model),
-        observation=None,
-    )
+    __slots__ = ("consumed",)
 
+    def __init__(self) -> None:
+        self.consumed = False
 
-def _buffered(
-    instruction: PreparedWrite | PreparedTargetWrite,
-    observation: WriteObservation | None,
-    model: AcceptedMetamodel,
-) -> BufferItem:
-    """One resolved entry as the buffer item a unit of work would hold for it,
-    settled against :func:`instruction_evidence`. Whether an observation may
-    exist at all is decided BEFORE this point, by :func:`_durable_row` — the one
-    seam every producer's rows pass through — and by the carriers' own structural
-    refusals; this function only forwards what they left.
-    """
-    if isinstance(instruction, PreparedTargetWrite):
-        return target_write(instruction, inheritance.view(model))
-    assert isinstance(
-        instruction, PreparedKeyedWrite
-    )  # every other producer of this seam resolves keyed writes
-    return buffered_write(
-        instruction, instruction_evidence(model, instruction, supplied=observation)
-    )
+    def consume(self) -> None:
+        self.consumed = True
 
 
 class _SimulatedUnit:
@@ -1211,11 +1172,16 @@ class _SimulatedUnit:
     as an attempt's own writes are, every span it executes changing the case's
     simulated rows (:func:`_simulated_unit`).
 
-    A write it buffers carries its supplied observation as a plain value
-    (:func:`_buffered`), so it consumes no authority a real read retained, and
-    a write that unit of work refuses to admit is refused as the case's
-    composition rather than leaked as the production refusal. A
-    caller-addressed write is buffered as the attempt's own is, through
+    Every write it buffers settles against authority of this unit's own, as
+    an application's would against its source's: an observation is retained
+    here, detached from any participation, so nothing a real read retained is
+    spent; a write with no observation, of an object this unit's own insertion
+    opened, is authorized by the identity this unit issued; and an
+    observation-free write of an unversioned row spends a
+    :class:`_SimulatedSourceAuthority` the writes of one flush share. A write
+    that unit of work refuses to admit is refused as the case's composition
+    rather than leaked as the production refusal. A caller-addressed write is
+    buffered as the attempt's own is, through
     :meth:`~parallax.core.unit_work.UnitOfWork.buffer_target`: under Locking it
     is confirmed against the case state's stored row.
 
@@ -1225,7 +1191,7 @@ class _SimulatedUnit:
     held group buffers before the unit's next flush, which empties it.
     """
 
-    __slots__ = ("_model", "_steps", "_uow", "inserted")
+    __slots__ = ("_model", "_source", "_steps", "_uow", "inserted")
 
     def __init__(
         self, model: AcceptedMetamodel, uow: UnitOfWork, steps: SimulatedWriteSteps
@@ -1233,6 +1199,7 @@ class _SimulatedUnit:
         self._model = model
         self._uow = uow
         self._steps = steps
+        self._source = _SimulatedSourceAuthority()
         self.inserted: set[ObjectKey] = set()
 
     @property
@@ -1241,17 +1208,42 @@ class _SimulatedUnit:
         return self._steps.statements
 
     def buffer(self, write: _ResolvedWrite) -> None:
+        """Buffer ``write`` against the evidence its lane resolved for it, or,
+        where it resolved none, against this unit's own insertion of its
+        object."""
         instruction = write.instruction
-        try:
-            if isinstance(instruction, PreparedTargetWrite):
-                self._uow.buffer_target(instruction)
-            else:
-                self._uow.buffer(_buffered(instruction, write.supplied_observation, self._model))
-        except WriteEvidenceError as refusal:
-            raise EngineError(
-                f"a simulated transaction cannot admit this write beside the ones it already "
-                f"buffered — {refusal}"
-            ) from refusal
+        if isinstance(instruction, PreparedTargetWrite):
+            self._admit(instruction)
+            return
+        assert isinstance(instruction, PreparedKeyedWrite)  # predicate writes buffer apart
+        key = object_key(instruction, self._model)
+        observation = write.supplied_observation
+        if instruction.mutation in INSERT_MUTATIONS:
+            self._admit(instruction)
+        elif observation is None:
+            self._authorized(instruction, key)
+        else:
+            assert key is not None  # an observation is bound only to a row naming its object
+            shape = temporal_read.view(self._model).shape(instruction.target.identity)
+            assert shape is not None  # the facet covers every accepted Entity
+            retained = self._retained(
+                object_state_key_from_observation(key, observation, shape), observation
+            )
+            self._settled(instruction, key, retained)
+
+    def mirror(self, instruction: PreparedKeyedWrite, source: WireEntity) -> None:
+        """Buffer a keyed write a public verb accepted through ``source``, the
+        value it was addressed by, settled as that verb settled it — against
+        the observation the value's read retained, or the insertion that
+        opened it — under this unit's own authority."""
+        key = object_key(instruction, self._model)
+        evidence = read_evidence_of(source)
+        if evidence is None:
+            self._authorized(instruction, key)
+            return
+        published = evidence.observation
+        retained = None if published is None else self._retained(published.key, published.evidence)
+        self._settled(instruction, key, retained)
 
     def buffer_predicate(self, prepared: PreparedPredicateWrite) -> None:
         self._uow.buffer_predicate(prepared)
@@ -1262,6 +1254,47 @@ class _SimulatedUnit:
         answer = self._uow.read(read_fn)
         self.inserted.clear()
         return answer
+
+    def _retained(self, key: ObjectStateKey, evidence: WriteObservation) -> RetainedObservation:
+        return self._uow.retain(RetainedObservation(key, evidence, None))
+
+    def _authorized(self, instruction: PreparedKeyedWrite, key: ObjectKey | None) -> None:
+        identity = None if key is None else self._uow.insertion_identity(key)
+        if identity is None:
+            self._settled(instruction, key, None)
+        else:
+            self._admit(buffered_write(instruction, None, authority=identity))
+
+    def _settled(
+        self,
+        instruction: PreparedKeyedWrite,
+        key: ObjectKey | None,
+        observation: RetainedObservation | None,
+    ) -> None:
+        evidence = opt_lock.settled_evidence(
+            opt_lock.optimistic_key(self._model, instruction.target.identity),
+            instruction.mutation,
+            object_key=key,
+            observation=observation,
+        )
+        if not isinstance(evidence, ObjectKey):
+            self._admit(buffered_write(instruction, evidence))
+            return
+        if self._source.consumed:
+            self._source = _SimulatedSourceAuthority()
+        self._admit(buffered_write(instruction, evidence, source=self._source))
+
+    def _admit(self, item: BufferItem | PreparedTargetWrite) -> None:
+        try:
+            if isinstance(item, PreparedTargetWrite):
+                self._uow.buffer_target(item)
+            else:
+                self._uow.buffer(item)
+        except WriteEvidenceError as refusal:
+            raise EngineError(
+                f"a simulated transaction cannot admit this write beside the ones it already "
+                f"buffered — {refusal}"
+            ) from refusal
 
 
 @contextlib.contextmanager
@@ -1318,43 +1351,6 @@ def _simulated_unit(
         lifetime.close()
     if rollback:
         uow.discard()
-
-
-def _refuse_unread_coverage(
-    model: AcceptedMetamodel,
-    dialect: Dialect,
-    concurrency: Concurrency,
-    tx_instant: str,
-    resolved: Sequence[_ResolvedWrite],
-) -> None:
-    """Refuse a buffer whose flush would read coverage, for a lane that tracks
-    no case state.
-
-    Such a lane simulates nothing: its writes are production's alone, so what
-    it asks of their plan is only whether every unit settles from the evidence
-    the writes carry. A unit deferred to its flush would read coverage itself,
-    and what that read finds is state no evidence of the lane witnessed.
-    """
-    plan = build_write_planner(model).finalize(
-        WritePlanningRequest(
-            actor_identity=_PLANNING_ACTOR,
-            transaction_instant=TransactionInstant(_pinned_clock(tx_instant)),
-            concurrency=concurrency,
-            buffered_writes=compose_writes(
-                model,
-                [
-                    _buffered(write.instruction, write.supplied_observation, model)
-                    for write in resolved
-                ],
-            ),
-            counts_unchanged_rows=dialect.counts_unchanged_rows,
-        )
-    )
-    if any(unit.deferred is not None for unit in plan.units):
-        raise EngineError(
-            "a range write reached coverage no observation of its unit holds, and "
-            "this lane tracks no case state to bind it to"
-        )
 
 
 def lower_writes(
@@ -2243,10 +2239,7 @@ def _unit_source_reads(
 
 def _execute_write_unit(
     port: CaseDatabase,
-    serving: ServingModel,
-    model: AcceptedMetamodel,
-    options: TxnOptions,
-    requests: case_format.TransactionKeywords,
+    context: CaseContext,
     resolved: Sequence[_ResolvedWrite],
     tx_instant: str,
     lifecycle: LifecycleRun,
@@ -2255,7 +2248,7 @@ def _execute_write_unit(
 ) -> tuple[tuple[LoweredStatement, ...], int]:
     """Execute one choreography unit's ALREADY-RESOLVED instructions through the
     production ``db.transact`` entry point — ONE transaction over a root
-    connected with ``options``, requesting exactly ``requests``,
+    connected with the case's options, requesting exactly its keywords,
     ``clock=FixedClock(tx_instant)``
     (ADR 0010: instants come from the Clock Strategy, never a per-operation
     override), and report the DML its lifecycle delivered beside the calls it
@@ -2272,32 +2265,53 @@ def _execute_write_unit(
     a case counts them in `then.roundTrips` and authors no golden for them, so
     they name no statement index in the lifecycle observation.
 
+    Inside the same callback, each write the public verb accepts is tracked into
+    a simulated transaction over the case state (:func:`_submit_tracked_write`),
+    which flushes before production's own pre-commit flush. The case state's own
+    transaction encloses the production one, so what tracking advanced stands or
+    falls with the unit's real outcome, and an attempt production replays tracks
+    again from the case state the unit began with.
+
     A ``rollback: true`` step runs on the aborting port (`m-unit-work` abort
     contract): the boundary's own pre-commit flush still puts the buffered DML
     on the wire — and counts its round trips — before the provider rolls the
     transaction back.
     """
+    model = context.model
+    store = context.case_state()
     instant = normalize_instant(dt.datetime.fromisoformat(tx_instant))
     observed = lifecycle.observation()
     with Database.connect(
         write_adapter(port, rollback=rollback),
-        serving,
-        options=options,
+        context.serving,
+        options=context.options,
         clock=FixedClock(instant),
         lifecycle_provider=observed.provider,
     ) as _root_database:
         database = _root_database.using_database_login()
 
-        def body(tx: TxnContext) -> None:
-            state = GroupState()
-            with observed.resolving_reads():
-                for query in _unit_source_reads(model, resolved):
-                    state.published.extend(_published_nodes(tx.wire.find(query)))
-            for write in resolved:
-                _buffer_wire_write(tx, model, state, write, None)
+        with store.transaction(rollback=rollback) as restart:
 
-        with absorbing_rollback():
-            transact(database, body, **requests)
+            def body(tx: TxnContext) -> None:
+                restart()
+                state = GroupState()
+                with observed.resolving_reads():
+                    for query in _unit_source_reads(model, resolved):
+                        state.published.extend(_published_nodes(tx.wire.find(query)))
+                with _simulated_unit(
+                    model,
+                    port.dialect,
+                    context.concurrency,
+                    tx_instant,
+                    store,
+                    rollback=rollback,
+                    record_statements=False,
+                ) as tracked:
+                    for write in resolved:
+                        _submit_tracked_write(tx, model, state, write, None, tracked)
+
+            with absorbing_rollback():
+                transact(database, body, **context.requests)
         return observed.writes, observed.round_trips
 
 
@@ -2343,60 +2357,51 @@ def execute_keyed_unit(
     rollback: bool,
 ) -> tuple[tuple[LoweredStatement, ...], int]:
     """One buffered-keyed-write choreography unit, whole: resolve its entries
-    once, advance the case state by what that ONE resolution executes, and
-    execute it as its own ``db.transact`` — reporting the DML its lifecycle
-    delivered beside the round trips the execution cost.
+    once, execute it as its own ``db.transact``, and advance the case state by
+    what that execution accepted — reporting the DML its lifecycle delivered
+    beside the round trips the execution cost.
 
     Every producer of an ungrouped keyed unit drives this — a scenario's
     ungrouped write step on either scenario lane, and a writeSequence entry — so
-    the order the three operations happen in, and the boundary they share, are
-    stated once. The case state advances through the unit's own simulated
-    transaction (:func:`_simulated_unit`), which records no statement: the
-    production execution generates and runs the SQL. That transaction encloses
-    the production one, so a doomed unit's advances — and those of a unit whose
-    execution failed — are discarded with the rows its abort erases.
+    the order the operations happen in, and the boundary they share, are
+    stated once. The case state advances through a simulated transaction inside
+    the production one (:func:`_execute_write_unit`), which records no statement:
+    the production execution generates and runs the SQL. The case state's own
+    transaction encloses the production one, so a doomed unit's advances — and
+    those of a unit whose execution failed — are discarded with the rows its
+    abort erases.
 
-    Resolution happens ONCE and both consumers read it, so a temporal write's
-    observation is resolved a single time. The emission is what the lifecycle
-    delivered, each statement in the canonical Lowered Statement form its
-    Database Call borrowed, and its count is the one the entries' authored
-    ``statements`` assert. A unit whose writes are the framework's own
-    bookkeeping opens no production unit of work at all — those statements have
-    no verb to be stated through — so the statements its simulated transaction
-    recorded are what it executes and reports
-    (:func:`_execute_framework_write_unit`).
+    Resolution happens ONCE, so a temporal write's observation is resolved a
+    single time. The emission is what the lifecycle delivered, each statement in
+    the canonical Lowered Statement form its Database Call borrowed, and its
+    count is the one the entries' authored ``statements`` assert. A unit whose
+    writes are the framework's own bookkeeping opens no production unit of work
+    at all — those statements have no verb to be stated through — so the
+    statements its simulated transaction recorded are what it executes and
+    reports (:func:`_execute_framework_write_unit`).
     """
     tx_instant = entry_instant(entries[0])
     store = context.case_state()
-    with store.transaction(rollback=rollback):
-        resolved = _resolve_entries(entries, context.model, store, group_observations)
-        framework = _framework_unit(resolved, context.model)
-        with _simulated_unit(
-            context.model,
-            port.dialect,
-            context.concurrency,
-            tx_instant,
-            store,
-            rollback=rollback,
-            record_statements=framework,
-        ) as unit:
-            for write in resolved:
-                unit.buffer(write)
-        if framework:
+    resolved = _resolve_entries(entries, context.model, store, group_observations)
+    if _framework_unit(resolved, context.model):
+        with store.transaction(rollback=rollback):
+            with _simulated_unit(
+                context.model,
+                port.dialect,
+                context.concurrency,
+                tx_instant,
+                store,
+                rollback=rollback,
+                record_statements=True,
+            ) as unit:
+                for write in resolved:
+                    unit.buffer(write)
             statements = unit.statements
             _check_statement_count_consistency(entries, len(statements))
             return statements, _execute_framework_write_unit(port, statements, rollback=rollback)
-        ran, unit_trips = _execute_write_unit(
-            port,
-            context.serving,
-            context.model,
-            context.options,
-            context.requests,
-            resolved,
-            tx_instant,
-            lifecycle,
-            rollback=rollback,
-        )
+    ran, unit_trips = _execute_write_unit(
+        port, context, resolved, tx_instant, lifecycle, rollback=rollback
+    )
     _check_statement_count_consistency(entries, len(ran))
     return ran, unit_trips
 
@@ -3032,23 +3037,13 @@ def _buffer_wire_write(
     source: WireEntity | None = None,
 ) -> WireEntity | None:
     """Buffer ONE resolved keyed write through the public ``tx.wire`` verb its
-    mutation names.
+    mutation names, answering the value an insert opened.
 
     Driven off the SAME :class:`_ResolvedWrite` the case state advances by, so
     the real write and that advance read one resolution: the durable row,
     its Valid-Time bounds, and its mutation all come from the instruction, and
     what this adds is only which verb states them and which published value the
-    write is addressed by.
-
-    An insert opens a row no find can have returned, so the node the verb answers
-    is recorded for the rest of the group — the read-your-own-writes source a
-    later entry of the same unit resolves against — and returned. Every other
-    mutation takes its source from ``source`` where the submission named the
-    insert whose answered value it writes through, else from the node its
-    evidence already resolved (``write.source_node``), else from what this group
-    published, and its change set is the durable row less the identity that
-    source already carries: a PK-only row therefore states the empty change set,
-    which is the ordinary no-op.
+    write is addressed by (:func:`_keyed_source`).
     """
     instruction = write.instruction
     if isinstance(instruction, PreparedTargetWrite):
@@ -3057,34 +3052,114 @@ def _buffer_wire_write(
     assert isinstance(
         instruction, PreparedKeyedWrite
     )  # every other resolved entry this lane buffers is keyed
-    entity_name = instruction.target.identity.canonical
-    entity_metadata = instruction.target
-    row = dict(instruction.rows[0])
-    valid_from, until = _authored_bounds(instruction.valid_time_window)
     if instruction.mutation in INSERT_MUTATIONS:
-        payload = _wire_insert_payload(model, entity_metadata, row)
-        opened = (
-            tx.wire.insert(
-                entity_name, payload, valid_from=_required(valid_from), until=_required(until)
-            )
-            if instruction.mutation == "insertUntil"
-            else tx.wire.insert(entity_name, payload, **_stated_start(valid_from))
+        return _buffer_wire_insert(tx, model, state, instruction)
+    _buffer_wire_keyed(tx, model, instruction, _keyed_source(model, state, write, named, source))
+    return None
+
+
+def _submit_tracked_write(
+    tx: TxnContext,
+    model: AcceptedMetamodel,
+    state: GroupState,
+    write: _ResolvedWrite,
+    named: Sequence[WireEntity] | None,
+    tracked: _SimulatedUnit,
+) -> None:
+    """Submit ONE resolved write through its public verb, then track what that
+    verb accepted into ``tracked``, the simulated transaction advancing the
+    case state.
+
+    The public value a keyed write is addressed by is chosen once, and the
+    tracked write settles as the public one did through it, under authority of
+    the tracking unit's own (:meth:`_SimulatedUnit.mirror`): its flush may run
+    before production's, so it never spends what the public write will. A write
+    the verb refuses is never tracked, and an insert keeps the value the verb
+    answered for the rest of the unit.
+    """
+    instruction = write.instruction
+    if isinstance(instruction, PreparedTargetWrite):
+        _buffer_wire_target(tx, model, instruction)
+        tracked.buffer(write)
+        return
+    assert isinstance(
+        instruction, PreparedKeyedWrite
+    )  # every other resolved entry this lane buffers is keyed
+    if instruction.mutation in INSERT_MUTATIONS:
+        _buffer_wire_insert(tx, model, state, instruction)
+        tracked.buffer(write)
+        return
+    source = _keyed_source(model, state, write, named, None)
+    _buffer_wire_keyed(tx, model, instruction, source)
+    tracked.mirror(instruction, source)
+
+
+def _buffer_wire_insert(
+    tx: TxnContext, model: AcceptedMetamodel, state: GroupState, instruction: PreparedKeyedWrite
+) -> WireEntity:
+    """Buffer ONE insert through ``tx.wire.insert`` and record the value it
+    answered: a row no find can have returned, which a later write of the
+    same unit is addressed by — read-your-own-writes."""
+    valid_from, until = _authored_bounds(instruction.valid_time_window)
+    payload = _wire_insert_payload(model, instruction.target, dict(instruction.rows[0]))
+    opened = (
+        tx.wire.insert(
+            instruction.target.identity.canonical,
+            payload,
+            valid_from=_required(valid_from),
+            until=_required(until),
         )
-        state.opened[_node_object_key(opened)] = opened
-        return opened
-    key = object_key(instruction, model)
-    node = (
-        source
-        if source is not None
-        else write.source_node
-        if write.source_node is not None
-        else _group_source_node(entity_name, key, state, named, valid_from)
+        if instruction.mutation == "insertUntil"
+        else tx.wire.insert(
+            instruction.target.identity.canonical, payload, **_stated_start(valid_from)
+        )
     )
+    state.opened[_node_object_key(opened)] = opened
+    return opened
+
+
+def _keyed_source(
+    model: AcceptedMetamodel,
+    state: GroupState,
+    write: _ResolvedWrite,
+    named: Sequence[WireEntity] | None,
+    source: WireEntity | None,
+) -> WireEntity:
+    """The published value a keyed write of existing state is addressed by:
+    ``source`` where the submission named the insert whose answered value it
+    writes through, else the node its evidence already resolved
+    (``write.source_node``), else what this unit published
+    (:func:`_group_source_node`)."""
+    if source is not None:
+        return source
+    if write.source_node is not None:
+        return write.source_node
+    instruction = write.instruction
+    assert isinstance(instruction, PreparedKeyedWrite)  # only a keyed write has a source
+    valid_from, _until = _authored_bounds(instruction.valid_time_window)
+    return _group_source_node(
+        instruction.target.identity.canonical,
+        object_key(instruction, model),
+        state,
+        named,
+        valid_from,
+    )
+
+
+def _buffer_wire_keyed(
+    tx: TxnContext, model: AcceptedMetamodel, instruction: PreparedKeyedWrite, node: WireEntity
+) -> None:
+    """Buffer ONE keyed write of existing state through the public verb its
+    mutation names, addressed by ``node``. Its change set is the durable row
+    less the identity that source already carries: a PK-only row therefore
+    states the empty change set, which is the ordinary no-op."""
+    key = object_key(instruction, model)
     identity = dict(key.primary_key) if key is not None else {}
     changes = ActualWireProjection(model).entity_values(
-        entity_metadata,
-        {name: value for name, value in row.items() if name not in identity},
+        instruction.target,
+        {name: value for name, value in instruction.rows[0].items() if name not in identity},
     )
+    _valid_from, until = _authored_bounds(instruction.valid_time_window)
     match instruction.mutation:
         case "amend":
             tx.wire.amend(node, changes)
@@ -3098,7 +3173,6 @@ def _buffer_wire_write(
             tx.wire.terminate(node)
         case _:
             tx.wire.terminate(node, until=_required(until))
-    return None
 
 
 def _buffer_wire_target(
@@ -3247,12 +3321,10 @@ class GroupSession:
 
 def run_group_step(
     tx: TxnContext,
-    session: ModeledExecution,
     context: CaseContext,
     state: GroupState,
     step: Mapping[str, object],
     index: int,
-    tx_instant: str,
     observation: LifecycleObservation,
     *,
     tracked: _SimulatedUnit | None,
@@ -3265,14 +3337,14 @@ def run_group_step(
     (never a scenario-wide store) — a temporal entry's predecessor through the
     evidence ``context`` selects (:class:`CaseStateEvidenceResolver` where the
     lane models case state, :class:`GroupEvidenceResolver` where it models
-    none). Where the lane models case state, each resolved write is buffered
+    none). Each resolved write is buffered through the PUBLIC ``tx.wire`` verb
+    its mutation names, against the value this group published for its key, and
+    where the lane models case state, what that verb accepted is then tracked
     into ``tracked``, the group's own simulated unit of work, whose flushes
-    advance that state at the same boundaries the group's own flushes run;
-    where it models none, the writes are only planned, refusing a range whose
-    coverage its evidence does not hold (:func:`_refuse_unread_coverage`).
-    Each resolved write is then buffered through the PUBLIC ``tx.wire`` verb
-    its mutation names, against the value this group published for its key.
-    Every entry a group holds is
+    advance that state at the same boundaries the group's own flushes run
+    (:func:`_submit_tracked_write`). Where it models none, any coverage a flush
+    needs beyond the group's reads is production's own to read, on the group's
+    connection. Every entry a group holds is
     therefore caller-authored: a DB-computed write marker is a choreography unit
     of its own and no group step may carry one (`m-case-format` "Buffered keyed
     write instructions"), which this refuses by name rather than leaving to the
@@ -3298,12 +3370,6 @@ def run_group_step(
     rather than of how it arrived. ``observation`` is the group's own port
     observation, read across either call to recover the statements the step
     emits — for a delivery, every page's.
-
-    ``session`` is the connection ``tx`` was opened over, and the dialect a write
-    step plans under is read off its port. A group runs on its own connection —
-    an interleaved group's on the dedicated session opened for it — so a step
-    plans as whatever is about to execute it rather than as the caller's own
-    port.
 
     Returns the step's lowered emission pointer, and — for a read step — what it
     published beside it (:class:`_StepRead`), which is the step's own
@@ -3346,15 +3412,11 @@ def run_group_step(
                 "marker, which states the framework's own bookkeeping and is a choreography unit "
                 "of its own — a `uow` group's held transaction has no verb to buffer one through"
             )
-        if tracked is None:
-            _refuse_unread_coverage(
-                model, session.dialect, context.concurrency, tx_instant, resolved
-            )
-        else:
-            for write in resolved:
-                tracked.buffer(write)
         for write, named in zip(resolved, sources, strict=True):
-            _buffer_wire_write(tx, model, state, write, named)
+            if tracked is None:
+                _buffer_wire_write(tx, model, state, write, named)
+            else:
+                _submit_tracked_write(tx, model, state, write, named, tracked)
         state.buffered.append((index, len(observation.writes)))
         return LoweredStep(f"/scenario/{index}/write", (), True, False), None
     if tracked is None:
@@ -3389,7 +3451,7 @@ def _group_read(
     state.finds[index] = nodes
     state.published.extend(nodes)
     return LoweredStep(
-        f"/scenario/{index}/objectQuery", observation.since(mark, "read"), False, False
+        f"/scenario/{index}/objectQuery", observation.own_reads_since(mark), False, False
     ), read
 
 
@@ -3451,12 +3513,10 @@ def _run_uow_group(
                 for index in range(start, end + 1):
                     step, read = run_group_step(
                         tx,
-                        session,
                         context,
                         state,
                         steps[index],
                         index,
-                        tx_instant,
                         observation,
                         tracked=tracked,
                     )

@@ -660,12 +660,11 @@ which `tools/check_scope_ownership.py` demands (*Filesystem ownership*, below).
   share, rather than through a second decoder, and the canonical Leaf that
   traversal hands its normalizer is what identifies a declared axis end. The
   traversal stays out of `parallax.core.document_codec`'s package interface, since
-  no developer-facing surface needs it. The case lanes build instructions,
-  caller-addressed writes, and case-state row acquisitions through the unit of
-  work's implementation leaves under `parallax.core._execution._unit_work`, which
-  the `parallax.core.unit_work` facade deliberately does not export, and a lane
-  tracking no case state composes a buffer it only plans through the same
-  leaves' `compose_writes`. Each remaining reach stays
+  no developer-facing surface needs it. The case lanes build instructions and
+  case-state row acquisitions through the unit of work's implementation leaves
+  under `parallax.core._execution._unit_work`, which the
+  `parallax.core.unit_work` facade deliberately does not export. Each remaining
+  reach stays
   keyed by its exact importing module and imported names in the source inventory.
   Widening
   `parallax.core.entity`'s shipped surface to serve a development-only consumer

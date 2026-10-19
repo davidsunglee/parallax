@@ -28,6 +28,7 @@ from parallax.conformance.simulated_temporal_store import (
     SimulatedStoreError,
     SimulatedTemporalStore,
 )
+from parallax.core import temporal_read
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work import instructions
 from parallax.core._execution._unit_work.acquisition import (
@@ -38,7 +39,7 @@ from parallax.core._execution._unit_work.acquisition import (
     TargetReadRequest,
 )
 from parallax.core._execution._unit_work.instructions import KeyedWrite, PreparedKeyedWrite
-from parallax.core._execution._unit_work.write_planner import compose_writes
+from parallax.core._execution._unit_work.materialized import ObservedKeyedWrite
 from parallax.core.base import INFINITY
 from parallax.core.inheritance import EntityMemberSelection
 from parallax.core.metamodel import (
@@ -50,12 +51,17 @@ from parallax.core.metamodel import (
 )
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.unit_work import (
+    RetainedObservation,
     SubjectActor,
     TransactionInstant,
     WritePlanningRequest,
-    buffered_write,
 )
-from parallax.core.write_plan import ObjectKey, PredecessorRow
+from parallax.core.write_plan import (
+    ObjectKey,
+    PredecessorRow,
+    TemporalObservation,
+    object_state_key_from_observation,
+)
 from parallax.core.write_plan.plan import PlannedWrites
 from parallax.core.write_plan.steps import INFINITY as OPEN_END
 from parallax.core.write_plan.steps import (
@@ -227,6 +233,20 @@ def _apply_all(store: SimulatedTemporalStore, model: Metamodel, steps: PlannedWr
         store.apply(model, step)
 
 
+def _observed_write(
+    prepared: PreparedKeyedWrite, observation: TemporalObservation
+) -> ObservedKeyedWrite:
+    """``prepared`` settling against ``observation`` of Position 1, retained as
+    the planner's own input carries it."""
+    shape = temporal_read.view(POSITION).shape(POSITION_ENTITY.identity)
+    assert shape is not None
+    key = ObjectKey(POSITION_ENTITY.identity, (("id", 1),))
+    retained = RetainedObservation(
+        object_state_key_from_observation(key, observation, shape), observation, None
+    )
+    return ObservedKeyedWrite(prepared, observation, retained)
+
+
 @pytest.mark.parametrize(
     ("value", "kept"), [("100.00", True), ("150.00", False)], ids=["kept", "closed"]
 )
@@ -256,7 +276,7 @@ def test_a_milestone_no_planned_step_closes_stays_stored_as_it_was(value: str, k
                     FixedClock(dt.datetime(2024, 9, 1, tzinfo=dt.UTC))
                 ),
                 concurrency="locking",
-                buffered_writes=compose_writes(POSITION, [buffered_write(prepared, observed)]),
+                buffered_writes=[_observed_write(prepared, observed)],
             )
         )
         .steps
@@ -766,6 +786,20 @@ def test_a_committed_transaction_keeps_what_ran_inside_it() -> None:
     assert _stored(store) == [_HEAD_ROW]
     store.apply(POSITION, _close(_JUN))
     assert _stored(store) == []
+
+
+def test_a_restarted_transaction_begins_again_from_what_it_began_with() -> None:
+    store = SimulatedTemporalStore()
+    store.seed_fixtures(POSITION, POSITION_ENTITY, [_HEAD, _TAIL])
+    with store.transaction(rollback=False) as restart:
+        for _attempt in range(2):
+            restart()
+            store.apply(POSITION, _close(None))
+            store.note_out_of_band_write()
+            assert _stored(store) == [_HEAD_ROW]
+        restart()
+    assert _stored(store) == [_HEAD_ROW, _TAIL_ROW]
+    assert store.has_complete_stored_row(POSITION, POSITION_ENTITY, {"id": 1})
 
 
 _ENDINGS = ["rollback", "failure", "interruption"]
