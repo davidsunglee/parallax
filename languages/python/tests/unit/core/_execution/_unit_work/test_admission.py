@@ -243,7 +243,6 @@ def _spanning_group(*rows: dict[str, object]) -> MaterializedWriteGroup:
 
 
 def _position_observed(position_id: int, start: dt.datetime) -> ObservedKeyedWrite:
-    """An amendment of the Position rectangle opened at ``start``, observed."""
     observation = TemporalObservation(predecessor=PredecessorRow(_position(position_id, start)))
     shape = temporal_read.view(POSITION).shape(ENTITY)
     assert shape is not None
@@ -263,9 +262,6 @@ def _position_observed(position_id: int, start: dt.datetime) -> ObservedKeyedWri
 # A caller-addressed write is confirmed once acceptance leaves it unproven.   #
 # --------------------------------------------------------------------------- #
 class _Confirmations:
-    """A confirmation recording each write it is asked about, answering it
-    unchanged."""
-
     def __init__(self) -> None:
         self.asked: list[TargetKeyedWrite] = []
 
@@ -414,8 +410,6 @@ def test_discard_leaves_pending_authority_unspent_and_forgets_every_insertion() 
 
 
 class _Untraversable:
-    """Changed states completion must not read again."""
-
     def __iter__(self) -> Iterator[ObjectStateKey]:
         raise AssertionError("completion traversed the unit's changed states")
 
@@ -462,9 +456,6 @@ def test_a_completed_version_advance_scopes_the_next_write_its_insertion_authori
 
 
 def _stored_insertion_across_two_rows() -> WriteAdmission:
-    """An admission whose drained batch stored a Position insertion from
-    February, which a completed unit left as two current rows split at
-    June."""
     admission = WriteAdmission(POSITION, inserted_version=_unversioned)
     _admit(admission, _position_insert())
     admission.drain_planned()
