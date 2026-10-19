@@ -1921,9 +1921,18 @@ def test_an_amended_capture_is_stated_by_verification_and_by_every_comparison(
             "4 re-measured readings changed and envelopes re-classified under a later "
             "Budget Contract",
         ),
+        (
+            {"redigested": {"producingCommit": "c" * 40}},
+            "workload digest re-stated under a later digest definition",
+        ),
+        (
+            {"reclassified": {}, "redigested": {}},
+            "envelopes re-classified under a later Budget Contract and workload digest "
+            "re-stated under a later digest definition",
+        ),
     ],
 )
-def test_a_reclassified_capture_is_stated_as_reclassified(
+def test_a_reclassified_or_redigested_capture_is_stated_as_such(
     tmp_path: Path, adjustment: dict[str, object], stated: str
 ) -> None:
     _base, head, *_rest, head_conditions = _pair(tmp_path, BudgetContract.load())

@@ -63,9 +63,10 @@ matrix addresses, and measurement windows. Start with
 [`cost_report.py`](../../tools/cost_report.py) and
 [`workloads.py`](../../packages/parallax-conformance/src/parallax/conformance/workloads.py).
 The [Budget Contract](../../spec/budget-contract.yaml) owns capture authority
-and its sampling requirements. Workload digests identify fixtures and model
-inputs; conditions identify the instruments. A workload digest alone does not
-establish that two instruments are equivalent.
+and its sampling requirements. Workload digests identify each workload's
+measured fixture sections and parsed model, not comments, formatting, or
+fixture keys no workload reads; conditions identify the instruments. A workload
+digest alone does not establish that two instruments are equivalent.
 
 Isolated cell readers use a fresh child interpreter, `PYTHONHASHSEED=0`, three
 warm-ups, and nine measured samples per cell. The value is the median; samples
@@ -123,7 +124,7 @@ excluded as a timing baseline; those diagnostics did not rehabilitate them.
 Current cross-day comparisons likewise describe observations under their recorded
 conditions rather than attributing every change to production code.
 
-## Collect, compare, and reclassify
+## Collect, compare, reclassify, and redigest
 
 Run from the repository root. Capture into a run directory outside Git:
 
@@ -157,6 +158,21 @@ Reclassification rewrites that portfolio, records the adjustment in conditions,
 and regenerates its summary without taking measurements. It requires the same
 authority minor, unchanged observations, and no prior adjustment. It does not
 require separate member JSON files. Do not reclassify the fixed historical bases.
+
+When the workload digest's definition changes without changing what was
+measured, re-state a capture's digest instead of recapturing:
+
+```sh
+uv run --project languages/python python languages/python/tools/cost_report.py \
+  --redigest languages/python/evidence/cost/current/portfolio.json
+```
+
+It proves that the measured workload inputs at the capture's producing commit
+digest to HEAD's workload digest, and that the commit's own code reports HEAD's
+generated-key offset and frozen manifests. It then amends the members recording
+the stale digest and records the adjustment as reclassification does. It
+refuses a changed Budget Contract, a prior adjustment, or any unproven input
+and writes nothing.
 
 The former previous/COR-191 comparisons can be reconstructed using Git revisions
 `3535d3e0f` and `dc65ef88`. Export both `portfolio.json` and `conditions.json`

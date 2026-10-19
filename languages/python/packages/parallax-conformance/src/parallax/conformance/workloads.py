@@ -57,6 +57,8 @@ type FixtureRows = Mapping[str, Sequence[RowDocument]]
 
 _GENERATED_KEY_OFFSET: Final = 256
 
+_MEASURED_SECTIONS: Final = ("model", "objectQuery", "dataset", "delivery")
+
 STRUCTURAL_LAYOUTS: Final = ("columns", "document")
 """The storage layouts every structural family is measured under, in report order."""
 
@@ -267,11 +269,23 @@ class ScriptedRows:
 
 @dataclass(frozen=True, slots=True)
 class Workload:
-    """One Budget Contract workload backed by one benchmark fixture."""
+    """One Budget Contract workload backed by one benchmark fixture.
+
+    ``document`` holds only the fixture's measured sections — ``model``,
+    ``objectQuery``, ``dataset``, and ``delivery`` — which are exactly what
+    :func:`workload_digest` covers.
+    """
 
     id: str
     fixture_path: Path
     document: Mapping[str, object]
+
+    def __post_init__(self) -> None:
+        unmeasured = sorted(set(self.document) - set(_MEASURED_SECTIONS))
+        if unmeasured:
+            raise ValueError(
+                f"{self.fixture_path.name}: {', '.join(unmeasured)} are not measured sections"
+            )
 
     @property
     def page_sizes(self) -> tuple[int, ...]:
@@ -455,26 +469,54 @@ def _load_catalog(budget: BudgetContract) -> Mapping[str, Workload]:
         previous = fixture_owners.get(fixture_path)
         if previous is not None:
             raise ValueError(f"workloads {previous!r} and {workload_id!r} both own {fixture_path}")
-        document = case_format.safe_load_yaml(fixture_path.read_text(encoding="utf-8"))
-        if not isinstance(document, Mapping):
-            raise ValueError(f"{fixture_path}: benchmark fixture is not a mapping")
+        document = _measured(fixture_path, fixture_path.read_text(encoding="utf-8"))
         fixture_owners[fixture_path] = workload_id
-        loaded[workload_id] = Workload(
-            workload_id, fixture_path, cast("Mapping[str, object]", document)
-        )
+        loaded[workload_id] = Workload(workload_id, fixture_path, document)
     return loaded
 
 
-def workload_digest(workloads: Mapping[str, Workload] | None = None) -> str:
+def _measured(fixture_path: Path, text: str) -> dict[str, object]:
+    document = case_format.safe_load_yaml(text)
+    if not isinstance(document, Mapping):
+        raise ValueError(f"{fixture_path}: benchmark fixture is not a mapping")
+    sections = cast("Mapping[str, object]", document)
+    return {section: sections[section] for section in _MEASURED_SECTIONS if section in sections}
+
+
+def _canonical(document: object) -> bytes:
+    return json.dumps(document, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode(
+        "utf-8"
+    )
+
+
+def _file_text(path: Path) -> str:
+    return path.read_text(encoding="utf-8")
+
+
+def workload_digest(
+    workloads: Mapping[str, Workload] | None = None,
+    *,
+    read: Callable[[Path], str] | None = None,
+) -> str:
+    """The SHA-256 digest of what ``workloads`` measure: each workload's id, the
+    canonical JSON of its fixture's measured sections and of its parsed model,
+    the generated-key offset, and the structural and leaf-type manifests.
+    Comments, formatting, and fixture keys outside the measured sections leave
+    it unchanged.
+
+    ``read`` answers the text of a fixture or model source by its absolute path,
+    by default the file's own; a value with no JSON form is a ``TypeError``.
+    """
     selected = workloads or catalog()
+    text_of = read if read is not None else _file_text
     digest = hashlib.sha256(f"generated-key-offset:{_GENERATED_KEY_OFFSET}\0".encode())
     for workload_id, workload in selected.items():
-        digest.update(workload_id.encode("utf-8"))
-        digest.update(b"\0")
-        digest.update(workload.fixture_path.read_bytes())
-        digest.update(b"\0")
-        digest.update(workload.model_path.read_bytes())
-        digest.update(b"\0")
+        measured = _measured(workload.fixture_path, text_of(workload.fixture_path))
+        model_path = Workload(workload_id, workload.fixture_path, measured).model_path
+        model = case_format.safe_load_yaml(text_of(model_path))
+        for part in (workload_id.encode("utf-8"), _canonical(measured), _canonical(model)):
+            digest.update(part)
+            digest.update(b"\0")
     digest.update(structural_digest().encode("utf-8"))
     digest.update(leaf_type_digest().encode("utf-8"))
     return digest.hexdigest()

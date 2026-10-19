@@ -8,13 +8,15 @@ merely drift or an adverse reading as an advisory that never fails;
 when the portfolio establishes no freshness at all: no single snapshot-delivery
 member, or provenance whose recorded lock digest is absent or malformed.
 
-A workload digest covers what was measured — the frozen workload manifest and
-the fixture and model sources defining it — and never the instruments that
-measured it. A capture is taken once at its producing commit; the blocking
-memory gates are the cost class's, and whether a later instrument edit leaves
-two captures comparable is a judgement recorded beside the evidence. A capture
-whose readings were changed after that run, or whose envelopes were
-re-classified under a later Budget Contract, records the change in the
+A workload digest covers what was measured — the frozen workload manifest,
+each workload's measured fixture sections, and the parsed content of its model
+— and never the instruments that measured it, nor comments, formatting, or
+fixture keys no workload reads. A capture is taken once at its producing
+commit; the blocking memory gates are the cost class's, and whether a later
+instrument edit leaves two captures comparable is a judgement recorded beside
+the evidence. A capture whose readings were changed after that run, whose
+envelopes were re-classified under a later Budget Contract, or whose workload
+digest was re-stated under a later digest definition records the change in the
 ``adjustment`` of its ``conditions.json``, and verification and comparison both
 state it rather than presenting the amended capture as the run's own.
 
@@ -94,7 +96,7 @@ from interpreter_matrix import (
 from parallax.conformance import case_format
 from parallax.conformance.budget import BudgetContract, MemoryGates, reading_bytes
 from parallax.conformance.cost_envelope import Provenance, Reading, classify_authority, validate
-from parallax.conformance.workloads import workload_digest
+from parallax.conformance.workloads import catalog, workload_digest
 from snapshot_delivery_overhead import (
     CONTROL_GROUP,
     ENVIRONMENT_NAMESPACE,
@@ -1619,8 +1621,9 @@ def conditions_beside(portfolio: Path) -> Conditions | None:
 
 
 ADJUSTMENT_FIELD: Final = "adjustment"
-"""Where a capture's conditions record readings changed after the run, or its
-envelopes re-classified under a later Budget Contract."""
+"""Where a capture's conditions record readings changed after the run, its
+envelopes re-classified under a later Budget Contract, or its workload digest
+re-stated under a later digest definition."""
 
 
 def _authority_only_change(old: BudgetContract, new: BudgetContract) -> None:
@@ -1709,23 +1712,167 @@ def reclassify(portfolio: Path) -> None:
     contract = committed_contract()
     members = cast("Sequence[Document]", document["members"])
     changed = [_reclassified_member(member, contract) for member in members]
-    updated = {**document, "members": changed}
     old_digest = cast("Document", members[0]["provenance"])["budgetContractDigest"]
-    updated_conditions = {
-        **conditions,
-        ADJUSTMENT_FIELD: {
-            "schemaVersion": 1,
-            "date": datetime.now(UTC).date().isoformat(),
+    _write_adjusted(
+        portfolio,
+        {**document, "members": changed},
+        durations,
+        conditions,
+        {
             "reclassified": {
                 "contractDigest": {"atCapture": old_digest, "reclassifiedUnder": contract.digest},
                 "unchanged": "every reading, sample, comparison, and measurement condition",
             },
         },
-    }
-    summary = _summary(updated, durations)
-    _write_json(portfolio, updated)
+    )
+
+
+def _write_adjusted(
+    portfolio: Path,
+    document: Document,
+    durations: Spans | None,
+    conditions: Document,
+    adjustment: Document,
+) -> None:
+    summary = _summary(document, durations)
+    _write_json(portfolio, document)
     (portfolio.parent / "summary.md").write_text(summary, encoding="utf-8")
-    _write_json(portfolio.parent / CONDITIONS_FILE, updated_conditions)
+    _write_json(
+        portfolio.parent / CONDITIONS_FILE,
+        {
+            **conditions,
+            ADJUSTMENT_FIELD: {
+                "schemaVersion": 1,
+                "date": datetime.now(UTC).date().isoformat(),
+                **adjustment,
+            },
+        },
+    )
+
+
+CODE_IDENTITY_PROGRAM: Final = (
+    "import json\n"
+    "from parallax.conformance import workloads\n"
+    "print(json.dumps([workloads._GENERATED_KEY_OFFSET, workloads.structural_digest(), "
+    "workloads.leaf_type_digest()]))\n"
+)
+"""Prints what a workload digest covers as code rather than as measured
+inputs, as the checkout running it defines that code."""
+
+type CodeIdentityRunner = Callable[[Path], tuple[int, str, str]]
+"""Runs :data:`CODE_IDENTITY_PROGRAM` in the checkout whose Python workspace is
+the given path, and answers its exit status, stdout, and stderr."""
+
+
+def text_at(commit: str, path: Path) -> str:
+    """The text the repository file at ``path`` holds at ``commit``."""
+    repo = WORKSPACE.parents[1]
+    relative = path.resolve().relative_to(repo).as_posix()
+    completed = subprocess.run(
+        ["git", "show", f"{commit}:{relative}"], cwd=repo, capture_output=True, check=False
+    )
+    if completed.returncode != 0:
+        raise ValueError(f"{relative} does not exist at {commit[:12]}")
+    return completed.stdout.decode("utf-8")
+
+
+def _code_identity(runner: CodeIdentityRunner, workspace: Path, label: str) -> object:
+    returncode, stdout, stderr = runner(workspace)
+    if returncode != 0:
+        raise ValueError(
+            f"the code identity at {label} exited {returncode}: {stderr.strip() or stdout.strip()}"
+        )
+    try:
+        return json.loads(stdout.strip().splitlines()[-1])
+    except (IndexError, ValueError) as error:
+        raise ValueError(f"the code identity at {label} is not JSON: {error}") from error
+
+
+def _prove_measurement_unchanged(
+    commit: str, digest: str, runner: CodeIdentityRunner, worktree: WorktreeFactory
+) -> None:
+    label = commit[:12]
+    if workload_digest(catalog(), read=lambda path: text_at(commit, path)) != digest:
+        raise ValueError(f"the measured workload inputs at {label} differ from HEAD's")
+    try:
+        with worktree(commit) as checkout:
+            produced = _code_identity(runner, checkout / "languages" / "python", label)
+    except subprocess.CalledProcessError as error:
+        raise ValueError(f"git could not check out {label}: {error.stderr or error}") from error
+    current = _code_identity(runner, WORKSPACE, "HEAD")
+    if produced != current:
+        raise ValueError(
+            f"the workload digest's code at {label} differs from HEAD's: {produced} != {current}"
+        )
+
+
+def redigest(
+    portfolio: Path,
+    runner: CodeIdentityRunner | None = None,
+    worktree: WorktreeFactory | None = None,
+) -> None:
+    """Re-state a capture's workload digest under HEAD's digest definition.
+
+    Refused unless what was measured provably did not change since the one
+    producing commit every member names: that commit is an ancestor of HEAD,
+    the members embed HEAD's committed Budget Contract, the measured inputs the
+    commit holds digest to HEAD's workload digest, and the commit's own code
+    reports HEAD's generated-key offset and frozen manifests. Every member
+    recording the snapshot-delivery member's workload digest takes HEAD's;
+    readings, comparisons, other provenance, and measurement conditions stay as
+    captured, and an existing adjustment is never overwritten.
+    """
+    document, conditions, durations = _reclassification_inputs(portfolio)
+    members = cast("Sequence[Document]", document["members"])
+    provenances = [cast("Document", member["provenance"]) for member in members]
+    commits = {str(provenance["commit"]) for provenance in provenances}
+    if len(commits) != 1:
+        raise ValueError("the members name different producing commits")
+    (commit,) = commits
+    if COMMIT_PATTERN.fullmatch(commit) is None or not is_published(commit):
+        raise ValueError(f"the producing commit {commit[:12]} is not an ancestor of HEAD")
+    if provenances[0]["budgetContractDigest"] != committed_contract().digest:
+        raise ValueError(
+            "the members embed a Budget Contract other than HEAD's committed one; "
+            "reclassify or recapture instead"
+        )
+    snapshot = _snapshot(document)
+    if snapshot is None:
+        raise ValueError("the portfolio has no single snapshot-delivery member")
+    recorded = cast("Document", snapshot["provenance"])["workloadDigest"]
+    current = workload_digest()
+    if recorded == current:
+        raise ValueError("the snapshot-delivery workload digest is already HEAD's")
+    _prove_measurement_unchanged(
+        commit, current, runner or run_code_identity, worktree or base_worktree
+    )
+    restated: dict[str, Document] = {
+        str(member["subject"]): {**member, "provenance": {**provenance, "workloadDigest": current}}
+        for member, provenance in zip(members, provenances, strict=True)
+        if provenance["workloadDigest"] == recorded
+    }
+    for member in restated.values():
+        validate(member)
+    _write_adjusted(
+        portfolio,
+        {
+            **document,
+            "members": [restated.get(str(member["subject"]), member) for member in members],
+        },
+        durations,
+        conditions,
+        {
+            "redigested": {
+                "workloadDigest": {"atCapture": recorded, "redigestedUnder": current},
+                "producingCommit": commit,
+                "members": sorted(restated),
+                "unchanged": (
+                    "every reading, sample, comparison, and measurement condition; the measured "
+                    "workload inputs and code identity at the producing commit equal HEAD's"
+                ),
+            },
+        },
+    )
 
 
 def amendment_beside(portfolio: Path) -> str | None:
@@ -1753,13 +1900,16 @@ def amendment_beside(portfolio: Path) -> str | None:
         if isinstance(count, int) and not isinstance(count, bool):
             changed.append(f"{count} {label}")
     reclassified = adjustment.get("reclassified") is not None
+    redigested = adjustment.get("redigested") is not None
     statements: list[str] = []
     if changed:
         statements.append(f"{' and '.join(changed)} readings changed")
-    elif not reclassified:
+    elif not (reclassified or redigested):
         statements.append("readings changed")
     if reclassified:
         statements.append("envelopes re-classified under a later Budget Contract")
+    if redigested:
+        statements.append("workload digest re-stated under a later digest definition")
     return (
         f"{' and '.join(statements)} after the run its provenance names, recorded in the "
         f"{ADJUSTMENT_FIELD} of {CONDITIONS_FILE}"
@@ -2260,12 +2410,21 @@ BASE_ENVIRONMENT_EXCLUDED: Final = frozenset(
 def run_base(workspace: Path, arguments: Sequence[str]) -> tuple[int, str, str]:
     """The base checkout's collector through its own frozen environment,
     never this checkout's."""
+    return _run_frozen(workspace, ["tools/cost_report.py", *arguments])
+
+
+def run_code_identity(workspace: Path) -> tuple[int, str, str]:
+    """:data:`CODE_IDENTITY_PROGRAM` through the checkout's own frozen environment."""
+    return _run_frozen(workspace, ["-c", CODE_IDENTITY_PROGRAM])
+
+
+def _run_frozen(workspace: Path, arguments: Sequence[str]) -> tuple[int, str, str]:
     environment = {
         name: value for name, value in os.environ.items() if name not in BASE_ENVIRONMENT_EXCLUDED
     }
     try:
         completed = subprocess.run(
-            ["uv", "run", "--frozen", "python", "tools/cost_report.py", *arguments],
+            ["uv", "run", "--frozen", "python", *arguments],
             cwd=workspace,
             env=environment,
             capture_output=True,
@@ -3487,6 +3646,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--out", type=Path)
     parser.add_argument("--verify", type=Path)
     parser.add_argument("--reclassify", type=Path, metavar="PORTFOLIO")
+    parser.add_argument("--redigest", type=Path, metavar="PORTFOLIO")
     parser.add_argument("--freshness-only", type=Path, metavar="PORTFOLIO")
     parser.add_argument("--lock-file", type=Path, help="lock inspected by --freshness-only")
     parser.add_argument("--compare", nargs=2, type=Path, metavar=("BASE", "HEAD"))
@@ -3535,6 +3695,7 @@ def _refuse_misplaced_options(parser: argparse.ArgumentParser, args: argparse.Na
             ("--verify", args.verify is not None),
             ("--compare", args.compare is not None),
             ("--reclassify", args.reclassify is not None),
+            ("--redigest", args.redigest is not None),
         )
         if chosen
     ]
@@ -3545,6 +3706,10 @@ def _refuse_misplaced_options(parser: argparse.ArgumentParser, args: argparse.Na
         (
             args.reclassify is not None and args.out is not None,
             "--reclassify rewrites its input; --out is not accepted",
+        ),
+        (
+            args.redigest is not None and args.out is not None,
+            "--redigest rewrites its input; --out is not accepted",
         ),
         (
             args.lock_file is not None and args.freshness_only is None,
@@ -3683,16 +3848,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run_verify(args)
     if args.compare is not None:
         return _run_compare(parser, args)
-    if args.reclassify is not None:
-        return _run_reclassification(args.reclassify)
+    if args.reclassify is not None or args.redigest is not None:
+        return _run_adjustment(args)
     if args.out is None:
         parser.error("--out is required when collecting")
     return _run_collection(args.out)
 
 
-def _run_reclassification(portfolio: Path) -> int:
+def _run_adjustment(args: argparse.Namespace) -> int:
+    if args.reclassify is not None:
+        portfolio = cast("Path", args.reclassify)
+        adjust, refused = reclassify, "reclassification"
+        done = f"reclassified {portfolio} under the committed Budget Contract"
+    else:
+        portfolio = cast("Path", args.redigest)
+        adjust, refused = redigest, "redigest"
+        done = f"re-digested {portfolio} under HEAD's workload digest definition"
     try:
-        reclassify(portfolio)
+        adjust(portfolio)
     except (
         KeyError,
         TypeError,
@@ -3701,9 +3874,9 @@ def _run_reclassification(portfolio: Path) -> int:
         ValidationError,
         subprocess.CalledProcessError,
     ) as error:
-        print(f"reclassification refused: {error}", file=sys.stderr)
+        print(f"{refused} refused: {error}", file=sys.stderr)
         return 1
-    print(f"reclassified {portfolio} under the committed Budget Contract")
+    print(done)
     return 0
 
 
