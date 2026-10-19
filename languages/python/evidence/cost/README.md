@@ -9,7 +9,7 @@ owns what belongs in Git and how future runs are stored.
 
 | Capture | Role | Producing commit | Captured |
 |---|---|---|---|
-| [current](current/portfolio.json) | Current verification input and memory-gate basis | `d125a65958c86cc0912d0498c01699d89c109659` | 2026-10-16 |
+| [current](current/portfolio.json) | Current verification input and memory-gate basis | `bc9add4bea1bc740b60ed4e28bc3413e186f8f17` | 2026-10-19 |
 | [structural-metadata-before](structural-metadata-before/portfolio.json) | Fixed recovery reference | `b7abe2d055fd3e0974829616f2de99b94ad5af97` | 2026-09-16 |
 | [structural-metadata-after](structural-metadata-after/portfolio.json) | Fixed regression comparison base | `1636e9f0ce072dce25ddd1ebeabd0b1368b65031` | 2026-09-17 |
 
@@ -24,30 +24,37 @@ producing commit, with no errors, incomplete cells, or collector failures.
 Snapshot delivery is authoritative under its embedded Budget Contract; the
 other members have their own protocols and are non-authoritative.
 
-The producing commit was later rewritten as `5b37f3099`, with an identical tree
-outside `docs/research/transaction-isolation/captures/`. The recorded commit is
-the fact of what was captured. Verifying an envelope reconstructs its embedded
-Budget Contract and checks internal consistency without resolving that commit;
-the ancestry advisory alone consults Git history. This is an integrity check of
+The recorded commit is the fact of what was captured. Verifying an envelope
+reconstructs its embedded Budget Contract and checks internal consistency
+without resolving that commit; the ancestry advisory alone consults Git history.
+Rebase and squash merges rewrite branch commits, so capture at a commit already
+on `main` and land the evidence on top of it. This is an integrity check of
 reviewed evidence, not an attestation that the observations cannot be forged.
 
-The current collector completed on 2026-10-16, 13:53:29–14:52:58 UTC, in
-59m29s wall time. It ran on a Mac17,4 (Apple M5, 10 cores, 32 GiB), macOS
+The current collector completed on 2026-10-19, 11:59:25–12:58:45 UTC, in
+59m19s wall time. It ran on a Mac17,4 (Apple M5, 10 cores, 32 GiB), macOS
 27.0.1 build 26A434, with CPython 3.13.16 and 3.14.8 and PostgreSQL 18.6.
 [Conditions](current/conditions.json) record interpreter identities and instrument
 source hashes; [durations](current/durations.json) record collection telemetry.
 The dependency lock SHA-256 is
 `ba94b858fe8d97e5b38e66362623f67e2e6634515530972af4459e0dcee51334`.
 The portfolio SHA-256 is
-`1b476bc83215561580416d258179bdf63c1e095f61a0579c336beaa42f4a51ef`.
+`2131a987df9a18e2c359ee45f0810ed2d3de681f4032b4e8d8fa75683e07f1fd`.
 
-No competing tests or measurements ran, but the host was active: package
-installation and indexing had recently finished, load averages fell during the
-run, and the HumanLayer daemon remained active. The run does not establish
-whether backup workers were paused. It is not evidence of quiet-machine timing
+No competing tests, measurements, or agents ran, and the OrbStack VM was
+restarted immediately before collection. The run does not establish whether
+backup workers were paused. It is not evidence of quiet-machine timing
 stability. The historical bases used macOS 26.6.2 and CPython 3.13.15/3.14.7
 on the same machine, so current-versus-base timings cross host and interpreter
 conditions as well as implementation changes.
+
+Against the superseded `d125a6595` capture, taken under the same host,
+interpreters, lock, and Budget Contract, no memory reading rose past its former
+gate and every gate address was kept. Keyed target writes retain 152 B/row
+less and opening and geometry writes 64 B/row less; read-plan compilation
+retains 1.1–1.6 KiB more on the guarded controls, and typed cold-plan peaks in
+the feature-boundary member rose 5–12%. These span `5b37f3099..bc9add4be` and
+are not attributed to individual commits.
 
 ## Method and interpretation
 

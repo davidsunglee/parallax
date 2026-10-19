@@ -9,7 +9,7 @@
           "version": "3.13.16"
         },
         "3.14": {
-          "executable": "/Users/david/.humanlayer/workspaces/cor-214-simplify-transactions-and-repeatable-read-7bk9nl/parallax/languages/python/.venv/bin/python",
+          "executable": "/Users/david/Code/parallax/languages/python/.venv/bin/python",
           "implementation": "CPython",
           "status": "available",
           "version": "3.14.8"
@@ -31,16 +31,16 @@
           "version": "3.13.16"
         },
         "3.14": {
-          "executable": "/Users/david/.humanlayer/workspaces/cor-214-simplify-transactions-and-repeatable-read-7bk9nl/parallax/languages/python/.venv/bin/python",
+          "executable": "/Users/david/Code/parallax/languages/python/.venv/bin/python",
           "implementation": "CPython",
           "status": "available",
           "version": "3.14.8"
         }
       },
       "sources": {
-        "tests/unit/_instance_state_support.py": "0ea62e8a1de5a4a76541f91936eab7fc20e81262f36b02a367bbc7a6410d0e3b",
+        "tests/unit/_instance_state_support.py": "31bfcde149191834ff7d2f80d0f7003e403362f122b7c38093a8cf21f9804c79",
         "tests/unit/memory_instruments.py": "cc1c8140dd4a66aa886b9d014ec10adebb9a8dbfac23a3cd73d2bf837723894a",
-        "tools/instance_state_overhead.py": "ad3b102f2dc61fd589243bb50d4d4af19b271c0c5423f7e61b625b59604870fc",
+        "tools/instance_state_overhead.py": "4c1058dda6ab31e8c263bf742c9edb3270ee86aeea8c070323b22aed097d2294",
         "tools/instance_state_reading.py": "3f25f428052e40de7726b2448a34927394bd7adcf1a9fa1b0a7d964b70e6ce14"
       }
     },
@@ -51,7 +51,7 @@
           "status": "unavailable"
         },
         "3.14": {
-          "executable": "/Users/david/.humanlayer/workspaces/cor-214-simplify-transactions-and-repeatable-read-7bk9nl/parallax/languages/python/.venv/bin/python",
+          "executable": "/Users/david/Code/parallax/languages/python/.venv/bin/python",
           "implementation": "CPython",
           "status": "available",
           "version": "3.14.8"
@@ -70,7 +70,7 @@
           "version": "3.13.16"
         },
         "3.14": {
-          "executable": "/Users/david/.humanlayer/workspaces/cor-214-simplify-transactions-and-repeatable-read-7bk9nl/parallax/languages/python/.venv/bin/python",
+          "executable": "/Users/david/Code/parallax/languages/python/.venv/bin/python",
           "implementation": "CPython",
           "status": "available",
           "version": "3.14.8"
@@ -96,7 +96,7 @@
           "version": "3.13.16"
         },
         "3.14": {
-          "executable": "/Users/david/.humanlayer/workspaces/cor-214-simplify-transactions-and-repeatable-read-7bk9nl/parallax/languages/python/.venv/bin/python",
+          "executable": "/Users/david/Code/parallax/languages/python/.venv/bin/python",
           "implementation": "CPython",
           "status": "available",
           "version": "3.14.8"
