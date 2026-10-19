@@ -11,7 +11,7 @@ from parallax.core._execution._unit_work.instructions import (
     TargetMutation,
     prepare_wire_write,
 )
-from parallax.core._execution._unit_work.materialized import (
+from parallax.core._execution._unit_work.write_items import (
     ObservedKeyedWrite,
     TargetKeyedWrite,
     target_write,

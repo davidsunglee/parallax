@@ -35,7 +35,6 @@ from parallax.core._execution._unit_work.instructions import (
     prepare_typed_write,
     prepare_wire_write,
 )
-from parallax.core._execution._unit_work.materialized import GroupStates, target_write
 from parallax.core._execution._unit_work.ranges import DeferredTemporalRange
 from parallax.core._execution._unit_work.strategy import (
     AuditDecoration,
@@ -43,6 +42,7 @@ from parallax.core._execution._unit_work.strategy import (
     BatchingStrategy,
     ConcurrencyStrategy,
 )
+from parallax.core._execution._unit_work.write_items import GroupStateKeys, target_write
 from parallax.core._execution._unit_work.write_planner import compose_writes
 from parallax.core._execution._unit_work.write_settlement import (
     WritePlanCompiler,  # producer-reach regression only
@@ -118,7 +118,7 @@ def test_a_groups_state_keys_read_no_axis_end(
     evidence, shape = milestone_rows.milestones(entity, (_JAN, _MAR), (_MAR, INFINITY))
     monkeypatch.setattr(PredecessorRows, "axis_end", refuse)
 
-    keys = list(GroupStates(entity.identity, "id", evidence, shape))
+    keys = list(GroupStateKeys(entity.identity, "id", evidence, shape))
 
     assert [cast("TemporalObjectStateKey", key).milestone.valid_time for key in keys] == [
         _JAN,

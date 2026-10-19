@@ -39,7 +39,7 @@ from parallax.core._execution._unit_work.acquisition import (
     TargetReadRequest,
 )
 from parallax.core._execution._unit_work.instructions import KeyedWrite, PreparedKeyedWrite
-from parallax.core._execution._unit_work.materialized import ObservedKeyedWrite
+from parallax.core._execution._unit_work.write_items import ObservedKeyedWrite
 from parallax.core.base import INFINITY
 from parallax.core.inheritance import EntityMemberSelection
 from parallax.core.metamodel import (
@@ -242,7 +242,7 @@ def _observed_write(
     retained = RetainedObservation(
         object_state_key_from_observation(key, observation, shape), observation, None
     )
-    return ObservedKeyedWrite(prepared, observation, retained)
+    return ObservedKeyedWrite(prepared, retained)
 
 
 @pytest.mark.parametrize(

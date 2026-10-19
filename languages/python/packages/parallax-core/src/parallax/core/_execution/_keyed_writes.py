@@ -22,7 +22,6 @@ from parallax.core._execution._unit_work.instructions import (
     WriteInstructionError,
 )
 from parallax.core._execution._unit_work.keys import object_key
-from parallax.core._execution._unit_work.materialized import buffered_write
 from parallax.core._execution._unit_work.retain import (
     InsertionIdentity,
     KeyedWriteRefusalAdvice,
@@ -33,6 +32,7 @@ from parallax.core._execution._unit_work.uow import (
     NoInsertionAuthority,
     UnitOfWork,
 )
+from parallax.core._execution._unit_work.write_items import buffered_write
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.execution_lifecycle._activity import InstalledLifecycle, refuse_reentry
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel

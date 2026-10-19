@@ -34,8 +34,8 @@ from parallax.core._execution._unit_work.instructions import (
     prepare_typed_write,
     prepare_wire_write,
 )
-from parallax.core._execution._unit_work.materialized import VersionedEvidence
 from parallax.core._execution._unit_work.uow import WriteBatchScope
+from parallax.core._execution._unit_work.write_items import VersionedEvidence
 from parallax.core.dialect import POSTGRES
 from parallax.core.inheritance import EntityMemberSelection
 from parallax.core.metamodel import EntityIdentity, Metamodel

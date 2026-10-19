@@ -83,7 +83,11 @@ from parallax.core.write_plan import (
 from parallax.core.write_plan.plan import DeferredRange, ExecutionUnit, PlannedWrites, WritePlan
 from parallax.core.write_plan.steps import PlannedWrite
 from tests._support.clock_probes import instant_at
-from tests._support.planner_probes import NO_ROW_READS, TEST_ACTOR_IDENTITY
+from tests._support.planner_probes import (
+    NO_ROW_READS,
+    TEST_ACTOR_IDENTITY,
+    retained_observation,
+)
 from tests.unit._corpus_identity_support import corpus_object_key
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._temporal_group_support import temporal_group
@@ -824,7 +828,9 @@ def test_a_unit_kept_behind_a_barrier_binds_on_the_rows_and_ownership_earlier_un
     )
     assert isinstance(target, PreparedTargetWrite)
     with store.transaction(rollback=False):
-        uow.buffer(buffered_write(amendment, observation))
+        uow.buffer(
+            buffered_write(amendment, retained_observation(amendment, _BARRIERED, observation))
+        )
         uow.buffer_predicate(_barrier())
         uow.buffer_target(target)
         uow.flush(trigger="pre_commit")

@@ -44,18 +44,18 @@ from parallax.core._execution._unit_work.instructions import (
     prepare_typed_write,
     prepare_wire_write,
 )
-from parallax.core._execution._unit_work.materialized import (
-    InsertionKeyedWrite,
-    ObservedKeyedWrite,
-    readless_write,
-    target_write,
-)
 from parallax.core._execution._unit_work.retain import InsertionIdentity, ReadEvidence
 from parallax.core._execution._unit_work.uow import (
     NO_INSERTION_AUTHORITY,
     EscapedTransactionError,
     OpenWriteBatch,
     _TargetWriteState,  # pyright: ignore[reportPrivateUsage] - the owner of the removal window and lineage it is tested at
+)
+from parallax.core._execution._unit_work.write_items import (
+    InsertionKeyedWrite,
+    ObservedKeyedWrite,
+    readless_write,
+    target_write,
 )
 from parallax.core._execution._unit_work.write_planner import PendingWrites, compose_writes
 from parallax.core._execution._unit_work.write_runner import ExecuteWriteSteps
@@ -106,11 +106,12 @@ from parallax.core.write_plan.plan import (
     DerivedRow,
     Openings,
     OwnedEndpoint,
+    SourceAuthority,
 )
 from parallax.core.write_plan.steps import INFINITY as PLANNED_INFINITY
 from parallax.core.write_plan.steps import NEW_LINEAGE, Finite, PlannedUpdate
 from tests._support.clock_probes import CountingClock
-from tests._support.planner_probes import TEST_ACTOR_IDENTITY
+from tests._support.planner_probes import TEST_ACTOR_IDENTITY, RecordingSource
 from tests.unit._corpus_identity_support import corpus_object_key
 from tests.unit._temporal_group_support import temporal_group
 from tests.unit._where_position_model import (
@@ -338,7 +339,7 @@ def test_an_observation_a_buffered_write_carries_binds_into_its_settled_step() -
                     KeyedWrite("amend", "Account", ({"id": 1, "balance": Decimal("0.00")},)),
                     _ACCOUNT,
                 ),
-                observation=resolved.evidence,
+                retained_observation=resolved,
             )
         )
 
@@ -366,7 +367,9 @@ def test_an_insert_refuses_to_carry_a_write_observation() -> None:
                 ),
                 _ACCOUNT,
             ),
-            observation=VersionObservation(observed_version=1),
+            retained_observation=RetainedObservation(
+                _account_state(1, 1), VersionObservation(observed_version=1), None
+            ),
         )
 
 
@@ -387,7 +390,7 @@ def test_a_multi_row_keyed_write_refuses_to_carry_one_write_observation() -> Non
                 ),
                 _ACCOUNT,
             ),
-            VersionObservation(observed_version=7),
+            RetainedObservation(_account_state(1, 7), VersionObservation(observed_version=7), None),
         )
 
 
@@ -451,24 +454,6 @@ def test_evidence_of_this_attempt_carrying_no_observation_licenses_no_gated_writ
         assert refusal.value.code == "write-evidence-unavailable"
 
     _run(body)
-
-
-def test_a_carrier_refuses_a_claim_naming_other_evidence() -> None:
-    # The claim a carrier holds is the retained form of the observation it
-    # settles against, and the flush spends the claim while the planner settles
-    # the observation. Two different pieces of evidence in one carrier would let
-    # a write gate on one state and retire another's claim, so the pairing is
-    # refused where the carrier is built.
-    state = VersionedObjectStateKey(corpus_object_key("Account", ("id", 1)), 7)
-    other = RetainedObservation(state, VersionObservation(observed_version=7), None)
-    with pytest.raises(ValueError, match="the retained form of the observation"):
-        ObservedKeyedWrite(
-            instruction=_prepared_keyed(
-                KeyedWrite("amend", "Account", ({"id": 1, "balance": Decimal("0.00")},)), _ACCOUNT
-            ),
-            observation=VersionObservation(observed_version=7),
-            claim=other,
-        )
 
 
 def test_two_writes_of_one_claim_merge_and_answer_it_once() -> None:
@@ -704,21 +689,16 @@ def _balance_state(key: int) -> ObjectStateKey:
     )
 
 
-def _account_write(
-    mutation: KeyedMutation, account_id: int, version: int, *, retained: bool = True
-) -> BufferItem:
-    """A keyed write of one Account state, carrying its source's evidence:
-    the retained observation a read of that state claims, or (``retained=False``)
-    the same evidence as a caller-held value, which claims nothing."""
+def _account_write(mutation: KeyedMutation, account_id: int, version: int) -> BufferItem:
+    """A keyed write of one Account state, carrying the retained observation
+    a read of that state claims."""
     row: dict[str, object] = {"id": account_id}
     if mutation == "amend":
         row["balance"] = Decimal("1.00")
     evidence = VersionObservation(observed_version=version)
     return buffered_write(
         _prepared_keyed(KeyedWrite(mutation, "Account", (row,)), _ACCOUNT),
-        RetainedObservation(_account_state(account_id, version), evidence, None)
-        if retained
-        else evidence,
+        RetainedObservation(_account_state(account_id, version), evidence, None),
     )
 
 
@@ -827,8 +807,11 @@ def test_a_group_selecting_one_state_twice_is_refused_and_leaves_no_claim() -> N
 _PERSON_META = model_of(PERSON)
 
 
-def _person_write(mutation: KeyedMutation, person_id: int) -> BufferItem:
-    """An unversioned Non-Temporal Person write settling against its object."""
+def _person_write(
+    mutation: KeyedMutation, person_id: int, source: SourceAuthority | None = None
+) -> BufferItem:
+    """An unversioned Non-Temporal Person write settling against its object,
+    admitted through ``source``."""
     row: dict[str, object] = {"id": person_id}
     if mutation == "amend":
         row["name"] = "Grace"
@@ -836,6 +819,7 @@ def _person_write(mutation: KeyedMutation, person_id: int) -> BufferItem:
     return buffered_write(
         prepared,
         corpus_object_key("Person", ("id", person_id)),
+        source=RecordingSource() if source is None else source,
     )
 
 
@@ -868,18 +852,6 @@ def test_a_retained_claim_is_taken_at_the_exact_observed_state() -> None:
         _run(body)
 
 
-def test_a_caller_held_observation_claims_nothing() -> None:
-    def body(uow: UnitOfWork) -> None:
-        uow.buffer(_account_write("delete", 1, 7, retained=False))
-        uow.buffer(_account_write("amend", 1, 7, retained=False))
-        # Nor did either take the retained form's claim at that state.
-        uow.buffer(_account_write("amend", 1, 7))
-        raise _Abandoned
-
-    with pytest.raises(_Abandoned):
-        _run(body)
-
-
 def test_an_object_claimed_write_claims_its_instructions_object() -> None:
     simulated = _simulated(_PERSON_META)
 
@@ -892,6 +864,36 @@ def test_an_object_claimed_write_claims_its_instructions_object() -> None:
 
     _run(body, steps=simulated, meta=_PERSON_META)
     assert sorted(_kinds(simulated)) == ["delete", "update"]
+
+
+@dataclass(frozen=True, slots=True)
+class _OrderedSource:
+    """Observation-free source authority recording its turn in ``spent``."""
+
+    name: str
+    spent: list[str]
+
+    def consume(self) -> None:
+        self.spent.append(self.name)
+
+
+def test_every_accepted_object_source_is_spent_in_buffering_order_after_the_flush() -> None:
+    # Coalescing and supersession compose the writes themselves, and each
+    # source they were admitted through is still spent, once, in the order its
+    # write was buffered — and only once the whole flush succeeded.
+    simulated = _simulated(_PERSON_META)
+    spent: list[str] = []
+
+    def body(uow: UnitOfWork) -> None:
+        uow.buffer(_person_write("amend", 1, _OrderedSource("amend", spent)))
+        uow.buffer(_person_write("amend", 2, _OrderedSource("other", spent)))
+        uow.buffer(_person_write("delete", 1, _OrderedSource("delete", spent)))
+        uow.buffer(_person_write("delete", 1, _OrderedSource("again", spent)))
+        assert spent == []
+
+    _run(body, steps=simulated, meta=_PERSON_META)
+    assert sorted(_kinds(simulated)) == ["delete", "update"]
+    assert spent == ["amend", "other", "delete", "again"]
 
 
 def test_a_refused_carrier_or_claim_leaves_claims_and_pending_inserts_as_they_were() -> None:
@@ -959,9 +961,6 @@ def test_every_other_accepted_item_reports_plain_buffering() -> None:
     def body(uow: UnitOfWork) -> None:
         assert uow.buffer(_account_write("amend", 1, 7)) is BufferOutcome.BUFFERED
         assert uow.buffer(_account_write("delete", 2, 7)) is BufferOutcome.BUFFERED
-        assert uow.buffer(_account_write("delete", 3, 7, retained=False)) is (
-            BufferOutcome.BUFFERED
-        )
         assert uow.buffer(readless_write(predicate)) is BufferOutcome.BUFFERED
         assert uow.buffer(_account_group((4, 7))) is BufferOutcome.BUFFERED
         raise _Abandoned
@@ -984,9 +983,7 @@ def test_a_destructive_write_after_the_insert_flushed_cancels_nothing() -> None:
     def body(uow: UnitOfWork) -> None:
         uow.buffer(_account_insert(9))
         uow.read(lambda: None)
-        assert uow.buffer(_account_write("delete", 9, 1, retained=False)) is (
-            BufferOutcome.BUFFERED
-        )
+        assert uow.buffer(_account_write("delete", 9, 1)) is BufferOutcome.BUFFERED
 
     _run(body, steps=simulated)
     assert _kinds(simulated) == ["insert", "delete"]
@@ -1081,11 +1078,11 @@ def test_each_unit_spends_its_evidence_before_the_next_unit_executes() -> None:
     first = _account_write("amend", 1, 7)
     second = _account_write("amend", 2, 3)
     assert isinstance(first, ObservedKeyedWrite) and isinstance(second, ObservedKeyedWrite)
-    claims = (first.claim, second.claim)
+    retained = (first.retained_observation, second.retained_observation)
     seen: list[tuple[bool, ...]] = []
 
     def spent() -> tuple[bool, ...]:
-        return tuple(claim is not None and claim.consumed for claim in claims)
+        return tuple(observation.consumed for observation in retained)
 
     def body(uow: UnitOfWork) -> None:
         uow.buffer(first)
@@ -1098,7 +1095,7 @@ def test_each_unit_spends_its_evidence_before_the_next_unit_executes() -> None:
 def test_a_caught_execution_failure_still_dooms_the_attempt() -> None:
     failure = RuntimeError("the statement failed")
     claimed = _account_write("amend", 1, 7)
-    assert isinstance(claimed, ObservedKeyedWrite) and claimed.claim is not None
+    assert isinstance(claimed, ObservedKeyedWrite)
     steps = ObservedSteps(_simulated(), failing=0, failure=failure)
 
     def body(uow: UnitOfWork) -> str:
@@ -1115,7 +1112,7 @@ def test_a_caught_execution_failure_still_dooms_the_attempt() -> None:
     with pytest.raises(RollbackOnlyError) as exc:
         _run(body, steps=steps)
     assert exc.value.__cause__ is failure
-    assert claimed.claim is not None and not claimed.claim.consumed
+    assert not claimed.retained_observation.consumed
 
 
 def test_a_planning_refusal_leaves_the_attempt_usable() -> None:
@@ -1593,9 +1590,13 @@ def _position_destroy(start: dt.datetime, until: dt.datetime) -> ObservedKeyedWr
         _BARRIERED,
     )
     assert isinstance(prepared, PreparedKeyedWrite)
-    return ObservedKeyedWrite(
-        instruction=prepared, observation=TemporalObservation(predecessor=_position_row(_JAN, _T0))
+    # Each destruction observed the rectangle its window starts in, so writes
+    # over disjoint windows claim distinct states and compose.
+    observation = TemporalObservation(predecessor=_position_row(start, _T0))
+    state = object_state_key_from_observation(
+        corpus_object_key("WherePosition", ("id", 1)), observation, _barriered_shape()
     )
+    return ObservedKeyedWrite(prepared, RetainedObservation(state, observation, None))
 
 
 def _shell_barrier() -> PreparedPredicateWrite:

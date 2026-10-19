@@ -15,12 +15,12 @@ import pytest
 
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work.acquisition import CoverageReadRequest
-from parallax.core._execution._unit_work.materialized import (
+from parallax.core._execution._unit_work.write_items import (
     BufferItem,
     ComposedTemporalWrite,
     ObservedKeyedWrite,
     TargetKeyedWrite,
-    chained,
+    chained_temporal_write,
 )
 from parallax.core._execution._unit_work.write_planner import compose_writes
 from parallax.core.base import INFINITY, TemporalBound
@@ -422,7 +422,7 @@ def _chained_unit(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=instant_at("2024-10-01T00:00:00+00:00"),
             concurrency=concurrency,  # type: ignore[arg-type]
-            buffered_writes=(chained(composed, "id", leads=leads, follows=follows),),
+            buffered_writes=(chained_temporal_write(composed, "id", leads=leads, follows=follows),),
         )
     )
     (unit,) = plan.units

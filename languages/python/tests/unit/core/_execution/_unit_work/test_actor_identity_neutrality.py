@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import datetime as dt
+from collections.abc import Sequence
 from decimal import Decimal
 
 from parallax.conformance import models
 from parallax.core import predicate as predicate_algebra
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work.strategy import ActorIdentity
+from parallax.core._execution._unit_work.write_items import OrderedWrite
 from parallax.core.base import INFINITY
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import Metamodel
@@ -49,19 +51,18 @@ _LOGIN = DatabaseLoginActor("runtime-login")
 
 def _plan_under(
     actor: ActorIdentity,
-    buffer: list[BufferItem | KeyedWrite | PredicateWrite],
+    buffered: Sequence[OrderedWrite],
     model: Metamodel,
     *,
-    observations: dict[ObjectKey, WriteObservation] | None = None,
-    concurrency: Concurrency = "locking",
-    tx_instant: TransactionInstant | None = None,
+    concurrency: Concurrency,
+    tx_instant: TransactionInstant | None,
 ) -> WritePlan:
     return build_write_planner(model).finalize(
         WritePlanningRequest(
             actor_identity=actor,
             transaction_instant=tx_instant if tx_instant is not None else inert_instant(),
             concurrency=concurrency,
-            buffered_writes=observed_buffer(buffer, model, observations),
+            buffered_writes=buffered,
         )
     )
 
@@ -85,21 +86,13 @@ def _assert_neutral(
 ) -> None:
     subject_instant = None if tx_instant_literal is None else instant_at(tx_instant_literal)
     login_instant = None if tx_instant_literal is None else instant_at(tx_instant_literal)
+    # One composed buffer, so both plans spend the identical retained evidence.
+    buffered = observed_buffer(buffer, model, observations)
     subject_plan = _plan_under(
-        _SUBJECT,
-        buffer,
-        model,
-        observations=observations,
-        concurrency=concurrency,
-        tx_instant=subject_instant,
+        _SUBJECT, buffered, model, concurrency=concurrency, tx_instant=subject_instant
     )
     login_plan = _plan_under(
-        _LOGIN,
-        buffer,
-        model,
-        observations=observations,
-        concurrency=concurrency,
-        tx_instant=login_instant,
+        _LOGIN, buffered, model, concurrency=concurrency, tx_instant=login_instant
     )
 
     assert subject_plan == login_plan

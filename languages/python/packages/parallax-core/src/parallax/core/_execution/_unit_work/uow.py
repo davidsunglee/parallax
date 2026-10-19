@@ -44,18 +44,6 @@ from parallax.core._execution._unit_work.instructions import (
     PreparedTargetWrite,
 )
 from parallax.core._execution._unit_work.keys import resolve_object_key
-from parallax.core._execution._unit_work.materialized import (
-    BufferItem,
-    InsertionKeyedWrite,
-    MaterializedWriteGroup,
-    ObjectClaimedWrite,
-    ObservedKeyedWrite,
-    TargetKeyedWrite,
-    buffered_instruction,
-    group_state_keys,
-    readless_write,
-    target_write,
-)
 from parallax.core._execution._unit_work.retain import (
     InsertionIdentity,
     KeyedWriteRefusalAdvice,
@@ -68,6 +56,18 @@ from parallax.core._execution._unit_work.strategy import (
     ActorIdentity,
     Concurrency,
     EvidencePolicyLookup,
+)
+from parallax.core._execution._unit_work.write_items import (
+    BufferItem,
+    InsertionKeyedWrite,
+    MaterializedWriteGroup,
+    ObjectClaimedWrite,
+    ObservedKeyedWrite,
+    TargetKeyedWrite,
+    buffered_instruction,
+    group_state_keys,
+    readless_write,
+    target_write,
 )
 from parallax.core._execution._unit_work.write_planner import (
     PendingWrites,
@@ -1038,25 +1038,24 @@ class UnitOfWork:
         boundary — all of it, or nothing.
 
         The claim is read off the carrier itself
-        (:func:`~parallax.core._execution._unit_work.materialized.buffered_write`): a
+        (:func:`~parallax.core._execution._unit_work.write_items.buffered_write`): a
         retained observation claims the state it observed, an object-claimed
         write claims its instruction's object, and a Materialized Write Group
         claims every state it selected (`m-unit-work` "Observed-State
-        Coalescing"). A caller-held observation, an insert, and a bare
-        instruction claim nothing. An arriving keyed intent the held claim
-        cannot absorb raises :class:`WriteEvidenceError`
-        (``write-evidence-already-claimed``); a group colliding with a held
-        claim raises :class:`UnitOfWorkError`, withdrawing the claims it had
-        admitted. Either way the buffer, the claims, and the pending inserts are
-        left as they were.
+        Coalescing"). An insert and a bare instruction claim nothing. An
+        arriving keyed intent the held claim cannot absorb raises
+        :class:`WriteEvidenceError` (``write-evidence-already-claimed``); a
+        group colliding with a held claim raises :class:`UnitOfWorkError`,
+        withdrawing the claims it had admitted. Either way the buffer, the
+        claims, and the pending inserts are left as they were.
 
-        A carrier built from a read's retained claim brings that claim with it,
+        A carrier built from a read's retained observation brings it along,
         so the buffer is what keeps a write's evidence alive once the caller
         releases the source value it came from, and what a successful flush
         spends it through.
 
         A caller-addressed carrier
-        (:class:`~parallax.core._execution._unit_work.materialized.TargetKeyedWrite`)
+        (:class:`~parallax.core._execution._unit_work.write_items.TargetKeyedWrite`)
         is appended at the object its condition names and claims nothing: its
         caller's stated revision is its whole condition, and this judges none of
         it. :meth:`buffer_target` is the admission that does, and it buffers
@@ -1067,7 +1066,7 @@ class UnitOfWork:
         ``insertion_advice`` for a repeat of it (:meth:`insertion_advice`).
         Where an earlier insertion of the object is stored and a pending write
         removes all of it, the insert executes after that removal. A write an insertion authorized
-        (:class:`~parallax.core._execution._unit_work.materialized.InsertionKeyedWrite`) is
+        (:class:`~parallax.core._execution._unit_work.write_items.InsertionKeyedWrite`) is
         admitted only while that authority stands, and a write leaving nothing
         of what a still-unflushed insertion opened ends it.
 
@@ -1459,7 +1458,7 @@ class UnitOfWork:
 
     def _claim_keyed(self, item: BufferItem, key: ObjectKey | None) -> None:
         if isinstance(item, ObservedKeyedWrite):
-            scope: ClaimScope | None = None if item.claim is None else item.claim.key
+            scope: ClaimScope | None = item.retained_observation.key
         elif isinstance(item, ObjectClaimedWrite):
             scope = key
         elif isinstance(item, InsertionKeyedWrite):
@@ -1505,7 +1504,7 @@ class UnitOfWork:
             scope = None
         else:
             key = resolve_object_key(instruction, inheritance.view(self.meta))
-            scope = None if item.claim is None else item.claim.key
+            scope = item.retained_observation.key
         assert key is not None  # such a write names one object
         if not self._pending.admits_temporal(item, key) or (
             scope is not None and (self._claims.held(scope) is not None or self._claims.spans(key))

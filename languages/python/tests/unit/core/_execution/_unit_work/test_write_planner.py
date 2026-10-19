@@ -39,8 +39,11 @@ from parallax.core._execution._unit_work.instructions import (
     derive_keyed_write,
     prepare_typed_write,
 )
-from parallax.core._execution._unit_work.materialized import ObjectClaimedWrite, ObservedKeyedWrite
-from parallax.core._execution._unit_work.write_settlement import OrderedWrite
+from parallax.core._execution._unit_work.write_items import (
+    ObjectClaimedWrite,
+    ObservedKeyedWrite,
+    OrderedWrite,
+)
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import INFINITY
 from parallax.core.metamodel import (
@@ -71,7 +74,6 @@ from parallax.core.unit_work import (
     VersionedEvidenceBuilder,
     WriteAssignment,
     WritePlanningRequest,
-    buffered_write,
     object_key,
 )
 from parallax.core.write_plan import (
@@ -107,7 +109,12 @@ from parallax.core.write_plan.steps import (
 )
 from parallax.descriptor._records import Metamodel as DescriptorMetamodel
 from tests._support.clock_probes import CountingClock, inert_instant, instant_at
-from tests._support.planner_probes import TEST_ACTOR_IDENTITY, observed_buffer
+from tests._support.planner_probes import (
+    TEST_ACTOR_IDENTITY,
+    RecordingSource,
+    observed_buffer,
+    retained_observation,
+)
 from tests.unit._corpus_identity_support import corpus_entity, corpus_object_key
 from tests.unit._corpus_model_support import corpus_records, formed
 from tests.unit._corpus_model_support import model as corpus_model
@@ -203,17 +210,18 @@ def _prepared_keyed(write: KeyedWrite, model: Metamodel) -> PreparedKeyedWrite:
 
 
 def _observed(
-    write: KeyedWrite,
-    observation: WriteObservation,
-    *,
-    claim: RetainedObservation | None = None,
+    write: KeyedWrite, evidence: WriteObservation | RetainedObservation
 ) -> ObservedKeyedWrite:
-    """``write`` as an observation carrier."""
-    return ObservedKeyedWrite(_prepared_keyed(write, _ACCOUNT), observation, claim=claim)
+    """``write`` as an observation carrier, retaining ``evidence`` alone where
+    no shared retained observation is supplied."""
+    prepared = _prepared_keyed(write, _ACCOUNT)
+    if not isinstance(evidence, RetainedObservation):
+        evidence = retained_observation(prepared, _ACCOUNT, evidence)
+    return ObservedKeyedWrite(prepared, evidence)
 
 
 def _claimed(write: KeyedWrite) -> ObjectClaimedWrite:
-    return ObjectClaimedWrite(_prepared_keyed(write, _WALLET))
+    return ObjectClaimedWrite(_prepared_keyed(write, _WALLET), RecordingSource())
 
 
 def _version_group(
@@ -337,12 +345,6 @@ _BALANCE_PREDECESSOR: dict[str, object] = {
 }
 
 
-def _balance_update(row: Mapping[str, object], observation: TemporalObservation) -> BufferItem:
-    return buffered_write(
-        _prepared_keyed(KeyedWrite("amend", "Balance", (row,)), _BALANCE), observation
-    )
-
-
 def _changed_entry(plan: WritePlan) -> tuple[ChangedFrom, PlannedRow]:
     (entry,) = (
         entry
@@ -361,11 +363,12 @@ def test_coalesced_temporal_writes_overlay_every_member_any_of_them_assigned() -
     observation = TemporalObservation(predecessor=PredecessorRow(members=_BALANCE_PREDECESSOR))
     plan = _plan(
         [
-            _balance_update({"id": 1, "value": Decimal("9.00")}, observation),
-            _balance_update({"id": 1, "acctNum": "B"}, observation),
-            _balance_update({"id": 1, "value": Decimal("1.00")}, observation),
+            KeyedWrite("amend", "Balance", ({"id": 1, "value": Decimal("9.00")},)),
+            KeyedWrite("amend", "Balance", ({"id": 1, "acctNum": "B"},)),
+            KeyedWrite("amend", "Balance", ({"id": 1, "value": Decimal("1.00")},)),
         ],
         _BALANCE,
+        observations={corpus_object_key("Balance", ("id", 1)): observation},
     )
     _origin, row = _changed_entry(plan)
     values = _row_values(row)
@@ -2080,13 +2083,9 @@ def test_only_surviving_writes_carry_claims_into_execution_units() -> None:
         None,
     )
     buffer = [
-        _observed(KeyedWrite("delete", "Account", ({"id": 1},)), observation, claim=shared),
-        _observed(
-            KeyedWrite("amend", "Account", ({"id": 1, "balance": Decimal("9.00")},)),
-            observation,
-            claim=shared,
-        ),
-        _observed(KeyedWrite("amend", "Account", ({"id": 2},)), retired_observation, claim=retired),
+        _observed(KeyedWrite("delete", "Account", ({"id": 1},)), shared),
+        _observed(KeyedWrite("amend", "Account", ({"id": 1, "balance": Decimal("9.00")},)), shared),
+        _observed(KeyedWrite("amend", "Account", ({"id": 2},)), retired),
     ]
     finalized = build_write_planner(_ACCOUNT).finalize(
         WritePlanningRequest(

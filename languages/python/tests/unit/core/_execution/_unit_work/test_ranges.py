@@ -23,7 +23,7 @@ from parallax.core._execution._unit_work.instructions import (
     PreparedTargetWrite,
     prepare_wire_write,
 )
-from parallax.core._execution._unit_work.materialized import (
+from parallax.core._execution._unit_work.write_items import (
     BufferItem,
     ComposedTemporalWrite,
     ObservedKeyedWrite,
@@ -51,7 +51,7 @@ from parallax.core.write_plan import (
     VersionObservation,
     WritePlanningError,
 )
-from parallax.core.write_plan.keys import TemporalObjectStateKey
+from parallax.core.write_plan.keys import TemporalObjectStateKey, VersionedObjectStateKey
 from parallax.core.write_plan.plan import (
     NO_TEMPORAL_WRITE_OWNERSHIP,
     BoundRange,
@@ -459,7 +459,14 @@ def test_a_temporal_write_holding_no_temporal_observation_is_refused_before_the_
     )
     assert isinstance(prepared, PreparedKeyedWrite)
     item: BufferItem = (
-        prepared if observation is None else ObservedKeyedWrite(prepared, observation)
+        prepared
+        if observation is None
+        else ObservedKeyedWrite(
+            prepared,
+            RetainedObservation(
+                VersionedObjectStateKey(ObjectKey(_SPAN, (("id", 1),)), 1), observation, None
+            ),
+        )
     )
     clock = CountingClock([_PLANNED_AT])
     with pytest.raises(WritePlanningError, match="closes the current milestone"):

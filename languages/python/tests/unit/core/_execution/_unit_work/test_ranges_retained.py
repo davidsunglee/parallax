@@ -16,9 +16,13 @@ from parallax.core import inheritance
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work import ranges as ranges_module
 from parallax.core._execution._unit_work.acquisition import CompletionRequest, CoverageReadRequest
-from parallax.core._execution._unit_work.materialized import BufferItem, TargetKeyedWrite, chained
 from parallax.core._execution._unit_work.ranges import DeferredTemporalRange
 from parallax.core._execution._unit_work.retain import RetainedTargetState
+from parallax.core._execution._unit_work.write_items import (
+    BufferItem,
+    TargetKeyedWrite,
+    chained_temporal_write,
+)
 from parallax.core._execution._unit_work.write_planner import compose_writes
 from parallax.core._execution._unit_work.write_runner import acquire_and_bind_range
 from parallax.core.base import INFINITY
@@ -78,7 +82,7 @@ def _planned(
     if follows:
         (composed,) = buffered
         assert not isinstance(composed, RetainedObservation)
-        buffered = [chained(composed, "id", follows=True)]  # type: ignore[arg-type]
+        buffered = [chained_temporal_write(composed, "id", follows=True)]  # type: ignore[arg-type]
     plan = build_write_planner(POSITION).finalize(
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
