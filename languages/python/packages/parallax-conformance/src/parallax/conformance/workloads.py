@@ -24,6 +24,7 @@ from parallax.core.entity._authored_resolver import object_query_node
 from parallax.core.metamodel import Metamodel
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query import deserialize as deserialize_query
+from parallax.core.wire._json import dump_document
 
 __all__ = [
     "ACQUISITION_LEVELS",
@@ -484,9 +485,21 @@ def _measured(fixture_path: Path, text: str) -> dict[str, object]:
 
 
 def _canonical(document: object) -> bytes:
-    return json.dumps(document, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode(
-        "utf-8"
-    )
+    compact = json.dumps(document, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    # dump_document departs from the host spelling only for an authored number that
+    # spelling would turn into another, so only such a document needs its exact form.
+    if dump_document(document) == json.dumps(document):
+        return compact.encode("utf-8")
+    return f"exact:{dump_document(_key_sorted(document))}".encode()
+
+
+def _key_sorted(value: object) -> object:
+    if isinstance(value, Mapping):
+        mapping = cast("Mapping[str, object]", value)
+        return {key: _key_sorted(mapping[key]) for key in sorted(mapping)}
+    if isinstance(value, list):
+        return [_key_sorted(member) for member in cast("list[object]", value)]
+    return value
 
 
 def _file_text(path: Path) -> str:
@@ -500,7 +513,8 @@ def workload_digest(
 ) -> str:
     """The SHA-256 digest of what ``workloads`` measure: each workload's id, the
     canonical JSON of its fixture's measured sections and of its parsed model,
-    the generated-key offset, and the structural and leaf-type manifests.
+    every number keeping its authored meaning, the generated-key offset, and the
+    structural and leaf-type manifests.
     Comments, formatting, and fixture keys outside the measured sections leave
     it unchanged.
 

@@ -164,6 +164,30 @@ def test_workload_digest_moves_with_every_measured_input(
     assert _edited_digest("conventional-fanout", source, edit) != workload_digest()
 
 
+_ORDER_ID = "parallax.compatibility.Order.id"
+
+
+@pytest.mark.parametrize(
+    ("authored", "changed"),
+    [("9007199254740992.0", "9007199254740993.0"), ("0", "1" * 5000)],
+    ids=["beyond-float-precision", "beyond-int-digit-limit"],
+)
+def test_workload_digest_distinguishes_numbers_the_host_spells_alike(
+    authored: str, changed: str
+) -> None:
+    def keyed(literal: str) -> str:
+        return _edited_digest(
+            "conventional-fanout",
+            "fixture",
+            _replaced(
+                'predicate: { "true": {} }',
+                f"predicate: {{ eq: {{ path: {_ORDER_ID}, value: {literal} }} }}",
+            ),
+        )
+
+    assert keyed(authored) != keyed(changed)
+
+
 def test_a_workload_holds_only_its_fixtures_measured_sections() -> None:
     for workload in catalog().values():
         authored = case_format.safe_load_yaml(workload.fixture_path.read_text(encoding="utf-8"))

@@ -1750,14 +1750,29 @@ def _write_adjusted(
     )
 
 
-CODE_IDENTITY_PROGRAM: Final = (
-    "import json\n"
-    "from parallax.conformance import workloads\n"
-    "print(json.dumps([workloads._GENERATED_KEY_OFFSET, workloads.structural_digest(), "
-    "workloads.leaf_type_digest()]))\n"
-)
-"""Prints what a workload digest covers as code rather than as measured
-inputs, as the checkout running it defines that code."""
+CODE_IDENTITY_PROGRAM: Final = """\
+import hashlib
+import json
+from parallax.conformance import workloads
+
+generated = {}
+for workload_id, workload in workloads.catalog().items():
+    if "generate" in workload.document["dataset"]:
+        rows = workload.rows(workload.roots).entities
+        payload = {entity: list(rows[entity]) for entity in rows}
+        text = json.dumps(payload, sort_keys=True, default=repr)
+        generated[workload_id] = hashlib.sha256(text.encode()).hexdigest()
+print(json.dumps([
+    workloads._GENERATED_KEY_OFFSET,
+    workloads.structural_digest(),
+    workloads.leaf_type_digest(),
+    generated,
+]))
+"""
+"""Prints what a workload measures as code rather than as fixture text, as the
+checkout running it defines that code: the generated-key offset, the frozen
+manifests, and the digest of each generated dataset's rows at its fixture's
+scale."""
 
 type CodeIdentityRunner = Callable[[Path], tuple[int, str, str]]
 """Runs :data:`CODE_IDENTITY_PROGRAM` in the checkout whose Python workspace is
@@ -1802,7 +1817,7 @@ def _prove_measurement_unchanged(
     current = _code_identity(runner, WORKSPACE, "HEAD")
     if produced != current:
         raise ValueError(
-            f"the workload digest's code at {label} differs from HEAD's: {produced} != {current}"
+            f"the workload code at {label} differs from HEAD's: {produced} != {current}"
         )
 
 
@@ -1817,10 +1832,10 @@ def redigest(
     producing commit every member names: that commit is an ancestor of HEAD,
     the members embed HEAD's committed Budget Contract, the measured inputs the
     commit holds digest to HEAD's workload digest, and the commit's own code
-    reports HEAD's generated-key offset and frozen manifests. Every member
-    recording the snapshot-delivery member's workload digest takes HEAD's;
-    readings, comparisons, other provenance, and measurement conditions stay as
-    captured, and an existing adjustment is never overwritten.
+    reports HEAD's generated-key offset, frozen manifests, and generated rows.
+    Every member recording the snapshot-delivery member's workload digest takes
+    HEAD's; readings, comparisons, other provenance, and measurement conditions
+    stay as captured, and an existing adjustment is never overwritten.
     """
     document, conditions, durations = _reclassification_inputs(portfolio)
     members = cast("Sequence[Document]", document["members"])

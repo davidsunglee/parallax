@@ -492,6 +492,9 @@ ACCEPTED_CONFORMANCE_PRIVATE_REACHES: dict[tuple[str, str], frozenset[str]] = {
     ("parallax.conformance.case_format", "parallax.core.wire._json"): frozenset(
         {"authored_number"}
     ),
+    # The workload digest hashes those authored numbers, so it serializes them
+    # through the one writer that keeps the meaning each was authored with.
+    ("parallax.conformance.workloads", "parallax.core.wire._json"): frozenset({"dump_document"}),
     **_carrier_neutral_private_sql_reaches_from(conformance=True),
     # The second-frontend fixture drives production's eager delivery over a Page
     # it publishes itself, through the Root View and refusal Snapshot publication
