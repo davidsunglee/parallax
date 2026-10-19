@@ -43,6 +43,6 @@ workloads:
           mariadb: select count(*) n, sum(t0.balance) total from account t0
   - name: point-read-cached
     kind: cache-hit
-    note: represents the SAME point-read repeated — a query-cache HIT costs ZERO Database Calls (served from the cache by a caching implementation). Pairs with `point-read` (the miss) so the report carries the hit's zero beside the miss's measured cost. A cache-hit workload lists no golden SQL, so a run executes nothing and records 0 trips — that zero is this fixture's own declaration of what a hit costs rather than a reading of any query cache, and what it proves is the methodology end-to-end.
+    note: represents the SAME point-read repeated — a query-cache HIT costs ZERO Database Calls (served from the cache by a caching implementation). Pairs with `point-read` (the miss) so the report carries the hit's zero beside the miss's measured cost. A cache-hit workload lists no golden SQL, so a run executes nothing and records 0 Database Calls — that zero is this fixture's own declaration of what a hit costs rather than a reading of any query cache, and what it proves is the methodology end-to-end.
     iterations: 200
     expectDatabaseCalls: 0
