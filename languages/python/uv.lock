@@ -466,16 +466,16 @@ wheels = [
 
 [[package]]
 name = "cython-lint"
-version = "0.21.1"
+version = "0.22.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cython" },
     { name = "pycodestyle" },
     { name = "tokenize-rt" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/32/1a/29aa1e57639bb54a45803e85fbb7f8603e2f490dfb4568cdebf04a70929e/cython_lint-0.21.1.tar.gz", hash = "sha256:bfacc75ce47b6631fd3c7a570b6918cea37e679c71407c9e1249e3a949f9100f", size = 30089, upload-time = "2026-08-26T13:18:51.462Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/31/d5/893dc09b9512861789902d1eb05644e3267c422225beede3ff2a6be44e93/cython_lint-0.22.0.tar.gz", hash = "sha256:ec1f536fbd9d420de48700c36942603bf1918d38b9136ea2ae905443f1e8ea10", size = 32543, upload-time = "2026-10-07T07:07:09.877Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/6a/a8/9b45ca296632584a450ae2f7d37ec9d1268846451df6e5587905dd8d02a8/cython_lint-0.21.1-py3-none-any.whl", hash = "sha256:8a161e6f81e6477d74ce3fa63c564ce4c63104e001ababb98ad6b053cd1d5152", size = 15188, upload-time = "2026-08-26T13:18:50.097Z" },
+    { url = "https://files.pythonhosted.org/packages/a4/a1/b9998246e5b48549d0967b471dd204b01eb2b2818165b85e01de3c6bc340/cython_lint-0.22.0-py3-none-any.whl", hash = "sha256:b9cf60e92cccc33d14bc7b00be3c50c85136f8f2b0a7f5345f876c17ed3f0f16", size = 16813, upload-time = "2026-10-07T07:07:08.554Z" },
 ]
 
 [[package]]
