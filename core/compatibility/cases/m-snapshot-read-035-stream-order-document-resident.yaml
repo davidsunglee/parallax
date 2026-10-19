@@ -48,4 +48,4 @@ then:
       - { id: 51, travelerId: 1, destination: Oslo, nights: 3 }
       - { id: 53, travelerId: 2, destination: Bergen, nights: 7 }
       - { id: 52, travelerId: 1, destination: Bergen, nights: 1 }
-  roundTrips: 3
+  databaseCalls: 3

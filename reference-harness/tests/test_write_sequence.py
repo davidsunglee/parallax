@@ -2,7 +2,7 @@
 
 These pin the DB-free invariants of a milestone-chaining write case: the
 statement-count consistency check (sum of per-step counts == then.statements DML count
-== roundTrips), the temporal DDL (a temporal entity's physical primary key spans
+== databaseCalls), the temporal DDL (a temporal entity's physical primary key spans
 the as-of start_column so the milestone chain is admissible), and the as-of-aware
 descriptor accessors. The full apply-DML-and-assert-table-state behavior is
 exercised end-to-end against real Postgres by the compatibility suite.
@@ -66,7 +66,7 @@ def test_write_sequence_cases_are_discovered_and_self_describe() -> None:
 def test_write_step_count_consistency_holds_for_authored_cases() -> None:
     for case in discover_cases(COMPATIBILITY_ROOT):
         if case.is_write_sequence:
-            # Must not raise: per-step counts sum to the DML count and roundTrips.
+            # Must not raise: per-step counts sum to the DML count and databaseCalls.
             _assert_write_step_count(case, "postgres")
 
 

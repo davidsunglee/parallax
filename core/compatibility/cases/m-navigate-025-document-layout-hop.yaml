@@ -26,4 +26,4 @@ then:
     mariadb: select id, json_value(payload, '$.displayName') as display_name, cast(json_value(payload, '$.score') as signed) as score, json_value(payload, '$.joinedOn') as joined_on, json_value(payload, '$.note') as note from traveler where id in (select traveler_id from trip where json_value(payload, '$.destination') = 'Oslo')
   rows:
     - { id: 1, display_name: Ada, score: 7, joined_on: '2026-01-15', note: north wing }
-  roundTrips: 1
+  databaseCalls: 1

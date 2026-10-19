@@ -21,7 +21,7 @@ when:
             asOf: latest
           valid-time:
             asOf: "2024-03-01T00:00:00.000000Z"
-      roundTrips: 1
+      databaseCalls: 1
       note: observe R2 — id 1 pinned at Valid Time 2024-03-01, the rectangle-split head (100.00), valid [2024-01-01, 2024-06-01)
       statements:
         - sql:
@@ -41,7 +41,7 @@ when:
             asOf: latest
           valid-time:
             asOf: "2024-09-01T00:00:00.000000Z"
-      roundTrips: 1
+      databaseCalls: 1
       note: observe R3 — the SAME primary key at Valid Time 2024-09-01, the corrected tail (200.00), a DIFFERENT milestone also current on Transaction Time
       statements:
         - sql:
@@ -58,7 +58,7 @@ when:
             - { id: 1, value: "150.00" }
           validFrom: "2024-03-01T00:00:00.000000Z"
           at: "2024-10-01T00:00:00.000000Z"
-      roundTrips: 4
+      databaseCalls: 4
       note: correct the value the step-0 read returned from its pin through infinity — the close addresses R2 by its finite end (thru_z 2024-06-01), the flush reads the coverage beyond it and closes R3 under its own start; R2's head carries its value, and R2's set tail and R3 set over its own unassigned members hold one complete state, so they open as one successor
       statements:
         - sql:
@@ -71,7 +71,7 @@ when:
             postgres: insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?)
           binds: [1, A, "100.00", "2024-01-01T00:00:00.000000Z", "2024-03-01T00:00:00.000000Z", "2024-10-01T00:00:00.000000Z", infinity, 1, A, "150.00", "2024-03-01T00:00:00.000000Z", infinity, "2024-10-01T00:00:00.000000Z", infinity]
 then:
-  roundTrips: 6
+  databaseCalls: 6
   tableState:
     position:
       - pos_id: 1

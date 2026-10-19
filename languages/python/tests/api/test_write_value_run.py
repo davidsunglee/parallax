@@ -63,13 +63,13 @@ def test_write_value_case_runs_through_the_shipped_verbs(
 
     outcomes = db.transact(fn)
     assert outcomes == [step.expect_error for step in steps]
-    # The case's `then.roundTrips` graded against what the transaction actually
+    # The case's `then.databaseCalls` graded against what the transaction actually
     # put on the wire, never against a count this suite kept. The count is the
     # steps' own verbs, so the WRITE statements are what it names: a read that
     # arranges a value of the stated provenance is the adapter's own affair and
-    # is not the case's cost (:func:`write_value_runner.declared_round_trips`),
+    # is not the case's cost (:func:`write_value_runner.declared_database_calls`),
     # and which port method ran a statement is what separates the two.
-    assert len(observed.writes) == write_value_runner.declared_round_trips(case)
+    assert len(observed.writes) == write_value_runner.declared_database_calls(case)
     # The durable end state beside it: a statement that ran would have left an
     # effect on one of the only two rows a keyed write here can address. The
     # fixture row stands exactly as loaded (a flushed `update` would bump

@@ -19,4 +19,4 @@ when:
       note: the gated UPDATE conflicts once, and a bound of zero leaves it unreplayed
 then:
   outcome: optimistic-lock-conflict
-  roundTrips: 2
+  databaseCalls: 2

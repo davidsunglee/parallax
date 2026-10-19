@@ -61,7 +61,7 @@ def _read_case() -> dict[str, Any]:
         "then": {
             "statements": [{"sql": {"postgres": "select t0.id from orders t0"}, "binds": []}],
             "rows": [{"id": 1}],
-            "roundTrips": 1,
+            "databaseCalls": 1,
         },
     }
 
@@ -97,7 +97,7 @@ def _scenario_case() -> dict[str, Any]:
                         "target": "Account",
                         "predicate": {"eq": {"path": "Account.id", "value": 7}},
                     },
-                    "roundTrips": 1,
+                    "databaseCalls": 1,
                     "statements": [
                         {
                             "sql": {"postgres": "select t0.id from account t0 where t0.id = ?"},
@@ -108,7 +108,7 @@ def _scenario_case() -> dict[str, Any]:
                 }
             ]
         },
-        "then": {"roundTrips": 1},
+        "then": {"databaseCalls": 1},
     }
 
 
@@ -132,7 +132,7 @@ def _settled_write_scenario_case() -> dict[str, Any]:
                         "target": "Position",
                         "predicate": {"eq": {"path": "Position.id", "value": 1}},
                     },
-                    "roundTrips": 1,
+                    "databaseCalls": 1,
                     "statements": [
                         {
                             "sql": {"postgres": "select t0.pos_id from position t0"},
@@ -152,14 +152,14 @@ def _settled_write_scenario_case() -> dict[str, Any]:
                             "validFrom": "2024-03-01T00:00:00+00:00",
                         }
                     ],
-                    "roundTrips": 1,
+                    "databaseCalls": 1,
                     "statements": [
                         {"sql": {"postgres": "update position set out_z = ?"}, "binds": ["x"]}
                     ],
                 },
             ]
         },
-        "then": {"roundTrips": 2},
+        "then": {"databaseCalls": 2},
     }
 
 
@@ -180,7 +180,7 @@ def _action_scenario_case() -> dict[str, Any]:
                         "target": "Order",
                         "predicate": {"in": {"path": "Order.id", "values": [1, 2]}},
                     },
-                    "roundTrips": 1,
+                    "databaseCalls": 1,
                     "statements": [
                         {
                             "sql": {
@@ -195,7 +195,7 @@ def _action_scenario_case() -> dict[str, Any]:
                     "action": "load",
                     "on": 0,
                     "path": "items",
-                    "roundTrips": 1,
+                    "databaseCalls": 1,
                     "statements": [
                         {
                             "sql": {
@@ -211,18 +211,18 @@ def _action_scenario_case() -> dict[str, Any]:
                     "action": "access",
                     "on": 0,
                     "path": "items",
-                    "roundTrips": 0,
+                    "databaseCalls": 0,
                     "sameObjectAs": 1,
                 },
                 {
                     "action": "mutate",
                     "on": 0,
                     "set": {"name": "Ada2"},
-                    "roundTrips": 0,
+                    "databaseCalls": 0,
                 },
             ]
         },
-        "then": {"roundTrips": 2},
+        "then": {"databaseCalls": 2},
     }
 
 
@@ -260,7 +260,7 @@ def _read_expect_graph_case() -> dict[str, Any]:
                         "predicate": {"eq": {"path": "Order.id", "value": 1}},
                         "includes": [{"segments": [{"rel": "Order.items"}]}],
                     },
-                    "roundTrips": 2,
+                    "databaseCalls": 2,
                     "statements": [
                         {
                             "sql": {"postgres": "select t0.id from orders t0 where t0.id = ?"},
@@ -278,7 +278,7 @@ def _read_expect_graph_case() -> dict[str, Any]:
                 }
             ]
         },
-        "then": {"roundTrips": 2},
+        "then": {"databaseCalls": 2},
     }
 
 
@@ -295,7 +295,7 @@ def _action_identity_error_case() -> dict[str, Any]:
                         "target": "Order",
                         "predicate": {"eq": {"path": "Order.id", "value": 1}},
                     },
-                    "roundTrips": 1,
+                    "databaseCalls": 1,
                     "statements": [
                         {
                             "sql": {"postgres": "select t0.id from orders t0 where t0.id = ?"},
@@ -309,19 +309,19 @@ def _action_identity_error_case() -> dict[str, Any]:
                         "target": "Order",
                         "predicate": {"eq": {"path": "Order.id", "value": 1}},
                     },
-                    "roundTrips": 0,
+                    "databaseCalls": 0,
                     "differentObjectFrom": 0,
                 },
                 {
                     "action": "mutate",
                     "on": 0,
                     "set": {"name": "Ada2"},
-                    "roundTrips": 0,
+                    "databaseCalls": 0,
                     "expectError": "transaction-time-pin-read-only",
                 },
             ]
         },
-        "then": {"roundTrips": 1},
+        "then": {"databaseCalls": 1},
     }
 
 
@@ -331,7 +331,7 @@ def _write_value_scenario_case() -> dict[str, Any]:
 
     Each step hands a keyed write verb a value whose provenance the sibling
     `value` states, names no `on`, carries no golden SQL, and declares
-    `roundTrips: 0` — so the whole scenario's declared total is legitimately 0,
+    `databaseCalls: 0` — so the whole scenario's declared total is legitimately 0,
     the one shape where that floor is relaxed.
 
     The three steps are the three shapes this grammar admits: a refused `update`,
@@ -349,19 +349,19 @@ def _write_value_scenario_case() -> dict[str, Any]:
                 {
                     "action": "amend",
                     "value": "unmanaged",
-                    "roundTrips": 0,
+                    "databaseCalls": 0,
                     "expectError": "write-value-not-stored",
                 },
-                {"action": "amend", "value": "thisSource", "roundTrips": 0},
+                {"action": "amend", "value": "thisSource", "databaseCalls": 0},
                 {
                     "action": "insert",
                     "value": "thisSource",
-                    "roundTrips": 0,
+                    "databaseCalls": 0,
                     "expectError": "write-value-already-stored",
                 },
             ]
         },
-        "then": {"roundTrips": 0},
+        "then": {"databaseCalls": 0},
     }
 
 
@@ -611,13 +611,13 @@ def _rejected_query_case() -> dict[str, Any]:
     }
 
 
-def _rejected_case_declaring_zero_round_trips() -> dict[str, Any]:
-    """A rejected case declaring the zero round trips it actually costs.
+def _rejected_case_declaring_zero_database_calls() -> dict[str, Any]:
+    """A rejected case declaring the zero Database Calls it actually costs.
 
     The count a pre-SQL refusal can accurately state, which the property's own
     default of one — written for the shapes that reach the database — cannot."""
     doc = _rejected_query_case()
-    doc["then"]["roundTrips"] = 0
+    doc["then"]["databaseCalls"] = 0
     return doc
 
 
@@ -672,7 +672,7 @@ def _action_boundary_no_on_case() -> dict[str, Any]:
                         "target": "Order",
                         "predicate": {"eq": {"path": "Order.id", "value": 1}},
                     },
-                    "roundTrips": 1,
+                    "databaseCalls": 1,
                     "statements": [
                         {
                             "sql": {"postgres": "select t0.id from orders t0 where t0.id = ?"},
@@ -683,7 +683,7 @@ def _action_boundary_no_on_case() -> dict[str, Any]:
                 },
                 {
                     "action": "flush",
-                    "roundTrips": 1,
+                    "databaseCalls": 1,
                     "statements": [
                         {
                             "sql": {
@@ -693,10 +693,10 @@ def _action_boundary_no_on_case() -> dict[str, Any]:
                         }
                     ],
                 },
-                {"action": "commit", "roundTrips": 0},
+                {"action": "commit", "databaseCalls": 0},
             ]
         },
-        "then": {"roundTrips": 2},
+        "then": {"databaseCalls": 2},
     }
 
 
@@ -738,7 +738,7 @@ def _graphs_read_case() -> dict[str, Any]:
                     "graph": {"InvoiceLine": [{"id": 1000, "amount": 75.00}]},
                 },
             ],
-            "roundTrips": 1,
+            "databaseCalls": 1,
         },
     }
 
@@ -785,7 +785,7 @@ def _stored_data_issues_read_case() -> dict[str, Any]:
                     ],
                 }
             ],
-            "roundTrips": 1,
+            "databaseCalls": 1,
         },
     }
 
@@ -799,14 +799,14 @@ def _provisioned_read_case() -> dict[str, Any]:
 
 def _statementless_read_case() -> dict[str, Any]:
     doc = _read_case()
-    doc["then"] = {"statements": [], "rows": [], "roundTrips": 0}
+    doc["then"] = {"statements": [], "rows": [], "databaseCalls": 0}
     return doc
 
 
 def _streamed_statementless_read_case() -> dict[str, Any]:
     doc = _read_case()
     doc["when"]["stream"] = {"batchSize": 2}
-    doc["then"] = {"statements": [], "graph": {"Order": []}, "roundTrips": 0}
+    doc["then"] = {"statements": [], "graph": {"Order": []}, "databaseCalls": 0}
     return doc
 
 
@@ -855,7 +855,7 @@ VALID_CASES = {
     "read-issuing-no-statement": _statementless_read_case,
     "read-streaming-no-statement": _streamed_statementless_read_case,
     "rejected-query": _rejected_query_case,
-    "rejected-declaring-its-zero-cost": _rejected_case_declaring_zero_round_trips,
+    "rejected-declaring-its-zero-cost": _rejected_case_declaring_zero_database_calls,
     "rejected-write": _rejected_write_case,
     "rejected-keyed-write": _rejected_keyed_write_case,
 }
@@ -1407,13 +1407,13 @@ def _write_value_step_with_golden_statements() -> dict[str, Any]:
     return doc
 
 
-def _write_value_step_costing_a_round_trip() -> dict[str, Any]:
-    """A keyed write action step declaring a nonzero `roundTrips`.
+def _write_value_step_costing_a_database_call() -> dict[str, Any]:
+    """A keyed write action step declaring a nonzero `databaseCalls`.
 
     The step's whole observable is which verb accepted the value, so it costs
-    zero round trips by construction."""
+    zero Database Calls by construction."""
     doc = _write_value_scenario_case()
-    doc["when"]["scenario"][0]["roundTrips"] = 1
+    doc["when"]["scenario"][0]["databaseCalls"] = 1
     return doc
 
 
@@ -1421,13 +1421,13 @@ def _write_value_step_accepting_an_insert() -> dict[str, Any]:
     """A keyed write action step declaring an ACCEPTED `insert`.
 
     An accepted `insert` opens a row: the verb buffers a write the committing
-    unit of work flushes, so the step emits DML while its `roundTrips: 0` denies
+    unit of work flushes, so the step emits DML while its `databaseCalls: 0` denies
     it — and no executor could catch the contradiction, since the suite that runs
     this lane asserts no golden SQL and grades the declared zero as the absence of
     exactly the durable effect the acceptance produces. The only accepted keyed
     write this shape carries is the `update` of a value no author changed."""
     doc = _write_value_scenario_case()
-    doc["when"]["scenario"][2] = {"action": "insert", "value": "unmanaged", "roundTrips": 0}
+    doc["when"]["scenario"][2] = {"action": "insert", "value": "unmanaged", "databaseCalls": 0}
     return doc
 
 
@@ -1468,7 +1468,7 @@ def _write_value_scenario_mixing_another_step() -> dict[str, Any]:
                 "target": "parallax.compatibility.Account",
                 "predicate": {"eq": {"path": "parallax.compatibility.Account.id", "value": 2}},
             },
-            "roundTrips": 1,
+            "databaseCalls": 1,
             "statements": [
                 {
                     "sql": {"postgres": "select t0.id from account t0 where t0.id = ?"},
@@ -1477,29 +1477,29 @@ def _write_value_scenario_mixing_another_step() -> dict[str, Any]:
             ],
         }
     )
-    doc["then"]["roundTrips"] = 1
+    doc["then"]["databaseCalls"] = 1
     return doc
 
 
-def _read_case_with_zero_round_trips() -> dict[str, Any]:
-    """A read case declaring `then.roundTrips: 0`.
+def _read_case_with_zero_database_calls() -> dict[str, Any]:
+    """A read case declaring `then.databaseCalls: 0`.
 
     Zero is legal only for the two shapes that can cost nothing — a scenario
     whose steps all cost none, and a pre-SQL `rejected` refusal; a read executes
     the golden SQL it asserts, so an all-zero total is impossible and is refused
     here rather than in a later harness check."""
     doc = _read_case()
-    doc["then"]["roundTrips"] = 0
+    doc["then"]["databaseCalls"] = 0
     return doc
 
 
-def _rejected_case_costing_a_round_trip() -> dict[str, Any]:
-    """A rejected case declaring `then.roundTrips: 1`.
+def _rejected_case_costing_a_database_call() -> dict[str, Any]:
+    """A rejected case declaring `then.databaseCalls: 1`.
 
     A rejected case's input is refused before any statement is composed, so one
-    round trip is not merely unasserted but impossible."""
+    Database Call is not merely unasserted but impossible."""
     doc = _rejected_query_case()
-    doc["then"]["roundTrips"] = 1
+    doc["then"]["databaseCalls"] = 1
     return doc
 
 
@@ -1521,7 +1521,7 @@ def _streamed_read_case(**stream: Any) -> dict[str, Any]:
                 }
             ],
             "graph": {"Order": [{"id": 1}]},
-            "roundTrips": 1,
+            "databaseCalls": 1,
         },
     }
 
@@ -1568,15 +1568,15 @@ def _provisioning_model_outside_the_model_directory() -> dict[str, Any]:
     return doc
 
 
-def _statementless_read_without_round_trips() -> dict[str, Any]:
+def _statementless_read_without_database_calls() -> dict[str, Any]:
     doc = _statementless_read_case()
-    del doc["then"]["roundTrips"]
+    del doc["then"]["databaseCalls"]
     return doc
 
 
-def _statementless_read_costing_a_round_trip() -> dict[str, Any]:
+def _statementless_read_costing_a_database_call() -> dict[str, Any]:
     doc = _statementless_read_case()
-    doc["then"]["roundTrips"] = 1
+    doc["then"]["databaseCalls"] = 1
     return doc
 
 
@@ -1601,13 +1601,13 @@ def _statementless_read_with_stored_data_issues() -> dict[str, Any]:
 def _statementless_write_sequence() -> dict[str, Any]:
     doc = _write_sequence_case()
     doc["then"]["statements"] = []
-    doc["then"]["roundTrips"] = 0
+    doc["then"]["databaseCalls"] = 0
     return doc
 
 
 def _read_costing_nothing_beside_a_statement() -> dict[str, Any]:
     doc = _read_case()
-    doc["then"]["roundTrips"] = 0
+    doc["then"]["databaseCalls"] = 0
     return doc
 
 
@@ -1650,12 +1650,12 @@ def _dialect_keyed_outcome_on_a_read() -> dict[str, Any]:
 
 
 def _read_costing_nothing_by_claiming_an_unopened_boundary() -> dict[str, Any]:
-    # The zero-round-trip relaxation rides `then.outcome: boundary-failed`, so
+    # The zero-Database-Call relaxation rides `then.outcome: boundary-failed`, so
     # confining the outcome is what keeps a case asserting golden SQL from
     # declaring it cost nothing.
     doc = _read_case()
     doc["then"]["outcome"] = "boundary-failed"
-    doc["then"]["roundTrips"] = 0
+    doc["then"]["databaseCalls"] = 0
     return doc
 
 
@@ -1749,14 +1749,14 @@ def _streamed_scenario_step_case() -> dict[str, Any]:
     licenses (`m-case-format` *Streamed read steps*)."""
     doc = _settled_write_scenario_case()
     doc["when"]["scenario"][0]["stream"] = {"batchSize": 2}
-    doc["when"]["scenario"][0]["roundTrips"] = 2
+    doc["when"]["scenario"][0]["databaseCalls"] = 2
     doc["when"]["scenario"][0]["statements"].append(
         {
             "sql": {"postgres": "select t0.pos_id from position t0 where t0.pos_id > ?"},
             "binds": [1, 2],
         }
     )
-    doc["then"]["roundTrips"] = 3
+    doc["then"]["databaseCalls"] = 3
     return doc
 
 
@@ -1817,13 +1817,13 @@ def _streamed_step_naming_a_representation() -> dict[str, Any]:
 
 REJECTED_CASES = {
     "write-value-step-with-golden-statements": _write_value_step_with_golden_statements,
-    "write-value-step-costing-a-round-trip": _write_value_step_costing_a_round_trip,
+    "write-value-step-costing-a-database-call": _write_value_step_costing_a_database_call,
     "write-value-step-accepting-an-insert": _write_value_step_accepting_an_insert,
     "write-value-scenario-on-the-harness-lane": _write_value_scenario_on_the_harness_lane,
     "write-value-scenario-without-a-lane": _write_value_scenario_without_a_lane,
     "write-value-scenario-mixing-another-step": _write_value_scenario_mixing_another_step,
-    "read-with-zero-round-trips": _read_case_with_zero_round_trips,
-    "rejected-costing-a-round-trip": _rejected_case_costing_a_round_trip,
+    "read-with-zero-database-calls": _read_case_with_zero_database_calls,
+    "rejected-costing-a-database-call": _rejected_case_costing_a_database_call,
     "legacy-layout": _legacy_layout,
     "mislabeled-shape": _mislabeled_shape,
     "string-sql-at-golden-location": _string_sql_at_golden_location,
@@ -1887,8 +1887,8 @@ REJECTED_CASES = {
     "provisioning-model-outside-the-model-directory": (
         _provisioning_model_outside_the_model_directory
     ),
-    "statementless-read-without-round-trips": _statementless_read_without_round_trips,
-    "statementless-read-costing-a-round-trip": _statementless_read_costing_a_round_trip,
+    "statementless-read-without-database-calls": _statementless_read_without_database_calls,
+    "statementless-read-costing-a-database-call": _statementless_read_costing_a_database_call,
     "statementless-read-with-reference-sql": _statementless_read_with_reference_sql,
     "statementless-read-with-stored-data-issues": _statementless_read_with_stored_data_issues,
     "statementless-write-sequence": _statementless_write_sequence,

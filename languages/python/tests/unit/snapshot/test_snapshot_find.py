@@ -1,7 +1,7 @@
 """Production find-executor tests for ``find`` and ``find_history``.
 
 Exercises the ONE per-level loop against a fake, canned-response `m-db-port`
-(no Docker): round-trip accounting (one statement per non-empty level), the
+(no Docker): Database Call accounting (one statement per non-empty level), the
 empty-level short-circuit (no child statement issued, gathered from `then`'s
 own contract in `m-deep-fetch`), a back-reference level's zero-statement
 resolution, `familyVariant` materialization flowing through the executor

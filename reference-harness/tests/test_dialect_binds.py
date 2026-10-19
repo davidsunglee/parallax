@@ -59,7 +59,7 @@ def _case_validator() -> Draft202012Validator:
 
 
 def _make_case(statements: list[dict[str, Any]], reference_sql: Any = None) -> Case:
-    then: dict[str, Any] = {"statements": statements, "rows": [], "roundTrips": 1}
+    then: dict[str, Any] = {"statements": statements, "rows": [], "databaseCalls": 1}
     if reference_sql is not None:
         then["referenceSql"] = reference_sql
     raw = {
@@ -100,7 +100,7 @@ def _read_case_doc() -> dict[str, Any]:
                 ),
             },
             "rows": [{"id": 1}],
-            "roundTrips": 1,
+            "databaseCalls": 1,
         },
     }
 

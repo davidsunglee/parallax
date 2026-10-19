@@ -18,4 +18,4 @@ then:
     - { id: 202, order_id: 1, order_item_id: 11, code: PACKED }
     - { id: 203, order_id: 1, order_item_id: 12, code: PICKED }
     - { id: 204, order_id: 42, order_item_id: 421, code: PICKED }
-  roundTrips: 1
+  databaseCalls: 1

@@ -77,4 +77,4 @@ then:
       - { id: 1000, tier: gold }
       - { id: 1005, tier: silver }
       - { id: 1010, tier: bronze }
-  roundTrips: 6
+  databaseCalls: 6

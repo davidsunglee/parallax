@@ -13,13 +13,13 @@ when:
   scenario:
     - action: insert
       value: anotherSource
-      roundTrips: 0
+      databaseCalls: 0
       expectError: write-value-foreign-lifecycle
       note: the insert family refuses another managed source's value
     - action: amend
       value: anotherSource
-      roundTrips: 0
+      databaseCalls: 0
       expectError: write-value-foreign-lifecycle
       note: and so does the update family — neither writes a value it did not produce
 then:
-  roundTrips: 0
+  databaseCalls: 0

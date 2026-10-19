@@ -269,7 +269,7 @@ def _locking_stream_step(case: Case) -> Case:
         "statements": step["statements"],
         "referenceSql": step["referenceSql"],
         "graph": {"Account": step["expectRows"]},
-        "roundTrips": step["roundTrips"],
+        "databaseCalls": step["databaseCalls"],
     }
     return case
 

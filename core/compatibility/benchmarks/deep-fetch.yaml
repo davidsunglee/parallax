@@ -1,11 +1,11 @@
 # Benchmark fixture (m-perf-bench): the deep-fetch shapes workload.
 #
 # Prices, at scale, the statement shape m-deep-fetch's N+1 elimination produces.
-# The headline property is that a deep fetch costs `1 + levels` round trips
+# The headline property is that a deep fetch costs `1 + levels` Database Calls
 # regardless of fan-out: a 1 -> N -> N fetch over P parents is THREE statements
 # (root + items + statuses), never 1 + N + N. This fixture authors that shape and
 # times it: a run executes the statements below and reports how many it issued, so
-# `expectRoundTrips` keeps the declared arithmetic consistent with the statement
+# `expectDatabaseCalls` keeps the declared arithmetic consistent with the statement
 # list rather than catching a target that fell back to N+1. What refuses THAT is
 # the compatibility corpus's golden statements for m-deep-fetch.
 #
@@ -26,7 +26,7 @@ workloads:
   - name: deep-fetch-1-N
     note: root + to-many items — TWO statements over 200 parents, never 1 + 200
     iterations: 50
-    expectRoundTrips: 2
+    expectDatabaseCalls: 2
     statements:
       - sql:
           postgres: select t0.id, t0.name from orders t0 where t0.id <= ?
@@ -39,7 +39,7 @@ workloads:
   - name: deep-fetch-1-N-N
     note: root + items + statuses — THREE statements, the N+1-eliminating shape
     iterations: 50
-    expectRoundTrips: 3
+    expectDatabaseCalls: 3
     statements:
       - sql:
           postgres: select t0.id, t0.name from orders t0 where t0.id <= ?

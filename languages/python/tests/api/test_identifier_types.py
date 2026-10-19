@@ -259,7 +259,7 @@ def test_every_identifier_executes_its_matching_graph(
         assert parent.children[0].id == (
             UUID(child_key) if root_entity.startswith("Uuid") else child_key
         )
-    assert observation.round_trips == document["then"]["roundTrips"]
+    assert observation.database_calls == document["then"]["databaseCalls"]
 
 
 def _join_documents(

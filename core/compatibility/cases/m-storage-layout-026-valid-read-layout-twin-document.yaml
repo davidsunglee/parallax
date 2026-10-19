@@ -22,4 +22,4 @@ then:
   rows:
     - { id: 1, label: alpha, rank: 20 }
     - { id: 2, label: beta, rank: 10 }
-  roundTrips: 1
+  databaseCalls: 1

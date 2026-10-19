@@ -23,7 +23,7 @@ when:
               marks:
                 - { code: A }
                 - { code: B }
-      roundTrips: 1
+      databaseCalls: 1
       note: write every member of every shape — the nested `one`, the nested `many`, and the top-level `many`
       statements:
         - sql:
@@ -49,7 +49,7 @@ when:
             - id: 11
               spec:
                 title: Beta
-      roundTrips: 1
+      databaseCalls: 1
       note: omit `note` and every occurrence-valued member — the omitted `many` members still store the empty array
       statements:
         - sql:
@@ -69,7 +69,7 @@ when:
               spec:
                 title: Gamma
                 note: null
-      roundTrips: 1
+      databaseCalls: 1
       note: spell `note` as an explicit null — the same member, the other presence state
       statements:
         - sql:
@@ -88,7 +88,7 @@ when:
           rows:
             - id: 13
               label: delta
-      roundTrips: 1
+      databaseCalls: 1
       note: name no occurrence at all — `spec` is absent while `marks` still stores the empty array
       statements:
         - sql:
@@ -107,7 +107,7 @@ when:
         orderBy:
           - attr: parallax.compatibility.WriteTwinItem.id
             direction: asc
-      roundTrips: 1
+      databaseCalls: 1
       note: read the four written rows back — each one publishes exactly the value its own write composed
       statements:
         - sql:
@@ -145,7 +145,7 @@ when:
           spec: null
           marks: []
 then:
-  roundTrips: 5
+  databaseCalls: 5
   tableState:
     write_twin:
       - id: 1

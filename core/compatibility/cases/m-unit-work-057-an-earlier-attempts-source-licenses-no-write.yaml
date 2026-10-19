@@ -7,8 +7,8 @@ when:
     - action: amend
       value: thisSource
       sourceRead: earlierAttempt
-      roundTrips: 0
+      databaseCalls: 0
       expectError: write-evidence-unavailable
       note: the earlier attempt committed without writing, so its evidence is unspent yet still not this attempt's
 then:
-  roundTrips: 0
+  databaseCalls: 0

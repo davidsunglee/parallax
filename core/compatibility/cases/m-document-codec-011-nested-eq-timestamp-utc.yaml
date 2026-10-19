@@ -24,4 +24,4 @@ then:
     mariadb: select id, label from sample where nullif(json_unquote(json_extract(profile, '$.instant')), 'null') = '2026-01-15T09:30:00.000000Z'
   rows:
     - { id: 1, label: Ada }
-  roundTrips: 1
+  databaseCalls: 1

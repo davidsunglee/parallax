@@ -20,7 +20,7 @@ when:
       note: the gated UPDATE lands and the boundary commits before the release fails
 then:
   outcome: committed
-  roundTrips: 2
+  databaseCalls: 2
   executionLifecycle:
     roots:
       - execution: 1

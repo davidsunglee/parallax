@@ -685,7 +685,7 @@ def test_run_case_validates_a_deep_fetch_reads_positions_before_any_sql() -> Non
                 {"sql": {"postgres": "select t0.id, t0.name from person t0"}},
             ],
             "graph": {"Animal": []},
-            "roundTrips": 2,
+            "databaseCalls": 2,
         },
     }
     case = Case(

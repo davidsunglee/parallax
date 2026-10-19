@@ -132,7 +132,7 @@ def _is_transactional(case: case_format.Case) -> bool:
 
 
 def compile_read_case(case: case_format.Case, dialect_name: str) -> tuple[list[Emission], int]:
-    """Compile a read case to its ordered emissions and round-trip count.
+    """Compile a read case to its ordered emissions and Database Call count.
 
     The statements are the ones production's own read issues for the case's
     query over a database holding no rows, run exactly as :func:`run_read_case`
@@ -171,7 +171,7 @@ def run_read_case(
 
     The whole lane is ``db.read_rows`` / ``tx.read_rows``: canonicalization,
     compilation, the read-lock suffix, the Database Call, `familyVariant`
-    materialization, and the round-trip count are all production's, and what is
+    materialization, and the Database Call count are all production's, and what is
     left here is wire rendering and the case's own routing. A row this adapter
     reports is the row production materialized, not a row this adapter
     re-derived from the query a second time.
@@ -184,7 +184,7 @@ def run_read_case(
     Optimistic Lock Facet, exactly as it is for a developer's ``tx.find``, rather
     than from a lock this lane asked a compiler for while executing outside any
     boundary. Begin and commit reach the database but are no Database Call, so
-    the round trips a locking case reports are the read's alone.
+    the Database Calls a locking case reports are the read's alone.
 
     The adapter returns **managed** Python values (``Decimal``, ``datetime``,
     ``UUID``, ``bytes``, …); the conformance harness grades in **wire space**, so
@@ -216,7 +216,7 @@ def run_read_case(
                 ActualWireProjection(model).published_row(query, _conforming_row(case, row))
                 for row in result.rows
             ],
-            observed.round_trips,
+            observed.database_calls,
         )
 
 
@@ -276,7 +276,7 @@ def _wire_read(
     and execution, row conversion, projection merging, root classification, and
     the finite include-tree unwind are production's, and a scanning read answers
     the milestone-set form from the same call, exactly as ``find`` does. The
-    statements and the round-trip count come back beside the result rather than
+    statements and the Database Call count come back beside the result rather than
     on it, because a Snapshot retains nothing about the execution that produced
     it.
     """
@@ -316,7 +316,7 @@ def run_graph_case(
                 envelope.graph_root(root) for root in roots
             ]
         },
-        observed.round_trips,
+        observed.database_calls,
         _stored_data_records(roots, model),
     )
 
@@ -358,7 +358,7 @@ def run_stream_case(
     equivalence is stated where it can be executed, in each language's API
     Conformance Suite.
 
-    Its statements and round trips come off the delivered lifecycle exactly as
+    Its statements and Database Calls come off the delivered lifecycle exactly as
     every other lane's do: a Snapshot Stream publishes one Stream Batch per page
     and every page's Database Calls under it, and each of those carries the
     canonical Lowered Statement it borrowed. Nothing here observes at the
@@ -379,7 +379,7 @@ def run_stream_case(
                 envelope.graph_root(root) for root in roots
             ]
         },
-        observed.round_trips,
+        observed.database_calls,
         _stored_data_records(roots, model),
     )
 
@@ -413,7 +413,7 @@ def run_streamed_graphs_case(
         {"pin": ActualWireProjection(model).pin(pin), "graph": {root_key: milestone_roots}}
         for pin, milestone_roots in _milestone_groups(entity, roots)
     ]
-    return _read_emissions(observed), graphs_wire, observed.round_trips
+    return _read_emissions(observed), graphs_wire, observed.database_calls
 
 
 def _wire_delivery(
@@ -474,7 +474,7 @@ def run_graphs_case(
         {"pin": ActualWireProjection(model).pin(pin), "graph": {root_key: roots}}
         for pin, roots in _milestone_partition(entity, snapshot.checked().results())
     ]
-    return _read_emissions(observed), graphs_wire, observed.round_trips
+    return _read_emissions(observed), graphs_wire, observed.database_calls
 
 
 def _is_single_graph(

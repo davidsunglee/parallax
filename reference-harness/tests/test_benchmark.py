@@ -194,9 +194,9 @@ def test_every_workload_declares_iterations_and_strict_canonical_goldens() -> No
             label = (fixture_path.name, workload.get("name"))
             assert workload.get("iterations", 0) >= 1, label
             if workload.get("kind") == "cache-hit":
-                # A cache-hit workload issues no SQL (0 round trips), so it lists
-                # no golden SQL — the methodology witness for `expectRoundTrips: 0`.
-                assert workload.get("expectRoundTrips") == 0, label
+                # A cache-hit workload issues no SQL (0 Database Calls), so it lists
+                # no golden SQL — the methodology witness for `expectDatabaseCalls: 0`.
+                assert workload.get("expectDatabaseCalls") == 0, label
                 continue
             statements = workload.get("statements")
             assert isinstance(statements, list) and statements, label
@@ -216,37 +216,37 @@ def test_every_workload_declares_iterations_and_strict_canonical_goldens() -> No
                     assert isinstance(binds, list), label
 
 
-def test_deep_fetch_round_trips_match_statement_count() -> None:
-    # A multi-statement deep-fetch workload's expectRoundTrips MUST equal its
+def test_deep_fetch_database_calls_match_statement_count() -> None:
+    # A multi-statement deep-fetch workload's expectDatabaseCalls MUST equal its
     # statement count — the fixture/report consistency the harness enforces, since
     # a run executes the authored list and counts what it issued.
     fixture = yaml.safe_load((BENCHMARKS_ROOT / "deep-fetch.yaml").read_text(encoding="utf-8"))
     for workload in fixture["workloads"]:
         statements = _statements(workload, "postgres")
-        assert workload["expectRoundTrips"] == len(statements), workload["name"]
+        assert workload["expectDatabaseCalls"] == len(statements), workload["name"]
 
 
-def test_stream_round_trips_are_the_page_arithmetic_of_one_result() -> None:
+def test_stream_database_calls_are_the_page_arithmetic_of_one_result() -> None:
     # A delivery of N roots at page size B over L levels costs `ceil(N/B)` root
     # statements and `ceil(N/B) * L` child ones (m-perf-bench, streamed delivery)
     # — a page reads one root past its batch, so no terminal statement proves
     # exhaustion — and each workload's declared count is derivable from its own
     # page size rather than merely equal to how many statements someone authored.
     # The three workloads are ONE result at three page sizes, which is what makes
-    # the count the trade rather than a setting: 20 roots cost 8, 6, and 2 round
-    # trips.
+    # the count the trade rather than a setting: 20 roots cost 8, 6, and 2
+    # Database Calls.
     fixture = yaml.safe_load((BENCHMARKS_ROOT / "stream.yaml").read_text(encoding="utf-8"))
     roots, levels = 20, 1
     for workload, page in zip(fixture["workloads"], (5, 7, 20), strict=True):
         pages = -(-roots // page)
         declared = pages * (1 + levels)
         for dialect in ("postgres", "mariadb"):
-            assert workload["expectRoundTrips"] == len(_statements(workload, dialect)), (
+            assert workload["expectDatabaseCalls"] == len(_statements(workload, dialect)), (
                 workload["name"],
                 dialect,
             )
-        assert workload["expectRoundTrips"] == declared, workload["name"]
-    assert [w["expectRoundTrips"] for w in fixture["workloads"]] == [8, 6, 2]
+        assert workload["expectDatabaseCalls"] == declared, workload["name"]
+    assert [w["expectDatabaseCalls"] for w in fixture["workloads"]] == [8, 6, 2]
 
 
 def test_stream_pages_seek_from_the_root_the_previous_page_delivered_last() -> None:
@@ -275,17 +275,17 @@ def test_temporal_document_layout_declares_the_milestone_write_shapes() -> None:
     )
     by_name = {w["name"]: w for w in fixture["workloads"]}
     for dialect in ("postgres", "mariadb"):
-        assert by_name["predecessor-resolve"]["expectRoundTrips"] == len(
+        assert by_name["predecessor-resolve"]["expectDatabaseCalls"] == len(
             _statements(by_name["predecessor-resolve"], dialect)
         )
-        assert by_name["milestone-chain"]["expectRoundTrips"] == len(
+        assert by_name["milestone-chain"]["expectDatabaseCalls"] == len(
             _statements(by_name["milestone-chain"], dialect)
         )
-        assert by_name["rectangle-split"]["expectRoundTrips"] == len(
+        assert by_name["rectangle-split"]["expectDatabaseCalls"] == len(
             _statements(by_name["rectangle-split"], dialect)
         )
-    assert by_name["milestone-chain"]["expectRoundTrips"] == 2
-    assert by_name["rectangle-split"]["expectRoundTrips"] == 4
+    assert by_name["milestone-chain"]["expectDatabaseCalls"] == 2
+    assert by_name["rectangle-split"]["expectDatabaseCalls"] == 4
     # Every write iteration addresses its own seeded milestone, so the dataset must
     # carry at least one row per iteration.
     seeded = fixture["dataset"]["generate"]["rows"]

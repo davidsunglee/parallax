@@ -28,7 +28,7 @@ when:
             asOf: latest
           valid-time:
             asOf: "2024-07-01T00:00:00.000000Z"
-      roundTrips: 1
+      databaseCalls: 1
       note: the amendment selects its objects by the rectangle current at its validFrom
       statements:
         - sql:
@@ -55,7 +55,7 @@ when:
         at: "2024-10-01T00:00:00.000000Z"
         validFrom: "2024-07-01T00:00:00.000000Z"
         until: "2024-09-01T00:00:00.000000Z"
-      roundTrips: 2
+      databaseCalls: 2
       statements:
         - sql:
             postgres: update position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ? and in_z = ?
@@ -74,7 +74,7 @@ when:
             asOf: latest
           valid-time:
             asOf: "2024-08-01T00:00:00.000000Z"
-      roundTrips: 1
+      databaseCalls: 1
       statements:
         - sql:
             postgres: select t0.pos_id, t0.acct_num, t0.val, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from position t0 where t0.val = ? and t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?
@@ -83,4 +83,4 @@ when:
       expectRows:
         - { pos_id: 1, acct_num: A, val: "300.00", from_z: "2024-07-01T00:00:00.000000Z", thru_z: "2024-09-01T00:00:00.000000Z", in_z: "2024-10-01T00:00:00.000000Z", out_z: infinity }
 then:
-  roundTrips: 4
+  databaseCalls: 4

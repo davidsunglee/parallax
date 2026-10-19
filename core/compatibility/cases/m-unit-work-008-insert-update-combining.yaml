@@ -17,7 +17,7 @@ when:
           entity: parallax.compatibility.Account
           rows:
             - { id: 8, balance: "99.00" }
-      roundTrips: 1
+      databaseCalls: 1
       note: a buffered insert + a buffered update of the SAME new object combine to ONE insert (final balance 99.00)
       statements:
         - sql:
@@ -29,7 +29,7 @@ when:
           eq:
             path: parallax.compatibility.Account.id
             value: 8
-      roundTrips: 1
+      databaseCalls: 1
       note: a dependent find observes the combined insert's final values (read-your-own-writes)
       statements:
         - sql:
@@ -38,4 +38,4 @@ when:
       expectRows:
         - { id: 8, owner: Turing, balance: "99.00", version: 1 }
 then:
-  roundTrips: 2
+  databaseCalls: 2

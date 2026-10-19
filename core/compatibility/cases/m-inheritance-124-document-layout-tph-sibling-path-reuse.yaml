@@ -37,4 +37,4 @@ then:
   rows:
     - { id: 1, detail: visa-4242, authorization_code: AUTH-7, familyVariant: CardPayment }
     - { id: 2, detail: "12.50", authorization_code: null, familyVariant: CashPayment }
-  roundTrips: 1
+  databaseCalls: 1

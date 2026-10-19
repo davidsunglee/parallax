@@ -13,7 +13,7 @@ when:
           eq:
             path: parallax.compatibility.Order.id
             value: 1
-      roundTrips: 1
+      databaseCalls: 1
       note: materialize a snapshot of order 1 (no relationships included)
       statements:
         - sql:
@@ -24,12 +24,12 @@ when:
     - action: mutate
       "on": 0
       set: { name: Mutant }
-      roundTrips: 0
+      databaseCalls: 0
       note: derive an edited copy of the snapshot node -> NO DML (a snapshot has no write-back)
     - action: access
       "on": 1
       path: statuses
-      roundTrips: 0
+      databaseCalls: 0
       note: access an UNINCLUDED relationship on the EDITED COPY -> closed-world absent, ZERO SQL, the same answer its source node gives; absence representation is per-language
 then:
-  roundTrips: 1
+  databaseCalls: 1

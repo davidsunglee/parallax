@@ -278,7 +278,7 @@ rather than left true by omission:
    fixed where materialization is (`m-snapshot-read`, *What a materialized value
    carries*). A getter's answer never decides the second — reading a member is not
    what makes it part of the value.
-2. **They materialize with the owner in one round trip.** A value object
+2. **They materialize with the owner in one Database Call.** A value object
    materializes **with its owning entity in the same read**: the owner's single
    statement projects the whole structured-document column, and every nested
    to-one and to-many value is decoded from that one column. Invoking a getter
@@ -309,15 +309,16 @@ rather than left true by omission:
    participates in **no unit-of-work semantics of its own** — it holds no
    independent transaction, lock, identity, cache, or dirty-tracking state.
 
-One-round-trip materialization is proven by `read` cases carrying `then.graph` at
-`roundTrips: 1`: the owning entity's assembled graph carries its nested to-one and
-to-many value-object values, decoded from the single document column, with **no**
-child statement (`m-value-object-023` materializes every row's full nested
-composite under `true`; `m-value-object-024` materializes the matching owners'
-composites under a value-object field filter). An Include Path through a value
-object is pinned as a pre-SQL `rejected` case (`m-case-format`): a value
-object's occurrence name is a legal *member* segment, so such a path is spellable
-and only a model-aware resolver knows the member it names is a value object.
+Materialization in one Database Call is proven by `read` cases carrying
+`then.graph` at `databaseCalls: 1`: the owning entity's assembled graph carries
+its nested to-one and to-many value-object values, decoded from the single
+document column, with **no** child statement (`m-value-object-023` materializes
+every row's full nested composite under `true`; `m-value-object-024` materializes
+the matching owners' composites under a value-object field filter). An Include
+Path through a value object is pinned as a pre-SQL `rejected` case
+(`m-case-format`): a value object's occurrence name is a legal *member* segment,
+so such a path is spellable and only a model-aware resolver knows the member it
+names is a value object.
 
 Rooting a `find()` at a value object is refused earlier, and by a different
 authority. An occurrence name begins lowercase while an Entity's local name is

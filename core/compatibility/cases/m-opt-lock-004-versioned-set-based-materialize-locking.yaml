@@ -16,7 +16,7 @@ when:
           lessThan:
             path: parallax.compatibility.Account.balance
             value: "200.00"
-      roundTrips: 1
+      databaseCalls: 1
       note: the materialize read — resolve `balance < 200` to rows (ids 1 and 3, version 1)
       statements:
         - sql:
@@ -36,7 +36,7 @@ when:
               value: "200.00"
         assignments:
           - { attr: parallax.compatibility.Account.balance, value: "0.00" }
-      roundTrips: 2
+      databaseCalls: 2
       note: one per-object version-advancing UPDATE per materialized row (no gate, locking mode)
       statements:
         - sql:
@@ -51,7 +51,7 @@ when:
           lessThan:
             path: parallax.compatibility.Account.balance
             value: "200.00"
-      roundTrips: 1
+      databaseCalls: 1
       note: the SAME find re-resolves (cache MISS) and MUST observe both rows at balance 0.00, version 2
       statements:
         - sql:
@@ -62,4 +62,4 @@ when:
         - { id: 1, owner: Ada, balance: "0.00", version: 2 }
         - { id: 3, owner: Grace, balance: "0.00", version: 2 }
 then:
-  roundTrips: 4
+  databaseCalls: 4

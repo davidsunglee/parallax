@@ -402,7 +402,7 @@ def test_the_conformance_lane_plans_through_planners_the_factory_built(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     seen = _watch(lane, monkeypatch)
-    emissions, _round_trips = compile_case(case_format.load_case(case), "postgres")
+    emissions, _database_calls = compile_case(case_format.load_case(case), "postgres")
 
     assert emissions, "a case that emitted nothing exercised no write lane"
     _assert_planned_only_through_the_factory(seen, plannings=plannings)
@@ -413,7 +413,7 @@ def test_the_conformance_conflict_lane_plans_through_planners_the_factory_built(
 ) -> None:
     seen = _watch("conformance conflict", monkeypatch)
     case = case_format.load_case(_CASES / "m-opt-lock-006-success.yaml")
-    emissions, _affected, _state, _round_trips = engine.run_conflict_case(
+    emissions, _affected, _state, _database_calls = engine.run_conflict_case(
         case,
         ScriptedAdapter(
             Transact(

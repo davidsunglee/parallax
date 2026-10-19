@@ -45,4 +45,4 @@ then:
           entity: parallax.compatibility.StreamCoordinate
           member: parallax.compatibility.StreamCoordinate.clock
           objectKey: { entity: parallax.compatibility.StreamCoordinate, key: { id: 102 } }
-  roundTrips: 1
+  databaseCalls: 1

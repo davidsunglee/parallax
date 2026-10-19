@@ -3,7 +3,7 @@
 # under the equal authorization fixture. Principal inequality alone makes the
 # actors unequal. The read following the join is the joining body's observable:
 # pre-body refusal leaves the earlier read as the only database call, while a
-# late authority check would execute a second call and fail the round-trip oracle.
+# late authority check would execute a second call and fail the Database Call oracle.
 model: models/account.yaml
 tags: [slice-snapshot-1, m-execution-authority, m-unit-work, m-api-conformance, authority, join]
 lane: api-conformance
@@ -26,4 +26,4 @@ when:
       note: the refused joining body must not reach this database call
 then:
   outcome: authority-mismatch
-  roundTrips: 1
+  databaseCalls: 1

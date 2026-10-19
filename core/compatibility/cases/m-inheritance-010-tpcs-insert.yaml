@@ -19,4 +19,4 @@ then:
   tableState:
     invoice:
       - { id: 10, title: Invoice-C, folder_id: null, currency: USD, amount_due: "300.00" }
-  roundTrips: 1
+  databaseCalls: 1

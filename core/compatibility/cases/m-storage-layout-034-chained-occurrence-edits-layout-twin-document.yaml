@@ -19,7 +19,7 @@ when:
                 stops:
                   - { port: Bergen }
                   - { port: Kiel }
-      roundTrips: 2
+      databaseCalls: 2
       note: the first edit restates the whole occurrence to add a stop
       statements:
         - sql:
@@ -50,7 +50,7 @@ when:
           eq:
             path: parallax.compatibility.WriteTwinItem.id
             value: 2
-      roundTrips: 1
+      databaseCalls: 1
       note: the restated occurrence is what item 2 holds when the second edit arrives
       statements:
         - sql:
@@ -78,7 +78,7 @@ when:
                 title: Meridian
                 stops:
                   - { port: Kiel }
-      roundTrips: 2
+      databaseCalls: 2
       note: the second edit names two members, so it destroys what the first edit had just stored
       statements:
         - sql:
@@ -103,7 +103,7 @@ when:
           eq:
             path: parallax.compatibility.WriteTwinItem.id
             value: 2
-      roundTrips: 1
+      databaseCalls: 1
       note: only the second edit's own value survives, and `label` and `marks` are untouched throughout
       statements:
         - sql:
@@ -120,7 +120,7 @@ when:
           marks:
             - { code: C }
 then:
-  roundTrips: 6
+  databaseCalls: 6
   tableState:
     write_twin:
       - id: 1

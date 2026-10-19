@@ -18,4 +18,4 @@ when:
       note: the first write raises an injected serialization failure — auto-retried
 then:
   outcome: committed
-  roundTrips: 4
+  databaseCalls: 4

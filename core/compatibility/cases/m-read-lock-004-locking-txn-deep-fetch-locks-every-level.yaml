@@ -54,4 +54,4 @@ then:
         quantity: 5
         shippedOn: 2024-02-05
         order: { id: 42, name: Grace, sku: A-999, qty: 30, price: "99.99", active: true, orderedOn: 2024-06-30 }
-  roundTrips: 2
+  databaseCalls: 2

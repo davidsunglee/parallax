@@ -10,7 +10,7 @@ when:
           entity: parallax.compatibility.Account
           rows:
             - { id: 7, owner: Newton, balance: "5.00", version: 1 }
-      roundTrips: 1
+      databaseCalls: 1
       note: buffer + COMMIT an insert of a new account 7
       statements:
         - sql:
@@ -22,7 +22,7 @@ when:
           eq:
             path: parallax.compatibility.Account.id
             value: 7
-      roundTrips: 1
+      databaseCalls: 1
       note: a dependent find MUST observe the flushed write (read-your-own-writes)
       statements:
         - sql:
@@ -31,4 +31,4 @@ when:
       expectRows:
         - { id: 7, owner: Newton, balance: "5.00", version: 1 }
 then:
-  roundTrips: 2
+  databaseCalls: 2

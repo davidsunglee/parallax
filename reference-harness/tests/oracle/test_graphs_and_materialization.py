@@ -467,7 +467,7 @@ def _both_guarded_branches_continue(case: Case) -> Case:
             "binds": [[10, 11], "cat", "dog"],
         },
     ]
-    case.then["roundTrips"] = 5
+    case.then["databaseCalls"] = 5
     case.then["graph"] = {
         "Animal": [
             _root_node(
@@ -663,7 +663,7 @@ def test_a_milestone_set_partitions_its_rows_into_edge_pinned_graphs(
 
     assert_case_read(case, reads)
 
-    # One round trip returns the whole milestone set; the second call is the
+    # One Database Call returns the whole milestone set; the second call is the
     # independent oracle cross-checking it.
     assert len(reads.calls) == 2
 
@@ -841,7 +841,7 @@ def test_a_value_object_composite_materializes_from_one_statement(
 
 
 @pytest.mark.parametrize("dialect", ["postgres", "mariadb"])
-def test_a_filtered_value_object_read_still_materializes_in_one_round_trip(
+def test_a_filtered_value_object_read_still_materializes_in_one_database_call(
     corpus_case: CaseLoader, dialect: str
 ) -> None:
     case = corpus_case(_FILTERED_VALUE_OBJECT_GRAPH)

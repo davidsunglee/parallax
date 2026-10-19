@@ -70,4 +70,4 @@ then:
             txEnd: infinity
             claims:
               - { id: 2000, coverageId: 20, reserve: "4000.00", validStart: "2024-01-01T00:00:00.000000Z", validEnd: infinity, txStart: "2024-01-01T00:00:00.000000Z", txEnd: infinity }
-  roundTrips: 3
+  databaseCalls: 3

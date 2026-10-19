@@ -21,7 +21,7 @@ when:
           entity: parallax.compatibility.Account
           rows:
             - { id: 9 }
-      roundTrips: 0
+      databaseCalls: 0
       note: the buffered INSERT of new account 9 then the buffered DELETE of the same new object CANCEL — the flush emits no DML at all (Reladomo addDelete)
     - objectQuery:
         target: parallax.compatibility.Account
@@ -29,7 +29,7 @@ when:
           eq:
             path: parallax.compatibility.Account.id
             value: 9
-      roundTrips: 1
+      databaseCalls: 1
       note: account 9 is absent — the cancelled insert never persisted
       statements:
         - sql:
@@ -37,4 +37,4 @@ when:
           binds: [9]
       expectRows: []
 then:
-  roundTrips: 1
+  databaseCalls: 1

@@ -176,7 +176,7 @@ def test_an_occurrence_carrying_no_net_change_is_still_assigned(
     # occurrence literally even though it restates what the read returned.
     observed = LifecycleObservation()
     db = _connect_and_seed(profile_run, observed)
-    seeded = observed.round_trips
+    seeded = observed.database_calls
 
     def rewrite(tx: TxnContext) -> None:
         customer = tx.find(Customer.where(Customer.id == 1)).result()

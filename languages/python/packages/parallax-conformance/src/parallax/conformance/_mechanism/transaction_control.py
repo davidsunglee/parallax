@@ -103,7 +103,7 @@ class _AbortingPort:
     the buffered DML on the wire — so the case's own contract is reproduced
     exactly (`m-unit-work` "Abort": "the forced flush is safe precisely because
     it lands inside the still-open atomic scope the abort discards"): the write's
-    statements execute, count their round trips on the attempt, and are then
+    statements execute, count their Database Calls on the attempt, and are then
     erased by the provider's rollback.
 
     Raising HERE rather than inside the transaction callback is what makes the
@@ -116,7 +116,7 @@ class _AbortingPort:
     durability boundary that never failed, and the sentinel — outside every
     classified family — makes ``retryEligible: false`` a default rather than a
     verdict. No case reads either: what a `rollback: true` case asserts is the
-    table state and the round trips, and both come from the calls, not from the
+    table state and the Database Calls, and both come from the calls, not from the
     failure record.
     """
 
@@ -213,7 +213,7 @@ def absorbing_rollback() -> Generator[None]:
 
     The step's boundary aborts by raising the sentinel, through
     :func:`transact` or :func:`committed`, and this is the one place that
-    sentinel is absorbed: the step's DML executed and counted its round trips,
+    sentinel is absorbed: the step's DML executed and counted its Database Calls,
     and the abort is the outcome the case asked for rather than a failure.
     Everything else propagates. A context manager rather than a parameter,
     because a lane enters this around whatever else the step entered — a

@@ -27,4 +27,4 @@ then:
         body: Reminder
         annotation: { author: Ada, priority: high }
         familyVariant: Memo
-  roundTrips: 1
+  databaseCalls: 1

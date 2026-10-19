@@ -1,6 +1,6 @@
 """The conformance run observation, over synthetic delivered streams.
 
-`then.statements`, `then.roundTrips`, and `then.executionLifecycle` are three
+`then.statements`, `then.databaseCalls`, and `then.executionLifecycle` are three
 projections of ONE delivery (`m-execution-lifecycle`), and this is where each is
 pinned against events built by hand rather than against events a run happened to
 produce: the corpus exercises the transitions its own six cases reach, and the
@@ -596,21 +596,21 @@ def test_the_statements_a_run_reports_are_the_ones_its_calls_borrowed() -> None:
     # force-flush's DML off the find step that triggered it.
     assert [statement.sql for statement in observation.reads] == ["select 1", "select 2"]
     assert [statement.sql for statement in observation.writes] == ["insert 1"]
-    assert observation.round_trips == 3
+    assert observation.database_calls == 3
 
 
 def test_a_step_reads_its_own_statements_from_the_mark_it_took() -> None:
     observation = LifecycleObservation()
     handle = _Handler(observation)
     handle.deliver(_call("read", "select 1"))
-    mark = observation.round_trips
+    mark = observation.database_calls
     handle.deliver(_call("write", "insert 1"), _call("read", "select 2"))
 
     assert [statement.sql for statement in observation.since(mark)] == ["insert 1", "select 2"]
     assert [statement.sql for statement in observation.since(mark, "read")] == ["select 2"]
 
 
-def test_a_failed_call_is_the_round_trip_it_was_charged_for() -> None:
+def test_a_failed_call_is_the_database_call_it_was_charged_for() -> None:
     observation = LifecycleObservation()
     handle = _Handler(observation)
     failure = DatabaseCallFailed(DatabaseFailureDiagnostic(_diagnostic(), "deadlock", "40P01"))
@@ -620,7 +620,7 @@ def test_a_failed_call_is_the_round_trip_it_was_charged_for() -> None:
     )
     # Read off Started rather than off its Finished peer: a call the database
     # never answered still reached it.
-    assert observation.round_trips == 1
+    assert observation.database_calls == 1
 
 
 def test_a_resolving_read_takes_no_index_and_shifts_none() -> None:
@@ -808,7 +808,7 @@ def test_every_handle_the_conformance_engine_builds_observes_its_own_work() -> N
     """No lane may build a Handle the run cannot see.
 
     A ``Database`` constructed without a Provider still reads and writes; its
-    Database Calls simply reach no Handler, so its statements and round trips
+    Database Calls simply reach no Handler, so its statements and their count
     vanish from the run's observation and the case grades a stream missing work
     that really happened. The absence is invisible at the call site, which is
     why it is asserted over the source rather than left to a case to discover.

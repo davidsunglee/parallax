@@ -81,14 +81,14 @@ def test_every_write_value_case_is_graded_through_the_shipped_verbs(
 
     outcomes = db.transact(fn)
     assert outcomes == [step.expect_error for step in steps]
-    # The case's own round-trip oracle, graded against the DML the enclosing
+    # The case's own Database Call oracle, graded against the DML the enclosing
     # transaction actually flushed: a refusal reaches no statement and an
     # accepted step here materializes nothing (m-case-format *Keyed write action
     # steps*), so the count the case declares is the count the port recorded.
     # The recorded operations are what makes that provable with no database at
     # all.
     flushed = [op for op in port.calls if isinstance(op, WriteCall)]
-    assert len(flushed) == write_value_runner.declared_round_trips(case)
+    assert len(flushed) == write_value_runner.declared_database_calls(case)
 
 
 def _outside_reads(steps: list[write_value_runner.WriteValueStep]) -> list[Read | Transact]:
@@ -225,8 +225,8 @@ def test_a_case_mixing_a_keyed_write_step_with_another_step_is_loud() -> None:
     # the keyed step cannot drop out of the graded set silently on the way to
     # the executor that is the case's only one.
     steps: list[dict[str, Any]] = [
-        {"action": "amend", "value": "unmanaged", "roundTrips": 0},
-        {"objectQuery": {"target": "parallax.compatibility.Account"}, "roundTrips": 1},
+        {"action": "amend", "value": "unmanaged", "databaseCalls": 0},
+        {"objectQuery": {"target": "parallax.compatibility.Account"}, "databaseCalls": 1},
     ]
     mixed = case_format.Case(
         path=Path("m-unit-work-999-mixed.yaml"),
@@ -242,7 +242,7 @@ def test_a_case_mixing_a_keyed_write_step_with_another_step_is_loud() -> None:
 
 
 def test_a_case_whose_total_disagrees_with_its_steps_is_loud() -> None:
-    # A scenario's `then.roundTrips` is the sum of its steps' own counts, and
+    # A scenario's `then.databaseCalls` is the sum of its steps' own counts, and
     # this suite is where that is checked at all: the compatibility harness
     # executes no api-conformance case.
     miscounted = case_format.Case(
@@ -252,13 +252,13 @@ def test_a_case_whose_total_disagrees_with_its_steps_is_loud() -> None:
         tags=("m-unit-work",),
         model="models/account.yaml",
         document={
-            "when": {"scenario": [{"action": "amend", "value": "unmanaged", "roundTrips": 0}]},
-            "then": {"roundTrips": 1},
+            "when": {"scenario": [{"action": "amend", "value": "unmanaged", "databaseCalls": 0}]},
+            "then": {"databaseCalls": 1},
         },
     )
 
     with pytest.raises(ValueError, match="sum of its steps"):
-        write_value_runner.declared_round_trips(miscounted)
+        write_value_runner.declared_database_calls(miscounted)
 
 
 def test_an_unrecognized_provenance_token_is_loud() -> None:

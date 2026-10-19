@@ -72,7 +72,7 @@ then:
         active: false
         orderedOn: 2024-03-15
         items: []
-  roundTrips: 4
+  databaseCalls: 4
   executionLifecycle:
     roots:
       - execution: 1

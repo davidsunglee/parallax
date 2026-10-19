@@ -15,4 +15,4 @@ then:
   referenceSql: select id, vehicle_id from traversal_parking where vehicle_id in (select id from traversal_bike where maker = 'Trek' union all select id from traversal_car where maker = 'Trek')
   rows:
   - {id: 31, vehicle_id: 6}
-  roundTrips: 1
+  databaseCalls: 1

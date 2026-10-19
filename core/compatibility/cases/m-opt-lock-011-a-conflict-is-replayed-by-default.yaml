@@ -18,4 +18,4 @@ when:
       note: the gated UPDATE conflicts once, then the replayed callback re-reads and succeeds
 then:
   outcome: committed
-  roundTrips: 4
+  databaseCalls: 4

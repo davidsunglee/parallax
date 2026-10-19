@@ -1,5 +1,5 @@
 # valueObject materialization: the whole nested composite arrives WITH the owner
-# in ONE round trip (m-value-object "Materialization and navigation contract"),
+# in ONE Database Call (m-value-object "Materialization and navigation contract"),
 # on Postgres AND MariaDB.
 model: models/customer.yaml
 tags: [m-value-object, m-sql, nested, json, materialization, graph, to-one, to-many, slice-snapshot-1, slice-managed-1]
@@ -114,4 +114,4 @@ then:
           entity: parallax.compatibility.Customer
           member: parallax.compatibility.Customer.address.phones
           objectKey: { entity: parallax.compatibility.Customer, key: { id: 10 } }
-  roundTrips: 1
+  databaseCalls: 1

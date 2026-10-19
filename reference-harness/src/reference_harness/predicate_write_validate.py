@@ -150,7 +150,7 @@ def validate_predicate_write_materialization(
         indexes = ", ".join(f"scenario[{index}]" for index, _ in matching_finds)
         raise PredicateWriteValidationError(
             f"matching materializing find at {indexes} must be a real resolving read: "
-            "roundTrips: 1, exactly one authored golden read statement, and expectRows "
+            "databaseCalls: 1, exactly one authored golden read statement, and expectRows "
             "exposing the resolved rows (or a genuine zero-match result)"
         )
     valid = _start_selected_valid_time(entity, instruction)
@@ -221,13 +221,13 @@ def _resolving_materialization_rows(step: dict[str, Any]) -> list[Any] | None:
     """Return rows only for one real materializing database read.
 
     A versioned or temporal predicate write cannot plan from a cache hit.  The
-    scenario therefore records the one resolving read explicitly: one round trip,
+    scenario therefore records the one resolving read explicitly: one Database Call,
     one authored golden SQL entry, and ``expectRows`` for either the observed rows
     or a genuine zero-match result.  The case schema and generic scenario
     bookkeeping validate the entry's full SQL shape; this descriptor-aware check
     owns the link from that read to a predicate write.
     """
-    if step.get("roundTrips") != 1:
+    if step.get("databaseCalls") != 1:
         return None
     statements = step.get("statements")
     if not isinstance(statements, list) or len(statements) != 1:

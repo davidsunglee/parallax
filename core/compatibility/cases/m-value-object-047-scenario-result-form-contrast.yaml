@@ -25,7 +25,7 @@ when:
         temporal:
           transaction-time:
             asOf: latest
-      roundTrips: 1
+      databaseCalls: 1
       note: managed find materializes the owner WITH its address Document slot — INSTANCE-FORM
       statements:
         - sql:
@@ -52,7 +52,7 @@ when:
         temporal:
           transaction-time:
             asOf: latest
-      roundTrips: 1
+      databaseCalls: 1
       note: the predicate-write resolving read is ROW-FORM (no instance constructed) and still projects the address Document slot — the Temporal Observation it records is a complete Predecessor Row
       statements:
         - sql:
@@ -81,7 +81,7 @@ when:
               path: parallax.compatibility.Supplier.name
               value: Nordic Foods
         at: "2024-10-01T00:00:00.000000Z"
-      roundTrips: 1
+      databaseCalls: 1
       note: close the resolved current row (out_z = at), gated on step 1's observed in_z; a Transaction-Time-only close copies no payload, so no document rides this write's read
       statements:
         - sql:
@@ -97,7 +97,7 @@ when:
         temporal:
           transaction-time:
             asOf: "2024-08-01T00:00:00.000000Z"
-      roundTrips: 1
+      databaseCalls: 1
       note: >-
         verify (INSTANCE-FORM managed find, same form as step 0, address Document slot present) —
         asOf-pins the Transaction-Time dimension strictly INSIDE the now-closed window
@@ -126,4 +126,4 @@ when:
             phones:
               - { type: work, number: '555-0200' }
 then:
-  roundTrips: 4
+  databaseCalls: 4

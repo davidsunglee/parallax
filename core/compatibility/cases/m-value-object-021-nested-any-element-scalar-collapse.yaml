@@ -27,4 +27,4 @@ then:
     mariadb: select id, name from customer where json_type(json_extract(address, '$.phones')) = 'ARRAY' and exists (select 1 from json_table(address, '$.phones[*]' columns (type varchar(64) path '$.type', number varchar(64) path '$.number')) jt where jt.number = '555-0000')
   rows:
     - { id: 7, name: Nils }
-  roundTrips: 1
+  databaseCalls: 1

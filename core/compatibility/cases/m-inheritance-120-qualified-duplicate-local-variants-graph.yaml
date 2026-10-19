@@ -18,4 +18,4 @@ then:
     Record:
       - { id: 3, variantMarker: archive-marker, archiveLabel: archived, familyVariant: archive.SharedVariant }
       - { id: 4, variantMarker: catalog-marker, catalogLabel: current, familyVariant: catalog.SharedVariant }
-  roundTrips: 1
+  databaseCalls: 1

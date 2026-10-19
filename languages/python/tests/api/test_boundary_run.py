@@ -276,9 +276,9 @@ def test_boundary_case_runs_through_the_shipped_surface(
     ), case.case_id
 
     then = cast("dict[str, Any]", case_document(case)["then"])
-    expected_round_trips = then.get("roundTrips")
-    if expected_round_trips is not None:
-        assert observed.round_trips == expected_round_trips, case.case_id
+    expected_database_calls = then.get("databaseCalls")
+    if expected_database_calls is not None:
+        assert observed.database_calls == expected_database_calls, case.case_id
 
     # The stream itself, where the case authors it. A boundary case carries no
     # golden SQL, so every Database Call names its statement by no index at all

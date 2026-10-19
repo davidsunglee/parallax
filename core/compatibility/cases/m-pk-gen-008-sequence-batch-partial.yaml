@@ -41,4 +41,4 @@ then:
     pass:
       - { id: 1, zone: north }
       - { id: 2, zone: south }
-  roundTrips: 3
+  databaseCalls: 3

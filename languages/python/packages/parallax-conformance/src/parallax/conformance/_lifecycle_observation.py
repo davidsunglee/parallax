@@ -100,7 +100,7 @@ class StatementIndexError(RuntimeError):
 
 @dataclass(frozen=True, slots=True)
 class ObservedCall:
-    """One attempted round trip, in the canonical form the activity borrowed.
+    """One attempted Database Call, in the canonical form the activity borrowed.
 
     ``kind`` is the Database Call's own, which is the same read/write split the
     corpus charges a materializing pair's resolve and its per-row writes to
@@ -175,12 +175,12 @@ class LifecycleObservation:
 
     An observation spans however many transactions and attempts the Handle it is
     installed on drives: a failed attempt's statements are recorded exactly like
-    a committed one's, because a round trip is charged for reaching the database
+    a committed one's, because a Database Call is charged for reaching the database
     rather than for surviving. Roots are answered in the order they opened.
 
     The unit an observation covers is the unit whose counts a case states —
     a whole read, one buffered write unit, one held `uow` group — because
-    `then.roundTrips` is authored per step. Whole-run questions are the
+    `then.databaseCalls` is authored per step. Whole-run questions are the
     :class:`LifecycleRun`'s.
     """
 
@@ -200,7 +200,7 @@ class LifecycleObservation:
         """Charge every Database Call opened inside the block to the resolving
         reads a keyed write owes.
 
-        Such a read reaches the database — it is one of the round trips the case
+        Such a read reaches the database — it is one of the Database Calls the case
         counts — but the case authors no golden statement for it (`m-case-format`
         "Resolving reads a write owes"), so it stands outside the emission order
         a Database Call names by index. Which calls those are is knowable only
@@ -230,7 +230,7 @@ class LifecycleObservation:
         """Every Database Call this run opened, in delivery order.
 
         Read off ``DatabaseCallStarted`` rather than off the Finished peer, so a
-        call the database never answered is still the round trip it was charged
+        call the database never answered is still the Database Call it was charged
         for.
         """
         return tuple(
@@ -255,10 +255,10 @@ class LifecycleObservation:
     def since(
         self, mark: int, kind: Literal["read", "write"] | None = None
     ) -> tuple[LoweredStatement, ...]:
-        """Every statement of ``kind`` issued after ``mark`` round trips.
+        """Every statement of ``kind`` issued after ``mark`` Database Calls.
 
         A run driving many steps through one handle reads each step's own
-        emissions by taking :attr:`round_trips` before it and asking for the
+        emissions by taking :attr:`database_calls` before it and asking for the
         difference after, so one observation serves a whole scenario without a
         second observation per step.
 
@@ -272,11 +272,11 @@ class LifecycleObservation:
         )
 
     def own_reads_since(self, mark: int) -> tuple[LoweredStatement, ...]:
-        """Every read issued after ``mark`` round trips outside a write batch.
+        """Every read issued after ``mark`` Database Calls outside a write batch.
 
         A participating read's force-flush can itself read: the coverage a
-        deferred unit binds is acquired inside the batch. That read is a round
-        trip of the flush, which no step's emissions name (`m-case-format`
+        deferred unit binds is acquired inside the batch. That read is a
+        Database Call of the flush, which no step's emissions name (`m-case-format`
         "Resolving reads a write owes"), so the read that triggered the flush
         reports only the statements it issued itself.
         """
@@ -296,7 +296,7 @@ class LifecycleObservation:
         return tuple(reads)
 
     @property
-    def round_trips(self) -> int:
+    def database_calls(self) -> int:
         """Every attempted call, failed ones included. Begin, commit, and
         rollback are no Database Call and so count none (`m-db-port`,
         `m-execution-lifecycle`)."""
@@ -310,7 +310,7 @@ class LifecycleRun:
     whole case, and each Handle reports its own counts through an observation of
     its own. This is what puts their roots back into one order, which is what
     `then.executionLifecycle` grades: the oracle describes the run, while
-    `then.roundTrips` describes a step.
+    `then.databaseCalls` describes a step.
 
     Observations are minted here in the order the lanes run, so the flattened
     order is execution order for every lane that runs its work sequentially.

@@ -38,4 +38,4 @@ then:
             country: FI
           phones:
             - { type: main, number: '555-1000' }
-  roundTrips: 1
+  databaseCalls: 1

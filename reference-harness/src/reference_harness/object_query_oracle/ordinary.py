@@ -21,7 +21,7 @@ def assert_case_read(case: Case, reader: ReadExecutor) -> None:
     Requires
         the case is accepted and read-shaped; the runner has already asserted
         schema, normalization, serde, equivalent encodings, query inheritance, and
-        round-trip count; the database *reader* reads has been provisioned.
+        Database Call count; the database *reader* reads has been provisioned.
     Guarantees
         every authored observable has been compared before this returns. Raises
         :class:`CaseFailure` on any authored or local interface violation, with the
@@ -285,7 +285,7 @@ def _assert_graphs(case: Case, reader: ReadExecutor) -> None:
     graph_specs = case.expected_graphs or []
     root_entity = _graphs_root_entity(case)
 
-    # Level 0: the single history / asOfRange query — every milestone in one round trip.
+    # Level 0: the single history / asOfRange query — every milestone in one Database Call.
     root_rows = materialize.materialize_read(
         case, execute.query_rows(case, reader, statements[0], case.statement_binds(0, dialect))
     )

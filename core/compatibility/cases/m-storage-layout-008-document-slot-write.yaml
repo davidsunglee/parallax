@@ -54,4 +54,4 @@ then:
         note: null
         contact:
           email: kari@example.test
-  roundTrips: 2
+  databaseCalls: 2

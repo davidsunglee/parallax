@@ -40,4 +40,4 @@ then:
           - { id: 3, orderId: 1, label: fragile, priority: 5 }
           - { id: 2, orderId: 1, label: gift, priority: 2 }
           - { id: 1, orderId: 1, label: urgent, priority: 2 }
-  roundTrips: 2
+  databaseCalls: 2

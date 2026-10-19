@@ -39,4 +39,4 @@ then:
         notes:
           - { id: 100, leaseId: 10, text: signed }
           - { id: 101, leaseId: 10, text: renewed }
-  roundTrips: 2
+  databaseCalls: 2

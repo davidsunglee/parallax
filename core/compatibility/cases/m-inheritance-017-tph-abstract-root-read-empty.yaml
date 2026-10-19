@@ -16,4 +16,4 @@ then:
       binds: [Ghost]
   referenceSql: select id, kind, name, owner_id, license_id, indoor, bark_volume, tusk_length from animal where name = 'Ghost'
   rows: []
-  roundTrips: 1
+  databaseCalls: 1

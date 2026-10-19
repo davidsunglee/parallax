@@ -204,7 +204,7 @@ def test_run_interleaved_scenario_case_renders_the_conflict_and_discards_the_abo
     run = run_interleaved_scenario_case(case, caller_port, executions)
 
     emissions = run.emissions
-    assert run.round_trips == 6
+    assert run.database_calls == 6
     assert len(emissions) == 6
     assert run.units == {
         "ours": {
@@ -359,7 +359,7 @@ def test_run_interleaved_scenario_case_reports_the_second_groups_own_conflict_to
                     },
                 ],
             },
-            "then": {"roundTrips": 4},
+            "then": {"databaseCalls": 4},
         },
     )
     row_v1: MappingRow = {
@@ -428,7 +428,7 @@ def test_run_interleaved_group_buffers_a_non_last_write_without_flushing() -> No
                     },
                 ],
             },
-            "then": {"roundTrips": 4},
+            "then": {"databaseCalls": 4},
         },
     )
     row_v1: MappingRow = {
@@ -451,7 +451,7 @@ def test_run_interleaved_group_buffers_a_non_last_write_without_flushing() -> No
     )
 
     assert _shortfalls(run.units) == []
-    assert run.round_trips == 4
+    assert run.database_calls == 4
     assert len(ours_port.writes) == 2  # buffered together, flushed once at the group's last step
     # One flush delivered both steps' writes, and nothing it delivered names the
     # step that buffered each, so both are reported under the last write step
@@ -620,7 +620,7 @@ def test_an_interleaved_case_bounded_at_zero_runs_each_group_once(
 
     run = run_interleaved_scenario_case(case, caller_port, executions)
 
-    assert run.round_trips == 6
+    assert run.database_calls == 6
     assert _shortfalls(run.units) == ["optimisticConflict"]
     assert len(ours_port.levels) == 1
     assert len(peer_port.levels) == 1
@@ -746,7 +746,7 @@ def test_a_temporal_race_reports_the_stale_close_as_the_losing_groups_conflict()
         "/scenario/2/write",
         "/scenario/3/write",
     ]
-    assert run.round_trips == 5
+    assert run.database_calls == 5
     assert [sql.split(" ")[0] for sql, _binds in peer_port.writes] == ["update", "insert"]
     assert [sql.split(" ")[0] for sql, _binds in ours_port.writes] == ["update"]
 
@@ -836,7 +836,7 @@ def _race_case(
         document={
             "model": model,
             "when": {"uow": {"concurrency": "optimistic"}, "scenario": steps},
-            "then": {"roundTrips": 0},
+            "then": {"databaseCalls": 0},
         },
     )
 
@@ -980,7 +980,7 @@ def _closed_ends(run: Any) -> list[tuple[str, object]]:
 
 def test_a_flush_reads_coverage_its_groups_reading_does_not_hold_on_its_own_session() -> None:
     # The commit's flush reads the rectangle after the observed one itself, on
-    # the group's own session, and closes both. That read is a round trip of the
+    # the group's own session, and closes both. That read is a Database Call of the
     # flush, which no step reports as a statement.
     run, ours_port = _coverage_race([_POSITION_FIND, _UNBOUNDED_TERMINATE])
 
@@ -993,7 +993,7 @@ def test_a_flush_reads_coverage_its_groups_reading_does_not_hold_on_its_own_sess
         "/scenario/0/objectQuery",
         "/scenario/1/objectQuery",
     ]
-    assert run.round_trips == 5
+    assert run.database_calls == 5
 
 
 def test_a_finds_force_flush_reads_coverage_it_never_reports_as_the_finds_own() -> None:
@@ -1008,4 +1008,4 @@ def test_a_finds_force_flush_reads_coverage_it_never_reports_as_the_finds_own() 
         "/scenario/3/objectQuery",
     ]
     assert len({sql for _pointer, sql in finds}) == 1
-    assert run.round_trips == 6
+    assert run.database_calls == 6

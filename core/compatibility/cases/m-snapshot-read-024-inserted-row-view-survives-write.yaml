@@ -25,7 +25,7 @@ when:
           entity: parallax.compatibility.OrderItem
           rows:
             - { id: 61, orderId: 6, sku: C-610, quantity: 4 }
-      roundTrips: 2
+      databaseCalls: 2
       note: create the order and the line item this scenario's graph is made of - two inserts, each opening its own key, so neither owes a resolving read
       statements:
         - sql:
@@ -43,7 +43,7 @@ when:
         includes:
           - segments:
               - rel: parallax.compatibility.Order.items
-      roundTrips: 2
+      databaseCalls: 2
       note: materialize a snapshot of the FRESH order 6 WITH its line item (1 + L levels) - provenance, not the assertion
       statements:
         - sql:
@@ -59,7 +59,7 @@ when:
           entity: parallax.compatibility.OrderItem
           rows:
             - { id: 61, sku: Rewritten }
-      roundTrips: 2
+      databaseCalls: 2
       note: rewrite the very row the loaded `items` view holds - one DML statement plus the resolving read the keyed update owes
       statements:
         - sql:
@@ -68,7 +68,7 @@ when:
     - action: access
       "on": 1
       path: items
-      roundTrips: 0
+      databaseCalls: 0
       sameObjectAs: 1
       note: access the ALREADY-MATERIALIZED items after the write -> ZERO SQL and the sku the read paid for
       expectGraph:
@@ -80,7 +80,7 @@ when:
           eq:
             path: parallax.compatibility.OrderItem.id
             value: 61
-      roundTrips: 1
+      databaseCalls: 1
       note: observing the write means issuing another read - the same line item, re-read, holds the rewritten sku
       statements:
         - sql:
@@ -89,4 +89,4 @@ when:
       expectRows:
         - { id: 61, order_id: 6, sku: Rewritten, quantity: 4, shipped_on: null }
 then:
-  roundTrips: 7
+  databaseCalls: 7

@@ -25,7 +25,7 @@ when:
         includes:
           - segments:
               - rel: parallax.compatibility.Order.items
-      roundTrips: 2
+      databaseCalls: 2
       note: materialize a snapshot of order 1 WITH its line items (1 + L levels)
       statements:
         - sql:
@@ -39,16 +39,16 @@ when:
     - action: mutate
       "on": 0
       set: { name: Mutant }
-      roundTrips: 0
+      databaseCalls: 0
       note: the first hop - an AUTHORED change, deriving an edited copy of the snapshot node -> NO DML
     - action: mutate
       "on": 1
-      roundTrips: 0
+      databaseCalls: 0
       note: the second hop - a CHANGE-FREE edit of the copy step 1 derived, naming that copy rather than the read
     - action: access
       "on": 0
       path: items
-      roundTrips: 0
+      databaseCalls: 0
       sameObjectAs: 0
       note: access the ALREADY-MATERIALIZED items after the whole chain -> ZERO SQL and the same contents
       expectGraph:
@@ -56,4 +56,4 @@ when:
           - { id: 12, orderId: 1, sku: B-200, quantity: 1, shippedOn: 2024-02-15 }
           - { id: 11, orderId: 1, sku: A-100, quantity: 2, shippedOn: null }
 then:
-  roundTrips: 2
+  databaseCalls: 2

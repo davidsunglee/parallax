@@ -25,7 +25,7 @@ when:
           - segments:
               - rel: parallax.compatibility.Order.statuses
               - rel: parallax.compatibility.OrderStatus.orderItem
-      roundTrips: 3
+      databaseCalls: 3
       note: materialize order 1 with its statuses AND the items those statuses point at - three levels, the third keyed on the DISTINCT non-null orderItemIds
       statements:
         - sql:
@@ -42,7 +42,7 @@ when:
     - action: access
       "on": 0
       path: statuses.orderItem
-      roundTrips: 0
+      databaseCalls: 0
       sameObjectAs: 0
       note: walk the whole fanned-out path over the materialized view -> ZERO SQL, item 11 twice, and no null for the order-level status
       expectGraph:
@@ -51,4 +51,4 @@ when:
           - { id: 11, orderId: 1, sku: A-100, quantity: 2, shippedOn: null }
           - { id: 12, orderId: 1, sku: B-200, quantity: 1, shippedOn: 2024-02-15 }
 then:
-  roundTrips: 3
+  databaseCalls: 3

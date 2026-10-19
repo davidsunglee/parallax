@@ -20,7 +20,7 @@ when:
             history: {}
           valid-time:
             history: {}
-      roundTrips: 1
+      databaseCalls: 1
       note: history returns all three milestones, each carrying its own edge pins (from/thru/in/out)
       statements:
         - sql:
@@ -41,7 +41,7 @@ when:
             asOf: "2024-01-01T00:00:00.000000Z"
           valid-time:
             asOf: "2024-01-01T00:00:00.000000Z"
-      roundTrips: 1
+      databaseCalls: 1
       note: re-read at R1's edge pin (Valid-Time + Transaction-Time from-instant 2024-01-01) -> exactly R1 (90)
       statements:
         - sql:
@@ -60,7 +60,7 @@ when:
             asOf: "2024-04-01T00:00:00.000000Z"
           valid-time:
             asOf: "2024-06-01T00:00:00.000000Z"
-      roundTrips: 1
+      databaseCalls: 1
       differentObjectFrom: 1
       identityAttr: pos_id
       note: re-read at R3's edge pin (Valid Time 2024-06-01, Transaction Time 2024-04-01) -> exactly R3 (200), a DISTINCT view from R1
@@ -71,4 +71,4 @@ when:
       expectRows:
         - { pos_id: 1, acct_num: A, val: "200.00", from_z: "2024-06-01T00:00:00.000000Z", thru_z: infinity, in_z: "2024-04-01T00:00:00.000000Z", out_z: infinity }
 then:
-  roundTrips: 3
+  databaseCalls: 3

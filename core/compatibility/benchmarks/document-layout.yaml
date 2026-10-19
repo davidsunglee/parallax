@@ -8,7 +8,7 @@
 # The dataset is 200 deterministic Travelers and their Trips from the shared
 # `travelers-tree` recipe; the document codec decides their physical storage.
 #
-# Three workloads, each with `expectRoundTrips`, so the report carries a statement
+# Three workloads, each with `expectDatabaseCalls`, so the report carries a statement
 # count beside every timing rather than a wall-time reading alone:
 #
 #   - document-path-filter (200): a scalar path predicate through the typed-cast seam
@@ -18,7 +18,7 @@
 # `patch-update` is the one whose count carries the most meaning: the contract's
 # patch is ONE statement, where a read-modify-write of the whole Structured Column
 # would issue a SELECT before its UPDATE and cost two. This fixture authors the
-# one-statement shape and prices it, so `expectRoundTrips: 1` records what a
+# one-statement shape and prices it, so `expectDatabaseCalls: 1` records what a
 # conforming patch costs; what refuses the two-statement shape is the corpus's
 # golden statements for the layout.
 #
@@ -45,9 +45,9 @@ delivery:
   pageSizes: [1, 32, 128]
 workloads:
   - name: document-path-filter
-    note: a scalar document-path predicate through the m-dialect typed cast — one statement, one round trip
+    note: a scalar document-path predicate through the m-dialect typed cast — one statement, one Database Call
     iterations: 200
-    expectRoundTrips: 1
+    expectDatabaseCalls: 1
     statements:
       - sql:
           postgres: select t0.id, t0.payload from traveler t0 where cast(jsonb_extract_path_text(t0.payload, ?) as bigint) > ?
@@ -58,16 +58,16 @@ workloads:
   - name: instance-read
     note: the instance-form read — the Structured Column projected ONCE, every member decoded from it
     iterations: 200
-    expectRoundTrips: 1
+    expectDatabaseCalls: 1
     statements:
       - sql:
           postgres: select t0.id, t0.payload from traveler t0
           mariadb: select t0.id, t0.payload from traveler t0
   - name: patch-update
     kind: write
-    note: a two-assignment patch update — ONE statement, no resolving read; a read-modify-write regression takes two round trips
+    note: a two-assignment patch update — ONE statement, no resolving read; a read-modify-write regression takes two Database Calls
     iterations: 100
-    expectRoundTrips: 1
+    expectDatabaseCalls: 1
     statements:
       - sql:
           postgres: update traveler set payload = jsonb_set(jsonb_set(payload, ?, cast(? as jsonb)), ?, cast(? as jsonb)) where id = ?
@@ -77,9 +77,9 @@ workloads:
           mariadb: ['$.displayName', '"Ada-$i"', '$.score', '21', 1]
   - name: guarded-occurrence-assignment
     kind: write
-    note: depth 2, two named leaves, one guarded object write-back per occurrence level, one statement and one round trip
+    note: depth 2, two named leaves, one guarded object write-back per occurrence level, one statement and one Database Call
     iterations: 100
-    expectRoundTrips: 1
+    expectDatabaseCalls: 1
     statements:
       - sql:
           postgres: 'update traveler set payload = jsonb_set(payload, ?, jsonb_set(jsonb_set(case when jsonb_typeof(payload #> ?) = ? then payload #> ? else cast(? as jsonb) end, ?, cast(? as jsonb)), ?, jsonb_set(case when jsonb_typeof(payload #> ?) = ? then payload #> ? else cast(? as jsonb) end, ?, cast(? as jsonb)))) where id = ?'

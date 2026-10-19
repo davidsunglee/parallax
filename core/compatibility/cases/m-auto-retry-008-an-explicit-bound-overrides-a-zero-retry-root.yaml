@@ -23,4 +23,4 @@ when:
       note: the first attempt's write raises an injected serialization failure — the explicit bound admits one retry
 then:
   outcome: committed
-  roundTrips: 4
+  databaseCalls: 4

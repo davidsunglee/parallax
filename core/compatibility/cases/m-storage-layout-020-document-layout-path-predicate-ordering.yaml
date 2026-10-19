@@ -29,4 +29,4 @@ then:
     mariadb: select id, json_value(payload, '$.displayName') as display_name, cast(json_value(payload, '$.score') as signed) as score, json_value(payload, '$.joinedOn') as joined_on, json_value(payload, '$.note') as note from traveler where cast(json_value(payload, '$.score') as signed) > 5 order by cast(json_value(payload, '$.score') as signed) desc limit 1
   rows:
     - { id: 2, display_name: Bo, score: 30, joined_on: '2025-12-31', note: null }
-  roundTrips: 1
+  databaseCalls: 1

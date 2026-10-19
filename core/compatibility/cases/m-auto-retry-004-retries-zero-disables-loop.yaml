@@ -21,4 +21,4 @@ when:
       note: the write raises an injected serialization failure — with maxRetries 0 it surfaces
 then:
   outcome: serialization-failure
-  roundTrips: 2
+  databaseCalls: 2

@@ -84,7 +84,7 @@ class ScenarioRun:
     """
 
     emissions: list[Emission]
-    round_trips: int
+    database_calls: int
     errors: list[dict[str, object]]
     step_rows: list[dict[str, object]]
     step_graphs: list[dict[str, object]]

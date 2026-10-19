@@ -610,7 +610,7 @@ def test_compile_case_emits_for_a_claimed_read() -> None:
     assert envelope["command"] == "compile"
     assert envelope["status"] == "ok"
     assert envelope["caseShape"] == "read"
-    assert envelope["roundTrips"] == 1
+    assert envelope["databaseCalls"] == 1
     assert envelope["emissions"][0]["casePointer"] == "/objectQuery"
 
 
@@ -679,7 +679,7 @@ def test_run_case_ok_through_a_fake_port() -> None:
     assert envelope["profile"] == _PROFILE.name
     assert envelope["dialect"] == "postgres"
     assert envelope["observations"]["rows"] == [{"id": 1, "name": "Ada"}]
-    assert envelope["observations"]["roundTrips"] == 1
+    assert envelope["observations"]["databaseCalls"] == 1
 
 
 class _WritePort(ConnectsAsItself):
@@ -738,9 +738,9 @@ _SCENARIO_CASE = case_format.default_cases_dir() / "m-unit-work-001-read-your-ow
 _WRITE_SEQUENCE_CASE = case_format.default_cases_dir() / "m-unit-work-003-fk-insert-ordering.yaml"
 
 
-def test_run_case_scenario_reports_round_trips_and_the_rows_its_read_step_published() -> None:
+def test_run_case_scenario_reports_database_calls_and_the_rows_its_read_step_published() -> None:
     # A scenario run routes through the write lane: its write step commits and its
-    # find reads committed state. The envelope carries `roundTrips` and one
+    # find reads committed state. The envelope carries `databaseCalls` and one
     # `stepRows` entry (m-conformance-adapter) — at the READ step's own pointer,
     # never the write step's, and carrying the row the find published rather than
     # anything the write buffered.
@@ -748,7 +748,7 @@ def test_run_case_scenario_reports_round_trips_and_the_rows_its_read_step_publis
     validate_adapter_envelope(envelope)
     assert envelope["status"] == "ok"
     assert envelope["observations"] == {
-        "roundTrips": 2,
+        "databaseCalls": 2,
         "stepRows": [
             {
                 "at": "/scenario/1",
@@ -762,7 +762,7 @@ def test_run_case_scenario_reports_round_trips_and_the_rows_its_read_step_publis
     ]
 
 
-def test_run_case_write_sequence_reports_table_state_and_round_trips() -> None:
+def test_run_case_write_sequence_reports_table_state_and_database_calls() -> None:
     # The write-sequence observation reads back every model table after commit
     # (m-conformance-adapter "write-sequence cases report tableState"); the fake
     # port answers every read with its canned row, so every orders-model table
@@ -796,7 +796,7 @@ def test_run_case_write_sequence_reports_table_state_and_round_trips() -> None:
             "order_status": [{"id": 7, "order_id": None, "order_item_id": None, "code": None}],
             "order_tag": [{"id": 7, "order_id": None, "label": None, "priority": None}],
         },
-        "roundTrips": 2,
+        "databaseCalls": 2,
     }
     assert [e["casePointer"] for e in envelope["emissions"]] == [
         "/writeSequence/0",
@@ -922,7 +922,7 @@ def test_run_case_grades_a_scenario_expect_error_through_the_errors_observation(
     envelope = adapter.run_case(_PIN_READ_ONLY_CASE, _PROFILE.on_stand_in(_PositionPort()))
     validate_adapter_envelope(envelope)
     assert envelope["status"] == "ok", envelope
-    assert envelope["observations"]["roundTrips"] == 1
+    assert envelope["observations"]["databaseCalls"] == 1
     assert envelope["observations"]["errors"] == [
         {"at": "/scenario/1", "errorClass": "transaction-time-pin-read-only"}
     ]
@@ -932,7 +932,7 @@ def test_compile_case_compiles_an_expect_error_scenarios_find_steps() -> None:
     envelope = adapter.compile_case(_PIN_READ_ONLY_CASE, "postgres")
     validate_adapter_envelope(envelope)
     assert envelope["status"] == "ok", envelope
-    assert envelope["roundTrips"] == 1
+    assert envelope["databaseCalls"] == 1
     assert [e["casePointer"] for e in envelope["emissions"]] == ["/scenario/0/objectQuery"]
 
 
@@ -1004,7 +1004,7 @@ def test_run_case_grades_the_managed_pin_case_end_to_end_under_a_scoped_claim() 
     validate_adapter_envelope(envelope)
     assert envelope["status"] == "ok", envelope
     assert [e["casePointer"] for e in envelope["emissions"]] == ["/scenario/0/objectQuery"]
-    assert envelope["observations"]["roundTrips"] == 1
+    assert envelope["observations"]["databaseCalls"] == 1
     assert envelope["observations"]["errors"] == [
         {"at": "/scenario/1", "errorClass": "transaction-time-pin-read-only"}
     ]
@@ -1133,7 +1133,7 @@ def test_run_case_error_reports_the_classification() -> None:
     assert envelope["observations"] == {
         "errorClass": "uniqueViolation",
         "nativeCode": "23505",
-        "roundTrips": 2,
+        "databaseCalls": 2,
     }
     assert [e["casePointer"] for e in envelope["emissions"]] == [
         "/then/statements/0",
@@ -1253,7 +1253,7 @@ def test_run_case_rejected_query_reports_the_classified_rule() -> None:
     assert envelope["emissions"] == []
     assert envelope["observations"] == {
         "rejectedRule": "narrow-outside-position",
-        "roundTrips": 0,
+        "databaseCalls": 0,
     }
 
 
@@ -1265,7 +1265,7 @@ def test_run_case_rejected_query_normalizes_case_decimal_bounds_before_validatio
     assert envelope["status"] == "ok"
     assert envelope["observations"] == {
         "rejectedRule": "between-bounds-inverted",
-        "roundTrips": 0,
+        "databaseCalls": 0,
     }
 
 
@@ -1275,7 +1275,7 @@ def test_run_case_rejected_model_reports_the_classified_rule() -> None:
     assert envelope["status"] == "ok"
     assert envelope["observations"] == {
         "rejectedRule": "inheritance-unknown-parent",
-        "roundTrips": 0,
+        "databaseCalls": 0,
     }
 
 
@@ -1286,7 +1286,7 @@ def test_run_case_rejected_write_reports_the_classified_rule() -> None:
     assert envelope["emissions"] == []
     assert envelope["observations"] == {
         "rejectedRule": "write-required-attribute-missing",
-        "roundTrips": 0,
+        "databaseCalls": 0,
     }
 
 
@@ -1332,7 +1332,7 @@ _GRAPHS_CASE = (
 
 def test_run_case_graph_observation_reports_the_assembled_graph() -> None:
     # `then.graph` (a snapshot graph, not a bare rows list) routes through
-    # `run_graph_case`; the envelope carries `graph` and `roundTrips`, and — for
+    # `run_graph_case`; the envelope carries `graph` and `databaseCalls`, and — for
     # a conforming read — no `storedDataIssues` entry at all.
     port = _QueuePort(
         [
@@ -1362,7 +1362,7 @@ def test_run_case_graph_observation_reports_the_assembled_graph() -> None:
     envelope = adapter.run_case(_GRAPH_CASE, _PROFILE.on_stand_in(port))
     validate_adapter_envelope(envelope)
     assert envelope["status"] == "ok"
-    assert envelope["observations"]["roundTrips"] == 2
+    assert envelope["observations"]["databaseCalls"] == 2
     assert envelope["observations"]["graph"]["Order"][0]["id"] == 1
     assert "storedDataIssues" not in envelope["observations"]
     # The whole envelope round-trips through the wire (json.dumps).
@@ -1453,7 +1453,7 @@ def test_run_case_streamed_observation_reports_the_delivered_roots() -> None:
     # and the shipped streamed read — two pages at `batchSize: 2` over four
     # roots, each asking for three and delivering two, so the second comes back
     # short and proves exhaustion without a third. The envelope carries the
-    # delivered graph, the round trips the delivery cost, and one emission per
+    # delivered graph, the Database Calls the delivery cost, and one emission per
     # page: a Snapshot Stream publishes a Stream Batch per page and that page's
     # Database Calls under it, so the statements come off the delivered
     # lifecycle exactly as every other lane's do. The seek is what shows they
@@ -1472,7 +1472,7 @@ def test_run_case_streamed_observation_reports_the_delivered_roots() -> None:
         [1, 2, 3, 42, 3],
         [1, 2, 3, 42, 2, 2, 3, 1, 2, 3, 42, 3, 3],
     ]
-    assert envelope["observations"]["roundTrips"] == 2
+    assert envelope["observations"]["databaseCalls"] == 2
     assert [root["id"] for root in envelope["observations"]["graph"]["Order"]] == [1, 2, 3, 42]
     assert "storedDataIssues" not in envelope["observations"]
     assert json.loads(json.dumps(envelope)) == envelope
@@ -1507,7 +1507,7 @@ def test_run_case_graphs_observation_reports_ordered_milestone_pin_graphs() -> N
     envelope = adapter.run_case(_GRAPHS_CASE, _PROFILE.on_stand_in(port))
     validate_adapter_envelope(envelope)
     assert envelope["status"] == "ok"
-    assert envelope["observations"]["roundTrips"] == 1
+    assert envelope["observations"]["databaseCalls"] == 1
     graphs = envelope["observations"]["graphs"]
     assert [g["pin"]["transaction-time"] for g in graphs] == [
         "2024-01-01T00:00:00.000000Z",
@@ -1577,7 +1577,7 @@ def test_run_case_runs_a_genuine_batch_collapse_write() -> None:
     )
     envelope = adapter.run_case(case_path, _PROFILE.on_stand_in(port))
     assert envelope["status"] == "ok", envelope
-    assert envelope["observations"]["roundTrips"] == 3
+    assert envelope["observations"]["databaseCalls"] == 3
     assert port.writes == 2
 
 
@@ -1728,7 +1728,7 @@ def test_a_case_authoring_no_oracle_reports_no_lifecycle_observation() -> None:
     # nowhere else: an observed key a case left unasserted is one the corpus
     # comparator would have to be told to ignore.
     envelope = adapter.run_case(_VO_READ_CASE, _PROFILE.on_stand_in(_FakePort()))
-    assert set(envelope["observations"]) == {"rows", "roundTrips"}
+    assert set(envelope["observations"]) == {"rows", "databaseCalls"}
 
 
 _INCLUDE_SCENARIO_CASE = (
@@ -1787,12 +1787,12 @@ class _OrderWithItemsPort(ConnectsAsItself):
 def test_run_case_scenario_reports_a_step_graph_for_an_access_step() -> None:
     # The per-step graph channel (`m-conformance-adapter` *Per-step graph
     # observations*): an `access` step declaring `expectGraph` publishes one
-    # `stepGraphs` entry at its own pointer, beside `roundTrips`, and the envelope
+    # `stepGraphs` entry at its own pointer, beside `databaseCalls`, and the envelope
     # still validates against the adapter schema.
     envelope = adapter.run_case(_INCLUDE_SCENARIO_CASE, _PROFILE.on_stand_in(_OrderWithItemsPort()))
     validate_adapter_envelope(envelope)
     assert envelope["status"] == "ok", envelope
-    assert envelope["observations"]["roundTrips"] == 2
+    assert envelope["observations"]["databaseCalls"] == 2
     step_graphs = envelope["observations"]["stepGraphs"]
     assert [entry["at"] for entry in step_graphs] == ["/scenario/2"]
     assert sorted(node["id"] for node in step_graphs[0]["graph"]["OrderItem"]) == [11, 12]
@@ -1818,7 +1818,7 @@ def test_a_state_graded_run_reports_its_unit_fates_and_table_state() -> None:
         envelope = adapter.run_case(_SCENARIO_CASE, _PROFILE.on_stand_in(_WritePort()))
     validate_adapter_envelope(envelope)
     assert envelope["observations"] == {
-        "roundTrips": 1,
+        "databaseCalls": 1,
         "units": units,
         "tableState": table_state,
     }

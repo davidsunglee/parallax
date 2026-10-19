@@ -43,9 +43,9 @@ to the bitemporal rectangle split.
   snapshot graphs (`m-snapshot-read`); writes are explicit only. No managed
   lifecycle: the slice claims neither `m-identity-map` nor `m-op-list` (a
   snapshot read is not a query-backed lazy list; its
-  round-trip observability is pinned by `m-snapshot-read`). It is also the only
-  slice claiming `m-execution-lifecycle`: transient execution observability is
-  lifecycle-neutral, but its dedicated case spine is authored over the
+  Database Call observability is pinned by `m-snapshot-read`). It is also the
+  only slice claiming `m-execution-lifecycle`: transient execution observability
+  is lifecycle-neutral, but its dedicated case spine is authored over the
   plain-value surface, so the managed slice claims it once cases carry that tag.
   The execution runtime (`m-execution`) and read delivery (`m-read-delivery`)
   are lifecycle-neutral too, and are claimed here alone for the same reason:

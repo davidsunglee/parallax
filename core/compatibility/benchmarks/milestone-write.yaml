@@ -3,7 +3,7 @@
 # Prices the statement shape of m-temporal-write's milestone chaining (audit-only). A milestone insert
 # writes a current row [in_z = txInstant, out_z = infinity); a milestone update
 # closes the current row (out_z = txInstant) and chains a new current row. The
-# benchmark measures the wall-time of each write and its round-trip count.
+# benchmark measures the wall-time of each write and its Database Call count.
 #
 # A `kind: write` workload is re-run `iterations` times. Because identical DML with
 # a fixed primary key is not re-runnable (duplicate key on the 2nd iteration), a
@@ -18,9 +18,9 @@ dataset:
 workloads:
   - name: milestone-insert
     kind: write
-    note: insert a current milestone row [in_z, infinity) — one statement, one round trip
+    note: insert a current milestone row [in_z, infinity) — one statement, one Database Call
     iterations: 200
-    expectRoundTrips: 1
+    expectDatabaseCalls: 1
     statements:
       - sql:
           postgres: insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)

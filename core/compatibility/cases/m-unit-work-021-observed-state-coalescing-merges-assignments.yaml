@@ -17,7 +17,7 @@ when:
           eq:
             path: parallax.compatibility.Account.id
             value: 1
-      roundTrips: 1
+      databaseCalls: 1
       note: observe account 1 (balance 100.00, version 1) — the ONE state both buffered writes settle against
       statements:
         - sql:
@@ -37,7 +37,7 @@ when:
           entity: parallax.compatibility.Account
           rows:
             - { id: 1, owner: Grace, balance: "175.00" }
-      roundTrips: 1
+      databaseCalls: 1
       note: two assignment-bearing writes of one observed state merge into ONE gated UPDATE; the later 175.00 wins over 125.00
       statements:
         - sql:
@@ -50,7 +50,7 @@ when:
           eq:
             path: parallax.compatibility.Account.id
             value: 1
-      roundTrips: 1
+      databaseCalls: 1
       note: the dependent find MUST observe the merged value, never the intermediate 125.00; the group COMMITS after this, its last step
       statements:
         - sql:
@@ -59,4 +59,4 @@ when:
       expectRows:
         - { id: 1, owner: Grace, balance: "175.00", version: 2 }
 then:
-  roundTrips: 3
+  databaseCalls: 3

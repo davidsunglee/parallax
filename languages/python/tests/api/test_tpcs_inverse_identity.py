@@ -149,7 +149,7 @@ def test_public_broad_tpcs_children_report_same_root_witness_conflict(
     assert conflict.code == "snapshot-projection-conflict"
     assert conflict.coordinates == ()
     assert conflict.occurrences == ((1, 0), (1, 1))
-    assert observation.round_trips == 2
+    assert observation.database_calls == 2
 
 
 @pytest.mark.parametrize("streamed", [False, True], ids=["eager", "streamed"])
@@ -200,7 +200,7 @@ def test_public_wire_deeper_inverse_reuses_each_broad_child_on_a_live_database(
         assert link["parent"]["familyVariant"] == parent["familyVariant"]
         assert link["parent"]["label"] == parent["label"]
         assert "links" not in link["parent"]
-    assert observation.round_trips == 3
+    assert observation.database_calls == 3
 
 
 @pytest.mark.parametrize("wire", [False, True], ids=["typed", "wire"])
@@ -241,4 +241,4 @@ def test_public_broad_to_one_child_reuses_the_root_link_as_its_inverse(
         assert isinstance(link.parent, InverseAlpha)
         assert link.parent.links == (link,)
         assert link.parent.links[0] is link
-    assert observation.round_trips == 3
+    assert observation.database_calls == 3

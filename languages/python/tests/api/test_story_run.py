@@ -162,16 +162,16 @@ class _CountingDatabase(ScopedDatabase):
 
     A result carries no record of the execution that produced it
     (`m-execution-lifecycle`), and stories use the public API —
-    so the per-operation round-trip counts a scenario step's own oracle grades
+    so the per-operation Database Call counts a scenario step's own oracle grades
     are observed here, at the one boundary where "one operation" exists as a
-    thing. ``round_trips`` holds one entry per :meth:`find` and :meth:`transact`
+    thing. ``database_calls`` holds one entry per :meth:`find` and :meth:`transact`
     call, in call order, which is the same partition the case's steps draw.
     """
 
-    __slots__ = ("_root", "observation", "round_trips")
+    __slots__ = ("_root", "database_calls", "observation")
     _root: Database[Any]
     observation: LifecycleObservation
-    round_trips: list[int]
+    database_calls: list[int]
 
     def __init__(self, adapter: Any, model: Any, clock: Any = None) -> None:
         observation = LifecycleObservation()
@@ -180,14 +180,14 @@ class _CountingDatabase(ScopedDatabase):
         object.__setattr__(self, "_execution", scoped._execution)
         object.__setattr__(self, "_root", root)
         object.__setattr__(self, "observation", observation)
-        object.__setattr__(self, "round_trips", [])
+        object.__setattr__(self, "database_calls", [])
 
     def _counted[T](self, run: Callable[[], T]) -> T:
-        mark = self.observation.round_trips
+        mark = self.observation.database_calls
         try:
             return run()
         finally:
-            self.round_trips.append(self.observation.round_trips - mark)
+            self.database_calls.append(self.observation.database_calls - mark)
 
     def find[S](self, query: ObjectQuery[Any, S]) -> Snapshot[S]:
         return self._counted(lambda: super(_CountingDatabase, self).find(query))
@@ -244,7 +244,7 @@ def test_diamond_identity_shares_one_child_node(profile_run: Any) -> None:
     # distinguish one shared node from two equal ones.
     assert order.items[0] is order.items_by_ship_date[0]
     assert order.items[1] is order.items_by_ship_date[1]
-    assert db.round_trips == [3]
+    assert db.database_calls == [3]
 
 
 def test_back_reference_cycle_resolves_to_the_root(profile_run: Any) -> None:
@@ -258,7 +258,7 @@ def test_back_reference_cycle_resolves_to_the_root(profile_run: Any) -> None:
     # in-memory cycle the wire lane unwinds finitely into a value tree.
     assert order.items[0].order is order
     assert order.items[1].order is order
-    assert db.round_trips == [2]
+    assert db.database_calls == [2]
 
 
 def test_closed_world_unloaded_access_raises_without_sql(profile_run: Any) -> None:
@@ -271,9 +271,9 @@ def test_closed_world_unloaded_access_raises_without_sql(profile_run: Any) -> No
     with pytest.raises(UnloadedRelationshipError, match="statuses"):
         order.statuses  # noqa: B018 - the access itself is the assertion
     # The access issues no SQL of its own: the materializing find is the only
-    # round trip on record (m-snapshot-read-009 is this suite's official grader
+    # Database Call on record (m-snapshot-read-009 is this suite's official grader
     # for the closed-world absence witness, `lane: api-conformance`).
-    assert db.round_trips == [1]
+    assert db.database_calls == [1]
 
 
 def test_empty_root_materializes_no_children(profile_run: Any) -> None:
@@ -282,7 +282,7 @@ def test_empty_root_materializes_no_children(profile_run: Any) -> None:
     db = _counting_connect(profile_run.port, meta)
     snapshot = story.run(db)
     assert snapshot.results() == []
-    assert db.round_trips == [1]
+    assert db.database_calls == [1]
 
 
 def test_empty_intermediate_level_short_circuits(profile_run: Any) -> None:
@@ -292,7 +292,7 @@ def test_empty_intermediate_level_short_circuits(profile_run: Any) -> None:
     snapshot = story.run(db)
     order = snapshot.result()
     assert order.items == ()
-    assert db.round_trips == [2]
+    assert db.database_calls == [2]
 
 
 def test_pinned_graph_at_a_past_valid_time_instant(profile_run: Any) -> None:
@@ -333,8 +333,8 @@ def test_an_edited_copy_keeps_its_source_nodes_views(profile_run: Any) -> None:
     with pytest.raises(UnloadedRelationshipError, match="statuses"):
         edited.statuses  # noqa: B018 - the access itself is the assertion
     # Neither the derivation nor the access issues SQL: the materializing find is
-    # still the only round trip on record.
-    assert db.round_trips == [1]
+    # still the only Database Call on record.
+    assert db.database_calls == [1]
 
 
 def test_an_edit_keeps_a_loaded_relationship_view(profile_run: Any) -> None:
@@ -352,8 +352,8 @@ def test_an_edit_keeps_a_loaded_relationship_view(profile_run: Any) -> None:
     assert edited.items[0] is order.items[0]
     assert edited.items[1] is order.items[1]
     # Neither the derivation nor the access issues SQL: the materializing find's
-    # own two levels are still the only round trips on record.
-    assert db.round_trips == [2]
+    # own two levels are still the only Database Calls on record.
+    assert db.database_calls == [2]
 
 
 def test_a_write_keeps_a_loaded_to_one_view(profile_run: Any) -> None:
@@ -371,7 +371,7 @@ def test_a_write_keeps_a_loaded_to_one_view(profile_run: Any) -> None:
     assert (loaded_order.name, reread.name) == ("Ada", "Rewritten")
     # The story's own first operation: the materializing read the surviving view
     # hangs off, before the write and the re-read that follow it.
-    assert db.round_trips[0] == 2
+    assert db.database_calls[0] == 2
 
 
 def _committed_item_ids(db: ScopedDatabase, order_id: int) -> list[int]:
@@ -397,7 +397,7 @@ def test_a_write_keeps_a_loaded_empty_relationship_view(profile_run: Any) -> Non
     # half of the distinction m-snapshot-read-019 holds from the other side.
     assert is_view_loaded(order, Order.items) is True
     assert order.items == ()
-    assert db.round_trips[0] == 2
+    assert db.database_calls[0] == 2
     # The write is load-bearing: order 3 really owns item 31 now, so the empty
     # tuple above is a value only the surviving view can answer.
     assert _committed_item_ids(db, 3) == [31]
@@ -417,8 +417,8 @@ def test_a_write_keeps_an_unloaded_relationship_absent(profile_run: Any) -> None
     with pytest.raises(UnloadedRelationshipError, match="items"):
         order.items  # noqa: B018 - the access itself is the assertion
     # The access issues no SQL of its own, the write's own unit of work aside:
-    # the materializing find is the only round trip this snapshot ever cost.
-    assert db.round_trips[0] == 1
+    # the materializing find is the only Database Call this snapshot ever cost.
+    assert db.database_calls[0] == 1
     # This case's lane has no corpus executor at all, so the write it composes
     # across is proven here or nowhere: order 3 really owns item 31, and the
     # relationship stayed absent across a write that genuinely landed on it.
@@ -512,33 +512,35 @@ def _assert_find_step_rows(case_id: str, index: int, snapshot: Snapshot[Any]) ->
 
 
 def _assert_composition_units(case_id: str, db: _CountingDatabase) -> None:
-    """A composition story's units of work each cost the round trips the scenario
-    step they mirror authors, and together the case's own ``then.roundTrips``.
+    """A composition story's units of work each cost the Database Calls the scenario
+    step they mirror authors, and together the case's own ``then.databaseCalls``.
 
-    ``db.round_trips`` holds the story's own ``find`` and ``transact`` calls in
+    ``db.database_calls`` holds the story's own ``find`` and ``transact`` calls in
     AUTHORED order, one per scenario step that touches the database — every find
     and every write, which is the same partition the case's own steps draw. A
-    zero-round-trip `access` rides on the counter of the find its `on` names, so
+    zero-Database-Call `access` rides on the counter of the find its `on` names, so
     its declared cost is added there rather than counted on its own: a
     re-fetching access breaks that find's equality.
 
     Per step and in total, because the aggregate alone admits compensating
-    errors: a read-back that re-read the root with an include costs one round
-    trip too many, which a write that skipped its resolving read would pay for.
+    errors: a read-back that re-read the root with an include costs one
+    Database Call too many, which a write that skipped its resolving read would pay for.
     """
     steps = _scenario_steps(case_id)
     expected = [
-        cast("int", step["roundTrips"])
+        cast("int", step["databaseCalls"])
         + sum(
-            cast("int", rider["roundTrips"])
+            cast("int", rider["databaseCalls"])
             for rider in steps
             if rider.get("action") == "access" and rider.get("on") == index
         )
         for index, step in enumerate(steps)
         if "write" in step or "objectQuery" in step
     ]
-    assert db.round_trips == expected, case_id
-    assert sum(db.round_trips) == case_document(_CASES[case_id])["then"]["roundTrips"], case_id
+    assert db.database_calls == expected, case_id
+    assert sum(db.database_calls) == case_document(_CASES[case_id])["then"]["databaseCalls"], (
+        case_id
+    )
 
 
 def test_a_delete_keeps_a_loaded_relationship_view(profile_run: Any) -> None:
@@ -692,11 +694,11 @@ def test_a_grouped_read_observes_its_own_relationship_writes(profile_run: Any) -
     # read for the write, because the group's own find already published the row
     # its update settles against.
     steps = _scenario_steps(story.case_id)
-    assert db.round_trips == [case_document(_CASES[story.case_id])["then"]["roundTrips"]]
+    assert db.database_calls == [case_document(_CASES[story.case_id])["then"]["databaseCalls"]]
     assert _kind_runs(db) == [
-        ("read", steps[0]["roundTrips"]),
-        ("write", steps[1]["roundTrips"]),
-        ("read", steps[2]["roundTrips"]),
+        ("read", steps[0]["databaseCalls"]),
+        ("write", steps[1]["databaseCalls"]),
+        ("read", steps[2]["databaseCalls"]),
     ]
     # The group really committed: a fresh read outside it observes what the
     # dependent find observed inside it.
@@ -717,7 +719,7 @@ def test_a_finite_transaction_time_pinned_view_is_read_only(profile_run: Any) ->
     with raises_contextualized(TransactionTimePinReadOnlyError) as refused:
         a_finite_transaction_time_pinned_view_is_read_only(db)
     assert refused.value.code == "transaction-time-pin-read-only"
-    # The case's own `roundTrips: 0` on the mutate step, graded as durable state:
+    # The case's own `databaseCalls: 0` on the mutate step, graded as durable state:
     # the superseded milestone and the current one stand exactly as they were, so
     # nothing appended and nothing was rewritten.
     assert engine.read_table_state(profile_run.port, model_of(meta)) == before
@@ -768,7 +770,7 @@ def test_one_to_one_peer_attaches_as_a_single_object(profile_run: Any) -> None:
     assert by_id[2].passport is not None
     assert by_id[2].passport.number == "P-BBB"
     assert by_id[3].passport is None  # no passport on record -> a null peer
-    assert db.round_trips == [2]
+    assert db.database_calls == [2]
 
 
 def test_animal_owner_reaches_root_and_narrowed_subtype_view(profile_run: Any) -> None:
@@ -782,7 +784,7 @@ def test_animal_owner_reaches_root_and_narrowed_subtype_view(profile_run: Any) -
     assert {pet.name for pet in alice.animals} == {"Rex", "Whiskers"}
     dogs = view(alice, AnimalOwnerPerson.pets.narrow(Dog))
     assert [dog.name for dog in cast("tuple[Any, ...]", dogs)] == ["Rex"]
-    assert db.round_trips == [3]
+    assert db.database_calls == [3]
 
 
 _BEAST = EntityIdentity("parallax.compatibility", "Beast")
@@ -820,7 +822,7 @@ def test_an_older_reader_diagnoses_a_stored_subtype_it_does_not_compose(
     assert (akela.howl, raksha.howl) == ("aroo", "yip")
     _unknown_tag(baloo, "bear")
     assert cast("InvalidData[object]", baloo).object_key is None
-    assert db.round_trips == [1]
+    assert db.database_calls == [1]
 
     query = Beast.where(Beast.all).order_by(Beast.id.asc())
     with db.stream(query, batch_size=2) as stream:
@@ -854,7 +856,7 @@ def test_a_broad_include_diagnoses_a_child_subtype_its_reader_does_not_compose(
     assert cast("InvalidData[object]", bagheera).object_key is not None
     assert isinstance(kaa, Keeper)
     assert kaa.beasts == ()
-    assert db.round_trips == [2]
+    assert db.database_calls == [2]
 
     query = Keeper.where(Keeper.all).order_by(Keeper.id.asc()).include(Keeper.beasts)
     with db.stream(query, batch_size=1) as stream:
@@ -878,7 +880,7 @@ def test_a_narrowed_include_keeps_its_guard_over_the_only_composed_subtype(
     assert [wolf.name for wolf in cast("tuple[Any, ...]", wolves)] == ["Akela", "Raksha"]
     assert view(by_name["Bagheera"], Keeper.beasts.narrow(Wolf)) == ()
     assert is_view_loaded(by_name["Bagheera"], Keeper.beasts) is False
-    assert db.round_trips == [2]
+    assert db.database_calls == [2]
 
 
 def test_a_document_reader_diagnoses_a_stored_subtype_it_does_not_compose(
@@ -893,7 +895,7 @@ def test_a_document_reader_diagnoses_a_stored_subtype_it_does_not_compose(
     assert isinstance(bruno, DocumentFox)
     assert (akela.howl, bruno.brush) == ("aroo", "red")
     _unknown_tag(bear, "bear")
-    assert db.round_trips == [1]
+    assert db.database_calls == [1]
 
 
 def test_a_subtype_document_filter_reads_only_the_composed_subtypes(profile_run: Any) -> None:
@@ -908,7 +910,7 @@ def test_a_subtype_document_filter_reads_only_the_composed_subtypes(profile_run:
         ("Fox", "Bruno"),
         ("Wolf", "Akela"),
     ]
-    assert db.round_trips == [1]
+    assert db.database_calls == [1]
 
 
 def test_a_subtype_document_filter_leaves_its_include_levels_unfiltered(
@@ -922,7 +924,7 @@ def test_a_subtype_document_filter_leaves_its_include_levels_unfiltered(
     _unknown_tag(akela, "bear")
     assert isinstance(bruno, DocumentFox)
     assert bruno.followers == ()
-    assert db.round_trips == [2]
+    assert db.database_calls == [2]
 
 
 def test_a_subtype_with_no_composed_concrete_reads_no_roots_without_a_statement(
@@ -934,14 +936,14 @@ def test_a_subtype_with_no_composed_concrete_reads_no_roots_without_a_statement(
 
     assert snapshot.results() == []
     assert snapshot.wire().results() == []
-    assert db.round_trips == [0]
+    assert db.database_calls == [0]
     query = Prototype.where(Prototype.all)
     assert db.wire.find(query).results() == []
     with db.stream(query, batch_size=2) as stream:
         assert list(stream) == []
     with db.wire.stream(query, batch_size=2) as wire_stream:
         assert list(wire_stream) == []
-    assert db.observation.round_trips == 0
+    assert db.observation.database_calls == 0
 
 
 def test_includes_of_a_subtype_with_no_composed_concrete_load_without_a_statement(
@@ -959,7 +961,7 @@ def test_includes_of_a_subtype_with_no_composed_concrete_load_without_a_statemen
         assert (workbench.prototype, workbench.prototypes) == (None, ())
         assert is_view_loaded(workbench, Workbench.concepts) is False
     assert [gadget.label for gadget in bench.gadgets] == ["Cog", "Gear"]
-    assert db.round_trips == [2]
+    assert db.database_calls == [2]
 
 
 def test_includes_of_a_tpcs_position_with_no_concrete_load_without_a_statement(
@@ -973,7 +975,7 @@ def test_includes_of_a_tpcs_position_with_no_concrete_load_without_a_statement(
     assert (bench["conceptId"], bench["concept"], bench["concepts"]) == (8, None, [])
     assert (shed["concept"], shed["concepts"], shed["gadgets"]) == (None, [], [])
     assert "prototypes" not in bench
-    assert db.round_trips == [2]
+    assert db.database_calls == [2]
 
 
 def test_narrowed_pets_view_populates_per_owner(profile_run: Any) -> None:
@@ -988,7 +990,7 @@ def test_narrowed_pets_view_populates_per_owner(profile_run: Any) -> None:
     assert [dog.name for dog in cast("tuple[Any, ...]", bob_dogs)] == ["Fido"]
     carol_dogs = view(by_name["Carol"], AnimalOwnerPerson.pets.narrow(Dog))
     assert carol_dogs == ()
-    assert db.round_trips == [2]
+    assert db.database_calls == [2]
 
 
 def test_equivalent_narrow_spellings_dedupe_to_one_view(profile_run: Any) -> None:
@@ -999,7 +1001,7 @@ def test_equivalent_narrow_spellings_dedupe_to_one_view(profile_run: Any) -> Non
     by_name = {person.name: person for person in snapshot.results()}
     alice_view = view(by_name["Alice"], AnimalOwnerPerson.pets.narrow(Cat, Dog))
     assert {pet.name for pet in cast("tuple[Any, ...]", alice_view)} == {"Rex", "Whiskers"}
-    assert db.round_trips == [2]
+    assert db.database_calls == [2]
 
 
 def test_distinct_narrowed_views_populate_independently(profile_run: Any) -> None:
@@ -1012,7 +1014,7 @@ def test_distinct_narrowed_views_populate_independently(profile_run: Any) -> Non
     alice_cats = view(alice, AnimalOwnerPerson.pets.narrow(Cat))
     assert [pet.name for pet in cast("tuple[Any, ...]", alice_dogs)] == ["Rex"]
     assert [pet.name for pet in cast("tuple[Any, ...]", alice_cats)] == ["Whiskers"]
-    assert db.round_trips == [3]
+    assert db.database_calls == [3]
 
 
 def test_a_redundant_narrow_populates_a_view_beside_the_broad_one(profile_run: Any) -> None:
@@ -1029,7 +1031,7 @@ def test_a_redundant_narrow_populates_a_view_beside_the_broad_one(profile_run: A
     # under its own derived view key rather than merging into `pets`.
     assert sorted(pet.name for pet in alice.pets) == ["Rex", "Whiskers"]
     assert sorted(pet.name for pet in cast("tuple[Any, ...]", redundant)) == ["Rex", "Whiskers"]
-    assert db.round_trips == [3]
+    assert db.database_calls == [3]
 
 
 def test_disjoint_root_guards_fill_one_owner_view(profile_run: Any) -> None:
@@ -1048,7 +1050,7 @@ def test_disjoint_root_guards_fill_one_owner_view(profile_run: Any) -> None:
     assert is_view_loaded(by_name["Tusker"], Animal.owner) is False
     with pytest.raises(UnloadedRelationshipError, match="owner"):
         _ = by_name["Tusker"].owner
-    assert db.round_trips == [3]
+    assert db.database_calls == [3]
 
 
 def test_a_root_guard_beside_a_broad_path_stays_its_own_hop(profile_run: Any) -> None:
@@ -1065,7 +1067,7 @@ def test_a_root_guard_beside_a_broad_path_stays_its_own_hop(profile_run: Any) ->
         "Whiskers": "Alice",
         "Tusker": "Carol",
     }
-    assert db.round_trips == [3]
+    assert db.database_calls == [3]
 
 
 def test_guarded_branches_keep_their_own_parents(profile_run: Any) -> None:
@@ -1085,7 +1087,7 @@ def test_guarded_branches_keep_their_own_parents(profile_run: Any) -> None:
     assert sorted(pet.name for pet in by_name["Rex"].owner.pets) == ["Rex", "Whiskers"]
     assert [pet.name for pet in by_name["Fido"].owner.pets] == ["Fido"]
     assert is_view_loaded(by_name["Tusker"].owner, AnimalOwnerPerson.pets) is False
-    assert db.round_trips == [4]
+    assert db.database_calls == [4]
 
 
 def test_a_guarded_root_continues_through_a_narrowed_hop(profile_run: Any) -> None:
@@ -1108,7 +1110,7 @@ def test_a_guarded_root_continues_through_a_narrowed_hop(profile_run: Any) -> No
     assert by_name["Whiskers"].owner is not alice
     assert by_name["Whiskers"].owner == alice
     assert is_view_loaded(by_name["Tusker"], Animal.owner) is False
-    assert db.round_trips == [3]
+    assert db.database_calls == [3]
 
 
 def _read_case_query(case_id: str) -> tuple[Any, Any]:
@@ -1153,7 +1155,7 @@ def test_transaction_time_only_vo_owner_as_of_latest(profile_run: Any) -> None:
     db = _counting_connect(profile_run.port, meta)
     snapshot = story.run(db)
     _assert_vo_owner_graph(story.case_id, snapshot, "Supplier", "id")
-    assert db.round_trips == [1]
+    assert db.database_calls == [1]
 
 
 def test_transaction_time_only_vo_owner_as_of_a_past_instant(profile_run: Any) -> None:
@@ -1162,7 +1164,7 @@ def test_transaction_time_only_vo_owner_as_of_a_past_instant(profile_run: Any) -
     db = _counting_connect(profile_run.port, meta)
     snapshot = story.run(db)
     _assert_vo_owner_graph(story.case_id, snapshot, "Supplier", "id")
-    assert db.round_trips == [1]
+    assert db.database_calls == [1]
 
 
 def test_bitemporal_vo_owner_as_of_latest(profile_run: Any) -> None:
@@ -1171,7 +1173,7 @@ def test_bitemporal_vo_owner_as_of_latest(profile_run: Any) -> None:
     db = _counting_connect(profile_run.port, meta)
     snapshot = story.run(db)
     _assert_vo_owner_graph(story.case_id, snapshot, "Branch", "id")
-    assert db.round_trips == [1]
+    assert db.database_calls == [1]
 
 
 def test_bitemporal_vo_owner_as_of_a_past_audit_point(profile_run: Any) -> None:
@@ -1180,7 +1182,7 @@ def test_bitemporal_vo_owner_as_of_a_past_audit_point(profile_run: Any) -> None:
     db = _counting_connect(profile_run.port, meta)
     snapshot = story.run(db)
     _assert_vo_owner_graph(story.case_id, snapshot, "Branch", "id")
-    assert db.round_trips == [1]
+    assert db.database_calls == [1]
 
 
 def _assert_typed_per_variant_graph(case_id: str, snapshot: Any, entity_name: str) -> None:
@@ -1194,7 +1196,7 @@ def test_tph_abstract_root_read_materializes_typed_per_variant_instances(profile
     db = _counting_connect(profile_run.port, meta)
     snapshot = story.run(db)
     _assert_typed_per_variant_graph(story.case_id, snapshot, "Payment")
-    assert db.round_trips == [1]
+    assert db.database_calls == [1]
 
 
 def test_tph_narrow_to_abstract_subtype_materializes_typed_per_variant_instances(
@@ -1205,7 +1207,7 @@ def test_tph_narrow_to_abstract_subtype_materializes_typed_per_variant_instances
     db = _counting_connect(profile_run.port, meta)
     snapshot = story.run(db)
     _assert_typed_per_variant_graph(story.case_id, snapshot, "Animal")
-    assert db.round_trips == [1]
+    assert db.database_calls == [1]
 
 
 def test_tph_or_across_branches_materializes_typed_per_variant_instances(
@@ -1216,7 +1218,7 @@ def test_tph_or_across_branches_materializes_typed_per_variant_instances(
     db = _counting_connect(profile_run.port, meta)
     snapshot = story.run(db)
     _assert_typed_per_variant_graph(story.case_id, snapshot, "Animal")
-    assert db.round_trips == [1]
+    assert db.database_calls == [1]
 
 
 def test_tpcs_narrow_to_abstract_subtype_materializes_typed_per_variant_instances(
@@ -1227,7 +1229,7 @@ def test_tpcs_narrow_to_abstract_subtype_materializes_typed_per_variant_instance
     db = _counting_connect(profile_run.port, meta)
     snapshot = story.run(db)
     _assert_typed_per_variant_graph(story.case_id, snapshot, "Document")
-    assert db.round_trips == [1]
+    assert db.database_calls == [1]
 
 
 def _assert_customer_predicate_rows(case_id: str, snapshot: Any) -> None:
@@ -1241,7 +1243,7 @@ def _assert_customer_predicate_rows(case_id: str, snapshot: Any) -> None:
 
 
 # The seven Customer nested-predicate stories share ONE execution shape
-# (reset, run, `then.rows`, one round trip), so a single parametrized runner
+# (reset, run, `then.rows`, one Database Call), so a single parametrized runner
 # drives them — the READ-story generic-runner precedent below — with the
 # behavior each case witnesses preserved as the parameter id.
 @pytest.mark.parametrize(
@@ -1268,7 +1270,7 @@ def test_customer_nested_predicate_story_selects_the_golden_owners(
     db = _counting_connect(profile_run.port, meta)
     snapshot = story.run(db)
     _assert_customer_predicate_rows(story.case_id, snapshot)
-    assert db.round_trips == [1]
+    assert db.database_calls == [1]
 
 
 @pytest.mark.parametrize(
@@ -1284,7 +1286,7 @@ def test_customer_owner_materializes_its_composite(case_id: str, profile_run: An
     db = _counting_connect(profile_run.port, meta)
     snapshot = story.run(db)
     _assert_vo_owner_graph(story.case_id, snapshot, "Customer", "id")
-    assert db.round_trips == [1]
+    assert db.database_calls == [1]
 
 
 def _assert_customer_locations_graph(case_id: str, snapshot: Any) -> None:
@@ -1299,7 +1301,7 @@ def test_customer_locations_deep_fetch_materializes_the_child_document_too(
     db = _counting_connect(profile_run.port, meta)
     snapshot = story.run(db)
     _assert_customer_locations_graph(story.case_id, snapshot)
-    assert db.round_trips == [2]
+    assert db.database_calls == [2]
 
 
 def test_every_graph_story_mirrors_an_active_case_exactly_once() -> None:
@@ -1317,7 +1319,7 @@ def test_every_graph_story_mirrors_an_active_case_exactly_once() -> None:
 # drives every `read_stories.READ_STORIES` entry instead of a hand-rolled     #
 # per-case function. Grading is the case's own `then.rows` (order-insensitive,#
 # exact-typed, physical-column-keyed — `instance_row`, never the canonical    #
-# camelCase `orderedOn` spelling `then.rows` never uses) plus `then.roundTrips`#
+# camelCase `orderedOn` spelling `then.rows` never uses) plus `then.databaseCalls`#
 # when the case declares it. `familyVariant` is reported only for a case whose #
 # own oracle rows declare it (an abstract-root inheritance read) — the        #
 # API-suite's own polymorphism observation (`queries-and-results.md`:         #
@@ -1410,9 +1412,9 @@ def test_read_story_runs_through_the_shipped_surface(story: ReadStory, profile_r
         instance_row(instance, family_variant=expects_variant) for instance in snapshot.results()
     ]
     compare_rows(observed_rows, expected_rows)
-    expected_round_trips = then.get("roundTrips")
-    if expected_round_trips is not None:
-        assert len(port.statements) == expected_round_trips, story.case_id
+    expected_database_calls = then.get("databaseCalls")
+    if expected_database_calls is not None:
+        assert len(port.statements) == expected_database_calls, story.case_id
 
     # Grade the statements this story's find actually executed against the
     # case's authored Postgres golden

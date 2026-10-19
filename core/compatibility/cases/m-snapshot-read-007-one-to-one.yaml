@@ -32,4 +32,4 @@ then:
         name: Grace
         passport: { id: 102, personId: 2, number: P-BBB }
       - { id: 3, name: Ada, passport: null }
-  roundTrips: 2
+  databaseCalls: 2

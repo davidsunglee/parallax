@@ -14,4 +14,4 @@ then:
   statements: []
   graph:
     Prototype: []
-  roundTrips: 0
+  databaseCalls: 0

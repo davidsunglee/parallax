@@ -32,7 +32,7 @@ when:
             asOf: latest
           valid-time:
             asOf: "2024-06-01T00:00:00.000000Z"
-      roundTrips: 1
+      databaseCalls: 1
       note: OUR unit of work observes R3 — id 1 pinned at Valid Time 2024-06-01, its own start, the open current rectangle (200.00, known from 2024-04-01)
       statements:
         - sql:
@@ -53,7 +53,7 @@ when:
             asOf: latest
           valid-time:
             asOf: "2024-06-01T00:00:00.000000Z"
-      roundTrips: 1
+      databaseCalls: 1
       note: a CONCURRENT unit of work observes the SAME rectangle — the classic race
       statements:
         - sql:
@@ -71,7 +71,7 @@ when:
             - { id: 1, value: "250.00" }
           validFrom: "2024-06-01T00:00:00.000000Z"
           at: "2024-05-01T00:00:00.000000Z"
-      roundTrips: 2
+      databaseCalls: 2
       note: the concurrent unit of work commits FIRST — an update from the observed rectangle's own start has no head, so its close gated on the in_z it observed, then the changed successor [2024-06-01, infinity) from the same instant; the group COMMITS after this, its last step
       statements:
         - sql:
@@ -91,7 +91,7 @@ when:
             - { id: 1 }
           validFrom: "2024-06-01T00:00:00.000000Z"
           at: "2024-10-01T00:00:00.000000Z"
-      roundTrips: 1
+      databaseCalls: 1
       note: "our terminate from the observed rectangle's own start through its open end is the close alone, gated on OUR observed in_z 2024-04-01, which the concurrent commit closed — 0 rows; the commit's flush fails and the group ROLLS BACK after this, its last step"
       statements:
         - sql:
@@ -105,7 +105,7 @@ then:
       flushFailure: { at: commit, entity: parallax.compatibility.Position, key: { id: 1 }, shortfall: optimisticConflict }
     concurrent:
       outcome: committed
-  roundTrips: 5
+  databaseCalls: 5
   tableState:
     position:
       - pos_id: 1

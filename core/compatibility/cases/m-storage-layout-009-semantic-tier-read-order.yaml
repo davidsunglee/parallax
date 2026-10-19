@@ -27,4 +27,4 @@ then:
         probe:
           model: TH-2
         familyVariant: LayoutMeterReading
-  roundTrips: 1
+  databaseCalls: 1

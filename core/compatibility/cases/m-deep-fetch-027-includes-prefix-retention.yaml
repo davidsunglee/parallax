@@ -1,6 +1,6 @@
 # Includes maximal-prefix retention — the two-hop path canonically subsumes its
 # exact one-hop prefix, while prefix materialization still plans items and statuses
-# as two child levels and therefore preserves the three-round-trip observation.
+# as two child levels and therefore preserves the three-Database-Call observation.
 model: models/orders.yaml
 tags: [m-deep-fetch, m-object-query, includes-prefix-retention]
 shape: read
@@ -97,4 +97,4 @@ then:
             shippedOn: 2024-03-10
             statuses:
               - { id: 204, orderId: 42, orderItemId: 421, code: PICKED }
-  roundTrips: 3
+  databaseCalls: 3

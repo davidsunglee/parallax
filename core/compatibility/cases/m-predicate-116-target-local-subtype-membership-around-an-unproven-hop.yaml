@@ -17,4 +17,4 @@ then:
   rows:
   - {id: 50, parking_id: 30}
   - {id: 53, parking_id: 33}
-  roundTrips: 1
+  databaseCalls: 1

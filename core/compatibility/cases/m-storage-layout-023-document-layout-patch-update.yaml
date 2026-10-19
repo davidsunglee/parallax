@@ -67,4 +67,4 @@ then:
               country: "NO"
           tags:
             - { label: scout }
-  roundTrips: 3
+  databaseCalls: 3

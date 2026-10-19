@@ -13,4 +13,4 @@ then:
   referenceSql: select id, parking_id from traversal_ticket where parking_id in (select p.id from traversal_parking p join traversal_car c on c.id = p.vehicle_id join traversal_dealer d on d.id = c.dealer_id where d.name = 'Nordic')
   rows:
   - {id: 50, parking_id: 30}
-  roundTrips: 1
+  databaseCalls: 1

@@ -219,14 +219,14 @@ after which `m-unit-work-033` joins the interleaved lane.
 Relates to `parallax.conformance._lanes.scenario._execute_framework_write_unit`.
 
 **What.** Every other write lane drives its DML through a real `db.transact`, so
-its statements and round trips are read off the delivered lifecycle. One does
+its statements and Database Calls are read off the delivered lifecycle. One does
 not, because the DML it runs has no public verb to be stated through: a
 `{"increment": n}` DB-computed write marker is the PK allocator's own statement.
-It therefore executes a plan of its own against `m-db-port` and STATES its round
-trips, exactly as `run_error_case` does for authored trigger DML. The consequence
-is bounded and real: a case reaching that shape opens no Root Execution for that
-work, so it can author no `then.executionLifecycle` — the stream would omit calls
-the run made, and the record's own count cross-check
+It therefore executes a plan of its own against `m-db-port` and STATES its
+Database Calls, exactly as `run_error_case` does for authored trigger DML. The
+consequence is bounded and real: a case reaching that shape opens no Root
+Execution for that work, so it can author no `then.executionLifecycle` — the
+stream would omit calls the run made, and the record's own count cross-check
 (`reference_harness.execution_validate`) would report the disagreement rather
 than the case grading a stream missing them.
 

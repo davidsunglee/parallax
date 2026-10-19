@@ -204,7 +204,7 @@ def test_a_boundary_action_commits_its_dml_on_the_providers_own_connection(corpu
 
 
 def test_an_unresolved_list_step_issues_nothing(corpus_case) -> None:
-    # m-op-list-001: the construction of a query-backed list costs zero round trips
+    # m-op-list-001: the construction of a query-backed list costs zero Database Calls
     # and makes no call at all; the observation is deferred to the later step that
     # accesses it, and the re-access after that issues nothing either.
     case = corpus_case("m-op-list-001-construction-first-access-reaccess.yaml")
@@ -304,11 +304,11 @@ def test_a_flush_failure_is_graded_on_the_flush_that_failed(damaged_case) -> Non
                 "rows": [{"id": 9, "balance": "6.00"}],
             }
         ],
-        "roundTrips": 1,
+        "databaseCalls": 1,
         "statements": [{"sql": {"postgres": _GATED_UPDATE}, "binds": ["6.00", 2, 9, 1]}],
     }
     steps[4:4] = [reread, later]
-    case.then["roundTrips"] += reread["roundTrips"] + later["roundTrips"]
+    case.then["databaseCalls"] += reread["databaseCalls"] + later["databaseCalls"]
     ours, concurrent, again, after = _observed(case)
     script = [ours, concurrent, Affected(1), Affected(1), Affected(0), again, Affected(1), after]
     with pytest.raises(CaseFailure, match="of the failing flush addressing it MUST have"):
@@ -325,7 +325,7 @@ def test_a_flush_failure_reported_before_the_groups_last_flush_is_refused(damage
 def test_a_list_constructed_after_pending_writes_leaves_them_to_commit(damaged_case) -> None:
     case = damaged_case("m-opt-lock-012-conflict-aborts-uow.yaml")
     steps = case.when["scenario"]
-    steps.insert(4, {"uow": "ours", "objectQuery": steps[0]["objectQuery"], "roundTrips": 0})
+    steps.insert(4, {"uow": "ours", "objectQuery": steps[0]["objectQuery"], "databaseCalls": 0})
     assert_judged(case)
     case.then["units"]["ours"]["flushFailure"]["at"] = 4
     with pytest.raises(CaseFailure, match="last flush runs at 'commit'"):
@@ -408,7 +408,7 @@ def _uncommitted_write_then_reference_sql_case() -> Case:
                 {
                     "uow": "g",
                     "write": [{"mutation": "amend", "entity": "Account", "rows": [{"id": 2}]}],
-                    "roundTrips": 1,
+                    "databaseCalls": 1,
                     "statements": [
                         {
                             "sql": {"postgres": "update account set balance = ? where id = ?"},
@@ -422,13 +422,13 @@ def _uncommitted_write_then_reference_sql_case() -> Case:
                         "target": "Account",
                         "predicate": {"eq": {"path": "Account.id", "value": 2}},
                     },
-                    "roundTrips": 1,
+                    "databaseCalls": 1,
                     "statements": [{"sql": {"postgres": find}, "binds": [2]}],
                     "referenceSql": "select * from account where id = 2",
                 },
             ]
         },
-        "then": {"roundTrips": 2},
+        "then": {"databaseCalls": 2},
     }
     return Case(
         path=Path("m-unit-work-998-synthetic.yaml"),

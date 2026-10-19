@@ -27,4 +27,4 @@ then:
     - { id: 1, name: Ada }
     - { id: 2, name: Linus }
     - { id: 3, name: Grace }
-  roundTrips: 1
+  databaseCalls: 1

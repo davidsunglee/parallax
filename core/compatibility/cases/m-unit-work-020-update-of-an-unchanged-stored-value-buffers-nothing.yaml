@@ -6,7 +6,7 @@ when:
   scenario:
     - action: amend
       value: thisSource
-      roundTrips: 0
+      databaseCalls: 0
       note: accepted, and with no change to write it buffers nothing — no expectError, no DML
 then:
-  roundTrips: 0
+  databaseCalls: 0

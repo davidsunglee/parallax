@@ -23,7 +23,7 @@ when:
             asOf: latest
           valid-time:
             asOf: "2024-03-01T00:00:00.000000Z"
-      roundTrips: 1
+      databaseCalls: 1
       note: pin id 1 at the finite Valid-Time instant 2024-03-01 with Transaction-Time Latest — a WRITABLE Valid-Time-past view (the head, 100.00)
       statements:
         - sql:
@@ -35,7 +35,7 @@ when:
       "on": 0
       set:
         value: "250.00"
-      roundTrips: 0
+      databaseCalls: 0
       note: mutating a finite Valid-Time-axis view is ACCEPTED (the writable retroactive correction) — no error, no DML in this closed-world lane
 then:
-  roundTrips: 1
+  databaseCalls: 1

@@ -35,4 +35,4 @@ then:
           - id: '123e4567-e89b-12d3-a456-426614174001'
             parentId: '123e4567-e89b-12d3-a456-426614174000'
             parent: {id: '123e4567-e89b-12d3-a456-426614174000', label: independent}
-  roundTrips: 2
+  databaseCalls: 2

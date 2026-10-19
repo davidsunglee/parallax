@@ -2,12 +2,12 @@
 #
 # Loads a GENERATED dataset — 1,000 `Account` rows from the `accounts-sequential`
 # recipe — then runs four read workloads, each declaring its per-dialect SQL, binds,
-# and `iterations`. An OPTIONAL `expectRoundTrips` states how many statements the
+# and `iterations`. An OPTIONAL `expectDatabaseCalls` states how many statements the
 # workload authors, so the report carries a statement count beside every timing:
-#   - point-read (200):         a single PK lookup            — expectRoundTrips 1
-#   - range-read (100):         a bounded balance range scan  — expectRoundTrips 1
-#   - aggregate-group-by (100): a count/sum over the dataset  — (no round-trip bound)
-#   - point-read-cached (200):  the same point-read, cache HIT — expectRoundTrips 0
+#   - point-read (200):         a single PK lookup            — expectDatabaseCalls 1
+#   - range-read (100):         a bounded balance range scan  — expectDatabaseCalls 1
+#   - aggregate-group-by (100): a count/sum over the dataset  — (no Database Call bound)
+#   - point-read-cached (200):  the same point-read, cache HIT — expectDatabaseCalls 0
 tags: [m-perf-bench, query-mix]
 model: models/account.yaml
 dataset:
@@ -18,7 +18,7 @@ workloads:
   - name: point-read
     note: a single primary-key lookup — the query-cache miss/first-fetch cost
     iterations: 200
-    expectRoundTrips: 1
+    expectDatabaseCalls: 1
     statements:
       - sql:
           postgres: select t0.id, t0.owner, t0.balance from account t0 where t0.id = ?
@@ -27,7 +27,7 @@ workloads:
   - name: range-read
     note: a bounded range scan over the balance column (m-predicate range predicates)
     iterations: 100
-    expectRoundTrips: 1
+    expectDatabaseCalls: 1
     statements:
       - sql:
           postgres: select t0.id, t0.owner, t0.balance from account t0 where t0.balance between ? and ?
@@ -36,13 +36,13 @@ workloads:
   - name: aggregate-group-by
     note: a group-by / aggregate workload (the m-agg aggregate path) over the dataset
     iterations: 100
-    expectRoundTrips: 1
+    expectDatabaseCalls: 1
     statements:
       - sql:
           postgres: select count(*) n, sum(t0.balance) total from account t0
           mariadb: select count(*) n, sum(t0.balance) total from account t0
   - name: point-read-cached
     kind: cache-hit
-    note: represents the SAME point-read repeated — a query-cache HIT costs ZERO round trips (served from the cache by a caching implementation). Pairs with `point-read` (the miss) so the report carries the hit's zero beside the miss's measured cost. A cache-hit workload lists no golden SQL, so a run executes nothing and records 0 trips — that zero is this fixture's own declaration of what a hit costs rather than a reading of any query cache, and what it proves is the methodology end-to-end.
+    note: represents the SAME point-read repeated — a query-cache HIT costs ZERO Database Calls (served from the cache by a caching implementation). Pairs with `point-read` (the miss) so the report carries the hit's zero beside the miss's measured cost. A cache-hit workload lists no golden SQL, so a run executes nothing and records 0 trips — that zero is this fixture's own declaration of what a hit costs rather than a reading of any query cache, and what it proves is the methodology end-to-end.
     iterations: 200
-    expectRoundTrips: 0
+    expectDatabaseCalls: 0

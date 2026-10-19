@@ -35,4 +35,4 @@ then:
   tableState:
     badge:
       - { id: 1, holder: Bo }
-  roundTrips: 2
+  databaseCalls: 2

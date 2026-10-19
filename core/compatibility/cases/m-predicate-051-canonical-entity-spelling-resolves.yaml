@@ -20,4 +20,4 @@ then:
   referenceSql: select id, archive_label from archive_shared where archive_label = 'A-1'
   rows:
     - { id: 10, archive_label: A-1 }
-  roundTrips: 1
+  databaseCalls: 1

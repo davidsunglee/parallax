@@ -1,7 +1,7 @@
 """What a Scenario's own document must say about the dialect being executed.
 
 Three cross-checks, none of which touches a database: the golden SQL each step
-lists is canonical, the round trips it declares are the calls it makes, and a
+lists is canonical, the Database Calls it declares are the calls it makes, and a
 write settling against a grouped find binds the state that find recorded. All
 three are dialect-keyed, so they run only where the executing dialect carries a
 golden — the structural rules that must hold on every run are
@@ -70,36 +70,36 @@ def _assert_normalization(scenario: CompiledScenario, dialect: str) -> None:
 
 
 def _assert_count_consistency(scenario: CompiledScenario, dialect: str) -> None:
-    """Each step's declared roundTrips MUST equal its golden SQL statement count
+    """Each step's declared databaseCalls MUST equal its golden SQL statement count
     plus the resolving reads it owes.
 
-    A cache HIT lists no golden SQL and declares ``roundTrips: 0``; a cache MISS
-    that executes one statement declares ``roundTrips: 1``. An ungrouped write
+    A cache HIT lists no golden SQL and declares ``databaseCalls: 0``; a cache MISS
+    that executes one statement declares ``databaseCalls: 1``. An ungrouped write
     step declares its DML beside the read its keyed verbs' sources require, which
     it lists no SQL for — the framework composes that read from the model rather
     than from the case. The steps' total MUST equal the case-level
-    ``roundTrips``. This is the round-trip contract proven from the fixture's own
+    ``databaseCalls``. This is the Database Call contract proven from the fixture's own
     declared counts — the harness never compiles a query to SQL.
     """
     case = scenario.case
     total = 0
     for step in scenario.steps:
-        declared = step.round_trips
+        declared = step.database_calls
         statements = step.statements.sql(dialect)
         reads = _resolving_reads(case, step)
         if len(statements) + reads != declared:
             raise CaseFailure(
-                f"{case.path.name}: scenario[{step.index}] declares roundTrips "
+                f"{case.path.name}: scenario[{step.index}] declares databaseCalls "
                 f"{declared} but lists {len(statements)} golden SQL statement(s) "
                 f"for {dialect} and owes {reads} resolving read(s). A step's declared "
-                f"round trips MUST equal the number of calls it makes (a cache hit = 0)."
+                f"Database Calls MUST equal the number of calls it makes (a cache hit = 0)."
             )
         total += declared
-    if total != case.round_trips:
+    if total != case.database_calls:
         raise CaseFailure(
-            f"{case.path.name}: scenario steps total {total} round trip(s) but "
-            f"roundTrips is {case.round_trips}. The case-level roundTrips MUST "
-            f"equal the sum of the per-step round trips."
+            f"{case.path.name}: scenario steps total {total} Database Call(s) but "
+            f"databaseCalls is {case.database_calls}. The case-level databaseCalls MUST "
+            f"equal the sum of the per-step Database Calls."
         )
 
 
@@ -110,7 +110,7 @@ def _resolving_reads(case: Case, step: Any) -> int:
     An UNGROUPED write step is its own choreography unit, so it owes what any unit
     owes (:func:`write_plan.unit_resolving_reads`). A GROUPED one owes no
     resolving read of its own: its group's find steps are what publish the values
-    it settles against, and those finds already declare their own round trips
+    it settles against, and those finds already declare their own Database Calls
     (`m-case-format` *Resolving reads a write owes*). What a settled one can owe is
     the coverage read its flush makes for a Bitemporal object whose requested
     extent its named find's rectangle does not cover (:func:`_coverage_reads`). A

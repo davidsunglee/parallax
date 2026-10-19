@@ -36,4 +36,4 @@ then:
           phones:
             - { type: main, number: '555-3000' }
             - { type: fax, number: '555-3001' }
-  roundTrips: 1
+  databaseCalls: 1

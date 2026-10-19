@@ -42,4 +42,4 @@ then:
           city: Oslo
           geo:
             country: "NO"
-  roundTrips: 2
+  databaseCalls: 2

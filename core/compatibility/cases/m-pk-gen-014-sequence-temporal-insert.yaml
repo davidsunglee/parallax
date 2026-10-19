@@ -37,4 +37,4 @@ then:
       - { name: entry_seq, next_val: 2 }
     audit_entry:
       - { id: 1, note: opened, in_z: "2024-05-01T00:00:00.000000Z", out_z: infinity }
-  roundTrips: 2
+  databaseCalls: 2

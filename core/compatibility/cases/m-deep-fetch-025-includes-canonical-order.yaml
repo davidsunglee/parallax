@@ -78,4 +78,4 @@ then:
         statuses:
           - { id: 142, orderId: 42, orderItemId: null, code: NEW }
           - { id: 204, orderId: 42, orderItemId: 421, code: PICKED }
-  roundTrips: 3
+  databaseCalls: 3

@@ -48,4 +48,4 @@ then:
       issues:
         - code: stored-data-family-tag-unknown
           entity: parallax.compatibility.Beast
-  roundTrips: 2
+  databaseCalls: 2

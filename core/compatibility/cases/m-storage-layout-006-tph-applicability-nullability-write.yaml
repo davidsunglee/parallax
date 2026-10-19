@@ -29,4 +29,4 @@ then:
     layout_payment:
       - { id: 1, kind: card, amount: "100.00", card_network: Visa, tendered: null }
       - { id: 2, kind: cash, amount: "20.00", card_network: null, tendered: "25.00" }
-  roundTrips: 2
+  databaseCalls: 2

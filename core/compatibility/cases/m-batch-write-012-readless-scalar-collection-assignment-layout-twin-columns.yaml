@@ -25,14 +25,14 @@ when:
             value: []
           - attr: parallax.compatibility.CollectionTwinItem.counts
             value: [5, 5]
-      roundTrips: 1
+      databaseCalls: 1
       statements:
         - sql:
             postgres: update collection_twin set counts = ?, tags = ?, parts = ? where id < ?
             mariadb: update collection_twin set counts = ?, tags = ?, parts = ? where id < ?
           binds: [[5, 5], [], [{ sku: d, marks: [1] }], 3]
 then:
-  roundTrips: 1
+  databaseCalls: 1
   tableState:
     collection_twin:
       - id: 1

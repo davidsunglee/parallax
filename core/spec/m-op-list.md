@@ -9,7 +9,7 @@ has with deep fetch). Lists sit *above* the shared fetch algorithm, not
 underneath it: a relationship predicate is a correlated sub-select and yields
 no list, so `m-navigate` carries no edge to `m-op-list` at all; deep fetch
 populates the list instead, and this module's contract is what makes that
-population's round-trip guarantees observable.
+population's Database Call guarantees observable.
 
 ## Query-backed lazy list results (`findMany`)
 
@@ -26,16 +26,17 @@ materialized array. The canonical entry point is `findMany(query)`:
 Where the **transaction-scoped identity map** (`m-identity-map`) is present, two
 lists resolving the same identity key within one unit of work yield the **same**
 logical object — the rows still round-trip; only the materialized objects
-coalesce. Repeated-equal-query round-trip *elimination* (a query cache) is
+coalesce. Repeated-equal-query Database Call *elimination* (a query cache) is
 `m-process-cache` (deferred). The list-core contract above holds independently
 of both.
 
-This laziness is what makes the deep-fetch round-trip guarantees (`m-deep-fetch`)
-observable: because a list defers resolution and a deep fetch issues one statement
-per relationship level, the harness can count statements and prove that populating
-an already-fetched relationship does not fan out. (A plain-value read is **not**
-a query-backed list — for snapshot graphs the same round-trip observability
-is pinned by `m-snapshot-read` on its own materialization.)
+This laziness is what makes the deep-fetch Database Call guarantees
+(`m-deep-fetch`) observable: because a list defers resolution and a deep fetch
+issues one statement per relationship level, the harness can count statements and
+prove that populating an already-fetched relationship does not fan out. (A
+plain-value read is **not** a query-backed list — for snapshot graphs the same
+Database Call observability is pinned by `m-snapshot-read` on its own
+materialization.)
 
 ### Observable contract
 
@@ -48,4 +49,4 @@ is pinned by `m-snapshot-read` on its own materialization.)
 
 The compatibility suite expresses the list-core contract through the deep-fetch
 cases: the assembled object graph **is** the populated list result, and the
-round-trip-count assertion proves the lazy resolution did not fan out.
+Database Call count assertion proves the lazy resolution did not fan out.

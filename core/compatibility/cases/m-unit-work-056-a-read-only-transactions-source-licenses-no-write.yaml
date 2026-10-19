@@ -7,8 +7,8 @@ when:
     - action: amend
       value: thisSource
       sourceRead: readOnlyTransaction
-      roundTrips: 0
+      databaseCalls: 0
       expectError: write-evidence-unavailable
       note: a committed read-only transaction's result stays readable but licenses no later write
 then:
-  roundTrips: 0
+  databaseCalls: 0

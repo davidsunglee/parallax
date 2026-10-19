@@ -97,4 +97,4 @@ then:
           phones:
             - { type: work, number: '555-0200' }
             - { type: home, number: '555-0201' }
-  roundTrips: 4
+  databaseCalls: 4

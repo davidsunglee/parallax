@@ -21,4 +21,4 @@ when:
       note: the write raises a serialization failure on every attempt — surfaces after the bound
 then:
   outcome: serialization-failure
-  roundTrips: 6
+  databaseCalls: 6

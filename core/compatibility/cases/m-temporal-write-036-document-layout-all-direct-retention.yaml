@@ -27,7 +27,7 @@ when:
             asOf: latest
           valid-time:
             asOf: latest
-      roundTrips: 1
+      databaseCalls: 1
       note: the materializing read — `t0.payload` is projected for the observation, not for any member
       statements:
         - sql:
@@ -47,7 +47,7 @@ when:
         at: "2026-02-15T00:00:00.000000Z"
         validFrom: "2026-03-01T00:00:00.000000Z"
         until: "2026-09-01T00:00:00.000000Z"
-      roundTrips: 2
+      databaseCalls: 2
       note: head and tail each bind the closed rectangle's own document, `berthCode` included
       statements:
         - sql:
@@ -81,7 +81,7 @@ when:
             asOf: latest
           valid-time:
             asOf: "2026-05-01T00:00:00.000000Z"
-      roundTrips: 1
+      databaseCalls: 1
       note: no rectangle covers the excised window, and this read projects the Structured Column too
       statements:
         - sql:
@@ -90,4 +90,4 @@ when:
           binds: [1, "2026-05-01T00:00:00.000000Z", "2026-05-01T00:00:00.000000Z", infinity]
       expectRows: []
 then:
-  roundTrips: 4
+  databaseCalls: 4

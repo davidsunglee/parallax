@@ -14,7 +14,7 @@ when:
           eq:
             path: parallax.compatibility.Wallet.id
             value: 1
-      roundTrips: 1
+      databaseCalls: 1
       note: observe wallet 1 inside the group; the unversioned target resolves to Locking, so the find takes the shared row lock
       statements:
         - sql:
@@ -28,7 +28,7 @@ when:
           entity: parallax.compatibility.Wallet
           rows:
             - { id: 1, balance: "175.00" }
-      roundTrips: 1
+      databaseCalls: 1
       note: the keyed update of the locked row is ungated and advances no version; the unit of work commits at the group's last step below
       statements:
         - sql:
@@ -41,7 +41,7 @@ when:
           eq:
             path: parallax.compatibility.Wallet.id
             value: 1
-      roundTrips: 1
+      databaseCalls: 1
       note: a dependent find observes the updated balance and takes the same shared lock; the group COMMITS after this, its last step
       statements:
         - sql:
@@ -50,7 +50,7 @@ when:
       expectRows:
         - { id: 1, owner: Ada, balance: "175.00" }
 then:
-  roundTrips: 3
+  databaseCalls: 3
   tableState:
     wallet:
       - { id: 1, owner: Ada, balance: "175.00" }

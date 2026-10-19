@@ -18,4 +18,4 @@ then:
   graph:
     VariantRecord:
       - { id: 2, profile: { label: variant-profile }, familyVariant: VariantNote }
-  roundTrips: 1
+  databaseCalls: 1

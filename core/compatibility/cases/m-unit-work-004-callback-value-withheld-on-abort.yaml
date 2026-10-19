@@ -18,4 +18,4 @@ when:
       note: a dependent find observes the flushed write (still inside the atomic scope)
 then:
   outcome: aborted
-  roundTrips: 3
+  databaseCalls: 3

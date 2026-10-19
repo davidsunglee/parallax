@@ -15,7 +15,7 @@ when:
           eq:
             path: parallax.compatibility.Animal.id
             value: 1
-      roundTrips: 1
+      databaseCalls: 1
       note: ROOT finder over the abstract family root — the concrete superset + raw tag
       statements:
         - sql:
@@ -29,7 +29,7 @@ when:
           eq:
             path: parallax.compatibility.Dog.id
             value: 1
-      roundTrips: 1
+      databaseCalls: 1
       sameObjectAs: 0
       identityAttr: id
       note: LEAF finder over the concrete subtype Dog — its own superset, tag-guarded; the SAME managed object as step 0
@@ -40,4 +40,4 @@ when:
       expectRows:
         - { id: 1, name: Rex, owner_id: 10, license_id: L-100, bark_volume: 7 }
 then:
-  roundTrips: 2
+  databaseCalls: 2

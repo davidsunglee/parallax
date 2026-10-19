@@ -25,4 +25,4 @@ then:
     mariadb: select id, label from sample where nullif(json_unquote(json_extract(profile, '$.clock')), 'null') = '09:30:00'
   rows:
     - { id: 1, label: Ada }
-  roundTrips: 1
+  databaseCalls: 1

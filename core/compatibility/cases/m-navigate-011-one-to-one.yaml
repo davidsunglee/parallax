@@ -22,4 +22,4 @@ then:
   referenceSql: select id, name from person where id in (select person_id from passport where number = 'P-AAA')
   rows:
     - { id: 1, name: Alan }
-  roundTrips: 1
+  databaseCalls: 1

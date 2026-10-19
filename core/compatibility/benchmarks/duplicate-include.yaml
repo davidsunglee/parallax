@@ -19,7 +19,7 @@ delivery:
 workloads:
   - name: duplicate-include-shape
     iterations: 20
-    expectRoundTrips: 3
+    expectDatabaseCalls: 3
     statements:
       - sql:
           postgres: select t0.id from orders t0 order by t0.id asc limit ?

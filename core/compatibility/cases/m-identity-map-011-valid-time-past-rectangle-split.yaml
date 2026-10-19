@@ -10,7 +10,7 @@ when:
     concurrency: optimistic
   scenario:
     - write: insert
-      roundTrips: 1
+      databaseCalls: 1
       note: establish a fresh managed Position id 2 as one clean Latest rectangle (value 100, both axes current)
       statements:
         - sql:
@@ -27,7 +27,7 @@ when:
             asOf: latest
           valid-time:
             asOf: "2024-03-01T00:00:00.000000Z"
-      roundTrips: 1
+      databaseCalls: 1
       note: pin id 2 at the finite Valid-Time instant 2024-03-01 (Transaction Time latest) — a WRITABLE Valid-Time-past view (100)
       statements:
         - sql:
@@ -39,11 +39,11 @@ when:
       "on": 1
       set:
         value: "200.00"
-      roundTrips: 0
+      databaseCalls: 0
       note: buffer the retroactive correction to 200 over the Valid-Time window [2024-03-01, 2024-09-01) — no DML yet
     - action: flush
       "on": 1
-      roundTrips: 2
+      databaseCalls: 2
       note: the correction lowers to the m-temporal-write rectangle split — inactivate the original, then chain head / middle / tail in one multi-row insert
       statements:
         - sql:
@@ -63,7 +63,7 @@ when:
             asOf: latest
           valid-time:
             asOf: "2024-04-01T00:00:00.000000Z"
-      roundTrips: 1
+      databaseCalls: 1
       note: re-read inside the corrected window (Valid Time 2024-04-01, Transaction Time latest) -> the MIDDLE's new value 200
       statements:
         - sql:
@@ -72,4 +72,4 @@ when:
       expectRows:
         - { pos_id: 2, acct_num: A, val: "200.00", from_z: "2024-03-01T00:00:00.000000Z", thru_z: "2024-09-01T00:00:00.000000Z", in_z: "2024-02-15T00:00:00.000000Z", out_z: infinity }
 then:
-  roundTrips: 5
+  databaseCalls: 5

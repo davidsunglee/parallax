@@ -43,8 +43,8 @@ idiomatic developer experience while still guaranteeing parity.
 **Normative** (an implementation MUST conform):
 
 - **Observable behavior** — query results, the SQL emitted (per dialect, after
-  normalization), deep-fetch round-trip counts, temporal semantics, transaction
-  / identity-cache / optimistic-lock rules.
+  normalization), deep-fetch Database Call counts, temporal semantics,
+  transaction / identity-cache / optimistic-lock rules.
 - **Protocol seams** — the metamodel (introspection **and** serde), the
   Predicate algebra (**and** its serde), the canonical model-descriptor schema,
   and the database-dialect interface.

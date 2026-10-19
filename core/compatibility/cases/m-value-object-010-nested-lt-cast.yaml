@@ -23,4 +23,4 @@ then:
     mariadb: select id, name from customer where nullif(json_unquote(json_extract(address, '$.geo.elevation')), 'null') + 0 < 8
   rows:
     - { id: 3, name: Grace }
-  roundTrips: 1
+  databaseCalls: 1

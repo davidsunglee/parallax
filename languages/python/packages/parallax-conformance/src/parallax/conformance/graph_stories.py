@@ -959,7 +959,7 @@ GRAPH_STORIES: tuple[GraphStory, ...] = (
     ),
     GraphStory(
         "m-value-object-023",
-        "The whole nested composite materializes with its owner in one round trip",
+        "The whole nested composite materializes with its owner in one Database Call",
         "customer",
         customer_owner_materializes_its_whole_nested_composite,
     ),

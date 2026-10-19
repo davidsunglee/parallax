@@ -27,7 +27,7 @@ when:
       note: a joining call naming a different level is refused before its callback runs
 then:
   outcome: option-conflict
-  roundTrips: 1
+  databaseCalls: 1
   executionLifecycle:
     roots:
       - execution: 1

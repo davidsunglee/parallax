@@ -44,4 +44,4 @@ then:
           geo:
             country: LV
           phones: []
-  roundTrips: 1
+  databaseCalls: 1

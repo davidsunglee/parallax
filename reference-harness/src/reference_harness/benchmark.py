@@ -9,8 +9,8 @@ DQ10). For each benchmark fixture under ``core/compatibility/benchmarks/`` it:
 2. loads a dataset — generated (a deterministic recipe + row count) or empty;
 3. runs each workload's golden SQL ``iterations`` times against the real
    database, timing every run;
-4. records wall-time ``p50``/``p95``, the database round trips actually issued
-   (checked against ``expectRoundTrips`` when declared, which keeps a fixture's
+4. records wall-time ``p50``/``p95``, the Database Calls actually issued
+   (checked against ``expectDatabaseCalls`` when declared, which keeps a fixture's
    declared arithmetic consistent with the statements it authors rather than
    grading a target's read), and peak/steady process memory;
 5. writes ``report.json`` (and prints a compact summary).
@@ -371,8 +371,8 @@ def _run_workload(workload: dict[str, Any], db: DatabaseProvider) -> dict[str, A
     is_write = workload.get("kind") == "write"
     if is_cache_hit:
         # A cache-hit workload declares no statements, so a run of it executes
-        # nothing and records 0 round trips — the methodology witness for
-        # `expectRoundTrips: 0`. That zero is the fixture's own declaration of what
+        # nothing and records 0 Database Calls — the methodology witness for
+        # `expectDatabaseCalls: 0`. That zero is the fixture's own declaration of what
         # a query-cache hit costs a caching implementation, not a reading of any
         # cache: none is consulted here and no read is issued.
         statements: list[str] = []
@@ -386,19 +386,19 @@ def _run_workload(workload: dict[str, Any], db: DatabaseProvider) -> dict[str, A
     iterations = int(workload.get("iterations", 1))
 
     durations_ms: list[float] = []
-    round_trips = 0
+    database_calls = 0
     for iteration in range(1, iterations + 1):
         start = time.perf_counter()
-        trips = 0
+        calls = 0
         for index, statement in enumerate(statements):
             stmt_binds = _substitute_iteration(binds[index], iteration)
             if is_write:
                 db.execute(statement, stmt_binds)
             else:
                 db.query(statement, stmt_binds)
-            trips += 1
+            calls += 1
         durations_ms.append((time.perf_counter() - start) * 1000.0)
-        round_trips = trips  # constant across iterations; record the last
+        database_calls = calls  # constant across iterations; record the last
 
     result: dict[str, Any] = {
         "name": workload.get("name"),
@@ -407,16 +407,16 @@ def _run_workload(workload: dict[str, Any], db: DatabaseProvider) -> dict[str, A
             "p50": round(_percentile(durations_ms, 50), 4),
             "p95": round(_percentile(durations_ms, 95), 4),
         },
-        "roundTrips": round_trips,
+        "databaseCalls": database_calls,
     }
-    expect = workload.get("expectRoundTrips")
+    expect = workload.get("expectDatabaseCalls")
     if expect is not None:
-        result["expectRoundTrips"] = expect
-        result["roundTripsOk"] = round_trips == expect
-        if round_trips != expect:
+        result["expectDatabaseCalls"] = expect
+        result["databaseCallsOk"] = database_calls == expect
+        if database_calls != expect:
             raise BenchmarkError(
-                f"workload {workload.get('name')!r} issued {round_trips} round "
-                f"trip(s) but expectRoundTrips is {expect} (the fixture's declared "
+                f"workload {workload.get('name')!r} issued {database_calls} Database "
+                f"Call(s) but expectDatabaseCalls is {expect} (the fixture's declared "
                 f"count disagrees with the statements it authors)."
             )
     return result
@@ -478,12 +478,12 @@ def _print_summary(report: dict[str, Any]) -> None:
         print(f"  {benchmark['fixture']} ({benchmark['datasetRows']} rows)")
         for workload in benchmark["workloads"]:
             wall = workload["wallTimeMs"]
-            trips = workload["roundTrips"]
-            expect = workload.get("expectRoundTrips")
-            trip_note = f"  rt={trips}" + (f"/{expect}" if expect is not None else "")
+            calls = workload["databaseCalls"]
+            expect = workload.get("expectDatabaseCalls")
+            calls_note = f"  calls={calls}" + (f"/{expect}" if expect is not None else "")
             print(
                 f"    {workload['name']:<22} "
-                f"p50={wall['p50']:>8.3f}ms  p95={wall['p95']:>8.3f}ms{trip_note}"
+                f"p50={wall['p50']:>8.3f}ms  p95={wall['p95']:>8.3f}ms{calls_note}"
             )
     mem = report["memory"]
     print(f"  memory: peak={mem['peakBytes']}B steady={mem['steadyBytes']}B")

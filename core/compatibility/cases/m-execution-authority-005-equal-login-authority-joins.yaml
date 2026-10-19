@@ -21,4 +21,4 @@ when:
       note: an independently selected login actor on the same root joins by value
 then:
   outcome: committed
-  roundTrips: 1
+  databaseCalls: 1

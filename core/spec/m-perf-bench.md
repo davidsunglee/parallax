@@ -49,7 +49,7 @@ the spec calls out:
 |---|---|---|
 | **query mix** (point + range reads) | the point and range reads `m-predicate` / `m-sql` compile to, paired with the query-cache hit a caching target serves without one (`m-process-cache`) | `read-mix.yaml` |
 | **deep-fetch shapes** (to-one, to-many, multi-hop) | `m-deep-fetch`'s N+1-eliminated fetch — `1 + levels` statements regardless of fan-out | `deep-fetch.yaml` |
-| **streamed delivery** (one result at several page sizes) | `m-read-delivery` streamed delivery — that same `1 + levels` shape once per page, and the page-size / round-trip trade | `stream.yaml` |
+| **streamed delivery** (one result at several page sizes) | `m-read-delivery` streamed delivery — that same `1 + levels` shape once per page, and the page-size / Database Call trade | `stream.yaml` |
 | **milestone workloads** (insert / update / terminate chains) | `m-temporal-write` milestone chaining — the close-and-chain write pair | `milestone-write.yaml` |
 | **aggregation** (group-by / having) | the `m-agg` aggregate statement | folded into `read-mix.yaml` |
 
@@ -66,18 +66,18 @@ gates instead.
 
 One workload kind stands outside that account rather than qualifying it. A
 `kind: cache-hit` workload declares NO statements, so a run of it executes
-nothing and records zero round trips. That zero is the fixture's own declaration
-of what a query-cache hit costs — the report's witness for `expectRoundTrips: 0`
+nothing and records zero Database Calls. That zero is the fixture's own declaration
+of what a query-cache hit costs — the report's witness for `expectDatabaseCalls: 0`
 — and not a reading of any cache, because no cache is consulted and no read is
 issued.
 
 A **streamed-delivery** workload is the deep-fetch family's paging counterpart,
-and it declares the same kind of thing: the round-trip arithmetic a paged delivery
-of one result owes. A delivery of `N` roots at page size `B` over `L` relationship
-levels costs `ceil(N / B)` root statements and `ceil(N / B) x L` child statements
-— a page reads one root past its batch, so exhaustion is proved by the page that
-delivered the last roots rather than by a statement of its own — and each
-workload's `expectRoundTrips` is that arithmetic evaluated at its own page size.
+and it declares the same kind of thing: the Database Call arithmetic a paged
+delivery of one result owes. A delivery of `N` roots at page size `B` over `L`
+relationship levels costs `ceil(N / B)` root statements and `ceil(N / B) x L` child
+statements — a page reads one root past its batch, so exhaustion is proved by the
+page that delivered the last roots rather than by a statement of its own — and each
+workload's `expectDatabaseCalls` is that arithmetic evaluated at its own page size.
 
 What the family exports to the reference harness is that count and the page statements behind it — the
 shape a conforming delivery of the result must produce. It exports no delivery: a
@@ -85,29 +85,30 @@ fixture's workload carries golden SQL, so a run of it executes those page
 statements as authored and reports how many it issued. A language delivery report
 instead executes the fixture-level `objectQuery`; neither lane substitutes for the
 other. The adapter's
-`benchmark` command carries each workload's `roundTrips` beside its
-`expectRoundTrips`, and the two agreeing says the arithmetic this module states
+`benchmark` command carries each workload's `databaseCalls` beside its
+`expectDatabaseCalls`, and the two agreeing says the arithmetic this module states
 and the statements the fixture authors are consistent with each other. It says
-nothing about a target's delivery: the round-trip discipline of a real paged read
+nothing about a target's delivery: the Database Call discipline of a real paged read
 is settled by the streamed-delivery cases (`m-read-delivery`) against golden
 statements. The family is a set of workloads over ONE result at several page sizes
 rather than one workload, because what it makes comparable is the trade: the same
-rows for fewer round trips and a larger per-page working set.
+rows for fewer Database Calls and a larger per-page working set.
 
 Each workload declares its golden SQL as an ordered list of `{sql, binds}`
 **statement entries** (`statements`, per dialect, exactly like a compatibility
 case's `then.statements` — each entry's `sql` is a dialect-keyed map and its
 `binds` are authored inline) and an **`iterations`** count (how many times the
 harness repeats it to gather a stable timing sample). A workload **MAY** declare an
-**`expectRoundTrips`** count — the database round trips a run of its authored
+**`expectDatabaseCalls`** count — the Database Calls a run of its authored
 statements issues. That count is arithmetic the fixture exports, and a run reports
 the count it actually issued beside it through the adapter's `benchmark` command,
 so the two agreeing is a consistency check between a fixture's arithmetic and its
 own statement list rather than an observation of a target. A workload
 **MAY** instead declare **`kind: cache-hit`** — the repeated find a caching
-implementation serves at **zero** round trips (`expectRoundTrips: 0`), listing no
-`statements` — so the query-mix fixture carries the hit's declared zero beside the
-miss's measured cost rather than the miss alone. A run of one executes nothing.
+implementation serves at **zero** Database Calls (`expectDatabaseCalls: 0`),
+listing no `statements` — so the query-mix fixture carries the hit's declared zero
+beside the miss's measured cost rather than the miss alone. A run of one executes
+nothing.
 
 ### Dataset scale
 
@@ -180,12 +181,13 @@ For each workload the harness measures and reports:
 
 - **wall-time percentiles** — `p50` and `p95` over the workload's iterations (a
   single mean hides tail latency; percentiles are the comparable metric);
-- **database round trips** — the count of authored statements the run issued,
+- **Database Calls** — the count of authored statements the run issued,
   reported beside the workload's declared count, so the statement cost of a
   workload sits in the report next to its timings rather than being left to the
   wall-clock figures alone. The two agreeing is a fixture-consistency check and
   not a target-conformance one: what makes `m-deep-fetch` / `m-unit-work`
-  round-trip discipline binding is the compatibility corpus's golden statements;
+  Database Call discipline binding is the compatibility corpus's golden
+  statements;
 - **memory** — **peak** and **steady** resident set over the run (cache/index
   footprint is a first-class cost for a cache-centric framework).
 
@@ -209,10 +211,10 @@ diffable across languages and over time.
       "workloads": [
         { "name": "point-read", "iterations": 200,
           "wallTimeMs": { "p50": 0.4, "p95": 0.9 },
-          "roundTrips": 1, "expectRoundTrips": 1, "roundTripsOk": true },
+          "databaseCalls": 1, "expectDatabaseCalls": 1, "databaseCallsOk": true },
         { "name": "deep-fetch-1-N-N", "iterations": 50,
           "wallTimeMs": { "p50": 2.1, "p95": 4.0 },
-          "roundTrips": 3, "expectRoundTrips": 3, "roundTripsOk": true }
+          "databaseCalls": 3, "expectDatabaseCalls": 3, "databaseCallsOk": true }
       ]
     }
   ],
@@ -233,15 +235,15 @@ gameable*:
 - **Same workloads, same data.** Every language runs the identical fixtures
   against the identical (deterministically generated) dataset at the identical
   scale, so a number means the same thing everywhere.
-- **Round trips are declared, and a run reports its own.** A workload's
-  `expectRoundTrips` is the count a run of its authored statements owes; the
+- **Database Calls are declared, and a run reports its own.** A workload's
+  `expectDatabaseCalls` is the count a run of its authored statements owes; the
   adapter's `benchmark` command carries the count the run issued beside it, and
-  `roundTripsOk` is that comparison. What that buys is a legible trade: a
+  `databaseCallsOk` is that comparison. What that buys is a legible trade: a
   wall-time figure read beside a statement count says whether a number moved by
   doing the work faster or by issuing different work, which a timing column alone
   cannot. What it is not is an observation of the implementation — a run executes
-  the fixture's own statements, so `roundTripsOk` grades a fixture against its own
-  report and no target's read is in it. The round-trip DISCIPLINE is a conformance
+  the fixture's own statements, so `databaseCallsOk` grades a fixture against its own
+  report and no target's read is in it. The Database Call DISCIPLINE is a conformance
   property, settled against golden statements in the compatibility corpus and in
   each target's own gates, rather than one a benchmark decides.
 - **Percentiles, not means.** Reporting `p50`/`p95` makes tail latency visible, so

@@ -51,4 +51,4 @@ then:
         txEnd: infinity
         coverages:
           - { id: 20, policyId: 2, amount: "300.00", validStart: "2024-01-01T00:00:00.000000Z", validEnd: infinity, txStart: "2024-01-01T00:00:00.000000Z", txEnd: infinity }
-  roundTrips: 2
+  databaseCalls: 2

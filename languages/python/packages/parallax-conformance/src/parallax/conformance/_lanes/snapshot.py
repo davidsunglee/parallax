@@ -161,7 +161,7 @@ def compile_scenario(
     write steps (each its own simulated transaction, lowered exactly as the
     unit-of-work lane's ungrouped write step is, so a `rollback: true` step's
     advances are restored after it); `mutate` and `access` contribute no
-    emissions and no round trips at all (m-snapshot-read: an in-memory-only
+    emissions and no Database Calls at all (m-snapshot-read: an in-memory-only
     change and a closed-world navigation, never SQL)."""
     serving = case_serving_model(case)
     model = models.accepted_model_of(serving.current().model)
@@ -267,7 +267,7 @@ def run_scenario(
     finite-Transaction-Time-pin refusal against the named view's own pin and,
     when that verdict accepts, derives an Edited Copy carrying the step's `set`
     and publishes it as this step's own result (:func:`_grade_mutate_step`) —
-    zero round trips, nothing at the port (m-snapshot-read closed world: a
+    zero Database Calls, nothing at the port (m-snapshot-read closed world: a
     snapshot node is never enrolled in a unit of work, so editing it can never
     write back); and `access` navigates a relationship on the view a named
     earlier step holds, likewise touching the port not at all
@@ -306,7 +306,7 @@ def run_scenario(
     ) as _root_db:
         db = _root_db.using_database_login()
         emissions: list[Emission] = []
-        round_trips = 0
+        database_calls = 0
         results: list[_ScenarioStepResult] = []
         errors: list[dict[str, object]] = []
         rows_observed: list[dict[str, object]] = []
@@ -332,17 +332,17 @@ def run_scenario(
                             )
                         results.append(edited)
                 case "write":
-                    statements, unit_trips = _run_snapshot_write_step(
+                    statements, unit_calls = _run_snapshot_write_step(
                         case, context, port, step, lifecycle
                     )
                     emissions.extend(
                         Emission(f"/scenario/{index}/write", statement) for statement in statements
                     )
-                    round_trips += unit_trips
+                    database_calls += unit_calls
                     results.append(_NO_SCENARIO_RESULT)
                 case "find":
                     query = step_query(step, model)
-                    mark = observation.round_trips
+                    mark = observation.database_calls
                     try:
                         # The case document's own spelling is resolved HERE, where the
                         # document is read, so no later step carries a spelling into a
@@ -355,7 +355,7 @@ def run_scenario(
                         Emission(f"/scenario/{index}/objectQuery", statement)
                         for statement in observation.since(mark, "read")
                     )
-                    round_trips += observation.round_trips - mark
+                    database_calls += observation.database_calls - mark
                     rows_observed.append(
                         step_rows(model, index, query, snapshot.checked().results())
                     )
@@ -367,7 +367,7 @@ def run_scenario(
                     )
             if observed is not None:
                 step_graphs.append(observed)
-        return ScenarioRun(emissions, round_trips, errors, rows_observed, step_graphs)
+        return ScenarioRun(emissions, database_calls, errors, rows_observed, step_graphs)
 
 
 def _root_members(
@@ -393,7 +393,7 @@ def _run_snapshot_write_step(
     lifecycle: LifecycleRun,
 ) -> tuple[tuple[LoweredStatement, ...], int]:
     """Execute one `write:` step of a snapshot-read scenario and report the DML
-    it emitted beside the round trips it cost.
+    it emitted beside the Database Calls it cost.
 
     The step is its OWN choreography unit, driven through the SAME
     :func:`~parallax.conformance._lanes.scenario.execute_keyed_unit` an

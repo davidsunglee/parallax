@@ -23,7 +23,7 @@ when:
             value: []
           - attr: parallax.compatibility.CollectionTwinItem.counts
             value: [5, 5]
-      roundTrips: 1
+      databaseCalls: 1
       statements:
         - sql:
             postgres: update collection_twin set payload = jsonb_set(jsonb_set(jsonb_set(payload, ?, cast(? as jsonb)), ?, cast(? as jsonb)), ?, cast(? as jsonb)) where id < ?
@@ -32,7 +32,7 @@ when:
             postgres: ['{counts}', [5, 5], '{tags}', [], '{parts}', [{ sku: d, marks: [1] }], 3]
             mariadb: ['$.counts', [5, 5], '$.tags', [], '$.parts', [{ sku: d, marks: [1] }], 3]
 then:
-  roundTrips: 1
+  databaseCalls: 1
   tableState:
     collection_twin:
       - id: 1

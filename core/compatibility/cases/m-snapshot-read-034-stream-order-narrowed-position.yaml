@@ -43,4 +43,4 @@ then:
         licenseId: L-101
         barkVolume: 3
         familyVariant: Dog
-  roundTrips: 2
+  databaseCalls: 2

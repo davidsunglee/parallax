@@ -28,4 +28,4 @@ then:
     - { id: 8, name: Iris }
     - { id: 9, name: Omar }
     - { id: 10, name: Priya }
-  roundTrips: 1
+  databaseCalls: 1

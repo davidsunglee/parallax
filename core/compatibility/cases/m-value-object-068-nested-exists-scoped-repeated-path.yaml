@@ -28,4 +28,4 @@ then:
   referenceSql:
     postgres: select id, name from customer where jsonb_typeof(address -> 'phones') = 'array' and exists (select 1 from jsonb_array_elements(address -> 'phones') e where e.value ->> 'type' = 'home' and e.value ->> 'type' = 'work')
   rows: []
-  roundTrips: 1
+  databaseCalls: 1

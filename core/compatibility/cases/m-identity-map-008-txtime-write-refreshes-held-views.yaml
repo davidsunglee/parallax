@@ -18,7 +18,7 @@ when:
         temporal:
           transaction-time:
             asOf: latest
-      roundTrips: 1
+      databaseCalls: 1
       note: hold the LATEST view of id 2 (the current milestone, 200.00)
       statements:
         - sql:
@@ -35,7 +35,7 @@ when:
         temporal:
           transaction-time:
             asOf: "2024-04-01T00:00:00.000000Z"
-      roundTrips: 1
+      databaseCalls: 1
       note: hold a PAST view pinned at 2024-04-01 (the same milestone right now, 200.00)
       statements:
         - sql:
@@ -44,7 +44,7 @@ when:
       expectRows:
         - { bal_id: 2, acct_num: B, val: "200.00", in_z: "2024-02-01T00:00:00.000000Z", out_z: infinity }
     - write: amend
-      roundTrips: 2
+      databaseCalls: 2
       note: audit-only update at 2024-07-01 — close the current row, then chain a new current milestone (250.00)
       statements:
         - sql:
@@ -62,7 +62,7 @@ when:
         temporal:
           transaction-time:
             asOf: latest
-      roundTrips: 1
+      databaseCalls: 1
       sameObjectAs: 0
       identityAttr: bal_id
       note: the held LATEST view ADVANCED to the newly chained milestone (250.00) — the SAME object as step 0
@@ -81,7 +81,7 @@ when:
         temporal:
           transaction-time:
             asOf: "2024-04-01T00:00:00.000000Z"
-      roundTrips: 1
+      databaseCalls: 1
       sameObjectAs: 1
       identityAttr: bal_id
       note: the held PAST view still reflects its own pin (200.00, now the closed [2024-02-01, 2024-07-01) milestone) — the SAME object as step 1
@@ -92,4 +92,4 @@ when:
       expectRows:
         - { bal_id: 2, acct_num: B, val: "200.00", in_z: "2024-02-01T00:00:00.000000Z", out_z: "2024-07-01T00:00:00.000000Z" }
 then:
-  roundTrips: 6
+  databaseCalls: 6

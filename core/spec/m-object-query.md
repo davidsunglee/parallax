@@ -249,7 +249,7 @@ The normative execution guarantee is **one SQL statement per relationship level*
 (N+1 elimination): the root query plus one statement per distinct hop, where hop
 identity is the triple **(relationship, whether a selection was authored, effective
 concrete set)**. Paths sharing a hop fetch it **once**. `m-deep-fetch` specifies
-this in full, and the round-trip-count layer of the compatibility harness
+this in full, and the Database Call count layer of the compatibility harness
 (`m-case-format`) proves it.
 
 ### Includes is an order-insensitive set

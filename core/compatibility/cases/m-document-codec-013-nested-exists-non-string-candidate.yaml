@@ -38,4 +38,4 @@ then:
     mariadb: select id, label from sample where json_type(json_extract(profile, '$.entries')) = 'ARRAY' and exists (select 1 from json_table(profile, '$.entries[*]' columns (kind varchar(64) path '$.kind', active varchar(8) path '$.active', price varchar(32) path '$.price', issued varchar(32) path '$.issued')) jt where jt.kind = 'home' and jt.active = 'true' and jt.price = '19.99' and jt.issued = '2026-02-01')
   rows:
     - { id: 1, label: Ada }
-  roundTrips: 1
+  databaseCalls: 1

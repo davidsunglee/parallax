@@ -74,4 +74,4 @@ then:
         items:
           - { id: 422, orderId: 42, sku: B-200, quantity: 5, shippedOn: 2024-02-05 }
           - { id: 421, orderId: 42, sku: A-999, quantity: 3, shippedOn: 2024-03-10 }
-  roundTrips: 2
+  databaseCalls: 2

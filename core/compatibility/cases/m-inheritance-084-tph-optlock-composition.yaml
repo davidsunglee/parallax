@@ -23,4 +23,4 @@ then:
   tableState:
     vehicle:
       - { id: 1, kind: car, name: Coupe, version: 6, doors: 4, axles: null }
-  roundTrips: 2
+  databaseCalls: 2

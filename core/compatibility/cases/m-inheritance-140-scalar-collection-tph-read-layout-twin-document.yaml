@@ -21,4 +21,4 @@ then:
     TagAsset:
       - { id: 1, tags: [a, a], ports: [1, 2], numbers: ["555"], codes: ["01ff"], familyVariant: TagPhone }
       - { id: 2, tags: [d], legs: [l, r], familyVariant: TagDesk }
-  roundTrips: 1
+  databaseCalls: 1

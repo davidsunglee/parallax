@@ -1,6 +1,6 @@
 # Columns half of the temporal successor proof: a Transaction-Time close chains a
 # successor in which the ASSIGNED occurrence is replaced whole, at depth. Its twin
-# authors the same write and the same round trips under Relational Document Layout.
+# authors the same write and the same Database Calls under Relational Document Layout.
 model: models/write-transparency-layout-twin-columns.yaml
 tags: [m-temporal-write, m-storage-layout, m-value-object, m-document-codec, m-unit-work, m-sql, write-sequence, update, temporal, audit-only, json, nested, layout-twin, columns, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
@@ -57,4 +57,4 @@ then:
           title: Coal Run
         marks:
           - { code: X }
-  roundTrips: 3
+  databaseCalls: 3

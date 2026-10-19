@@ -17,7 +17,7 @@ when:
           eq:
             path: parallax.compatibility.Order.id
             value: 3
-      roundTrips: 1
+      databaseCalls: 1
       note: materialize a snapshot of order 3 with NO relationships included, so `items` is absent rather than empty
       statements:
         - sql:
@@ -30,7 +30,7 @@ when:
           entity: parallax.compatibility.OrderItem
           rows:
             - { id: 31, orderId: 3, sku: C-300, quantity: 7 }
-      roundTrips: 1
+      databaseCalls: 1
       note: commit an item for the very order whose `items` the view never included
       statements:
         - sql:
@@ -39,7 +39,7 @@ when:
     - action: access
       "on": 0
       path: items
-      roundTrips: 0
+      databaseCalls: 0
       note: access the UNINCLUDED relationship after the write -> closed-world absent, ZERO SQL; the absence representation is per-language
 then:
-  roundTrips: 2
+  databaseCalls: 2

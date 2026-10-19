@@ -24,7 +24,7 @@ when:
       note: the joined callback reads on the same connection and transaction
 then:
   outcome: committed
-  roundTrips: 2
+  databaseCalls: 2
   executionLifecycle:
     roots:
       - execution: 1

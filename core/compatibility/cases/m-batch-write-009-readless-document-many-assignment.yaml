@@ -20,7 +20,7 @@ when:
           - attr: parallax.compatibility.Traveler.tags
             value:
               - { label: founder }
-      roundTrips: 1
+      databaseCalls: 1
       statements:
         - sql:
             postgres: update traveler set payload = jsonb_set(payload, ?, cast(? as jsonb)) where id < ?
@@ -29,7 +29,7 @@ when:
             postgres: ['{tags}', [{ label: founder }], 3]
             mariadb: ['$.tags', [{ label: founder }], 3]
 then:
-  roundTrips: 1
+  databaseCalls: 1
   tableState:
     traveler:
       - id: 1

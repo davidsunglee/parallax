@@ -41,4 +41,4 @@ then:
     voucher:
       - { id: 100, label: spring }
       - { id: 110, label: summer }
-  roundTrips: 3
+  databaseCalls: 3

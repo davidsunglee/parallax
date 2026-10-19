@@ -67,4 +67,4 @@ then:
         indoor: null
         tuskLength: "12.50"
         familyVariant: WildBoar
-  roundTrips: 2
+  databaseCalls: 2

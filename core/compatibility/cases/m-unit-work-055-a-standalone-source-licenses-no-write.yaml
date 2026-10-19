@@ -7,8 +7,8 @@ when:
     - action: amend
       value: thisSource
       sourceRead: standalone
-      roundTrips: 0
+      databaseCalls: 0
       expectError: write-evidence-unavailable
       note: a standalone read participated in no attempt, so the unchanged value is refused rather than dropped
 then:
-  roundTrips: 0
+  databaseCalls: 0

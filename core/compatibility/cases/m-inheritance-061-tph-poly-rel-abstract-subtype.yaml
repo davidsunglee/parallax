@@ -17,4 +17,4 @@ then:
   rows:
     - { id: 10, name: Alice }
     - { id: 11, name: Bob }
-  roundTrips: 1
+  databaseCalls: 1

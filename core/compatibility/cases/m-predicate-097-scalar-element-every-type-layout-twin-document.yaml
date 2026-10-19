@@ -89,4 +89,4 @@ then:
           words: [deep]
       - sku: b
         marks: []
-  roundTrips: 1
+  databaseCalls: 1

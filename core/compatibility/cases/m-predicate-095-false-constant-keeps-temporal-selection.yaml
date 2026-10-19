@@ -18,4 +18,4 @@ then:
     binds: [infinity, infinity]
   referenceSql: select id, name, from_z, thru_z, in_z, out_z from policy where 1 = 0
   rows: []
-  roundTrips: 1
+  databaseCalls: 1

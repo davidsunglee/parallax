@@ -160,4 +160,4 @@ then:
           entity: parallax.compatibility.Customer
           member: parallax.compatibility.Customer.address.phones
           objectKey: { entity: parallax.compatibility.Customer, key: { id: 10 } }
-  roundTrips: 2
+  databaseCalls: 2

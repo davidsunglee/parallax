@@ -76,4 +76,4 @@ then:
           big: 100
           small: 10
           flag: true
-  roundTrips: 1
+  databaseCalls: 1

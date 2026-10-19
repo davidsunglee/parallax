@@ -20,4 +20,4 @@ when:
       note: the gated UPDATE conflicts once, and the call's own bound of one replays it to success
 then:
   outcome: committed
-  roundTrips: 4
+  databaseCalls: 4

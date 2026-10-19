@@ -37,8 +37,8 @@ observation alike (`m-execution-lifecycle`):
   calls that name none are the two the space does not hold — every call where
   nothing is authored at all, and the resolving read a keyed write owes, which
   is a read;
-- **counts.** The record's sole count oracle — ``then.roundTrips`` on a case,
-  ``observations.roundTrips`` on an envelope — counts the Database Call
+- **counts.** The record's sole count oracle — ``then.databaseCalls`` on a case,
+  ``observations.databaseCalls`` on an envelope — counts the Database Call
   activities the stream opened, which the record restates rather than competes
   with;
 - **triggers.** A batch's trigger is a POSITIONAL claim: a ``read-dependency``
@@ -213,7 +213,7 @@ def validate_execution(case: dict[str, Any]) -> list[str]:
     if not isinstance(then, dict):
         return []
     space = _StatementSpace(_authored_golden_kinds(case), "golden statement", "the case authors")
-    return _check_record(then.get("executionLifecycle"), space, then.get("roundTrips", 1))
+    return _check_record(then.get("executionLifecycle"), space, then.get("databaseCalls", 1))
 
 
 def validate_execution_observation(envelope: dict[str, Any]) -> list[str]:
@@ -221,7 +221,7 @@ def validate_execution_observation(envelope: dict[str, Any]) -> list[str]:
     ``executionLifecycle``.
 
     The envelope's own ``emissions`` is the index space a call's ``statement``
-    names, and ``observations.roundTrips`` is the count the record restates.
+    names, and ``observations.databaseCalls`` is the count the record restates.
     Returns an empty list for an envelope reporting no lifecycle. The caller has
     already validated *envelope* against the conformance-adapter schema.
     """
@@ -230,7 +230,7 @@ def validate_execution_observation(envelope: dict[str, Any]) -> list[str]:
         return []
     space = _StatementSpace(_entry_kinds(envelope, "emissions"), "emission", "the envelope reports")
     return _check_record(
-        observations.get("executionLifecycle"), space, observations.get("roundTrips")
+        observations.get("executionLifecycle"), space, observations.get("databaseCalls")
     )
 
 
@@ -1041,8 +1041,8 @@ def _check_statement_kinds(named: list[_Call], space: _StatementSpace, problems:
 def _check_total(calls: int, declared: Any, problems: list[str]) -> None:
     if calls != declared:
         problems.append(
-            f"the lifecycle opens {calls} Database Call(s) but the record declares roundTrips "
-            f"{declared}; `then.roundTrips` (or the envelope's `observations.roundTrips`) is "
+            f"the lifecycle opens {calls} Database Call(s) but the record declares databaseCalls "
+            f"{declared}; `then.databaseCalls` (or the envelope's `observations.databaseCalls`) is "
             f"the sole count oracle and the lifecycle counts the same calls, so a record "
             f"authoring both states one number twice"
         )

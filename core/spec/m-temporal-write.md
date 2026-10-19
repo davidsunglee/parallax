@@ -927,7 +927,7 @@ Write-sequence cases carry a `when.writeSequence` (ordered `insert` / `amend` /
 golden SQL (`then.statements`) to a freshly-provisioned (empty) table, then asserts
 the resulting milestone rows equal `then.tableState` — including the
 `out_z = infinity` current-row state. The DML statement count must equal the sum of
-the steps' declared statement counts and the case's `then.roundTrips`. Rather than
+the steps' declared statement counts and the case's `then.databaseCalls`. Rather than
 introspecting
 an implementation, the suite proves the *documented golden SQL itself* produces
 the correct milestones.
@@ -941,7 +941,7 @@ finite) plus the `head` / `middle` / `tail` rectangles current on Transaction Ti
 lone `head`, with `[V, infinity)` covered by no current-on-Transaction-Time row; a plain
 `insert` asserts a single fully-current rectangle (`thru_z = out_z = infinity`) with
 no inactivation. The DML statement count must equal the sum of the steps' declared
-statement counts and the case's `then.roundTrips` (a plain `insert` step is 1
+statement counts and the case's `then.databaseCalls` (a plain `insert` step is 1
 statement; a plain `terminate` step is 2 statements — inactivate + `head`; a plain
 `amend` step is 2 — inactivate + one `insert` of `head` and new `tail`). The
 standalone witnesses are `m-temporal-write-025-plain-insert`, `m-temporal-write-022-plain-update-split`, and

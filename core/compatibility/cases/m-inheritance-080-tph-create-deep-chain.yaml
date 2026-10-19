@@ -19,4 +19,4 @@ then:
   tableState:
     animal:
       - { id: 5, kind: dog, name: Bella, owner_id: 10, license_id: L-500, bark_volume: 5, indoor: null, tusk_length: null }
-  roundTrips: 1
+  databaseCalls: 1

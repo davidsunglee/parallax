@@ -73,4 +73,4 @@ then:
         out_z: infinity
         probe:
           model: TH-2
-  roundTrips: 4
+  databaseCalls: 4

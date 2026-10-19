@@ -19,7 +19,7 @@ when:
           eq:
             path: parallax.compatibility.Account.id
             value: 2
-      roundTrips: 1
+      databaseCalls: 1
       note: the writing unit of work observes account 2 (250.00, version 1) before its update
       statements:
         - sql:
@@ -34,7 +34,7 @@ when:
           entity: parallax.compatibility.Account
           rows:
             - { id: 2, balance: "999.00" }
-      roundTrips: 1
+      databaseCalls: 1
       note: the gated update advancing the OBSERVED version 1 -> 2; the group does not close here, so the write stays uncommitted across the reader's find below
       statements:
         - sql:
@@ -48,7 +48,7 @@ when:
           eq:
             path: parallax.compatibility.Account.id
             value: 2
-      roundTrips: 1
+      databaseCalls: 1
       note: the reading unit of work MUST observe the COMMITTED 250.00 at version 1, never the peer's uncommitted 999.00; the group COMMITS after this, its last step
       statements:
         - sql:
@@ -64,7 +64,7 @@ when:
           eq:
             path: parallax.compatibility.Account.id
             value: 2
-      roundTrips: 1
+      databaseCalls: 1
       note: the writer reads its OWN write back inside its own transaction; the group COMMITS after this, its last step
       statements:
         - sql:
@@ -79,7 +79,7 @@ when:
           eq:
             path: parallax.compatibility.Account.id
             value: 2
-      roundTrips: 1
+      databaseCalls: 1
       note: UNGROUPED, after both groups resolved — the committed 999.00 at version 2
       statements:
         - sql:
@@ -89,4 +89,4 @@ when:
       expectRows:
         - { id: 2, owner: Linus, balance: "999.00", version: 2 }
 then:
-  roundTrips: 5
+  databaseCalls: 5

@@ -39,4 +39,4 @@ then:
         items:
           - { id: 12, orderId: 1, sku: B-200, quantity: 1, shippedOn: 2024-02-15 }
           - { id: 11, orderId: 1, sku: A-100, quantity: 2, shippedOn: null }
-  roundTrips: 2
+  databaseCalls: 2

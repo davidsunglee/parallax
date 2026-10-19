@@ -13,7 +13,7 @@ when:
             path: parallax.compatibility.Order.id
             values:
               - 999
-      roundTrips: 1
+      databaseCalls: 1
       note: an empty source set (no such order)
       statements:
         - sql:
@@ -23,7 +23,7 @@ when:
     - action: load
       "on": 0
       path: items
-      roundTrips: 0
+      databaseCalls: 0
       note: empty source -> NO child SQL
       expectRows: []
     - objectQuery:
@@ -33,7 +33,7 @@ when:
             path: parallax.compatibility.Order.id
             values:
               - 3
-      roundTrips: 1
+      databaseCalls: 1
       note: order 3 exists but has no line items
       statements:
         - sql:
@@ -44,7 +44,7 @@ when:
     - action: load
       "on": 2
       path: items.statuses
-      roundTrips: 1
+      databaseCalls: 1
       note: empty intermediate (order 3 has no items) -> the statuses query is suppressed
       statements:
         - sql:
@@ -52,4 +52,4 @@ when:
           binds: [3]
       expectRows: []
 then:
-  roundTrips: 3
+  databaseCalls: 3

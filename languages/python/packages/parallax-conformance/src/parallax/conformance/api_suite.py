@@ -124,7 +124,7 @@ EXAMPLES: Final[list[Example]] = [
     # the SAME `build()` through the shipped `parallax.snapshot.connect` +
     # `parallax-postgres` (test_story_run's generic runner), grading the
     # mirrored case's own `then.rows` (order-insensitive, exact-typed) and
-    # `then.roundTrips`. The relationship quantifier siblings (the identical
+    # `then.databaseCalls`. The relationship quantifier siblings (the identical
     # correlated-EXISTS lowering over another relationship), the deep-fetch-bearing temporal
     # siblings, the multi-concrete polymorphic PROJECTING inheritance reads,
     # and the Customer value-object predicate-read siblings (whose flagship
@@ -1118,7 +1118,7 @@ _COMPOSITION_UNMIRRORED_MODEL_REASON: Final[str] = (
     "(m-snapshot-read-020 across a delete, m-snapshot-read-025 across a bitemporal "
     "rectangle split): the surviving view's reference identity is a materialization "
     "property, not a write-verb one, and this case's own composition is graded "
-    "end-to-end by BOTH wire executors — golden close DML, `roundTrips: 0` on the "
+    "end-to-end by BOTH wire executors — golden close DML, `databaseCalls: 0` on the "
     "access, the contents its `expectGraph` states, and the read-back that shows "
     "Latest moved. Its model (`models/invoice.yaml`) is one this package authors no "
     "idiomatic class family for by the recorded mirrored-model partition"
@@ -1415,7 +1415,7 @@ _EXECUTION_AUTHORITY_BOUNDARY_RUNNER_REASON: Final[str] = (
     "an execution-authority join witness graded end-to-end by the case-driven boundary "
     "runner (`tests/api/test_boundary_run.py`), which derives the case's outer and "
     "independently authored joining scopes from one REAL Database Root and verifies the "
-    "case's outcome and exact modeled round-trip count. The Usage Guide's "
+    "case's outcome and exact modeled Database Call count. The Usage Guide's "
     "`m-execution-authority-001` story separately executes the public root lifetime, scope "
     "selection, option derivation, and both authority modes; these remaining cases add only "
     "the refusal or login-equality variant already graded by the boundary runner"

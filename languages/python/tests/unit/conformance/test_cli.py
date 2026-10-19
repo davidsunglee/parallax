@@ -76,7 +76,7 @@ def test_run_rejected_case_never_provisions_a_container(
     assert envelope["dialect"] == "postgres"
     assert envelope["emissions"] == []
     assert envelope["observations"]["rejectedRule"] == "narrow-outside-position"
-    assert envelope["observations"]["roundTrips"] == 0
+    assert envelope["observations"]["databaseCalls"] == 0
 
 
 def test_compile_unsupported_dialect_exit_10(capsys: pytest.CaptureFixture[str]) -> None:

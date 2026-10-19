@@ -80,7 +80,7 @@ def test_the_compile_lane_emits_exactly_one_plans_own_lowering(
 
     monkeypatch.setattr(WritePlanner, "finalize", finalize)
     case = case_format.load_case(_CASE)
-    emissions, _round_trips = engine.compile_write_sequence_case(case, "postgres")
+    emissions, _database_calls = engine.compile_write_sequence_case(case, "postgres")
 
     assert planned, "the emissions come from a plan rather than from a re-lowering"
     assert len({id(value) for value in planned}) == len(planned), "no buffer is planned twice"
