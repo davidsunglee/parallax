@@ -271,6 +271,30 @@ class LifecycleObservation:
             call.statement for call in self.calls[mark:] if kind is None or call.kind == kind
         )
 
+    def own_reads_since(self, mark: int) -> tuple[LoweredStatement, ...]:
+        """Every read issued after ``mark`` round trips outside a write batch.
+
+        A participating read's force-flush can itself read: the coverage a
+        deferred unit binds is acquired inside the batch. That read is a round
+        trip of the flush, which no step's emissions name (`m-case-format`
+        "Resolving reads a write owes"), so the read that triggered the flush
+        reports only the statements it issued itself.
+        """
+        reads: list[LoweredStatement] = []
+        position = 0
+        for root in self.roots:
+            flushing = False
+            for event in root.events:
+                if isinstance(event, WriteBatchStarted):
+                    flushing = True
+                elif isinstance(event, WriteBatchFinished):
+                    flushing = False
+                elif isinstance(event, DatabaseCallStarted):
+                    if position >= mark and event.kind == "read" and not flushing:
+                        reads.append(event.statement)
+                    position += 1
+        return tuple(reads)
+
     @property
     def round_trips(self) -> int:
         """Every attempted call, failed ones included. Begin, commit, and

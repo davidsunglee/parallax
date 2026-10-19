@@ -7,8 +7,8 @@ relationship contents, an execution granting no termination trust, a second
 session that will not open — each releasing every session it had opened.
 
 The temporal race runs each group at its own instant and settles each temporal
-write against its own group's reads, modeling no case state: what a group's
-reads did not retain is refused rather than modeled.
+write against its own group's reads, modeling no case state: coverage beyond
+what those reads retained is read by the group's own flush, on its own session.
 """
 
 from __future__ import annotations
@@ -689,6 +689,7 @@ def test_each_interleaved_group_is_composed_over_the_cases_own_root_record() -> 
 
 _FEB = dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
 _MAR = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
+_JUN = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 _SEP = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
 _OCT = dt.datetime(2024, 10, 1, tzinfo=dt.UTC)
 
@@ -922,48 +923,92 @@ def test_a_second_temporal_write_of_a_key_its_group_settled_is_refused() -> None
         run_interleaved_scenario_case(case, ScriptedPort(), executions)
 
 
-def test_a_temporal_write_needing_coverage_its_reading_does_not_hold_is_refused() -> None:
-    # A plain terminate from the start of a BOUNDED rectangle reaches the
-    # rectangle after it, which no read of the group observed: its flush would
-    # read that coverage itself, and what it would find includes the other
-    # session's commits, which this lane does not model.
-    jan = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
-    jun = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
-    bounded: MappingRow = {
-        "pos_id": 1,
-        "acct_num": "A",
-        "val": decimal.Decimal("100.00"),
-        "from_z": jan,
-        "thru_z": jun,
-        "in_z": dt.datetime(2024, 4, 1, tzinfo=dt.UTC),
-        "out_z": INFINITY,
+_BOUNDED: Final[MappingRow] = {
+    "pos_id": 1,
+    "acct_num": "A",
+    "val": decimal.Decimal("100.00"),
+    "from_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+    "thru_z": _JUN,
+    "in_z": dt.datetime(2024, 4, 1, tzinfo=dt.UTC),
+    "out_z": INFINITY,
+}
+_FOLLOWING: Final[MappingRow] = {
+    **_BOUNDED,
+    "val": decimal.Decimal("200.00"),
+    "from_z": _JUN,
+    "thru_z": INFINITY,
+}
+_POSITION_FIND: Final[dict[str, object]] = {
+    "objectQuery": {
+        "target": "parallax.compatibility.Position",
+        "predicate": {"eq": {"path": "parallax.compatibility.Position.id", "value": 1}},
+        "temporal": {
+            "valid-time": {"asOf": "2024-01-01T00:00:00.000000Z"},
+            "transaction-time": {"asOf": "latest"},
+        },
     }
-    find = {
-        "objectQuery": {
-            "target": "parallax.compatibility.Position",
-            "predicate": {"eq": {"path": "parallax.compatibility.Position.id", "value": 1}},
-            "temporal": {
-                "valid-time": {"asOf": "2024-01-01T00:00:00.000000Z"},
-                "transaction-time": {"asOf": "latest"},
-            },
+}
+# A plain terminate from the start of a BOUNDED rectangle reaches the rectangle
+# after it, which no read of the group observed.
+_UNBOUNDED_TERMINATE: Final[dict[str, object]] = {
+    "write": [
+        {
+            "mutation": "terminate",
+            "entity": "parallax.compatibility.Position",
+            "rows": [{"id": 1}],
+            "validFrom": "2024-01-01T00:00:00.000000Z",
+            "at": "2024-10-01T00:00:00+00:00",
+            "on": 0,
         }
-    }
-    terminate = {
-        "write": [
-            {
-                "mutation": "terminate",
-                "entity": "parallax.compatibility.Position",
-                "rows": [{"id": 1}],
-                "validFrom": "2024-01-01T00:00:00.000000Z",
-                "at": "2024-10-01T00:00:00+00:00",
-                "on": 0,
-            }
-        ]
-    }
-    case = _race_case([find, terminate], [find], "models/position.yaml")
-    executions = _ScriptedExecutions(
-        ScriptedPort(read_rows=[[bounded]]), ScriptedPort(read_rows=[[bounded]])
-    )
+    ]
+}
 
-    with pytest.raises(EngineError, match="tracks no case state to bind it to"):
-        run_interleaved_scenario_case(case, ScriptedPort(), executions)
+
+def _coverage_race(ours: Sequence[Mapping[str, object]]) -> tuple[Any, ScriptedPort]:
+    """``ours`` over a session whose second read answers the rectangle after
+    the bounded one its find publishes."""
+    ours_port = ScriptedPort(read_rows=[[_BOUNDED], [_FOLLOWING], [_BOUNDED]])
+    run = run_interleaved_scenario_case(
+        _race_case(ours, [_POSITION_FIND], "models/position.yaml"),
+        ScriptedPort(),
+        _ScriptedExecutions(ours_port, ScriptedPort(read_rows=[[_BOUNDED]])),
+    )
+    return run, ours_port
+
+
+def _closed_ends(run: Any) -> list[tuple[str, object]]:
+    """Each closing update's pointer and the Valid-Time end it addresses."""
+    return [(e.case_pointer, e.binds[2]) for e in run.emissions if e.sql.startswith("update")]
+
+
+def test_a_flush_reads_coverage_its_groups_reading_does_not_hold_on_its_own_session() -> None:
+    # The commit's flush reads the rectangle after the observed one itself, on
+    # the group's own session, and closes both. That read is a round trip of the
+    # flush, which no step reports as a statement.
+    run, ours_port = _coverage_race([_POSITION_FIND, _UNBOUNDED_TERMINATE])
+
+    assert run.units == {"ours": {"outcome": "committed"}, "concurrent": {"outcome": "committed"}}
+    (_find, (coverage, coverage_binds)) = ours_port.reads
+    assert coverage.endswith("where t0.pos_id = %s and t0.thru_z > %s and t0.out_z = %s")
+    assert coverage_binds[1] == _JUN
+    assert _closed_ends(run) == [("/scenario/2/write", _JUN), ("/scenario/2/write", "infinity")]
+    assert [e.case_pointer for e in run.emissions if e.sql.startswith("select")] == [
+        "/scenario/0/objectQuery",
+        "/scenario/1/objectQuery",
+    ]
+    assert run.round_trips == 5
+
+
+def test_a_finds_force_flush_reads_coverage_it_never_reports_as_the_finds_own() -> None:
+    run, ours_port = _coverage_race([_POSITION_FIND, _UNBOUNDED_TERMINATE, _POSITION_FIND])
+
+    assert len(ours_port.reads) == 3
+    assert _closed_ends(run) == [("/scenario/1/write", _JUN), ("/scenario/1/write", "infinity")]
+    finds = [(e.case_pointer, e.sql) for e in run.emissions if e.sql.startswith("select")]
+    assert [pointer for pointer, _sql in finds] == [
+        "/scenario/0/objectQuery",
+        "/scenario/2/objectQuery",
+        "/scenario/3/objectQuery",
+    ]
+    assert len({sql for _pointer, sql in finds}) == 1
+    assert run.round_trips == 6

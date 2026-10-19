@@ -77,7 +77,6 @@ def _run_interleaved_group(
     context: CaseContext,
     steps: Sequence[Mapping[str, object]],
     indices: Sequence[int],
-    tx_instant: str,
     turnstile: Turnstile,
     result: _InterleavedGroupResult,
 ) -> None:
@@ -116,20 +115,20 @@ def _run_interleaved_group(
 
     ``session`` is passed beside the shared ``context`` rather than read out of
     it because the two groups run on two connections: each group's steps execute
-    on the dedicated session opened for it. Its steps run at ``tx_instant``, the
-    group's own Transaction Instant — the same instant ``session``'s Clock
-    answers.
+    on the dedicated session opened for it, whose Clock answers the group's own
+    Transaction Instant.
 
     ``context`` carries no case-state tracker, and that is the invariant two
     concurrent sessions rest on: a temporal write settles against what its own
     group's reads retained — the value production's verb is handed, through
     :class:`~parallax.conformance._lanes.scenario.GroupEvidenceResolver` — so the lane
     models nothing the other session could have changed, the two threads share
-    no mutable state, and a group's abort leaves nothing behind to discard. A
-    write whose plan would need more than those reads retained — a coverage read
-    its flush defers, or a second temporal write of a key its group already
-    settled — is refused as unwitnessed rather than modeled, because that state
-    includes the other session's commits, which only the database knows.
+    no mutable state, and a group's abort leaves nothing behind to discard.
+    Coverage a flush needs beyond those reads is production's own to read, on
+    the group's own connection, so it sees whatever the other session committed
+    exactly as the database does. A second temporal write of a key its group
+    already settled would compose onto state no read of the group retained, and
+    is refused as unwitnessed rather than modeled.
 
     Every OWN find step's `stepRows` observation lands in ``result.rows`` (keyed
     by scenario step index) — without this, a grouped find's own DML is graded
@@ -157,12 +156,10 @@ def _run_interleaved_group(
             is_last = position == len(indices) - 1
             lowered[index], read = run_group_step(
                 tx,
-                session,
                 context,
                 state,
                 steps[index],
                 index,
-                tx_instant,
                 observation,
                 tracked=None,
             )
@@ -373,7 +370,6 @@ def run_interleaved_scenario_case(
                         context,
                         steps,
                         indices,
-                        tx_instant,
                         turnstile,
                         result,
                     ),
@@ -381,7 +377,7 @@ def run_interleaved_scenario_case(
                 ),
                 executions[name],
             )
-            for name, observed, indices, tx_instant, result in plans
+            for name, observed, indices, _tx_instant, result in plans
         }
         for thread, _execution in workers.values():
             thread.start()

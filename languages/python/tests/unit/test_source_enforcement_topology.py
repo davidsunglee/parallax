@@ -545,11 +545,9 @@ ACCEPTED_CONFORMANCE_PRIVATE_REACHES: dict[tuple[str, str], frozenset[str]] = {
         {"FAMILY_VARIANT_KEY"}
     ),
     # The unit of work's implementation leaves the case lanes build writes
-    # through: the instruction vocabulary and its prepared forms, the
-    # caller-addressed write builder, the composition a lane tracking no case
-    # state plans through, and the row-acquisition requests a case state is
-    # read by. The facade exports none of them, so each lane names the
-    # private owner.
+    # through: the instruction vocabulary and its prepared forms, and the
+    # row-acquisition requests a case state is read by. The facade exports
+    # none of them, so each lane names the private owner.
     **{
         (lane, "parallax.core._execution._unit_work"): frozenset({"instructions"})
         for lane in (
@@ -576,14 +574,6 @@ ACCEPTED_CONFORMANCE_PRIVATE_REACHES: dict[tuple[str, str], frozenset[str]] = {
             "WriteInstruction",
         }
     ),
-    (
-        "parallax.conformance._lanes.scenario",
-        "parallax.core._execution._unit_work.materialized",
-    ): frozenset({"target_write"}),
-    (
-        "parallax.conformance._lanes.scenario",
-        "parallax.core._execution._unit_work.write_planner",
-    ): frozenset({"compose_writes"}),
     (
         "parallax.conformance.simulated_temporal_store",
         "parallax.core._execution._unit_work.acquisition",
