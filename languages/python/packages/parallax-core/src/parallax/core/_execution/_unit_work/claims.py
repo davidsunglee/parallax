@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterable, Set
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Final, Literal
 
@@ -13,7 +13,6 @@ __all__ = [
     "SELECTION_INTENT",
     "SPANNING_SELECTION_INTENT",
     "ClaimScope",
-    "ClaimTable",
     "ClaimVerdict",
     "SettledEvidence",
     "WriteIntent",
@@ -67,11 +66,9 @@ resolved. It is one intent value rather than one per row because a group carries
 no window of its own to compare: it is indivisible, and every keyed intent
 against a state it selected is incompatible with it."""
 
-_NOTHING_SPANNED: Final[frozenset[ObjectKey]] = frozenset()
-
 SPANNING_SELECTION_INTENT: Final = WriteIntent(kind="selection", spans=True)
 """The selection claim of a group that reaches every state of each object it
-selected, not only the one it selected (:meth:`ClaimTable.spans`)."""
+selected, not only the one it selected."""
 
 
 type ClaimScope = ObjectStateKey | ObjectKey
@@ -249,89 +246,3 @@ def _overlaps(first: WriteIntent, second: WriteIntent) -> bool:
     first_window = first.valid_time_window
     second_window = second.valid_time_window
     return first_window is None or second_window is None or first_window.overlaps(second_window)
-
-
-class ClaimTable:
-    """The claims one buffer holds, by the scope each is taken at.
-
-    A unit of work files its Materialized Write Groups' selection claims here;
-    a keyed write's claim is the pending write itself, indexed where the buffer
-    composes it.
-
-    Buffer-scoped and no wider: a flush spends the buffer it planned and the
-    claims travel out with it, so what a later write may claim is decided
-    by what is still pending rather than by everything this unit of work has
-    ever written. An abort drops both together for the same reason.
-    """
-
-    __slots__ = ("_held", "_objects", "_spanned")
-
-    def __init__(self) -> None:
-        self._held: dict[ClaimScope, WriteIntent] = {}
-        # The objects the claims address, built by the first question about an
-        # object and kept current from then on, so a buffer that is never asked
-        # pays nothing per claim.
-        self._objects: set[ObjectKey] | None = None
-        # The objects a claim reaches every state of, built by the first
-        # question after a spanning claim; a buffer holding none keeps the
-        # shared empty set rather than one of its own.
-        self._spanned: Set[ObjectKey] | None = _NOTHING_SPANNED
-
-    def claim(self, key: ClaimScope, intent: WriteIntent) -> ClaimVerdict:
-        """Take ``intent``'s claim at ``key``, answering what it became.
-
-        The verdict is :func:`admits`' alone, unclaimed row included, so this
-        table decides nothing of its own and stays the storage the rule is
-        applied to.
-
-        What it is left holding is what the buffer will actually carry after the
-        verdict: an admitted or coalescing intent replaces the held one, a
-        superseding destruction replaces it too, and a deduplicated or
-        incompatible intent leaves it untouched — the first because the second
-        adds nothing, the second because the arriving verb is about to refuse.
-        """
-        verdict = admits(self._held.get(key), intent)
-        if verdict in ("admit", "coalesce", "supersede"):
-            self._held[key] = intent
-            if self._objects is not None:
-                self._objects.add(claimed_object(key))
-            if intent.spans:
-                self._spanned = None
-        return verdict
-
-    def held(self, key: ClaimScope) -> WriteIntent | None:
-        """What this buffer currently claims at ``key``, if anything — the read
-        side of :meth:`claim`, for a verb deciding whether it has an earlier
-        intent to combine with at all."""
-        return self._held.get(key)
-
-    def claims_object(self, key: ObjectKey) -> bool:
-        """Whether this buffer claims any state of object ``key``."""
-        objects = self._objects
-        if objects is None:
-            objects = self._objects = {claimed_object(scope) for scope in self._held}
-        return key in objects
-
-    def spans(self, key: ObjectKey) -> bool:
-        """Whether a claim this buffer holds reaches every state of object
-        ``key``, not only the one it names (:data:`SPANNING_SELECTION_INTENT`)."""
-        spanned = self._spanned
-        if spanned is None:
-            spanned = self._spanned = {
-                claimed_object(scope) for scope, intent in self._held.items() if intent.spans
-            } or _NOTHING_SPANNED
-        return key in spanned
-
-    def release(self, keys: Iterable[ClaimScope]) -> None:
-        """Drop the claims at ``keys``, which the caller itself just admitted
-        and is withdrawing before the write that took them is buffered."""
-        for key in keys:
-            del self._held[key]
-        self._objects = None
-        self._spanned = None
-
-    def clear(self) -> None:
-        """Drop every claim — the buffer that held them is gone."""
-        self._held.clear()
-        self._objects = None
-        self._spanned = _NOTHING_SPANNED

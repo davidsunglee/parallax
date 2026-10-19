@@ -23,6 +23,7 @@ import datetime as dt
 import gc
 import weakref
 from decimal import Decimal
+from itertools import groupby
 from typing import Any, Literal, cast
 
 import pytest
@@ -114,17 +115,6 @@ def _sql(port: ScriptedAdapter, position: int) -> str:
     call = port.calls[position]
     assert isinstance(call, (ReadCall, WriteCall))
     return call.sql
-
-
-def _pending_writes(tx: TxnContext) -> int:
-    """How many writes this transaction is still holding, read off the buffer.
-
-    The claim is about the buffer rather than about the statements it eventually
-    lowers to, so it is measured there: a bound inferred from DML would be
-    satisfied by coalescing that never happened.
-    """
-    uow = tx._attempt.uow  # pyright: ignore[reportPrivateUsage] - unit test reads the transaction's own ledger
-    return len(uow._pending.writes())  # pyright: ignore[reportPrivateUsage] - the buffer IS the claim's subject
 
 
 def _observation(node: object) -> Any:
@@ -226,9 +216,10 @@ def test_a_read_only_delivery_emits_no_dml_at_all() -> None:
 
 @pytest.mark.parametrize("size", [1, 2, 3])
 def test_a_writing_loop_never_holds_more_than_one_pages_writes(size: int) -> None:
-    # The bound the per-page flush buys, measured on the buffer at every root:
-    # what a loop accumulates is a page's worth, whatever the result's size, so
-    # the same dial that sizes a page sizes the buffer.
+    # The bound the per-page flush buys: what a loop accumulates is a page's
+    # worth, whatever the result's size, so the same dial that sizes a page
+    # sizes each flush. The loop writes distinct rows, none of which coalesce,
+    # so each flush executes every write it held.
     rows = [_account_row(account_id) for account_id in range(1, 7)]
     port = ScriptedAdapter(
         Transact(
@@ -239,17 +230,20 @@ def test_a_writing_loop_never_holds_more_than_one_pages_writes(size: int) -> Non
             )
         )
     )
-    held: list[int] = []
 
     def fn(tx: TxnContext) -> None:
         with tx.stream(_accounts(), batch_size=size) as stream:
             for account in stream:
                 tx.amend(account.edit(balance=Decimal("125.00")))
-                held.append(_pending_writes(tx))
 
     account_db(port).transact(fn)
-    assert len(held) == len(rows)
-    assert max(held) == size
+    flushed = [
+        len(list(run))
+        for writes, run in groupby(_kinds(port), key=lambda kind: kind is WriteCall)
+        if writes
+    ]
+    assert sum(flushed) == len(rows)
+    assert max(flushed) == size
 
 
 # --------------------------------------------------------------------------- #

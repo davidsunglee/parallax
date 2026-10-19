@@ -6,7 +6,13 @@ from dataclasses import dataclass, field
 from typing import Final, Literal, cast
 
 from parallax.core import inheritance, temporal_read
-from parallax.core._execution._unit_work.claims import SettledEvidence, WriteIntent, keyed_intent
+from parallax.core._execution._unit_work.claims import (
+    ClaimScope,
+    SettledEvidence,
+    WriteIntent,
+    claimed_object,
+    keyed_intent,
+)
 from parallax.core._execution._unit_work.instructions import (
     ASSIGNMENT_MUTATIONS,
     INSERT_MUTATIONS,
@@ -66,7 +72,9 @@ __all__ = [
     "TemporalKeyedWrite",
     "VersionedEvidence",
     "VersionedEvidenceBuilder",
+    "buffered_claim_scope",
     "buffered_instruction",
+    "buffered_object_key",
     "buffered_write",
     "chained_temporal_write",
     "composed_temporal_write",
@@ -732,3 +740,43 @@ def buffered_instruction(item: BufferItem) -> PreparedWrite:
     ):
         return item.instruction
     return item
+
+
+def buffered_object_key(
+    item: PreparedKeyedWrite | ClaimedKeyedWrite | InsertionKeyedWrite | TargetKeyedWrite,
+    families: inheritance.InheritanceFacet,
+) -> ObjectKey | None:
+    """The one object ``item`` writes, or ``None`` where it names none.
+
+    A retained observation, an insertion's identity, and a caller's scope
+    already name it; only a write carrying none of them is resolved from its
+    row.
+    """
+    if isinstance(item, ObservedKeyedWrite):
+        return item.retained_observation.key.object
+    if isinstance(item, InsertionKeyedWrite):
+        return item.identity.object_key
+    if isinstance(item, TargetKeyedWrite):
+        return claimed_object(item.scope)
+    return resolve_object_key(buffered_instruction(item), families)
+
+
+def buffered_claim_scope(
+    item: PreparedKeyedWrite | ClaimedKeyedWrite | InsertionKeyedWrite | TargetKeyedWrite,
+    object_key: ObjectKey | None,
+) -> ClaimScope | None:
+    """The scope ``item`` claims where it composes by claimed scope rather than
+    by temporal object, given ``object_key``, the object it writes
+    (:func:`buffered_object_key`).
+
+    ``None`` for a write that claims nothing there: a bare instruction, and a
+    write an insertion authorized while it folds into its object's pending
+    opening.
+    """
+    if isinstance(item, ObservedKeyedWrite):
+        return item.retained_observation.key
+    if isinstance(item, ObjectClaimedWrite):
+        return object_key
+    if isinstance(item, InsertionKeyedWrite | TargetKeyedWrite):
+        return item.scope
+    return None

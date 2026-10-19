@@ -15,7 +15,6 @@ from parallax.core._execution._unit_work.write_items import (
     ComposedTemporalWrite,
     ObservedKeyedWrite,
 )
-from parallax.core._execution._unit_work.write_planner import compose_writes
 from parallax.core.base import INFINITY
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.unit_work import (
@@ -23,6 +22,7 @@ from parallax.core.unit_work import (
     KeyedMutation,
     KeyedWrite,
     RetainedObservation,
+    WriteEvidenceError,
     WritePlanningRequest,
     buffered_write,
 )
@@ -44,7 +44,7 @@ from parallax.core.write_plan.keys import (
 )
 from parallax.core.write_plan.plan import CombinedSourceAuthority, WritePlan
 from tests._support.clock_probes import instant_at
-from tests._support.planner_probes import TEST_ACTOR_IDENTITY
+from tests._support.planner_probes import TEST_ACTOR_IDENTITY, admitted_writes
 from tests.unit._corpus_model_support import corpus_records, formed
 
 _BALANCE = formed(corpus_records()["balance"])
@@ -96,7 +96,7 @@ def _plan(*writes: ObservedKeyedWrite) -> WritePlan:
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=instant_at("2024-06-01T00:00:00+00:00"),
             concurrency="optimistic",
-            buffered_writes=compose_writes(_BALANCE, writes),
+            buffered_writes=admitted_writes(_BALANCE, writes),
         )
     )
 
@@ -129,7 +129,7 @@ def test_terminations_through_two_observations_compose_to_destruction_alone() ->
     # A composition that assigns nothing destroys the row it reaches and opens
     # nothing, ordered as a destructive write.
     stale, current = _observation(_JAN, "100.00"), _observation(_MAR, "120.00")
-    composed = compose_writes(_BALANCE, [_write("terminate", stale), _write("terminate", current)])
+    composed = admitted_writes(_BALANCE, [_write("terminate", stale), _write("terminate", current)])
     (write,) = composed
     assert isinstance(write, ComposedTemporalWrite) and not write.assigns
     steps = list(_plan(_write("terminate", stale), _write("terminate", current)).steps)
@@ -150,20 +150,21 @@ def test_a_termination_after_an_update_through_another_observation_ends_the_row(
 
 def test_a_repeated_termination_of_one_observation_adds_nothing() -> None:
     current = _observation(_MAR, "120.00")
-    (write,) = compose_writes(
+    (write,) = admitted_writes(
         _BALANCE, [_write("terminate", current), _write("terminate", current)]
     )
     assert isinstance(write, ObservedKeyedWrite)
 
 
-def test_a_pair_no_verb_admitted_is_left_standing_rather_than_composed() -> None:
+def test_an_assignment_after_a_destruction_over_its_coverage_is_refused() -> None:
     # An assignment after a destruction over the same coverage resurrects
-    # nothing; a buffer no unit of work admitted keeps both writes as authored.
+    # nothing, so admission refuses it rather than composing or keeping both.
     stale, current = _observation(_JAN, "100.00"), _observation(_MAR, "120.00")
-    composed = compose_writes(
-        _BALANCE, [_write("terminate", stale), _write("amend", current, value="1.00")]
-    )
-    assert [type(write) for write in composed] == [ObservedKeyedWrite, ObservedKeyedWrite]
+    with pytest.raises(WriteEvidenceError) as refused:
+        admitted_writes(
+            _BALANCE, [_write("terminate", stale), _write("amend", current, value="1.00")]
+        )
+    assert refused.value.code == "write-evidence-already-claimed"
 
 
 def test_completions_spend_every_member() -> None:
@@ -190,13 +191,15 @@ def test_a_bitemporal_write_carrying_no_temporal_observation_is_refused_as_unobs
     unobserved = RetainedObservation(
         VersionedObjectStateKey(position, 1), VersionObservation(observed_version=1), None
     )
+    write = buffered_write(prepared, unobserved)
+    assert isinstance(write, ObservedKeyedWrite)
     with pytest.raises(WritePlanningError, match="requires the Temporal Observation"):
         build_write_planner(model).finalize(
             WritePlanningRequest(
                 actor_identity=TEST_ACTOR_IDENTITY,
                 transaction_instant=instant_at("2024-06-01T00:00:00+00:00"),
                 concurrency="optimistic",
-                buffered_writes=compose_writes(model, [buffered_write(prepared, unobserved)]),
+                buffered_writes=(write,),
             )
         )
 
@@ -237,7 +240,7 @@ def test_two_observed_rectangles_bind_at_planning_when_they_cover_the_range() ->
         )
         return buffered_write(prepared, RetainedObservation(state, observed, None))
 
-    writes = compose_writes(
+    writes = admitted_writes(
         model,
         [
             update(_MAR, "150.00", rectangle(_JAN, jun, "100.00")),

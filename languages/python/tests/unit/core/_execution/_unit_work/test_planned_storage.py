@@ -43,7 +43,6 @@ from parallax.core._execution._unit_work.strategy import (
     ConcurrencyStrategy,
 )
 from parallax.core._execution._unit_work.write_items import GroupStateKeys, target_write
-from parallax.core._execution._unit_work.write_planner import compose_writes
 from parallax.core._execution._unit_work.write_settlement import (
     WritePlanCompiler,  # producer-reach regression only
 )
@@ -87,7 +86,7 @@ from parallax.core.write_plan.columns import (
 from parallax.core.write_plan.keys import TemporalObjectStateKey
 from parallax.core.write_plan.steps import ChangedFrom, PlannedUpdate
 from tests._support.clock_probes import CountingClock, inert_instant
-from tests._support.planner_probes import TEST_ACTOR_IDENTITY
+from tests._support.planner_probes import TEST_ACTOR_IDENTITY, admitted_writes
 from tests.unit._corpus_identity_support import corpus_entity
 from tests.unit._gc_reachability import reachable_objects
 from tests.unit._temporal_group_support import temporal_group
@@ -392,7 +391,7 @@ def test_a_deferred_range_retains_finalized_data_and_neither_producer_nor_owners
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=TransactionInstant(clock),
             concurrency="optimistic",
-            buffered_writes=compose_writes(
+            buffered_writes=admitted_writes(
                 _POSITION, [target_write(prepared, inheritance.view(_POSITION))]
             ),
             ownership=ownership,
@@ -1038,7 +1037,7 @@ def test_a_pending_opening_settles_through_no_retained_producer_and_prepares_no_
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=inert_instant(),
             concurrency="optimistic",
-            buffered_writes=compose_writes(_POSITION, writes),
+            buffered_writes=admitted_writes(_POSITION, writes),
         )
     )
     assert len(list(plan.steps)) == 2

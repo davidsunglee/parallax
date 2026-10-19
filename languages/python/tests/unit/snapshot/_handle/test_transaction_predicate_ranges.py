@@ -308,13 +308,13 @@ def test_an_interruption_between_batches_closes_the_group_and_rolls_back(
 def test_the_group_completes_once_after_its_last_batch(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(ranges_module, "_GROUP_OBJECTS", 1)
     completed: list[UnitEffects] = []
-    complete = UnitOfWork._complete  # pyright: ignore[reportPrivateUsage]
+    complete = UnitOfWork._complete_unit  # pyright: ignore[reportPrivateUsage]
 
     def counting(self: UnitOfWork, unit: Any, effects: Any, allocated: Any) -> None:
         completed.append(effects)
         complete(self, unit, effects, allocated)
 
-    monkeypatch.setattr(UnitOfWork, "_complete", counting)
+    monkeypatch.setattr(UnitOfWork, "_complete_unit", counting)
     port = ScriptedAdapter(
         Transact(
             Read(rows=_two_objects()),

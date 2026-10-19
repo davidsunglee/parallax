@@ -1976,19 +1976,6 @@ _FEB = dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
 _APR = dt.datetime(2024, 4, 1, tzinfo=dt.UTC)
 
 
-@dataclass(frozen=True)
-class _PartlyInserted(OpenedRows):
-    """An attempt whose admitted insertion contributed only ``parts`` of the
-    rows it tags, as a merged row it opened holds."""
-
-    parts: tuple[TimeInterval, ...] = ()
-
-    def insertion_coverage(
-        self, endpoint: OwnedEndpoint, valid_time_coverage: TimeInterval | None, /
-    ) -> tuple[TimeInterval | None, ...]:
-        return self.parts if endpoint in self.inserted else ()
-
-
 @pytest.mark.parametrize(
     ("parts", "continued", "shared", "fresh"),
     [
@@ -2012,7 +1999,7 @@ def test_a_group_continues_an_insertion_only_into_the_parts_it_contributed(
     fresh: tuple[str, ...],
 ) -> None:
     owned = _endpoint("Position", 2, OPEN_END, OPEN_END)
-    ownership = _PartlyInserted(frozenset({owned}), frozenset({owned}), parts=parts)
+    ownership = OpenedRows(frozenset({owned}), frozenset({owned}), insertion_parts=parts)
     plan = build_write_planner(_POSITION).finalize(
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,

@@ -11,7 +11,6 @@ from parallax.core import temporal_read
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work.instructions import prepare_wire_write
 from parallax.core._execution._unit_work.write_items import BufferItem
-from parallax.core._execution._unit_work.write_planner import compose_writes
 from parallax.core.base import INFINITY
 from parallax.core.metamodel import EntityIdentity, Metamodel
 from parallax.core.unit_work import (
@@ -39,7 +38,7 @@ from parallax.core.write_plan.steps import (
     PlannedWrite,
 )
 from tests._support.clock_probes import instant_at
-from tests._support.planner_probes import TEST_ACTOR_IDENTITY
+from tests._support.planner_probes import TEST_ACTOR_IDENTITY, admitted_writes
 from tests.unit._corpus_model_support import model
 from tests.unit.core._execution._unit_work._acquired_rows_support import bind_held
 
@@ -126,7 +125,7 @@ def planned(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=instant_at(NOW.isoformat()),
             concurrency=concurrency,  # type: ignore[arg-type]
-            buffered_writes=compose_writes(meta, list(writes)),
+            buffered_writes=admitted_writes(meta, list(writes)),
             ownership=ownership,
             counts_unchanged_rows=counts_unchanged_rows,
         )

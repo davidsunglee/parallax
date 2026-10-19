@@ -22,7 +22,6 @@ from parallax.core._execution._unit_work.write_items import (
     TargetKeyedWrite,
     chained_temporal_write,
 )
-from parallax.core._execution._unit_work.write_planner import compose_writes
 from parallax.core.base import INFINITY, TemporalBound
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.unit_work import (
@@ -61,7 +60,7 @@ from parallax.core.write_plan.steps import (
 )
 from parallax.core.write_plan.steps import INFINITY as OPEN_END
 from tests._support.clock_probes import instant_at
-from tests._support.planner_probes import TEST_ACTOR_IDENTITY
+from tests._support.planner_probes import TEST_ACTOR_IDENTITY, admitted_writes
 from tests.unit.core._execution._unit_work._acquired_rows_support import bind_held, coverage_read
 from tests.unit.core._execution._unit_work._ownership_support import OpenedRows
 from tests.unit.core._execution._unit_work._temporal_targets_support import (
@@ -102,7 +101,7 @@ def _deferred_unit(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=instant_at("2024-10-01T00:00:00+00:00"),
             concurrency=concurrency,  # type: ignore[arg-type]
-            buffered_writes=compose_writes(POSITION, list(writes)),
+            buffered_writes=admitted_writes(POSITION, list(writes)),
             counts_unchanged_rows=guards,
         )
     )
@@ -415,7 +414,7 @@ def _chained_unit(
     follows: bool = True,
     concurrency: str = "optimistic",
 ) -> ExecutionUnit:
-    (composed,) = compose_writes(POSITION, list(writes))
+    (composed,) = admitted_writes(POSITION, list(writes))
     assert isinstance(composed, ComposedTemporalWrite | TargetKeyedWrite | ObservedKeyedWrite)
     plan = build_write_planner(POSITION).finalize(
         WritePlanningRequest(

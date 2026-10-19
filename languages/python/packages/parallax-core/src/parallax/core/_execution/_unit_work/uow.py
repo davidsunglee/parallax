@@ -1,13 +1,10 @@
 from __future__ import annotations
 
-import bisect
 import datetime as dt
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable
 from dataclasses import dataclass, replace
-from enum import Enum
-from itertools import islice
 from types import TracebackType
-from typing import Final, Literal, Protocol, cast, final
+from typing import Literal, Protocol, cast
 from weakref import WeakValueDictionary
 
 from parallax.core import inheritance, temporal_read
@@ -18,15 +15,16 @@ from parallax.core._execution._unit_work.acquisition import (
     consume_selection,
     consume_target,
 )
-from parallax.core._execution._unit_work.claims import (
-    SELECTION_INTENT,
-    SPANNING_SELECTION_INTENT,
-    ClaimScope,
-    ClaimTable,
-    SettledEvidence,
-    claimed_object,
-    keyed_intent,
+from parallax.core._execution._unit_work.admission import (
+    WRITE_EVIDENCE_CODES,
+    BufferOutcome,
+    NoInsertionAuthority,
+    UnitOfWorkError,
+    WriteAdmission,
+    WriteEvidenceError,
+    WriteEvidenceErrorCode,
 )
+from parallax.core._execution._unit_work.claims import SettledEvidence, claimed_object
 from parallax.core._execution._unit_work.clock import Clock, TransactionInstant
 from parallax.core._execution._unit_work.effects import (
     CardinalityCorruptionError,
@@ -34,16 +32,11 @@ from parallax.core._execution._unit_work.effects import (
 )
 from parallax.core._execution._unit_work.instructions import (
     AMEND_MUTATIONS,
-    DESTRUCTIVE_MUTATIONS,
-    INSERT_MUTATIONS,
     ExpectedTxStart,
-    ExpectedVersion,
     KeyedMutation,
-    PreparedKeyedWrite,
     PreparedPredicateWrite,
     PreparedTargetWrite,
 )
-from parallax.core._execution._unit_work.keys import resolve_object_key
 from parallax.core._execution._unit_work.retain import (
     InsertionIdentity,
     KeyedWriteRefusalAdvice,
@@ -59,23 +52,14 @@ from parallax.core._execution._unit_work.strategy import (
 )
 from parallax.core._execution._unit_work.write_items import (
     BufferItem,
-    InsertionKeyedWrite,
     MaterializedWriteGroup,
-    ObjectClaimedWrite,
-    ObservedKeyedWrite,
     TargetKeyedWrite,
-    buffered_instruction,
-    group_state_keys,
     readless_write,
     target_write,
 )
-from parallax.core._execution._unit_work.write_planner import (
-    PendingWrites,
-    WritePlanner,
-    WritePlanningRequest,
-)
+from parallax.core._execution._unit_work.write_planner import WritePlanner, WritePlanningRequest
 from parallax.core._execution._unit_work.write_runner import ExecuteWriteSteps, run_write_plan
-from parallax.core.base import INFINITY, TemporalBound, normalize_instant
+from parallax.core.base import normalize_instant
 from parallax.core.inheritance import InheritanceEntityView
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.temporal_read import (
@@ -95,23 +79,16 @@ from parallax.core.write_plan.keys import (
 from parallax.core.write_plan.materialized import PredecessorRows
 from parallax.core.write_plan.observe import PredecessorRow
 from parallax.core.write_plan.plan import (
-    AllocatedOpening,
-    Derivation,
-    Descent,
     ExecutionUnit,
-    Openings,
-    OwnedEndpoint,
     UnitEffects,
 )
-from parallax.core.write_plan.steps import Finite, KeyTarget
+from parallax.core.write_plan.steps import KeyTarget
 
 __all__ = [
-    "NO_INSERTION_AUTHORITY",
     "WRITE_EVIDENCE_CODES",
     "AttemptLifetime",
     "BufferOutcome",
     "Concurrency",
-    "NoInsertionAuthority",
     "OpenWriteBatch",
     "RollbackOnlyError",
     "StoredTarget",
@@ -197,10 +174,6 @@ class StoredTarget:
     tx_start: object | None = None
 
 
-class UnitOfWorkError(RuntimeError):
-    """A unit of work was driven into an illegal state."""
-
-
 class EscapedTransactionError(UnitOfWorkError):
     """A transaction reference was used after its attempt ended."""
 
@@ -213,73 +186,6 @@ class RollbackOnlyError(UnitOfWorkError):
     as its cause (``__cause__``), so its retriability classification survives
     for the outermost retry loop.
     """
-
-
-type WriteEvidenceErrorCode = Literal[
-    "write-evidence-unavailable",
-    "write-evidence-consumed",
-    "write-evidence-already-claimed",
-    "write-evidence-inserted",
-]
-"""The write-evidence refusals a keyed verb raises.
-
-The first three partition what can be wrong with a source's evidence at the
-verb: there is none the target Entity's Effective Concurrency Strategy can use,
-the evidence there is has been spent by a successful flush, or a write already
-buffered in this unit of work claimed the scope this one settles against, for an
-intent this one cannot join. The fourth refuses a caller's own condition on an
-object this attempt inserted, which only that insertion's source or a read
-addresses. A conflict the database discovers later is a different thing
-entirely and keeps its own flush-time classification.
-"""
-
-WRITE_EVIDENCE_CODES: Final[frozenset[str]] = frozenset(
-    {
-        "write-evidence-unavailable",
-        "write-evidence-consumed",
-        "write-evidence-already-claimed",
-        "write-evidence-inserted",
-    }
-)
-"""The complete set of codes :class:`WriteEvidenceError` carries."""
-
-
-class WriteEvidenceError(LookupError):
-    """A keyed write verb was handed a source whose write evidence it cannot use.
-
-    A ``LookupError`` because every code reports that the evidence this write
-    needs is not there for it to use: never recorded for this source, recorded
-    and already spent, or still live but claimed by an intent this unit of work
-    already buffered at the scope this write settles against, which this one
-    cannot join. ``object_key`` is the object the write addressed, always
-    visible so a caller can say WHICH write was refused; the Read Evidence and the
-    claim scope behind it stay implementation state.
-
-    Raised synchronously at the verb, before any buffering and before any
-    database access. A conflict the database discovers later is a different
-    thing entirely and keeps its own flush-time classification.
-    """
-
-    def __init__(
-        self, *, code: WriteEvidenceErrorCode, message: str, object_key: ObjectKey
-    ) -> None:
-        super().__init__(f"{code}: {message}")
-        self.code: Final = code
-        self.message: Final = message
-        self.object_key: Final = object_key
-
-
-class BufferOutcome(Enum):
-    """What buffering one accepted item did to the buffer's pending inserts.
-
-    Both values mean the item was buffered; a refused item raises instead.
-    ``CANCELLED_PENDING_INSERT`` reports a destructive keyed write that left
-    nothing of a still-unflushed insert of its object — the pair the flush
-    emits nothing for — and nothing about SQL.
-    """
-
-    BUFFERED = "buffered"
-    CANCELLED_PENDING_INSERT = "cancelled-pending-insert"
 
 
 @dataclass(frozen=True, slots=True)
@@ -297,618 +203,6 @@ class TransactionSettings:
 
     concurrency: Concurrency = "optimistic"
     counts_unchanged_rows: bool = False
-
-
-class _TargetRecord:
-    """What one attempt holds about one object it inserted.
-
-    ``insertion_advice`` is the refusal advice the latest insertion's opener
-    supplied, kept for a repeat's diagnostics, and ``valid_time_window`` is the
-    window it was admitted with, ``None`` for an object without Valid Time — its
-    start is the anchor every write it authorizes starts at. ``identity`` is the
-    authority that insertion grants while it stands, and ``None`` once its
-    complete removal retired it. ``pending_insert`` lasts until the next flush.
-
-    What survives of the object's admitted insertions is counted where it is
-    stored: ``live`` — the owned current rows an admission of the object
-    opened, by their tags — for a Bitemporal object, whose coverage a write can
-    remove in part, and zero or one for any other, which a removal takes whole.
-    ``floor`` is the earliest anchor of any admission whose coverage may still
-    be stored — once a flush executes an insertion, its own anchor, since what
-    an earlier admission opened was removed before it — and ``advanced_from``
-    the version the last completed update of a versioned row advanced from.
-    ``removal`` keeps the stored removal window once it is asked for
-    (:meth:`_TargetWriteState.removal_window`), until what it derives from
-    changes. A record lasts until the attempt ends, whatever became of the
-    insertion: it is also the fact that this attempt admitted one.
-    """
-
-    __slots__ = (
-        "advanced_from",
-        "floor",
-        "identity",
-        "insertion_advice",
-        "live",
-        "pending_insert",
-        "removal",
-        "valid_time_window",
-    )
-
-    def __init__(
-        self,
-        insertion_advice: KeyedWriteRefusalAdvice | None,
-        valid_time_window: TimeInterval | None,
-        identity: InsertionIdentity,
-    ) -> None:
-        self.insertion_advice = insertion_advice
-        self.valid_time_window = valid_time_window
-        self.identity: InsertionIdentity | None = identity
-        self.pending_insert = True
-        self.live = 0
-        self.floor = _window_start(valid_time_window)
-        self.advanced_from: int | None = None
-        self.removal: TimeInterval | _Uncomputed = _UNCOMPUTED
-
-    def set_floor(self, floor: dt.datetime | None) -> None:
-        """Retain ``floor`` as the earliest stored anchor, dropping a removal
-        window derived from the previous one."""
-        if floor != self.floor:
-            self.floor = floor
-            self.removal = _UNCOMPUTED
-
-    @property
-    def stored(self) -> bool:
-        """Whether anything an admitted insertion of the object opened may
-        still be stored."""
-        return self.live > 0
-
-
-@final
-class _Uncomputed:
-    """The removal window a record has not derived since what it derives from
-    last changed — distinct from every window, and from a missing Valid-Time
-    axis."""
-
-    __slots__ = ()
-
-
-_UNCOMPUTED: Final = _Uncomputed()
-
-
-@final
-class NoInsertionAuthority:
-    """The answer :meth:`UnitOfWork.insertion_authority` gives where no admitted
-    insertion's authority stands: distinct from the ``None`` window of a
-    standing insertion without Valid Time."""
-
-    __slots__ = ()
-
-
-NO_INSERTION_AUTHORITY: Final = NoInsertionAuthority()
-
-
-def _window_start(window: TimeInterval | None) -> dt.datetime | None:
-    return None if window is None else window.start
-
-
-type _Address = tuple[EntityIdentity, tuple[object, ...]]
-
-type _Tag = tuple[InsertionIdentity, tuple[TimeInterval, ...] | None]
-"""The admission an owned row continues, and the parts of the row it
-contributed in order, ``None`` where it contributed the whole row."""
-
-
-class _TargetWriteState:
-    """The attempt's write-owned facts about the objects it writes.
-
-    Each target's admitted insertion, and every current temporal row the
-    attempt successfully opened, by complete physical address. A row of a
-    Bitemporal object that continues an admission standing when it opens — the
-    admission's own insert, or a successor of the part of a row an admission
-    contributed — is tagged with that admission's identity, and with the parts
-    of it the admission contributed where that is not the whole row; a
-    successor of coverage no admission opened is not. Reads never add to it,
-    so its size follows what the attempt wrote rather than what it read.
-    """
-
-    __slots__ = ("_addresses", "_continuity", "_endpoints", "_owning", "_records", "_tags")
-
-    def __init__(self) -> None:
-        self._records: dict[ObjectKey, _TargetRecord] = {}
-        # The Bitemporal records again, by the address an owned row names its
-        # object with, so tagging a row needs no key of its own.
-        self._addresses: dict[_Address, _TargetRecord] = {}
-        self._endpoints: set[OwnedEndpoint] = set()
-        self._tags: dict[OwnedEndpoint, _Tag] = {}
-        # Every Entity some owned row has been an object of, so a group of an
-        # Entity the attempt never opened a row of is planned without a
-        # per-row check. It only grows; an Entity whose rows were all removed
-        # merely keeps its groups on the per-row path.
-        self._owning: set[EntityIdentity] = set()
-        # What units of the running flush proved for later ones, allocated by
-        # the first unit that records anything and released once no object's
-        # proofs remain, or when the flush ends however it ends.
-        self._continuity: _Continuity | None = None
-
-    def owns(self, endpoint: OwnedEndpoint, /) -> bool:
-        return endpoint in self._endpoints
-
-    def owns_any(self, entity: EntityIdentity, /) -> bool:
-        return entity in self._owning
-
-    def continues_insertion(self, endpoint: OwnedEndpoint, /) -> bool:
-        return endpoint in self._tags
-
-    def insertion_coverage(
-        self, endpoint: OwnedEndpoint, valid_time_coverage: TimeInterval | None, /
-    ) -> tuple[TimeInterval | None, ...]:
-        tag = self._tags.get(endpoint) if self._tags else None
-        if tag is None:
-            return ()
-        parts = tag[1]
-        if parts is None or valid_time_coverage is None:
-            return (valid_time_coverage,)
-        return tuple(
-            part
-            for part in (part.intersection(valid_time_coverage) for part in parts)
-            if part is not None
-        )
-
-    def proven(self, original: ObjectStateKey, /) -> Derivation | None:
-        continuity = self._continuity
-        proofs = None if continuity is None else continuity.proofs.get(original.object)
-        return None if proofs is None else proofs.get(original)
-
-    def descendants(
-        self, original: ObjectStateKey, valid_time_window: TimeInterval | None, /
-    ) -> Iterator[tuple[OwnedEndpoint, Descent]]:
-        continuity = self._continuity
-        assert continuity is not None  # a proven original's rows are kept
-        descents = continuity.descents
-        for endpoint, contributed in continuity.lineage[original].reaching(valid_time_window):
-            if valid_time_window is None or (
-                contributed is not None and contributed.overlaps(valid_time_window)
-            ):
-                yield endpoint, descents[endpoint]
-
-    def descent(self, endpoint: OwnedEndpoint, /) -> Descent | None:
-        continuity = self._continuity
-        return None if continuity is None else continuity.descents.get(endpoint)
-
-    def record(self, target: ObjectKey) -> _TargetRecord | None:
-        return self._records.get(target)
-
-    def authority(self, identity: InsertionIdentity) -> _TargetRecord | None:
-        """The record whose standing authority ``identity`` is, if any."""
-        record = self._records.get(identity.object_key)
-        return record if record is not None and record.identity is identity else None
-
-    def open_insert(
-        self,
-        target: ObjectKey,
-        insertion_advice: KeyedWriteRefusalAdvice | None,
-        valid_time_window: TimeInterval | None,
-    ) -> InsertionIdentity:
-        identity = InsertionIdentity(target)
-        record = self._records.get(target)
-        if record is None:
-            record = _TargetRecord(insertion_advice, valid_time_window, identity)
-            self._records[target] = record
-            if valid_time_window is not None:
-                self._addresses[_address(target)] = record
-            return identity
-        if not record.stored:
-            record.set_floor(_window_start(valid_time_window))
-        record.insertion_advice = insertion_advice
-        record.valid_time_window = valid_time_window
-        record.identity = identity
-        record.pending_insert = True
-        record.advanced_from = None
-        return identity
-
-    def store_pending_insert(self, target: ObjectKey) -> None:
-        """Count the pending insertion of ``target`` as stored, because a later
-        pending write removes the whole row it opens: what is pending of the
-        object is then that removal."""
-        record = self._records.get(target)
-        if record is not None and record.pending_insert:
-            record.pending_insert = False
-            if record.valid_time_window is None:
-                record.live = 1
-
-    def cancel_insert(self, target: ObjectKey) -> None:
-        # The record stays: the attempt admitted an insertion of the object
-        # whatever became of it, and a caller-addressed write consults that.
-        record = self._records[target]
-        record.identity = None
-        record.pending_insert = False
-
-    def removal_window(self, record: _TargetRecord) -> TimeInterval:
-        """The Valid Time a removal of everything a Bitemporal ``record``'s
-        admissions left stored must destroy: from its retained floor to the
-        latest end among the owned rows they opened, the open bound included.
-
-        It encloses that coverage rather than tracing it, and is derived when
-        first asked, then kept on the record until a row it derives from is
-        tagged or retired or the floor moves.
-        """
-        removal = record.removal
-        if isinstance(removal, TimeInterval):
-            return removal
-        floor = record.floor
-        assert floor is not None  # a Bitemporal opening states its start
-        removal = record.removal = TimeInterval(floor, self._latest_end(record))
-        return removal
-
-    def _latest_end(self, record: _TargetRecord) -> dt.datetime | Literal[TemporalBound.INFINITY]:
-        """The latest Valid-Time end among the coverage ``record``'s admissions
-        contributed to owned rows — a whole row's physical end read as its
-        managed endpoint, a contributed part's own end — the open bound where
-        one runs on, or where none is tagged."""
-        latest: dt.datetime | None = None
-        for endpoint, (_identity, parts) in self._tags.items():
-            if self._addresses.get((endpoint.entity, endpoint.key)) is not record:
-                continue
-            if parts is None:
-                end = endpoint.ends[0]
-                if not isinstance(end, Finite):
-                    return INFINITY
-                instant = end.instant
-            else:
-                instant = parts[-1].end
-                if instant is INFINITY:
-                    return INFINITY
-            assert isinstance(instant, dt.datetime)  # a finite Valid-Time end is an instant
-            if latest is None or instant > latest:
-                latest = instant
-        return INFINITY if latest is None else latest
-
-    def advanced(self, state: VersionedObjectStateKey) -> None:
-        record = self._records.get(state.object)
-        if record is not None:
-            record.advanced_from = state.version
-
-    def end_flush(self, removed: Iterable[ObjectKey]) -> None:
-        records = self._records
-        for target in removed:
-            record = records.get(target)
-            if record is None:
-                continue
-            if record.valid_time_window is None:
-                record.live = 0
-            if not record.pending_insert:
-                record.identity = None
-        for record in records.values():
-            if record.pending_insert:
-                record.pending_insert = False
-                if record.valid_time_window is None:
-                    record.live = 1
-                record.set_floor(_window_start(record.valid_time_window))
-
-    def complete(
-        self,
-        removed: Iterable[OwnedEndpoint],
-        opened: Openings,
-        derived: tuple[Derivation, ...] = (),
-        concludes: ObjectKey | None = None,
-    ) -> None:
-        """Retire the owned rows one execution unit removed, then register the
-        rows it opened, each tagged with the parts an admission contributed to
-        it, or no longer tagged where it names a row again that none did. An
-        admission whose last tagged row the unit removed or untagged is retired
-        only if no row the unit opened continues it.
-
-        Each original the unit ``derived`` rows from that stood before the
-        flush began is proven until the object's last consumer — the unit that
-        ``concludes`` it — completes, or the flush ends, and each row it derived
-        descends from it over the part it contributed; a row derived from one
-        an earlier unit of the flush derived descends from the originals that
-        one did, each over the part of the row that came from its own
-        contribution."""
-        continuity = self._continuity
-        if derived and continuity is None:
-            continuity = self._continuity = _Continuity()
-        inherited = continuity.inherited(derived) if continuity is not None else ()
-        drained = self._retire(removed, continuity)
-        self._open(opened, drained)
-        for record, tag in drained:
-            if not record.live and record.identity is tag and not record.pending_insert:
-                # Nothing this admission contributed is left: it was removed
-                # completely, and its authority ends with it.
-                record.identity = None
-        if continuity is not None:
-            continuity.derive(derived, inherited)
-            if concludes is not None:
-                continuity.release(concludes)
-                if not continuity.proofs:
-                    self._continuity = None
-
-    def _open(
-        self, opened: Openings, drained: list[tuple[_TargetRecord, InsertionIdentity]]
-    ) -> None:
-        """Register each row ``opened`` names, tagged with what an admission
-        contributed to it and with nothing where it names none."""
-        for endpoint in opened.fresh:
-            self._register(endpoint)
-            if self._tags:
-                self._untag(endpoint, drained)
-        for endpoint in opened.continued:
-            self._register(endpoint)
-            self._tag(endpoint, None, drained)
-        for endpoint, parts in opened.shared:
-            self._register(endpoint)
-            self._tag(endpoint, parts, drained)
-
-    def _retire(
-        self, removed: Iterable[OwnedEndpoint], continuity: _Continuity | None
-    ) -> list[tuple[_TargetRecord, InsertionIdentity]]:
-        """Retire each removed row, answering every admission whose last tagged
-        row went with them."""
-        drained: list[tuple[_TargetRecord, InsertionIdentity]] = []
-        for endpoint in removed:
-            self._endpoints.remove(endpoint)  # planning removes only a row this attempt owns
-            if continuity is not None:
-                continuity.forget(endpoint)
-            if self._tags:
-                self._untag(endpoint, drained)
-        return drained
-
-    def release_continuity(self) -> None:
-        """End the flush's proofs: no later submission carries them."""
-        self._continuity = None
-
-    def _register(self, endpoint: OwnedEndpoint) -> None:
-        self._endpoints.add(endpoint)
-        self._owning.add(endpoint.entity)
-
-    def _tag(
-        self,
-        endpoint: OwnedEndpoint,
-        parts: tuple[TimeInterval, ...] | None,
-        drained: list[tuple[_TargetRecord, InsertionIdentity]],
-    ) -> None:
-        """Tag ``endpoint`` with the standing admission of its object over
-        ``parts`` of it, the whole row where ``None``, replacing any tag it
-        held."""
-        record = self._addresses.get((endpoint.entity, endpoint.key))
-        if record is None or record.identity is None:
-            if self._tags:
-                self._untag(endpoint, drained)
-            return
-        if endpoint not in self._tags:
-            record.live += 1
-        self._tags[endpoint] = (record.identity, parts)
-        record.removal = _UNCOMPUTED
-
-    def _untag(
-        self, endpoint: OwnedEndpoint, drained: list[tuple[_TargetRecord, InsertionIdentity]]
-    ) -> None:
-        tag = self._tags.pop(endpoint, None)
-        if tag is not None:
-            self._drain(endpoint, tag[0], drained)
-
-    def _drain(
-        self,
-        endpoint: OwnedEndpoint,
-        identity: InsertionIdentity,
-        drained: list[tuple[_TargetRecord, InsertionIdentity]],
-    ) -> None:
-        record = self._addresses[(endpoint.entity, endpoint.key)]
-        record.live -= 1
-        record.removal = _UNCOMPUTED
-        if not record.live:
-            drained.append((record, identity))
-
-    def clear(self) -> None:
-        self._records.clear()
-        self._addresses.clear()
-        self._endpoints.clear()
-        self._tags.clear()
-        self._owning.clear()
-        self.release_continuity()
-
-
-def _with_allocated(opened: Openings, allocated: tuple[object, ...]) -> Openings:
-    named = tuple(
-        _allocated_endpoint(opening, key)
-        for opening, key in zip(opened.allocated, allocated, strict=True)
-    )
-    return Openings(fresh=(*opened.fresh, *named), continued=opened.continued, shared=opened.shared)
-
-
-def _allocated_endpoint(opening: AllocatedOpening, key: object) -> OwnedEndpoint:
-    return OwnedEndpoint(opening.entity, (key,), opening.ends)
-
-
-class _Continuity:
-    """What the running flush's units proved for later units of the same
-    objects: each original transformed under protection that stood before the
-    flush began, which current row descends from which of them over which part
-    of it, and each one's contributed parts of current rows in Valid-Time
-    order."""
-
-    __slots__ = ("descents", "lineage", "proofs")
-
-    def __init__(self) -> None:
-        self.proofs: dict[ObjectKey, dict[ObjectStateKey, Derivation]] = {}
-        self.descents: dict[OwnedEndpoint, Descent] = {}
-        self.lineage: dict[ObjectStateKey, _Lineage] = {}
-
-    def inherited(
-        self, derived: tuple[Derivation, ...]
-    ) -> tuple[tuple[tuple[ObjectStateKey, TimeInterval | None], ...] | None, ...]:
-        """The originals, each over its part, each one in ``derived`` was itself
-        derived from earlier in the flush, if any, read before the unit's
-        removals retire it."""
-        descents = self.descents
-        inherited: list[tuple[tuple[ObjectStateKey, TimeInterval | None], ...] | None] = []
-        for derivation in derived:
-            owned = derivation.owned
-            descent = None if owned is None else descents.get(owned)
-            inherited.append(None if descent is None else descent.contributions)
-        return tuple(inherited)
-
-    def derive(
-        self,
-        derived: tuple[Derivation, ...],
-        inherited: tuple[tuple[tuple[ObjectStateKey, TimeInterval | None], ...] | None, ...],
-    ) -> None:
-        """Record each row ``derived`` names as descending from its originals.
-
-        A row derived from an original no earlier unit derived descends from
-        that original over the part it contributed. One derived from a row an
-        earlier unit derived descends from that row's own originals, each over
-        the part of the contribution that came from its own part, never over
-        the rest. A row revised in place, or derived from several originals, is
-        re-derived at its own address, so what it descended from is forgotten
-        before any row is added again."""
-        for derivation in derived:
-            for row in derivation.rows:
-                self.forget(row.endpoint)
-        contributions: dict[OwnedEndpoint, list[tuple[ObjectStateKey, TimeInterval | None]]] = {}
-        coverages: dict[OwnedEndpoint, TimeInterval | None] = {}
-        for derivation, earlier in zip(derived, inherited, strict=True):
-            original = derivation.original
-            if earlier is None:
-                self.proofs.setdefault(original.object, {})[original] = derivation
-                if original not in self.lineage:  # kept even where it contributed no row
-                    self.lineage[original] = _Lineage()
-                sources: tuple[tuple[ObjectStateKey, TimeInterval | None], ...] = (
-                    (original, derivation.valid_time_coverage),
-                )
-            else:
-                sources = earlier
-            for row in derivation.rows:
-                coverages[row.endpoint] = row.valid_time_coverage
-                _contribute(contributions.setdefault(row.endpoint, []), row.contributed, sources)
-        for endpoint, parts in contributions.items():
-            if not parts:  # only coverage no proven original held, such as a gap opened
-                continue
-            joined = _joined(parts)
-            self.descents[endpoint] = Descent(coverages[endpoint], joined)
-            for source, contributed in joined:
-                self.lineage[source].add(endpoint, contributed)
-
-    def forget(self, endpoint: OwnedEndpoint) -> None:
-        descent = self.descents.pop(endpoint, None)
-        if descent is not None:
-            for original, contributed in descent.contributions:
-                self.lineage[original].discard(endpoint, contributed)
-
-    def release(self, target: ObjectKey) -> None:
-        """Drop everything proven about ``target``: its last consumer is done."""
-        descents = self.descents
-        lineage = self.lineage
-        for original in self.proofs.pop(target, ()):
-            for endpoint, _contributed in lineage.pop(original).rows:
-                descents.pop(endpoint, None)
-
-
-def _contribute(
-    parts: list[tuple[ObjectStateKey, TimeInterval | None]],
-    contributed: TimeInterval | None,
-    sources: tuple[tuple[ObjectStateKey, TimeInterval | None], ...],
-) -> None:
-    """Add to ``parts`` each of ``sources`` over the part of ``contributed`` its
-    own part shares — every one on a Transaction-Time-Only object, where both
-    are ``None`` — and none over Valid Time it does not share."""
-    for source, part in sources:
-        if contributed is None or part is None:
-            parts.append((source, None))
-            continue
-        shared = contributed.intersection(part)
-        if shared is not None:
-            parts.append((source, shared))
-
-
-def _joined(
-    parts: list[tuple[ObjectStateKey, TimeInterval | None]],
-) -> tuple[tuple[ObjectStateKey, TimeInterval | None], ...]:
-    """``parts`` in Valid-Time order, each original's adjacent parts one."""
-    if len(parts) < 2:
-        return tuple(parts)
-    parts.sort(key=_part_start)
-    joined: list[tuple[ObjectStateKey, TimeInterval | None]] = []
-    for original, contributed in parts:
-        if joined:
-            previous, earlier = joined[-1]
-            if (
-                previous == original
-                and earlier is not None
-                and contributed is not None
-                and earlier.meets(contributed)
-            ):
-                joined[-1] = (original, TimeInterval(earlier.start, contributed.end))
-                continue
-        joined.append((original, contributed))
-    return tuple(joined)
-
-
-def _part_start(part: tuple[ObjectStateKey, TimeInterval | None]) -> dt.datetime:
-    return _lineage_key(part[1])
-
-
-class _Lineage:
-    """The parts of current rows one proven original contributed, in
-    Valid-Time order.
-
-    They are pieces of one original's coverage and so never overlap, which is
-    what lets a range find the ones its window may reach by their starts alone
-    rather than by visiting every row the original's units left. A row that
-    merged several contributors appears once per part this original
-    contributed. An original without Valid Time has one current row at a time,
-    keyed at the earliest instant.
-    """
-
-    __slots__ = ("_keys", "_rows")
-
-    def __init__(self) -> None:
-        self._keys: list[dt.datetime] = []
-        self._rows: list[tuple[OwnedEndpoint, TimeInterval | None]] = []
-
-    def add(self, endpoint: OwnedEndpoint, contributed: TimeInterval | None) -> None:
-        key = _lineage_key(contributed)
-        position = bisect.bisect_right(self._keys, key)
-        self._keys.insert(position, key)
-        self._rows.insert(position, (endpoint, contributed))
-
-    def discard(self, endpoint: OwnedEndpoint, contributed: TimeInterval | None) -> None:
-        position = bisect.bisect_left(self._keys, _lineage_key(contributed))
-        assert self._rows[position][0] == endpoint  # no two contributed parts share a start
-        del self._keys[position]
-        del self._rows[position]
-
-    @property
-    def rows(self) -> list[tuple[OwnedEndpoint, TimeInterval | None]]:
-        return self._rows
-
-    def reaching(
-        self, window: TimeInterval | None
-    ) -> Iterator[tuple[OwnedEndpoint, TimeInterval | None]]:
-        """The parts that may overlap ``window``, every one where it is
-        ``None``: those starting before its end, from the last one starting at
-        or before its start."""
-        rows = self._rows
-        if window is None:
-            yield from rows
-            return
-        keys = self._keys
-        first = max(bisect.bisect_right(keys, window.start) - 1, 0)
-        end = window.end
-        last = len(keys) if end is INFINITY else bisect.bisect_left(keys, end)
-        for position in range(first, last):
-            yield rows[position]
-
-
-_AXISLESS: Final = dt.datetime.min.replace(tzinfo=dt.UTC)
-
-
-def _lineage_key(coverage: TimeInterval | None) -> dt.datetime:
-    return _AXISLESS if coverage is None else coverage.start
-
-
-def _address(target: ObjectKey) -> _Address:
-    return (target.entity, tuple(value for _name, value in target.primary_key))
 
 
 class UnitOfWork:
@@ -931,16 +225,14 @@ class UnitOfWork:
 
     __slots__ = (
         "_actor_identity",
+        "_admission",
         "_changed",
-        "_claims",
         "_evidence_policy_for",
         "_freshness",
         "_lifetime",
         "_observations",
         "_participation",
-        "_pending",
         "_planner",
-        "_targets",
         "_transaction_instant",
         "acquire_rows",
         "clock",
@@ -985,20 +277,12 @@ class UnitOfWork:
         # The connected model's write-evidence policy, bound once per accepted
         # model by model preparation, which alone may reach `m-opt-lock`.
         self._evidence_policy_for = evidence_policy_for
-        # The buffered writes, composed as each is admitted, each carrying the
+        # The accepted writes, composed as each is admitted, each carrying the
         # claims its verbs resolved for it — the strong reference that keeps a
         # write's evidence alive after its source value is released, and what a
-        # successful flush spends through.
-        self._pending = PendingWrites(meta)
-        # What the buffered writes have claimed, by the scope each claim is taken
-        # at. It travels with the buffer rather than with the scope:
-        # a flush spends what it planned, so what a later write may claim
-        # is decided by what is still pending.
-        self._claims = ClaimTable()
-        # What this attempt holds about each object it writes: its admitted
-        # insertion and the authority that grants, and the current temporal
-        # rows it opened.
-        self._targets = _TargetWriteState()
+        # successful flush spends through — beside this attempt's admitted
+        # insertions and the current temporal rows it opened.
+        self._admission = WriteAdmission(meta, inserted_version=planner.inserted_version)
         # This index is not an owner: a retained observation lives as
         # long as some source value or buffered write reaches it, and this entry
         # disappears with the last of them (`m-unit-work` "Observation lifetime").
@@ -1034,8 +318,9 @@ class UnitOfWork:
     def buffer(
         self, item: BufferItem, *, insertion_advice: KeyedWriteRefusalAdvice | None = None
     ) -> BufferOutcome:
-        """Admit ``item``'s claim and buffer it for flush at the unit-of-work
-        boundary — all of it, or nothing.
+        """Admit ``item`` under the authority it carries and buffer it for flush
+        at the unit-of-work boundary — all of it, or nothing
+        (:meth:`~parallax.core._execution._unit_work.admission.WriteAdmission.admit`).
 
         The claim is read off the carrier itself
         (:func:`~parallax.core._execution._unit_work.write_items.buffered_write`): a
@@ -1046,8 +331,8 @@ class UnitOfWork:
         arriving keyed intent the held claim cannot absorb raises
         :class:`WriteEvidenceError` (``write-evidence-already-claimed``); a
         group colliding with a held claim raises :class:`UnitOfWorkError`,
-        withdrawing the claims it had admitted. Either way the buffer, the
-        claims, and the pending inserts are left as they were.
+        withdrawing the claims it had admitted. Either way the pending writes,
+        their claims, and the pending inserts are left as they were.
 
         A carrier built from a read's retained observation brings it along,
         so the buffer is what keeps a write's evidence alive once the caller
@@ -1056,16 +341,15 @@ class UnitOfWork:
 
         A caller-addressed carrier
         (:class:`~parallax.core._execution._unit_work.write_items.TargetKeyedWrite`)
-        is appended at the object its condition names and claims nothing: its
-        caller's stated revision is its whole condition, and this judges none of
-        it. :meth:`buffer_target` is the admission that does, and it buffers
-        through here once that admission succeeds.
+        is admitted as :meth:`buffer_target` describes, its caller's revision
+        confirmed under this attempt's concurrency strategy.
 
         An insert admits an insertion of the object it opens and issues that
         insertion's identity (:meth:`insertion_identity`), and retains
         ``insertion_advice`` for a repeat of it (:meth:`insertion_advice`).
         Where an earlier insertion of the object is stored and a pending write
-        removes all of it, the insert executes after that removal. A write an insertion authorized
+        removes all of it, the insert executes after that removal. A write an
+        insertion authorized
         (:class:`~parallax.core._execution._unit_work.write_items.InsertionKeyedWrite`) is
         admitted only while that authority stands, and a write leaving nothing
         of what a still-unflushed insertion opened ends it.
@@ -1076,54 +360,9 @@ class UnitOfWork:
         recognized when the pair is complete rather than when it is planned.
         """
         self._ensure_open()
-        if isinstance(item, TargetKeyedWrite):
-            self._pending.add(item, claimed_object(item.scope))
-            return BufferOutcome.BUFFERED
-        if isinstance(item, InsertionKeyedWrite):
-            item = self._authorized(item)
-        instruction = buffered_instruction(item)
-        key = self._addressed_object(item)
-        if isinstance(item, MaterializedWriteGroup):
-            self._claim_selection(item)
-        elif self._pending.is_temporal(item):
-            assert isinstance(item, ObservedKeyedWrite | InsertionKeyedWrite)
-            self._claim_composed(item)
-        else:
-            self._claim_keyed(item, key)
-        targets = self._targets
-        if key is not None and instruction.mutation in INSERT_MUTATIONS:
-            assert isinstance(instruction, PreparedKeyedWrite)  # only a keyed write inserts
-            record = targets.record(key)
-            self._pending.add(
-                item,
-                key,
-                after_removal=record is not None and self._removed_whole(key, record),
-            )
-            targets.open_insert(
-                key,
-                insertion_advice,
-                instruction.valid_time_window,
-            )
-            return BufferOutcome.BUFFERED
-        folds = key is not None and self._pending.folds_into_opening(key)
-        cancelled = self._pending.add(item, key)
-        if folds and key is not None and not self._pending.folds_into_opening(key):
-            # Nothing the pending insertion opened survives this write, whether
-            # or not its composed destruction still settles stored coverage.
-            targets.cancel_insert(key)
-            if cancelled:
-                return BufferOutcome.CANCELLED_PENDING_INSERT
-            return BufferOutcome.BUFFERED
-        if (
-            key is not None
-            and not folds
-            and instruction.mutation in DESTRUCTIVE_MUTATIONS
-            and self._pending.removes(key)
-        ):
-            # A barrier kept this removal after the object's pending insert,
-            # which therefore executes and opens the row this one removes.
-            targets.store_pending_insert(key)
-        return BufferOutcome.BUFFERED
+        return self._admission.admit(
+            item, confirm_target=self._confirm_target, insertion_advice=insertion_advice
+        )
 
     def buffer_predicate(self, prepared: PreparedPredicateWrite) -> None:
         """Buffer a prepared predicate-selected write, readless or materialized.
@@ -1212,61 +451,49 @@ class UnitOfWork:
         self._ensure_open()
         if prepared.mutation in AMEND_MUTATIONS and not prepared.assigns:
             return
-        target = prepared.target
         item = target_write(prepared, inheritance.view(self.meta))
+        self._admission.admit(item, confirm_target=self._confirm_target)
+
+    def _confirm_target(self, item: TargetKeyedWrite) -> TargetKeyedWrite:
+        """``item`` once its caller's revision is confirmed under its target's
+        Effective Concurrency Strategy, answered with the row it read where it
+        read one, or refused.
+
+        Admission has already found no pending write proving that revision.
+        Under Locking a live read of exactly that state this attempt holds
+        proves it, else the stored row is read under the shared lock; the
+        Optimistic strategy reads nothing.
+        """
+        target = item.instruction.target
+        policy = self._evidence_policy_for(target.identity)
+        if policy.effective_strategy(self.settings.concurrency) != "locking":
+            return item
+        expectation = item.expectation
         scope = item.scope
         key = claimed_object(scope)
-        if self._targets.record(key) is not None:
-            raise WriteEvidenceError(
-                code="write-evidence-inserted",
-                message=(
-                    f"{target.identity.canonical}: this transaction inserted the object this write "
-                    "addresses, so no caller's revision describes it; until the transaction "
-                    "commits, write it through the value the insert took or a read of it"
-                ),
-                object_key=key,
-            )
-        expectation = prepared.expectation
-        temporal = self._pending.is_temporal(item)
-        admitted = (
-            self._pending.admits_temporal(item, key)
-            if temporal
-            else self._pending.admits_target(item, key)
-        )
-        if not admitted or self._claims.claims_object(key):
-            raise _already_claimed(target, key)
-        policy = self._evidence_policy_for(target.identity)
-        if policy.effective_strategy(self.settings.concurrency) == "locking":
-            if temporal:
-                assert isinstance(expectation, ExpectedTxStart)  # a temporal target's revision
-                item = self._acquire_temporal(item, key, expectation)
-            elif not (self._pending.holds_scope(scope) or self._participates(scope)):
-                assert isinstance(expectation, ExpectedVersion)  # a non-temporal target's revision
-                stored, _row, _document = self._stored_target(target, key, None)
-                if stored is None or stored.version != expectation.version:
-                    raise WritePreconditionError(
-                        target.identity, dict(key.primary_key), expectation.version
-                    )
-        self.buffer(item)
+        if isinstance(expectation, ExpectedTxStart):
+            return self._confirm_temporal_target(item, key, expectation)
+        if not self._participates(scope):
+            stored, _row, _document = self._stored_target(target, key, None)
+            if stored is None or stored.version != expectation.version:
+                raise WritePreconditionError(
+                    target.identity, dict(key.primary_key), expectation.version
+                )
+        return item
 
-    def _acquire_temporal(
+    def _confirm_temporal_target(
         self, item: TargetKeyedWrite, key: ObjectKey, expectation: ExpectedTxStart
     ) -> TargetKeyedWrite:
         """Prove a Locking caller-addressed write of a temporal object starts
         from the state its caller stated, or refuse it, answering the write
         with the row it read where it read one.
 
-        A pending write of the object over exactly this window already holds
-        that state: admission required it to start from exactly this one. A
-        write over a disjoint window starts elsewhere and proves nothing here.
-        Otherwise a live read of the state this attempt holds does, else
-        it is read, whole, and kept with the write as the state the read found
-        at this point of the attempt's changes.
+        A live read of the state this attempt holds proves it, else it is
+        read, whole, and kept with the write as the state the read found at
+        this point of the attempt's changes.
         """
         window = item.instruction.valid_time_window
-        if self._pending.states_window(key, window):
-            return item
-        valid_from = _window_start(window)
+        valid_from = None if window is None else window.start
         if self._participates(
             TemporalObjectStateKey(key, Edge(tx_time=expectation.instant, valid_time=valid_from))
         ):
@@ -1344,70 +571,12 @@ class UnitOfWork:
             and not held.invalidated
         )
 
-    def _authorized(self, item: InsertionKeyedWrite) -> InsertionKeyedWrite:
-        """``item`` checked against the authority it carries, and given the
-        claim scope its stored Non-Temporal row takes, or refused."""
-        record = self._targets.authority(item.identity)
-        instruction = item.instruction
-        if record is None:
-            raise UnitOfWorkError(
-                f"{instruction.target.identity.canonical}: the insertion this write was authored "
-                "through no longer stands in this unit of work"
-            )
-        key = item.identity.object_key
-        if record.pending_insert and self._pending.folds_into_opening(key):
-            if not self._pending.opening_admits(key, instruction):
-                raise _already_claimed(instruction.target, key)
-            return item
-        if self._pending.is_temporal(item):
-            return item
-        version = self._planner.inserted_version(instruction.target.identity, record.advanced_from)
-        scope = key if version is None else VersionedObjectStateKey(key, version)
-        return InsertionKeyedWrite(instruction=instruction, identity=item.identity, scope=scope)
-
-    def _removed_whole(self, key: ObjectKey, record: _TargetRecord) -> bool:
-        """Whether the pending writes of ``key`` remove everything its
-        admissions opened, so a further insertion of it is a first opening.
-
-        An insertion still pending is removed whole only from beyond a barrier,
-        since a removal beside it cancels it instead. A Non-Temporal or
-        Transaction-Time-Only removal there already counts the insertion as
-        stored, so only a Bitemporal opening is judged here: the writes buffered
-        after it must destroy all the coverage it opens.
-        """
-        if not record.pending_insert:
-            return record.stored and self._removes_stored(key, record)
-        if record.valid_time_window is None or self._pending.folds_into_opening(key):
-            return False
-        window = record.valid_time_window
-        assert window is not None  # a Bitemporal opening states its window
-        return (
-            window.first_uncovered(self._pending.destroyed_coverage(key, after_opening=True))
-            is None
-        )
-
-    def _removes_stored(self, key: ObjectKey, record: _TargetRecord) -> bool:
-        """Whether the pending writes of ``key`` remove everything its admitted
-        insertions left stored.
-
-        A Non-Temporal row is removed whole by a pending delete, and so is a
-        Transaction-Time-Only object by a termination. A Bitemporal object's
-        stored coverage lies between its earliest admitted anchor and the latest
-        end among the rows those admissions opened, so the pending writes must
-        destroy all of that window.
-        """
-        if record.valid_time_window is None:
-            return self._pending.removes(key)
-        window = self._targets.removal_window(record)
-        return window.first_uncovered(self._pending.destroyed_coverage(key)) is None
-
     def insertion_identity(self, target: ObjectKey) -> InsertionIdentity | None:
         """The authority the standing admitted insertion of ``target`` grants,
         or ``None`` where none stands — the identity a source the insertion was
         stated through carries from then on."""
         self._ensure_open()
-        record = self._targets.record(target)
-        return None if record is None else record.identity
+        return self._admission.insertion_identity(target)
 
     def insertion_authority(
         self, identity: InsertionIdentity
@@ -1415,137 +584,21 @@ class UnitOfWork:
         """The Valid-Time window the insertion ``identity`` names was admitted
         with — whose start is where a write it authorizes starts — while its
         authority stands in this unit of work, ``None`` for a standing insertion
-        of an object without Valid Time, or :data:`NO_INSERTION_AUTHORITY` once
-        it does not stand: never issued here, retired by the complete removal of
-        what it opened, or superseded by a later insertion of the same
-        object."""
+        of an object without Valid Time, or
+        :data:`~parallax.core._execution._unit_work.admission.NO_INSERTION_AUTHORITY`
+        once it does not stand: never issued here, retired by the complete
+        removal of what it opened, or superseded by a later insertion of the
+        same object."""
         self._ensure_open()
-        record = self._targets.authority(identity)
-        return NO_INSERTION_AUTHORITY if record is None else record.valid_time_window
+        return self._admission.insertion_authority(identity)
 
     def insertion_advice(self, target: ObjectKey) -> KeyedWriteRefusalAdvice | None:
         """The refusal advice of the admitted insertion of ``target`` that a
         further insertion of it would repeat, or ``None`` where an insertion of
-        it is a first opening or its opener supplied none.
-
-        An insertion still pending is repeated by another; so is one whose
-        coverage is stored and survives what is pending. Once everything the
-        object's admissions opened has been removed — or a pending write
-        removes all of it — the object can be inserted again.
-        """
+        it is a first opening or its opener supplied none
+        (:meth:`~parallax.core._execution._unit_work.admission.WriteAdmission.insertion_advice`)."""
         self._ensure_open()
-        record = self._targets.record(target)
-        if record is None or self._removed_whole(target, record):
-            return None
-        return record.insertion_advice if record.pending_insert or record.stored else None
-
-    def _addressed_object(self, item: BufferItem) -> ObjectKey | None:
-        """The one object ``item`` addresses where buffering needs it — to claim
-        it, or to open or cancel a pending insert of it — derived once."""
-        if isinstance(item, MaterializedWriteGroup):
-            return None
-        if isinstance(item, InsertionKeyedWrite):
-            return item.identity.object_key
-        instruction = buffered_instruction(item)
-        mutation = instruction.mutation
-        if (
-            isinstance(item, ObjectClaimedWrite)
-            or mutation in INSERT_MUTATIONS
-            or mutation in DESTRUCTIVE_MUTATIONS
-        ):
-            return resolve_object_key(instruction, inheritance.view(self.meta))
-        return None
-
-    def _claim_keyed(self, item: BufferItem, key: ObjectKey | None) -> None:
-        if isinstance(item, ObservedKeyedWrite):
-            scope: ClaimScope | None = item.retained_observation.key
-        elif isinstance(item, ObjectClaimedWrite):
-            scope = key
-        elif isinstance(item, InsertionKeyedWrite):
-            scope = item.scope
-        else:
-            return
-        if scope is None or keyed_intent(item.instruction) is None:
-            return
-        object_scope = scope if isinstance(scope, ObjectKey) else scope.object
-        conditioned = self._pending.target_scope(object_scope)
-        if (
-            self._claims.held(scope) is None
-            and conditioned in (None, scope)
-            and self._pending.verdict(item, object_scope) != "incompatible"
-        ):
-            return
-        raise WriteEvidenceError(
-            code="write-evidence-already-claimed",
-            message=(
-                f"{item.instruction.target.identity.canonical}: a write already buffered in this "
-                "transaction claims what this one settles against, for an intent it cannot be "
-                "combined with — a different Valid-Time region composes no interval, an "
-                "assignment after a destructive intent resurrects nothing, and a predicate "
-                "write's selected rows are one compact group; read the row through this "
-                "transaction to flush the buffered intent and settle against fresh state"
-            ),
-            object_key=claimed_object(scope),
-        )
-
-    def _claim_composed(self, item: ObservedKeyedWrite | InsertionKeyedWrite) -> None:
-        """Admit a temporal object's write against existing coverage into
-        composition with the object's pending writes, or refuse it
-        (`m-unit-work` "Observed-State Coalescing").
-
-        Judged over every write of the object still pending, whatever state
-        each observed, before anything changes. A write an insertion
-        authorized of an object whose insert is still pending composes with
-        that opening instead, which buffering has already judged.
-        """
-        instruction = item.instruction
-        if isinstance(item, InsertionKeyedWrite):
-            key: ObjectKey | None = item.identity.object_key
-            scope = None
-        else:
-            key = resolve_object_key(instruction, inheritance.view(self.meta))
-            scope = item.retained_observation.key
-        assert key is not None  # such a write names one object
-        if not self._pending.admits_temporal(item, key) or (
-            scope is not None and (self._claims.held(scope) is not None or self._claims.spans(key))
-        ):
-            raise _already_claimed(instruction.target, key)
-
-    def _claim_selection(self, group: MaterializedWriteGroup) -> None:
-        # The resolving read force-flushed the buffer, so no pending intent can
-        # hold a state the group selected; a collision is a caller defect, and
-        # rollback re-derives only the admitted prefix rather than retaining
-        # every key on the success path.
-        mutation = group.mutation
-        # A Bitemporal amendment reaches each object's coverage past the row it
-        # selected when its flush reaches it, so a write observing any other
-        # state of such an object would settle against coverage the group
-        # changes first.
-        intent = (
-            SPANNING_SELECTION_INTENT
-            if mutation.mutation in AMEND_MUTATIONS
-            and isinstance(
-                temporal_read.view(self.meta).shape(mutation.selection.target.identity), Bitemporal
-            )
-            else SELECTION_INTENT
-        )
-        admitted = 0
-        try:
-            for state in group_state_keys(group, self.meta):
-                verdict = (
-                    "incompatible"
-                    if self._pending.holds(state)
-                    else self._claims.claim(state, intent)
-                )
-                if verdict != "admit":
-                    raise UnitOfWorkError(
-                        f"a Materialized Write Group's selection of {state!r} collides "
-                        f"with a claim this buffer already holds ({verdict})"
-                    )
-                admitted += 1
-        except BaseException:
-            self._claims.release(islice(group_state_keys(group, self.meta), admitted))
-            raise
+        return self._admission.insertion_advice(target)
 
     def resolve_read_evidence(
         self,
@@ -1688,7 +741,7 @@ class UnitOfWork:
         (the DB rollback the enclosing transaction performs, upstream).
         """
         self._ensure_open()
-        if self._pending:
+        if self._admission:
             self.flush(trigger="read_dependency")
         return read_fn()
 
@@ -1720,11 +773,12 @@ class UnitOfWork:
         further work and cannot commit. A planning refusal precedes
         execution and leaves the transaction usable.
 
-        The claims the buffer took travel out with it: what a later write may
-        claim is decided by what is still pending, and after a flush nothing is.
+        The claims the pending writes took travel out with them: what a later
+        write may claim is decided by what is still pending, and after a flush
+        nothing is.
         """
         self._ensure_open()
-        if not self._pending:
+        if not self._admission:
             return
         opening = self.write_batch_opening
         if opening is None:
@@ -1734,25 +788,22 @@ class UnitOfWork:
             self._flush_buffer()
 
     def _flush_buffer(self) -> None:
+        admission = self._admission
         # The planning request is the flush's last reference to the writes it
         # planned, so it ends with the call: once planning succeeds and the
-        # buffer clears, what a plan's deferred unit took over is released as
+        # batch drains, what a plan's deferred unit took over is released as
         # that unit executes rather than held until the flush ends.
         plan = self._planner.finalize(
             WritePlanningRequest(
                 actor_identity=self._actor_identity,
                 transaction_instant=self._transaction_instant,
                 concurrency=self.settings.concurrency,
-                buffered_writes=self._pending.writes(),
-                ownership=self._targets,
+                buffered_writes=admission.composed_writes(),
+                ownership=admission.ownership,
                 counts_unchanged_rows=self.settings.counts_unchanged_rows,
             )
         )
-        sources = self._pending.sources()
-        removed = self._pending.removals()
-        self._pending.clear()
-        self._claims.clear()
-        self._targets.end_flush(removed)
+        sources = admission.drain_planned()
         try:
             run_write_plan(self, plan, self.execute_write_steps)
             for source in sources:
@@ -1761,9 +812,9 @@ class UnitOfWork:
             self._lifetime.doom(failure)
             raise
         finally:
-            self._targets.release_continuity()
+            admission.release_continuity()
 
-    def _complete(
+    def _complete_unit(
         self, unit: ExecutionUnit, effects: UnitEffects, allocated: tuple[object, ...]
     ) -> None:
         """Publish one successful execution unit's ``effects``: its own, those
@@ -1794,13 +845,7 @@ class UnitOfWork:
             self._invalidate(key, stamp)
         if changed_any:
             self._freshness = stamp
-        opened = effects.opened
-        self._targets.complete(
-            effects.removed,
-            _with_allocated(opened, allocated) if allocated else opened,
-            effects.derived,
-            effects.concludes,
-        )
+        self._admission.complete_unit(effects, allocated)
 
     def _invalidate(self, key: ObjectStateKey, stamp: int) -> None:
         held = self._observations.get(key)
@@ -1808,7 +853,7 @@ class UnitOfWork:
             held.invalidate()
         self._changed[key] = stamp
         if isinstance(key, VersionedObjectStateKey):
-            self._targets.advanced(key)
+            self._admission.record_version_advance(key)
 
     def _ensure_open(self) -> None:
         self._lifetime.ensure_open()
@@ -1822,9 +867,7 @@ class UnitOfWork:
         wrote survives, so evidence a later attempt is handed is still about
         stored state.
         """
-        self._pending.clear()
-        self._claims.clear()
-        self._targets.clear()
+        self._admission.discard()
         self._observations.clear()
         self._changed.clear()
 
@@ -1847,18 +890,3 @@ def _require_one_start(
             1,
             count,
         )
-
-
-def _already_claimed(target: EntityMetadata, key: ObjectKey) -> WriteEvidenceError:
-    return WriteEvidenceError(
-        code="write-evidence-already-claimed",
-        message=(
-            f"{target.identity.canonical}: a write already buffered in this transaction cannot "
-            "be composed with this one — an assignment after a destructive intent over its "
-            "window resurrects nothing, a destructive intent composes only with writes of "
-            "exactly its own window, and a predicate write's selected rows are one compact "
-            "group; read the row through this transaction to flush the buffered intent and "
-            "settle against fresh state"
-        ),
-        object_key=key,
-    )
