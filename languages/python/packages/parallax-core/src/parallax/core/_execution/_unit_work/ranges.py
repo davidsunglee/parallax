@@ -226,9 +226,6 @@ def _original(
     predecessor: PredecessorRow,
     state: ObjectStateKey | None,
 ) -> _Original:
-    """One current row as an original: its observed state is the retained
-    observation's where one names it, and otherwise the state its milestone
-    edge keys."""
     shape = facts.shape
     if state is None:
         state = TemporalObjectStateKey(

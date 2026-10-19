@@ -690,8 +690,6 @@ def _balance_state(key: int) -> ObjectStateKey:
 
 
 def _account_write(mutation: KeyedMutation, account_id: int, version: int) -> BufferItem:
-    """A keyed write of one Account state, carrying the retained observation
-    a read of that state claims."""
     row: dict[str, object] = {"id": account_id}
     if mutation == "amend":
         row["balance"] = Decimal("1.00")
@@ -810,8 +808,7 @@ _PERSON_META = model_of(PERSON)
 def _person_write(
     mutation: KeyedMutation, person_id: int, source: SourceAuthority | None = None
 ) -> BufferItem:
-    """An unversioned Non-Temporal Person write settling against its object,
-    admitted through ``source``."""
+    """An unversioned Non-Temporal Person write settling against its object."""
     row: dict[str, object] = {"id": person_id}
     if mutation == "amend":
         row["name"] = "Grace"
@@ -868,8 +865,6 @@ def test_an_object_claimed_write_claims_its_instructions_object() -> None:
 
 @dataclass(frozen=True, slots=True)
 class _OrderedSource:
-    """Observation-free source authority recording its turn in ``spent``."""
-
     name: str
     spent: list[str]
 
@@ -877,23 +872,38 @@ class _OrderedSource:
         self.spent.append(self.name)
 
 
+def _buffer_composed_person_writes(uow: UnitOfWork, spent: list[str]) -> None:
+    # The second amendment of 1 coalesces into the first, the first deletion
+    # supersedes their merge, and the second deduplicates into it.
+    uow.buffer(_person_write("amend", 1, _OrderedSource("amend", spent)))
+    uow.buffer(_person_write("amend", 2, _OrderedSource("other", spent)))
+    uow.buffer(_person_write("amend", 1, _OrderedSource("coalesced", spent)))
+    uow.buffer(_person_write("delete", 1, _OrderedSource("delete", spent)))
+    uow.buffer(_person_write("delete", 1, _OrderedSource("again", spent)))
+
+
 def test_every_accepted_object_source_is_spent_in_buffering_order_after_the_flush() -> None:
-    # Coalescing and supersession compose the writes themselves, and each
-    # source they were admitted through is still spent, once, in the order its
-    # write was buffered — and only once the whole flush succeeded.
     simulated = _simulated(_PERSON_META)
     spent: list[str] = []
+    seen: list[list[str]] = []
+    steps = ObservedSteps(simulated, observe=lambda _span: seen.append(list(spent)))
 
-    def body(uow: UnitOfWork) -> None:
-        uow.buffer(_person_write("amend", 1, _OrderedSource("amend", spent)))
-        uow.buffer(_person_write("amend", 2, _OrderedSource("other", spent)))
-        uow.buffer(_person_write("delete", 1, _OrderedSource("delete", spent)))
-        uow.buffer(_person_write("delete", 1, _OrderedSource("again", spent)))
-        assert spent == []
-
-    _run(body, steps=simulated, meta=_PERSON_META)
+    _run(lambda uow: _buffer_composed_person_writes(uow, spent), steps=steps, meta=_PERSON_META)
     assert sorted(_kinds(simulated)) == ["delete", "update"]
-    assert spent == ["amend", "other", "delete", "again"]
+    assert steps.spans > 1
+    assert seen == [[]] * steps.spans
+    assert spent == ["amend", "other", "coalesced", "delete", "again"]
+
+    failure = RuntimeError("the last unit failed")
+    unspent: list[str] = []
+    failing = ObservedSteps(_simulated(_PERSON_META), failing=steps.spans - 1, failure=failure)
+    with pytest.raises(RuntimeError, match="the last unit failed"):
+        _run(
+            lambda uow: _buffer_composed_person_writes(uow, unspent),
+            steps=failing,
+            meta=_PERSON_META,
+        )
+    assert unspent == []
 
 
 def test_a_refused_carrier_or_claim_leaves_claims_and_pending_inserts_as_they_were() -> None:
