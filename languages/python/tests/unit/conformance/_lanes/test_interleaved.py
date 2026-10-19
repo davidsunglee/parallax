@@ -965,8 +965,6 @@ _UNBOUNDED_TERMINATE: Final[dict[str, object]] = {
 
 
 def _coverage_race(ours: Sequence[Mapping[str, object]]) -> tuple[Any, ScriptedPort]:
-    """``ours`` over a session whose second read answers the rectangle after
-    the bounded one its find publishes."""
     ours_port = ScriptedPort(read_rows=[[_BOUNDED], [_FOLLOWING], [_BOUNDED]])
     run = run_interleaved_scenario_case(
         _race_case(ours, [_POSITION_FIND], "models/position.yaml"),
@@ -977,7 +975,6 @@ def _coverage_race(ours: Sequence[Mapping[str, object]]) -> tuple[Any, ScriptedP
 
 
 def _closed_ends(run: Any) -> list[tuple[str, object]]:
-    """Each closing update's pointer and the Valid-Time end it addresses."""
     return [(e.case_pointer, e.binds[2]) for e in run.emissions if e.sql.startswith("update")]
 
 

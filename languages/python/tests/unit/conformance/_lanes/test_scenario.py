@@ -1924,8 +1924,6 @@ def test_a_tracked_unit_whose_production_execution_fails_advances_no_row(
 
 
 def _ledger_values_at_each_close(monkeypatch: pytest.MonkeyPatch) -> list[object]:
-    """The value the case state holds for Ledger 2 as each tracked close of it
-    is applied."""
     closing: list[object] = []
     apply = SimulatedTemporalStore.apply
 
@@ -1990,8 +1988,6 @@ def _ledger_find(*, uow: str = "g") -> dict[str, object]:
 
 
 def _tracked_sources(monkeypatch: pytest.MonkeyPatch) -> list[ReadEvidence]:
-    """The Read Evidence of each published value a tracked write was addressed
-    by, in order."""
     sources: list[ReadEvidence] = []
     mirror = scenario._SimulatedUnit.mirror  # pyright: ignore[reportPrivateUsage] - observes the value each tracked write was addressed by
 
@@ -2104,6 +2100,33 @@ def test_a_write_its_public_verb_refuses_is_never_tracked(monkeypatch: pytest.Mo
     with pytest.raises(WriteEvidenceError) as refused:
         scenario.run_scenario_case(case, port)
     assert refused.value.code == "write-evidence-already-claimed"
+    (tracked,) = admitted
+    assert isinstance(tracked, ObservedKeyedWrite)
+    assert tracked.instruction.mutation == "delete"
+
+
+def test_an_amendment_its_public_verb_drops_as_empty_is_never_tracked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    admitted = _admitted(monkeypatch)
+    find = _account_find_step(1)
+    write = {
+        "uow": "g",
+        "write": [
+            {"mutation": "delete", "entity": "Account", "rows": [{"id": 1}]},
+            {"mutation": "amend", "entity": "Account", "rows": [{"id": 1}]},
+        ],
+    }
+    case = _synthetic_write(
+        "scenario",
+        {"when": {"scenario": [find, write]}, "then": {"units": {"g": {"outcome": "committed"}}}},
+    )
+    port = FakeWritePort(
+        find_rows=[{"id": 1, "owner": "Ada", "balance": decimal.Decimal("100.00"), "version": 1}]
+    )
+    run = scenario.run_scenario_case(case, port)
+    assert run.round_trips == 2
+    assert len(port.writes) == 1 and port.commits == 1
     (tracked,) = admitted
     assert isinstance(tracked, ObservedKeyedWrite)
     assert tracked.instruction.mutation == "delete"
@@ -4448,7 +4471,6 @@ def test_a_staged_writer_runs_at_a_requested_read_committed_over_a_snapshot_root
 
 
 def _admitted(monkeypatch: pytest.MonkeyPatch) -> list[BufferItem | PreparedTargetWrite]:
-    """Every write a simulated transaction hands its unit of work, in order."""
     admitted: list[BufferItem | PreparedTargetWrite] = []
     admit = scenario._SimulatedUnit._admit  # pyright: ignore[reportPrivateUsage] - observes what the lane hands its simulated unit of work
 

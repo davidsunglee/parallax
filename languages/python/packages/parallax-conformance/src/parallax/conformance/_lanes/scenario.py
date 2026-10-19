@@ -106,6 +106,7 @@ from parallax.core.predicate import (
 from parallax.core.sql_gen import LoweredStatement, SqlGenError
 from parallax.core.temporal_read import TemporalReadError, TimeInterval
 from parallax.core.unit_work import (
+    AMEND_MUTATIONS,
     INSERT_MUTATIONS,
     BufferItem,
     CardinalityCorruptionError,
@@ -567,9 +568,10 @@ class GroupEvidenceResolver:
 
     Nothing here computes a predecessor, so the evidence is exactly what that
     group's own reads saw, whatever any other session has since committed. A
-    write whose plan would need more than that is refused as unwitnessed rather
-    than modeled: a key its group already settled would compose onto a buffered
-    write, and a key its group opened carries no reading at all.
+    write that would compose onto state no read of its group retained is
+    refused as unwitnessed rather than modeled: a key its group already settled
+    would compose onto a buffered write, and a key its group opened carries no
+    reading at all.
     """
 
     state: GroupState
@@ -1208,9 +1210,6 @@ class _SimulatedUnit:
         return self._steps.statements
 
     def buffer(self, write: _ResolvedWrite) -> None:
-        """Buffer ``write`` against the evidence its lane resolved for it, or,
-        where it resolved none, against this unit's own insertion of its
-        object."""
         instruction = write.instruction
         if isinstance(instruction, PreparedTargetWrite):
             self._admit(instruction)
@@ -3074,8 +3073,8 @@ def _submit_tracked_write(
     tracked write settles as the public one did through it, under authority of
     the tracking unit's own (:meth:`_SimulatedUnit.mirror`): its flush may run
     before production's, so it never spends what the public write will. A write
-    the verb refuses is never tracked, and an insert keeps the value the verb
-    answered for the rest of the unit.
+    the verb refuses or drops is never tracked, and an insert keeps the value
+    the verb answered for the rest of the unit.
     """
     instruction = write.instruction
     if isinstance(instruction, PreparedTargetWrite):
@@ -3090,8 +3089,8 @@ def _submit_tracked_write(
         tracked.buffer(write)
         return
     source = _keyed_source(model, state, write, named, None)
-    _buffer_wire_keyed(tx, model, instruction, source)
-    tracked.mirror(instruction, source)
+    if _buffer_wire_keyed(tx, model, instruction, source):
+        tracked.mirror(instruction, source)
 
 
 def _buffer_wire_insert(
@@ -3125,11 +3124,6 @@ def _keyed_source(
     named: Sequence[WireEntity] | None,
     source: WireEntity | None,
 ) -> WireEntity:
-    """The published value a keyed write of existing state is addressed by:
-    ``source`` where the submission named the insert whose answered value it
-    writes through, else the node its evidence already resolved
-    (``write.source_node``), else what this unit published
-    (:func:`_group_source_node`)."""
     if source is not None:
         return source
     if write.source_node is not None:
@@ -3148,11 +3142,12 @@ def _keyed_source(
 
 def _buffer_wire_keyed(
     tx: TxnContext, model: AcceptedMetamodel, instruction: PreparedKeyedWrite, node: WireEntity
-) -> None:
-    """Buffer ONE keyed write of existing state through the public verb its
-    mutation names, addressed by ``node``. Its change set is the durable row
-    less the identity that source already carries: a PK-only row therefore
-    states the empty change set, which is the ordinary no-op."""
+) -> bool:
+    """Submit ONE keyed write of existing state through the public verb its
+    mutation names, addressed by ``node``, answering whether that verb buffered
+    it. Its change set is the durable row less the identity that source already
+    carries: a PK-only amendment therefore states the empty change set, which
+    the verb drops as the ordinary no-op."""
     key = object_key(instruction, model)
     identity = dict(key.primary_key) if key is not None else {}
     changes = ActualWireProjection(model).entity_values(
@@ -3173,6 +3168,7 @@ def _buffer_wire_keyed(
             tx.wire.terminate(node)
         case _:
             tx.wire.terminate(node, until=_required(until))
+    return bool(changes) or instruction.mutation not in AMEND_MUTATIONS
 
 
 def _buffer_wire_target(
