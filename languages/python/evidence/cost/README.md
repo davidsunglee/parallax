@@ -173,10 +173,10 @@ uv run --project languages/python python languages/python/tools/cost_report.py \
 
 It proves that the measured workload inputs at the capture's producing commit
 digest to HEAD's workload digest, and that the commit's own code reports HEAD's
-generated-key offset and frozen manifests. It then amends the members recording
-the stale digest and records the adjustment as reclassification does. It
-refuses a changed Budget Contract, a prior adjustment, or any unproven input
-and writes nothing.
+generated-key offset, frozen manifests, and generated dataset rows. It then
+amends the members recording the stale digest and records the adjustment as
+reclassification does. It refuses a changed Budget Contract, a prior
+adjustment, or any unproven input and writes nothing.
 
 The former previous/COR-191 comparisons can be reconstructed using Git revisions
 `3535d3e0f` and `dc65ef88`. Export both `portfolio.json` and `conditions.json`

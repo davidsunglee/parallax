@@ -16,7 +16,7 @@ import snapshot_delivery_overhead as snapshot_report
 from cost_report import Collection, MemberResult
 from durations import Spans
 from interpreter_matrix import RuntimeIdentity, RuntimeUnavailable, authority_minor
-from parallax.conformance import cost_envelope
+from parallax.conformance import cost_envelope, workloads
 from parallax.conformance.budget import BudgetContract, MemoryGates, derive_memory_gates
 from parallax.conformance.cost_envelope import Provenance, classify_authority
 from parallax.conformance.workloads import workload_digest
@@ -628,6 +628,28 @@ def test_redigest_refuses_an_unproven_capture_before_writes(
     portfolio = _stale_capture(tmp_path, monkeypatch)
     monkeypatch.setattr(cost_report, seam, fake)
     _refused_without_writes(portfolio)
+
+
+def _code_identity_in_process(capsys: pytest.CaptureFixture[str]) -> object:
+    capsys.readouterr()
+    exec(cost_report.CODE_IDENTITY_PROGRAM, {})
+    return json.loads(capsys.readouterr().out)
+
+
+def test_the_code_identity_moves_with_a_generated_row(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    unchanged = _code_identity_in_process(capsys)
+    original = workloads._orders_tree  # pyright: ignore[reportPrivateUsage] - recipe seam
+    order = "parallax.compatibility.Order"
+
+    def widened(roots: int, fanout: int) -> workloads.ScriptedRows:
+        rows = original(roots, fanout)
+        orders = tuple({**row, "name": f"{row['name']}0"} for row in rows.entity(order))
+        return replace(rows, entities={**rows.entities, order: orders})
+
+    monkeypatch.setattr(workloads, "_orders_tree", widened)
+    assert _code_identity_in_process(capsys) != unchanged
 
 
 def test_redigest_is_exclusive(tmp_path: Path) -> None:
