@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -95,6 +95,83 @@ def test_workload_digest_covers_the_catalog_inputs() -> None:
     assert len(digest) == 64
     assert set(digest) <= set("0123456789abcdef")
     assert workload_digest(catalog()) == digest
+
+
+def _edited_digest(workload_id: str, source: str, edit: Callable[[str], str]) -> str:
+    workload = catalog()[workload_id]
+    edited = workload.fixture_path if source == "fixture" else workload.model_path
+
+    def read(path: Path) -> str:
+        text = path.read_text(encoding="utf-8")
+        return edit(text) if path == edited else text
+
+    return workload_digest(read=read)
+
+
+def _commented(text: str) -> str:
+    return f"# a comment no workload reads\n{text}"
+
+
+def _replaced(old: str, new: str) -> Callable[[str], str]:
+    def edit(text: str) -> str:
+        assert old in text
+        return text.replace(old, new, 1)
+
+    return edit
+
+
+@pytest.mark.parametrize(
+    ("source", "edit"),
+    [
+        ("fixture", _commented),
+        ("fixture", _replaced("tags: [m-perf-bench, stream]", "tags: [m-perf-bench]")),
+        ("fixture", _replaced("    note: 20 roots at page size 5", "    note: retitled")),
+        ("fixture", _replaced("    iterations: 20\n", "    iterations: 21\n")),
+        ("fixture", _replaced("expectDatabaseCalls: 8", "expectRoundTrips: 8")),
+        ("fixture", _replaced('predicate: { "true": {} }', 'predicate: {"true": {}}')),
+        ("model", _commented),
+    ],
+    ids=[
+        "comment",
+        "tags",
+        "note",
+        "harness-workloads",
+        "unmeasured-key",
+        "format",
+        "model-comment",
+    ],
+)
+def test_workload_digest_ignores_what_no_workload_measures(
+    source: str, edit: Callable[[str], str]
+) -> None:
+    assert _edited_digest("conventional-fanout", source, edit) == workload_digest()
+
+
+@pytest.mark.parametrize(
+    ("source", "edit"),
+    [
+        ("fixture", _replaced("    rows: 200", "    rows: 201")),
+        ("fixture", _replaced("pageSizes: [1, 32, 128]", "pageSizes: [1, 32]")),
+        ("fixture", _replaced("rel: parallax.compatibility.Order.items", "rel: other")),
+        ("fixture", _replaced("model: models/orders.yaml", "model: models/account.yaml")),
+        ("model", _replaced("  - name: OrderItem", "  - name: LineItem")),
+    ],
+    ids=["dataset", "delivery", "object-query", "model-reference", "model-content"],
+)
+def test_workload_digest_moves_with_every_measured_input(
+    source: str, edit: Callable[[str], str]
+) -> None:
+    assert _edited_digest("conventional-fanout", source, edit) != workload_digest()
+
+
+def test_a_workload_holds_only_its_fixtures_measured_sections() -> None:
+    for workload in catalog().values():
+        authored = case_format.safe_load_yaml(workload.fixture_path.read_text(encoding="utf-8"))
+        assert isinstance(authored, Mapping)
+        assert "workloads" in authored
+        assert set(workload.document) == {"model", "objectQuery", "dataset", "delivery"}
+    with pytest.raises(ValueError, match="tags, workloads are not measured sections"):
+        _workload({"workloads": [], "tags": []})
 
 
 def test_workload_digest_changes_with_the_generated_key_offset(
