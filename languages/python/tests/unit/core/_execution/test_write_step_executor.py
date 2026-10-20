@@ -63,9 +63,6 @@ _GROUPED_INSERT_CAP: Final = "parallax.core._execution._write_lowering._GROUPED_
 
 @dataclass
 class _Executed:
-    """What one execution of steps did: what it prepared, and what it answered
-    or what it raised."""
-
     preparer: RecordingPreparer
     answered: tuple[object, ...] | None = None
     raised: BaseException | None = None
@@ -79,8 +76,6 @@ def _execute(
     failing: int | None = None,
     failure: BaseException | None = None,
 ) -> _Executed:
-    """Execute ``steps`` inside one Flush over ``port``, recording what was
-    prepared and whatever it raised."""
     executed = _Executed(RecordingPreparer(port, steps, failing=failing, failure=failure))
     try:
         with open_flush(provider) as flush:

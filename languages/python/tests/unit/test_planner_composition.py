@@ -137,7 +137,6 @@ class _Composition:
         ]
 
     def planned_groups(self) -> list[tuple[PlannedStep, ...]]:
-        """Each Write Group's steps of every plan planned here, in order."""
         return [group.steps for one in self.planned for group in one.plan.groups]
 
     def unaccounted(self) -> list[tuple[PlannedStep, ...]]:

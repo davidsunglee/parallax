@@ -356,9 +356,6 @@ def _close_region(
     updates: list[OrderedWrite],
     deletes: list[tuple[int, OrderedWrite]],
 ) -> None:
-    """Append a region's nonempty phases to ``phases`` — its inserts by
-    ascending rank, its updates as authored, its deletes by descending rank —
-    and empty the region."""
     if inserts:
         inserts.sort(key=_RANK)
         phases.append(tuple(item for _, item in inserts))

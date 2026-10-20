@@ -174,7 +174,9 @@ class RecordingPreparer(LayoutPayloadPreparer):
         self.failure = failure
         self.prepared: list[tuple[int, int]] = []
         self._positions = {
-            id(source): index for index, step in enumerate(steps) for source in _sources(step)
+            id(source): index
+            for index, step in enumerate(steps)
+            for source in _payload_sources(step)
         }
 
     @property
@@ -198,9 +200,7 @@ class RecordingPreparer(LayoutPayloadPreparer):
             raise self.failure
 
 
-def _sources(step: PlannedStep) -> tuple[object, ...]:
-    """What a payload is prepared from for ``step``: each entry an insert
-    holds, or the assignments an update, close, or revision carries."""
+def _payload_sources(step: PlannedStep) -> tuple[object, ...]:
     match step:
         case PlannedInsert(entries=entries):
             return entries
