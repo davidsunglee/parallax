@@ -51,6 +51,19 @@ payload arriving to the frozen node it answers, with the commit that follows
 outside it. The family is a model of its own, so its preparation prices the
 family variant beside the structural model's preparation rather than inside it.
 
+The cross-object flushes are keyed loops: one transaction reads many distinct
+objects of one categorical Entity, amends each through its own public verb,
+and commits, so its pre-commit flush plans and executes every amendment as
+Write Groups rather than as one step the planner collapsed. The read, what the
+caller authors, and admission all precede the flush. Production's planning and
+step-execution seams are wrapped to mark two regions inside it: finalization,
+ending at the finalized plan before anything executes, and each Write Group's
+steps, with that group's completion between one region and the next. The
+port these flushes write through offers ordered write transport, serializes
+every statement it is presented on either path as the driver would, and counts
+the statements, invocations, largest ordered invocation, and largest grouped
+insert of one flush in constant space.
+
 Exported names carry no leading underscore: importing an underscored name across
 modules is a ``reportPrivateUsage`` error under pyright strict, so privacy is
 carried by this MODULE's underscore. Never imported by production code.
@@ -84,11 +97,17 @@ from parallax.core import (
     attr,
 )
 from parallax.core._execution._unit_work.instructions import coerce_typed_row
+from parallax.core._execution._unit_work.write_planner import WritePlanner, WritePlanningRequest
+from parallax.core._execution._write_step_executor import WriteStepExecutor
 from parallax.core.base import INFINITY as OPEN_BOUND
 from parallax.core.base import detach_json_container
 from parallax.core.db_port import (
+    CanonicalWriteStatement,
     DatabaseConnection,
     DocumentReadOrdinals,
+    OrderedWriteResult,
+    OrderedWriteResultComplete,
+    OrderedWriteTransport,
     PipelineStatement,
     Row,
     TransactionOutcome,
@@ -97,8 +116,11 @@ from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity import EntityRowCodec
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
+from parallax.core.execution_lifecycle._activity import FlushActivity
 from parallax.core.storage_layout import view as storage_layout_view
 from parallax.core.unit_work import KeyedMutation, TargetMutation
+from parallax.core.write_plan.plan import WritePlan
+from parallax.core.write_plan.steps import PlannedStep
 from parallax.postgres._connection import adapt_binds
 from parallax.snapshot import Database, ScopedDatabase, TxnContext, WireEntity
 from tests._support.db_port import ConnectsAsItself, body_outcome, projected_rows
@@ -109,6 +131,8 @@ __all__ = [
     "ANCESTOR_KEY",
     "CASES",
     "CATALOG",
+    "CROSS_OBJECT_CASES",
+    "CROSS_OBJECT_PREFIX",
     "ENTITY_CLASSES",
     "FAMILY_ENTITY_CLASSES",
     "FAMILY_MODEL",
@@ -116,17 +140,26 @@ __all__ = [
     "RESPONSE_CASES",
     "AcceptingPort",
     "Case",
+    "CrossObjectCase",
     "Executed",
+    "FlushRegions",
+    "FlushWork",
     "Ingress",
     "Layout",
+    "OrderedAcceptingPort",
     "ResponseCase",
     "case_named",
+    "cross_object_case_named",
     "database",
+    "flush_database",
+    "flush_objects",
     "insert_response",
     "lowered",
+    "marked_flushes",
     "response_case_named",
     "response_database",
     "serialize",
+    "unmarked",
     "write",
     "write_lowering_digest",
 ]
@@ -285,8 +318,8 @@ class Case:
     answers, keyed by physical column as the driver answers it, and ``None`` for
     an insert, which reads nothing; an ``addressed`` target reads nothing before
     its verb, and its stored row answers the reads the target itself makes
-    inside the window. ``statements`` is how many Planned Writes the flush
-    realizes; grouped openings can realize several in one physical statement.
+    inside the window. ``statements`` is how many Planned Steps the flush
+    realizes; a grouped insert can realize several in one physical statement.
     """
 
     name: str
@@ -903,6 +936,304 @@ def lowered(case: Case) -> tuple[Executed, ...]:
     with database(case, port) as handle:
         write(handle, case)
     return tuple(port.executed)
+
+
+CROSS_OBJECT_PREFIX: Final = "cross-object."
+
+
+@dataclass(frozen=True, slots=True)
+class FlushWork:
+    """What one flush presented to its port: every statement, every call that
+    presented one or more of them, the most statements one ordered invocation
+    presented, and the most rows one insert statement wrote."""
+
+    statements: int
+    invocations: int
+    largest_ordered_invocation: int
+    largest_grouped_insert: int
+
+
+@dataclass(frozen=True, slots=True)
+class CrossObjectCase:
+    """One flush of keyed amendments over distinct objects of one Entity.
+
+    ``stored`` holds each object's current milestone, keyed by physical column
+    as the driver answers it, and ``changes`` what the caller authors for each,
+    by key: a Typed case's ``edit`` keywords or a Wire case's changes document,
+    composed outside every window as a caller's arrives. ``groups`` is how many
+    settled writes each Write Group of the flush's plan holds, and ``work`` what
+    executing them presents to the port.
+    """
+
+    name: str
+    entity: type[Entity]
+    ingress: Ingress
+    layout: Layout
+    bounded: bool
+    stored: tuple[Mapping[str, object], ...]
+    changes: Mapping[int, Mapping[str, object]]
+    groups: tuple[int, ...]
+    work: FlushWork
+
+    @property
+    def objects(self) -> int:
+        return len(self.stored)
+
+
+def _cross_object_case(
+    family: str,
+    operation: str,
+    layout: Layout,
+    ingress: Ingress,
+    *,
+    first_key: int,
+    label: str,
+    groups: tuple[int, ...],
+    work: FlushWork,
+) -> CrossObjectCase:
+    cls = _CATEGORICAL[(family, layout)]
+    keys = range(first_key, first_key + sum(groups))
+    mutation: KeyedMutation = "amendUntil" if family == "bitemporal" else "amend"
+    return CrossObjectCase(
+        f"{CROSS_OBJECT_PREFIX}{family}.{operation}-{len(keys)}.{layout}.{ingress}",
+        cls,
+        ingress,
+        layout,
+        mutation == "amendUntil",
+        tuple(_stored_row(_value(cls, key, "before"), layout) for key in keys),
+        {
+            key: _authored(ingress, mutation, _value(cls, key, label), addressed=False)
+            for key in keys
+        },
+        groups,
+        work,
+    )
+
+
+CROSS_OBJECT_CASES: Final[tuple[CrossObjectCase, ...]] = (
+    _cross_object_case(
+        "txtime",
+        "changed",
+        "columns",
+        "typed",
+        first_key=1001,
+        label="after",
+        groups=(64,),
+        work=FlushWork(65, 2, 64, 64),
+    ),
+    _cross_object_case(
+        "txtime",
+        "changed",
+        "columns",
+        "typed",
+        first_key=2001,
+        label="after",
+        groups=(64, 64, 2),
+        work=FlushWork(133, 6, 64, 64),
+    ),
+    _cross_object_case(
+        "bitemporal",
+        "interior",
+        "document",
+        "wire",
+        first_key=3001,
+        label="middle",
+        groups=(64,),
+        work=FlushWork(67, 4, 64, 64),
+    ),
+)
+"""The cross-object family under the default Optimistic strategy: one full
+Transaction-Time group, the same amendment over two full groups and a tail, and
+one full Bitemporal group whose writes each open a head, a changed middle, and
+a tail. Each group's closes share ordered invocations and its successors
+grouped inserts."""
+
+
+def cross_object_case_named(name: str) -> CrossObjectCase:
+    for case in CROSS_OBJECT_CASES:
+        if case.name == name:
+            return case
+    raise KeyError(
+        f"{name!r} is not a cross-object case: {[case.name for case in CROSS_OBJECT_CASES]}"
+    )
+
+
+def _inserted_rows(sql: str) -> int:
+    return sql.count("), (") + 1 if sql.startswith("insert") else 0
+
+
+class OrderedAcceptingPort(AcceptingPort):
+    """An :class:`AcceptingPort` that also offers ordered write transport,
+    converting each presented statement to the driver's SQL and serializing its
+    binds as the PostgreSQL adapter does before queuing it, and confirming one
+    affected row for each; it counts what one flush presents as
+    :class:`FlushWork`, keeping nothing else of a statement."""
+
+    __slots__ = (
+        "_invocations",
+        "_largest_insert",
+        "_largest_ordered",
+        "_statements",
+        "_transport",
+    )
+    _statements: int
+    _invocations: int
+    _largest_ordered: int
+    _largest_insert: int
+    _transport: OrderedWriteTransport
+
+    def __init__(self, stored: Sequence[Mapping[str, object]] = ()) -> None:
+        super().__init__(stored)
+        self._transport = self._ordered_writes
+        self.reset()
+
+    def reset(self) -> None:
+        """Count from nothing, as a new flush does."""
+        self._statements = self._invocations = 0
+        self._largest_ordered = self._largest_insert = 0
+
+    def work(self) -> FlushWork:
+        return FlushWork(
+            self._statements, self._invocations, self._largest_ordered, self._largest_insert
+        )
+
+    @property
+    def ordered_write_transport(self) -> OrderedWriteTransport | None:
+        return self._transport
+
+    def execute_write(self, sql: str, binds: Sequence[object]) -> int:
+        affected = super().execute_write(sql, binds)
+        self._statements += 1
+        self._invocations += 1
+        self._largest_insert = max(self._largest_insert, _inserted_rows(sql))
+        return affected
+
+    def _ordered_writes(self, statements: Sequence[CanonicalWriteStatement]) -> OrderedWriteResult:
+        for statement in statements:
+            self.dialect.to_driver_sql(statement.sql).encode()
+            serialize(statement.binds)
+        presented = len(statements)
+        self._statements += presented
+        self._invocations += 1
+        self._largest_ordered = max(self._largest_ordered, presented)
+        return OrderedWriteResultComplete((1,) * presented)
+
+
+@contextmanager
+def flush_database(
+    case: CrossObjectCase, port: OrderedAcceptingPort | None = None
+) -> Generator[ScopedDatabase]:
+    """A login-scoped handle over ``case``'s stored rows, composed outside every
+    window, flushing at :data:`INSTANT`."""
+    with Database(
+        (OrderedAcceptingPort(case.stored) if port is None else port).open(),
+        MODEL,
+        clock=FixedClock(INSTANT),
+    ) as root:
+        yield root.using_database_login()
+
+
+def _read_all(tx: TxnContext, case: CrossObjectCase) -> list[Any]:
+    entity = cast("Any", case.entity)
+    first = case.stored[0]["id"]
+    query = entity.where(entity.id.between(first, case.stored[-1]["id"]))
+    if case.bounded:
+        query = query.as_of(valid_time=INTERIOR_FROM)
+    if case.ingress == "wire":
+        return list(tx.wire.find(query).results())
+    return list(tx.find(query).results())
+
+
+def _amend(tx: TxnContext, case: CrossObjectCase, source: Any) -> None:
+    until = INTERIOR_UNTIL if case.bounded else None
+    if case.ingress == "wire":
+        changes = case.changes[cast("int", source["id"])]
+        if until is None:
+            tx.wire.amend(source, changes)
+        else:
+            tx.wire.amend(source, changes, until=until)
+        return
+    edited = source.edit(**case.changes[source.id])
+    if until is None:
+        tx.amend(edited)
+    else:
+        tx.amend(edited, until=until)
+
+
+def flush_objects(handle: ScopedDatabase, case: CrossObjectCase) -> None:
+    """Run ``case`` as one committed transaction: read every object, then amend
+    each through its public verb, leaving all of them to its one pre-commit
+    flush."""
+
+    def body(tx: TxnContext) -> None:
+        for source in _read_all(tx, case):
+            _amend(tx, case, source)
+
+    handle.transact(body)
+
+
+def unmarked() -> None:
+    """The mark a region no reading observes: the flush runs unobserved."""
+
+
+@dataclass(slots=True)
+class FlushRegions:
+    """The marks :func:`marked_flushes` calls: ``planning`` as finalization
+    begins and ``planned`` once it has answered the plan, which is still held
+    and has executed nothing; ``executing`` before each Write Group's steps,
+    or a deferred range's, are handed to execution and ``executed`` once they
+    return, before any settled write of that group completes."""
+
+    planning: Checkpoint = unmarked
+    planned: Checkpoint = unmarked
+    executing: Checkpoint = unmarked
+    executed: Checkpoint = unmarked
+
+
+@contextmanager
+def _replaced(owner: type, name: str, replacement: object) -> Generator[None]:
+    original = owner.__dict__[name]
+    setattr(owner, name, replacement)
+    try:
+        yield
+    finally:
+        setattr(owner, name, original)
+
+
+@contextmanager
+def marked_flushes(regions: FlushRegions) -> Generator[None]:
+    """Every flush inside the block calling ``regions`` around production's
+    own planning and step execution: :meth:`WritePlanner.finalize` and
+    :meth:`WriteStepExecutor.execute` are wrapped for the block's whole life,
+    so the wrappers are installed once rather than around each flush, and the
+    marks are read from ``regions`` at each call."""
+    finalize = WritePlanner.finalize
+    execute = WriteStepExecutor.execute
+
+    def finalized(planner: WritePlanner, request: WritePlanningRequest, /) -> WritePlan:
+        regions.planning()
+        plan = finalize(planner, request)
+        regions.planned()
+        return plan
+
+    def executed(
+        executor: WriteStepExecutor,
+        steps: tuple[PlannedStep, ...],
+        /,
+        *,
+        allocates: bool,
+        flush: FlushActivity,
+    ) -> tuple[object, ...]:
+        regions.executing()
+        answered = execute(executor, steps, allocates=allocates, flush=flush)
+        regions.executed()
+        return answered
+
+    with (
+        _replaced(WritePlanner, "finalize", finalized),
+        _replaced(WriteStepExecutor, "execute", executed),
+    ):
+        yield
 
 
 def write_lowering_digest() -> str:

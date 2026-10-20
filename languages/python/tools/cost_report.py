@@ -166,7 +166,7 @@ answers from a portfolio it deliberately does not validate."""
 TIMING_UNITS: Final = frozenset(
     {"ms", "roots/s", "us/projection", "projections/s", "us/row", "us", "us/root"}
 )
-COUNT_UNITS: Final = frozenset({"calls/row"})
+COUNT_UNITS: Final = frozenset({"calls/row", "statements", "invocations", "rows"})
 
 
 @dataclass(frozen=True, slots=True)

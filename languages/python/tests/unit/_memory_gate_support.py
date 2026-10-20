@@ -123,6 +123,12 @@ OWNERS: Final[tuple[GateOwner, ...]] = (
         _exactly("model.prepared", "model.prepared.family"),
     ),
     GateOwner(
+        WRITE_MODULE,
+        "test_the_cross_object_flushes_stay_within_their_memory_gates",
+        WRITE_SUBJECT,
+        _prefixed("cross-object."),
+    ),
+    GateOwner(
         SNAPSHOT_MODULE,
         "test_the_depth_reads_stay_within_their_memory_gates",
         SNAPSHOT_SUBJECT,
