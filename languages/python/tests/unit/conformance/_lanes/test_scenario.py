@@ -35,8 +35,6 @@ from parallax.conformance.simulated_temporal_store import (
 )
 from parallax.core import predicate
 from parallax.core._execution._unit_work import instructions
-from parallax.core._execution._unit_work import ranges as ranges_module
-from parallax.core._execution._unit_work.acquisition import CoverageReadRequest, CoverageTerm
 from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedWrite,
     PreparedTargetWrite,
@@ -58,7 +56,6 @@ from parallax.core.dialect import POSTGRES
 from parallax.core.execution import TxnOptions
 from parallax.core.execution_lifecycle import DatabaseCallStarted
 from parallax.core.metamodel import (
-    AttributeIdentity,
     EntityIdentity,
 )
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
@@ -70,12 +67,9 @@ from parallax.core.unit_work import (
     Concurrency,
     MissingTargetError,
     OptimisticLockConflictError,
-    PredicateSelection,
-    PredicateWriteInstruction,
     ReadEvidence,
     RetainedObservation,
     StaleWriteError,
-    WriteAssignment,
     WriteEffectError,
     WriteEvidenceError,
     WriteRejectedError,
@@ -90,8 +84,6 @@ from parallax.core.write_plan.keys import TemporalObjectStateKey, VersionedObjec
 from parallax.core.write_plan.steps import PlannedClose
 from parallax.snapshot._publication._wire import read_evidence_of
 from tests._support.sweep_goldens import write_golden_statements
-from tests.unit._temporal_group_support import temporal_group
-from tests.unit.conformance._coverage_rows_support import coverage_members, read_coverage
 from tests.unit.conformance._lanes._scripted_port import ScriptedPort
 from tests.unit.conformance._recording_ports import FakeWritePort
 
@@ -1332,24 +1324,6 @@ def test_a_grouped_write_starting_away_from_its_finds_pin_is_an_engine_error() -
         scenario.run_scenario_case(case, FakeWritePort(read_script=[[row], [row]]))
 
 
-def _simulated_unit(
-    meta: AcceptedMetamodel,
-    store: SimulatedTemporalStore,
-    *,
-    concurrency: Concurrency = "optimistic",
-    rollback: bool = False,
-) -> Any:
-    return scenario._simulated_unit(  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's simulated transaction directly
-        meta,
-        POSTGRES,
-        concurrency,
-        scenario.INERT_CLOCK_INSTANT,
-        store,
-        rollback=rollback,
-        record_statements=True,
-    )
-
-
 def test_a_tracked_milestone_of_a_document_target_is_refused_after_out_of_band_statements() -> None:
     # m-temporal-write-011 seeds a Structured Column key no member declares with
     # out-of-band SQL and then updates that milestone by key. The tracker never
@@ -1753,73 +1727,6 @@ def test_only_a_simulated_store_diagnostic_becomes_an_engine_error(
     with pytest.raises(type(failure)) as raised:
         scenario.compile_write_sequence_case(case, "postgres")
     assert raised.value is failure
-
-
-def test_a_supplied_materialized_group_executes_round_by_round_in_a_simulated_transaction(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # Coverage a supplied group's rounds bind against comes from the store,
-    # and each round's executed writes advance it before the next is read.
-    monkeypatch.setattr(ranges_module, "_GROUP_OBJECTS", 1)
-    meta = models.load_models()["position"]
-    entity = model_facts.case_entity(meta, "parallax.compatibility.Position")
-    rows = [
-        {
-            "id": key,
-            "acctNum": "A",
-            "value": decimal.Decimal("100.00"),
-            "validStart": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
-            "validEnd": INFINITY,
-            "txStart": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
-            "txEnd": INFINITY,
-        }
-        for key in (1, 2)
-    ]
-    store = SimulatedTemporalStore()
-    store.seed_fixtures(meta, entity, rows)
-    group = temporal_group(
-        PredicateWriteInstruction(
-            "amendUntil",
-            PredicateSelection(
-                "Position",
-                predicate.Comparison("eq", predicate.FieldSubject("Position.value"), "100.00"),
-            ),
-            (WriteAssignment("Position.value", decimal.Decimal("150.00")),),
-            dt.datetime(2024, 2, 1, tzinfo=dt.UTC),
-            _JUN,
-        ),
-        meta,
-        rows,
-    )
-    with (
-        store.transaction(rollback=False),
-        _simulated_unit(meta, store, concurrency="locking") as unit,
-    ):
-        # A supplied group has no case form, so it is buffered into the
-        # transaction's own unit of work.
-        unit._uow.buffer(group)
-    assert [statement.sql.split(" ", 1)[0] for statement in unit.statements] == [
-        "update",
-        "insert",
-    ] * 2
-    for key in (1, 2):
-        stored = coverage_members(
-            read_coverage(
-                store,
-                meta,
-                CoverageReadRequest(
-                    entity=entity,
-                    key_attribute=AttributeIdentity(entity.identity, "id"),
-                    terms=(CoverageTerm(key, ()),),
-                    locking=False,
-                ),
-            )
-        )
-        assert sorted(cast("decimal.Decimal", row["value"]) for row in stored) == [
-            decimal.Decimal("100.00"),
-            decimal.Decimal("100.00"),
-            decimal.Decimal("150.00"),
-        ]
 
 
 def _tracked_ledger_unit(
@@ -2861,55 +2768,6 @@ def test_run_scenario_case_executes_a_readless_predicate_write() -> None:
     assert len(port.writes) == 1 and port.commits == 1
 
 
-def test_run_scenario_case_executes_a_materializing_predicate_write_pair() -> None:
-    # A VERSIONED target's predicate delete MATERIALIZES (ADR 0014): the
-    # scenario's own preceding find step pairs with it
-    # (`_run_materializing_pair`), resolving through the SAME `FakeWritePort`
-    # connection the subsequent per-row delete commits on — no Docker. The case
-    # declares no `when.uow`, so it runs under the resolved `optimistic`
-    # preference, which a versioned target turns into the Optimistic strategy:
-    # each materialized key is gated.
-    case = _synthetic_write(
-        "scenario",
-        {
-            "when": {
-                "scenario": [
-                    {
-                        "objectQuery": {
-                            "target": "Account",
-                            "predicate": {
-                                "lessThan": {"path": "Account.balance", "value": "200.00"}
-                            },
-                        },
-                    },
-                    {
-                        "write": {
-                            "mutation": "delete",
-                            "target": {
-                                "entity": "Account",
-                                "predicate": {
-                                    "lessThan": {"path": "Account.balance", "value": "200.00"}
-                                },
-                            },
-                        }
-                    },
-                ]
-            },
-        },
-    )
-    port = FakeWritePort(
-        find_rows=[{"id": 1, "owner": "Ada", "balance": decimal.Decimal("100.00"), "version": 1}]
-    )
-    run = scenario.run_scenario_case(case, port)
-    assert run.database_calls == 2
-    assert [e.case_pointer for e in run.emissions] == [
-        "/scenario/0/objectQuery",
-        "/scenario/1/write",
-    ]
-    assert run.emissions[1].sql == "delete from account where id = ? and version = ?"
-    assert len(port.writes) == 1 and len(port.reads) == 1 and port.commits == 1
-
-
 def test_run_scenario_case_readless_predicate_write_rollback_aborts_but_counts_the_call() -> None:
     # `_run_readless_predicate_write`'s own abort contract mirrors the keyed-
     # write one (`test_run_scenario_case_rollback_step_aborts_but_counts_the_
@@ -2943,274 +2801,6 @@ def test_run_scenario_case_readless_predicate_write_rollback_aborts_but_counts_t
     assert run.emissions[0].sql == "delete from wallet where balance < ?"
     assert len(port.writes) == 1
     assert port.commits == 0 and port.rollbacks == 1
-
-
-def test_materializing_predicate_write_rollback_aborts_but_counts_the_database_call() -> None:
-    # `_run_materializing_pair`'s own abort contract: the resolve AND the
-    # per-row DML its observations license still execute (and count their
-    # Database Calls) before the forced flush + intentional abort discards them —
-    # `_run_uow_group`'s doomed-group behavior, reproduced for a
-    # materializing pair's own single held transaction.
-    case = _synthetic_write(
-        "scenario",
-        {
-            "when": {
-                "scenario": [
-                    {
-                        "objectQuery": {
-                            "target": "Account",
-                            "predicate": {
-                                "lessThan": {"path": "Account.balance", "value": "200.00"}
-                            },
-                        },
-                    },
-                    {
-                        "write": {
-                            "mutation": "delete",
-                            "target": {
-                                "entity": "Account",
-                                "predicate": {
-                                    "lessThan": {"path": "Account.balance", "value": "200.00"}
-                                },
-                            },
-                        },
-                        "rollback": True,
-                    },
-                ]
-            },
-        },
-    )
-    port = FakeWritePort(
-        find_rows=[{"id": 1, "owner": "Ada", "balance": decimal.Decimal("100.00"), "version": 1}]
-    )
-    run = scenario.run_scenario_case(case, port)
-    assert run.database_calls == 2
-    assert [e.case_pointer for e in run.emissions] == [
-        "/scenario/0/objectQuery",
-        "/scenario/1/write",
-    ]
-    assert run.emissions[1].sql == "delete from account where id = ? and version = ?"
-    assert len(port.writes) == 1 and len(port.reads) == 1
-    assert port.commits == 0 and port.rollbacks == 1
-
-
-def _ledger_predicate() -> dict[str, object]:
-    return {"eq": {"path": "parallax.compatibility.Ledger.id", "value": 2}}
-
-
-def _ledger_materializing_pair(at: str, *, rollback: bool = False) -> list[dict[str, object]]:
-    """The resolving find + materializing predicate update over the fixture-held
-    Ledger id 2 that `m-case-format` "Materializing cases" runs as ONE
-    transaction: production resolves the predicate itself and plans a close plus a
-    successor per resolved row."""
-    write: dict[str, object] = {
-        "write": {
-            "mutation": "amend",
-            "target": {
-                "entity": "parallax.compatibility.Ledger",
-                "predicate": _ledger_predicate(),
-            },
-            "assignments": [{"attr": "parallax.compatibility.Ledger.value", "value": "777.00"}],
-            "at": at,
-        },
-        "databaseCalls": 3,
-    }
-    if rollback:
-        write["rollback"] = True
-    return [
-        {
-            "objectQuery": {
-                "target": "parallax.compatibility.Ledger",
-                "predicate": _ledger_predicate(),
-            },
-            "databaseCalls": 1,
-        },
-        write,
-    ]
-
-
-def _ledger_resolve_port(*rows: MappingRow) -> FakeWritePort:
-    fixture: MappingRow = {
-        "led_id": 2,
-        "acct_num": "B",
-        "val": decimal.Decimal("200.00"),
-        "in_z": dt.datetime(2024, 2, 1, tzinfo=dt.UTC),
-        "out_z": INFINITY,
-    }
-    return FakeWritePort(find_rows=[fixture, *rows])
-
-
-def test_run_scenario_case_refuses_a_keyed_temporal_write_after_a_materializing_pair() -> None:
-    # The materializing pair resolves its rows and plans their closes and
-    # successors INSIDE production, which returns neither, so this lane cannot
-    # advance case state to the milestone that transaction opened. A later keyed
-    # temporal write would gate its own close on the milestone the pair retired
-    # (the fixture's 2024-02-01) and quietly affect zero rows, while a real
-    # caller — who could only have reached the step by reading the row — gates on
-    # the successor and gets a stale write. The composition is refused rather
-    # than graded, so the two answers can never be mistaken for one.
-    case = _synthetic_ledger_scenario(
-        [
-            *_ledger_materializing_pair("2025-05-01T00:00:00+00:00"),
-            _ledger_update("300.00", "2026-02-01T00:00:00+00:00"),
-        ]
-    )
-    with pytest.raises(EngineError, match="materializing predicate write already moved"):
-        scenario.run_scenario_case(case, _ledger_resolve_port())
-
-
-def test_run_scenario_case_keeps_case_state_when_a_materializing_pair_aborts() -> None:
-    # An ABORTED pair moved nothing: its close and successor were rolled back with
-    # the rest of its transaction, so the milestone the fixture left current is
-    # still current and the next keyed write settles against it. The record of
-    # what materialization displaced is staged on the pair's own outcome, exactly
-    # as every other unit's case-state advances are.
-    case = _synthetic_ledger_scenario(
-        [
-            *_ledger_materializing_pair("2025-05-01T00:00:00+00:00", rollback=True),
-            _ledger_update("300.00", "2026-02-01T00:00:00+00:00"),
-        ]
-    )
-    port = _ledger_resolve_port()
-    run = scenario.run_scenario_case(case, port)
-    assert port.rollbacks == 1 and port.commits == 1
-    close, _successor = run.emissions[-2:]
-    assert close.case_pointer == "/scenario/2/write"
-    assert close.binds[3] == _instant("2024-02-01T00:00:00+00:00")
-
-
-def test_run_scenario_case_chains_a_key_inserted_after_a_materializing_pair() -> None:
-    # The refusal is scoped to the milestones the pair displaced, never to the
-    # case: a milestone this case's own later write OPENS is a complete account of
-    # its row again, so an insert-then-update chain over a key the pair never held
-    # stays legal and closes the milestone the insert opened (2025-06-01).
-    case = _synthetic_ledger_scenario(
-        [
-            *_ledger_materializing_pair("2025-05-01T00:00:00+00:00"),
-            _ledger_insert("2025-06-01T00:00:00+00:00"),
-            _ledger_chain_update("300.00", "2026-02-01T00:00:00+00:00"),
-        ]
-    )
-    run = scenario.run_scenario_case(
-        case,
-        _ledger_resolve_port(
-            _ledger_row(9, "100.00", in_z="2025-06-01T00:00:00+00:00", acct_num="D")
-        ),
-    )
-    close = run.emissions[-2]
-    assert close.case_pointer == "/scenario/3/write"
-    assert close.binds[3] == _instant("2025-06-01T00:00:00+00:00")
-
-
-def test_is_materializing_write_step_returns_none_for_a_keyed_write_shape() -> None:
-    # `_is_materializing_write_step`'s SHAPE guard: a keyed-write step's
-    # `write` field is the buffered-entry LIST (`m-case-format`'s
-    # `bufferedWriteSequence` shape) — never a `PredicateWriteInstruction` pairing
-    # candidate. Peeked by the scenario run lane's own one-step look-ahead
-    # (`run_scenario_case`); no reachable corpus scenario puts an ungrouped
-    # find immediately before an ungrouped keyed write (every such adjacency
-    # is either `uow`-grouped or predicate-shaped), so this pins the guard
-    # directly at the function level.
-    meta = model_facts.load_case_metamodel(_case("m-unit-work-001"))
-    step: Mapping[str, object] = {
-        "write": [{"mutation": "insert", "entity": "Account", "rows": [{"id": 1}]}]
-    }
-    assert scenario.is_materializing_write_step(step, meta) is None
-
-
-def test_is_materializing_write_step_returns_none_for_a_non_predicate_mapping() -> None:
-    # Defensive coverage: a `write` field that IS a mapping but deserializes
-    # to something other than a `PredicateWriteInstruction` (never schema-legal — the
-    # mapping `write` shape is `predicateWrite`-only, `m-case-format`) still
-    # falls through to `None` rather than an assertion failure.
-    meta = model_facts.load_case_metamodel(_case("m-unit-work-001"))
-    step: Mapping[str, object] = {
-        "write": {"mutation": "amend", "entity": "Account", "rows": [{"id": 1, "balance": 1.0}]}
-    }
-    assert scenario.is_materializing_write_step(step, meta) is None
-
-
-def test_run_materializing_pair_rejects_a_mismatched_preceding_find_target() -> None:
-    # `_run_materializing_pair`'s own internal target-match guard: its SOLE
-    # production caller (`run_scenario_case`'s look-ahead) already verifies
-    # the find step's own query `target` against `pairing.target.entity` before ever
-    # calling this function, so the guard is unreachable through the public
-    # entry point — a genuine caller-contract defense, pinned here by
-    # calling the function directly with a manufactured mismatch.
-    case = _case("m-unit-work-001")
-    serving = model_facts.case_serving_model(case)
-    meta = models.accepted_model_of(serving.current().model)
-    steps: list[Mapping[str, object]] = [
-        {
-            "objectQuery": {
-                "target": "Wallet",
-                "predicate": {"eq": {"path": "Wallet.id", "value": 1}},
-            }
-        },
-        {
-            "write": {
-                "mutation": "delete",
-                "target": {
-                    "entity": "Account",
-                    "predicate": {"lessThan": {"path": "Account.balance", "value": "200.00"}},
-                },
-            }
-        },
-    ]
-    context = scenario.CaseContext(
-        serving, meta, "locking", SimulatedTemporalStore(), {}, TxnOptions()
-    )
-    with pytest.raises(EngineError, match="not preceded by"):
-        scenario._run_materializing_pair(  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helper directly
-            FakeWritePort(),
-            context,
-            steps,
-            0,
-            LifecycleRun(),
-        )
-
-
-def test_run_scenario_case_rejects_a_materializing_pair_whose_find_predicate_differs() -> None:
-    # (`m-case-format.md`, "Predicate-selected write instruction": "model-aware
-    # validation MUST require that prior read to use the same concrete query
-    # `target` and canonical predicate"): the preceding find must share
-    # the write's own target predicate, not merely its entity — unlike the
-    # entity-mismatch guard above, this IS reachable through the public
-    # `run_scenario_case` entry point: the look-ahead pairing decision
-    # (`run_scenario_case`) checks only the query's `target`, so a same-entity,
-    # DIFFERENT-predicate pair still routes into `_run_materializing_pair`,
-    # whose own canonical-predicate comparison is what catches it.
-    case = _synthetic_write(
-        "scenario",
-        {
-            "when": {
-                "scenario": [
-                    {
-                        "objectQuery": {
-                            "target": "Account",
-                            "predicate": {"eq": {"path": "Account.balance", "value": "100.00"}},
-                        },
-                    },
-                    {
-                        "write": {
-                            "mutation": "delete",
-                            "target": {
-                                "entity": "Account",
-                                "predicate": {
-                                    "lessThan": {"path": "Account.balance", "value": "200.00"}
-                                },
-                            },
-                        }
-                    },
-                ]
-            },
-        },
-    )
-    port = FakeWritePort(
-        find_rows=[{"id": 1, "owner": "Ada", "balance": decimal.Decimal("100.00"), "version": 1}]
-    )
-    with pytest.raises(EngineError, match="SAME canonical predicate"):
-        scenario.run_scenario_case(case, port)
 
 
 def test_run_write_sequence_case_wraps_a_lowering_error() -> None:
@@ -3562,11 +3152,11 @@ def test_run_conflict_case_wraps_a_lowering_failure_as_engine_error() -> None:
 
 
 def test_predicate_writes_require_no_keyed_unit_source_read_or_framework_classification() -> None:
-    model = models.load_models()["account"]
+    model = models.load_models()["wallet"]
     instruction = instructions.PredicateWriteInstruction(
         "amend",
-        instructions.PredicateSelection("parallax.compatibility.Account", predicate.TrueNode()),
-        (instructions.WriteAssignment("parallax.compatibility.Account.owner", "Ada"),),
+        instructions.PredicateSelection("parallax.compatibility.Wallet", predicate.TrueNode()),
+        (instructions.WriteAssignment("parallax.compatibility.Wallet.owner", "Ada"),),
     )
     prepared = instructions.prepare_typed_write(instruction, model)
     assert isinstance(prepared, instructions.PreparedPredicateWrite)
@@ -3939,31 +3529,6 @@ def test_a_bounded_bitemporal_terminate_entry_reaches_its_own_wire_verb() -> Non
     assert port.writes[1][0].startswith("update position set out_z")
 
 
-@pytest.mark.parametrize(
-    "case_id",
-    [
-        "m-temporal-write-026",
-        "m-temporal-write-027",
-        "m-temporal-write-028",
-        "m-temporal-write-029",
-    ],
-)
-def test_every_materializing_predicate_mutation_reaches_its_own_wire_verb(case_id: str) -> None:
-    # The four bitemporal predicate shapes — plain update, plain terminate, and
-    # the bounded pair — each dispatch to the `tx.wire.*_where` verb their own
-    # mutation names. The canned row is what the pair's resolving find publishes.
-    port = FakeWritePort(
-        find_rows=[
-            _position_row(
-                1, "200.00", from_z="2024-06-01T00:00:00+00:00", in_z="2024-04-01T00:00:00+00:00"
-            )
-        ]
-    )
-    run = scenario.run_scenario_case(_load_case(case_id), port)
-    assert run.errors == []
-    assert any(e.sql.startswith("update position set out_z") for e in run.emissions)
-
-
 def test_a_write_settles_against_a_row_its_own_unit_opened() -> None:
     # Read-your-own-writes inside ONE step: no read could return the inserted row,
     # so the node `tx.wire.insert` answered is what the update is addressed by.
@@ -4235,7 +3800,7 @@ def test_a_framework_write_step_inside_a_uow_group_is_refused() -> None:
 # the record `given.databaseOptions` states, and every transaction it opens     #
 # resolves what the request omits against that record — the held `uow` group,  #
 # the ungrouped keyed unit, the ungrouped find, the readless predicate write,  #
-# the materializing pair, and the writeSequence entry alike.                   #
+# and the writeSequence entry alike.                                           #
 # --------------------------------------------------------------------------- #
 _CONSPICUOUS_ROOT: Final[dict[str, object]] = {
     "maxRetries": 0,
@@ -4328,43 +3893,6 @@ def test_a_readless_predicate_write_opens_at_the_roots_level() -> None:
         },
     )
     port = FakeWritePort()
-    scenario.run_scenario_case(case, port)
-    assert port.levels == ["serializable"]
-
-
-def test_a_materializing_pair_opens_its_one_transaction_at_the_roots_level() -> None:
-    case = _synthetic_write(
-        "scenario",
-        {
-            "given": {"databaseOptions": dict(_CONSPICUOUS_ROOT)},
-            "when": {
-                "scenario": [
-                    {
-                        "objectQuery": {
-                            "target": "Account",
-                            "predicate": {
-                                "lessThan": {"path": "Account.balance", "value": "200.00"}
-                            },
-                        },
-                    },
-                    {
-                        "write": {
-                            "mutation": "delete",
-                            "target": {
-                                "entity": "Account",
-                                "predicate": {
-                                    "lessThan": {"path": "Account.balance", "value": "200.00"}
-                                },
-                            },
-                        }
-                    },
-                ]
-            },
-        },
-    )
-    port = FakeWritePort(
-        find_rows=[{"id": 1, "owner": "Ada", "balance": decimal.Decimal("100.00"), "version": 1}]
-    )
     scenario.run_scenario_case(case, port)
     assert port.levels == ["serializable"]
 

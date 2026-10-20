@@ -156,7 +156,7 @@ class EntityRowScope:
 
     ``unaliased`` is the write lane (`m-batch-write.md` "Predicate-selected
     readless forms"): a write's rendered predicate is UNALIASED (`where balance
-    < ?`), contrasting the resolving read's aliased `t0.balance < ?` form.
+    < ?`), contrasting a read's aliased `t0.balance < ?` form.
     ``False`` — the read compiler's default — for every ordinary read scope. It
     lives on the scope rather than on the context precisely so that
     `compile_write_predicate` reaches the very same vocabulary a read does, one

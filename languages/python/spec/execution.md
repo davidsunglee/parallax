@@ -155,7 +155,10 @@ Write verbs are on the `TxnContext`; their snake_case temporal parameters bind
 the corresponding core operations. Inserts accept fresh constructed values;
 later mutations require provenance where the core evidence rules prescribe it.
 Evidence is never a caller-supplied address. Set-based writes take an Object
-Query; amendment verbs also take Assignments.
+Query; amendment verbs also take Assignments. A set-based write is one readless
+statement, so over a versioned or temporal Entity it is refused at the call with
+a `WriteInstructionError` naming the keyed and conditional verbs that write such
+an Entity (`m-batch-write`).
 
 The method names the authority. `amend`, `replace`, `delete`, and `terminate`
 take a source — a value a read of the writing transaction attempt published, a

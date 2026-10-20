@@ -92,7 +92,6 @@ class Parking(Entity, table="pa_parking", namespace=_NS):
 
 class Lease(Entity, table="pa_lease", namespace=_NS):
     id: Attr[int] = attr(primary_key=True)
-    version: Attr[int] = attr(type=Int32, optimistic_locking=True)
     owner_id: Attr[int | None]
     owner: Rel[Owner | None] = rel(cardinality=MANY_TO_ONE, join=("owner_id", "id"))
 
@@ -136,7 +135,6 @@ class Crate(Entity, table="pa_crate", namespace=_NS):
 
 class Bin(Entity, table="pa_bin", namespace=_NS):
     id: Attr[int] = attr(primary_key=True)
-    version: Attr[int] = attr(type=Int32, optimistic_locking=True)
     shelf_id: Attr[int | None]
     shelf: Rel[Shelf | None] = rel(cardinality=MANY_TO_ONE, join=("shelf_id", "id"))
 
@@ -338,7 +336,7 @@ def test_shared_to_one_joins_keep_three_valued_truth(profile_run: Any) -> None:
     assert _ids(db, Basket, (owner.nickname == "ace") & owner.exists(Owner.active.is_(True))) == {1}
 
 
-def test_a_materializing_predicate_write_selects_through_shared_joins(profile_run: Any) -> None:
+def test_a_readless_delete_selects_through_shared_joins(profile_run: Any) -> None:
     db = _served(profile_run)
     _seed_baskets(db)
     db.transact(
@@ -526,7 +524,6 @@ def test_the_unproven_hop_never_reads_a_parking_no_ticket_reaches(profile_run: A
 _JANUARY = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 _MARCH = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
 _JUNE = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
-_JULY = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
 
 
 def _seed_plans(profile_run: Any) -> None:
@@ -626,20 +623,6 @@ def test_a_locking_read_through_a_temporal_join_locks_only_its_roots(profile_run
         return found
 
     assert db.transact(locked, concurrency="locking") == [1]
-
-
-def test_a_temporal_predicate_write_acquires_through_the_temporal_join(profile_run: Any) -> None:
-    db = _served(profile_run)
-    _seed_plans(profile_run)
-    db.transact(
-        lambda tx: tx.amend_where(
-            Policy.where(Policy.plan.premium == 30), Policy.note.set("top"), valid_from=_JULY
-        )
-    )
-    found = db.find(
-        Policy.where(Policy.note == "top").as_of(tx_time=LATEST, valid_time=_JULY)
-    ).results()
-    assert [policy.id for policy in found] == [1]
 
 
 def _seed_shelves(profile_run: Any, db: ScopedDatabase) -> None:
@@ -807,7 +790,7 @@ def test_owner_results_read_the_one_milestone_a_temporal_owner_joins(profile_run
     assert counters(codes.all(codes.element == "b")) == [1, 2, 3, 4]
 
 
-def test_a_materializing_predicate_write_selects_through_owner_results(profile_run: Any) -> None:
+def test_a_readless_delete_selects_through_owner_results(profile_run: Any) -> None:
     db = _served(profile_run)
     _seed_shelves(profile_run, db)
     db.transact(

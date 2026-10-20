@@ -541,7 +541,6 @@ def test_preflight_leaves_physical_sql_only_concurrency_values_untyped() -> None
 
 _PATH_UPDATE_CASES = (
     "m-opt-lock-018-document-layout-version-advance",
-    "m-opt-lock-019-document-layout-no-op-collapse",
     "m-storage-layout-023-document-layout-patch-update",
     "m-storage-layout-024-document-layout-occurrence-parent-states",
     "m-storage-layout-032-assigned-occurrence-replacement-layout-twin-document",

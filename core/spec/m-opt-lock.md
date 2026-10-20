@@ -171,7 +171,7 @@ that names a versioned target's Attribute.
   consumer must re-check.
 - A Version Gate applies to exactly **one** row: it binds that row's observed
   version, so it is legal only on a single-key target. This is the same fact that
-  forbids a versioned readless predicate template.
+  keeps a predicate-selected write off a versioned target (`m-batch-write`).
 
 ### What licenses a write under Locking
 
@@ -249,8 +249,7 @@ Database Calls). A keyed amendment's assignments are literal sets
 observed is not empty: it issues its `UPDATE`, gated as any other, and advances
 the version. A temporal one keeps a milestone it leaves unchanged, proven by a
 guard under Optimistic (*Temporal entities derive the version from Transaction
-Time*, below). A predicate-selected amendment instead compares each resolved row,
-below. Neither empty write needs to bump the version — the concurrent editor that
+Time*, below). Neither empty write needs to bump the version — the concurrent editor that
 races it advances the version itself, so nothing slips through.
 
 ### Composed temporal writes keep every source condition
@@ -269,64 +268,16 @@ composition writes anything new. A rectangle the flush read
 for the range (`m-temporal-write` *Observed writes span their requested extent*)
 is gated on the `in_z` that read observed, exactly as an observed one is.
 
-### Predicate-selected writes materialize when observations are needed
-
-A **predicate-selected write** starts from one concrete entity and one **bare**
-`m-predicate` predicate. It is not a language method name and it is not inferred
-from golden SQL. Query clauses (`orderBy`, `limit`, `includes`, `temporal`,
-`asOfRange`, `history`, and `narrowTo`) are not write targets.
-The canonical instruction and its assignment rules are `m-case-format`.
+### A predicate-selected write never reaches a versioned target
 
 A keyed write of one versioned row gates under Optimistic and advances under
-both strategies from the version observed for that row. A predicate-selected write to a
-versioned entity has **no** single-statement versioned template: the gate binds a
-*per-row* observed version. It **MUST** therefore **materialize** (ADR 0014):
-
-1. resolve the predicate through a read, recording each matched row's observed
-   version; under the Entity's effective Locking strategy this read takes the
-   `m-read-lock` shared lock; then
-2. issue one keyed per-object write for every row that the verb writes — gated
-   under Optimistic and ungated-but-version-advancing under Locking.
-
-For assignment-bearing mutations, no-op elimination is **per resolved row**: when
-all assignments already equal that row's values, it issues no DML, advances no
-version, and contributes no Database Call. `delete` and temporal `terminate`
-process **every** resolved row: they have no assignment equality to eliminate. The
-exact cost is therefore **`1 + N`**, where `N` is the number of rows actually
-written, not necessarily the number resolved. A per-object gate or temporal close
-that matches zero rows is the `updatedRows != 1` conflict signal and **MUST**
-abort the whole unit of work; a later row is never silently continued after that
-conflict.
-
-A **Bitemporal amendment** is the exception to elimination at selection. It
-resolves each object by the rectangle current at its `validFrom` and reaches the
-object's later coverage when its flush reaches it (`m-temporal-write`
-*Predicate-selected amendments span their requested extent*), so equality at the
-start eliminates nothing: every rectangle it reaches is judged unchanged for
-itself, and one kept unchanged under Optimistic is proven by its guard. Its
-starting rectangle gates on the `in_z` its selection observed, every later
-rectangle on the `in_z` its own read inside the flush observed, and a later read
-never refreshes the starting proof. Its cost adds those coverage reads, and its
-DML is the statements its rectangles take, guards included.
-
-This materialization rule also applies to Transaction-Time Entities. Their
-observed `txStart` (`in_z`) is the per-row optimistic version analogue; the
-temporal modules own close/chain and rectangle-split SQL, while this module owns
-the conflict and abort rule. Reladomo is the prior art: transaction mode either
-reads under a lock or gates on the observed optimistic version and treats
-`updatedRows != 1` as a conflict; its temporal director closes `IN_Z` milestones
-and splits rectangles. Parallax adopts those runtime semantics, not Reladomo's
-Java API or implementation structure.
-
-The one exception is an **unversioned, non-temporal** target, which remains
-readless whatever it assigns:
-`amend` emits exactly one `update <table> set <column> = ?, … where <predicate>`
-and `delete` exactly one `delete from <table> where <predicate>`. The readless
-update has no equality-elimination pass. Its `set` columns follow `m-sql`'s
-target Entity Layout filtering, never authored assignment order; binds are
-assignment values in that emitted order followed by predicate binds.
-`m-batch-write` owns this readless vocabulary and witness; this module owns every
-observed-version or Transaction-Time materialization rule.
+both strategies from the version observed for that row. A predicate-selected
+write (`m-batch-write`) is one readless statement and observes no row, so it has
+no version to gate on or advance from: it is refused for a versioned target, as
+for a Transaction-Time one, before anything is read
+(`set-based-write-target-unsupported`, `m-batch-write`). A caller writes such a
+target through a read and keyed writes, or through a caller-addressed write
+stating the version it holds (*Caller-addressed writes*, `m-unit-work`).
 
 ### Temporal entities derive the version from Transaction Time
 
@@ -482,21 +433,8 @@ entries that simulate a concurrent transaction mutating the row — and a
 
 A companion **scenario** case pins the empty-update rule: a versioned update
 assigning no attribute declares `databaseCalls: 0` and lists no golden DML (no
-statement issued). Predicate-selected witnesses use a materializing `find`, the
-structured `write` instruction, and a verification `find`; non-trivial finds carry
-their own naive `referenceSql` oracle.
-
-| Witness | Target / Concurrency Preference | Observable rule |
-|---|---|---|
-| `m-opt-lock-003`, `-004` | `Account` update, optimistic / locking | materialize then per-object update; optimistic reads/gates are lock-free, locking reads carry `for share of t0` and writes omit the gate |
-| `m-opt-lock-014` | `Account` update, locking | mixed equal/changed rows gives `1 + 1`, proving per-row no-op elimination and no spurious version bump |
-| `m-opt-lock-015` | `Account` delete, optimistic | every matched row is deleted through a version-gated per-row write; the final find proves only the unmatched account remains |
-| `m-temporal-write-007` | Transaction-Time `Balance` terminate, locking | every current matched milestone is closed; no equality-elimination applies |
-| `m-temporal-write-026`–`-029` | `Position` plain / bounded correction or termination | the materialized observed rectangle is closed and the required head/middle/tail chain is emitted |
-
-Each scenario's write step lists its ordered per-object golden statements
-(`databaseCalls: N`); the declared total is the honest `1 + N` materialize cost plus
-any explicit verification read. Optimistic corpus cases carry
+statement issued). The refusal of a predicate-selected write over a versioned
+target is `m-batch-write-047`. Optimistic corpus cases carry
 `when.uow: { concurrency: optimistic }`; locking cases carry
 `when.uow: { concurrency: locking }`.
 

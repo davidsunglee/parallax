@@ -1,7 +1,6 @@
 """Write admission (`m-unit-work` "Observed-State Coalescing"), observed at the
 owner's interface where the write verbs cannot say it precisely: when a
-caller-addressed write's confirmation is consulted, what a withdrawn group
-leaves of the claims and their views, how a planned batch drains into the
+caller-addressed write's confirmation is consulted, how a planned batch drains into the
 live ownership, and the window rules a temporal object's caller-addressed
 writes meet that the verb matrices do not reach. What a caller sees through
 the verbs is the snapshot and API suites'."""
@@ -16,14 +15,13 @@ from decimal import Decimal
 import pytest
 
 from parallax.conformance.class_models import MODELS as CLASS_MODELS
-from parallax.core import inheritance, temporal_read
+from parallax.core import inheritance
 from parallax.core import predicate as predicate_algebra
 from parallax.core._execution._unit_work.admission import BufferOutcome, WriteAdmission
 from parallax.core._execution._unit_work.instructions import (
     ExpectedTxStart,
     PreparedKeyedWrite,
     PreparedPredicateWrite,
-    prepare_typed_write,
     prepare_wire_write,
 )
 from parallax.core._execution._unit_work.retain import RetainedTargetState
@@ -33,7 +31,6 @@ from parallax.core._execution._unit_work.write_items import (
     ChainedTemporalWrite,
     ComposedTemporalWrite,
     InsertionKeyedWrite,
-    ObservedKeyedWrite,
     ReadlessPredicateWrite,
     TargetKeyedWrite,
     readless_write,
@@ -42,31 +39,24 @@ from parallax.core._execution._unit_work.write_items import (
 from parallax.core.base import INFINITY
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import EntityIdentity, Metamodel
-from parallax.core.temporal_read import TemporalReadError
 from parallax.core.unit_work import (
     KeyedWriteInstruction,
-    MaterializedWriteGroup,
     PredicateSelection,
     PredicateWriteInstruction,
     RetainedObservation,
     TargetWriteInstruction,
-    UnitOfWorkError,
-    VersionedEvidenceBuilder,
     WriteAssignment,
     WriteEvidenceError,
     buffered_write,
 )
 from parallax.core.write_plan import (
     ObjectKey,
-    PredecessorRow,
-    TemporalObservation,
     VersionObservation,
 )
 from parallax.core.write_plan.keys import (
     ObjectStateKey,
     TemporalObjectStateKey,
     VersionedObjectStateKey,
-    object_state_key_from_observation,
 )
 from parallax.core.write_plan.plan import (
     OPEN_BITEMPORAL_ENDS,
@@ -79,7 +69,6 @@ from parallax.core.write_plan.steps import INFINITY as PLANNED_INFINITY
 from parallax.core.write_plan.steps import Finite
 from tests._support.planner_probes import RecordingSource
 from tests.unit._corpus_model_support import corpus_records, formed
-from tests.unit._temporal_group_support import temporal_group
 from tests.unit.core._execution._unit_work._temporal_targets_support import (
     APR,
     AUG,
@@ -182,28 +171,6 @@ def _account_amend(account_id: int) -> PreparedKeyedWrite:
     return prepared
 
 
-def _account_group(*states: tuple[int, int]) -> MaterializedWriteGroup:
-    evidence = VersionedEvidenceBuilder(key_position=0, version_position=1)
-    for state in states:
-        evidence.append(state)
-    sealed = evidence.seal()
-    assert sealed is not None
-    prepared = prepare_typed_write(
-        PredicateWriteInstruction(
-            "delete",
-            PredicateSelection(
-                "Account",
-                predicate_algebra.Comparison(
-                    "lessThan", predicate_algebra.FieldSubject("Account.id"), 100
-                ),
-            ),
-        ),
-        _ACCOUNT,
-    )
-    assert isinstance(prepared, PreparedPredicateWrite)
-    return MaterializedWriteGroup(mutation=prepared, evidence=sealed)
-
-
 def _barrier() -> ReadlessPredicateWrite:
     prepared = prepare_wire_write(
         PredicateWriteInstruction(
@@ -218,49 +185,6 @@ def _barrier() -> ReadlessPredicateWrite:
     )
     assert isinstance(prepared, PreparedPredicateWrite)
     return readless_write(prepared)
-
-
-def _position(position_id: int, start: dt.datetime, tx_start: object = T0) -> dict[str, object]:
-    return {
-        **rectangle(start, INFINITY, "100.00").members,
-        "id": position_id,
-        "txStart": tx_start,
-    }
-
-
-def _spanning_group(*rows: dict[str, object]) -> MaterializedWriteGroup:
-    return temporal_group(
-        PredicateWriteInstruction(
-            "amend",
-            PredicateSelection(
-                "Position",
-                predicate_algebra.Comparison(
-                    "lessThan", predicate_algebra.FieldSubject("Position.id"), 100
-                ),
-            ),
-            assignments=(WriteAssignment("Position.acctNum", "G"),),
-            valid_from=MAR,
-        ),
-        POSITION,
-        rows,
-    )
-
-
-def _position_observed(position_id: int, start: dt.datetime) -> ObservedKeyedWrite:
-    observation = TemporalObservation(predecessor=PredecessorRow(_position(position_id, start)))
-    shape = temporal_read.view(POSITION).shape(ENTITY)
-    assert shape is not None
-    state = object_state_key_from_observation(
-        ObjectKey(ENTITY, (("id", position_id),)), observation, shape
-    )
-    held = RetainedObservation(state, observation, None)
-    prepared = prepare_wire_write(
-        KeyedWriteInstruction("amend", "Position", ({"id": position_id, "acctNum": "O"},), start),
-        POSITION,
-    )
-    item = buffered_write(prepared, held)
-    assert isinstance(item, ObservedKeyedWrite)
-    return item
 
 
 # --------------------------------------------------------------------------- #
@@ -321,35 +245,6 @@ def test_the_write_confirmation_answers_is_the_one_composed() -> None:
     (composed,) = admission.composed_writes()
     assert isinstance(composed, TargetKeyedWrite)
     assert composed.retained is held
-
-
-# --------------------------------------------------------------------------- #
-# A withdrawn group leaves the claims and their views as they were.           #
-# --------------------------------------------------------------------------- #
-def test_a_group_withdrawn_after_the_object_view_was_asked_leaves_it_current() -> None:
-    admission = _admitted(_account_observed(3, 7), meta=_ACCOUNT)
-    # A target's admission builds the object view before the group arrives.
-    _admit(admission, _account_target(5, 1))
-    with pytest.raises(UnitOfWorkError, match="collides with a claim"):
-        admission.admit(_account_group((1, 7), (2, 7), (3, 7)), confirm_target=_confirmed)
-    # Neither withdrawn selection still claims its object, and the keyed
-    # write the group met still stands at its own position.
-    _admit(admission, _account_target(1, 8), _account_observed(2, 7), _account_observed(3, 7))
-    _refused(admission, _account_target(3, 8))
-    assert len(admission.composed_writes()) == 4
-
-
-def test_a_group_withdrawn_after_the_spanning_view_was_asked_leaves_it_current() -> None:
-    admission = _admitted(_spanning_group(_position(5, JAN)))
-    # An observed write of an unselected object builds the spanning view.
-    _admit(admission, _position_observed(6, JAN))
-    with pytest.raises(TemporalReadError):
-        admission.admit(
-            _spanning_group(_position(1, JAN), _position(2, JAN), _position(3, JAN, "soon")),
-            confirm_target=_confirmed,
-        )
-    _admit(admission, _position_observed(1, JUN), _position_observed(2, JUN))
-    _refused(admission, _position_observed(5, JUN))
 
 
 # --------------------------------------------------------------------------- #

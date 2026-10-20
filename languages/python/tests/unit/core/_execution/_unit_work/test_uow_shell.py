@@ -58,14 +58,12 @@ from parallax.core.base import INFINITY
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import AttributeIdentity, Metamodel
-from parallax.core.temporal_read import TemporalReadError
 from parallax.core.unit_work import (
     BufferItem,
     BufferOutcome,
     Clock,
     KeyedMutation,
     KeyedWriteInstruction,
-    MaterializedWriteGroup,
     PredicateSelection,
     PredicateWriteInstruction,
     RetainedObservation,
@@ -75,7 +73,6 @@ from parallax.core.unit_work import (
     TransactionSettings,
     UnitOfWork,
     UnitOfWorkError,
-    VersionedEvidenceBuilder,
     WriteAssignment,
     WriteBatchReason,
     WriteEvidenceError,
@@ -104,7 +101,6 @@ from parallax.core.write_plan.steps import NEW_LINEAGE, Finite, PlannedUpdate
 from tests._support.clock_probes import CountingClock
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY, RecordingSource, admitted_writes
 from tests.unit._corpus_identity_support import corpus_object_key
-from tests.unit._temporal_group_support import temporal_group
 from tests.unit._where_position_model import (
     WherePosition,
 )
@@ -615,32 +611,9 @@ def test_escaped_reference_raises_on_every_use() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Buffering a Materialized Write Group installs its selection claims with it, #
-# or neither.                                                                  #
+# The keyed writes the claim tests buffer.                                     #
 # --------------------------------------------------------------------------- #
 _TX_START = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
-
-
-def _account_group(*states: tuple[int, int]) -> MaterializedWriteGroup:
-    evidence = VersionedEvidenceBuilder(key_position=0, version_position=1)
-    for state in states:
-        evidence.append(state)
-    sealed = evidence.seal()
-    assert sealed is not None
-    prepared = prepare_typed_write(
-        PredicateWriteInstruction(
-            "delete",
-            PredicateSelection(
-                "Account",
-                predicate_algebra.Comparison(
-                    "lessThan", predicate_algebra.FieldSubject("Account.id"), 100
-                ),
-            ),
-        ),
-        _ACCOUNT,
-    )
-    assert isinstance(prepared, PreparedPredicateWrite)
-    return MaterializedWriteGroup(mutation=prepared, evidence=sealed)
 
 
 def _balance_members(key: int, tx_start: object = _TX_START) -> dict[str, object]:
@@ -653,32 +626,16 @@ def _balance_members(key: int, tx_start: object = _TX_START) -> dict[str, object
     }
 
 
-def _balance_group(*rows: dict[str, object]) -> MaterializedWriteGroup:
-    return temporal_group(
-        PredicateWriteInstruction(
-            "terminate",
-            PredicateSelection(
-                "Balance",
-                predicate_algebra.Comparison(
-                    "lessThan", predicate_algebra.FieldSubject("Balance.value"), "100.00"
-                ),
-            ),
-        ),
-        _BALANCE,
-        rows,
-    )
-
-
 def _account_state(key: int, version: int) -> VersionedObjectStateKey:
     return VersionedObjectStateKey(corpus_object_key("Account", ("id", key)), version)
 
 
 def _balance_state(key: int) -> ObjectStateKey:
-    target = _balance_group(_balance_members(key)).mutation.selection.target
-    shape = temporal_read.view(_BALANCE).shape(target.identity)
+    object_key = corpus_object_key("Balance", ("id", key))
+    shape = temporal_read.view(_BALANCE).shape(object_key.entity)
     assert shape is not None
     return object_state_key_from_observation(
-        corpus_object_key("Balance", ("id", key)),
+        object_key,
         TemporalObservation(predecessor=PredecessorRow(_balance_members(key))),
         shape,
     )
@@ -711,87 +668,6 @@ def _refused_as_claimed(uow: UnitOfWork, item: BufferItem) -> WriteEvidenceError
         uow.buffer(item)
     assert refusal.value.code == "write-evidence-already-claimed"
     return refusal.value
-
-
-def test_buffering_a_group_claims_every_state_it_selected_as_a_keyed_read_would_key_it() -> None:
-    simulated = _simulated()
-
-    def body(uow: UnitOfWork) -> None:
-        assert uow.buffer(_account_group((1, 7), (2, 3))) is BufferOutcome.BUFFERED
-        _refused_as_claimed(uow, _account_write("amend", 1, 7))
-        _refused_as_claimed(uow, _account_write("delete", 2, 3))
-        # Another state of a selected object is another claim scope.
-        assert uow.buffer(_account_write("amend", 2, 7)) is BufferOutcome.BUFFERED
-
-    _run(body, steps=simulated)
-    assert sorted(_kinds(simulated)) == ["delete", "delete", "update"]
-
-    def temporal(uow: UnitOfWork) -> None:
-        uow.buffer(_balance_group(_balance_members(1), _balance_members(2)))
-        _refused_as_claimed(uow, _balance_update(1))
-        _refused_as_claimed(uow, _balance_update(2))
-
-    _run(temporal, meta=_BALANCE)
-
-
-def test_a_late_milestone_edge_failure_withdraws_only_the_admitted_prefix() -> None:
-    # The third row's axis start is no instant, so deriving its state key fails
-    # after two claims were admitted. Those two are withdrawn, the claim held
-    # before the group is untouched, and the group is never buffered.
-    simulated = _simulated(_BALANCE)
-
-    def body(uow: UnitOfWork) -> None:
-        uow.buffer(_balance_update(9))
-        group = _balance_group(
-            _balance_members(1), _balance_members(2), _balance_members(3, tx_start="soon")
-        )
-        with pytest.raises(TemporalReadError):
-            uow.buffer(group)
-        uow.buffer(_balance_group(_balance_members(1), _balance_members(2)))
-        with pytest.raises(UnitOfWorkError, match="collides with a claim"):
-            uow.buffer(_balance_group(_balance_members(9)))
-
-    _run(body, meta=_BALANCE, steps=simulated)
-    # The amendment of 9 closes and reopens it; the group terminates 1 and 2.
-    assert _kinds(simulated) == ["close", "insert", "close", "close"]
-    assert [
-        statement.binds[1]
-        for statement in simulated.statements
-        if statement.sql.startswith("update")
-    ] == [9, 1, 2]
-
-
-def test_a_late_collision_leaves_the_pending_claim_it_met_standing() -> None:
-    simulated = _simulated()
-
-    def body(uow: UnitOfWork) -> None:
-        uow.buffer(_account_write("amend", 3, 7))
-        with pytest.raises(UnitOfWorkError, match="collides with a claim"):
-            uow.buffer(_account_group((1, 7), (2, 7), (3, 7), (4, 7)))
-        with pytest.raises(UnitOfWorkError, match="collides with a claim"):
-            uow.buffer(_account_group((3, 7)))
-        for account_id in (1, 2, 4):
-            uow.buffer(_account_write("delete", account_id, 7))
-
-    _run(body, steps=simulated)
-    assert set(_kinds(simulated)) == {"update", "delete"}
-    (update,) = (
-        statement for statement in simulated.statements if statement.sql.startswith("update")
-    )
-    assert update.binds == (Decimal("1.00"), 8, 3, 7)
-
-
-def test_a_group_selecting_one_state_twice_is_refused_and_leaves_no_claim() -> None:
-    simulated = _simulated()
-
-    def body(uow: UnitOfWork) -> None:
-        with pytest.raises(UnitOfWorkError, match="incompatible"):
-            uow.buffer(_account_group((1, 7), (2, 7), (1, 7)))
-        uow.buffer(_account_write("amend", 1, 7))
-        uow.buffer(_account_write("amend", 2, 7))
-
-    _run(body, steps=simulated)
-    assert set(_kinds(simulated)) == {"update"}
 
 
 # --------------------------------------------------------------------------- #
@@ -955,30 +831,29 @@ def test_a_destructive_write_of_a_pending_insert_reports_the_cancellation() -> N
 
 
 def test_every_other_accepted_item_reports_plain_buffering() -> None:
-    predicate = prepare_typed_write(
-        PredicateWriteInstruction(
-            "delete",
-            PredicateSelection(
-                "Account",
-                predicate_algebra.Comparison("eq", predicate_algebra.FieldSubject("Account.id"), 1),
-            ),
-        ),
-        _ACCOUNT,
-    )
-
     def body(uow: UnitOfWork) -> None:
         assert uow.buffer(_account_write("amend", 1, 7)) is BufferOutcome.BUFFERED
         assert uow.buffer(_account_write("delete", 2, 7)) is BufferOutcome.BUFFERED
-        assert uow.buffer(readless_write(predicate)) is BufferOutcome.BUFFERED
-        assert uow.buffer(_account_group((4, 7))) is BufferOutcome.BUFFERED
         raise _Abandoned
 
     with pytest.raises(_Abandoned):
         _run(body)
 
+    predicate = prepare_typed_write(
+        PredicateWriteInstruction(
+            "delete",
+            PredicateSelection(
+                "Person",
+                predicate_algebra.Comparison("eq", predicate_algebra.FieldSubject("Person.id"), 3),
+            ),
+        ),
+        _PERSON_META,
+    )
+
     def unversioned(uow: UnitOfWork) -> None:
         assert uow.buffer(_person_write("amend", 1)) is BufferOutcome.BUFFERED
         assert uow.buffer(_person_write("delete", 2)) is BufferOutcome.BUFFERED
+        assert uow.buffer(readless_write(predicate)) is BufferOutcome.BUFFERED
         raise _Abandoned
 
     with pytest.raises(_Abandoned):

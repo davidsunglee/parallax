@@ -4,20 +4,17 @@ complete before later work runs*), through simulated step execution.
 Each unit's span executes and the unit completes before any step of a later
 unit is taken, a unit with no step included; a deferred range binds at its
 unit's turn on what earlier units published, reusing the starting rows it
-retained that are still current; a deferred group executes round by round,
-each round released before the next is prepared, and publishes once, after its
-last round, closing its preparation however it ends; and a unit whose span
-answers another number of allocated keys than the rows it opens completes
-nothing. Against simulated stored rows, each span changes them as it
-executes, so a later unit or round reads what earlier ones left, while what
-the attempt owns changes only as each unit completes.
+retained that are still current; and a unit whose span answers another number
+of allocated keys than the rows it opens completes nothing. Against simulated
+stored rows, each span changes them as it executes, so a later unit reads what
+earlier ones left, while what the attempt owns changes only as each unit
+completes.
 """
 
 from __future__ import annotations
 
 import dataclasses
 import datetime as dt
-import weakref
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from decimal import Decimal
@@ -32,7 +29,6 @@ from parallax.core import MAX, Attr, Bitemporal, DomainModel, Entity, attr, opt_
 from parallax.core import predicate as predicate_algebra
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
-from parallax.core._execution._unit_work import ranges as ranges_module
 from parallax.core._execution._unit_work.acquisition import (
     AcquireRows,
     CompletionRequest,
@@ -50,7 +46,6 @@ from parallax.core._execution._unit_work.instructions import (
     prepare_typed_write,
     prepare_wire_write,
 )
-from parallax.core._execution._unit_work.ranges import GroupContinuation
 from parallax.core._execution._unit_work.write_runner import ExecuteWriteSteps, run_write_plan
 from parallax.core.base import INFINITY
 from parallax.core.dialect import POSTGRES
@@ -60,7 +55,6 @@ from parallax.core.unit_work import (
     BufferItem,
     Concurrency,
     KeyedWriteInstruction,
-    MaterializedWriteGroup,
     PredicateSelection,
     PredicateWriteInstruction,
     RetainedObservation,
@@ -76,7 +70,6 @@ from parallax.core.unit_work import (
 )
 from parallax.core.write_plan import (
     ObjectKey,
-    ObjectStateKey,
     PredecessorRow,
     TemporalObservation,
     object_state_key_from_observation,
@@ -97,8 +90,6 @@ from tests._support.planner_probes import (
     retained_observation,
 )
 from tests.unit._corpus_identity_support import corpus_object_key
-from tests.unit._corpus_model_support import model as corpus_model
-from tests.unit._temporal_group_support import temporal_group
 from tests.unit._where_position_model import WherePosition
 from tests.unit.core._execution._unit_work._acquired_rows_support import HeldRows
 from tests.unit.core._execution._unit_work._flush_support import ObservedSteps, statement_kinds
@@ -483,276 +474,6 @@ def test_a_retained_row_still_current_at_its_units_turn_is_completed_without_a_r
 
 
 # --------------------------------------------------------------------------- #
-# A deferred group executes round by round and publishes once.                #
-# --------------------------------------------------------------------------- #
-_GROUPED: Final = corpus_model("position")
-_GROUPED_ENTITY: Final = entity_by_name(_GROUPED, "Position")
-assert _GROUPED_ENTITY is not None
-_GROUPED_POSITION: Final = _GROUPED_ENTITY
-_SELECTED_FROM: Final = dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
-_SELECTED_UNTIL: Final = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
-
-
-def _member_row(key: int, value: str = "100.00") -> dict[str, object]:
-    return {
-        "id": key,
-        "acctNum": "A",
-        "value": Decimal(value),
-        "validStart": _JAN,
-        "validEnd": INFINITY,
-        "txStart": _JAN,
-        "txEnd": INFINITY,
-    }
-
-
-def _state(row: dict[str, object]) -> ObjectStateKey:
-    shape = temporal_read.view(_GROUPED).shape(corpus_object_key("Position", ("id", 1)).entity)
-    assert shape is not None
-    return object_state_key_from_observation(
-        corpus_object_key("Position", ("id", row["id"])),
-        TemporalObservation(predecessor=PredecessorRow(row)),
-        shape,
-    )
-
-
-def _amended(*rows: dict[str, object]) -> MaterializedWriteGroup:
-    return temporal_group(
-        PredicateWriteInstruction(
-            "amendUntil",
-            PredicateSelection(
-                "Position",
-                predicate_algebra.Comparison(
-                    "eq", predicate_algebra.FieldSubject("Position.value"), "100.00"
-                ),
-            ),
-            (WriteAssignment("Position.value", Decimal("150.00")),),
-            _SELECTED_FROM,
-            _SELECTED_UNTIL,
-        ),
-        _GROUPED,
-        rows,
-    )
-
-
-class _Tracked(PlannedWrites):
-    """A round's Planned Writes, as they were pulled, that a weak reference
-    can tell is still alive."""
-
-
-@dataclass
-class _Lifecycle:
-    """What the group's continuation saw: at each pull, what ``progress``
-    answered, whether the round before it was still alive, and whether the
-    group's selected states had been published as changed; and how often it
-    finished and closed."""
-
-    observations: tuple[RetainedObservation, ...]
-    progress: Callable[[], int]
-    pulls: list[tuple[int, bool, bool]] = field(default_factory=list[tuple[int, bool, bool]])
-    previous: weakref.ref[_Tracked] | None = None
-    finished: int = 0
-    closed: int = 0
-
-    def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        pull, finish, close_ = (
-            GroupContinuation.pull,
-            GroupContinuation.finish,
-            GroupContinuation.close,
-        )
-        lifecycle = self
-
-        def pulling(continuation: GroupContinuation) -> PlannedWrites | None:
-            previous = lifecycle.previous
-            lifecycle.pulls.append(
-                (
-                    lifecycle.progress(),
-                    previous is not None and previous() is not None,
-                    any(observation.invalidated for observation in lifecycle.observations),
-                )
-            )
-            writes = pull(continuation)
-            if writes is None:
-                lifecycle.previous = None
-                return None
-            tracked = _Tracked(writes.segments)
-            lifecycle.previous = weakref.ref(tracked)
-            return tracked
-
-        def finishing(continuation: GroupContinuation) -> object:
-            lifecycle.finished += 1
-            return finish(continuation)
-
-        def closing(continuation: GroupContinuation) -> None:
-            lifecycle.closed += 1
-            close_(continuation)
-
-        monkeypatch.setattr(GroupContinuation, "pull", pulling)
-        monkeypatch.setattr(GroupContinuation, "finish", finishing)
-        monkeypatch.setattr(GroupContinuation, "close", closing)
-
-
-def _grouped(
-    monkeypatch: pytest.MonkeyPatch,
-    steps: Callable[[SimulatedWriteSteps], ExecuteWriteSteps],
-    *rows: dict[str, object],
-    store: SimulatedTemporalStore | None = None,
-) -> tuple[UnitOfWork, SimulatedWriteSteps, _Lifecycle]:
-    """A unit of work holding the amendment of ``rows`` as one deferred group
-    settled one object a round, each selected state retained, with what its
-    continuation sees recorded: how many statements had run, or with a
-    ``store`` holding ``rows``, how many rows it held."""
-    monkeypatch.setattr(ranges_module, "_GROUP_OBJECTS", 1)
-    payloads = build_write_planner(_GROUPED).payloads
-    acquire_rows: AcquireRows
-    if store is None:
-        simulated = _simulated(_GROUPED)
-        acquire_rows = HeldRows(_GROUPED)
-    else:
-        store.seed_fixtures(_GROUPED, _GROUPED_POSITION, rows)
-        simulated = SimulatedWriteSteps(payloads, _GROUPED, POSTGRES, store=store)
-        acquire_rows = store.acquisition(_GROUPED)
-    uow = _uow(_GROUPED, steps(simulated), rows=acquire_rows, concurrency="locking")
-    observations = tuple(
-        uow.retain(
-            RetainedObservation(
-                _state(row), TemporalObservation(predecessor=PredecessorRow(row)), None
-            )
-        )
-        for row in rows
-    )
-    uow.buffer(_amended(*rows))
-    if store is None:
-        lifecycle = _Lifecycle(observations, lambda: len(simulated.statements))
-    else:
-        keys = [cast("int", row["id"]) for row in rows]
-        lifecycle = _Lifecycle(
-            observations,
-            lambda: sum(len(_stored(store, _GROUPED, _GROUPED_POSITION, key)) for key in keys),
-        )
-    lifecycle.install(monkeypatch)
-    return uow, simulated, lifecycle
-
-
-def test_each_round_executes_and_is_released_before_the_next_is_prepared(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    uow, simulated, lifecycle = _grouped(
-        monkeypatch, lambda simulated: simulated, _member_row(1), _member_row(2), _member_row(3)
-    )
-    uow.flush(trigger="pre_commit")
-    # One object a round, two statements each: its close, and one insert
-    # opening its head, changed part, and tail. Nothing is published before
-    # the last round.
-    assert lifecycle.pulls == [
-        (0, False, False),
-        (2, False, False),
-        (4, False, False),
-        (6, False, False),
-    ]
-    assert (lifecycle.finished, lifecycle.closed) == (1, 1)
-    assert all(observation.invalidated for observation in lifecycle.observations)
-    assert statement_kinds(simulated.statements) == ["close", "insert"] * 3
-
-
-def test_an_empty_round_is_executed_and_does_not_end_the_group(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # The selected milestone already holds the assigned value under the
-    # shared lock: its round executes nothing, and the next answers none.
-    spans: list[int] = []
-    uow, simulated, lifecycle = _grouped(
-        monkeypatch,
-        lambda simulated: ObservedSteps(simulated, observe=spans.append),
-        _member_row(1, "150.00"),
-    )
-    uow.flush(trigger="pre_commit")
-    assert [statements for statements, _alive, _published in lifecycle.pulls] == [0, 0]
-    # The group unit's own empty span, then its one empty round.
-    assert spans == [0, 1]
-    assert simulated.statements == ()
-    assert (lifecycle.finished, lifecycle.closed) == (1, 1)
-
-
-def test_a_failed_round_closes_the_group_once_and_prepares_and_publishes_nothing_more(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    failure = RuntimeError("the second round failed")
-    uow, _simulated_steps, lifecycle = _grouped(
-        monkeypatch,
-        # The group's own empty span, then its first and second rounds.
-        lambda simulated: ObservedSteps(simulated, failing=2, failure=failure),
-        _member_row(1),
-        _member_row(2),
-        _member_row(3),
-    )
-    with pytest.raises(RuntimeError, match="second round") as raised:
-        uow.flush(trigger="pre_commit")
-    assert raised.value is failure
-    assert len(lifecycle.pulls) == 2
-    assert (lifecycle.finished, lifecycle.closed) == (0, 1)
-    assert not any(observation.invalidated for observation in lifecycle.observations)
-    with pytest.raises(RollbackOnlyError):
-        uow.read(lambda: None)
-
-
-def test_a_close_failing_after_an_earlier_failure_is_noted_on_it(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    failure = RuntimeError("the round failed")
-    uow, _simulated_steps, _lifecycle = _grouped(
-        monkeypatch,
-        lambda simulated: ObservedSteps(simulated, failing=1, failure=failure),
-        _member_row(1),
-    )
-
-    def failing_close(continuation: GroupContinuation) -> None:
-        raise LookupError("closing failed")
-
-    monkeypatch.setattr(GroupContinuation, "close", failing_close)
-    with pytest.raises(RuntimeError) as raised:
-        uow.flush(trigger="pre_commit")
-    assert raised.value is failure
-    assert any("closing failed" in note for note in raised.value.__notes__)
-
-
-def test_a_close_failing_after_every_round_succeeded_refuses_the_units_success(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    uow, _simulated_steps, lifecycle = _grouped(
-        monkeypatch, lambda simulated: simulated, _member_row(1)
-    )
-    closing = LookupError("closing failed")
-
-    def failing_close(continuation: GroupContinuation) -> None:
-        raise closing
-
-    monkeypatch.setattr(GroupContinuation, "close", failing_close)
-    with pytest.raises(LookupError) as raised:
-        uow.flush(trigger="pre_commit")
-    assert raised.value is closing
-    assert not any(observation.invalidated for observation in lifecycle.observations)
-
-
-def test_a_finish_failing_closes_the_group_and_publishes_nothing(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    uow, _simulated_steps, lifecycle = _grouped(
-        monkeypatch, lambda simulated: simulated, _member_row(1)
-    )
-    finishing = LookupError("finishing failed")
-
-    def failing_finish(continuation: GroupContinuation) -> object:
-        raise finishing
-
-    monkeypatch.setattr(GroupContinuation, "finish", failing_finish)
-    with pytest.raises(LookupError) as raised:
-        uow.flush(trigger="pre_commit")
-    assert raised.value is finishing
-    assert lifecycle.closed == 1
-    assert not any(observation.invalidated for observation in lifecycle.observations)
-
-
-# --------------------------------------------------------------------------- #
 # Simulated rows change as each span executes; ownership as each unit         #
 # completes.                                                                   #
 # --------------------------------------------------------------------------- #
@@ -895,57 +616,3 @@ def test_a_unit_kept_behind_a_barrier_binds_on_the_rows_and_ownership_earlier_un
         (_JUN, _AUG, _FIXED, "A", changed),
         (_AUG, INFINITY, _FIXED, "A", hundred),
     ]
-
-
-def test_each_round_advances_the_stored_rows_before_the_next_while_the_group_publishes_once(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    store = SimulatedTemporalStore()
-    uow, _simulated_steps, lifecycle = _grouped(
-        monkeypatch,
-        lambda simulated: simulated,
-        _member_row(1),
-        _member_row(2),
-        _member_row(3),
-        store=store,
-    )
-    with store.transaction(rollback=False):
-        uow.flush(trigger="pre_commit")
-    # Each round's object closes and opens three rows in its place before the
-    # next round is prepared; nothing is published before the last.
-    assert lifecycle.pulls == [
-        (3, False, False),
-        (5, False, False),
-        (7, False, False),
-        (9, False, False),
-    ]
-    assert all(observation.invalidated for observation in lifecycle.observations)
-    assert [len(_stored(store, _GROUPED, _GROUPED_POSITION, key)) for key in (1, 2, 3)] == [3, 3, 3]
-
-
-def test_a_later_rounds_failure_restores_the_rows_earlier_rounds_advanced(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    store = SimulatedTemporalStore()
-    failure = RuntimeError("the third round failed")
-    uow, _simulated_steps, lifecycle = _grouped(
-        monkeypatch,
-        # The group's own empty span, then its first, second, and third rounds.
-        lambda simulated: ObservedSteps(simulated, failing=3, failure=failure),
-        _member_row(1),
-        _member_row(2),
-        _member_row(3),
-        store=store,
-    )
-    with (
-        pytest.raises(RuntimeError, match="third round") as raised,
-        store.transaction(rollback=False),
-    ):
-        uow.flush(trigger="pre_commit")
-    assert raised.value is failure
-    assert [progress for progress, _alive, _published in lifecycle.pulls] == [3, 5, 7]
-    assert (lifecycle.finished, lifecycle.closed) == (0, 1)
-    assert not any(observation.invalidated for observation in lifecycle.observations)
-    assert [_stored(store, _GROUPED, _GROUPED_POSITION, key) for key in (1, 2, 3)] == [
-        [(_JAN, INFINITY, _JAN, "A", Decimal("100.00"))]
-    ] * 3

@@ -396,8 +396,7 @@ def _assert_refusal(scenario: CompiledScenario, submission: Submission) -> None:
         pending = [
             other
             for other in earlier
-            if (_names_same_object(other, submission) or _may_select(scenario, other, submission))
-            and _pending_at(scenario, other, submission)
+            if _names_same_object(other, submission) and _pending_at(scenario, other, submission)
         ]
         if not pending:
             raise CaseFailure(
@@ -429,21 +428,6 @@ def _earlier_in_group(scenario: CompiledScenario, submission: Submission) -> lis
     ]
 
 
-def _may_select(scenario: CompiledScenario, group: Submission, write: Submission) -> bool:
-    """Whether the materializing predicate submission *group* may have selected
-    the object *write* names: its target is that object's Entity."""
-    return (
-        group.flushes
-        and write.entity is not None
-        and _predicate_entity(scenario.case, group).canonical_name == write.entity.canonical_name
-    )
-
-
-def _predicate_entity(case: Case, submission: Submission) -> Entity:
-    target = submission.entry.get("target") or {}
-    return case.model.entity(str(target.get("entity", "")))
-
-
 def _names_same_object(first: Submission, second: Submission) -> bool:
     return (
         second.entity is not None
@@ -454,22 +438,14 @@ def _names_same_object(first: Submission, second: Submission) -> bool:
 
 def _pending_at(scenario: CompiledScenario, earlier: Submission, later: Submission) -> bool:
     """Whether *earlier* is still pending when *later* is submitted: no find of
-    their group runs between them, and no predicate submission whose verb
-    flushes, since each flushes what is pending."""
+    their group runs between them, since each flushes what is pending."""
     group_of = {step.index: step.group for step in scenario.steps}
     label = group_of[later.step]
-    between = (earlier.step, earlier.position), (later.step, later.position)
     return not any(
         isinstance(step, _RowPublishingStep)
         and step.group == label
         and earlier.step < step.index < later.step
         for step in scenario.steps
-    ) and not any(
-        submission.flushes
-        and submission.refusal is None
-        and group_of[submission.step] == label
-        and between[0] < (submission.step, submission.position) < between[1]
-        for submission in scenario.submissions()
     )
 
 
@@ -494,15 +470,6 @@ def _assert_failure_subject(
             submission
             for submission in writers
             if submission.kind == "keyed" and not submission.inserts
-        ] + [
-            # A materializing predicate write names no object of its own: any
-            # object of its target it selected, or whose later coverage it
-            # reached, can fall short of its gate.
-            submission
-            for submission in flushed
-            if submission.flushes
-            and _predicate_entity(scenario.case, submission).canonical_name
-            == failure.entity.canonical_name
         ]
     if not able:
         raise CaseFailure(

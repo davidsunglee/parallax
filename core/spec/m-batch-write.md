@@ -7,7 +7,8 @@
 2. **predicate-selected writes** over a bare `m-predicate` predicate, whose
    canonical instruction is supplied by `m-case-format`.
 
-It owns only the set-based/readless vocabulary for the second family. Versioning,
+It owns only the set-based/readless vocabulary for the second family, including
+which targets that family can write at all. Versioning,
 locking, conflict abort, and temporal chaining belong respectively to `m-opt-lock`,
 `m-read-lock`, and `m-temporal-write`. The canonical golden SQL is
 fixed by `m-sql`.
@@ -76,29 +77,37 @@ DML and asserting the resulting table state — the write-sequence machinery
 per-key delete). So "buffered writes flush as set-based SQL" is verified by the
 rows it leaves behind, not merely asserted.
 
-A **versioned** entity has no readless predicate-write template. Every one of its
-writes against an existing row requires that row's own prior observation, in
-under **both** Effective Concurrency Strategies — Optimistic binds it as that
-row's gate, while Locking needs the read that took its shared lock — and one predicate statement can
-neither carry nor acquire one. Predicate update and delete therefore materialize
-to keyed writes (`m-opt-lock`). Transaction-Time temporal predicate
-writes likewise materialize so each observed milestone can close/chain
-(`m-temporal-write`). Those are not buffered-batch collapse rules.
+## A predicate-selected write is readless, or refused
 
-A materializing predicate write resolves **before** planning and enters it as one
-**Materialized Write Group** (`m-unit-work`) — one authored mutation, one shared
-key shape, aligned key and observation columns. Batching treats that group as
-**indivisible**: it is never split across steps, never merged with an unrelated
-buffered instruction, and never regrouped by statement kind, and it survives no
-further than finalization. It is an input to planning, not a member of a Write
-Plan, so no group wrapper or identifier reaches the flush. A Bitemporal
-amendment's group finalizes to one deferred unit whose objects settle in batches
-when the flush reaches it (`m-unit-work` *Materialized Write Groups*).
+A predicate-selected write is **one readless statement**, so its target is an
+**unversioned, non-temporal** Entity. Every write of an existing object of any
+other target is judged against that object's own prior observation: a
+**versioned** target's version, under **both** Effective Concurrency Strategies —
+Optimistic binds it as that row's gate, while Locking needs the read that took
+its shared lock (`m-opt-lock`) — and a **temporal** target's current milestone,
+which the write closes and chains from (`m-temporal-write`). One predicate
+statement can neither carry nor acquire such an observation.
+
+A model-aware validator therefore **MUST** refuse a predicate-selected write
+whose target is versioned (any Attribute of its family declares
+`optimisticLocking`) or temporal (Transaction-Time-Only or Bitemporal), with the
+pre-SQL rule `set-based-write-target-unsupported` (`m-case-format` *Rejected
+cases*). It is judged once the target Entity resolves and before the write's
+verb, window, predicate, inheritance family, or assignments, because none of
+them could make the write admissible. The refusal is a preparation refusal
+(`m-unit-work`): nothing is read, nothing pending is flushed, and the attempt is
+not doomed. An implementation's refusal **SHOULD** name the writes that reach
+such a target: reading its objects and writing each one by key, or a
+caller-addressed write stating the revision the caller holds — and, for a
+temporal target, a termination rather than a deletion.
+
+`m-batch-write-047`, `-048`, and `-049` witness the refusal for a versioned, a
+Transaction-Time-Only, and a Bitemporal target.
 
 ## Predicate-selected readless forms
 
-For an **unversioned, non-temporal** target, a predicate-selected write is
-readless and emits exactly one statement, whatever members it assigns. A Value
+A predicate-selected write emits exactly one statement, whatever members it
+assigns. A Value
 Object occurrence — `one` or `many`, any nested `many` it holds included — and a
 scalar collection are each assigned whole at their own path, exactly as any
 other amendment assigns them (`m-storage-layout`): the statement reads no stored
@@ -109,7 +118,7 @@ alone. `amend` is:
 update <table> set <column> = ?, … where <predicate>
 ```
 
-There is no materialization and no equality-elimination pass: rows already equal
+There is no equality-elimination pass: rows already equal
 to an assigned value are still matched by ordinary SQL set semantics. The
 emitted `set` columns and their assignment-value binds follow `m-sql`'s physical
 DML rule: filter the assigned cells from the target Entity Layout in Table
@@ -142,16 +151,12 @@ PostgreSQL's Repeatable Read the same race raises the snapshot conflict
 
 `m-batch-write-005` pins readless predicate delete and
 `m-batch-write-006` pins the update's layout-order SQL and bind determinism.
-Reladomo's transaction behavior remains prior art for the materializing branch:
-it reads under a lock or gates on an observed optimistic version, not a Java bulk
-API template. Parallax applies that runtime rule through the owning modules above.
 
 A readless statement that **matches zero rows succeeds with zero affected rows —
 never an error.** Ordinary SQL set semantics already make `update … where
 <predicate>` and `delete … where <predicate>` no-ops when nothing matches; a
-predicate-selected write that matches nothing simply wrote nothing, the same way
-a materializing verb's resolving read matching zero rows emits zero keyed writes
-and succeeds (`m-opt-lock`). This is categorically distinct from the shortfall an
+predicate-selected write that matches nothing simply wrote nothing. This is
+categorically distinct from the shortfall an
 **observation-backed** per-row write raises (`m-opt-lock` / `m-temporal-write`),
 which fires when a row the caller **did** match and observe was concurrently
 changed underneath it. Both effective strategies raise it, and the settled gate
@@ -167,7 +172,7 @@ writes after it. Batching and dependency ordering (`m-unit-work`) apply freely
 foreign-key rules operate exactly as they otherwise would — but **no write may
 cross the barrier in either direction**.
 
-Unlike a keyed or materialized write, a readless predicate never reveals which
+Unlike a keyed write, a readless predicate never reveals which
 rows it touches: its read/write set is whatever the predicate matches at
 execution time. Moving another write across it could therefore change which rows
 it matches, and so change what the transaction wrote. Treating the whole buffer
@@ -191,9 +196,11 @@ versioned per-key delete. The predicate-write witnesses prove a distinct target:
 | `m-batch-write-009` | unversioned, non-temporal document-mapped `Traveler` update | one readless update replacing a top-level document-resident `many` whole at its path, every other key kept |
 | `m-batch-write-010` | unversioned, non-temporal document-mapped `NestedRoute` update | one readless update replacing a `one` whose authored content holds a nested `many`, its whole subtree included |
 | `m-batch-write-012`/`-013` | unversioned, non-temporal `CollectionTwinItem` update under each layout | one readless update assigning whole scalar collections and a `many` holding one, in Table Layout order |
-| `m-opt-lock-015` | versioned `Account` delete | materialize plus one optimistic per-row delete for each match |
+| `m-batch-write-047` | versioned `Account` update | refused before its predicate and assignments: `set-based-write-target-unsupported` |
+| `m-batch-write-048` | Transaction-Time-Only `Balance` delete | refused: `set-based-write-target-unsupported` |
+| `m-batch-write-049` | Bitemporal `Position` update | refused before any window is judged: `set-based-write-target-unsupported` |
 
 The two families share SQL terminology but not an observation contract: an `IN`
 list can collapse an already tracked set, whereas a predicate write starts from an
-operation and either remains readless or materializes because its target requires
-per-row observation.
+operation, observes nothing, and so writes only a target that needs no per-row
+observation.

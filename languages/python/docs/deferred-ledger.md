@@ -111,29 +111,6 @@ landed an unreviewed restructuring of the very surface the boundary review was
 measuring. Until it is taken the residue is reader-facing only: no case id enters
 or leaves the skip map, no case changes lane, and no grade moves.
 
-### D-72 — Predicate-write staging still refuses an issue-bearing read instead of classifying it
-
-*Medium — an invalid stored row is classified by read surfaces but refused by a
-write-only staging lane.* Relates to write acquisition in
-`parallax.core.execution` over `parallax.core.read_delivery`'s judged member rows,
-and `core/spec/m-read-delivery.md`.
-
-**What.** Ordinary eager, streamed, values, and milestone-set reads classify
-invalid stored state at the individual Root View. A milestone root whose edge
-cannot decode remains an in-band `InvalidData` at its arrival ordinal and carries
-no edge; it is not partitioned or refused as a whole read. Predicate-write
-staging is the one remaining refusing lane because a write has no result union
-in which to publish a classified row.
-
-**Why it is deferred rather than fixed.** Selecting an invalid row for mutation
-needs a write-contract decision: either refuse the write before deriving Object
-Keys, skip that row and make affected-row accounting partial, or add a new
-per-row write result channel. Those choices have different atomicity and
-accounting semantics, so the read-contract change does not decide among them.
-
-**When.** With the predicate-write contract that defines whether selected
-invalid rows refuse, are skipped, or become explicit per-row write results.
-
 ### D-74 — No corpus model pairs a versioned root with an unversioned relationship target, so one preference resolving two ways has a single grader
 
 *Medium — shipped behavior proven at one interface instead of two.* **Owned by
@@ -159,20 +136,16 @@ observation an interface test already pins exactly. Nothing in the write or read
 contract depends on it, and no acceptance criterion reaches it — what it buys is
 the second grader every other claimed observable has.
 
-### D-75 — A READLESS predicate write step is refused on the snapshot-scenario lane, though nothing about that shape conflicts with it
+### D-75 — A predicate write step is refused on the snapshot-scenario lane, though nothing about that shape conflicts with it
 
 *Low — a refusal narrower than it needs to be, on a shape no case authors.*
 Relates to `parallax.conformance._lanes.snapshot._snapshot_write_entries`.
 
 **What.** The snapshot-scenario lane now executes `write:` steps, and it admits
 the buffered KEYED instruction list alone: `_snapshot_write_entries` classifies
-every other `write` form and refuses each by its own name. A MATERIALIZING
-predicate write is refused permanently and correctly — it resolves through the
-find step that precedes it (`_run_materializing_pair`), and a find on this lane
-materializes a view a later `access` states rather than the rows a write settles
-against, so the two step roles genuinely conflict. A READLESS predicate write
-(the `m-batch-write-005` / `-006` shape) needs no find at all, so nothing about
-it conflicts with this lane; its refusal says so — the shape is unwired here, not
+every other `write` form and refuses each by its own name. A predicate write
+(the `m-batch-write-005` / `-006` shape) reads nothing, so nothing about it
+conflicts with this lane; its refusal says so — the shape is unwired here, not
 mis-authored. Wiring it would reuse `_lower_predicate_write_step` and
 `_run_readless_predicate_write` unchanged, as the unit-of-work lane already does.
 
@@ -180,8 +153,7 @@ mis-authored. Wiring it would reuse `_lower_predicate_write_step` and
 with a lifecycle action step, so the branch would ship unexercised — a coverage
 cost for a shape nothing asks for. The moment a case authors one, the repair is
 the branch plus its own DB-free driver; until then the honest state is the
-refusal this entry describes, which already says which half of itself is
-permanent.
+refusal this entry describes.
 
 ### D-77 — The interleaved-`uow`-group runner refuses a step stating relationship contents, though its own find interpreter already holds what would answer one
 
@@ -716,6 +688,7 @@ re-project a family superset, which is an unrelated obligation.
 
 ## Forwarding pointers
 
+- **D-72** → closed by [COR-223](https://linear.app/flimflam/issue/COR-223/make-predicate-writes-readless-only-and-add-replace-where). A predicate write is one readless statement and preparation refuses every target that would need its rows read (`core/spec/m-batch-write.md`), so no write stages a read that could meet an issue-bearing row.
 - **D-97** → fixed. `parallax.core.base.nearest_binary32_of_spelling` rounds a decimal to binary32 once by parsing to binary64 and narrowing, reading the exact decimal only when the parse is exactly a binary32 midpoint — the only place the two roundings can differ — so `_shortest_float`'s candidates and Float32 membership no longer build an exact ratio.
 - **D-98** → closed by the COR-142 owner decision. The unsupported 10% attribution gate is withdrawn rather than replaced; Phase 2 totals and counts remain before evidence, and the same single-implementation report supplies Phase 6's clean whole-lane after deltas without paired adapters or builder-exclusive attribution.
 - **D-96** → closed. The Snapshot delivery portfolio takes each materialization-stress memory cell in a child interpreter of its own (`tools/snapshot_delivery_reading.py`), as a collected window delta with no timed batch run before the reading, so the retained and transient cells are differences rather than levels.
@@ -773,5 +746,6 @@ carry at all — needs the entry it stood for:
 - `.humanlayer/tasks/cor-115-reference-harness-object-query-oracle/08-deferred-ledger.md` — D-55.
 - `.humanlayer/tasks/cor-110-logging-lifecycle-diet/08-deferred-ledger.md` — D-79.
 - `.humanlayer/tasks/cor-155-implement-the-redesigned-snapshot-delivery-contract-and-nrsu2x/10-deferred-ledger.md` — D-96.
+- `.humanlayer/tasks/cor-223-cleanup-predicate-writes-api-yhcb8e/05-deferred-ledger.md` — D-72.
 - `.humanlayer/tasks/cor-142-measure-and-remove-per-row-document-shape-derivation-in-the-flpf4g/review-loop/phase-2/round-01/remediation.md` — D-98.
 - `.humanlayer/tasks/cor-188-float32-hot-paths/deferred-ledger.md` — D-97.

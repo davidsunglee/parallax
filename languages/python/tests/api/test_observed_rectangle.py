@@ -138,7 +138,6 @@ _JAN = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 _FEB = dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
 _MAR = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
 _APR = dt.datetime(2024, 4, 1, tzinfo=dt.UTC)
-_MAY = dt.datetime(2024, 5, 1, tzinfo=dt.UTC)
 
 
 class AttemptOrigin(ValueObject):
@@ -308,11 +307,6 @@ def _span_terminate(
         tx.wire.terminate(observed)
     else:
         tx.wire.terminate(observed, until=until)
-
-
-def _wire_target(entity: type[Any]) -> dict[str, object]:
-    name = _name(entity)
-    return {"entity": name, "predicate": {"eq": {"path": f"{name}.id", "value": 1}}}
 
 
 @pytest.mark.parametrize("concurrency", _CONCURRENCIES)
@@ -610,90 +604,6 @@ def test_a_row_committed_at_a_repeated_instant_is_closed_not_revised(
         (_ATTEMPT, _ATTEMPT, "seeded", _SPEC_DOCUMENT),
         (_ATTEMPT, None, "first", _SPEC_DOCUMENT),
     ]
-
-
-@pytest.mark.parametrize("concurrency", _CONCURRENCIES)
-@pytest.mark.parametrize("representation", _REPRESENTATIONS)
-@pytest.mark.parametrize("entity", [ColumnsLog, DocumentLog])
-def test_a_row_the_attempt_inserted_is_revised_in_place(
-    profile_run: Any, entity: type[Any], representation: _Representation, concurrency: _Concurrency
-) -> None:
-    profile_run.reset(model_of(_ATTEMPT_MODEL), {})
-    clock = ScriptedClock([_ATTEMPT])
-    db = own_root(connect(profile_run.port, _ATTEMPT_MODEL, clock=clock)).using_database_login()
-
-    def edit(tx: TxnContext) -> None:
-        # The predicate write's resolving read flushes the insert first, so the
-        # row it selects is one the attempt itself opened.
-        if representation == "typed":
-            tx.insert(entity(id=1, label="inserted", spec=_SPEC))
-            tx.amend_where(entity.where(entity.id == 1), entity.label.set("edited"))
-        else:
-            tx.wire.insert(_name(entity), {"id": 1, "label": "inserted", "spec": _SPEC_DOCUMENT})
-            tx.wire.amend_where(_wire_target(entity), {"label": "edited"})
-
-    db.transact(edit, concurrency=concurrency)
-
-    assert _log_rows(profile_run, entity) == [(_ATTEMPT, None, "edited", _SPEC_DOCUMENT)]
-
-
-@pytest.mark.parametrize("concurrency", _CONCURRENCIES)
-@pytest.mark.parametrize("representation", _REPRESENTATIONS)
-@pytest.mark.parametrize("entity", [ColumnsSpan, DocumentSpan])
-def test_a_predicate_write_revises_the_rectangles_the_attempt_opened(
-    profile_run: Any, entity: type[Any], representation: _Representation, concurrency: _Concurrency
-) -> None:
-    db = _attempt_db(profile_run)
-    db.transact(lambda tx: tx.insert(entity(id=1, amount=100, spec=_SPEC), valid_from=_JAN))
-
-    def edit(tx: TxnContext) -> None:
-        current = _span_find(tx, entity, representation, _FEB)
-        _span_update(tx, current, representation, 150)
-        if representation == "typed":
-            tx.amend_where(entity.where(entity.id == 1), entity.amount.set(175), valid_from=_MAR)
-            tx.amend_where(
-                entity.where(entity.id == 1), entity.amount.set(200), valid_from=_APR, until=_MAY
-            )
-        else:
-            tx.wire.amend_where(_wire_target(entity), {"amount": 175}, valid_from=_MAR)
-            tx.wire.amend_where(_wire_target(entity), {"amount": 200}, valid_from=_APR, until=_MAY)
-
-    db.transact(edit, concurrency=concurrency)
-
-    assert _span_rows(profile_run, entity) == [
-        (_SEEDED, _ATTEMPT, _JAN, None, 100, _SPEC_DOCUMENT),
-        (_ATTEMPT, None, _JAN, _FEB, 100, _SPEC_DOCUMENT),
-        (_ATTEMPT, None, _FEB, _MAR, 150, _SPEC_DOCUMENT),
-        (_ATTEMPT, None, _MAR, _APR, 175, _SPEC_DOCUMENT),
-        (_ATTEMPT, None, _APR, _MAY, 200, _SPEC_DOCUMENT),
-        (_ATTEMPT, None, _MAY, None, 175, _SPEC_DOCUMENT),
-    ]
-
-
-@pytest.mark.parametrize("concurrency", _CONCURRENCIES)
-@pytest.mark.parametrize("representation", _REPRESENTATIONS)
-@pytest.mark.parametrize("entity", [ColumnsLog, DocumentLog])
-def test_a_predicate_termination_removes_the_row_the_attempt_opened(
-    profile_run: Any, entity: type[Any], representation: _Representation, concurrency: _Concurrency
-) -> None:
-    db = _attempt_db(profile_run)
-    db.transact(lambda tx: tx.insert(entity(id=1, label="seeded", spec=_SPEC)))
-
-    def edit(tx: TxnContext) -> None:
-        for label in ("first", "second"):
-            if representation == "typed":
-                tx.amend_where(entity.where(entity.id == 1), entity.label.set(label))
-            else:
-                tx.wire.amend_where(_wire_target(entity), {"label": label})
-            _log_find(tx, entity, representation)
-        if representation == "typed":
-            tx.terminate_where(entity.where(entity.id == 1))
-        else:
-            tx.wire.terminate_where(_wire_target(entity))
-
-    db.transact(edit, concurrency=concurrency)
-
-    assert _log_rows(profile_run, entity) == [(_SEEDED, _ATTEMPT, "seeded", _SPEC_DOCUMENT)]
 
 
 def test_a_caught_dependent_read_failure_still_rolls_the_attempt_back(profile_run: Any) -> None:

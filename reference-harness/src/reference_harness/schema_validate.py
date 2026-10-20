@@ -58,12 +58,7 @@ from .keyed_write_validate import (
     validate_keyed_write,
 )
 from .metamodel import validate_index_identities, validate_temporal_member_names
-from .predicate_write_validate import (
-    PredicateWriteValidationError,
-    requires_predicate_write_materialization,
-    validate_predicate_write,
-    validate_predicate_write_materialization,
-)
+from .predicate_write_validate import PredicateWriteValidationError, validate_predicate_write
 from .providers import DIALECT_CATALOG
 from .query_references import collect_query_reference_classes
 from .relationship import validate_relationship_types
@@ -270,7 +265,7 @@ def _validate_predicate_write(
         return None
     try:
         validate_predicate_write(entity, write, entity_defs)
-    except PredicateWriteValidationError as exc:
+    except (PredicateWriteValidationError, RejectionError) as exc:
         errors.append(f"{label}: {exc}")
     return entity
 
@@ -321,7 +316,6 @@ def _validate_buffered_write(
     registry: Registry | None = None,
     *,
     grouped: bool = False,
-    state_graded: bool = False,
 ) -> None:
     """Validate a buffered scenario write — the m-unit-work general keyed buffer.
 
@@ -360,10 +354,7 @@ def _validate_buffered_write(
     proven where it always was — the step's golden SQL executed verbatim plus
     ``tableState`` / ``expectRows`` — so no cross-entry same-object equality is imposed
     here. A predicate entry is validated as a predicate write rather than by the keyed
-    member check. One whose target requires materialization resolves through its own
-    verb, which flushes every submission before it: only a state-graded buffer carries
-    one, because no golden lowering of the buffer could state the statements its
-    selection decides.
+    member check.
     """
     framework: list[int] = []
     for position, instruction in enumerate(instructions):
@@ -371,19 +362,9 @@ def _validate_buffered_write(
         if not isinstance(instruction, dict):
             continue  # the case schema owns non-object entries
         if "target" in instruction:
-            entity = _validate_predicate_write(
+            _validate_predicate_write(
                 instruction, entity_defs, predicate_schema, entry_label, errors, registry
             )
-            if (
-                entity is not None
-                and not state_graded
-                and requires_predicate_write_materialization(entity)
-            ):
-                errors.append(
-                    f"{entry_label}: a predicate submission of {entity.name} materializes "
-                    f"through a resolving read, which flushes the buffer it stands in; only a "
-                    f"`grading: state` buffer carries one"
-                )
             continue
         entity = _valid_keyed_entry_entity(instruction, entity_defs, entry_label, errors)
         if entity is not None and states_framework_marker(entity, instruction):
@@ -1292,14 +1273,7 @@ def _validate_case(
     if isinstance(when.get("scenario"), list):
         for index, step in enumerate(when["scenario"]):
             if isinstance(step, dict):  # the case schema owns a malformed step
-                _validate_scenario_step(
-                    when["scenario"],
-                    index,
-                    step,
-                    scope,
-                    errors,
-                    state_graded=case.get("grading") == "state",
-                )
+                _validate_scenario_step(when["scenario"], index, step, scope, errors)
     if isinstance(when.get("coherence"), list):
         _validate_coherence_queries(when["coherence"], scope, errors)
     if isinstance(case, dict):
@@ -1334,8 +1308,6 @@ def _validate_scenario_step(
     step: dict[str, Any],
     scope: _CaseScope,
     errors: list[str],
-    *,
-    state_graded: bool = False,
 ) -> None:
     step_label = f"{scope.label} scenario[{index}]"
     _scenario_statement_binds_keys(step, step_label, errors)
@@ -1352,7 +1324,7 @@ def _validate_scenario_step(
     if isinstance(step.get("write"), list):
         _validate_settled_write(scenario, index, step_label, errors)
     if isinstance(step.get("write"), dict):
-        entity = _validate_predicate_write(
+        _validate_predicate_write(
             step["write"],
             scope.entities,
             scope.predicate_schema,
@@ -1360,11 +1332,6 @@ def _validate_scenario_step(
             errors,
             scope.registry,
         )
-        if entity is not None:
-            try:
-                validate_predicate_write_materialization(entity, scenario[:index], step["write"])
-            except PredicateWriteValidationError as exc:
-                errors.append(f"{step_label}: {exc}")
     if step.get("action") == "mutate":
         _validate_scenario_edit(scenario, index, scope.entities, scope.family, step_label, errors)
     if isinstance(step.get("write"), list):
@@ -1376,7 +1343,6 @@ def _validate_scenario_step(
             errors,
             scope.registry,
             grouped=isinstance(step.get("uow"), str),
-            state_graded=state_graded,
         )
 
 

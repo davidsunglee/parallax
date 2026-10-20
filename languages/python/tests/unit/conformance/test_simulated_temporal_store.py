@@ -740,10 +740,8 @@ def test_a_revision_re_accounts_for_nothing_the_store_had_lost_track_of() -> Non
     store = SimulatedTemporalStore()
     store.seed_fixtures(POSITION, POSITION_ENTITY, [_HEAD])
     store.note_out_of_band_write()
-    store.note_materialized_write(POSITION_ENTITY)
     store.apply(POSITION, _revision(_JUN, validStart=_MAR))
     assert not store.has_complete_stored_row(POSITION, POSITION_ENTITY, {"id": 1})
-    assert store.moved_by_materialization(POSITION, POSITION_ENTITY, {"id": 1})
 
 
 def test_storing_a_row_again_as_it_is_keeps_one_addressable_row() -> None:
@@ -837,15 +835,12 @@ def test_an_uncommitted_transaction_restores_every_row_and_flag(ending: str) -> 
         store.apply(POSITION, _revision(None, value=decimal.Decimal("300.00")))
         store.apply(POSITION, _close(None, key=2))
         store.apply(POSITION, _opening(2, _JAN, INFINITY, "10.00"))
-        store.note_materialized_write(POSITION_ENTITY)
         assert _stored(store) == [(_TAIL["validStart"], INFINITY, decimal.Decimal("300.00"))]
         assert store.has_complete_stored_row(POSITION, POSITION_ENTITY, {"id": 2})
-        assert store.moved_by_materialization(POSITION, POSITION_ENTITY, {"id": 2})
     assert _stored(store) == [_HEAD_ROW, _TAIL_ROW]
     assert store.predecessor_for(POSITION, POSITION_ENTITY, {"id": 2}) is observed
     assert dict(observed.predecessor.members) == single
     assert not store.has_complete_stored_row(POSITION, POSITION_ENTITY, {"id": 2})
-    assert not store.moved_by_materialization(POSITION, POSITION_ENTITY, {"id": 2})
     # The restored rows are addressable again.
     store.apply(POSITION, _close(_JUN))
     assert _stored(store) == [_TAIL_ROW]
@@ -997,7 +992,6 @@ _CHANGES: Final[Mapping[str, tuple[Callable[[SimulatedTemporalStore], None], set
         lambda store: store.apply(ACCOUNT, _account_insert(MAX_PLUS_ONE)),
         {1, 2, 3},
     ),
-    "materialized": (lambda store: store.note_materialized_write(ACCOUNT_ENTITY), {1, 2, 3}),
     "out-of-band": (lambda store: store.note_out_of_band_write(), {1, 2, 3}),
 }
 """Each change that may move an initial Account row, beside the keys whose
@@ -1029,7 +1023,7 @@ def test_an_uncommitted_transaction_restores_what_the_initial_rows_still_answer(
     store = _accounts(_ADA, _LINUS)
     with _ended(store, ending):
         store.apply(ACCOUNT, _account_update(1))
-        store.note_materialized_write(ACCOUNT_ENTITY)
+        store.apply(ACCOUNT, _account_insert(MAX_PLUS_ONE))
     assert _read(store, ACCOUNT, _target(ACCOUNT_ENTITY, 1))[1] == [{"id": 1, "version": 1}]
 
 

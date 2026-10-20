@@ -1,0 +1,21 @@
+# A predicate-selected amendment of a versioned Entity is refused when it is
+# prepared, before its predicate or assignments are judged: each selected object's
+# version must be observed before it is written, and one readless statement
+# observes nothing.
+model: models/account.yaml
+tags: [m-batch-write, m-opt-lock, rejected, predicate-write, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  write:
+    mutation: amend
+    target:
+      entity: parallax.compatibility.Account
+      predicate:
+        lessThan:
+          path: parallax.compatibility.Account.balance
+          value: "200.00"
+    assignments:
+      - attr: parallax.compatibility.Account.balance
+        value: "0.00"
+then:
+  rejectedRule: set-based-write-target-unsupported

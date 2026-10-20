@@ -237,11 +237,11 @@ invariant while each dialect emits its own optimized SQL:
 The predicate fragments in this module fix a read's **`where` clause**; this section
 fixes its **`select` list**. A read's projected column list is a **pure function of
 the model and the read's target (`objectQuery.target`, `m-object-query`) plus its result
-form — never of the predicate**. Exactly one read takes a fourth input: the internal
-materialized-predicate-write resolving read derives its `Document` slots from the
-**declared needs of the write it serves** — that write's target designation and its
-declared assignments — and from nothing else, its own predicate included (the
-`Document` slot rule and *Result form*, below). The Object Query deliberately
+form — never of the predicate**. Exactly one kind of read takes a fourth input: the
+internal row-acquisition read a write makes (`m-unit-work` *Row acquisition*)
+derives its `Document` slots from the **observation the write it serves records**,
+and from nothing else, its own predicate included (the `Document` slot rule and
+*Result form*, below). The Object Query deliberately
 carries **no projection clause** (`m-object-query`): no read may project
 a proper subset of the derived list. The `orderBy` and `limit` clauses never
 change the list.
@@ -267,10 +267,9 @@ For each physical branch, SQL selects from the layout values as follows:
    effective set to one concrete. A concrete target uses the same slot for its
    tag predicate but does not project it.
 3. Every applicable top-level Value Object `Document` slot is projected for an
-   **instance-form** read. A row-form read omits those slots by default; the
-   internal materialized-predicate-write resolving read is the one row-form read
-   that widens the default, projecting the slots the write it serves needs
-   (*Result form*, below). Each selected slot expands to the document read pair
+   **instance-form** read. A row-form read omits those slots by default; a
+   row-acquisition read is the one row-form read that widens the default,
+   projecting the slots the observation it records needs (*Result form*, below). Each selected slot expands to the document read pair
    defined below; it is never projected as one ambiguous raw value. Before any
    occurrence cursor exists, instance materialization passes the resulting
    `m-core` `DocumentRead` to `m-document-codec` as a `LocatedMemberInput` for
@@ -283,9 +282,8 @@ For each physical branch, SQL selects from the layout values as follows:
    projected **once** for a branch that needs it, and not at all for a branch
    that does not. Two independent needs reach it. A read whose requested members
    include one placed at a Document Path needs it to produce that member. An
-   **observation-bearing** read — an instance-form read, and the internal
-   materialized-predicate-write resolving read that widens its own projection
-   (*Result form*, below) — needs it whenever the branch's Table carries one at
+   **observation-bearing** read — an instance-form read, and a row-acquisition
+   read that widens its own projection (*Result form*, below) — needs it whenever the branch's Table carries one at
    all, because the stored document is itself part of what such a read observes:
    a Predecessor Row retains the raw document (`m-write-plan`), and an owner
    declaring no document-resident member still holds whatever keys a newer
@@ -362,14 +360,13 @@ whether `Document` slots are selected:
   `load` / first `access`, which is a child level resolved on demand.
 - **Row-form** (the **values lane**) — the result is consumed as flat values, with no
   instance constructed. It omits Document slots by default. The corpus's predicate
-  `read` cases (`then.rows`) and the internal materialized-predicate-write read —
-  which resolves a set-based write to each row's pk and gate values (ADR 0014) — are
-  the values lane; aggregation results (`m-agg`) use this lane too. The
-  resolving read is the one row-form read whose consumer can widen the default: it
-  additionally projects the Document slots the write it serves needs, which for a
-  temporal target is every declared one, because the observation it records is a
-  complete Predecessor Row (`m-write-plan`). Widening the projection does not make it
-  instance-form — it still constructs no instance.
+  `read` cases (`then.rows`) and the internal row-acquisition reads a write makes
+  (`m-unit-work` *Row acquisition*) are the values lane; aggregation results
+  (`m-agg`) use this lane too. A row-acquisition read is the one row-form read
+  whose consumer can widen the default: a temporal target's projects every declared
+  Document slot, because the observation it records is a complete Predecessor Row
+  (`m-write-plan`) — the **predecessor projection**. Widening the projection does
+  not make it instance-form — it still constructs no instance.
 
 Row-form is **not a developer surface**: the idiomatic find API always materializes,
 so the developer path is instance-form; row-form is the internal / conformance
@@ -378,8 +375,7 @@ form is declared by **which result member it asserts** (`then.rows` = row-form;
 `then.graph` / `then.graphs` = instance-form), and a scenario / coherence / concurrency
 **step** read (asserted with `expectRows` / `observeRows`) is fixed by the step's read
 semantics: a managed-object find or refresh, a relationship `load`, a query-backed
-list's first `access`, and a full-scalar shared concurrency read are **instance-form**; the
-internal materialized-predicate-write resolving read is **row-form**.
+list's first `access`, and a full-scalar shared concurrency read are **instance-form**.
 
 Everything already specified composes with this rule unchanged: a version
 Attribute is an applicable Attribute slot; a TPH abstract read selects its
@@ -1347,8 +1343,8 @@ Uncovered parts are disjoint and never adjacent, each bounded by its own
 endpoints, and a statement names a bounded number of them, so many parts take
 several such reads, all before the range binds. A row overlapping a part is read
 whole however little of it the part reaches, and a row two statements both
-return is one row. Its projection is the predecessor projection of a resolving
-read, the Structured Column included under Relational Document Layout, and under
+return is one row. Its projection is the predecessor projection (*Result form*),
+the Structured Column included under Relational Document Layout, and under
 Locking it carries the read-lock suffix below. The read belongs to the write step: it is
 counted in that step's Database Calls, and a case authors no golden for it
 (`m-case-format`). Once the rectangles are known, every rectangle's inactivation,
@@ -1406,22 +1402,6 @@ the predecessor projection and the read-lock suffix:
 |---|---|---|
 | Bitemporal | `… where t0.pos_id = ? and t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ? for share of t0` | `[pk, validFrom, validFrom, infinity]` |
 | Transaction-Time-Only | `… where t0.bal_id = ? and t0.out_z = ? for share of t0` | `[pk, infinity]` |
-
-A Bitemporal predicate-selected amendment (`m-temporal-write` *Predicate-selected
-amendments span their requested extent*) resolves its objects as of its
-`validFrom` — `… where <predicate> and t0.from_z <= ? and t0.thru_z > ? and
-t0.out_z = ?`, binding `[…, validFrom, validFrom, infinity]` — and its flush
-reads, batch by batch, the parts of each selected object's extent its starting
-rectangle leaves, several objects to a statement, each object's parts beside
-its key:
-
-| Objects | Golden read | Binds |
-|---|---|---|
-| two, one bounded part each | `… where ((t0.pos_id = ? and t0.thru_z > ? and t0.from_z < ?) or (t0.pos_id = ? and t0.thru_z > ?)) and t0.out_z = ?` | `[pk₁, from₁, until₁, pk₂, from₂, infinity]` |
-
-A statement names a bounded number of key/part terms, so many objects take
-several such reads, every one for a batch before that batch settles. Each
-object's steps follow the order above, objects in resolution order.
 
 ## Transactional SQL fragments
 
@@ -1538,20 +1518,14 @@ locking-mode advance by applying the ungated golden and asserting the resulting
 table state (`m-case-format` write-sequence case), so both are verified against
 real data.
 
-### Versioned set-based updates materialize
+### No versioned set-based update
 
 There is **no** set-based versioned `UPDATE` template — no versioned analogue of
 the batched `where <pk> in (…)` form above — because the gate binds a *per-row*
-observed version a single statement cannot carry. A set-based update targeting a
-versioned entity therefore **materializes** (`m-opt-lock`, ADR 0014): the runtime
-resolves the predicate to rows (a read that records each row's observed version
-and, in `locking` mode, takes the shared lock), then **lowers to one keyed
-per-object `UPDATE` per resolved row** — the gated optimistic form or the ungated
-locking form above. The scenario golden lists those per-object statements in order
-(one per matched row), each statement entry carrying its own `binds`, and the
-declared Database Calls are `1` read + `N` updates. For a **non-versioned** entity the readless batched
-forms above stand (ADR 0014); materialization applies only where a framework-owned
-version must ride each write.
+observed version a single statement cannot carry. A predicate-selected write over
+a versioned entity is therefore refused (`m-batch-write`), and a versioned
+entity's buffered keyed writes each lower to one per-object statement of the
+gated optimistic form or the ungated locking form above.
 
 ### Versioned-read projection
 

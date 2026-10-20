@@ -23,6 +23,10 @@ from parallax.conformance.class_models import MODELS
 from parallax.conformance.graph_models import POLICY_MODEL, Policy
 from parallax.conformance.story_models import Order
 from parallax.core import LATEST, TX_TIME
+from parallax.core._execution._unit_work.instructions import (
+    SET_BASED_WRITE_TARGET_UNSUPPORTED,
+    InstructionRejectedError,
+)
 from parallax.core.db_port import DatabaseAdapter, MappingRow
 from parallax.core.entity._authored_resolver import object_query_node
 from parallax.core.entity._model import model_of
@@ -383,13 +387,14 @@ def test_an_insert_payload_reaches_the_model_aware_validator_the_typed_verbs_do(
     assert [type(op) for op in port.calls] == [BeginCall, RollbackCall]
 
 
-def test_a_predicate_write_buffers_through_the_shared_predicate_seam() -> None:
-    port = ScriptedAdapter(Transact(Read(rows=[ACCOUNT_ROW]), Write()))
-    _run(port, lambda tx: tx.wire.amend_where(_predicate_target(), {"balance": "11.00"}))
-    # A versioned target materializes: the resolving read, then one keyed write
-    # per resolved row (`m-opt-lock`, ADR 0014) — the readless template is not
-    # available and the Wire ingress does not invent one.
-    assert [type(op) for op in port.calls] == [BeginCall, ReadCall, WriteCall, CommitCall]
+def test_a_predicate_write_of_a_versioned_target_is_refused_at_the_shared_predicate_seam() -> None:
+    # A versioned target needs an observation one readless statement cannot
+    # make (`m-batch-write`), and the Wire ingress does not invent a read.
+    port = ScriptedAdapter(Transact())
+    with raises_contextualized(InstructionRejectedError) as refused:
+        _run(port, lambda tx: tx.wire.amend_where(_predicate_target(), {"balance": "11.00"}))
+    assert refused.value.rule == SET_BASED_WRITE_TARGET_UNSUPPORTED
+    assert [type(op) for op in port.calls] == [BeginCall, RollbackCall]
 
 
 # --------------------------------------------------------------------------- #

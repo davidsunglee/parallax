@@ -289,26 +289,6 @@ def test_a_conditional_amendment_and_replacement_carry_collections(
     ]
 
 
-@_REPRESENTATIONS
-@_TICKETS
-def test_a_predicate_amendment_of_a_versioned_owner_materializes_its_collections(
-    profile_run: Any, entity: type[Any], representation: _Representation
-) -> None:
-    db = _seed_ticket(profile_run, entity)
-
-    def fn(tx: TxnContext) -> None:
-        if representation == "typed":
-            tx.amend_where(entity.where(entity.id == 1), entity.tags.set(("z",)))
-        else:
-            tx.wire.amend_where(
-                {"entity": _name(entity), "predicate": _by_id(entity, 1)["predicate"]},
-                {"tags": ["z"]},
-            )
-
-    db.transact(fn)
-    assert _stored(profile_run, entity, "tags", "version") == [(["z"], 2)]
-
-
 # --------------------------------------------------------------------------- #
 # Readless predicate amendments of unversioned Non-Temporal owners.            #
 # --------------------------------------------------------------------------- #
@@ -424,48 +404,6 @@ def test_a_bitemporal_amendment_judges_each_predecessor_collection(
         (_S1, _TA, _JAN, _MAY, 1, ["a"]),
         (_TA, None, _JAN, _MAY, 1, ["b", "a"]),
         (_S2, None, _MAY, None, 2, ["b", "a"]),
-    ]
-
-
-@_SPANS
-def test_a_bitemporal_predicate_amendment_keeps_equal_starting_rows_selected(
-    profile_run: Any, entity: type[Any]
-) -> None:
-    _seed_spans(profile_run, entity)
-
-    _db(profile_run, _TA).transact(
-        lambda tx: tx.amend_where(
-            entity.where(entity.id == 1), entity.tags.set(("a",)), valid_from=_MAR
-        )
-    )
-    assert _span_rows(profile_run, entity) == [
-        (_S1, None, _JAN, _MAY, 1, ["a"]),
-        (_S2, _TA, _MAY, None, 2, ["b", "a"]),
-        (_TA, None, _MAY, None, 2, ["a"]),
-    ]
-
-
-@_SPANS
-def test_an_equal_collection_with_a_changed_milestone_still_executes(
-    profile_run: Any, entity: type[Any]
-) -> None:
-    _seed_spans(profile_run, entity)
-
-    _db(profile_run, _TA).transact(
-        lambda tx: tx.amend_where(
-            entity.where(entity.id == 1),
-            entity.tags.set(("a",)),
-            entity.amount.set(9),
-            valid_from=_MAR,
-            until=_JUL,
-        )
-    )
-    assert _span_rows(profile_run, entity) == [
-        (_S1, _TA, _JAN, _MAY, 1, ["a"]),
-        (_TA, None, _JAN, _MAR, 1, ["a"]),
-        (_TA, None, _MAR, _JUL, 9, ["a"]),
-        (_S2, _TA, _MAY, None, 2, ["b", "a"]),
-        (_TA, None, _JUL, None, 2, ["b", "a"]),
     ]
 
 
@@ -602,50 +540,3 @@ def test_a_readless_predicate_amendment_selects_through_collection_quantifiers(
 
     db.transact(fn)
     assert _stored(profile_run, entity, "tags") == [(["z"],), (["z"],), ([],)]
-
-
-@_REPRESENTATIONS
-@_SPANS
-def test_a_bitemporal_predicate_amendment_selects_by_the_collection_current_at_valid_from(
-    profile_run: Any, entity: type[Any], representation: _Representation
-) -> None:
-    _seed_spans(profile_run, entity)
-    _db(profile_run, _S1).transact(
-        lambda tx: tx.insert(entity(id=2, amount=5, tags=("b",)), valid_from=_JAN)
-    )
-
-    def fn(tx: TxnContext) -> None:
-        if representation == "typed":
-            tx.amend_where(
-                entity.where(entity.tags.none(entity.tags.element == "b")),
-                entity.amount.set(7),
-                valid_from=_MAR,
-            )
-        else:
-            name = _name(entity)
-            predicate = {"none": {"path": f"{name}.tags", "where": {"eq": {"value": "b"}}}}
-            tx.wire.amend_where(
-                {"entity": name, "predicate": predicate}, {"amount": 7}, valid_from=_MAR
-            )
-
-    _db(profile_run, _TA).transact(fn)
-    sql = (
-        "select id, in_z, case when out_z = 'infinity' then null else out_z end, from_z, "
-        "case when thru_z = 'infinity' then null else thru_z end, "
-        f"{_member(entity, 'amount')}, {_member(entity, 'tags')} "
-        f"from {_TABLES[entity]} order by id, from_z, in_z"
-    )
-    rows = [
-        tuple(int(cell) if isinstance(cell, float) else cell for cell in row)
-        for row in profile_run.port.execute(sql, [])
-    ]
-    # Object 1 is selected by its row at March, whose collection holds no "b";
-    # the amendment then reaches its May row, which does.
-    assert rows == [
-        (1, _S1, _TA, _JAN, _MAY, 1, ["a"]),
-        (1, _TA, None, _JAN, _MAR, 1, ["a"]),
-        (1, _TA, None, _MAR, _MAY, 7, ["a"]),
-        (1, _S2, _TA, _MAY, None, 2, ["b", "a"]),
-        (1, _TA, None, _MAY, None, 7, ["b", "a"]),
-        (2, _S1, None, _JAN, None, 5, ["b"]),
-    ]

@@ -94,10 +94,9 @@ def _skip_reason(case: case_format.Case, envelope: dict[str, Any]) -> str:
     """
     if envelope.get("status") == "run-only":
         # Declared `compileEligibility: run-only` covers query-result-dependent
-        # reads, pk-gen sequence reservations, and materializing predicate writes:
-        # m-temporal-write-007/009, m-temporal-write-026..-029, m-opt-lock-014/015,
-        # m-value-object-047/066): `run` (never `compile`) is the ONLY lane that ever
-        # grades these — the m-conformance-adapter envelope already answers
+        # reads and writes and pk-gen sequence reservations: `run` (never
+        # `compile`) is the ONLY lane that ever grades these — the
+        # m-conformance-adapter envelope already answers
         # `run-only` without attempting any lowering at all, so this is classified
         # first, shape-agnostically, before any shape-specific fallback text.
         # `test_run_only_cases_are_never_compiled` asserts the envelope.
@@ -346,13 +345,12 @@ def test_displayed_skip_text_stays_honest_for_a_representative_set() -> None:
     # main sweep, never by `_skip_text` — a case's exercised-status membership
     # is asserted directly there, not re-derived from skip text here).
     assert {"m-batch-write-005", "m-batch-write-006"} <= WRITE_EXERCISED
-    # A materializing predicate-write scenario (query-result-dependent,
-    # run-only) is classified BEFORE the shape fallback — never the stale
-    # generic scheduling promise.
-    materializing_text = _skip_text("m-temporal-write-007")
-    assert materializing_text.startswith("declared compile-run-only"), materializing_text
-    assert "graded by run instead" in materializing_text, materializing_text
-    assert "land with a later write increment" not in materializing_text, materializing_text
+    # A query-result-dependent run-only scenario is classified BEFORE the shape
+    # fallback — never the stale generic scheduling promise.
+    run_only_text = _skip_text("m-opt-lock-001")
+    assert run_only_text.startswith("declared compile-run-only"), run_only_text
+    assert "graded by run instead" in run_only_text, run_only_text
+    assert "land with a later write increment" not in run_only_text, run_only_text
     # A write that lowers successfully but sits outside the keyed set names its
     # current classification and does not mention unrelated pk-gen behavior.
     bucket_text = _skip_text("m-core-002")

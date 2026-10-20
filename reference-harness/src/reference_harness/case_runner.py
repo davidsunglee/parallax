@@ -103,7 +103,7 @@ from .object_query_oracle import assert_case_read
 from .object_query_oracle import row as object_query_row
 from .object_query_validate import validate_object_query
 from .predicate_validate import validate_query_predicate
-from .predicate_write_validate import validate_predicate_write
+from .predicate_write_validate import PREDICATE_WRITE_REJECTED_RULES, validate_predicate_write
 from .providers import Catalog, DatabaseProvider
 from .provisioning import apply_given, provision, provision_empty
 from .relationship import MODEL_REJECTED_RULES as RELATIONSHIP_MODEL_REJECTED_RULES
@@ -168,6 +168,7 @@ ALL_REJECTED_RULES = (
     | PREDICATE_REJECTED_RULES
     | WRITE_REJECTED_RULES
     | KEYED_WRITE_REJECTED_RULES
+    | PREDICATE_WRITE_REJECTED_RULES
 )
 
 

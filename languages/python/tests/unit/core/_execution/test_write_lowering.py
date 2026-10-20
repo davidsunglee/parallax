@@ -483,7 +483,7 @@ def test_versioned_update_carrying_a_literal_version_is_refused() -> None:
 
 
 def test_versioned_delete_gates_on_the_observed_version_optimistic_mode() -> None:
-    # m-opt-lock-015: optimistic mode binds the observed version LAST, exactly as
+    # Optimistic mode binds the observed version LAST, exactly as
     # a versioned UPDATE's own gate does — the gate is concurrency-driven, never
     # mutation-driven.
     delete = KeyedWriteInstruction("delete", "Account", ({"id": 3},))

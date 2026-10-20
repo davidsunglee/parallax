@@ -212,8 +212,7 @@ def execute_read(
     call that reached the port and came back is work the lifecycle owes an
     account of, whatever it came back with. The bracket owns that, so this
     function announces only the rows it alone holds. Every row-producing read
-    goes through here — a find level, and the resolving read a materializing
-    predicate write runs — so the duration and failed-call semantics of a `read`
+    goes through here, so the duration and failed-call semantics of a `read`
     call have exactly one definition.
 
     Takes the whole ``CompiledRead`` rather than a statement plus its document

@@ -4,14 +4,13 @@ The case schema proves the instruction's structural shape — including that the
 selection is exactly an `m-predicate` node, since a set-based write shapes no
 result and the Object Query clauses have no spelling in that position.  This
 module resolves the neutral shape against a descriptor before any SQL is emitted:
-the predicate must resolve over the named target, assignments must name
-assignable domain attributes exactly once, and temporal coordinates must fit the
-target's profile.
+the target must be one a readless statement can write, the predicate must resolve
+over it, assignments must name assignable domain attributes exactly once, and
+temporal coordinates must fit the target's profile.
 """
 
 from __future__ import annotations
 
-import datetime as dt
 from typing import Any
 
 from .case import Entity
@@ -19,9 +18,12 @@ from .inheritance import Family, inheritance_of
 from .predicate_paths import EntityScope
 from .predicate_validate import validate_predicate
 from .query_references import collect_reference_classes
-from .serde import canonical
 from .storage_layout import is_scalar_collection
 from .value_object_resolve import RejectionError, decode_typed_literal, literal_matches_type
+
+SET_BASED_WRITE_TARGET_UNSUPPORTED = "set-based-write-target-unsupported"
+
+PREDICATE_WRITE_REJECTED_RULES: frozenset[str] = frozenset({SET_BASED_WRITE_TARGET_UNSUPPORTED})
 
 
 class PredicateWriteValidationError(ValueError):
@@ -47,6 +49,7 @@ def validate_predicate_write(
             f"predicate write target entity {target_name!r} is not model entity "
             f"{entity.canonical_name!r}"
         )
+    _assert_readless_target(entity, instruction.get("mutation"))
     if inheritance_of(entity.definition) is not None:
         raise PredicateWriteValidationError(
             "predicate-selected writes to inheritance families are unsupported"
@@ -67,285 +70,25 @@ def validate_predicate_write(
         raise PredicateWriteValidationError(str(exc)) from exc
 
     mutation = instruction.get("mutation")
-    _assert_temporal_shape(entity, mutation, instruction)
+    _assert_temporal_shape(mutation, instruction)
     if mutation in ("amend", "amendUntil"):
         _assert_assignments(entity, instruction.get("assignments"))
 
 
-def validate_predicate_write_materialization(
-    entity: Entity,
-    preceding_steps: list[dict[str, Any]],
-    instruction: dict[str, Any],
-) -> None:
-    """Require an observable prior resolution when a predicate write needs one.
-
-    Versioned and temporal predicate writes lower to per-row work, so their
-    scenario data must expose the exact earlier resolution from which that work
-    is planned.  The readless exception is deliberately narrow: only an
-    unversioned, non-temporal ``update`` or ``delete`` reaches this helper and
-    returns without a read.  Structural shape and descriptor validity are owned
-    by :func:`validate_predicate_write`; this function only links an already
-    validated scenario write to its earlier read result.
-
-    That resolving "materializing find" is the internal materialized-predicate-write
-    read — the values-lane / ROW-FORM read of m-case-format's *Read result form* (m-sql
-    *Read projection*): it observes each matched row's pk and gate/current-scalar values
-    to plan per-row DML without constructing an instance. Slot 4's value-object document
-    columns follow the observation it records rather than the lane: a temporal target's
-    resolve projects every declared one (its Predecessor Row is complete), while a
-    versioned target's retains only the observed version and so projects only the
-    documents its own assignments compare against. A reassigned document comes from the
-    write instruction, never from the read. A managed-object find/refresh step is instead
-    instance-form (the object lane).
-
-    Under Relational Document Layout the resolve projects the shared Structured
-    Column once in place of those members' own columns and fans it back out under
-    exactly the names each of them would have carried (`m-sql`), so what a
-    materializing read must EXPOSE is member-named under either layout and the
-    requirement below is layout-independent. The raw document rides that same
-    projection: a temporal target's Predecessor Row retains it (`m-unit-work`), so
-    a chained successor is patched from the document the row held rather than
-    rebuilt from these members — which is why the Structured Column itself is
-    never a required observation of its own.
-    """
-    if not requires_predicate_write_materialization(entity):
+def _assert_readless_target(entity: Entity, mutation: Any) -> None:
+    """Refuse a target one readless statement cannot write: a versioned or
+    temporal one, each of whose objects is written against an observation of it
+    (`m-batch-write`). Judged before the predicate, the family, and the
+    assignments, because none of them could make the write admissible."""
+    versioned = any(attribute.get("optimisticLocking") for attribute in entity.attributes)
+    if not (entity.is_temporal or versioned):
         return
-
-    target = instruction.get("target")
-    if not isinstance(target, dict):  # pragma: no cover - structural schema guard
-        return
-    predicate = target.get("predicate")
-    if not isinstance(predicate, dict):  # pragma: no cover - structural schema guard
-        return
-
-    target_finds = [
-        (index, step)
-        for index, step in enumerate(preceding_steps)
-        if isinstance(step.get("objectQuery"), dict)
-        and step["objectQuery"].get("target") in (entity.name, entity.canonical_name)
-    ]
-    matching_finds = [
-        (index, step)
-        for index, step in target_finds
-        if canonical(step["objectQuery"].get("predicate")) == canonical(predicate)
-    ]
-    if not matching_finds:
-        if target_finds:
-            raise PredicateWriteValidationError(
-                f"predicate write to {entity.name!r} requires a preceding materializing find "
-                "with a matching canonical predicate; earlier finds for that target resolve "
-                "different predicates"
-            )
-        raise PredicateWriteValidationError(
-            f"predicate write to {entity.name!r} requires a preceding materializing find "
-            "for the same concrete target and canonical predicate"
-        )
-
-    resolving = [
-        (index, step, rows)
-        for index, step in matching_finds
-        if (rows := _resolving_materialization_rows(step)) is not None
-    ]
-    if not resolving:
-        indexes = ", ".join(f"scenario[{index}]" for index, _ in matching_finds)
-        raise PredicateWriteValidationError(
-            f"matching materializing find at {indexes} must be a real resolving read: "
-            "databaseCalls: 1, exactly one authored golden read statement, and expectRows "
-            "exposing the resolved rows (or a genuine zero-match result)"
-        )
-    valid = _start_selected_valid_time(entity, instruction)
-    if valid is not None:
-        resolving = [found for found in resolving if _selects_at_start(found[1], instruction)]
-        if not resolving:
-            indexes = ", ".join(f"scenario[{index}]" for index, _ in matching_finds)
-            raise PredicateWriteValidationError(
-                f"materializing find at {indexes} must read {entity.name!r} as of the "
-                f"amendment's validFrom {instruction.get('validFrom')!r} on Valid Time and at "
-                "latest on Transaction Time: a Bitemporal amendment selects there"
-            )
-    index, _, rows = resolving[0]
-    _assert_materialization_rows(entity, index, rows, instruction)
-    if valid is not None:
-        _assert_window_covered(valid, index, rows, instruction)
-
-
-def _start_selected_valid_time(
-    entity: Entity, instruction: dict[str, Any]
-) -> dict[str, Any] | None:
-    """The Valid-Time axis of a Bitemporal amendment, which selects each object
-    by its rectangle current at the write's ``validFrom``; ``None`` for any
-    other write."""
-    if instruction.get("mutation") not in ("amend", "amendUntil"):
-        return None
-    axes = {axis["dimension"]: axis for axis in entity.temporal_runtime_axes}
-    return axes.get("valid-time")
-
-
-def _selects_at_start(step: dict[str, Any], instruction: dict[str, Any]) -> bool:
-    temporal = step["objectQuery"].get("temporal")
-    selection = temporal if isinstance(temporal, dict) else {}
-    return selection.get("valid-time") == {"asOf": instruction.get("validFrom")} and selection.get(
-        "transaction-time"
-    ) == {"asOf": "latest"}
-
-
-def _assert_window_covered(
-    valid: dict[str, Any], index: int, rows: list[Any], instruction: dict[str, Any]
-) -> None:
-    """A golden-graded case states only selected rows covering the write's
-    whole window: coverage past them is read inside the flush, which only a
-    state-graded case grades."""
-    until = instruction.get("until", "infinity")
-    for row_index, row in enumerate(rows):
-        end = row.get(valid["end_column"]) if isinstance(row, dict) else None
-        if end != "infinity" and (until == "infinity" or _instant(end) < _instant(until)):
-            raise PredicateWriteValidationError(
-                f"materializing find at scenario[{index}] expectRows[{row_index}] ends before "
-                "the amendment's window does: the coverage past it is read inside the flush, "
-                "so the case is state-graded"
-            )
-
-
-def _instant(value: Any) -> dt.datetime:
-    return dt.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-
-
-def requires_predicate_write_materialization(entity: Entity) -> bool:
-    """Whether predicate writes for *entity* require an observed row set."""
-    return entity.is_temporal or any(
-        attribute.get("optimisticLocking") for attribute in entity.attributes
+    kind = "temporal" if entity.is_temporal else "versioned"
+    raise RejectionError(
+        SET_BASED_WRITE_TARGET_UNSUPPORTED,
+        f"a predicate-selected {mutation!r} on the {kind} entity {entity.name!r} needs an "
+        "observation of each object it writes, which one readless statement cannot make",
     )
-
-
-def _resolving_materialization_rows(step: dict[str, Any]) -> list[Any] | None:
-    """Return rows only for one real materializing database read.
-
-    A versioned or temporal predicate write cannot plan from a cache hit.  The
-    scenario therefore records the one resolving read explicitly: one Database Call,
-    one authored golden SQL entry, and ``expectRows`` for either the observed rows
-    or a genuine zero-match result.  The case schema and generic scenario
-    bookkeeping validate the entry's full SQL shape; this descriptor-aware check
-    owns the link from that read to a predicate write.
-    """
-    if step.get("databaseCalls") != 1:
-        return None
-    statements = step.get("statements")
-    if not isinstance(statements, list) or len(statements) != 1:
-        return None
-    rows = step.get("expectRows")
-    if not isinstance(rows, list):
-        return None
-    return rows
-
-
-def _assert_materialization_rows(
-    entity: Entity, index: int, rows: list[Any], instruction: dict[str, Any]
-) -> None:
-    """Ensure a real read exposes every current value needed to plan the write.
-
-    Derive the projection from the descriptor and requested write rather than
-    authored SQL: identities, observed versions, and current temporal coordinates
-    are always needed; assignment-bearing updates additionally need the current
-    assigned values for per-row no-op elimination; temporal chains need every
-    current payload column they copy into their head/middle/tail rows.
-    """
-    required_columns = _materialization_columns(entity, instruction)
-    for row_index, row in enumerate(rows):
-        if not isinstance(row, dict):  # pragma: no cover - case schema guard
-            continue
-        missing = sorted(required_columns - row.keys())
-        if missing:
-            raise PredicateWriteValidationError(
-                f"materializing find at scenario[{index}] expectRows[{row_index}] omits "
-                f"required current materialization column(s) {missing} for {entity.name!r}"
-            )
-
-
-def _materialization_columns(entity: Entity, instruction: dict[str, Any]) -> set[str]:
-    """Return descriptor columns a predicate-write materialization must observe.
-
-    This is intentionally column-based because ``expectRows`` represents the SQL
-    projection.  The descriptor identifies observed state; output values generated
-    by a write (a bumped version, fresh Transaction-Time instants, open bounds, or an
-    inheritance discriminator) are not requested from the materialization.
-    """
-    temporal_columns = _temporal_columns(entity)
-    required_columns = {
-        attribute["column"]
-        for attribute in entity.attributes
-        if attribute.get("primaryKey") or attribute.get("optimisticLocking")
-    }
-    if entity.is_temporal:
-        required_columns.update(temporal_columns)
-
-    mutation = instruction.get("mutation")
-    if mutation in ("amend", "amendUntil"):
-        required_columns.update(_assigned_columns(entity, instruction.get("assignments")))
-
-    if _temporal_write_carries_payload(entity, mutation):
-        required_columns.update(_temporal_payload_columns(entity, temporal_columns))
-    return required_columns
-
-
-def _temporal_columns(entity: Entity) -> set[str]:
-    return {
-        column
-        for axis in entity.temporal_runtime_axes
-        for column in (axis.get("start_column"), axis.get("end_column"))
-        if isinstance(column, str)
-    }
-
-
-def _assigned_columns(entity: Entity, assignments: Any) -> set[str]:
-    """Resolve scalar and whole-document assignment observations from the descriptor."""
-    if not isinstance(assignments, list):  # pragma: no cover - structural schema guard
-        return set()
-    columns: set[str] = set()
-    for assignment in assignments:
-        if not isinstance(assignment, dict):  # pragma: no cover - structural schema guard
-            continue
-        reference = assignment.get("attr")
-        if not isinstance(reference, str) or "." not in reference:
-            continue
-        _, name = reference.rsplit(".", 1)
-        try:
-            columns.add(entity.attribute_by_name(name)["column"])
-        except KeyError:
-            try:
-                columns.add(entity.value_object_by_name(name)["column"])
-            except KeyError:
-                # Assignment validity is checked earlier by _assert_assignments.
-                continue
-    return columns
-
-
-def _temporal_write_carries_payload(entity: Entity, mutation: Any) -> bool:
-    """Whether this temporal verb chains a row containing the old payload.
-
-    An update always opens a successor, and a Valid-Time terminate preserves
-    the head and/or tail around the removed interval.  A Transaction-Time-Only terminate
-    merely closes its row, so its payload is not an input to planning that close.
-    """
-    if not entity.is_temporal:
-        return False
-    if mutation in ("amend", "amendUntil"):
-        return True
-    return any(axis.get("dimension") == "valid-time" for axis in entity.temporal_runtime_axes)
-
-
-def _temporal_payload_columns(entity: Entity, temporal_columns: set[str]) -> set[str]:
-    """Return current domain columns copied into a temporal successor row."""
-    scalar_columns = {
-        attribute["column"]
-        for attribute in entity.attributes
-        if attribute["column"] not in temporal_columns and not attribute.get("optimisticLocking")
-    }
-    value_object_columns = {
-        value_object["column"]
-        for value_object in entity.value_objects
-        if isinstance(value_object.get("column"), str)
-    }
-    return scalar_columns | value_object_columns
 
 
 def _assert_predicate_scope(node: Any, entity: Entity) -> None:
@@ -366,7 +109,6 @@ def _assert_assignments(entity: Entity, assignments: Any) -> None:
     if not isinstance(assignments, list):  # pragma: no cover - structural schema guard
         raise PredicateWriteValidationError("assignment-bearing predicate write needs assignments")
     seen: set[str] = set()
-    temporal_columns = _temporal_columns(entity)
     for assignment in assignments:
         if not isinstance(assignment, dict):  # pragma: no cover - structural schema guard
             raise PredicateWriteValidationError("predicate write assignment must be an object")
@@ -393,21 +135,14 @@ def _assert_assignments(entity: Entity, assignments: Any) -> None:
                 ) from exc
             _assert_value_object_assignment(ref, value_object, assignment.get("value"))
             continue
-        _assert_attribute_assignment(ref, attribute, assignment.get("value"), temporal_columns)
+        _assert_attribute_assignment(ref, attribute, assignment.get("value"))
 
 
-def _assert_attribute_assignment(
-    ref: str, attribute: dict[str, Any], value: Any, temporal_columns: set[str]
-) -> None:
-    """Validate a scalar attribute assignment: user-owned, and typed as declared."""
-    if (
-        attribute.get("primaryKey")
-        or attribute.get("optimisticLocking")
-        or attribute.get("column") in temporal_columns
-    ):
-        raise PredicateWriteValidationError(
-            f"assignment {ref!r} targets a framework-owned attribute"
-        )
+def _assert_attribute_assignment(ref: str, attribute: dict[str, Any], value: Any) -> None:
+    """Validate a scalar attribute assignment: not the key, and typed as declared.
+    A readless target declares no framework-owned member a caller could name."""
+    if attribute.get("primaryKey"):
+        raise PredicateWriteValidationError(f"assignment {ref!r} targets the primary key")
     if not is_scalar_collection(attribute):
         if not literal_matches_type(value, attribute.get("type")):
             raise PredicateWriteValidationError(
@@ -489,36 +224,12 @@ def _assert_value_object_document(ref: str, value_object: dict[str, Any], docume
         )
 
 
-def _assert_temporal_shape(entity: Entity, mutation: Any, instruction: dict[str, Any]) -> None:
-    axes = {axis.get("dimension") for axis in entity.temporal_runtime_axes}
-    has_transaction_time = "transaction-time" in axes
-    has_valid_time = "valid-time" in axes
-    temporal_values = {name: instruction.get(name) for name in ("at", "validFrom", "until")}
-    if not axes:
-        if any(value is not None for value in temporal_values.values()):
-            raise PredicateWriteValidationError(
-                "non-temporal predicate write carries temporal bounds"
-            )
-        if mutation not in ("amend", "delete"):
-            raise PredicateWriteValidationError(
-                f"non-temporal target does not support predicate mutation {mutation!r}"
-            )
-        return
-    if mutation == "delete":
-        raise PredicateWriteValidationError("temporal predicate writes use terminate, not delete")
-    if has_transaction_time and instruction.get("at") is None:
+def _assert_temporal_shape(mutation: Any, instruction: dict[str, Any]) -> None:
+    """A readless target is non-temporal, so it takes no temporal coordinate and
+    no milestone verb."""
+    if any(instruction.get(name) is not None for name in ("at", "validFrom", "until")):
+        raise PredicateWriteValidationError("non-temporal predicate write carries temporal bounds")
+    if mutation not in ("amend", "delete"):
         raise PredicateWriteValidationError(
-            "Transaction-Time predicate write requires flush-time at"
+            f"non-temporal target does not support predicate mutation {mutation!r}"
         )
-    if not has_transaction_time and instruction.get("at") is not None:
-        raise PredicateWriteValidationError(
-            "target has no Transaction-Time dimension, so at is invalid"
-        )
-    if has_valid_time and instruction.get("validFrom") is None:
-        raise PredicateWriteValidationError("Valid-Time predicate write requires validFrom")
-    if not has_valid_time and instruction.get("validFrom") is not None:
-        raise PredicateWriteValidationError(
-            "target has no Valid-Time dimension, so validFrom is invalid"
-        )
-    if mutation in ("amendUntil", "terminateUntil") and not has_valid_time:
-        raise PredicateWriteValidationError(f"{mutation} requires a Valid-Time target")

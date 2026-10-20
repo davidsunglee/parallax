@@ -49,14 +49,13 @@ _MULTI_HOP_ACCESS = "m-snapshot-read-026-multi-hop-access-drops-null-branches.ya
 _READ_YOUR_OWN_WRITES = "m-unit-work-029-ryow-relationship.yaml"
 _STREAMED_EVIDENCE = "m-unit-work-030-a-streamed-roots-evidence-licenses-a-later-write.yaml"
 _ABSTRACT_FIND = "m-inheritance-130-tph-abstract-find-licenses-concrete-update.yaml"
-_RESOLVING_READ = "m-temporal-write-026-predicate-plain-update-materialize.yaml"
+_FIND_AFTER_A_WRITE = "m-batch-write-005-predicate-delete-readless.yaml"
 _ONE_OBJECT_TWO_FINDS = "m-identity-map-001-same-transaction-identity.yaml"
 _TPCS_ROW_FORM_READ = "m-inheritance-050-tpcs-abstract-root-read.yaml"
 _TPCS_INSTANCE_FORM_READ = "m-inheritance-137-tpcs-union-vo-placeholder.yaml"
 _POLYMORPHIC_OWNER = "m-identity-map-005-family-root-vs-leaf.yaml"
 _DOCUMENT_LAYOUT_DEEP_FETCH = "m-deep-fetch-024-document-layout-graph.yaml"
 _DOCUMENT_LAYOUT_TPH_READ = "m-inheritance-123-document-layout-tph-broad-read.yaml"
-_DOCUMENT_LAYOUT_ROW_FORM_READ = "m-storage-layout-017-document-layout-provisioned-read.yaml"
 
 
 def _order(
@@ -151,29 +150,6 @@ _SECOND_DELIVERY = [
     ],
 ]
 
-_LATEST_POSITION: list[dict[str, Any]] = [
-    {
-        "pos_id": 1,
-        "acct_num": "A",
-        "val": Decimal("200.00"),
-        "from_z": "2024-06-01T00:00:00+00:00",
-        "thru_z": "infinity",
-        "in_z": "2024-04-01T00:00:00+00:00",
-        "out_z": "infinity",
-    }
-]
-_CORRECTED_POSITION: list[dict[str, Any]] = [
-    {
-        "pos_id": 1,
-        "acct_num": "A",
-        "val": Decimal("300.00"),
-        "from_z": "2024-07-01T00:00:00+00:00",
-        "thru_z": "infinity",
-        "in_z": "2024-10-01T00:00:00+00:00",
-        "out_z": "infinity",
-    }
-]
-
 
 def _steps(case: Case) -> list[dict[str, Any]]:
     return case.when["scenario"]
@@ -245,50 +221,21 @@ def test_a_finds_reference_oracle_runs_on_the_reader_the_golden_used(
     form — where a fresh connection would observe committed-only state after an
     uncommitted grouped write — is pinned in ``test_execution.py``.
     """
-    case = corpus_case(_RESOLVING_READ)
-    script = [
-        *_rows(_LATEST_POSITION, _LATEST_POSITION),
-        Affected(1),
-        Affected(2),
-        *_rows(_CORRECTED_POSITION, _CORRECTED_POSITION),
-    ]
-    with ScriptedProvider(script=script) as db:
+    case = corpus_case(_FIND_AFTER_A_WRITE)
+    with ScriptedProvider(script=[Affected(2), *_rows([], [])]) as db:
         assert_unit_work_scenario(case, db)
 
     queries = [call for call in _calls(db) if isinstance(call, Queried)]
-    assert [call.session for call in queries] == [None, None, None, None]
-    assert queries[1].sql.startswith("select pos_id, acct_num, val")
+    assert [call.session for call in queries] == [None, None]
+    assert queries[1].sql.startswith("select id, owner, balance from wallet")
 
 
 def test_a_find_whose_reference_oracle_disagrees_is_refused(corpus_case: CaseLoader) -> None:
-    other = [{**_LATEST_POSITION[0], "val": Decimal("999.00")}]
-    case = corpus_case(_RESOLVING_READ)
+    other = [{"id": 1, "owner": "Ada", "balance": Decimal("100.00")}]
+    case = corpus_case(_FIND_AFTER_A_WRITE)
 
-    with pytest.raises(CaseFailure, match=r"scenario\[0\] referenceSql rows != golden rows"):
-        assert_unit_work_scenario(case, ScriptedProvider(script=_rows(_LATEST_POSITION, other)))
-
-
-def test_a_materializing_predicate_writes_resolving_read_is_an_ordinary_step(
-    corpus_case: CaseLoader,
-) -> None:
-    """Nothing in the step's own shape distinguishes it, so nothing routes it differently.
-
-    A predicate write's resolving read is authored as an ordinary preceding read —
-    its own query, golden, reference oracle, and ``expectRows`` — and is graded the
-    way every other Scenario read is. What sets it apart is outside the step: the
-    write it serves, which is what its result form is read off
-    (``test_a_materializing_predicate_writes_resolving_find_is_graded_row_form``).
-    """
-    case = corpus_case(_RESOLVING_READ)
-    assert "write" in _steps(case)[1]
-    script = [
-        *_rows(_LATEST_POSITION, _LATEST_POSITION),
-        Affected(1),
-        Affected(2),
-        *_rows(_CORRECTED_POSITION, _CORRECTED_POSITION),
-    ]
-    with ScriptedProvider(script=script) as db:
-        assert_unit_work_scenario(case, db)
+    with pytest.raises(CaseFailure, match=r"scenario\[1\] referenceSql rows != golden rows"):
+        assert_unit_work_scenario(case, ScriptedProvider(script=[Affected(2), *_rows([], other)]))
 
 
 def test_an_abstract_target_step_publishes_familyVariant_not_the_raw_tag(
@@ -463,56 +410,6 @@ def test_an_observation_find_step_is_graded_in_the_instance_form_it_reads(
 
     with pytest.raises(CaseFailure, match=r"not the stable superset.*'annotation'"):
         assert_unit_work_scenario(case, ScriptedProvider(script=_rows([])))
-
-
-def _followed_by_a_materializing_predicate_write(case: Case) -> Case:
-    """*case*'s one find made the resolving read of a set-based predicate write.
-
-    The corpus authors no set-based write over an inheritance family, so the pairing
-    is fabricated in a private copy: a `delete` over the find's own target and
-    canonical predicate, and the family root marked versioned — the one model fact
-    that decides whether such a write must resolve its rows before it writes them.
-    The write lists no golden of its own, because what the pairing is for is the
-    result form the find ahead of it is graded in.
-    """
-    query = case.raw["when"]["scenario"][0]["objectQuery"]
-    case.raw["when"]["scenario"].append(
-        {
-            "write": {
-                "mutation": "delete",
-                "target": {"entity": query["target"], "predicate": query["predicate"]},
-            },
-            "databaseCalls": 0,
-        }
-    )
-    root = case.model.descriptor["entities"][0]
-    root["attributes"][1]["optimisticLocking"] = True
-    return case
-
-
-def test_a_materializing_predicate_writes_resolving_find_is_graded_row_form(
-    damaged_case: CaseLoader,
-) -> None:
-    """The one row-form step read is derived from the write it serves, not assumed.
-
-    It is an ordinary preceding `objectQuery` step this oracle grades like any other,
-    so the form cannot be read off the step's own shape: what distinguishes it is that
-    the very next step is a predicate write over its target which must resolve its rows
-    before it writes them. Graded row-form, the `union all` superset it must project
-    drops the `Document` slot the observation find beside it requires — so the same
-    two goldens swap verdicts once the write is authored.
-    """
-    resolving = _followed_by_a_materializing_predicate_write(
-        _as_a_one_step_scenario(damaged_case(_TPCS_ROW_FORM_READ), [])
-    )
-    with ScriptedProvider(script=_rows([])) as db:
-        assert_unit_work_scenario(resolving, db)
-
-    observing = _followed_by_a_materializing_predicate_write(
-        _as_a_one_step_scenario(damaged_case(_TPCS_INSTANCE_FORM_READ), [])
-    )
-    with pytest.raises(CaseFailure, match=r"not the stable superset"):
-        assert_unit_work_scenario(observing, ScriptedProvider(script=_rows([])))
 
 
 def test_a_find_listing_sql_for_levels_its_query_declares_none_of_is_refused(
@@ -1241,124 +1138,6 @@ def test_a_reuse_after_its_session_closed_needs_no_reader_at_all(
 
 
 # --- what a step publishes ----------------------------------------------------
-
-# Every member the layout moved into the shared `payload` Column, occurrences
-# included, so a row's Structured Column carries both lanes at once.
-_TRAVELER_DOCUMENTS: list[dict[str, Any]] = [
-    {
-        "id": 1,
-        "payload": {
-            "displayName": "Ada",
-            "score": 7,
-            "joinedOn": "2026-01-15",
-            "note": "north wing",
-            "address": {"city": "Oslo", "geo": {"country": "NO"}},
-            "tags": [{"label": "founder"}],
-        },
-    },
-    {
-        "id": 2,
-        "payload": {
-            "displayName": "Bo",
-            "score": 30,
-            "joinedOn": "2025-12-31",
-            "address": {"city": "Bergen", "geo": {"country": "NO"}},
-            "tags": [],
-        },
-    },
-    {
-        "id": 3,
-        "payload": {
-            "displayName": "Cyd",
-            "score": None,
-            "joinedOn": None,
-            "note": None,
-            "address": None,
-            "tags": [],
-        },
-    },
-]
-
-
-def _resolving_a_predicate_write_over_a_document_layout(case: Case) -> Case:
-    """A shipped row-form document-layout read made a predicate write's own resolve.
-
-    The corpus authors no predicate write over a document-mapped Entity, so the
-    pairing is fabricated in a private copy: the find's own target and canonical
-    predicate written by the step after it, and the target's primary key marked as
-    its optimistic-lock member — the one model fact that decides whether such a
-    write must resolve its rows before it writes them, and the one that leaves the
-    compiled layout untouched, every member staying inside the shared Column.
-    """
-    query = case.raw["when"]["objectQuery"]
-    statements = case.raw["then"]["statements"]
-    case.raw["shape"] = "scenario"
-    case.raw["when"] = {
-        "scenario": [
-            {
-                "objectQuery": query,
-                "statements": statements,
-                "expectRows": case.raw["then"]["rows"],
-                "databaseCalls": len(statements),
-            },
-            {
-                "write": {
-                    "mutation": "delete",
-                    "target": {"entity": query["target"], "predicate": query["predicate"]},
-                },
-                "databaseCalls": 0,
-            },
-        ]
-    }
-    case.raw["then"] = {"databaseCalls": len(statements)}
-    case.model.descriptor["entities"][0]["attributes"][0]["optimisticLocking"] = True
-    return case
-
-
-def test_a_row_form_step_read_publishes_no_value_object_occurrence(
-    damaged_case: CaseLoader,
-) -> None:
-    """A step's result FORM decides which members its Structured Column fans out.
-
-    The sole row-form step read is a materializing predicate write's resolve, and
-    row form asks for the Attributes alone (`m-case-format` *Read result form*), so
-    the `address` and `tags` occurrences stored beside them in the same document
-    stay inside it. What the step publishes is the scalars, under the names a
-    Column of each would have had.
-    """
-    case = _resolving_a_predicate_write_over_a_document_layout(
-        damaged_case(_DOCUMENT_LAYOUT_ROW_FORM_READ)
-    )
-
-    with ScriptedProvider(script=_rows(_TRAVELER_DOCUMENTS)) as db:
-        assert_unit_work_scenario(case, db)
-
-
-def test_a_resolving_read_widens_to_the_occurrence_its_write_assigns(
-    damaged_case: CaseLoader,
-) -> None:
-    """The one read that widens its lane's Document default does it for the write.
-
-    A versioned target's resolve projects the Value Object `Document` slots its own
-    assignments reach into (`m-case-format` *Read result form*), and the unit is the
-    SLOT: one Structured Column carries `displayName` beside `address` and `tags`,
-    so an assignment on the Attribute needs the slot and every occupant of that slot
-    materializes with it. The twin above is the same fabricated pairing under a
-    `delete`, which assigns nothing and therefore widens nothing: the same read, the
-    same golden, and a different published row because the write it serves differs.
-    """
-    case = _resolving_a_predicate_write_over_a_document_layout(
-        damaged_case(_DOCUMENT_LAYOUT_ROW_FORM_READ)
-    )
-    write = _steps(case)[1]["write"]
-    write["mutation"] = "amend"
-    write["assignments"] = [{"attr": "parallax.compatibility.Traveler.displayName", "value": "Ada"}]
-    for expected, document in zip(_steps(case)[0]["expectRows"], _TRAVELER_DOCUMENTS, strict=True):
-        expected["address"] = document["payload"]["address"]
-        expected["tags"] = document["payload"]["tags"]
-
-    with ScriptedProvider(script=_rows(_TRAVELER_DOCUMENTS)) as db:
-        assert_unit_work_scenario(case, db)
 
 
 def test_a_step_publishing_rows_that_skipped_the_seam_is_refused(

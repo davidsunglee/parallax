@@ -14,8 +14,7 @@ from typing import cast
 import pytest
 
 from parallax.conformance.scripted_clock import FixedClock
-from parallax.core import Attr, DomainModel, Entity, Float32, Int32, ValueObject, attr
-from parallax.core.base import PresentDocument
+from parallax.core import Attr, DomainModel, Entity, Float32, ValueObject, attr
 from parallax.core.db_port import JsonDocument
 from parallax.snapshot import TxnContext, connect
 from tests._support.db_port import Read, ScriptedAdapter, Transact, Write, WriteCall
@@ -34,20 +33,12 @@ class Reading(Entity, table="reading", namespace="typed.normalization"):
     point: Attr[Point]
 
 
-class VersionedReading(Entity, table="versioned_reading", namespace="typed.normalization"):
-    id: Attr[int] = attr(primary_key=True)
-    version: Attr[int] = attr(type=Int32, optimistic_locking=True)
-    ratio: Attr[float] = attr(type=Float32)
-    measure: Attr[float]
-    point: Attr[Point]
-
-
 class Stamp(Entity, table="stamp", namespace="typed.normalization"):
     id: Attr[int] = attr(primary_key=True)
     at: Attr[dt.datetime]
 
 
-_MODEL = DomainModel(Reading, VersionedReading, Stamp)
+_MODEL = DomainModel(Reading, Stamp)
 
 # (Float32 input, Float64 input); a Float64 underflow has no host spelling but -0.0.
 _NEGATIVE_ZEROS = pytest.mark.parametrize(
@@ -111,31 +102,6 @@ def test_a_typed_update_where_binds_negative_float_zero_as_positive_zero(
             Reading.measure.set(measure),
             Reading.point.set(Point(ratio=ratio, measure=measure)),
         ),
-        Write(),
-    )
-
-    assert _zero_signs(calls) == [1.0] * 4
-
-
-@_NEGATIVE_ZEROS
-def test_a_materializing_typed_update_where_binds_negative_float_zero_as_positive_zero(
-    ratio: float, measure: float
-) -> None:
-    stored = {
-        "id": 1,
-        "version": 1,
-        "ratio": 1.5,
-        "measure": 2.5,
-        "point": PresentDocument({"ratio": 1.5, "measure": 2.5}),
-    }
-    calls = _write_calls(
-        lambda tx: tx.amend_where(
-            VersionedReading.where(VersionedReading.id >= 0),
-            VersionedReading.ratio.set(ratio),
-            VersionedReading.measure.set(measure),
-            VersionedReading.point.set(Point(ratio=ratio, measure=measure)),
-        ),
-        Read(rows=[stored]),
         Write(),
     )
 

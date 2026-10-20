@@ -117,8 +117,7 @@ def delete_collapses(model: Metamodel, entity: EntityMetadata) -> bool:
     collapses: each row is removed under its own
     prior observation and its own exactly-one affected-row expectation, in
     either concurrency mode, and optimistic mode binds that row's version as its
-    own gate on top (`m-batch-write-004` is the ungated locking form,
-    `m-opt-lock-015` the gated one)."""
+    own gate on top (`m-batch-write-004` is the ungated locking form)."""
     if _is_temporal(model, entity):
         return False
     return not _is_versioned(model, entity)

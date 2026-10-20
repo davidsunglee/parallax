@@ -53,12 +53,12 @@ def test_real_prose_and_schema_vocabularies_match() -> None:
     assert check(_real_markdown(), _real_evolution_markdown(), _real_schema()) == []
 
 
-def test_real_prose_vocabulary_is_the_full_fifty_six_rule_set() -> None:
+def test_real_prose_vocabulary_is_the_full_fifty_seven_rule_set() -> None:
     # A sanity floor: the parser found every bulleted group PLUS the
     # comma-separated Model-rules paragraph, not an accidentally-truncated
     # subset (a parsing-anchor regression would silently shrink this).
     prose = prose_rejected_rules(_real_markdown())
-    assert len(prose) == 56
+    assert len(prose) == 57
     assert "relationship-join-type-mismatch" in prose
     assert {
         "neutral-literal-type-mismatch",
@@ -79,6 +79,7 @@ def test_real_prose_vocabulary_is_the_full_fifty_six_rule_set() -> None:
     assert "string-predicate-non-string-member" in prose  # the non-string-member rule
     assert "subtype-write-sibling-attribute" in prose  # a Subtype-write-rule bullet
     assert "temporal-keyed-write-multi-row" in prose  # the Instruction-rule bullet
+    assert "set-based-write-target-unsupported" in prose  # the predicate Instruction rule
     assert "inheritance-missing-root" in prose  # a Model-rules paragraph entry
     assert "inheritance-missing-concrete-subtype" in prose  # the family-membership rule
     assert "inheritance-concrete-subtype-with-children" in prose  # the leaves-only rule
@@ -96,9 +97,9 @@ def test_real_prose_vocabulary_is_the_full_fifty_six_rule_set() -> None:
     assert "storage-layout-index-over-document-member" in prose
 
 
-def test_real_schema_enum_is_the_full_fifty_six_rule_set() -> None:
+def test_real_schema_enum_is_the_full_fifty_seven_rule_set() -> None:
     rules = schema_rejected_rules(_real_schema())
-    assert len(rules) == 56
+    assert len(rules) == 57
     assert "metamodel-temporal-member-reserved" in rules
     assert "relationship-join-type-mismatch" in rules
     assert {
@@ -121,6 +122,7 @@ def test_real_schema_enum_is_the_full_fifty_six_rule_set() -> None:
     assert "subtype-selection-duplicate-alternative" in rules
     assert "subtype-selection-overlapping-alternatives" in rules
     assert "temporal-keyed-write-multi-row" in rules
+    assert "set-based-write-target-unsupported" in rules
     assert "inheritance-missing-concrete-subtype" in rules
     assert "inheritance-concrete-subtype-with-children" in rules
     assert "inheritance-layout-not-root-owned" in rules

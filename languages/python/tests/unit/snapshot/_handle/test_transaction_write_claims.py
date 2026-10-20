@@ -507,66 +507,6 @@ def test_a_restoring_edit_of_a_value_this_transaction_inserted_cancels_nothing()
     ]
 
 
-# --------------------------------------------------------------------------- #
-# Materialized Write Group claims.                                            #
-# --------------------------------------------------------------------------- #
-def test_a_predicate_group_claims_every_state_it_selected() -> None:
-    # The group owns the observations its predicate resolved, and it is one
-    # compact indivisible unit — so a later keyed write of a state it selected
-    # has nothing to join and is refused without the group being indexed or
-    # mutated.
-    port = ScriptedAdapter(Transact(Read(rows=[_ACCOUNT_ROW], times=2)))
-
-    def fn(tx: TxnContext) -> None:
-        node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
-        tx.amend_where(mm.Account.where(mm.Account.id == 1), mm.Account.owner.set("Grace"))
-        tx.amend(node.edit(balance=Decimal("125.00")))
-
-    with raises_contextualized(WriteEvidenceError) as refusal:
-        account_db(port).transact(fn)
-    assert refusal.value.code == "write-evidence-already-claimed"
-
-
-def test_a_keyed_write_of_a_state_the_group_did_not_select_stays_independent() -> None:
-    port = ScriptedAdapter(
-        Transact(
-            Read(rows=[dict(_ACCOUNT_ROW)]),
-            Read(rows=[{"id": 2, "owner": "Linus", "balance": Decimal("250.00"), "version": 7}]),
-            Write(times=2),
-        )
-    )
-
-    def fn(tx: TxnContext) -> None:
-        node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
-        tx.amend_where(mm.Account.where(mm.Account.id == 2), mm.Account.owner.set("Grace"))
-        tx.amend(node.edit(balance=Decimal("125.00")))
-
-    account_db(port).transact(fn)
-    assert len(_writes(port)) == 2
-
-
-def test_a_keyed_intent_before_an_overlapping_predicate_write_force_flushes_first() -> None:
-    # The reverse order needs no claim: the resolving read force-flushes the
-    # buffered keyed write, so the rows the predicate selects are fresh state no
-    # pending intent still holds.
-    port = ScriptedAdapter(Transact(_ACCOUNT_READ, Write(), _ACCOUNT_READ, Write()))
-
-    def fn(tx: TxnContext) -> None:
-        node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
-        tx.amend(node.edit(balance=Decimal("125.00")))
-        tx.amend_where(mm.Account.where(mm.Account.id == 1), mm.Account.owner.set("Grace"))
-
-    account_db(port).transact(fn)
-    assert [type(op) for op in port.calls] == [
-        BeginCall,
-        ReadCall,
-        WriteCall,
-        ReadCall,
-        WriteCall,
-        CommitCall,
-    ]
-
-
 def test_the_locked_read_is_what_a_locking_preference_still_licenses() -> None:
     # The claim seam is strategy-independent: an explicit `locking` preference
     # locks the read and the same two assignments still merge into one write.

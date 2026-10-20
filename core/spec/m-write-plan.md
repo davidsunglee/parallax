@@ -354,10 +354,10 @@ every audit value, with no generated-value expression. Completeness is required
 because temporal expansion carries members the authored mutation never mentioned,
 and because audit finalization must distinguish `m-edit`'s carried state from its
 authored assignments without a second read (ADR 0042). Successors retain or view
-that state rather than copying it, and bulk materialization MAY expose a logical
-Predecessor Row view over a group's compact storage — aligned columns, or the
-resolving read's own row state, for example — instead of allocating one row
-object per observation. Where a trusted producer already owns the observed state
+that state rather than copying it, and a read retaining many MAY expose a
+logical Predecessor Row view over compact storage — aligned columns, or the
+read's own row state, for example — instead of allocating one row object per
+observation. Where a trusted producer already owns the observed state
 outright, it transfers that state into the Predecessor Row; the carrier does not
 copy it and then freeze it again.
 
@@ -369,9 +369,9 @@ it in immutable form.
 
 Under Relational Document Layout a Predecessor Row additionally retains the
 **raw Structured Column document**, as a distinct named field beside its member
-state and never as an entry in it. A group's compact storage carries the same
-value aligned with each row's member state, so a logical Predecessor Row view over
-it exposes the raw document without allocating a second per-row carrier. The
+state and never as an entry in it. Compact storage carries the same value
+aligned with each row's member state, so a logical Predecessor Row view over it
+exposes the raw document without allocating a second per-row carrier. The
 document is read-only under the same logical immutability: a successor that
 changes a member composes its own document from a copy (`m-document-codec`
 patching), and no reader alters the retained one. What a successor binds from it
@@ -384,9 +384,8 @@ members can never surface the raw document as a result field or an Entity
 member.
 
 Retention costs no additional query. A temporal write already materializes its
-predecessor to obtain the key, milestone bounds, and complete state; the
-resolving read projects the Structured Column for that observation
-anyway, and this rule says only that the observation path carries the value
+predecessor to obtain the key, milestone bounds, and complete state; the read
+that observed it projects the Structured Column for that observation anyway, and this rule says only that the observation path carries the value
 forward instead of discarding it once known members are decoded.
 
 The successor is then built by patching that retained document

@@ -2,8 +2,8 @@
 
 Each Entity holds a scalar, a One Value Object nesting another One, and a Many,
 under Columns or Relational Document Layout. A milestone is composed from its
-key alone: as the driver answers it, keyed by physical column, or as a
-resolving read appends it to Predecessor Rows.
+key alone: as the driver answers it, keyed by physical column, or as a read
+appends it to Predecessor Rows.
 
 Exported names carry no leading underscore: importing an underscored name across
 modules is a ``reportPrivateUsage`` error under pyright strict, so privacy is
@@ -13,8 +13,8 @@ carried by this MODULE's underscore. Never imported by production code.
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Callable, Iterator, Mapping, Sequence
-from typing import Final, Literal, cast
+from collections.abc import Mapping
+from typing import Final, Literal
 
 from parallax.core import (
     Attr,
@@ -27,19 +27,10 @@ from parallax.core import (
     temporal_read,
 )
 from parallax.core.base import INFINITY
-from parallax.core.db_port import (
-    DatabaseConnection,
-    DocumentReadOrdinals,
-    PipelineStatement,
-    Row,
-    TransactionOutcome,
-)
-from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity._construction_input import ABSENT
 from parallax.core.entity._layout import LayoutCatalog
 from parallax.core.entity._model import model_of
 from parallax.core.write_plan import PredecessorRows, PredecessorRowsBuilder
-from tests._support.db_port import ConnectsAsItself, body_outcome, projected_rows
 from tests.unit._positional_row_support import positional_row
 
 __all__ = [
@@ -51,7 +42,6 @@ __all__ = [
     "Layout",
     "MilestoneColumns",
     "MilestoneDocument",
-    "MilestonePort",
     "milestones",
     "stored_row",
 ]
@@ -132,7 +122,7 @@ def milestones(
     entity: type[Entity], *spans: tuple[dt.datetime, object]
 ) -> tuple[PredecessorRows, temporal_read.Bitemporal]:
     """One stored milestone of ``entity`` per Valid-Time ``(start, end)`` span,
-    keyed from one, as a resolving read appends them."""
+    keyed from one, as a read appends them."""
     layout = LayoutCatalog(_PREPARED).entity(entity.identity)
     selection = layout.member_selection
     builder = PredecessorRowsBuilder(
@@ -153,52 +143,3 @@ def milestones(
     assert evidence is not None
     assert isinstance(shape, temporal_read.Bitemporal)
     return evidence, shape
-
-
-class MilestonePort(ConnectsAsItself):
-    """A port whose every read answers ``rows`` milestones, each composed by
-    ``stored`` from its key when the statement runs, which refuses every
-    write, and whose transaction boundary is the body's own outcome."""
-
-    dialect: Dialect = POSTGRES
-    __slots__ = ("_rows", "_stored")
-    _stored: Callable[[int], Mapping[str, object]]
-    _rows: int
-
-    def __init__(self, stored: Callable[[int], Mapping[str, object]], rows: int) -> None:
-        self._stored = stored
-        self._rows = rows
-
-    def rows(self) -> Iterator[Mapping[str, object]]:
-        stored = self._stored
-        for offset in range(self._rows):
-            yield stored(1 + offset)
-
-    def execute(
-        self,
-        sql: str,
-        binds: Sequence[object],
-        document_reads: Sequence[DocumentReadOrdinals] = (),
-    ) -> list[Row]:
-        del binds
-        return projected_rows(sql, self.rows(), document_reads)
-
-    def execute_write(self, sql: str, binds: Sequence[object]) -> int:
-        del sql, binds
-        raise AssertionError("a milestone port answers reads only")
-
-    def execute_pipeline(self, statements: Sequence[PipelineStatement]) -> list[list[Row]]:
-        return [
-            self.execute(statement.sql, statement.binds, statement.document_reads)
-            for statement in statements
-        ]
-
-    def transaction[T](
-        self,
-        body: Callable[[DatabaseConnection], T],
-        *,
-        isolation: str | None = None,
-        access_mode: str | None = None,
-    ) -> TransactionOutcome[T]:
-        del isolation, access_mode
-        return body_outcome(cast("DatabaseConnection", self), body)

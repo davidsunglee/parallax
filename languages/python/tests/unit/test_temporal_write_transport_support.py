@@ -137,7 +137,6 @@ def test_a_transaction_hands_its_body_a_connection_counting_into_the_same_tally(
         (Cell("keyed-amend", 128), True, Realization(0, 2, 128, 64, 3, 130, 64)),
         (Cell("target-replace", 1), True, Realization(1, 0, 0, 0, 1, 3, 3)),
         (Cell("target-replace", 64), True, Realization(0, 1, 64, 64, 1, 3, 3)),
-        (Cell("predicate-amend", 70), True, Realization(70, 0, 0, 0, 70, 210, 3)),
         (Cell("collection-amend", 64), True, Realization(0, 1, 64, 64, 2, 66, 64)),
     ],
     ids=lambda value: value.id if isinstance(value, Cell) else str(value),
@@ -155,7 +154,6 @@ def test_every_cell_is_a_workload_the_live_module_drives() -> None:
     assert {cell.workload for cell in CELLS} == {
         "keyed-amend",
         "target-replace",
-        "predicate-amend",
         "collection-amend",
     }
     assert transport.STATEMENT_CAP == transport.ENTRY_CAP == 64
@@ -200,14 +198,3 @@ def test_a_wide_amendment_keeps_every_milestone_apart_and_a_replacement_merges_t
     ]
     assert replaced[1].valid_from == _day(10)
     assert replaced[1].valid_to == _day(63 * 30 + 20)
-
-
-def test_a_predicate_group_amends_each_of_its_objects_alone() -> None:
-    history = expected_history("predicate-amend", 70, 4)
-    assert {row.key for row in history} == {5000 + index for index in range(70)}
-    assert len(history) == 70 * 4
-    assert all(
-        [row.valid_from for row in history if row.key == key and row.tx_from == AMENDED_AT]
-        == [_day(0), _day(10), _day(20)]
-        for key in range(5000, 5070)
-    )

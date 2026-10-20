@@ -40,13 +40,7 @@ from parallax.core import predicate as predicate_algebra
 from parallax.core._execution._concurrency import CONCURRENCY
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
-from parallax.core._execution._unit_work.instructions import (
-    PreparedPredicateWrite,
-    prepare_typed_write,
-)
-from parallax.core._execution._unit_work.ranges import DeferredGroupRange
 from parallax.core._execution._unit_work.write_items import OrderedWrite
-from parallax.core._execution._write_lowering import lowered as lower
 from parallax.core.deep_fetch._include_tree import build_include_tree
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._layout import CatalogedModel
@@ -60,13 +54,10 @@ from parallax.core.temporal_read import Edge, Pin
 from parallax.core.unit_work import (
     Concurrency,
     KeyedWriteInstruction,
-    MaterializedWriteGroup,
     PredicateSelection,
     PredicateWriteInstruction,
     TransactionSettings,
     UnitOfWork,
-    VersionedEvidenceBuilder,
-    WriteAssignment,
     WritePlanningRequest,
     object_key,
 )
@@ -79,7 +70,7 @@ from parallax.core.write_plan import (
     WriteObservation,
 )
 from parallax.core.write_plan.keys import TemporalObjectStateKey, VersionedObjectStateKey
-from parallax.core.write_plan.plan import NO_TEMPORAL_WRITE_OWNERSHIP, WriteStepView
+from parallax.core.write_plan.plan import WriteStepView
 from parallax.core.write_plan.steps import (
     PlannedClose,
     PlannedDelete,
@@ -109,7 +100,6 @@ from tests._support.planner_probes import NO_ROW_READS, TEST_ACTOR_IDENTITY, obs
 from tests._support.root_ownership import own_root
 from tests.unit._corpus_model_support import corpus_records, formed
 from tests.unit._judged_evidence_support import judged_rows, retained_sources
-from tests.unit._temporal_group_support import temporal_group
 from tests.unit._transact_support import INFINITY_INSTANT, RATE, db_for
 from tests.unit.snapshot._snapshot_page_support import PageFixture, identity_of
 
@@ -179,34 +169,10 @@ def _trace_declarations(monkeypatch: pytest.MonkeyPatch, model: Metamodel) -> li
     return callers
 
 
-def _version_group() -> MaterializedWriteGroup:
-    prepared = prepare_typed_write(
-        PredicateWriteInstruction(
-            "amend",
-            PredicateSelection(
-                "Account",
-                predicate_algebra.Comparison(
-                    "lessThan", predicate_algebra.FieldSubject("Account.balance"), "1000000.00"
-                ),
-            ),
-            assignments=(WriteAssignment("Account.balance", Decimal("5.00")),),
-        ),
-        _MODEL,
-    )
-    assert isinstance(prepared, PreparedPredicateWrite)
-    evidence = VersionedEvidenceBuilder(key_position=0, version_position=1)
-    for key_value, version in ((20, 1), (21, 4)):
-        evidence.append((key_value, version))
-    sealed = evidence.seal()
-    assert sealed is not None
-    return MaterializedWriteGroup(mutation=prepared, evidence=sealed)
-
-
 def _prepared_writes() -> list[OrderedWrite]:
     """Every non-temporal arm version settlement forks on: a versioned insert,
     observed updates and deletes of a standalone Entity and of an inherited
-    position, a collapsing unversioned run, a readless predicate write, and a
-    Materialized Write Group."""
+    position, a collapsing unversioned run, and a readless predicate write."""
     fridge_update = KeyedWriteInstruction("amend", "Fridge", ({"id": 1, "name": "Chill"},))
     account_delete = KeyedWriteInstruction("delete", "Account", ({"id": 3},))
     fridge_key = object_key(fridge_update, _MODEL)
@@ -240,7 +206,6 @@ def _prepared_writes() -> list[OrderedWrite]:
                 account_key: VersionObservation(observed_version=2),
             },
         ),
-        _version_group(),
     ]
 
 
@@ -299,26 +264,9 @@ _BITEMPORAL: Final[Mapping[str, object]] = {
 _VALID_FROM: Final = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
 
 
-def _value_update(
-    entity: str, *, valid_from: dt.datetime | None = None
-) -> PredicateWriteInstruction:
-    return PredicateWriteInstruction(
-        "amend",
-        PredicateSelection(
-            entity,
-            predicate_algebra.Comparison(
-                "lessThan", predicate_algebra.FieldSubject(f"{entity}.value"), "1000000.00"
-            ),
-        ),
-        assignments=(WriteAssignment(f"{entity}.value", Decimal("7.00")),),
-        valid_from=valid_from,
-    )
-
-
 def _temporal_writes() -> list[OrderedWrite]:
     """Observed updates of an inherited position in a Transaction-Time-Only and
-    a Bitemporal family, an observed standalone terminate, and a packed
-    Materialized Write Group of each temporal shape."""
+    a Bitemporal family, and an observed standalone terminate."""
     quote_update = KeyedWriteInstruction(
         "amend", "SpotQuote", ({"id": 1, "price": Decimal("2.00")},)
     )
@@ -339,22 +287,6 @@ def _temporal_writes() -> list[OrderedWrite]:
     return [
         *observed_buffer(
             [write for write, _members in predecessors], _TEMPORAL_MODEL, observations
-        ),
-        temporal_group(
-            _value_update("Balance"),
-            _TEMPORAL_MODEL,
-            [
-                {"id": row, "acctNum": "B", "value": Decimal("1"), **_TRANSACTION_TIME}
-                for row in (10, 11, 12)
-            ],
-        ),
-        temporal_group(
-            _value_update("Position", valid_from=_VALID_FROM),
-            _TEMPORAL_MODEL,
-            [
-                {"id": row, "acctNum": "P", "value": Decimal("1"), **_BITEMPORAL}
-                for row in (20, 21, 22)
-            ],
         ),
     ]
 
@@ -379,27 +311,12 @@ def test_admitting_planning_and_lowering_temporal_writes_take_axes_from_the_fami
     assert list(plan.steps) == steps
     payloads = LayoutPayloadPreparer(_TEMPORAL_MODEL)
     lowered = list(lowered_steps(plan.steps, payloads, _TEMPORAL_MODEL, POSTGRES))
-    # The Bitemporal amendment group settles at execution; its selected rows
-    # cover its window, so it reads nothing.
-    (deferred,) = (unit.deferred for unit in plan.units if unit.deferred is not None)
-    assert isinstance(deferred, DeferredGroupRange)
-    continuation = planner.prepare_group(
-        deferred,
-        acquire_rows=NO_ROW_READS,
-        ownership=NO_TEMPORAL_WRITE_OWNERSHIP,
-        actor_identity=TEST_ACTOR_IDENTITY,
-        transaction_instant=instant,
-    )
-    while (writes := continuation.pull()) is not None:
-        steps.extend(writes)
-        lowered.extend((step, lower(step, payloads, _TEMPORAL_MODEL, POSTGRES)) for step in writes)
-    continuation.close()
 
     assert callers == []
     assert len(lowered) == len(steps)
     closes = [step for step in steps if isinstance(step, PlannedClose)]
-    # Three addressed writes and three rows of each group.
-    assert len(closes) == 9
+    # One close per addressed write.
+    assert len(closes) == 3
     for close in closes:
         shape = temporal_read.view(_TEMPORAL_MODEL).shape(close.entity)
         assert isinstance(shape, temporal_read.TransactionTimeOnly | temporal_read.Bitemporal)
@@ -698,13 +615,6 @@ def _streamed_rate_history(database: ScopedDatabase) -> None:
         assert [edge_of(root).tx_time for root in stream] == [_OPENED, _LATER]
 
 
-def _materialized_policy_update(database: ScopedDatabase) -> None:
-    def update(tx: TxnContext) -> None:
-        tx.amend_where(Policy.where(Policy.id == 1), Policy.name.set("P-2"), valid_from=_VALID_FROM)
-
-    database.transact(update)
-
-
 _QUERIES: Final[
     Mapping[str, tuple[DomainModel, tuple[ScriptEntry, ...], Callable[[ScopedDatabase], None]]]
 ] = {
@@ -716,11 +626,6 @@ _QUERIES: Final[
     "inherited-latest": (RATE, (Read(rows=[_deposit_rate_row(1)]),), _latest_rate),
     "inherited-history": (RATE, (Read(rows=list(_RATE_MILESTONES)),), _eager_rate_history),
     "inherited-stream": (RATE, (Read(rows=list(_RATE_MILESTONES)),), _streamed_rate_history),
-    "materialized-update": (
-        POLICY_MODEL,
-        (Transact(Read(rows=[_POLICY_ROW]), Write(times=3)),),
-        _materialized_policy_update,
-    ),
 }
 
 

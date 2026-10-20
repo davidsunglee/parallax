@@ -28,7 +28,7 @@ implements them. Preparation is pure and runs when something needs its result:
 a statement about to be lowered, or a comparison that needs complete state. A
 narrow update demands its assignments alone and never a complete row or its
 predecessor. Nothing prepares a whole plan, a later execution unit, or every row
-of a Materialized Write Group in advance, and repeating a demand without
+of a packed run in advance, and repeating a demand without
 retained backing may prepare again rather than consult a cache.
 
 A **Row Payload** holds one Write Row's persisted cells in Table Layout slot

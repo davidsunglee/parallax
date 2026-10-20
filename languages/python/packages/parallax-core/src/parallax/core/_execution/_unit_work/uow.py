@@ -10,9 +10,7 @@ from weakref import WeakValueDictionary
 from parallax.core import inheritance, temporal_read
 from parallax.core._execution._unit_work.acquisition import (
     AcquireRows,
-    SelectionReadRequest,
     TargetReadRequest,
-    consume_selection,
     consume_target,
 )
 from parallax.core._execution._unit_work.admission import (
@@ -52,7 +50,6 @@ from parallax.core._execution._unit_work.strategy import (
 )
 from parallax.core._execution._unit_work.write_items import (
     BufferItem,
-    MaterializedWriteGroup,
     TargetKeyedWrite,
     readless_write,
     target_write,
@@ -61,11 +58,10 @@ from parallax.core._execution._unit_work.write_planner import WritePlanner, Writ
 from parallax.core._execution._unit_work.write_runner import ExecuteWriteSteps, run_write_plan
 from parallax.core.base import normalize_instant
 from parallax.core.inheritance import InheritanceEntityView
-from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
+from parallax.core.metamodel import EntityMetadata, Metamodel
 from parallax.core.temporal_read import (
     Bitemporal,
     Edge,
-    NonTemporal,
     TimeInterval,
     TransactionTimeOnly,
     milestone_edge,
@@ -76,7 +72,6 @@ from parallax.core.write_plan.keys import (
     TemporalObjectStateKey,
     VersionedObjectStateKey,
 )
-from parallax.core.write_plan.materialized import PredecessorRows
 from parallax.core.write_plan.observe import PredecessorRow
 from parallax.core.write_plan.plan import (
     ExecutionUnit,
@@ -365,52 +360,11 @@ class UnitOfWork:
         )
 
     def buffer_predicate(self, prepared: PreparedPredicateWrite) -> None:
-        """Buffer a prepared predicate-selected write, readless or materialized.
-
-        An unversioned Non-Temporal target settles as one statement
-        (`m-batch-write` "Predicate-selected readless forms"). Every other
-        target materializes (`m-opt-lock`, ADR 0014):
-        pending writes flush through :meth:`read`, its selection is read
-        through ``acquire_rows``, and every selected row that is not a no-op
-        becomes the evidence of one Materialized Write Group buffered at the
-        call position. A selection leaving no row buffers nothing, and a
-        stored-data refusal while reading leaves nothing buffered.
-
-        A Bitemporal amendment selects its objects at its ``valid_from``, by
-        the row current there, and keeps every one its predicate matches: its
-        amendment reaches each object's later coverage when its flush reaches
-        it, so equality at the start eliminates nothing. An object selected by
-        more than one row is :class:`CardinalityCorruptionError`, raised once
-        the selection is read and before anything is buffered.
-        """
-        entity = prepared.selection.target
-        version = self._planner.version_attribute(entity.identity)
-        shape = temporal_read.view(self.meta).shape(entity.identity)
-        if version is None and isinstance(shape, NonTemporal):
-            self.buffer(readless_write(prepared))
-            return
-        view = self._family(entity)
-        selection = view.member_selection
-        window = prepared.valid_time_window
-        request = SelectionReadRequest(
-            prepared,
-            key_position=selection.position(view.primary_key.identity),
-            version_position=None if version is None else selection.position(version),
-            valid_from=(
-                window.start
-                if window is not None
-                and isinstance(shape, Bitemporal)
-                and prepared.mutation in AMEND_MUTATIONS
-                else None
-            ),
-        )
-        evidence = self.read(lambda: self.acquire_rows(request, consume_selection))
-        if evidence is None:
-            return
-        if request.valid_from is not None:
-            assert isinstance(evidence, PredecessorRows)  # a temporal selection's rows are whole
-            _require_one_start(entity.identity, view, evidence)
-        self.buffer(MaterializedWriteGroup(mutation=prepared, evidence=evidence))
+        """Buffer a prepared predicate-selected write, which settles as one
+        readless statement (`m-batch-write` "Predicate-selected readless
+        forms"): preparation has refused every target that needs an
+        observation."""
+        self.buffer(readless_write(prepared))
 
     def buffer_target(self, prepared: PreparedTargetWrite) -> None:
         """Admit a caller-addressed write and buffer it — all of it, or nothing.
@@ -870,23 +824,3 @@ class UnitOfWork:
         self._admission.discard()
         self._observations.clear()
         self._changed.clear()
-
-
-def _require_one_start(
-    entity: EntityIdentity, view: InheritanceEntityView, selected: PredecessorRows
-) -> None:
-    """Refuse the first object, in resolution order, that more than one
-    selected row starts."""
-    seen: set[object] = set()
-    for index in range(len(selected)):
-        key = selected.key(index)
-        if key not in seen:
-            seen.add(key)
-            continue
-        count = sum(1 for other in range(len(selected)) if selected.key(other) == key)
-        raise CardinalityCorruptionError(
-            entity,
-            KeyTarget(key_attributes=(view.primary_key.identity,), key_values=((key,),)),
-            1,
-            count,
-        )

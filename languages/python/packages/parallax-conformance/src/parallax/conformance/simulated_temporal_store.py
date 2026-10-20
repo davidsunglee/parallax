@@ -133,7 +133,6 @@ class _Snapshot:
 
     current: dict[_ObjectKey, _StoredRow]
     overtaken: set[_ObjectKey]
-    materialized: set[_ObjectKey]
     out_of_band: bool
     changed_objects: set[_InitialObject]
     changed_families: set[EntityIdentity]
@@ -165,7 +164,6 @@ class SimulatedTemporalStore:
         "_current",
         "_initial",
         "_located",
-        "_materialized",
         "_out_of_band",
         "_overtaken",
     )
@@ -175,7 +173,6 @@ class SimulatedTemporalStore:
         self._located: dict[_Address, tuple[_ObjectKey, ...]] = {}
         self._out_of_band = False
         self._overtaken: set[_ObjectKey] = set()
-        self._materialized: set[_ObjectKey] = set()
         self._initial: Mapping[_InitialObject, tuple[_InitialRow, ...]] | None = None
         self._changed_objects: set[_InitialObject] = set()
         self._changed_families: set[EntityIdentity] = set()
@@ -218,24 +215,6 @@ class SimulatedTemporalStore:
         slot = self._slot(model, entity, row)
         return slot is not None and slot not in self._overtaken
 
-    def moved_by_materialization(
-        self,
-        model: Metamodel,
-        entity: EntityMetadata,
-        row: Mapping[str, object],
-    ) -> bool:
-        """Whether the milestone ``row`` addresses is one a materializing
-        predicate write of this case already retired
-        (:meth:`note_materialized_write`).
-
-        ``True`` means the stored milestone is stale in the strongest sense: the
-        database holds a successor of it opened at that write's own instant, and a
-        close addressed at what this store still holds current would match no
-        row at all.
-        """
-        slot = self._slot(model, entity, row)
-        return slot is not None and slot in self._materialized
-
     @contextlib.contextmanager
     def transaction(self, *, rollback: bool) -> Generator[Callable[[], None]]:
         """One simulated database transaction over these rows: what runs inside
@@ -252,7 +231,6 @@ class SimulatedTemporalStore:
         snapshot = _Snapshot(
             dict(self._current),
             set(self._overtaken),
-            set(self._materialized),
             self._out_of_band,
             set(self._changed_objects),
             set(self._changed_families),
@@ -265,28 +243,6 @@ class SimulatedTemporalStore:
             raise
         if rollback:
             restart()
-
-    def note_materialized_write(self, entity: EntityMetadata) -> None:
-        """Record that a materializing predicate write over ``entity`` committed —
-        it resolved its own rows and, for each, retired the milestone it found and
-        opened a successor (`m-opt-lock` predicate-selected writes materialize).
-
-        Production performs that resolve and plans those rows internally, and
-        hands back neither, so this store cannot advance to what the write left:
-        which of ``entity``'s milestones its predicate selected is not derivable
-        here at all. Every milestone of ``entity`` stored right now is therefore
-        recorded as MOVED, which is a stronger statement than the doubt
-        out-of-band statements raise (:meth:`has_complete_stored_row`) — the row
-        it names is not merely unaccounted for, it is no longer the current one —
-        and it is the tightest bound available without the plan.
-
-        Milestones of OTHER entities are untouched: a predicate names one target,
-        and a write of that target moves no other table's rows. What the initial
-        fixtures stored of a Non-Temporal ``entity`` is no longer known either.
-        """
-        name = entity.identity.name
-        self._materialized |= {key for key in self._current if key[0] == name}
-        self._changed_families.add(entity.identity)
 
     def note_out_of_band_write(self) -> None:
         """Record that statements outside this store's own accounting ran
@@ -473,7 +429,6 @@ class SimulatedTemporalStore:
             **_members_by_name(assignments.attributes, assignments.value_objects),
         }
         overtaken = slot in self._overtaken
-        materialized = slot in self._materialized
         self._forget(slot)
         revised = self._track(
             layout, TemporalObservation(predecessor=PredecessorRow(members=members))
@@ -482,8 +437,6 @@ class SimulatedTemporalStore:
         # had already lost track of.
         if overtaken:
             self._overtaken.add(revised)
-        if materialized:
-            self._materialized.add(revised)
 
     def _addressed(self, target: MilestoneTarget, entity: EntityIdentity) -> _ObjectKey | None:
         """The slot of the one stored row ``target`` addresses, or ``None``
@@ -608,9 +561,8 @@ class SimulatedTemporalStore:
 
         Storing a milestone is also what re-establishes a whole account of it: the
         row stored here came from the case's own fixtures or from the plan that
-        wrote it, so neither the doubt earlier out-of-band statements raised nor
-        an earlier materializing write's displacement can still stand for the slot
-        it occupies.
+        wrote it, so the doubt earlier out-of-band statements raised no longer
+        stands for the slot it occupies.
         """
         members = observation.predecessor.members
         key = layout.key(members)
@@ -628,7 +580,6 @@ class SimulatedTemporalStore:
             address = existing.address
         self._current[key] = _StoredRow(observation, address)
         self._overtaken.discard(key)
-        self._materialized.discard(key)
         return key
 
     def _forget(self, slot: _ObjectKey) -> None:
@@ -637,12 +588,10 @@ class SimulatedTemporalStore:
         stored = self._current.pop(slot)
         del self._located[stored.address]
         self._overtaken.discard(slot)
-        self._materialized.discard(slot)
 
     def _restore(self, snapshot: _Snapshot) -> None:
         self._current = dict(snapshot.current)
         self._overtaken = set(snapshot.overtaken)
-        self._materialized = set(snapshot.materialized)
         self._out_of_band = snapshot.out_of_band
         self._changed_objects = set(snapshot.changed_objects)
         self._changed_families = set(snapshot.changed_families)

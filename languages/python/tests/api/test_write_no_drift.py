@@ -16,8 +16,9 @@ from pydantic import ValidationError
 
 from parallax.conformance import case_format
 from parallax.conformance.class_models import MODELS
-from parallax.conformance.read_models import Payment
+from parallax.conformance.read_models import Balance, Payment
 from parallax.conformance.stories import WRITE_STORIES, WriteStory
+from parallax.conformance.story_models import Account, Position
 from parallax.conformance.vo_models import (
     ContactAddress,
     ContactGeo,
@@ -656,3 +657,43 @@ def test_idiomatic_write_build_rejects_the_corpus_rule(case_id: str) -> None:
         db.transact(REJECTED_WRITE_BUILDERS[case_id])
     assert exc_info.value.rule == expected_rule
     assert not port.wrote
+
+
+# --------------------------------------------------------------------------- #
+# The predicate-write rejects: each Typed `_where` verb refuses the SAME       #
+# instruction the corpus's rejected lane prepares through Wire, naming the     #
+# SAME classified rule, before anything reaches the port (`api_suite.EXAMPLES`'#
+# own entries are these exact snippets).                                      #
+# --------------------------------------------------------------------------- #
+REJECTED_PREDICATE_WRITES: dict[str, tuple[str, Callable[[TxnContext], None]]] = {
+    "m-batch-write-047": (
+        "account",
+        lambda tx: tx.amend_where(
+            Account.where(Account.balance < Decimal("200.00")),
+            Account.balance.set(Decimal("0.00")),
+        ),
+    ),
+    "m-batch-write-048": (
+        "balance",
+        lambda tx: tx.delete_where(Balance.where(Balance.acct_num == "A-1")),
+    ),
+    "m-batch-write-049": (
+        "position",
+        lambda tx: tx.amend_where(
+            Position.where(Position.acct_num == "A-1"),
+            Position.value.set(Decimal("0.00")),
+        ),
+    ),
+}
+
+
+@pytest.mark.parametrize("case_id", sorted(REJECTED_PREDICATE_WRITES))
+def test_idiomatic_predicate_write_rejects_the_corpus_rule(case_id: str) -> None:
+    model, write = REJECTED_PREDICATE_WRITES[case_id]
+    expected_rule = case_document(_CASES[case_id])["then"]["rejectedRule"]
+    port = _KeyedSeedPort()
+    db = own_root(Database.connect(port, MODELS[model])).using_database_login()
+    with raises_contextualized(instructions.InstructionRejectedError) as exc_info:
+        db.transact(write)
+    assert exc_info.value.rule == expected_rule
+    assert port.statements() == []

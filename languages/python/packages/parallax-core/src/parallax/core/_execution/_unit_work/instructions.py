@@ -180,6 +180,11 @@ TEMPORAL_KEYED_WRITE_MULTI_ROW: Final[str] = "temporal-keyed-write-multi-row"
 # not of the model) and raised here for a write's own target reference.
 REFERENCE_AMBIGUOUS_ENTITY_NAME: Final[str] = "reference-ambiguous-entity-name"
 
+# The same vocabulary's classification of a predicate-selected write whose
+# target needs an observation: a versioned or temporal Entity, which one
+# readless statement cannot write (`m-batch-write`).
+SET_BASED_WRITE_TARGET_UNSUPPORTED: Final[str] = "set-based-write-target-unsupported"
+
 
 class WriteInstructionError(ValueError):
     """A write-instruction document is not a well-formed canonical instruction."""
@@ -996,7 +1001,9 @@ def _prepare_write(
     payload.
 
     The target stage resolves the Entity, then asks whether it admits the verb
-    (both halves of temporal applicability), the window, and the row count.
+    (both halves of temporal applicability), the window, and the row count. A
+    predicate write first asks whether its target can be written without being
+    read at all (:func:`_judge_readless_family`).
     Only then is the payload measured — a keyed row's subtype shape, members,
     and values, or a predicate write's selecting predicate, family refusal, and
     assignments in authored order — so a call whose verb or window is wrong for
@@ -1013,6 +1020,9 @@ def _prepare_write(
         )
     keyed = isinstance(instruction, KeyedWriteInstruction)
     entity = resolve_target(model, instruction.entity if keyed else instruction.target.entity)
+    if not keyed:
+        position = _family_position(model, entity)
+        _judge_readless_family(model, entity, position, instruction.mutation)
     window = _judge_target(model, entity, instruction)
     if members is not None:
         # A predicate write states its assignments.
@@ -1042,6 +1052,72 @@ def _prepare_write(
         converter=converter,
         source_access=source_access,
     )
+
+
+def _judge_readless_family(
+    model: AcceptedMetamodel,
+    entity: EntityMetadata,
+    position: inheritance.InheritanceEntityView,
+    mutation: PredicateMutation,
+) -> None:
+    """Refuse a predicate write whose target cannot be written by one readless
+    statement (`m-batch-write`).
+
+    Each selected object of a versioned or temporal family needs its own
+    observation before it is written, so the write needs its caller to read
+    first; the refusal names the verbs that write through such a read or a
+    revision the caller holds."""
+    shape = temporal_read.view(model).shape(entity.identity)
+    if _requires_observation(position, shape):
+        raise InstructionRejectedError(
+            SET_BASED_WRITE_TARGET_UNSUPPORTED,
+            _readless_family_advice(entity, position, shape, mutation),
+        )
+
+
+_PREDICATE_VERBS: Final[Mapping[str, str]] = MappingProxyType(
+    {
+        "amend": "amend",
+        "amendUntil": "amend",
+        "delete": "delete",
+        "terminate": "terminate",
+        "terminateUntil": "terminate",
+    }
+)
+
+
+def _readless_family_advice(
+    entity: EntityMetadata,
+    position: inheritance.InheritanceEntityView,
+    shape: temporal_read.TemporalShape | None,
+    mutation: PredicateMutation,
+) -> str:
+    verb = _PREDICATE_VERBS[mutation]
+    temporal = _is_temporal(shape)
+    # A destructive verb's keyed sibling is the one the target's kind admits.
+    sibling = verb if verb == "amend" else "terminate" if temporal else "delete"
+    revision = "version" if _is_versioned(position) else "tx_start"
+    return (
+        f"{entity.identity.name} is {'temporal' if temporal else 'versioned'}, so "
+        f"{verb}_where cannot change it without reading it. Read it (find / stream) and "
+        f"{sibling} each object, or use {sibling}_if with the {revision} you hold."
+    )
+
+
+def _requires_observation(
+    position: inheritance.InheritanceEntityView, shape: temporal_read.TemporalShape | None
+) -> bool:
+    """Whether every write of the family must be judged against an observation
+    of the object it changes: its version, or the milestone it closes."""
+    return _is_versioned(position) or _is_temporal(shape)
+
+
+def _is_versioned(position: inheritance.InheritanceEntityView) -> bool:
+    return any(attribute.optimistic_locking for attribute in position.applicable_attributes)
+
+
+def _is_temporal(shape: temporal_read.TemporalShape | None) -> bool:
+    return isinstance(shape, temporal_read.TransactionTimeOnly | temporal_read.Bitemporal)
 
 
 def _judge_target(
@@ -1227,9 +1303,7 @@ def _judge_expectation(
     ``None`` included.
     """
     mutation = instruction.mutation
-    versioned = any(attribute.optimistic_locking for attribute in position.applicable_attributes)
-    temporal = isinstance(shape, temporal_read.TransactionTimeOnly | temporal_read.Bitemporal)
-    if not (versioned or temporal):
+    if not _requires_observation(position, shape):
         raise WriteInstructionError(
             f"{root.name}: {mutation!r} states a revision its caller observed, and "
             f"{root.name!r} is unversioned and non-temporal, so it has none to state and no "
@@ -1242,7 +1316,7 @@ def _judge_expectation(
             f"{root.name}: {mutation!r} states {list(stated)}, and a target has one condition "
             "to state"
         )
-    required = "version" if versioned else "tx_start"
+    required = "version" if _is_versioned(position) else "tx_start"
     if stated and required not in stated:
         (misstated,) = stated
         raise WriteInstructionError(_misstated(root, mutation, misstated, required))
