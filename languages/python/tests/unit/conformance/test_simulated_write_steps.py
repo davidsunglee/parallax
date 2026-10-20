@@ -78,7 +78,6 @@ def _deletes(*keys: int) -> tuple[PlannedStep, ...]:
 
 
 def _holds_any(holder: object, steps: tuple[PlannedStep, ...]) -> bool:
-    """Whether anything ``holder`` reaches is ``steps`` or one of them."""
     held = {id(steps), *(id(step) for step in steps)}
     return any(id(value) in held for value in reachable_objects(holder))
 
@@ -217,9 +216,6 @@ def _succession(key: int) -> tuple[PlannedStep, ...]:
 
 
 class _FailingPreparer(LayoutPayloadPreparer):
-    """The Position model's own preparer, raising ``failure`` instead of
-    preparing ``failing``'s assignments."""
-
     __slots__ = ("failing", "failure")
 
     def __init__(self, failing: PlannedStep, failure: Exception) -> None:

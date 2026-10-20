@@ -186,7 +186,6 @@ def _cursor(
 
 
 def _remaining(cursor: LoweringCursor) -> list[PlannedStep]:
-    """The steps ``cursor`` has not yet taken, in order."""
     rest: list[PlannedStep] = []
     while (step := cursor.take()) is not None:
         rest.append(step)

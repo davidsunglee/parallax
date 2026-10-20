@@ -77,7 +77,7 @@ class SimulatedWriteSteps:
             lowered = tuple(stream_physical(steps, self._payloads, self._meta, self._dialect))
         store = self._store
         if store is not None:
-            refusal = _applied(store, self._meta, steps)
+            refusal = _first_refusal(store, self._meta, steps)
             if refusal is not None:
                 raise refusal
         allocated: tuple[object, ...] = ()
@@ -93,11 +93,9 @@ class SimulatedWriteSteps:
         return allocated
 
 
-def _applied(
+def _first_refusal(
     store: SimulatedTemporalStore, meta: Metamodel, steps: tuple[PlannedStep, ...]
 ) -> SimulatedStoreError | None:
-    """Apply each of ``steps`` to ``store`` in order up to the first it
-    refuses, answering that refusal with no traceback into the store."""
     for step in steps:
         try:
             store.apply(meta, step)

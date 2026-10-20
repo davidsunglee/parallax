@@ -97,9 +97,6 @@ def _lost() -> DatabaseError:
 
 @dataclass
 class _Executed:
-    """What one execution of steps did: what it prepared, and what it answered
-    or what it raised."""
-
     preparer: RecordingPreparer
     answered: tuple[object, ...] | None = None
     raised: BaseException | None = None
@@ -112,12 +109,8 @@ def _execute(
     failing: int | None = None,
     failure: BaseException | None = None,
 ) -> _Executed:
-    """Execute ``steps`` inside one Flush over ``port``, recording what was
-    prepared.
-
-    A failure is caught outside the Flush and recorded, so the Flush finishes
-    with it and the script reads as the calls alone.
-    """
+    """A failure is caught outside the Flush and recorded, so the Flush finishes
+    with it and the script reads as the calls alone."""
     executed = _Executed(RecordingPreparer(port, steps, failing=failing, failure=failure))
     try:
         with open_flush(provider) as flush:
@@ -193,8 +186,6 @@ class _Claim:
 def _plan(
     port: ScriptedAdapter, *groups: tuple[PlannedStep, ...]
 ) -> tuple[WritePlan, list[_Claim]]:
-    """A plan of one Write Group holding ``steps`` for each of ``groups``, its
-    one settled write spending a claim of its own."""
     claims = [_Claim(port) for _steps in groups]
     plan = WritePlan(
         tuple(

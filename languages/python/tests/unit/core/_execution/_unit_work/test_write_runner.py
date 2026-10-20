@@ -148,9 +148,6 @@ class _Claim:
 
 @dataclass
 class _Executions:
-    """``steps`` executing each sequence a plan hands it, recording the exact
-    sequence and which of ``claims`` were spent by then."""
-
     steps: ObservedSteps
     claims: tuple[_Claim, ...]
     seen: list[tuple[tuple[PlannedStep, ...], tuple[bool, ...]]] = field(

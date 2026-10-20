@@ -211,8 +211,6 @@ class WritePlanCompiler:
         audit: AuditDecoration,
         guards: bool,
     ) -> tuple[SettledWrite, tuple[PlannedStep, ...]]:
-        """``item`` settled: the settled write it becomes and the steps it
-        planned, in order."""
         advances = 0
         if isinstance(item, FollowingKeyedWrite):
             advances = item.advances
