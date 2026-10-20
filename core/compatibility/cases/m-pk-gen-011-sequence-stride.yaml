@@ -18,8 +18,8 @@ when:
         - { name: voucher_seq, nextVal: { increment: 20 } }
     - mutation: insert
       entity: parallax.compatibility.Voucher
-      statements: 2
-      note: "hand out 100,110"
+      statements: 1
+      note: "hand out 100,110 in one grouped insert"
       rows:
         - { id: 100, label: spring }
         - { id: 110, label: summer }
@@ -30,15 +30,11 @@ then:
         mariadb: update pk_sequence set next_val = next_val + ? where name = ?
       binds: [20, voucher_seq]
     - sql:
-        postgres: insert into voucher(id, label) values (?, ?)
-        mariadb: insert into voucher(id, label) values (?, ?)
-      binds: [100, spring]
-    - sql:
-        postgres: insert into voucher(id, label) values (?, ?)
-        mariadb: insert into voucher(id, label) values (?, ?)
-      binds: [110, summer]
+        postgres: insert into voucher(id, label) values (?, ?), (?, ?)
+        mariadb: insert into voucher(id, label) values (?, ?), (?, ?)
+      binds: [100, spring, 110, summer]
   tableState:
     voucher:
       - { id: 100, label: spring }
       - { id: 110, label: summer }
-  databaseCalls: 3
+  databaseCalls: 2

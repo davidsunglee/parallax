@@ -1341,10 +1341,10 @@ def test_planning_captures_the_transaction_instant_only_for_surviving_temporal_w
 
 
 # --------------------------------------------------------------------------- #
-# Temporal in-place adjacency (ADR 0045): a close and its successors stay      #
-# adjacent at the mutation's already-decided position, no unrelated step      #
-# interleaved, through the SAME ordering + settling pipeline as everything    #
-# else.                                                                        #
+# Temporal in-place expansion (ADR 0045): a write's close and its successors  #
+# stay at the mutation's already-decided position, between the phases around  #
+# it, through the SAME ordering + settling pipeline as everything else; only  #
+# its own Write Group's other objects come between them (ADR 0076).           #
 # --------------------------------------------------------------------------- #
 def test_a_bounded_bitemporal_update_expands_in_place_between_unrelated_writes() -> None:
     # Dependency ordering buckets by verb (inserts, then updates, then

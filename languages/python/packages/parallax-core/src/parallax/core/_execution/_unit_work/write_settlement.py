@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Container, Mapping, Sequence
+from typing import Final
 
 from parallax.core._execution._unit_work.clock import TransactionInstant
 from parallax.core._execution._unit_work.instructions import (
@@ -100,6 +101,17 @@ from parallax.core.write_plan.steps import (
 
 __all__ = ["WritePlanCompiler"]
 
+_GROUP_WRITES: Final = 64
+"""The most settled writes one Write Group holds. In a group of updates or
+deletes every insert waits behind every effect of the group, so this bounds the
+work and the row locks a failing insert wastes, whatever the flush's size; it
+is not the executor's per-call statement or row cap."""
+
+type _GroupKey = tuple[AttributeIdentity, object]
+"""One object a settled write writes: its family's primary-key Attribute and the
+value it holds, so two Entities of one Inheritance Family sharing a key value
+name one object and two unrelated Entities never do."""
+
 
 class WritePlanCompiler:
     """The Write Planner's own compiler of mutation phases into a Write Plan
@@ -174,8 +186,13 @@ class WritePlanCompiler:
 
         Each ordered item settles into one settled write, which records what
         its success changes: the claim it spends, the observed state it
-        revises, and the rows it removes and opens. Each settled write forms a
-        Write Group of its own, holding its steps in their settled order.
+        revises, and the rows it removes and opens. Consecutive settled writes
+        of one mutation phase over distinct objects share a Write Group of at
+        most :data:`_GROUP_WRITES`, laid out as every write's effects and then
+        every write's inserts, each write's own order kept. A deferred write, a
+        write whose insert the database allocates a key for, and a write naming
+        no complete object key form a group of their own, and a write naming an
+        object the open group already writes starts the next group.
         ``ownership`` answers which current rows this attempt already opened,
         so a write against one of them revises or removes that row instead of
         closing it into history.
@@ -194,12 +211,28 @@ class WritePlanCompiler:
         """
         groups: list[WriteGroup] = []
         audit = AuditDecoration(self._audit, actor_identity, transaction_instant, self._settled)
+        families = self._families
         for phase in phases:
+            members: list[tuple[SettledWrite, tuple[PlannedStep, ...]]] = []
+            held: set[_GroupKey] = set()
             for item in phase:
                 write, steps = self._settled_write(
                     item, concurrency, transaction_instant, ownership, audit, counts_unchanged_rows
                 )
-                groups.append(WriteGroup((write,), steps))
+                keys = (
+                    None
+                    if write.deferred is not None or write.opened.allocated
+                    else _object_keys(item, families)
+                )
+                if keys is None:
+                    _close_group(groups, members, held)
+                    groups.append(WriteGroup((write,), steps))
+                    continue
+                if len(members) == _GROUP_WRITES or not held.isdisjoint(keys):
+                    _close_group(groups, members, held)
+                members.append((write, steps))
+                held.update(keys)
+            _close_group(groups, members, held)
         return WritePlan(tuple(groups))
 
     def _settled_write(
@@ -656,6 +689,51 @@ class WritePlanCompiler:
         ):
             self._concurrency.reject_authored_version(entity.identity, version_attr)
         return self._concurrency.require_version(entity.identity, observation)
+
+
+def _object_keys(item: OrderedWrite, families: InheritanceFacet) -> tuple[_GroupKey, ...] | None:
+    """Every object ``item`` writes, each row of a collapsed batch included, or
+    ``None`` where a row names no complete key: a readless predicate write, or
+    an insert whose key is absent or the database computes."""
+    if isinstance(item, FollowingKeyedWrite):
+        item = item.write
+    if isinstance(item, PreparedPredicateWrite):
+        return None
+    if isinstance(item, CoalescedTemporalWrite):
+        target, rows = item.target, (item.key,)
+    elif isinstance(item, PendingOpening):
+        target, rows = item.insert.target, item.insert.rows
+    else:
+        instruction = item if isinstance(item, PreparedKeyedWrite) else item.instruction
+        target, rows = instruction.target, instruction.rows
+    key = entity_view(families, target).primary_key.identity
+    keys: list[_GroupKey] = []
+    for row in rows:
+        value = row.get(key.name)
+        if value is None or isinstance(value, Mapping):
+            return None
+        keys.append((key, value))
+    return tuple(keys)
+
+
+def _close_group(
+    groups: list[WriteGroup],
+    members: list[tuple[SettledWrite, tuple[PlannedStep, ...]]],
+    held: set[_GroupKey],
+) -> None:
+    if len(members) == 1:
+        ((write, steps),) = members
+        groups.append(WriteGroup((write,), steps))
+    elif members:
+        effects = [step for _, steps in members for step in steps if not _inserts(step)]
+        inserts = [step for _, steps in members for step in steps if _inserts(step)]
+        groups.append(WriteGroup(tuple(write for write, _ in members), (*effects, *inserts)))
+    members.clear()
+    held.clear()
+
+
+def _inserts(step: PlannedStep) -> bool:
+    return isinstance(step, PlannedInsert)
 
 
 def _unobserved_close(entity: EntityMetadata, mutation: str) -> WritePlanningError:

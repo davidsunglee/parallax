@@ -560,9 +560,10 @@ Planned Insert, opened at the attempt's Transaction Instant over
 coverage, which stamps the open bound as the managed `infinity`.
 
 A settled write's steps keep each predecessor's effect ahead of what it opens. A lone
-write's or a group row's close is followed immediately by its successors in
-Valid-Time order — `head`, `middle`, `tail` where each exists and is nonempty —
-with no unrelated step interleaved and no surviving group or identifier. A range
+write's close is followed by its successors in Valid-Time order — `head`,
+`middle`, `tail` where each exists and is nonempty — with none of the write's
+other steps between them and no surviving identifier; within a Write Group,
+other objects' steps may come between (`m-unit-work` *Write Group formation*). A range
 over several predecessors runs every predecessor's effect before any opening:
 predecessors holding a caller's start first, in the order the callers stated
 them, then validated observations, then every other predecessor; its successors

@@ -2553,13 +2553,13 @@ def test_non_uniform_multi_row_update_decomposes_per_distinct_key() -> None:
     ]
 
 
-def test_pk_gen_managed_insert_decomposes_per_row_even_with_literal_ids() -> None:
+def test_pk_gen_managed_insert_rows_stay_their_own_steps_in_one_grouped_insert() -> None:
     # m-pk-gen-008's own shape: a `sequence`-strategy target's rows already
     # carry LITERAL, pre-resolved ids (no `{computed: ...}` marker — the
     # registry-read block reservation resolved them upstream). The ENTITY's
-    # own pk-generator strategy, not the row's shape, drives decomposition:
-    # each row's key allocation is independent, so this seam lowers each as
-    # its own single-row insert.
+    # own pk-generator strategy, not the row's shape, keeps each row its own
+    # single-entry Planned Insert; execution then inserts the rows of distinct
+    # objects with one grouped statement.
     case = _synthetic_write(
         "writeSequence",
         {
@@ -2569,7 +2569,7 @@ def test_pk_gen_managed_insert_decomposes_per_row_even_with_literal_ids() -> Non
                     {
                         "mutation": "insert",
                         "entity": "Pass",
-                        "statements": 2,
+                        "statements": 1,
                         "rows": [
                             {"id": 1, "zone": "north"},
                             {"id": 2, "zone": "south"},
@@ -2580,11 +2580,8 @@ def test_pk_gen_managed_insert_decomposes_per_row_even_with_literal_ids() -> Non
         },
     )
     emissions, database_calls = scenario.compile_write_sequence_case(case, "postgres")
-    assert database_calls == 2
-    assert [e.sql for e in emissions] == [
-        "insert into pass(id, zone) values (?, ?)",
-        "insert into pass(id, zone) values (?, ?)",
-    ]
+    assert database_calls == 1
+    assert [e.sql for e in emissions] == ["insert into pass(id, zone) values (?, ?), (?, ?)"]
 
 
 def test_elided_no_op_row_is_not_counted_as_a_statement() -> None:

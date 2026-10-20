@@ -18,8 +18,8 @@ when:
         - { name: pass_seq, nextVal: { increment: 3 } }
     - mutation: insert
       entity: parallax.compatibility.Pass
-      statements: 2
-      note: "hand out 2 of the reserved block (ids 1,2; id 3 lost)"
+      statements: 1
+      note: "hand out 2 of the reserved block (ids 1,2; id 3 lost), both rows in one grouped insert"
       rows:
         - { id: 1, zone: north }
         - { id: 2, zone: south }
@@ -30,15 +30,11 @@ then:
         mariadb: update pk_sequence set next_val = next_val + ? where name = ?
       binds: [3, pass_seq]
     - sql:
-        postgres: insert into pass(id, zone) values (?, ?)
-        mariadb: insert into pass(id, zone) values (?, ?)
-      binds: [1, north]
-    - sql:
-        postgres: insert into pass(id, zone) values (?, ?)
-        mariadb: insert into pass(id, zone) values (?, ?)
-      binds: [2, south]
+        postgres: insert into pass(id, zone) values (?, ?), (?, ?)
+        mariadb: insert into pass(id, zone) values (?, ?), (?, ?)
+      binds: [1, north, 2, south]
   tableState:
     pass:
       - { id: 1, zone: north }
       - { id: 2, zone: south }
-  databaseCalls: 3
+  databaseCalls: 2

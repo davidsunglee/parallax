@@ -857,14 +857,14 @@ def test_a_pending_assignment_alone_leaves_a_stored_insertion_standing() -> None
 
 def test_a_bounded_removal_reaching_every_end_the_insertion_opened_is_complete() -> None:
     # The insertion opened [January, September) and a sibling object's
-    # insertion opened its own row beside it. Terminating the first until
-    # September reaches the latest end any of its rows has, so it removes all of
-    # it and a reinsertion of that object is admitted, while the sibling is
-    # untouched.
+    # insertion opened its own row beside it, both in one statement. Terminating
+    # the first until September reaches the latest end any of its rows has, so
+    # it removes all of it and a reinsertion of that object is admitted, while
+    # the sibling is untouched.
     first_row = _rectangle(_JAN, _SEP)
     port = ScriptedAdapter(
         Transact(
-            Write(times=2),
+            Write(),
             Read(rows=[first_row]),
             Read(rows=[first_row]),
             Write(times=2),
@@ -880,7 +880,8 @@ def test_a_bounded_removal_reaching_every_end_the_insertion_opened_is_complete()
         tx.insert(_position("200.00"), valid_from=_MAR)
 
     _transact(port, fn)
-    removal, insert = _writes(port)[2:]
+    openings, removal, insert = _writes(port)
+    assert len(openings.binds) == 14
     assert removal.sql.startswith("delete from where_position")
     assert insert.binds[2:5] == (Decimal("200.00"), _MAR, INFINITY_INSTANT)
 

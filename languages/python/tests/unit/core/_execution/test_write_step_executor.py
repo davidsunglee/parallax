@@ -2,9 +2,10 @@
 
 Each step of the tuple it is handed is prepared and lowered only after every
 earlier step was enforced; a step running alone is one Database Call enforced
-as itself, a run of compatible temporal openings is one multi-row insert, and
-an insert whose key the database allocates answers that key. The statements
-execution runs are the ones a dry traversal of the same steps answers.
+as itself, a run of compatible single-entry inserts — temporal openings here —
+is one multi-row insert, and an insert whose key the database allocates
+answers that key. The statements execution runs are the ones a dry traversal
+of the same steps answers.
 """
 
 from __future__ import annotations

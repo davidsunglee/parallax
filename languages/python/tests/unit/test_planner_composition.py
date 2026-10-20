@@ -14,9 +14,8 @@ those plannings returned, whether execution or a simulated step execution
 lowers it, and the groups streamed are the groups planned, each once and in
 order, so a factory plan the lane discarded is named too. Every step
 rendered by ``compile_write_step`` — the function that turns a settled step into
-a statement of its own — is by identity a step of one of those streamed
-sequences; the drives here settle no run of temporal openings, which the cursor
-renders into one statement together. An
+a statement of its own — or carried into a grouped insert the cursor builds is
+by identity a step of one of those streamed sequences. An
 unrelated implementation of the planner interface inherits nothing, so it
 performs no planning this module records and appears in
 no subclass registry; but its plan still has to become SQL, and every route from
@@ -62,7 +61,7 @@ from types import ModuleType
 import pytest
 
 from parallax.conformance import case_format, engine
-from parallax.core._execution import _planning
+from parallax.core._execution import _planning, _write_lowering
 from parallax.core._execution._publication import write_projection
 from parallax.core._execution._unit_work.strategy import (
     AuditStrategy,
@@ -72,13 +71,18 @@ from parallax.core._execution._unit_work.strategy import (
 from parallax.core._execution._write_lowering import LoweringCursor
 from parallax.core.dialect import Dialect
 from parallax.core.execution import prepare_model
-from parallax.core.metamodel import Metamodel
+from parallax.core.metamodel import (
+    AttributeIdentity,
+    EntityIdentity,
+    Metamodel,
+    ValueObjectIdentity,
+)
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.sql_gen._write import StepPayload, compile_write_step
 from parallax.core.unit_work import NO_AUDIT, WritePlanner, WritePlanningRequest
 from parallax.core.write_plan import WritePlan
 from parallax.core.write_plan.payload import WritePayloadPreparer
-from parallax.core.write_plan.steps import PlannedStep
+from parallax.core.write_plan.steps import PlannedInsert, PlannedStep, WriteRow
 from parallax.snapshot import TxnContext
 from tests._support import mirrored_models as mm
 from tests._support.db_port import (
@@ -194,7 +198,9 @@ def _watch(lane: str, monkeypatch: pytest.MonkeyPatch) -> _Composition:
     seen = _Composition(lane=lane, built=[], planned=[], lowered=[], rendered=[])
     finalizing = WritePlanner.finalize
     cursoring = LoweringCursor
+    grouping = LoweringCursor.lowered_grouped_insert
     rendering = compile_write_step
+    joining = _write_lowering._joining  # pyright: ignore[reportPrivateUsage] - a grouped insert's joining step
 
     def construct(
         model: Metamodel,
@@ -230,11 +236,27 @@ def _watch(lane: str, monkeypatch: pytest.MonkeyPatch) -> _Composition:
         seen.rendered.append(step)
         return rendering(step, payload, meta, dialect)
 
+    def group(self: LoweringCursor, first: PlannedInsert) -> _write_lowering.GroupedInsert:
+        seen.rendered.append(first)
+        return grouping(self, first)
+
+    def join(
+        step: PlannedStep | None,
+        entity: EntityIdentity,
+        members: frozenset[AttributeIdentity | ValueObjectIdentity],
+    ) -> WriteRow | None:
+        entry = joining(step, entity, members)
+        if step is not None and entry is not None:
+            seen.rendered.append(step)
+        return entry
+
     monkeypatch.setattr(_planning, "WritePlanner", construct)
     monkeypatch.setattr(WritePlanner, "finalize", finalize)
+    monkeypatch.setattr(LoweringCursor, "lowered_grouped_insert", group)
     watched: tuple[tuple[object, object], ...] = (
         (cursor, LoweringCursor),
         (render, compile_write_step),
+        (join, joining),
     )
     for replacement, original in watched:
         holders = _bindings_of(original)

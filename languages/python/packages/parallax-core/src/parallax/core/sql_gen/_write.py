@@ -159,24 +159,46 @@ def compile_write_step(
 
 
 def effect_parameter_ceiling(
-    step: PlannedClose | PlannedTemporalRevision | PlannedTemporalRemoval | PlannedTemporalGuard,
+    step: PlannedClose
+    | PlannedTemporalRevision
+    | PlannedTemporalRemoval
+    | PlannedTemporalGuard
+    | PlannedUpdate
+    | PlannedDelete,
 ) -> int:
     """A conservative upper bound on the SQL parameters ``step``'s statement
     carries, computed before its payload is prepared.
 
-    The milestone address binds each key value, at most one table-per-hierarchy
-    tag, and each axis end, and a gate binds once more. Each member a revising
-    step assigns binds at most twice: once in a Column of its own, or a path and
-    a value in the shared Structured Column's mutation expression (`m-dialect`).
+    The address binds each key value and at most one table-per-hierarchy tag,
+    and a milestone address each axis end too; a temporal or version gate binds
+    once more. Each member a revising step assigns, a version advance or
+    registry increment included, binds at most twice: once in a Column of its
+    own, or a path and a value in the shared Structured Column's mutation
+    expression (`m-dialect`). A predicate-selected step's binds follow its
+    predicate rather than its shape, so it has no such bound.
     """
     target = step.target
-    ceiling = len(target.key_values) + 1 + len(target.end_values)
-    if isinstance(step.concurrency, TemporalGate):
+    if isinstance(target, ResolvedMutationSelection):
+        raise SqlGenError(
+            f"{step.entity.canonical}: a predicate-selected step's binds are not bounded by its "
+            "shape"
+        )
+    if isinstance(target, MilestoneTarget):
+        ceiling = len(target.key_values) + 1 + len(target.end_values)
+    else:
+        ceiling = sum(len(values) for values in target.key_values) + 1
+    if _gated(step.concurrency):
         ceiling += 1
-    if isinstance(step, PlannedClose | PlannedTemporalRevision):
+    if isinstance(step, PlannedClose | PlannedTemporalRevision | PlannedUpdate):
         assignments = step.assignments
         ceiling += 2 * (len(assignments.attributes) + len(assignments.value_objects))
     return ceiling
+
+
+def _gated(concurrency: TemporalConcurrency | NonTemporalConcurrency) -> bool:
+    return isinstance(concurrency, TemporalGate) or (
+        isinstance(concurrency, Versioned) and isinstance(concurrency.gate, VersionGate)
+    )
 
 
 def _row_payloads(step: PlannedInsert, payload: StepPayload) -> tuple[RowPayload, ...]:

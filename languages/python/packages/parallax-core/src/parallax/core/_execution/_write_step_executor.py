@@ -85,10 +85,11 @@ class WriteStepExecutor:
         enforced, and nothing is taken ahead of that but the one step a run
         looks at to find where it ends, which waits unprepared. Where the
         connection has ordered write transport, a run of two or more contiguous
-        count-only temporal effects is instead lowered whole and presented
-        together before any of it is enforced (:meth:`_run_ordered`). A run of
-        contiguous compatible temporal openings is inserted by one multi-row
-        statement (:meth:`_run_grouped_insert`), each opening remaining its own step.
+        count-only effects on one row each is instead lowered whole and
+        presented together before any of it is enforced (:meth:`_run_ordered`).
+        A run of contiguous compatible single-entry inserts is inserted by one
+        multi-row statement (:meth:`_run_grouped_insert`), each insert remaining
+        its own step.
 
         This performs NO classification of its own: the adopted Write Planner
         already spent the concurrency mode while settling each step, and this
@@ -192,20 +193,20 @@ class WriteStepExecutor:
     def _run_grouped_insert(
         self, first: PlannedInsert, cursor: LoweringCursor, flush: FlushActivity
     ) -> PlannedStep | None:
-        """Insert ``first`` and the compatible openings following it with one
+        """Insert ``first`` and the compatible inserts following it with one
         statement (:meth:`LoweringCursor.lowered_grouped_insert`), and answer
         the step after the run — taken from ``cursor`` but not lowered — or
         ``None`` where ``cursor`` ran out.
 
         The statement is one ordinary Database Call, enforced as an insert is,
-        and its failure is the whole statement's own: it is neither attributed
-        to one of the openings nor replayed one opening at a time. A later
-        opening failing ordinarily to be prepared ends the run: the
-        openings appended before it are inserted as selected, and only if they
-        succeed does that failure propagate. ``first`` failing inserts nothing,
-        and a control-flow or fatal exception inserts none of the run. The step
-        after a run that reached its capacity is taken only once the run's
-        statement has run.
+        and its failure is the whole statement's own, however many objects its
+        rows belong to: it is neither attributed to one of the inserts nor
+        replayed one insert at a time. A later insert failing ordinarily to be
+        prepared ends the run: the inserts appended before it are inserted as
+        selected, and only if they succeed does that failure propagate.
+        ``first`` failing inserts nothing, and a control-flow or fatal exception
+        inserts none of the run. The step after a run that reached its capacity
+        is taken only once the run's statement has run.
         """
         statement, following, failure = cursor.lowered_grouped_insert(first)
         try:

@@ -2,8 +2,9 @@
 `m-db-port`, `m-execution-lifecycle`).
 
 A connection holding ordered write transport receives each run of two or more
-contiguous count-only temporal effects in one invocation, and an effect that
-would be its run's only one runs alone. The result is proved well formed
+contiguous count-only effects on one row each — temporal ones, and Non-Temporal
+updates and deletes of one key — in one invocation, and an effect that would
+be its run's only one runs alone. The result is proved well formed
 before any of it is read, then enforced in original order against the exact
 steps the statements were lowered from, and nothing after the run is lowered
 before that. Every presented statement stays one Database Call, finished from
@@ -17,11 +18,14 @@ from __future__ import annotations
 import gc
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
+from decimal import Decimal
 
 import pytest
 
 from parallax.conformance._lifecycle_recording import RecordingLifecycleProvider
-from parallax.core._execution._write_lowering import GroupedInsert, LoweringCursor
+from parallax.conformance.class_models import MODELS
+from parallax.core._execution._planning import build_write_planner
+from parallax.core._execution._write_lowering import GroupedInsert, LoweringCursor, lowered
 from parallax.core._execution._write_step_executor import OrderedInvocation
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
@@ -32,6 +36,7 @@ from parallax.core.db_port import (
     StatementNotExecuted,
 )
 from parallax.core.dialect import POSTGRES
+from parallax.core.entity._model import model_of
 from parallax.core.execution_lifecycle import (
     CausedFailure,
     DatabaseCallFailed,
@@ -50,7 +55,7 @@ from parallax.core.execution_lifecycle import (
     RootExecution,
 )
 from parallax.core.execution_lifecycle._activity import INERT
-from parallax.core.metamodel import EntityIdentity
+from parallax.core.metamodel import AttributeIdentity, EntityIdentity, entity_by_name
 from parallax.core.sql_gen import LoweredStatement, SqlGenError
 from parallax.core.unit_work import (
     CardinalityCorruptionError,
@@ -59,7 +64,17 @@ from parallax.core.unit_work import (
 )
 from parallax.core.write_plan import WritePlan
 from parallax.core.write_plan.plan import SettledWrite, WriteGroup
-from parallax.core.write_plan.steps import PlannedInsert, PlannedStep
+from parallax.core.write_plan.steps import (
+    MISSING_TARGET,
+    UNVERSIONED,
+    ExactCount,
+    KeyTarget,
+    PlannedAssignments,
+    PlannedDelete,
+    PlannedInsert,
+    PlannedStep,
+    PlannedUpdate,
+)
 from tests._support.db_port import (
     Ordered,
     OrderedCall,
@@ -138,6 +153,54 @@ def test_a_run_of_mixed_effects_crosses_the_port_once_as_canonical_statements() 
     assert executed.answered == ()
 
 
+def test_single_key_non_temporal_effects_share_an_invocation_and_a_batch_runs_alone() -> None:
+    meta = model_of(MODELS["wallet"])
+    wallet = entity_by_name(meta, "Wallet")
+    assert wallet is not None
+    key = AttributeIdentity(wallet.identity, "id")
+
+    def target(*keys: int) -> KeyTarget:
+        return KeyTarget(key_attributes=(key,), key_values=tuple((value,) for value in keys))
+
+    def update(*keys: int) -> PlannedUpdate:
+        return PlannedUpdate(
+            entity=wallet.identity,
+            target=target(*keys),
+            assignments=PlannedAssignments(
+                attributes={AttributeIdentity(wallet.identity, "balance"): Decimal("1.00")}
+            ),
+            concurrency=UNVERSIONED,
+            affected_rows=ExactCount(len(keys), MISSING_TARGET),
+        )
+
+    delete = PlannedDelete(
+        entity=wallet.identity,
+        target=target(2),
+        concurrency=UNVERSIONED,
+        affected_rows=ExactCount(1, MISSING_TARGET),
+    )
+    steps = (update(1), delete, update(3, 4), update(5), update(6))
+    port = ScriptedAdapter(
+        Ordered(OrderedWriteResultComplete((1, 1))),
+        Write(affected=2),
+        Ordered(OrderedWriteResultComplete((1, 1))),
+        ordered=True,
+    )
+    with open_flush() as flush:
+        step_executor(port, meta).execute(steps, allocates=False, flush=flush)
+    payloads = build_write_planner(meta).payloads
+
+    def call(step: PlannedStep) -> WriteCall:
+        lowered_step = lowered(step, payloads, meta, POSTGRES)
+        return WriteCall(POSTGRES.to_driver_sql(lowered_step.sql), lowered_step.binds)
+
+    assert port.calls == [
+        OrderedCall((call(steps[0]), call(steps[1]))),
+        call(steps[2]),
+        OrderedCall((call(steps[3]), call(steps[4]))),
+    ]
+
+
 def test_a_connection_without_ordered_transport_runs_and_lowers_each_effect_alone() -> None:
     steps = (close(1), close(2), close(3))
     port = ScriptedAdapter(Write(times=3))
@@ -152,7 +215,7 @@ def test_a_connection_without_ordered_transport_runs_and_lowers_each_effect_alon
 def _lowering_recorded(
     monkeypatch: pytest.MonkeyPatch, steps: tuple[PlannedStep, ...], port: ScriptedAdapter
 ) -> list[tuple[int, int]]:
-    """Where each of ``steps`` lowering alone or beginning a grouped opening is
+    """Where each of ``steps`` lowering alone or beginning a grouped insert is
     recorded: its position, with how many port calls had been made by then."""
     lowered_at: list[tuple[int, int]] = []
     lowered_alone = LoweringCursor.lowered

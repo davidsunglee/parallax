@@ -1,5 +1,6 @@
 """Grouped temporal openings against a real server (`m-execution` *Flush
-execution*, `m-sql` *Requested ranges*).
+execution*, `m-sql` *Requested ranges*), and the Write Group a keyed loop over
+distinct objects executes as (`m-unit-work` *Write Group formation*).
 
 Each proof runs the same public writes twice: once as execution realizes them,
 grouping the openings, and once with the internal entry cap at one, so each
@@ -9,7 +10,10 @@ statement exactly the history the singleton statements store, collections of
 every shape included, and that a grouped statement fails as a whole with its
 own native diagnostic — which can differ from the error the earliest failing
 opening raises alone — while the attempt still rolls back, refuses further
-work, and reports that diagnostic's own retry verdict.
+work, and reports that diagnostic's own retry verdict. A grouped insert whose
+rows belong to several objects fails the same way, naming no row, and a Write
+Group enforcing every effect before any insert reports a later object's
+shortfall ahead of an earlier object's insert failure.
 """
 
 from __future__ import annotations
@@ -23,8 +27,18 @@ import pytest
 
 from parallax.conformance._lifecycle_recording import RecordingLifecycleProvider
 from parallax.conformance.scripted_clock import ScriptedClock
-from parallax.core import Attr, Bitemporal, Document, DomainModel, Entity, ValueObject, attr
+from parallax.core import (
+    Attr,
+    Bitemporal,
+    Document,
+    DomainModel,
+    Entity,
+    TxTemporal,
+    ValueObject,
+    attr,
+)
 from parallax.core._execution import _write_lowering
+from parallax.core._execution._unit_work import write_settlement
 from parallax.core.db_error import DatabaseError
 from parallax.core.entity._model import model_of
 from parallax.core.execution import ExecutionFailure
@@ -36,7 +50,8 @@ from parallax.core.execution_lifecycle import (
     ExecutionEvent,
     TransactionAttemptFinished,
 )
-from parallax.core.unit_work import RollbackOnlyError
+from parallax.core.unit_work import OptimisticLockConflictError, RollbackOnlyError
+from parallax.core.write_plan.steps import MilestoneTarget
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.root_ownership import own_root
 
@@ -67,7 +82,12 @@ class Account(Entity, table="opn_account", namespace=_NAMESPACE):
     code: Attr[str] = attr(primary_key=True, max_length=16)
 
 
-_MODEL = DomainModel(ColumnsSpan, DocumentSpan, Account)
+class Ledger(TxTemporal, table="opn_ledger", namespace=_NAMESPACE):
+    id: Attr[int] = attr(primary_key=True)
+    amount: Attr[int]
+
+
+_MODEL = DomainModel(ColumnsSpan, DocumentSpan, Account, Ledger)
 _TABLES: dict[type[Any], str] = {
     ColumnsSpan: "opn_columns_span",
     DocumentSpan: "opn_document_span",
@@ -326,3 +346,123 @@ def test_a_grouped_statements_failure_leaves_the_attempt_rollback_only(
     assert isinstance(failed.cause, RollbackOnlyError)
     (finished,) = failed.attempts
     assert isinstance(finished.outcome, AttemptRolledBack)
+
+
+def _ledgers(profile_run: Any, provider: RecordingLifecycleProvider) -> ScopedDatabase:
+    """Ledgers 1 to 3 at 100, refusing any later row that stores 150."""
+    db = _database(profile_run, provider)
+
+    def seed(tx: TxnContext) -> None:
+        for key in (1, 2, 3):
+            tx.insert(Ledger(id=key, amount=100))
+
+    db.transact(seed)
+    control = profile_run.control()
+    try:
+        control.execute_write(
+            "alter table opn_ledger add constraint opn_ledger_amount "
+            "check (amount <> 150) not valid",
+            [],
+        )
+    finally:
+        control.close()
+    return db
+
+
+def _ledger_rows(profile_run: Any) -> list[_Row]:
+    return [
+        tuple(row)
+        for row in profile_run.port.execute("select * from opn_ledger order by id, in_z", [])
+    ]
+
+
+def _amend_ledgers(amounts: dict[int, int], before: Callable[[], None] = lambda: None) -> Any:
+    def edit(tx: TxnContext) -> None:
+        sources = [
+            ledger
+            for ledger in tx.find(Ledger.where(Ledger.amount == 100)).results()
+            if ledger.id in amounts
+        ]
+        before()
+        for source in sorted(sources, key=lambda ledger: ledger.id):
+            tx.amend(source.edit(amount=amounts[source.id]))
+
+    return edit
+
+
+def test_a_grouped_insert_of_distinct_objects_fails_whole_naming_no_row(
+    profile_run: Any,
+) -> None:
+    provider = RecordingLifecycleProvider()
+    db = _ledgers(profile_run, provider)
+    before = _ledger_rows(profile_run)
+    with pytest.raises(ExecutionFailure) as escaped:
+        db.transact(_amend_ledgers({1: 150, 2: 150, 3: 150}), max_retries=2)
+
+    cause = escaped.value.cause
+    assert isinstance(cause, DatabaseError)
+    assert (cause.category, cause.native_code) == (None, "23514")
+    events = _events(provider)
+    closes, inserts = _writes(events)[:3], _writes(events)[3:]
+    assert all(close.startswith("update opn_ledger") for close in closes)
+    # Every object's successor in one statement, presented once and never replayed.
+    (insert,) = inserts
+    assert insert.count("), (") == 2
+    failed = [
+        event
+        for event in events
+        if isinstance(event, DatabaseCallFinished) and isinstance(event.outcome, DatabaseCallFailed)
+    ]
+    (call,) = failed
+    started = next(
+        event
+        for event in events
+        if isinstance(event, DatabaseCallStarted) and event.activity_id == call.activity_id
+    )
+    assert started.target == Ledger.identity.canonical
+    (finished,) = [event for event in events if isinstance(event, TransactionAttemptFinished)]
+    assert isinstance(finished.outcome, AttemptRolledBack)
+    assert finished.outcome.failure.retry_eligible is False
+    assert _ledger_rows(profile_run) == before
+
+
+@pytest.mark.parametrize("grouped", [True, False], ids=["one-group", "one-object-at-a-time"])
+def test_a_later_objects_shortfall_is_reported_before_an_earlier_objects_insert_fails(
+    profile_run: Any, monkeypatch: pytest.MonkeyPatch, grouped: bool
+) -> None:
+    provider = RecordingLifecycleProvider()
+    db = _ledgers(profile_run, provider)
+    before = _ledger_rows(profile_run)
+
+    def advance_two() -> None:
+        other = profile_run.control()
+        try:
+            other.execute_write(
+                "update opn_ledger set in_z = in_z + interval '1 microsecond' "
+                "where id = 2 and out_z = 'infinity'",
+                [],
+            )
+        finally:
+            other.close()
+
+    # Ledger 1's successor violates the check, and ledger 2 changed after the
+    # read, so its close matches nothing.
+    with monkeypatch.context() as patched:
+        if not grouped:
+            patched.setattr(write_settlement, "_GROUP_WRITES", 1)
+        with pytest.raises(ExecutionFailure) as escaped:
+            db.transact(_amend_ledgers({1: 150, 2: 160}, advance_two), max_retries=0)
+
+    cause = escaped.value.cause
+    writes = _writes(_events(provider))
+    if grouped:
+        assert isinstance(cause, OptimisticLockConflictError)
+        assert isinstance(cause.target, MilestoneTarget)
+        assert cause.target.key_values == (2,)
+        assert all(write.startswith("update opn_ledger") for write in writes)
+    else:
+        assert isinstance(cause, DatabaseError)
+        assert cause.native_code == "23514"
+        assert [write.split(" ", 1)[0] for write in writes] == ["update", "insert"]
+    rows = _ledger_rows(profile_run)
+    assert [row for row in rows if row[0] != 2] == [row for row in before if row[0] != 2]
