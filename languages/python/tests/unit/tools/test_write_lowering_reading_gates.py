@@ -2,12 +2,13 @@
 
 `spec/memory-gates.yaml` holds one blocking ceiling per retained checkpoint and
 per high-water mark of every keyed-write and model-preparation case, the
-leaf-type inserts among them, derived from the retained capture the file names
-as its basis. Each family below reads its cases through the same child the
-report measures with — :func:`write_lowering_reading.measure`, the identical
-windows, roots, and warm-ups — and grades the retained and transient readings
-against their gates, and the per-unit readings of any scaling domain its
-workloads form against that domain's order.
+leaf-type inserts among them, and per flush and per object of every
+cross-object flush's retained plan and execution high-water mark, derived from
+the retained capture the file names as its basis. Each family below reads its
+cases through the same child the report measures with —
+:func:`write_lowering_reading.measure`, the identical windows, roots, and
+warm-ups — and grades each gated reading against its gate, and the per-unit
+readings of any scaling domain its workloads form against that domain's order.
 
 Beside the gates, seeded regressions prove what each one detects. A retained
 duplication is seeded at the preparation seam as a per-instruction registry
@@ -56,7 +57,6 @@ for timing, which nothing here grades."""
 
 RETAINED: Final = "retainedBytes"
 TRANSIENT: Final = "transientBytes"
-GATED_CELLS: Final = (RETAINED, TRANSIENT)
 
 DUPLICATED_CASES: Final = (
     "txtime.opening.columns.typed",
@@ -89,14 +89,14 @@ pass observation a duplicate lowering doubles."""
 
 
 class _Reading:
-    """One case's gated readings and its pass observations."""
+    """One case's readings and its pass observations."""
 
     __slots__ = ("calls", "values")
 
     def __init__(self, workload: str) -> None:
         reading = write_lowering_reading.measure(workload, warmups=WARMUPS, measured=MEASURED)
         samples = cast("Mapping[str, Sequence[float]]", reading["samples"])
-        self.values: dict[str, float] = {cell: median(samples[cell]) for cell in GATED_CELLS}
+        self.values: dict[str, float] = {cell: median(taken) for cell, taken in samples.items()}
         self.calls: Mapping[str, float] = cast("Mapping[str, float]", reading["calls"])
 
 
@@ -218,6 +218,13 @@ def test_the_leaf_type_inserts_stay_within_their_memory_gates() -> None:
 @in_a_child_interpreter
 def test_the_prepared_model_stays_within_its_memory_gates() -> None:
     _within_gates(gate_support.owner_of(test_the_prepared_model_stays_within_its_memory_gates))
+
+
+@in_a_child_interpreter
+def test_the_cross_object_flushes_stay_within_their_memory_gates() -> None:
+    _within_gates(
+        gate_support.owner_of(test_the_cross_object_flushes_stay_within_their_memory_gates)
+    )
 
 
 @in_a_child_interpreter

@@ -4,7 +4,7 @@ This script is imported only by its gated suite. Report execution starts it in a
 child interpreter, where it drives one case through the production seams of its
 window and answers with one JSON line.
 
-Three windows are read. A keyed-write case reads its row inside one
+Four windows are read. A keyed-write case reads its row inside one
 transaction and runs from the public keyed verb until ``transact`` returns:
 preparation, buffering, and the pre-commit flush's settlement, SQL lowering,
 production bind adaptation, and psycopg's own document serialization. A
@@ -21,6 +21,21 @@ whole window. The retained checkpoint is read separately, at the production
 stage each window names — what the verb kept of its buffered write beyond the
 read it revises, the node answered with its row buffered, the model prepared —
 so sampling never prolongs a lifetime inside a timed run.
+
+The fourth window, a cross-object flush, is read over two regions of one
+pre-commit flush instead, after its transaction has read every object and
+buffered an amendment of each.
+Planning runs from finalization's start to the finalized plan, and its elapsed
+time is one region; execution is every Write Group's steps, through lowering,
+production bind adaptation, psycopg serialization, and presentation to a port
+offering ordered transport, and its elapsed time is the sum of those regions.
+Each group's completion falls between two regions and inside neither, as it
+does in production. The execution high-water mark is the highest rise any one
+group's region reached above the level it opened at. The plan's retained bytes
+are a separate checkpoint, read across finalization: what is reachable once the
+plan is answered, before any group executes, that was not before it began.
+Byte readings are reported per flush and per object, and every flush must
+present to the port exactly the work its case states.
 """
 
 from __future__ import annotations
@@ -75,15 +90,35 @@ from tests.unit.memory_instruments import (  # noqa: E402
     untraced,
 )
 
-type Window = Literal["keyed-write", "wire-insert-response", "model-preparation"]
+type Window = Literal[
+    "keyed-write", "wire-insert-response", "model-preparation", "cross-object-flush"
+]
 
 KEYED_WINDOW: Final[Window] = "keyed-write"
 RESPONSE_WINDOW: Final[Window] = "wire-insert-response"
 MODEL_WINDOW: Final[Window] = "model-preparation"
+FLUSH_WINDOW: Final[Window] = "cross-object-flush"
 MODEL_CASE: Final = "model.prepared"
 MODEL_FAMILY_CASE: Final = "model.prepared.family"
 MODEL_EDITION: Final = "write-lowering-report"
 METRICS: Final = ("elapsedUs", "transientBytes", "retainedBytes")
+WORK_CELLS: Final[Mapping[str, Callable[[lowering_support.FlushWork], int]]] = {
+    "work.statements": lambda work: work.statements,
+    "work.invocations": lambda work: work.invocations,
+    "work.largestOrderedInvocation": lambda work: work.largest_ordered_invocation,
+    "work.largestGroupedInsert": lambda work: work.largest_grouped_insert,
+}
+FLUSH_METRICS: Final = (
+    "plan.elapsedUs",
+    "plan.retainedBytes",
+    "plan.retainedBytesPerObject",
+    "execution.elapsedUs",
+    "execution.transientBytes",
+    "execution.transientBytesPerObject",
+    *WORK_CELLS,
+)
+"""What a cross-object flush answers: per-flush timing, bytes per flush and per
+object, and the exact work its execution presented to the port."""
 RETAINED_WARMUPS: Final = WARMUP
 
 _MONITORING_TOOL_IDS: Final = range(6)
@@ -109,6 +144,7 @@ WINDOWS: Final[Mapping[str, Window]] = {
     **{case.name: RESPONSE_WINDOW for case in lowering_support.RESPONSE_CASES},
     MODEL_CASE: MODEL_WINDOW,
     MODEL_FAMILY_CASE: MODEL_WINDOW,
+    **{case.name: FLUSH_WINDOW for case in lowering_support.CROSS_OBJECT_CASES},
 }
 CASE_NAMES: Final = tuple(WINDOWS)
 MODEL_CLASSES: Final[Mapping[str, tuple[type[Entity], ...]]] = {
@@ -323,11 +359,178 @@ def _per_unit(samples: Sequence[int | float], units: int) -> list[float]:
     return [float(sample) / units for sample in samples]
 
 
+class _Stopwatch:
+    """Elapsed nanoseconds summed over every region it was opened and closed
+    around."""
+
+    __slots__ = ("_opened", "total")
+
+    def __init__(self) -> None:
+        self._opened = 0
+        self.total = 0
+
+    def open(self) -> None:
+        self._opened = perf_counter_ns()
+
+    def close(self) -> None:
+        self.total += perf_counter_ns() - self._opened
+
+
+class _RegionalPeak:
+    """The highest rise above its own floor that any one region it was opened
+    and closed around reached; ``tracemalloc`` must already be tracing. Each
+    floor is read after a collection, as :func:`_peak` reads its one."""
+
+    __slots__ = ("_floor", "highest")
+
+    def __init__(self) -> None:
+        self._floor = 0
+        self.highest = 0
+
+    def open(self) -> None:
+        gc.collect()
+        gc.collect()
+        self._floor = tracemalloc.get_traced_memory()[0]
+        tracemalloc.reset_peak()
+
+    def close(self) -> None:
+        _, high_water = tracemalloc.get_traced_memory()
+        self.highest = max(self.highest, high_water - self._floor)
+
+
+@dataclass(frozen=True, slots=True)
+class _FlushDriver:
+    """One cross-object case's flush: ``run`` reads every object, amends each,
+    and commits, calling the marks ``regions`` holds at that moment, and refuses
+    a flush that presented other work than its case states."""
+
+    objects: int
+    regions: lowering_support.FlushRegions
+    run: Callable[[], lowering_support.FlushWork]
+
+    def marked(
+        self,
+        *,
+        planning: Sampler = lowering_support.unmarked,
+        planned: Sampler = lowering_support.unmarked,
+        executing: Sampler = lowering_support.unmarked,
+        executed: Sampler = lowering_support.unmarked,
+    ) -> lowering_support.FlushWork:
+        regions = self.regions
+        regions.planning, regions.planned = planning, planned
+        regions.executing, regions.executed = executing, executed
+        try:
+            return self.run()
+        finally:
+            regions.planning = regions.planned = lowering_support.unmarked
+            regions.executing = regions.executed = lowering_support.unmarked
+
+
+@contextmanager
+def _flush_driver_for(case: lowering_support.CrossObjectCase) -> Generator[_FlushDriver]:
+    regions = lowering_support.FlushRegions()
+    port = lowering_support.OrderedAcceptingPort(case.stored)
+
+    with (
+        lowering_support.flush_database(case, port) as handle,
+        lowering_support.marked_flushes(regions),
+    ):
+
+        def run() -> lowering_support.FlushWork:
+            port.reset()
+            lowering_support.flush_objects(handle, case)
+            work = port.work()
+            if work != case.work:
+                raise RuntimeError(f"{case.name} presented {work}, expected {case.work}")
+            return work
+
+        yield _FlushDriver(case.objects, regions, run)
+
+
+def _timed_flush(driver: _FlushDriver) -> tuple[int, int, lowering_support.FlushWork]:
+    planning, execution = _Stopwatch(), _Stopwatch()
+    work = driver.marked(
+        planning=planning.open,
+        planned=planning.close,
+        executing=execution.open,
+        executed=execution.close,
+    )
+    return planning.total, execution.total, work
+
+
+def _execution_peak(driver: _FlushDriver) -> int:
+    peak = _RegionalPeak()
+    driver.marked(executing=peak.open, executed=peak.close)
+    return peak.highest
+
+
+def _plan_kept(driver: _FlushDriver) -> int:
+    """What finalization kept, read as a retained increment across it and
+    answered as at least zero, as :func:`_kept_by_the_verb` answers."""
+
+    def checkpoint(sample: Sampler) -> None:
+        driver.marked(planning=sample, planned=sample)
+
+    return max(0, retained_increment(checkpoint))
+
+
+def _measure_flush(name: str, *, warmups: int, measured: int) -> dict[str, object]:
+    """One cross-object case's samples over its planning and execution regions,
+    the plan it retained, and the work it presented."""
+    case = lowering_support.cross_object_case_named(name)
+    with _flush_driver_for(case) as driver:
+        with untraced():
+            for _ in range(warmups):
+                driver.run()
+            planning: list[int] = []
+            execution: list[int] = []
+            works: set[lowering_support.FlushWork] = set()
+            for _ in range(measured):
+                planning_ns, execution_ns, work = _timed_flush(driver)
+                planning.append(planning_ns)
+                execution.append(execution_ns)
+                works.add(work)
+
+        transient: list[int] = []
+        tracemalloc.start()
+        try:
+            with untraced():
+                for _ in range(measured):
+                    transient.append(_execution_peak(driver))
+            kept = _plan_kept(driver)
+        finally:
+            tracemalloc.stop()
+
+    (work,) = works
+    objects = case.objects
+    samples: dict[str, list[float]] = {
+        "plan.elapsedUs": [total / 1_000 for total in planning],
+        "plan.retainedBytes": [float(kept)],
+        "plan.retainedBytesPerObject": _per_unit([kept], objects),
+        "execution.elapsedUs": [total / 1_000 for total in execution],
+        "execution.transientBytes": [float(peak) for peak in transient],
+        "execution.transientBytesPerObject": _per_unit(transient, objects),
+        **{cell: [float(count(work))] for cell, count in WORK_CELLS.items()},
+    }
+    return {
+        "case": name,
+        "window": FLUSH_WINDOW,
+        "units": objects,
+        "samples": samples,
+        "calls": {},
+        "warmups": warmups,
+        "measured": measured,
+        "retainedWarmups": RETAINED_WARMUPS,
+    }
+
+
 def measure(name: str, *, warmups: int, measured: int) -> dict[str, object]:
     """One case's per-unit samples over its window, and its pass observations."""
     if warmups < 0 or measured <= 0:
         raise ValueError("warmups must be non-negative and measured must be positive")
     window = WINDOWS[name]
+    if window == FLUSH_WINDOW:
+        return _measure_flush(name, warmups=warmups, measured=measured)
     observe = window == KEYED_WINDOW
 
     with driver_for(name) as driver:

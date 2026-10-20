@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
@@ -11,10 +12,20 @@ import write_lowering_overhead as report
 from durations import Spans
 from interpreter_matrix import CURRENT_MINOR, IDENTITY_SCRIPT, supported_minors
 from parallax.conformance import workloads
-from parallax.conformance.budget import BudgetContract
+from parallax.conformance.budget import BudgetContract, derive_memory_gates
 from parallax.conformance.cost_envelope import validate
+from parallax.core._execution._unit_work.uow import UnitOfWork
+from parallax.core._execution._unit_work.write_planner import WritePlanner
+from parallax.core._execution._write_step_executor import WriteStepExecutor
 from parallax.core.base import detach_json_container
-from parallax.core.db_port import DocumentReadOrdinals, JsonDocument, Row
+from parallax.core.db_port import (
+    CanonicalWriteStatement,
+    DocumentReadOrdinals,
+    JsonDocument,
+    OrderedWriteResult,
+    OrderedWriteResultComplete,
+    Row,
+)
 from tests.unit import _leaf_type_support as leaf_support
 from tests.unit import _write_lowering_support as lowering_support
 from tests.unit.tools._provenance_support import pin_dirty_tree
@@ -26,17 +37,19 @@ _CATEGORICAL_OPERATIONS = {
 }
 
 
+def _samples(metric: str) -> list[float]:
+    if metric.endswith("elapsedUs"):
+        return [10.0, 12.0, 11.0] * 3
+    return [100.0] * report.MEASURED if report.samples_expected(metric) > 1 else [50.0]
+
+
 def _child_document(case: str, overrides: Mapping[str, object] | None = None) -> dict[str, object]:
     window = report.WINDOWS[case]
     document: dict[str, object] = {
         "case": case,
         "window": window,
-        "units": 2,
-        "samples": {
-            "elapsedUs": [10.0, 12.0, 11.0] * 3,
-            "transientBytes": [100.0] * report.MEASURED,
-            "retainedBytes": [50.0],
-        },
+        "units": report.CROSS_OBJECT_OBJECTS.get(case, 2),
+        "samples": {metric: _samples(metric) for metric in report.metrics_of(window)},
         "calls": dict.fromkeys(report.CALL_NAMES, 1.0) if window == report.KEYED_WINDOW else {},
         "warmups": report.WARMUPS,
         "measured": report.MEASURED,
@@ -68,16 +81,19 @@ def test_the_matrix_names_every_keyed_response_and_model_case_once() -> None:
     ]
     target = [case.name for case in lowering_support.CASES if case.addressed]
     response = [case.name for case in lowering_support.RESPONSE_CASES]
+    cross_object = [case.name for case in lowering_support.CROSS_OBJECT_CASES]
     assert (
         *keyed,
         *response,
         report.MODEL_CASE,
         report.MODEL_FAMILY_CASE,
+        *cross_object,
     ) == report.CASE_NAMES
     assert len(set(report.CASE_NAMES)) == len(report.CASE_NAMES)
     assert (*response, report.MODEL_FAMILY_CASE) == report.CONTROL_CASE_NAMES
     assert tuple(leaf_keyed) == report.LEAF_TYPE_CASE_NAMES
     assert tuple(target) == report.TARGET_CASE_NAMES
+    assert tuple(cross_object) == report.CROSS_OBJECT_CASE_NAMES
     legacy_keyed = [name for name in keyed if name not in target and name not in leaf_keyed]
     assert (*legacy_keyed, *report.RETIRED_WINDOWS, report.MODEL_CASE) == report.LEGACY_CASE_NAMES
     assert report.CASE_COVERAGES == {
@@ -344,8 +360,8 @@ def _documents(statement_binds: Sequence[object]) -> list[object]:
 
 def _rows(statement: lowering_support.Executed) -> list[tuple[object, ...]]:
     """The binds of each value tuple ``statement`` renders: one per Planned
-    Step, since a run of temporal openings shares one multi-row insert
-    (`m-execution` *Flush execution*); any other statement is one."""
+    Step, since contiguous compatible single-entry inserts share one grouped
+    insert (`m-execution` *Flush execution*); any other statement is one."""
     tuples = statement.sql.count("), (") + 1 if statement.sql.startswith("insert") else 1
     width = len(statement.binds) // tuples
     return [statement.binds[index * width : (index + 1) * width] for index in range(tuples)]
@@ -527,6 +543,7 @@ def test_envelope_carries_every_address_with_its_window_runtime_and_unit() -> No
         report.KEYED_WINDOW,
         report.RESPONSE_WINDOW,
         report.MODEL_WINDOW,
+        report.FLUSH_WINDOW,
     }
     addresses = {(reading.runtime, reading.workload, reading.cell) for reading in envelope.readings}
     assert addresses == report.expected_addresses(("3.13", "3.14"))
@@ -857,6 +874,7 @@ def test_the_legacy_coverage_drops_the_later_cases_and_carries_the_retired_ones(
         *report.CONTROL_CASE_NAMES,
         *report.LEAF_TYPE_CASE_NAMES,
         *report.TARGET_CASE_NAMES,
+        *report.CROSS_OBJECT_CASE_NAMES,
     }
     assert legacy - current == {
         (runtime, case, metric)
@@ -877,3 +895,284 @@ def test_the_leaf_type_cases_are_read_on_the_newest_supported_minor_alone() -> N
         for runtime, case, _cell in report.expected_addresses((oldest, newest))
         if case in report.LEAF_TYPE_CASE_NAMES
     } == {newest}
+
+
+# --------------------------------------------------------------------------- #
+# The cross-object flushes: keyed loops whose one flush executes Write Groups. #
+# --------------------------------------------------------------------------- #
+def test_the_cross_object_family_is_three_keyed_loops_read_on_every_supported_minor() -> None:
+    family = {
+        case.name: (case.entity, case.ingress, case.layout, case.objects, case.groups)
+        for case in lowering_support.CROSS_OBJECT_CASES
+    }
+    assert family == {
+        "cross-object.txtime.changed-64.columns.typed": (
+            lowering_support.TxColumns,
+            "typed",
+            "columns",
+            64,
+            (64,),
+        ),
+        "cross-object.txtime.changed-130.columns.typed": (
+            lowering_support.TxColumns,
+            "typed",
+            "columns",
+            130,
+            (64, 64, 2),
+        ),
+        "cross-object.bitemporal.interior-64.document.wire": (
+            lowering_support.BiDocument,
+            "wire",
+            "document",
+            64,
+            (64,),
+        ),
+    }
+    assert report.selected_cases([f"{lowering_support.CROSS_OBJECT_PREFIX}*"]) == tuple(family)
+    assert all(report.WINDOWS[name] == report.FLUSH_WINDOW for name in family)
+    for case in lowering_support.CROSS_OBJECT_CASES:
+        keys = [row["id"] for row in case.stored]
+        assert len(set(keys)) == case.objects == sum(case.groups)
+        assert set(case.changes) == set(keys)
+        assert all("id" not in changes for changes in case.changes.values())
+    runtimes = supported_minors()
+    combinations = {
+        (runtime, case)
+        for runtime, case, _cell in report.expected_addresses(runtimes)
+        if case in family
+    }
+    assert combinations == {(runtime, case) for runtime in runtimes for case in family}
+    assert len(combinations) == 6
+
+
+def test_a_cross_object_flush_answers_per_flush_and_per_object_bytes_at_distinct_addresses() -> (
+    None
+):
+    for metric in report.FLUSH_METRICS:
+        assert report.unit_of(report.FLUSH_WINDOW, metric) == report.FLUSH_UNITS[metric]
+    per_flush = {m for m, unit in report.FLUSH_UNITS.items() if unit == "B"}
+    per_object = {m for m, unit in report.FLUSH_UNITS.items() if unit == "B/row"}
+    assert per_flush == {"plan.retainedBytes", "execution.transientBytes"}
+    assert per_object == {f"{metric}PerObject" for metric in per_flush}
+    for _runtime, case, cell in report.expected_addresses(("3.14",)):
+        if case in report.CROSS_OBJECT_CASE_NAMES:
+            assert cell in report.FLUSH_METRICS, (case, cell)
+    matrix = _matrix("3.13", "3.14")
+    contract = BudgetContract.load()
+    envelope = report.build_envelope(
+        contract,
+        report._provenance(contract, matrix),  # pyright: ignore[reportPrivateUsage] - entrypoint seam
+        matrix,
+    )
+    flushes = [r for r in envelope.readings if r.workload in report.CROSS_OBJECT_CASE_NAMES]
+    assert {(r.runtime, r.workload, r.cell) for r in flushes} == {
+        (runtime, case, metric)
+        for runtime in ("3.13", "3.14")
+        for case in report.CROSS_OBJECT_CASE_NAMES
+        for metric in report.FLUSH_METRICS
+    }
+    assert all(r.window == report.FLUSH_WINDOW for r in flushes)
+    gates = derive_memory_gates({"members": [envelope.document()]}, 1.10)
+    assert {
+        workload: {cell: gate["unit"] for cell, gate in cells.items()}
+        for workload, cells in gates[report.SUBJECT].items()
+        if workload in report.CROSS_OBJECT_CASE_NAMES
+    } == {
+        case: {
+            "plan.retainedBytes": "B",
+            "plan.retainedBytesPerObject": "B/row",
+            "execution.transientBytes": "B",
+            "execution.transientBytesPerObject": "B/row",
+        }
+        for case in report.CROSS_OBJECT_CASE_NAMES
+    }
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"units": 1},
+        {"samples": {"elapsedUs": [1.0] * 9, "transientBytes": [1.0] * 9, "retainedBytes": [1.0]}},
+        {"samples": {metric: _samples(metric) for metric in report.FLUSH_METRICS[:-1]}},
+        {
+            "samples": {
+                **{metric: _samples(metric) for metric in report.FLUSH_METRICS},
+                "work.statements": [0.0],
+            }
+        },
+        {"calls": dict.fromkeys(report.CALL_NAMES, 1.0)},
+    ],
+)
+def test_a_malformed_cross_object_child_reading_is_an_unavailable_cell(
+    overrides: dict[str, object],
+) -> None:
+    (case, *_others) = report.CROSS_OBJECT_CASE_NAMES
+    assert isinstance(_reading(case), report.ChildReading)
+    assert isinstance(
+        report._decoded(  # pyright: ignore[reportPrivateUsage] - child protocol under test
+            json.dumps(_child_document(case, overrides)), case
+        ),
+        str,
+    )
+
+
+def test_the_single_write_port_offers_no_ordered_transport_and_the_flush_port_one_stable_one() -> (
+    None
+):
+    assert lowering_support.AcceptingPort().ordered_write_transport is None
+    port = lowering_support.OrderedAcceptingPort()
+    transport = port.ordered_write_transport
+    assert transport is not None
+    assert port.ordered_write_transport is transport
+
+
+@dataclass(frozen=True, slots=True)
+class _Statement:
+    sql: str
+    binds: Sequence[object]
+
+
+def test_the_flush_port_serializes_every_statement_and_counts_one_flush_in_constant_space(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    serialized: list[int] = []
+
+    def counting(binds: Sequence[object]) -> Any:
+        serialized.append(len(binds))
+        return []
+
+    monkeypatch.setattr(lowering_support, "serialize", counting)
+    port = lowering_support.OrderedAcceptingPort()
+    transport = port.ordered_write_transport
+    assert transport is not None
+    assert port.work() == lowering_support.FlushWork(0, 0, 0, 0)
+    assert port.execute_write("insert into t(a, b) values (%s, %s), (%s, %s), (%s, %s)", [1] * 6)
+    assert port.execute_write("update t set a = %s where b = %s", [1, 2])
+    result = transport(
+        [_Statement("update t set a = ? where b = ?", (1, 2)) for _ in range(3)]
+        + [_Statement("delete from t where b = ?", (JsonDocument({"b": 1}),))]
+    )
+    assert result == OrderedWriteResultComplete((1, 1, 1, 1))
+    assert serialized == [6, 2, 2, 2, 2, 1]
+    assert port.work() == lowering_support.FlushWork(
+        statements=6, invocations=3, largest_ordered_invocation=4, largest_grouped_insert=3
+    )
+    port.reset()
+    assert port.work() == lowering_support.FlushWork(0, 0, 0, 0)
+
+
+class _ObservedPort(lowering_support.OrderedAcceptingPort):
+    __slots__ = ("events",)
+    events: list[str]
+
+    def __init__(self, stored: Sequence[Mapping[str, object]]) -> None:
+        super().__init__(stored)
+        self.events = []
+
+    def execute(
+        self,
+        sql: str,
+        binds: Sequence[object],
+        document_reads: Sequence[DocumentReadOrdinals] = (),
+    ) -> list[Row]:
+        self.events.append("read")
+        return super().execute(sql, binds, document_reads)
+
+    def execute_write(self, sql: str, binds: Sequence[object]) -> int:
+        self.events.append("statement")
+        return super().execute_write(sql, binds)
+
+    def _ordered_writes(self, statements: Sequence[CanonicalWriteStatement]) -> OrderedWriteResult:
+        self.events.append("ordered")
+        return super()._ordered_writes(statements)
+
+
+def _observed_flush(
+    case: lowering_support.CrossObjectCase, monkeypatch: pytest.MonkeyPatch
+) -> _ObservedPort:
+    port = _ObservedPort(case.stored)
+    complete = UnitOfWork._complete_write  # pyright: ignore[reportPrivateUsage] - observing completion
+
+    def completing(owner: UnitOfWork, *args: Any) -> None:
+        port.events.append("complete")
+        complete(owner, *args)
+
+    monkeypatch.setattr(UnitOfWork, "_complete_write", completing)
+    regions = lowering_support.FlushRegions(
+        planning=lambda: port.events.append("planning"),
+        planned=lambda: port.events.append("planned"),
+        executing=lambda: port.events.append("executing"),
+        executed=lambda: port.events.append("executed"),
+    )
+    with (
+        lowering_support.flush_database(case, port) as handle,
+        lowering_support.marked_flushes(regions),
+    ):
+        lowering_support.flush_objects(handle, case)
+    return port
+
+
+@pytest.mark.parametrize("case", lowering_support.CROSS_OBJECT_CASES, ids=lambda case: case.name)
+def test_a_cross_object_flush_executes_its_groups_between_completions_outside_every_region(
+    case: lowering_support.CrossObjectCase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Only the regions' own marks may enclose a statement, and every settled
+    # write of a group completes after its region closes and before the next
+    # opens, so no completion is read as execution and none waits for the
+    # flush's end.
+    port = _observed_flush(case, monkeypatch)
+    calls = {
+        "cross-object.txtime.changed-64.columns.typed": [["ordered", "statement"]],
+        "cross-object.txtime.changed-130.columns.typed": [["ordered", "statement"]] * 3,
+        "cross-object.bitemporal.interior-64.document.wire": [
+            ["ordered", "statement", "statement", "statement"]
+        ],
+    }[case.name]
+    assert port.events == [
+        "read",
+        "planning",
+        "planned",
+        *(
+            event
+            for size, presented in zip(case.groups, calls, strict=True)
+            for event in ("executing", *presented, "executed", *(["complete"] * size))
+        ),
+    ]
+    assert port.work() == case.work
+
+
+def test_each_cross_object_flush_writes_every_object_through_its_capped_call_shapes() -> None:
+    for case in lowering_support.CROSS_OBJECT_CASES:
+        port = lowering_support.OrderedAcceptingPort(case.stored)
+        with (
+            lowering_support.flush_database(case, port) as handle,
+            lowering_support.marked_flushes(lowering_support.FlushRegions()),
+        ):
+            lowering_support.flush_objects(handle, case)
+            first = port.work()
+            port.reset()
+            lowering_support.flush_objects(handle, case)
+        assert first == port.work() == case.work, case.name
+        successors = 3 if case.bounded else 1
+        largest = case.work.largest_grouped_insert
+        assert case.work.largest_ordered_invocation == largest == 64
+        inserts = sum(-(-size * successors // largest) for size in case.groups)
+        assert case.work.statements == case.objects + inserts
+        assert case.work.invocations == len(case.groups) + inserts
+
+
+def test_marked_flushes_restore_production_on_every_exit() -> None:
+    finalize = WritePlanner.finalize
+    execute = WriteStepExecutor.execute
+    with lowering_support.marked_flushes(lowering_support.FlushRegions()):
+        assert WritePlanner.finalize is not finalize
+        assert WriteStepExecutor.execute is not execute
+    assert WritePlanner.finalize is finalize
+    assert WriteStepExecutor.execute is execute
+    with (
+        pytest.raises(RuntimeError, match="left"),
+        lowering_support.marked_flushes(lowering_support.FlushRegions()),
+    ):
+        raise RuntimeError("left")
+    assert WritePlanner.finalize is finalize
+    assert WriteStepExecutor.execute is execute

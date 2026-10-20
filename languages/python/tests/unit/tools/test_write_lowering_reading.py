@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import sys
+import tracemalloc
 from contextlib import redirect_stdout
 from typing import cast
 
@@ -17,6 +18,7 @@ from tests.unit import _write_lowering_support as lowering_support
 from tests.unit.memory_instruments import (
     in_a_child_interpreter,
     serve_one_measurement,
+    untraced,
 )
 from write_lowering_reading import CASE_NAMES, OBSERVED_FUNCTIONS, Observer
 
@@ -102,7 +104,41 @@ def test_child_case_names_match_the_shared_workloads() -> None:
         *(case.name for case in lowering_support.RESPONSE_CASES),
         write_lowering_reading.MODEL_CASE,
         write_lowering_reading.MODEL_FAMILY_CASE,
+        *(case.name for case in lowering_support.CROSS_OBJECT_CASES),
     ) == CASE_NAMES
+
+
+def test_a_cross_object_child_answers_exactly_the_reports_flush_cells() -> None:
+    assert write_lowering_reading.FLUSH_METRICS == write_lowering_overhead.FLUSH_METRICS
+    assert write_lowering_reading.FLUSH_WINDOW == write_lowering_overhead.FLUSH_WINDOW
+    assert {
+        name
+        for name, window in write_lowering_reading.WINDOWS.items()
+        if window == write_lowering_reading.FLUSH_WINDOW
+    } == set(write_lowering_overhead.CROSS_OBJECT_CASE_NAMES)
+
+
+def test_a_stopwatch_sums_its_regions_and_a_regional_peak_keeps_the_highest_rise() -> None:
+    stopwatch = write_lowering_reading._Stopwatch()  # pyright: ignore[reportPrivateUsage] - instrument under test
+    for _ in range(2):
+        stopwatch.open()
+        stopwatch.close()
+    assert stopwatch.total >= 0
+    peak = write_lowering_reading._RegionalPeak()  # pyright: ignore[reportPrivateUsage] - instrument under test
+    held: list[bytearray] = []
+    tracemalloc.start()
+    try:
+        with untraced():
+            peak.open()
+            held.append(bytearray(1 << 20))
+            peak.close()
+            peak.open()
+            scratch = bytearray(1 << 16)
+            del scratch
+            peak.close()
+    finally:
+        tracemalloc.stop()
+    assert 1 << 20 <= peak.highest < 1 << 21
 
 
 def _reading(name: str) -> dict[str, object]:
@@ -147,6 +183,35 @@ def _assert_reading(name: str, *, units: int) -> None:
         assert all(value >= 0 for value in calls.values())
     else:
         assert calls == {}
+
+
+def _assert_flush_reading(name: str) -> None:
+    reading = _reading(name)
+    case = lowering_support.cross_object_case_named(name)
+    assert reading["window"] == write_lowering_reading.FLUSH_WINDOW
+    assert reading["units"] == case.objects
+    assert reading["calls"] == {}
+    samples = cast("dict[str, list[float]]", reading["samples"])
+    assert set(samples) == set(write_lowering_reading.FLUSH_METRICS)
+    for region in ("plan", "execution"):
+        assert len(samples[f"{region}.elapsedUs"]) == 2
+        assert all(value > 0 for value in samples[f"{region}.elapsedUs"])
+    retained, transient = samples["plan.retainedBytes"], samples["execution.transientBytes"]
+    assert len(retained) == 1 and retained[0] > 0
+    assert len(transient) == 2 and all(value > 0 for value in transient)
+    assert samples["plan.retainedBytesPerObject"] == [retained[0] / case.objects]
+    assert samples["execution.transientBytesPerObject"] == [v / case.objects for v in transient]
+    assert {cell: samples[cell] for cell in write_lowering_reading.WORK_CELLS} == {
+        "work.statements": [case.work.statements],
+        "work.invocations": [case.work.invocations],
+        "work.largestOrderedInvocation": [case.work.largest_ordered_invocation],
+        "work.largestGroupedInsert": [case.work.largest_grouped_insert],
+    }
+
+
+@in_a_child_interpreter
+def test_a_cross_object_flush_reads_its_planning_and_group_execution_regions() -> None:
+    _assert_flush_reading(lowering_support.CROSS_OBJECT_CASES[0].name)
 
 
 @in_a_child_interpreter

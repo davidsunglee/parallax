@@ -1304,6 +1304,34 @@ def test_compare_reads_throughput_deltas_in_their_own_direction() -> None:
     assert "| incomparable |" in rendered
 
 
+def test_compare_reads_every_flush_work_count_exactly() -> None:
+    counts = {
+        metric: unit
+        for metric, unit in write_report.FLUSH_UNITS.items()
+        if metric.startswith("work.")
+    }
+    assert set(counts.values()) <= cost_report.COUNT_UNITS
+    base = _portfolio(
+        _member("write-lowering", *(_reading("f", m, 100.0, u) for m, u in counts.items()))
+    )
+    head = _portfolio(
+        _member(
+            "write-lowering",
+            *(
+                _reading("f", m, 101.0 if m == "work.statements" else 100.0, u)
+                for m, u in counts.items()
+            ),
+        )
+    )
+    lines = compare(base, head).splitlines()
+    for metric in counts:
+        verdict = "changed" if metric == "work.statements" else "exact"
+        assert any(
+            line.startswith(f"| 3.14 | w | f | {metric} |") and line.endswith(f"| {verdict} |")
+            for line in lines
+        ), metric
+
+
 # Changing allowances or sampling makes retained captures incomparable.
 def test_the_frozen_allowances_and_write_sampling_remain_comparable() -> None:
     assert cost_report.TIMING_NOISE_ALLOWANCE == 0.05

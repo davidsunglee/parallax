@@ -7,8 +7,11 @@ beside them, the geometry inserts, the changed-ancestor successors, and the
 leaf-type inserts through their public verbs and the flush's actual driver
 serialization, the public Wire insert to the node it answers, and the two
 model-preparation checkpoints. The leaf-type cases are read only on the
-supported minors the leaf-type manifest scopes them to. Measurements are
-observations: only an incomplete matrix changes this command's exit status.
+supported minors the leaf-type manifest scopes them to. The cross-object
+flushes are read on every supported minor: each one flush of keyed amendments
+over many distinct objects, read as its planning and Write Group execution
+regions. Measurements are observations: only an incomplete matrix changes this
+command's exit status.
 """
 
 from __future__ import annotations
@@ -99,14 +102,47 @@ CALL_VOCABULARIES: Final[Mapping[str, tuple[str, ...]]] = {
 """Every complete counter vocabulary a write-lowering envelope may carry, by
 the name a validation failure reports it under."""
 METRICS: Final = ("elapsedUs", "transientBytes", "retainedBytes")
-REPEATED_METRICS: Final = ("elapsedUs", "transientBytes")
-"""The metrics sampled once per measured run. ``retainedBytes`` is one
-checkpoint and every ``calls.*`` observation is one median, so each carries a
-single sample."""
+FLUSH_UNITS: Final[Mapping[str, str]] = {
+    "plan.elapsedUs": "us",
+    "plan.retainedBytes": "B",
+    "plan.retainedBytesPerObject": "B/row",
+    "execution.elapsedUs": "us",
+    "execution.transientBytes": "B",
+    "execution.transientBytesPerObject": "B/row",
+    "work.statements": "statements",
+    "work.invocations": "invocations",
+    "work.largestOrderedInvocation": "statements",
+    "work.largestGroupedInsert": "rows",
+}
+"""Every cell a cross-object flush answers, exactly and only, with its unit. A
+``B`` reading is per flush and its ``B/row`` peer the same reading divided by
+the flush's objects, so the two are distinct addresses of one quantity."""
+FLUSH_METRICS: Final = tuple(FLUSH_UNITS)
+REPEATED_METRICS: Final = (
+    "elapsedUs",
+    "transientBytes",
+    "plan.elapsedUs",
+    "execution.elapsedUs",
+    "execution.transientBytes",
+    "execution.transientBytesPerObject",
+)
+"""The metrics sampled once per measured run. A retained reading is one
+checkpoint, a work count is exact, and every ``calls.*`` observation is one
+median, so each carries a single sample."""
+POSITIVE_METRICS: Final = frozenset(
+    {
+        "elapsedUs",
+        "plan.elapsedUs",
+        "execution.elapsedUs",
+        *(m for m in FLUSH_UNITS if m.startswith("work.")),
+    }
+)
+"""The metrics no reading can answer as zero: time passes and work is presented."""
 
 KEYED_WINDOW: Final = "keyed-write"
 RESPONSE_WINDOW: Final = "wire-insert-response"
 MODEL_WINDOW: Final = "model-preparation"
+FLUSH_WINDOW: Final = "cross-object-flush"
 MODEL_CASE: Final = "model.prepared"
 MODEL_FAMILY_CASE: Final = "model.prepared.family"
 WINDOW_DESCRIPTIONS: Final[Mapping[str, str]] = {
@@ -124,6 +160,17 @@ WINDOW_DESCRIPTIONS: Final[Mapping[str, str]] = {
         "lowering, or serialization"
     ),
     MODEL_WINDOW: "one complete model preparation from the declared Entity Classes",
+    FLUSH_WINDOW: (
+        "one pre-commit flush of a keyed amendment of each of many distinct objects its "
+        "transaction already read and buffered, over a provider-free port offering ordered "
+        "transport, read as two regions: planning, from finalization's start to the "
+        "finalized plan, whose retained bytes are a separate checkpoint before any Write "
+        "Group executes; and execution, summed over every Write Group's steps through "
+        "lowering, production bind adaptation, psycopg's serialization, and presentation, "
+        "with each group's completion between regions and inside neither; the read, the "
+        "authored inputs, admission, and the commit precede or follow both; per-object "
+        "bytes divide a flush's by its objects"
+    ),
 }
 
 sys.path.insert(0, str(WORKSPACE))
@@ -143,6 +190,7 @@ WINDOWS: Final[Mapping[str, str]] = {
     **{case.name: RESPONSE_WINDOW for case in lowering_support.RESPONSE_CASES},
     MODEL_CASE: MODEL_WINDOW,
     MODEL_FAMILY_CASE: MODEL_WINDOW,
+    **{case.name: FLUSH_WINDOW for case in lowering_support.CROSS_OBJECT_CASES},
 }
 """Every case the child can be asked for, and the window it reads."""
 
@@ -160,6 +208,12 @@ LEAF_TYPE_CASE_NAMES: Final = tuple(
 manifest scopes them to."""
 TARGET_CASE_NAMES: Final = tuple(case.name for case in lowering_support.CASES if case.addressed)
 """The caller-addressed target writes."""
+CROSS_OBJECT_OBJECTS: Final[Mapping[str, int]] = {
+    case.name: case.objects for case in lowering_support.CROSS_OBJECT_CASES
+}
+"""Each cross-object flush and the objects it amends: the denominator of its
+per-object readings."""
+CROSS_OBJECT_CASE_NAMES: Final = tuple(CROSS_OBJECT_OBJECTS)
 RETIRED_WINDOWS: Final[Mapping[str, str]] = {
     "acquisition.rows-8.columns": "predicate-acquisition",
     "acquisition.rows-32.columns": "predicate-acquisition",
@@ -218,8 +272,15 @@ type Cell = ChildReading | str
 type Matrix = dict[str, dict[str, Cell]]
 
 
+def metrics_of(window: str) -> tuple[str, ...]:
+    """The cells other than pass observations a reading over ``window`` answers."""
+    return FLUSH_METRICS if window == FLUSH_WINDOW else METRICS
+
+
 def unit_of(window: str, metric: str) -> str:
     """The unit one metric is reported in over one window."""
+    if window == FLUSH_WINDOW:
+        return FLUSH_UNITS[metric]
     scale = "" if window == MODEL_WINDOW else "/row"
     return f"{'us' if metric == 'elapsedUs' else 'B'}{scale}"
 
@@ -259,6 +320,16 @@ def _samples(value: object, name: str, expected: int, *, positive: bool) -> tupl
     return samples
 
 
+def _units(value: object, case: str) -> int:
+    """The denominator a child divided by: positive, and a cross-object
+    flush's own objects."""
+    units = _positive_integer(value, "units")
+    objects = CROSS_OBJECT_OBJECTS.get(case, units)
+    if units != objects:
+        raise ValueError(f"the child divided by {units} objects, expected {objects}")
+    return units
+
+
 def _decoded(output: str, case: str) -> Cell:
     lines = output.strip().splitlines()
     if not lines:
@@ -285,14 +356,16 @@ def _decoded(output: str, case: str) -> Cell:
         if document["window"] != window:
             raise ValueError(f"the child read window {document['window']!r}, expected {window!r}")
         samples = cast("Mapping[str, object]", document["samples"])
-        if set(samples) != set(METRICS):
-            raise ValueError(f"sampled metrics were {sorted(samples)}, expected {list(METRICS)}")
+        metrics = metrics_of(window)
+        if set(samples) != set(metrics):
+            raise ValueError(f"sampled metrics were {sorted(samples)}, expected {list(metrics)}")
         calls = cast("Mapping[str, object]", document["calls"])
         expected_calls = set(CALL_NAMES) if window == KEYED_WINDOW else set[str]()
         if set(calls) != expected_calls:
             raise ValueError(
                 f"observed calls were {sorted(calls)}, expected {sorted(expected_calls)}"
             )
+        units = _units(document["units"], case)
         warmups = _positive_integer(document["warmups"], "warmups")
         measured = _positive_integer(document["measured"], "measured")
         if warmups != WARMUPS or measured != MEASURED:
@@ -300,15 +373,15 @@ def _decoded(output: str, case: str) -> Cell:
         reading = ChildReading(
             case=case,
             window=window,
-            units=_positive_integer(document["units"], "units"),
+            units=units,
             samples={
                 metric: _samples(
                     samples[metric],
                     f"samples.{metric}",
                     samples_expected(metric),
-                    positive=metric == "elapsedUs",
+                    positive=metric in POSITIVE_METRICS,
                 )
-                for metric in METRICS
+                for metric in metrics
             },
             calls={name: _number(calls[name]) for name in expected_calls},
             warmups=warmups,
@@ -385,7 +458,7 @@ def case_readings(runtime: str, reading: ChildReading) -> tuple[Reading, ...]:
                 window=reading.window,
                 runtime=runtime,
             )
-            for metric in METRICS
+            for metric in metrics_of(reading.window)
         ),
         *(
             Reading(
@@ -413,8 +486,9 @@ def expected_addresses(
     addresses: set[tuple[str, str, str]] = set()
     for runtime in runtimes:
         for case in runtime_cases(runtime, case_names):
-            addresses.update((runtime, case, metric) for metric in METRICS)
-            if ENVELOPE_WINDOWS[case] == KEYED_WINDOW:
+            window = ENVELOPE_WINDOWS[case]
+            addresses.update((runtime, case, metric) for metric in metrics_of(window))
+            if window == KEYED_WINDOW:
                 addresses.update((runtime, case, f"calls.{name}") for name in call_names)
     return frozenset(addresses)
 
@@ -478,7 +552,7 @@ def _canary_reading(case: str) -> ChildReading:
         case,
         window,
         1,
-        {metric: (10.0,) * samples_expected(metric) for metric in METRICS},
+        {metric: (10.0,) * samples_expected(metric) for metric in metrics_of(window)},
         dict.fromkeys(CALL_NAMES, 1.0) if window == KEYED_WINDOW else {},
         WARMUPS,
         MEASURED,
