@@ -5,7 +5,7 @@
 derived from it, the resolution of transaction options, the serving and adoption
 of Model Editions, and the **Attempts**, writable or read-only, that run each
 physical transaction attempt. It executes reads by handing them to `m-read-delivery` under the
-conditions it establishes, and executes writes by running each span of Planned
+conditions it establishes, and executes writes by running each sequence of Planned
 Steps the unit of work hands it from the Write Plan `m-unit-work` finalizes and
 acquiring the rows a write needs to read. Per the dependency graph it depends on `m-unit-work`
 for admission, evidence, finalization, and effects; `m-read-delivery` for every
@@ -224,22 +224,23 @@ row alone, with the judgement and refusal the read would have applied to them.
 
 ### Flush execution
 
-The unit of work runs the Write Plan a flush finalizes unit by unit, binding
-each deferred unit at its turn and completing each unit before the next
-(`m-unit-work` *Execution units complete before later work runs*). Execution
-implements the step-execution port: it runs each span of Planned Steps the
-unit of work hands it — a unit's planned steps, or the steps a deferred range
-bound — inside the Flush the unit of
-work opened for the flush. It lowers the span's Planned Steps through one
-shared path — the planner's payload preparer prepares what the statement about
-to run stores, and `m-sql` renders it — executes them through the port, and has
-the unit of work enforce each step's affected rows; for a unit opening rows
-whose keys the database allocates, it answers those keys in step order. A span
-returns once every step of it has succeeded, and nothing of it is held
-afterwards. Execution neither walks a plan's units nor interprets their
-effects, so no later unit's statement is prepared or lowered before the earlier
-unit completes, and a later step's lowering failure cannot overtake it. A
-failed span completes no unit, and the failure dooms the attempt.
+The unit of work runs the Write Plan a flush finalizes Write Group by Write
+Group, binding each deferred settled write at its turn and completing every
+settled write of a group before a later group executes (`m-unit-work` *Write
+Groups complete before later work runs*). Execution implements the
+step-execution port: it runs each sequence of Planned Steps the unit of work
+hands it — a Write Group's steps, or the steps a deferred range bound — inside
+the Flush the unit of work opened for the flush. It lowers those Planned Steps
+through one shared path — the planner's payload preparer prepares what the
+statement about to run stores, and `m-sql` renders it — executes them through
+the port, and has the unit of work enforce each step's affected rows; for steps
+opening rows whose keys the database allocates, it answers those keys in step
+order. An execution returns once every step it was handed has succeeded, and
+holds nothing of them afterwards. Execution neither walks a plan's Write Groups
+nor interprets their settled writes' completion facts, so no later group's
+statement is prepared or lowered before the earlier group completes, and a
+later step's lowering failure cannot overtake it. A failed execution completes
+no settled write, and the failure dooms the attempt.
 
 Where the connection holds ordered write transport (`m-db-port`), a run of two
 or more contiguous count-only temporal effects — closes, guards, revisions, and
@@ -248,13 +249,12 @@ step, and every step on a connection holding none, runs alone. Whether a step
 may join a run is decided from the step itself before its payload is demanded,
 including the bound on binds its statement promises to fit the dialect's limit;
 a statement exceeding that promise is a lowering failure. A run never crosses an
-insert, a unit, a barrier, or a round, and an internal statement cap ends it
-before another step is even taken. Before a run's first effect is lowered, the
-one step after it is taken, unprepared: where that step cannot join, or no step
-remains, the effect would be its run's only one and runs alone, and the taken
-step waits its turn. An ordinary failure taking that step propagates only once
-the effect running alone has succeeded; a control-flow or fatal one propagates
-before that effect is lowered. The whole result is validated before any of it
+insert or a Write Group, and an internal statement cap ends it before another
+step is even looked at. Before a run's first effect is lowered, execution looks
+at the step after it, unprepared: where that step cannot join, or no step
+remains, the effect would be its run's only one and runs alone, and the step
+looked at waits its turn. Looking at a step reads the sequence it was handed
+and cannot fail; only preparing or lowering a step can. The whole result is validated before any of it
 is interpreted, so a malformed one fails the invocation with the integrity error
 ahead of any shortfall it reports. Confirmed outcomes are then enforced in
 original order against the exact steps they were lowered from: an earlier
@@ -262,7 +262,7 @@ shortfall outranks a later statement failure or interruption, a statement
 failure propagates as itself, and an interruption no earlier outcome overtook
 propagates last. Nothing after the run is lowered before the run is enforced.
 
-Taking or lowering a later effect of a run may fail ordinarily after earlier
+Preparing or lowering a later effect of a run may fail ordinarily after earlier
 effects were lowered. The run's lowered prefix is then presented and enforced as
 it was selected — never lowered again, replayed, or split into calls of its own
 — and that failure propagates only where the prefix succeeds. A failure lowering
@@ -272,8 +272,8 @@ presents none of the prefix.
 Ordered transport departs from running each step alone in exactly two ways.
 Later effects of the current run can execute, and take locks, before an earlier
 effect's shortfall is enforced, because a zero-row count is a successful
-statement to the database; the failed unit still publishes nothing and its
-attempt rolls back. And a later effect can be lowered before the prefix it
+statement to the database; the failed Write Group still publishes nothing and
+its attempt rolls back. And a later effect can be lowered before the prefix it
 follows is submitted. Rollback, rollback-only state, retry classification of
 the failure that propagates, and the precedence of cancellation and fatal
 exceptions are unchanged.
@@ -283,15 +283,15 @@ of one Entity naming the same members and holding no generated value — with
 one multi-row statement (`m-sql` *Requested ranges*), on every connection.
 Each opening remains its own Planned Step, and the statement is one ordinary
 Database Call. Whether an opening may join is decided from the step before its
-payload is demanded. Before another step is taken the statement must have room
-for one more entry within the dialect's bind limit (`m-dialect`) and an
+payload is demanded. Before another step is looked at the statement must have
+room for one more entry within the dialect's bind limit (`m-dialect`) and an
 internal entry cap; at that capacity the statement runs before another step is
-taken, and otherwise the one taken step that cannot join waits, unprepared,
-until the statement has run. A run never crosses a unit, a barrier, a round, or
+looked at, and otherwise the one step looked at that cannot join waits,
+unprepared, until the statement has run. A run never crosses a Write Group or
 an effect, so no opening moves ahead of the effect it follows. Any other insert
 runs alone as before, and a logical multi-entry insert is never split.
 
-Taking, preparing, or appending a later opening of a run may fail ordinarily.
+Preparing or appending a later opening of a run may fail ordinarily.
 The openings appended before it are then inserted as the one statement they were
 selected as — never prepared again or inserted one at a time — and that failure
 propagates only where the statement succeeds. A failure preparing the run's
@@ -302,9 +302,9 @@ A grouped statement succeeds or fails as a whole. Its failure is the
 statement's own database error, classified and judged for retry as any
 statement's is; it can name another constraint, message, or category than the
 error the earliest failing opening would raise alone, and it is neither
-attributed to an opening nor explained by replaying or reading anything. A unit
-whose statement fails is never reported, and its attempt rolls back and becomes
-rollback-only exactly as for any other failure.
+attributed to an opening nor explained by replaying or reading anything. A Write
+Group whose statement fails completes none of its settled writes, and its
+attempt rolls back and becomes rollback-only exactly as for any other failure.
 
 ## What the suite pins down
 

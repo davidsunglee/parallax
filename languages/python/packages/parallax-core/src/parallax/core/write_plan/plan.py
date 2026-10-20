@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import bisect
 import datetime as dt
-from collections.abc import Iterable, Iterator, Sequence
-from dataclasses import dataclass, field
+from collections.abc import Iterable
+from dataclasses import dataclass
 from typing import Final, Protocol
 
 from parallax.core.metamodel import EntityIdentity
@@ -26,153 +25,12 @@ __all__ = [
     "Descent",
     "Openings",
     "OwnedEndpoint",
-    "PlannedWrites",
     "SettledWrite",
     "SourceAuthority",
-    "StepSegment",
     "TemporalWriteOwnership",
+    "WriteGroup",
     "WritePlan",
-    "WriteStepView",
-    "eager_segment",
-    "eager_writes",
 ]
-
-
-class StepSegment(Protocol):
-    """One homogeneous, positive-length run of a Write Plan's Planned Steps.
-
-    A segment exposes only its length and a materialize-on-demand accessor;
-    nothing about how it is backed is part of the contract.
-    """
-
-    def __len__(self) -> int: ...
-    def step(self, index: int) -> PlannedStep: ...
-
-
-@dataclass(frozen=True, slots=True)
-class _EagerSegment:
-    """A segment over already-settled steps, held as one immutable tuple."""
-
-    steps: tuple[PlannedStep, ...]
-
-    def __post_init__(self) -> None:
-        if not self.steps:
-            raise ValueError("a Step Segment carries at least one step")
-
-    def __len__(self) -> int:
-        return len(self.steps)
-
-    def step(self, index: int) -> PlannedStep:
-        return self.steps[index]
-
-
-def eager_segment(steps: Sequence[PlannedStep]) -> StepSegment:
-    """A Step Segment wrapping already-settled steps, in order."""
-    return _EagerSegment(tuple(steps))
-
-
-@dataclass(frozen=True, slots=True)
-class PlannedWrites:
-    """The immutable ordered logical sequence of Planned Steps a Write Plan exposes.
-
-    Backed by segments (:class:`StepSegment`) rather than one flat tuple, each
-    asked for one Planned Step at a time.
-    """
-
-    segments: tuple[StepSegment, ...] = ()
-    _offsets: tuple[int, ...] = field(init=False, repr=False, compare=False)
-    _length: int = field(init=False, repr=False, compare=False)
-
-    def __post_init__(self) -> None:
-        offsets: list[int] = []
-        total = 0
-        for segment in self.segments:
-            offsets.append(total)
-            total += len(segment)
-        object.__setattr__(self, "_offsets", tuple(offsets))
-        object.__setattr__(self, "_length", total)
-
-    def __len__(self) -> int:
-        return self._length
-
-    def __iter__(self) -> Iterator[PlannedStep]:
-        for segment in self.segments:
-            for index in range(len(segment)):
-                yield segment.step(index)
-
-    def __getitem__(self, position: int) -> PlannedStep:
-        length = self._length
-        resolved = position if position >= 0 else position + length
-        if not 0 <= resolved < length:
-            raise IndexError(position)
-        segment_index = bisect.bisect_right(self._offsets, resolved) - 1
-        return self.segments[segment_index].step(resolved - self._offsets[segment_index])
-
-    def view(self, first: int, stop: int) -> WriteStepView:
-        """The steps from position ``first`` up to ``stop``, exclusive, borrowed
-        from this sequence (:class:`WriteStepView`)."""
-        return WriteStepView(self, first, stop)
-
-    def __eq__(self, other: object) -> bool:
-        if not isinstance(other, PlannedWrites):
-            return NotImplemented
-        return len(self) == len(other) and all(a == b for a, b in zip(self, other, strict=True))
-
-    # Equality reads the logical sequence, not the segmentation, so two
-    # Planned Steps values packed differently can compare equal — the same
-    # reason no meaningful `__hash__` exists (Planned Steps is a value never
-    # used as a mapping/set key).
-    __hash__ = None  # pyright: ignore[reportAssignmentType] - deliberately unhashable
-
-
-@dataclass(frozen=True, slots=True)
-class WriteStepView:
-    """A contiguous span of one :class:`PlannedWrites` sequence, from position
-    ``first`` up to ``stop``, exclusive, possibly empty.
-
-    The view holds its owner and two positions and nothing else. Iterating it
-    walks only the owner's segments the span intersects, in order, asking each
-    for every spanned step once per pass, so a consumer that keeps the step it
-    was handed never has a lazily backed segment rebuild it again.
-    """
-
-    owner: PlannedWrites
-    first: int
-    stop: int
-
-    def __post_init__(self) -> None:
-        if not 0 <= self.first <= self.stop <= len(self.owner):
-            raise ValueError(
-                f"a view spans positions within its {len(self.owner)} Planned Step(s) in "
-                f"order, not {self.first} to {self.stop}"
-            )
-
-    def __len__(self) -> int:
-        return self.stop - self.first
-
-    def __iter__(self) -> Iterator[PlannedStep]:
-        position = self.first
-        stop = self.stop
-        if position == stop:
-            return
-        owner = self.owner
-        offsets = owner._offsets  # pyright: ignore[reportPrivateUsage] - the owner's own index
-        segments = owner.segments
-        segment_index = bisect.bisect_right(offsets, position) - 1
-        while position < stop:
-            segment = segments[segment_index]
-            base = offsets[segment_index]
-            end = min(base + len(segment), stop)
-            for index in range(position - base, end - base):
-                yield segment.step(index)
-            position = end
-            segment_index += 1
-
-
-def eager_writes(steps: Sequence[PlannedStep]) -> PlannedWrites:
-    """The Planned Steps sequence of already-settled ``steps``, in order: one
-    eager segment, or none for no step."""
-    return PlannedWrites((eager_segment(steps),)) if steps else PlannedWrites()
 
 
 @dataclass(frozen=True, slots=True)
@@ -405,7 +263,7 @@ class BoundRange(CompletionFacts):
     """What a range became once bound to its coverage: the Planned Steps it
     executes, in order, beside the completion facts their success publishes."""
 
-    steps: PlannedWrites
+    steps: tuple[PlannedStep, ...]
 
 
 class DeferredRange:
@@ -422,53 +280,47 @@ class SettledWrite(CompletionFacts):
     """One caller write after settlement in a Write Plan, and the completion
     facts its success applies.
 
-    It spans the plan's steps up to the exclusive offset ``end``, after the
-    previous settled write's. Its facts are applied only once every one of its
-    steps has succeeded, and before any later settled write executes, after it
-    spends the source authority ``claim``. Removals are retired before openings
-    are registered, so a row removed and reopened at one address remains owned,
-    and an insertion whose last row the write removed still stands when a row
-    the write opened continues it.
+    Its facts are applied only once every step of its Write Group has
+    succeeded, and before any later group executes, after it spends the source
+    authority ``claim``. Removals are retired before openings are registered,
+    so a row removed and reopened at one address remains owned, and an
+    insertion whose last row the write removed still stands when a row the
+    write opened continues it.
 
     A settled write with a ``deferred`` range has no planned step of its own:
     its steps and facts come from binding that range at its turn.
     """
 
-    end: int
     claim: SourceAuthority | None = None
     deferred: DeferredRange | None = None
 
 
 @dataclass(frozen=True, slots=True)
-class WritePlan:
-    """One flush's finalized, execution-ordered steps.
+class WriteGroup:
+    """Settled writes that execute and complete together.
 
-    An empty :class:`PlannedWrites` is the one canonical result for complete
-    cancellation or known no-op elimination; there is no empty-plan sentinel and
-    no second result variant.
-
-    ``units`` partitions ``steps`` into settled writes, in order and ending
-    where the steps end; a plan given none forms one settled write of every step,
-    which publishes nothing.
+    ``steps`` holds their planned steps in execution order. Each of ``writes``
+    completes, in order, only once every one of ``steps`` has succeeded, and
+    before any step of a later group executes, so no write of a group may
+    depend on another's completion. A deferred write's range binds and executes
+    at its turn, after the group's steps.
     """
 
-    steps: PlannedWrites = PlannedWrites()
-    units: tuple[SettledWrite, ...] = ()
+    writes: tuple[SettledWrite, ...]
+    steps: tuple[PlannedStep, ...]
 
     def __post_init__(self) -> None:
-        length = len(self.steps)
-        units = self.units
-        if not units:
-            if length:
-                object.__setattr__(self, "units", (SettledWrite(end=length),))
-            return
-        previous = 0
-        for unit in units:
-            if unit.end < previous:
-                raise ValueError("a Write Plan's settled writes follow its steps in order")
-            previous = unit.end
-        if previous != length:
-            raise ValueError(
-                f"a Write Plan's settled writes end where its {length} step(s) end, not at "
-                f"{previous}"
-            )
+        if not self.writes:
+            raise ValueError("a Write Group holds at least one settled write")
+
+
+@dataclass(frozen=True, slots=True)
+class WritePlan:
+    """One flush's finalized Write Groups, in execution order.
+
+    A plan of no group is the one canonical result for complete cancellation or
+    known no-op elimination; there is no empty-plan sentinel and no second
+    result variant.
+    """
+
+    groups: tuple[WriteGroup, ...] = ()

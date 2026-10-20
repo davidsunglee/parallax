@@ -1,11 +1,10 @@
 """The production step executor over a scripted port (`m-execution`).
 
-Each step of a borrowed span is taken from its sequence once and lowered only
-after every earlier step was enforced; a step running alone is one Database
-Call enforced as itself, a run of compatible temporal openings is one multi-row
-insert, and an insert whose key the database allocates answers that key. The
-statements execution runs are the ones a dry traversal of the same steps
-answers.
+Each step of the tuple it is handed is prepared and lowered only after every
+earlier step was enforced; a step running alone is one Database Call enforced
+as itself, a run of compatible temporal openings is one multi-row insert, and
+an insert whose key the database allocates answers that key. The statements
+execution runs are the ones a dry traversal of the same steps answers.
 """
 
 from __future__ import annotations
@@ -22,7 +21,6 @@ from parallax.conformance._lifecycle_recording import RecordingLifecycleProvider
 from parallax.core import MAX, Attr, Bitemporal, DomainModel, attr
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work.instructions import PreparedKeyedWrite, prepare_typed_write
-from parallax.core._execution._write_lowering import LoweringCursor
 from parallax.core.db_error import DatabaseError
 from parallax.core.entity._model import model_of
 from parallax.core.execution_lifecycle import (
@@ -32,10 +30,10 @@ from parallax.core.execution_lifecycle import (
     ExecutionLifecycleProvider,
 )
 from parallax.core.metamodel import AttributeIdentity, entity_by_name
-from parallax.core.sql_gen import LoweredStatement, SqlGenError
+from parallax.core.sql_gen import SqlGenError
 from parallax.core.unit_work import KeyedWriteInstruction, MissingTargetError, WritePlanningRequest
 from parallax.core.write_plan import WritePlan
-from parallax.core.write_plan.plan import PlannedWrites, SettledWrite
+from parallax.core.write_plan.plan import SettledWrite, WriteGroup
 from parallax.core.write_plan.steps import (
     MISSING_TARGET,
     UNVERSIONED,
@@ -50,7 +48,7 @@ from tests._support.planner_probes import TEST_ACTOR_IDENTITY
 from tests.unit.core._execution._execution_support import ACCOUNT
 from tests.unit.core._execution._write_step_support import (
     POSITION,
-    HeldSteps,
+    RecordingPreparer,
     alone,
     close,
     open_flush,
@@ -65,22 +63,29 @@ _GROUPED_INSERT_CAP: Final = "parallax.core._execution._write_lowering._GROUPED_
 
 @dataclass
 class _Executed:
-    """What one execution of a span did: what it answered or what it raised."""
+    """What one execution of steps did: what it prepared, and what it answered
+    or what it raised."""
 
-    segment: HeldSteps
+    preparer: RecordingPreparer
     answered: tuple[object, ...] | None = None
     raised: BaseException | None = None
 
 
-def _execute(segment: HeldSteps, provider: ExecutionLifecycleProvider | None = None) -> _Executed:
-    """Execute ``segment`` as one span inside one Flush over its port,
-    recording whatever it raised."""
-    executed = _Executed(segment)
-    view = PlannedWrites((segment,)).view(0, len(segment))
+def _execute(
+    port: ScriptedAdapter,
+    steps: tuple[PlannedStep, ...],
+    provider: ExecutionLifecycleProvider | None = None,
+    *,
+    failing: int | None = None,
+    failure: BaseException | None = None,
+) -> _Executed:
+    """Execute ``steps`` inside one Flush over ``port``, recording what was
+    prepared and whatever it raised."""
+    executed = _Executed(RecordingPreparer(port, steps, failing=failing, failure=failure))
     try:
         with open_flush(provider) as flush:
-            executed.answered = step_executor(segment.port).execute(
-                view, allocates=False, flush=flush
+            executed.answered = step_executor(port, payloads=executed.preparer).execute(
+                steps, allocates=False, flush=flush
             )
     except BaseException as raised:
         executed.raised = raised
@@ -106,13 +111,12 @@ def _delete(key: int) -> PlannedDelete:
     )
 
 
-def test_a_shortfall_is_enforced_before_the_next_step_is_taken() -> None:
+def test_a_shortfall_is_enforced_before_the_next_step_is_presented() -> None:
     port = ScriptedAdapter(Write(affected=0))
-    segment = HeldSteps(port, (_delete(1), _delete(2)))
-    view = PlannedWrites((segment,)).view(0, len(segment))
     with pytest.raises(MissingTargetError), open_flush() as flush:
-        step_executor(port, _ACCOUNT_META).execute(view, allocates=False, flush=flush)
-    assert segment.asked == [(0, 0)]
+        step_executor(port, _ACCOUNT_META).execute(
+            (_delete(1), _delete(2)), allocates=False, flush=flush
+        )
     assert len(port.calls) == 1
 
 
@@ -124,7 +128,7 @@ class Span(Bitemporal, table="span", namespace="parallax.execution.allocated"):
 _SPANS: Final = DomainModel(Span)
 
 
-def test_an_allocating_span_answers_the_keys_its_insert_returned() -> None:
+def test_allocating_steps_answer_the_keys_their_insert_returned() -> None:
     meta = model_of(_SPANS)
     prepared = prepare_typed_write(
         KeyedWriteInstruction(
@@ -144,13 +148,12 @@ def test_an_allocating_span_answers_the_keys_its_insert_returned() -> None:
             buffered_writes=[prepared],
         )
     )
-    (unit,) = plan.units
-    assert unit.opened.allocated
+    (group,) = plan.groups
+    (write,) = group.writes
+    assert write.opened.allocated
     port = ScriptedAdapter(Read(rows=[{"id": 42}]))
     with open_flush() as flush:
-        answered = step_executor(port, meta).execute(
-            plan.steps.view(0, unit.end), allocates=True, flush=flush
-        )
+        answered = step_executor(port, meta).execute(group.steps, allocates=True, flush=flush)
     assert answered == (42,)
     # The insert ran as row-producing DML rather than as a counted write.
     assert [type(call) for call in port.calls] == [ReadCall]
@@ -161,28 +164,16 @@ def test_an_allocating_span_answers_the_keys_its_insert_returned() -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_a_run_of_openings_is_one_call_and_the_step_ending_it_is_lowered_only_after_it(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_a_run_of_openings_is_one_call_and_the_step_ending_it_is_prepared_only_after_it() -> None:
     openings = (opening(1), opening(2, Decimal(2)), opening(3, Decimal(3)))
     boundary = close(1)
     port = ScriptedAdapter(Write(affected=3), Write())
-    lowered_at: list[int] = []
-    lowered_alone = LoweringCursor.lowered
-
-    def lowering(cursor: LoweringCursor, step: PlannedStep) -> LoweredStatement:
-        lowered_at.append(len(port.calls))
-        return lowered_alone(cursor, step)
-
-    monkeypatch.setattr(LoweringCursor, "lowered", lowering)
     provider = RecordingLifecycleProvider()
-    executed = _execute(HeldSteps(port, (*openings, boundary)), provider)
+    executed = _execute(port, (*openings, boundary), provider)
     assert executed.raised is None
     assert port.calls == [*physical(*openings), alone(boundary)]
-    # The close ending the run was taken, unprepared, before the run's insert
-    # ran, and lowered only once it had.
-    assert executed.segment.asked == [(0, 0), (1, 0), (2, 0), (3, 0)]
-    assert lowered_at == [1]
+    # The close ending the run waited unprepared while the run's insert ran.
+    assert executed.preparer.prepared == [(0, 0), (1, 0), (2, 0), (3, 1)]
     events = [event for root in provider.roots for event in root.events]
     started, _ = [event for event in events if isinstance(event, DatabaseCallStarted)]
     finished, _ = [event for event in events if isinstance(event, DatabaseCallFinished)]
@@ -191,34 +182,35 @@ def test_a_run_of_openings_is_one_call_and_the_step_ending_it_is_lowered_only_af
     assert finished.shared_timing_id is None
 
 
-def test_the_step_after_a_capped_run_is_taken_only_once_its_statement_ran(
+def test_the_step_after_a_capped_run_is_prepared_only_once_its_statement_ran(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(_GROUPED_INSERT_CAP, 2)
     openings = (opening(1), opening(2), opening(3))
     port = ScriptedAdapter(Write(affected=2), Write())
-    executed = _execute(HeldSteps(port, openings))
+    executed = _execute(port, openings)
     assert executed.raised is None
     assert port.calls == [*physical(*openings[:2]), *physical(openings[2])]
-    assert executed.segment.asked == [(0, 0), (1, 0), (2, 1)]
+    assert executed.preparer.prepared == [(0, 0), (1, 0), (2, 1)]
 
 
 def test_a_later_openings_refusal_inserts_the_prefix_then_propagates() -> None:
     prefix = (opening(1), opening(2))
     port = ScriptedAdapter(Write(affected=2))
-    executed = _execute(HeldSteps(port, (*prefix, opening(3, "no decimal"), opening(4))))
+    executed = _execute(port, (*prefix, opening(3, "no decimal"), opening(4)))
     assert isinstance(executed.raised, SqlGenError)
     assert port.calls == physical(*prefix)
-    assert executed.segment.taken == [0, 1, 2]
+    assert executed.preparer.positions == [0, 1, 2]
 
 
-def test_a_later_step_failing_to_be_built_inserts_the_prefix_then_propagates() -> None:
+def test_a_later_opening_failing_to_be_prepared_inserts_the_prefix_then_propagates() -> None:
     prefix = (opening(1), opening(2))
-    failure = RuntimeError("the third opening's backing cannot be rebuilt")
+    failure = RuntimeError("the third opening cannot be prepared")
     port = ScriptedAdapter(Write(affected=2))
-    executed = _execute(HeldSteps(port, (*prefix, opening(3)), failing=2, failure=failure))
+    executed = _execute(port, (*prefix, opening(3), opening(4)), failing=2, failure=failure)
     assert executed.raised is failure
     assert port.calls == physical(*prefix)
+    assert executed.preparer.positions == [0, 1, 2]
 
 
 def test_the_prefixs_own_failure_wins_over_the_refusal_it_overtook() -> None:
@@ -226,7 +218,7 @@ def test_the_prefixs_own_failure_wins_over_the_refusal_it_overtook() -> None:
         category="uniqueViolation", native_code="23505", message="duplicate key"
     )
     port = ScriptedAdapter(Write(raises=violation))
-    executed = _execute(HeldSteps(port, (opening(1), opening(2), opening(3, "no decimal"))))
+    executed = _execute(port, (opening(1), opening(2), opening(3, "no decimal")))
     assert executed.raised is violation
     assert violation.__context__ is None
     assert violation.__cause__ is None
@@ -234,23 +226,21 @@ def test_the_prefixs_own_failure_wins_over_the_refusal_it_overtook() -> None:
 
 def test_a_failure_preparing_the_first_opening_inserts_nothing() -> None:
     port = ScriptedAdapter()
-    executed = _execute(HeldSteps(port, (opening(1, "no decimal"), opening(2))))
+    executed = _execute(port, (opening(1, "no decimal"), opening(2)))
     assert isinstance(executed.raised, SqlGenError)
     assert port.calls == []
-    assert executed.segment.asked == [(0, 0)]
+    assert executed.preparer.prepared == [(0, 0)]
 
 
-def test_a_control_flow_exception_taking_a_later_opening_inserts_none_of_the_run() -> None:
+def test_a_control_flow_exception_preparing_a_later_opening_inserts_none_of_the_run() -> None:
     interrupt = KeyboardInterrupt()
     port = ScriptedAdapter()
-    executed = _execute(
-        HeldSteps(port, (opening(1), opening(2), opening(3)), failing=2, failure=interrupt)
-    )
+    executed = _execute(port, (opening(1), opening(2), opening(3)), failing=2, failure=interrupt)
     assert executed.raised is interrupt
     assert port.calls == []
 
 
-def test_the_statements_a_span_runs_are_the_ones_its_dry_traversal_answers(
+def test_the_statements_execution_runs_are_the_ones_a_dry_traversal_answers(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(_GROUPED_INSERT_CAP, 2)
@@ -258,7 +248,7 @@ def test_the_statements_a_span_runs_are_the_ones_its_dry_traversal_answers(
     statements = physical(*steps)
     assert len(statements) == 5
     port = ScriptedAdapter(Write(), Write(affected=2), Write(), Write(), Write())
-    executed = _execute(HeldSteps(port, steps))
+    executed = _execute(port, steps)
     assert executed.raised is None
     assert port.calls == statements
     assert all(isinstance(call, WriteCall) for call in port.calls)
@@ -267,7 +257,7 @@ def test_the_statements_a_span_runs_are_the_ones_its_dry_traversal_answers(
 @dataclass
 class _Claim:
     """Source authority recording how many port calls had been made when a
-    unit spent it."""
+    settled write spent it."""
 
     port: ScriptedAdapter
     spent_at: int | None = None
@@ -276,37 +266,45 @@ class _Claim:
         self.spent_at = len(self.port.calls)
 
 
-def test_a_run_of_openings_never_reaches_into_a_later_units_span() -> None:
+def test_a_run_of_openings_never_reaches_into_a_later_groups_steps() -> None:
     first = (close(1), opening(1), opening(2), opening(3))
     second = (opening(5),)
     port = ScriptedAdapter(Write(), Write(affected=3), Write())
     claims = (_Claim(port), _Claim(port))
     plan = WritePlan(
-        steps=PlannedWrites((HeldSteps(port, (*first, *second)),)),
-        units=(SettledWrite(end=4, claim=claims[0]), SettledWrite(end=5, claim=claims[1])),
+        (
+            WriteGroup((SettledWrite(claim=claims[0]),), first),
+            WriteGroup((SettledWrite(claim=claims[1]),), second),
+        )
     )
     with open_flush() as flush:
         run_plan(port, plan, flush)
     assert port.calls == [*physical(*first), *physical(*second)]
-    # Each unit completed once its own statements ran.
+    # Each group's write completed once its own statements ran.
     assert [claim.spent_at for claim in claims] == [2, 3]
 
 
-def test_a_unit_whose_grouped_statement_fails_completes_nothing_and_takes_no_later_step() -> None:
+def test_a_group_whose_grouped_statement_fails_completes_nothing_and_prepares_no_later_step() -> (
+    None
+):
     violation = DatabaseError(
         category="uniqueViolation", native_code="23505", message="duplicate key"
     )
     port = ScriptedAdapter(Write(), Write(raises=violation))
-    segment = HeldSteps(port, (close(1), opening(1), opening(2), opening(3), opening(5)))
+    first = (close(1), opening(1), opening(2), opening(3))
+    second = (opening(5),)
+    preparer = RecordingPreparer(port, (*first, *second))
     claims = (_Claim(port), _Claim(port))
     plan = WritePlan(
-        steps=PlannedWrites((segment,)),
-        units=(SettledWrite(end=4, claim=claims[0]), SettledWrite(end=5, claim=claims[1])),
+        (
+            WriteGroup((SettledWrite(claim=claims[0]),), first),
+            WriteGroup((SettledWrite(claim=claims[1]),), second),
+        )
     )
     with pytest.raises(DatabaseError) as raised, open_flush() as flush:
-        run_plan(port, plan, flush)
+        run_plan(port, plan, flush, payloads=preparer)
     assert raised.value is violation
-    assert segment.taken == [0, 1, 2, 3]
+    assert preparer.positions == [0, 1, 2, 3]
     assert [claim.spent_at for claim in claims] == [None, None]
 
 
@@ -320,10 +318,10 @@ def _builders() -> set[int]:
 def test_a_grouped_run_keeps_no_builder_alive_once_it_ran_or_its_failure_is_released() -> None:
     before = _builders()
     port = ScriptedAdapter(Write(affected=3))
-    assert _execute(HeldSteps(port, (opening(1), opening(2), opening(3)))).raised is None
+    assert _execute(port, (opening(1), opening(2), opening(3))).raised is None
     assert _builders() <= before
     port = ScriptedAdapter(Write(affected=1))
-    executed = _execute(HeldSteps(port, (opening(1), opening(2, "no decimal"))))
+    executed = _execute(port, (opening(1), opening(2, "no decimal")))
     assert isinstance(executed.raised, SqlGenError)
     executed.raised = None
     assert _builders() <= before

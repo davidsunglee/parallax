@@ -33,9 +33,7 @@ from parallax.core.write_plan.plan import (
     DerivedRow,
     Openings,
     OwnedEndpoint,
-    PlannedWrites,
     TemporalWriteOwnership,
-    eager_writes,
 )
 from parallax.core.write_plan.planned_rows import (
     resolve_row,
@@ -87,7 +85,7 @@ __all__ = [
 ]
 
 type ExpansionRole = Literal["coverage", "starting", "validation"]
-"""How a unit's driver asks one predecessor to be expanded: as coverage its
+"""How a write's driver asks one predecessor to be expanded: as coverage its
 transform applies to, as coverage a caller's starting condition names, or as an
 earlier observation it only validates and retires."""
 
@@ -102,7 +100,7 @@ type _Overlay = tuple[
 
 
 class RowAudit(Protocol):
-    """How a temporal unit's audit finalizes each row it produces and stamps
+    """How a temporal write's audit finalizes each row it produces and stamps
     each close it emits, already bound to the attempt's actor and instant."""
 
     def finalize_row(self, write_row: WriteRow, /) -> WriteRow: ...
@@ -112,7 +110,7 @@ class RowAudit(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class TemporalFacts:
-    """What one temporal unit settles about its target before any predecessor
+    """What one temporal write settles about its target before any predecessor
     is in hand: the target, its compiled family-effective view, the Temporal
     Shape whose axes bound its intervals, and the attempt's resolved instant.
 
@@ -126,29 +124,29 @@ class TemporalFacts:
     instant: dt.datetime
 
 
-_NOTHING: Final[BoundRange] = BoundRange(steps=PlannedWrites())
+_NOTHING: Final[BoundRange] = BoundRange(steps=())
 
 type _Extent = tuple[object, object, bool]
 """One successor's Valid-Time start and end — ``None`` both without Valid
-Time — and whether it executes the unit's assignments rather than carrying its
+Time — and whether it executes the write's assignments rather than carrying its
 predecessor's state."""
 
 
 class PredecessorExpander:
-    """The per-object rules of one temporal unit: whether its transform reaches
+    """The per-object rules of one temporal write: whether its transform reaches
     a predecessor, whether the predecessor is unchanged and how that is proven,
     how it is closed and gated, how the attempt's ownership disposes of it, and
-    which successors it opens — and the new lineages the unit opens from no
+    which successors it opens — and the new lineages the write opens from no
     predecessor at all, a pending insertion's surviving parts and a
     replacement's gaps.
 
-    Built once per unit — a range binding or a pending insertion — from the
-    unit's settled facts and the attempt's ownership as it stands then.
+    Built once per settled write — a range binding or a pending insertion — from the
+    write's settled facts and the attempt's ownership as it stands then.
     ``key_value`` is a range's one object key. ``gated`` and ``guards`` say
     whether its closes gate and whether the database can prove an unchanged
-    milestone by a guard, and ``derives`` whether a later unit of the flush
+    milestone by a guard, and ``derives`` whether a later settled write of the flush
     relies on what it derives.
-    ``audit`` finalizes each row the unit produces, carried, changed, or new,
+    ``audit`` finalizes each row the write produces, carried, changed, or new,
     once, and stamps each close it emits; ``payloads`` prepares what an
     object's produced rows persist, so that equal adjacent ones merge
     (:meth:`settle`).
@@ -224,7 +222,7 @@ class PredecessorExpander:
         starting: bool = False,
     ) -> PlannedClose:
         """The close of ``predecessor`` at its own address, gated on its
-        observed Transaction-Time start where the unit gates."""
+        observed Transaction-Time start where the write gates."""
         facts = self._facts
         gate: TemporalConcurrency = UNGATED
         if self._gated:
@@ -351,7 +349,7 @@ class PredecessorExpander:
 
         Each predecessor is decided by itself first (:meth:`_reach`): reach,
         preservation and its proof, close and gate, and the rows it produces,
-        each finalized by the unit's audit once. Only then do the object's
+        each finalized by the write's audit once. Only then do the object's
         produced rows — successors, a pending insertion's surviving parts, a
         replacement's gaps — merge, in Valid-Time order: two adjacent ones whose
         persisted state outside their interval is identical, the final audit
@@ -413,7 +411,7 @@ class PredecessorExpander:
 
         A transform that does not reach the predecessor leaves it alone. One
         it leaves exactly as it was is kept where that is proven, whether the
-        unit's source observed it, an insertion authorized the write, or a
+        write's source observed it, an insertion authorized the write, or a
         caller's condition named it (:meth:`_unchanged`). Otherwise the
         predecessor is closed — Superseded where a successor assigns,
         Terminated otherwise — and its nonempty successors produced, or the
@@ -421,7 +419,7 @@ class PredecessorExpander:
         predecessor's gate, a guard keeping it included, fails as its caller's
         precondition. A ``validation`` predecessor is retired as Terminated
         through the same disposal, producing nothing. Only an emitted close is
-        stamped by the unit's audit; a guard proving a kept milestone and the
+        stamped by the write's audit; a guard proving a kept milestone and the
         close a removal or revision addresses like are not.
         """
         facts = self._facts
@@ -502,11 +500,7 @@ class PredecessorExpander:
         reached = settlement.reached
         candidates = settlement.candidates
         if not reached and not candidates:
-            return (
-                _NOTHING
-                if concludes is None
-                else BoundRange(steps=PlannedWrites(), concludes=concludes)
-            )
+            return _NOTHING if concludes is None else BoundRange(steps=(), concludes=concludes)
         opened: list[_Opened] = []
         revised: list[_Filed] | None = None
         if len(candidates) < 2 or not isinstance(facts.shape, Bitemporal):
@@ -524,7 +518,7 @@ class PredecessorExpander:
         entity = facts.entity.identity
         inserts = tuple(PlannedInsert(entity=entity, entries=(row,)) for _, row, _, _ in opened)
         return BoundRange(
-            steps=eager_writes((*effects, *inserts)),
+            steps=(*effects, *inserts),
             changed=tuple(record.state for record in reached if _changes(record.code)),
             removed=tuple(record.own for record in reached if record.code & _DISPOSAL == _REMOVE),
             opened=_openings(facts, opened, revised or ()),
@@ -639,7 +633,7 @@ class PredecessorExpander:
     def _derived(
         self, reached: Sequence[_Reached], candidates: Sequence[_Candidate]
     ) -> tuple[Derivation, ...]:
-        """What a later unit needs of each predecessor the unit transformed:
+        """What a later settled write needs of each predecessor the write transformed:
         its state and coverage, its own address where the attempt owned it, and
         each row it contributed to — at the predecessor's own key, since no
         successor assigns a key — with the Valid Time the row covers and the
@@ -674,7 +668,7 @@ class PredecessorExpander:
 
 @dataclass(slots=True)
 class _Reached:
-    """One predecessor a unit settles a statement or a successor for: what its
+    """One predecessor a write settles a statement or a successor for: what its
     disposition decided before the object's produced rows merged and what it
     finally is once they have, the parts of it an insertion contributed where
     the attempt owned it, and the row it is revised into, if any."""
@@ -692,11 +686,11 @@ class _Reached:
 
 @dataclass(slots=True)
 class _Candidate:
-    """One row a unit produces for its object before produced rows merge: its
+    """One row a write produces for its object before produced rows merge: its
     Valid-Time extent (``None`` both without Valid Time), the finalized row,
     the predecessor it succeeds where one does and whether it keeps that
     owned predecessor's address, the parts of it an admitted insertion
-    contributed, its place among the unit's openings, its prepared cells once
+    contributed, its place among the write's openings, its prepared cells once
     a comparison demanded them, and the Valid Time of the row it merged into
     with its neighbours, if it did."""
 
@@ -735,7 +729,7 @@ class _Settlement:
 
 
 type _Opened = tuple[int, WriteRow, TimeInterval | None, tuple[TimeInterval | None, ...]]
-"""One run opened as a row: its place among the unit's openings, the row, its
+"""One run opened as a row: its place among the write's openings, the row, its
 Valid Time, and the parts of it an insertion contributed."""
 
 type _Filed = tuple[OwnedEndpoint, TimeInterval | None, tuple[TimeInterval | None, ...]]
@@ -793,7 +787,7 @@ def _joined_shares(run: Sequence[_Candidate]) -> tuple[TimeInterval | None, ...]
 def _openings(
     facts: TemporalFacts, opened: Sequence[_Opened], revised: Sequence[_Filed]
 ) -> Openings:
-    """The owned rows a unit's ``opened`` runs and ``revised`` rows register,
+    """The owned rows a write's ``opened`` runs and ``revised`` rows register,
     each by the parts of it an insertion contributed: none, all of it, or only
     those."""
     if not revised and not any(parts for _, _, _, parts in opened):
@@ -924,7 +918,7 @@ def _disposition(
     Otherwise one the attempt did not open is closed and every successor
     opened. One it opened is revised in place into the one successor ending
     where it ends — its complete physical address — wherever that successor
-    executes the unit's assignments or starts later, else left in place, and
+    executes the write's assignments or starts later, else left in place, and
     removed where no successor keeps its address."""
     if unchanged and _provable(owned=owned, gated=gated, guards=guards):
         return _PRESERVE if owned or not gated else _GUARD
@@ -948,7 +942,7 @@ def _kept_index(code: int) -> int | None:
 
 def _changes(code: int) -> bool:
     """Whether the predecessor is closed, removed, or revised: the change to
-    its observed state its unit publishes."""
+    its observed state its write publishes."""
     return code & _DISPOSAL in (_CLOSE, _REMOVE, _REVISE)
 
 
@@ -968,7 +962,7 @@ def _own_step(
         return closing
     if disposal == _GUARD:
         concurrency = closing.concurrency
-        assert isinstance(concurrency, TemporalGate)  # only a gating unit is proven by a guard
+        assert isinstance(concurrency, TemporalGate)  # only a gating write is proven by a guard
         return PlannedTemporalGuard(
             entity=closing.entity,
             target=closing.target,
@@ -1062,7 +1056,7 @@ def _represented(
     assigned: _Overlay | None = None,
     executed: ExecutedMembers = (),
 ) -> WriteRow:
-    """The row a unit produces over ``[valid_start, valid_end)`` from its
+    """The row a write produces over ``[valid_start, valid_end)`` from its
     starting ``attributes`` and ``value_objects``, which it adopts: a
     predecessor's cells or a new lineage's authored state, with ``assigned``
     overlaid and the row stamped as every opened row is."""

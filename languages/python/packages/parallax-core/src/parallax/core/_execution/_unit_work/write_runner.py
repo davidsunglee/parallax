@@ -18,12 +18,11 @@ from parallax.core.write_plan.plan import (
     BoundRange,
     CompletionFacts,
     DeferredRange,
-    SettledWrite,
     TemporalWriteOwnership,
     WritePlan,
-    WriteStepView,
 )
 from parallax.core.write_plan.predecessor_rows import PredecessorRows
+from parallax.core.write_plan.steps import PlannedStep
 
 if TYPE_CHECKING:
     from parallax.core._execution._unit_work.uow import UnitOfWork
@@ -32,50 +31,52 @@ __all__ = ["ExecuteWriteSteps", "acquire_and_bind_range", "run_write_plan"]
 
 
 class ExecuteWriteSteps(Protocol):
-    """How a flush has one span of Planned Steps executed: a settled write's
-    planned steps, or the steps its deferred range bound.
+    """How a flush has one sequence of Planned Steps executed: a Write Group's
+    steps, or the steps a deferred range bound.
 
-    A normal return means every step of the span executed and its effect was
-    enforced, in order; it completes no settled write and commits nothing. With
+    A normal return means every step executed and its effect was enforced, in
+    order; it completes no settled write and commits nothing. With
     ``allocates``, it answers the key the database allocated for each row a
-    row-producing insert of the span opened, in step order, and otherwise none.
-    The span is borrowed: nothing of it stays reachable once the call returns.
+    row-producing insert of the steps opened, in step order, and otherwise
+    none. Nothing of the steps stays reachable from it once the call returns.
     """
 
-    def __call__(self, steps: WriteStepView, /, *, allocates: bool) -> tuple[object, ...]: ...
+    def __call__(
+        self, steps: tuple[PlannedStep, ...], /, *, allocates: bool
+    ) -> tuple[object, ...]: ...
 
 
 def run_write_plan(owner: UnitOfWork, plan: WritePlan, execute: ExecuteWriteSteps, /) -> None:
-    """Execute ``plan``'s settled writes in order through ``execute``,
-    completing each in ``owner`` as soon as its steps succeeded and before any
-    step of a later one is taken.
+    """Execute ``plan``'s Write Groups in order through ``execute``,
+    completing each settled write of a group in ``owner``, in order, as soon as
+    the group's steps succeeded and before any step of a later group executes.
 
     A deferred settled write binds at its turn, against the ownership and
     continuity every earlier one published: to the retained rows it reuses and
-    the coverage they leave. A settled write with no step still completes. One
-    that fails completes nothing, and nothing after it is prepared, bound, or
-    executed.
+    the coverage they leave. A settled write with no step still completes. A
+    group that fails completes none of its writes, and nothing after it is
+    prepared, bound, or executed.
     """
     complete = owner._complete_write  # pyright: ignore[reportPrivateUsage] - the owner's completion
-    steps = plan.steps
-    start = 0
-    for write in plan.units:
-        allocated = execute(steps.view(start, write.end), allocates=bool(write.opened.allocated))
-        start = write.end
-        _require_allocated(write, allocated)
-        deferred = write.deferred
-        complete(
-            write, write if deferred is None else _deferred(owner, deferred, execute), allocated
-        )
-
-
-def _require_allocated(write: SettledWrite, allocated: tuple[object, ...]) -> None:
-    expected = len(write.opened.allocated)
-    if len(allocated) != expected:
-        raise UnitOfWorkError(
-            f"a settled write opening {expected} row(s) whose keys the database allocates "
-            f"executed answering {len(allocated)} key(s)"
-        )
+    for group in plan.groups:
+        writes = group.writes
+        expected = sum(len(write.opened.allocated) for write in writes)
+        allocated = execute(group.steps, allocates=bool(expected))
+        if len(allocated) != expected:
+            raise UnitOfWorkError(
+                f"a Write Group opening {expected} row(s) whose keys the database allocates "
+                f"executed answering {len(allocated)} key(s)"
+            )
+        first = 0
+        for write in writes:
+            stop = first + len(write.opened.allocated)
+            deferred = write.deferred
+            complete(
+                write,
+                write if deferred is None else _deferred(owner, deferred, execute),
+                allocated[first:stop],
+            )
+            first = stop
 
 
 def _deferred(
@@ -92,7 +93,7 @@ def _deferred(
         transaction_instant=owner._transaction_instant,  # pyright: ignore[reportPrivateUsage] - the owner's binding inputs
         current=owner._current,  # pyright: ignore[reportPrivateUsage] - the owner's freshness check
     )
-    execute(bound.steps.view(0, len(bound.steps)), allocates=False)
+    execute(bound.steps, allocates=False)
     return bound
 
 

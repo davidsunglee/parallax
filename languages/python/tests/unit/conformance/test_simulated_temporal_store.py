@@ -65,7 +65,6 @@ from parallax.core.write_plan import (
     TemporalObservation,
     object_state_key_from_observation,
 )
-from parallax.core.write_plan.plan import PlannedWrites
 from parallax.core.write_plan.steps import INFINITY as OPEN_END
 from parallax.core.write_plan.steps import (
     MAX_PLUS_ONE,
@@ -85,6 +84,7 @@ from parallax.core.write_plan.steps import (
     PlannedDelete,
     PlannedInsert,
     PlannedRow,
+    PlannedStep,
     PlannedTemporalGuard,
     PlannedTemporalRemoval,
     PlannedTemporalRevision,
@@ -93,6 +93,7 @@ from parallax.core.write_plan.steps import (
     Versioned,
     WriteRow,
 )
+from tests._support.planner_probes import plan_steps
 from tests.unit.conformance._coverage_rows_support import coverage_members, read_coverage
 
 POSITION = models.load_models()["position"]
@@ -208,7 +209,7 @@ def test_an_axis_start_that_is_not_a_finite_instant_is_refused(valid_start: obje
 
 def _planned(
     entity_name: str, members: dict[str, object], *, valid_from: str, at: str
-) -> PlannedWrites:
+) -> tuple[PlannedStep, ...]:
     """The Write Plan an insert of ``members`` produces, through the SAME
     ``build_write_planner`` factory the engine's own write lanes plan with — so
     what the store holds is what a flush would actually write."""
@@ -217,9 +218,8 @@ def _planned(
     )
     assert isinstance(instruction, KeyedWriteInstruction)  # a `rows` document is a keyed write
     prepared = instructions.prepare_wire_write(instruction, POSITION)
-    return (
-        build_write_planner(POSITION)
-        .finalize(
+    return plan_steps(
+        build_write_planner(POSITION).finalize(
             WritePlanningRequest(
                 actor_identity=SubjectActor("unattributed"),
                 transaction_instant=TransactionInstant(FixedClock(dt.datetime.fromisoformat(at))),
@@ -227,11 +227,12 @@ def _planned(
                 buffered_writes=[prepared],
             )
         )
-        .steps
     )
 
 
-def _apply_all(store: SimulatedTemporalStore, model: Metamodel, steps: PlannedWrites) -> None:
+def _apply_all(
+    store: SimulatedTemporalStore, model: Metamodel, steps: tuple[PlannedStep, ...]
+) -> None:
     for step in steps:
         store.apply(model, step)
 
@@ -268,9 +269,8 @@ def test_a_milestone_no_planned_step_closes_stays_stored_as_it_was(value: str, k
         ),
         POSITION,
     )
-    steps = (
-        build_write_planner(POSITION)
-        .finalize(
+    steps = plan_steps(
+        build_write_planner(POSITION).finalize(
             WritePlanningRequest(
                 actor_identity=SubjectActor("unattributed"),
                 transaction_instant=TransactionInstant(
@@ -280,7 +280,6 @@ def test_a_milestone_no_planned_step_closes_stays_stored_as_it_was(value: str, k
                 buffered_writes=[_observed_write(prepared, observed)],
             )
         )
-        .steps
     )
     for step in steps:
         store.apply(POSITION, step)
@@ -342,7 +341,7 @@ def test_an_applied_non_temporal_insert_stores_nothing() -> None:
             buffered_writes=[prepared],
         )
     )
-    _apply_all(store, account, plan.steps)
+    _apply_all(store, account, plan_steps(plan))
     entity = account.entity(EntityIdentity("parallax.compatibility", "Account"))
     assert entity is not None
     assert store.predecessor_for(account, entity, {"id": 1}) is None
@@ -360,7 +359,7 @@ def test_two_tracked_milestones_of_one_key_sharing_an_edge_are_refused() -> None
 
 def _rectangles(
     *spans: tuple[int, str, str | None, str],
-) -> PlannedWrites:
+) -> tuple[PlannedStep, ...]:
     """The plan opening one rectangle per ``(id, validFrom, until, value)``."""
     entries: list[PreparedKeyedWrite] = []
     for key, valid_from, until, value in spans:
@@ -375,9 +374,8 @@ def _rectangles(
         instruction = instructions.deserialize(document)
         assert isinstance(instruction, KeyedWriteInstruction)  # a `rows` document is a keyed write
         entries.append(instructions.prepare_wire_write(instruction, POSITION))
-    return (
-        build_write_planner(POSITION)
-        .finalize(
+    return plan_steps(
+        build_write_planner(POSITION).finalize(
             WritePlanningRequest(
                 actor_identity=SubjectActor("unattributed"),
                 transaction_instant=TransactionInstant(
@@ -387,7 +385,6 @@ def _rectangles(
                 buffered_writes=entries,
             )
         )
-        .steps
     )
 
 

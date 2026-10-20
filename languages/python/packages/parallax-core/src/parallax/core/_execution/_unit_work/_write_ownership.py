@@ -144,8 +144,8 @@ class WriteOwnership:
         self._addresses: dict[_ObjectAddress, InsertionRecord] = {}
         self._endpoints: set[OwnedEndpoint] = set()
         self._tags: dict[OwnedEndpoint, _InsertionTag] = {}
-        # What units of the running flush proved for later ones, allocated by
-        # the first unit that records anything and released once no object's
+        # What settled writes of the running flush proved for later ones, allocated by
+        # the first write that records anything and released once no object's
         # proofs remain, or when the flush ends however it ends.
         self._continuity: _FlushContinuity | None = None
 
@@ -282,11 +282,11 @@ class WriteOwnership:
         admission whose last tagged row the write removed or untagged is retired
         only if no row the write opened continues it.
 
-        Each original the unit ``derived`` rows from that stood before the
-        flush began is proven until the object's last consumer — the unit that
+        Each original the write ``derived`` rows from that stood before the
+        flush began is proven until the object's last consumer — the write that
         ``concludes`` it — completes, or the flush ends, and each row it derived
         descends from it over the part it contributed; a row derived from one
-        an earlier unit of the flush derived descends from the originals that
+        an earlier settled write of the flush derived descends from the originals that
         one did, each over the part of the row that came from its own
         contribution."""
         continuity = self._continuity
@@ -395,7 +395,7 @@ class WriteOwnership:
 
 
 class _FlushContinuity:
-    """What the running flush's units proved for later units of the same
+    """What the running flush's settled writes proved for later settled writes of the same
     objects: each original transformed under protection that stood before the
     flush began, which current row descends from which of them over which part
     of it, and each one's contributed parts of current rows in Valid-Time
@@ -412,7 +412,7 @@ class _FlushContinuity:
         self, derived: tuple[Derivation, ...]
     ) -> tuple[tuple[tuple[ObjectStateKey, TimeInterval | None], ...] | None, ...]:
         """The originals, each over its part, each one in ``derived`` was itself
-        derived from earlier in the flush, if any, read before the unit's
+        derived from earlier in the flush, if any, read before the write's
         removals retire it."""
         descents = self.descents
         inherited: list[tuple[tuple[ObjectStateKey, TimeInterval | None], ...] | None] = []
@@ -429,9 +429,9 @@ class _FlushContinuity:
     ) -> None:
         """Record each row ``derived`` names as descending from its originals.
 
-        A row derived from an original no earlier unit derived descends from
+        A row derived from an original no earlier settled write derived descends from
         that original over the part it contributed. One derived from a row an
-        earlier unit derived descends from that row's own originals, each over
+        earlier settled write derived descends from that row's own originals, each over
         the part of the contribution that came from its own part, never over
         the rest. A row revised in place, or derived from several originals, is
         re-derived at its own address, so what it descended from is forgotten
@@ -528,7 +528,7 @@ class _Lineage:
 
     They are pieces of one original's coverage and so never overlap, which is
     what lets a range find the ones its window may reach by their starts alone
-    rather than by visiting every row the original's units left. A row that
+    rather than by visiting every row the original's settled writes left. A row that
     merged several contributors appears once per part this original
     contributed. An original without Valid Time has one current row at a time,
     keyed at the earliest instant.

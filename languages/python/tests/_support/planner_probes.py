@@ -34,8 +34,10 @@ from parallax.core.unit_work import (
     buffered_write,
     object_key,
 )
-from parallax.core.write_plan import ObjectKey, WriteObservation
+from parallax.core.write_plan import ObjectKey, WriteObservation, WritePlan
 from parallax.core.write_plan.keys import object_state_key_from_observation
+from parallax.core.write_plan.plan import SettledWrite
+from parallax.core.write_plan.steps import PlannedStep
 
 __all__ = [
     "NO_ROW_READS",
@@ -44,7 +46,9 @@ __all__ = [
     "admitted_writes",
     "observed_buffer",
     "observed_write",
+    "plan_steps",
     "retained_observation",
+    "settled_writes",
 ]
 
 # An arbitrary Actor Identity: `m-unit-work` requires one on every Planning
@@ -186,3 +190,13 @@ def _prepared_item(
     if isinstance(item, PredicateWriteInstruction):
         return prepare_typed_write(item, model)
     return item
+
+
+def plan_steps(plan: WritePlan) -> tuple[PlannedStep, ...]:
+    """Every Planned Step of ``plan``'s Write Groups, in execution order."""
+    return tuple(step for group in plan.groups for step in group.steps)
+
+
+def settled_writes(plan: WritePlan) -> tuple[SettledWrite, ...]:
+    """Every settled write of ``plan``'s Write Groups, in completion order."""
+    return tuple(write for group in plan.groups for write in group.writes)

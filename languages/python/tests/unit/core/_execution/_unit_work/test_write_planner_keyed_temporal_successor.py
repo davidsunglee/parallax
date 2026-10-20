@@ -51,6 +51,7 @@ from tests._support.clock_probes import inert_instant
 from tests._support.planner_probes import (
     TEST_ACTOR_IDENTITY,
     observed_buffer,
+    plan_steps,
     retained_observation,
 )
 from tests.unit import _milestone_rows_support as milestone_rows
@@ -138,7 +139,7 @@ def test_a_literal_keyed_write_overlays_every_member_it_assigns(
     )
     observation = TemporalObservation(predecessor=PredecessorRow(members=_BALANCE_PREDECESSOR))
     literal = buffered_write(prepared, retained_observation(prepared, _BALANCE, observation))
-    (_close, successor) = _plan([literal], _BALANCE).steps
+    (_close, successor) = plan_steps(_plan([literal], _BALANCE))
     # The successor overlays every member the row assigns, whatever it equals.
     assert _insert_rows(successor)[0]["acctNum"] == "B"
     assert _insert_rows(successor)[0]["value"] == Decimal("9.00")
@@ -200,7 +201,7 @@ def test_a_restated_occurrence_is_assigned_whole_and_keeps_no_key_its_value_omit
 
     (changed,) = (
         step
-        for step in plan.steps
+        for step in plan_steps(plan)
         if isinstance(step, PlannedInsert) and isinstance(step.entries[0].origin, ChangedFrom)
     )
     documents = [

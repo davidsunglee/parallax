@@ -37,6 +37,7 @@ from tests._support.db_port import (
     Transact,
     Write,
 )
+from tests._support.planner_probes import plan_steps
 from tests._support.repo import REPO_ROOT
 from tests.unit._transact_support import account_db, new_account
 
@@ -88,7 +89,9 @@ def test_the_compile_lane_emits_exactly_one_plans_own_lowering(
     expected = [
         statement
         for value in planned
-        for statement in stream_physical(value.steps, LayoutPayloadPreparer(model), model, POSTGRES)
+        for statement in stream_physical(
+            plan_steps(value), LayoutPayloadPreparer(model), model, POSTGRES
+        )
     ]
     assert [(emission.sql, emission.binds) for emission in emissions] == [
         (statement.sql, statement.binds) for statement in expected

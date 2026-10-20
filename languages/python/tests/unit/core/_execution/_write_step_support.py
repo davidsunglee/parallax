@@ -1,13 +1,12 @@
-"""Planned Steps of the corpus Position model, a span handing them out lazily,
-the production step executor over a scripted port, the Flush it executes
-inside, and a Write Plan's units run through it."""
+"""Planned Steps of the corpus Position model, a payload preparer recording
+when each is prepared, the production step executor over a scripted port, the
+Flush it executes inside, and a Write Plan's groups run through it."""
 
 from __future__ import annotations
 
 import datetime as dt
 from collections.abc import Generator
 from contextlib import contextmanager
-from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Final
 
@@ -28,11 +27,12 @@ from parallax.core.execution_lifecycle._activity import (
     installed_lifecycle,
     open_transaction_root,
 )
-from parallax.core.metamodel import AttributeIdentity, Metamodel, entity_by_name
+from parallax.core.metamodel import AttributeIdentity, EntityIdentity, Metamodel, entity_by_name
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.unit_work import TransactionSettings, UnitOfWork
+from parallax.core.write_payload import LayoutPayloadPreparer
 from parallax.core.write_plan import SUPERSEDED, WritePlan
-from parallax.core.write_plan.plan import WriteStepView
+from parallax.core.write_plan.payload import AssignmentPayload, RowPayload, WritePayloadPreparer
 from parallax.core.write_plan.steps import (
     INFINITY,
     NEW_LINEAGE,
@@ -49,6 +49,7 @@ from parallax.core.write_plan.steps import (
     PlannedTemporalGuard,
     PlannedTemporalRemoval,
     PlannedTemporalRevision,
+    PlannedUpdate,
     TemporalGate,
     WriteRow,
 )
@@ -150,36 +151,77 @@ def _opened(key: int, start: dt.datetime, end: object, value: object) -> Planned
     return PlannedInsert(entity=POSITION, entries=(WriteRow(row=row, origin=NEW_LINEAGE),))
 
 
-@dataclass
-class HeldSteps:
-    """A segment handing out ``steps`` only when asked, recording each position
-    asked with how many port calls had been made by then, and raising
-    ``failure`` instead of building the step at ``failing``."""
+class RecordingPreparer(LayoutPayloadPreparer):
+    """``meta``'s own payload preparer for ``steps``, recording the position of
+    each step it prepares a payload for with how many ``port`` calls had been
+    made by then, and raising ``failure`` instead of preparing the step at
+    ``failing``."""
 
-    port: ScriptedAdapter
-    steps: tuple[PlannedStep, ...]
-    failing: int | None = None
-    failure: BaseException | None = None
-    asked: list[tuple[int, int]] = field(default_factory=list[tuple[int, int]])
+    __slots__ = ("_positions", "failing", "failure", "port", "prepared")
 
-    def __len__(self) -> int:
-        return len(self.steps)
-
-    def step(self, index: int) -> PlannedStep:
-        self.asked.append((index, len(self.port.calls)))
-        if index == self.failing and self.failure is not None:
-            raise self.failure
-        return self.steps[index]
+    def __init__(
+        self,
+        port: ScriptedAdapter,
+        steps: tuple[PlannedStep, ...],
+        meta: Metamodel = POSITION_META,
+        *,
+        failing: int | None = None,
+        failure: BaseException | None = None,
+    ) -> None:
+        super().__init__(meta)
+        self.port = port
+        self.failing = failing
+        self.failure = failure
+        self.prepared: list[tuple[int, int]] = []
+        self._positions = {
+            id(source): index for index, step in enumerate(steps) for source in _sources(step)
+        }
 
     @property
-    def taken(self) -> list[int]:
-        return [index for index, _calls in self.asked]
+    def positions(self) -> list[int]:
+        return [index for index, _calls in self.prepared]
+
+    def row(self, entity: EntityIdentity, write_row: WriteRow) -> RowPayload:
+        self._prepare(write_row)
+        return super().row(entity, write_row)
+
+    def assignments(
+        self, entity: EntityIdentity, assignments: PlannedAssignments
+    ) -> AssignmentPayload:
+        self._prepare(assignments)
+        return super().assignments(entity, assignments)
+
+    def _prepare(self, source: object) -> None:
+        index = self._positions[id(source)]
+        self.prepared.append((index, len(self.port.calls)))
+        if index == self.failing and self.failure is not None:
+            raise self.failure
 
 
-def step_executor(port: ScriptedAdapter, meta: Metamodel = POSITION_META) -> WriteStepExecutor:
+def _sources(step: PlannedStep) -> tuple[object, ...]:
+    """What a payload is prepared from for ``step``: each entry an insert
+    holds, or the assignments an update, close, or revision carries."""
+    match step:
+        case PlannedInsert(entries=entries):
+            return entries
+        case PlannedUpdate() | PlannedClose() | PlannedTemporalRevision():
+            return (step.assignments,)
+        case _:
+            return ()
+
+
+def step_executor(
+    port: ScriptedAdapter,
+    meta: Metamodel = POSITION_META,
+    payloads: WritePayloadPreparer | None = None,
+) -> WriteStepExecutor:
     """The production executor of an attempt over ``port``, preparing payloads
-    through the planner an attempt adopts."""
-    return WriteStepExecutor(port, payloads=build_write_planner(meta).payloads, meta=meta)
+    through ``payloads`` or else the planner an attempt adopts."""
+    return WriteStepExecutor(
+        port,
+        payloads=build_write_planner(meta).payloads if payloads is None else payloads,
+        meta=meta,
+    )
 
 
 @contextmanager
@@ -208,13 +250,14 @@ def run_plan(
     plan: WritePlan,
     flush: FlushActivity,
     meta: Metamodel = POSITION_META,
+    payloads: WritePayloadPreparer | None = None,
 ) -> None:
-    """``plan`` run unit by unit by a fresh unit of work, each span executed by
-    the production executor of an attempt over ``port`` as calls of
-    ``flush``."""
-    executor = step_executor(port, meta)
+    """``plan`` run group by group by a fresh unit of work, each group's steps
+    executed by the production executor of an attempt over ``port`` as calls
+    of ``flush``, preparing payloads through ``payloads`` where given."""
+    executor = step_executor(port, meta, payloads)
 
-    def execute(steps: WriteStepView, /, *, allocates: bool) -> tuple[object, ...]:
+    def execute(steps: tuple[PlannedStep, ...], /, *, allocates: bool) -> tuple[object, ...]:
         return executor.execute(steps, allocates=allocates, flush=flush)
 
     planner = build_write_planner(meta)

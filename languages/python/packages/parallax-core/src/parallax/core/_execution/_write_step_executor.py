@@ -28,7 +28,6 @@ from parallax.core.execution_lifecycle._activity import (
 from parallax.core.metamodel import Metamodel
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.write_plan.payload import WritePayloadPreparer
-from parallax.core.write_plan.plan import WriteStepView
 from parallax.core.write_plan.steps import PlannedInsert, PlannedStep
 
 __all__ = ["WriteStepExecutor"]
@@ -41,13 +40,13 @@ effects continues in another invocation once this one is enforced."""
 
 
 class WriteStepExecutor:
-    """Lowers, executes, and enforces borrowed spans of Planned Steps on one
+    """Lowers, executes, and enforces sequences of Planned Steps on one
     attempt's connection.
 
-    It holds what every span of its attempt shares — the connection, the
+    It holds what every execution of its attempt shares — the connection, the
     connection's ordered write transport, the adopted planner's payload
     preparer, and the model — and no Flush: each invocation is handed the
-    Flush it runs inside, and retains neither that Flush nor the span after
+    Flush it runs inside, and retains neither that Flush nor the steps after
     returning.
     """
 
@@ -62,14 +61,14 @@ class WriteStepExecutor:
     ) -> None:
         self._connection = connection
         # Read once: a connection's transport capability is fixed for its
-        # lifetime, and every span this executes runs on this connection.
+        # lifetime, and everything this executes runs on this connection.
         self._ordered = connection.ordered_write_transport
         self._payloads = payloads
         self._meta = meta
 
     def execute(
         self,
-        steps: WriteStepView,
+        steps: tuple[PlannedStep, ...],
         /,
         *,
         allocates: bool,
@@ -77,14 +76,14 @@ class WriteStepExecutor:
     ) -> tuple[object, ...]:
         """Lower, execute, and enforce each of ``steps`` in order as calls of
         ``flush``, and answer the keys the database allocated, in step order,
-        where the span ``allocates`` any.
+        where ``allocates`` asks for any.
 
         Each statement stores the payload the preparer prepares for it when its
         turn comes. A temporal mutation's effect on its predecessor precedes the
         rows it opens, so a failure there aborts BEFORE those rows ever execute.
         A step that runs alone is lowered only once every earlier step has been
-        enforced, and nothing is lowered ahead of that but the one step a run
-        takes to find where it ends, which waits unprepared. Where the
+        enforced, and nothing is taken ahead of that but the one step a run
+        looks at to find where it ends, which waits unprepared. Where the
         connection has ordered write transport, a run of two or more contiguous
         count-only temporal effects is instead lowered whole and presented
         together before any of it is enforced (:meth:`_run_ordered`). A run of
@@ -101,7 +100,7 @@ class WriteStepExecutor:
         bracket is what lets the Flush's failure name that completed call
         instead of the enforcement being read as a failure of the Flush itself.
 
-        An insert whose key the database allocates for a row the span records
+        An insert whose key the database allocates for a row the steps record
         answers that key: it runs as row-producing DML, core reads the key from
         the rows it returned (:func:`~parallax.core.unit_work.allocated_keys`)
         inside the same bracket, and the keys are answered in step order.
@@ -143,48 +142,42 @@ class WriteStepExecutor:
 
         The step after ``first`` is taken before anything is lowered: where
         transport cannot carry it, or none remains, ``first`` would be the
-        run's only effect and runs alone instead. Taking it may fail
-        ordinarily, and ``first`` then runs alone before that failure
-        propagates, exactly as it would have without the look ahead.
+        run's only effect and runs alone instead.
 
         Otherwise the run ends before a step transport cannot carry, and at
-        :data:`_ORDERED_STATEMENTS` before another step is even taken. Taking
-        or lowering a later effect may fail ordinarily: the effects already
-        lowered are then presented and enforced as they were selected, and only
-        if they succeed does that failure propagate. ``first`` failing presents
+        :data:`_ORDERED_STATEMENTS` before another step is even taken. Lowering
+        a later effect may fail ordinarily: the effects already lowered are
+        then presented and enforced as they were selected, and only if they
+        succeed does that failure propagate. ``first`` failing presents
         nothing, and a control-flow or fatal exception presents none of them.
         """
-        following, following_ceiling, failure = _look_ahead(cursor)
+        following = cursor.take()
+        following_ceiling = (
+            None if following is None else cursor.ordered_parameter_ceiling(following)
+        )
         if following is None or following_ceiling is None:
-            try:
-                self._run_single(first, cursor.lowered(first), flush)
-            except BaseException:
-                # The lone effect's own failure is the one raised; the failure
-                # taking the step after it is dropped rather than kept
-                # reachable from it.
-                failure = None
-                raise
-            _raise_held(failure)
+            self._run_single(first, cursor.lowered(first), flush)
             return following
         invocation = OrderedInvocation()
         invocation.append(first, cursor.lowered_within(first, parameter_ceiling))
+        failure: Exception | None = None
         capped = True
         while True:
             try:
                 invocation.append(following, cursor.lowered_within(following, following_ceiling))
-                following = None
-                if len(invocation) >= _ORDERED_STATEMENTS:
-                    break
-                following = cursor.take()
-                if following is None:
-                    capped = False
-                    break
-                following_ceiling = cursor.ordered_parameter_ceiling(following)
-                if following_ceiling is None:
-                    capped = False
-                    break
             except Exception as error:
                 failure = error
+                break
+            following = None
+            if len(invocation) >= _ORDERED_STATEMENTS:
+                break
+            following = cursor.take()
+            if following is None:
+                capped = False
+                break
+            following_ceiling = cursor.ordered_parameter_ceiling(following)
+            if following_ceiling is None:
+                capped = False
                 break
         try:
             _run_ordered_invocation(invocation, transport, flush)
@@ -207,7 +200,7 @@ class WriteStepExecutor:
         The statement is one ordinary Database Call, enforced as an insert is,
         and its failure is the whole statement's own: it is neither attributed
         to one of the openings nor replayed one opening at a time. A later
-        opening failing ordinarily to be taken or prepared ends the run: the
+        opening failing ordinarily to be prepared ends the run: the
         openings appended before it are inserted as selected, and only if they
         succeed does that failure propagate. ``first`` failing inserts nothing,
         and a control-flow or fatal exception inserts none of the run. The step
@@ -272,9 +265,8 @@ class OrderedInvocation(Sequence[LoweredStatement]):
     with the exact original step it was lowered from.
 
     Transport and observation read it as the statements; enforcement reads
-    each original back by position, so a lazily built step is never rebuilt
-    to be enforced. It is sealed before it is presented and stays unchanged
-    until its result has been enforced.
+    each original back by position. It is sealed before it is presented and
+    stays unchanged until its result has been enforced.
     """
 
     __slots__ = ("_sealed", "_statements", "_steps")
@@ -317,21 +309,6 @@ def _raise_held(failure: Exception | None) -> None:
     selected before it have succeeded."""
     if failure is not None:
         raise failure
-
-
-def _look_ahead(cursor: LoweringCursor) -> tuple[PlannedStep | None, int | None, Exception | None]:
-    """The step after an effect, taken from ``cursor`` but not lowered, with
-    the parameter ceiling ordered transport would carry it within, or else the
-    ordinary failure taking it raised."""
-    try:
-        following = cursor.take()
-        return (
-            following,
-            None if following is None else cursor.ordered_parameter_ceiling(following),
-            None,
-        )
-    except Exception as error:
-        return None, None, error
 
 
 def _integrity(problem: str) -> OrderedWriteResultIntegrityError:

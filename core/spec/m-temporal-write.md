@@ -169,7 +169,7 @@ Optimistic the close's gate — or the guard keeping an unchanged row — binds 
 stated `ifTxStart` rather than an observation, and its zero-row shortfall is
 that failed precondition, never a retriable conflict. Under Locking the current
 row was read whole under the shared lock at submission, and the flush reuses it
-unless an earlier unit of the attempt has since changed it, when it reads the
+unless an earlier settled write of the attempt has since changed it, when it reads the
 row again under the lock (`m-unit-work` *Retained starting rows*); the close is
 ungated.
 
@@ -319,7 +319,7 @@ rectangle no read of the write observed is read inside the flush that writes it
 — the object's current rows over the part of the extent the observations do
 not cover, read with the shared lock under Locking (`m-read-lock`) — and is
 inactivated under its own observed `in_z` like any observed rectangle
-(`m-unit-work` *deferred range unit*). Where observed writes of one object
+(`m-unit-work` *deferred settled write*). Where observed writes of one object
 compose (`m-unit-work` *Observed-State Coalescing*), the composition's segments
 are applied the same way: each segment over each rectangle it overlaps, the
 later-authored value winning where windows overlap. An assignment equal to a
@@ -344,7 +344,7 @@ is still pending, its opening is the coverage: an edit bounded inside the
 opening splits it, and an amendment never extends it beyond its own window
 (`m-unit-work` *Same-transaction write coalescing*). A replacement reaching past
 the opening establishes the same state there it would once the insertion had
-executed, settled in the opening's own unit at the normal flush: no flush runs
+executed, settled as the opening's own write at the normal flush: no flush runs
 at the call and no intermediate insertion is written. The stored coverage past
 the opening's window is read inside the flush, each rectangle the composed
 writes reach is transformed under its own proof, the opening's surviving pieces
@@ -390,7 +390,7 @@ the starting rectangle's inactivation, or the guard keeping it unchanged, gates
 on the stated `ifTxStart`, and its shortfall is that failed precondition; every
 later rectangle's gates on its own `in_z`, and its shortfall is an ordinary
 conflict. Under Locking the starting rectangle was read whole under the shared
-lock at submission, and the flush reuses it while no earlier unit of the attempt
+lock at submission, and the flush reuses it while no earlier settled write of the attempt
 has changed it and reads only the rectangles it does not cover, under the same
 lock (`m-unit-work` *Retained starting rows*), so no inactivation is gated
 (`m-read-lock`).
@@ -496,7 +496,7 @@ Ownership is never inferred from `in_z = txInstant`.
 ## Temporal expansion
 
 A temporal write is finalized by `m-unit-work`'s Write Planner, which expands each
-surviving temporal unit in place, at its already-decided position (ADR 0045).
+surviving temporal write in place, at its already-decided position (ADR 0045).
 Expansion is **neutral**: it names no SQL, dialect, physical column, or statement
 and takes no dialect argument, which is what lets it live inside planning while
 column participation and quoting stay in lowering. An implementation **MUST NOT**
@@ -522,7 +522,7 @@ milestone's **Successors**: the nonempty intervals it becomes, in Valid-Time
 order. A successor derives from exactly one predecessor — the existing milestone
 it is part of — and is `CarriedFrom` it where no segment assigns there, or
 `ChangedFrom` it, carrying the assigned members over the predecessor's own
-unassigned ones. A row the unit opens may merge adjacent successors of several
+unassigned ones. A row the write opens may merge adjacent successors of several
 predecessors and new lineages (*Merging produced successors*); each successor
 still derives from its own predecessor alone, which keeps its own proof. A gap in coverage stays a gap, except inside a replacement's
 extent, where each uncovered stretch is a **Coverage Gap**: a new lineage opened
@@ -530,9 +530,9 @@ with the complete stated state, never a successor of anything.
 
 ### Predecessor Expansion
 
-A **Predecessor Expansion** applies one unit's transform to one existing milestone
+A **Predecessor Expansion** applies one write's transform to one existing milestone
 — its **predecessor**, carried as the complete Predecessor Row its observation or
-the flush's read produced (`m-write-plan`). It decides, from the unit's settled
+the flush's read produced (`m-write-plan`). It decides, from the write's settled
 facts and the attempt's ownership as it stands then:
 
 - whether the transform reaches the predecessor at all; one it does not reach is
@@ -559,7 +559,7 @@ Planned Insert, opened at the attempt's Transaction Instant over
 `[txInstant, infinity)` on Transaction Time and over its own Valid-Time
 coverage, which stamps the open bound as the managed `infinity`.
 
-A unit's steps keep each predecessor's effect ahead of what it opens. A lone
+A settled write's steps keep each predecessor's effect ahead of what it opens. A lone
 write's or a group row's close is followed immediately by its successors in
 Valid-Time order — `head`, `middle`, `tail` where each exists and is nonempty —
 with no unrelated step interleaved and no surviving group or identifier. A range
@@ -607,8 +607,8 @@ successor, wherever its unchanged state is proven without changing it:
   to fall back.
 
 Either way nothing is closed or opened, the milestone keeps its Transaction-Time
-start and its history gains nothing, and the unit's other milestones transform
-as usual. The unit still completes: it spends every source it composed, and it
+start and its history gains nothing, and the write's other milestones transform
+as usual. The settled write still completes: it spends every source it composed, and it
 changes no state of the kept milestone, so an observation of that state from
 another source stays eligible, another transaction's revision token for it
 still holds, and a caller's stated start still names it. A stale stated start is
@@ -630,7 +630,7 @@ a changed milestone replaces that content where it assigns (`m-write-plan`
 
 ### Ownership disposal
 
-For each predecessor a unit transforms, expansion derives its **nonempty**
+For each predecessor a write transforms, expansion derives its **nonempty**
 successors once and then:
 
 ```text
@@ -658,7 +658,7 @@ predecessor is chosen only once they have (*Merging produced successors*).
 
 ### Merging produced successors
 
-Once every predecessor of one object is decided, the rows the unit produces for
+Once every predecessor of one object is decided, the rows the write produces for
 that object — its successors, a pending insertion's surviving pieces, and a
 replacement's Coverage Gaps — merge before any of them is given an address. Two
 of them are one row when, in Valid-Time order, one starts where the other ends,
@@ -701,8 +701,8 @@ that predecessor is removed under its gate and the merged row opened. Equal
 stored state does not make one predecessor's assignments stand for another's:
 only the predecessor ending the merged row is revised, and only by its own.
 
-Every original's part of a merged row is recorded with the unit's effects
-(`m-unit-work` *Execution units complete before later work runs*): writes the
+Every original's part of a merged row is recorded with the settled write's completion facts
+(`m-unit-work` *Write Groups complete before later work runs*): writes the
 flush admitted before a barrier follow each original to the merged row over the
 part it contributed, never over the rest, and an insertion keeps only the part
 of the row its own coverage became.

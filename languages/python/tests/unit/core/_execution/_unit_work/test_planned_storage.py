@@ -49,7 +49,12 @@ from parallax.core.write_plan import (
     WritePlan,
 )
 from tests._support.clock_probes import CountingClock, inert_instant
-from tests._support.planner_probes import TEST_ACTOR_IDENTITY, admitted_writes
+from tests._support.planner_probes import (
+    TEST_ACTOR_IDENTITY,
+    admitted_writes,
+    plan_steps,
+    settled_writes,
+)
 from tests.unit._gc_reachability import reachable_objects
 from tests.unit.core._execution._unit_work._ownership_support import OpenedRows
 
@@ -96,11 +101,9 @@ def _is_producer(value: object) -> bool:
 
 
 def _reachable_from_plan(plan: WritePlan) -> list[object]:
-    """Everything a plan's segments and settled writes reach, every deferred
-    range's description included."""
-    return [
-        value for held in (*plan.steps.segments, *plan.units) for value in reachable_objects(held)
-    ]
+    """Everything a plan reaches: its Write Groups' steps and settled writes,
+    every deferred range's description included."""
+    return list(reachable_objects(plan))
 
 
 def test_every_facet_an_accepted_model_carries_counts_as_a_producer() -> None:
@@ -152,8 +155,8 @@ def test_a_deferred_range_retains_finalized_data_and_neither_producer_nor_owners
             ownership=ownership,
         )
     )
-    (unit,) = plan.units
-    assert isinstance(unit.deferred, DeferredTemporalRange)
+    (write,) = settled_writes(plan)
+    assert isinstance(write.deferred, DeferredTemporalRange)
     walked = _reachable_from_plan(plan)
     assert not [value for value in walked if _is_producer(value)]
     assert not [value for value in walked if isinstance(value, OpenedRows | AuditDecoration)]
@@ -206,5 +209,5 @@ def test_a_pending_opening_settles_through_no_retained_producer_and_prepares_no_
             buffered_writes=admitted_writes(_POSITION, writes),
         )
     )
-    assert len(list(plan.steps)) == 2
+    assert len(list(plan_steps(plan))) == 2
     assert not [value for value in _reachable_from_plan(plan) if _is_producer(value)]

@@ -1,22 +1,19 @@
 """Simulated step execution, with and without a store.
 
-Each span is taken once. Recording lowers it through the production dry
-traversal, its statements kept only once the whole span lowered and its steps
-kept not at all; a store's rows change as each step is taken, and only a
-recording simulation lowers at all. A lowering failure outranks a store's
-refusal, which stops the store's changes and is raised once the span lowered;
-any other failure applying a step propagates as it is taken. An allocating
-span answers the next scripted keys, unchecked, and a store is answered none.
+Recording lowers the steps it is handed through the production dry traversal,
+keeping their statements only once all of them lowered and the steps not at
+all; a store's rows change as each step is applied after that, and only a
+recording simulation lowers at all. A lowering failure therefore outranks a
+store's refusal, which stops the store's changes and is raised once the steps
+lowered; any other failure applying a step propagates as it is applied.
+Allocating steps answer the next scripted keys, unchecked, and a store is
+answered none.
 """
 
 from __future__ import annotations
 
 import datetime as dt
-import gc
 import traceback
-import weakref
-from collections.abc import Callable
-from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Final
 
@@ -32,8 +29,9 @@ from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._write_lowering import stream_physical
 from parallax.core.base import INFINITY
 from parallax.core.dialect import POSTGRES
-from parallax.core.metamodel import AttributeIdentity, entity_by_name
-from parallax.core.write_plan.plan import PlannedWrites, WriteStepView
+from parallax.core.metamodel import AttributeIdentity, EntityIdentity, entity_by_name
+from parallax.core.write_payload import LayoutPayloadPreparer
+from parallax.core.write_plan.payload import AssignmentPayload
 from parallax.core.write_plan.steps import INFINITY as OPEN_END
 from parallax.core.write_plan.steps import (
     MISSING_TARGET,
@@ -53,6 +51,7 @@ from parallax.core.write_plan.steps import (
     PlannedStep,
     WriteRow,
 )
+from tests.unit._gc_reachability import reachable_objects
 
 _ACCOUNT_META: Final = models.load_models()["account"]
 _ACCOUNT: Final = entity_by_name(_ACCOUNT_META, "Account")
@@ -70,108 +69,72 @@ def _delete(key: int) -> PlannedStep:
     )
 
 
-@dataclass
-class _Taken:
-    """A segment building each step only when asked, recording each position
-    asked, and raising ``failure`` instead of building the step at ``failing``."""
-
-    keys: tuple[int, ...]
-    failing: int | None = None
-    failure: Exception | None = None
-    asked: list[int] = field(default_factory=list[int])
-
-    def __len__(self) -> int:
-        return len(self.keys)
-
-    def step(self, index: int) -> PlannedStep:
-        self.asked.append(index)
-        if index == self.failing and self.failure is not None:
-            raise self.failure
-        return _delete(self.keys[index])
-
-
-@dataclass
-class _Built:
-    """A segment building each of ``steps`` only when asked, recording each
-    position asked, and raising ``failure`` instead of building the step at
-    ``failing``."""
-
-    steps: tuple[Callable[[], PlannedStep], ...]
-    failing: int | None = None
-    failure: Exception | None = None
-    asked: list[int] = field(default_factory=list[int])
-
-    def __len__(self) -> int:
-        return len(self.steps)
-
-    def step(self, index: int) -> PlannedStep:
-        self.asked.append(index)
-        if index == self.failing and self.failure is not None:
-            raise self.failure
-        return self.steps[index]()
-
-
-def _span(segment: _Taken | _Built) -> WriteStepView:
-    return PlannedWrites((segment,)).view(0, len(segment))
-
-
 def _simulated(*allocated: tuple[object, ...]) -> SimulatedWriteSteps:
     return SimulatedWriteSteps(_PAYLOADS, _ACCOUNT_META, POSTGRES, allocated_results=allocated)
 
 
-def test_a_span_is_taken_once_and_lowered_as_the_dry_traversal_lowers_it() -> None:
-    simulated = _simulated()
-    segment = _Taken((1, 2, 3))
-    assert simulated(_span(segment), allocates=False) == ()
-    assert segment.asked == [0, 1, 2]
-    expected = tuple(
-        stream_physical([_delete(key) for key in (1, 2, 3)], _PAYLOADS, _ACCOUNT_META, POSTGRES)
-    )
-    assert simulated.statements == expected
-    # Reading what was recorded takes and lowers nothing again.
-    assert simulated.statements == expected
-    assert segment.asked == [0, 1, 2]
+def _deletes(*keys: int) -> tuple[PlannedStep, ...]:
+    return tuple(_delete(key) for key in keys)
 
 
-def test_statements_accumulate_across_spans_in_order() -> None:
+def _holds_any(holder: object, steps: tuple[PlannedStep, ...]) -> bool:
+    """Whether anything ``holder`` reaches is ``steps`` or one of them."""
+    held = {id(steps), *(id(step) for step in steps)}
+    return any(id(value) in held for value in reachable_objects(holder))
+
+
+def test_steps_are_lowered_as_the_dry_traversal_lowers_them() -> None:
     simulated = _simulated()
-    simulated(_span(_Taken((1,))), allocates=False)
-    simulated(_span(_Taken(())), allocates=False)
-    simulated(_span(_Taken((2,))), allocates=False)
+    steps = _deletes(1, 2, 3)
+    assert simulated(steps, allocates=False) == ()
+    expected = tuple(stream_physical(steps, _PAYLOADS, _ACCOUNT_META, POSTGRES))
+    assert simulated.statements == expected
+    # Reading what was recorded lowers nothing again.
+    assert simulated.statements == expected
+
+
+def test_statements_accumulate_across_executions_in_order() -> None:
+    simulated = _simulated()
+    simulated(_deletes(1), allocates=False)
+    simulated((), allocates=False)
+    simulated(_deletes(2), allocates=False)
     assert [statement.binds for statement in simulated.statements] == [(1,), (2,)]
 
 
-def test_a_span_that_fails_to_lower_keeps_none_of_its_statements_and_answers_no_keys() -> None:
-    simulated = _simulated((42,))
-    failure = ValueError("the second step cannot be built")
-    with pytest.raises(ValueError, match="cannot be built") as raised:
-        simulated(_span(_Taken((1, 2), failing=1, failure=failure)), allocates=True)
+def test_steps_that_fail_to_lower_keep_none_of_their_statements_and_answer_no_keys() -> None:
+    steps = (_close(1), _close(2))
+    failure = ValueError("the second close cannot be prepared")
+    simulated = SimulatedWriteSteps(
+        _FailingPreparer(steps[1], failure),
+        _POSITION_META,
+        POSTGRES,
+        allocated_results=[(42,)],
+    )
+    with pytest.raises(ValueError, match="cannot be prepared") as raised:
+        simulated(steps, allocates=True)
     assert raised.value is failure
     assert simulated.statements == ()
-    # The scripted keys are still the next allocating span's.
-    assert simulated(_span(_Taken((3,))), allocates=True) == (42,)
+    # The scripted keys are still the next allocating execution's.
+    assert simulated((_close(3),), allocates=True) == (42,)
 
 
-def test_a_span_kept_nothing_of_its_steps_once_it_returned() -> None:
+def test_an_execution_keeps_nothing_of_its_steps_once_it_returned() -> None:
     simulated = _simulated()
-    segment = _Taken((1, 2))
-    alive = weakref.ref(segment)
-    simulated(_span(segment), allocates=False)
-    del segment
-    gc.collect()
-    assert alive() is None
+    steps = _deletes(1, 2)
+    simulated(steps, allocates=False)
+    assert not _holds_any(simulated, steps)
     assert len(simulated.statements) == 2
 
 
-def test_each_allocating_span_answers_the_next_scripted_keys_unchecked() -> None:
+def test_each_allocating_execution_answers_the_next_scripted_keys_unchecked() -> None:
     simulated = _simulated((42,), (), (7, 8))
-    assert simulated(_span(_Taken((1,))), allocates=False) == ()
-    assert simulated(_span(_Taken((2,))), allocates=True) == (42,)
-    assert simulated(_span(_Taken((3,))), allocates=True) == ()
-    assert simulated(_span(_Taken((4,))), allocates=True) == (7, 8)
+    assert simulated(_deletes(1), allocates=False) == ()
+    assert simulated(_deletes(2), allocates=True) == (42,)
+    assert simulated(_deletes(3), allocates=True) == ()
+    assert simulated(_deletes(4), allocates=True) == (7, 8)
     with pytest.raises(ValueError, match="no scripted result"):
-        simulated(_span(_Taken((5,))), allocates=True)
-    # A misconfigured span records nothing either.
+        simulated(_deletes(5), allocates=True)
+    # A misconfigured execution records nothing either.
     assert len(simulated.statements) == 4
 
 
@@ -181,7 +144,7 @@ def test_a_simulation_with_no_store_records_its_statements() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# A store's rows change as each step is taken.                                 #
+# A store's rows change as each step is applied.                              #
 # --------------------------------------------------------------------------- #
 _POSITION_META: Final = models.load_models()["position"]
 _POSITION: Final = entity_by_name(_POSITION_META, "Position")
@@ -248,39 +211,51 @@ def _backed(store: SimulatedTemporalStore, *, record: bool) -> SimulatedWriteSte
     )
 
 
-def _succession(key: int) -> tuple[Callable[[], PlannedStep], ...]:
+def _succession(key: int) -> tuple[PlannedStep, ...]:
     """Position ``key``'s close and the opening succeeding it."""
-    return (lambda: _close(key), lambda: _opening(key, "150.00"))
+    return (_close(key), _opening(key, "150.00"))
 
 
-def test_a_recorded_span_is_taken_once_applying_and_lowering_each_step() -> None:
+class _FailingPreparer(LayoutPayloadPreparer):
+    """The Position model's own preparer, raising ``failure`` instead of
+    preparing ``failing``'s assignments."""
+
+    __slots__ = ("failing", "failure")
+
+    def __init__(self, failing: PlannedStep, failure: Exception) -> None:
+        super().__init__(_POSITION_META)
+        assert isinstance(failing, PlannedClose)
+        self.failing = failing
+        self.failure = failure
+
+    def assignments(
+        self, entity: EntityIdentity, assignments: PlannedAssignments
+    ) -> AssignmentPayload:
+        if assignments is self.failing.assignments:
+            raise self.failure
+        return super().assignments(entity, assignments)
+
+
+def test_recorded_steps_are_applied_and_lowered() -> None:
     store = _store(_members(1, _JAN, "100.00"))
     simulated = _backed(store, record=True)
-    segment = _Built(_succession(1))
-    assert simulated(_span(segment), allocates=False) == ()
-    assert segment.asked == [0, 1]
+    steps = _succession(1)
+    assert simulated(steps, allocates=False) == ()
     assert _value(store, 1) == Decimal("150.00")
-    expected = tuple(
-        stream_physical(
-            [step() for step in _succession(1)], _POSITION_PAYLOADS, _POSITION_META, POSTGRES
-        )
-    )
+    expected = tuple(stream_physical(steps, _POSITION_PAYLOADS, _POSITION_META, POSTGRES))
     assert simulated.statements == expected
-    assert segment.asked == [0, 1]
 
 
-def test_a_tracked_span_changes_the_store_and_lowers_nothing(
+def test_tracked_steps_change_the_store_and_lower_nothing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def refused(*_arguments: object) -> object:
-        raise AssertionError("a tracked span lowers nothing")
+        raise AssertionError("tracked steps lower nothing")
 
     monkeypatch.setattr(_simulated_write_steps, "stream_physical", refused)
     store = _store(_members(1, _JAN, "100.00"))
     simulated = _backed(store, record=False)
-    segment = _Built(_succession(1))
-    assert simulated(_span(segment), allocates=False) == ()
-    assert segment.asked == [0, 1]
+    assert simulated(_succession(1), allocates=False) == ()
     assert _value(store, 1) == Decimal("150.00")
     assert simulated.statements == ()
 
@@ -291,13 +266,11 @@ def _twins() -> SimulatedTemporalStore:
     return _store(_members(1, _JAN, "100.00"), _members(1, _JUN, "200.00"))
 
 
-def test_a_store_refusal_raises_once_the_span_lowered_and_stops_its_later_changes() -> None:
+def test_a_store_refusal_raises_once_the_steps_lowered_and_stops_their_later_changes() -> None:
     store = _twins()
     simulated = _backed(store, record=True)
-    segment = _Built((lambda: _close(1), lambda: _opening(2, "9.00")))
     with pytest.raises(AmbiguousObservationError, match="share both") as raised:
-        simulated(_span(segment), allocates=False)
-    assert segment.asked == [0, 1]
+        simulated((_close(1), _opening(2, "9.00")), allocates=False)
     assert _value(store, 2) is None
     assert simulated.statements == ()
     # The refusal raised carries no traceback into the step it refused.
@@ -307,54 +280,58 @@ def test_a_store_refusal_raises_once_the_span_lowered_and_stops_its_later_change
     )
 
 
-def test_a_lowering_failure_outranks_a_store_refusal() -> None:
-    failure = ValueError("the second step cannot be built")
-    simulated = _backed(_twins(), record=True)
-    segment = _Built((lambda: _close(1), lambda: _close(2)), failing=1, failure=failure)
-    with pytest.raises(ValueError, match="cannot be built") as raised:
-        simulated(_span(segment), allocates=False)
+def test_a_lowering_failure_outranks_a_store_refusal_and_changes_no_row() -> None:
+    steps = (_close(1), _close(2), _opening(2, "9.00"))
+    failure = ValueError("the second close cannot be prepared")
+    store = _twins()
+    simulated = SimulatedWriteSteps(
+        _FailingPreparer(steps[1], failure), _POSITION_META, POSTGRES, store=store
+    )
+    with pytest.raises(ValueError, match="cannot be prepared") as raised:
+        simulated(steps, allocates=False)
     assert raised.value is failure
     assert simulated.statements == ()
+    assert _value(store, 2) is None
 
 
-def test_a_tracked_span_raises_a_store_refusal_as_its_step_is_taken() -> None:
+def test_tracked_steps_raise_a_store_refusal_as_its_step_is_applied() -> None:
     store = _twins()
     simulated = _backed(store, record=False)
-    segment = _Built((lambda: _close(1), lambda: _opening(2, "9.00")))
     with pytest.raises(AmbiguousObservationError):
-        simulated(_span(segment), allocates=False)
-    assert segment.asked == [0]
+        simulated((_close(1), _opening(2, "9.00")), allocates=False)
     assert _value(store, 2) is None
 
 
 @pytest.mark.parametrize("record", [True, False], ids=["recorded", "tracked"])
 @pytest.mark.parametrize("failure", [RuntimeError("a defect"), KeyboardInterrupt()], ids=type)
-def test_any_other_failure_applying_a_step_propagates_as_it_is_taken(
+def test_any_other_failure_applying_a_step_propagates_as_it_is_applied(
     monkeypatch: pytest.MonkeyPatch, record: bool, failure: BaseException
 ) -> None:
+    applied: list[PlannedStep] = []
+
     def failing(store: SimulatedTemporalStore, model: object, step: PlannedStep) -> None:
+        applied.append(step)
         raise failure
 
     monkeypatch.setattr(SimulatedTemporalStore, "apply", failing)
     simulated = _backed(_store(), record=record)
-    segment = _Built((lambda: _close(1), lambda: _close(2)))
+    steps = (_close(1), _close(2))
     with pytest.raises(type(failure)) as raised:
-        simulated(_span(segment), allocates=False)
+        simulated(steps, allocates=False)
     assert raised.value is failure
-    assert segment.asked == [0]
+    assert applied == [steps[0]]
     assert simulated.statements == ()
 
 
 @pytest.mark.parametrize("record", [True, False], ids=["recorded", "tracked"])
-def test_a_store_backed_span_kept_nothing_of_its_steps_once_it_returned(record: bool) -> None:
+def test_a_store_backed_execution_keeps_nothing_of_its_steps_once_it_returned(
+    record: bool,
+) -> None:
     store = _store(_members(1, _JAN, "100.00"))
     simulated = _backed(store, record=record)
-    segment = _Built(_succession(1))
-    alive = weakref.ref(segment)
-    simulated(_span(segment), allocates=False)
-    del segment
-    gc.collect()
-    assert alive() is None
+    steps = _succession(1)
+    simulated(steps, allocates=False)
+    assert not _holds_any(simulated, steps)
 
 
 def test_a_store_backed_simulation_is_answered_no_scripted_keys() -> None:
@@ -364,4 +341,4 @@ def test_a_store_backed_simulation_is_answered_no_scripted_keys() -> None:
         )
     simulated = _backed(_store(), record=True)
     with pytest.raises(ValueError, match="no scripted result"):
-        simulated(_span(_Built((lambda: _opening(1, "1.00"),))), allocates=True)
+        simulated((_opening(1, "1.00"),), allocates=True)

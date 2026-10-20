@@ -49,6 +49,7 @@ __all__ = [
     "CoalescedWrite",
     "FollowingKeyedWrite",
     "InsertionKeyedWrite",
+    "MutationPhase",
     "ObjectClaimedWrite",
     "ObservedKeyedWrite",
     "OrderedWrite",
@@ -322,7 +323,7 @@ class ChainedTemporalWrite(CoalescedTemporalWrite):
     other pending writes stand in other regions of the same buffer.
 
     A barrier keeps every write on its own side, so each region's writes of the
-    object execute as their own unit. ``follows`` marks a composition an
+    object execute as a settled write of their own. ``follows`` marks a composition an
     earlier region's writes of the object precede: it binds to the coverage
     those left, carrying the conditions they already proved. ``leads`` marks
     one a later region's writes follow: it records what it derived from each
@@ -568,6 +569,11 @@ coalescing is the only stage that reads one, and it hands the survivor on as the
 ordinary instruction it always was, so batching, ordering, and settlement see an
 unversioned write as the bare instruction they measure every other one by.
 """
+
+type MutationPhase = tuple[OrderedWrite, ...]
+"""A region's ordered writes of one mutation kind — its inserts, its updates,
+or its deletes — or one readless predicate write standing alone as a barrier.
+The planner hands settlement a flush's phases in flush order."""
 
 type CoalescedWrite = OrderedWrite | AfterRemoval
 """One coalesced write as finalization receives it: what settlement

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterator
 from typing import Final, NamedTuple
 
 from parallax.core import temporal_read
@@ -46,10 +46,10 @@ _GROUPED_INSERT_ROWS: Final = 64
 class GroupedInsert(NamedTuple):
     """One statement inserting a run of temporal openings, and how the run
     ended: at ``following``, the step that could not join it, taken but neither
-    prepared nor lowered; at ``failure``, raised ordinarily taking, preparing,
-    or appending a later opening, the statement then holding exactly the
-    entries appended before it; or at neither, where the statement reached its
-    capacity or the steps ran out."""
+    prepared nor lowered; at ``failure``, raised ordinarily preparing or
+    appending a later opening, the statement then holding exactly the entries
+    appended before it; or at neither, where the statement reached its capacity
+    or the steps ran out."""
 
     statement: LoweredStatement
     following: PlannedStep | None
@@ -60,17 +60,16 @@ class LoweringCursor:
     """``steps`` taken one at a time, each lowered only when asked, storing the
     payload its statement demands.
 
-    Execution's route from a borrowed span of Planned Steps to statements:
-    each step is taken from its sequence exactly once and taking it lowers
-    nothing, so a step can be looked at before anything is prepared for it, and
-    a lazily built step is never built again to be lowered or enforced.
+    Execution's route from a sequence of Planned Steps to statements: taking a
+    step reads it and prepares nothing, so a step can be looked at before
+    anything is prepared for it, and only preparing or lowering it can fail.
     """
 
     __slots__ = ("_dialect", "_meta", "_payloads", "_steps")
 
     def __init__(
         self,
-        steps: Iterable[PlannedStep],
+        steps: tuple[PlannedStep, ...],
         payloads: WritePayloadPreparer,
         meta: Metamodel,
         dialect: Dialect,
@@ -81,7 +80,7 @@ class LoweringCursor:
         self._dialect = dialect
 
     def take(self) -> PlannedStep | None:
-        """The next step, or ``None`` once the span is exhausted."""
+        """The next step, or ``None`` once the steps are exhausted."""
         return next(self._steps, None)
 
     def lowered(self, step: PlannedStep) -> LoweredStatement:
@@ -129,11 +128,11 @@ class LoweringCursor:
         binds = self._dialect.max_bind_parameters
         following: PlannedStep | None = None
         while builder.has_capacity(_GROUPED_INSERT_ROWS, binds):
+            following = self.take()
+            joining = _joining(following, entity, members)
+            if joining is None:
+                break
             try:
-                following = self.take()
-                joining = _joining(following, entity, members)
-                if joining is None:
-                    break
                 builder.append(joining, _row_payload(payloads, entity, joining))
             except Exception as error:
                 return GroupedInsert(builder.finish(), None, error)
@@ -142,7 +141,10 @@ class LoweringCursor:
 
 
 def stream_physical(
-    steps: Iterable[PlannedStep], payloads: WritePayloadPreparer, meta: Metamodel, dialect: Dialect
+    steps: tuple[PlannedStep, ...],
+    payloads: WritePayloadPreparer,
+    meta: Metamodel,
+    dialect: Dialect,
 ) -> Iterator[LoweredStatement]:
     """Each statement ``steps`` execute as, in order: a run of compatible
     temporal openings as the one statement inserting them all, and every other

@@ -1,14 +1,14 @@
-"""The one walk of a finalized Write Plan (`m-unit-work` *Execution units
+"""The one walk of a finalized Write Plan (`m-unit-work` *Write Groups
 complete before later work runs*), through simulated step execution.
 
-Each unit's span executes and the unit completes before any step of a later
-unit is taken, a unit with no step included; a deferred range binds at its
-unit's turn on what earlier units published, reusing the starting rows it
-retained that are still current; and a unit whose span answers another number
-of allocated keys than the rows it opens completes nothing. Against simulated
-stored rows, each span changes them as it executes, so a later unit reads what
-earlier ones left, while what the attempt owns changes only as each unit
-completes.
+Each Write Group's own steps execute, and every settled write of the group
+completes before any step of a later group executes, a write with no step
+included; a deferred range binds at its write's turn on what earlier writes
+published, reusing the starting rows it retained that are still current; and a
+group whose steps answer another number of allocated keys than the rows its
+writes open completes nothing. Against simulated stored rows, each execution
+changes them, so a later write reads what earlier ones left, while what the
+attempt owns changes only as each write completes.
 """
 
 from __future__ import annotations
@@ -79,9 +79,9 @@ from parallax.core.write_plan.plan import (
     BoundRange,
     DeferredRange,
     OwnedEndpoint,
-    PlannedWrites,
     SettledWrite,
     TemporalWriteOwnership,
+    WriteGroup,
     WritePlan,
 )
 from parallax.core.write_plan.steps import PlannedStep
@@ -134,11 +134,11 @@ def _simulated(meta: Metamodel, *allocated: tuple[object, ...]) -> SimulatedWrit
 
 
 # --------------------------------------------------------------------------- #
-# Each unit completes before any step of a later unit is taken.               #
+# Each Write Group's settled writes complete before a later group executes.   #
 # --------------------------------------------------------------------------- #
 @dataclass
 class _Claim:
-    """Source authority recording whether a unit spent it."""
+    """Source authority recording whether a settled write spent it."""
 
     consumed: bool = False
 
@@ -147,94 +147,99 @@ class _Claim:
 
 
 @dataclass
-class _Taken:
-    """Position closes built only when asked, recording which of ``claims``
-    were spent as each step is taken, and raising ``failure`` instead of
-    building the step at ``failing``."""
+class _Executions:
+    """``steps`` executing each sequence a plan hands it, recording the exact
+    sequence and which of ``claims`` were spent by then."""
 
-    keys: tuple[int, ...]
+    steps: ObservedSteps
     claims: tuple[_Claim, ...]
-    failing: int | None = None
-    failure: Exception | None = None
-    taken: list[tuple[int, tuple[bool, ...]]] = field(
-        default_factory=list[tuple[int, tuple[bool, ...]]]
+    seen: list[tuple[tuple[PlannedStep, ...], tuple[bool, ...]]] = field(
+        default_factory=list[tuple[tuple[PlannedStep, ...], tuple[bool, ...]]]
     )
 
-    def __len__(self) -> int:
-        return len(self.keys)
+    def __post_init__(self) -> None:
+        self.steps.observe = self._observe
 
-    def step(self, index: int) -> PlannedStep:
-        self.taken.append((index, tuple(claim.consumed for claim in self.claims)))
-        if index == self.failing and self.failure is not None:
-            raise self.failure
-        return close(self.keys[index])
+    def _observe(self, position: int, steps: tuple[PlannedStep, ...]) -> None:
+        del position
+        self.seen.append((steps, tuple(claim.consumed for claim in self.claims)))
 
 
-def test_each_unit_completes_before_any_step_of_the_next_is_taken() -> None:
+def _group(*writes: SettledWrite, steps: tuple[PlannedStep, ...] = ()) -> WriteGroup:
+    return WriteGroup(writes, steps)
+
+
+def test_each_group_executes_its_own_steps_once_every_earlier_group_completed() -> None:
     claims = (_Claim(), _Claim(), _Claim())
-    segment = _Taken((1, 2, 3), claims)
     plan = WritePlan(
-        steps=PlannedWrites((segment,)),
-        units=(
-            SettledWrite(end=2, claim=claims[0]),
-            SettledWrite(end=2, claim=claims[1]),
-            SettledWrite(end=3, claim=claims[2]),
-        ),
+        (
+            _group(SettledWrite(claim=claims[0]), steps=(close(1), close(2))),
+            _group(SettledWrite(claim=claims[1])),
+            _group(SettledWrite(claim=claims[2]), steps=(close(3),)),
+        )
     )
     simulated = _simulated(POSITION_META)
-    run_write_plan(_uow(POSITION_META, simulated), plan, simulated)
-    # The unit with no step completes where the first ends, before the step
-    # after it is even taken; every step is taken exactly once.
-    assert segment.taken == [
-        (0, (False, False, False)),
-        (1, (False, False, False)),
-        (2, (True, True, False)),
+    executions = _Executions(ObservedSteps(simulated), claims)
+    run_write_plan(_uow(POSITION_META, executions.steps), plan, executions.steps)
+    # Each execution is handed its group's own tuple, a group with no step
+    # included, and a settled write with no step completes once it ran.
+    assert [steps for steps, _spent in executions.seen] == [group.steps for group in plan.groups]
+    assert all(
+        steps is group.steps
+        for (steps, _spent), group in zip(executions.seen, plan.groups, strict=True)
+    )
+    assert [spent for _steps, spent in executions.seen] == [
+        (False, False, False),
+        (True, False, False),
+        (True, True, False),
     ]
     assert all(claim.consumed for claim in claims)
     assert statement_kinds(simulated.statements) == ["close", "close", "close"]
 
 
-def test_a_unit_whose_span_fails_completes_nothing_and_no_later_step_is_taken() -> None:
-    claims = (_Claim(), _Claim())
-    failure = ValueError("the second step cannot be built")
-    segment = _Taken((1, 2, 3), claims, failing=1, failure=failure)
-    plan = WritePlan(
-        steps=PlannedWrites((segment,)),
-        units=(SettledWrite(end=2, claim=claims[0]), SettledWrite(end=3, claim=claims[1])),
-    )
-    simulated = _simulated(POSITION_META)
-    with pytest.raises(ValueError, match="cannot be built") as raised:
-        run_write_plan(_uow(POSITION_META, simulated), plan, simulated)
-    assert raised.value is failure
-    assert [index for index, _spent in segment.taken] == [0, 1]
-    assert not any(claim.consumed for claim in claims)
-    assert simulated.statements == ()
-
-
-def test_each_unit_spans_one_execution_of_its_own_steps() -> None:
+def test_every_settled_write_of_a_group_completes_once_its_steps_succeeded() -> None:
     claims = (_Claim(), _Claim(), _Claim())
     plan = WritePlan(
-        steps=PlannedWrites((_Taken((1, 2, 3, 4), claims),)),
-        units=(
-            SettledWrite(end=1, claim=claims[0]),
-            SettledWrite(end=3, claim=claims[1]),
-            SettledWrite(end=4, claim=claims[2]),
-        ),
+        (
+            _group(
+                SettledWrite(claim=claims[0]),
+                SettledWrite(claim=claims[1]),
+                steps=(close(1), close(2)),
+            ),
+            _group(SettledWrite(claim=claims[2]), steps=(close(3),)),
+        )
     )
-    spans: list[tuple[int, tuple[bool, ...]]] = []
-    simulated = _simulated(POSITION_META)
-
-    def observe(position: int) -> None:
-        spans.append((len(simulated.statements), tuple(claim.consumed for claim in claims)))
-
-    steps = ObservedSteps(simulated, observe=observe)
-    run_write_plan(_uow(POSITION_META, steps), plan, steps)
-    # A run of a unit's steps never reaches into the next unit's.
-    assert spans == [
-        (0, (False, False, False)),
-        (1, (True, False, False)),
-        (3, (True, True, False)),
+    executions = _Executions(ObservedSteps(_simulated(POSITION_META)), claims)
+    run_write_plan(_uow(POSITION_META, executions.steps), plan, executions.steps)
+    assert [spent for _steps, spent in executions.seen] == [
+        (False, False, False),
+        (True, True, False),
     ]
+
+
+def test_a_group_whose_steps_fail_completes_nothing_and_no_later_group_executes() -> None:
+    claims = (_Claim(), _Claim(), _Claim())
+    failure = ValueError("the group's steps fail")
+    plan = WritePlan(
+        (
+            _group(SettledWrite(claim=claims[0]), steps=(close(1),)),
+            _group(
+                SettledWrite(claim=claims[1]),
+                SettledWrite(claim=claims[2]),
+                steps=(close(2), close(3)),
+            ),
+            _group(SettledWrite(), steps=(close(4),)),
+        )
+    )
+    simulated = _simulated(POSITION_META)
+    executions = _Executions(ObservedSteps(simulated, failing=1, failure=failure), claims)
+    with pytest.raises(ValueError, match="steps fail") as raised:
+        run_write_plan(_uow(POSITION_META, executions.steps), plan, executions.steps)
+    assert raised.value is failure
+    # The earlier group stays published; the failed one publishes nothing.
+    assert executions.steps.executions == 2
+    assert [claim.consumed for claim in claims] == [True, False, False]
+    assert statement_kinds(simulated.statements) == ["close"]
 
 
 class _Foreign(DeferredRange):
@@ -244,14 +249,14 @@ class _Foreign(DeferredRange):
 def test_a_deferred_description_no_planner_finalized_is_refused_before_anything_is_read() -> None:
     held = HeldRows(POSITION_META)
     simulated = _simulated(POSITION_META)
-    plan = WritePlan(units=(SettledWrite(end=0, deferred=_Foreign()),))
+    plan = WritePlan((_group(SettledWrite(deferred=_Foreign())),))
     with pytest.raises(TypeError, match="did not finalize"):
         run_write_plan(_uow(POSITION_META, simulated, rows=held), plan, simulated)
     assert held.requests == []
 
 
 # --------------------------------------------------------------------------- #
-# A unit opening rows whose keys the database allocates.                      #
+# A settled write opening rows whose keys the database allocates.             #
 # --------------------------------------------------------------------------- #
 class Span(Bitemporal, table="span", namespace="parallax.runner.allocated"):
     id: Attr[int] = attr(primary_key=MAX)
@@ -299,7 +304,7 @@ def _span_amend(key: int) -> AdmittedWrite:
     return buffered_write(prepared, RetainedObservation(state, observation, None))
 
 
-def test_the_rows_a_unit_opens_are_owned_under_the_keys_its_span_answered() -> None:
+def test_the_rows_a_settled_write_opens_are_owned_under_the_keys_its_steps_answered() -> None:
     simulated = _simulated(_SPANS, (42,))
     uow = _uow(_SPANS, simulated)
     uow.buffer(_span_insert())
@@ -312,7 +317,7 @@ def test_the_rows_a_unit_opens_are_owned_under_the_keys_its_span_answered() -> N
 
 
 @pytest.mark.parametrize("answered", [(), (41, 42)], ids=["none", "too-many"])
-def test_a_unit_answered_another_number_of_keys_than_it_opens_completes_nothing(
+def test_a_write_answered_another_number_of_keys_than_it_opens_completes_nothing(
     answered: tuple[object, ...],
 ) -> None:
     plan = build_write_planner(_SPANS).finalize(
@@ -323,17 +328,18 @@ def test_a_unit_answered_another_number_of_keys_than_it_opens_completes_nothing(
             buffered_writes=[_span_insert()],
         )
     )
-    (unit,) = plan.units
-    assert len(unit.opened.allocated) == 1
+    (group,) = plan.groups
+    (write,) = group.writes
+    assert len(write.opened.allocated) == 1
     claim = _Claim()
-    claimed = WritePlan(steps=plan.steps, units=(dataclasses.replace(unit, claim=claim),))
+    claimed = WritePlan((WriteGroup((dataclasses.replace(write, claim=claim),), group.steps),))
     simulated = _simulated(_SPANS, answered)
     with pytest.raises(UnitOfWorkError, match=rf"opening 1 row\(s\).*{len(answered)} key\(s\)"):
         run_write_plan(_uow(_SPANS, simulated), claimed, simulated)
     assert not claim.consumed
 
 
-def test_a_flush_whose_unit_answered_the_wrong_keys_dooms_the_attempt() -> None:
+def test_a_flush_whose_write_answered_the_wrong_keys_dooms_the_attempt() -> None:
     uow = _uow(_SPANS, _simulated(_SPANS, ()))
     uow.buffer(_span_insert())
     with pytest.raises(UnitOfWorkError, match="key"):
@@ -343,7 +349,7 @@ def test_a_flush_whose_unit_answered_the_wrong_keys_dooms_the_attempt() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# A deferred range binds at its unit's turn.                                   #
+# A deferred range binds at its settled write's turn.                         #
 # --------------------------------------------------------------------------- #
 @dataclass(slots=True)
 class _Watched:
@@ -400,7 +406,7 @@ def _retained_row(key: int) -> RetainedObservation:
     return RetainedObservation(state, observation, None)
 
 
-def test_a_deferred_range_binds_only_once_every_earlier_unit_completed() -> None:
+def test_a_deferred_range_binds_only_once_every_earlier_write_completed() -> None:
     claim = _retained_row(2)
     simulated = _simulated(TARGET_POSITION)
     reads: list[tuple[type[RowRequest], bool, int]] = []
@@ -413,17 +419,56 @@ def test_a_deferred_range_binds_only_once_every_earlier_unit_completed() -> None
     uow.buffer(_observed_amend(2, claim))
     uow.buffer_target(_target(_APR, _SEP, "150.00"))
     uow.flush(trigger="pre_commit")
-    # The earlier unit had executed and spent its source when the range read
+    # The earlier write had executed and spent its source when the range read
     # its coverage; the range's own steps ran after.
     ((kind, spent, executed),) = reads
     assert (kind, spent) == (CoverageReadRequest, True)
     assert 0 < executed < len(simulated.statements)
 
 
+def test_a_deferred_write_executes_its_group_then_the_exact_steps_its_range_bound(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plans: list[WritePlan] = []
+    ranges: list[BoundRange] = []
+    finalize, bind = WritePlanner.finalize, WritePlanner.bind_deferred
+
+    def planning(planner: WritePlanner, request: WritePlanningRequest) -> WritePlan:
+        plans.append(finalize(planner, request))
+        return plans[-1]
+
+    def binding(planner: WritePlanner, *arguments: Any, **keywords: Any) -> BoundRange:
+        ranges.append(bind(planner, *arguments, **keywords))
+        return ranges[-1]
+
+    monkeypatch.setattr(WritePlanner, "finalize", planning)
+    monkeypatch.setattr(WritePlanner, "bind_deferred", binding)
+    executed: list[tuple[PlannedStep, ...]] = []
+    steps = ObservedSteps(
+        _simulated(TARGET_POSITION), observe=lambda _position, held: executed.append(held)
+    )
+    held = HeldRows(TARGET_POSITION, [rectangle(_JAN, INFINITY, "100.00")], overlapping=True)
+    uow = _uow(TARGET_POSITION, steps, rows=held)
+    uow.buffer(_observed_amend(2, _retained_row(2)))
+    uow.buffer_target(_target(_APR, _SEP, "150.00"))
+    uow.flush(trigger="pre_commit")
+    ((planned, deferred),) = [plan.groups for plan in plans]
+    (settled,) = deferred.writes
+    (bound,) = ranges
+    assert settled.deferred is not None
+    assert deferred.steps == ()
+    assert bound.steps
+    assert [id(held) for held in executed] == [
+        id(planned.steps),
+        id(deferred.steps),
+        id(bound.steps),
+    ]
+
+
 def test_planning_and_deferred_binding_borrow_the_one_live_ownership(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # The flush drains its buffer after planning, and the earlier unit's
+    # The flush drains its buffer after planning, and the earlier write's
     # completion publishes into the very ownership the range then binds under.
     planned: list[TemporalWriteOwnership] = []
     bound: list[tuple[TemporalWriteOwnership, bool]] = []
@@ -435,7 +480,7 @@ def test_planning_and_deferred_binding_borrow_the_one_live_ownership(
 
     def binding(planner: WritePlanner, *args: Any, **kwargs: Any) -> BoundRange:
         ownership = kwargs["ownership"]
-        # The earlier unit amended object 2 from April on, opening its current tail.
+        # The earlier write amended object 2 from April on, opening its current tail.
         opened = OwnedEndpoint(
             corpus_object_key("Position", ("id", 2)).entity, (2,), OPEN_BITEMPORAL_ENDS
         )
@@ -458,7 +503,7 @@ def test_planning_and_deferred_binding_borrow_the_one_live_ownership(
     assert published
 
 
-def test_a_retained_row_still_current_at_its_units_turn_is_completed_without_a_read() -> None:
+def test_a_retained_row_still_current_at_its_writes_turn_is_completed_without_a_read() -> None:
     held = HeldRows(TARGET_POSITION, [rectangle(_JAN, _JUN, "100.00")], overlapping=True)
     simulated = _simulated(TARGET_POSITION)
     uow = _uow(TARGET_POSITION, simulated, rows=held, concurrency="locking")
@@ -478,7 +523,7 @@ def test_a_retained_row_still_current_at_its_units_turn_is_completed_without_a_r
 
 
 # --------------------------------------------------------------------------- #
-# Simulated rows change as each span executes; ownership as each unit         #
+# Simulated rows change as each group executes; ownership as each write       #
 # completes.                                                                   #
 # --------------------------------------------------------------------------- #
 def _stored(
@@ -543,7 +588,9 @@ def _barrier() -> PreparedPredicateWrite:
     return barrier
 
 
-def test_a_unit_kept_behind_a_barrier_binds_on_the_rows_and_ownership_earlier_units_left() -> None:
+def test_a_write_kept_behind_a_barrier_binds_on_the_rows_and_ownership_earlier_writes_left() -> (
+    None
+):
     store = SimulatedTemporalStore()
     store.seed_fixtures(
         _BARRIERED,
@@ -606,8 +653,8 @@ def test_a_unit_kept_behind_a_barrier_binds_on_the_rows_and_ownership_earlier_un
         uow.buffer_target(target)
         uow.flush(trigger="pre_commit")
     hundred, changed = Decimal("100.00"), Decimal("175.00")
-    # The kept-back unit read its coverage once the earlier unit had executed,
-    # and found the row that unit opened.
+    # The kept-back write read its coverage once the earlier write had
+    # executed, and found the row that write opened.
     ((executed, stored),) = seen
     assert executed > 0
     assert (_APR, INFINITY, _FIXED, "A", hundred) in stored

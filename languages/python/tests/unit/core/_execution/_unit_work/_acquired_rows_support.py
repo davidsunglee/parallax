@@ -83,15 +83,15 @@ class HeldRows:
 
 def bind_held(
     model: Metamodel,
-    unit: SettledWrite,
+    settled: SettledWrite,
     rows: Sequence[PredecessorRow],
     *,
     transaction_instant: TransactionInstant,
     ownership: TemporalWriteOwnership = NO_TEMPORAL_WRITE_OWNERSHIP,
 ) -> BoundRange:
-    """``unit``'s deferred range bound, as the unit of work binds it at
+    """``settled write``'s deferred range bound, as the unit of work binds it at
     execution, to a coverage read finding ``rows`` under ``ownership``."""
-    deferred = unit.deferred
+    deferred = settled.deferred
     assert deferred is not None
     return acquire_and_bind_range(
         deferred,
@@ -104,11 +104,11 @@ def bind_held(
 
 
 def coverage_read(
-    model: Metamodel, unit: SettledWrite, *, transaction_instant: TransactionInstant
+    model: Metamodel, settled: SettledWrite, *, transaction_instant: TransactionInstant
 ) -> CoverageReadRequest:
-    """The coverage read ``unit``'s deferred range asks for when the unit of
+    """The coverage read ``settled write``'s deferred range asks for when the unit of
     work binds it, observed as the read is asked for and before any binding."""
-    deferred = unit.deferred
+    deferred = settled.deferred
     assert deferred is not None
     observed = _ObservedRead()
     with contextlib.suppress(_ObservedRead):

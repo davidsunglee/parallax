@@ -38,7 +38,7 @@ from parallax.core.write_plan import (
 )
 from tests._support.clock_probes import inert_instant, instant_at
 from tests._support.lowering_probes import lowered_steps
-from tests._support.planner_probes import observed_buffer
+from tests._support.planner_probes import observed_buffer, plan_steps
 
 _MODELS = models.load_models()
 _ACCOUNT = _MODELS["account"]
@@ -71,7 +71,7 @@ def _statements(plan: WritePlan, model: Metamodel) -> list[LoweredStatement]:
     return [
         statement
         for _step, statement in lowered_steps(
-            plan.steps, LayoutPayloadPreparer(model), model, POSTGRES
+            plan_steps(plan), LayoutPayloadPreparer(model), model, POSTGRES
         )
     ]
 

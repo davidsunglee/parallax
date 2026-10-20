@@ -104,7 +104,9 @@ from tests._support.planner_probes import (
     TEST_ACTOR_IDENTITY,
     RecordingSource,
     observed_buffer,
+    plan_steps,
     retained_observation,
+    settled_writes,
 )
 from tests.unit._corpus_identity_support import corpus_entity, corpus_object_key
 from tests.unit._corpus_model_support import corpus_records, formed
@@ -179,7 +181,7 @@ def _step_mutation(step: PlannedStep) -> str:
 
 
 def _entities(plan: WritePlan) -> list[str]:
-    return [_step_entity(step) for step in plan.steps]
+    return [_step_entity(step) for step in plan_steps(plan)]
 
 
 def _key_values(step: PlannedUpdate | PlannedDelete) -> tuple[tuple[object, ...], ...]:
@@ -213,7 +215,7 @@ def _claimed(write: KeyedWriteInstruction) -> ObjectClaimedWrite:
 
 
 def _shape(plan: WritePlan) -> list[tuple[str, str]]:
-    return [(_step_mutation(step), _step_entity(step)) for step in plan.steps]
+    return [(_step_mutation(step), _step_entity(step)) for step in plan_steps(plan)]
 
 
 # --------------------------------------------------------------------------- #
@@ -225,7 +227,7 @@ def test_nontemporal_insert_then_update_coalesces_to_one_insert() -> None:
     )
     update = KeyedWriteInstruction("amend", "Account", ({"id": 9, "balance": Decimal("99.00")},))
     plan = _plan([insert, update], _ACCOUNT)
-    (step,) = plan.steps
+    (step,) = plan_steps(plan)
     assert isinstance(step, PlannedInsert)
     (row,) = _insert_rows(step)
     # A single INSERT with final values, never INSERT + UPDATE; the framework
@@ -248,7 +250,7 @@ def test_two_assignments_of_one_observed_state_merge_with_the_later_value_winnin
     )
     second = KeyedWriteInstruction("amend", "Account", ({"id": 1, "balance": Decimal("175.00")},))
     plan = _plan([first, second], _ACCOUNT, observations={key: observation})
-    (step,) = plan.steps
+    (step,) = plan_steps(plan)
     assert isinstance(step, PlannedUpdate)
     assert _assignment_values(step) == {
         "owner": "Grace",
@@ -268,7 +270,7 @@ def test_a_restated_member_is_written_as_the_last_word_on_it() -> None:
     )
     second = KeyedWriteInstruction("amend", "Account", ({"id": 1, "balance": Decimal("250.00")},))
     plan = _plan([first, second], _ACCOUNT, observations={key: observation})
-    (step,) = plan.steps
+    (step,) = plan_steps(plan)
     assert isinstance(step, PlannedUpdate)
     assert _assignment_values(step) == {
         "owner": "Grace",
@@ -289,7 +291,7 @@ _BALANCE_PREDECESSOR: dict[str, object] = {
 def _changed_entry(plan: WritePlan) -> tuple[ChangedFrom, PlannedRow]:
     (entry,) = (
         entry
-        for step in plan.steps
+        for step in plan_steps(plan)
         if isinstance(step, PlannedInsert)
         for entry in step.entries
         if isinstance(entry.origin, ChangedFrom)
@@ -317,7 +319,7 @@ def test_coalesced_temporal_writes_overlay_every_member_any_of_them_assigned() -
     assert values["value"] == Decimal("1.00")
     (entry,) = (
         entry
-        for step in plan.steps
+        for step in plan_steps(plan)
         if isinstance(step, PlannedInsert)
         for entry in step.entries
         if isinstance(entry.origin, ChangedFrom)
@@ -334,7 +336,7 @@ def test_a_destructive_intent_supersedes_the_assignments_buffered_before_it() ->
     update = KeyedWriteInstruction("amend", "Account", ({"id": 1, "balance": Decimal("125.00")},))
     delete = KeyedWriteInstruction("delete", "Account", ({"id": 1},))
     plan = _plan([update, delete], _ACCOUNT, observations={key: observation})
-    (step,) = plan.steps
+    (step,) = plan_steps(plan)
     assert isinstance(step, PlannedDelete)
 
 
@@ -343,7 +345,7 @@ def test_identical_destructive_intents_of_one_state_plan_one_step() -> None:
     observation = VersionObservation(observed_version=4)
     delete = KeyedWriteInstruction("delete", "Account", ({"id": 1},))
     plan = _plan([delete, delete], _ACCOUNT, observations={key: observation})
-    (step,) = plan.steps
+    (step,) = plan_steps(plan)
     assert isinstance(step, PlannedDelete)
 
 
@@ -360,7 +362,7 @@ def test_writes_of_two_observed_states_of_one_object_stay_independent() -> None:
         VersionObservation(observed_version=5),
     )
     plan = _plan([first, second], _ACCOUNT, concurrency="optimistic")
-    assert len(plan.steps) == 2
+    assert len(plan_steps(plan)) == 2
 
 
 def test_a_second_state_of_one_object_does_not_close_the_first_states_claim() -> None:
@@ -383,7 +385,7 @@ def test_a_second_state_of_one_object_does_not_close_the_first_states_claim() ->
         earlier,
     )
     plan = _plan([first, interleaved, third], _ACCOUNT, concurrency="optimistic")
-    merged, standing = plan.steps
+    merged, standing = plan_steps(plan)
     assert isinstance(merged, PlannedUpdate)
     assert isinstance(standing, PlannedUpdate)
     assert _assignment_values(merged) == {"balance": Decimal("175.00"), "version": 5}
@@ -398,7 +400,7 @@ def test_object_claimed_writes_of_one_unversioned_row_merge_into_one_step() -> N
     )
     second = _claimed(KeyedWriteInstruction("amend", "Wallet", ({"id": 1, "owner": "Grace"},)))
     plan = _plan([first, second], _WALLET)
-    (step,) = plan.steps
+    (step,) = plan_steps(plan)
     assert isinstance(step, PlannedUpdate)
     assert _assignment_values(step) == {"balance": Decimal("5.00"), "owner": "Grace"}
 
@@ -409,7 +411,7 @@ def test_an_object_claimed_destruction_supersedes_the_assignment_before_it() -> 
     )
     delete = _claimed(KeyedWriteInstruction("delete", "Wallet", ({"id": 1},)))
     plan = _plan([update, delete], _WALLET)
-    (step,) = plan.steps
+    (step,) = plan_steps(plan)
     assert isinstance(step, PlannedDelete)
 
 
@@ -419,7 +421,7 @@ def test_identical_object_claimed_destructions_plan_one_step() -> None:
     # sequence out of an internal invariant failure.
     delete = _claimed(KeyedWriteInstruction("delete", "Wallet", ({"id": 1},)))
     plan = _plan([delete, delete], _WALLET)
-    (step,) = plan.steps
+    (step,) = plan_steps(plan)
     assert isinstance(step, PlannedDelete)
 
 
@@ -430,7 +432,7 @@ def test_object_claimed_writes_of_two_rows_still_collapse_into_one_batch() -> No
     first = _claimed(KeyedWriteInstruction("delete", "Wallet", ({"id": 1},)))
     second = _claimed(KeyedWriteInstruction("delete", "Wallet", ({"id": 2},)))
     plan = _plan([first, second], _WALLET)
-    (step,) = plan.steps
+    (step,) = plan_steps(plan)
     assert isinstance(step, PlannedDelete)
     assert isinstance(step.target, KeyTarget)
     assert step.target.key_values == ((1,), (2,))
@@ -446,7 +448,7 @@ def test_audit_insert_then_update_coalesces_in_place() -> None:
     )
     update = KeyedWriteInstruction("amend", "Balance", ({"id": 9, "value": Decimal("150.00")},))
     plan = _plan([insert, update], _BALANCE, tx_instant=instant_at(_B1))
-    (step,) = plan.steps
+    (step,) = plan_steps(plan)
     assert isinstance(step, PlannedInsert)  # one current milestone, no close
     (row,) = _insert_rows(step)
     assert row["acctNum"] == "D"
@@ -465,7 +467,7 @@ def test_bitemporal_insert_then_update_keeps_the_valid_time_bound() -> None:
         "amend", "Position", ({"id": 9, "value": Decimal("150.00")},), valid_from=_B1_MANAGED
     )
     plan = _plan([insert, update], _POSITION, tx_instant=instant_at(_B1))
-    (step,) = plan.steps
+    (step,) = plan_steps(plan)
     assert isinstance(step, PlannedInsert)  # one fully-current rectangle, no head/tail split
     (row,) = _insert_rows(step)
     assert row["acctNum"] == "D"
@@ -479,7 +481,7 @@ def test_insert_then_delete_cancels_to_no_dml() -> None:
     )
     delete = KeyedWriteInstruction("delete", "Account", ({"id": 9},))
     plan = _plan([insert, delete], _ACCOUNT)
-    assert len(plan.steps) == 0  # both annihilate — the net-zero elision across two verbs
+    assert len(plan_steps(plan)) == 0  # both annihilate — the net-zero elision across two verbs
 
 
 def test_insert_then_multiple_updates_fold_into_one_insert() -> None:
@@ -489,7 +491,7 @@ def test_insert_then_multiple_updates_fold_into_one_insert() -> None:
     update1 = KeyedWriteInstruction("amend", "Account", ({"id": 9, "balance": Decimal("50.00")},))
     update2 = KeyedWriteInstruction("amend", "Account", ({"id": 9, "owner": "Markov"},))
     plan = _plan([insert, update1, update2], _ACCOUNT)
-    (step,) = plan.steps
+    (step,) = plan_steps(plan)
     (row,) = _insert_rows(step)
     assert row["owner"] == "Markov"
     assert row["balance"] == Decimal("50.00")
@@ -498,14 +500,14 @@ def test_insert_then_multiple_updates_fold_into_one_insert() -> None:
 def test_update_of_a_row_not_inserted_this_transaction_is_not_coalesced() -> None:
     update = KeyedWriteInstruction("amend", "Wallet", ({"id": 1, "balance": Decimal("0.00")},))
     plan = _plan([update], _WALLET)
-    (step,) = plan.steps
+    (step,) = plan_steps(plan)
     assert isinstance(step, PlannedUpdate)
 
 
 def test_delete_of_a_row_not_inserted_this_transaction_is_not_coalesced() -> None:
     delete = KeyedWriteInstruction("delete", "Wallet", ({"id": 1},))
     plan = _plan([delete], _WALLET)
-    (step,) = plan.steps
+    (step,) = plan_steps(plan)
     assert isinstance(step, PlannedDelete)
 
 
@@ -529,7 +531,7 @@ def test_multi_row_and_predicate_writes_do_not_coalesce() -> None:
         ),
     )
     plan = _plan([multi, predicate], _WALLET)
-    assert len(plan.steps) == 2
+    assert len(plan_steps(plan)) == 2
 
 
 # --------------------------------------------------------------------------- #
@@ -776,7 +778,7 @@ def test_no_keyed_write_crosses_a_readless_predicate_write_in_either_direction()
         ("update", "Order"),
         ("insert", "Order"),
     ]
-    predicate_step = plan.steps[1]
+    predicate_step = plan_steps(plan)[1]
     assert isinstance(predicate_step, PlannedUpdate)
     assert isinstance(predicate_step.target, ResolvedMutationSelection)
     assert predicate_step.target.predicate == predicate_algebra.validate_predicate(
@@ -859,13 +861,13 @@ def test_two_readless_predicate_writes_partition_the_buffer_into_three_regions()
 def test_empty_change_set_update_emits_no_instruction() -> None:
     update = KeyedWriteInstruction("amend", "Wallet", ({"id": 1},))  # only the PK: no changed field
     plan = _plan([update], _WALLET)
-    assert len(plan.steps) == 0
+    assert len(plan_steps(plan)) == 0
 
 
 def test_nonempty_change_set_update_survives_elision() -> None:
     update = KeyedWriteInstruction("amend", "Wallet", ({"id": 1, "balance": Decimal("7.00")},))
     plan = _plan([update], _WALLET)
-    assert len(plan.steps) == 1
+    assert len(plan_steps(plan)) == 1
 
 
 def test_a_key_only_row_of_a_preformed_multi_row_update_is_eliminated() -> None:
@@ -879,14 +881,14 @@ def test_a_key_only_row_of_a_preformed_multi_row_update_is_eliminated() -> None:
         "amend", "Wallet", ({"id": 1}, {"id": 2, "balance": Decimal("9.00")})
     )
     plan = _plan([update], _WALLET)
-    (step,) = plan.steps
+    (step,) = plan_steps(plan)
     assert isinstance(step, PlannedUpdate)
     assert _key_values(step) == ((2,),)
 
 
 def test_a_preformed_update_whose_rows_are_all_key_only_is_eliminated_whole() -> None:
     update = KeyedWriteInstruction("amend", "Wallet", ({"id": 1}, {"id": 2}))
-    assert len(_plan([update], _WALLET).steps) == 0
+    assert len(plan_steps(_plan([update], _WALLET))) == 0
 
 
 def test_a_plural_temporal_update_is_refused_rather_than_narrowed_by_no_op_elimination() -> None:
@@ -918,13 +920,13 @@ def test_a_single_row_temporal_update_naming_only_its_key_is_still_eliminated() 
     # temporal row assigning nothing opens no successor worth chaining, so
     # stage 2 removes it exactly as it removes a non-temporal one.
     update = KeyedWriteInstruction("amend", "Balance", ({"id": 1},))
-    assert len(_plan([update], _BALANCE).steps) == 0
+    assert len(plan_steps(_plan([update], _BALANCE))) == 0
 
 
 def test_empty_plan_from_empty_buffer() -> None:
     plan = _plan([], _ACCOUNT)
     assert plan == WritePlan()
-    assert len(plan.steps) == 0
+    assert len(plan_steps(plan)) == 0
 
 
 # --------------------------------------------------------------------------- #
@@ -991,7 +993,7 @@ def test_object_key_is_none_for_a_marker_shaped_primary_key_value() -> None:
     assert object_key(marker_insert, _PK_MAX) is None
     # And it must not crash any planning stage that keys off it.
     plan = _plan([marker_insert], _PK_MAX)
-    (step,) = plan.steps
+    (step,) = plan_steps(plan)
     assert isinstance(step, PlannedInsert)
     (row,) = _insert_rows(step)
     assert row["id"] == MAX_PLUS_ONE
@@ -1037,7 +1039,7 @@ def test_recorded_observations_bind_to_their_own_planned_update() -> None:
         },
     )
     advanced = {}
-    for step in plan.steps:
+    for step in plan_steps(plan):
         assert isinstance(step, PlannedUpdate)
         row_id = _single_key(step)
         advanced[row_id] = _row_values_from_assignments(step)["version"]
@@ -1087,7 +1089,7 @@ def test_a_versioned_update_with_a_recorded_observation_carries_a_settled_gate()
         observations={key_: VersionObservation(observed_version=3)},
         concurrency="optimistic",
     )
-    (step,) = plan.steps
+    (step,) = plan_steps(plan)
     assert isinstance(step, PlannedUpdate)
     version = next(ident for ident in step.assignments.attributes if ident.name == "version")
     assert step.concurrency == Versioned(attribute=version, gate=VersionGate(observed_version=3))
@@ -1102,10 +1104,10 @@ def test_an_unversioned_target_settles_ungated_under_the_optimistic_preference()
     # shared read lock its participating read took instead.
     delete = KeyedWriteInstruction("delete", "Wallet", ({"id": 1},))
     plan = _plan([delete], _WALLET, concurrency="optimistic")
-    (step,) = plan.steps
+    (step,) = plan_steps(plan)
     assert isinstance(step, PlannedDelete)
     assert step.concurrency == UNVERSIONED
-    (under_locking,) = _plan([delete], _WALLET).steps
+    (under_locking,) = plan_steps(_plan([delete], _WALLET))
     assert isinstance(under_locking, PlannedDelete)
     assert under_locking.concurrency == step.concurrency
 
@@ -1115,7 +1117,7 @@ def test_a_versioned_delete_with_a_recorded_observation_is_ungated_under_locking
     key_ = object_key(delete, _ACCOUNT)
     assert key_ is not None
     plan = _plan([delete], _ACCOUNT, observations={key_: VersionObservation(observed_version=3)})
-    (step,) = plan.steps
+    (step,) = plan_steps(plan)
     assert isinstance(step, PlannedDelete)
     assert step.concurrency == Versioned(
         attribute=AttributeIdentity(_ACCOUNT.entities[0].identity, "version"), gate=UNGATED
@@ -1126,7 +1128,7 @@ def test_a_versioned_delete_with_a_recorded_observation_is_ungated_under_locking
 def test_an_observation_free_multi_key_delete_carries_the_aggregate_missing_target_policy() -> None:
     delete = KeyedWriteInstruction("delete", "Wallet", ({"id": 1}, {"id": 2}))
     plan = _plan([delete], _WALLET)
-    (step,) = plan.steps
+    (step,) = plan_steps(plan)
     assert isinstance(step, PlannedDelete)
     assert isinstance(step.target, KeyTarget)
     assert step.target.key_values == ((1,), (2,))
@@ -1148,7 +1150,7 @@ def test_an_unversioned_multi_key_update_settles_to_one_aggregate_planned_step()
         KeyedWriteInstruction("amend", "Wallet", ({"id": 3, "balance": Decimal("5.00")},)),
     ]
     plan = _plan(buffer, _WALLET)
-    (step,) = plan.steps
+    (step,) = plan_steps(plan)
     assert isinstance(step, PlannedUpdate)
     assert _key_values(step) == ((1,), (2,), (3,))
     assert step.concurrency == UNVERSIONED
@@ -1166,7 +1168,7 @@ def test_a_readless_predicate_write_carries_an_unbounded_expectation() -> None:
         ),
     )
     plan = _plan([predicate], _WALLET)
-    (step,) = plan.steps
+    (step,) = plan_steps(plan)
     assert isinstance(step, PlannedDelete)
     assert step.affected_rows == ANY_COUNT
 
@@ -1187,7 +1189,7 @@ def test_batching_merges_adjacent_same_entity_same_mutation_inserts() -> None:
         ),
     ]
     plan = _plan(buffer, _WALLET)
-    (step,) = plan.steps
+    (step,) = plan_steps(plan)
     assert isinstance(step, PlannedInsert)
     assert len(step.entries) == 3
 
@@ -1197,7 +1199,7 @@ def test_batching_merges_uniform_updates_but_not_a_lone_row() -> None:
         KeyedWriteInstruction("amend", "Wallet", ({"id": 1, "balance": Decimal("5.00")},))
     ]
     plan = _plan(buffer, _WALLET)
-    (step,) = plan.steps
+    (step,) = plan_steps(plan)
     assert isinstance(step, PlannedUpdate)
     assert len(_key_values(step)) == 1  # a single row is never a "run"
 
@@ -1215,7 +1217,7 @@ def test_a_known_no_op_between_two_uniform_updates_does_not_prevent_their_batch(
         KeyedWriteInstruction("amend", "Wallet", ({"id": 3, "balance": Decimal("5.00")},)),
     ]
     plan = _plan(buffer, _WALLET)
-    (step,) = plan.steps
+    (step,) = plan_steps(plan)
     assert isinstance(step, PlannedUpdate)
     assert _key_values(step) == ((1,), (3,))
 
@@ -1226,7 +1228,7 @@ def test_batching_declines_a_non_uniform_update_run_leaving_rows_separate() -> N
         KeyedWriteInstruction("amend", "Wallet", ({"id": 2, "balance": Decimal("222.00")},)),
     ]
     plan = _plan(buffer, _WALLET)
-    assert len(plan.steps) == 2  # `batch_write.update_collapses` declines: not uniform
+    assert len(plan_steps(plan)) == 2  # `batch_write.update_collapses` declines: not uniform
 
 
 def test_batching_never_regroups_across_an_intervening_different_entity() -> None:
@@ -1248,7 +1250,7 @@ def test_batching_never_regroups_across_an_intervening_different_entity() -> Non
     # stay two separate single-row instructions rather than merging into one.
     wallet_steps = [
         step
-        for step in plan.steps
+        for step in plan_steps(plan)
         if isinstance(step, PlannedInsert) and step.entity.name == "Wallet"
     ]
     assert len(wallet_steps) == 2
@@ -1275,7 +1277,7 @@ def test_batching_never_merges_a_row_carrying_a_recorded_observation() -> None:
             key2: VersionObservation(observed_version=1),
         },
     )
-    assert len(plan.steps) == 2
+    assert len(plan_steps(plan)) == 2
 
 
 def test_batching_never_touches_a_predicate_write() -> None:
@@ -1289,7 +1291,7 @@ def test_batching_never_touches_a_predicate_write() -> None:
         ),
     )
     plan = _plan([predicate], _WALLET)
-    (step,) = plan.steps
+    (step,) = plan_steps(plan)
     assert isinstance(step, PlannedDelete)
     assert isinstance(step.target, ResolvedMutationSelection)
     assert step.target.predicate == predicate_algebra.validate_predicate(
@@ -1314,7 +1316,7 @@ def test_planning_never_captures_the_transaction_instant_for_canceled_work() -> 
     )
     delete = KeyedWriteInstruction("delete", "Account", ({"id": 1},))
     plan = _plan([insert, delete], _ACCOUNT, tx_instant=TransactionInstant(clock))
-    assert len(plan.steps) == 0
+    assert len(plan_steps(plan)) == 0
     assert clock.calls == 0
 
 
@@ -1324,7 +1326,7 @@ def test_planning_captures_the_transaction_instant_only_for_surviving_temporal_w
         "insert", "Wallet", ({"id": 1, "owner": "Ada", "balance": Decimal("1.00")},)
     )
     plan = _plan([non_temporal], _WALLET, tx_instant=TransactionInstant(clock))
-    assert len(plan.steps) == 1
+    assert len(plan_steps(plan)) == 1
     assert clock.calls == 0
 
     temporal_clock = CountingClock([dt.datetime(2024, 6, 1, tzinfo=dt.UTC)])
@@ -1332,7 +1334,7 @@ def test_planning_captures_the_transaction_instant_only_for_surviving_temporal_w
         "insert", "Balance", ({"id": 1, "acctNum": "A", "value": Decimal("1.00")},)
     )
     plan = _plan([temporal], _BALANCE, tx_instant=TransactionInstant(temporal_clock))
-    (step,) = plan.steps
+    (step,) = plan_steps(plan)
     assert isinstance(step, PlannedInsert)
     assert _insert_rows(step)[0]["txStart"] == dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
     assert temporal_clock.calls == 1
@@ -1348,7 +1350,7 @@ def test_a_bounded_bitemporal_update_expands_in_place_between_unrelated_writes()
     # Dependency ordering buckets by verb (inserts, then updates, then
     # deletes) within one region, so an unrelated INSERT and an unrelated
     # DELETE naturally flank the temporal UPDATE bucket — exactly the position
-    # its close-and-successors run must occupy as one indivisible unit.
+    # its close-and-successors run must occupy as one indivisible write.
     position_update = KeyedWriteInstruction(
         "amend",
         "Position",
@@ -1373,7 +1375,7 @@ def test_a_bounded_bitemporal_update_expands_in_place_between_unrelated_writes()
         observations={key_: _bitemporal_observation()},
         tx_instant=instant_at("2024-06-01T00:00:00+00:00"),
     )
-    kinds = [_step_mutation(step) for step in plan.steps]
+    kinds = [_step_mutation(step) for step in plan_steps(plan)]
     assert kinds[0] == "insert"
     assert kinds[-1] == "delete"
     middle = kinds[1:-1]
@@ -1414,7 +1416,7 @@ def test_composed_amendments_leaving_one_state_open_one_row_after_their_close() 
         observations={key_: _bitemporal_observation()},
         tx_instant=instant_at("2024-07-01T00:00:00+00:00"),
     )
-    close, *inserts = plan.steps
+    close, *inserts = plan_steps(plan)
     assert isinstance(close, PlannedClose)
     assert [_position_value_and_valid_time(step) for step in inserts] == [
         [
@@ -1442,7 +1444,7 @@ def test_a_pending_insertion_amended_into_one_state_opens_one_row_for_it() -> No
         _POSITION,
         tx_instant=instant_at("2024-07-01T00:00:00+00:00"),
     )
-    assert [_position_value_and_valid_time(step) for step in plan.steps] == [
+    assert [_position_value_and_valid_time(step) for step in plan_steps(plan)] == [
         [
             (
                 Decimal("1.0"),
@@ -1541,7 +1543,7 @@ def test_a_prepared_finalize_resolves_targets_without_any_entity_spelling_scan(
             buffered_writes=prepared,
         )
     )
-    kinds = [_step_mutation(step) for step in plan.steps]
+    kinds = [_step_mutation(step) for step in plan_steps(plan)]
     assert kinds.count("insert") >= 2  # the Wallet insert, plus the bitemporal successors
     assert "close" in kinds
     assert kinds.count("update") == 1  # the addressed Account update
@@ -1629,8 +1631,8 @@ def test_settlement_reads_each_temporal_mutations_family_shape_once(
         )
     )
     assert reads == ["SpotQuote", "DepositRate"]
-    _ = list(plan.steps)
-    _ = plan.steps[len(plan.steps) - 1]
+    _ = list(plan_steps(plan))
+    _ = plan_steps(plan)[len(plan_steps(plan)) - 1]
     assert reads == ["SpotQuote", "DepositRate"]
 
 
@@ -1667,9 +1669,9 @@ def test_audit_decorates_each_update_once_at_settlement_and_never_on_enumeration
     )
     assert audit.actors == [TEST_ACTOR_IDENTITY]
     (update,) = audit.updates
-    assert plan.steps[0] is update
+    assert plan_steps(plan)[0] is update
 
-    assert list(plan.steps) == [update]
+    assert list(plan_steps(plan)) == [update]
     assert audit.updates == [update]
 
 
@@ -1697,7 +1699,7 @@ def test_audit_finalizes_the_rows_and_closes_temporal_expansion_produced(
         observations={key_: _bitemporal_observation()},
         tx_instant=instant_at("2024-06-01T00:00:00+00:00"),
     )
-    steps = list(plan.steps)
+    steps = list(plan_steps(plan))
     assert isinstance(steps[0], PlannedClose)
     assert audit.closes == [steps[0]]
     assert steps[0] is audit.closes[0]
@@ -1733,10 +1735,10 @@ def test_audit_finalizes_each_part_a_pending_opening_leaves_once(
         _POSITION,
         tx_instant=instant_at("2024-06-01T00:00:00+00:00"),
     )
-    entries = [step.entries[0] for step in plan.steps if isinstance(step, PlannedInsert)]
+    entries = [step.entries[0] for step in plan_steps(plan) if isinstance(step, PlannedInsert)]
     assert len(entries) == 2
     assert [id(row) for row in audit.rows] == [id(entry) for entry in entries]
-    list(plan.steps)
+    list(plan_steps(plan))
     assert len(audit.rows) == 2
 
 
@@ -1759,7 +1761,7 @@ def test_audit_never_reaches_a_milestone_a_write_keeps_unchanged(
         observations={key_: _bitemporal_observation()},
         tx_instant=instant_at("2024-06-01T00:00:00+00:00"),
     )
-    assert list(plan.steps) == []
+    assert list(plan_steps(plan)) == []
     assert (audit.rows, audit.closes) == ([], [])
 
 
@@ -1788,7 +1790,7 @@ def test_audit_states_what_it_adds_to_carried_and_changed_rows_as_executed_assig
         observations={key_: _bitemporal_observation()},
         tx_instant=instant_at("2024-07-01T00:00:00+00:00"),
     )
-    entries = [step.entries[0] for step in plan.steps if isinstance(step, PlannedInsert)]
+    entries = [step.entries[0] for step in plan_steps(plan) if isinstance(step, PlannedInsert)]
     origins = [type(entry.origin).__name__ for entry in entries]
     assert origins == ["CarriedFrom", "ChangedFrom", "CarriedFrom"]
     executed = [
@@ -1829,10 +1831,10 @@ def test_audit_may_not_state_an_updated_rows_key(monkeypatch: pytest.MonkeyPatch
         _plan(_wallet_update(), model)
 
 
-def test_only_surviving_writes_carry_claims_into_execution_units() -> None:
+def test_only_surviving_writes_carry_claims_into_settled_writes() -> None:
     # Two surviving writes settle against one observed state — a destruction and
     # an assignment of one state are a pair no verb admitted as combinable, so
-    # both are left standing — and each one's unit carries that one claim. A
+    # both are left standing — and each one's settled write carries that one claim. A
     # carrier the earlier stages retire takes its claim out of the flush with it:
     # the key-only update below is known no-op work, eliminated at stage 2, and
     # never settled, so its claim is absent by ABSENCE rather than by a second
@@ -1863,8 +1865,8 @@ def test_only_surviving_writes_carry_claims_into_execution_units() -> None:
             buffered_writes=buffer,
         )
     )
-    assert [_step_mutation(step) for step in finalized.steps] == ["update", "delete"]
-    assert [unit.claim for unit in finalized.units] == [shared, shared]
+    assert [_step_mutation(step) for step in plan_steps(finalized)] == ["update", "delete"]
+    assert [write.claim for write in settled_writes(finalized)] == [shared, shared]
 
 
 # --------------------------------------------------------------------------- #
@@ -1916,5 +1918,5 @@ def test_a_many_keyed_mapping_cell_is_an_ordinary_literal_not_a_computed_marker(
         _WALLET,
         rows=({"id": 1, "owner": document, "balance": Decimal("1.00")},),
     )
-    (step,) = _plan([carried], _WALLET).steps
+    (step,) = plan_steps(_plan([carried], _WALLET))
     assert _insert_rows(step)[0]["owner"] == document

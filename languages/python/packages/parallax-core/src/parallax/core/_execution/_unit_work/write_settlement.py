@@ -35,6 +35,7 @@ from parallax.core._execution._unit_work.write_items import (
     CoalescedTemporalWrite,
     FollowingKeyedWrite,
     InsertionKeyedWrite,
+    MutationPhase,
     ObservedKeyedWrite,
     OrderedWrite,
     PendingOpening,
@@ -66,12 +67,11 @@ from parallax.core.write_plan.plan import (
     BoundRange,
     CombinedSourceAuthority,
     Openings,
-    PlannedWrites,
     SettledWrite,
     SourceAuthority,
     TemporalWriteOwnership,
+    WriteGroup,
     WritePlan,
-    eager_writes,
 )
 from parallax.core.write_plan.planned_rows import (
     WritePlanningError,
@@ -102,10 +102,10 @@ __all__ = ["WritePlanCompiler"]
 
 
 class WritePlanCompiler:
-    """The Write Planner's own compiler of ordered writes into a Write Plan
+    """The Write Planner's own compiler of mutation phases into a Write Plan
     (`m-unit-work`): it interprets each write's concurrency and its ordinary
-    or temporal semantics and audit, and assembles its steps, unit
-    boundaries, claims, and proposed effects.
+    or temporal semantics and audit, and assembles its steps, Write Groups,
+    claims, and proposed effects.
 
     Constructed once per accepted Metamodel by the planner that owns it, with
     that model, the Inheritance and Temporal facets it compiled, the
@@ -147,7 +147,7 @@ class WritePlanCompiler:
 
     def compile(
         self,
-        ordered_writes: Sequence[OrderedWrite],
+        phases: Sequence[MutationPhase],
         *,
         concurrency: Concurrency,
         actor_identity: ActorIdentity,
@@ -155,13 +155,13 @@ class WritePlanCompiler:
         ownership: TemporalWriteOwnership = NO_TEMPORAL_WRITE_OWNERSHIP,
         counts_unchanged_rows: bool = False,
     ) -> WritePlan:
-        """The whole ordered sequence as one Write Plan.
+        """Every mutation phase, in flush order, as one Write Plan.
 
         Each settled write carries the claim its surviving write settled
         against. An item the planner's earlier stages retired — folded into a
         pending insert, cancelled against one, or eliminated as a known no-op —
         never reaches this loop, and therefore no settled write carries the
-        evidence it was holding (`m-unit-work` "A successful execution unit
+        evidence it was holding (`m-unit-work` "A successful settled write
         consumes").
 
         Audit reaches every write as it settles: each row a write produces —
@@ -174,9 +174,11 @@ class WritePlanCompiler:
 
         Each ordered item settles into one settled write, which records what
         its success changes: the claim it spends, the observed state it
-        revises, and the rows it removes and opens. ``ownership`` answers which
-        current rows this attempt already opened, so a write against one of
-        them revises or removes that row instead of closing it into history.
+        revises, and the rows it removes and opens. Each settled write forms a
+        Write Group of its own, holding its steps in their settled order.
+        ``ownership`` answers which current rows this attempt already opened,
+        so a write against one of them revises or removes that row instead of
+        closing it into history.
 
         A milestone a write leaves exactly as it was — whether its source
         observed it, an insertion authorized the write, or a caller's condition
@@ -188,68 +190,55 @@ class WritePlanCompiler:
         (``counts_unchanged_rows``) can report. Without that proof the
         milestone is closed and chained as any changed one. A pending
         insertion settles with the writes its insertion authorized as the one
-        unit of new lineages they leave of its window.
+        settled write of new lineages they leave of its window.
         """
-        pending: list[PlannedStep] = []
-        units: list[SettledWrite] = []
-        count = 0
+        groups: list[WriteGroup] = []
         audit = AuditDecoration(self._audit, actor_identity, transaction_instant, self._settled)
-        for item in ordered_writes:
-            advances = 0
-            if isinstance(item, FollowingKeyedWrite):
-                advances = item.advances
-                item = item.write
-            shape = self._carrier_shape(item)
-            if isinstance(item, PendingOpening):
-                assert isinstance(shape, Bitemporal)  # only a Bitemporal opening is composed
-                steps, unit = self._opening(
-                    item,
-                    shape,
-                    concurrency,
-                    transaction_instant,
-                    ownership,
-                    audit,
-                    start=count,
-                    guards=counts_unchanged_rows,
+        for phase in phases:
+            for item in phase:
+                write, steps = self._settled_write(
+                    item, concurrency, transaction_instant, ownership, audit, counts_unchanged_rows
                 )
-                pending.extend(steps)
-                count = unit.end
-                units.append(unit)
-                continue
-            if isinstance(shape, TransactionTimeOnly | Bitemporal):
-                assert not isinstance(item, PreparedKeyedWrite | PreparedPredicateWrite)
-                steps, unit = self._range(
-                    item,
-                    shape,
-                    concurrency,
-                    transaction_instant,
-                    ownership,
-                    audit,
-                    start=count,
-                    guards=counts_unchanged_rows,
-                )
-                pending.extend(steps)
-                count = unit.end
-                units.append(unit)
-                continue
-            assert not isinstance(item, CoalescedTemporalWrite)
-            settled, claim, own_state = self._settle_keyed(
-                item, concurrency, transaction_instant, shape, audit, advances
+                groups.append(WriteGroup((write,), steps))
+        return WritePlan(tuple(groups))
+
+    def _settled_write(
+        self,
+        item: OrderedWrite,
+        concurrency: Concurrency,
+        transaction_instant: TransactionInstant,
+        ownership: TemporalWriteOwnership,
+        audit: AuditDecoration,
+        guards: bool,
+    ) -> tuple[SettledWrite, tuple[PlannedStep, ...]]:
+        """``item`` settled: the settled write it becomes and the steps it
+        planned, in order."""
+        advances = 0
+        if isinstance(item, FollowingKeyedWrite):
+            advances = item.advances
+            item = item.write
+        shape = self._carrier_shape(item)
+        if isinstance(item, PendingOpening):
+            assert isinstance(shape, Bitemporal)  # only a Bitemporal opening is composed
+            return self._opening(
+                item, shape, concurrency, transaction_instant, ownership, audit, guards=guards
             )
-            pending.extend(settled.steps)
-            count += len(settled.steps)
-            units.append(
-                SettledWrite(
-                    end=count,
-                    claim=claim,
-                    changed=(
-                        settled.changed if own_state is None else (*settled.changed, own_state)
-                    ),
-                    removed=settled.removed,
-                    opened=settled.opened,
-                )
+        if isinstance(shape, TransactionTimeOnly | Bitemporal):
+            assert not isinstance(item, PreparedKeyedWrite | PreparedPredicateWrite)
+            return self._range(
+                item, shape, concurrency, transaction_instant, ownership, audit, guards=guards
             )
-        return WritePlan(steps=eager_writes(pending), units=tuple(units))
+        assert not isinstance(item, CoalescedTemporalWrite)
+        settled, claim, own_state = self._settle_keyed(
+            item, concurrency, transaction_instant, shape, audit, advances
+        )
+        write = SettledWrite(
+            claim=claim,
+            changed=settled.changed if own_state is None else (*settled.changed, own_state),
+            removed=settled.removed,
+            opened=settled.opened,
+        )
+        return write, settled.steps
 
     def _carrier_shape(self, item: OrderedWrite) -> TemporalShape | None:
         """The Temporal Shape of a buffered carrier's target, read once at
@@ -278,7 +267,7 @@ class WritePlanCompiler:
         advances: int = 0,
     ) -> tuple[BoundRange, SourceAuthority | None, VersionedObjectStateKey | None]:
         """One ordered keyed write's settled steps and effects, beside the
-        claim its unit spends and the state its carrier itself names as
+        claim its settled write spends and the state its carrier itself names as
         changed. ``advances`` is how many versions earlier writes of its scope
         a barrier kept before it advance the row past the state that scope
         names.
@@ -288,7 +277,7 @@ class WritePlanCompiler:
         if isinstance(item, PreparedPredicateWrite):
             view = entity_view(self._families, item.selection.target)
             return (
-                BoundRange(steps=eager_writes((_readless_step(item, view, audit),))),
+                BoundRange(steps=(_readless_step(item, view, audit),)),
                 None,
                 None,
             )
@@ -379,7 +368,7 @@ class WritePlanCompiler:
         changed = _changes(source)
         if instruction.mutation == "insert":
             return BoundRange(
-                steps=eager_writes((self._settle_insert(facts, instruction, audit),)),
+                steps=(self._settle_insert(facts, instruction, audit),),
                 changed=changed,
             )
         addressed = self._addressed_facts(facts, concurrency, conditioned=conditioned)
@@ -413,7 +402,7 @@ class WritePlanCompiler:
                 ),
             ),
         )
-        return BoundRange(steps=eager_writes((step,)), changed=changed)
+        return BoundRange(steps=(step,), changed=changed)
 
     def _range(
         self,
@@ -424,12 +413,11 @@ class WritePlanCompiler:
         ownership: TemporalWriteOwnership,
         audit: AuditDecoration,
         *,
-        start: int,
         guards: bool,
-    ) -> tuple[PlannedWrites, SettledWrite]:
+    ) -> tuple[SettledWrite, tuple[PlannedStep, ...]]:
         """``item`` settled as a range over its temporal object's coverage: the
-        steps it binds now and the unit they form from ``start``, or no step
-        and the unit carrying the deferred range execution binds.
+        settled write with the steps it binds now, or the settled write
+        carrying the deferred range execution binds, with no step.
 
         A lone observed write enters as the carrier it was buffered in, so one
         that lies inside the predecessor it observed binds that predecessor at
@@ -460,10 +448,8 @@ class WritePlanCompiler:
         )
         claim = range_claims(item)
         if isinstance(ranged, DeferredTemporalRange):
-            return PlannedWrites(), SettledWrite(end=start, claim=claim, deferred=ranged)
-        steps = ranged.steps
-        return steps, SettledWrite(
-            end=start + len(steps),
+            return SettledWrite(claim=claim, deferred=ranged), ()
+        write = SettledWrite(
             claim=claim,
             changed=ranged.changed,
             removed=ranged.removed,
@@ -471,6 +457,7 @@ class WritePlanCompiler:
             derived=ranged.derived,
             concludes=ranged.concludes,
         )
+        return write, ranged.steps
 
     def _settle_insert(
         self, facts: NonTemporalFacts, instruction: PreparedKeyedWrite, audit: AuditDecoration
@@ -580,7 +567,7 @@ class WritePlanCompiler:
             ),
         )
         return BoundRange(
-            steps=eager_writes(inserts),
+            steps=inserts,
             changed=_changes(source),
             opened=Openings(
                 continued=openings(facts, inserts),
@@ -597,11 +584,10 @@ class WritePlanCompiler:
         ownership: TemporalWriteOwnership,
         audit: AuditDecoration,
         *,
-        start: int,
         guards: bool,
-    ) -> tuple[PlannedWrites, SettledWrite]:
+    ) -> tuple[SettledWrite, tuple[PlannedStep, ...]]:
         """A pending Bitemporal insertion and the writes it authorized since,
-        settled as the one unit of new lineages they leave of its window,
+        settled as the one settled write of new lineages they leave of its window,
         together with any stored coverage a replacement it authorized reaches
         past that window (:func:`~parallax.core._execution._unit_work.ranges.settle_opening`):
         bound now, or deferred until execution reads that coverage."""
@@ -623,15 +609,14 @@ class WritePlanCompiler:
             guards=guards,
         )
         if isinstance(ranged, DeferredTemporalRange):
-            return PlannedWrites(), SettledWrite(end=start, deferred=ranged)
-        steps = ranged.steps
-        return steps, SettledWrite(
-            end=start + len(steps),
+            return SettledWrite(deferred=ranged), ()
+        write = SettledWrite(
             changed=ranged.changed,
             removed=ranged.removed,
             opened=ranged.opened,
             derived=ranged.derived,
         )
+        return write, ranged.steps
 
     def _observed_version(
         self,
@@ -684,7 +669,7 @@ def _unobserved_close(entity: EntityMetadata, mutation: str) -> WritePlanningErr
 
 
 def _target_claim(item: TargetKeyedWrite) -> SourceAuthority | None:
-    """What a caller-conditioned write's unit spends: the observations of the
+    """What a caller-conditioned settled write spends: the observations of the
     observed writes composed into it, if any."""
     retained = item.retained_observations
     if not retained:

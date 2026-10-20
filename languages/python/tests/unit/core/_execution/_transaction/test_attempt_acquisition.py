@@ -333,10 +333,10 @@ def test_a_coverage_read_is_a_read_call_of_the_flush_reaching_its_range() -> Non
     ]
 
 
-def test_each_deferred_range_reads_its_coverage_only_once_the_unit_before_it_ran() -> None:
-    # Two Optimistic caller-addressed writes are two deferred units of one flush:
-    # each reads its coverage at its own turn, so the second unit's read follows
-    # the first unit's statements rather than being prepared alongside them.
+def test_each_deferred_range_reads_its_coverage_only_once_the_write_before_it_ran() -> None:
+    # Two Optimistic caller-addressed writes are two deferred settled writes of one flush:
+    # each reads its coverage at its own turn, so the second settled write's read follows
+    # the first settled write's statements rather than being prepared alongside them.
     recorder = RecordingLifecycleProvider()
 
     def stored(key: int) -> MappingRow:

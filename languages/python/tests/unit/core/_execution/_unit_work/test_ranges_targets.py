@@ -2,7 +2,7 @@
 *Caller-addressed writes span their requested extent*), driven through range
 binding without a database: the caller's start, a replacement's extent,
 destruction, disjoint operations under one transform, and what a range after an
-ordering barrier binds to once earlier units of its flush have run."""
+ordering barrier binds to once earlier settled writes of its flush have run."""
 
 from __future__ import annotations
 
@@ -60,7 +60,7 @@ from parallax.core.write_plan.steps import (
 )
 from parallax.core.write_plan.steps import INFINITY as OPEN_END
 from tests._support.clock_probes import instant_at
-from tests._support.planner_probes import TEST_ACTOR_IDENTITY, admitted_writes
+from tests._support.planner_probes import TEST_ACTOR_IDENTITY, admitted_writes, settled_writes
 from tests.unit.core._execution._unit_work._acquired_rows_support import bind_held, coverage_read
 from tests.unit.core._execution._unit_work._ownership_support import OpenedRows
 from tests.unit.core._execution._unit_work._temporal_targets_support import (
@@ -93,7 +93,7 @@ from tests.unit.core._execution._unit_work._temporal_targets_support import (
 # --------------------------------------------------------------------------- #
 # Binding: the caller's start, replacement extent, and destruction.            #
 # --------------------------------------------------------------------------- #
-def _deferred_unit(
+def _deferred_write(
     *writes: AdmittedWrite, concurrency: str = "optimistic", guards: bool = False
 ) -> SettledWrite:
     plan = build_write_planner(POSITION).finalize(
@@ -105,25 +105,25 @@ def _deferred_unit(
             counts_unchanged_rows=guards,
         )
     )
-    (unit,) = plan.units
-    assert unit.deferred is not None
-    return unit
+    (write,) = settled_writes(plan)
+    assert write.deferred is not None
+    return write
 
 
 def _bound(
-    unit: SettledWrite,
+    settled: SettledWrite,
     rows: Sequence[PredecessorRow],
     *,
     ownership: TemporalWriteOwnership = NO_TEMPORAL_WRITE_OWNERSHIP,
 ) -> BoundRange:
-    """``unit``'s deferred range bound, as the unit of work binds it at
+    """``settled write``'s deferred range bound, as the unit of work binds it at
     execution, to a coverage read finding ``rows`` under ``ownership``."""
-    return bind_held(POSITION, unit, rows, transaction_instant=_instant(), ownership=ownership)
+    return bind_held(POSITION, settled, rows, transaction_instant=_instant(), ownership=ownership)
 
 
-def _coverage(unit: SettledWrite) -> CoverageReadRequest:
-    """The coverage read ``unit``'s deferred range asks for."""
-    return coverage_read(POSITION, unit, transaction_instant=_instant())
+def _coverage(settled: SettledWrite) -> CoverageReadRequest:
+    """The coverage read ``settled write``'s deferred range asks for."""
+    return coverage_read(POSITION, settled, transaction_instant=_instant())
 
 
 def _instant() -> TransactionInstant:
@@ -148,9 +148,9 @@ def test_a_range_its_observations_leave_uncovered_reads_only_the_uncovered_suffi
         until=SEP,
         acctNum="O",
     )
-    unit = _deferred_unit(observed)
-    assert unit.deferred is not None
-    (window,) = _coverage(unit).terms[0].valid_time_windows
+    settled = _deferred_write(observed)
+    assert settled.deferred is not None
+    (window,) = _coverage(settled).terms[0].valid_time_windows
     assert window == TimeInterval(JUN, SEP)
     prepared = observed.instruction.valid_time_window
     assert prepared is not None
@@ -159,21 +159,21 @@ def test_a_range_its_observations_leave_uncovered_reads_only_the_uncovered_suffi
 
 def test_a_lone_target_range_reads_through_the_very_window_its_caller_prepared() -> None:
     target = addressed_write(value="150.00")
-    unit = _deferred_unit(target)
-    assert unit.deferred is not None
-    (window,) = _coverage(unit).terms[0].valid_time_windows
+    settled = _deferred_write(target)
+    assert settled.deferred is not None
+    (window,) = _coverage(settled).terms[0].valid_time_windows
     assert window is target.instruction.valid_time_window
 
 
 def test_a_target_range_reads_its_window_and_gates_its_start_on_the_callers_revision() -> None:
-    unit = _deferred_unit(addressed_write(value="150.00"))
-    assert unit.deferred is not None
-    acquisition = _coverage(unit)
+    settled = _deferred_write(addressed_write(value="150.00"))
+    assert settled.deferred is not None
+    acquisition = _coverage(settled)
     assert (acquisition.terms[0].valid_time_windows, acquisition.locking) == (
         (TimeInterval(MAR, SEP),),
         False,
     )
-    bound = _bound(unit, [START.evidence.predecessor, LATER.evidence.predecessor])  # type: ignore[union-attr]
+    bound = _bound(settled, [START.evidence.predecessor, LATER.evidence.predecessor])  # type: ignore[union-attr]
     first, second = (step for step in bound.steps if isinstance(step, PlannedClose))
     assert first.affected_rows.on_shortfall == FAILED_PRECONDITION
     assert second.affected_rows.on_shortfall != FAILED_PRECONDITION
@@ -196,9 +196,9 @@ def test_a_target_range_reads_its_window_and_gates_its_start_on_the_callers_revi
 def test_a_target_whose_start_does_not_stand_at_its_callers_revision_binds_nothing(
     coverage: list[PredecessorRow],
 ) -> None:
-    unit = _deferred_unit(addressed_write(replaces=True, acctNum="Z", value="1.00"))
+    settled = _deferred_write(addressed_write(replaces=True, acctNum="Z", value="1.00"))
     with pytest.raises(WritePreconditionError) as refused:
-        _bound(unit, coverage)
+        _bound(settled, coverage)
     assert (dict(refused.value.key), refused.value.expected) == ({"id": 1}, T0)
 
 
@@ -206,7 +206,7 @@ def test_a_replacement_fills_the_gaps_of_its_extent_once_and_a_destruction_fills
     coverage = [rectangle(JAN, MAR + dt.timedelta(days=30), "100.00")]
     coverage.append(rectangle(JUN, DEC, "200.00"))
     replaced = _bound(
-        _deferred_unit(addressed_write(replaces=True, until=None, acctNum="Z", value="9.00")),
+        _deferred_write(addressed_write(replaces=True, until=None, acctNum="Z", value="9.00")),
         coverage,
     )
     # Every replaced part and every gap holds the one complete state, so the
@@ -218,7 +218,7 @@ def test_a_replacement_fills_the_gaps_of_its_extent_once_and_a_destruction_fills
     # The destruction observed [January, June), so the flush reads only the
     # coverage from June on.
     destroyed = _bound(
-        _deferred_unit(
+        _deferred_write(
             addressed_write(replaces=True, until=None, acctNum="Z", value="9.00"),
             observed_write("terminate", START, until=None),
         ),
@@ -232,7 +232,7 @@ def test_a_replacement_fills_the_gaps_of_its_extent_once_and_a_destruction_fills
 def test_a_patch_after_a_replacement_keeps_its_extent_and_overlays_its_gaps() -> None:
     coverage = [rectangle(JAN, JUN, "100.00")]
     bound = _bound(
-        _deferred_unit(
+        _deferred_write(
             addressed_write(replaces=True, acctNum="Z", value="9.00"),
             observed_write("amendUntil", START, value="7.00"),
             addressed_write(acctNum="Y"),
@@ -252,10 +252,10 @@ def test_a_patch_after_a_replacement_keeps_its_extent_and_overlays_its_gaps() ->
 
 
 def test_a_locking_target_range_reads_its_coverage_under_the_shared_lock_ungated() -> None:
-    unit = _deferred_unit(addressed_write(value="150.00"), concurrency="locking")
-    assert unit.deferred is not None
-    assert _coverage(unit).locking
-    bound = _bound(unit, [START.evidence.predecessor])  # type: ignore[union-attr]
+    settled = _deferred_write(addressed_write(value="150.00"), concurrency="locking")
+    assert settled.deferred is not None
+    assert _coverage(settled).locking
+    bound = _bound(settled, [START.evidence.predecessor])  # type: ignore[union-attr]
     close = next(step for step in bound.steps if isinstance(step, PlannedClose))
     assert close.concurrency == UNGATED
 
@@ -267,8 +267,8 @@ _COVERAGE = [rectangle(JAN, JUN, "100.00"), rectangle(JUN, INFINITY, "200.00", t
 
 
 def test_an_equal_start_is_kept_by_a_guard_on_its_callers_revision_beside_later_changes() -> None:
-    unit = _deferred_unit(addressed_write(value="100.00"), guards=True)
-    bound = _bound(unit, _COVERAGE)
+    settled = _deferred_write(addressed_write(value="100.00"), guards=True)
+    bound = _bound(settled, _COVERAGE)
     guard, close, *_opened = bound.steps
     assert isinstance(guard, PlannedTemporalGuard)
     assert guard.concurrency.observed_start == T0
@@ -292,10 +292,10 @@ def test_an_equal_start_is_kept_by_a_guard_on_its_callers_revision_beside_later_
 def test_an_equal_start_needs_no_statement_under_locking_and_is_chained_where_unprovable(
     concurrency: str, guards: bool, kinds: list[type[object]]
 ) -> None:
-    unit = _deferred_unit(
+    settled = _deferred_write(
         addressed_write(value="100.00", until=JUN), concurrency=concurrency, guards=guards
     )
-    bound = _bound(unit, _COVERAGE[:1])
+    bound = _bound(settled, _COVERAGE[:1])
     assert [type(step) for step in bound.steps] == kinds
     if kinds:
         closing = bound.steps[0]
@@ -308,8 +308,10 @@ def test_an_equal_start_needs_no_statement_under_locking_and_is_chained_where_un
 
 def test_an_equal_replacement_keeps_what_it_holds_and_still_opens_its_gaps() -> None:
     coverage = [rectangle(JAN, APR, "100.00"), rectangle(JUN, INFINITY, "100.00", tx_start=T1)]
-    unit = _deferred_unit(addressed_write(replaces=True, acctNum="A", value="100.00"), guards=True)
-    bound = _bound(unit, coverage)
+    settled = _deferred_write(
+        addressed_write(replaces=True, acctNum="A", value="100.00"), guards=True
+    )
+    bound = _bound(settled, coverage)
     start, later, gap = bound.steps
     assert isinstance(start, PlannedTemporalGuard)
     assert start.affected_rows.on_shortfall == FAILED_PRECONDITION
@@ -326,7 +328,7 @@ def test_an_equal_target_of_a_row_the_attempt_opened_is_kept_without_a_statement
     opened = rectangle(JAN, INFINITY, "100.00", tx_start=T)
     owned = OpenedRows(frozenset({OwnedEndpoint(ENTITY, (1,), OPEN_BITEMPORAL_ENDS)}))
     bound = _bound(
-        _deferred_unit(addressed_write(value="100.00", tx_start=T), guards=True),
+        _deferred_write(addressed_write(value="100.00", tx_start=T), guards=True),
         [opened],
         ownership=owned,
     )
@@ -337,13 +339,13 @@ def test_an_equal_target_of_a_row_the_attempt_opened_is_kept_without_a_statement
 # Binding disjoint operations: one transform per original, a guard per start.  #
 # --------------------------------------------------------------------------- #
 def test_disjoint_targets_over_one_original_transform_it_once_under_one_guard() -> None:
-    unit = _deferred_unit(
+    settled = _deferred_write(
         addressed_write(valid_from=FEB, until=APR, value="150.00"),
         addressed_write(valid_from=JUN, until=AUG, value="175.00"),
     )
-    assert unit.deferred is not None
-    assert _coverage(unit).terms[0].valid_time_windows == (TimeInterval(FEB, AUG),)
-    bound = _bound(unit, [WHOLE.evidence.predecessor])  # type: ignore[union-attr]
+    assert settled.deferred is not None
+    assert _coverage(settled).terms[0].valid_time_windows == (TimeInterval(FEB, AUG),)
+    bound = _bound(settled, [WHOLE.evidence.predecessor])  # type: ignore[union-attr]
     (close,) = (step for step in bound.steps if isinstance(step, PlannedClose))
     assert close.affected_rows.on_shortfall == FAILED_PRECONDITION
     assert _windows(bound) == [
@@ -356,12 +358,12 @@ def test_disjoint_targets_over_one_original_transform_it_once_under_one_guard() 
 
 
 def test_disjoint_targets_over_distinct_originals_guard_each_start_in_authored_order() -> None:
-    unit = _deferred_unit(
+    settled = _deferred_write(
         addressed_write(valid_from=SEP, until=OCT, tx_start=T1, value="175.00"),
         addressed_write(valid_from=FEB, until=APR, value="150.00"),
     )
     later = rectangle(JUN, INFINITY, "200.00", tx_start=T1)
-    bound = _bound(unit, [START.evidence.predecessor, later])  # type: ignore[union-attr]
+    bound = _bound(settled, [START.evidence.predecessor, later])  # type: ignore[union-attr]
     closes = [step for step in bound.steps if isinstance(step, PlannedClose)]
     # The first-authored start's guard runs first, whatever its Valid Time.
     assert [close.concurrency.observed_start for close in closes] == [T1, T0]  # type: ignore[union-attr]
@@ -369,34 +371,34 @@ def test_disjoint_targets_over_distinct_originals_guard_each_start_in_authored_o
 
 
 def test_a_disjoint_operations_stale_start_fails_as_its_own_callers_precondition() -> None:
-    unit = _deferred_unit(
+    settled = _deferred_write(
         addressed_write(valid_from=FEB, until=APR, value="150.00"),
         addressed_write(valid_from=JUN, until=AUG, tx_start=T1, value="175.00"),
     )
     with pytest.raises(WritePreconditionError) as refused:
-        _bound(unit, [WHOLE.evidence.predecessor])  # type: ignore[union-attr]
+        _bound(settled, [WHOLE.evidence.predecessor])  # type: ignore[union-attr]
     assert refused.value.expected == T1
 
 
 def test_two_current_rows_at_any_operations_start_are_corruption() -> None:
-    unit = _deferred_unit(
+    settled = _deferred_write(
         addressed_write(valid_from=FEB, until=APR, value="150.00"),
         addressed_write(valid_from=JUN, until=AUG, value="175.00"),
     )
     overlapping = [rectangle(JAN, JUN, "100.00"), rectangle(MAY, DEC, "1.00", tx_start=T1)]
     overlapping.append(rectangle(JUN, SEP, "2.00", tx_start=T1))
     with pytest.raises(CardinalityCorruptionError):
-        _bound(unit, overlapping)
+        _bound(settled, overlapping)
 
 
 def test_a_replacement_fills_only_its_own_window_beside_a_disjoint_destruction() -> None:
     later = rectangle(APR, INFINITY, "200.00", tx_start=T1)
-    unit = _deferred_unit(
+    settled = _deferred_write(
         addressed_write(replaces=True, valid_from=FEB, until=JUN, acctNum="Z", value="9.00"),
         observed_write("terminateUntil", retained(later), valid_from=JUL, until=SEP),
     )
     gapped = [rectangle(JAN, MAR, "100.00"), later]
-    bound = _bound(unit, gapped)
+    bound = _bound(settled, gapped)
     assert sorted(_windows(bound), key=lambda window: window[0]) == [  # type: ignore[arg-type, return-value]
         (JAN, FEB, Decimal("100.00")),
         (FEB, JUN, Decimal("9.00")),
@@ -406,9 +408,9 @@ def test_a_replacement_fills_only_its_own_window_beside_a_disjoint_destruction()
 
 
 # --------------------------------------------------------------------------- #
-# Continuation across a barrier: what an earlier unit of the flush proved.     #
+# Continuation across a barrier: what an earlier write of the flush proved.   #
 # --------------------------------------------------------------------------- #
-def _chained_unit(
+def _chained_write(
     *writes: AdmittedWrite,
     leads: bool = False,
     follows: bool = True,
@@ -424,8 +426,8 @@ def _chained_unit(
             buffered_writes=(chained_temporal_write(composed, "id", leads=leads, follows=follows),),
         )
     )
-    (unit,) = plan.units
-    return unit
+    (write,) = settled_writes(plan)
+    return write
 
 
 def _endpoint(end: object) -> OwnedEndpoint:
@@ -433,7 +435,7 @@ def _endpoint(end: object) -> OwnedEndpoint:
     return OwnedEndpoint(ENTITY, (1,), ends)
 
 
-# What an earlier unit's patch of [February, April) left of [January, infinity).
+# What an earlier settled write's patch of [February, April) left of [January, infinity).
 _LEFT = ((JAN, FEB), (FEB, APR), (APR, INFINITY))
 
 
@@ -468,11 +470,11 @@ def _opened(start: dt.datetime, value: str = "100.00", **cells: object) -> Prede
 
 
 def test_a_following_range_reads_its_whole_window_and_discharges_a_proven_start() -> None:
-    unit = _chained_unit(addressed_write(valid_from=JUN, until=AUG, value="175.00"))
-    assert unit.deferred is not None
-    assert _coverage(unit).terms[0].valid_time_windows == (TimeInterval(JUN, AUG),)
-    bound = _bound(unit, [_opened(APR)], ownership=_proven())
-    # The start now stands at the row the earlier unit derived from the
+    settled = _chained_write(addressed_write(valid_from=JUN, until=AUG, value="175.00"))
+    assert settled.deferred is not None
+    assert _coverage(settled).terms[0].valid_time_windows == (TimeInterval(JUN, AUG),)
+    bound = _bound(settled, [_opened(APR)], ownership=_proven())
+    # The start now stands at the row the earlier settled write derived from the
     # original the caller stated; that row is the attempt's own, so it is
     # revised in place rather than closed, and nothing gates on the caller.
     assert not any(isinstance(step, PlannedClose) for step in bound.steps)
@@ -496,17 +498,17 @@ def test_a_following_range_reads_its_whole_window_and_discharges_a_proven_start(
 def test_a_following_start_no_intact_proof_carries_is_the_callers_precondition(
     ownership: OpenedRows, coverage: list[PredecessorRow]
 ) -> None:
-    unit = _chained_unit(addressed_write(valid_from=JUN, until=AUG, value="175.00"))
+    settled = _chained_write(addressed_write(valid_from=JUN, until=AUG, value="175.00"))
     with pytest.raises(WritePreconditionError) as refused:
-        _bound(unit, coverage, ownership=ownership)
+        _bound(settled, coverage, ownership=ownership)
     assert refused.value.expected == T0
 
 
-def test_a_following_observed_write_binds_to_the_values_the_earlier_unit_left() -> None:
-    unit = _chained_unit(
+def test_a_following_observed_write_binds_to_the_values_the_earlier_write_left() -> None:
+    settled = _chained_write(
         observed_write("amendUntil", WHOLE, valid_from=JUN, until=AUG, acctNum="O"),
     )
-    bound = _bound(unit, [_opened(APR, "150.00")], ownership=_proven())
+    bound = _bound(settled, [_opened(APR, "150.00")], ownership=_proven())
     opened = [
         {identity.name: value for identity, value in step.entries[0].row.attributes.items()}
         for step in bound.steps
@@ -526,60 +528,60 @@ def test_a_following_observed_write_binds_to_the_values_the_earlier_unit_left() 
 def test_a_following_observed_original_neither_standing_nor_proven_fails_as_its_own_shortfall(
     concurrency: str, error: type[Exception]
 ) -> None:
-    unit = _chained_unit(
+    settled = _chained_write(
         observed_write("amendUntil", WHOLE, valid_from=JUN, until=AUG, acctNum="O"),
         concurrency=concurrency,
     )
     with pytest.raises(error):
         _bound(
-            unit,
+            settled,
             [rectangle(APR, INFINITY, "100.00", tx_start=T1)],
             ownership=OpenedRows(frozenset()),
         )
 
 
 def test_a_following_observed_original_still_standing_binds_as_any_original() -> None:
-    unit = _chained_unit(
+    settled = _chained_write(
         observed_write("amendUntil", WHOLE, valid_from=JUN, until=AUG, acctNum="O"),
     )
-    bound = _bound(unit, [WHOLE.evidence.predecessor], ownership=OpenedRows(frozenset()))  # type: ignore[union-attr]
+    bound = _bound(settled, [WHOLE.evidence.predecessor], ownership=OpenedRows(frozenset()))  # type: ignore[union-attr]
     (close,) = (step for step in bound.steps if isinstance(step, PlannedClose))
     assert close.concurrency.observed_start == T0  # type: ignore[union-attr]
 
 
 def test_a_following_callers_precondition_outranks_a_lost_observation() -> None:
-    unit = _chained_unit(
+    settled = _chained_write(
         observed_write("amendUntil", WHOLE, valid_from=FEB, until=APR, acctNum="O"),
         addressed_write(valid_from=JUN, until=AUG, value="175.00"),
     )
     with pytest.raises(WritePreconditionError):
         _bound(
-            unit,
+            settled,
             [rectangle(JAN, INFINITY, "100.00", tx_start=T1)],
             ownership=OpenedRows(frozenset()),
         )
 
 
 def test_a_leading_range_records_what_it_derived_from_each_original() -> None:
-    unit = _chained_unit(
+    settled = _chained_write(
         addressed_write(valid_from=FEB, until=APR, value="150.00"), leads=True, follows=False
     )
-    bound = _bound(unit, [WHOLE.evidence.predecessor])  # type: ignore[union-attr]
+    bound = _bound(settled, [WHOLE.evidence.predecessor])  # type: ignore[union-attr]
     (derivation,) = bound.derived
     assert derivation.original == WHOLE.key
     assert derivation.owned is None
     assert derivation.rows == _derived(_lineage(_LEFT))
     assert derivation.valid_time_coverage == TimeInterval(JAN, INFINITY)
-    plain = _deferred_unit(addressed_write(valid_from=FEB, until=APR, value="150.00"))
+    plain = _deferred_write(addressed_write(valid_from=FEB, until=APR, value="150.00"))
     assert _bound(plain, [WHOLE.evidence.predecessor]).derived == ()  # type: ignore[union-attr]
 
 
 def test_a_following_start_untouched_at_its_stated_start_is_judged_as_usual() -> None:
     later = rectangle(JUN, INFINITY, "200.00", tx_start=T1)
-    unit = _chained_unit(
+    settled = _chained_write(
         addressed_write(valid_from=JUL, until=AUG, tx_start=T1, value="175.00"),
     )
-    bound = _bound(unit, [later], ownership=OpenedRows(frozenset()))
+    bound = _bound(settled, [later], ownership=OpenedRows(frozenset()))
     (close,) = (step for step in bound.steps if isinstance(step, PlannedClose))
     assert close.affected_rows.on_shortfall == FAILED_PRECONDITION
 
@@ -611,11 +613,11 @@ def _short_proof() -> OpenedRows:
 def test_a_following_start_whose_proof_names_another_state_is_the_callers_precondition(
     ownership: OpenedRows, tx_start: dt.datetime
 ) -> None:
-    unit = _chained_unit(
+    settled = _chained_write(
         addressed_write(valid_from=JUN, until=AUG, tx_start=tx_start, value="175.00"),
     )
     with pytest.raises(WritePreconditionError):
-        _bound(unit, [_opened(APR)], ownership=ownership)
+        _bound(settled, [_opened(APR)], ownership=ownership)
 
 
 def test_a_following_range_fails_where_another_row_derived_from_its_original_is_gone() -> None:
@@ -630,12 +632,12 @@ def test_a_following_range_fails_where_another_row_derived_from_its_original_is_
             endpoint: Descent(coverage, ((WHOLE.key, coverage),)) for endpoint, coverage in rows
         },
     )
-    unit = _chained_unit(addressed_write(valid_from=JUN, until=AUG, value="175.00"))
+    settled = _chained_write(addressed_write(valid_from=JUN, until=AUG, value="175.00"))
     # The start stands, but [July, infinity), derived from the same original
     # inside the window, does not.
     with pytest.raises(WritePreconditionError):
         _bound(
-            unit,
+            settled,
             [PredecessorRow(members={**_opened(APR).members, "validEnd": JUL})],
             ownership=ownership,
         )
@@ -644,13 +646,13 @@ def test_a_following_range_fails_where_another_row_derived_from_its_original_is_
 def test_a_leading_range_records_an_overlapped_observation_it_only_validated() -> None:
     earlier = retained(rectangle(JAN, JUN, "100.00"))
     later = retained(rectangle(MAR, INFINITY, "300.00", tx_start=T1))
-    unit = _chained_unit(
+    settled = _chained_write(
         observed_write("amendUntil", earlier, valid_from=FEB, until=APR, acctNum="E"),
         observed_write("amendUntil", later, valid_from=MAY, until=JUL, acctNum="L"),
         leads=True,
         follows=False,
     )
-    validated, transformed = _bound(unit, [later.evidence.predecessor]).derived  # type: ignore[union-attr]
+    validated, transformed = _bound(settled, [later.evidence.predecessor]).derived  # type: ignore[union-attr]
     assert (validated.original, validated.rows) == (earlier.key, ())
     assert transformed.original == later.key
 
@@ -658,12 +660,12 @@ def test_a_leading_range_records_an_overlapped_observation_it_only_validated() -
 def test_a_callers_start_is_guarded_ahead_of_an_overlapped_observation_it_validates() -> None:
     earlier = retained(rectangle(JAN, JUN, "100.00"))
     later = retained(rectangle(MAR, INFINITY, "300.00", tx_start=T1))
-    unit = _deferred_unit(
+    settled = _deferred_write(
         observed_write("amendUntil", earlier, valid_from=FEB, until=MAR, acctNum="E"),
         observed_write("amendUntil", later, valid_from=MAY, until=JUL, acctNum="L"),
         addressed_write(valid_from=SEP, until=OCT, tx_start=T1, value="1.00"),
     )
-    bound = _bound(unit, [later.evidence.predecessor])  # type: ignore[union-attr]
+    bound = _bound(settled, [later.evidence.predecessor])  # type: ignore[union-attr]
     start, validation = (step for step in bound.steps if isinstance(step, PlannedClose))
     assert start.affected_rows.on_shortfall == FAILED_PRECONDITION
     assert (start.concurrency.observed_start, validation.concurrency.observed_start) == (  # type: ignore[union-attr]
@@ -679,7 +681,7 @@ _SECOND = retained(rectangle(JUN, INFINITY, "200.00", tx_start=T1))
 
 
 def _merged() -> OpenedRows:
-    """What an earlier unit left after amending START [January, June) at T0
+    """What an earlier settled write left after amending START [January, June) at T0
     and _SECOND [June, infinity) at T1 from March until September into one
     merged row over [March, September)."""
     head, merged, tail = _endpoint(MAR), _endpoint(SEP), _endpoint(INFINITY)
@@ -730,10 +732,10 @@ _MERGED_ROW = rectangle(MAR, SEP, "150.00", tx_start=T)
 def test_a_follower_reaches_a_merged_row_through_the_original_whose_part_holds_its_start(
     valid_from: dt.datetime, until: dt.datetime, tx_start: dt.datetime
 ) -> None:
-    unit = _chained_unit(
+    settled = _chained_write(
         addressed_write(valid_from=valid_from, until=until, tx_start=tx_start, value="175.00")
     )
-    bound = _bound(unit, [_MERGED_ROW], ownership=_merged())
+    bound = _bound(settled, [_MERGED_ROW], ownership=_merged())
     # The merged row is the attempt's own and is revised in place, gated on
     # nothing the caller stated.
     assert not any(isinstance(step, PlannedClose) for step in bound.steps)
@@ -751,22 +753,22 @@ def test_one_originals_proof_never_stands_for_another_merged_into_the_same_row(
     # Both originals share the merged row's address, but the caller's start lies
     # in the part the other original contributed, whose revision it did not
     # state.
-    unit = _chained_unit(
+    settled = _chained_write(
         addressed_write(valid_from=valid_from, until=until, tx_start=tx_start, value="175.00")
     )
     with pytest.raises(WritePreconditionError):
-        _bound(unit, [_MERGED_ROW], ownership=_merged())
+        _bound(settled, [_MERGED_ROW], ownership=_merged())
 
 
 def test_a_follower_fails_where_its_original_lost_a_row_though_its_merged_row_stands() -> None:
     # The second original's tail [September, infinity) is gone; its merged
     # part alone does not prove a start the caller states there.
-    unit = _chained_unit(
+    settled = _chained_write(
         addressed_write(valid_from=JUL, until=OCT, tx_start=T1, value="175.00"),
     )
     with pytest.raises(WritePreconditionError):
         _bound(
-            unit,
+            settled,
             [_MERGED_ROW, rectangle(SEP, INFINITY, "200.00", tx_start=T1)],
             ownership=_merged(),
         )
@@ -790,8 +792,8 @@ def test_a_start_in_a_merged_part_no_original_contributed_is_the_callers_precond
             merged: Descent(TimeInterval(MAR, SEP), ((START.key, TimeInterval(MAR, JUN)),)),
         },
     )
-    unit = _chained_unit(
+    settled = _chained_write(
         addressed_write(valid_from=JUL, until=AUG, tx_start=T0, value="175.00"),
     )
     with pytest.raises(WritePreconditionError):
-        _bound(unit, [_MERGED_ROW], ownership=ownership)
+        _bound(settled, [_MERGED_ROW], ownership=ownership)

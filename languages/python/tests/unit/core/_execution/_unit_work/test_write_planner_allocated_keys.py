@@ -29,7 +29,7 @@ from parallax.core.write_plan.steps import (
 )
 from tests._support.clock_probes import instant_at
 from tests._support.lowering_probes import lowered_steps
-from tests._support.planner_probes import TEST_ACTOR_IDENTITY
+from tests._support.planner_probes import TEST_ACTOR_IDENTITY, plan_steps, settled_writes
 
 _NAMESPACE = "allocated.planner"
 _MAR, _JUN = (dt.datetime(2024, month, 1, tzinfo=dt.UTC) for month in (3, 6))
@@ -90,10 +90,12 @@ def test_a_temporal_insert_answers_the_key_the_database_allocates(
     entity: type[Entity], bounds: dict[str, dt.datetime], ends: tuple[TemporalUpperBound, ...]
 ) -> None:
     plan = _plan(entity, **bounds)
-    (unit,) = plan.units
-    assert unit.opened.allocated == (AllocatedOpening(entity.identity, ends),)
-    assert tuple(unit.opened.continued) == ()
-    ((step, statement),) = lowered_steps(plan.steps, LayoutPayloadPreparer(_META), _META, POSTGRES)
+    (write,) = settled_writes(plan)
+    assert write.opened.allocated == (AllocatedOpening(entity.identity, ends),)
+    assert tuple(write.opened.continued) == ()
+    ((step, statement),) = lowered_steps(
+        plan_steps(plan), LayoutPayloadPreparer(_META), _META, POSTGRES
+    )
     assert isinstance(step, PlannedInsert)
     assert RETURNED_MAX_PLUS_ONE in step.entries[0].row.attributes.values()
     assert statement.sql.endswith(" returning id")
@@ -101,7 +103,9 @@ def test_a_temporal_insert_answers_the_key_the_database_allocates(
 
 def test_a_non_temporal_insert_records_no_allocated_row_and_answers_nothing() -> None:
     plan = _plan(Plain)
-    (unit,) = plan.units
-    assert unit.opened.allocated == ()
-    ((_step, statement),) = lowered_steps(plan.steps, LayoutPayloadPreparer(_META), _META, POSTGRES)
+    (write,) = settled_writes(plan)
+    assert write.opened.allocated == ()
+    ((_step, statement),) = lowered_steps(
+        plan_steps(plan), LayoutPayloadPreparer(_META), _META, POSTGRES
+    )
     assert "returning" not in statement.sql

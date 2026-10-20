@@ -27,7 +27,7 @@ The interface and its result vocabulary are `m-write-plan`'s; this module
 implements them. Preparation is pure and runs when something needs its result:
 a statement about to be lowered, or a comparison that needs complete state. A
 narrow update demands its assignments alone and never a complete row or its
-predecessor. Nothing prepares a whole plan, a later execution unit, or every row
+predecessor. Nothing prepares a whole plan, a later Write Group, or every row
 of a packed run in advance, and repeating a demand without
 retained backing may prepare again rather than consult a cache.
 
