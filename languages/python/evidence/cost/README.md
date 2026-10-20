@@ -9,7 +9,7 @@ owns what belongs in Git and how future runs are stored.
 
 | Capture | Role | Producing commit | Captured |
 |---|---|---|---|
-| [current](current/portfolio.json) | Current verification input and memory-gate basis | `581c5475be67a4b62711a3d2af73b218dacef8bb` | 2026-10-20 |
+| [current](current/portfolio.json) | Current verification input and memory-gate basis | `90ff69ccbe4e4334b9c1f07adb35d67f42886947` | 2026-10-20 |
 | [structural-metadata-before](structural-metadata-before/portfolio.json) | Fixed recovery reference | `b7abe2d055fd3e0974829616f2de99b94ad5af97` | 2026-09-16 |
 | [structural-metadata-after](structural-metadata-after/portfolio.json) | Fixed regression comparison base | `1636e9f0ce072dce25ddd1ebeabd0b1368b65031` | 2026-09-17 |
 
@@ -39,32 +39,39 @@ its producing commit is a branch commit, and its `main` counterpart is the
 rebase merge's rewrite of the same change. Because the producing commit is not
 an ancestor of `main`, `--redigest` cannot re-state this capture.
 
-The current collector completed on 2026-10-20, 12:00:20–12:53:12 UTC, in
-52m52s wall time. It ran on a Mac17,4 (Apple M5, 10 cores, 32 GiB), macOS
+The current collector completed on 2026-10-20, 19:14:27–20:13:55 UTC, in
+59m28s wall time. It ran on a Mac17,4 (Apple M5, 10 cores, 32 GiB), macOS
 27.0.1 build 26A434, with CPython 3.13.16 and 3.14.8 and PostgreSQL 18.6.
 [Conditions](current/conditions.json) record interpreter identities and instrument
 source hashes; [durations](current/durations.json) record collection telemetry.
 The dependency lock SHA-256 is
 `bc4f54c3d6fbf5268d3a324ecb0409c2bcf2e0b0d0920f3ec0a7e0f1c4494557`.
 The portfolio SHA-256 is
-`45a112d27d109c37cf906cee2230b8df60275804b97d56d4206361bf89cd44ad`.
+`1a8897eac9f7b7ea742832fe77d810c3c8005608245eeab48e95165832fce01d`.
 
-No competing tests, measurements, or agents ran, and the OrbStack VM was
-restarted immediately before collection. The run does not establish whether
-backup workers were paused. It is not evidence of quiet-machine timing
-stability. The historical bases used macOS 26.6.2 and CPython 3.13.15/3.14.7
-on the same machine, so current-versus-base timings cross host and interpreter
-conditions as well as implementation changes.
+No competing tests or measurements ran, but other interactive sessions and
+system indexing were active: the one-minute load average reached 5.7 in the
+first 15 minutes and stayed between 1.9 and 3.4 afterward. The OrbStack VM was not restarted, and the host moved
+from AC to battery power 13 minutes in, with Low Power Mode off. The run is not
+evidence of quiet-machine timing stability. The historical bases used macOS
+26.6.2 and CPython 3.13.15/3.14.7 on the same machine, so current-versus-base
+timings cross host and interpreter conditions as well as implementation
+changes.
 
-Against the superseded `bc9add4be` capture, taken under the same host,
-interpreters, and Budget Contract but an earlier dependency lock, no memory
-reading rose past its former gate and every gate address was kept. The write
-lowering member no longer measures predicate acquisition or flush, and its
-measured models no longer declare the entities only those workloads wrote:
-model preparation retains and allocates about 23 KiB (5%) less, and leaf-type
-readings moved within noise. Typed unchanged Transaction-Time writes allocate
-16–17% fewer transient bytes per row, and target replacements and Wire target
-patches retain 64 B/row less. These span `bc9add4be..581c5475b` and are not
+Against the superseded `581c5475b` capture, taken under the same host,
+interpreters, lock, and Budget Contract, no memory reading rose past its former
+gate and every gate address was kept. Write lowering adds the `cross-object-flush`
+window and its 12 gates. Keyed single-write windows allocate 416–576 B/row fewer
+transient bytes, because Write Groups own plain step tuples in place of step
+segments, offsets, and borrowed views. Transaction-Time target writes are the
+exception at 72–80 B/row more (0.4%): their high-water falls inside deferred
+binding, before any bound step exists, while the plan's singleton Write Group
+is held. Retained bytes did not move, and Snapshot memory moved within noise.
+Snapshot's advisory Budget Contract timing outcomes went from 2 to 16 outside,
+all live or first-result cells. No read path changed, and a same-condition
+diagnostic of the superseded tree reproduced the slower `versioned-document`
+timings, so these are attributed to run conditions. The cross-object family
+took 1m49s of the collection. These span `581c5475b..90ff69ccb` and are not
 attributed to individual commits.
 
 ## Method and interpretation
