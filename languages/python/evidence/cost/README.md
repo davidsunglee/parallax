@@ -9,7 +9,7 @@ owns what belongs in Git and how future runs are stored.
 
 | Capture | Role | Producing commit | Captured |
 |---|---|---|---|
-| [current](current/portfolio.json) | Current verification input and memory-gate basis | `bc9add4bea1bc740b60ed4e28bc3413e186f8f17` | 2026-10-19 |
+| [current](current/portfolio.json) | Current verification input and memory-gate basis | `581c5475be67a4b62711a3d2af73b218dacef8bb` | 2026-10-20 |
 | [structural-metadata-before](structural-metadata-before/portfolio.json) | Fixed recovery reference | `b7abe2d055fd3e0974829616f2de99b94ad5af97` | 2026-09-16 |
 | [structural-metadata-after](structural-metadata-after/portfolio.json) | Fixed regression comparison base | `1636e9f0ce072dce25ddd1ebeabd0b1368b65031` | 2026-09-17 |
 
@@ -27,23 +27,27 @@ other members have their own protocols and are non-authoritative.
 The recorded commit is the fact of what was captured. Verifying an envelope
 reconstructs its embedded Budget Contract and checks internal consistency
 without resolving that commit; the ancestry advisory alone consults Git history.
-Rebase and squash merges rewrite branch commits, so capture at a commit already
-on `main` and land the evidence on top of it. This is an integrity check of
-reviewed evidence, not an attestation that the observations cannot be forged.
+This is an integrity check of reviewed evidence, not an attestation that the
+observations cannot be forged.
 
-The current collector completed on 2026-10-19, 11:59:25–12:58:45 UTC, in
-59m19s wall time. It ran on a Mac17,4 (Apple M5, 10 cores, 32 GiB), macOS
+Rebase and squash merges rewrite branch commits. Prefer capturing at a commit
+already on `main` and landing the evidence on top of it, which keeps
+`--redigest` available. Capture on the branch instead when the change makes the
+committed capture stale, so `python-check-evidence` stays green through the
+merge. The current capture was taken on its change's branch for that reason:
+its producing commit is a branch commit, and its `main` counterpart is the
+rebase merge's rewrite of the same change. Because the producing commit is not
+an ancestor of `main`, `--redigest` cannot re-state this capture.
+
+The current collector completed on 2026-10-20, 12:00:20–12:53:12 UTC, in
+52m52s wall time. It ran on a Mac17,4 (Apple M5, 10 cores, 32 GiB), macOS
 27.0.1 build 26A434, with CPython 3.13.16 and 3.14.8 and PostgreSQL 18.6.
 [Conditions](current/conditions.json) record interpreter identities and instrument
 source hashes; [durations](current/durations.json) record collection telemetry.
 The dependency lock SHA-256 is
-`ba94b858fe8d97e5b38e66362623f67e2e6634515530972af4459e0dcee51334`.
-The collected portfolio SHA-256 was
-`2131a987df9a18e2c359ee45f0810ed2d3de681f4032b4e8d8fa75683e07f1fd`. Its
-workload digest was later re-stated under the measured-content digest
-definition, as the adjustment in its conditions records, giving the current
-portfolio SHA-256
-`91f4d016b75056ea14911308e61b5ee603f6b7fa60c293e97a5e01df50a759eb`.
+`bc4f54c3d6fbf5268d3a324ecb0409c2bcf2e0b0d0920f3ec0a7e0f1c4494557`.
+The portfolio SHA-256 is
+`45a112d27d109c37cf906cee2230b8df60275804b97d56d4206361bf89cd44ad`.
 
 No competing tests, measurements, or agents ran, and the OrbStack VM was
 restarted immediately before collection. The run does not establish whether
@@ -52,13 +56,16 @@ stability. The historical bases used macOS 26.6.2 and CPython 3.13.15/3.14.7
 on the same machine, so current-versus-base timings cross host and interpreter
 conditions as well as implementation changes.
 
-Against the superseded `d125a6595` capture, taken under the same host,
-interpreters, lock, and Budget Contract, no memory reading rose past its former
-gate and every gate address was kept. Keyed target writes retain 152 B/row
-less and opening and geometry writes 64 B/row less; read-plan compilation
-retains 1.1–1.6 KiB more on the guarded controls, and typed cold-plan peaks in
-the feature-boundary member rose 5–12%. These span `5b37f3099..bc9add4be` and
-are not attributed to individual commits.
+Against the superseded `bc9add4be` capture, taken under the same host,
+interpreters, and Budget Contract but an earlier dependency lock, no memory
+reading rose past its former gate and every gate address was kept. The write
+lowering member no longer measures predicate acquisition or flush, and its
+measured models no longer declare the entities only those workloads wrote:
+model preparation retains and allocates about 23 KiB (5%) less, and leaf-type
+readings moved within noise. Typed unchanged Transaction-Time writes allocate
+16–17% fewer transient bytes per row, and target replacements and Wire target
+patches retain 64 B/row less. These span `bc9add4be..581c5475b` and are not
+attributed to individual commits.
 
 ## Method and interpretation
 
@@ -111,10 +118,9 @@ Window boundaries matter. Keyed writes include the public verb through commit,
 production bind adaptation, and driver serialization, but exclude the preceding
 read and caller-authored inputs. Target writes include their own coverage read,
 so their delta against observed writes cannot price target addressing alone.
-Predicate acquisition stops with the group buffered; predicate flush adds the
-provider-free flush but excludes driver serialization. Positional materialization
-starts after root execution and stops at a finished Page, before publication;
-deferred Document leaves are therefore not decoded in that window. Read-plan
+Positional materialization starts after root execution and stops at a finished
+Page, before publication; deferred Document leaves are therefore not decoded in
+that window. Read-plan
 compilation prices one entry in an otherwise empty cache, excluding the cache
 shell and model preparation; it says nothing about eviction or mixed-query reuse.
 Json-leaf payload size and malformed-read evidence volume are not measured
