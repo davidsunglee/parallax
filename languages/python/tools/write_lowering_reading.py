@@ -4,31 +4,23 @@ This script is imported only by its gated suite. Report execution starts it in a
 child interpreter, where it drives one case through the production seams of its
 window and answers with one JSON line.
 
-Five windows are read. A keyed-write case reads its row inside one
+Three windows are read. A keyed-write case reads its row inside one
 transaction and runs from the public keyed verb until ``transact`` returns:
 preparation, buffering, and the pre-commit flush's settlement, SQL lowering,
 production bind adaptation, and psycopg's own document serialization. A
 caller-addressed target reads nothing before its verb, so its own coverage read
-at flush falls inside that window. A
-predicate-acquisition case runs one
-public bounded ``tx.wire.amend_where`` from the caller's documents through
-preparation and production acquisition over freshly composed resolving rows to a
-buffered Materialized Write Group, and stops before any flush. A predicate-flush
-case runs the same verb on through the pre-commit flush, which reads each batch
-of selected objects' later coverage, settles, lowers, and binds it, until
-``transact`` returns; its retained checkpoint is the first write naming the
-last selected object. A public insert
-case runs one ``tx.wire.insert`` of a nested, polymorphic payload inside an open
-transaction to the frozen node it answers, and stops before the commit that
-flushes the row. The model-preparation cases each run one complete model
-preparation: the structural write model, and the table-per-hierarchy family
-whose variant spelling that preparation derives.
+at flush falls inside that window. A public insert case runs one
+``tx.wire.insert`` of a nested, polymorphic payload inside an open transaction
+to the frozen node it answers, and stops before the commit that flushes the
+row. The model-preparation cases each run one complete model preparation: the
+structural write model, and the table-per-hierarchy family whose variant
+spelling that preparation derives.
 
 Elapsed time and the high-water mark are read over uninterrupted runs of the
 whole window. The retained checkpoint is read separately, at the production
 stage each window names — what the verb kept of its buffered write beyond the
-read it revises, the group buffered, the node answered with its row buffered,
-the model prepared — so sampling never prolongs a lifetime inside a timed run.
+read it revises, the node answered with its row buffered, the model prepared —
+so sampling never prolongs a lifetime inside a timed run.
 """
 
 from __future__ import annotations
@@ -60,22 +52,16 @@ from parallax.snapshot import ScopedDatabase
 WORKSPACE: Final = Path(__file__).resolve().parents[1]
 INSTRUMENT_MODULE: Final = WORKSPACE / "tests" / "unit" / "memory_instruments.py"
 SUPPORT_MODULE: Final = WORKSPACE / "tests" / "unit" / "_write_lowering_support.py"
-ACQUISITION_MODULE: Final = WORKSPACE / "tests" / "unit" / "_predicate_acquisition_support.py"
-FLUSH_MODULE: Final = WORKSPACE / "tests" / "unit" / "_predicate_flush_support.py"
 sys.path.insert(0, str(WORKSPACE))
 
 # `sys.path` gains the workspace above, so these imports cannot precede it; that is
 # what the E402 suppression each one carries records.
-from tests.unit import _predicate_acquisition_support as acquisition_support  # noqa: E402
-from tests.unit import _predicate_flush_support as flush_support  # noqa: E402
 from tests.unit import _write_lowering_support as lowering_support  # noqa: E402
 from tests.unit import memory_instruments  # noqa: E402
 
 for module, expected in (
     (memory_instruments, INSTRUMENT_MODULE),
     (lowering_support, SUPPORT_MODULE),
-    (acquisition_support, ACQUISITION_MODULE),
-    (flush_support, FLUSH_MODULE),
 ):
     if Path(module.__file__ or "").resolve() != expected:
         raise ImportError(f"this reading requires {expected}, but resolved {module.__file__}")
@@ -89,17 +75,9 @@ from tests.unit.memory_instruments import (  # noqa: E402
     untraced,
 )
 
-type Window = Literal[
-    "keyed-write",
-    "predicate-acquisition",
-    "predicate-flush",
-    "wire-insert-response",
-    "model-preparation",
-]
+type Window = Literal["keyed-write", "wire-insert-response", "model-preparation"]
 
 KEYED_WINDOW: Final[Window] = "keyed-write"
-ACQUISITION_WINDOW: Final[Window] = "predicate-acquisition"
-FLUSH_WINDOW: Final[Window] = "predicate-flush"
 RESPONSE_WINDOW: Final[Window] = "wire-insert-response"
 MODEL_WINDOW: Final[Window] = "model-preparation"
 MODEL_CASE: Final = "model.prepared"
@@ -128,12 +106,9 @@ replaced subtree, and an unchanged successor returns neither."""
 
 WINDOWS: Final[Mapping[str, Window]] = {
     **{case.name: KEYED_WINDOW for case in lowering_support.CASES},
-    **{case.name: ACQUISITION_WINDOW for case in acquisition_support.CASES},
-    **{case.name: ACQUISITION_WINDOW for case in acquisition_support.LEAF_CASES},
     **{case.name: RESPONSE_WINDOW for case in lowering_support.RESPONSE_CASES},
     MODEL_CASE: MODEL_WINDOW,
     MODEL_FAMILY_CASE: MODEL_WINDOW,
-    **{case.name: FLUSH_WINDOW for case in flush_support.CASES},
 }
 CASE_NAMES: Final = tuple(WINDOWS)
 MODEL_CLASSES: Final[Mapping[str, tuple[type[Entity], ...]]] = {
@@ -247,43 +222,6 @@ def _keyed_driver(case: lowering_support.Case, handle: ScopedDatabase) -> Driver
     return Driver(1, run, marked, checkpoint, _kept_by_the_verb)
 
 
-def _acquisition_driver(case: acquisition_support.Case, handle: ScopedDatabase) -> Driver:
-    def run() -> None:
-        acquisition_support.acquire(handle, case)
-
-    def marked(opened: Sampler, closed: Sampler) -> None:
-        acquisition_support.acquire(handle, case, opened=opened, closed=closed)
-
-    def checkpoint(sample: Sampler) -> None:
-        acquisition_support.acquire(handle, case, closed=sample)
-
-    return Driver(case.rows, run, marked, checkpoint)
-
-
-def _flush_driver(
-    case: flush_support.Case, handle: ScopedDatabase, port: flush_support.FlushPort
-) -> Driver:
-    """A predicate flush's runs. Its window ends when ``transact`` returns, and
-    its checkpoint samples at the first write naming the last selected object,
-    when every batch before that object's has executed."""
-
-    def run() -> None:
-        flush_support.flush(handle, case)
-
-    def marked(opened: Sampler, closed: Sampler) -> None:
-        flush_support.flush(handle, case, opened=opened)
-        closed()
-
-    def checkpoint(sample: Sampler) -> None:
-        port.reached = sample
-        try:
-            flush_support.flush(handle, case)
-        finally:
-            port.reached = None
-
-    return Driver(case.units, run, marked, checkpoint)
-
-
 def _response_driver(case: lowering_support.ResponseCase, handle: ScopedDatabase) -> Driver:
     def run() -> None:
         lowering_support.insert_response(handle, case)
@@ -325,16 +263,6 @@ def driver_for(name: str) -> Generator[Driver]:
         keyed = lowering_support.case_named(name)
         with lowering_support.database(keyed) as handle:
             yield _keyed_driver(keyed, handle)
-        return
-    if window == ACQUISITION_WINDOW:
-        case = acquisition_support.case_named(name)
-        with acquisition_support.database(case) as handle:
-            yield _acquisition_driver(case, handle)
-        return
-    if window == FLUSH_WINDOW:
-        flushed = flush_support.case_named(name)
-        with flush_support.database(flushed) as (handle, port):
-            yield _flush_driver(flushed, handle, port)
         return
     if window == RESPONSE_WINDOW:
         response = lowering_support.response_case_named(name)

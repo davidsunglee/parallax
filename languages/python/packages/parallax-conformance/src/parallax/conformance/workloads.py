@@ -27,10 +27,8 @@ from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.wire._json import dump_document
 
 __all__ = [
-    "ACQUISITION_LEVELS",
     "ANCESTOR_LEVEL_IDS",
     "GEOMETRY_LEVELS",
-    "LEAF_ACQUISITION_LEVEL_IDS",
     "LEAF_CONTROL_TYPE_ID",
     "LEAF_TYPE_IDS",
     "LEAF_TYPE_LEVEL_ID",
@@ -38,13 +36,11 @@ __all__ = [
     "PLAN_LEVEL_IDS",
     "READ_GEOMETRY_ROOTS",
     "STRUCTURAL_LAYOUTS",
-    "AcquisitionLevel",
     "GeometryLevel",
     "ScriptedRows",
     "Workload",
     "ancestor_levels",
     "catalog",
-    "leaf_acquisition_levels",
     "leaf_type_digest",
     "leaf_type_level",
     "leaf_type_runtimes",
@@ -91,18 +87,6 @@ class GeometryLevel:
             raise ValueError(f"{self.id}: populated leaves cannot exceed the declared width")
 
 
-@dataclass(frozen=True, slots=True)
-class AcquisitionLevel:
-    """One frozen row count a predicate-acquisition family resolves."""
-
-    id: str
-    rows: int
-
-    def __post_init__(self) -> None:
-        if self.rows < 1:
-            raise ValueError(f"{self.id}: an acquisition level resolves at least one row")
-
-
 GEOMETRY_LEVELS: Final[tuple[GeometryLevel, ...]] = (
     GeometryLevel("depth-1", "depth", depth=1, many=2, width=4, populated=4),
     GeometryLevel("depth-4", "depth", depth=4, many=2, width=4, populated=4),
@@ -116,13 +100,6 @@ GEOMETRY_LEVELS: Final[tuple[GeometryLevel, ...]] = (
 )
 """Every geometry level, varying one dimension at a time from the shallow
 ``depth-1`` baseline: depth 1, two Many elements, four leaves, all populated."""
-
-ACQUISITION_LEVELS: Final[tuple[AcquisitionLevel, ...]] = (
-    AcquisitionLevel("rows-8", 8),
-    AcquisitionLevel("rows-32", 32),
-    AcquisitionLevel("rows-128", 128),
-)
-"""Every row count the two predicate-acquisition families resolve."""
 
 ANCESTOR_LEVEL_IDS: Final[tuple[str, ...]] = ("depth-1", "width-16", "width-64", "sparse-64")
 """The geometry levels a changed-successor write is measured at as well as an
@@ -158,7 +135,6 @@ def structural_digest() -> str:
         "geometry": [asdict(level) for level in GEOMETRY_LEVELS],
         "ancestor": list(ANCESTOR_LEVEL_IDS),
         "plan": list(PLAN_LEVEL_IDS),
-        "acquisition": [asdict(level) for level in ACQUISITION_LEVELS],
     }
     return hashlib.sha256(json.dumps(manifest, sort_keys=True).encode("utf-8")).hexdigest()
 
@@ -187,9 +163,6 @@ LEAF_TYPE_LEVEL_ID: Final = "width-64"
 """The geometry level every leaf type is measured at: one root occurrence and
 its Many elements, every declared leaf of the measured type and populated."""
 
-LEAF_ACQUISITION_LEVEL_IDS: Final[tuple[str, ...]] = ("rows-8",)
-"""The acquisition row counts the leaf-type predicate acquisition resolves."""
-
 LEAF_TYPE_RUNTIMES: Final = 1
 """How many supported CPython minors, newest first, the leaf-type families are
 measured on; every other family is measured on every supported minor."""
@@ -198,12 +171,6 @@ measured on; every other family is measured on every supported minor."""
 def leaf_type_level() -> GeometryLevel:
     """The geometry level the leaf-type families measure."""
     return next(level for level in GEOMETRY_LEVELS if level.id == LEAF_TYPE_LEVEL_ID)
-
-
-def leaf_acquisition_levels() -> tuple[AcquisitionLevel, ...]:
-    """Every acquisition level the leaf-type predicate acquisition resolves."""
-    by_id = {level.id: level for level in ACQUISITION_LEVELS}
-    return tuple(by_id[level_id] for level_id in LEAF_ACQUISITION_LEVEL_IDS)
 
 
 def leaf_type_runtimes(supported: Sequence[str]) -> tuple[str, ...]:
@@ -219,7 +186,6 @@ def leaf_type_digest() -> str:
         "types": list(LEAF_TYPE_IDS),
         "control": LEAF_CONTROL_TYPE_ID,
         "level": asdict(leaf_type_level()),
-        "acquisition": [asdict(level) for level in leaf_acquisition_levels()],
         "newestRuntimes": LEAF_TYPE_RUNTIMES,
     }
     return hashlib.sha256(json.dumps(manifest, sort_keys=True).encode("utf-8")).hexdigest()

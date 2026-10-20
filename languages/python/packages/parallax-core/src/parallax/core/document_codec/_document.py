@@ -732,9 +732,9 @@ def apply_prepared_patches(
     return cast("FrozenMap[str, object]", _adopt_document_builder(current))
 
 
-# Strings and object members are compared inline in the per-node loop the
-# predicate-flush window's merging rows time; a helper per node would add a call
-# to every one.
+# Strings and object members are compared inline in the per-node loop that judges
+# whether adjacent temporal rows merge; a helper per node would add a call to
+# every one.
 def persisted_document_equal(left: object, right: object) -> bool:  # noqa: C901
     """Whether two stored documents hold the same persisted content.
 

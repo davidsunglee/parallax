@@ -30,8 +30,8 @@ from parallax.core.write_plan import (
 from parallax.core.write_plan.columns import (
     _CHUNK_SIZE,  # pyright: ignore[reportPrivateUsage] - bounded-chunking regression only
 )
+from tests.unit import _milestone_rows_support as milestone_rows
 from tests.unit._document_layout_support import PERSON, document_model
-from tests.unit.core import _milestone_rows_support as milestone_rows
 
 _PERSON = LayoutCatalog(document_model()).entity(PERSON)
 
@@ -109,7 +109,7 @@ def test_predecessor_rows_read_an_axis_start_by_its_selection_position() -> None
 
 
 _LAYOUTS = pytest.mark.parametrize(
-    "entity", milestone_rows.LAYOUT_ENTITIES, ids=milestone_rows.LAYOUT_IDS
+    "entity", milestone_rows.ENTITY_CLASSES, ids=milestone_rows.LAYOUTS
 )
 _JAN, _MAR, _APR, _JUN = (dt.datetime(2026, month, 1, tzinfo=dt.UTC) for month in (1, 3, 4, 6))
 

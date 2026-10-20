@@ -243,7 +243,6 @@ MEMBER_SOURCES: Final[Mapping[str, MemberSources]] = {
         ),
         (
             "tests/unit/_write_lowering_support.py",
-            "tests/unit/_predicate_acquisition_support.py",
             "tests/unit/_structural_geometry_support.py",
             "tests/unit/_leaf_type_support.py",
             "tests/unit/_workload_spelling_support.py",
@@ -549,7 +548,7 @@ def validate_write_lowering_matrix(
         raise ValueError("write-lowering evidence declares no comparisons")
     for address, reading_document in readings.items():
         _runtime, case, cell = address
-        window = write_report.WINDOWS[case]
+        window = write_report.ENVELOPE_WINDOWS[case]
         if reading_document.get("window") != window:
             raise ValueError(f"{_spelled(address)} reading window is not {window!r}")
         expected_unit = (

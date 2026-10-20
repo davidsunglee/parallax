@@ -87,10 +87,10 @@ from parallax.core.write_plan.keys import TemporalObjectStateKey
 from parallax.core.write_plan.steps import ChangedFrom, PlannedUpdate
 from tests._support.clock_probes import CountingClock, inert_instant
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY, admitted_writes
+from tests.unit import _milestone_rows_support as milestone_rows
 from tests.unit._corpus_identity_support import corpus_entity
 from tests.unit._gc_reachability import reachable_objects
 from tests.unit._temporal_group_support import temporal_group
-from tests.unit.core import _milestone_rows_support as milestone_rows
 from tests.unit.core._execution._unit_work._acquired_rows_support import HeldRows, prepared_group
 from tests.unit.core._execution._unit_work._audit_support import RecordingAudit
 from tests.unit.core._execution._unit_work._ownership_support import OpenedRows
@@ -107,7 +107,7 @@ _JAN, _MAR = (dt.datetime(2026, month, 1, tzinfo=dt.UTC) for month in (1, 3))
 # --------------------------------------------------------------------------- #
 # Group evidence: the states a group selected, and its versioned columns.      #
 # --------------------------------------------------------------------------- #
-@pytest.mark.parametrize("entity", milestone_rows.LAYOUT_ENTITIES, ids=milestone_rows.LAYOUT_IDS)
+@pytest.mark.parametrize("entity", milestone_rows.ENTITY_CLASSES, ids=milestone_rows.LAYOUTS)
 def test_a_groups_state_keys_read_no_axis_end(
     monkeypatch: pytest.MonkeyPatch, entity: type[Entity]
 ) -> None:

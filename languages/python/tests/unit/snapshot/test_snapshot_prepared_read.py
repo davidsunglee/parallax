@@ -90,7 +90,7 @@ from parallax.descriptor._records import ValueObject as DescriptorValueObject
 from parallax.snapshot._publication._root import RootView
 from parallax.snapshot._publication._root_publication import publication_issue, publish_roots
 from tests._support.sql import compile_read
-from tests.unit import _predicate_acquisition_support as acquisition
+from tests.unit import _milestone_rows_support as milestone_rows
 from tests.unit._corpus_model_support import formed, target
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._document_layout_support import columns_model
@@ -911,16 +911,16 @@ def test_rows_share_a_logical_node_only_where_key_and_axis_starts_agree() -> Non
 # --------------------------------------------------------------------------- #
 # Valid-Time coverage: read on demand from the Page or the judged state.        #
 # --------------------------------------------------------------------------- #
-_ACQUISITION: Final = model_of(acquisition.MODEL)
+_MILESTONES: Final = model_of(milestone_rows.MODEL)
 _VALID_UNTIL: Final = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
-_ACQUISITION_LAYOUTS: Final = pytest.mark.parametrize(
-    "entity", ["AcquisitionColumns", "AcquisitionDocument"], ids=["columns", "document"]
+_MILESTONE_LAYOUTS: Final = pytest.mark.parametrize(
+    "entity", ["MilestoneColumns", "MilestoneDocument"], ids=["columns", "document"]
 )
 
 
 def _milestone(entity: str, **bounds: object) -> dict[str, object]:
-    """One stored milestone of an acquisition Entity, current on Transaction
-    Time and open on Valid Time unless ``bounds`` say otherwise."""
+    """One stored milestone of ``entity``, current on Transaction Time and open
+    on Valid Time unless ``bounds`` say otherwise."""
     members: dict[str, object] = {
         "title": "Ada",
         "address": {"city": "Oslo", "geo": {"country": "NO"}},
@@ -928,7 +928,7 @@ def _milestone(entity: str, **bounds: object) -> dict[str, object]:
     }
     stored = {"from_z": _VALID_FROM, "thru_z": INFINITY, "in_z": _OPENED, "out_z": INFINITY}
     stored |= bounds
-    if entity == "AcquisitionDocument":
+    if entity == "MilestoneDocument":
         return {"id": 1, **stored, "payload": PresentDocument(cast("DocumentValue", members))}
     return {
         "id": 1,
@@ -941,13 +941,13 @@ def _milestone(entity: str, **bounds: object) -> dict[str, object]:
 
 def _milestone_page(entity: str, row: Mapping[str, object]) -> tuple[Page, int, Bitemporal]:
     builder = PageBuilder(ViewSchema.of())
-    index, *_ = bound_read(_ACQUISITION, entity).convert_row(row, builder, source=ROOT_LEVEL)
-    shape = temporal_view(_ACQUISITION).shape(target(_ACQUISITION, entity).identity)
+    index, *_ = bound_read(_MILESTONES, entity).convert_row(row, builder, source=ROOT_LEVEL)
+    shape = temporal_view(_MILESTONES).shape(target(_MILESTONES, entity).identity)
     assert isinstance(shape, Bitemporal)
     return builder.finish((index,), Pin()), index, shape
 
 
-@_ACQUISITION_LAYOUTS
+@_MILESTONE_LAYOUTS
 @pytest.mark.parametrize("valid_end", [_VALID_UNTIL, INFINITY], ids=["finite", "open"])
 def test_a_milestone_covers_its_stored_valid_time_cells_on_the_page_and_its_state(
     entity: str, valid_end: object
@@ -965,7 +965,7 @@ def test_a_milestone_covers_its_stored_valid_time_cells_on_the_page_and_its_stat
         assert coverage.end is valid_end
 
 
-@_ACQUISITION_LAYOUTS
+@_MILESTONE_LAYOUTS
 @pytest.mark.parametrize(
     "stored",
     [pytest.param("not-an-instant", id="malformed"), pytest.param(None, id="null")],
@@ -982,7 +982,7 @@ def test_a_rejected_valid_time_end_has_no_coverage_on_either_carrier(
         valid_time_coverage(shape, RootView(page), 0)
 
 
-@_ACQUISITION_LAYOUTS
+@_MILESTONE_LAYOUTS
 def test_a_null_valid_time_start_has_no_coverage_on_the_page(entity: str) -> None:
     page, index, shape = _milestone_page(entity, _milestone(entity, from_z=None))
 
@@ -990,7 +990,7 @@ def test_a_null_valid_time_start_has_no_coverage_on_the_page(entity: str) -> Non
         valid_time_coverage(shape, page_rows(page), index)
 
 
-@_ACQUISITION_LAYOUTS
+@_MILESTONE_LAYOUTS
 def test_coverage_outlives_its_page_rows_without_holding_or_caching_them(entity: str) -> None:
     page, index, shape = _milestone_page(entity, _milestone(entity, thru_z=_VALID_UNTIL))
     rows = page_rows(page)

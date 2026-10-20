@@ -592,7 +592,7 @@ def test_snapshot_matrix_validation_requires_every_scaling_arm() -> None:
         (
             _drop_a_runtime,
             "reading matrix is not exact under any one case coverage and counter vocabulary; "
-            "against the before leaf types cases and current counters: missing CPython",
+            "against the legacy cases and current counters: missing CPython",
         ),
         (_add_comparison, "declares no comparisons"),
     ],
@@ -797,7 +797,7 @@ def test_compare_pairs_every_unchanged_address_across_the_counter_rename() -> No
     keyed_cases = [
         case
         for case in write_report.LEGACY_CASE_NAMES
-        if write_report.WINDOWS[case] == write_report.KEYED_WINDOW
+        if write_report.ENVELOPE_WINDOWS[case] == write_report.KEYED_WINDOW
     ]
     unmatched = len(keyed_cases) * len(supported_minors())
     missing_on_head = [line for line in lines if line.endswith("| missing on head |")]
@@ -1393,33 +1393,25 @@ def _without_leaf_types(snapshot: dict[str, Any]) -> None:
     readings[:] = [r for r in readings if not str(r["workload"]).startswith("leaf-")]
 
 
-def _without_flush_cases(write: dict[str, Any]) -> None:
-    readings = cast("list[dict[str, Any]]", write["readings"])
-    readings[:] = [r for r in readings if r["workload"] not in write_report.FLUSH_CASE_NAMES]
-
-
-def _without_target_cases(write: dict[str, Any]) -> None:
-    _without_flush_cases(write)
-    readings = cast("list[dict[str, Any]]", write["readings"])
-    readings[:] = [r for r in readings if r["workload"] not in write_report.TARGET_CASE_NAMES]
-
-
-def _without_leaf_type_cases(write: dict[str, Any]) -> None:
-    _without_target_cases(write)
-    readings = cast("list[dict[str, Any]]", write["readings"])
-    readings[:] = [r for r in readings if r["workload"] not in write_report.LEAF_TYPE_CASE_NAMES]
-
-
 def _without_controls(snapshot: dict[str, Any]) -> None:
     _without_leaf_types(snapshot)
     readings = cast("list[dict[str, Any]]", snapshot["readings"])
     readings[:] = [r for r in readings if not str(r["workload"]).startswith("control-")]
 
 
-def _without_control_cases(write: dict[str, Any]) -> None:
-    _without_leaf_type_cases(write)
+def _to_legacy_cases(write: dict[str, Any]) -> None:
     readings = cast("list[dict[str, Any]]", write["readings"])
-    readings[:] = [r for r in readings if r["workload"] not in write_report.CONTROL_CASE_NAMES]
+    keyed = [
+        r
+        for r in readings
+        if r["workload"] == write_report.LEGACY_CASE_NAMES[0] and r["cell"] in write_report.METRICS
+    ]
+    readings[:] = [r for r in readings if r["workload"] in write_report.LEGACY_CASE_NAMES]
+    readings.extend(
+        {**deepcopy(reading), "workload": case, "window": window}
+        for case, window in write_report.RETIRED_WINDOWS.items()
+        for reading in keyed
+    )
 
 
 def _with_instance_state(document: dict[str, Any], contract: BudgetContract) -> dict[str, Any]:
@@ -1445,30 +1437,13 @@ def _without_instance_head_only(document: dict[str, Any]) -> None:
     ]
 
 
-def test_a_capture_without_the_predicate_flush_verifies_but_cannot_be_required_current(
+def test_a_capture_under_the_legacy_write_cases_verifies_but_cannot_be_required_current(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     contract = BudgetContract.load()
     monkeypatch.setattr(cost_report, "is_published", _published)
     document = _verifiable(contract)
-    _without_flush_cases(_write_of(document))
-    assert verify(document) == []
-    (write_failure,) = verify(document, required=[write_report.SUBJECT])
-    assert write_failure.startswith(
-        "the write-lowering envelope is invalid: write-lowering reading matrix is not exact "
-        "under any one case coverage and counter vocabulary; against the current cases and "
-        "current counters: missing CPython"
-    )
-    assert write_report.FLUSH_CASE_NAMES[0] in write_failure
-
-
-def test_a_capture_without_the_target_writes_verifies_but_cannot_be_required_current(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    contract = BudgetContract.load()
-    monkeypatch.setattr(cost_report, "is_published", _published)
-    document = _verifiable(contract)
-    _without_target_cases(_write_of(document))
+    _to_legacy_cases(_write_of(document))
     assert verify(document) == []
     assert verify(document, required=["snapshot-delivery"]) == []
     (write_failure,) = verify(document, required=[write_report.SUBJECT])
@@ -1477,9 +1452,9 @@ def test_a_capture_without_the_target_writes_verifies_but_cannot_be_required_cur
         "under any one case coverage and counter vocabulary; against the current cases and "
         "current counters: missing CPython"
     )
-    assert write_report.TARGET_CASE_NAMES[0] in write_failure
+    assert next(iter(write_report.RETIRED_WINDOWS)) in write_failure
     readings = cast("list[dict[str, Any]]", _write_of(document)["readings"])
-    keyed = next(r for r in readings if r["workload"] == write_report.BEFORE_TARGET_CASE_NAMES[0])
+    keyed = next(r for r in readings if r["workload"] == write_report.LEGACY_CASE_NAMES[0])
     readings.append({**deepcopy(keyed), "workload": write_report.TARGET_CASE_NAMES[0]})
     (mixed,) = verify(document)
     assert "write-lowering reading matrix is not exact" in mixed
@@ -1492,7 +1467,6 @@ def test_a_capture_without_the_leaf_types_verifies_but_cannot_be_required_curren
     monkeypatch.setattr(cost_report, "is_published", _published)
     document = _verifiable(contract)
     _without_leaf_types(_snapshot_of(document))
-    _without_leaf_type_cases(_write_of(document))
     assert verify(document) == []
     (snapshot_failure,) = verify(document, required=["snapshot-delivery"])
     assert snapshot_failure.startswith(
@@ -1500,13 +1474,6 @@ def test_a_capture_without_the_leaf_types_verifies_but_cannot_be_required_curren
         "missing CPython"
     )
     assert "leaf-" in snapshot_failure
-    (write_failure,) = verify(document, required=[write_report.SUBJECT])
-    assert write_failure.startswith(
-        "the write-lowering envelope is invalid: write-lowering reading matrix is not exact "
-        "under any one case coverage and counter vocabulary; against the current cases and "
-        "current counters: missing CPython"
-    )
-    assert write_report.LEAF_TYPE_CASE_NAMES[0] in write_failure
     _without_controls(_snapshot_of(document))
     readings = cast("list[dict[str, Any]]", _snapshot_of(document)["readings"])
     readings.append(
@@ -1549,7 +1516,6 @@ def test_a_capture_without_the_control_group_verifies_but_cannot_be_required_cur
     document = _verifiable(contract)
     assert verify(document, required=["snapshot-delivery", write_report.SUBJECT]) == []
     _without_controls(_snapshot_of(document))
-    _without_control_cases(_write_of(document))
     assert verify(document) == []
     (snapshot_failure,) = verify(document, required=["snapshot-delivery"])
     assert snapshot_failure.startswith(
@@ -1557,13 +1523,6 @@ def test_a_capture_without_the_control_group_verifies_but_cannot_be_required_cur
         "missing CPython"
     )
     assert "control-" in snapshot_failure
-    (write_failure,) = verify(document, required=[write_report.SUBJECT])
-    assert write_failure.startswith(
-        "the write-lowering envelope is invalid: write-lowering reading matrix is not exact "
-        "under any one case coverage and counter vocabulary; against the current cases and "
-        "current counters: missing CPython"
-    )
-    assert write_report.MODEL_FAMILY_CASE in write_failure
 
 
 def test_requiring_instance_state_holds_it_to_its_owners_complete_matrix(

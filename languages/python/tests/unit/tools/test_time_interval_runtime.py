@@ -56,7 +56,6 @@ def test_writes_are_preparation_inclusive_only_and_reads_measure_both_modes() ->
             modes.setdefault(cell.flow, set()).add(cell.mode)
     assert modes == {
         "source-keyed": {"preparation-inclusive"},
-        "predicate": {"preparation-inclusive"},
         "target-patch": {"preparation-inclusive"},
         "target-replace": {"preparation-inclusive"},
         "read-eager": {"preparation-inclusive", "reused-execution"},
@@ -79,7 +78,7 @@ def test_every_shared_algorithm_is_measured_at_every_size() -> None:
     ("arguments", "reason"),
     [
         (["--flow", "target-patch", "--interface", "typed"], "Typed target-patch"),
-        (["--flow", "predicate", "--mode", "reused-execution"], "prepares its instruction"),
+        (["--flow", "target-replace", "--mode", "reused-execution"], "prepares its instruction"),
         (["--flow", "source-keyed", "--size", "8"], "takes no --size"),
         (["--algorithm", "removal-window", "--size", "16"], "no cell of size 16"),
         (["--algorithm", "removal-window", "--layout", "columns"], "only --size"),

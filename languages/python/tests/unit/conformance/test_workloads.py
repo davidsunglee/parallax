@@ -10,20 +10,16 @@ from parallax.conformance import case_format, workloads
 from parallax.conformance.budget import BudgetContract
 from parallax.conformance.story_models import ACCOUNT_MODEL, ORDERS_MODEL, Order
 from parallax.conformance.workloads import (
-    ACQUISITION_LEVELS,
     ANCESTOR_LEVEL_IDS,
     GEOMETRY_LEVELS,
-    LEAF_ACQUISITION_LEVEL_IDS,
     LEAF_CONTROL_TYPE_ID,
     LEAF_TYPE_IDS,
     LEAF_TYPE_LEVEL_ID,
     LEAF_TYPE_RUNTIMES,
-    AcquisitionLevel,
     GeometryLevel,
     Workload,
     ancestor_levels,
     catalog,
-    leaf_acquisition_levels,
     leaf_type_digest,
     leaf_type_level,
     leaf_type_runtimes,
@@ -218,9 +214,6 @@ def test_structural_families_vary_one_dimension_from_a_shallow_baseline() -> Non
         }
         assert len(varied) <= 1, level
         assert level.populated == level.width or level.family == "sparsity", level
-    assert [level.rows for level in ACQUISITION_LEVELS] == sorted(
-        {level.rows for level in ACQUISITION_LEVELS}
-    )
     assert {level.family for level in GEOMETRY_LEVELS} == {"depth", "many", "width", "sparsity"}
 
 
@@ -229,8 +222,6 @@ def test_structural_levels_refuse_impossible_geometry() -> None:
         GeometryLevel("bad", "depth", depth=0, many=0, width=1, populated=1)
     with pytest.raises(ValueError, match="cannot exceed the declared width"):
         GeometryLevel("bad", "width", depth=1, many=0, width=2, populated=3)
-    with pytest.raises(ValueError, match="at least one row"):
-        AcquisitionLevel("bad", 0)
 
 
 def test_the_changed_ancestor_levels_name_geometries_that_vary_only_in_width() -> None:
@@ -266,8 +257,6 @@ def test_the_leaf_types_are_measured_at_one_frozen_level_against_their_control()
     level = leaf_type_level()
     assert level.id == LEAF_TYPE_LEVEL_ID
     assert (level.depth, level.populated) == (1, level.width)
-    assert [level.id for level in leaf_acquisition_levels()] == list(LEAF_ACQUISITION_LEVEL_IDS)
-    assert set(leaf_acquisition_levels()) <= set(ACQUISITION_LEVELS)
 
 
 def test_the_leaf_types_are_measured_on_the_newest_supported_minor_alone() -> None:
@@ -282,7 +271,6 @@ def test_the_leaf_types_are_measured_on_the_newest_supported_minor_alone() -> No
         ("LEAF_TYPE_IDS", ("float64", "float32")),
         ("LEAF_CONTROL_TYPE_ID", "bytes"),
         ("LEAF_TYPE_LEVEL_ID", "width-16"),
-        ("LEAF_ACQUISITION_LEVEL_IDS", ("rows-32",)),
         ("LEAF_TYPE_RUNTIMES", 2),
     ],
 )

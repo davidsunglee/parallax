@@ -17,11 +17,11 @@ from parallax.conformance.budget import (
     BudgetContract,
     MemoryGate,
     MemoryGates,
+    ScalingDomain,
     derive_memory_gates,
     memory_ceiling,
     reading_bytes,
 )
-from parallax.conformance.workloads import ACQUISITION_LEVELS
 
 AFTER_PORTFOLIO = Path("languages/python/evidence/cost/structural-metadata-after/portfolio.json")
 
@@ -158,7 +158,7 @@ def test_every_memory_gate_is_the_basis_reading_under_the_stated_rule() -> None:
     assert gates.document() == derive_memory_gates(portfolio, gates.headroom)
     basis = _basis_addresses(portfolio)
     assert set(gates.addresses) == set(basis)
-    assert len(gates.addresses) == len(set(gates.addresses)) == 370
+    assert len(gates.addresses) == len(set(gates.addresses)) == 310
     for gate in gates.gates:
         assert gate.unit == basis[(gate.subject, gate.workload, gate.cell)]
         assert gate.max_bytes > 0
@@ -197,7 +197,7 @@ def test_the_derivation_is_indifferent_to_the_counter_vocabulary() -> None:
     assert counters == 2 * 46 * 2
     derived = derive_memory_gates(renamed_portfolio, 1.10)
     assert derived == derive_memory_gates(after, 1.10)
-    assert sum(len(cells) for workloads in derived.values() for cells in workloads.values()) == 154
+    assert sum(len(cells) for workloads in derived.values() for cells in workloads.values()) == 142
 
 
 def test_the_derivation_rule_is_the_largest_runtime_reading_scaled_and_rounded_up() -> None:
@@ -291,27 +291,18 @@ def test_the_advisory_allowances_beside_the_gates_are_the_reports_own() -> None:
     }
 
 
-@pytest.mark.usefixtures("committed_cost_evidence")
-def test_the_scaling_domains_order_the_acquisition_levels_per_layout() -> None:
-    gates = MemoryGates.load()
-    assert [domain.name for domain in gates.scaling] == [
-        "acquisition.columns",
-        "acquisition.document",
-    ]
-    for domain in gates.scaling:
-        layout = domain.name.removeprefix("acquisition.")
-        assert domain.subject == "write-lowering"
-        assert domain.ordered == tuple(
-            f"acquisition.{level.id}.{layout}" for level in ACQUISITION_LEVELS
-        )
-        assert domain.non_increasing == ("retainedBytes", "transientBytes")
-        for workload in domain.ordered:
-            for cell in domain.non_increasing:
-                assert gates.gate(domain.subject, workload, cell).unit == "B/row"
-    assert gates.subject_gates("write-lowering")
-    assert gates.workload_gates("snapshot-delivery", "plan-depth-1")
+def test_a_scaling_domain_loads_its_order_and_its_non_increasing_cells(tmp_path: Path) -> None:
+    document = (
+        "schemaVersion: 1\nbasis: {portfolio: p, headroom: 1.1}\nadvisory: {}\n"
+        "gates: {s: {w1: {c: {unit: B/row, maxBytes: 2}}, w2: {c: {unit: B/row, maxBytes: 1}}}}\n"
+        "scaling: {d: {subject: s, ordered: [w1, w2], nonIncreasing: [c]}}\n"
+    )
+    gates = MemoryGates.from_bytes(tmp_path / "memory-gates.yaml", document.encode("utf-8"))
+    assert gates.scaling == (ScalingDomain("d", "s", ("w1", "w2"), ("c",)),)
+    assert [gate.workload for gate in gates.subject_gates("s")] == ["w1", "w2"]
+    assert gates.workload_gates("s", "w2") == (MemoryGate("s", "w2", "c", "B/row", 1),)
     with pytest.raises(KeyError, match="no memory gate"):
-        gates.gate("write-lowering", "unknown", "retainedBytes")
+        gates.gate("s", "unknown", "c")
 
 
 @pytest.mark.parametrize(
