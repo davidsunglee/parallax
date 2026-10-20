@@ -346,7 +346,6 @@ def test_a_grouped_statements_failure_leaves_the_attempt_rollback_only(
 
 
 def _ledgers(profile_run: Any, provider: RecordingLifecycleProvider) -> ScopedDatabase:
-    """Ledgers 1 to 3 at 100, refusing any later row that stores 150."""
     db = _database(profile_run, provider)
 
     def seed(tx: TxnContext) -> None:
