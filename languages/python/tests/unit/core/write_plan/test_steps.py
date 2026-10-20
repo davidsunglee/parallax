@@ -71,7 +71,6 @@ from parallax.core.write_plan.steps import (
     WriteRow,
     WriteTarget,
     adopt_planned_row,
-    assignments_added,
     shortfall_for,
 )
 from tests.unit._corpus_model_support import model as corpus_model
@@ -596,22 +595,3 @@ def test_a_write_row_executes_only_members_it_holds() -> None:
     for absent in (_VERSION, ValueObjectIdentity(_ACCOUNT, ("billing",))):
         with pytest.raises(ValueError, match="an executed member is one its Write Row holds"):
             WriteRow(row=row, origin=NEW_LINEAGE, executed=(absent,))
-
-
-def test_what_a_hook_added_is_the_assignments_it_makes_beyond_the_stated_ones() -> None:
-    stated = PlannedAssignments(attributes={_OWNER: "Ada"})
-    final = PlannedAssignments(
-        attributes={**stated.attributes, _VERSION: 2}, value_objects={_ADDRESS: None}
-    )
-
-    added = assignments_added(stated, final)
-
-    assert added is not None
-    assert (dict(added.attributes), dict(added.value_objects)) == (
-        {_VERSION: 2},
-        {_ADDRESS: None},
-    )
-    assert assignments_added(None, final) is final
-    assert assignments_added(stated, stated) is None
-    assert assignments_added(stated, None) is None
-    assert assignments_added(stated, PlannedAssignments(attributes={_OWNER: "Ada"})) is None

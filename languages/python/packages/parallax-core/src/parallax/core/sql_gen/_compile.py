@@ -111,8 +111,8 @@ __all__ = [
 ]
 
 # The read's consumption lane (m-sql *Read projection*, *Result form*): a
-# ``row``-form read (the values lane) projects scalars only by default, with an
-# explicit materializing-write override for required documents; an ``instance``-form
+# ``row``-form read (the values lane) projects scalars only by default, with a
+# row-acquisition read's widening for required documents; an ``instance``-form
 # read (the object lane — a find / snapshot / deep-fetch whose rows materialize
 # into instances) additionally projects the value-object document columns (slot 4).
 # PRIVATE: `compile_read`'s ``result_form`` keyword and its semantics are part of
@@ -188,8 +188,8 @@ class CompiledRead:
     can carry, in Position Layout order — the scalar/document provenance a
     materializing caller needs, carried here so no consumer re-projects a family
     superset of its own. It is a property of the POSITION, not of the result form
-    or the layout: a default row-form read projects no document column, while the
-    explicit materializing-write widening lane projects the documents it needs.
+    or the layout: a default row-form read projects no document column, while a
+    row-acquisition read that widens its projection projects the documents it needs.
     An occurrence is just as much a member when the layout stores it inside a
     shared Structured Column rather than in one of its own. Raw ordinal access is
     the metadata-preserving contract for Page and write consumers.

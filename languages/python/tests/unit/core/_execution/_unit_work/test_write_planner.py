@@ -12,8 +12,7 @@ never a private stage function: same-transaction coalescing (insert-then-update
 in place per temporal flavor; insert-then-delete cancellation), dependency
 ordering over the descriptor graph and the readless-predicate-write barriers
 that partition it, empty-change-set elision, batching (`m-batch-write`),
-Materialized Write Group settlement, optimistic-mode gates, and temporal
-in-place adjacency.
+optimistic-mode gates, and temporal in-place adjacency.
 """
 
 from __future__ import annotations
@@ -32,7 +31,6 @@ from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work import keys as keys_module
 from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedWrite,
-    PreparedPredicateWrite,
     derive_keyed_write,
     prepare_typed_write,
 )
@@ -61,13 +59,10 @@ from parallax.core.unit_work import (
     BufferItem,
     Concurrency,
     KeyedWriteInstruction,
-    MaterializedWriteGroup,
-    PredicateMutation,
     PredicateSelection,
     PredicateWriteInstruction,
     RetainedObservation,
     TransactionInstant,
-    VersionedEvidenceBuilder,
     WriteAssignment,
     WritePlanningRequest,
     object_key,
@@ -215,53 +210,6 @@ def _observed(
 
 def _claimed(write: KeyedWriteInstruction) -> ObjectClaimedWrite:
     return ObjectClaimedWrite(_prepared_keyed(write, _WALLET), RecordingSource())
-
-
-def _version_group(
-    entity: str,
-    mutation: PredicateMutation,
-    key_name: str,
-    rows: Sequence[tuple[object, int]],
-    assignments: Sequence[WriteAssignment] = (),
-    model: Metamodel | None = None,
-) -> MaterializedWriteGroup:
-    """A minimal Materialized Write Group for planner-seam tests.
-
-    ``rows`` is ``(key value, observed version)`` per resolved row; every row
-    shares ``assignments`` uniformly, the real shape a materializing predicate
-    write settles to (`m-unit-work` "Materialized Write Groups") — a
-    Materialized Write Group carries no per-row assigned value, only per-row
-    key and observation columns.
-    """
-    del key_name
-    evidence = VersionedEvidenceBuilder(key_position=0, version_position=1)
-    for key_value, version in rows:
-        evidence.append((key_value, version))
-    sealed = evidence.seal()
-    assert sealed is not None
-    predicate = PredicateWriteInstruction(
-        mutation,
-        PredicateSelection(
-            entity,
-            predicate_algebra.Comparison(
-                "lessThan", predicate_algebra.FieldSubject(f"{entity}.balance"), "1000000.00"
-            ),
-        ),
-        assignments=tuple(
-            WriteAssignment(
-                assignment.attr,
-                Decimal(str(assignment.value))
-                if assignment.attr.endswith(".balance") and isinstance(assignment.value, float)
-                else assignment.value,
-            )
-            for assignment in assignments
-        ),
-    )
-    prepared = prepare_typed_write(
-        predicate, model if model is not None else (_WALLET if entity == "Wallet" else _ACCOUNT)
-    )
-    assert isinstance(prepared, PreparedPredicateWrite)
-    return MaterializedWriteGroup(mutation=prepared, evidence=sealed)
 
 
 def _shape(plan: WritePlan) -> list[tuple[str, str]]:
@@ -1117,21 +1065,6 @@ def test_an_observation_on_an_unversioned_non_temporal_delete_is_refused() -> No
         _plan([delete], _WALLET, observations={key_: VersionObservation(observed_version=3)})
 
 
-def test_a_materialized_group_on_an_unversioned_non_temporal_target_is_refused() -> None:
-    # The same rule one call deeper: a group's observation columns are not
-    # optional either, so a group whose target turns out unversioned is refused
-    # rather than settled Unversioned with every row's observed version dropped.
-    group = _version_group(
-        "Wallet",
-        "amend",
-        "id",
-        [(1, 7), (2, 8)],
-        [WriteAssignment("Wallet.balance", Decimal("5.00"))],
-    )
-    with pytest.raises(WritePlanningError, match="unversioned Non-Temporal 'amend'"):
-        _plan([group], _WALLET, concurrency="optimistic")
-
-
 def _row_values_from_assignments(step: PlannedUpdate) -> dict[str, object]:
     values: dict[str, object] = {
         ident.name: value for ident, value in step.assignments.attributes.items()
@@ -1208,8 +1141,7 @@ def test_an_unversioned_multi_key_update_settles_to_one_aggregate_planned_write(
     # addressed write keeps whichever verb it carries. A collapsed run is ONE
     # statement over one multi-key Key Target, so it settles to one Planned
     # Update whose expectation is the whole target's key count — never one step
-    # per key, which is the grain a Materialized Write Group settles at and an
-    # addressed write never does.
+    # per key.
     buffer: list[_TestBufferItem] = [
         KeyedWriteInstruction("amend", "Wallet", ({"id": 1, "balance": Decimal("5.00")},)),
         KeyedWriteInstruction("amend", "Wallet", ({"id": 2, "balance": Decimal("5.00")},)),

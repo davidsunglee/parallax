@@ -4,7 +4,7 @@ import datetime as dt
 from collections.abc import Callable
 from typing import Any, Literal, Protocol, Self, cast, overload
 
-from parallax.core import deep_fetch, inheritance
+from parallax.core import deep_fetch
 from parallax.core._execution._family import entity_layout
 from parallax.core._execution._keyed_writes import (
     KeyedInsertSource,
@@ -34,7 +34,6 @@ from parallax.core._execution._unit_work.acquisition import (
     RowConsumer,
     RowReadRequest,
     RowRequest,
-    SelectionReadRequest,
     TargetReadRequest,
 )
 from parallax.core._execution._unit_work.clock import Clock
@@ -76,11 +75,7 @@ from parallax.core.execution_lifecycle._activity import (
 )
 from parallax.core.metamodel import Metamodel
 from parallax.core.object_query import ObjectQueryNode
-from parallax.core.object_query._resolved import (
-    ResolvedObjectQuery,
-    latest_temporal_selections,
-    selections_at_valid_time,
-)
+from parallax.core.object_query._resolved import ResolvedObjectQuery
 from parallax.core.read_delivery import RowsResult
 from parallax.core.read_delivery._fetch import entity_read_lock, execute_read
 from parallax.core.read_delivery._page import ABSENT, release_page_rows
@@ -596,7 +591,7 @@ class TxnAttempt(_TxnAttemptBase):
         until: dt.datetime | Omitted = OMITTED,
     ) -> None:
         """Run one predicate-selected write in its ingress order, then buffer it
-        readless or materializing through a Read of its own under this attempt.
+        readless.
 
         Re-entry is refused first, then a stated start judged, and only then is
         ``adapter`` asked to prepare the write under this attempt's write
@@ -647,7 +642,7 @@ class TxnAttempt(_TxnAttemptBase):
         """Read the rows ``request`` names on this attempt's connection and hand
         them to ``consumer``, executing no pending write and publishing nothing.
 
-        A selection or target read is a Read of its own under this attempt
+        A target read is a Read of its own under this attempt
         (`m-execution-lifecycle`: every statement-reaching operation belongs to
         exactly one Read, Write Batch, or Stream Batch), spanning its planning,
         lowering, and the consumer, so a compile refusal or a root holding
@@ -674,12 +669,7 @@ class TxnAttempt(_TxnAttemptBase):
         if isinstance(request, CoverageReadRequest):
             return self._consume(self._coverage_read(request), self._batch, request, consumer)
         with self._activity.read(request.entity.identity, "rows") as read:
-            compiled = (
-                self._selection_read(request)
-                if isinstance(request, SelectionReadRequest)
-                else self._target_read(request)
-            )
-            return self._consume(compiled, read, request, consumer)
+            return self._consume(self._target_read(request), read, request, consumer)
 
     def _completed_rows[Result](
         self, request: CompletionRequest, consumer: RowConsumer[CompletionRequest, Result]
@@ -736,39 +726,6 @@ class TxnAttempt(_TxnAttemptBase):
         finally:
             rows.close()
             release_page_rows(page)
-
-    def _selection_read(self, request: SelectionReadRequest) -> CompiledRead:
-        """The predicate's resolving read, at Latest on every declared temporal
-        axis — or, where the request selects at a Valid-Time instant, as of that
-        instant on Valid Time and Latest on Transaction Time: a
-        mutation-compatible Object Query carries no as-of term, so the internal
-        authoring boundary adds one per dimension and routes the read through
-        the same root canonicalization every other read takes, rather than
-        matching every historical milestone too.
-
-        Its projection follows the evidence it becomes: a temporal target's
-        rows are complete Predecessor Rows, so every declared document is
-        projected whatever the verb does with it; a versioned target's are its
-        key and version, so only the assigned documents its no-op elimination
-        compares are."""
-        meta = self._write.model.meta
-        entity = request.entity
-        predecessors = request.predecessors
-        root = inheritance.root_metadata(inheritance.view(meta), meta, entity.identity)
-        valid_from = request.valid_from
-        query = deep_fetch.plan_mutation_read(
-            request.write,
-            model=meta,
-            temporal=(
-                latest_temporal_selections(root)
-                if valid_from is None
-                else selections_at_valid_time(root, valid_from)
-            ),
-            projection=deep_fetch.ReadProjectionRequest(
-                "all" if predecessors else "none", predecessors
-            ),
-        )
-        return self._row_read(query, entity_read_lock(meta, entity.identity, self._preference))
 
     def _target_read(self, request: TargetReadRequest) -> CompiledRead:
         """The point read of the row a caller-addressed write starts from: the

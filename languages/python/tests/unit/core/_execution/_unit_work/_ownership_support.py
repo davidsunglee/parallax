@@ -6,7 +6,6 @@ import datetime as dt
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 
-from parallax.core.metamodel import EntityIdentity
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.write_plan.keys import ObjectStateKey
 from parallax.core.write_plan.plan import Derivation, Descent, OwnedEndpoint
@@ -32,9 +31,6 @@ class OpenedRows:
 
     def owns(self, endpoint: OwnedEndpoint, /) -> bool:
         return endpoint in self.endpoints
-
-    def owns_any(self, entity: EntityIdentity, /) -> bool:
-        return any(endpoint.entity == entity for endpoint in self.endpoints)
 
     def continues_insertion(self, endpoint: OwnedEndpoint, /) -> bool:
         return endpoint in self.inserted

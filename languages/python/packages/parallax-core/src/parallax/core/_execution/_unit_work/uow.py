@@ -319,15 +319,13 @@ class UnitOfWork:
 
         The claim is read off the carrier itself
         (:func:`~parallax.core._execution._unit_work.write_items.buffered_write`): a
-        retained observation claims the state it observed, an object-claimed
-        write claims its instruction's object, and a Materialized Write Group
-        claims every state it selected (`m-unit-work` "Observed-State
-        Coalescing"). An insert and a bare instruction claim nothing. An
-        arriving keyed intent the held claim cannot absorb raises
-        :class:`WriteEvidenceError` (``write-evidence-already-claimed``); a
-        group colliding with a held claim raises :class:`UnitOfWorkError`,
-        withdrawing the claims it had admitted. Either way the pending writes,
-        their claims, and the pending inserts are left as they were.
+        retained observation claims the state it observed, and an
+        object-claimed write claims its instruction's object (`m-unit-work`
+        "Observed-State Coalescing"). An insert and a bare instruction claim
+        nothing. An arriving keyed intent the held claim cannot absorb raises
+        :class:`WriteEvidenceError` (``write-evidence-already-claimed``), and
+        the pending writes, their claims, and the pending inserts are left as
+        they were.
 
         A carrier built from a read's retained observation brings it along,
         so the buffer is what keeps a write's evidence alive once the caller
@@ -771,9 +769,8 @@ class UnitOfWork:
     def _complete_unit(
         self, unit: ExecutionUnit, effects: UnitEffects, allocated: tuple[object, ...]
     ) -> None:
-        """Publish one successful execution unit's ``effects``: its own, those
-        of the range its deferred coverage bound, or what its deferred group
-        finished with.
+        """Publish one successful execution unit's ``effects``: its own, or
+        those of the range its deferred coverage bound.
 
         Every source authority the unit's writes settled against is spent;
         live evidence of every state it changed is invalidated and the change

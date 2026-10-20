@@ -1,13 +1,8 @@
 from __future__ import annotations
 
-import bisect
 import datetime as dt
-import functools
-from array import array
-from collections.abc import Iterable, Iterator, Mapping, Sequence
-from dataclasses import dataclass, field, replace
-from enum import Enum
-from types import MappingProxyType
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass, field
 from typing import Final, Literal, Protocol, cast
 
 from parallax.core.base import INFINITY, TemporalBound
@@ -21,18 +16,13 @@ from parallax.core.temporal_read import (
     Bitemporal,
     TimeInterval,
     TransactionTimeOnly,
-    milestone_edge,
 )
 from parallax.core.temporal_write.coverage import (
-    CARRIED_HEAD,
-    CARRIED_TAIL,
-    WITHIN,
     CoverageGap,
     CoverageTransform,
     Successor,
 )
-from parallax.core.write_plan.keys import ObjectKey, ObjectStateKey, TemporalObjectStateKey
-from parallax.core.write_plan.materialized import PredecessorRows
+from parallax.core.write_plan.keys import ObjectKey, ObjectStateKey
 from parallax.core.write_plan.observe import AssignedComparison, PredecessorRow
 from parallax.core.write_plan.payload import RowPayload, WritePayloadPreparer
 from parallax.core.write_plan.plan import (
@@ -45,14 +35,10 @@ from parallax.core.write_plan.plan import (
     OwnedEndpoint,
     PlannedWrites,
     TemporalWriteOwnership,
-    UnitEffects,
     eager_writes,
 )
 from parallax.core.write_plan.planned_rows import (
-    PreparedAssignment,
-    WritePlanningError,
     resolve_row,
-    resolved_assignments,
 )
 from parallax.core.write_plan.steps import (
     FAILED_PRECONDITION,
@@ -84,7 +70,6 @@ from parallax.core.write_plan.steps import (
     WriteRow,
     adopt_planned_assignments,
     adopt_planned_row,
-    assignments_added,
     shortfall_for,
 )
 from parallax.core.write_plan.steps import INFINITY as OPEN_UPPER_BOUND
@@ -92,9 +77,7 @@ from parallax.core.write_plan.steps import INFINITY as OPEN_UPPER_BOUND
 __all__ = [
     "ExpansionRole",
     "PredecessorExpander",
-    "PredecessorUse",
     "RowAudit",
-    "SettledGroup",
     "TemporalFacts",
     "bitemporal_ends",
     "entry_endpoint",
@@ -120,14 +103,7 @@ type _Overlay = tuple[
 
 class RowAudit(Protocol):
     """How a temporal unit's audit finalizes each row it produces and stamps
-    each close it emits, already bound to the attempt's actor and instant.
-
-    ``neutral`` says every row and close passes through unchanged, so compact
-    backing need build none merely to ask.
-    """
-
-    @property
-    def neutral(self) -> bool: ...
+    each close it emits, already bound to the attempt's actor and instant."""
 
     def finalize_row(self, write_row: WriteRow, /) -> WriteRow: ...
 
@@ -166,24 +142,22 @@ class PredecessorExpander:
     predecessor at all, a pending insertion's surviving parts and a
     replacement's gaps.
 
-    Built once per unit — a range binding, a Materialized Write Group, or a
-    pending insertion — from the unit's settled facts and the attempt's
-    ownership as it stands then. ``key_value`` is a range's one object key; a
-    group reads each row's own. ``gated`` and ``guards`` say whether its closes
-    gate and whether the database can prove an unchanged milestone by a guard,
-    and ``derives`` whether a later unit of the flush relies on what it derives.
+    Built once per unit — a range binding or a pending insertion — from the
+    unit's settled facts and the attempt's ownership as it stands then.
+    ``key_value`` is a range's one object key. ``gated`` and ``guards`` say
+    whether its closes gate and whether the database can prove an unchanged
+    milestone by a guard, and ``derives`` whether a later unit of the flush
+    relies on what it derives.
     ``audit`` finalizes each row the unit produces, carried, changed, or new,
     once, and stamps each close it emits; ``payloads`` prepares what an
     object's produced rows persist, so that equal adjacent ones merge
     (:meth:`settle`).
 
-    Every predecessor, whichever representation holds it, is settled by one
-    decision (:func:`_disposition`) and realized by one construction of its own
-    step (:func:`_own_step`) and its successors (:func:`_represented`), so a
-    range's predecessors and a group's rows differ only in where their cells and
-    successors are read from. Each canonical assignment mapping is resolved,
-    and its comparison with stored values prepared, once per expansion however
-    many predecessors and gaps share it. Nothing returned retains the expansion
+    Every predecessor is settled by one decision (:func:`_disposition`) and
+    realized by one construction of its own step (:func:`_own_step`) and its
+    successors (:func:`_represented`). Each canonical assignment mapping is
+    resolved, and its comparison with stored values prepared, once per expansion
+    however many predecessors and gaps share it. Nothing returned retains the expansion
     or the ownership it read.
     """
 
@@ -229,17 +203,6 @@ class PredecessorExpander:
         self._resolved: list[tuple[Mapping[str, object], _ResolvedState, ExecutedMembers]] = []
         self._comparisons: list[tuple[Mapping[str, object], AssignedComparison]] = []
 
-    def keyed(self, key_value: object) -> PredecessorExpander:
-        """This expansion over the object ``key_value`` names, sharing every
-        assignment mapping it has resolved and comparison it has prepared, and
-        every one either prepares from now on: a group expands each of its
-        objects through one."""
-        expansion = object.__new__(PredecessorExpander)
-        for slot in PredecessorExpander.__slots__:
-            setattr(expansion, slot, getattr(self, slot))
-        expansion._key_values = (key_value,)
-        return expansion
-
     def expand(
         self,
         predecessor: PredecessorRow,
@@ -276,83 +239,6 @@ class PredecessorExpander:
             gate=gate,
             on_shortfall=FAILED_PRECONDITION if starting and self._gated else None,
         )
-
-    def settle_group(
-        self, evidence: PredecessorRows, assignments: Sequence[PreparedAssignment]
-    ) -> SettledGroup:
-        """A Materialized Write Group's selected rows, every one a coverage
-        predecessor of this expansion's one-segment transform, settled into
-        the immutable backing its steps and effects are read from.
-
-        ``assignments`` are the group's own, resolved here once for every row
-        into the one executed assignment set every changed successor shares; a
-        marker no opened row can express is refused before anything is
-        settled. Selection already judged every selected row changed, so no row
-        is judged unchanged again, and a surviving row executes every
-        assignment, those restoring a stored value included, exactly as a keyed
-        write does. Each row's disposition is the one decision :meth:`expand`
-        takes — reach, close, revision or removal of a row the attempt opened,
-        and the nonempty successors — read from the row's own cells without
-        building any of its steps. An unowned Transaction-Time-Only group reads
-        no row at all: every row takes the one disposition its mutation decides.
-        A one-segment transform leaves no two produced rows adjacent unless
-        it assigns, and only a Transaction-Time-Only or destroying group settles
-        here, so no successor of a group merges with another.
-
-        A non-neutral audit finalizes every produced row and stamps every
-        emitted close here, once, and the backing keeps only what it added
-        (:attr:`SettledGroup.audited`), so enumerating the group's steps never
-        audits again.
-        """
-        facts = self._facts
-        attributes, value_objects = resolved_assignments(facts.entity, assignments, "insert")
-        executed = _in_member_order(facts, (*attributes, *value_objects))
-        selection = evidence.selection
-        shape = facts.shape
-        transform = self._transform
-        valid_positions = (
-            (
-                selection.position(shape.valid_time.start_attribute),
-                selection.position(shape.valid_time.end_attribute),
-            )
-            if isinstance(shape, Bitemporal)
-            else None
-        )
-        shares: dict[int, tuple[TimeInterval, ...]] = {}
-        uniform, dispositions, offsets, length = _RowDisposal(
-            facts=facts,
-            transform=transform,
-            ownership=self._ownership,
-            owning=self._ownership.owns_any(facts.entity.identity),
-            gated=self._gated,
-            guards=self._guards,
-            key_position=evidence.key_position,
-            valid_positions=valid_positions,
-            shares=shares,
-        ).settle(evidence)
-        group = SettledGroup(
-            facts=facts,
-            transform=transform,
-            key_attributes=self._key_attributes,
-            key_position=evidence.key_position,
-            cause=SUPERSEDED if transform.assigns else TERMINATED,
-            gate_position=(
-                selection.position(shape.transaction_time.start_attribute) if self._gated else None
-            ),
-            valid_positions=valid_positions,
-            assigned_attributes=MappingProxyType(attributes),
-            assigned_value_objects=MappingProxyType(value_objects),
-            executed=executed,
-            uniform=uniform,
-            dispositions=dispositions,
-            offsets=offsets,
-            length=length,
-            shares=MappingProxyType(shares) if shares else _NO_SHARES,
-        )
-        audit = self._audit
-        if audit.neutral:
-            return group
-        return group.audited_by(audit, evidence)
 
     def _keeps(self, predecessor: PredecessorRow, owned: bool) -> bool:
         """Whether ``predecessor``, if unchanged, could be kept as it is
@@ -857,13 +743,6 @@ type _Filed = tuple[OwnedEndpoint, TimeInterval | None, tuple[TimeInterval | Non
 Valid Time, and the parts of it an insertion contributed."""
 
 
-_NO_SHARES: Final[Mapping[int, tuple[TimeInterval, ...]]] = MappingProxyType({})
-
-_WHOLE: Final = object()
-"""What :meth:`SettledGroup._shared` answers for a row an insertion
-contributed all of."""
-
-
 def _first(entry: _Opened) -> int:
     return entry[0]
 
@@ -1004,34 +883,17 @@ def _extent(successor: Successor) -> _Extent:
     return coverage.start, coverage.end, changed
 
 
-class PredecessorUse(Enum):
-    """What materializing one group step needs of its row's predecessor:
-    nothing, only its member cells, or its bindable document — for the last
-    time where ``BINDABLE_LAST``, since no later step of the row needs it."""
-
-    NONE = "none"
-    MEMBERS = "members"
-    BINDABLE = "bindable"
-    BINDABLE_LAST = "bindable-last"
-
-
-# One predecessor's settled disposition, packed into one small integer: the
-# successor positions a group row keeps (coverage's bits; a range lists its
-# successors instead), what becomes of the predecessor itself, which successor
-# keeps an owned row's address, whether its successors continue an insertion,
-# and whether the transform reaches it.
-_POSITIONS: Final = (CARRIED_HEAD, WITHIN, CARRIED_TAIL)
-_POSITION_BITS: Final = CARRIED_HEAD | WITHIN | CARRIED_TAIL
+# One predecessor's settled disposition, packed into one small integer: what
+# becomes of the predecessor itself, and which successor keeps an owned row's
+# address.
 _CLOSE: Final = 0
-_REMOVE: Final = 1 << 3
-_REVISE: Final = 2 << 3
-_KEEP: Final = 3 << 3
-_GUARD: Final = 4 << 3
-_PRESERVE: Final = 5 << 3
-_DISPOSAL: Final = 7 << 3
-_CONTINUES: Final = 1 << 6
-_UNREACHED: Final = 1 << 7
-_KEPT_SHIFT: Final = 8
+_REMOVE: Final = 1
+_REVISE: Final = 2
+_KEEP: Final = 3
+_GUARD: Final = 4
+_PRESERVE: Final = 5
+_DISPOSAL: Final = 7
+_KEPT_SHIFT: Final = 3
 
 
 def _provable(*, owned: bool, gated: bool, guards: bool) -> bool:
@@ -1087,7 +949,7 @@ def _kept_index(code: int) -> int | None:
 def _changes(code: int) -> bool:
     """Whether the predecessor is closed, removed, or revised: the change to
     its observed state its unit publishes."""
-    return not code & _UNREACHED and code & _DISPOSAL in (_CLOSE, _REMOVE, _REVISE)
+    return code & _DISPOSAL in (_CLOSE, _REMOVE, _REVISE)
 
 
 def _own_step(
@@ -1130,500 +992,11 @@ def _own_step(
     )
 
 
-def _kept_position(code: int) -> int:
-    """The group successor position keeping an owned row's address, or none."""
-    kept = _kept_index(code)
-    return 0 if kept is None else _positions(code & _POSITION_BITS)[kept]
-
-
-def _opened(code: int) -> int:
-    """The successor positions a group row opens: every one it keeps but the
-    one an owned row keeps its address at."""
-    return code & _POSITION_BITS & ~_kept_position(code)
-
-
-def _owns_step(code: int) -> bool:
-    """Whether the row takes a step of its own: a close, removal, revision, or
-    guard."""
-    return not code & _UNREACHED and code & _DISPOSAL not in (_KEEP, _PRESERVE)
-
-
-_ROW_EFFECT: Final = 0
-"""The slot of a row's own close, removal, revision, or guard among its
-steps."""
-
-
-@functools.cache
-def _positions(positions: int) -> tuple[int, ...]:
-    """The successor positions in the union ``positions``, in order by start.
-    Decoded once per distinct union."""
-    return tuple(position for position in _POSITIONS if positions & position)
-
-
-@functools.cache
-def _slots(code: int) -> tuple[int, ...]:
-    """The steps a row of disposition ``code`` takes, in order: its own effect
-    where it takes one, then each successor position it opens. Decoded once
-    per distinct disposition."""
-    successors = _positions(_opened(code))
-    return (_ROW_EFFECT, *successors) if _owns_step(code) else successors
-
-
-def _row_steps(code: int) -> int:
-    return len(_slots(code))
-
-
-@dataclass(frozen=True, slots=True)
-class SettledGroup:
-    """A Materialized Write Group's settled temporal expansion: the facts its
-    rows share and the final disposition of every selected row, from which any
-    one step, and the effects of all of them, are read on demand.
-
-    A group whose rows all take one disposition holds it once as ``uniform``
-    and maps a step index to its row arithmetically. Otherwise
-    ``dispositions`` holds each row's, ``offsets`` where each row's steps
-    begin, and ``length`` how many steps they total; a row taking no step keeps
-    its place and is skipped by the lookup. Nothing here is a producer or the
-    attempt's live ownership: what each row's disposition reads was decided
-    when the group settled.
-
-    ``assigned_attributes`` and ``assigned_value_objects`` are the group's one
-    assignment set, which every changed successor executes whole and states as
-    ``executed``. ``audited`` holds, by row and step slot, only
-    what a non-neutral audit added to that step's row or close when the group
-    settled; a step it added nothing to, and every step under the neutral one,
-    holds nothing. ``shares`` holds, by row, the parts of an owned row an
-    admitted insertion contributed where that is not the whole row, so that
-    only the same parts of its successors continue it.
-    """
-
-    facts: TemporalFacts
-    transform: CoverageTransform
-    key_attributes: tuple[AttributeIdentity, ...]
-    key_position: int
-    cause: CloseCause
-    gate_position: int | None
-    valid_positions: tuple[int, int] | None
-    assigned_attributes: Mapping[AttributeIdentity, PlannedValue]
-    assigned_value_objects: Mapping[ValueObjectIdentity, object]
-    executed: ExecutedMembers
-    uniform: int
-    dispositions: array[int] | None
-    offsets: array[int] | None
-    length: int
-    audited: Mapping[tuple[int, int], PlannedAssignments] = MappingProxyType({})
-    shares: Mapping[int, tuple[TimeInterval, ...]] = MappingProxyType({})
-
-    def __len__(self) -> int:
-        return self.length
-
-    def locate(self, index: int) -> tuple[int, int, PredecessorUse]:
-        """The row the group's ``index``-th step belongs to, the step's slot
-        among the row's own — its own effect or a successor position — and
-        what it needs of the row's predecessor."""
-        offsets = self.offsets
-        if offsets is None:
-            code = self.uniform
-            slots = _slots(code)
-            row, place = divmod(index, len(slots))
-        else:
-            row = bisect.bisect_right(offsets, index) - 1
-            place = index - offsets[row]
-            code = self._code(row)
-            slots = _slots(code)
-        slot = slots[place]
-        if slot == _ROW_EFFECT:
-            use = PredecessorUse.MEMBERS if code & _DISPOSAL == _REVISE else PredecessorUse.NONE
-        elif place == len(slots) - 1:
-            use = PredecessorUse.BINDABLE_LAST
-        else:
-            use = PredecessorUse.BINDABLE
-        return row, slot, use
-
-    def step(
-        self,
-        row: int,
-        slot: int,
-        values: tuple[object, ...],
-        predecessor: PredecessorRow | None,
-    ) -> PlannedWrite:
-        """The step at ``slot`` of ``row`` (:meth:`locate`), built from the
-        row's member ``values`` and the ``predecessor`` its use asks for."""
-        if slot == _ROW_EFFECT:
-            return self._effect(row, self._code(row), values, predecessor)
-        assert predecessor is not None  # every successor reads its predecessor
-        return PlannedInsert(
-            entity=self.facts.entity.identity,
-            entries=(self._candidate(row, slot, values, predecessor),),
-        )
-
-    def audited_by(self, audit: RowAudit, evidence: PredecessorRows) -> SettledGroup:
-        """This group with what ``audit`` adds to each row it produces and each
-        close it emits, finalized once per step now rather than when a step is
-        built."""
-        added: dict[tuple[int, int], PlannedAssignments] = {}
-        for row, values in enumerate(evidence.rows):
-            code = self._code(row)
-            if code & _UNREACHED:
-                continue
-            disposal = code & _DISPOSAL
-            if disposal == _CLOSE:
-                close = cast("PlannedClose", self._effect(row, code, values, None))
-                stamped = assignments_added(
-                    close.assignments, audit.decorate_close(close).assignments
-                )
-                if stamped is not None:
-                    added[row, _ROW_EFFECT] = stamped
-            positions = _positions(_opened(code))
-            if disposal == _REVISE:
-                positions = (*positions, _kept_position(code))
-            if not positions:
-                continue
-            predecessor = PredecessorRow.over_row(evidence.selection, values, None, evidence.absent)
-            for position in positions:
-                candidate = self._candidate(row, position, values, predecessor)
-                stamped = _finalized_additions(candidate, audit.finalize_row(candidate))
-                if stamped is not None:
-                    added[row, position] = stamped
-        return replace(self, audited=MappingProxyType(added)) if added else self
-
-    def effects(self, evidence: PredecessorRows) -> UnitEffects:
-        """What every row's success publishes, as views over ``evidence`` and
-        these dispositions that read them only when iterated."""
-        return UnitEffects(
-            changed=_GroupChanges(self, evidence),
-            removed=_GroupRemovals(self, evidence),
-            opened=Openings(
-                fresh=_GroupOpenings(self, evidence, continued=False),
-                continued=_GroupOpenings(self, evidence, continued=True),
-                shared=_GroupShares(self, evidence) if self.shares else (),
-            ),
-        )
-
-    def changed_states(self, evidence: PredecessorRows) -> Iterator[ObjectStateKey]:
-        facts = self.facts
-        entity = facts.entity.identity
-        key_name = self.key_attributes[0].name
-        key_position = evidence.key_position
-        dispositions = self.dispositions
-        if dispositions is None and not _changes(self.uniform):
-            return
-        for row, values in enumerate(evidence.rows):
-            if dispositions is None or _changes(dispositions[row]):
-                yield TemporalObjectStateKey(
-                    ObjectKey(entity, ((key_name, values[key_position]),)),
-                    milestone_edge(facts.shape, evidence, row),
-                )
-
-    def removals(self, evidence: PredecessorRows) -> Iterator[OwnedEndpoint]:
-        dispositions = self.dispositions
-        if dispositions is None and self.uniform & _DISPOSAL != _REMOVE:
-            return
-        key_position = evidence.key_position
-        for row, values in enumerate(evidence.rows):
-            code = self.uniform if dispositions is None else dispositions[row]
-            if code & _DISPOSAL == _REMOVE:
-                yield self._endpoint(values[key_position], self._valid_end(values))
-
-    def openings(self, evidence: PredecessorRows, *, continued: bool) -> Iterator[OwnedEndpoint]:
-        dispositions = self.dispositions
-        shares = self.shares
-        if dispositions is None and not shares and bool(self.uniform & _CONTINUES) is not continued:
-            return
-        key_position = evidence.key_position
-        for row, values in enumerate(evidence.rows):
-            code = self.uniform if dispositions is None else dispositions[row]
-            if shares and row in shares:
-                continue
-            if bool(code & _CONTINUES) is not continued:
-                continue
-            key = values[key_position]
-            for slot in _slots(code):
-                if slot != _ROW_EFFECT:
-                    _start, end = self._extent(slot, values)
-                    yield self._endpoint(key, end)
-        for row, parts in shares.items():
-            for endpoint, within in self._shared(evidence, row, parts):
-                # Continued where the insertion contributed all of it, fresh
-                # where none of it, and shared (:meth:`shared`) otherwise.
-                if (within == _WHOLE) if continued else not within:
-                    yield endpoint
-
-    def shared(
-        self, evidence: PredecessorRows
-    ) -> Iterator[tuple[OwnedEndpoint, tuple[TimeInterval, ...]]]:
-        """Each row only some parts of which an admitted insertion
-        contributed — one it opens, or the owned row it revises — beside
-        those parts."""
-        for row, parts in self.shares.items():
-            for endpoint, within in self._shared(evidence, row, parts):
-                if within and within != _WHOLE:
-                    yield endpoint, cast("tuple[TimeInterval, ...]", within)
-
-    def _shared(
-        self, evidence: PredecessorRows, row: int, parts: tuple[TimeInterval, ...]
-    ) -> Iterator[tuple[OwnedEndpoint, object]]:
-        """Each row ``row``'s successors open, and the owned row it revises
-        into its kept successor, beside the parts of it ``parts`` contribute —
-        :data:`_WHOLE` where they contribute all of it."""
-        values = evidence.rows[row]
-        key = values[evidence.key_position]
-        code = self._code(row)
-        positions = _positions(_opened(code))
-        if code & _DISPOSAL == _REVISE:
-            positions = (*positions, _kept_position(code))
-        for position in positions:
-            start, end = self._extent(position, values)
-            extent = _interval(start, end)
-            within = _shares(extent, parts)
-            yield self._endpoint(key, end), _WHOLE if within == (extent,) else within
-
-    def _code(self, row: int) -> int:
-        dispositions = self.dispositions
-        return self.uniform if dispositions is None else dispositions[row]
-
-    def _effect(
-        self,
-        row: int,
-        code: int,
-        values: tuple[object, ...],
-        predecessor: PredecessorRow | None,
-    ) -> PlannedWrite:
-        facts = self.facts
-        gate_position = self.gate_position
-        closing = _planned_close(
-            facts,
-            key_attributes=self.key_attributes,
-            key_values=(values[self.key_position],),
-            observed_valid_end=self._valid_end(values),
-            cause=self.cause,
-            gate=(
-                UNGATED
-                if gate_position is None
-                else TemporalGate(
-                    start_attribute=facts.shape.transaction_time.start_attribute,
-                    observed_start=values[gate_position],
-                )
-            ),
-        )
-        disposal = code & _DISPOSAL
-        if disposal == _CLOSE:
-            stamped = self.audited.get((row, _ROW_EFFECT))
-            if stamped is not None:
-                closing = replace(
-                    closing,
-                    assignments=adopt_planned_assignments(
-                        {**closing.assignments.attributes, **stamped.attributes},
-                        {**closing.assignments.value_objects, **stamped.value_objects},
-                    ),
-                )
-        kept = None
-        if disposal == _REVISE:
-            assert predecessor is not None  # a revision reads its predecessor's cells
-            kept = self._candidate(row, _kept_position(code), values, predecessor)
-        return _own_step(facts, code, closing, kept, predecessor)
-
-    def _candidate(
-        self, row: int, position: int, values: tuple[object, ...], predecessor: PredecessorRow
-    ) -> WriteRow:
-        """The finalized row ``row``'s successor at ``position`` stores."""
-        start, end = self._extent(position, values)
-        candidate = (
-            _successor_row(
-                self.facts,
-                predecessor,
-                start,
-                end,
-                assigned=(self.assigned_attributes, self.assigned_value_objects),
-                executed=self.executed,
-            )
-            if position == WITHIN
-            else _successor_row(self.facts, predecessor, start, end)
-        )
-        stamped = self.audited.get((row, position))
-        return candidate if stamped is None else _stamped(self.facts, candidate, stamped)
-
-    def _extent(self, position: int, values: tuple[object, ...]) -> tuple[object, object]:
-        valid = self.valid_positions
-        if valid is None:
-            return None, None
-        return self.transform.successor_extent(position, values[valid[0]], values[valid[1]])
-
-    def _valid_end(self, values: tuple[object, ...]) -> object | None:
-        valid = self.valid_positions
-        return None if valid is None else values[valid[1]]
-
-    def _endpoint(self, key: object, valid_end: object | None) -> OwnedEndpoint:
-        return OwnedEndpoint(
-            self.facts.entity.identity,
-            (key,),
-            TRANSACTION_TIME_ENDS if valid_end is None else bitemporal_ends(valid_end),
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class _GroupChanges:
-    group: SettledGroup
-    evidence: PredecessorRows
-
-    def __iter__(self) -> Iterator[ObjectStateKey]:
-        return self.group.changed_states(self.evidence)
-
-
-@dataclass(frozen=True, slots=True)
-class _GroupRemovals:
-    group: SettledGroup
-    evidence: PredecessorRows
-
-    def __iter__(self) -> Iterator[OwnedEndpoint]:
-        return self.group.removals(self.evidence)
-
-
-@dataclass(frozen=True, slots=True)
-class _GroupShares:
-    group: SettledGroup
-    evidence: PredecessorRows
-
-    def __iter__(self) -> Iterator[tuple[OwnedEndpoint, tuple[TimeInterval, ...]]]:
-        return self.group.shared(self.evidence)
-
-
-@dataclass(frozen=True, slots=True)
-class _GroupOpenings:
-    """The rows a group opens from the selected rows an admitted insertion
-    opened when ``continued``, and from every other selected row when not."""
-
-    group: SettledGroup
-    evidence: PredecessorRows
-    continued: bool
-
-    def __iter__(self) -> Iterator[OwnedEndpoint]:
-        return self.group.openings(self.evidence, continued=self.continued)
-
-
-type _Dispositions = tuple[int, array[int] | None, array[int] | None, int]
-
-
-@dataclass(frozen=True, slots=True)
-class _RowDisposal:
-    """What deciding a group's row dispositions reads, held only while the
-    group settles: the attempt's live ``ownership`` among it."""
-
-    facts: TemporalFacts
-    transform: CoverageTransform
-    ownership: TemporalWriteOwnership
-    owning: bool
-    gated: bool
-    guards: bool
-    key_position: int
-    valid_positions: tuple[int, int] | None
-    shares: dict[int, tuple[TimeInterval, ...]]
-
-    def settle(
-        self, evidence: PredecessorRows
-    ) -> tuple[int, array[int] | None, array[int] | None, int]:
-        """Every row's disposition, as one ``uniform`` code where all rows
-        share it, else dense dispositions and the offsets their steps start at;
-        and the total step count. An unowned Transaction-Time-Only group reads
-        no row."""
-        if not self.owning and self.valid_positions is None:
-            positions = self.transform.successor_positions(None, None)
-            assert positions is not None  # one segment spans the whole axis
-            code = positions | self._decided(owned=False, start=None, end=None, positions=0)
-            return code, None, None, len(evidence) * _row_steps(code)
-        first = _CLOSE
-        dispositions: array[int] | None = None
-        for index, values in enumerate(evidence.rows):
-            code = self._disposition(index, values)
-            if index == 0:
-                first = code
-            elif dispositions is not None:
-                dispositions.append(code)
-            elif code != first:
-                dispositions = array("H", (first,)) * index
-                dispositions.append(code)
-        if dispositions is None:
-            return first, None, None, len(evidence) * _row_steps(first)
-        offsets = array("q")
-        length = 0
-        for code in dispositions:
-            offsets.append(length)
-            length += _row_steps(code)
-        return _CLOSE, dispositions, offsets, length
-
-    def _disposition(self, row: int, values: tuple[object, ...]) -> int:
-        valid = self.valid_positions
-        start = end = None
-        if valid is not None:
-            start, end = values[valid[0]], values[valid[1]]
-            _require_valid_time(self.facts, start, end)
-        positions = self.transform.successor_positions(start, end)
-        if positions is None:
-            return _UNREACHED
-        owned = continues = False
-        if self.owning:
-            own = OwnedEndpoint(
-                self.facts.entity.identity,
-                (values[self.key_position],),
-                TRANSACTION_TIME_ENDS if valid is None else bitemporal_ends(end),
-            )
-            ownership = self.ownership
-            owned = ownership.owns(own)
-            if owned and ownership.continues_insertion(own):
-                coverage = None if valid is None else _interval(start, end)
-                inserted = ownership.insertion_coverage(own, coverage)
-                if inserted == (coverage,):
-                    continues = True
-                elif inserted:
-                    self.shares[row] = cast("tuple[TimeInterval, ...]", inserted)
-        code = positions | self._decided(owned=owned, start=start, end=end, positions=positions)
-        return code | _CONTINUES if continues else code
-
-    def _decided(self, *, owned: bool, start: object, end: object, positions: int) -> int:
-        """The row's disposition by the one decision every predecessor takes,
-        its successor ``positions`` read only where the attempt ``owned`` it."""
-        transform = self.transform
-        return _disposition(
-            # Selection judged every selected row changed (`m-unit-work`
-            # *Comparing an assigned member with its persisted value*).
-            unchanged=False,
-            owned=owned,
-            gated=self.gated,
-            guards=self.guards,
-            extents=(
-                tuple(
-                    (*transform.successor_extent(position, start, end), position == WITHIN)
-                    for position in _positions(positions)
-                )
-                if owned
-                else ()
-            ),
-            start=start,
-            end=end,
-        )
-
-
 def _interval(start: object, end: object) -> TimeInterval | None:
     """The Valid Time ``[start, end)`` — ``None`` both without Valid Time."""
     if start is None:
         return None
     return TimeInterval(cast("dt.datetime", start), cast("TemporalBound", end))
-
-
-def _require_valid_time(facts: TemporalFacts, start: object, end: object) -> None:
-    """Refuse a selected Bitemporal row whose Valid-Time cells are no interval,
-    which no close can address."""
-    if not isinstance(start, dt.datetime):
-        raise WritePlanningError(
-            f"bitemporal close on {facts.entity.identity.name!r}: no observed Valid-Time start "
-            "supplied — a selected row's successors begin from it"
-        )
-    if end is not INFINITY and not isinstance(end, dt.datetime):
-        raise WritePlanningError(
-            f"bitemporal close on {facts.entity.identity.name!r}: no observed Valid-Time end "
-            "supplied — a Bitemporal milestone address needs one exclusive upper bound "
-            "per As-Of Axis (m-temporal-write 'Address and gate are separate')"
-        )
 
 
 def _complete(successors: Sequence[Successor], coverage: TimeInterval) -> bool:
@@ -1702,63 +1075,12 @@ def _represented(
     )
 
 
-def _stamped(facts: TemporalFacts, write_row: WriteRow, stamped: PlannedAssignments) -> WriteRow:
-    """``write_row`` with the values an audit added when its group settled,
-    each an executed member of the row."""
-    row = write_row.row
-    return WriteRow(
-        row=adopt_planned_row(
-            {**row.attributes, **stamped.attributes},
-            {**row.value_objects, **stamped.value_objects},
-        ),
-        origin=write_row.origin,
-        executed=_in_member_order(
-            facts,
-            (
-                *write_row.executed,
-                *(member for member in stamped.members if member not in write_row.executed),
-            ),
-        ),
-    )
-
-
 def _in_member_order(
     facts: TemporalFacts, members: Iterable[AttributeIdentity | ValueObjectIdentity]
 ) -> ExecutedMembers:
     """``members`` in the Entity's member order, so one assignment set selects
     one sequence however it was authored."""
     return tuple(sorted(members, key=facts.view.member_selection.index.__getitem__))
-
-
-def _finalized_additions(candidate: WriteRow, finalized: WriteRow) -> PlannedAssignments | None:
-    """The executed values finalization added to ``candidate`` or replaced in
-    it, or ``None`` where it did neither."""
-    row = finalized.row
-    before = candidate.row
-    added = [
-        member
-        for member in finalized.executed
-        if member not in candidate.executed
-        or (
-            row.attributes[member] is not before.attributes[member]
-            if isinstance(member, AttributeIdentity)
-            else row.value_objects[member] is not before.value_objects[member]
-        )
-    ]
-    if not added:
-        return None
-    return adopt_planned_assignments(
-        {
-            member: row.attributes[member]
-            for member in added
-            if isinstance(member, AttributeIdentity)
-        },
-        {
-            member: row.value_objects[member]
-            for member in added
-            if isinstance(member, ValueObjectIdentity)
-        },
-    )
 
 
 def opening(

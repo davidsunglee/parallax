@@ -31,10 +31,6 @@ from parallax.conformance.read_models import (
     WildBoar,
 )
 from parallax.core import DomainModel, deep_fetch, inheritance, relationship
-from parallax.core._execution._unit_work.instructions import (
-    PreparedPredicateWrite,
-    prepare_typed_write,
-)
 from parallax.core.base import INFINITY, ManagedValue
 from parallax.core.deep_fetch._include_tree import EMPTY_RENDER, IncludePosition
 from parallax.core.dialect import POSTGRES
@@ -84,7 +80,6 @@ from parallax.core.predicate._resolved import (
 from parallax.core.sql_gen._compile import compile_read, compile_template
 from parallax.core.temporal_read import Bitemporal, TimeInterval
 from parallax.core.temporal_read import view as temporal_view
-from parallax.core.unit_work import PredicateSelection, PredicateWriteInstruction, WriteAssignment
 from tests.unit._corpus_model_support import model as accepted_model
 from tests.unit._corpus_model_support import target as entity_of
 
@@ -265,28 +260,6 @@ def test_deep_fetch_rejects_a_validated_path_whose_relationship_disappeared() ->
             ORDERS,
             projection=deep_fetch.ReadProjectionRequest("all", True),
         )
-
-
-def test_mutation_read_unions_an_explicit_projection_with_assigned_value_objects() -> None:
-    account = entity_of(ORDERS, "Order")
-    prepared = prepare_typed_write(
-        PredicateWriteInstruction(
-            "amend",
-            PredicateSelection(account.identity.canonical, TrueNode()),
-            (WriteAssignment(f"{account.identity.canonical}.name", "updated"),),
-        ),
-        ORDERS,
-    )
-    assert isinstance(prepared, PreparedPredicateWrite)
-
-    query = deep_fetch.plan_mutation_read(
-        prepared,
-        model=ORDERS,
-        temporal=(),
-        projection=deep_fetch.ReadProjectionRequest(frozenset({"unavailable"}), False),
-    )
-
-    assert query.projection.value_objects == ()
 
 
 # --------------------------------------------------------------------------- #

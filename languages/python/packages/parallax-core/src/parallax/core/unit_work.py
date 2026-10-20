@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from parallax.core._execution._unit_work.claims import (
-    SELECTION_INTENT,
     ClaimScope,
     ClaimVerdict,
     SettledEvidence,
@@ -74,9 +73,6 @@ from parallax.core._execution._unit_work.uow import (
 from parallax.core._execution._unit_work.write_items import (
     BufferItem,
     ClaimedKeyedWrite,
-    MaterializedWriteGroup,
-    VersionedEvidence,
-    VersionedEvidenceBuilder,
     buffered_write,
 )
 from parallax.core._execution._unit_work.write_planner import (
@@ -93,7 +89,6 @@ __all__ = [
     "INSERT_MUTATIONS",
     "NO_AUDIT",
     "REPLACE_MUTATIONS",
-    "SELECTION_INTENT",
     "WRITE_EVIDENCE_CODES",
     "BufferItem",
     "BufferOutcome",
@@ -107,7 +102,6 @@ __all__ = [
     "EvidencePolicyLookup",
     "KeyedMutation",
     "KeyedWriteInstruction",
-    "MaterializedWriteGroup",
     "MissingTargetError",
     "OptimisticLockConflictError",
     "ParticipationToken",
@@ -128,8 +122,6 @@ __all__ = [
     "UnitOfWork",
     "UnitOfWorkError",
     "VersionArithmetic",
-    "VersionedEvidence",
-    "VersionedEvidenceBuilder",
     "WriteAssignment",
     "WriteBatchReason",
     "WriteEffectError",

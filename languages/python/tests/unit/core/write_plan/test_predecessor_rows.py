@@ -1,4 +1,4 @@
-"""Predecessor Rows: a resolving read's aligned evidence, adopted by reference
+"""Predecessor Rows: a row-acquisition read's aligned rows, adopted by reference
 (m-write-plan *Predecessor Row*).
 
 Each judged positional row and raw document is retained as read, sealed in
@@ -153,7 +153,7 @@ class _RecordedRows:
 
 
 @_LAYOUTS
-def test_group_coverage_is_read_lazily_and_only_until_a_gap_is_found(
+def test_predecessor_rows_coverage_is_read_lazily_and_only_until_a_gap_is_found(
     entity: type[Entity],
 ) -> None:
     evidence, shape = milestone_rows.milestones(

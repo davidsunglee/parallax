@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from operator import itemgetter
 
 from parallax.core import inheritance, relationship, temporal_read
-from parallax.core._execution._unit_work.acquisition import AcquireRows
 from parallax.core._execution._unit_work.clock import TransactionInstant
 from parallax.core._execution._unit_work.instructions import (
     AMEND_MUTATIONS,
@@ -14,15 +13,9 @@ from parallax.core._execution._unit_work.instructions import (
     INSERT_MUTATIONS,
     ExpectedVersion,
     PreparedKeyedWrite,
-    PreparedWrite,
     derive_keyed_write,
 )
-from parallax.core._execution._unit_work.ranges import (
-    DeferredGroupRange,
-    DeferredTemporalRange,
-    GroupContinuation,
-    bind_deferred,
-)
+from parallax.core._execution._unit_work.ranges import DeferredTemporalRange, bind_deferred
 from parallax.core._execution._unit_work.strategy import (
     ActorIdentity,
     AuditDecoration,
@@ -38,7 +31,6 @@ from parallax.core._execution._unit_work.write_items import (
     ComposedTemporalWrite,
     FollowingKeyedWrite,
     InsertionKeyedWrite,
-    MaterializedWriteGroup,
     ObservedKeyedWrite,
     OrderedWrite,
     PendingOpening,
@@ -48,7 +40,6 @@ from parallax.core._execution._unit_work.write_items import (
 )
 from parallax.core._execution._unit_work.write_settlement import WritePlanCompiler
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity, EntityMetadata, Metamodel
-from parallax.core.write_plan.materialized import PredecessorRows
 from parallax.core.write_plan.payload import WritePayloadPreparer
 from parallax.core.write_plan.plan import (
     NO_TEMPORAL_WRITE_OWNERSHIP,
@@ -56,6 +47,7 @@ from parallax.core.write_plan.plan import (
     TemporalWriteOwnership,
     WritePlan,
 )
+from parallax.core.write_plan.predecessor_rows import PredecessorRows
 
 __all__ = [
     "WritePlanner",
@@ -96,10 +88,9 @@ class WritePlanner:
     """The model-scoped, stateless Write Planner (`m-unit-work`).
 
     Constructed once per accepted Metamodel with its strategy adapters already
-    wired; :meth:`finalize` plans a flush, :meth:`bind_deferred` binds a
-    deferred range of a plan it finalized once that range's coverage is read,
-    and :meth:`prepare_group` answers the continuation a deferred group of such
-    a plan settles through. No caller sequences coalescing, batching, ordering, temporal expansion,
+    wired; :meth:`finalize` plans a flush, and :meth:`bind_deferred` binds a
+    deferred range of a plan it finalized once that range's coverage is read.
+    No caller sequences coalescing, batching, ordering, temporal expansion,
     observation validation, instant acquisition, or audit by hand.
 
     The compiler it constructs here is its own, built over the same model and
@@ -232,30 +223,6 @@ class WritePlanner:
             payloads=self._payloads,
         )
 
-    def prepare_group(
-        self,
-        description: DeferredGroupRange,
-        /,
-        *,
-        acquire_rows: AcquireRows,
-        ownership: TemporalWriteOwnership,
-        actor_identity: ActorIdentity,
-        transaction_instant: TransactionInstant,
-    ) -> GroupContinuation:
-        """The continuation that settles a deferred group this planner
-        finalized, batch by batch, reading each batch's coverage through
-        ``acquire_rows`` under ``ownership`` as the running flush's earlier
-        units left it; the configured audit finalizes each row it produces once
-        and decorates each close it emits, with ``actor_identity`` and
-        ``transaction_instant``."""
-        return GroupContinuation(
-            description,
-            acquire_rows=acquire_rows,
-            ownership=ownership,
-            audit=AuditDecoration(self._audit, actor_identity, transaction_instant, self._settled),
-            payloads=self._payloads,
-        )
-
     def version_attribute(self, entity: EntityIdentity) -> AttributeIdentity | None:
         """The Attribute carrying ``entity``'s optimistic version, or ``None``
         for an unversioned Entity."""
@@ -378,8 +345,8 @@ class WritePlanner:
         close_region()
         return ordered
 
-    def _rank(self, instruction: PreparedWrite) -> int:
-        return self._ranked(_instruction_target(instruction))
+    def _rank(self, instruction: PreparedKeyedWrite) -> int:
+        return self._ranked(instruction.target)
 
     def _ranked(self, entity: EntityMetadata) -> int:
         rank = self._relationships.referential_rank(entity.identity)
@@ -454,16 +421,6 @@ def _merge_rows(run: Sequence[PreparedKeyedWrite]) -> PreparedKeyedWrite:
     entity/mutation/Valid-Time window every member of the run already shares."""
     first = run[0]
     return derive_keyed_write(first, tuple(row for w in run for row in w.rows))
-
-
-def _instruction_target(instruction: PreparedWrite) -> EntityMetadata:
-    if isinstance(instruction, PreparedKeyedWrite):
-        return instruction.target
-    # A readless predicate write is always a barrier in `_order`, never a
-    # region member `_rank` resolves against — but a Materialized Write
-    # Group's own `mutation` IS a `PreparedPredicateWrite`, and a group ranks as an
-    # ordinary region member, so this arm is reached for one.
-    return instruction.selection.target
 
 
 def _without_noop_rows(
@@ -558,18 +515,18 @@ def _settled_attributes(
 
 def _ordered_instruction(
     item: PreparedKeyedWrite
-    | ReadlessPredicateWrite
     | ObservedKeyedWrite
     | InsertionKeyedWrite
     | TargetKeyedWrite
     | FollowingKeyedWrite
-    | PendingOpening
-    | MaterializedWriteGroup,
-) -> PreparedWrite:
+    | PendingOpening,
+) -> PreparedKeyedWrite:
     """The instruction ordering ranks ``item`` by: a pending opening's own
     insert, and the write a barrier keeps after earlier ones."""
     if isinstance(item, FollowingKeyedWrite):
         return item.write.instruction
     if isinstance(item, PendingOpening):
         return item.insert
-    return buffered_instruction(item)
+    if isinstance(item, PreparedKeyedWrite):
+        return item
+    return item.instruction

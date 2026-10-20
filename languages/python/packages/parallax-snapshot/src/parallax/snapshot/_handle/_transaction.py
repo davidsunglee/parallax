@@ -50,10 +50,9 @@ class TxnContext:
     materialized level's own target Entity calls for, otherwise identical to
     :meth:`ScopedDatabase.find`. The predicate-selected ``_where`` verb family
     — :meth:`amend_where`, :meth:`delete_where`, :meth:`terminate_where` —
-    writes every row a mutation-compatible Object Query selects: readless for an
-    unversioned, non-temporal target, materializing to per-row keyed writes
-    otherwise (ADR 0014, which those verbs reach through the Typed predicate
-    ingress). Every windowed verb selects its bounded form with keyword-only
+    writes every row a mutation-compatible Object Query selects in one readless
+    statement over an unversioned, non-temporal target, and preparation refuses
+    every other target (ADR 0075). Every windowed verb selects its bounded form with keyword-only
     ``until``, and a stated ``valid_from`` or ``until`` of ``None`` is refused
     rather than read as omission. A reference used after its attempt ended
     raises ``EscapedTransactionError``: the attempt's lifetime fences every

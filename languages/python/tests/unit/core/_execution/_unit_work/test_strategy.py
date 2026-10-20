@@ -132,7 +132,6 @@ def test_the_neutral_audit_answers_every_input_itself_and_reads_no_clock() -> No
     clock = CountingClock([])
     neutral = AuditDecoration(NO_AUDIT, TEST_ACTOR_IDENTITY, TransactionInstant(clock), ())
 
-    assert neutral.neutral
     assert neutral.finalize_row(write_row) is write_row
     assert neutral.decorate_update(update) is update
     assert clock.calls == 0
@@ -146,7 +145,6 @@ def test_a_finalized_row_states_every_value_it_adds_as_an_executed_assignment() 
 
     finalized = bound.finalize_row(write_row)
 
-    assert not bound.neutral
     assert finalized.row.attributes[owner] == "audited"
     assert finalized.executed == (owner,)
     assert finalized.origin is write_row.origin

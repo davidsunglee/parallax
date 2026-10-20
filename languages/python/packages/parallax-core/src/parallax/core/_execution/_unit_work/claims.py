@@ -10,8 +10,6 @@ from parallax.core.temporal_read import TimeInterval
 from parallax.core.write_plan.keys import ObjectKey, ObjectStateKey
 
 __all__ = [
-    "SELECTION_INTENT",
-    "SPANNING_SELECTION_INTENT",
     "ClaimScope",
     "ClaimVerdict",
     "SettledEvidence",
@@ -23,14 +21,11 @@ __all__ = [
     "keyed_intent",
 ]
 
-type WriteIntentKind = Literal["assignment", "destructive", "selection"]
+type WriteIntentKind = Literal["assignment", "destructive"]
 """What a buffered write means to do to what it claimed.
 
 ``assignment`` writes member values against a row that survives the write;
-``destructive`` removes the row or closes the milestone; ``selection`` is a
-Materialized Write Group's own claim over every state its predicate resolved,
-which is a whole compact unit rather than a per-object intent a later write
-could join.
+``destructive`` removes the row or closes the milestone.
 """
 
 # The keyed mutations that write member values against a surviving row. The
@@ -57,18 +52,6 @@ class WriteIntent:
 
     kind: WriteIntentKind
     valid_time_window: TimeInterval | None = None
-    spans: bool = False
-
-
-SELECTION_INTENT: Final = WriteIntent(kind="selection")
-"""The claim a Materialized Write Group takes on every state its predicate
-resolved. It is one intent value rather than one per row because a group carries
-no window of its own to compare: it is indivisible, and every keyed intent
-against a state it selected is incompatible with it."""
-
-SPANNING_SELECTION_INTENT: Final = WriteIntent(kind="selection", spans=True)
-"""The selection claim of a group that reaches every state of each object it
-selected, not only the one it selected."""
 
 
 type ClaimScope = ObjectStateKey | ObjectKey
@@ -191,9 +174,6 @@ def admits(held: WriteIntent | None, arriving: WriteIntent) -> ClaimVerdict:
     The rule reads in the order the incompatibilities appear:
 
     * an unclaimed scope admits whatever arrives;
-    * a Materialized Write Group's selection claim admits nothing beside it, in
-      either direction — the group is compact and indivisible, so merging a keyed
-      assignment into it would mean indexing and mutating it;
     * different Valid-Time windows never compose, because interval composition
       is semantics this framework does not invent;
     * an assignment after a destruction is a resurrection, which no write means;
@@ -203,8 +183,6 @@ def admits(held: WriteIntent | None, arriving: WriteIntent) -> ClaimVerdict:
     """
     if held is None:
         return "admit"
-    if "selection" in (held.kind, arriving.kind):
-        return "incompatible"
     if held.valid_time_window != arriving.valid_time_window:
         return "incompatible"
     if held.kind == "destructive":

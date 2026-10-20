@@ -40,7 +40,6 @@ from parallax.core.metamodel import AttributeIdentity, EntityIdentity
 from parallax.core.opt_lock._facet import UNVERSIONED
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.unit_work import (
-    SELECTION_INTENT,
     KeyedWriteInstruction,
     RetainedObservation,
     WriteIntent,
@@ -150,13 +149,10 @@ def test_every_other_keyed_mutation_intends_an_assignment_or_a_destruction(
     [
         (None, _ASSIGNMENT, "admit"),
         (None, _DESTRUCTIVE, "admit"),
-        (None, SELECTION_INTENT, "admit"),
         (_ASSIGNMENT, _ASSIGNMENT, "coalesce"),
         (_ASSIGNMENT, _DESTRUCTIVE, "supersede"),
         (_DESTRUCTIVE, _DESTRUCTIVE, "deduplicate"),
         (_DESTRUCTIVE, _ASSIGNMENT, "incompatible"),
-        (SELECTION_INTENT, _ASSIGNMENT, "incompatible"),
-        (_ASSIGNMENT, SELECTION_INTENT, "incompatible"),
         (
             WriteIntent(kind="assignment", valid_time_window=TimeInterval(_VALID_FROM, INFINITY)),
             WriteIntent(kind="assignment", valid_time_window=TimeInterval(_OTHER_FROM, INFINITY)),

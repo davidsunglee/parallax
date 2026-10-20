@@ -17,9 +17,9 @@ __all__ = [
 
 @dataclass(frozen=True, slots=True)
 class PredecessorRows:
-    """Each selected row's complete Predecessor Row state, in resolution order.
+    """Each acquired row's complete Predecessor Row state, in read order.
 
-    ``rows`` holds the resolving read's own judged positional member rows,
+    ``rows`` holds the acquiring read's own judged positional member rows,
     aligned to ``selection``, and ``absent`` is the marker those rows carry at a
     member the row does not hold. ``key_position`` is the family key's position
     in ``selection``. ``documents`` aligns each row's raw Structured Column and

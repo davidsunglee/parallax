@@ -75,10 +75,8 @@ def eager_segment(steps: Sequence[PlannedWrite]) -> StepSegment:
 class PlannedWrites:
     """The immutable ordered logical sequence of Planned Writes a Write Plan exposes.
 
-    Backed by segments rather than one flat tuple: a large materialized run
-    packs its steps as compact columns and rebuilds one Planned Write at a
-    time, so no consumer of a Write Plan forces the whole run into memory as
-    independently allocated objects merely by holding the plan.
+    Backed by segments (:class:`StepSegment`) rather than one flat tuple, each
+    asked for one Planned Write at a time.
     """
 
     segments: tuple[StepSegment, ...] = ()
@@ -264,10 +262,6 @@ class TemporalWriteOwnership(Protocol):
 
     def owns(self, endpoint: OwnedEndpoint, /) -> bool: ...
 
-    def owns_any(self, entity: EntityIdentity, /) -> bool:
-        """Whether any owned row is an object of ``entity``."""
-        ...
-
     def continues_insertion(self, endpoint: OwnedEndpoint, /) -> bool:
         """Whether an admitted insertion contributed any part of the owned row
         ``endpoint`` (:meth:`insertion_coverage`)."""
@@ -307,10 +301,6 @@ class TemporalWriteOwnership(Protocol):
 class _NoTemporalWriteOwnership:
     def owns(self, endpoint: OwnedEndpoint, /) -> bool:
         del endpoint
-        return False
-
-    def owns_any(self, entity: EntityIdentity, /) -> bool:
-        del entity
         return False
 
     def continues_insertion(self, endpoint: OwnedEndpoint, /) -> bool:

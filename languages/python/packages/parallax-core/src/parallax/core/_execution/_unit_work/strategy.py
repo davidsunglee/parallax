@@ -134,10 +134,8 @@ class VersionArithmetic:
     a new lineage opens at, and the step a successful write advances by.
 
     Data rather than policy — it decides nothing beyond addition — which is what
-    lets a settled write keep it. A packed run of a Materialized Write Group's
-    rows advances each row's observed version at step access from the value here
-    rather than from a precomputed second column, and holding the strategy that
-    produced it would instead put a policy object inside a Write Plan.
+    lets a settled write keep it: holding the strategy that produced it would
+    instead put a policy object inside a Write Plan.
     """
 
     initial: int
@@ -320,21 +318,13 @@ class AuditDecoration:
     strategy cannot move what a step addresses or change a value without
     stating it as an executed assignment. ``settled`` holds the Attributes
     settlement alone decides — every primary key, temporal bound, and optimistic
-    version — which no answer may state. ``neutral`` says the strategy is the
-    audit-neutral default, which answers every input unchanged: a settlement
-    holding rows only as compact backing then builds none merely to ask, and
-    keeps what any other strategy adds (``assignments_added``) rather than the
-    steps it answered.
+    version — which no answer may state.
     """
 
     audit: AuditStrategy
     actor_identity: ActorIdentity
     transaction_instant: TransactionInstant
     settled: Container[object]
-
-    @property
-    def neutral(self) -> bool:
-        return isinstance(self.audit, UndecoratedAudit)
 
     def finalize_row(self, write_row: WriteRow) -> WriteRow:
         finalized = self.audit.finalize_row(
