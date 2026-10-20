@@ -67,12 +67,19 @@ segments, offsets, and borrowed views. Transaction-Time target writes are the
 exception at 72–80 B/row more (0.4%): their high-water falls inside deferred
 binding, before any bound step exists, while the plan's singleton Write Group
 is held. Retained bytes did not move, and Snapshot memory moved within noise.
-Snapshot's advisory Budget Contract timing outcomes went from 2 to 16 outside,
-all live or first-result cells. No read path changed, and a same-condition
-diagnostic of the superseded tree reproduced the slower `versioned-document`
-timings, so these are attributed to run conditions. The cross-object family
-took 1m49s of the collection. These span `581c5475b..90ff69ccb` and are not
-attributed to individual commits.
+Snapshot's advisory Budget Contract timing outcomes went from 2 to 16 outside.
+The two already outside, `duplicate-include` provider-free eager time and
+throughput, stayed outside; the 14 new ones are all live or first-result cells.
+No read path changed, and a same-condition ABBA diagnostic of the superseded
+tree reproduced the slower `versioned-document` timings, so these are
+attributed to run conditions. The cross-object family took 1m49s of the
+collection. These span `581c5475b..90ff69ccb` and are not attributed to
+individual commits. The raw capture, the superseded capture (`superseded/`),
+the ABBA diagnostic (`snapshot-abba/`), and the deferred-binding peak
+attribution (`target-bisect/`) are archived at
+`~/.local/share/parallax/evidence/cor-226/phase-5-capture/`; its `SHA256SUMS`
+manifest has SHA-256
+`f92d383aac02c40c3f18836ca7d92ea91f6c8d99cfcb64be3daadd624d71c2c2`.
 
 ## Method and interpretation
 
