@@ -9,7 +9,7 @@
           "version": "3.13.16"
         },
         "3.14": {
-          "executable": "/Users/david/.humanlayer/workspaces/cor-223-cleanup-predicate-writes-api-yhcb8e/parallax/languages/python/.venv/bin/python",
+          "executable": "/Users/david/.humanlayer/workspaces/cor-226-batch-write-statements-across-objects-h9msa2/parallax/languages/python/.venv/bin/python",
           "implementation": "CPython",
           "status": "available",
           "version": "3.14.8"
@@ -31,7 +31,7 @@
           "version": "3.13.16"
         },
         "3.14": {
-          "executable": "/Users/david/.humanlayer/workspaces/cor-223-cleanup-predicate-writes-api-yhcb8e/parallax/languages/python/.venv/bin/python",
+          "executable": "/Users/david/.humanlayer/workspaces/cor-226-batch-write-statements-across-objects-h9msa2/parallax/languages/python/.venv/bin/python",
           "implementation": "CPython",
           "status": "available",
           "version": "3.14.8"
@@ -51,14 +51,14 @@
           "status": "unavailable"
         },
         "3.14": {
-          "executable": "/Users/david/.humanlayer/workspaces/cor-223-cleanup-predicate-writes-api-yhcb8e/parallax/languages/python/.venv/bin/python",
+          "executable": "/Users/david/.humanlayer/workspaces/cor-226-batch-write-statements-across-objects-h9msa2/parallax/languages/python/.venv/bin/python",
           "implementation": "CPython",
           "status": "available",
           "version": "3.14.8"
         }
       },
       "sources": {
-        "tools/lifecycle_overhead.py": "8aaa723d1d56ba968ad1fcba2bcf6ac02b8efc3312be9763e0cfaa2f416e68f0"
+        "tools/lifecycle_overhead.py": "17d27c69273afcf61e95ec45cd49cad55bdb623d5c78ad0fded9da94625f4ac9"
       }
     },
     "snapshot-delivery": {
@@ -70,7 +70,7 @@
           "version": "3.13.16"
         },
         "3.14": {
-          "executable": "/Users/david/.humanlayer/workspaces/cor-223-cleanup-predicate-writes-api-yhcb8e/parallax/languages/python/.venv/bin/python",
+          "executable": "/Users/david/.humanlayer/workspaces/cor-226-batch-write-statements-across-objects-h9msa2/parallax/languages/python/.venv/bin/python",
           "implementation": "CPython",
           "status": "available",
           "version": "3.14.8"
@@ -96,7 +96,7 @@
           "version": "3.13.16"
         },
         "3.14": {
-          "executable": "/Users/david/.humanlayer/workspaces/cor-223-cleanup-predicate-writes-api-yhcb8e/parallax/languages/python/.venv/bin/python",
+          "executable": "/Users/david/.humanlayer/workspaces/cor-226-batch-write-statements-across-objects-h9msa2/parallax/languages/python/.venv/bin/python",
           "implementation": "CPython",
           "status": "available",
           "version": "3.14.8"
@@ -106,10 +106,10 @@
         "tests/unit/_leaf_type_support.py": "ba71d340b0a45e885b18ef6a7db6dcdf249e2e76949730de2525fc9c2dcef112",
         "tests/unit/_structural_geometry_support.py": "41673306e078cb7e920bbf5c11d348bfe68da531a4abef21d9f653cb3ae99dd3",
         "tests/unit/_workload_spelling_support.py": "c84e87a236d549df8423293c7b05cf5a5ebb6c5a20149ffa1b9abe57527d8636",
-        "tests/unit/_write_lowering_support.py": "87f7d1bc0c94fe0f154c27bbfede26bd1adb4de911347f0d45e8de9fb9ecfbcc",
+        "tests/unit/_write_lowering_support.py": "5f3688963aa4ed69c63648ead136fd7abbf814fa9ce28e6d4b65da68c3dd6b58",
         "tests/unit/memory_instruments.py": "cc1c8140dd4a66aa886b9d014ec10adebb9a8dbfac23a3cd73d2bf837723894a",
-        "tools/write_lowering_overhead.py": "7674c6c6537c3f51f9843b7acd63711590ce9c1e5a31525e4cada0cf3b68cd3e",
-        "tools/write_lowering_reading.py": "cdce3d8059fdd5510b40f250ae4d16d08373ec6a21d43c55668b93556691cfb5"
+        "tools/write_lowering_overhead.py": "1f8e89d4b0ba7f78a1e5bd9a7b52835b32fb03bc11406cb81ed1eb3fc7db2bd0",
+        "tools/write_lowering_reading.py": "df37c67cb48253f0fa6c0388b350d578ee218b42d7ad620e5c207ff5c4184d39"
       }
     }
   },
