@@ -51,10 +51,10 @@ from parallax.core.write_plan.steps import (
     Finite,
     PlannedClose,
     PlannedInsert,
+    PlannedStep,
     PlannedTemporalGuard,
     PlannedTemporalRemoval,
     PlannedTemporalRevision,
-    PlannedWrite,
     TemporalGate,
 )
 from parallax.core.write_plan.steps import INFINITY as OPEN_END
@@ -167,17 +167,17 @@ def _assigning(
     return NO_TRANSFORM.followed_by(window, assigned, replaces=False)
 
 
-def _kinds(steps: Iterable[PlannedWrite]) -> list[type[PlannedWrite]]:
+def _kinds(steps: Iterable[PlannedStep]) -> list[type[PlannedStep]]:
     return [type(step) for step in steps]
 
 
-def _cells(insert: PlannedWrite) -> dict[str, object]:
+def _cells(insert: PlannedStep) -> dict[str, object]:
     assert isinstance(insert, PlannedInsert)
     (entry,) = insert.entries
     return {identity.name: value for identity, value in entry.row.attributes.items()}
 
 
-def _windows(steps: Iterable[PlannedWrite]) -> list[tuple[object, object, object]]:
+def _windows(steps: Iterable[PlannedStep]) -> list[tuple[object, object, object]]:
     return [
         (cells["validStart"], cells["validEnd"], cells["amount"])
         for cells in (_cells(step) for step in steps if isinstance(step, PlannedInsert))
@@ -370,7 +370,7 @@ def test_an_equal_bounded_assignment_keeps_the_rectangle_across_carried_head_and
     gated: bool,
     ownership: TemporalWriteOwnership,
     stored: PredecessorRow,
-    kinds: list[type[PlannedWrite]],
+    kinds: list[type[PlannedStep]],
 ) -> None:
     expanded = _expand(
         _expansion(_SPAN_FACTS, _RESTATING, gated=gated, guards=True, ownership=ownership),
@@ -401,7 +401,7 @@ def test_a_starting_rectangle_a_caller_named_is_kept_unchanged_like_any_other(
     gated: bool,
     ownership: TemporalWriteOwnership,
     stored: PredecessorRow,
-    kinds: list[type[PlannedWrite]],
+    kinds: list[type[PlannedStep]],
 ) -> None:
     expanded = _expand(
         _expansion(_SPAN_FACTS, _RESTATING, gated=gated, guards=True, ownership=ownership),

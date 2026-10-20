@@ -40,10 +40,10 @@ from parallax.core.write_plan.steps import (
     PlannedClose,
     PlannedInsert,
     PlannedRow,
+    PlannedStep,
     PlannedTemporalGuard,
     PlannedTemporalRemoval,
     PlannedTemporalRevision,
-    PlannedWrite,
     TemporalGate,
     WriteRow,
 )
@@ -56,7 +56,7 @@ _T1: Final = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 
 def _effects(
     entity: EntityIdentity, owner: EntityIdentity, revised: dict[AttributeIdentity, object]
-) -> list[PlannedWrite]:
+) -> list[PlannedStep]:
     """Every count-only temporal effect on ``entity``, whose key and temporal
     members ``owner`` declares; its revision assigns ``revised``."""
 
@@ -101,7 +101,7 @@ def _effects(
     ]
 
 
-def _cases() -> list[tuple[str, Metamodel, PlannedWrite]]:
+def _cases() -> list[tuple[str, Metamodel, PlannedStep]]:
     position = model("position")
     columns = entity_of(position, "Position").identity
     tags = model("scalar-collection-lifecycle-layout-twin-document")
@@ -109,7 +109,7 @@ def _cases() -> list[tuple[str, Metamodel, PlannedWrite]]:
     instrument = model("instrument")
     bond = entity_of(instrument, "Bond").identity
     root = entity_of(instrument, "Instrument").identity
-    cases: list[tuple[str, Metamodel, PlannedWrite]] = []
+    cases: list[tuple[str, Metamodel, PlannedStep]] = []
     revisions: tuple[tuple[str, Metamodel, EntityIdentity, EntityIdentity, dict[str, object]], ...]
     revisions = (
         ("columns", position, columns, columns, {"value": Decimal("2.50")}),
@@ -137,7 +137,7 @@ def _cases() -> list[tuple[str, Metamodel, PlannedWrite]]:
     ("label", "meta", "step"), _cases(), ids=[label for label, _meta, _step in _cases()]
 )
 def test_every_temporal_effect_promises_a_parameter_ceiling_its_statement_keeps(
-    label: str, meta: Metamodel, step: PlannedWrite
+    label: str, meta: Metamodel, step: PlannedStep
 ) -> None:
     del label
     ceiling = ordered_parameter_ceiling(step, POSTGRES)

@@ -96,7 +96,7 @@ def _is_producer(value: object) -> bool:
 
 
 def _reachable_from_plan(plan: WritePlan) -> list[object]:
-    """Everything a plan's segments and execution units reach, every deferred
+    """Everything a plan's segments and settled writes reach, every deferred
     range's description included."""
     return [
         value for held in (*plan.steps.segments, *plan.units) for value in reachable_objects(held)

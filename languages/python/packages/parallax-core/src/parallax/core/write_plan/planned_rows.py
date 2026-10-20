@@ -41,7 +41,7 @@ _MARKER_KEYS: Final[frozenset[str]] = frozenset({"computed", "increment"})
 
 
 class WritePlanningError(ValueError):
-    """A buffered write cannot be settled into a Planned Write — a caller
+    """A buffered write cannot be settled into a Planned Step — a caller
     wiring defect the planner refuses loudly rather than settling wrongly
     (e.g. a row naming a member outside its Entity's family)."""
 

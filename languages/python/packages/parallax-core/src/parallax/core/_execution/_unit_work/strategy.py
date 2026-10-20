@@ -119,7 +119,7 @@ class BatchingStrategy(Protocol):
         rows: Sequence[Mapping[str, object]],
     ) -> bool: ...
 
-    def group_key(
+    def batch_key(
         self,
         model: Metamodel,
         entity: EntityMetadata,

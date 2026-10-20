@@ -74,8 +74,8 @@ from parallax.core.write_plan.plan import WriteStepView
 from parallax.core.write_plan.steps import (
     PlannedClose,
     PlannedDelete,
+    PlannedStep,
     PlannedUpdate,
-    PlannedWrite,
     TemporalGate,
     Versioned,
 )
@@ -205,7 +205,7 @@ def _prepared_writes() -> list[OrderedWrite]:
     ]
 
 
-def _settled_versions(steps: list[PlannedWrite]) -> list[tuple[EntityIdentity, object]]:
+def _settled_versions(steps: list[PlannedStep]) -> list[tuple[EntityIdentity, object]]:
     """Each versioned step's Entity beside the version Attribute planning settled."""
     return [
         (step.entity, step.concurrency.attribute)
@@ -237,7 +237,7 @@ def test_planning_and_lowering_prepared_writes_take_the_version_from_its_owner(
             buffered_writes=prepared,
         )
     )
-    lowered: list[tuple[PlannedWrite, LoweredStatement]] = list(
+    lowered: list[tuple[PlannedStep, LoweredStatement]] = list(
         lowered_steps(plan.steps, LayoutPayloadPreparer(_MODEL), _MODEL, POSTGRES)
     )
 

@@ -48,9 +48,9 @@ from parallax.core._execution._unit_work.retain import ReadEvidence
 from parallax.core._execution._unit_work.strategy import ActorIdentity
 from parallax.core._execution._unit_work.uow import (
     Concurrency,
+    FlushTrigger,
     TransactionSettings,
     UnitOfWork,
-    WriteBatchReason,
 )
 from parallax.core._execution._write_step_executor import WriteStepExecutor
 from parallax.core.base import ManagedValue
@@ -64,13 +64,13 @@ from parallax.core.execution_lifecycle._activity import (
     INERT,
     ActivityTarget,
     DatabaseCallScope,
+    FlushActivity,
     InstalledLifecycle,
     JoinedInvocationActivity,
     ReadActivity,
     StreamActivity,
     StreamBatchActivity,
     TransactionAttemptActivity,
-    WriteBatchActivity,
     refuse_reentry,
 )
 from parallax.core.metamodel import Metamodel
@@ -346,7 +346,7 @@ class _TxnAttemptBase:
         """Run ``body`` once the read is admitted, inside its own activity.
 
         The activity opens INSIDE the admission, which is what makes a
-        dependency batch a writable attempt's admission forces out an ordered
+        dependency flush a writable attempt's admission forces out an ordered
         SIBLING of the read under the same attempt rather than a scope
         containing it (`m-execution-lifecycle`).
         """
@@ -421,11 +421,11 @@ class ReadOnlyTxnAttempt(_TxnAttemptBase):
 class TxnAttempt(_TxnAttemptBase):
     """One physical writable transaction attempt: its unit of work, its
     connection, the selection it adopted, its activity, its resolved options,
-    and the Write Batch its current flush runs inside.
+    and the Flush activity of its current flush.
 
     Constructed inside the port's transaction callback, after the attempt
     adopted and opened: every execution field is set before the unit of work is
-    constructed over this attempt's own step-execution, write-batch, and
+    constructed over this attempt's own step-execution, flush, and
     row-acquisition methods, so neither a lifecycle factory nor a callback can
     observe a partially wired attempt. A retry constructs a fresh one; a joining
     call reuses the active attempt and never constructs another.
@@ -437,7 +437,7 @@ class TxnAttempt(_TxnAttemptBase):
     about what it stores.
     """
 
-    __slots__ = ("_batch", "_options", "_step_executor", "_uow", "_write")
+    __slots__ = ("_flush", "_options", "_step_executor", "_uow", "_write")
 
     def __init__(
         self,
@@ -458,7 +458,7 @@ class TxnAttempt(_TxnAttemptBase):
         )
         self._write = write
         # Every flush of this attempt executes its steps on this connection
-        # through this one executor, handing it the flush's own Write Batch.
+        # through this one executor, handing it that flush's own activity.
         self._step_executor = WriteStepExecutor(
             connection, payloads=write.planner.payloads, meta=write.model.meta
         )
@@ -466,11 +466,11 @@ class TxnAttempt(_TxnAttemptBase):
         # attempt of the invocation: what a joining call is compared against,
         # and what a caller inspects, without ambient state on either path.
         self._options = options
-        # One flush is ONE Write Batch however many statements its plan lowers
-        # to. The unit of work opens it before planning and executes every span
-        # of the plan inside it, so each span runs under the batch its flush
-        # opened; a flush never nests.
-        self._batch: WriteBatchActivity = INERT
+        # One flush is ONE Flush activity however many statements its plan
+        # lowers to. The unit of work opens it before planning and executes
+        # every span of the plan inside it, so each span runs under the activity
+        # its flush opened; a flush never nests.
+        self._flush: FlushActivity = INERT
         self._uow = UnitOfWork(
             settings=TransactionSettings(
                 concurrency=options.concurrency,
@@ -479,8 +479,8 @@ class TxnAttempt(_TxnAttemptBase):
             lifetime=lifetime,
             clock=clock,
             meta=write.model.meta,
-            execute_write_steps=self._execute_steps,
-            write_batch_opening=self._open_write_batch,
+            execute_write_steps=self._execute_write_steps,
+            flush_opening=self._open_flush,
             acquire_rows=self._acquire_rows,
             # The adopted selection's Write Planner: retained by this unit of
             # work for its life, and reused by every join into it rather than
@@ -511,7 +511,7 @@ class TxnAttempt(_TxnAttemptBase):
         return self._write.codec
 
     def complete(self) -> None:
-        """Flush what is still buffered as the boundary's pre-commit batch, while
+        """Flush what is still buffered as the boundary's pre-commit flush, while
         the lifetime still admits work."""
         self._uow.flush(trigger="pre_commit")
 
@@ -614,14 +614,14 @@ class TxnAttempt(_TxnAttemptBase):
 
         A target read is a Read of its own under this attempt
         (`m-execution-lifecycle`: every statement-reaching operation belongs to
-        exactly one Read, Write Batch, or Stream Batch), spanning its planning,
+        exactly one Read, Flush, or Stream Batch), spanning its planning,
         lowering, and the consumer, so a compile refusal or a root holding
         invalid stored data is a FAILED Read rather than work outside every
         activity. Its lock suffix derives from the target Entity's Effective
         Concurrency Strategy through the same seam a participating find takes.
         A coverage read runs while a flush is reaching a deferred range, so it
-        is a read call of the Write Batch that flush runs inside, under the
-        shared row lock where its range protects every affected row with one.
+        is a read call of that flush's Flush activity, under the shared row lock
+        where its range protects every affected row with one.
 
         Every read is row-form, over the target's own member selection: the
         identity under ``Columns`` layout and the document fan-out under
@@ -637,7 +637,7 @@ class TxnAttempt(_TxnAttemptBase):
                 request, cast("RowConsumer[CompletionRequest, Result]", consumer)
             )
         if isinstance(request, CoverageReadRequest):
-            return self._consume(self._coverage_read(request), self._batch, request, consumer)
+            return self._consume(self._coverage_read(request), self._flush, request, consumer)
         with self._activity.read(request.entity.identity, "rows") as read:
             return self._consume(self._target_read(request), read, request, consumer)
 
@@ -734,19 +734,20 @@ class TxnAttempt(_TxnAttemptBase):
 
     # Flush execution.
 
-    def _open_write_batch(self, trigger: WriteBatchReason, /) -> WriteBatchActivity:
+    def _open_flush(self, trigger: FlushTrigger, /) -> FlushActivity:
         """The scope one flush of this attempt's buffer runs inside.
 
         The unit of work enters it before planning and leaves it when the flush
-        is over, so a planning refusal is a failed batch rather than work outside
-        every batch, and a batch planning reduces to no DML at all still
+        is over, so a planning refusal is a failed Flush rather than work outside
+        every Flush, and a Flush planning reduces to no DML at all still
         completes.
         """
-        batch = self._activity.write_batch(trigger)
-        self._batch = batch
-        return batch
+        flush = self._activity.flush(trigger)
+        self._flush = flush
+        return flush
 
-    def _execute_steps(self, steps: WriteStepView, /, *, allocates: bool) -> tuple[object, ...]:
-        """Execute ``steps`` as calls of the Write Batch the current flush runs
-        inside."""
-        return self._step_executor.execute(steps, allocates=allocates, batch=self._batch)
+    def _execute_write_steps(
+        self, steps: WriteStepView, /, *, allocates: bool
+    ) -> tuple[object, ...]:
+        """Execute ``steps`` as calls of the current flush's Flush activity."""
+        return self._step_executor.execute(steps, allocates=allocates, flush=self._flush)

@@ -19,7 +19,7 @@ from parallax.core._execution._unit_work.acquisition import CompletionRequest, C
 from parallax.core._execution._unit_work.ranges import DeferredTemporalRange
 from parallax.core._execution._unit_work.retain import RetainedTargetState
 from parallax.core._execution._unit_work.write_items import (
-    BufferItem,
+    AdmittedWrite,
     TargetKeyedWrite,
     chained_temporal_write,
 )
@@ -30,7 +30,7 @@ from parallax.core.temporal_read import TimeInterval
 from parallax.core.unit_work import RetainedObservation, WritePlanningRequest
 from parallax.core.write_plan import PlannedClose, PlannedInsert, PredecessorRow
 from parallax.core.write_plan.keys import ObjectStateKey, TemporalObjectStateKey
-from parallax.core.write_plan.plan import NO_TEMPORAL_WRITE_OWNERSHIP, BoundRange, ExecutionUnit
+from parallax.core.write_plan.plan import NO_TEMPORAL_WRITE_OWNERSHIP, BoundRange, SettledWrite
 from tests._support.clock_probes import instant_at
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY, admitted_writes
 from tests.unit._positional_row_support import positional_row
@@ -75,8 +75,8 @@ def _holding(item: TargetKeyedWrite, state: RetainedTargetState) -> TargetKeyedW
 
 
 def _planned(
-    *writes: BufferItem, concurrency: str = "locking", follows: bool = False
-) -> ExecutionUnit:
+    *writes: AdmittedWrite, concurrency: str = "locking", follows: bool = False
+) -> SettledWrite:
     buffered = admitted_writes(POSITION, list(writes))
     if follows:
         (composed,) = buffered
@@ -95,8 +95,8 @@ def _planned(
 
 
 def _unit(
-    *writes: BufferItem, concurrency: str = "locking", follows: bool = False
-) -> ExecutionUnit:
+    *writes: AdmittedWrite, concurrency: str = "locking", follows: bool = False
+) -> SettledWrite:
     unit = _planned(*writes, concurrency=concurrency, follows=follows)
     assert isinstance(unit.deferred, DeferredTemporalRange)
     return unit
@@ -108,7 +108,7 @@ def _always(state: ObjectStateKey, read_at: int) -> bool:
 
 
 def _bind(
-    unit: ExecutionUnit,
+    unit: SettledWrite,
     stored: Sequence[PredecessorRow],
     *,
     current: Callable[[ObjectStateKey, int], bool] = _always,

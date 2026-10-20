@@ -208,7 +208,7 @@ def test_a_temporal_write_crosses_the_port_as_calculated_and_leaves_its_history(
     stored, differing = _stored(profile_run, cell)
     expected = expected_history(cell.workload, cell.size, 0)
     assert stored == expected
-    # Each closed milestone and each opened row is one Planned Write, however
+    # Each closed milestone and each opened row is one Planned Step, however
     # the statements carried them.
     assert tally.logical_writes == len(expected)
     assert tally.realization() == expected_realization(

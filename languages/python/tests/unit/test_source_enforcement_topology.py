@@ -53,7 +53,7 @@ from parallax.core.object_query._resolved import ResolvedObjectQuery
 from parallax.core.sql_gen._compile import compile_read, compile_write_predicate
 from parallax.core.sql_gen._write import compile_write_step
 from parallax.core.unit_work import WritePlanner
-from parallax.core.write_plan.steps import PlannedWrite
+from parallax.core.write_plan.steps import PlannedStep
 from tests._support.repo import PY_ROOT
 from tests.unit._source_inventory_support import (
     CONFORMANCE_SRC,
@@ -153,7 +153,7 @@ def test_carrier_neutral_lowering_requires_producer_owned_semantic_products() ->
     assert get_type_hints(compile_write_predicate)["op"] is TemporallyResolvedPredicate
     assert get_type_hints(prepare_typed_write)["return"] == PreparedWrite | PreparedTargetWrite
     assert get_type_hints(prepare_wire_write)["return"] == PreparedWrite | PreparedTargetWrite
-    assert get_type_hints(compile_write_step)["step"] == PlannedWrite
+    assert get_type_hints(compile_write_step)["step"] == PlannedStep
     assert not {
         "compile_read",
         "compile_write_predicate",
@@ -373,7 +373,7 @@ def test_the_sql_gen_reach_inventory_names_a_new_reach_and_passes_the_public_doo
 # pool-observation registry a root owns, stay in private modules. Who reaches
 # them is therefore a topology decision rather than a use of the package's
 # interface: execution opens roots, attempts, reads, connection brackets, and
-# the calls a Write Batch executes; read delivery opens the Database Calls and
+# the calls a Flush executes; read delivery opens the Database Calls and
 # Stream Batches it executes; and Snapshot's Wire editable-data copy refuses
 # re-entry before it reads a node, its write verbs entering the attempt's doors,
 # which refuse it. Keyed by reaching module and private module, so another

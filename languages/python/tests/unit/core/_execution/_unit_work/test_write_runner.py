@@ -52,7 +52,7 @@ from parallax.core.dialect import POSTGRES
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import AttributeIdentity, EntityMetadata, Metamodel, entity_by_name
 from parallax.core.unit_work import (
-    BufferItem,
+    AdmittedWrite,
     Concurrency,
     KeyedWriteInstruction,
     PredicateSelection,
@@ -78,13 +78,13 @@ from parallax.core.write_plan.plan import (
     OPEN_BITEMPORAL_ENDS,
     BoundRange,
     DeferredRange,
-    ExecutionUnit,
     OwnedEndpoint,
     PlannedWrites,
+    SettledWrite,
     TemporalWriteOwnership,
     WritePlan,
 )
-from parallax.core.write_plan.steps import PlannedWrite
+from parallax.core.write_plan.steps import PlannedStep
 from tests._support.clock_probes import instant_at
 from tests._support.planner_probes import (
     NO_ROW_READS,
@@ -163,7 +163,7 @@ class _Taken:
     def __len__(self) -> int:
         return len(self.keys)
 
-    def step(self, index: int) -> PlannedWrite:
+    def step(self, index: int) -> PlannedStep:
         self.taken.append((index, tuple(claim.consumed for claim in self.claims)))
         if index == self.failing and self.failure is not None:
             raise self.failure
@@ -176,9 +176,9 @@ def test_each_unit_completes_before_any_step_of_the_next_is_taken() -> None:
     plan = WritePlan(
         steps=PlannedWrites((segment,)),
         units=(
-            ExecutionUnit(end=2, claim=claims[0]),
-            ExecutionUnit(end=2, claim=claims[1]),
-            ExecutionUnit(end=3, claim=claims[2]),
+            SettledWrite(end=2, claim=claims[0]),
+            SettledWrite(end=2, claim=claims[1]),
+            SettledWrite(end=3, claim=claims[2]),
         ),
     )
     simulated = _simulated(POSITION_META)
@@ -200,7 +200,7 @@ def test_a_unit_whose_span_fails_completes_nothing_and_no_later_step_is_taken() 
     segment = _Taken((1, 2, 3), claims, failing=1, failure=failure)
     plan = WritePlan(
         steps=PlannedWrites((segment,)),
-        units=(ExecutionUnit(end=2, claim=claims[0]), ExecutionUnit(end=3, claim=claims[1])),
+        units=(SettledWrite(end=2, claim=claims[0]), SettledWrite(end=3, claim=claims[1])),
     )
     simulated = _simulated(POSITION_META)
     with pytest.raises(ValueError, match="cannot be built") as raised:
@@ -216,9 +216,9 @@ def test_each_unit_spans_one_execution_of_its_own_steps() -> None:
     plan = WritePlan(
         steps=PlannedWrites((_Taken((1, 2, 3, 4), claims),)),
         units=(
-            ExecutionUnit(end=1, claim=claims[0]),
-            ExecutionUnit(end=3, claim=claims[1]),
-            ExecutionUnit(end=4, claim=claims[2]),
+            SettledWrite(end=1, claim=claims[0]),
+            SettledWrite(end=3, claim=claims[1]),
+            SettledWrite(end=4, claim=claims[2]),
         ),
     )
     spans: list[tuple[int, tuple[bool, ...]]] = []
@@ -244,7 +244,7 @@ class _Foreign(DeferredRange):
 def test_a_deferred_description_no_planner_finalized_is_refused_before_anything_is_read() -> None:
     held = HeldRows(POSITION_META)
     simulated = _simulated(POSITION_META)
-    plan = WritePlan(units=(ExecutionUnit(end=0, deferred=_Foreign()),))
+    plan = WritePlan(units=(SettledWrite(end=0, deferred=_Foreign()),))
     with pytest.raises(TypeError, match="did not finalize"):
         run_write_plan(_uow(POSITION_META, simulated, rows=held), plan, simulated)
     assert held.requests == []
@@ -276,7 +276,7 @@ def _span_insert() -> PreparedKeyedWrite:
     return prepared
 
 
-def _span_amend(key: int) -> BufferItem:
+def _span_amend(key: int) -> AdmittedWrite:
     members = {
         "id": key,
         "amount": 1,
@@ -378,7 +378,7 @@ def _target(valid_from: dt.datetime, until: dt.datetime, value: str) -> Prepared
 _JAN, _APR, _JUN, _SEP = (dt.datetime(2024, month, 1, tzinfo=dt.UTC) for month in (1, 4, 6, 9))
 
 
-def _observed_amend(key: int, claim: RetainedObservation) -> BufferItem:
+def _observed_amend(key: int, claim: RetainedObservation) -> AdmittedWrite:
     prepared = prepare_wire_write(
         KeyedWriteInstruction("amend", "Position", ({"id": key, "value": "150.00"},), _APR),
         TARGET_POSITION,

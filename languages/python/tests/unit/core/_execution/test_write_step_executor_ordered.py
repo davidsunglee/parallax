@@ -21,10 +21,8 @@ from dataclasses import dataclass, field, replace
 import pytest
 
 from parallax.conformance._lifecycle_recording import RecordingLifecycleProvider
-from parallax.core._execution._write_lowering import LoweredOpening, LoweringCursor
-from parallax.core._execution._write_step_executor import (
-    _LoweredWriteChunk,  # pyright: ignore[reportPrivateUsage] - the chunk is the presented sequence itself
-)
+from parallax.core._execution._write_lowering import GroupedInsert, LoweringCursor
+from parallax.core._execution._write_step_executor import OrderedInvocation
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
     OrderedWriteResultComplete,
@@ -47,9 +45,9 @@ from parallax.core.execution_lifecycle import (
     ExecutionLifecycleHandler,
     ExecutionLifecycleHandlerError,
     ExecutionLifecycleProvider,
+    FlushFailed,
+    FlushFinished,
     RootExecution,
-    WriteBatchFailed,
-    WriteBatchFinished,
 )
 from parallax.core.execution_lifecycle._activity import INERT
 from parallax.core.metamodel import EntityIdentity
@@ -60,8 +58,8 @@ from parallax.core.unit_work import (
     StaleWriteError,
 )
 from parallax.core.write_plan import WritePlan
-from parallax.core.write_plan.plan import ExecutionUnit, PlannedWrites
-from parallax.core.write_plan.steps import PlannedInsert, PlannedWrite
+from parallax.core.write_plan.plan import PlannedWrites, SettledWrite
+from parallax.core.write_plan.steps import PlannedInsert, PlannedStep
 from tests._support.db_port import (
     Ordered,
     OrderedCall,
@@ -76,6 +74,7 @@ from tests.unit.core._execution._write_step_support import (
     close,
     guard,
     insert,
+    open_flush,
     ordered,
     removal,
     revision,
@@ -83,7 +82,6 @@ from tests.unit.core._execution._write_step_support import (
     slot,
     statement,
     step_executor,
-    write_batch,
 )
 
 _CAP = "parallax.core._execution._write_step_executor._ORDERED_STATEMENTS"
@@ -109,17 +107,17 @@ class _Executed:
 def _execute_held(
     segment: HeldSteps, provider: ExecutionLifecycleProvider | None = None
 ) -> _Executed:
-    """Execute ``segment`` as one span inside one Write Batch over its port.
+    """Execute ``segment`` as one span inside one Flush over its port.
 
-    A failure is caught outside the batch and recorded, so the batch finishes
+    A failure is caught outside the Flush and recorded, so the Flush finishes
     with it and the script reads as the calls alone.
     """
     executed = _Executed(segment)
     view = PlannedWrites((segment,)).view(0, len(segment))
     try:
-        with write_batch(provider) as batch:
+        with open_flush(provider) as flush:
             executed.answered = step_executor(segment.port).execute(
-                view, allocates=False, batch=batch
+                view, allocates=False, flush=flush
             )
     except BaseException as raised:
         executed.raised = raised
@@ -127,7 +125,7 @@ def _execute_held(
 
 
 def _execute(
-    port: ScriptedAdapter, *steps: PlannedWrite, provider: ExecutionLifecycleProvider | None = None
+    port: ScriptedAdapter, *steps: PlannedStep, provider: ExecutionLifecycleProvider | None = None
 ) -> _Executed:
     return _execute_held(HeldSteps(port, steps), provider)
 
@@ -155,29 +153,29 @@ def test_a_connection_without_ordered_transport_runs_and_lowers_each_effect_alon
     assert executed.raised is None
     assert port.calls == [alone(step) for step in steps]
     # Each effect is taken only once the one before it ran: nothing is
-    # gathered into a chunk ahead of its turn.
+    # gathered into an invocation ahead of its turn.
     assert executed.segment.asked == [(0, 0), (1, 1), (2, 2)]
 
 
 def _lowering_recorded(
-    monkeypatch: pytest.MonkeyPatch, steps: tuple[PlannedWrite, ...], port: ScriptedAdapter
+    monkeypatch: pytest.MonkeyPatch, steps: tuple[PlannedStep, ...], port: ScriptedAdapter
 ) -> list[tuple[int, int]]:
     """Where each of ``steps`` lowering alone or beginning a grouped opening is
     recorded: its position, with how many port calls had been made by then."""
     lowered_at: list[tuple[int, int]] = []
     lowered_alone = LoweringCursor.lowered
-    lowered_opening = LoweringCursor.lowered_opening
+    lowered_grouped_insert = LoweringCursor.lowered_grouped_insert
 
-    def lowering(cursor: LoweringCursor, step: PlannedWrite) -> LoweredStatement:
+    def lowering(cursor: LoweringCursor, step: PlannedStep) -> LoweredStatement:
         lowered_at.append((steps.index(step), len(port.calls)))
         return lowered_alone(cursor, step)
 
-    def grouping(cursor: LoweringCursor, first: PlannedInsert) -> LoweredOpening:
+    def grouping(cursor: LoweringCursor, first: PlannedInsert) -> GroupedInsert:
         lowered_at.append((steps.index(first), len(port.calls)))
-        return lowered_opening(cursor, first)
+        return lowered_grouped_insert(cursor, first)
 
     monkeypatch.setattr(LoweringCursor, "lowered", lowering)
-    monkeypatch.setattr(LoweringCursor, "lowered_opening", grouping)
+    monkeypatch.setattr(LoweringCursor, "lowered_grouped_insert", grouping)
     return lowered_at
 
 
@@ -193,10 +191,10 @@ class _Claim:
         self.spent_at = len(self.port.calls)
 
 
-def _units(port: ScriptedAdapter, *ends: int) -> tuple[tuple[ExecutionUnit, ...], list[_Claim]]:
+def _units(port: ScriptedAdapter, *ends: int) -> tuple[tuple[SettledWrite, ...], list[_Claim]]:
     claims = [_Claim(port) for _end in ends]
     return tuple(
-        ExecutionUnit(end=end, claim=claim) for end, claim in zip(ends, claims, strict=True)
+        SettledWrite(end=end, claim=claim) for end, claim in zip(ends, claims, strict=True)
     ), claims
 
 
@@ -207,8 +205,8 @@ def test_a_run_never_reaches_into_a_later_units_span() -> None:
     )
     units, claims = _units(port, 1, 3, 4)
     plan = WritePlan(steps=PlannedWrites((HeldSteps(port, steps),)), units=units)
-    with write_batch() as batch:
-        run_plan(port, plan, batch)
+    with open_flush() as flush:
+        run_plan(port, plan, flush)
     # The first unit's close would be the only one of its run, since a run
     # never reaches into the next unit, so it runs alone; so does the last's.
     assert port.calls == [alone(steps[0]), ordered(*steps[1:3]), alone(steps[3])]
@@ -222,8 +220,8 @@ def test_a_failed_run_completes_its_unit_never_and_takes_no_later_units_step() -
     )
     units, claims = _units(segment.port, 2, 3)
     plan = WritePlan(steps=PlannedWrites((segment,)), units=units)
-    with pytest.raises(StaleWriteError), write_batch() as batch:
-        run_plan(segment.port, plan, batch)
+    with pytest.raises(StaleWriteError), open_flush() as flush:
+        run_plan(segment.port, plan, flush)
     assert segment.taken == [0, 1]
     assert [claim.spent_at for claim in claims] == [None, None]
 
@@ -351,10 +349,10 @@ def test_an_earlier_shortfall_outranks_a_later_statement_failure() -> None:
         DatabaseCallFailed,
         DatabaseCallNotExecuted,
     ]
-    # The batch names the call whose count fell short, not the later failure.
-    batch = _batch_failure(provider)
-    assert isinstance(batch, CausedFailure)
-    assert batch.cause_activity_id == calls[1].activity_id
+    # The Flush names the call whose count fell short, not the later failure.
+    attributed = _flush_failure(provider)
+    assert isinstance(attributed, CausedFailure)
+    assert attributed.cause_activity_id == calls[1].activity_id
 
 
 def test_a_confirmed_statement_failure_propagates_as_itself_from_its_own_call() -> None:
@@ -368,9 +366,9 @@ def test_a_confirmed_statement_failure_propagates_as_itself_from_its_own_call() 
     failed = calls[1].outcome
     assert isinstance(failed, DatabaseCallFailed)
     assert failed.diagnostic.category == "deadlock"
-    batch = _batch_failure(provider)
-    assert isinstance(batch, CausedFailure)
-    assert batch.cause_activity_id == calls[1].activity_id
+    attributed = _flush_failure(provider)
+    assert isinstance(attributed, CausedFailure)
+    assert attributed.cause_activity_id == calls[1].activity_id
 
 
 def test_an_excess_count_is_a_cardinality_corruption_of_its_own_step() -> None:
@@ -425,7 +423,7 @@ def test_a_malformed_result_outranks_the_earlier_shortfall_it_reports(
     assert "update" not in str(executed.raised)
     calls = _finished_calls(provider)
     assert [type(call.outcome) for call in calls] == [DatabaseCallUnconfirmed] * 2
-    assert isinstance(_batch_failure(provider), DirectFailure)
+    assert isinstance(_flush_failure(provider), DirectFailure)
 
 
 def test_an_interruption_reports_its_confirmed_unconfirmed_and_unsent_statements() -> None:
@@ -448,7 +446,7 @@ def test_an_interruption_reports_its_confirmed_unconfirmed_and_unsent_statements
     assert unconfirmed[0] is unconfirmed[1]
     assert unconfirmed[0].diagnostic.native_code == "08006"
     # A primary interruption names no call as its cause.
-    assert isinstance(_batch_failure(provider), DirectFailure)
+    assert isinstance(_flush_failure(provider), DirectFailure)
 
 
 def test_an_earlier_shortfall_outranks_the_interruption_after_it() -> None:
@@ -463,9 +461,9 @@ def test_an_earlier_shortfall_outranks_the_interruption_after_it() -> None:
         DatabaseCallUnconfirmed,
         DatabaseCallUnconfirmed,
     ]
-    batch = _batch_failure(provider)
-    assert isinstance(batch, CausedFailure)
-    assert batch.cause_activity_id == calls[0].activity_id
+    attributed = _flush_failure(provider)
+    assert isinstance(attributed, CausedFailure)
+    assert attributed.cause_activity_id == calls[0].activity_id
 
 
 def test_a_confirmed_failure_before_an_interruption_propagates_as_itself() -> None:
@@ -486,7 +484,7 @@ def test_an_exception_escaping_transport_leaves_every_call_unconfirmed() -> None
     assert executed.raised is escaped
     calls = _finished_calls(provider)
     assert [type(call.outcome) for call in calls] == [DatabaseCallUnconfirmed] * 3
-    assert isinstance(_batch_failure(provider), DirectFailure)
+    assert isinstance(_flush_failure(provider), DirectFailure)
 
 
 def test_a_fatal_exception_escaping_transport_closes_every_call_and_stays_primary() -> None:
@@ -505,12 +503,12 @@ def test_a_fatal_exception_escaping_transport_closes_every_call_and_stays_primar
 
 
 def _failing_at(
-    monkeypatch: pytest.MonkeyPatch, failing: PlannedWrite, failure: BaseException
+    monkeypatch: pytest.MonkeyPatch, failing: PlannedStep, failure: BaseException
 ) -> None:
     real = LoweringCursor.lowered_within
 
     def lowering(
-        cursor: LoweringCursor, step: PlannedWrite, parameter_ceiling: int
+        cursor: LoweringCursor, step: PlannedStep, parameter_ceiling: int
     ) -> LoweredStatement:
         if step is failing:
             raise failure
@@ -593,7 +591,7 @@ def test_a_statement_exceeding_its_promised_parameter_ceiling_is_a_lowering_fail
     steps = (close(1), guard(2))
     promised = {id(steps[0]): 6, id(steps[1]): 3}
 
-    def promise(step: PlannedWrite) -> int:
+    def promise(step: PlannedStep) -> int:
         return promised[id(step)]
 
     monkeypatch.setattr(
@@ -621,9 +619,9 @@ def _finished_calls(provider: RecordingLifecycleProvider) -> list[DatabaseCallFi
     return [event for event in _events(provider) if isinstance(event, DatabaseCallFinished)]
 
 
-def _batch_failure(provider: RecordingLifecycleProvider) -> object:
-    (finished,) = [event for event in _events(provider) if isinstance(event, WriteBatchFinished)]
-    assert isinstance(finished.outcome, WriteBatchFailed)
+def _flush_failure(provider: RecordingLifecycleProvider) -> object:
+    (finished,) = [event for event in _events(provider) if isinstance(event, FlushFinished)]
+    assert isinstance(finished.outcome, FlushFailed)
     return finished.outcome.failure
 
 
@@ -770,7 +768,7 @@ def test_a_handler_quarantined_while_an_interruption_finishes_its_calls_sees_no_
 
 def test_a_handler_quarantined_before_the_run_opens_no_observation_of_it() -> None:
     provider = _Tripping(
-        lambda event, _seen: type(event).__name__ == "WriteBatchStarted", RuntimeError("full")
+        lambda event, _seen: type(event).__name__ == "FlushStarted", RuntimeError("full")
     )
     port = ScriptedAdapter(Ordered(OrderedWriteResultComplete((1, 1))), ordered=True)
     executed = _execute(port, close(1), close(2), provider=provider)
@@ -778,22 +776,22 @@ def test_a_handler_quarantined_before_the_run_opens_no_observation_of_it() -> No
     assert not [event for event in provider.seen if isinstance(event, DatabaseCallStarted)]
 
 
-def test_a_chunk_reads_as_its_statements_and_holds_each_exact_original() -> None:
+def test_an_ordered_invocation_reads_as_its_statements_and_holds_each_exact_original() -> None:
     originals = (close(1), guard(2))
     statements = tuple(statement(step) for step in originals)
-    chunk = _LoweredWriteChunk()
+    invocation = OrderedInvocation()
     for original, lowered_statement in zip(originals, statements, strict=True):
-        chunk.append(original, lowered_statement)
-    assert len(chunk) == 2
-    assert chunk[1] is statements[1]
-    assert list(chunk[:1]) == [statements[0]]
-    assert list(chunk) == list(statements)
-    assert chunk.step(0) is originals[0]
-    assert chunk.target(1) is POSITION
-    chunk.seal()
+        invocation.append(original, lowered_statement)
+    assert len(invocation) == 2
+    assert invocation[1] is statements[1]
+    assert list(invocation[:1]) == [statements[0]]
+    assert list(invocation) == list(statements)
+    assert invocation.step(0) is originals[0]
+    assert invocation.target(1) is POSITION
+    invocation.seal()
     with pytest.raises(RuntimeError, match="admits no further statement"):
-        chunk.append(close(3), statements[0])
-    assert len(chunk) == 2
+        invocation.append(close(3), statements[0])
+    assert len(invocation) == 2
 
 
 class _Clockless:
@@ -879,8 +877,8 @@ def _alive(*names: str) -> set[int]:
     return {id(item) for item in gc.get_objects() if type(item).__name__ in names}
 
 
-def test_an_observed_run_leaves_neither_its_chunk_nor_its_observation_alive() -> None:
-    kinds = ("_LoweredWriteChunk", "_LiveOrderedCalls")
+def test_an_observed_run_leaves_neither_its_invocation_nor_its_observation_alive() -> None:
+    kinds = ("OrderedInvocation", "_LiveOrderedCalls")
     before = _alive(*kinds)
     provider = _Counting()
     steps = tuple(close(key) for key in range(1, 41))

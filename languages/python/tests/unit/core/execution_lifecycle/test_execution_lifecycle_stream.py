@@ -15,7 +15,7 @@ is the default, and Parallax's own failure is neither. Its ATTRIBUTION follows t
 page boundary — a page that failed is the batch's failure and the stream's cause,
 while a root that failed to publish reaches a batch that already completed and is
 the stream's own. And its CORRELATION says where a stream sits: a standalone one
-is a root, a participating one is a child of the attempt, and the dependency batch
+is a root, a participating one is a child of the attempt, and the dependency flush
 a page flushes out is that page's ordered sibling rather than its parent.
 """
 
@@ -43,6 +43,8 @@ from parallax.core.execution_lifecycle import (
     ExecutionEvent,
     ExecutionLifecycleHandler,
     ExecutionLifecycleHandlerError,
+    FlushFinished,
+    FlushStarted,
     ReleaseStarted,
     RootExecution,
     StreamBatchCompleted,
@@ -54,8 +56,6 @@ from parallax.core.execution_lifecycle import (
     StreamFailed,
     StreamFinished,
     StreamStarted,
-    WriteBatchFinished,
-    WriteBatchStarted,
 )
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support import mirrored_models as mm
@@ -484,10 +484,10 @@ def test_a_transactional_stream_is_a_child_of_the_attempt() -> None:
     assert root.events[6].parent_activity_id == page.activity_id
 
 
-def test_a_pages_dependency_write_batch_is_that_pages_ordered_sibling() -> None:
+def test_a_pages_dependency_flush_is_that_pages_ordered_sibling() -> None:
     # The flush precedes the batch rather than running inside it, so the two are
     # siblings under the attempt in that order — the same relation a dependency
-    # batch and the Read it enables already have. A page whose batch opened first
+    # Flush and the Read it enables already have. A page whose batch opened first
     # would report the flush as work the page did.
     recorder = RecordingLifecycleProvider()
     port = ScriptedAdapter(
@@ -520,10 +520,10 @@ def test_a_pages_dependency_write_batch_is_that_pages_ordered_sibling() -> None:
         "DatabaseCallStarted",
         "DatabaseCallFinished",
         "StreamBatchFinished",
-        "WriteBatchStarted",
+        "FlushStarted",
         "DatabaseCallStarted",
         "DatabaseCallFinished",
-        "WriteBatchFinished",
+        "FlushFinished",
         "StreamBatchStarted",
         "DatabaseCallStarted",
         "DatabaseCallFinished",
@@ -535,13 +535,13 @@ def test_a_pages_dependency_write_batch_is_that_pages_ordered_sibling() -> None:
         "TransactionInvocationFinished",
     ]
     (stream_started,) = _of(root, StreamStarted)
-    (write_started,) = _of(root, WriteBatchStarted)
-    # Siblings: the flush's batch names the ATTEMPT the stream itself names, so
+    (flush_started,) = _of(root, FlushStarted)
+    # Siblings: the Flush names the ATTEMPT the stream itself names, so
     # it is beside the page rather than under it.
-    assert write_started.parent_activity_id == stream_started.parent_activity_id
-    (write_finished,) = _of(root, WriteBatchFinished)
+    assert flush_started.parent_activity_id == stream_started.parent_activity_id
+    (flush_finished,) = _of(root, FlushFinished)
     forced = _of(root, StreamBatchStarted)[1]
-    assert write_finished.sequence < forced.sequence
+    assert flush_finished.sequence < forced.sequence
 
 
 def test_a_participating_stream_that_the_callback_left_early_is_closed_early() -> None:

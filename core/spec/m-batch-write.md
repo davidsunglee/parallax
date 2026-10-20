@@ -14,14 +14,14 @@ locking, conflict abort, and temporal chaining belong respectively to `m-opt-loc
 fixed by `m-sql`.
 
 `m-batch-write` decides only **compatibility**: whether two buffered writes may
-share one step. The Planned Write algebra and the affected-row policy that step
+share one step. The Planned Step algebra and the affected-row policy that step
 then carries are `m-write-plan`'s, and the flush's stage order is
 `m-unit-work`'s; this module reaches planning through the strategy port that
 module declares.
 
 ## Batching is a membership decision
 
-Batching is expressed by **membership in one Planned Write**, not by a marker on
+Batching is expressed by **membership in one Planned Step**, not by a marker on
 several. Compatible inserts become one Planned Insert with several entries;
 compatible uniform keyed updates or deletes become one Planned Update or Planned
 Delete whose Key Target holds several key tuples.

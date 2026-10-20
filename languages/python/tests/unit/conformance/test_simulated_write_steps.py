@@ -50,7 +50,7 @@ from parallax.core.write_plan.steps import (
     PlannedDelete,
     PlannedInsert,
     PlannedRow,
-    PlannedWrite,
+    PlannedStep,
     WriteRow,
 )
 
@@ -61,7 +61,7 @@ _ID: Final = AttributeIdentity(_ACCOUNT.identity, "id")
 _PAYLOADS: Final = build_write_planner(_ACCOUNT_META).payloads
 
 
-def _delete(key: int) -> PlannedWrite:
+def _delete(key: int) -> PlannedStep:
     return PlannedDelete(
         entity=_ACCOUNT.identity,
         target=KeyTarget((_ID,), ((key,),)),
@@ -83,7 +83,7 @@ class _Taken:
     def __len__(self) -> int:
         return len(self.keys)
 
-    def step(self, index: int) -> PlannedWrite:
+    def step(self, index: int) -> PlannedStep:
         self.asked.append(index)
         if index == self.failing and self.failure is not None:
             raise self.failure
@@ -96,7 +96,7 @@ class _Built:
     position asked, and raising ``failure`` instead of building the step at
     ``failing``."""
 
-    steps: tuple[Callable[[], PlannedWrite], ...]
+    steps: tuple[Callable[[], PlannedStep], ...]
     failing: int | None = None
     failure: Exception | None = None
     asked: list[int] = field(default_factory=list[int])
@@ -104,7 +104,7 @@ class _Built:
     def __len__(self) -> int:
         return len(self.steps)
 
-    def step(self, index: int) -> PlannedWrite:
+    def step(self, index: int) -> PlannedStep:
         self.asked.append(index)
         if index == self.failing and self.failure is not None:
             raise self.failure
@@ -209,7 +209,7 @@ def _members(
     }
 
 
-def _close(key: int) -> PlannedWrite:
+def _close(key: int) -> PlannedStep:
     return PlannedClose(
         entity=_POSITION.identity,
         target=MilestoneTarget(
@@ -225,7 +225,7 @@ def _close(key: int) -> PlannedWrite:
     )
 
 
-def _opening(key: int, value: str) -> PlannedWrite:
+def _opening(key: int, value: str) -> PlannedStep:
     members = _members(key, _JAN, value, tx_start=_NOW)
     row = PlannedRow(attributes={_position(name): member for name, member in members.items()})
     return PlannedInsert(entity=_POSITION.identity, entries=(WriteRow(row, NEW_LINEAGE),))
@@ -248,7 +248,7 @@ def _backed(store: SimulatedTemporalStore, *, record: bool) -> SimulatedWriteSte
     )
 
 
-def _succession(key: int) -> tuple[Callable[[], PlannedWrite], ...]:
+def _succession(key: int) -> tuple[Callable[[], PlannedStep], ...]:
     """Position ``key``'s close and the opening succeeding it."""
     return (lambda: _close(key), lambda: _opening(key, "150.00"))
 
@@ -332,7 +332,7 @@ def test_a_tracked_span_raises_a_store_refusal_as_its_step_is_taken() -> None:
 def test_any_other_failure_applying_a_step_propagates_as_it_is_taken(
     monkeypatch: pytest.MonkeyPatch, record: bool, failure: BaseException
 ) -> None:
-    def failing(store: SimulatedTemporalStore, model: object, step: PlannedWrite) -> None:
+    def failing(store: SimulatedTemporalStore, model: object, step: PlannedStep) -> None:
         raise failure
 
     monkeypatch.setattr(SimulatedTemporalStore, "apply", failing)

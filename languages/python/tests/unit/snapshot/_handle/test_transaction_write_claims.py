@@ -409,7 +409,7 @@ def test_an_unversioned_update_then_delete_of_one_object_is_one_delete() -> None
 def test_identical_unversioned_destructive_intents_deduplicate() -> None:
     # Unclaimed, the pair reaches the batch collapse as two writes of one key and
     # a Key Target's addressed rows are distinct — so what the claim buys here is
-    # a legal two-verb sequence reaching a Planned Write at all.
+    # a legal two-verb sequence reaching a Planned Step at all.
     port = ScriptedAdapter(Transact(Read(rows=[{"id": 1, "name": "Ada"}]), Write()))
 
     def fn(tx: TxnContext) -> None:

@@ -11,7 +11,7 @@ not have happened. Two layers carry that:
   Schema states, on BOTH sides too — correlation that describes a tree,
   balanced Starteds and Finisheds, attribution one link deep, statement indexes
   that name something, a call count agreeing with the record's own count
-  oracle, each batch's positional trigger claim, and the attempt history a
+  oracle, each Flush's positional trigger claim, and the attempt history a
   terminal transaction stream admits.
 
 The whole corpus is asserted consistent under both.
@@ -69,7 +69,7 @@ def _renumbered(root: dict[str, Any], released: int) -> None:
 
 def _write_root(**attempt_finish: Any) -> dict[str, Any]:
     """One transaction root: an invocation, an attempt that takes and gives back a
-    connection, a pre-commit batch, one write."""
+    connection, a pre-commit flush, one write."""
     finish = attempt_finish or {"outcome": "committed"}
     return _root(
         "transaction-invocation",
@@ -87,7 +87,7 @@ def _write_root(**attempt_finish: Any) -> dict[str, Any]:
             _event(2, 2, 1, transactionAttemptStarted={"edition": "account"}),
             _event(3, 3, 2, acquisitionStarted={}),
             _event(4, 3, 2, acquisitionFinished={"outcome": "acquired"}),
-            _event(5, 4, 2, writeBatchStarted={"trigger": "pre-commit"}),
+            _event(5, 4, 2, flushStarted={"trigger": "pre-commit"}),
             _event(
                 6,
                 5,
@@ -95,7 +95,7 @@ def _write_root(**attempt_finish: Any) -> dict[str, Any]:
                 databaseCallStarted={"target": "Account", "kind": "write", "statement": 0},
             ),
             _event(7, 5, 4, databaseCallFinished={"outcome": "writeCompleted", "affectedRows": 1}),
-            _event(8, 4, 2, writeBatchFinished={"outcome": "completed"}),
+            _event(8, 4, 2, flushFinished={"outcome": "completed"}),
             _event(9, 6, 2, releaseStarted={}),
             _event(10, 6, 2, releaseFinished={"cleanup": "returned"}),
             _event(11, 2, 1, transactionAttemptFinished=finish),
@@ -274,28 +274,28 @@ def test_both_mirrors_pin_the_canonical_entity_name_grammar() -> None:
 
 def test_an_attribution_on_a_completed_activity_is_refused_by_both_schemas() -> None:
     root = _write_root()
-    root["events"][7]["writeBatchFinished"] = {"outcome": "completed", "attribution": "direct"}
+    root["events"][7]["flushFinished"] = {"outcome": "completed", "attribution": "direct"}
     assert not _valid_against("compatibility-case.schema.json", _case(_lifecycle(root)))
     assert not _valid_against("conformance-adapter.schema.json", _run_envelope(_lifecycle(root)))
 
 
 def test_a_failing_activity_omitting_its_attribution_is_refused_by_both_schemas() -> None:
     root = _write_root()
-    root["events"][7]["writeBatchFinished"] = {"outcome": "failed"}
+    root["events"][7]["flushFinished"] = {"outcome": "failed"}
     assert not _valid_against("compatibility-case.schema.json", _case(_lifecycle(root)))
     assert not _valid_against("conformance-adapter.schema.json", _run_envelope(_lifecycle(root)))
 
 
 def test_a_caused_failure_naming_no_cause_is_refused_by_both_schemas() -> None:
     root = _write_root()
-    root["events"][7]["writeBatchFinished"] = {"outcome": "failed", "attribution": "caused"}
+    root["events"][7]["flushFinished"] = {"outcome": "failed", "attribution": "caused"}
     assert not _valid_against("compatibility-case.schema.json", _case(_lifecycle(root)))
     assert not _valid_against("conformance-adapter.schema.json", _run_envelope(_lifecycle(root)))
 
 
 def test_a_direct_failure_naming_a_cause_is_refused_by_both_schemas() -> None:
     root = _write_root()
-    root["events"][7]["writeBatchFinished"] = {
+    root["events"][7]["flushFinished"] = {
         "outcome": "failed",
         "attribution": "direct",
         "cause": 4,
@@ -416,7 +416,7 @@ def test_a_parent_that_had_already_finished_is_flagged() -> None:
             events[2],
             events[3],
             events[4],
-            _event(6, 4, 2, writeBatchFinished={"outcome": "completed"}),
+            _event(6, 4, 2, flushFinished={"outcome": "completed"}),
             _event(
                 7,
                 5,
@@ -472,7 +472,7 @@ def test_an_activity_finished_twice_is_flagged() -> None:
 
 def test_a_finished_naming_an_activity_no_started_assigned_is_flagged() -> None:
     root = _write_root()
-    root["events"][7] = _event(8, 9, 2, writeBatchFinished={"outcome": "completed"})
+    root["events"][7] = _event(8, 9, 2, flushFinished={"outcome": "completed"})
     problems = validate_execution(_case(_lifecycle(root)))
     assert any("no Started assigned" in problem for problem in problems)
 
@@ -597,7 +597,7 @@ def test_a_database_call_owned_by_no_read_or_batch_is_flagged() -> None:
     root["events"][6]["parent"] = 2
     problems = validate_execution(_case(_lifecycle(root)))
     assert any(
-        "databaseCallStarted is contained by readStarted or writeBatchStarted or streamBatchStarted"
+        "databaseCallStarted is contained by readStarted or flushStarted or streamBatchStarted"
         in problem
         for problem in problems
     )
@@ -648,7 +648,7 @@ def test_a_committed_invocation_after_a_final_attempt_that_rolled_back_is_flagge
 
 
 def test_a_scope_finishing_while_a_child_is_still_open_is_flagged() -> None:
-    """The batch closes before the call it holds does, which no runtime can do."""
+    """The Flush closes before the call it holds does, which no runtime can do."""
     root = _write_root()
     root["events"][6], root["events"][7] = root["events"][7], root["events"][6]
     root["events"][6]["sequence"] = 7
@@ -657,10 +657,10 @@ def test_a_scope_finishing_while_a_child_is_still_open_is_flagged() -> None:
     assert any("it contains are still open" in problem for problem in problems)
 
 
-def test_a_read_dependency_batch_still_open_when_its_read_starts_is_flagged() -> None:
+def test_a_read_dependency_flush_still_open_when_its_read_starts_is_flagged() -> None:
     """Opening first is not the claim: the read WAITS on the flush it forced."""
     root = _write_root()
-    root["events"][4]["writeBatchStarted"] = {"trigger": "read-dependency"}
+    root["events"][4]["flushStarted"] = {"trigger": "read-dependency"}
     root["events"][7:7] = [
         _event(0, 6, 2, readStarted={"target": "Account", "interface": "typed"}),
         _event(0, 6, 2, readFinished={"outcome": "completed"}),
@@ -720,10 +720,10 @@ def test_a_cause_naming_a_child_that_had_not_finished_is_flagged() -> None:
     assert any("had not finished" in problem for problem in problems)
 
 
-# --- a batch's trigger is a positional claim ---------------------------------
+# --- a Flush's trigger is a positional claim ---------------------------------
 
 
-def test_a_pre_commit_batch_followed_by_more_attempt_work_is_flagged() -> None:
+def test_a_pre_commit_flush_followed_by_more_attempt_work_is_flagged() -> None:
     root = _write_root()
     root["events"][8:8] = [
         _event(0, 6, 2, readStarted={"target": "Account", "interface": "typed"}),
@@ -731,19 +731,19 @@ def test_a_pre_commit_batch_followed_by_more_attempt_work_is_flagged() -> None:
     ]
     _renumbered(root, released=7)
     problems = validate_execution(_case(_lifecycle(root)))
-    assert any("boundary owns the FINAL batch" in problem for problem in problems)
+    assert any("boundary owns the FINAL flush" in problem for problem in problems)
 
 
-def test_a_read_dependency_batch_with_no_read_after_it_is_flagged() -> None:
+def test_a_read_dependency_flush_with_no_read_after_it_is_flagged() -> None:
     root = _write_root()
-    root["events"][4]["writeBatchStarted"] = {"trigger": "read-dependency"}
+    root["events"][4]["flushStarted"] = {"trigger": "read-dependency"}
     problems = validate_execution(_case(_lifecycle(root)))
     assert any("in front of the read it enabled" in problem for problem in problems)
 
 
-def test_a_read_dependency_batch_standing_before_its_read_is_accepted() -> None:
+def test_a_read_dependency_flush_standing_before_its_read_is_accepted() -> None:
     root = _write_root()
-    root["events"][4]["writeBatchStarted"] = {"trigger": "read-dependency"}
+    root["events"][4]["flushStarted"] = {"trigger": "read-dependency"}
     root["events"][8:8] = [
         _event(0, 6, 2, readStarted={"target": "Account", "interface": "typed"}),
         _event(0, 6, 2, readFinished={"outcome": "completed"}),
@@ -839,7 +839,7 @@ def test_an_acquired_connection_the_record_never_releases_is_flagged() -> None:
 
 
 def test_work_under_an_owner_granted_no_connection_is_flagged() -> None:
-    """A batch runs on the connection its attempt holds, so an attempt that ran
+    """A Flush runs on the connection its attempt holds, so an attempt that ran
     one was granted one."""
     root = _write_root()
     root["events"][3]["acquisitionFinished"] = {
@@ -1042,7 +1042,7 @@ def _read_then_write_root(read_statement: int | None = None) -> dict[str, Any]:
             _event(6, 5, 4, databaseCallStarted=started),
             _event(7, 5, 4, databaseCallFinished={"outcome": "readCompleted", "returnedRows": 1}),
             _event(8, 4, 2, readFinished={"outcome": "completed"}),
-            _event(9, 6, 2, writeBatchStarted={"trigger": "pre-commit"}),
+            _event(9, 6, 2, flushStarted={"trigger": "pre-commit"}),
             _event(
                 10,
                 7,
@@ -1050,7 +1050,7 @@ def _read_then_write_root(read_statement: int | None = None) -> dict[str, Any]:
                 databaseCallStarted={"target": "Account", "kind": "write", "statement": 0},
             ),
             _event(11, 7, 6, databaseCallFinished={"outcome": "writeCompleted", "affectedRows": 1}),
-            _event(12, 6, 2, writeBatchFinished={"outcome": "completed"}),
+            _event(12, 6, 2, flushFinished={"outcome": "completed"}),
             _event(13, 8, 2, releaseStarted={}),
             _event(14, 8, 2, releaseFinished={"cleanup": "returned"}),
             _event(15, 2, 1, transactionAttemptFinished={"outcome": "committed"}),
@@ -1133,7 +1133,7 @@ def test_a_statement_whose_sql_names_no_kind_narrows_nothing() -> None:
 
 
 def _two_write_root(second_statement: int) -> dict[str, Any]:
-    """One pre-commit batch putting two ordered writes on the wire."""
+    """One pre-commit flush putting two ordered writes on the wire."""
     return _root(
         "transaction-invocation",
         [
@@ -1150,7 +1150,7 @@ def _two_write_root(second_statement: int) -> dict[str, Any]:
             _event(2, 2, 1, transactionAttemptStarted={"edition": "account"}),
             _event(3, 3, 2, acquisitionStarted={}),
             _event(4, 3, 2, acquisitionFinished={"outcome": "acquired"}),
-            _event(5, 4, 2, writeBatchStarted={"trigger": "pre-commit"}),
+            _event(5, 4, 2, flushStarted={"trigger": "pre-commit"}),
             _event(
                 6,
                 5,
@@ -1169,7 +1169,7 @@ def _two_write_root(second_statement: int) -> dict[str, Any]:
                 },
             ),
             _event(9, 6, 4, databaseCallFinished={"outcome": "writeCompleted", "affectedRows": 1}),
-            _event(10, 4, 2, writeBatchFinished={"outcome": "completed"}),
+            _event(10, 4, 2, flushFinished={"outcome": "completed"}),
             _event(11, 7, 2, releaseStarted={}),
             _event(12, 7, 2, releaseFinished={"cleanup": "returned"}),
             _event(13, 2, 1, transactionAttemptFinished={"outcome": "committed"}),

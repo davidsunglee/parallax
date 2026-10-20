@@ -51,7 +51,7 @@ from parallax.core.read_delivery._page import (
 )
 from parallax.core.temporal_read import Edge, Pin
 from parallax.core.unit_work import (
-    BufferItem,
+    AdmittedWrite,
     KeyedWriteInstruction,
     ReadEvidence,
     RetainedObservation,
@@ -605,7 +605,7 @@ def test_a_participating_read_stamps_its_own_unit_of_works_participation() -> No
 # --------------------------------------------------------------------------- #
 # Freshness: evidence is judged against the state its rows had when read.     #
 # --------------------------------------------------------------------------- #
-def _balance_update(model: AcceptedMetamodel, hint: ReadEvidence) -> BufferItem:
+def _balance_update(model: AcceptedMetamodel, hint: ReadEvidence) -> AdmittedWrite:
     instruction = prepare_typed_write(
         KeyedWriteInstruction("amend", "Balance", ({"id": 1, "value": Decimal("6.00")},)), model
     )

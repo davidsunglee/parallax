@@ -50,7 +50,7 @@ from parallax.core._execution._unit_work.strategy import (
     EvidencePolicyLookup,
 )
 from parallax.core._execution._unit_work.write_items import (
-    BufferItem,
+    AdmittedWrite,
     TargetKeyedWrite,
     target_write,
 )
@@ -74,8 +74,8 @@ from parallax.core.write_plan.keys import (
 )
 from parallax.core.write_plan.observe import PredecessorRow
 from parallax.core.write_plan.plan import (
-    ExecutionUnit,
-    UnitEffects,
+    CompletionFacts,
+    SettledWrite,
 )
 from parallax.core.write_plan.steps import KeyTarget
 
@@ -84,39 +84,39 @@ __all__ = [
     "AttemptLifetime",
     "BufferOutcome",
     "Concurrency",
-    "OpenWriteBatch",
+    "FlushTrigger",
+    "OpenFlush",
     "RollbackOnlyError",
     "StoredTarget",
     "TransactionSettings",
     "UnitOfWork",
     "UnitOfWorkError",
-    "WriteBatchReason",
     "WriteEvidenceError",
     "WriteEvidenceErrorCode",
 ]
 
-type WriteBatchReason = Literal["read_dependency", "pre_commit"]
+type FlushTrigger = Literal["read_dependency", "pre_commit"]
 """The CLOSED set of reasons a unit of work flushes its buffer.
 
-``read_dependency`` is the batch :meth:`UnitOfWork.read` forces out so a
-dependent read observes it; ``pre_commit`` is the boundary-owned final batch
-the transaction attempt flushes once its callback has returned. There
+``read_dependency`` is the flush :meth:`UnitOfWork.read` forces out so a
+dependent read observes it; ``pre_commit`` is the boundary-owned final flush
+the transaction attempt runs once its callback has returned. There
 is no size-based, periodic, or caller-invoked third trigger, which is what lets
-an observer state which of the two produced a batch instead of guessing from
+an observer state which of the two produced a flush instead of guessing from
 position.
 
 The second trigger is named for WHEN it runs rather than for what it does,
-because "finalization" already names the planner stage every batch of either
+because "finalization" already names the planner stage every flush of either
 trigger goes through.
 """
 
 
-class WriteBatchScope(Protocol):
+class FlushScope(Protocol):
     """The composition-layer scope one flush runs inside.
 
     Left however the flush leaves — a planning refusal, a failed statement, a
     shortfall the enforcer raised, or success — so a composition layer that
-    observes the transaction can never be told a batch began and not told how it
+    observes the transaction can never be told a flush began and not told how it
     ended.
     """
 
@@ -131,7 +131,7 @@ class WriteBatchScope(Protocol):
     ) -> None: ...
 
 
-class OpenWriteBatch(Protocol):
+class OpenFlush(Protocol):
     """The composition-layer opener a flush announces itself to.
 
     Called once per flush that has something to flush, BEFORE the buffered
@@ -139,11 +139,11 @@ class OpenWriteBatch(Protocol):
     it answers spans planning as well as execution. A flush that fails in
     planning is therefore inside the scope and never executes a step, which
     is the whole distinction this exists to make available: an observer can tell
-    a batch that failed before it ran anything from work that is not a batch at
+    a flush that failed before it ran anything from work that is not a flush at
     all. Optional, because the shell itself needs nothing from it.
     """
 
-    def __call__(self, trigger: WriteBatchReason, /) -> WriteBatchScope: ...
+    def __call__(self, trigger: FlushTrigger, /) -> FlushScope: ...
 
 
 class AttemptLifetime(Protocol):
@@ -231,9 +231,9 @@ class UnitOfWork:
         "acquire_rows",
         "clock",
         "execute_write_steps",
+        "flush_opening",
         "meta",
         "settings",
-        "write_batch_opening",
     )
 
     def __init__(
@@ -248,7 +248,7 @@ class UnitOfWork:
         planner: WritePlanner,
         actor_identity: ActorIdentity,
         evidence_policy_for: EvidencePolicyLookup,
-        write_batch_opening: OpenWriteBatch | None = None,
+        flush_opening: OpenFlush | None = None,
     ) -> None:
         self.settings = settings
         self._lifetime = lifetime
@@ -256,7 +256,7 @@ class UnitOfWork:
         self.meta = meta
         self.execute_write_steps = execute_write_steps
         self.acquire_rows = acquire_rows
-        self.write_batch_opening = write_batch_opening
+        self.flush_opening = flush_opening
         # The injected Write Planner (`m-unit-work`'s single finalization
         # authority) — constructed once per accepted Metamodel by the
         # execution's model preparation (`parallax.core.execution.prepare_model`),
@@ -286,7 +286,7 @@ class UnitOfWork:
         self._observations: WeakValueDictionary[ObjectStateKey, RetainedObservation] = (
             WeakValueDictionary()
         )
-        # How many execution units have changed an observed state so far, and
+        # How many settled writes have changed an observed state so far, and
         # the count at which each changed state last changed. A read captures
         # the count when it runs, so evidence it builds later, from rows it
         # already holds, is known to predate any change completed in between.
@@ -310,7 +310,7 @@ class UnitOfWork:
         return self._participation
 
     def buffer(
-        self, item: BufferItem, *, insertion_advice: KeyedWriteRefusalAdvice | None = None
+        self, item: AdmittedWrite, *, insertion_advice: KeyedWriteRefusalAdvice | None = None
     ) -> BufferOutcome:
         """Admit ``item`` under the authority it carries and buffer it for flush
         at the unit-of-work boundary — all of it, or nothing
@@ -683,7 +683,7 @@ class UnitOfWork:
         return observation
 
     def _current(self, state: ObjectStateKey, read_at: int) -> bool:
-        """Whether no execution unit that completed after a read capturing
+        """Whether no settled write that completed after a read capturing
         :attr:`freshness` ``read_at`` changed ``state``: what that read found
         of ``state`` is still what the attempt stores, whatever else changed.
         An unchanged milestone a guard proved is no change."""
@@ -704,28 +704,29 @@ class UnitOfWork:
             self.flush(trigger="read_dependency")
         return read_fn()
 
-    def flush(self, *, trigger: WriteBatchReason) -> None:
-        """Plan the buffered writes and run the plan unit by unit, each span of
-        its steps executed and enforced through the injected
+    def flush(self, *, trigger: FlushTrigger) -> None:
+        """Plan the buffered writes and run the plan settled write by settled
+        write, each span of its steps executed and enforced through the injected
         :class:`~parallax.core._execution._unit_work.write_runner.ExecuteWriteSteps`.
 
         ``trigger`` names which of the two flush reasons this call is, and every
         caller already knows its own: :meth:`read` serves a read dependency and
-        the attempt runs the boundary's pre-commit batch. The whole
-        flush runs inside the injected :class:`OpenWriteBatch`'s scope, so a
-        planning refusal is inside the batch rather than beside it and a batch
+        the attempt runs the boundary's pre-commit flush. The whole
+        flush runs inside the injected :class:`OpenFlush`'s scope, so a
+        planning refusal is inside the Flush rather than beside it and a Flush
         planning reduces to no DML at all still ends the way it began.
 
-        Each execution unit of the plan completes as soon as its steps succeed,
-        before any step of the next unit is taken: it spends the evidence every
-        write it composed was admitted through — an overwritten or physically
-        empty one included — invalidates evidence of the states it changed,
-        retires the owned rows it removed, and registers the rows it opened. A
-        deferred unit binds at its turn against what every earlier unit
-        published. Sources that carry no observation are spent once the whole
-        flush succeeds. Only an update that assigns no member leaves its
-        evidence eligible, because it stated no write at all. Spending is
-        idempotent, so a claim several units carry is spent once.
+        Each settled write of the plan completes as soon as its steps succeed,
+        before any step of the next settled write is taken: it spends the
+        evidence every write it composed was admitted through — an overwritten
+        or physically empty one included — invalidates evidence of the states
+        it changed, retires the owned rows it removed, and registers the rows
+        it opened. A deferred settled write binds at its turn against what
+        every earlier one published. Sources that carry no observation are
+        spent once the whole flush succeeds. Only an update that assigns no
+        member leaves its evidence eligible, because it stated no write at all.
+        Spending is idempotent, so a claim several settled writes carry is
+        spent once.
 
         A failure while executing, binding, or completing dooms the attempt's
         lifetime before it propagates, so a caller that catches it can do no
@@ -739,7 +740,7 @@ class UnitOfWork:
         self._ensure_open()
         if not self._admission:
             return
-        opening = self.write_batch_opening
+        opening = self.flush_opening
         if opening is None:
             self._flush_buffer()
             return
@@ -750,8 +751,8 @@ class UnitOfWork:
         admission = self._admission
         # The planning request is the flush's last reference to the writes it
         # planned, so it ends with the call: once planning succeeds and the
-        # batch drains, what a plan's deferred unit took over is released as
-        # that unit executes rather than held until the flush ends.
+        # buffer drains, what a plan's deferred settled write took over is
+        # released as it executes rather than held until the flush ends.
         plan = self._planner.finalize(
             WritePlanningRequest(
                 actor_identity=self._actor_identity,
@@ -773,37 +774,37 @@ class UnitOfWork:
         finally:
             admission.release_continuity()
 
-    def _complete_unit(
-        self, unit: ExecutionUnit, effects: UnitEffects, allocated: tuple[object, ...]
+    def _complete_write(
+        self, write: SettledWrite, facts: CompletionFacts, allocated: tuple[object, ...]
     ) -> None:
-        """Publish one successful execution unit's ``effects``: its own, or
-        those of the range its deferred coverage bound.
+        """Publish one successful settled write's completion ``facts``: its
+        own, or those of the range its deferred coverage bound.
 
-        Every source authority the unit's writes settled against is spent;
-        live evidence of every state it changed is invalidated and the change
-        recorded, so a read that ran before it cannot later build eligible
-        evidence of that state; then the owned rows it removed are retired before
-        the rows it opened, completed by the keys the database ``allocated``,
-        are registered.
+        Every source authority the write's composed writes settled against is
+        spent; live evidence of every state it changed is invalidated and the
+        change recorded, so a read that ran before it cannot later build
+        eligible evidence of that state; then the owned rows it removed are
+        retired before the rows it opened, completed by the keys the database
+        ``allocated``, are registered.
 
-        What the unit ``derived`` from its originals stays for the writes a
+        What the write ``derived`` from its originals stays for the writes a
         barrier kept after it: those were admitted with conditions on the same
-        originals, which this unit's guarded effects or held locks have now
+        originals, which this write's guarded effects or held locks have now
         proven. Spending and invalidation still apply to them; no later
         submission is admitted on these proofs. The object's proofs end when
-        the unit that ``concludes`` it completes, or with the flush.
+        the settled write that ``concludes`` it completes, or with the flush.
         """
-        claim = unit.claim
+        claim = write.claim
         if claim is not None:
             claim.consume()
         stamp = self._freshness + 1
         changed_any = False
-        for key in effects.changed:
+        for key in facts.changed:
             changed_any = True
             self._invalidate(key, stamp)
         if changed_any:
             self._freshness = stamp
-        self._admission.complete_unit(effects, allocated)
+        self._admission.complete(facts, allocated)
 
     def _invalidate(self, key: ObjectStateKey, stamp: int) -> None:
         held = self._observations.get(key)

@@ -9,7 +9,7 @@ transactions retain no lifecycle record.
 
 The module depends on `m-sql` for the Lowered Statement a database call executes,
 `m-db-port` for call and transaction outcomes, `m-db-error` for neutral database
-failure facts, `m-unit-work` for transaction and write-batch semantics, and
+failure facts, `m-unit-work` for transaction and flush semantics, and
 `m-auto-retry` for retry policy and classification. A composition root threads
 the lifecycle publisher down to the observed modules. None of those modules
 discovers a provider or records history for this module.
@@ -23,7 +23,7 @@ contains. Its immutable descriptor carries exactly:
 - `kind` — `read`, `transaction-invocation`, or `stream`.
 
 Concurrent outermost operations are distinct roots. One outer transaction root
-contains every retry, joined invocation, read, write batch, database call, and
+contains every retry, joined invocation, read, flush, database call, and
 transactional stream it causes. A standalone read or stream owns its own root.
 
 Deterministic public preflight precedes Root Execution creation. Invalid
@@ -58,7 +58,7 @@ An **Execution Activity** starts once and finishes once with a terminal outcome
 defined by its kind. The nine kinds are:
 
 - Read;
-- Write Batch;
+- Flush;
 - Database Call;
 - Transaction Invocation;
 - Transaction Attempt;
@@ -85,7 +85,7 @@ The event algebra is the closed union of these eighteen concrete transitions:
 
 ```text
 ReadStarted                       ReadFinished
-WriteBatchStarted                 WriteBatchFinished
+FlushStarted                      FlushFinished
 DatabaseCallStarted               DatabaseCallFinished
 TransactionInvocationStarted      TransactionInvocationFinished
 TransactionAttemptStarted         TransactionAttemptFinished
@@ -137,7 +137,7 @@ value with one of its own DIRECT children — an activity whose `parentActivityI
 is this one's. A direct child reports a value to its parent by finishing failed
 with it, and an explicit enforcement relation reports an already-finished child
 for the value the enforcement itself raised — never temporal proximity. A
-completed zero-row write call may therefore cause a Write Batch failure even
+completed zero-row write call may therefore cause a Flush failure even
 though the call itself completed successfully.
 
 Three rules fix the answer for every implementation. Each speaks only of the
@@ -183,7 +183,7 @@ code or `None`. Those two database facts are copied directly from Database Error
 and are never reclassified. An unexpected non-Database Error escaping the port
 uses `None` for both.
 
-## Read, write-batch, and database-call events
+## Read, flush, and database-call events
 
 The read transitions are:
 
@@ -193,7 +193,7 @@ ReadFinished(ReadCompleted | ReadFailed(failure))
 ```
 
 `interface` is `typed`, `wire`, or internal `rows`. A Read starts after public
-preflight and any read-dependency Write Batch. It spans planning, lowering, all
+preflight and any read-dependency Flush. It spans planning, lowering, all
 of its Database Calls, conversion, materialization, and publication until the
 public result is ready. It has no root-count or materialized-node count.
 `edition` is the nonempty opaque token of the Model Edition a **standalone**
@@ -202,18 +202,18 @@ Read is the root activity; a participating Read carries none, because the
 Transaction Attempt it hangs under already stated the edition it inherits, and
 the parent correlation is what relates the two.
 
-The write-batch transitions are:
+The flush transitions are:
 
 ```text
-WriteBatchStarted(trigger)
-WriteBatchFinished(WriteBatchCompleted | WriteBatchFailed(failure))
+FlushStarted(trigger)
+FlushFinished(FlushCompleted | FlushFailed(failure))
 ```
 
-`trigger` is `read-dependency` or `pre-commit`. A Write Batch exists only for a
+`trigger` is `read-dependency` or `pre-commit`. A Flush exists only for a
 nonempty unit-of-work buffer and starts before planning. It spans planning,
 lowering, every Database Call, and affected-row enforcement. It completes even
-when planning reduces the batch to zero DML. An empty read dependency or
-pre-commit boundary emits no Write Batch. A dependency batch and the Read it
+when planning reduces the flush to zero DML. An empty read dependency or
+pre-commit boundary emits no Flush. A dependency Flush and the Read it
 enables are siblings in that order under their current Transaction Attempt.
 
 The database-call transitions are:
@@ -246,7 +246,7 @@ count none, and neither is whatever an adapter runs to open a boundary at a
 requested Isolation Level: applying the level is part of opening the boundary,
 so it belongs to the same demarcation the count already excludes.
 
-Every statement-reaching operation belongs to exactly one Read, Write Batch, or
+Every statement-reaching operation belongs to exactly one Read, Flush, or
 Stream Batch. A call is its direct child. No other activity kind owns a call.
 
 ### Calls one ordered transport invocation carries
@@ -256,7 +256,7 @@ statement it presents, not one for the invocation, and presentation is no proof
 that a statement executed. Every call's Started transition is delivered before
 the port is invoked, and every Finished transition after it, each set
 contiguously in presentation order. The calls finish from the same validated
-result the write batch interprets:
+result the flush interprets:
 
 | Result fact | Finished outcome |
 |---|---|
@@ -267,7 +267,7 @@ result the write batch interprets:
 
 An unconfirmed call's diagnostic describes the interruption, shared by every
 call it left unconfirmed, and never claims that call's statement failed. An
-ordinary exception escaping the invocation, and a result the write batch refuses
+ordinary exception escaping the invocation, and a result the flush refuses
 as malformed, finish every call unconfirmed with that exception's diagnostic. A
 control-flow or fatal exception after the Started transitions were delivered
 finishes every call not yet finished as unconfirmed while delivery remains
@@ -286,7 +286,7 @@ identity.
 A statement failure, and a shortfall enforced against a confirmed count, are
 attributed to their own call through the enforcement relation, in presentation
 order. An interruption that propagates, an exception escaping the invocation,
-and a malformed result are the Write Batch's direct failures: no unconfirmed
+and a malformed result are the Flush's direct failures: no unconfirmed
 call is named as their cause.
 
 ## Transaction events
@@ -372,8 +372,8 @@ attempt with no second Started transition.
 | `retryEligible` | classifier verdict under the effective policy, independent of remaining budget |
 
 `callback` includes the callback, joined invocations, reads, and
-read-dependency batches. `pre-commit` is the final automatic nonempty Write
-Batch after the callback returns. `commit` is the durability call.
+read-dependency Flushes. `pre-commit` is the final automatic nonempty Flush
+after the callback returns. `commit` is the durability call.
 
 The transaction topology is:
 
@@ -450,7 +450,7 @@ StreamBatchStarted()
 StreamBatchFinished(StreamBatchCompleted | StreamBatchFailed(failure))
 ```
 
-It starts after any read-dependency Write Batch and before page planning. For a
+It starts after any read-dependency Flush and before page planning. For a
 standalone stream its Acquisition is the first child, its Database Calls follow as
 direct children, and its Release is the last child. A participating stream inherits
 the attempt's connection and emits neither resource child. The batch spans conversion and completes once the
@@ -483,7 +483,7 @@ ReleaseFinished(durationNs, holdDurationNs, cleanupResult)
 
 They are SIBLINGS of the execution activities beside them rather than a lease
 enclosing them. An eager Read's Database Calls stay its own direct children, an
-attempt keeps its Reads, Write Batches, joined invocations, and streams, and a
+attempt keeps its Reads, Flushes, joined invocations, and streams, and a
 standalone stream keeps its Stream Batches; each standalone batch in turn keeps its
 resource children and Database Calls. What an owner asked the adapter for is one more
 thing it did, not a scope the rest of it runs inside. Nothing opens under an
@@ -495,7 +495,7 @@ Read acquires before its first statement; an attempt acquires before its boundar
 asked to begin, so an acquisition that granted nothing is the begin failure above;
 each standalone Stream Batch acquires after the batch opens and releases before that
 batch finishes. Root publication happens after the batch and therefore after release.
-Work that INHERITS a connection emits neither: a participating read, write batch,
+Work that INHERITS a connection emits neither: a participating read, flush,
 stream batch, or joined invocation runs on the attempt's connection.
 
 `reason` is the `m-db-port` acquisition-failure vocabulary — `timeout`,
@@ -700,11 +700,11 @@ This module owns ten cases:
 | Case | Observable distinction |
 |---|---|
 | standalone read | one Read brackets its Acquisition, its Database Call, and its Release outside a transaction |
-| pre-commit batch | one nonempty boundary batch brackets two ordered writes |
-| read dependency | the dependency batch finishes before its sibling Read starts |
+| pre-commit batch | one nonempty boundary Flush brackets two ordered writes |
+| read dependency | the dependency Flush finishes before its sibling Read starts |
 | retry then commit | one invocation contains a rolled-back attempt and a later committed attempt, each acquiring and releasing its own connection, and the first releases before the second acquires; zero-row enforcement is attributed to the completed call |
-| retry exhaustion | every failed call, batch, and attempt finishes before the next attempt; classifier truth remains retry-eligible when the budget ends |
-| joined invocation | the joined activity has no attempt of its own and no Acquisition, and its buffered write reaches the outer attempt's pre-commit batch |
+| retry exhaustion | every failed call, Flush, and attempt finishes before the next attempt; classifier truth remains retry-eligible when the budget ends |
+| joined invocation | the joined activity has no attempt of its own and no Acquisition, and its buffered write reaches the outer attempt's pre-commit Flush |
 | streamed delivery | a Stream root brackets one Stream Batch per page; every standalone batch acquires before its Database Calls and releases after conversion, while a participating batch emits neither resource child and uses its attempt's connection |
 | isolation setup failure | the attempt that adopted its edition starts before the boundary is asked to begin, acquires a connection, finishes `beginFailed` `direct` with no callback and no retry, and releases what it took; the invocation finishes failed caused by it |
 | acquisition failure | the attempt's Acquisition grants nothing, carries the partial cleanup it ran and is followed by no Release, and the attempt finishes `beginFailed` caused by it |

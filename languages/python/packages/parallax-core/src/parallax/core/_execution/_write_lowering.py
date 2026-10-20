@@ -23,16 +23,16 @@ from parallax.core.write_plan.steps import (
     MaxPlusOne,
     PlannedClose,
     PlannedInsert,
+    PlannedStep,
     PlannedTemporalGuard,
     PlannedTemporalRemoval,
     PlannedTemporalRevision,
     PlannedUpdate,
     WriteRow,
 )
-from parallax.core.write_plan.steps import PlannedWrite as PlannedStep
 
 __all__ = [
-    "LoweredOpening",
+    "GroupedInsert",
     "LoweringCursor",
     "lowered",
     "lowered_within",
@@ -40,10 +40,10 @@ __all__ = [
     "stream_physical",
 ]
 
-_OPENING_ENTRY_CAP: Final = 64
+_GROUPED_INSERT_ROWS: Final = 64
 
 
-class LoweredOpening(NamedTuple):
+class GroupedInsert(NamedTuple):
     """One statement inserting a run of temporal openings, and how the run
     ended: at ``following``, the step that could not join it, taken but neither
     prepared nor lowered; at ``failure``, raised ordinarily taking, preparing,
@@ -60,7 +60,7 @@ class LoweringCursor:
     """``steps`` taken one at a time, each lowered only when asked, storing the
     payload its statement demands.
 
-    Execution's route from a borrowed span of Planned Writes to statements:
+    Execution's route from a borrowed span of Planned Steps to statements:
     each step is taken from its sequence exactly once and taking it lowers
     nothing, so a step can be looked at before anything is prepared for it, and
     a lazily built step is never built again to be lowered or enforced.
@@ -93,8 +93,8 @@ class LoweringCursor:
     def lowered_within(self, step: PlannedStep, parameter_ceiling: int) -> LoweredStatement:
         return lowered_within(step, parameter_ceiling, self._payloads, self._meta, self._dialect)
 
-    def opening(self, step: PlannedStep) -> PlannedInsert | None:
-        """``step`` where it can begin a grouped opening statement — a temporal
+    def grouped_insert_start(self, step: PlannedStep) -> PlannedInsert | None:
+        """``step`` where it can begin a grouped insert — a temporal
         Entity's single-entry insert holding no generated value — decided before
         its payload is demanded; ``None`` where it lowers alone."""
         if (
@@ -106,7 +106,7 @@ class LoweringCursor:
             return step
         return None
 
-    def lowered_opening(self, first: PlannedInsert) -> LoweredOpening:
+    def lowered_grouped_insert(self, first: PlannedInsert) -> GroupedInsert:
         """``first`` and the compatible openings following it, as one
         multi-row statement.
 
@@ -128,7 +128,7 @@ class LoweringCursor:
         )
         binds = self._dialect.max_bind_parameters
         following: PlannedStep | None = None
-        while builder.has_capacity(_OPENING_ENTRY_CAP, binds):
+        while builder.has_capacity(_GROUPED_INSERT_ROWS, binds):
             try:
                 following = self.take()
                 joining = _joining(following, entity, members)
@@ -136,9 +136,9 @@ class LoweringCursor:
                     break
                 builder.append(joining, _row_payload(payloads, entity, joining))
             except Exception as error:
-                return LoweredOpening(builder.finish(), None, error)
+                return GroupedInsert(builder.finish(), None, error)
             following = None
-        return LoweredOpening(builder.finish(), following, None)
+        return GroupedInsert(builder.finish(), following, None)
 
 
 def stream_physical(
@@ -157,12 +157,12 @@ def stream_physical(
     cursor = LoweringCursor(steps, payloads, meta, dialect)
     step = cursor.take()
     while step is not None:
-        first = cursor.opening(step)
+        first = cursor.grouped_insert_start(step)
         if first is None:
             yield cursor.lowered(step)
             step = cursor.take()
             continue
-        statement, following, failure = cursor.lowered_opening(first)
+        statement, following, failure = cursor.lowered_grouped_insert(first)
         yield statement
         if failure is not None:
             raise failure

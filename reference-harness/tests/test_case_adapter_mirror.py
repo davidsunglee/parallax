@@ -59,7 +59,7 @@ MIRRORED_DEFS = frozenset(
         "lifecycleNoFields",
         "lifecycleTarget",
         "lifecycleReadStarted",
-        "lifecycleWriteBatchStarted",
+        "lifecycleFlushStarted",
         "lifecycleDatabaseCallStarted",
         "lifecycleDatabaseCallFinished",
         "lifecycleInvocationStarted",

@@ -15,7 +15,7 @@ from parallax.core.write_plan.steps import (
     NonTemporalConcurrency,
     OptimisticConflict,
     PlannedInsert,
-    PlannedWrite,
+    PlannedStep,
     StaleWrite,
     TemporalConcurrency,
     TemporalGate,
@@ -45,7 +45,7 @@ class WriteEffectError(RuntimeError):
     """The closed family raised when a step's Affected Rows Policy is violated.
 
     The payload is the whole diagnostic: no SQL, statement index, driver
-    exception, complete Planned Write, assignments, or observation is retained,
+    exception, complete Planned Step, assignments, or observation is retained,
     and ``target`` is the step's own target by reference rather than a copy.
     """
 
@@ -151,7 +151,7 @@ class WriteResultError(RuntimeError):
         )
 
 
-def returns_rows(step: PlannedWrite) -> TypeGuard[PlannedInsert]:
+def returns_rows(step: PlannedStep) -> TypeGuard[PlannedInsert]:
     """Whether ``step``'s statement answers rows: an insert whose key the
     database allocates and returns. Every entry of one Planned Insert carries
     the same generated-value shape, so the first answers for all."""
@@ -197,7 +197,7 @@ def allocated_keys(step: PlannedInsert, rows: Sequence[Sequence[object]]) -> tup
     return tuple(keys)
 
 
-def enforce_affected_rows(step: PlannedWrite, actual_count: int) -> None:
+def enforce_affected_rows(step: PlannedStep, actual_count: int) -> None:
     """Interpret one step's execution result against its Affected Rows Policy.
 
     Inserts carry no policy, so they are accepted and return. An ``AnyCount``

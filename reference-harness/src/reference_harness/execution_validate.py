@@ -17,7 +17,7 @@ observation alike (`m-execution-lifecycle`):
 - **topology.** Each activity kind names the kinds that may contain it: an Outer
   Invocation is the root and nothing else, a Joined Invocation and a Transaction
   Attempt each belong under their own one kind, and a Database Call is the direct
-  child of the Read, Write Batch, or Stream Batch that owns it. An invocation
+  child of the Read, Flush, or Stream Batch that owns it. An invocation
   finishes in the vocabulary its own kind admits — a physical commit or failure
   for the outer one, a nested return or raise for a joined one;
 - **balance.** Every Started has exactly one Finished, the root activity's is the
@@ -41,10 +41,10 @@ observation alike (`m-execution-lifecycle`):
   ``observations.databaseCalls`` on an envelope — counts the Database Call
   activities the stream opened, which the record restates rather than competes
   with;
-- **triggers.** A batch's trigger is a POSITIONAL claim: a ``read-dependency``
-  batch is the one a dependent read forced, so the sibling after it is the Read
+- **triggers.** A Flush's trigger is a POSITIONAL claim: a ``read-dependency``
+  flush is the one a dependent read forced, so the sibling after it is the Read
   it enabled and it has already FINISHED when that Read starts, and a
-  ``pre-commit`` batch is the boundary's own last one, so nothing its attempt
+  ``pre-commit`` flush is the boundary's own last one, so nothing its attempt
   does after it but give its connection back;
 - **resources.** An activity that owns a connection opens at most one
   Acquisition and at most one Release, the Acquisition FIRST among its children
@@ -74,7 +74,7 @@ __all__ = ["validate_execution", "validate_execution_observation"]
 
 _STARTED_FINISHED: dict[str, str] = {
     "readStarted": "readFinished",
-    "writeBatchStarted": "writeBatchFinished",
+    "flushStarted": "flushFinished",
     "databaseCallStarted": "databaseCallFinished",
     "transactionInvocationStarted": "transactionInvocationFinished",
     "transactionAttemptStarted": "transactionAttemptFinished",
@@ -109,8 +109,8 @@ _OWNER_FAILED: frozenset[str] = frozenset({"failed", "beginFailed"})
 
 _CONTAINED_BY: dict[str, tuple[str, ...]] = {
     "readStarted": ("transactionAttemptStarted",),
-    "writeBatchStarted": ("transactionAttemptStarted",),
-    "databaseCallStarted": ("readStarted", "writeBatchStarted", "streamBatchStarted"),
+    "flushStarted": ("transactionAttemptStarted",),
+    "databaseCallStarted": ("readStarted", "flushStarted", "streamBatchStarted"),
     "transactionAttemptStarted": (_OUTER,),
     "streamStarted": ("transactionAttemptStarted",),
     "streamBatchStarted": ("streamStarted",),
@@ -183,7 +183,7 @@ class _Activity:
 
     ``children`` is in opening order and the two positions are delivery
     positions within the root, which is what makes a trigger's positional claim
-    checkable: the batch a dependent read forced is the sibling before it, and
+    checkable: the flush a dependent read forced is the sibling before it, and
     it has already closed when that read opens.
     """
 
@@ -367,7 +367,7 @@ def _check_containment(
     An activity kind does not stand anywhere in the tree: an Outer Invocation IS
     the root, a Joined Invocation runs inside the attempt it joined, an attempt
     runs under the outer invocation that retries it, and a Database Call is the
-    direct child of the Read, Write Batch, or Stream Batch that owns it. Without
+    direct child of the Read, Flush, or Stream Batch that owns it. Without
     this the correlation rules describe a tree of anonymous nodes, which any
     stream can satisfy by naming numbers that happen to be open.
     """
@@ -554,38 +554,38 @@ def _check_cause(
 
 
 def _check_triggers(activities: dict[int, _Activity], problems: list[str]) -> None:
-    """Each Write Batch trigger against the position it claims."""
-    for batch in activities.values():
-        if batch.started != "writeBatchStarted":
+    """Each Flush trigger against the position it claims."""
+    for flush in activities.values():
+        if flush.started != "flushStarted":
             continue
-        trigger = batch.started_payload.get("trigger")
-        siblings = _siblings(batch, activities)
-        position = siblings.index(batch.activity)
+        trigger = flush.started_payload.get("trigger")
+        siblings = _siblings(flush, activities)
+        position = siblings.index(flush.activity)
         following = siblings[position + 1 :]
         if trigger == "read-dependency":
-            _check_read_dependency(batch, following, activities, problems)
+            _check_read_dependency(flush, following, activities, problems)
         if trigger == "pre-commit":
-            _check_pre_commit(batch, following, activities, problems)
+            _check_pre_commit(flush, following, activities, problems)
 
 
 def _check_pre_commit(
-    batch: _Activity,
+    flush: _Activity,
     following: list[int],
     activities: dict[int, _Activity],
     problems: list[str],
 ) -> None:
-    """Nothing the attempt's WORK does follows the boundary's own last batch.
+    """Nothing the attempt's WORK does follows the boundary's own last flush.
 
     Its Release does, and only its Release: giving the connection back is what
-    an attempt does once its work is over, so the batch is still the final thing
+    an attempt does once its work is over, so the flush is still the final thing
     written and the resource activity after it is the end of the borrowing
     rather than more work.
     """
     trailing = [child for child in following if activities[child].started != "releaseStarted"]
     if trailing:
         problems.append(
-            f"{batch.label} carries the `pre-commit` trigger but its attempt opened "
-            f"activity {trailing[0]} after it; the boundary owns the FINAL batch, so "
+            f"{flush.label} carries the `pre-commit` trigger but its attempt opened "
+            f"activity {trailing[0]} after it; the boundary owns the FINAL flush, so "
             f"nothing the attempt does follows it but giving its connection back"
         )
 
@@ -781,31 +781,31 @@ def _check_resource_count(
 
 
 def _check_read_dependency(
-    batch: _Activity,
+    flush: _Activity,
     following: list[int],
     activities: dict[int, _Activity],
     problems: list[str],
 ) -> None:
-    """The dependency batch stands in front of the Read it enabled, and is DONE.
+    """The dependency flush stands in front of the Read it enabled, and is DONE.
 
     Ordering the two opening events is not the claim: a read that force-flushed
-    the buffer waits for that flush, so the batch has already finished when the
-    read starts. A stream whose batch merely opened first would describe a read
+    the buffer waits for that flush, so the flush has already finished when the
+    read starts. A stream whose flush merely opened first would describe a read
     running against a buffer still on the wire.
     """
     read = activities[following[0]] if following else None
     if read is None or read.started != "readStarted":
         problems.append(
-            f"{batch.label} carries the `read-dependency` trigger but the next activity its "
-            f"attempt opened is not a Read; the batch a dependent read forced stands in "
+            f"{flush.label} carries the `read-dependency` trigger but the next activity its "
+            f"attempt opened is not a Read; the flush a dependent read forced stands in "
             f"front of the read it enabled, and that position is the whole assertion"
         )
         return
-    if batch.finished_at is None or batch.finished_at > read.started_at:
+    if flush.finished_at is None or flush.finished_at > read.started_at:
         problems.append(
-            f"{batch.label} carries the `read-dependency` trigger but had not finished when "
+            f"{flush.label} carries the `read-dependency` trigger but had not finished when "
             f"{read.label} started activity {read.activity}; the read waits on the flush it "
-            f"forced, so the batch it enabled it with is over before the read begins"
+            f"forced, so the flush it enabled it with is over before the read begins"
         )
 
 
@@ -1092,7 +1092,7 @@ def _statement_kind(entry: Any) -> str | None:
     The two sides hold the same evidence in different shapes — a case authors
     its SQL under each dialect it states, an envelope reports one rendered
     string — and the leading keyword is what separates a query a Read call
-    issued from the DML a Write Batch call issued. A lead outside that
+    issued from the DML a Flush call issued. A lead outside that
     vocabulary, or dialects disagreeing about it, yields no claim, so the
     unfamiliar statement is left to the rules that do not need its kind.
     """

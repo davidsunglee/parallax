@@ -26,7 +26,7 @@ from parallax.core.entity._layout import LayoutCatalog
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import Metamodel
 from parallax.core.unit_work import (
-    BufferItem,
+    AdmittedWrite,
     Concurrency,
     KeyedWriteInstruction,
     TransactionInstant,
@@ -45,7 +45,7 @@ from parallax.core.write_plan import (
 from parallax.core.write_plan.steps import (
     ChangedFrom,
     PlannedRow,
-    PlannedWrite,
+    PlannedStep,
 )
 from tests._support.clock_probes import inert_instant
 from tests._support.planner_probes import (
@@ -67,11 +67,11 @@ _ASSIGNED_TITLE = "title-changed"
 _INTERIOR_FROM = dt.datetime(2026, 3, 1, tzinfo=dt.UTC)
 _INTERIOR_UNTIL = dt.datetime(2026, 9, 1, tzinfo=dt.UTC)
 
-type _TestBufferItem = BufferItem | KeyedWriteInstruction
+type _TestAdmittedWrite = AdmittedWrite | KeyedWriteInstruction
 
 
 def _plan(
-    buffer: Sequence[_TestBufferItem],
+    buffer: Sequence[_TestAdmittedWrite],
     model: Metamodel,
     *,
     observations: dict[ObjectKey, WriteObservation] | None = None,
@@ -95,7 +95,7 @@ def _row_values(row: PlannedRow) -> dict[str, object]:
     return values
 
 
-def _insert_rows(step: PlannedWrite) -> list[dict[str, object]]:
+def _insert_rows(step: PlannedStep) -> list[dict[str, object]]:
     assert isinstance(step, PlannedInsert)
     return [_row_values(entry.row) for entry in step.entries]
 

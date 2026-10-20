@@ -87,13 +87,13 @@ from parallax.core.write_plan.steps import (
     Finite,
     NewLineage,
     PlannedRow,
+    PlannedStep,
     PlannedTemporalGuard,
     PlannedTemporalRemoval,
     PlannedTemporalRevision,
     TemporalGate,
     WriteRow,
 )
-from parallax.core.write_plan.steps import PlannedWrite as PlannedStep
 from parallax.descriptor._records import Metamodel
 from tests._support.clock_probes import instant_at
 from tests._support.lowering_probes import lower_instruction, lower_instruction_steps

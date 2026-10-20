@@ -12,13 +12,13 @@ from parallax.core import temporal_read
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work.instructions import prepare_wire_write
 from parallax.core._execution._unit_work.write_items import (
-    ComposedTemporalWrite,
+    CoalescedTemporalWrite,
     ObservedKeyedWrite,
 )
 from parallax.core.base import INFINITY
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.unit_work import (
-    BufferItem,
+    AdmittedWrite,
     KeyedMutation,
     KeyedWriteInstruction,
     RetainedObservation,
@@ -131,7 +131,7 @@ def test_terminations_through_two_observations_compose_to_destruction_alone() ->
     stale, current = _observation(_JAN, "100.00"), _observation(_MAR, "120.00")
     composed = admitted_writes(_BALANCE, [_write("terminate", stale), _write("terminate", current)])
     (write,) = composed
-    assert isinstance(write, ComposedTemporalWrite) and not write.assigns
+    assert isinstance(write, CoalescedTemporalWrite) and not write.assigns
     steps = list(_plan(_write("terminate", stale), _write("terminate", current)).steps)
     assert [type(step) for step in steps] == [PlannedClose, PlannedClose]
 
@@ -231,7 +231,7 @@ def test_two_observed_rectangles_bind_at_planning_when_they_cover_the_range() ->
     shape = temporal_read.view(model).shape(position)
     assert shape is not None
 
-    def update(valid_from: dt.datetime, value: str, observed: TemporalObservation) -> BufferItem:
+    def update(valid_from: dt.datetime, value: str, observed: TemporalObservation) -> AdmittedWrite:
         prepared = prepare_wire_write(
             KeyedWriteInstruction("amend", "Position", ({"id": 1, "value": value},), valid_from),
             model,

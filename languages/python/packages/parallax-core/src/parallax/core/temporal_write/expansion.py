@@ -57,11 +57,11 @@ from parallax.core.write_plan.steps import (
     PlannedAssignments,
     PlannedClose,
     PlannedInsert,
+    PlannedStep,
     PlannedTemporalGuard,
     PlannedTemporalRemoval,
     PlannedTemporalRevision,
     PlannedValue,
-    PlannedWrite,
     RowOrigin,
     Shortfall,
     TemporalConcurrency,
@@ -532,7 +532,7 @@ class PredecessorExpander:
             concludes=concludes,
         )
 
-    def _own(self, record: _Reached) -> PlannedWrite | None:
+    def _own(self, record: _Reached) -> PlannedStep | None:
         """The step ``record``'s predecessor finally takes of its own: its
         decorated close, a guard, a removal, a revision, or none."""
         disposal = record.code & _DISPOSAL
@@ -958,7 +958,7 @@ def _own_step(
     closing: PlannedClose,
     kept: WriteRow | None,
     predecessor: PredecessorRow | None,
-) -> PlannedWrite:
+) -> PlannedStep:
     """The one step of its own a predecessor of disposition ``code`` takes,
     addressed as ``closing`` addresses it: that close — decorated already — a
     guard proving it unchanged, its removal, or its revision into ``kept``,

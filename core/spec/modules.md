@@ -125,7 +125,7 @@ is both `active` and `cases`-covered has at least one tagged fixture.
 | `m-batch-write` | Set-based / batched writes | active | cases |
 | `m-cascade-delete` | Cascade delete | active | cases |
 | `m-unit-work` | Transactions & unit of work | active | cases |
-| `m-write-plan` | Planned Write algebra, Write Observations, and predecessor evidence | active | cases |
+| `m-write-plan` | Planned Step algebra, Write Observations, and predecessor evidence | active | cases |
 | `m-write-payload` | Persisted write payload assembly and persisted-state comparison | active | cases |
 | `m-read-lock` | In-transaction shared read lock | active | cases |
 | `m-auto-retry` | Bounded retry on transient conflict | active | cases |
@@ -473,7 +473,7 @@ construction it may reference any behavioral module it harnesses.
   *model* only: nothing here reaches as-of lowering, and the direction stays
   one-way, since `m-temporal-read` names no write-plan or unit-of-work construct.
 - **`m-write-plan --> m-core`, `--> m-metamodel`, `--> m-predicate`, `-->
-  m-inheritance`, `--> m-document-codec`.** The Planned Write algebra and the
+  m-inheritance`, `--> m-document-codec`.** The Planned Step algebra and the
   evidence it retains are stated in resolved model terms: managed values and
   retained documents (`m-core`), member and Entity Identities (`m-metamodel`),
   the resolved predicate a Resolved Mutation Selection carries
@@ -485,7 +485,7 @@ construction it may reference any behavioral module it harnesses.
   algebra, and `m-sql`, which lowers it, depend on it rather than on each
   other.
 - **`m-write-payload --> m-write-plan`, `--> m-storage-layout`, `-->
-  m-document-codec`; `m-execution --> m-write-payload`.** What a planned write
+  m-document-codec`; `m-execution --> m-write-payload`.** What a planned step
   stores — each member at its slot, each document composed, patched, or compared
   as persisted state — has one assembler beside the algebra rather than inside
   it or inside SQL lowering. The plan stays independent of storage layout: it
@@ -538,13 +538,13 @@ construction it may reference any behavioral module it harnesses.
   buffered prepared-write products. Managed-object mutation remains developer
   input governed by `m-core`.
 - **`m-sql --> m-deep-fetch`, `--> m-write-plan`, `--> m-wire`.** SQL's private
-  compilers consume resolved flat reads and planned writes. The Wire edge exists
+  compilers consume resolved flat reads and planned steps. The Wire edge exists
   for canonical document values and carrier contracts, not to authorize SQL to
   decode an authored literal; resolution and conversion have already happened.
 - **`m-execution-lifecycle --> m-unit-work`, `--> m-auto-retry`, `--> m-db-port`,
   `--> m-db-error`, `--> m-sql`.** Transient observability is a
   **composition-level publisher**: its event vocabulary names the statement a
-  call executes, call and boundary outcomes, write-batch triggers, retry policy,
+  call executes, call and boundary outcomes, flush triggers, retry policy,
   the Isolation Level a boundary was asked to open at, and classifier verdict. A
   composition root threads one publisher down as an ordinary parameter; observed
   modules discover no Provider and retain no lifecycle history.

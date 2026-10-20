@@ -34,11 +34,11 @@ from parallax.core.entity._model import model_of
 from parallax.core.execution_lifecycle import (
     DatabaseCallStarted,
     ExecutionEvent,
+    FlushStarted,
     ReadCompleted,
     ReadFailed,
     ReadFinished,
     ReadStarted,
-    WriteBatchStarted,
 )
 from parallax.core.inheritance import EntityMemberSelection
 from parallax.core.metamodel import (
@@ -195,8 +195,8 @@ def test_a_target_read_is_a_read_of_its_own_that_flushes_nothing_pending() -> No
 
     scope(port, provider=recorder).transact(fn, itself, concurrency="locking")
     names = _names(recorder.roots[-1].events)
-    # The pending insert executes in the pre-commit batch, after the read.
-    assert names.index("ReadStarted") < names.index("WriteBatchStarted")
+    # The pending insert executes in the pre-commit flush, after the read.
+    assert names.index("ReadStarted") < names.index("FlushStarted")
     assert [type(call) for call in port.calls][:2] == [BeginCall, ReadCall]
     assert isinstance(port.calls[-1], CommitCall)
 
@@ -299,10 +299,10 @@ def test_the_read_is_settled_however_its_consumer_leaves(
     assert isinstance(port.calls[-1], CommitCall)
 
 
-def test_a_coverage_read_is_a_read_call_of_the_write_batch_reaching_its_range() -> None:
+def test_a_coverage_read_is_a_read_call_of_the_flush_reaching_its_range() -> None:
     # An Optimistic caller-addressed write of a Transaction-Time object reads
     # nothing at its call; its range reads the object's coverage when the flush
-    # reaches it, inside that flush's Write Batch and with no Read of its own.
+    # reaches it, inside that flush's activity and with no Read of its own.
     recorder = RecordingLifecycleProvider()
     stored = {
         "bal_id": 1,
@@ -321,10 +321,8 @@ def test_a_coverage_read_is_a_read_call_of_the_write_batch_reaching_its_range() 
     )
     events = recorder.roots[-1].events
     assert not any(isinstance(event, ReadStarted) for event in events)
-    batch = next(
-        index for index, event in enumerate(events) if isinstance(event, WriteBatchStarted)
-    )
-    first_call = next(event for event in events[batch:] if isinstance(event, DatabaseCallStarted))
+    flush = next(index for index, event in enumerate(events) if isinstance(event, FlushStarted))
+    first_call = next(event for event in events[flush:] if isinstance(event, DatabaseCallStarted))
     assert first_call.kind == "read"
     assert [type(call) for call in port.calls] == [
         BeginCall,
@@ -379,7 +377,7 @@ def test_each_deferred_range_reads_its_coverage_only_once_the_unit_before_it_ran
         CommitCall,
     ]
     events = recorder.roots[-1].events
-    assert sum(isinstance(event, WriteBatchStarted) for event in events) == 1
+    assert sum(isinstance(event, FlushStarted) for event in events) == 1
 
 
 # --------------------------------------------------------------------------- #
@@ -711,7 +709,7 @@ def test_a_retained_rows_invalid_occurrence_fails_at_its_flush_not_its_call(
     entity: type[Any], invalid: str
 ) -> None:
     # The occurrence is judged when the flush completes the row it reuses, after
-    # the call has returned and inside the write batch, with no read of its own;
+    # the call has returned and inside the flush, with no read of its own;
     # a scalar collection inside it is judged with it.
     recorder = RecordingLifecycleProvider()
     spec, failing = _INVALID_SPECS[invalid]
@@ -743,11 +741,9 @@ def test_a_retained_rows_invalid_occurrence_fails_at_its_flush_not_its_call(
     )
     events = recorder.roots[-1].events
     (read,) = [event for event in events if isinstance(event, ReadStarted)]
-    batch = next(
-        index for index, event in enumerate(events) if isinstance(event, WriteBatchStarted)
-    )
-    assert events.index(read) < batch
-    assert not any(isinstance(event, DatabaseCallStarted) for event in events[batch:])
+    flush = next(index for index, event in enumerate(events) if isinstance(event, FlushStarted))
+    assert events.index(read) < flush
+    assert not any(isinstance(event, DatabaseCallStarted) for event in events[flush:])
 
 
 def test_a_completion_reads_nothing_and_opens_no_activity(

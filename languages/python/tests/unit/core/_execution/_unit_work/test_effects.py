@@ -11,7 +11,7 @@ Two invariants are asserted independently of the shortfall matrix, because
 neither is expressible in the policy: an excess over any exact count is always
 Cardinality Corruption whatever the step's shortfall tag says, and the raised
 payload carries the four semantic facts and nothing else — in particular no SQL,
-statement index, driver exception, whole Planned Write, assignments, or
+statement index, driver exception, whole Planned Step, assignments, or
 observation, which is what keeps the diagnostic stable across dialects and lets
 a retry loop recognize the canonical conflict without an optional module.
 """
@@ -58,6 +58,7 @@ from parallax.core.write_plan.steps import (
     PlannedAssignments,
     PlannedDelete,
     PlannedRow,
+    PlannedStep,
     PlannedTemporalGuard,
     PlannedTemporalRemoval,
     PlannedTemporalRevision,
@@ -70,7 +71,6 @@ from parallax.core.write_plan.steps import (
     VersionGate,
     WriteRow,
 )
-from parallax.core.write_plan.steps import PlannedWrite as PlannedStep
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._corpus_model_support import target as entity_of
 

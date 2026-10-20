@@ -1,7 +1,7 @@
 # Pre-commit batch (m-execution-lifecycle): the boundary's own flush is ONE
-# Write Batch activity carrying the `pre-commit` trigger.
+# Flush activity carrying the `pre-commit` trigger.
 model: models/orders.yaml
-tags: [m-execution-lifecycle, m-unit-work, slice-snapshot-1, write-batch, pre-commit]
+tags: [m-execution-lifecycle, m-unit-work, slice-snapshot-1, flush, pre-commit]
 shape: scenario
 when:
   scenario:
@@ -24,7 +24,7 @@ when:
           rows:
             - { id: 301, orderId: 300, sku: E-1, quantity: 4 }
       databaseCalls: 1
-      note: buffer the child OrderItem in the SAME unit of work; the boundary flushes both in one pre-commit batch
+      note: buffer the child OrderItem in the SAME unit of work; the boundary flushes both in one pre-commit flush
       statements:
         - sql:
             postgres: insert into order_item(id, order_id, sku, quantity) values (?, ?, ?, ?)
@@ -60,7 +60,7 @@ then:
           - sequence: 5
             activity: 4
             parent: 2
-            writeBatchStarted: { trigger: pre-commit }
+            flushStarted: { trigger: pre-commit }
           - sequence: 6
             activity: 5
             parent: 4
@@ -86,7 +86,7 @@ then:
           - sequence: 10
             activity: 4
             parent: 2
-            writeBatchFinished: { outcome: completed }
+            flushFinished: { outcome: completed }
           - sequence: 11
             activity: 7
             parent: 2

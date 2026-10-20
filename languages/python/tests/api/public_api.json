@@ -82,6 +82,11 @@
     "ExecutionLifecycleProviderError",
     "ExecutionLifecycleReentryError",
     "FanoutLifecycleProvider",
+    "FlushCompleted",
+    "FlushFailed",
+    "FlushFinished",
+    "FlushOutcome",
+    "FlushStarted",
     "JoinedInvocation",
     "JoinedInvocationRaised",
     "JoinedInvocationReturned",
@@ -120,12 +125,7 @@
     "TransactionInvocation",
     "TransactionInvocationFinished",
     "TransactionInvocationOutcome",
-    "TransactionInvocationStarted",
-    "WriteBatchCompleted",
-    "WriteBatchFailed",
-    "WriteBatchFinished",
-    "WriteBatchOutcome",
-    "WriteBatchStarted"
+    "TransactionInvocationStarted"
   ],
   "parallax.core.read_delivery": [
     "InvalidData",

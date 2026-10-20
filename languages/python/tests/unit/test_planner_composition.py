@@ -80,7 +80,7 @@ from parallax.core.unit_work import NO_AUDIT, WritePlanner, WritePlanningRequest
 from parallax.core.write_plan import WritePlan
 from parallax.core.write_plan.payload import WritePayloadPreparer
 from parallax.core.write_plan.plan import WriteStepView
-from parallax.core.write_plan.steps import PlannedWrite
+from parallax.core.write_plan.steps import PlannedStep
 from parallax.snapshot import TxnContext
 from tests._support import mirrored_models as mm
 from tests._support.db_port import (
@@ -127,8 +127,8 @@ class _Composition:
     lane: str
     built: list[_Built]
     planned: list[_Planning]
-    lowered: list[Iterable[PlannedWrite]]
-    rendered: list[PlannedWrite]
+    lowered: list[Iterable[PlannedStep]]
+    rendered: list[PlannedStep]
 
     def escaped(self) -> list[WritePlanningRequest]:
         """The plannings whose receiver the composition root did not build."""
@@ -156,12 +156,12 @@ class _Composition:
             if not any(source is one.plan.steps for one in self.planned)
         ]
 
-    def steps_of_lowered_plans(self) -> list[PlannedWrite]:
+    def steps_of_lowered_plans(self) -> list[PlannedStep]:
         """Every step the streamed sequences hold, in the order streaming reaches them."""
         return [step for streamed in self.lowered for step in _span_of(streamed)]
 
 
-def _span_of(streamed: Iterable[PlannedWrite]) -> Iterable[PlannedWrite]:
+def _span_of(streamed: Iterable[PlannedStep]) -> Iterable[PlannedStep]:
     """What ``streamed`` takes its steps from: the span a simulated step
     execution applies as lowering takes it, or the sequence itself.
 
@@ -237,7 +237,7 @@ def _watch(lane: str, monkeypatch: pytest.MonkeyPatch) -> _Composition:
         return finalized
 
     def cursor(
-        steps: Iterable[PlannedWrite],
+        steps: Iterable[PlannedStep],
         payloads: WritePayloadPreparer,
         meta: Metamodel,
         dialect: Dialect,
@@ -246,7 +246,7 @@ def _watch(lane: str, monkeypatch: pytest.MonkeyPatch) -> _Composition:
         return cursoring(steps, payloads, meta, dialect)
 
     def render(
-        step: PlannedWrite, payload: StepPayload, meta: Metamodel, dialect: Dialect
+        step: PlannedStep, payload: StepPayload, meta: Metamodel, dialect: Dialect
     ) -> LoweredStatement:
         seen.rendered.append(step)
         return rendering(step, payload, meta, dialect)

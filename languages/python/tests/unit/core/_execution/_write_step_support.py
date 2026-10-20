@@ -1,5 +1,5 @@
-"""Planned Writes of the corpus Position model, a span handing them out lazily,
-the production step executor over a scripted port, the Write Batch it executes
+"""Planned Steps of the corpus Position model, a span handing them out lazily,
+the production step executor over a scripted port, the Flush it executes
 inside, and a Write Plan's units run through it."""
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ from parallax.core.dialect import POSTGRES
 from parallax.core.entity._model import model_of
 from parallax.core.execution_lifecycle import ExecutionLifecycleProvider
 from parallax.core.execution_lifecycle._activity import (
-    WriteBatchActivity,
+    FlushActivity,
     installed_lifecycle,
     open_transaction_root,
 )
@@ -45,10 +45,10 @@ from parallax.core.write_plan.steps import (
     PlannedClose,
     PlannedInsert,
     PlannedRow,
+    PlannedStep,
     PlannedTemporalGuard,
     PlannedTemporalRemoval,
     PlannedTemporalRevision,
-    PlannedWrite,
     TemporalGate,
     WriteRow,
 )
@@ -157,7 +157,7 @@ class HeldSteps:
     ``failure`` instead of building the step at ``failing``."""
 
     port: ScriptedAdapter
-    steps: tuple[PlannedWrite, ...]
+    steps: tuple[PlannedStep, ...]
     failing: int | None = None
     failure: BaseException | None = None
     asked: list[tuple[int, int]] = field(default_factory=list[tuple[int, int]])
@@ -165,7 +165,7 @@ class HeldSteps:
     def __len__(self) -> int:
         return len(self.steps)
 
-    def step(self, index: int) -> PlannedWrite:
+    def step(self, index: int) -> PlannedStep:
         self.asked.append((index, len(self.port.calls)))
         if index == self.failing and self.failure is not None:
             raise self.failure
@@ -183,10 +183,10 @@ def step_executor(port: ScriptedAdapter, meta: Metamodel = POSITION_META) -> Wri
 
 
 @contextmanager
-def write_batch(
+def open_flush(
     provider: ExecutionLifecycleProvider | None = None,
-) -> Generator[WriteBatchActivity]:
-    """A pre-commit Write Batch of one attempt, observed by ``provider`` where
+) -> Generator[FlushActivity]:
+    """A pre-commit Flush of one attempt, observed by ``provider`` where
     one is given and inert otherwise."""
     with (
         open_transaction_root(
@@ -198,24 +198,24 @@ def write_batch(
         ) as invocation,
         invocation.attempt("test") as attempt,
     ):
-        with attempt.write_batch("pre_commit") as batch:
-            yield batch
+        with attempt.flush("pre_commit") as flush:
+            yield flush
         attempt.committed()
 
 
 def run_plan(
     port: ScriptedAdapter,
     plan: WritePlan,
-    batch: WriteBatchActivity,
+    flush: FlushActivity,
     meta: Metamodel = POSITION_META,
 ) -> None:
     """``plan`` run unit by unit by a fresh unit of work, each span executed by
     the production executor of an attempt over ``port`` as calls of
-    ``batch``."""
+    ``flush``."""
     executor = step_executor(port, meta)
 
     def execute(steps: WriteStepView, /, *, allocates: bool) -> tuple[object, ...]:
-        return executor.execute(steps, allocates=allocates, batch=batch)
+        return executor.execute(steps, allocates=allocates, flush=flush)
 
     planner = build_write_planner(meta)
     uow = UnitOfWork(
@@ -232,23 +232,23 @@ def run_plan(
     run_write_plan(uow, plan, execute)
 
 
-def statement(step: PlannedWrite) -> LoweredStatement:
+def statement(step: PlannedStep) -> LoweredStatement:
     return lowered(step, build_write_planner(POSITION_META).payloads, POSITION_META, POSTGRES)
 
 
-def alone(step: PlannedWrite) -> WriteCall:
+def alone(step: PlannedStep) -> WriteCall:
     """The write the port receives for ``step`` run as a call of its own."""
     lowered_step = statement(step)
     return WriteCall(POSTGRES.to_driver_sql(lowered_step.sql), lowered_step.binds)
 
 
-def ordered(*steps: PlannedWrite) -> OrderedCall:
+def ordered(*steps: PlannedStep) -> OrderedCall:
     """The invocation an adapter records for ``steps``: each statement in the
     driver form converted once from its canonical SQL."""
     return OrderedCall(tuple(alone(step) for step in steps))
 
 
-def physical(*steps: PlannedWrite) -> list[WriteCall]:
+def physical(*steps: PlannedStep) -> list[WriteCall]:
     """The writes a dry traversal of ``steps`` answers, as the port receives them."""
     return [
         WriteCall(POSTGRES.to_driver_sql(lowered_step.sql), lowered_step.binds)

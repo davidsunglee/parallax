@@ -790,7 +790,7 @@ def test_an_update_beyond_its_observed_rectangle_reads_the_coverage_it_reaches(
 ) -> None:
     # The source observed only [Jan, Jun); the write runs from its March pin
     # through infinity, so the flush reads the object's current coverage from
-    # where the observed rectangle ends — once, inside the write batch, under
+    # where the observed rectangle ends — once, inside the flush, under
     # the shared lock only when the effective strategy is Locking — and binds
     # the observed rectangle together with each row it finds; the equal changed
     # parts of both open as one row.

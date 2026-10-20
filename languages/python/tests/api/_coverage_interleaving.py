@@ -17,7 +17,7 @@ from parallax.core.execution_lifecycle import (
 
 class AfterCoverageRead:
     """A Provider whose Handler runs ``peer`` to completion on another thread
-    once, right after the ``nth`` coverage read write batches issue for
+    once, right after the ``nth`` coverage read flushes issue for
     ``table`` — between that read and the writes it binds."""
 
     def __init__(self, table: str, peer: Callable[[], None], *, nth: int = 1) -> None:

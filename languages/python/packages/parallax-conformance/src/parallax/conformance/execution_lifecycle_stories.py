@@ -106,7 +106,7 @@ def a_joined_unit_of_work_is_observed_inside_the_outer_attempt(
                 # A joined call shares the outer transaction rather than opening
                 # a nested one, so its write buffers on the SAME unit of work,
                 # runs on the SAME connection, and reaches the database in the
-                # outer boundary's pre-commit batch.
+                # outer boundary's pre-commit flush.
                 bumped = current.edit(balance=current.balance + _BUMP)
                 joined_tx.amend(bumped)
                 return bumped

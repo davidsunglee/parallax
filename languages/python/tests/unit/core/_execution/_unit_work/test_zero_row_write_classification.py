@@ -55,8 +55,8 @@ from parallax.core.write_plan.steps import (
     ExactCount,
     KeyTarget,
     PlannedDelete,
+    PlannedStep,
     PlannedUpdate,
-    PlannedWrite,
 )
 from tests._support.clock_probes import inert_instant
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY, observed_buffer
@@ -71,7 +71,7 @@ _KEY_2 = KeyTarget(key_attributes=(AttributeIdentity(_ROW_2, "id"),), key_values
 
 def _locking_policy(
     write: KeyedWriteInstruction, model: Metamodel, *, observed: int | None
-) -> tuple[PlannedWrite, AffectedRows]:
+) -> tuple[PlannedStep, AffectedRows]:
     """The single step a Locking-mode unit of work plans for ``write``, and the
     Affected Rows Policy it carries."""
     key = object_key(write, model)

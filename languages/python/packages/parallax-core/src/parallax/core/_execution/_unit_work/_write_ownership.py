@@ -16,11 +16,11 @@ from parallax.core.write_plan.steps import Finite
 __all__ = ["InsertionRecord", "PendingInsertionState", "WriteOwnership"]
 
 type PendingInsertionState = Literal["opening", "before_removal", "ended_opening"]
-"""How an insertion of the pending batch stands, while that batch links it.
+"""How an insertion of the buffer stands, while the buffer links it.
 
 ``opening`` is the object's current insertion, still to execute; a write folds
 into it only from its own barrier region. ``before_removal`` is an insertion a
-later write of the batch removes whole, already counted as stored.
+later write of the buffer removes whole, already counted as stored.
 ``ended_opening`` is a Bitemporal opening whose writes left nothing of it while
 a composed replacement still reaches the object's older stored coverage, so it
 folds nothing and its object is opened again only after that replacement.
@@ -36,8 +36,8 @@ class InsertionRecord:
     start is the anchor every write it authorizes starts at. ``identity`` is the
     authority that insertion grants while it stands, and ``None`` once its
     complete removal retired it. ``pending_position`` and ``pending_state`` link
-    the insertion to the pending batch that buffered it, at its position there,
-    until that batch drains or composition cancels it.
+    the insertion to the buffer that buffered it, at its position there,
+    until the buffer drains or composition cancels it.
 
     What survives of the object's admitted insertions is counted where it is
     stored: ``stored_count`` — the owned current rows an admission of the
@@ -276,11 +276,11 @@ class WriteOwnership:
         derived: tuple[Derivation, ...] = (),
         concludes: ObjectKey | None = None,
     ) -> None:
-        """Retire the owned rows one execution unit removed, then register the
+        """Retire the owned rows one settled write removed, then register the
         rows it opened, each tagged with the parts an admission contributed to
         it, or no longer tagged where it names a row again that none did. An
-        admission whose last tagged row the unit removed or untagged is retired
-        only if no row the unit opened continues it.
+        admission whose last tagged row the write removed or untagged is retired
+        only if no row the write opened continues it.
 
         Each original the unit ``derived`` rows from that stood before the
         flush began is proven until the object's last consumer — the unit that

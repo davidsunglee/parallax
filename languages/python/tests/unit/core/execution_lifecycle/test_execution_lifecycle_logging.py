@@ -55,6 +55,10 @@ from parallax.core.execution_lifecycle import (
     DirectFailure,
     ExecutionEvent,
     ExecutionLifecycleHandlerError,
+    FlushCompleted,
+    FlushFailed,
+    FlushFinished,
+    FlushStarted,
     JoinedInvocation,
     JoinedInvocationRaised,
     JoinedInvocationReturned,
@@ -84,10 +88,6 @@ from parallax.core.execution_lifecycle import (
     TransactionAttemptStarted,
     TransactionInvocationFinished,
     TransactionInvocationStarted,
-    WriteBatchCompleted,
-    WriteBatchFailed,
-    WriteBatchFinished,
-    WriteBatchStarted,
 )
 from parallax.core.execution_lifecycle._diagnostics import database_diagnostic_for
 from parallax.core.sql_gen import LoweredStatement
@@ -489,7 +489,7 @@ def test_a_non_root_finished_carries_no_summary_at_all(
 ) -> None:
     # The summary is the ROOT's, so a nested activity closing does not restate
     # the whole operation's totals under a second set of keys.
-    (record,) = _records(caplog, [WriteBatchFinished(EXECUTION.id, 1, 3, 2, WriteBatchCompleted())])
+    (record,) = _records(caplog, [FlushFinished(EXECUTION.id, 1, 3, 2, FlushCompleted())])
     assert "total_events" not in record.fields
 
 
@@ -747,9 +747,9 @@ def test_every_invocation_and_batch_outcome_has_its_own_spelling(
             TransactionInvocationFinished(
                 TRANSACTION.id, 4, 3, 2, JoinedInvocationRaised(_failure())
             ),
-            WriteBatchStarted(TRANSACTION.id, 5, 4, 2, "pre_commit"),
-            WriteBatchFinished(TRANSACTION.id, 6, 4, 2, WriteBatchCompleted()),
-            WriteBatchFinished(TRANSACTION.id, 7, 5, 2, WriteBatchFailed(_failure())),
+            FlushStarted(TRANSACTION.id, 5, 4, 2, "pre_commit"),
+            FlushFinished(TRANSACTION.id, 6, 4, 2, FlushCompleted()),
+            FlushFinished(TRANSACTION.id, 7, 5, 2, FlushFailed(_failure())),
             TransactionAttemptStarted(TRANSACTION.id, 8, 6, 1, "account"),
         ],
         execution=TRANSACTION,
@@ -811,8 +811,8 @@ def test_the_stream_vocabulary_logs_like_every_other_transition(
         logging.INFO,
         logging.ERROR,
     ]
-    # Page batches are counted for the root summary exactly as reads and write
-    # batches are, so a stream's own work is not invisible to it.
+    # Page batches are counted for the root summary exactly as reads and
+    # flushes are, so a stream's own work is not invisible to it.
     assert records[4].fields["total_stream_batches"] == 1
 
 
@@ -843,8 +843,8 @@ def test_the_logger_answers_every_transition_the_algebra_admits(
     every: list[ExecutionEvent] = [
         ReadStarted(EXECUTION.id, 1, 1, None, "Account", "typed", "edition"),
         ReadFinished(EXECUTION.id, 2, 1, None, ReadCompleted()),
-        WriteBatchStarted(EXECUTION.id, 3, 2, 1, "read_dependency"),
-        WriteBatchFinished(EXECUTION.id, 4, 2, 1, WriteBatchCompleted()),
+        FlushStarted(EXECUTION.id, 3, 2, 1, "read_dependency"),
+        FlushFinished(EXECUTION.id, 4, 2, 1, FlushCompleted()),
         DatabaseCallStarted(EXECUTION.id, 5, 3, 2, "Account", "write", STATEMENT),
         DatabaseCallFinished(EXECUTION.id, 6, 3, 2, STATEMENT, 9, DatabaseWriteCompleted(1)),
         TransactionInvocationStarted(EXECUTION.id, 7, 4, 1, JoinedInvocation()),
@@ -945,7 +945,7 @@ def test_only_a_root_activity_or_an_attempt_finishing_is_worth_more_than_debug(
             ReadStarted(EXECUTION.id, 1, 1, None, "Account", "typed", "edition"),
             ReadFinished(EXECUTION.id, 2, 1, None, ReadFailed(root)),
             ReadFinished(EXECUTION.id, 3, 2, 1, ReadFailed(root)),
-            WriteBatchFinished(EXECUTION.id, 4, 3, 1, WriteBatchFailed(root)),
+            FlushFinished(EXECUTION.id, 4, 3, 1, FlushFailed(root)),
             DatabaseCallFinished(
                 EXECUTION.id, 5, 4, 3, STATEMENT, 9, DatabaseCallFailed(_DATABASE_FAILURE)
             ),
@@ -1110,6 +1110,6 @@ def test_a_whole_transaction_through_connect_reads_as_one_operation(
     assert filtered[-1] == (logging.INFO, "transactionInvocationFinished")
     summary = written[-1].fields
     assert summary["total_attempts"] == 2
-    assert summary["total_write_batches"] == 2
+    assert summary["total_flushes"] == 2
     assert summary["total_affected_rows"] == 2
     assert UUID(str(summary["execution_id"])).version == 4

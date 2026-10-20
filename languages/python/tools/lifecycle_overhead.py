@@ -429,7 +429,7 @@ def _workload(db: ScopedDatabase) -> None:
     both flush triggers with a participating read between them.
 
     Every emitting activity kind appears — a Read root, a Transaction Invocation
-    root, its Attempt, both Write Batch triggers, and a Database Call under each
+    root, its Attempt, both Flush triggers, and a Database Call under each
     — so the per-event figure averages the mix an application really delivers
     rather than the cheapest transition.
     """

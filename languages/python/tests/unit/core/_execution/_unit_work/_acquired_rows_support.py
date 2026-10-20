@@ -25,7 +25,7 @@ from parallax.core.write_plan import PredecessorRow
 from parallax.core.write_plan.plan import (
     NO_TEMPORAL_WRITE_OWNERSHIP,
     BoundRange,
-    ExecutionUnit,
+    SettledWrite,
     TemporalWriteOwnership,
 )
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
@@ -83,7 +83,7 @@ class HeldRows:
 
 def bind_held(
     model: Metamodel,
-    unit: ExecutionUnit,
+    unit: SettledWrite,
     rows: Sequence[PredecessorRow],
     *,
     transaction_instant: TransactionInstant,
@@ -104,7 +104,7 @@ def bind_held(
 
 
 def coverage_read(
-    model: Metamodel, unit: ExecutionUnit, *, transaction_instant: TransactionInstant
+    model: Metamodel, unit: SettledWrite, *, transaction_instant: TransactionInstant
 ) -> CoverageReadRequest:
     """The coverage read ``unit``'s deferred range asks for when the unit of
     work binds it, observed as the read is asked for and before any binding."""

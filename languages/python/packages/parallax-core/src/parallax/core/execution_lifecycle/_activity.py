@@ -10,7 +10,7 @@ from typing import ClassVar, Final, Protocol, Self, runtime_checkable
 from uuid import UUID, uuid4
 
 from parallax.core import auto_retry
-from parallax.core._execution._unit_work.uow import Concurrency, WriteBatchReason
+from parallax.core._execution._unit_work.uow import Concurrency, FlushTrigger
 from parallax.core.db_port import (
     AccessMode,
     AcquisitionReason,
@@ -59,6 +59,10 @@ from parallax.core.execution_lifecycle._events import (
     DatabaseWriteCompleted,
     DatabaseWriteRowsCompleted,
     ExecutionEvent,
+    FlushCompleted,
+    FlushFailed,
+    FlushFinished,
+    FlushStarted,
     JoinedInvocation,
     JoinedInvocationRaised,
     JoinedInvocationReturned,
@@ -89,10 +93,6 @@ from parallax.core.execution_lifecycle._events import (
     TransactionAttemptStarted,
     TransactionInvocationFinished,
     TransactionInvocationStarted,
-    WriteBatchCompleted,
-    WriteBatchFailed,
-    WriteBatchFinished,
-    WriteBatchStarted,
 )
 from parallax.core.sql_gen import LoweredStatement
 
@@ -293,17 +293,17 @@ class DatabaseCallActivity(Protocol):
         ...
 
 
-class WriteBatchActivity(Protocol):
-    """One flushed Write Batch's scope.
+class FlushActivity(Protocol):
+    """One flush's activity scope.
 
-    A batch exists only for a nonempty unit-of-work buffer, starts before
+    A Flush exists only for a nonempty unit-of-work buffer, starts before
     planning, and completes even when planning reduces it to zero DML, which is
-    what lets a planning failure be attributed to the batch rather than to the
+    what lets a planning failure be attributed to the Flush rather than to the
     callback around it. Its success outcome carries no data, so leaving the
     scope normally IS its completion.
     """
 
-    def __enter__(self) -> WriteBatchActivity: ...
+    def __enter__(self) -> FlushActivity: ...
 
     def __exit__(
         self,
@@ -316,7 +316,7 @@ class WriteBatchActivity(Protocol):
     def database_call(
         self, statement: LoweredStatement, kind: DatabaseCallKind, target: ActivityTarget, /
     ) -> DatabaseCallActivity:
-        """Open this batch's next Database Call over the exact ``statement``
+        """Open this Flush's next Database Call over the exact ``statement``
         presented to the port."""
         ...
 
@@ -324,7 +324,7 @@ class WriteBatchActivity(Protocol):
         """Bracket the post-call enforcement of what ``call`` returned.
 
         The one relation causality cannot read off exception identity alone: a
-        write call that COMPLETED can still be the cause of this batch's failure,
+        write call that COMPLETED can still be the cause of this Flush's failure,
         because the shortfall in what it affected is only judged afterwards.
         Naming the call explicitly is what keeps proximity — "the last call" —
         from ever being the test.
@@ -332,7 +332,7 @@ class WriteBatchActivity(Protocol):
         ...
 
     def ordered_calls(self, calls: OrderedCallInput, /) -> OrderedCallObservation:
-        """Open one Database Call of this batch for each of ``calls``, which
+        """Open one Database Call of this Flush for each of ``calls``, which
         one ordered transport invocation presents together.
 
         ``calls`` is borrowed until the observation is left and must not change
@@ -389,7 +389,7 @@ class OrderedCallObservation(Protocol):
 
 
 class EnforcementScope(Protocol):
-    """The bracket a Write Batch attributes a post-call judgement through."""
+    """The bracket a Flush attributes a post-call judgement through."""
 
     def __enter__(self) -> object: ...
 
@@ -405,7 +405,7 @@ class EnforcementScope(Protocol):
 class DatabaseCallScope(Protocol):
     """A scope that opens Database Calls, and the whole of what opening one needs.
 
-    A Database Call's parent is a Read, a Write Batch, or a Stream Batch and
+    A Database Call's parent is a Read, a Flush, or a Stream Batch and
     never anything else, so an executor that only issues statements declares
     this rather than any one of them. Naming the narrower thing is what keeps an
     annotation from claiming a Read where another kind of scope opened the call,
@@ -572,11 +572,11 @@ class StreamBatchActivity(ConnectionOwnerActivity, Protocol):
 
     A batch is the page-read activity in its own right and never nests a Read.
     Its success outcome carries no data, so leaving the scope normally IS its
-    completion — the discipline a Read and a Write Batch already answer by.
+    completion — the discipline a Read and a Flush already answer by.
 
     Constructing one emits nothing, because a page decides where its own batch
-    starts: a participating page force-flushes first, and the dependency batch
-    that flush runs is an ordered SIBLING of this scope rather than something
+    starts: a participating page force-flushes first, and that dependency
+    Flush is an ordered SIBLING of this scope rather than something
     inside it.
     """
 
@@ -679,8 +679,8 @@ class TransactionAttemptActivity(ConnectionOwnerActivity, Protocol):
         """Open a participating Read under this attempt."""
         ...
 
-    def write_batch(self, trigger: WriteBatchReason, /) -> WriteBatchActivity:
-        """Open the Write Batch one flush of this attempt's buffer runs inside."""
+    def flush(self, trigger: FlushTrigger, /) -> FlushActivity:
+        """Open the Flush one flush of this attempt's buffer runs inside."""
         ...
 
     def stream(
@@ -689,7 +689,7 @@ class TransactionAttemptActivity(ConnectionOwnerActivity, Protocol):
         """Open a participating Stream under this attempt.
 
         A stream is a CHILD of the attempt rather than of the pages it runs, so
-        the dependency batch a page flushes out is its ordered sibling under the
+        the dependency flush a page forces out is its ordered sibling under the
         same attempt.
         """
         ...
@@ -818,7 +818,7 @@ class _InertActivity:
     def read(self, target: ActivityTarget, interface: ReadInterface, /) -> _InertActivity:
         return self
 
-    def write_batch(self, trigger: WriteBatchReason, /) -> _InertActivity:
+    def flush(self, trigger: FlushTrigger, /) -> _InertActivity:
         return self
 
     def stream(
@@ -1402,17 +1402,17 @@ class _LiveDatabaseCall(_LiveActivity):
 
 
 class _LiveEnforcement:
-    """The bracket that lets a COMPLETED call be named as what caused a batch's
+    """The bracket that lets a COMPLETED call be named as what caused a Flush's
     failure.
 
-    It records nothing on the way in: an enforcement that passes leaves the batch
+    It records nothing on the way in: an enforcement that passes leaves the Flush
     exactly as it found it, and only a judgement that raised is worth attributing.
     """
 
-    __slots__ = ("_batch", "_call_id")
+    __slots__ = ("_call_id", "_flush")
 
-    def __init__(self, batch: _LiveWriteBatch, call_id: int) -> None:
-        self._batch = batch
+    def __init__(self, flush: _LiveFlush, call_id: int) -> None:
+        self._flush = flush
         self._call_id = call_id
 
     def __enter__(self) -> None:
@@ -1427,7 +1427,7 @@ class _LiveEnforcement:
     ) -> None:
         if exc is None:
             return
-        self._batch.attribute(exc, self._call_id, diagnostic_for(exc))
+        self._flush.attribute(exc, self._call_id, diagnostic_for(exc))
 
 
 class _LiveAcquisition(_LiveActivity):
@@ -1622,28 +1622,28 @@ def _acquisition_reason(exc: BaseException) -> AcquisitionReason:
     return "preparation_failed"
 
 
-class _LiveWriteBatch(_LiveActivity):
+class _LiveFlush(_LiveActivity):
     """One observed flush: its Database Calls, and the enforcement that follows
     each of them."""
 
     __slots__ = ("_attempt", "_trigger")
 
-    _trigger: WriteBatchReason
+    _trigger: FlushTrigger
 
     def __init__(
-        self, publisher: _Publisher, parent: _LiveTransactionAttempt, trigger: WriteBatchReason
+        self, publisher: _Publisher, parent: _LiveTransactionAttempt, trigger: FlushTrigger
     ) -> None:
         super().__init__(publisher, parent)
         self._attempt = parent
         self._trigger = trigger
 
-    def __enter__(self) -> _LiveWriteBatch:
+    def __enter__(self) -> _LiveFlush:
         publisher = self._publisher
         if not publisher.active:
             return self
         self._open()
         publisher.deliver(
-            WriteBatchStarted(
+            FlushStarted(
                 publisher.execution_id,
                 publisher.take_sequence(),
                 self._activity_id,
@@ -1664,13 +1664,13 @@ class _LiveWriteBatch(_LiveActivity):
         if not publisher.active:
             return
         if exc is None:
-            outcome: WriteBatchCompleted | WriteBatchFailed = WriteBatchCompleted()
+            outcome: FlushCompleted | FlushFailed = FlushCompleted()
         else:
-            outcome = WriteBatchFailed(self._propagated(exc))
+            outcome = FlushFailed(self._propagated(exc))
             if self._trigger == "pre_commit":
                 self._attempt.pre_commit_failed(exc)
         publisher.deliver(
-            WriteBatchFinished(
+            FlushFinished(
                 publisher.execution_id,
                 publisher.take_sequence(),
                 self._activity_id,
@@ -1711,25 +1711,25 @@ class _LiveOrderedCalls:
     """
 
     __slots__ = (
-        "_batch",
-        "_batch_id",
         "_calls",
         "_duration_ns",
         "_finished",
         "_first_id",
+        "_flush",
+        "_flush_id",
         "_publisher",
     )
 
     def __init__(
         self,
         publisher: _Publisher,
-        batch: _LiveWriteBatch,
-        batch_id: int,
+        flush: _LiveFlush,
+        flush_id: int,
         calls: OrderedCallInput,
     ) -> None:
         self._publisher = publisher
-        self._batch = batch
-        self._batch_id = batch_id
+        self._flush = flush
+        self._flush_id = flush_id
         self._calls = calls
         self._first_id = 0
         self._finished = 0
@@ -1791,7 +1791,7 @@ class _LiveOrderedCalls:
         self._finish_each(_NOT_EXECUTED, result.unsent_count)
 
     def enforcing(self, index: int, /) -> _LiveEnforcement:
-        return _LiveEnforcement(self._batch, self._first_id + index)
+        return _LiveEnforcement(self._flush, self._first_id + index)
 
     def _start(self, index: int) -> None:
         publisher = self._publisher
@@ -1801,7 +1801,7 @@ class _LiveOrderedCalls:
                 publisher.execution_id,
                 publisher.take_sequence(),
                 self._first_id + index,
-                self._batch_id,
+                self._flush_id,
                 calls.target(index).canonical,
                 "write",
                 calls[index],
@@ -1828,7 +1828,7 @@ class _LiveOrderedCalls:
                 publisher.execution_id,
                 publisher.take_sequence(),
                 first_id + index,
-                self._batch_id,
+                self._flush_id,
                 self._calls[index],
                 self._duration_ns,
                 outcome,
@@ -2093,8 +2093,8 @@ class _LiveTransactionAttempt(_LiveConnectionOwner):
     def read(self, target: ActivityTarget, interface: ReadInterface, /) -> _LiveRead:
         return _LiveRead(self._publisher, self, target, interface, None)
 
-    def write_batch(self, trigger: WriteBatchReason, /) -> _LiveWriteBatch:
-        return _LiveWriteBatch(self._publisher, self, trigger)
+    def flush(self, trigger: FlushTrigger, /) -> _LiveFlush:
+        return _LiveFlush(self._publisher, self, trigger)
 
     def stream(
         self, target: ActivityTarget, interface: ReadInterface, batch_size: int, /
@@ -2105,11 +2105,11 @@ class _LiveTransactionAttempt(_LiveConnectionOwner):
         return _LiveJoinedInvocation(self._publisher, self)
 
     def pre_commit_failed(self, exc: BaseException) -> None:
-        """Remember what the pre-commit batch failed with.
+        """Remember what the pre-commit flush failed with.
 
         The port reports a body failure without saying which half of the body
         produced it, and the two halves are different phases: the callback the
-        caller wrote, and the automatic batch that follows it. Matching by
+        caller wrote, and the automatic flush that follows it. Matching by
         exception identity is what tells them apart without the port having to
         know there are two.
         """

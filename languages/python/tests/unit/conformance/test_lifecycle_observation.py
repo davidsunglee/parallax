@@ -60,6 +60,10 @@ from parallax.core.execution_lifecycle import (
     DatabaseWriteRowsCompleted,
     DirectFailure,
     ExecutionEvent,
+    FlushCompleted,
+    FlushFailed,
+    FlushFinished,
+    FlushStarted,
     JoinedInvocation,
     JoinedInvocationRaised,
     JoinedInvocationReturned,
@@ -87,10 +91,6 @@ from parallax.core.execution_lifecycle import (
     TransactionAttemptStarted,
     TransactionInvocationFinished,
     TransactionInvocationStarted,
-    WriteBatchCompleted,
-    WriteBatchFailed,
-    WriteBatchFinished,
-    WriteBatchStarted,
 )
 from parallax.core.execution_lifecycle._diagnostics import DatabaseFailureDiagnostic
 from parallax.core.sql_gen import LoweredStatement
@@ -188,19 +188,19 @@ def test_a_read_states_its_target_and_the_interface_that_publishes_it() -> None:
     }
 
 
-def test_a_write_batch_states_the_trigger_that_produced_it() -> None:
-    assert _transition(WriteBatchStarted(_EXECUTION, 1, 1, None, "read_dependency")) == {
-        "writeBatchStarted": {"trigger": "read-dependency"}
+def test_a_flush_states_the_trigger_that_produced_it() -> None:
+    assert _transition(FlushStarted(_EXECUTION, 1, 1, None, "read_dependency")) == {
+        "flushStarted": {"trigger": "read-dependency"}
     }
-    assert _transition(WriteBatchStarted(_EXECUTION, 1, 1, None, "pre_commit")) == {
-        "writeBatchStarted": {"trigger": "pre-commit"}
+    assert _transition(FlushStarted(_EXECUTION, 1, 1, None, "pre_commit")) == {
+        "flushStarted": {"trigger": "pre-commit"}
     }
-    assert _transition(WriteBatchFinished(_EXECUTION, 2, 1, None, WriteBatchCompleted())) == {
-        "writeBatchFinished": {"outcome": "completed"}
+    assert _transition(FlushFinished(_EXECUTION, 2, 1, None, FlushCompleted())) == {
+        "flushFinished": {"outcome": "completed"}
     }
-    failed = WriteBatchFailed(DirectFailure(_diagnostic()))
-    assert _transition(WriteBatchFinished(_EXECUTION, 2, 1, None, failed)) == {
-        "writeBatchFinished": {"outcome": "failed", "attribution": "direct"}
+    failed = FlushFailed(DirectFailure(_diagnostic()))
+    assert _transition(FlushFinished(_EXECUTION, 2, 1, None, failed)) == {
+        "flushFinished": {"outcome": "failed", "attribution": "direct"}
     }
 
 

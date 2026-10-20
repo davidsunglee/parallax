@@ -441,7 +441,7 @@ def test_the_recorder_groups_its_roots_and_keeps_what_it_is_told() -> None:
 
 
 def test_a_database_call_reports_a_write_count_the_same_way_it_reports_a_read() -> None:
-    # The Write Batch that opens one lands with the transaction emitters, so the
+    # The Flush that opens one lands with the transaction emitters, so the
     # scope's write completion is driven here directly: a call announces only the
     # count its body knows, and which count that is decides the outcome.
     recorder = RecordingLifecycleProvider()

@@ -86,7 +86,7 @@ sweep it in.
 
 type SettledEvidence = RetainedObservation | ObjectKey
 """What one keyed write against existing state settles against, in the two
-shapes a source can supply — which is also what decides the buffer item it
+shapes a source can supply — which is also what decides the admitted write it
 becomes and the claim it takes:
 
 * a RETAINED observation is a read's own claim on one exact observed state: the

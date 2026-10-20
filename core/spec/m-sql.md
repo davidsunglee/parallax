@@ -23,7 +23,7 @@ SQL compilation is private behind two closed entry points:
 
 ```text
 compilePlannedRead(PlannedEntityQuery, Dialect) -> CompiledRead
-compilePlannedWrite(PlannedWrite, StepPayload, Dialect) -> LoweredStatement
+compilePlannedStep(PlannedStep, StepPayload, Dialect) -> LoweredStatement
 
 StepPayload = [RowPayload] | AssignmentPayload | none
 ```
@@ -34,7 +34,7 @@ no predicate whose temporal visibility is unclosed. A `PlannedEntityQuery`
 carries exact target/member identities, an elaborated predicate of managed values
 with its relationships' temporal perspectives and any root perspective it
 retains (`m-navigate`), resolved ordering, and compact result metadata sufficient for
-row decoding and deep-fetch key gathering. A `PlannedWrite` carries the closed
+row decoding and deep-fetch key gathering. A `PlannedStep` carries the closed
 `m-write-plan` variant, exact member identities, managed values or generated-value
 expressions, target, concurrency decision, and affected-row policy. Its
 `StepPayload` is what the statement stores, prepared by `m-write-payload`
@@ -55,7 +55,7 @@ it is about to lower.
 result contract required for row materialization. `LoweredStatement` is the
 single statement value described below, including its plain binds, typed spans,
 repeated descriptors, and sparse Wire overrides. A multi-step write plan invokes
-the write compiler once per `PlannedWrite`; no generic metadata-free `Statement`
+the write compiler once per `PlannedStep`; no generic metadata-free `Statement`
 result bypasses these products.
 
 The compiler is a one-way consumer. It MUST NOT resolve a model reference, infer
@@ -1355,7 +1355,7 @@ successors or gaps of identical stored state (`m-temporal-write` *Merging
 produced successors*) is one insert, emitted where the first of them would have
 been.
 
-Each successor and gap row remains its own Planned Write; the statements that
+Each successor and gap row remains its own Planned Step; the statements that
 carry them are physical realization. Contiguous openings of one Entity that
 name the same members and carry no generated value share one multi-row insert
 of the *Batched insert / update* form below, one value tuple per opening in the

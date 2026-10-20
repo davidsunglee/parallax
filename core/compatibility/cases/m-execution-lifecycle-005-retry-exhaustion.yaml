@@ -68,7 +68,7 @@ then:
           - sequence: 9
             activity: 6
             parent: 2
-            writeBatchStarted: { trigger: pre-commit }
+            flushStarted: { trigger: pre-commit }
           - sequence: 10
             activity: 7
             parent: 6
@@ -80,7 +80,7 @@ then:
           - sequence: 12
             activity: 6
             parent: 2
-            writeBatchFinished: { outcome: failed, attribution: caused, cause: 7 }
+            flushFinished: { outcome: failed, attribution: caused, cause: 7 }
           - sequence: 13
             activity: 8
             parent: 2
@@ -129,7 +129,7 @@ then:
           - sequence: 23
             activity: 13
             parent: 9
-            writeBatchStarted: { trigger: pre-commit }
+            flushStarted: { trigger: pre-commit }
           - sequence: 24
             activity: 14
             parent: 13
@@ -141,7 +141,7 @@ then:
           - sequence: 26
             activity: 13
             parent: 9
-            writeBatchFinished: { outcome: failed, attribution: caused, cause: 14 }
+            flushFinished: { outcome: failed, attribution: caused, cause: 14 }
           - sequence: 27
             activity: 15
             parent: 9

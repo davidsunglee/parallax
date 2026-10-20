@@ -52,11 +52,11 @@ from parallax.core.write_plan.steps import (
     PlannedClose,
     PlannedDelete,
     PlannedInsert,
+    PlannedStep,
     PlannedTemporalGuard,
     PlannedTemporalRemoval,
     PlannedTemporalRevision,
     PlannedUpdate,
-    PlannedWrite,
     ResolvedMutationSelection,
     SelfIncrement,
     TemporalConcurrency,
@@ -131,7 +131,7 @@ def entity_layout(meta: Metamodel, entity: EntityMetadata) -> EntityLayoutView |
 
 
 def compile_write_step(
-    step: PlannedWrite, payload: StepPayload, meta: Metamodel, dialect: Dialect
+    step: PlannedStep, payload: StepPayload, meta: Metamodel, dialect: Dialect
 ) -> LoweredStatement:
     """Lower one finalized step to its single DML statement, storing exactly the
     values ``payload`` prepared for it.
@@ -216,7 +216,7 @@ def _assignment_payload(
     return payload
 
 
-def _require_no_payload(step: PlannedWrite, payload: StepPayload) -> None:
+def _require_no_payload(step: PlannedStep, payload: StepPayload) -> None:
     if payload is not None:
         raise SqlGenError(f"{step.entity.canonical}: this step stores no prepared payload")
 

@@ -46,7 +46,7 @@ from parallax.core._execution._unit_work.instructions import (
     prepare_wire_write,
 )
 from parallax.core._execution._unit_work.retain import InsertionIdentity, ReadEvidence
-from parallax.core._execution._unit_work.uow import EscapedTransactionError, OpenWriteBatch
+from parallax.core._execution._unit_work.uow import EscapedTransactionError, OpenFlush
 from parallax.core._execution._unit_work.write_items import (
     InsertionKeyedWrite,
     ObservedKeyedWrite,
@@ -58,9 +58,10 @@ from parallax.core.dialect import POSTGRES
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import AttributeIdentity, Metamodel
 from parallax.core.unit_work import (
-    BufferItem,
+    AdmittedWrite,
     BufferOutcome,
     Clock,
+    FlushTrigger,
     KeyedMutation,
     KeyedWriteInstruction,
     PredicateSelection,
@@ -73,7 +74,6 @@ from parallax.core.unit_work import (
     UnitOfWork,
     UnitOfWorkError,
     WriteAssignment,
-    WriteBatchReason,
     WriteEvidenceError,
     WritePlanningRequest,
     WritePreconditionError,
@@ -132,13 +132,13 @@ def _run[T](
     steps: ExecuteWriteSteps | None = None,
     settings: TransactionSettings | None = None,
     meta: Metamodel | None = None,
-    opening: OpenWriteBatch | None = None,
+    opening: OpenFlush | None = None,
     rows: AcquireRows | None = None,
     lifetime: TxnAttemptLifetime | None = None,
 ) -> T:
     """Drive ``body`` against a unit of work whose row reads answer ``rows``, or
     find no row at all, and whose spans ``steps`` executes, then flush what it
-    left as the attempt's pre-commit batch, and end the attempt's lifetime
+    left as the attempt's pre-commit flush, and end the attempt's lifetime
     either way.
 
     Coordination only: what an attempt does around that flush — refusing a
@@ -156,7 +156,7 @@ def _run[T](
         planner=build_write_planner(resolved_meta),
         actor_identity=TEST_ACTOR_IDENTITY,
         evidence_policy_for=opt_lock.view(resolved_meta).required_key,
-        write_batch_opening=opening,
+        flush_opening=opening,
     )
     try:
         result = body(uow)
@@ -213,7 +213,7 @@ def test_discarding_drops_every_buffered_write() -> None:
         tx.discard()
 
     _run(body, steps=simulated, opening=_opener(order))
-    # Nothing buffered survives to be planned, so no batch opens.
+    # Nothing buffered survives to be planned, so no flush opens.
     assert (order, simulated.statements) == ([], ())
 
 
@@ -449,7 +449,7 @@ def test_two_writes_of_one_claim_merge_and_answer_it_once() -> None:
     # Two edits of a single source value hold one claim, and Observed-State
     # Coalescing makes them one write: the assignments merge in authored order,
     # the later value wins the member both name, and the merged write's one
-    # execution unit keeps the identical retained observation both held.
+    # settled write keeps the identical retained observation both held.
     state = VersionedObjectStateKey(corpus_object_key("Account", ("id", 1)), 7)
     retained = RetainedObservation(state, VersionObservation(observed_version=7), None)
     carriers = [
@@ -525,12 +525,12 @@ def test_transaction_time_instant_is_captured_once_per_transaction() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# The batch scope.                                                             #
+# The flush scope.                                                             #
 # --------------------------------------------------------------------------- #
 class _Scope:
-    """One opened batch scope, recording each transition it makes."""
+    """One opened flush scope, recording each transition it makes."""
 
-    def __init__(self, order: list[str], trigger: WriteBatchReason) -> None:
+    def __init__(self, order: list[str], trigger: FlushTrigger) -> None:
         self._order = order
         self._trigger = trigger
 
@@ -548,11 +548,11 @@ class _Scope:
         self._order.append(f"{'left' if exc is None else 'failed'}:{self._trigger}")
 
 
-def _opener(order: list[str]) -> OpenWriteBatch:
+def _opener(order: list[str]) -> OpenFlush:
     return lambda trigger: _Scope(order, trigger)
 
 
-def test_each_batch_is_a_scope_around_its_own_planning_and_execution() -> None:
+def test_each_flush_is_a_scope_around_its_own_planning_and_execution() -> None:
     order: list[str] = []
     steps = ObservedSteps(_simulated(), observe=lambda _span: order.append("executed"))
 
@@ -572,7 +572,7 @@ def test_each_batch_is_a_scope_around_its_own_planning_and_execution() -> None:
     ]
 
 
-def test_a_unit_of_work_without_a_batch_opening_still_flushes() -> None:
+def test_a_unit_of_work_without_a_flush_opening_still_flushes() -> None:
     simulated = _simulated()
 
     def body(tx: UnitOfWork) -> None:
@@ -640,7 +640,7 @@ def _balance_state(key: int) -> ObjectStateKey:
     )
 
 
-def _account_write(mutation: KeyedMutation, account_id: int, version: int) -> BufferItem:
+def _account_write(mutation: KeyedMutation, account_id: int, version: int) -> AdmittedWrite:
     row: dict[str, object] = {"id": account_id}
     if mutation == "amend":
         row["balance"] = Decimal("1.00")
@@ -651,7 +651,7 @@ def _account_write(mutation: KeyedMutation, account_id: int, version: int) -> Bu
     )
 
 
-def _balance_update(key: int) -> BufferItem:
+def _balance_update(key: int) -> AdmittedWrite:
     observation = TemporalObservation(predecessor=PredecessorRow(_balance_members(key)))
     return buffered_write(
         _prepared_keyed(
@@ -662,7 +662,7 @@ def _balance_update(key: int) -> BufferItem:
     )
 
 
-def _refused_as_claimed(uow: UnitOfWork, item: BufferItem) -> WriteEvidenceError:
+def _refused_as_claimed(uow: UnitOfWork, item: AdmittedWrite) -> WriteEvidenceError:
     with pytest.raises(WriteEvidenceError) as refusal:
         uow.buffer(item)
     assert refusal.value.code == "write-evidence-already-claimed"
@@ -678,7 +678,7 @@ _PERSON_META = model_of(PERSON)
 
 def _person_write(
     mutation: KeyedMutation, person_id: int, source: SourceAuthority | None = None
-) -> BufferItem:
+) -> AdmittedWrite:
     """An unversioned Non-Temporal Person write settling against its object."""
     row: dict[str, object] = {"id": person_id}
     if mutation == "amend":
@@ -872,7 +872,7 @@ def test_a_destructive_write_after_the_insert_flushed_cancels_nothing() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Execution units: completion, ownership, freshness and failure containment.  #
+# Settled writes: completion, ownership, freshness and failure containment.   #
 # --------------------------------------------------------------------------- #
 def _balance_insert(key: int) -> PreparedKeyedWrite:
     return _prepared_keyed(
@@ -883,7 +883,7 @@ def _balance_insert(key: int) -> PreparedKeyedWrite:
     )
 
 
-def _balance_update_from(key: int, tx_start: object) -> BufferItem:
+def _balance_update_from(key: int, tx_start: object) -> AdmittedWrite:
     members = _balance_members(key, tx_start)
     observation = TemporalObservation(predecessor=PredecessorRow(members))
     state = object_state_key_from_observation(
@@ -918,7 +918,7 @@ def test_a_row_an_earlier_flush_opened_is_revised_rather_than_closed() -> None:
     assert _kinds(simulated) == ["insert", "update"]
 
 
-def _balance_terminate_from(key: int, tx_start: object) -> BufferItem:
+def _balance_terminate_from(key: int, tx_start: object) -> AdmittedWrite:
     members = _balance_members(key, tx_start)
     observation = TemporalObservation(predecessor=PredecessorRow(members))
     state = object_state_key_from_observation(
@@ -1157,7 +1157,7 @@ def test_a_guarded_unit_spends_its_source_and_leaves_an_unchanged_state_fresh(
     assert _kinds(simulated) == (["guard"] if kept else ["close", "insert"])
 
 
-def _account_amend(account_id: int, claim: RetainedObservation) -> BufferItem:
+def _account_amend(account_id: int, claim: RetainedObservation) -> AdmittedWrite:
     row = {"id": account_id, "balance": Decimal("1.00")}
     return buffered_write(
         _prepared_keyed(KeyedWriteInstruction("amend", "Account", (row,)), _ACCOUNT), claim
@@ -1299,7 +1299,7 @@ def _position_target(start: dt.datetime, until: dt.datetime) -> PreparedTargetWr
     return prepared
 
 
-def _observed_amendment(claim: RetainedObservation) -> BufferItem:
+def _observed_amendment(claim: RetainedObservation) -> AdmittedWrite:
     observed = prepare_wire_write(
         KeyedWriteInstruction(
             "amendUntil",

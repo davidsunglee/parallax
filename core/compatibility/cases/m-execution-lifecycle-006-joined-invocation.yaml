@@ -1,6 +1,6 @@
 # Joined invocation (m-execution-lifecycle): a joined unit of work is an
 # activity of its own that runs NO attempt, and its buffered write reaches the
-# database in the OUTER attempt's pre-commit batch.
+# database in the OUTER attempt's pre-commit flush.
 model: models/account.yaml
 tags: [m-execution-lifecycle, m-unit-work, m-api-conformance, slice-snapshot-1, joined]
 lane: api-conformance
@@ -75,7 +75,7 @@ then:
           - sequence: 11
             activity: 7
             parent: 2
-            writeBatchStarted: { trigger: pre-commit }
+            flushStarted: { trigger: pre-commit }
           - sequence: 12
             activity: 8
             parent: 7
@@ -87,7 +87,7 @@ then:
           - sequence: 14
             activity: 7
             parent: 2
-            writeBatchFinished: { outcome: completed }
+            flushFinished: { outcome: completed }
           - sequence: 15
             activity: 9
             parent: 2

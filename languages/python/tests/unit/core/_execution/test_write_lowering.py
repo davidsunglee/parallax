@@ -1,7 +1,7 @@
 """Write-DML lowering unit tests (execution's lowering seam, m-sql write DML).
 
 ``parallax.core._execution._write_lowering.lowered`` is the single
-write-lowering seam each Planned Write lowers through alone, whichever path
+write-lowering seam each Planned Step lowers through alone, whichever path
 reaches it. These tests pin its byte-exact non-temporal keyed emissions against
 the corpus goldens (``m-unit-work-001/003/005``, ``m-opt-lock-002/005/006/013``,
 ``m-inheritance-007/008/009/010/084/104``, ``m-pk-gen-001``), compose it with the
@@ -123,6 +123,7 @@ from parallax.core.write_plan.steps import (
     PlannedAssignments,
     PlannedDelete,
     PlannedRow,
+    PlannedStep,
     PlannedUpdate,
     ResolvedMutationSelection,
     SelfIncrement,
@@ -131,7 +132,6 @@ from parallax.core.write_plan.steps import (
     VersionGate,
     WriteRow,
 )
-from parallax.core.write_plan.steps import PlannedWrite as PlannedStep
 from parallax.descriptor import _records
 from tests._support.clock_probes import inert_instant
 from tests._support.lowering_probes import lower_instruction, lower_instruction_steps, lowered_steps

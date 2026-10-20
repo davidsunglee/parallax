@@ -35,6 +35,10 @@ from parallax.core.execution_lifecycle._events import (
     DatabaseWriteCompleted,
     DatabaseWriteRowsCompleted,
     ExecutionEvent,
+    FlushCompleted,
+    FlushFailed,
+    FlushFinished,
+    FlushStarted,
     JoinedInvocation,
     JoinedInvocationRaised,
     JoinedInvocationReturned,
@@ -61,10 +65,6 @@ from parallax.core.execution_lifecycle._events import (
     TransactionAttemptStarted,
     TransactionInvocationFinished,
     TransactionInvocationStarted,
-    WriteBatchCompleted,
-    WriteBatchFailed,
-    WriteBatchFinished,
-    WriteBatchStarted,
 )
 
 __all__ = ["LifecycleLogDetail", "LoggingLifecycleProvider"]
@@ -148,17 +148,17 @@ class _Counters:
         "database_calls",
         "database_duration_ns",
         "events",
+        "flushes",
         "joined_invocations",
         "reads",
         "returned_rows",
         "stream_batches",
-        "write_batches",
     )
 
     def __init__(self) -> None:
         self.events = 0
         self.reads = 0
-        self.write_batches = 0
+        self.flushes = 0
         self.stream_batches = 0
         self.database_calls = 0
         self.database_duration_ns = 0
@@ -243,10 +243,10 @@ def _attempt_failure_fields(
 
 
 type _NoPayload = StreamBatchStarted | AcquisitionStarted | ReleaseStarted
-type _Completed = ReadCompleted | WriteBatchCompleted | StreamBatchCompleted
+type _Completed = ReadCompleted | FlushCompleted | StreamBatchCompleted
 type _Committed = OuterInvocationCommitted | AttemptCommitted
 type _ActivityFailed = (
-    ReadFailed | WriteBatchFailed | OuterInvocationFailed | StreamFailed | StreamBatchFailed
+    ReadFailed | FlushFailed | OuterInvocationFailed | StreamFailed | StreamBatchFailed
 )
 
 
@@ -263,9 +263,7 @@ def _read_started_fields(event: ReadStarted, _detail: LifecycleLogDetail) -> dic
     return fields
 
 
-def _write_batch_started_fields(
-    event: WriteBatchStarted, _detail: LifecycleLogDetail
-) -> dict[str, object]:
+def _flush_started_fields(event: FlushStarted, _detail: LifecycleLogDetail) -> dict[str, object]:
     return {"trigger": event.trigger}
 
 
@@ -519,14 +517,14 @@ def _read_projection(event: ReadFinished, transition: str) -> _Projected[Any]:
             assert_never(unreachable)
 
 
-def _write_batch_projection(event: WriteBatchFinished, transition: str) -> _Projected[Any]:
+def _flush_projection(event: FlushFinished, transition: str) -> _Projected[Any]:
     match event.outcome:
-        case WriteBatchCompleted() as outcome:
+        case FlushCompleted() as outcome:
             projected = _Projected(
                 _finished_level(event, False), transition, True, outcome, _completed_fields
             )
             return projected
-        case WriteBatchFailed() as outcome:
+        case FlushFailed() as outcome:
             projected = _Projected(
                 _finished_level(event, True), transition, True, outcome, _failed_fields
             )
@@ -717,7 +715,7 @@ def _projected(event: ExecutionEvent) -> _Projected[Any]:
     match event:
         case (
             ReadStarted()
-            | WriteBatchStarted()
+            | FlushStarted()
             | DatabaseCallStarted()
             | TransactionInvocationStarted()
             | TransactionAttemptStarted()
@@ -736,9 +734,9 @@ def _started_projection(event: ActivityStarted) -> _Projected[Any]:
         case ReadStarted():
             projected = _Projected(logging.DEBUG, "readStarted", False, event, _read_started_fields)
             return projected
-        case WriteBatchStarted():
+        case FlushStarted():
             projected = _Projected(
-                logging.DEBUG, "writeBatchStarted", False, event, _write_batch_started_fields
+                logging.DEBUG, "flushStarted", False, event, _flush_started_fields
             )
             return projected
         case DatabaseCallStarted():
@@ -782,8 +780,8 @@ def _finished_projection(event: ActivityFinished) -> _Projected[Any]:
     match event:
         case ReadFinished():
             return _read_projection(event, "readFinished")
-        case WriteBatchFinished():
-            return _write_batch_projection(event, "writeBatchFinished")
+        case FlushFinished():
+            return _flush_projection(event, "flushFinished")
         case DatabaseCallFinished():
             return _database_call_projection(event, "databaseCallFinished")
         case TransactionInvocationFinished():
@@ -890,8 +888,8 @@ class _LoggingHandler:
                 counters.affected_rows += outcome.affected_rows
         elif isinstance(event, ReadStarted):
             counters.reads += 1
-        elif isinstance(event, WriteBatchStarted):
-            counters.write_batches += 1
+        elif isinstance(event, FlushStarted):
+            counters.flushes += 1
         elif isinstance(event, StreamBatchStarted):
             counters.stream_batches += 1
         elif isinstance(event, TransactionAttemptStarted):
@@ -905,7 +903,7 @@ class _LoggingHandler:
         counters = self._counters
         fields["total_events"] = counters.events
         fields["total_reads"] = counters.reads
-        fields["total_write_batches"] = counters.write_batches
+        fields["total_flushes"] = counters.flushes
         fields["total_stream_batches"] = counters.stream_batches
         fields["total_database_calls"] = counters.database_calls
         fields["total_database_duration_ns"] = counters.database_duration_ns

@@ -407,7 +407,7 @@ class TransactionRunner:
                             return _completed(attempted, active, fn, context)
 
                         # One connection for this attempt and everything inside
-                        # it — the boundary, the reads, the write batches, the
+                        # it — the boundary, the reads, the flushes, the
                         # streams — acquired after the attempt started and given
                         # back before it finishes. A retry re-enters this closure
                         # and acquires again, so nothing of a failed attempt's

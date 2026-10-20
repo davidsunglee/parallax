@@ -43,7 +43,7 @@ class CausedFailure:
 
     Attribution follows exception identity or an explicit enforcement relation,
     never temporal proximity, so a completed zero-row write call can be named by
-    a Write Batch failure while a conversion error that merely unwound past a
+    a Flush failure while a conversion error that merely unwound past a
     successful call names nothing. Every level names its own child, so a deeper
     cause is reached by walking the chain rather than read off one event.
     """
