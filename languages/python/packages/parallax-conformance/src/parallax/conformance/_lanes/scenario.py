@@ -1352,22 +1352,18 @@ def _lower_predicate_write_step(
     store: SimulatedTemporalStore,
     *,
     rollback: bool,
-) -> LoweredStatement:
+) -> tuple[LoweredStatement, ...]:
     """Lower an ungrouped READLESS scenario predicate-write step
-    (`m-batch-write-005`/``-006``) to its ONE statement as its own simulated
+    (`m-batch-write-005`/``-006``) to its statements as its own simulated
     transaction, with no database: the SAME ``build_write_planner`` planning
     and unit of work every other write path reaches (batching is a structural
-    no-op for a lone predicate write).
+    no-op for a lone predicate write). That is one statement, or none for the
+    empty amendment the unit of work drops (`m-batch-write-050`).
 
     The case-format preparation seam normalizes only carrier differences before
     strict Wire preparation. The prepared product retains managed values, and
     its compiler metadata projects them back to canonical Wire for the emission
     the case grades.
-
-    A MATERIALIZING predicate write never reaches here: its case carries
-    ``compileEligibility: run-only``, which short-circuits at
-    :func:`~parallax.conformance._mechanism.case_document.eligibility` before
-    the compile lane ever calls this.
     """
     # A readless predicate write declares no Transaction-Time boundary, so the
     # inert instant it carries is never captured (ADR 0010).
@@ -1384,33 +1380,35 @@ def _lower_predicate_write_step(
         ) as unit,
     ):
         unit.buffer_predicate(prepared)
-    (statement,) = unit.statements  # a readless predicate write is always exactly one statement
-    return statement
+    statements = tuple(unit.statements)
+    assert len(statements) <= 1  # a readless predicate write is at most one statement
+    return statements
 
 
 def _buffer_wire_predicate_write(
-    tx: TxnContext,
-    model: AcceptedMetamodel,
-    raw_write: Mapping[str, object],
-    prepared: PreparedPredicateWrite,
+    tx: TxnContext, model: AcceptedMetamodel, raw_write: Mapping[str, object]
 ) -> None:
-    """Buffer one scenario predicate write through its public Wire verb.
+    """Buffer one scenario predicate write through its public Wire verb, which
+    prepares the case's own authored target and changes, once.
 
-    The case's target remains the independently authored corpus input. Managed
-    assignment values come from the prepared product the pure lowering oracle
-    uses, then cross back through the canonical Wire projection before the public
-    verb prepares them again. Dict insertion order preserves the authored
-    assignment order; the Entity Layout still decides emitted SET order.
+    Only a synthetic case's managed carrier values are spelled in Wire first
+    (:func:`~parallax.conformance._case_ingress.normalize_case_write`). Dict
+    insertion order preserves the authored assignment order; the Entity Layout
+    still decides emitted SET order.
     """
+    instruction = instructions.deserialize(raw_write)
+    assert isinstance(instruction, PredicateWriteInstruction)
+    authored = _case_ingress.normalize_case_write(instruction, model)
     target = cast("Mapping[str, object]", raw_write["target"])
-    managed_changes = {
-        assignment.attr.rpartition(".")[2]: assignment.value
-        for assignment in prepared.managed_assignments
-    }
-    changes = ActualWireProjection(model).entity_values(prepared.selection.target, managed_changes)
-    match prepared.mutation:
+    match authored.mutation:
         case "amend":
-            tx.wire.amend_where(target, changes)
+            tx.wire.amend_where(
+                target,
+                {
+                    assignment.attr.rpartition(".")[2]: assignment.value
+                    for assignment in authored.assignments
+                },
+            )
         case "delete":
             tx.wire.delete_where(target)
 
@@ -1657,7 +1655,7 @@ def _lower_scenario_step(
     raw_write = step["write"]
     rollback = step.get("rollback") is True
     if is_predicate_write_step(raw_write):
-        statement = _lower_predicate_write_step(
+        statements = _lower_predicate_write_step(
             _prepared_case_predicate_write(cast("Mapping[str, object]", raw_write), context.model),
             context.model,
             dialect,
@@ -1665,7 +1663,7 @@ def _lower_scenario_step(
             context.case_state(),
             rollback=rollback,
         )
-        return LoweredStep(f"/scenario/{index}/write", (statement,), True, rollback)
+        return LoweredStep(f"/scenario/{index}/write", statements, True, rollback)
     entries = write_entries(raw_write)
     statements = lower_writes(
         entries,
@@ -2323,7 +2321,6 @@ def _run_readless_predicate_write(
     port: CaseDatabase,
     context: CaseContext,
     raw_write: Mapping[str, object],
-    instruction: PreparedPredicateWrite,
     tx_instant: str,
     lifecycle: LifecycleRun,
     *,
@@ -2332,7 +2329,7 @@ def _run_readless_predicate_write(
     """Execute a READLESS scenario predicate-write step (`m-batch-write-005`/
     ``-006``) through the SAME production ``db.transact`` entry point every
     other write path uses. The public Wire verb prepares the case's authored
-    target and canonically projected changes from ``instruction``.
+    target and changes.
 
     The reported emission is the DML the lifecycle delivered, whose compiler
     metadata renders the canonical Wire binds used for grading.
@@ -2349,7 +2346,7 @@ def _run_readless_predicate_write(
         database = _root_database.using_database_login()
 
         def body(tx: TxnContext) -> None:
-            _buffer_wire_predicate_write(tx, context.model, raw_write, instruction)
+            _buffer_wire_predicate_write(tx, context.model, raw_write)
 
         with absorbing_rollback():
             transact(database, body, **context.requests)
@@ -3125,10 +3122,9 @@ def run_group_step(
     model = context.model
     if "write" in step and is_predicate_write_step(step["write"]):
         raw_write = cast("Mapping[str, object]", step["write"])
-        prepared = _prepared_case_predicate_write(raw_write, model)
         if tracked is not None:
-            tracked.buffer_predicate(prepared)
-        _buffer_wire_predicate_write(tx, model, raw_write, prepared)
+            tracked.buffer_predicate(_prepared_case_predicate_write(raw_write, model))
+        _buffer_wire_predicate_write(tx, model, raw_write)
         state.buffered.append((index, len(observation.writes)))
         return (
             LoweredStep(f"/scenario/{index}/write", (), True, step.get("rollback") is True),
@@ -3353,8 +3349,7 @@ def _submit(
     refusal = entry.get("expectError")
     try:
         if "target" in entry:
-            prepared = _prepared_case_predicate_write(entry, model)
-            _buffer_wire_predicate_write(tx, model, entry, prepared)
+            _buffer_wire_predicate_write(tx, model, entry)
         elif "row" in entry:
             target = _build_target_instruction(entry, model).instruction
             assert isinstance(target, PreparedTargetWrite)  # a `row` entry is caller-addressed
@@ -3639,12 +3634,10 @@ def run_scenario_case(
             if is_predicate_write_step(raw_write):
                 raw_predicate_write = cast("Mapping[str, object]", raw_write)
                 tx_instant = entry_instant(raw_predicate_write)
-                instruction = _prepared_case_predicate_write(raw_predicate_write, model)
                 ran, predicate_calls = _run_readless_predicate_write(
                     port,
                     context,
                     raw_predicate_write,
-                    instruction,
                     tx_instant,
                     lifecycle,
                     rollback=rollback,

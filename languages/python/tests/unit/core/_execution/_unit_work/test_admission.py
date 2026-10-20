@@ -31,9 +31,7 @@ from parallax.core._execution._unit_work.write_items import (
     ChainedTemporalWrite,
     ComposedTemporalWrite,
     InsertionKeyedWrite,
-    ReadlessPredicateWrite,
     TargetKeyedWrite,
-    readless_write,
     target_write,
 )
 from parallax.core.base import INFINITY
@@ -171,7 +169,7 @@ def _account_amend(account_id: int) -> PreparedKeyedWrite:
     return prepared
 
 
-def _barrier() -> ReadlessPredicateWrite:
+def _barrier() -> PreparedPredicateWrite:
     prepared = prepare_wire_write(
         PredicateWriteInstruction(
             "amend",
@@ -184,7 +182,7 @@ def _barrier() -> ReadlessPredicateWrite:
         _WALLET,
     )
     assert isinstance(prepared, PreparedPredicateWrite)
-    return readless_write(prepared)
+    return prepared
 
 
 # --------------------------------------------------------------------------- #

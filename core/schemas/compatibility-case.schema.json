@@ -2746,7 +2746,6 @@
         "target": { "$ref": "write-instruction.schema.json#/$defs/writeTarget" },
         "assignments": {
           "type": "array",
-          "minItems": 1,
           "items": { "$ref": "write-instruction.schema.json#/$defs/writeAssignment" }
         }
       },

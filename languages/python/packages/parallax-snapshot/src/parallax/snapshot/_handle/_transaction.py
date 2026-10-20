@@ -499,8 +499,9 @@ class TxnContext:
 
         ``query`` carries nothing but its target and predicate
         (``query-not-mutation-compatible`` otherwise), and ``assignments`` are
-        ``Attr.set(...)`` calls naming members of its exact target, at least
-        one and each at most once. A versioned or temporal target, which each
+        ``Attr.set(...)`` calls naming members of its exact target, each at
+        most once. Naming none is the empty amendment, judged and then dropped,
+        so no statement runs. A versioned or temporal target, which each
         object's write must observe, is refused before anything else is judged
         (``set-based-write-target-unsupported``)."""
         self._attempt.predicate_write(TypedPredicateWriteAdapter(query, assignments), "amend")

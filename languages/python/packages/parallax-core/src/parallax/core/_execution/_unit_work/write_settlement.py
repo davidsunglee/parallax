@@ -38,10 +38,9 @@ from parallax.core._execution._unit_work.write_items import (
     ObservedKeyedWrite,
     OrderedWrite,
     PendingOpening,
-    ReadlessPredicateWrite,
     TargetKeyedWrite,
 )
-from parallax.core.inheritance import InheritanceFacet
+from parallax.core.inheritance import InheritanceEntityView, InheritanceFacet
 from parallax.core.metamodel import AttributeIdentity, EntityMetadata, Metamodel
 from parallax.core.temporal_read import (
     Bitemporal,
@@ -79,7 +78,6 @@ from parallax.core.write_plan.planned_rows import (
     entity_view,
     planned_assignments,
     planned_row,
-    prepared_assignments,
     resolve_row,
 )
 from parallax.core.write_plan.steps import (
@@ -219,7 +217,7 @@ class WritePlanCompiler:
                 units.append(unit)
                 continue
             if isinstance(shape, TransactionTimeOnly | Bitemporal):
-                assert not isinstance(item, PreparedKeyedWrite | ReadlessPredicateWrite)
+                assert not isinstance(item, PreparedKeyedWrite | PreparedPredicateWrite)
                 steps, unit = self._range(
                     item,
                     shape,
@@ -268,7 +266,7 @@ class WritePlanCompiler:
         self,
         item: (
             PreparedKeyedWrite
-            | ReadlessPredicateWrite
+            | PreparedPredicateWrite
             | ObservedKeyedWrite
             | InsertionKeyedWrite
             | TargetKeyedWrite
@@ -287,9 +285,10 @@ class WritePlanCompiler:
 
         A write spending a retained observation changes that state wherever
         its steps change the row it observed."""
-        if isinstance(item, ReadlessPredicateWrite):
+        if isinstance(item, PreparedPredicateWrite):
+            view = entity_view(self._families, item.selection.target)
             return (
-                BoundRange(steps=eager_writes((_readless_step(item.instruction, audit),))),
+                BoundRange(steps=eager_writes((_readless_step(item, view, audit),))),
                 None,
                 None,
             )
@@ -742,7 +741,9 @@ def _addressed_assignments(
     )
 
 
-def _readless_step(instruction: PreparedPredicateWrite, audit: AuditDecoration) -> PlannedStep:
+def _readless_step(
+    instruction: PreparedPredicateWrite, view: InheritanceEntityView, audit: AuditDecoration
+) -> PlannedStep:
     """A readless predicate-selected write's one unversioned statement over
     every row its selection matches, an update decorated once."""
     entity = instruction.selection.target
@@ -755,7 +756,7 @@ def _readless_step(instruction: PreparedPredicateWrite, audit: AuditDecoration) 
         PlannedUpdate(
             entity=entity.identity,
             target=target,
-            assignments=prepared_assignments(entity, instruction.managed_assignments),
+            assignments=planned_assignments(entity, view, instruction.row),
             concurrency=UNVERSIONED,
             affected_rows=ANY_COUNT,
         )

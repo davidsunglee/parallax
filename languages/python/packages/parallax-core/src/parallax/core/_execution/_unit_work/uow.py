@@ -51,7 +51,6 @@ from parallax.core._execution._unit_work.strategy import (
 from parallax.core._execution._unit_work.write_items import (
     BufferItem,
     TargetKeyedWrite,
-    readless_write,
     target_write,
 )
 from parallax.core._execution._unit_work.write_planner import WritePlanner, WritePlanningRequest
@@ -360,8 +359,14 @@ class UnitOfWork:
         """Buffer a prepared predicate-selected write, which settles as one
         readless statement (`m-batch-write` "Predicate-selected readless
         forms"): preparation has refused every target that needs an
-        observation."""
-        self.buffer(readless_write(prepared))
+        observation.
+
+        An amendment that assigns no member is the empty write: having been
+        validated, it is dropped here rather than buffered, so it seals no
+        barrier region between the writes around it."""
+        if prepared.mutation in AMEND_MUTATIONS and not prepared.assigns:
+            return
+        self.buffer(prepared)
 
     def buffer_target(self, prepared: PreparedTargetWrite) -> None:
         """Admit a caller-addressed write and buffer it — all of it, or nothing.

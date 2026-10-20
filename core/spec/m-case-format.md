@@ -1557,7 +1557,7 @@ are deliberately small and structural:
 | `mutation` | yes | one of `amend`, `delete` |
 | `target.entity` | yes | exact concrete descriptor entity the write begins from |
 | `target.predicate` | yes | one schema-valid `m-predicate` node; a set-based write shapes no result, so the Object Query clauses have no spelling in this position |
-| `assignments` | only `amend` | ordered `{attr, value}` data; nonempty and unique; `attr` names an assignable qualified top-level attribute or value object. An attribute takes a neutral scalar/null literal; a value object takes its complete object/array document or null according to its declared multiplicity/nullability. |
+| `assignments` | only `amend` | ordered `{attr, value}` data, unique, and empty for the empty amendment, which emits no statement (`m-batch-write`); `attr` names an assignable qualified top-level attribute or value object. An attribute takes a neutral scalar/null literal; a value object takes its complete object/array document or null according to its declared multiplicity/nullability. |
 
 A delete carries **no** assignments. Assignment list order is
 not SQL order: the target's Entity Layout order determines the emitted `set`

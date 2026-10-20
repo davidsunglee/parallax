@@ -50,7 +50,6 @@ from parallax.core._execution._unit_work.uow import EscapedTransactionError, Ope
 from parallax.core._execution._unit_work.write_items import (
     InsertionKeyedWrite,
     ObservedKeyedWrite,
-    readless_write,
     target_write,
 )
 from parallax.core._execution._unit_work.write_runner import ExecuteWriteSteps
@@ -853,7 +852,7 @@ def test_every_other_accepted_item_reports_plain_buffering() -> None:
     def unversioned(uow: UnitOfWork) -> None:
         assert uow.buffer(_person_write("amend", 1)) is BufferOutcome.BUFFERED
         assert uow.buffer(_person_write("delete", 2)) is BufferOutcome.BUFFERED
-        assert uow.buffer(readless_write(predicate)) is BufferOutcome.BUFFERED
+        assert uow.buffer(predicate) is BufferOutcome.BUFFERED
         raise _Abandoned
 
     with pytest.raises(_Abandoned):

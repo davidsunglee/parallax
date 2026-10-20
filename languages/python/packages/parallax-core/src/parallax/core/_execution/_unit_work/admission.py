@@ -24,6 +24,7 @@ from parallax.core._execution._unit_work.instructions import (
     INSERT_MUTATIONS,
     REPLACE_MUTATIONS,
     PreparedKeyedWrite,
+    PreparedPredicateWrite,
     derive_keyed_write,
 )
 from parallax.core._execution._unit_work.retain import (
@@ -43,7 +44,6 @@ from parallax.core._execution._unit_work.write_items import (
     ObjectClaimedWrite,
     ObservedKeyedWrite,
     PendingOpening,
-    ReadlessPredicateWrite,
     TargetKeyedWrite,
     TemporalContribution,
     TemporalKeyedWrite,
@@ -319,7 +319,7 @@ class WriteAdmission:
         """
         if isinstance(item, TargetKeyedWrite):
             self._admit_target(item, confirm_target)
-        elif isinstance(item, ReadlessPredicateWrite):
+        elif isinstance(item, PreparedPredicateWrite):
             self._seal()
             self._writes.append(item)
         else:

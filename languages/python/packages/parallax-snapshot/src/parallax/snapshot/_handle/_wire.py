@@ -400,11 +400,9 @@ class WireTransactionView(WireDatabaseView):
 
         ``target`` is a Typed Object Query, held to ``tx.amend_where``'s rules
         and kept as authored, or the canonical ``{entity, predicate}``
-        selection document. ``changes`` names at least one member: it lowers to
-        the same canonical assignment algebra ``tx.amend_where``'s
-        ``.set(...)`` spelling does, and that algebra's list is non-empty, so
-        ``{}`` is refused here rather than being the no-op it is for a keyed
-        amendment."""
+        selection document. ``changes`` lowers to the same canonical assignment
+        algebra ``tx.amend_where``'s ``.set(...)`` spelling does; ``{}`` is the
+        empty amendment, judged and then dropped, so no statement runs."""
         self._attempt.predicate_write(WirePredicateWriteAdapter(target, changes), "amend")
 
     def delete_where(self, target: WirePredicateTarget, /) -> None:

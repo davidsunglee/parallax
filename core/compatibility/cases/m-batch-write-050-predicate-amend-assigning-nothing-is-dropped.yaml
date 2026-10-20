@@ -1,0 +1,36 @@
+# A predicate-selected amendment assigning NOTHING is the empty amendment: judged
+# like any other, then dropped, so no statement runs and the rows it selects keep
+# their state (m-batch-write).
+model: models/wallet.yaml
+tags: [m-batch-write, m-unit-work, predicate-write, readless, no-op, scenario, slice-snapshot-1]
+shape: scenario
+when:
+  scenario:
+    - write:
+        mutation: amend
+        target:
+          entity: parallax.compatibility.Wallet
+          predicate:
+            lessThan:
+              path: parallax.compatibility.Wallet.balance
+              value: "200.00"
+        assignments: []
+      databaseCalls: 0
+      note: the empty amendment is judged, then dropped before it is buffered, so it emits no statement
+    - objectQuery:
+        target: parallax.compatibility.Wallet
+        predicate:
+          lessThan:
+            path: parallax.compatibility.Wallet.balance
+            value: "200.00"
+      databaseCalls: 1
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance from wallet t0 where t0.balance < ? for share of t0
+          binds: ["200.00"]
+      referenceSql: select id, owner, balance from wallet where balance < 200.00
+      expectRows:
+        - { id: 1, owner: Ada, balance: "100.00" }
+        - { id: 3, owner: Grace, balance: "10.00" }
+then:
+  databaseCalls: 1

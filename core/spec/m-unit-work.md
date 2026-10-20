@@ -260,8 +260,8 @@ target refuses `delete`; the window must be stated as the verb's form requires,
 admitted by the target's temporal profile, and ordered; a non-temporal target
 refuses a milestone verb; and a temporal keyed instruction carries one row. Only
 then is the payload judged — a keyed row's subtype shape, members, and values, or
-a predicate-selected write's predicate, family refusal, and assignments in
-authored order, each assignment's member resolved before its value is judged. `prepareWireWrite` applies the serialized decoding above;
+a predicate-selected write's predicate, family refusal, and assignments, every
+assignment's member resolved, in authored order, before any value is judged. `prepareWireWrite` applies the serialized decoding above;
 `prepareTypedWrite` applies `m-core.coerceNeutralInput` followed by managed
 membership and retains developer-facing mismatch errors. Neither consumer may
 choose the other policy from the runtime carrier it happens to receive.
@@ -288,8 +288,9 @@ undeclared member, and an inadmissible window before both.
 
 `PreparedKeyedWrite` carries the exact target, deeply owned managed rows, and
 prepared temporal bounds. `PreparedPredicateWrite` carries its
-`ResolvedMutationSelection`, ordered managed assignments, and prepared temporal
-bounds. `PreparedTargetWrite` carries its exact mutation, the exact target, its one
+`ResolvedMutationSelection` and the one owned managed row it assigns every
+selected object, which never states the key and is empty for a deletion.
+`PreparedTargetWrite` carries its exact mutation, the exact target, its one
 owned managed row, prepared temporal bounds, and its validated starting
 expectation — an expected version or an expected Transaction-Time start.
 Whether it assigns, replaces, or destroys follows from that mutation, so no
@@ -1040,7 +1041,8 @@ milestones*).
 
 A predicate-selected write's assignments are literal too: its one readless
 statement writes every row its predicate matches, whatever that row already
-holds (`m-batch-write`).
+holds. An amendment of it expressing no member is empty as well, and is
+dropped once judged (`m-batch-write`).
 
 ## Buffered, batched, ordered writes
 

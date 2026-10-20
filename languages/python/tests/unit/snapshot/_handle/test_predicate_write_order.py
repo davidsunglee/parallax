@@ -3,8 +3,9 @@
 Every ``_where`` verb, Typed or Wire, enters one ingress: lifecycle re-entry,
 then the representation's own capture of its selection and assignments, then
 the one preparation that judges whether the target can be written without being
-read at all, and then the predicate, the family, and each assignment in that
-order, and only then the buffering of one readless statement. What a row fixes is the ANSWER
+read at all, and then the predicate, the family, every assignment's member, and
+their values, in that order, and only then the buffering of one readless
+statement, or of nothing for an amendment assigning nothing. What a row fixes is the ANSWER
 that order gives — the refusal's class, code, message, the point it landed at,
 and the DML emitted — beside the whole port chronology, so a refusal that read
 or flushed anything, and an admitted write that read anything, are different
@@ -375,9 +376,6 @@ _UNDECLARED_WIRE_CHANGE: Final = _refused(
     "Person: assignment 'parallax.compatibility.Person.undeclared' does not name a declared "
     "member of parallax.compatibility.Person",
 )
-_NO_ASSIGNMENT: Final = _refused(
-    WriteInstructionError, "Person: a predicate-selected 'amend' requires at least one assignment"
-)
 
 _SELECTION_ORDER: Final[tuple[_Row, ...]] = (
     _Row(
@@ -437,18 +435,48 @@ _SELECTION_ORDER: Final[tuple[_Row, ...]] = (
         ),
         _wire(_UNDECLARED_WIRE_CHANGE),
     ),
-    _Row(
-        PredicateWriteScenario(PERSON_SELECTION, "amend", assignments="none"), _both(_NO_ASSIGNMENT)
-    ),
-    _Row(
-        PredicateWriteScenario(PERSON_SELECTION, "amend", assignments="none", wire_target="query"),
-        _wire(_NO_ASSIGNMENT),
-    ),
 )
 
 
 @pytest.mark.parametrize("row", _SELECTION_ORDER, ids=str)
 def test_the_selection_then_the_family_then_the_assignments_are_judged(row: _Row) -> None:
+    _assert_row(row)
+
+
+# --------------------------------------------------------------------------- #
+# An amendment assigning nothing — a Typed call naming no assignment, a Wire   #
+# `{}` — is judged as every other one is, and then dropped: it emits nothing,  #
+# reads nothing, and flushes nothing pending ahead of itself.                  #
+# --------------------------------------------------------------------------- #
+_DROPPED: Final = _wrote()
+
+_EMPTY_AMENDMENT: Final[tuple[_Row, ...]] = (
+    _Row(PredicateWriteScenario(PERSON_SELECTION, "amend", assignments="none"), _both(_DROPPED)),
+    _Row(
+        PredicateWriteScenario(PERSON_SELECTION, "amend", assignments="none", wire_target="query"),
+        _wire(_DROPPED),
+    ),
+    _Row(
+        PredicateWriteScenario(PERSON_SELECTION, "amend", assignments="none", pending=True),
+        _both(_wrote(WriteCall)),
+    ),
+    _Row(
+        PredicateWriteScenario(PERSON_SELECTION, "amend", selection="inverted", assignments="none"),
+        _both(_INVERTED),
+    ),
+    _Row(
+        PredicateWriteScenario(CARD_PAYMENT_SELECTION, "amend", assignments="none"),
+        _both(_refused(inheritance.InheritanceError, _FAMILY_REFUSAL)),
+    ),
+    _Row(
+        PredicateWriteScenario(POSITION_SELECTION, "amend", assignments="none"),
+        _both(_POSITION_AMEND),
+    ),
+)
+
+
+@pytest.mark.parametrize("row", _EMPTY_AMENDMENT, ids=str)
+def test_an_amendment_assigning_nothing_is_judged_and_then_dropped(row: _Row) -> None:
     _assert_row(row)
 
 

@@ -50,7 +50,7 @@ from parallax.core.unit_work import (
 from parallax.core.wire import WireDecodingError, WireValue, decode_wire
 from parallax.core.write_plan.columns import freeze_retained_value
 
-__all__ = ["decode_case_row", "normalize_case_query", "prepare_case_write"]
+__all__ = ["decode_case_row", "normalize_case_query", "normalize_case_write", "prepare_case_write"]
 
 type _ScalarMember = AttributeMetadata | ValueObjectAttributeMetadata
 
@@ -78,7 +78,7 @@ def prepare_case_write(
     ``prepare_wire_write`` unchanged for it to decode, classify, validate, freeze,
     and retain in its prepared result.
     """
-    return instructions.prepare_wire_write(_normalize_instruction(instruction, model), model)
+    return instructions.prepare_wire_write(normalize_case_write(instruction, model), model)
 
 
 def decode_case_row(
@@ -202,9 +202,24 @@ def _normalize_temporal_selection(selection: TemporalSelection) -> TemporalSelec
     return selection
 
 
-def _normalize_instruction(
+@overload
+def normalize_case_write(
+    instruction: PredicateWriteInstruction, model: AcceptedMetamodel
+) -> PredicateWriteInstruction: ...
+@overload
+def normalize_case_write(
+    instruction: WriteInstruction, model: AcceptedMetamodel
+) -> WriteInstruction: ...
+def normalize_case_write(
     instruction: WriteInstruction, model: AcceptedMetamodel
 ) -> WriteInstruction:
+    """``instruction`` with each managed carrier value a synthetic case states
+    in its canonical Wire spelling, by declared member type, and nothing judged.
+
+    Authored JSON values, and everything naming no declared member, pass
+    through unchanged, so what a public Wire verb is handed is the case's own
+    authored write.
+    """
     target_name = (
         instruction.target.entity
         if isinstance(instruction, PredicateWriteInstruction)
