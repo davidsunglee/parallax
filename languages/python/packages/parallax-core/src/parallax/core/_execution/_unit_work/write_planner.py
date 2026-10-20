@@ -461,7 +461,7 @@ def _instruction_target(instruction: PreparedWrite) -> EntityMetadata:
         return instruction.target
     # A readless predicate write is always a barrier in `_order`, never a
     # region member `_rank` resolves against — but a Materialized Write
-    # Group's own `mutation` IS a `PredicateWrite`, and a group ranks as an
+    # Group's own `mutation` IS a `PreparedPredicateWrite`, and a group ranks as an
     # ordinary region member, so this arm is reached for one.
     return instruction.selection.target
 

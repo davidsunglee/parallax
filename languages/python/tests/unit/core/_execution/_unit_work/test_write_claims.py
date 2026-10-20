@@ -41,7 +41,7 @@ from parallax.core.opt_lock._facet import UNVERSIONED
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.unit_work import (
     SELECTION_INTENT,
-    KeyedWrite,
+    KeyedWriteInstruction,
     RetainedObservation,
     WriteIntent,
     keyed_intent,
@@ -77,7 +77,7 @@ _PERSON_META = model_of(PERSON)
 _WHERE_POSITION_META = model_of(WHERE_POSITION_META)
 
 
-def _person_delete(*ids: int) -> KeyedWrite:
+def _person_delete(*ids: int) -> KeyedWriteInstruction:
     instruction = instructions.deserialize(
         {
             "mutation": "delete",
@@ -85,7 +85,7 @@ def _person_delete(*ids: int) -> KeyedWrite:
             "rows": [{"id": value} for value in ids],
         }
     )
-    assert isinstance(instruction, KeyedWrite)
+    assert isinstance(instruction, KeyedWriteInstruction)
     return instruction
 
 
@@ -333,7 +333,7 @@ def test_an_instruction_naming_no_entity_of_the_model_is_refused() -> None:
     foreign = instructions.deserialize(
         {"mutation": "delete", "entity": "parallax.compatibility.Account", "rows": [{"id": 1}]}
     )
-    assert isinstance(foreign, KeyedWrite)
+    assert isinstance(foreign, KeyedWriteInstruction)
     with pytest.raises(instructions.WriteInstructionError, match="declares no entity"):
         instructions.prepare_wire_write(foreign, _PERSON_META)
 
@@ -388,7 +388,7 @@ def test_an_observed_write_requires_a_retained_observation(evidence: object) -> 
 
 def test_a_target_carrier_refuses_an_insert_and_a_write_of_several_objects() -> None:
     insert = instructions.prepare_wire_write(
-        KeyedWrite("insert", "Person", ({"id": 1, "name": "Ada"},)), _PERSON_META
+        KeyedWriteInstruction("insert", "Person", ({"id": 1, "name": "Ada"},)), _PERSON_META
     )
     several = _prepared_person_delete(1, 2)
     person = ObjectKey(EntityIdentity("parallax.compatibility", "Person"), (("id", 1),))

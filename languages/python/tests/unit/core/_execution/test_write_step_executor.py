@@ -33,7 +33,7 @@ from parallax.core.execution_lifecycle import (
 )
 from parallax.core.metamodel import AttributeIdentity, entity_by_name
 from parallax.core.sql_gen import LoweredStatement, SqlGenError
-from parallax.core.unit_work import KeyedWrite, MissingTargetError, WritePlanningRequest
+from parallax.core.unit_work import KeyedWriteInstruction, MissingTargetError, WritePlanningRequest
 from parallax.core.write_plan import WritePlan
 from parallax.core.write_plan.plan import ExecutionUnit, PlannedWrites
 from parallax.core.write_plan.steps import (
@@ -127,7 +127,7 @@ _SPANS: Final = DomainModel(Span)
 def test_an_allocating_span_answers_the_keys_its_insert_returned() -> None:
     meta = model_of(_SPANS)
     prepared = prepare_typed_write(
-        KeyedWrite(
+        KeyedWriteInstruction(
             "insert",
             Span.identity.canonical,
             ({"id": {"computed": "maxPlusOne"}, "amount": 1},),

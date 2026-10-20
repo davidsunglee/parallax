@@ -42,7 +42,7 @@ from parallax.core.metamodel import (
 )
 from parallax.core.sql_gen import LoweredStatement, SqlGenError
 from parallax.core.sql_gen._write import InsertStatementBuilder
-from parallax.core.unit_work import KeyedWrite
+from parallax.core.unit_work import KeyedWriteInstruction
 from parallax.core.write_payload import LayoutPayloadPreparer
 from parallax.core.write_plan import PredecessorRow
 from parallax.core.write_plan.observe import (
@@ -75,7 +75,7 @@ def _document(statement: LoweredStatement, index: int = -1) -> object:
 
 def test_an_insert_binds_one_document_at_the_structured_column() -> None:
     (statement,) = _lower(
-        KeyedWrite(
+        KeyedWriteInstruction(
             "insert",
             "Person",
             (
@@ -106,7 +106,7 @@ def test_an_inserts_document_omits_what_the_row_omits_and_nulls_what_it_nulls() 
     # never names contributes no key at all, one it sets to `None` contributes JSON
     # null, and the `many` occurrence contributes its array either way.
     (statement,) = _lower(
-        KeyedWrite("insert", "Person", ({"id": 2, "displayName": None, "tags": []},))
+        KeyedWriteInstruction("insert", "Person", ({"id": 2, "displayName": None, "tags": []},))
     )
     assert _document(statement) == {"displayName": None, "tags": []}
 
@@ -114,7 +114,7 @@ def test_an_inserts_document_omits_what_the_row_omits_and_nulls_what_it_nulls() 
 def test_an_entity_with_no_document_member_still_binds_the_empty_object() -> None:
     # The Structured Column is `NOT NULL` and every governed row carries a document,
     # so an insert binds it whether or not the Entity has anything to put inside.
-    (statement,) = _lower(KeyedWrite("insert", "Marker", ({"id": 3},)))
+    (statement,) = _lower(KeyedWriteInstruction("insert", "Marker", ({"id": 3},)))
     assert statement.sql == "insert into marker(id, payload) values (?, ?)"
     assert _document(statement) == {}
 
@@ -125,7 +125,9 @@ def test_a_document_leaf_binds_the_codecs_spelling_not_the_inputs_carrier() -> N
     # what matters is that the value went THROUGH the encoding table rather than to a
     # serializer, which is what a `decimal` or `bytes` leaf would expose.
     (statement,) = _lower(
-        KeyedWrite("insert", "Person", ({"id": 4, "joinedOn": dt.date(2026, 1, 15), "tags": []},))
+        KeyedWriteInstruction(
+            "insert", "Person", ({"id": 4, "joinedOn": dt.date(2026, 1, 15), "tags": []},)
+        )
     )
     assert _document(statement) == {"joinedOn": "2026-01-15", "tags": []}
 
@@ -135,7 +137,7 @@ def test_an_update_patches_only_the_assigned_paths_in_canonical_order() -> None:
     # canonical logical placement order is the layout's and both dialects apply their
     # mutation expressions left to right (m-dialect).
     (statement,) = _lower(
-        KeyedWrite("amend", "Person", ({"id": 1, "score": 9, "displayName": "Ada"},))
+        KeyedWriteInstruction("amend", "Person", ({"id": 1, "score": 9, "displayName": "Ada"},))
     )
     assert statement.sql == (
         "update person set payload = "
@@ -148,7 +150,9 @@ def test_an_assigned_none_writes_json_null_rather_than_removing_the_key() -> Non
     # A NULL Column has one not-present state, so an assignment of `None` writes the
     # document's null rather than dropping the key — the two read back the same, and
     # writing neither would leave the stored value standing.
-    (statement,) = _lower(KeyedWrite("amend", "Person", ({"id": 1, "displayName": None},)))
+    (statement,) = _lower(
+        KeyedWriteInstruction("amend", "Person", ({"id": 1, "displayName": None},))
+    )
     assert statement.binds == ("{displayName}", "null", 1)
 
 
@@ -156,7 +160,9 @@ def test_assigning_a_one_occurrence_binds_its_whole_subtree_at_its_own_path() ->
     # One path, one composite value, and no type test: the author stated a complete
     # `address`, so the statement writes that document rather than reaching inside the
     # stored one. `geo` is not named, and after this write the row does not hold it.
-    (statement,) = _lower(KeyedWrite("amend", "Person", ({"id": 1, "address": {"city": "Bodo"}},)))
+    (statement,) = _lower(
+        KeyedWriteInstruction("amend", "Person", ({"id": 1, "address": {"city": "Bodo"}},))
+    )
     assert statement.sql == (
         "update person set payload = jsonb_set(payload, ?, cast(? as jsonb)) where id = ?"
     )
@@ -164,13 +170,13 @@ def test_assigning_a_one_occurrence_binds_its_whole_subtree_at_its_own_path() ->
 
 
 def test_assigning_null_to_a_one_occurrence_writes_json_null() -> None:
-    (statement,) = _lower(KeyedWrite("amend", "Person", ({"id": 1, "address": None},)))
+    (statement,) = _lower(KeyedWriteInstruction("amend", "Person", ({"id": 1, "address": None},)))
     assert statement.binds == ("{address}", "null", 1)
 
 
 def test_assigning_a_many_occurrence_replaces_its_array_whole() -> None:
     (statement,) = _lower(
-        KeyedWrite("amend", "Person", ({"id": 1, "tags": [{"label": "member"}]},))
+        KeyedWriteInstruction("amend", "Person", ({"id": 1, "tags": [{"label": "member"}]},))
     )
     assert statement.binds == ("{tags}", JsonDocument(({"label": "member"},)), 1)
 
@@ -179,8 +185,10 @@ def test_one_and_many_assignments_render_the_identical_statement_shape() -> None
     # The whole collapse in one assertion: cardinality selects no arm, so the two
     # occurrence kinds emit the same expression over their own paths and differ only
     # in the document each binds.
-    (one,) = _lower(KeyedWrite("amend", "Person", ({"id": 1, "address": {"city": "Bodo"}},)))
-    (many,) = _lower(KeyedWrite("amend", "Person", ({"id": 1, "tags": []},)))
+    (one,) = _lower(
+        KeyedWriteInstruction("amend", "Person", ({"id": 1, "address": {"city": "Bodo"}},))
+    )
+    (many,) = _lower(KeyedWriteInstruction("amend", "Person", ({"id": 1, "tags": []},)))
     assert one.sql == many.sql
 
 
@@ -189,7 +197,7 @@ def test_a_nested_occurrence_rides_inside_the_document_its_parent_binds() -> Non
     # authored `address` contributes a key to the ONE document that path binds rather
     # than a second path of its own.
     (statement,) = _lower(
-        KeyedWrite(
+        KeyedWriteInstruction(
             "amend",
             "Person",
             ({"id": 1, "address": {"geo": {"country": "NO"}}},),
@@ -201,7 +209,7 @@ def test_a_nested_occurrence_rides_inside_the_document_its_parent_binds() -> Non
 def test_a_direct_member_still_assigns_its_own_column() -> None:
     # The primary key is a direct role under either layout, so a delete keyed by it
     # names a Column and never extracts from the document.
-    (statement,) = _lower(KeyedWrite("delete", "Person", ({"id": 1},)))
+    (statement,) = _lower(KeyedWriteInstruction("delete", "Person", ({"id": 1},)))
     assert statement.sql == "delete from person where id = ?"
 
 
@@ -209,7 +217,7 @@ def test_a_columns_layout_twin_writes_the_same_members_to_their_own_columns() ->
     # The contrast that makes the claim above a layout decision rather than a
     # rewrite: the same instruction over the same members emits five columns.
     (statement,) = _lower(
-        KeyedWrite("insert", "Person", ({"id": 1, "displayName": "Ada", "tags": []},)),
+        KeyedWriteInstruction("insert", "Person", ({"id": 1, "displayName": "Ada", "tags": []},)),
         COLUMNS,
     )
     assert statement.sql == "insert into person(id, display_name, tags) values (?, ?, ?)"
@@ -219,7 +227,7 @@ def test_same_membered_rows_collapse_into_one_multi_row_insert() -> None:
     # The collapse the shared shape below admits: one column list and one value
     # tuple per row, each binding that row's own complete document.
     (statement,) = _lower(
-        KeyedWrite(
+        KeyedWriteInstruction(
             "insert", "Person", ({"id": 1, "displayName": "Ada"}, {"id": 2, "displayName": "Bo"})
         )
     )
@@ -274,7 +282,9 @@ def test_two_rows_naming_different_document_members_do_not_share_one_statement()
     assert display_name == same
     with pytest.raises(ValueError, match="same members"):
         _lower(
-            KeyedWrite("insert", "Person", ({"id": 1, "displayName": "Ada"}, {"id": 2, "score": 7}))
+            KeyedWriteInstruction(
+                "insert", "Person", ({"id": 1, "displayName": "Ada"}, {"id": 2, "score": 7})
+            )
         )
 
 
@@ -286,7 +296,7 @@ def test_an_unnamed_many_occurrence_shares_a_statement_with_one_that_names_it() 
     # must share, so a row whose zero state stayed implicit would fail that rule over
     # a statement it is byte-identical in.
     (statement,) = _lower(
-        KeyedWrite(
+        KeyedWriteInstruction(
             "insert",
             "Person",
             ({"id": 1, "displayName": "Ada", "tags": []}, {"id": 2, "displayName": "Bo"}),
@@ -302,7 +312,7 @@ def test_the_columns_layout_twin_shares_a_statement_the_same_way() -> None:
     # holds a Column of its own, and an insert binds `[]` there whether the row named
     # it or not — so the same two rows share one statement here too.
     (statement,) = _lower(
-        KeyedWrite(
+        KeyedWriteInstruction(
             "insert",
             "Person",
             ({"id": 1, "displayName": "Ada", "tags": []}, {"id": 2, "displayName": "Bo"}),

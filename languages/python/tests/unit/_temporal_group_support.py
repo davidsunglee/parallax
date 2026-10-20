@@ -16,7 +16,7 @@ from parallax.core._execution._unit_work.instructions import (
 )
 from parallax.core.entity._construction_input import ABSENT
 from parallax.core.metamodel import Metamodel
-from parallax.core.unit_work import MaterializedWriteGroup, PredicateWrite
+from parallax.core.unit_work import MaterializedWriteGroup, PredicateWriteInstruction
 from parallax.core.write_plan import PredecessorRowsBuilder
 from tests.unit._positional_row_support import positional_row
 
@@ -24,7 +24,7 @@ __all__ = ["temporal_group"]
 
 
 def temporal_group(
-    mutation: PredicateWrite,
+    mutation: PredicateWriteInstruction,
     model: Metamodel,
     predecessors: Sequence[Mapping[str, object]],
     *,

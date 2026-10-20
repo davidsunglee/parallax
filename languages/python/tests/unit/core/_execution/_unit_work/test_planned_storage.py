@@ -31,7 +31,7 @@ from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work.instructions import (
     PreparedPredicateWrite,
     PreparedTargetWrite,
-    TargetWrite,
+    TargetWriteInstruction,
     prepare_typed_write,
     prepare_wire_write,
 )
@@ -57,10 +57,10 @@ from parallax.core.model_formation import ModelCompilerRequirement
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.temporal_write.expansion import PredecessorExpander
 from parallax.core.unit_work import (
-    KeyedWrite,
+    KeyedWriteInstruction,
     MaterializedWriteGroup,
     PredicateSelection,
-    PredicateWrite,
+    PredicateWriteInstruction,
     SystemClock,
     TransactionInstant,
     VersionArithmetic,
@@ -148,7 +148,7 @@ def test_a_versioned_evidence_builder_that_appended_nothing_seals_to_nothing() -
     assert VersionedEvidenceBuilder(key_position=0, version_position=1).seal() is None
 
 
-def _prepared(instruction: PredicateWrite, model: object) -> PreparedPredicateWrite:
+def _prepared(instruction: PredicateWriteInstruction, model: object) -> PreparedPredicateWrite:
     prepared = prepare_typed_write(instruction, cast("Any", model))
     assert isinstance(prepared, PreparedPredicateWrite)
     return prepared
@@ -168,7 +168,7 @@ def _version_group(
     evidence = builder.seal()
     assert evidence is not None
     predicate = _prepared(
-        PredicateWrite(
+        PredicateWriteInstruction(
             "amend",
             PredicateSelection(
                 entity,
@@ -218,7 +218,7 @@ def _temporal_group(
     entity: str, key_name: str, rows: Sequence[tuple[object, Mapping[str, object]]]
 ) -> MaterializedWriteGroup:
     return temporal_group(
-        PredicateWrite(
+        PredicateWriteInstruction(
             "terminate",
             PredicateSelection(
                 entity,
@@ -375,7 +375,7 @@ def test_a_deferred_range_retains_finalized_data_and_neither_producer_nor_owners
     clock = CountingClock([dt.datetime(2024, 6, 1, tzinfo=dt.UTC)])
     ownership = OpenedRows(frozenset())
     prepared = prepare_wire_write(
-        TargetWrite(
+        TargetWriteInstruction(
             "amendUntil",
             "Position",
             {"id": 1, "value": "9.00"},
@@ -579,8 +579,8 @@ def _refuse_producers(monkeypatch: pytest.MonkeyPatch, model: Metamodel) -> None
     monkeypatch.setattr(AttributeMetadata, "optimistic_locking", property(consulted))
 
 
-def _value_update(entity: str, valid_from: dt.datetime | None) -> PredicateWrite:
-    return PredicateWrite(
+def _value_update(entity: str, valid_from: dt.datetime | None) -> PredicateWriteInstruction:
+    return PredicateWriteInstruction(
         "amend",
         PredicateSelection(
             entity,
@@ -593,8 +593,8 @@ def _value_update(entity: str, valid_from: dt.datetime | None) -> PredicateWrite
     )
 
 
-def _terminate(entity: str, valid_from: dt.datetime) -> PredicateWrite:
-    return PredicateWrite(
+def _terminate(entity: str, valid_from: dt.datetime) -> PredicateWriteInstruction:
+    return PredicateWriteInstruction(
         "terminate",
         PredicateSelection(
             entity,
@@ -772,7 +772,7 @@ def test_a_materialized_plan_shares_an_assigned_document_and_the_retained_predec
         }
     ]
     group = temporal_group(
-        PredicateWrite(
+        PredicateWriteInstruction(
             "amend",
             PredicateSelection(
                 "Branch",
@@ -1013,7 +1013,7 @@ def test_a_pending_opening_settles_through_no_retained_producer_and_prepares_no_
     monkeypatch.setattr(LayoutPayloadPreparer, "assignments", refuse)
     writes = [
         prepare_typed_write(
-            KeyedWrite(
+            KeyedWriteInstruction(
                 "insert",
                 "Position",
                 ({"id": 1, "acctNum": "A", "value": Decimal("1.00")},),
@@ -1022,7 +1022,7 @@ def test_a_pending_opening_settles_through_no_retained_producer_and_prepares_no_
             _POSITION,
         ),
         prepare_typed_write(
-            KeyedWrite(
+            KeyedWriteInstruction(
                 "amendUntil",
                 "Position",
                 ({"id": 1, "value": Decimal("2.00")},),

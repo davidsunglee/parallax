@@ -16,7 +16,7 @@ from parallax.core.entity import DomainModel
 from parallax.core.entity._model import model_of
 from parallax.core.execution import ServingModel, TxnOptions, prepare_model
 from parallax.core.execution_lifecycle import ExecutionLifecycleProvider
-from parallax.core.unit_work import KeyedWrite
+from parallax.core.unit_work import KeyedWriteInstruction
 from tests._support.root_ownership import own_root
 
 ACCOUNT: Final = MODELS["account"]
@@ -67,7 +67,7 @@ def scope(
 def account_insert(account_id: int = 7) -> PreparedKeyedWrite:
     """One prepared Account insert, buffered by a case straight into a unit of work."""
     prepared = prepare_typed_write(
-        KeyedWrite(
+        KeyedWriteInstruction(
             "insert",
             "Account",
             ({"id": account_id, "owner": "Newton", "balance": 5},),

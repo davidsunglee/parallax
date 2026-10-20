@@ -42,11 +42,11 @@ from parallax.core.metamodel import EntityIdentity, Metamodel
 from parallax.core.unit_work import (
     CardinalityCorruptionError,
     Concurrency,
-    KeyedWrite,
+    KeyedWriteInstruction,
     PredicateMutation,
     PredicateSelection,
-    PredicateWrite,
-    TargetWrite,
+    PredicateWriteInstruction,
+    TargetWriteInstruction,
     TransactionSettings,
     UnitOfWork,
     WriteAssignment,
@@ -138,7 +138,7 @@ def _predicate(
     assignments: Sequence[WriteAssignment] = (),
 ) -> PreparedPredicateWrite:
     return prepare_typed_write(
-        PredicateWrite(
+        PredicateWriteInstruction(
             mutation,
             PredicateSelection(
                 entity,
@@ -154,7 +154,9 @@ def _predicate(
 
 def _account_patch(*, version: int = 3) -> PreparedTargetWrite:
     return prepare_wire_write(
-        TargetWrite("amend", "Account", {"id": 1, "balance": "9.00"}, if_version=version),
+        TargetWriteInstruction(
+            "amend", "Account", {"id": 1, "balance": "9.00"}, if_version=version
+        ),
         _ACCOUNT,
     )
 
@@ -176,7 +178,8 @@ def test_a_versioned_predicate_write_reads_its_selection_once_after_pending_writ
     held = HeldRows(_ACCOUNT, [_account(1)])
     uow, _flushes = _uow(_ACCOUNT, _Logged(held, log), log=log)
     insert = prepare_typed_write(
-        KeyedWrite("insert", "Account", ({"id": 7, "owner": "Newton", "balance": 5},)), _ACCOUNT
+        KeyedWriteInstruction("insert", "Account", ({"id": 7, "owner": "Newton", "balance": 5},)),
+        _ACCOUNT,
     )
     uow.buffer(insert)
     uow.buffer_predicate(_predicate(_ACCOUNT, "Account"))

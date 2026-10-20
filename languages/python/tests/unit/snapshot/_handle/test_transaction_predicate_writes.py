@@ -94,7 +94,7 @@ from parallax.core.unit_work import (
     BufferItem,
     MaterializedWriteGroup,
     OptimisticLockConflictError,
-    PredicateWrite,
+    PredicateWriteInstruction,
     StaleWriteError,
     UnitOfWork,
     WriteEvidenceError,
@@ -1846,7 +1846,7 @@ def test_delete_where_refuses_an_attribute_outside_the_written_position() -> Non
 
 # --------------------------------------------------------------------------- #
 # A typed `_where` verb validates and RENDERS both Valid-Time bounds BEFORE it  #
-# builds the canonical instruction, so a `PredicateWrite` holds an ISO-8601 UTC #
+# builds the canonical instruction, so a `PredicateWriteInstruction` holds an ISO-8601 UTC #
 # instant in a temporal slot from the moment it exists —                        #
 # `write-instruction.schema.json`'s own definition of an instant — never a      #
 # caller's spelling and never anything else standing in for one. Which bound   #
@@ -1886,7 +1886,7 @@ def test_a_non_utc_bound_reaches_the_buffer_as_its_managed_utc_instant() -> None
 
 
 def test_no_typed_bound_reaches_the_shared_lowering_uncanonicalized() -> None:
-    # WHAT THIS PINS. A `PredicateWrite` this lane builds never carries a
+    # WHAT THIS PINS. A `PredicateWriteInstruction` this lane builds never carries a
     # non-canonical value in a canonical field, proved on the shape that binds
     # BOTH Valid-Time slots into SQL — a bitemporal `updateUntil`, whose
     # rectangle split emits a close and one insert of its three rows:
@@ -2054,7 +2054,7 @@ def test_the_engines_materializing_predicate_ingress_refuses_before_it_resolves(
 
 # The WIRE predicate ingress's OWN validation, driven the way the conformance
 # engine drives it — a canonical target NOTHING pre-validated, straight into
-# `tx.wire.*_where`. That ingress lowers to the same `PredicateWrite` the Typed
+# `tx.wire.*_where`. That ingress lowers to the same `PredicateWriteInstruction` the Typed
 # verbs build and validates it exactly as they do, so deleting its
 # prepared-write call fails BOTH cases.
 #
@@ -2112,7 +2112,7 @@ def test_preparation_refuses_an_inheritance_family_predicate_instruction() -> No
             "validFrom": "2024-07-01T00:00:00.000000Z",
         }
     )
-    assert isinstance(instruction, PredicateWrite)
+    assert isinstance(instruction, PredicateWriteInstruction)
     with pytest.raises(inheritance.InheritanceError, match="subtype-write-set-based-unsupported"):
         instructions.prepare_wire_write(instruction, model_of(RATE))
 

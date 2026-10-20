@@ -17,7 +17,7 @@ from parallax.core._execution._unit_work.write_items import target_write
 from parallax.core.base import INFINITY
 from parallax.core.unit_work import (
     RetainedObservation,
-    TargetWrite,
+    TargetWriteInstruction,
 )
 from parallax.core.write_plan import (
     ObjectKey,
@@ -238,7 +238,7 @@ def test_a_window_a_caller_addressed_keeps_a_milestone_it_leaves_unchanged() -> 
     whole = retained_state(SPANS, SPAN, span_row(JAN, INFINITY, 100, "a"))
     target = target_write(
         prepare_wire_write(
-            TargetWrite(
+            TargetWriteInstruction(
                 "amendUntil",
                 "SequenceSpan",
                 {"id": 1, "amount": 100},
@@ -370,7 +370,9 @@ def test_an_earlier_milestone_at_an_address_the_attempt_reopened_is_not_proven_b
 def test_a_stale_start_at_an_address_the_attempt_reopened_is_its_callers_precondition() -> None:
     target = target_write(
         prepare_wire_write(
-            TargetWrite("amend", "Balance", {"id": 1, "value": "100.00"}, if_tx_start=T0),
+            TargetWriteInstruction(
+                "amend", "Balance", {"id": 1, "value": "100.00"}, if_tx_start=T0
+            ),
             BALANCES,
         ),
         inheritance.view(BALANCES),

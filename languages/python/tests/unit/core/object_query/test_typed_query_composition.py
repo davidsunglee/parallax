@@ -119,7 +119,7 @@ from parallax.core.entity._model import model_of
 from parallax.core.predicate import TrueNode
 from parallax.core.unit_work import (
     PredicateSelection,
-    PredicateWrite,
+    PredicateWriteInstruction,
     WriteAssignment,
     WriteInstructionError,
 )
@@ -732,7 +732,7 @@ def test_a_foreign_assignment_never_targets_the_queried_position() -> None:
     # member-name honesty gate, which resolves the assignment's owner prefix
     # against the target the selection names.
     assignment: AttributeAssignment[SnapOrder] = SnapOrderStatus.code.set("X-1")  # pyright: ignore[reportAssignmentType]
-    write = PredicateWrite(
+    write = PredicateWriteInstruction(
         mutation="amend",
         target=PredicateSelection(entity="SnapOrder", predicate=TrueNode()),
         assignments=(WriteAssignment(attr=str(assignment.attr), value=assignment.value),),

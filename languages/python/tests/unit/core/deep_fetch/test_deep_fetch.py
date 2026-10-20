@@ -84,7 +84,7 @@ from parallax.core.predicate._resolved import (
 from parallax.core.sql_gen._compile import compile_read, compile_template
 from parallax.core.temporal_read import Bitemporal, TimeInterval
 from parallax.core.temporal_read import view as temporal_view
-from parallax.core.unit_work import PredicateSelection, PredicateWrite, WriteAssignment
+from parallax.core.unit_work import PredicateSelection, PredicateWriteInstruction, WriteAssignment
 from tests.unit._corpus_model_support import model as accepted_model
 from tests.unit._corpus_model_support import target as entity_of
 
@@ -270,7 +270,7 @@ def test_deep_fetch_rejects_a_validated_path_whose_relationship_disappeared() ->
 def test_mutation_read_unions_an_explicit_projection_with_assigned_value_objects() -> None:
     account = entity_of(ORDERS, "Order")
     prepared = prepare_typed_write(
-        PredicateWrite(
+        PredicateWriteInstruction(
             "amend",
             PredicateSelection(account.identity.canonical, TrueNode()),
             (WriteAssignment(f"{account.identity.canonical}.name", "updated"),),

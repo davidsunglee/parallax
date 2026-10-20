@@ -35,7 +35,7 @@ from parallax.core.sql_gen._planning import (
     plan_statement,
 )
 from parallax.core.sql_gen._predicate import EntityRowScope, render_shared_sources
-from parallax.core.unit_work import KeyedWrite
+from parallax.core.unit_work import KeyedWriteInstruction
 from parallax.core.wire import loads
 from tests._support.lowering_probes import lower_instruction
 from tests._support.sql import resolved_as_stated
@@ -398,7 +398,7 @@ def test_an_unrendered_key_set_has_no_wire_projection(form: str) -> None:
 
 def test_multirow_write_uses_one_repeated_descriptor_per_typed_row_run() -> None:
     statement = lower_instruction(
-        KeyedWrite(
+        KeyedWriteInstruction(
             "insert",
             "Wallet",
             (

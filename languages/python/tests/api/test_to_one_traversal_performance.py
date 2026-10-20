@@ -60,7 +60,7 @@ from parallax.core.entity._model import model_of
 from parallax.core.metamodel import TablePerConcreteSubtype
 from parallax.core.read_delivery._read_plan import UNCACHED_READ_PLANNER, EmptyRead
 from parallax.core.sql_gen import LoweredStatement
-from parallax.core.unit_work import PredicateSelection, PredicateWrite, WriteAssignment
+from parallax.core.unit_work import PredicateSelection, PredicateWriteInstruction, WriteAssignment
 from parallax.snapshot import ScopedDatabase, connect
 from tests._support.lowering_probes import lower_instruction
 from tests._support.query_probes import canonical_document, predicate_node, typed_resolved
@@ -1088,7 +1088,7 @@ def compile_statement(workload: Workload) -> LoweredStatement:
         root = plan.root_read()
         assert not isinstance(root, EmptyRead)
         return root[0].statement
-    write = PredicateWrite(
+    write = PredicateWriteInstruction(
         "amend" if workload.kind == "update" else "delete",
         PredicateSelection(Item.identity.canonical, predicate_node(query, MODEL)),
         assignments=(WriteAssignment(attr=_FLAG, value=True),) if workload.kind == "update" else (),

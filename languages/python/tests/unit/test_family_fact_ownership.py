@@ -59,10 +59,10 @@ from parallax.core.sql_gen import LoweredStatement
 from parallax.core.temporal_read import Edge, Pin
 from parallax.core.unit_work import (
     Concurrency,
-    KeyedWrite,
+    KeyedWriteInstruction,
     MaterializedWriteGroup,
     PredicateSelection,
-    PredicateWrite,
+    PredicateWriteInstruction,
     TransactionSettings,
     UnitOfWork,
     VersionedEvidenceBuilder,
@@ -181,7 +181,7 @@ def _trace_declarations(monkeypatch: pytest.MonkeyPatch, model: Metamodel) -> li
 
 def _version_group() -> MaterializedWriteGroup:
     prepared = prepare_typed_write(
-        PredicateWrite(
+        PredicateWriteInstruction(
             "amend",
             PredicateSelection(
                 "Account",
@@ -207,24 +207,24 @@ def _prepared_writes() -> list[OrderedWrite]:
     observed updates and deletes of a standalone Entity and of an inherited
     position, a collapsing unversioned run, a readless predicate write, and a
     Materialized Write Group."""
-    fridge_update = KeyedWrite("amend", "Fridge", ({"id": 1, "name": "Chill"},))
-    account_delete = KeyedWrite("delete", "Account", ({"id": 3},))
+    fridge_update = KeyedWriteInstruction("amend", "Fridge", ({"id": 1, "name": "Chill"},))
+    account_delete = KeyedWriteInstruction("delete", "Account", ({"id": 3},))
     fridge_key = object_key(fridge_update, _MODEL)
     account_key = object_key(account_delete, _MODEL)
     assert fridge_key is not None and account_key is not None
     return [
         *observed_buffer(
             [
-                KeyedWrite(
+                KeyedWriteInstruction(
                     "insert",
                     "Account",
                     ({"id": 9, "owner": "Ada", "balance": Decimal("1.00")},),
                 ),
                 fridge_update,
                 account_delete,
-                KeyedWrite("amend", "Wallet", ({"id": 1, "balance": Decimal("2.00")},)),
-                KeyedWrite("amend", "Wallet", ({"id": 2, "balance": Decimal("2.00")},)),
-                PredicateWrite(
+                KeyedWriteInstruction("amend", "Wallet", ({"id": 1, "balance": Decimal("2.00")},)),
+                KeyedWriteInstruction("amend", "Wallet", ({"id": 2, "balance": Decimal("2.00")},)),
+                PredicateWriteInstruction(
                     "delete",
                     PredicateSelection(
                         "Wallet",
@@ -299,8 +299,10 @@ _BITEMPORAL: Final[Mapping[str, object]] = {
 _VALID_FROM: Final = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
 
 
-def _value_update(entity: str, *, valid_from: dt.datetime | None = None) -> PredicateWrite:
-    return PredicateWrite(
+def _value_update(
+    entity: str, *, valid_from: dt.datetime | None = None
+) -> PredicateWriteInstruction:
+    return PredicateWriteInstruction(
         "amend",
         PredicateSelection(
             entity,
@@ -317,12 +319,14 @@ def _temporal_writes() -> list[OrderedWrite]:
     """Observed updates of an inherited position in a Transaction-Time-Only and
     a Bitemporal family, an observed standalone terminate, and a packed
     Materialized Write Group of each temporal shape."""
-    quote_update = KeyedWrite("amend", "SpotQuote", ({"id": 1, "price": Decimal("2.00")},))
-    rate_update = KeyedWrite(
+    quote_update = KeyedWriteInstruction(
+        "amend", "SpotQuote", ({"id": 1, "price": Decimal("2.00")},)
+    )
+    rate_update = KeyedWriteInstruction(
         "amend", "DepositRate", ({"id": 2, "amount": Decimal("3.00")},), valid_from=_VALID_FROM
     )
-    balance_terminate = KeyedWrite("terminate", "Balance", ({"id": 3},))
-    predecessors: list[tuple[KeyedWrite, Mapping[str, object]]] = [
+    balance_terminate = KeyedWriteInstruction("terminate", "Balance", ({"id": 3},))
+    predecessors: list[tuple[KeyedWriteInstruction, Mapping[str, object]]] = [
         (quote_update, {"id": 1, "price": Decimal("1"), "symbol": "Q", **_TRANSACTION_TIME}),
         (rate_update, {"id": 2, "amount": Decimal("1"), "grade": "A", **_BITEMPORAL}),
         (balance_terminate, {"id": 3, "acctNum": "B", "value": Decimal("1"), **_TRANSACTION_TIME}),

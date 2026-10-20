@@ -44,12 +44,12 @@ from parallax.core.entity._model import model_of
 from parallax.core.metamodel import EntityIdentity, Metamodel
 from parallax.core.temporal_read import TemporalReadError
 from parallax.core.unit_work import (
-    KeyedWrite,
+    KeyedWriteInstruction,
     MaterializedWriteGroup,
     PredicateSelection,
-    PredicateWrite,
+    PredicateWriteInstruction,
     RetainedObservation,
-    TargetWrite,
+    TargetWriteInstruction,
     UnitOfWorkError,
     VersionedEvidenceBuilder,
     WriteAssignment,
@@ -146,7 +146,7 @@ def _account(account_id: int) -> ObjectKey:
 
 def _account_observed(account_id: int, version: int) -> BufferItem:
     prepared = prepare_wire_write(
-        KeyedWrite("amend", "Account", ({"id": account_id, "owner": "Bo"},)), _ACCOUNT
+        KeyedWriteInstruction("amend", "Account", ({"id": account_id, "owner": "Bo"},)), _ACCOUNT
     )
     assert isinstance(prepared, PreparedKeyedWrite)
     state = VersionedObjectStateKey(_account(account_id), version)
@@ -155,7 +155,9 @@ def _account_observed(account_id: int, version: int) -> BufferItem:
 
 def _account_target(account_id: int, version: int) -> TargetKeyedWrite:
     prepared = prepare_wire_write(
-        TargetWrite("amend", "Account", {"id": account_id, "balance": "1.00"}, if_version=version),
+        TargetWriteInstruction(
+            "amend", "Account", {"id": account_id, "balance": "1.00"}, if_version=version
+        ),
         _ACCOUNT,
     )
     return target_write(prepared, inheritance.view(_ACCOUNT))
@@ -163,7 +165,9 @@ def _account_target(account_id: int, version: int) -> TargetKeyedWrite:
 
 def _account_insert(account_id: int) -> PreparedKeyedWrite:
     prepared = prepare_wire_write(
-        KeyedWrite("insert", "Account", ({"id": account_id, "owner": "N", "balance": "5.00"},)),
+        KeyedWriteInstruction(
+            "insert", "Account", ({"id": account_id, "owner": "N", "balance": "5.00"},)
+        ),
         _ACCOUNT,
     )
     assert isinstance(prepared, PreparedKeyedWrite)
@@ -172,7 +176,7 @@ def _account_insert(account_id: int) -> PreparedKeyedWrite:
 
 def _account_amend(account_id: int) -> PreparedKeyedWrite:
     prepared = prepare_wire_write(
-        KeyedWrite("amend", "Account", ({"id": account_id, "owner": "Cy"},)), _ACCOUNT
+        KeyedWriteInstruction("amend", "Account", ({"id": account_id, "owner": "Cy"},)), _ACCOUNT
     )
     assert isinstance(prepared, PreparedKeyedWrite)
     return prepared
@@ -185,7 +189,7 @@ def _account_group(*states: tuple[int, int]) -> MaterializedWriteGroup:
     sealed = evidence.seal()
     assert sealed is not None
     prepared = prepare_typed_write(
-        PredicateWrite(
+        PredicateWriteInstruction(
             "delete",
             PredicateSelection(
                 "Account",
@@ -202,7 +206,7 @@ def _account_group(*states: tuple[int, int]) -> MaterializedWriteGroup:
 
 def _barrier() -> ReadlessPredicateWrite:
     prepared = prepare_wire_write(
-        PredicateWrite(
+        PredicateWriteInstruction(
             "amend",
             PredicateSelection(
                 "Wallet",
@@ -226,7 +230,7 @@ def _position(position_id: int, start: dt.datetime, tx_start: object = T0) -> di
 
 def _spanning_group(*rows: dict[str, object]) -> MaterializedWriteGroup:
     return temporal_group(
-        PredicateWrite(
+        PredicateWriteInstruction(
             "amend",
             PredicateSelection(
                 "Position",
@@ -251,7 +255,8 @@ def _position_observed(position_id: int, start: dt.datetime) -> ObservedKeyedWri
     )
     held = RetainedObservation(state, observation, None)
     prepared = prepare_wire_write(
-        KeyedWrite("amend", "Position", ({"id": position_id, "acctNum": "O"},), start), POSITION
+        KeyedWriteInstruction("amend", "Position", ({"id": position_id, "acctNum": "O"},), start),
+        POSITION,
     )
     item = buffered_write(prepared, held)
     assert isinstance(item, ObservedKeyedWrite)
@@ -354,7 +359,9 @@ def test_a_batch_composition_left_nothing_of_still_needs_its_flush() -> None:
     admission = WriteAdmission(_ACCOUNT, inserted_version=_unversioned)
     assert not admission
     _admit(admission, _account_insert(9))
-    deletion = prepare_wire_write(KeyedWrite("delete", "Account", ({"id": 9},)), _ACCOUNT)
+    deletion = prepare_wire_write(
+        KeyedWriteInstruction("delete", "Account", ({"id": 9},)), _ACCOUNT
+    )
     outcome = admission.admit(deletion, confirm_target=_confirmed)
     assert outcome is BufferOutcome.CANCELLED_PENDING_INSERT
     assert admission
@@ -365,7 +372,7 @@ def test_a_batch_composition_left_nothing_of_still_needs_its_flush() -> None:
 
 def _person_write(person_id: int, source: RecordingSource) -> BufferItem:
     prepared = prepare_wire_write(
-        KeyedWrite("amend", "Person", ({"id": person_id, "name": "Grace"},)), _PERSON
+        KeyedWriteInstruction("amend", "Person", ({"id": person_id, "name": "Grace"},)), _PERSON
     )
     assert isinstance(prepared, PreparedKeyedWrite)
     return buffered_write(prepared, ObjectKey(_PERSON_ENTITY, (("id", person_id),)), source=source)
@@ -393,7 +400,7 @@ def test_discard_leaves_pending_authority_unspent_and_forgets_every_insertion() 
     source = RecordingSource()
     admission = _admitted(_person_write(1, source), meta=_PERSON)
     insertion = prepare_wire_write(
-        KeyedWrite("insert", "Person", ({"id": 9, "name": "Ada"},)), _PERSON
+        KeyedWriteInstruction("insert", "Person", ({"id": 9, "name": "Ada"},)), _PERSON
     )
     assert isinstance(insertion, PreparedKeyedWrite)
     _admit(admission, insertion)
@@ -467,7 +474,9 @@ def _stored_insertion_across_two_rows() -> WriteAdmission:
 
 def _position_insert() -> PreparedKeyedWrite:
     prepared = prepare_wire_write(
-        KeyedWrite("insert", "Position", ({"id": 1, "acctNum": "A", "value": "1.00"},), FEB),
+        KeyedWriteInstruction(
+            "insert", "Position", ({"id": 1, "acctNum": "A", "value": "1.00"},), FEB
+        ),
         POSITION,
     )
     assert isinstance(prepared, PreparedKeyedWrite)
@@ -583,11 +592,14 @@ def test_a_write_an_insertion_authorized_never_shares_a_targets_window() -> None
     # An insertion's write states no starting revision a caller's could agree
     # with, so the two cannot be one operation over one window.
     insertion = prepare_wire_write(
-        KeyedWrite("insert", "Position", ({"id": 1, "acctNum": "A", "value": "1.00"},), MAR),
+        KeyedWriteInstruction(
+            "insert", "Position", ({"id": 1, "acctNum": "A", "value": "1.00"},), MAR
+        ),
         POSITION,
     )
     amendment = prepare_wire_write(
-        KeyedWrite("amendUntil", "Position", ({"id": 1, "value": "2.00"},), MAR, SEP), POSITION
+        KeyedWriteInstruction("amendUntil", "Position", ({"id": 1, "value": "2.00"},), MAR, SEP),
+        POSITION,
     )
     assert isinstance(insertion, PreparedKeyedWrite)
     assert isinstance(amendment, PreparedKeyedWrite)

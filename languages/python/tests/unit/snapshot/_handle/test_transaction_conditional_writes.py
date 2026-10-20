@@ -33,7 +33,11 @@ from parallax.core.dialect import POSTGRES
 from parallax.core.entity import AttributeAssignment, DomainModel
 from parallax.core.entity._expressions import AttributeRef
 from parallax.core.entity._model import model_of
-from parallax.core.unit_work import TargetWrite, WriteInstructionError, WriteRejectedError
+from parallax.core.unit_work import (
+    TargetWriteInstruction,
+    WriteInstructionError,
+    WriteRejectedError,
+)
 from parallax.snapshot import TxnContext, WireEntity
 from parallax.snapshot._handle._wire import WireTransactionView
 from tests._support import mirrored_models as mm
@@ -603,7 +607,7 @@ def test_an_instruction_stating_no_revision_is_refused_for_every_target(
 ) -> None:
     model = model_of(MODELS["wallet"] if entity == "Wallet" else MODELS["account"])
     with pytest.raises(WriteInstructionError, match=outcome):
-        prepare_typed_write(TargetWrite("amend", entity, row), model)
+        prepare_typed_write(TargetWriteInstruction("amend", entity, row), model)
 
 
 @pytest.mark.parametrize("mutation", ["amend", "delete"])

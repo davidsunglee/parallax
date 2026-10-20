@@ -24,7 +24,7 @@ from parallax.core.base import INFINITY
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.temporal_read import TimeInterval
-from parallax.core.unit_work import KeyedWrite
+from parallax.core.unit_work import KeyedWriteInstruction
 from parallax.core.write_plan import PredecessorRow, TemporalObservation
 from parallax.core.write_plan.keys import ObjectStateKey, object_state_key_from_observation
 from parallax.core.write_plan.plan import (
@@ -74,7 +74,7 @@ def _live(admission: WriteAdmission) -> WriteOwnership:
 
 def _insert(start: dt.datetime, until: dt.datetime | None = None) -> PreparedKeyedWrite:
     prepared = prepare_wire_write(
-        KeyedWrite(
+        KeyedWriteInstruction(
             "insert" if until is None else "insertUntil",
             "WherePosition",
             ({"id": 1, "acctNum": "A", "value": "1.00"},),
@@ -222,7 +222,7 @@ def _cancel_reinsertion(admission: WriteAdmission, start: dt.datetime) -> None:
     identity = admission.insertion_identity(_KEY)
     assert identity is not None
     termination = prepare_wire_write(
-        KeyedWrite("terminate", "WherePosition", ({"id": 1},), start), _POSITION
+        KeyedWriteInstruction("terminate", "WherePosition", ({"id": 1},), start), _POSITION
     )
     assert isinstance(termination, PreparedKeyedWrite)
     admission.admit(InsertionKeyedWrite(termination, identity), confirm_target=_confirmed)

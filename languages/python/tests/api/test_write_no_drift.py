@@ -39,7 +39,7 @@ from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity import DomainModel
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import EntityMetadata
-from parallax.core.unit_work import KeyedWrite, WriteRejectedError
+from parallax.core.unit_work import KeyedWriteInstruction, WriteRejectedError
 from parallax.snapshot import Database, ScopedDatabase, TxnContext
 from tests._support.adoption import raises_contextualized
 from tests._support.corpus import case_document, compare_binds
@@ -625,7 +625,7 @@ def test_the_declared_structure_classifies_the_corpus_rule(case_id: str) -> None
     model = model_of(domain_model)
     target = _rejected_write_target(domain_model)
     authored = cast("Mapping[str, object]", case_document(case)["when"]["write"])
-    instruction = KeyedWrite("insert", target.identity.canonical, (authored,))
+    instruction = KeyedWriteInstruction("insert", target.identity.canonical, (authored,))
     with pytest.raises(WriteRejectedError) as exc_info:
         instructions.prepare_wire_write(instruction, model)
     assert exc_info.value.rule == expected_rule

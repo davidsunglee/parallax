@@ -66,7 +66,7 @@ from parallax.core.metamodel import (
     ValueObjectShapeDeclaration,
     ValueObjectShapeKey,
 )
-from parallax.core.unit_work import KeyedMutation, KeyedWrite, WriteRejectedError
+from parallax.core.unit_work import KeyedMutation, KeyedWriteInstruction, WriteRejectedError
 from tests.unit._metamodel_support import Declaration, attribute, identity, key, source
 
 # A synthetic multi-type entity: every scalar neutral type as a NULLABLE
@@ -176,7 +176,7 @@ def _prepare(
     *,
     mutation: KeyedMutation = "insert",
 ) -> None:
-    prepare_typed_write(KeyedWrite(mutation, entity, (row,)), model)
+    prepare_typed_write(KeyedWriteInstruction(mutation, entity, (row,)), model)
 
 
 def _refused(
