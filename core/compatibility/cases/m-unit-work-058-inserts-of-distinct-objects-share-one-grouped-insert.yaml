@@ -1,7 +1,5 @@
-# Write Groups (m-unit-work, m-execution): two line items buffered apart, with
-# their parent Order between them, stay separate Planned Inserts — batching
-# merges only buffer-adjacent writes — yet once ordering puts the parent first
-# the two inserts are adjacent in one Write Group and share one grouped insert.
+# Batching merges only buffer-adjacent writes, so only the Write Group joins
+# the two line items' inserts.
 model: models/orders.yaml
 tags: [m-unit-work, m-execution, m-sql, write-group, fk-ordering, scenario, slice-snapshot-1]
 shape: scenario

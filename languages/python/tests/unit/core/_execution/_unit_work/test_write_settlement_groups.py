@@ -1,6 +1,5 @@
 """How settlement forms a flush's Write Groups (`m-unit-work` *Write Group
-formation*): consecutive settled writes of one mutation phase over distinct
-objects, at most 64 of them, laid out every effect before any insert."""
+formation*)."""
 
 from __future__ import annotations
 
@@ -99,8 +98,6 @@ def _plan(
     concurrency: Concurrency = "optimistic",
     instant: TransactionInstant = _INSTANT,
 ) -> WritePlan:
-    """``buffer`` admitted as a unit of work admits it, with ``observations``
-    retained for the objects they name, and finalized."""
     return _finalize(
         observed_buffer(buffer, model, observations),
         model,
@@ -172,7 +169,6 @@ def _observed(
     buffer: Sequence[KeyedWriteInstruction],
     observe: Callable[[int], WriteObservation],
 ) -> dict[ObjectKey, WriteObservation]:
-    """Each object ``buffer`` writes, observed as ``observe`` answers for its key."""
     observations: dict[ObjectKey, WriteObservation] = {}
     for instruction in buffer:
         key = object_key(instruction, model)

@@ -103,9 +103,10 @@ __all__ = ["WritePlanCompiler"]
 
 _GROUP_WRITES: Final = 64
 """The most settled writes one Write Group holds. In a group of updates or
-deletes every insert waits behind every effect of the group, so this bounds the
-work and the row locks a failing insert wastes, whatever the flush's size; it
-is not the executor's per-call statement or row cap."""
+deletes every insert waits behind every effect of the group, so this bounds how
+many settled writes' effects a failing insert wastes, whatever the flush's size;
+a batch counts once however many rows it covers. It is not the executor's
+per-call statement or row cap."""
 
 type _GroupKey = tuple[AttributeIdentity, object]
 """One object a settled write writes: its family's primary-key Attribute and the
@@ -692,9 +693,8 @@ class WritePlanCompiler:
 
 
 def _object_keys(item: OrderedWrite, families: InheritanceFacet) -> tuple[_GroupKey, ...] | None:
-    """Every object ``item`` writes, each row of a collapsed batch included, or
-    ``None`` where a row names no complete key: a readless predicate write, or
-    an insert whose key is absent or the database computes."""
+    """``None`` where a row names no complete key: a readless predicate write,
+    or an insert whose key is absent or the database computes."""
     if isinstance(item, FollowingKeyedWrite):
         item = item.write
     if isinstance(item, PreparedPredicateWrite):

@@ -1,13 +1,6 @@
 """Keyed loops over distinct objects, through the public verbs over a scripted
 port: what each Write Group costs in calls (`m-unit-work` *Write Group
-formation*, `m-execution` *Flush execution*).
-
-A group of at most 64 objects presents every effect in ordered invocations and
-then every insert in grouped inserts; a lone tail runs each step alone. Without
-ordered transport, or under a narrow bind limit, only the call shapes change.
-A failing group reports its first presented failure and presents nothing after
-it.
-"""
+formation*, `m-execution` *Flush execution*)."""
 
 from __future__ import annotations
 
@@ -110,8 +103,6 @@ def _sources(tx: TxnContext, kind: str) -> list[SpanRow] | list[AuditedRow] | li
 
 
 def _loop(kind: str, *, delete: bool = False) -> Callable[[TxnContext], None]:
-    """Read every object of the book, then write each by key."""
-
     def body(tx: TxnContext) -> None:
         for source in _sources(tx, kind):
             if delete:
@@ -238,8 +229,6 @@ def test_a_narrow_bind_limit_splits_the_grouped_insert_and_writes_the_same_rows(
 
 
 class _Calls:
-    """A lifecycle Provider counting each Flush and each Database Call."""
-
     def __init__(self) -> None:
         self.flushes = 0
         self.calls = 0
