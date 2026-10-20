@@ -806,7 +806,7 @@ def _joined_invocation_chain(stack: ExitStack, installed: InstalledLifecycle) ->
     """An invocation, its attempt, and a joining call nested inside it.
 
     Three CORRELATION levels rather than four: everything a joining call's
-    callback drives — a read, a batch, another joining call — is a child of the
+    callback drives — a read, a Flush, another joining call — is a child of the
     same attempt this one is a child of, so nothing it opens is named beneath it.
     How deeply those scopes nest inside one another is a different question, and
     :func:`_threaded_roots` is the workload that varies it.
@@ -1296,9 +1296,9 @@ def test_a_completed_read_leaves_no_lifecycle_object_alive() -> None:
 
 @in_a_child_interpreter
 def test_a_completed_transaction_leaves_no_lifecycle_object_alive() -> None:
-    # A transaction is the deep root: an invocation over an attempt over a write
-    # batch over its Database Calls, with a participating read and its dependency
-    # batch beside them. Nothing of that tree may outlive the callback.
+    # A transaction is the deep root: an invocation over an attempt over a
+    # Flush over its Database Calls, with a participating read and its dependency
+    # Flush beside them. Nothing of that tree may outlive the callback.
     port = ScriptedAdapter(Transact(Write(), Read(rows=[NEW_ROW])))
     with _observed_db(port) as database:
 

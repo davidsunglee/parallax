@@ -6,7 +6,7 @@ read-correctness rules that make that attempt's reads safe. It is expressed enti
 and object state** (`m-predicate`): it depends on `m-predicate`, on `m-wire` for
 serialized write-literal conversion, on the execution port `m-db-port`, on
 `m-temporal-read` for the coverage it judges, on `m-write-plan` for the Planned
-Write algebra it produces and the Write Observations it carries, on
+Step algebra it produces and the Write Observations it carries, on
 `m-temporal-write` for the temporal expansion it drives, and on `m-edit`, which distinguishes authored assignments from state carried by
 derivation, but **not** on `m-sql`. The
 dialect-specific SQL the unit of work executes (the read-lock suffix, the
@@ -47,13 +47,13 @@ opens a transaction with no unit of work at all. Within one unit of work:
   unit of work flushes pending writes before serving a dependent read
   (read-your-own-writes), so a query never returns stale in-transaction state.
 - Those two are the **whole** trigger vocabulary: a **read dependency** and the
-  boundary's **pre-commit** batch. There is no size threshold, no periodic flush,
+  boundary's **pre-commit** flush. There is no size threshold, no periodic flush,
   and no caller-invoked one — physical write timing stays encapsulated, and a
-  batch that reached the database is therefore attributable to exactly one of
+  flush that reached the database is therefore attributable to exactly one of
   the two. The joined (nested) boundary adds no third trigger: it shares the
   outer unit of work's buffer, and the outer boundary's pre-commit flush is what
   flushes it. The second trigger is named for when it runs, because
-  **finalization** already names the planner stage every batch of either trigger
+  **finalization** already names the planner stage every flush of either trigger
   goes through.
 
 Where an implementation owns connection lifetimes (`m-db-port`), each **attempt**
@@ -1056,7 +1056,7 @@ At the unit-of-work boundary the buffered writes are flushed as **set-based** SQ
 wherever possible:
 
 - Multiple inserts or same-column updates of one entity become **one** Planned
-  Write with several rows or keys, lowered as a single multi-row `INSERT` or a
+  Step with several rows or keys, lowered as a single multi-row `INSERT` or a
   batched `UPDATE`. The canonical golden forms and their proof are
   `m-batch-write`.
 - Operations are **ordered** so that a parent row is inserted before a child

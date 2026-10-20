@@ -1135,7 +1135,7 @@ def test_an_observation_free_multi_key_delete_carries_the_aggregate_missing_targ
     assert step.affected_rows == ExactCount(2, MISSING_TARGET)
 
 
-def test_an_unversioned_multi_key_update_settles_to_one_aggregate_planned_write() -> None:
+def test_an_unversioned_multi_key_update_settles_to_one_aggregate_planned_step() -> None:
     # The delete above proves the aggregate expectation on the destructive verb;
     # this is the assigning one, and together they fix the cardinality an
     # addressed write keeps whichever verb it carries. A collapsed run is ONE

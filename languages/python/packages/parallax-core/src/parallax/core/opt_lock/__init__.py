@@ -116,7 +116,7 @@ def effective_strategy(preference: Concurrency, key: OptimisticKey | None) -> Co
     recover correctness with and therefore falls back to `m-read-lock`'s shared
     lock. One transaction consequently mixes strategies across Entities, and
     every consumer — read-lock derivation per deep-fetch level, gate settlement
-    per planned write, write-evidence rules — resolves through the key's own
+    per planned step, write-evidence rules — resolves through the key's own
     answer rather than reading the preference directly.
 
     An Identity the facet does not name has no key and takes the same Locking

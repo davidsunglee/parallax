@@ -152,7 +152,7 @@ def test_a_stored_insertions_removal_window_is_kept_until_what_it_derives_from_c
     narrowed = ownership.removal_window(record)
     assert narrowed == TimeInterval(_FEB, _JUN)
     assert narrowed is not window
-    # A stored object's further admission keeps its anchor until its batch is
+    # A stored object's further admission keeps its anchor until its buffer is
     # drained, and composition cancelling a pending one changes neither tags
     # nor anchor.
     admission.admit(_insert(_APR), confirm_target=_confirmed)

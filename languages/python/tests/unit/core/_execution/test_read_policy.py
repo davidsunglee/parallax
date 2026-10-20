@@ -503,7 +503,7 @@ def test_a_standalone_page_enters_its_batch_around_the_body_and_flushes_nothing(
 def test_every_participating_page_flushes_first_and_opens_its_batch_inside_that_flush() -> None:
     # Participation is per PAGE: a loop that writes as it reads sees its own
     # writes at every page, and each page's Stream Batch is the dependency
-    # batch's ordered sibling rather than its parent.
+    # Flush's ordered sibling rather than its parent.
     provider = RecordingLifecycleProvider()
     adapter = ScriptedAdapter(Transact(Write()))
     body = _Body(provider, adapter)
@@ -531,8 +531,8 @@ def test_every_participating_page_flushes_first_and_opens_its_batch_inside_that_
         "TransactionAttemptFinished",
         "TransactionInvocationFinished",
     ]
-    attempt, stream, batch, page = shown[1][1], shown[2][1], shown[3], shown[5]
-    assert (batch[2], page[2]) == (attempt, stream)
+    attempt, stream, flush, page = shown[1][1], shown[2][1], shown[3], shown[5]
+    assert (flush[2], page[2]) == (attempt, stream)
 
 
 # --------------------------------------------------------------------------- #
