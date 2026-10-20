@@ -232,21 +232,32 @@ def test_a_replacement_omitting_a_required_value_object_is_refused_with_its_rule
     assert refused.value.rule == "write-required-value-object-missing"
 
 
-@pytest.mark.parametrize(
-    ("row", "message"),
-    [
-        ({"owner": "Ada", "balance": "1.00", "nickname": "A"}, "does not declare"),
-        ({"owner": "Ada", "balance": 7}, "type-mismatch"),
-        ({"id": "seven", "owner": "Ada", "balance": "1.00"}, "replacement key 'id'"),
-    ],
-    ids=["undeclared", "ill-typed-member", "ill-typed-key"],
-)
-def test_model_validator_rejects_an_invalid_replacement_row(
-    row: dict[str, object], message: str
-) -> None:
+def test_model_validator_rejects_a_replacement_row_naming_an_undeclared_member() -> None:
     entity = _wallet_entity()
-    with pytest.raises(PredicateWriteValidationError, match=message):
+    row = {"owner": "Ada", "balance": "1.00", "nickname": "A"}
+    with pytest.raises(PredicateWriteValidationError, match="does not declare"):
         validate_predicate_write(entity, _replace_instruction(row), [entity.definition])
+
+
+@pytest.mark.parametrize(
+    ("model", "row"),
+    [
+        ("models/wallet.yaml", {"owner": "Ada", "balance": 7}),
+        ("models/wallet.yaml", {"id": "seven", "owner": "Ada", "balance": "1.00"}),
+        ("models/shipment.yaml", {"name": "Express", "destination": {"street": 1, "city": "X"}}),
+        ("models/scalar-collection-layout-twin-columns.yaml", {"counts": [5, "6"]}),
+    ],
+    ids=["member", "key", "value-object-leaf", "collection-element"],
+)
+def test_a_replacement_literal_its_type_cannot_decode_is_refused_with_its_rule(
+    model: str, row: dict[str, object]
+) -> None:
+    entity = load_model(_COMPATIBILITY_ROOT, model).root_entity
+    instruction = _replace_instruction(row)
+    instruction["target"] = {"entity": entity.name, "predicate": {"true": {}}}
+    with pytest.raises(RejectionError) as refused:
+        validate_predicate_write(entity, instruction, [entity.definition])
+    assert refused.value.rule == "neutral-literal-type-mismatch"
 
 
 def test_schema_requires_an_amendment_to_state_its_assignments() -> None:
