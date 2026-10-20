@@ -366,6 +366,7 @@ class UnitOfWork:
         replacement of an Entity whose only writable member is its key: having
         been validated, it is dropped here rather than buffered, so it seals no
         barrier region between the writes around it."""
+        self._ensure_open()
         if prepared.mutation in ASSIGNMENT_MUTATIONS and not prepared.assigns:
             return
         self.buffer(prepared)

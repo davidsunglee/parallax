@@ -56,6 +56,10 @@ WRITE_REQUIRED_ATTRIBUTE_MISSING = "write-required-attribute-missing"
 WRITE_REQUIRED_VALUE_OBJECT_MISSING = "write-required-value-object-missing"
 WRITE_VALUE_TYPE_MISMATCH = "write-value-type-mismatch"
 
+NEUTRAL_LITERAL_RULES: frozenset[str] = frozenset(
+    {NEUTRAL_LITERAL_TYPE_MISMATCH, NEUTRAL_LITERAL_NONCANONICAL, NEUTRAL_LITERAL_OUT_OF_SPACE}
+)
+
 REJECTED_RULES: frozenset[str] = frozenset(
     {
         BETWEEN_BOUNDS_INVERTED,
@@ -147,7 +151,7 @@ def decode_typed_literal(value: Any, neutral_type: str | None, subject: str) -> 
         return decode(value, neutral_type)
     except PortableLiteralError as exc:
         rule = f"neutral-literal-{exc.reason}"
-        if rule not in REJECTED_RULES:
+        if rule not in NEUTRAL_LITERAL_RULES:
             raise AssertionError(f"unknown portable literal reason {exc.reason!r}") from exc
         raise RejectionError(
             rule,

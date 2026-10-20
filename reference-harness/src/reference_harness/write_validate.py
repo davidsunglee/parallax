@@ -58,6 +58,7 @@ from .inheritance import (
 from .storage_layout import is_scalar_collection
 from .temporality import temporal_axes
 from .value_object_resolve import (
+    NEUTRAL_LITERAL_RULES,
     WRITE_REQUIRED_ATTRIBUTE_MISSING,
     WRITE_REQUIRED_VALUE_OBJECT_MISSING,
     WRITE_VALUE_TYPE_MISMATCH,
@@ -116,7 +117,9 @@ def undeclared_members(entity: Entity, row: Mapping[str, Any]) -> list[str]:
     return sorted(key for key in row if key not in applicable and key not in _ROW_CONTROL_KEYS)
 
 
-def assignment_violation(entity: Entity, name: str, value: Any) -> str | None:
+def assignment_violation(
+    entity: Entity, name: str, value: Any, *, classify_literals: bool = False
+) -> str | None:
     """Why *entity* refuses assigning *value* to its member *name*, or ``None``.
 
     One member with one value, which is what an EDIT authors, where
@@ -138,8 +141,12 @@ def assignment_violation(entity: Entity, name: str, value: Any) -> str | None:
     no edit authors one.
 
     The message is the refusal's own detail, member-qualified, so a caller reports
-    what is wrong with the assignment rather than re-deriving it.
+    what is wrong with the assignment rather than re-deriving it. With
+    *classify_literals*, a literal its declared type cannot decode is instead
+    refused by raising its classified ``neutral-literal-*``
+    :class:`RejectionError`, the observable a `rejected` case grades.
     """
+    keep = NEUTRAL_LITERAL_RULES if classify_literals else frozenset()
     path = f"{entity.name}.{name}"
     attribute = next(
         (candidate for candidate in entity.attributes if candidate["name"] == name), None
@@ -152,14 +159,17 @@ def assignment_violation(entity: Entity, name: str, value: Any) -> str | None:
         if name in framework_owned_names(entity):
             return f"{path}: framework-owned fields may not be assigned"
         return _violation_detail(
-            lambda: _validate_attribute({name: value}, attribute, path=path, marker_exempt=False)
+            lambda: _validate_attribute({name: value}, attribute, path=path, marker_exempt=False),
+            keep=keep,
         )
     occurrence = next(
         (candidate for candidate in entity.value_objects if candidate["name"] == name), None
     )
     if occurrence is None:
         return f"{path}: names no assignable attribute or value object"
-    return _violation_detail(lambda: _validate_occurrence({name: value}, occurrence, path=path))
+    return _violation_detail(
+        lambda: _validate_occurrence({name: value}, occurrence, path=path), keep=keep
+    )
 
 
 def target_row_violation(entity: Entity, row: dict[str, Any], *, replaces: bool) -> str | None:
@@ -211,17 +221,22 @@ def target_row_violation(entity: Entity, row: dict[str, Any], *, replaces: bool)
     return None
 
 
-def _violation_detail(judge: Callable[[], None]) -> str | None:
+def _violation_detail(
+    judge: Callable[[], None], *, keep: frozenset[str] = frozenset()
+) -> str | None:
     """*judge*'s refusal detail, or ``None`` when it raises nothing.
 
     The row walk answers by raising a classified :class:`RejectionError`, because a
-    `rejected` case's observable IS the rule it names. An assignment has no such
-    observable — a case may not declare this refusal at all — so the rule is
-    dropped here and only the human-readable detail survives.
+    `rejected` case's observable IS the rule it names. An assignment's absence and
+    shape refusals have no such observable, so their rule is dropped here and only
+    the human-readable detail survives; a refusal whose rule is in *keep* is
+    re-raised whole.
     """
     try:
         judge()
     except RejectionError as exc:
+        if exc.rule in keep:
+            raise
         return exc.detail
     return None
 

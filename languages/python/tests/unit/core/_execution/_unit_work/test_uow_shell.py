@@ -1471,7 +1471,9 @@ def _assert_optimistic_targets_read_nothing(held: HeldRows) -> None:
     assert all(isinstance(request, CoverageReadRequest) for request in held.requests)
 
 
-def _shell_barrier() -> PreparedPredicateWrite:
+def _shell_barrier(
+    assignments: tuple[WriteAssignment, ...] = (WriteAssignment("ShellTag.label", "q"),),
+) -> PreparedPredicateWrite:
     barrier = prepare_wire_write(
         PredicateWriteInstruction(
             "amend",
@@ -1481,12 +1483,39 @@ def _shell_barrier() -> PreparedPredicateWrite:
                     "eq", predicate_algebra.FieldSubject("ShellTag.id"), 1
                 ),
             ),
-            assignments=(WriteAssignment("ShellTag.label", "q"),),
+            assignments=assignments,
         ),
         _BARRIERED,
     )
     assert isinstance(barrier, PreparedPredicateWrite)
     return barrier
+
+
+def test_an_empty_predicate_write_is_refused_once_the_lifetime_has_ended() -> None:
+    captured: dict[str, UnitOfWork] = {}
+
+    def body(tx: UnitOfWork) -> None:
+        captured["tx"] = tx
+
+    _run(body, meta=_BARRIERED)
+    with pytest.raises(EscapedTransactionError):
+        captured["tx"].buffer_predicate(_shell_barrier(assignments=()))
+
+
+def test_a_doomed_lifetime_refuses_an_empty_predicate_write() -> None:
+    lifetime = TxnAttemptLifetime()
+
+    refused: list[RollbackOnlyError] = []
+
+    def body(tx: UnitOfWork) -> None:
+        lifetime.doom(RuntimeError("doomed"))
+        with pytest.raises(RollbackOnlyError) as exc:
+            tx.buffer_predicate(_shell_barrier(assignments=()))
+        refused.append(exc.value)
+
+    with pytest.raises(RollbackOnlyError):
+        _run(body, meta=_BARRIERED, lifetime=lifetime)
+    assert refused
 
 
 def _opening_geometry(plan: WritePlan) -> set[tuple[object, object, object]]:

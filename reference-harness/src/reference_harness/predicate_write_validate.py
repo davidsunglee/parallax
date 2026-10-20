@@ -151,7 +151,9 @@ def _assert_replacement(entity: Entity, row: Any) -> None:
     replacement*): it names declared members only and omits no required one,
     and every member it states but the primary key is one a caller may
     assign. The predicate selects the rows, so a stated key addresses nothing:
-    it need only be a value of its declared type, and is never written."""
+    it need only be a value of its declared type, and is never written. A
+    stated literal its member's declared type cannot decode is refused with
+    its ``neutral-literal-*`` rule."""
     if not isinstance(row, dict):  # pragma: no cover - structural schema guard
         raise PredicateWriteValidationError("a predicate replacement needs a row")
     unknown = undeclared_members(entity, row)
@@ -165,13 +167,10 @@ def _assert_replacement(entity: Entity, row: Any) -> None:
             (candidate for candidate in entity.attributes if candidate["name"] == name), None
         )
         if attribute is not None and attribute.get("primaryKey"):
-            if not literal_matches_type(value, attribute.get("type")):
-                raise PredicateWriteValidationError(
-                    f"replacement key {name!r} does not match declared type "
-                    f"{attribute.get('type')!r}"
-                )
+            if value is not None:
+                decode_typed_literal(value, attribute.get("type"), f"{entity.name}.{name}")
             continue
-        violation = assignment_violation(entity, name, value)
+        violation = assignment_violation(entity, name, value, classify_literals=True)
         if violation is not None:
             raise PredicateWriteValidationError(violation)
 
