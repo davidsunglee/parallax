@@ -2,9 +2,9 @@
 
 A Float32 cell must arrive as the binary32 value the server stored, not as the
 nearest binary64 to its shortest spelling. The carrier is more than a displayed
-value: it is the coordinate a stream resumes after, a payload retained by locking
-streams and keyed writes, and the predecessor an acquiring write weighs its
-assignment against. Included graphs correlate through integral identities. Expected
+value: it is the coordinate a stream resumes after, and a payload retained by
+locking streams and keyed writes. Included graphs correlate through integral
+identities. Expected
 values come from independent binary32 oracles, never from a float parse.
 """
 
@@ -58,6 +58,14 @@ class Reading(Entity, table="nf_reading", namespace=_NAMESPACE):
     f64: Attr[float]
 
 
+class Gauge(Entity, table="nf_gauge", namespace=_NAMESPACE):
+    """``Reading`` unversioned, which a predicate write can change."""
+
+    id: Attr[int] = attr(primary_key=True)
+    f32: Attr[float] = attr(type=Float32)
+    f64: Attr[float]
+
+
 class Sheet(Entity, table="nf_sheet", namespace=_NAMESPACE, layout=Document()):
     id: Attr[int] = attr(primary_key=True)
     f32: Attr[float] = attr(type=Float32)
@@ -70,6 +78,13 @@ class Sample(ValueObject):
 class Plot(Entity, table="nf_plot", namespace=_NAMESPACE):
     id: Attr[int] = attr(primary_key=True)
     version: Attr[int] = attr(type=Int32, optimistic_locking=True)
+    sample: Attr[Sample]
+
+
+class Chart(Entity, table="nf_chart", namespace=_NAMESPACE):
+    """``Plot`` unversioned, which a predicate write can change."""
+
+    id: Attr[int] = attr(primary_key=True)
     sample: Attr[Sample]
 
 
@@ -108,7 +123,7 @@ class Stock(Asset, table="nf_stock", namespace=_NAMESPACE, inheritance=ConcreteS
 
 
 _WIRE_PACKAGE = str(Path(wire_codec.__file__).parent)
-_MODEL = DomainModel(Reading, Sheet, Plot, Marker, Parent, Child, Asset, Bond, Stock)
+_MODEL = DomainModel(Reading, Gauge, Sheet, Plot, Chart, Marker, Parent, Child, Asset, Bond, Stock)
 
 type Representation = Literal["typed", "wire"]
 type Direction = Literal["asc", "desc"]
@@ -249,13 +264,19 @@ type Writer = Literal["insert", "keyed", "predicate"]
 _WRITERS: tuple[Writer, ...] = ("insert", "keyed", "predicate")
 
 
-def _insert_widths(representation: Representation, widths: Iterable[tuple[int, float, float]]):
+def _insert_widths(
+    representation: Representation,
+    widths: Iterable[tuple[int, float, float]],
+    entity: type[Reading | Gauge] = Reading,
+):
     def insert(tx: TxnContext) -> None:
         for key, f32, f64 in widths:
             if representation == "typed":
-                tx.insert(Reading(id=key, f32=f32, f64=f64))
+                tx.insert(entity(id=key, f32=f32, f64=f64))
             else:
-                tx.wire.insert(f"{_NAMESPACE}.Reading", {"id": key, "f32": f32, "f64": f64})
+                tx.wire.insert(
+                    f"{_NAMESPACE}.{entity.__name__}", {"id": key, "f32": f32, "f64": f64}
+                )
 
     return insert
 
@@ -278,14 +299,12 @@ def _predicate_widths(representation: Representation, widths: Mapping[int, tuple
     def update(tx: TxnContext) -> None:
         for key, (f32, f64) in widths.items():
             if representation == "typed":
-                tx.amend_where(
-                    Reading.where(Reading.id == key), Reading.f32.set(f32), Reading.f64.set(f64)
-                )
+                tx.amend_where(Gauge.where(Gauge.id == key), Gauge.f32.set(f32), Gauge.f64.set(f64))
             else:
                 tx.wire.amend_where(
                     {
-                        "entity": f"{_NAMESPACE}.Reading",
-                        "predicate": {"eq": {"path": f"{_NAMESPACE}.Reading.id", "value": key}},
+                        "entity": f"{_NAMESPACE}.Gauge",
+                        "predicate": {"eq": {"path": f"{_NAMESPACE}.Gauge.id", "value": key}},
                     },
                     {"f32": f32, "f64": f64},
                 )
@@ -295,24 +314,27 @@ def _predicate_widths(representation: Representation, widths: Mapping[int, tuple
 
 def _write_widths(
     db: ScopedDatabase, representation: Representation, writer: Writer
-) -> Mapping[int, tuple[float, float]]:
+) -> tuple[Mapping[int, tuple[float, float]], type[Reading | Gauge]]:
+    """The widths ``writer`` stored, and the Entity it stored them in."""
     widths = dict(zip(_WIDTH_IDS, zip(_FLOAT32_WIDTHS, _FLOAT64_WIDTHS, strict=True), strict=True))
     if writer == "insert":
         db.transact(_insert_widths(representation, ((k, *v) for k, v in widths.items())))
-    else:
-        db.transact(_insert_widths("typed", ((key, 1.5, 2.5) for key in widths)))
-        write = _keyed_widths if writer == "keyed" else _predicate_widths
-        db.transact(write(representation, widths))
-    return widths
+        return widths, Reading
+    entity = Reading if writer == "keyed" else Gauge
+    db.transact(_insert_widths("typed", ((key, 1.5, 2.5) for key in widths), entity))
+    write = _keyed_widths if writer == "keyed" else _predicate_widths
+    db.transact(write(representation, widths))
+    return widths, entity
 
 
 type Reader = Literal["typed-eager", "typed-stream", "wire-eager", "wire-stream"]
 _READERS: tuple[Reader, ...] = ("typed-eager", "typed-stream", "wire-eager", "wire-stream")
 
 
-def _read_readings(db: ScopedDatabase, reader: Reader) -> list[Any]:
-    typed = Reading.where(Reading.all).order_by(Reading.id.asc())
-    wire = _wire_query("Reading", orderBy=_wire_order("Reading", "id"))
+def _read_readings(db: ScopedDatabase, reader: Reader, entity: type[Any] = Reading) -> list[Any]:
+    typed = entity.where(entity.all).order_by(entity.id.asc())
+    name = entity.__name__
+    wire = _wire_query(name, orderBy=_wire_order(name, "id"))
     expected = len(_FLOAT32_WIDTHS)
     match reader:
         case "typed-eager":
@@ -325,9 +347,11 @@ def _read_readings(db: ScopedDatabase, reader: Reader) -> list[Any]:
             return _drained(db.wire.stream(wire, batch_size=1), expected=expected)
 
 
-def _assert_widths_read_back(db: Any, widths: Mapping[int, tuple[float, float]]) -> None:
+def _assert_widths_read_back(
+    db: Any, widths: Mapping[int, tuple[float, float]], entity: type[Reading | Gauge] = Reading
+) -> None:
     for reader in _READERS:
-        rows = _read_readings(db, reader)
+        rows = _read_readings(db, reader, entity)
         observed = [(_field(row, "id"), _field(row, "f32"), _field(row, "f64")) for row in rows]
         render32 = _wire32 if reader.startswith("wire") else _stored32
         expected = [
@@ -344,20 +368,21 @@ def test_every_width_edge_reads_back_exactly_and_rewriting_it_keeps_its_bits(
     profile_run: Any, representation: Representation, writer: Writer
 ) -> None:
     db = _served(profile_run)
-    widths = _write_widths(db, representation, writer)
-    _assert_widths_read_back(db, widths)
+    widths, entity = _write_widths(db, representation, writer)
+    _assert_widths_read_back(db, widths, entity)
 
-    # A predicate write weighs what it states against the rows it selected, so
-    # it finds nothing to write; a keyed write assigns what it states
-    # literally, so each row is rewritten — to exactly the bits it held.
-    versions = {row.id: row.version for row in _read_readings(db, "typed-eager")}
-    db.transact(_predicate_widths(representation, widths))
-    assert {row.id: row.version for row in _read_readings(db, "typed-eager")} == versions
-    db.transact(_keyed_widths(representation, widths))
-    assert {row.id: row.version for row in _read_readings(db, "typed-eager")} == {
-        key: version + 1 for key, version in versions.items()
-    }
-    _assert_widths_read_back(db, widths)
+    # Each row is rewritten with what it states — to exactly the bits it held. A
+    # keyed write assigns literally, so each version advances; a predicate write
+    # writes every row it selects.
+    if entity is Reading:
+        versions = {row.id: row.version for row in _read_readings(db, "typed-eager")}
+        db.transact(_keyed_widths(representation, widths))
+        assert {row.id: row.version for row in _read_readings(db, "typed-eager")} == {
+            key: version + 1 for key, version in versions.items()
+        }
+    else:
+        db.transact(_predicate_widths(representation, widths))
+    _assert_widths_read_back(db, widths, entity)
 
 
 _NONFINITE = (math.nan, math.inf, -math.inf)
@@ -389,21 +414,23 @@ def test_a_nonfinite_float_is_refused_before_any_write(
 def _restate_samples(representation: Representation, writer: Writer):
     def restate(tx: TxnContext) -> None:
         if representation == "typed":
-            for row in tx.find(Plot.where(Plot.all)).results():
-                sample = Sample(f32=row.sample.f32)
-                if writer == "keyed":
-                    tx.amend(row.edit(sample=sample))
-                else:
-                    tx.amend_where(Plot.where(Plot.id == row.id), Plot.sample.set(sample))
+            if writer == "keyed":
+                for row in tx.find(Plot.where(Plot.all)).results():
+                    tx.amend(row.edit(sample=Sample(f32=row.sample.f32)))
+            else:
+                for chart in tx.find(Chart.where(Chart.all)).results():
+                    sample = Sample(f32=chart.sample.f32)
+                    tx.amend_where(Chart.where(Chart.id == chart.id), Chart.sample.set(sample))
         else:
-            for node in tx.wire.find(_wire_query("Plot")).results():
+            name = "Plot" if writer == "keyed" else "Chart"
+            for node in tx.wire.find(_wire_query(name)).results():
                 sample = {"f32": cast("Mapping[str, object]", node["sample"])["f32"]}
                 if writer == "keyed":
                     tx.wire.amend(node, {"sample": sample})
                 else:
-                    target = {"path": f"{_NAMESPACE}.Plot.id", "value": node["id"]}
+                    target = {"path": f"{_NAMESPACE}.Chart.id", "value": node["id"]}
                     tx.wire.amend_where(
-                        {"entity": f"{_NAMESPACE}.Plot", "predicate": {"eq": target}},
+                        {"entity": f"{_NAMESPACE}.Chart", "predicate": {"eq": target}},
                         {"sample": sample},
                     )
 
@@ -416,23 +443,24 @@ def test_restating_a_value_object_float32_leaf_as_read_keeps_its_bits(
     profile_run: Any, representation: Representation, writer: Writer
 ) -> None:
     db = _served(profile_run)
+    entity: type[Any] = Plot if writer == "keyed" else Chart
     db.transact(
         lambda tx: [
-            tx.insert(Plot(id=key, sample=Sample(f32=f32)))
+            tx.insert(entity(id=key, sample=Sample(f32=f32)))
             for key, f32 in zip(_WIDTH_IDS, _FLOAT32_WIDTHS, strict=True)
         ]
     )
 
     db.transact(_restate_samples(representation, writer))
 
-    # The keyed restatement is a literal assignment and advances the version;
-    # the predicate one finds no selected row it changes.
-    version = 2 if writer == "keyed" else 1
-    plots = db.find(Plot.where(Plot.all).order_by(Plot.id.asc())).results()
+    rows = db.find(entity.where(entity.all).order_by(entity.id.asc())).results()
     authored = zip(_WIDTH_IDS, _FLOAT32_WIDTHS, strict=True)
-    assert [(row.id, row.version, _bits(row.sample.f32)) for row in plots] == [
-        (key, version, _bits(_stored32(f32))) for key, f32 in authored
+    assert [(row.id, _bits(row.sample.f32)) for row in rows] == [
+        (key, _bits(_stored32(f32))) for key, f32 in authored
     ]
+    if entity is Plot:
+        # The keyed restatement is a literal assignment and advances the version.
+        assert {row.version for row in db.find(Plot.where(Plot.all)).results()} == {2}
 
 
 # --------------------------------------------------------------------------- #

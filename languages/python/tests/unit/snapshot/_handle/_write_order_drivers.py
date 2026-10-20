@@ -46,6 +46,7 @@ from typing import Any, Final, Literal, cast
 
 from parallax.conformance.vo_models import ContactAddress, ContactGeo, ContactPhone, ContactPoint
 from parallax.core import DomainModel, Predicate
+from parallax.core._execution._unit_work.instructions import InstructionRejectedError
 from parallax.core.base import SQL_NULL, DocumentValue, PresentDocument
 from parallax.core.db_port import MappingRow
 from parallax.core.entity import AttributeAssignment
@@ -677,12 +678,9 @@ class PredicateTarget:
     """One predicate-write target, addressable from both representations.
 
     ``entity_class`` spells the Typed selection and ``entity`` the Wire one, over
-    the same key. ``row`` is what a resolving read of that selection answers,
-    and ``materializes`` whether an admitted write makes that read at all: the
-    port is scripted for it, so a write that reads when it should not, or the
-    reverse, fails at the unscripted call. ``fresh`` and ``payload`` open an
-    unrelated object of the same Entity, in each representation, for the rows
-    whose claim is what a pending write does around the predicate write.
+    the same key. ``fresh`` and ``payload`` open an unrelated object of the same
+    Entity, in each representation, for the rows whose claim is what a pending
+    write does around the predicate write.
     """
 
     name: str
@@ -690,8 +688,6 @@ class PredicateTarget:
     model: DomainModel
     entity: str
     entity_class: type[EntityBase]
-    row: MappingRow
-    materializes: bool
     typed_change: AttributeAssignment[Any]
     wire_change: Mapping[str, object]
     typed_undeclared: AttributeAssignment[Any]
@@ -708,8 +704,6 @@ PERSON_SELECTION: Final = PredicateTarget(
     model=PERSON,
     entity=_PERSON,
     entity_class=mm.Person,
-    row={"id": 1, "name": "Ada"},
-    materializes=False,
     typed_change=mm.Person.name.set("Grace"),
     wire_change={"name": "Grace"},
     typed_undeclared=mm.Account.owner.set("Grace"),
@@ -723,11 +717,11 @@ ACCOUNT_SELECTION: Final = PredicateTarget(
     model=ACCOUNT,
     entity=_ACCOUNT,
     entity_class=mm.Account,
-    row={"id": 1, "owner": "Ada", "balance": Decimal("100.00"), "version": 4},
-    materializes=True,
     typed_change=mm.Account.balance.set(Decimal("125.00")),
     wire_change={"balance": "125.00"},
     typed_undeclared=mm.Person.name.set("Grace"),
+    fresh=lambda: mm.Account(id=9, owner="Newton", balance=Decimal("5.00")),
+    payload={"id": 9, "owner": "Newton", "balance": "5.00"},
 )
 
 BALANCE_SELECTION: Final = PredicateTarget(
@@ -736,8 +730,6 @@ BALANCE_SELECTION: Final = PredicateTarget(
     model=BALANCE,
     entity=_BALANCE,
     entity_class=mm.Balance,
-    row=balance_row(in_z=_TX_START),
-    materializes=True,
     typed_change=mm.Balance.value.set(Decimal("125.00")),
     wire_change={"value": "125.00"},
     typed_undeclared=mm.Person.name.set("Grace"),
@@ -749,8 +741,6 @@ POSITION_SELECTION: Final = PredicateTarget(
     model=WHERE_POSITION_META,
     entity=_POSITION,
     entity_class=WherePosition,
-    row=_position_row(1, "A", Decimal("100.00"), _TX_START),
-    materializes=True,
     typed_change=WherePosition.value.set(Decimal("300.00")),
     wire_change={"value": "300.00"},
     typed_undeclared=mm.Person.name.set("Grace"),
@@ -768,8 +758,6 @@ CARD_PAYMENT_SELECTION: Final = PredicateTarget(
     model=PAYMENT,
     entity="parallax.compatibility.CardPayment",
     entity_class=im.CardPayment,
-    row={"id": 1, "amount": Decimal("1.00"), "card_network": "visa"},
-    materializes=False,
     typed_change=im.CardPayment.card_network.set("visa"),
     wire_change={"cardNetwork": "visa"},
     typed_undeclared=im.Payment.amount.set(Decimal("1.00")),
@@ -784,8 +772,6 @@ UNDECLARED_SELECTION: Final = PredicateTarget(
     model=PERSON,
     entity=_ACCOUNT,
     entity_class=mm.Account,
-    row={"id": 1, "owner": "Ada", "balance": Decimal("100.00"), "version": 4},
-    materializes=False,
     typed_change=mm.Account.owner.set("Grace"),
     wire_change={"owner": "Grace"},
     typed_undeclared=mm.Person.name.set("Grace"),
@@ -1125,13 +1111,15 @@ def _refused(raised: Exception, phase: Phase, port: ScriptedAdapter) -> Refused:
     ``ExecutionFailure``; what the order judged is that cause, so it is
     reported unwrapped, exactly as a refusal raised obtaining an outside source is.
     """
-    return Refused(
-        type(raised),
-        cast("str | None", getattr(raised, "code", None)),
-        str(raised),
-        phase,
-        tuple(port.calls),
-    )
+    return Refused(type(raised), _code(raised), str(raised), phase, tuple(port.calls))
+
+
+def _code(raised: Exception) -> str | None:
+    """The classification ``raised`` carries: its own ``code``, or the closed
+    pre-SQL rule an instruction refusal names."""
+    if isinstance(raised, InstructionRejectedError):
+        return raised.rule
+    return cast("str | None", getattr(raised, "code", None))
 
 
 def outcome(scenario: WriteScenario, representation: Representation) -> Outcome:
@@ -1153,14 +1141,14 @@ def outcome(scenario: WriteScenario, representation: Representation) -> Outcome:
             lambda: _assert_the_target_reads_were_reached(port, scenario),
         )
     if isinstance(scenario, PredicateWriteScenario):
-        port = _predicate_port(scenario)
+        port = _predicate_port()
         return _observed(
             port,
             db_for(scenario.target.model, port),
             scenario.concurrency,
             lambda _db: None,
             lambda tx, _prior: _predicate_body(tx, scenario, representation),
-            lambda: _assert_the_resolving_read_was_reached(port, scenario),
+            lambda: None,
         )
     port = _port(scenario)
     return _observed(
@@ -1510,32 +1498,11 @@ def _open(tx: TxnContext, scenario: KeyedWriteScenario) -> object:
     return tx.wire.insert(target.entity, dict(target.payload), **stated_start(target.valid_from))
 
 
-def _predicate_port(scenario: PredicateWriteScenario) -> ScriptedAdapter:
-    """A port scripted for the one resolving read a materializing target makes,
-    the pending insert that read force-flushes ahead of it, and a DML budget.
-
-    A readless target is scripted no read at all, so a predicate write that read
-    where its target admits a readless one fails at the call. A refusal consumes
-    nothing, so its whole chronology is the boundary's begin and rollback.
-    """
-    target = scenario.target
-    writes = Write(times=8)
-    if not target.materializes:
-        return ScriptedAdapter(Transact(writes))
-    read = Read(rows=[dict(target.row)])
-    if scenario.pending:
-        return ScriptedAdapter(Transact(Write(), read, writes))
-    return ScriptedAdapter(Transact(read, writes))
-
-
-def _assert_the_resolving_read_was_reached(
-    port: ScriptedAdapter, scenario: PredicateWriteScenario
-) -> None:
-    """Fail a row that completed without the resolving read its target makes."""
-    reads = sum(1 for call in port.calls if isinstance(call, ReadCall))
-    expected = int(scenario.target.materializes)
-    if reads != expected:
-        raise AssertionError(f"{scenario}: {expected} scripted read(s), {reads} run")
+def _predicate_port() -> ScriptedAdapter:
+    """A port scripted for DML alone: a predicate write reads nothing, so one
+    that reads fails at the unscripted call. A refusal consumes nothing, so its
+    whole chronology is the boundary's begin and rollback."""
+    return ScriptedAdapter(Transact(Write(times=8)))
 
 
 def _predicate_body(

@@ -646,15 +646,7 @@ was handed — the same distinction the `access` placement of `stepGraphs` draws
 For a `mutate`, what is reported is the derived Wire mapping after its authored
 assignments replace their bindings whole, never a re-read of the unchanged row.
 
-One read step reports no entry: the resolving read of a **materializing predicate
-write** (`m-case-format` *Materializing cases*). That read is the write's own
-internal resolve — an implementation performs it while planning the write and
-hands its rows to no caller, and an adapter that executed the find separately
-would resolve twice and report a Database Call the case does not count. What
-holds an implementation to that step is what the case already states about it:
-its golden read statement, which fixes the projection the resolve carries, and
-the per-row binds the write then emits, which the planner derived from those very
-rows. Every other read step owns an entry. A `mutate` owns one exactly when it
+Every read step owns an entry. A `mutate` owns one exactly when it
 declares `expectRows`, and any step that owns an entry and is missing it is an
 unanswered oracle rather than a pass.
 

@@ -1,48 +1,41 @@
 """Predicate-selected (`*_where`) write unit tests for `parallax.snapshot._handle`.
 
-The set-based verb family covers the
-mutation-compatibility guard, Assignment composition, inheritance rejection,
-Valid-Time-bound validation, readless
-dispatch for an unversioned non-temporal target, and materialization — the
-resolving read's need-sensitive projection, per-row no-op elimination, and
-atomic-unit buffering (ADR 0014) — across audit-only, bitemporal, and versioned
-non-temporal targets.
+The set-based verb family covers the mutation-compatibility guard, Assignment
+composition, inheritance rejection, the readless statement an unversioned
+non-temporal target buffers, and the refusal of every target that needs an
+observation (`m-batch-write`).
 
-No-op elimination is covered from both sides: through a whole write's emitted
-statements, and through the codec's prepared comparison driven directly off
-positional rows over these models' own shapes, under `Columns` layout and
-Relational Document Layout alike. Acquisition itself is graded as the one
-traversal of the resolved roots inside the resolving Read, with the Unit of
-Work left untouched until that traversal has judged every root.
+The codec's effective-change comparison is driven directly off positional rows
+over these models' own shapes, under `Columns` layout and Relational Document
+Layout alike.
 """
 
 from __future__ import annotations
 
 import datetime as dt
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Any, cast
+from typing import Any, Final, cast
 from uuid import UUID
 
 import pytest
 
 from parallax.conformance import case_format, engine
 from parallax.conformance._lanes import scenario
-from parallax.conformance._lifecycle_recording import RecordingLifecycleProvider
+from parallax.conformance.class_models import MODELS
 from parallax.conformance.graph_models import POLICY_MODEL, Policy
+from parallax.conformance.read_models import Balance
 from parallax.conformance.scripted_clock import FixedClock
-from parallax.conformance.story_models import Order, OrderItem
+from parallax.conformance.story_models import Account, Order, OrderItem
 from parallax.core import (
     TX_TIME,
     Attr,
-    Bitemporal,
     Document,
     DomainModel,
     Entity,
     Int32,
-    ObjectQuery,
     Predicate,
     QueryDefinitionError,
     TxTemporal,
@@ -52,23 +45,15 @@ from parallax.core import (
 )
 from parallax.core._execution._family import comparison_shape
 from parallax.core._execution._publication import write_projection
-from parallax.core._execution._transaction import _attempt as attempt_module
-from parallax.core._execution._unit_work import acquisition as acquisition_module
 from parallax.core._execution._unit_work import instructions
 from parallax.core.base import (
     INFINITY,
-    SQL_NULL,
-    DocumentValue,
     FrozenMap,
-    InstantError,
-    PresentDocument,
 )
-from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import JsonDocument, MappingRow
+from parallax.core.db_port import JsonDocument
 from parallax.core.dialect import POSTGRES
 from parallax.core.document_codec import (
     MemberShape,
-    PreparedEffectiveChange,
     prepare_effective_change,
 )
 from parallax.core.entity._authored_resolver import typed_interpretation
@@ -77,156 +62,41 @@ from parallax.core.entity._expressions import AuthoredPath, UnfinishedOperation
 from parallax.core.entity._layout import LayoutCatalog
 from parallax.core.entity._model import DomainModel as _Fixed
 from parallax.core.entity._model import class_index, model_of
-from parallax.core.execution import ExecutionFailure, QueryTargetError, ServingModel, prepare_model
-from parallax.core.execution_lifecycle import (
-    DirectFailure,
-    ExecutionEvent,
-    ReadFailed,
-    ReadFinished,
-)
+from parallax.core.execution import QueryTargetError, ServingModel, prepare_model
 from parallax.core.metamodel import UnresolvedEntityDeclaration
 from parallax.core.predicate import ModelRejectedError
 from parallax.core.predicate._interpretation import COMPARE
-from parallax.core.read_delivery import StoredDataDecodingError
-from parallax.core.read_delivery._page import Page
-from parallax.core.sql_gen._compile import CompiledRead
 from parallax.core.unit_work import (
-    BufferItem,
-    MaterializedWriteGroup,
-    OptimisticLockConflictError,
     PredicateWriteInstruction,
-    StaleWriteError,
-    UnitOfWork,
-    WriteEvidenceError,
 )
-from parallax.core.write_plan import (
-    ChunkedColumnBuilder,
-    EntityStateRow,
-    PredecessorRow,
-    PredecessorRows,
-    PredecessorRowsBuilder,
-)
-from parallax.core.write_plan.columns import ColumnSlice
 from parallax.snapshot import (
     Database,
-    Snapshot,
     TxnContext,
-    connect,
 )
 from parallax.snapshot._handle import _typed_writes as typed_writes
-from parallax.snapshot._publication._root import RootView
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
     BeginCall,
     CommitCall,
-    Read,
     ReadCall,
-    RollbackCall,
     ScriptedAdapter,
     Transact,
     Write,
     WriteCall,
-    inserted_rows,
 )
 from tests._support.root_ownership import own_root
-from tests.unit import _milestone_rows_support as milestone_rows
 from tests.unit._document_layout_support import document_model
 from tests.unit._document_layout_support import entity as document_layout_entity
-from tests.unit._gc_reachability import reachable_objects
 from tests.unit._positional_row_support import positional_row
 from tests.unit._transact_support import (
     ACCOUNT,
-    BALANCE,
     FIXED,
     ORDERS,
     PAYMENT,
     PERSON,
     RATE,
-    WriteDocumentBinds,
-    account_db,
 )
-from tests.unit._where_position_model import (
-    WHERE_POSITION_META,
-    WherePosition,
-)
-
-
-# A local Transaction-Time-Only, value-object-bearing entity with the
-# `supplier.yaml` shape from `m-value-object-047`. The minimal self-contained
-# fixture keeps this predicate-write test independent of the broader model
-# mirror.
-class WhereLedgerAddress(ValueObject):
-    city: Attr[str]
-
-
-class WhereLedger(TxTemporal, table="where_ledger", namespace="parallax.compatibility"):
-    id: Attr[int] = attr(primary_key=True)
-    name: Attr[str] = attr(max_length=64)
-    address: Attr[WhereLedgerAddress | None]
-
-
-_WHERE_LEDGER_META = DomainModel(WhereLedger)
-
-
-# A local bitemporal, value-object-bearing entity combines `WherePosition`'s
-# two axes with `WhereLedger`'s value-object shape. No corpus case exercises
-# this predicate-update combination (`m-case-format.md:727`).
-class WhereRectangleAddress(ValueObject):
-    city: Attr[str]
-
-
-class WhereRectangle(Bitemporal, table="where_rectangle", namespace="parallax.compatibility"):
-    id: Attr[int] = attr(primary_key=True)
-    acct_num: Attr[str] = attr(max_length=32)
-    value: Attr[Decimal] = attr(precision=18, scale=2)
-    address: Attr[WhereRectangleAddress | None]
-
-
-_WHERE_RECTANGLE_META = DomainModel(WhereRectangle)
-
-
-# A local versioned non-temporal, value-object-bearing entity mirrors
-# `models/subscriber.yaml`. Its two value objects prove minimal-read discipline:
-# the resolving read projects only the assigned document, never every declared
-# document.
-class WhereSubscriberAddress(ValueObject):
-    city: Attr[str]
-
-
-class WhereSubscriberProfile(ValueObject):
-    bio: Attr[str]
-
-
-class WhereSubscriber(Entity, table="where_subscriber", namespace="parallax.compatibility"):
-    id: Attr[int] = attr(primary_key=True)
-    version: Attr[int] = attr(type=Int32, optimistic_locking=True)
-    address: Attr[WhereSubscriberAddress | None]
-    profile: Attr[WhereSubscriberProfile]
-
-
-_WHERE_SUBSCRIBER_META = DomainModel(WhereSubscriber)
-
-
-# A versioned entity whose occurrence carries a nested `many`. That member is the
-# one position an authored document may leave out and still state the value the
-# row already holds, because a `many` has no absent state.
-class WhereRosterPhone(ValueObject):
-    number: Attr[str | None]
-
-
-class WhereRosterAddress(ValueObject):
-    city: Attr[str | None]
-    phones: Attr[tuple[WhereRosterPhone, ...]]
-
-
-class WhereRoster(Entity, table="where_roster", namespace="parallax.compatibility"):
-    id: Attr[int] = attr(primary_key=True)
-    version: Attr[int] = attr(type=Int32, optimistic_locking=True)
-    address: Attr[WhereRosterAddress | None]
-
-
-_WHERE_ROSTER_META = DomainModel(WhereRoster)
 
 
 class WhereManagedOccurrence(ValueObject):
@@ -253,30 +123,9 @@ class WhereManagedSubscriber(
 _WHERE_MANAGED_SUBSCRIBER_META = DomainModel(WhereManagedSubscriber)
 
 
-class WhereBinary(Entity, table="where_binary", namespace="parallax.compatibility"):
-    id: Attr[int] = attr(primary_key=True)
-    version: Attr[int] = attr(type=Int32, optimistic_locking=True)
-    payload: Attr[bytes]
-
-
-_WHERE_BINARY_META = DomainModel(WhereBinary)
-
-
-class WhereBinaryLedger(
-    TxTemporal, table="where_binary_ledger", namespace="parallax.compatibility"
-):
-    id: Attr[int] = attr(primary_key=True)
-    name: Attr[str] = attr(max_length=64)
-    payload: Attr[bytes]
-
-
-_WHERE_BINARY_LEDGER_META = DomainModel(WhereBinaryLedger)
-
-
 # A local Transaction-Time-Only entity under Relational Document Layout: the two
 # axis bounds keep Columns of their own and every domain member lives in the
-# shared Structured Column, so its resolving read is the one lane that both
-# retains a real stored document and patches a successor from it.
+# shared Structured Column.
 class WhereVoyageManifest(ValueObject):
     cargo: Attr[str | None]
 
@@ -290,30 +139,6 @@ class WhereVoyage(
 
 
 _WHERE_VOYAGE_META = DomainModel(WhereVoyage)
-
-
-# A local Bitemporal entity under Relational Document Layout. A rectangle split's
-# head and tail CARRY the predecessor's document with nothing patched into them,
-# so they are where the retained document reaches a bind unaltered; `stops` makes
-# that document carry an array as well as a nested object.
-class WhereCharterStop(ValueObject):
-    port: Attr[str]
-
-
-class WhereCharterTerms(ValueObject):
-    clause: Attr[str | None]
-
-
-class WhereCharter(
-    Bitemporal, table="where_charter", namespace="parallax.compatibility", layout=Document()
-):
-    id: Attr[int] = attr(primary_key=True)
-    route: Attr[str | None] = attr(max_length=64)
-    terms: Attr[WhereCharterTerms | None]
-    stops: Attr[tuple[WhereCharterStop, ...]]
-
-
-_WHERE_CHARTER_META = DomainModel(WhereCharter)
 
 
 class NestedReadlessStop(ValueObject):
@@ -341,11 +166,8 @@ _NESTED_READLESS_META = DomainModel(NestedReadlessVoyage)
 
 
 # --------------------------------------------------------------------------- #
-# Predicate-selected `_where` verb family: the mutation-                       #
-# compatibility guard, Assignment composition, inheritance rejection, Valid-   #
-# Time-                                                                        #
-# bound validation, readless dispatch, and materialization (resolve + per-row #
-# no-op elimination + the atomic-unit buffering, ADR 0014).                    #
+# Predicate-selected `_where` verb family over a readless target: one        #
+# statement, buffered, with no read.                                           #
 # --------------------------------------------------------------------------- #
 def test_readless_update_where_buffers_one_statement_no_read() -> None:
     port = ScriptedAdapter(Transact(Write()))
@@ -702,801 +524,10 @@ def test_a_typed_predicate_write_over_python_names_is_refused_by_a_classless_mod
     assert not any(isinstance(op, (ReadCall, WriteCall)) for op in port.calls)
 
 
-def test_materializing_update_where_skips_no_op_rows_and_gates_the_rest(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def forbidden(*args: object, **kwargs: object) -> object:
-        del args, kwargs
-        raise AssertionError("predicate write entered Snapshot.wire")
-
-    monkeypatch.setattr(Snapshot, "wire", forbidden)
-    # m-opt-lock-014's own shape: TWO resolved rows, one already equal to the
-    # assigned value (skipped: no DML, no version advance), one genuinely
-    # changed (one gated per-row UPDATE).
-    port = ScriptedAdapter(
-        Transact(
-            Read(
-                rows=[
-                    {"id": 1, "owner": "Ada", "balance": Decimal("100.00"), "version": 1},
-                    {"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1},
-                ]
-            ),
-            Write(),
-        )
-    )
-
-    def fn(tx: TxnContext) -> None:
-        tx.amend_where(
-            mm.Account.where(mm.Account.balance < 200), mm.Account.balance.set(Decimal("100.00"))
-        )
-
-    account_db(port).transact(fn, concurrency="optimistic")
-    assert [type(op) for op in port.calls] == [BeginCall, ReadCall, WriteCall, CommitCall]
-    (written,) = (call for call in port.calls if isinstance(call, WriteCall))
-    write_sql, write_binds = written.sql, written.binds
-    assert write_sql == POSTGRES.to_driver_sql(
-        "update account set balance = ?, version = ? where id = ? and version = ?"
-    )
-    assert write_binds == (100.00, 2, 3, 1)  # account 1's no-op row never wrote
-
-
-def test_a_materializing_write_derives_no_row_publication(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def forbidden(*args: object, **kwargs: object) -> object:
-        del args, kwargs
-        raise AssertionError("predicate acquisition derived a row publication")
-
-    monkeypatch.setattr(CompiledRead, "publication_keys", forbidden)
-    port = ScriptedAdapter(
-        Transact(
-            Read(rows=[{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]),
-            Write(),
-        )
-    )
-
-    def fn(tx: TxnContext) -> None:
-        tx.amend_where(
-            mm.Account.where(mm.Account.balance < 200), mm.Account.balance.set(Decimal("100.00"))
-        )
-
-    account_db(port).transact(fn, concurrency="optimistic")
-    assert [type(op) for op in port.calls] == [BeginCall, ReadCall, WriteCall, CommitCall]
-
-
-def test_materializing_delete_where_writes_every_resolved_row() -> None:
-    # m-opt-lock-015's own shape: delete has no assignment equality to test,
-    # so every resolved row writes — N always equals the resolved-row count.
-    port = ScriptedAdapter(
-        Transact(
-            Read(
-                rows=[
-                    {"id": 1, "owner": "Ada", "balance": Decimal("100.00"), "version": 1},
-                    {"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1},
-                ]
-            ),
-            Write(times=2),
-        )
-    )
-
-    def fn(tx: TxnContext) -> None:
-        tx.delete_where(mm.Account.where(mm.Account.balance < 200))
-
-    account_db(port).transact(fn, concurrency="optimistic")
-    writes = [op for op in port.calls if isinstance(op, WriteCall)]
-    assert len(writes) == 2
-    assert writes[0].binds == (1, 1)
-    assert writes[1].binds == (3, 1)
-
-
-def test_materializing_write_with_zero_resolved_rows_writes_nothing() -> None:
-    # `m-batch-write` requires zero resolved rows to produce zero keyed writes.
-    # A materializing write that resolves nothing still commits
-    # cleanly, with no keyed writes at all.
-    port = ScriptedAdapter(Transact(Read(rows=[])))
-
-    def fn(tx: TxnContext) -> None:
-        tx.delete_where(mm.Account.where(mm.Account.balance < 0))
-
-    account_db(port).transact(fn)
-    (resolving,) = (call for call in port.calls if isinstance(call, ReadCall))
-    assert port.calls == [BeginCall(), resolving, CommitCall()]
-    assert not any(isinstance(op, WriteCall) for op in port.calls)
-
-
-def test_a_failed_resolving_read_propagates_as_the_call_it_made() -> None:
-    # A materializing predicate write reaches the database to resolve its
-    # predicate, and a resolve that comes back with a failure is still the call
-    # this write made: nothing reinterprets it on the way out.
-    port = ScriptedAdapter(
-        Transact(
-            Read(
-                raises=DatabaseError(
-                    category="lockWaitTimeout", native_code="55P03", message="lock wait timeout"
-                )
-            )
-        )
-    )
-
-    def fn(tx: TxnContext) -> None:
-        tx.delete_where(mm.Account.where(mm.Account.balance < 0))
-
-    with raises_contextualized(DatabaseError) as refusal:
-        account_db(port).transact(fn, max_retries=0)
-    # The resolving read is what reached the port, so the failure that escapes
-    # is that read's own: a materializing predicate write issues its resolve
-    # before it lowers a single statement of DML.
-    assert refusal.value.category == "lockWaitTimeout"
-
-
-def _two_terminate_rows() -> list[MappingRow]:
-    return [
-        {
-            "bal_id": 1,
-            "acct_num": "A",
-            "val": Decimal("150.00"),
-            "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
-            "out_z": INFINITY,
-        },
-        {
-            "bal_id": 2,
-            "acct_num": "B",
-            "val": Decimal("50.00"),
-            "in_z": dt.datetime(2024, 2, 1, tzinfo=dt.UTC),
-            "out_z": INFINITY,
-        },
-    ]
-
-
-def test_materializing_terminate_where_over_an_audit_only_target() -> None:
-    # The explicit `locking` preference: every resolved row gets its own close,
-    # in the resolving read's own resolved-row order, and every close stays
-    # UNGATED (`m-temporal-write` "a LOCKING-mode close stays ungated" — the
-    # observed-`in_z` candidate binds only under the Optimistic strategy, which
-    # `~parallax.core.opt_lock.effective_strategy` reaches for a
-    # Transaction-Time target under the default preference alone).
-    port = ScriptedAdapter(Transact(Read(rows=_two_terminate_rows()), Write(times=2)))
-
-    def fn(tx: TxnContext) -> None:
-        tx.terminate_where(mm.Balance.where(mm.Balance.value < 200))
-
-    own_root(
-        Database.connect(port, BALANCE, clock=FixedClock(FIXED))
-    ).using_database_login().transact(fn, concurrency="locking")
-    writes = [op for op in port.calls if isinstance(op, WriteCall)]
-    assert len(writes) == 2  # one Transaction-Time-only close per resolved row, no chain
-    close_sql = POSTGRES.to_driver_sql(
-        "update balance set out_z = ? where bal_id = ? and out_z = ?"
-    )
-    assert writes[0].sql == close_sql
-    assert writes[0].binds == (FIXED, 1, "infinity")
-    assert writes[1].sql == close_sql
-    assert writes[1].binds == (FIXED, 2, "infinity")
-
-
-def test_materializing_terminate_where_audit_only_gates_under_optimistic_concurrency() -> None:
-    # OPTIMISTIC mode: an audit-only close GATES on the observed `in_z`,
-    # binding LAST (`m-temporal-write`, `m-opt-lock.md:87-99`) — every
-    # resolved row's own close carries THAT row's own observed `in_z`, in
-    # resolved-row order. Each is the gated close the corpus's
-    # `m-temporal-write-006` update emits ahead of its chained insert, here with
-    # nothing chained (`m-value-object-047`'s own re-gated step 2).
-    port = ScriptedAdapter(Transact(Read(rows=_two_terminate_rows()), Write(times=2)))
-
-    def fn(tx: TxnContext) -> None:
-        tx.terminate_where(mm.Balance.where(mm.Balance.value < 200))
-
-    own_root(
-        Database.connect(port, BALANCE, clock=FixedClock(FIXED))
-    ).using_database_login().transact(fn, concurrency="optimistic")
-    writes = [op for op in port.calls if isinstance(op, WriteCall)]
-    assert len(writes) == 2
-    gated_sql = POSTGRES.to_driver_sql(
-        "update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?"
-    )
-    assert writes[0].sql == gated_sql
-    assert writes[0].binds == (
-        FIXED,
-        1,
-        "infinity",
-        dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
-    )
-    assert writes[1].sql == gated_sql
-    assert writes[1].binds == (
-        FIXED,
-        2,
-        "infinity",
-        dt.datetime(2024, 2, 1, tzinfo=dt.UTC),
-    )
-
-
-def test_materializing_update_where_audit_only_chains_the_new_value() -> None:
-    # Temporal expansion chains the instruction's OWN authored FULL row —
-    # never a separate observed payload — so materialization must merge the
-    # resolved row's own unassigned scalar payload (acct_num) forward itself.
-    port = ScriptedAdapter(
-        Transact(
-            Read(
-                rows=[
-                    {
-                        "bal_id": 1,
-                        "acct_num": "A",
-                        "val": Decimal("150.00"),
-                        "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
-                        "out_z": INFINITY,
-                    }
-                ]
-            ),
-            Write(times=2),
-        )
-    )
-
-    def fn(tx: TxnContext) -> None:
-        tx.amend_where(
-            mm.Balance.where(mm.Balance.value < 200), mm.Balance.value.set(Decimal("175.00"))
-        )
-
-    own_root(
-        Database.connect(port, BALANCE, clock=FixedClock(FIXED))
-    ).using_database_login().transact(fn)
-    writes = [op for op in port.calls if isinstance(op, WriteCall)]
-    assert len(writes) == 2  # close then chain
-    chain_sql, chain_binds = writes[1].sql, writes[1].binds
-    assert chain_sql == POSTGRES.to_driver_sql(
-        "insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)"
-    )
-    assert chain_binds == (1, "A", 175.00, FIXED, INFINITY)
-
-
-def test_materializing_update_where_audit_only_carries_the_unassigned_value_object_forward() -> (
-    None
-):
-    # `m-case-format` "Predicate-selected write instruction": an
-    # assignment-bearing `update_where` on an audit-only, value-object-bearing
-    # target must carry the resolved row's OWN `address` document FORWARD into
-    # the chained row when the caller does not itself reassign it. The
-    # projection that makes this possible is the temporal target's own complete
-    # Predecessor MappingRow, which its close-only sibling records just the same.
-    port = ScriptedAdapter(
-        Transact(
-            Read(
-                rows=[
-                    {
-                        "id": 1,
-                        "name": "Nordic Foods",
-                        "address": PresentDocument({"city": "Bergen"}),
-                        "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
-                        "out_z": INFINITY,
-                    }
-                ]
-            ),
-            Write(times=2),
-        )
-    )
-
-    def fn(tx: TxnContext) -> None:
-        tx.amend_where(
-            WhereLedger.where(WhereLedger.id == 1), WhereLedger.name.set("Baltic Traders")
-        )
-
-    own_root(
-        Database.connect(port, _WHERE_LEDGER_META, clock=FixedClock(FIXED))
-    ).using_database_login().transact(fn)
-    reads = [op for op in port.calls if isinstance(op, ReadCall)]
-    writes = [op for op in port.calls if isinstance(op, WriteCall)]
-    assert reads[0].sql == POSTGRES.to_driver_sql(
-        "select t0.id, t0.name, t0.in_z, t0.out_z, not t0.address is null, "
-        "t0.address from where_ledger t0 "
-        "where t0.id = ? and t0.out_z = ?"
-    )
-    assert len(writes) == 2  # close then chain
-    chain_sql, chain_binds = writes[1].sql, writes[1].binds
-    assert chain_sql == POSTGRES.to_driver_sql(
-        "insert into where_ledger(id, name, in_z, out_z, address) values (?, ?, ?, ?, ?)"
-    )
-    assert chain_binds == (
-        1,
-        "Baltic Traders",
-        FIXED,
-        INFINITY,
-        JsonDocument({"city": "Bergen"}),
-    )
-
-
-def test_materializing_update_where_carries_an_encoded_scalar_in_the_predecessor() -> None:
-    port = ScriptedAdapter(
-        Transact(
-            Read(
-                rows=[
-                    {
-                        "id": 1,
-                        "name": "old",
-                        "payload_hex": "0a1b",
-                        "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
-                        "out_z": INFINITY,
-                    }
-                ]
-            ),
-            Write(times=2),
-        )
-    )
-
-    def fn(tx: TxnContext) -> None:
-        tx.amend_where(
-            WhereBinaryLedger.where(WhereBinaryLedger.id == 1),
-            WhereBinaryLedger.name.set("new"),
-        )
-
-    own_root(
-        Database.connect(port, _WHERE_BINARY_LEDGER_META, clock=FixedClock(FIXED))
-    ).using_database_login().transact(fn)
-    writes = [op for op in port.calls if isinstance(op, WriteCall)]
-    assert len(writes) == 2
-    assert b"\x0a\x1b" in writes[1].binds
-
-
-def test_materializing_update_where_document_layout_patches_the_retained_document() -> None:
-    # The materializing lane is the one that reads a real stored document rather
-    # than reconstructing one, so it is where retention is observable: the resolve
-    # projects the Structured Column, the observation keeps the row's raw document,
-    # and the chained successor is that document patched — which is why
-    # `charterCode`, a key this model declares nowhere, is still in the row the
-    # chain writes, and why `manifest` rides forward with the key inside IT too.
-    stored: DocumentValue = {
-        "title": "Coastal Run",
-        "charterCode": "NB-118",
-        "manifest": {"cargo": "grain", "sealNumber": "S-4021"},
-    }
-    port = ScriptedAdapter(
-        Transact(
-            Read(
-                rows=[
-                    {
-                        "id": 1,
-                        "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
-                        "out_z": INFINITY,
-                        "payload": PresentDocument(stored),
-                    }
-                ]
-            ),
-            Write(times=2),
-        )
-    )
-
-    def fn(tx: TxnContext) -> None:
-        tx.amend_where(
-            WhereVoyage.where(WhereVoyage.id == 1), WhereVoyage.title.set("Coastal Return")
-        )
-
-    own_root(
-        Database.connect(port, _WHERE_VOYAGE_META, clock=FixedClock(FIXED))
-    ).using_database_login().transact(fn)
-    reads = [op for op in port.calls if isinstance(op, ReadCall)]
-    writes = [op for op in port.calls if isinstance(op, WriteCall)]
-    assert reads[0].sql == POSTGRES.to_driver_sql(
-        "select t0.id, t0.in_z, t0.out_z, not t0.payload is null, "
-        "t0.payload from where_voyage t0 "
-        "where t0.id = ? and t0.out_z = ?"
-    )
-    assert len(writes) == 2  # close then chain
-    chain_sql, chain_binds = writes[1].sql, writes[1].binds
-    assert chain_sql == POSTGRES.to_driver_sql(
-        "insert into where_voyage(id, in_z, out_z, payload) values (?, ?, ?, ?)"
-    )
-    assert chain_binds == (
-        1,
-        FIXED,
-        INFINITY,
-        JsonDocument(
-            {
-                "title": "Coastal Return",
-                "charterCode": "NB-118",
-                "manifest": {"cargo": "grain", "sealNumber": "S-4021"},
-            }
-        ),
-    )
-
-
-def test_materializing_terminate_where_document_layout_binds_a_carried_document_as_json() -> None:
-    # A rectangle split's head CARRIES its predecessor's document with nothing
-    # patched into it. The resolving read transferred that raw document to the
-    # group unfrozen, so the insert binds it only as the recursively immutable
-    # copy settlement makes, and a Handler can mutate nothing the bind reaches.
-    stored: DocumentValue = {
-        "route": "Oslo-Bergen",
-        "charterCode": "NB-118",
-        "terms": {"clause": "standard", "sealNumber": "S-4021"},
-        "stops": [{"port": "Kristiansand", "berth": "7"}],
-    }
-    port = ScriptedAdapter(
-        Transact(
-            Read(
-                rows=[
-                    {
-                        "id": 1,
-                        "from_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
-                        "thru_z": INFINITY,
-                        "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
-                        "out_z": INFINITY,
-                        "payload": PresentDocument(stored),
-                    }
-                ]
-            ),
-            Write(times=2),
-        )
-    )
-    valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
-
-    def fn(tx: TxnContext) -> None:
-        tx.terminate_where(WhereCharter.where(WhereCharter.id == 1), valid_from=valid_from)
-
-    handler = WriteDocumentBinds()
-    own_root(
-        Database.connect(
-            port, _WHERE_CHARTER_META, clock=FixedClock(FIXED), lifecycle_provider=handler
-        )
-    ).using_database_login().transact(fn)
-    writes = [op for op in port.calls if isinstance(op, WriteCall)]
-    assert len(writes) == 2  # close + head only (no tail)
-    head_binds = writes[1].binds
-    carried = cast("JsonDocument", head_binds[-1]).value
-    assert carried == stored
-    assert type(carried) is FrozenMap
-    assert type(cast("FrozenMap[str, object]", carried)["stops"]) is tuple
-    assert handler.documents == [carried]
-    assert handler.mutated == []
-
-
-def _position_row() -> MappingRow:
-    return {
-        "id": 1,
-        "acct_num": "A",
-        "value": Decimal("200.00"),
-        "from_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
-        "thru_z": INFINITY,
-        "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
-        "out_z": INFINITY,
-    }
-
-
-def test_materializing_plain_update_where_over_a_bitemporal_target() -> None:
-    port = ScriptedAdapter(Transact(Read(rows=[_position_row()]), Write(times=2)))
-    valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
-
-    def fn(tx: TxnContext) -> None:
-        tx.amend_where(
-            WherePosition.where(WherePosition.id == 1),
-            WherePosition.value.set(Decimal("300.00")),
-            valid_from=valid_from,
-        )
-
-    own_root(
-        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
-    ).using_database_login().transact(fn, concurrency="optimistic")
-    writes = [op for op in port.calls if isinstance(op, WriteCall)]
-    assert len(writes) == 2  # close + one insert of head (old) and new tail
-    assert len(inserted_rows(writes[1])) == 2
-
-
-def test_materializing_plain_terminate_where_over_a_bitemporal_target() -> None:
-    port = ScriptedAdapter(Transact(Read(rows=[_position_row()]), Write(times=2)))
-    valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
-
-    def fn(tx: TxnContext) -> None:
-        tx.terminate_where(WherePosition.where(WherePosition.id == 1), valid_from=valid_from)
-
-    own_root(
-        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
-    ).using_database_login().transact(fn, concurrency="optimistic")
-    writes = [op for op in port.calls if isinstance(op, WriteCall)]
-    assert len(writes) == 2  # close + head only (no tail)
-
-
-def test_materializing_bounded_update_where_over_a_bitemporal_target() -> None:
-    port = ScriptedAdapter(Transact(Read(rows=[_position_row()]), Write(times=2)))
-    valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
-    until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
-
-    def fn(tx: TxnContext) -> None:
-        tx.amend_where(
-            WherePosition.where(WherePosition.id == 1),
-            WherePosition.value.set(Decimal("300.00")),
-            valid_from=valid_from,
-            until=until,
-        )
-
-    own_root(
-        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
-    ).using_database_login().transact(fn, concurrency="optimistic")
-    writes = [op for op in port.calls if isinstance(op, WriteCall)]
-    assert len(writes) == 2  # close + one insert of head, middle, and tail
-    assert len(inserted_rows(writes[1])) == 3
-
-
-def test_materializing_bounded_terminate_where_over_a_bitemporal_target() -> None:
-    port = ScriptedAdapter(Transact(Read(rows=[_position_row()]), Write(times=2)))
-    valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
-    until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
-
-    def fn(tx: TxnContext) -> None:
-        tx.terminate_where(
-            WherePosition.where(WherePosition.id == 1), valid_from=valid_from, until=until
-        )
-
-    own_root(
-        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
-    ).using_database_login().transact(fn, concurrency="optimistic")
-    writes = [op for op in port.calls if isinstance(op, WriteCall)]
-    assert len(writes) == 2  # close + one insert of head and tail (no middle)
-    assert len(inserted_rows(writes[1])) == 2
-
-
-def test_materializing_bounded_terminate_where_writes_per_resolved_row() -> None:
-    # The single-row test above proves the per-row shape
-    # (close + head + tail); this proves the MATERIALIZE loop itself resolves
-    # and writes MULTIPLE rows, exactly like `update_where`'s / `delete_where`'s
-    # own multi-row pins -- N resolved rows -> N closes, each followed by the
-    # one insert of its own head and tail, no cross-row elision
-    # (`m-opt-lock.md` "Predicate-selected writes materialize when
-    # observations are needed").
-    port = ScriptedAdapter(
-        Transact(Read(rows=[_position_row(), {**_position_row(), "id": 2}]), Write(times=4))
-    )
-    valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
-    until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
-
-    def fn(tx: TxnContext) -> None:
-        tx.terminate_where(
-            WherePosition.where(WherePosition.value < 999),
-            valid_from=valid_from,
-            until=until,
-        )
-
-    own_root(
-        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
-    ).using_database_login().transact(fn, concurrency="optimistic")
-    writes = [op for op in port.calls if isinstance(op, WriteCall)]
-    assert len(writes) == 4  # 2 resolved rows * (close + one insert of head and tail)
-    assert [len(inserted_rows(insert)) for insert in writes[1::2]] == [2, 2]
-    assert [insert.binds[0] for insert in writes[1::2]] == [1, 2]
-
-
-def _rectangle_row(*, address: dict[str, DocumentValue] | None) -> MappingRow:
-    return {
-        "id": 1,
-        "acct_num": "A",
-        "value": Decimal("200.00"),
-        "address": SQL_NULL if address is None else PresentDocument(address),
-        "from_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
-        "thru_z": INFINITY,
-        "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
-        "out_z": INFINITY,
-    }
-
-
-def test_materializing_bitemporal_update_where_carries_the_unassigned_value_object() -> None:
-    # `m-case-format.md:727`: a bitemporal, value-object-bearing target's
-    # assignment-bearing `update_where` must project the document in its
-    # resolving read. The resolved row's own `address`
-    # rides head AND the new tail WHOLE when the caller does not itself
-    # reassign it (`m-temporal-write` "head/tail old values come from the
-    # observed prior rectangle"; `m-value-object` "the document rides every
-    # chained/split row whole" — never decomposed).
-    address: dict[str, DocumentValue] = {"city": "Helsinki"}
-    port = ScriptedAdapter(Transact(Read(rows=[_rectangle_row(address=address)]), Write(times=2)))
-    valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
-
-    def fn(tx: TxnContext) -> None:
-        tx.amend_where(
-            WhereRectangle.where(WhereRectangle.id == 1),
-            WhereRectangle.value.set(Decimal("300.00")),
-            valid_from=valid_from,
-        )
-
-    own_root(
-        Database.connect(port, _WHERE_RECTANGLE_META, clock=FixedClock(FIXED))
-    ).using_database_login().transact(fn, concurrency="optimistic")
-    reads = [op for op in port.calls if isinstance(op, ReadCall)]
-    writes = [op for op in port.calls if isinstance(op, WriteCall)]
-    assert "t0.address" in reads[0].sql  # the need-sensitive projection fired
-    assert len(writes) == 2  # close + one insert of head (old) and new tail
-    head_binds, tail_binds = inserted_rows(writes[1])
-    assert head_binds[-1] == JsonDocument(address)  # head: OLD value, unreassigned document
-    assert tail_binds[-1] == JsonDocument(address)  # new tail: NEW value, SAME document
-    assert tail_binds[2] == Decimal("300.00")  # the assigned scalar column DOES take the new value
-
-
-def test_materializing_bounded_update_where_bitemporal_carries_the_value_object_per_chain() -> None:
-    # The full rectangle split (`m-temporal-write-026..029`'s own witnessed
-    # shape, VO-free `Position`): every one of head/middle/tail carries the
-    # resolved row's own `address` forward, whole, since the caller reassigns
-    # only `value` — the document is never decomposed at any chain slot.
-    address: dict[str, DocumentValue] = {"city": "Tampere"}
-    port = ScriptedAdapter(Transact(Read(rows=[_rectangle_row(address=address)]), Write(times=2)))
-    valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
-    until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
-
-    def fn(tx: TxnContext) -> None:
-        tx.amend_where(
-            WhereRectangle.where(WhereRectangle.id == 1),
-            WhereRectangle.value.set(Decimal("300.00")),
-            valid_from=valid_from,
-            until=until,
-        )
-
-    own_root(
-        Database.connect(port, _WHERE_RECTANGLE_META, clock=FixedClock(FIXED))
-    ).using_database_login().transact(fn, concurrency="optimistic")
-    writes = [op for op in port.calls if isinstance(op, WriteCall)]
-    assert len(writes) == 2  # close + one insert of head, middle, and tail
-    head_binds, middle_binds, tail_binds = inserted_rows(writes[1])
-    assert head_binds[-1] == JsonDocument(address)
-    assert middle_binds[-1] == JsonDocument(address)
-    assert tail_binds[-1] == JsonDocument(address)
-    assert middle_binds[2] == Decimal("300.00")  # middle carries the NEW assigned value
-
-
-def test_materializing_plain_terminate_where_bitemporal_carries_the_document() -> None:
-    # `m-case-format.md:727`: a bitemporal terminate's head rectangle chains
-    # the resolved row's old
-    # payload forward (a terminate's carried head reads the predecessor's
-    # own state), so the resolving read must project the document
-    # too, even though `terminate` carries no assignments — a bitemporal
-    # target's rectangle split ALWAYS chains, unlike an AUDIT-ONLY terminate
-    # (close-only, no chained row,
-    # `test_materializing_terminate_where_audit_only_stays_document_free`,
-    # below). `m-temporal-write` "head/tail old values come from the observed
-    # prior rectangle"; `m-value-object` "the document rides every
-    # chained/split row whole".
-    address: dict[str, DocumentValue] = {"city": "Oslo"}
-    port = ScriptedAdapter(Transact(Read(rows=[_rectangle_row(address=address)]), Write(times=2)))
-    valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
-
-    def fn(tx: TxnContext) -> None:
-        tx.terminate_where(WhereRectangle.where(WhereRectangle.id == 1), valid_from=valid_from)
-
-    own_root(
-        Database.connect(port, _WHERE_RECTANGLE_META, clock=FixedClock(FIXED))
-    ).using_database_login().transact(fn, concurrency="optimistic")
-    reads = [op for op in port.calls if isinstance(op, ReadCall)]
-    writes = [op for op in port.calls if isinstance(op, WriteCall)]
-    assert "t0.address" in reads[0].sql  # the need-sensitive projection fired
-    assert len(writes) == 2  # close + head only (no tail)
-    head_binds = writes[1].binds
-    assert head_binds[-1] == JsonDocument(address)  # head: the OLD value's document, whole
-
-
-def test_materializing_bounded_terminate_where_bitemporal_carries_the_document_per_edge() -> None:
-    # `terminateUntil` opens head AND tail (no middle — the window becomes a
-    # hole in Valid Time, bounded `terminate_where`'s own docstring), and
-    # BOTH chain the resolved row's OLD payload forward
-    # (`m-temporal-write` *Temporal expansion*), so the document rides both, whole.
-    address: dict[str, DocumentValue] = {"city": "Tampere"}
-    port = ScriptedAdapter(Transact(Read(rows=[_rectangle_row(address=address)]), Write(times=2)))
-    valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
-    until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
-
-    def fn(tx: TxnContext) -> None:
-        tx.terminate_where(
-            WhereRectangle.where(WhereRectangle.id == 1), valid_from=valid_from, until=until
-        )
-
-    own_root(
-        Database.connect(port, _WHERE_RECTANGLE_META, clock=FixedClock(FIXED))
-    ).using_database_login().transact(fn, concurrency="optimistic")
-    reads = [op for op in port.calls if isinstance(op, ReadCall)]
-    writes = [op for op in port.calls if isinstance(op, WriteCall)]
-    assert "t0.address" in reads[0].sql  # the need-sensitive projection fired
-    assert len(writes) == 2  # close + one insert of head and tail (no middle)
-    head_binds, tail_binds = inserted_rows(writes[1])
-    assert head_binds[-1] == JsonDocument(address)
-    assert tail_binds[-1] == JsonDocument(address)
-
-
-def test_materializing_terminate_where_audit_only_observes_the_whole_document() -> None:
-    # An AUDIT-ONLY terminate is close-only (temporal expansion opens no chained
-    # row, the predicate-write lane's `assignment_bearing` set excludes it), so it
-    # carries no payload forward and writes no document. Its resolving read
-    # still projects one, because a Temporal Observation retains a COMPLETE
-    # Predecessor MappingRow (`m-unit-work`) whatever the topology does with it —
-    # completeness is a property of the observation, not of the verb
-    # (`m-value-object-047`, the corpus witness).
-    port = ScriptedAdapter(
-        Transact(
-            Read(
-                rows=[
-                    {
-                        "id": 1,
-                        "name": "Nordic Foods",
-                        "address": PresentDocument({"city": "Bergen"}),
-                        "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
-                        "out_z": INFINITY,
-                    }
-                ]
-            ),
-            Write(),
-        )
-    )
-
-    def fn(tx: TxnContext) -> None:
-        tx.terminate_where(WhereLedger.where(WhereLedger.id == 1))
-
-    own_root(
-        Database.connect(port, _WHERE_LEDGER_META, clock=FixedClock(FIXED))
-    ).using_database_login().transact(fn, concurrency="optimistic")
-    reads = [op for op in port.calls if isinstance(op, ReadCall)]
-    writes = [op for op in port.calls if isinstance(op, WriteCall)]
-    assert "t0.address" in reads[0].sql
-    assert len(writes) == 1  # the close alone — nothing carries the document forward
-    assert JsonDocument({"city": "Bergen"}) not in writes[0].binds
-
-
 # --------------------------------------------------------------------------- #
-# A versioned non-temporal value-object target never chains. Its resolving    #
-# read must project assigned documents so per-row no-op elimination can compare #
-# them with stored values (`m-opt-lock.md:92-95`). `profile`, which these tests #
-# never assign, proves the projection stays minimal rather than including every #
-# declared value object.                                                       #
+# The codec's effective-change comparison weighs each assigned member as the  #
+# value the row would hold.                                                    #
 # --------------------------------------------------------------------------- #
-def test_materializing_versioned_update_where_eliminates_a_no_op_value_object_row() -> None:
-    port = ScriptedAdapter(
-        Transact(
-            Read(rows=[{"id": 1, "version": 1, "address": PresentDocument({"city": "Bergen"})}])
-        )
-    )
-
-    def fn(tx: TxnContext) -> None:
-        tx.amend_where(
-            WhereSubscriber.where(WhereSubscriber.id == 1),
-            WhereSubscriber.address.set(WhereSubscriberAddress(city="Bergen")),
-        )
-
-    own_root(
-        Database.connect(port, _WHERE_SUBSCRIBER_META, clock=FixedClock(FIXED))
-    ).using_database_login().transact(fn, concurrency="optimistic")
-    # No DML and no version advance: the reassigned document is IDENTICAL to
-    # the resolved row's own stored value, so the row is eliminated entirely.
-    assert [type(op) for op in port.calls] == [BeginCall, ReadCall, CommitCall]
-
-
-def test_an_authored_occurrence_omitting_a_nested_many_is_the_zero_the_row_holds() -> None:
-    # The stored document omits `phones` and the classified reduction the resolving
-    # read applies answers `[]` for it, because a `many` has no absent state. An
-    # authored document that omits the same member states that same zero — storing
-    # it writes `[]` there — so the assignment changes nothing and the row is
-    # eliminated. Preserving the omission on the authored side alone would compare
-    # two spellings of one value unequal and advance the version for no change.
-    def rows() -> list[MappingRow]:
-        return [{"id": 1, "version": 1, "address": PresentDocument({"city": "Bergen"})}]
-
-    typed_port = ScriptedAdapter(Transact(Read(rows=rows())))
-
-    def typed(tx: TxnContext) -> None:
-        tx.amend_where(
-            WhereRoster.where(WhereRoster.id == 1),
-            WhereRoster.address.set(WhereRosterAddress(city="Bergen")),
-        )
-
-    own_root(
-        Database.connect(typed_port, _WHERE_ROSTER_META, clock=FixedClock(FIXED))
-    ).using_database_login().transact(typed, concurrency="optimistic")
-    assert [type(op) for op in typed_port.calls] == [BeginCall, ReadCall, CommitCall]
-
-    # The same value spelled as the rendered document `set` equally accepts, which
-    # reaches the comparison without a Value Object's own serialization filling the
-    # member in on the way.
-    document_port = ScriptedAdapter(Transact(Read(rows=rows())))
-
-    def document(tx: TxnContext) -> None:
-        tx.amend_where(
-            WhereRoster.where(WhereRoster.id == 1),
-            WhereRoster.address.set(cast("Any", {"city": "Bergen"})),
-        )
-
-    own_root(
-        Database.connect(document_port, _WHERE_ROSTER_META, clock=FixedClock(FIXED))
-    ).using_database_login().transact(document, concurrency="optimistic")
-    assert [type(op) for op in document_port.calls] == [BeginCall, ReadCall, CommitCall]
 
 
 def _managed_subscriber_shape() -> MemberShape:
@@ -1511,61 +542,6 @@ def _managed_subscriber_shape() -> MemberShape:
 
 def _no_op(shape: MemberShape, assigned: Mapping[str, object], row: tuple[object, ...]) -> bool:
     return not prepare_effective_change(shape, assigned, absent=ABSENT).any_effective(row)
-
-
-_ENCODED_OCCURRENCE: dict[str, DocumentValue] = {
-    "amount": "19.95",
-    "payload": "0a1b",
-    "day": "2026-08-13",
-    "time": "09:30:00",
-    "instant": "2026-08-13T13:30:00.000000Z",
-    "token": "12345678-1234-5678-1234-567812345678",
-}
-
-
-def test_an_encoded_occurrence_assignment_is_decoded_at_ingress_before_it_is_weighed() -> None:
-    # Wire ingress decodes the encoded spelling once into the managed document a
-    # resolved row's decode also produces, so a Decimal, bytes, date, time,
-    # timestamp, or UUID leaf is weighed as the host value both sides hold, for a
-    # `one` and for every element of a `many`.
-    def calls(details: dict[str, DocumentValue]) -> list[type[object]]:
-        row: MappingRow = {
-            "id": 1,
-            "version": 1,
-            "amount": Decimal("19.95"),
-            "day": dt.date(2026, 8, 13),
-            "payload_hex": "0a1b",
-            "details": PresentDocument(details),
-            "entries": PresentDocument([_ENCODED_OCCURRENCE]),
-        }
-        port = ScriptedAdapter(Transact(Read(rows=[row]), Write()))
-
-        def fn(tx: TxnContext) -> None:
-            tx.wire.amend_where(
-                {
-                    "entity": "parallax.compatibility.WhereManagedSubscriber",
-                    "predicate": {
-                        "eq": {
-                            "path": "parallax.compatibility.WhereManagedSubscriber.id",
-                            "value": 1,
-                        }
-                    },
-                },
-                {"details": _ENCODED_OCCURRENCE, "entries": [_ENCODED_OCCURRENCE]},
-            )
-
-        own_root(
-            Database.connect(port, _WHERE_MANAGED_SUBSCRIBER_META, clock=FixedClock(FIXED))
-        ).using_database_login().transact(fn, concurrency="optimistic")
-        return [type(op) for op in port.calls]
-
-    assert calls(_ENCODED_OCCURRENCE) == [BeginCall, ReadCall, CommitCall]
-    assert calls({**_ENCODED_OCCURRENCE, "amount": "19.96"}) == [
-        BeginCall,
-        ReadCall,
-        WriteCall,
-        CommitCall,
-    ]
 
 
 def test_managed_scalar_operands_are_compared_as_the_host_values_the_row_holds() -> None:
@@ -1615,117 +591,6 @@ def test_a_no_op_occurrence_is_the_one_the_write_would_store_unchanged() -> None
     assert not _no_op(shape, {"address": {"city": "Bergen"}}, row)
     assert not _no_op(shape, {"address": {"city": "Oslo"}}, row)
     assert not _no_op(shape, {"tags": []}, row)
-
-
-def test_materializing_versioned_update_where_eliminates_an_encoded_scalar_no_op() -> None:
-    port = ScriptedAdapter(Transact(Read(rows=[{"id": 1, "version": 1, "payload_hex": "0a1b"}])))
-
-    def fn(tx: TxnContext) -> None:
-        tx.amend_where(
-            WhereBinary.where(WhereBinary.id == 1),
-            WhereBinary.payload.set(b"\x0a\x1b"),
-        )
-
-    own_root(
-        Database.connect(port, _WHERE_BINARY_META, clock=FixedClock(FIXED))
-    ).using_database_login().transact(fn, concurrency="optimistic")
-    assert [type(op) for op in port.calls] == [BeginCall, ReadCall, CommitCall]
-
-
-def test_materializing_versioned_update_where_gates_a_changed_value_object_row() -> None:
-    port = ScriptedAdapter(
-        Transact(
-            Read(rows=[{"id": 1, "version": 1, "address": PresentDocument({"city": "Bergen"})}]),
-            Write(),
-        )
-    )
-
-    def fn(tx: TxnContext) -> None:
-        tx.amend_where(
-            WhereSubscriber.where(WhereSubscriber.id == 1),
-            WhereSubscriber.address.set(WhereSubscriberAddress(city="Oslo")),
-        )
-
-    own_root(
-        Database.connect(port, _WHERE_SUBSCRIBER_META, clock=FixedClock(FIXED))
-    ).using_database_login().transact(fn, concurrency="optimistic")
-    writes = [op for op in port.calls if isinstance(op, WriteCall)]
-    assert len(writes) == 1
-    assert writes[0].sql == POSTGRES.to_driver_sql(
-        "update where_subscriber set address = ?, version = ? where id = ? and version = ?"
-    )
-    assert writes[0].binds == (JsonDocument({"city": "Oslo"}), 2, 1, 1)
-
-
-def test_materializing_versioned_update_where_projects_only_the_assigned_value_object() -> None:
-    # Minimal-read discipline: the resolving read projects the ASSIGNED
-    # document (`address`) only -- never `profile`, the entity's OTHER
-    # declared value object, which this `update_where` never touches.
-    port = ScriptedAdapter(
-        Transact(
-            Read(rows=[{"id": 1, "version": 1, "address": PresentDocument({"city": "Bergen"})}]),
-            Write(),
-        )
-    )
-
-    def fn(tx: TxnContext) -> None:
-        tx.amend_where(
-            WhereSubscriber.where(WhereSubscriber.id == 1),
-            WhereSubscriber.address.set(WhereSubscriberAddress(city="Oslo")),
-        )
-
-    own_root(
-        Database.connect(port, _WHERE_SUBSCRIBER_META, clock=FixedClock(FIXED))
-    ).using_database_login().transact(fn, concurrency="optimistic")
-    reads = [op for op in port.calls if isinstance(op, ReadCall)]
-    assert reads[0].sql == POSTGRES.to_driver_sql(
-        "select t0.id, t0.version, not t0.address is null, t0.address "
-        "from where_subscriber t0 where t0.id = ?"
-    )
-
-
-def test_materializing_bounded_update_where_rejects_an_equal_window_bound() -> None:
-    # No resolving read ever fires — the window rejects at build, before any
-    # buffering (preparation, before `_materialize_predicate_write`).
-    port = ScriptedAdapter(Transact())
-    valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
-
-    def fn(tx: TxnContext) -> None:
-        tx.amend_where(
-            WherePosition.where(WherePosition.id == 1),
-            WherePosition.value.set(Decimal("300.00")),
-            valid_from=valid_from,
-            until=valid_from,
-        )
-
-    with raises_contextualized(ValueError, match="requires valid_from < until"):
-        own_root(
-            Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
-        ).using_database_login().transact(fn, concurrency="optimistic")
-    assert not any(
-        isinstance(op, (ReadCall, WriteCall)) for op in port.calls
-    )  # never reached the resolve
-
-
-def test_a_where_window_bound_of_no_datetime_type_is_no_instant_either() -> None:
-    # A bound of no datetime type is no `m-core` instant, and the shared window
-    # gate answers it with that module's own class rather than with a bare
-    # assertion — the same verdict the keyed verbs answer the same value with.
-    port = ScriptedAdapter(Transact())
-
-    def fn(tx: TxnContext) -> None:
-        tx.amend_where(
-            WherePosition.where(WherePosition.id == 1),
-            WherePosition.value.set(Decimal("300.00")),
-            valid_from=dt.datetime(2024, 7, 1, tzinfo=dt.UTC),
-            until=cast("dt.datetime", "2024-09-01"),
-        )
-
-    with raises_contextualized(InstantError, match="no `timestamp`"):
-        own_root(
-            Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
-        ).using_database_login().transact(fn, concurrency="optimistic")
-    assert not any(isinstance(op, (ReadCall, WriteCall)) for op in port.calls)
 
 
 # --------------------------------------------------------------------------- #
@@ -1845,162 +710,80 @@ def test_delete_where_refuses_an_attribute_outside_the_written_position() -> Non
 
 
 # --------------------------------------------------------------------------- #
-# A typed `_where` verb validates and RENDERS both Valid-Time bounds BEFORE it  #
-# builds the canonical instruction, so a `PredicateWriteInstruction` holds an ISO-8601 UTC #
-# instant in a temporal slot from the moment it exists —                        #
-# `write-instruction.schema.json`'s own definition of an instant — never a      #
-# caller's spelling and never anything else standing in for one. Which bound   #
-# refusal outranks which predicate refusal is `test_predicate_write_order.py`'s #
-# subject; what is pinned here is the canonical value an admitted bound binds.  #
+# A target that needs an observation — versioned, Transaction-Time-Only, or    #
+# Bitemporal — is refused at the call, in both representations, before the    #
+# port is touched (`m-batch-write`). The exact advice for every verb and kind  #
+# is `test_predicate_write_order.py`'s subject.                                #
 # --------------------------------------------------------------------------- #
-_EXTREME_OFFSET = dt.datetime.min.replace(tzinfo=dt.timezone(dt.timedelta(hours=14)))
-_NON_UTC_VALID_FROM = dt.datetime(2024, 7, 1, 5, tzinfo=dt.timezone(dt.timedelta(hours=5)))
-_NON_UTC_UNTIL = dt.datetime(2024, 9, 1, 2, tzinfo=dt.timezone(dt.timedelta(hours=2)))
+_OBSERVED_TARGETS: Final[list[tuple[str, DomainModel, Callable[[TxnContext], None]]]] = [
+    (
+        "versioned",
+        MODELS["account"],
+        lambda tx: tx.amend_where(
+            Account.where(Account.balance < Decimal("200.00")),
+            Account.balance.set(Decimal("0.00")),
+        ),
+    ),
+    (
+        "transaction-time",
+        MODELS["balance"],
+        lambda tx: tx.delete_where(Balance.where(Balance.acct_num == "A-1")),
+    ),
+    (
+        "bitemporal",
+        MODELS["position"],
+        lambda tx: tx.wire.delete_where(
+            {
+                "entity": "Position",
+                "predicate": {"eq": {"path": "Position.acctNum", "value": "A-1"}},
+            }
+        ),
+    ),
+]
 
 
-def test_a_non_utc_bound_reaches_the_buffer_as_its_managed_utc_instant() -> None:
-    # The instruction that reaches the buffering seam carries the shared window
-    # gate's own canonical literals, so a
-    # bound authored at a NON-UTC offset lands in the rectangle split as the
-    # same instant in UTC, never as the caller's spelling.
-    port = ScriptedAdapter(Transact(Read(rows=[_position_row()]), Write(times=2)))
+@pytest.mark.parametrize(
+    ("model", "write"),
+    [(model, write) for _kind, model, write in _OBSERVED_TARGETS],
+    ids=[kind for kind, _model, _write in _OBSERVED_TARGETS],
+)
+def test_a_predicate_write_needing_an_observation_is_refused_at_the_call(
+    model: DomainModel, write: Callable[[TxnContext], None]
+) -> None:
+    port = ScriptedAdapter(Transact())
 
     def fn(tx: TxnContext) -> None:
-        _bounded_write(
-            tx,
-            WherePosition.where(WherePosition.id == 1),
-            _NON_UTC_VALID_FROM,
-            _NON_UTC_UNTIL,
-        )
+        with pytest.raises(instructions.InstructionRejectedError) as refused:
+            write(tx)
+        assert refused.value.rule == instructions.SET_BASED_WRITE_TARGET_UNSUPPORTED
+        assert port.calls == [BeginCall()]
+        raise _Abandon
 
-    own_root(
-        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
-    ).using_database_login().transact(fn, concurrency="optimistic")
-    writes = [op for op in port.calls if isinstance(op, WriteCall)]
-    assert len(writes) == 2  # close + one insert of head, middle, and tail
-    _head_binds, middle_binds, _tail_binds = inserted_rows(writes[1])
-    assert (
-        _NON_UTC_VALID_FROM.astimezone(dt.UTC) in middle_binds
-    )  # the authored `valid_from`, in UTC
-    assert _NON_UTC_UNTIL.astimezone(dt.UTC) in middle_binds  # the authored `until`, in UTC
-
-
-def test_no_typed_bound_reaches_the_shared_lowering_uncanonicalized() -> None:
-    # WHAT THIS PINS. A `PredicateWriteInstruction` this lane builds never carries a
-    # non-canonical value in a canonical field, proved on the shape that binds
-    # BOTH Valid-Time slots into SQL — a bitemporal `updateUntil`, whose
-    # rectangle split emits a close and one insert of its three rows:
-    #
-    #   - a bound that cannot render never becomes an instruction, so nothing is
-    #     buffered and no statement is ever issued;
-    #   - a bound that can render arrives already normalized, so the
-    #     statements a typed call produces are INDISTINGUISHABLE from the ones
-    #     the WIRE peer produces for the canonical target and bounds the
-    #     conformance engine hands it. Anything other than the canonical literal
-    #     in either slot would show up as a differing bind.
-    #
-    # WHAT IT DOES NOT PIN: what the shared lowering itself tolerates.
-    # prepared-write production reads no additional bound, and
-    # `write-instruction.schema.json` types a Valid-Time instant as a
-    # non-empty string with no pattern, so a caller that hand-authors a document
-    # containing a malformed instant still deserializes and still reaches SQL
-    # through this same seam. Refusing that belongs to the instruction serde;
-    # what belongs here is that no Parallax code path ever produces such a
-    # value.
-    idle = ScriptedAdapter(Transact())
-
-    def unrenderable(tx: TxnContext) -> None:
-        tx.amend_where(
-            WherePosition.where(WherePosition.id == 1),
-            WherePosition.value.set(Decimal("300.00")),
-            valid_from=_EXTREME_OFFSET,
-            until=_NON_UTC_UNTIL,
-        )
-
-    with raises_contextualized(InstantError):
+    with raises_contextualized(_Abandon):
         own_root(
-            Database.connect(idle, WHERE_POSITION_META, clock=FixedClock(FIXED))
-        ).using_database_login().transact(unrenderable)
-    assert idle.calls == [BeginCall(), RollbackCall()]
-
-    typed_port = ScriptedAdapter(Transact(Read(rows=[_position_row()]), Write(times=2)))
-
-    def typed(tx: TxnContext) -> None:
-        tx.amend_where(
-            WherePosition.where(WherePosition.id == 1),
-            WherePosition.value.set(Decimal("300.00")),
-            valid_from=_NON_UTC_VALID_FROM,
-            until=_NON_UTC_UNTIL,
-        )
-
-    own_root(
-        Database.connect(typed_port, WHERE_POSITION_META, clock=FixedClock(FIXED))
-    ).using_database_login().transact(typed, concurrency="optimistic")
-
-    seam_port = ScriptedAdapter(Transact(Read(rows=[_position_row()]), Write(times=2)))
-
-    def wire(tx: TxnContext) -> None:
-        tx.wire.amend_where(
-            {
-                "entity": "WherePosition",
-                "predicate": {"eq": {"path": "WherePosition.id", "value": 1}},
-            },
-            {"value": "300.00"},
-            valid_from=dt.datetime.fromisoformat("2024-07-01T00:00:00+00:00"),
-            until=dt.datetime.fromisoformat("2024-09-01T00:00:00+00:00"),
-        )
-
-    own_root(
-        Database.connect(seam_port, WHERE_POSITION_META, clock=FixedClock(FIXED))
-    ).using_database_login().transact(wire, concurrency="optimistic")
-    typed_writes = [op for op in typed_port.calls if isinstance(op, WriteCall)]
-    assert len(typed_writes) == 2  # close + one insert of head, middle, and tail
-    assert len(inserted_rows(typed_writes[1])) == 3
-    assert typed_writes == [op for op in seam_port.calls if isinstance(op, WriteCall)]
-
-
-def _bounded_write(
-    tx: TxnContext,
-    query: ObjectQuery[Any, Any],
-    valid_from: dt.datetime,
-    until: dt.datetime | None,
-) -> None:
-    assignment = WherePosition.value.set(Decimal("300.00"))
-    if until is None:
-        tx.amend_where(query, assignment, valid_from=valid_from)
-    else:
-        tx.amend_where(query, assignment, valid_from=valid_from, until=until)
+            Database.connect(port, model, clock=FixedClock(FIXED))
+        ).using_database_login().transact(fn)
 
 
 # --------------------------------------------------------------------------- #
-# The conformance engine's OWN ingress, driven as the engine drives it. Both    #
-# engine entry points are exercised as functions — the readless one             #
-# (`_run_readless_predicate_write`, which opens the transaction itself and      #
-# states its write through `tx.wire.*_where`) and the materializing one         #
-# (`_is_materializing_write_step`, which classifies the step AND validates it   #
-# before `_run_materializing_pair` executes anything) — so a lane that stopped  #
-# judging its own target fails these cases. Driving preparation from           #
-# the test instead would leave that regression unpinned: the refusal would then #
-# come from the test, not from the engine.                                      #
+# The conformance engine's OWN ingress, driven as the engine drives it: the     #
+# readless entry point (`_run_readless_predicate_write`, which opens the        #
+# transaction itself and states its write through `tx.wire.*_where`) prepares   #
+# the case's own instruction first, so a lane that stopped judging its own      #
+# target fails these cases. Driving preparation from the test instead would     #
+# leave that regression unpinned: the refusal would then come from the test,    #
+# not from the engine.                                                          #
 #                                                                               #
-# The models are the corpus's own, the exact pair the two dispatches are        #
-# authored over: `models/wallet.yaml` (unversioned, non-temporal -> READLESS,   #
-# m-batch-write-005) and `models/account.yaml` (versioned -> MATERIALIZING,     #
-# m-opt-lock-015).                                                              #
-#                                                                               #
-# The predicates cover both refusal families a write target carries: the        #
+# The model is the corpus's own `models/wallet.yaml` (m-batch-write-005). The   #
+# predicates cover both refusal families a write target carries: the            #
 # model-aware `between-bounds-inverted` rejection, and a node the Predicate     #
 # grammar does not admit at all — every query-wide clause is an Object Query    #
-# clause now, so a write target carrying one is a malformed document rather     #
+# clause now, so a write target carrying one is a malformed document rather    #
 # than a rule a validator applies.                                              #
 # --------------------------------------------------------------------------- #
 _READLESS_ENGINE_META = engine.load_case_metamodel(
     next(case for case in case_format.load_cases() if case.case_id == "m-batch-write-005")
 )
-_MATERIALIZING_ENGINE_META = engine.load_case_metamodel(
-    next(case for case in case_format.load_cases() if case.case_id == "m-opt-lock-015")
-)
-_ENGINE_TX_INSTANT = "2024-06-01T00:00:00+00:00"
 
 
 def _refused_predicates(entity: str) -> list[tuple[str, str, dict[str, object]]]:
@@ -2015,7 +798,6 @@ def _refused_predicates(entity: str) -> list[tuple[str, str, dict[str, object]]]
 
 
 _READLESS_REFUSALS = _refused_predicates("Wallet")
-_MATERIALIZING_REFUSALS = _refused_predicates("Account")
 
 
 @pytest.mark.parametrize(
@@ -2033,52 +815,20 @@ def test_the_engines_readless_case_adapter_refuses_before_execution(
         )
 
 
-@pytest.mark.parametrize(
-    ("message", "predicate"),
-    [(message, predicate) for _id, message, predicate in _MATERIALIZING_REFUSALS],
-    ids=[case_id for case_id, _message, _predicate in _MATERIALIZING_REFUSALS],
-)
-def test_the_engines_materializing_predicate_ingress_refuses_before_it_resolves(
-    message: str, predicate: dict[str, object]
-) -> None:
-    step = {
-        "write": {
-            "mutation": "delete",
-            "target": {"entity": "Account", "predicate": predicate},
-            "at": _ENGINE_TX_INSTANT,
-        }
-    }
-    with pytest.raises(ValueError, match=re.escape(message)):
-        scenario.is_materializing_write_step(step, _MATERIALIZING_ENGINE_META)
-
-
 # The WIRE predicate ingress's OWN validation, driven the way the conformance
 # engine drives it — a canonical target NOTHING pre-validated, straight into
-# `tx.wire.*_where`. That ingress lowers to the same `PredicateWriteInstruction` the Typed
-# verbs build and validates it exactly as they do, so deleting its
-# prepared-write call fails BOTH cases.
+# `tx.wire.delete_where`. That ingress lowers to the same
+# `PredicateWriteInstruction` the Typed verbs build and validates it exactly as
+# they do, so deleting its prepared-write call fails this case.
 #
 # The refusal is asserted at the verb CALL, inside the transaction body, which
-# is what makes each half discriminating. Unvalidated, the readless family
-# instruction is merely buffered and the call returns — the planner's flush-time
-# refusal would come later, and never at all on the abandoned transaction here.
-# And the materializing one reaches the resolving read, real SQL on the caller's
-# connection, which `port.calls` then shows.
-@pytest.mark.parametrize(
-    ("model", "entity", "temporal"),
-    [(PAYMENT, "CardPayment", False), (RATE, "DepositRate", True)],
-    ids=["readless-unversioned-family", "materializing-bitemporal-family"],
-)
-def test_the_wire_predicate_ingress_refuses_an_unvalidated_inheritance_family_target(
-    model: DomainModel, entity: str, temporal: bool
-) -> None:
-    # Each family takes the destructive verb its own temporality admits — a
-    # Bitemporal target is closed by `terminate_where` and states the window that
-    # close opens at — so both calls clear the shared window gate and the family
-    # refusal is what each one reaches.
+# is what makes it discriminating: unvalidated, the family instruction is merely
+# buffered and the call returns — the planner's flush-time refusal would come
+# later, and never at all on the abandoned transaction here.
+def test_the_wire_predicate_ingress_refuses_an_unvalidated_inheritance_family_target() -> None:
     target: dict[str, object] = {
-        "entity": entity,
-        "predicate": {"eq": {"path": f"{entity}.id", "value": 1}},
+        "entity": "CardPayment",
+        "predicate": {"eq": {"path": "CardPayment.id", "value": 1}},
     }
     port = ScriptedAdapter(Transact())
 
@@ -2086,493 +836,50 @@ def test_the_wire_predicate_ingress_refuses_an_unvalidated_inheritance_family_ta
         with pytest.raises(
             inheritance.InheritanceError, match="subtype-write-set-based-unsupported"
         ):
-            if temporal:
-                tx.wire.terminate_where(target, valid_from=dt.datetime(2024, 7, 1, tzinfo=dt.UTC))
-            else:
-                tx.wire.delete_where(target)
+            tx.wire.delete_where(target)
         assert port.calls == [BeginCall()]
         raise _Abandon
 
     with raises_contextualized(_Abandon):
         own_root(
-            Database.connect(port, model, clock=FixedClock(FIXED))
+            Database.connect(port, PAYMENT, clock=FixedClock(FIXED))
         ).using_database_login().transact(fn)
 
 
-# A materializing family instruction never reaches the buffering seam: the one
-# producer of prepared writes refuses it, so no seam re-judges the family.
-def test_preparation_refuses_an_inheritance_family_predicate_instruction() -> None:
+# A family instruction never reaches the buffering seam: the one producer of
+# prepared writes refuses it, so no seam re-judges the family. A family that
+# needs an observation hears that refusal first.
+@pytest.mark.parametrize(
+    ("model", "entity", "rule"),
+    [
+        (PAYMENT, "CardPayment", "subtype-write-set-based-unsupported"),
+        (RATE, "DepositRate", instructions.SET_BASED_WRITE_TARGET_UNSUPPORTED),
+    ],
+    ids=["unversioned-family", "bitemporal-family"],
+)
+def test_preparation_refuses_an_inheritance_family_predicate_instruction(
+    model: DomainModel, entity: str, rule: str
+) -> None:
     instruction = instructions.deserialize(
         {
-            "mutation": "terminate",
+            "mutation": "delete",
             "target": {
-                "entity": "DepositRate",
-                "predicate": {"eq": {"path": "DepositRate.id", "value": 1}},
+                "entity": entity,
+                "predicate": {"eq": {"path": f"{entity}.id", "value": 1}},
             },
-            "validFrom": "2024-07-01T00:00:00.000000Z",
         }
     )
     assert isinstance(instruction, PredicateWriteInstruction)
-    with pytest.raises(inheritance.InheritanceError, match="subtype-write-set-based-unsupported"):
-        instructions.prepare_wire_write(instruction, model_of(RATE))
+    with pytest.raises(
+        (inheritance.InheritanceError, instructions.InstructionRejectedError)
+    ) as refused:
+        instructions.prepare_wire_write(instruction, model_of(model))
+    assert refused.value.rule == rule
 
 
 class _Abandon(Exception):
     """Abandons the transaction once the refusal at the verb is proven, so
     nothing the transaction holds has to become a valid committed write."""
-
-
-# --------------------------------------------------------------------------- #
-# Stale-write detection and the optimistic-conflict retry loop, reached        #
-# through a TYPED `_where` call: a materialized group's per-row shortfall      #
-# classifies and retries exactly as the keyed path's does. Each is stated as   #
-# the whole per-attempt op SEQUENCE, because the retry contract is that the    #
-# closure is RE-EXECUTED — an attempt that reused the first one's              #
-# materialization would still open a second transaction and still commit.     #
-# --------------------------------------------------------------------------- #
-def _update_balance_where(tx: TxnContext) -> None:
-    tx.amend_where(
-        mm.Account.where(mm.Account.balance < 200), mm.Account.balance.set(Decimal("175.00"))
-    )
-
-
-def test_materializing_where_shortfall_in_locking_mode_is_a_stale_write() -> None:
-    # The `_where` counterpart of the keyed locking-mode shortfall: the UPDATE a
-    # materialized group emits under the Locking strategy is ungated, so a
-    # zero-row shortfall is the non-retriable stale write and the whole unit of
-    # work rolls back.
-    port = ScriptedAdapter(
-        Transact(
-            Read(rows=[{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]),
-            Write(affected=0),
-        )
-    )
-
-    with raises_contextualized(StaleWriteError, match="Account"):
-        account_db(port).transact(_update_balance_where, concurrency="locking")
-    assert [type(op) for op in port.calls] == [BeginCall, ReadCall, WriteCall, RollbackCall]
-
-
-def test_materializing_where_shortfall_in_optimistic_mode_is_a_lock_conflict() -> None:
-    port = ScriptedAdapter(
-        Transact(
-            Read(rows=[{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]),
-            Write(affected=0),
-        )
-    )
-
-    with raises_contextualized(OptimisticLockConflictError):
-        account_db(port).transact(_update_balance_where, concurrency="optimistic", max_retries=0)
-    assert [type(op) for op in port.calls] == [BeginCall, ReadCall, WriteCall, RollbackCall]
-
-
-def test_materializing_where_conflict_is_auto_retried_to_success_with_the_opt_in() -> None:
-    # The `0`-then-`1` affected-rows transition, driven through the typed
-    # `update_where` verb: the retried attempt re-runs the resolving read and
-    # the gated write inside a second transaction. The second `read` is the
-    # assertion that carries the re-execution contract; the second `begin` and
-    # the `commit` alone are also true of an attempt that reused the first
-    # attempt's materialization.
-    resolved = [{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]
-    port = ScriptedAdapter(
-        Transact(Read(rows=resolved), Write(affected=0)),
-        Transact(Read(rows=resolved), Write(affected=1)),
-    )
-
-    account_db(port).transact(_update_balance_where, concurrency="optimistic")
-    assert [type(op) for op in port.calls] == [
-        BeginCall,
-        ReadCall,
-        WriteCall,
-        RollbackCall,
-        BeginCall,
-        ReadCall,
-        WriteCall,
-        CommitCall,
-    ]
-    reads = [op for op in port.calls if isinstance(op, ReadCall)]
-    assert reads[0] == reads[1]
-
-
-# --------------------------------------------------------------------------- #
-# A Materialized Write Group's own claim (`m-unit-work` "Observed-State         #
-# Coalescing"). The group owns the observation of every state its predicate     #
-# resolved, and it is one compact indivisible unit — so the question a later    #
-# keyed write asks is answered by the group's presence rather than by anything  #
-# inside it.                                                                    #
-# --------------------------------------------------------------------------- #
-def test_a_group_refuses_a_later_keyed_write_of_a_state_it_selected() -> None:
-    port = ScriptedAdapter(
-        Transact(
-            Read(
-                rows=[{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}],
-                times=2,
-            )
-        )
-    )
-
-    def fn(tx: TxnContext) -> None:
-        node = tx.find(mm.Account.where(mm.Account.id == 3)).result()
-        tx.amend_where(
-            mm.Account.where(mm.Account.balance < Decimal("200.00")),
-            mm.Account.owner.set("Ada"),
-        )
-        tx.amend(node.edit(balance=Decimal("125.00")))
-
-    with raises_contextualized(WriteEvidenceError) as refusal:
-        account_db(port).transact(fn)
-    assert refusal.value.code == "write-evidence-already-claimed"
-    assert refusal.value.object_key.primary_key == (("id", 3),)
-
-
-def test_a_group_leaves_a_keyed_write_of_an_unselected_state_alone() -> None:
-    port = ScriptedAdapter(
-        Transact(
-            Read(rows=[{"id": 1, "owner": "Ada", "balance": Decimal("100.00"), "version": 1}]),
-            Read(rows=[{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]),
-            Write(times=2),
-        )
-    )
-
-    def fn(tx: TxnContext) -> None:
-        node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
-        tx.amend_where(
-            mm.Account.where(mm.Account.balance < Decimal("50.00")),
-            mm.Account.owner.set("Ada"),
-        )
-        tx.amend(node.edit(balance=Decimal("125.00")))
-
-    account_db(port).transact(fn)
-    assert len([op for op in port.calls if isinstance(op, WriteCall)]) == 2
-
-
-# --------------------------------------------------------------------------- #
-# What a materializing temporal resolve retains per row: the judged row       #
-# itself and its raw document, by reference, and nothing else.                #
-# --------------------------------------------------------------------------- #
-def _recorded_groups_and_views(
-    monkeypatch: pytest.MonkeyPatch,
-) -> tuple[list[MaterializedWriteGroup], list[EntityStateRow]]:
-    groups: list[MaterializedWriteGroup] = []
-    views: list[EntityStateRow] = []
-    buffer = UnitOfWork.buffer
-    over_declared_members = EntityStateRow.over_declared_members
-
-    def recording_buffer(uow: UnitOfWork, instruction: BufferItem) -> None:
-        if isinstance(instruction, MaterializedWriteGroup):
-            groups.append(instruction)
-        buffer(uow, instruction)
-
-    def recording_view(
-        selection: Any, values: tuple[object, ...], *, absent: object
-    ) -> EntityStateRow:
-        view = over_declared_members(selection, values, absent=absent)
-        views.append(view)
-        return view
-
-    monkeypatch.setattr(UnitOfWork, "buffer", recording_buffer)
-    monkeypatch.setattr(EntityStateRow, "over_declared_members", staticmethod(recording_view))
-    return groups, views
-
-
-def _plain(value: object) -> object:
-    if isinstance(value, Mapping):
-        return {key: _plain(nested) for key, nested in cast("Mapping[str, object]", value).items()}
-    if isinstance(value, tuple):
-        return tuple(_plain(nested) for nested in cast("tuple[object, ...]", value))
-    return value
-
-
-_MILESTONE_ROWS = 8
-
-
-class _Abandoned(Exception):
-    """Raised once the write is buffered, so its transaction rolls back unflushed."""
-
-
-def _materialize_milestones(layout: milestone_rows.Layout) -> None:
-    """Buffer one interior Wire ``amend_where`` over eight stored milestones of
-    ``layout``'s Entity, then abandon its transaction before any flush."""
-    entity = milestone_rows.ENTITY_CLASSES[milestone_rows.LAYOUTS.index(layout)]
-    name = entity.identity.canonical
-    target = {
-        "entity": name,
-        "predicate": {"greaterThanEquals": {"path": f"{name}.id", "value": 1}},
-    }
-    port = milestone_rows.MilestonePort(
-        lambda key: milestone_rows.stored_row(layout, key), _MILESTONE_ROWS
-    )
-
-    def body(transaction: TxnContext) -> None:
-        transaction.wire.amend_where(
-            target,
-            {"title": "title-changed"},
-            valid_from=dt.datetime(2026, 3, 1, tzinfo=dt.UTC),
-            until=dt.datetime(2026, 9, 1, tzinfo=dt.UTC),
-        )
-        raise _Abandoned
-
-    clock = FixedClock(dt.datetime(2026, 2, 1, tzinfo=dt.UTC))
-    with (
-        Database(port.open(), milestone_rows.MODEL, clock=clock) as root,
-        pytest.raises(ExecutionFailure) as failure,
-    ):
-        root.using_database_login().transact(body, concurrency="optimistic")
-    assert isinstance(failure.value.cause, _Abandoned)
-
-
-@pytest.mark.parametrize("layout", ["columns", "document"])
-def test_a_materializing_temporal_write_retains_each_resolved_row_whole_by_reference(
-    monkeypatch: pytest.MonkeyPatch, layout: milestone_rows.Layout
-) -> None:
-    # Every resolved row of a temporal resolve is retained as the positional
-    # row the read judged — scalars, the primary key, every axis bound
-    # (declared `validStart` over storage `from_z`), and both value-object
-    # occurrences, nested `one` and `many` alike — and the raw Structured
-    # Column rides beside it under Relational Document Layout and is absent
-    # under `Columns`. Acquisition views no row by member name, copies no
-    # cell, and keeps no second key column: the key is read at its position.
-    groups, views = _recorded_groups_and_views(monkeypatch)
-    traversals = _traversals(monkeypatch)
-    _materialize_milestones(layout)
-
-    assert len(traversals) == 1
-    assert views == []
-    (group,) = groups
-    evidence = group.evidence
-    assert isinstance(evidence, PredecessorRows)
-    assert len(evidence) == _MILESTONE_ROWS
-    assert [evidence.key(index) for index in range(_MILESTONE_ROWS)] == list(
-        range(1, _MILESTONE_ROWS + 1)
-    )
-    for index in range(_MILESTONE_ROWS):
-        key = index + 1
-        row = evidence.rows[index]
-        assert type(row) is tuple
-        predecessor = PredecessorRow.over_row(
-            evidence.selection, row, evidence.document(index), evidence.absent
-        )
-        stored = milestone_rows.stored_row(layout, key)
-        members = (
-            cast("Mapping[str, object]", stored["payload"]) if layout == "document" else stored
-        )
-        assert _plain(dict(predecessor.members)) == {
-            "id": key,
-            "title": members["title"],
-            "address": members["address"],
-            "tags": tuple(cast("Sequence[object]", members["tags"])),
-            "validStart": milestone_rows.VALID_START,
-            "validEnd": INFINITY,
-            "txStart": milestone_rows.TX_START,
-            "txEnd": INFINITY,
-        }
-        if layout == "document":
-            assert predecessor.document is evidence.document(index)
-            assert predecessor.document == stored["payload"]
-        else:
-            assert predecessor.document is None
-    assert (evidence.documents is None) == (layout == "columns")
-
-
-def test_a_buffered_group_reaches_no_page_builder_or_row_view(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # The buffered group is kept alive here past the transaction; nothing it
-    # holds is the Page it was read from, a Root View over it, the builders
-    # that accumulated it, or a named view of a row.
-    groups, _views = _recorded_groups_and_views(monkeypatch)
-    _materialize_milestones("document")
-
-    (group,) = groups
-    evidence = group.evidence
-    assert isinstance(evidence, PredecessorRows)
-    reached = reachable_objects(evidence, boundaries=(evidence.selection,))
-    forbidden = (
-        Page,
-        RootView,
-        EntityStateRow,
-        ChunkedColumnBuilder,
-        PredecessorRowsBuilder,
-    )
-    assert not [value for value in reached if isinstance(value, forbidden)]
-    assert sum(1 for value in reached if isinstance(value, ColumnSlice)) == 2
-
-
-# --------------------------------------------------------------------------- #
-# Acquisition is ONE traversal of the resolved roots, inside the resolving     #
-# Read: each root is judged publishable, compared, and accumulated in turn,   #
-# and the Unit of Work hears of the group only once every root has passed.    #
-# --------------------------------------------------------------------------- #
-_READ_ENDS = frozenset({"ReadFinished"})
-
-
-def _names(events: tuple[ExecutionEvent, ...]) -> list[str]:
-    return [type(event).__name__ for event in events]
-
-
-def _read_open(names: Sequence[str]) -> bool:
-    started = len(names) - 1 - names[::-1].index("ReadStarted")
-    return not _READ_ENDS & set(names[started:])
-
-
-def _traversals(
-    monkeypatch: pytest.MonkeyPatch, recorder: RecordingLifecycleProvider | None = None
-) -> list[list[str]]:
-    """Every Page-root traversal from now on, each as the event names its
-    transaction had delivered when the traversal began."""
-    traversals: list[list[str]] = []
-    roots = vars(attempt_module)["publishable_member_rows"]
-
-    def counting(page: Any) -> Any:
-        traversals.append([] if recorder is None else _names(recorder.roots[-1].events))
-        return roots(page)
-
-    monkeypatch.setattr(attempt_module, "publishable_member_rows", counting)
-    return traversals
-
-
-def _account_rows(*owners: str | None) -> list[MappingRow]:
-    return [
-        {"id": key, "owner": owner, "balance": Decimal("10.00"), "version": 1}
-        for key, owner in enumerate(owners, start=1)
-    ]
-
-
-def _recorded_account_db(port: ScriptedAdapter, recorder: RecordingLifecycleProvider) -> Any:
-    return own_root(
-        connect(port, ACCOUNT, clock=FixedClock(FIXED), lifecycle_provider=recorder)
-    ).using_database_login()
-
-
-def _assign_owner(tx: TxnContext) -> None:
-    tx.amend_where(
-        mm.Account.where(mm.Account.balance < Decimal("200.00")), mm.Account.owner.set("Ada")
-    )
-
-
-def test_a_materializing_write_judges_compares_and_keeps_each_root_in_one_traversal_of_its_read(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # One traversal, begun while the resolving Read is still open, decides
-    # everything: the no-op row is eliminated there, the changed row is kept
-    # there, and a versioned target's rows are read positionally rather than
-    # through a named row view. The group the traversal sealed is what the flush
-    # writes.
-    def named_view(*args: object, **kwargs: object) -> object:
-        del args, kwargs
-        raise AssertionError("a versioned acquisition viewed a row by member name")
-
-    recorder = RecordingLifecycleProvider()
-    traversals = _traversals(monkeypatch, recorder)
-    monkeypatch.setattr(EntityStateRow, "over_declared_members", staticmethod(named_view))
-    port = ScriptedAdapter(Transact(Read(rows=_account_rows("Ada", "Grace")), Write()))
-
-    _recorded_account_db(port, recorder).transact(_assign_owner, concurrency="optimistic")
-
-    (traversal,) = traversals
-    assert _read_open(traversal)
-    (written,) = (call for call in port.calls if isinstance(call, WriteCall))
-    assert written.binds == ("Ada", 2, 2, 1)
-
-
-def test_a_root_refused_later_in_the_traversal_leaves_the_unit_of_work_untouched(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # The first two roots are compared and kept before the third is judged, and
-    # its invalid stored document fails the resolving Read itself. What the
-    # traversal had accumulated stays in its local builders: nothing was
-    # buffered or claimed, so the same states select again and only that
-    # second write reaches the database.
-    recorder = RecordingLifecycleProvider()
-    traversals = _traversals(monkeypatch, recorder)
-    compared: list[tuple[object, ...]] = []
-    any_effective = PreparedEffectiveChange.any_effective
-
-    def recording_any_effective(change: PreparedEffectiveChange, row: tuple[object, ...]) -> bool:
-        compared.append(row)
-        return any_effective(change, row)
-
-    monkeypatch.setattr(PreparedEffectiveChange, "any_effective", recording_any_effective)
-
-    def rows(*cities: str | int) -> list[MappingRow]:
-        return [
-            {"id": key, "version": 1, "address": PresentDocument({"city": city})}
-            for key, city in enumerate(cities, start=1)
-        ]
-
-    port = ScriptedAdapter(
-        Transact(Read(rows=rows("Bergen", "Paris", 7)), Read(rows=rows("Bergen")), Write())
-    )
-
-    def assign(tx: TxnContext) -> None:
-        tx.amend_where(
-            WhereSubscriber.where(WhereSubscriber.id < 10),
-            WhereSubscriber.address.set(WhereSubscriberAddress(city="Oslo")),
-        )
-
-    def fn(tx: TxnContext) -> None:
-        with pytest.raises(StoredDataDecodingError):
-            assign(tx)
-        assign(tx)
-
-    own_root(
-        connect(port, _WHERE_SUBSCRIBER_META, clock=FixedClock(FIXED), lifecycle_provider=recorder)
-    ).using_database_login().transact(fn, concurrency="optimistic")
-
-    assert len(traversals) == 2
-    assert [row[0] for row in compared] == [1, 2, 1]
-    finished = next(event for event in recorder.roots[-1].events if isinstance(event, ReadFinished))
-    assert isinstance(finished.outcome, ReadFailed)
-    assert isinstance(finished.outcome.failure, DirectFailure)
-    assert finished.outcome.failure.diagnostic.qualified_type.endswith(".StoredDataDecodingError")
-    assert [type(op) for op in port.calls] == [BeginCall, ReadCall, ReadCall, WriteCall, CommitCall]
-
-
-@pytest.mark.parametrize("owners", [(), ("Ada", "Ada")], ids=["empty", "all-no-op"])
-def test_a_resolve_keeping_no_row_buffers_and_claims_nothing(
-    monkeypatch: pytest.MonkeyPatch, owners: tuple[str, ...]
-) -> None:
-    # Nothing the resolve compared was claimed, so a second write selecting
-    # those same states is admitted and is the only one that writes.
-    traversals = _traversals(monkeypatch)
-    port = ScriptedAdapter(
-        Transact(Read(rows=_account_rows(*owners)), Read(rows=_account_rows("Grace")), Write())
-    )
-
-    def fn(tx: TxnContext) -> None:
-        _assign_owner(tx)
-        _assign_owner(tx)
-
-    account_db(port).transact(fn, concurrency="optimistic")
-
-    assert len(traversals) == 2
-    assert [type(op) for op in port.calls] == [BeginCall, ReadCall, ReadCall, WriteCall, CommitCall]
-
-
-def test_a_verb_carrying_no_assignments_prepares_no_comparison(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # `delete` and `terminate` keep every resolved row, so no comparison exists
-    # for them to prepare or ask.
-    def forbidden(*args: object, **kwargs: object) -> object:
-        del args, kwargs
-        raise AssertionError("a destructive verb prepared an effective-change comparison")
-
-    monkeypatch.setattr(acquisition_module, "prepare_effective_change", forbidden)
-    deleting = ScriptedAdapter(Transact(Read(rows=_account_rows("Ada", "Grace")), Write(times=2)))
-    account_db(deleting).transact(
-        lambda tx: tx.delete_where(mm.Account.where(mm.Account.balance < 200)),
-        concurrency="optimistic",
-    )
-    terminating = ScriptedAdapter(Transact(Read(rows=_two_terminate_rows()), Write(times=2)))
-    own_root(
-        Database.connect(terminating, BALANCE, clock=FixedClock(FIXED))
-    ).using_database_login().transact(
-        lambda tx: tx.terminate_where(mm.Balance.where(mm.Balance.value < 200)),
-        concurrency="locking",
-    )
-    for port in (deleting, terminating):
-        assert len([op for op in port.calls if isinstance(op, WriteCall)]) == 2
 
 
 def test_a_positional_rows_absent_marker_is_compared_as_itself_never_as_the_observed_null() -> None:

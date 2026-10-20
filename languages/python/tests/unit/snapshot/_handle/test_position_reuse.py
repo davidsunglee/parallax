@@ -343,34 +343,6 @@ def test_a_keyed_insert_resolves_no_position(
     assert {name: committed[name] for name in data} == data
 
 
-@pytest.mark.parametrize("representation", _REPRESENTATIONS)
-def test_a_materializing_predicate_update_resolves_one_storage_position(
-    profile_run: Any, spies: _Spies, representation: Representation
-) -> None:
-    served = _served(profile_run, spies)
-    db = served.db
-    spies.clear()
-
-    def update(tx: TxnContext) -> None:
-        if representation == "typed":
-            tx.amend_where(Ledger.where(Ledger.id == 1), Ledger.balance.set(25))
-        else:
-            tx.wire.amend_where(
-                {
-                    "entity": f"{_NAMESPACE}.Ledger",
-                    "predicate": {"eq": {"path": f"{_NAMESPACE}.Ledger.id", "value": 1}},
-                },
-                {"balance": 25},
-            )
-
-    db.transact(update)
-
-    assert spies.counts() == _Counts(0, 1, 0)
-    assert served.misses() == 0
-    committed = db.find(Ledger.where(Ledger.id == 1)).result()
-    assert (committed.balance, committed.version) == (25, 2)
-
-
 _FAMILY_TARGETS: dict[
     str, tuple[Callable[[TxnContext], None], str, dict[str, object], dict[str, object]]
 ] = {

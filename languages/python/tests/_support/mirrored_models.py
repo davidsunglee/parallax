@@ -676,8 +676,8 @@ UNMIRRORED: Mapping[str, str] = MappingProxyType(
         ),
         "document-layout-restored-member": (
             "no mirror authored; its Transaction-Time document root with a nested "
-            "`many` exists for the restored-member write witness, whose resolving read "
-            "and successor the corpus lane already drives through production"
+            "`many` is the layout payload preparer's restored-member fixture, which "
+            "reads the declaration itself"
         ),
         "evolution-added-value-object-v1": _EVOLUTION_ENDPOINT,
         "evolution-added-value-object-v2": _EVOLUTION_ENDPOINT,

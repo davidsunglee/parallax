@@ -51,11 +51,11 @@ _READ_CASE = case_format.default_cases_dir() / "m-predicate-002-eq.yaml"
 _VO_READ_CASE = case_format.default_cases_dir() / "m-value-object-001-nested-eq.yaml"
 _SCALAR_READ_CASE = case_format.default_cases_dir() / "m-core-001-scalar-types-roundtrip.yaml"
 _RUN_ONLY_CASE = case_format.default_cases_dir() / "m-opt-lock-005-conflict.yaml"
-# A materializing predicate-write scenario; against `_FakePort` — a wrong-shaped
-# canned row and a write path that always raises — it still surfaces a loud
-# `run-failed` error, exercising this lane's own error-reporting contract.
+# A predicate-write scenario; against `_FakePort` — a wrong-shaped canned row and
+# a write path that always raises — it still surfaces a loud `run-failed` error,
+# exercising this lane's own error-reporting contract.
 _ENGINE_GAP_CASE = (
-    case_format.default_cases_dir() / "m-temporal-write-007-predicate-terminate-materialize.yaml"
+    case_format.default_cases_dir() / "m-batch-write-005-predicate-delete-readless.yaml"
 )
 
 
@@ -116,15 +116,15 @@ def test_case_write_adapter_accepts_canonical_predicate_operands_and_assignments
             """
 mutation: amend
 target:
-  entity: parallax.compatibility.Account
+  entity: parallax.compatibility.Wallet
   predicate:
-    lessThan: { path: parallax.compatibility.Account.balance, value: "200.00" }
+    lessThan: { path: parallax.compatibility.Wallet.balance, value: "200.00" }
 assignments:
-  - { attr: parallax.compatibility.Account.balance, value: "0.00" }
+  - { attr: parallax.compatibility.Wallet.balance, value: "0.00" }
 """
         )
     )
-    prepared = _case_ingress.prepare_case_write(instruction, models.load_models()["account"])
+    prepared = _case_ingress.prepare_case_write(instruction, models.load_models()["wallet"])
     assert isinstance(prepared, PreparedPredicateWrite)
     assert isinstance(prepared.selection.predicate, ResolvedComparison)
     assert prepared.selection.predicate.value == decimal.Decimal("200.00")
@@ -857,11 +857,10 @@ def test_run_observations_are_wire_rendered_and_json_serializable() -> None:
 
 
 def test_run_case_error_on_an_engine_gap() -> None:
-    # `_ENGINE_GAP_CASE` (m-temporal-write-007) is a materializing predicate-write
-    # scenario: its `_FakePort` returns a canned
-    # row shaped for a DIFFERENT model and raises `NotImplementedError` on any
-    # write, so materialization's own internal resolve/write sequence fails —
-    # this lane still reports a loud `run-failed` error rather than silently
+    # `_ENGINE_GAP_CASE` (m-batch-write-005) is a predicate-write scenario: its
+    # `_FakePort` returns a canned row shaped for a DIFFERENT model and raises
+    # `NotImplementedError` on any write, so the readless delete fails — this
+    # lane still reports a loud `run-failed` error rather than silently
     # mishandling it (a real port drives this case successfully, `test_run_
     # sweep.py::test_write_run_sweep`, Docker-gated).
     envelope = adapter.run_case(_ENGINE_GAP_CASE, _PROFILE.on_stand_in(_FakePort()))

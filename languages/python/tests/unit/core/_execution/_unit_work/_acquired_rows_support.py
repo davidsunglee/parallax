@@ -1,6 +1,6 @@
-"""An in-memory row acquisition answering the rows a database holds, deferred
-ranges read and bound through the unit of work's own acquisition and binding
-over it, and the continuation a deferred group settles through."""
+"""An in-memory row acquisition answering the rows a database holds, and
+deferred ranges read and bound through the unit of work's own acquisition and
+binding over it."""
 
 from __future__ import annotations
 
@@ -11,13 +11,11 @@ from dataclasses import dataclass, field
 from parallax.core import inheritance, temporal_read
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work.acquisition import (
-    AcquireRows,
     CompletionRequest,
     CoverageReadRequest,
     RowConsumer,
     RowRequest,
 )
-from parallax.core._execution._unit_work.ranges import DeferredGroupRange, GroupContinuation
 from parallax.core._execution._unit_work.write_runner import acquire_and_bind_range
 from parallax.core.entity._construction_input import ABSENT
 from parallax.core.metamodel import Metamodel
@@ -33,7 +31,7 @@ from parallax.core.write_plan.plan import (
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
 from tests.unit._positional_row_support import positional_row
 
-__all__ = ["HeldRows", "bind_held", "coverage_read", "prepared_group"]
+__all__ = ["HeldRows", "bind_held", "coverage_read"]
 
 
 @dataclass(slots=True)
@@ -138,25 +136,3 @@ class _ObservedRead(Exception):
         del consumer
         self.request = request
         raise self
-
-
-def prepared_group(
-    model: Metamodel,
-    unit: ExecutionUnit,
-    acquire_rows: AcquireRows,
-    *,
-    transaction_instant: TransactionInstant,
-    ownership: TemporalWriteOwnership = NO_TEMPORAL_WRITE_OWNERSHIP,
-) -> GroupContinuation:
-    """The continuation ``unit``'s deferred group settles through, as the
-    unit of work prepares it at the unit's turn, each batch's coverage read
-    through ``acquire_rows`` under ``ownership``."""
-    deferred = unit.deferred
-    assert isinstance(deferred, DeferredGroupRange)
-    return build_write_planner(model).prepare_group(
-        deferred,
-        acquire_rows=acquire_rows,
-        ownership=ownership,
-        actor_identity=TEST_ACTOR_IDENTITY,
-        transaction_instant=transaction_instant,
-    )

@@ -150,7 +150,8 @@ how `m-predicate` hosts `predicate.schema.json`; `m-case-format` and
   with its bounded `*Until` form where one exists;
 - a **predicate-selected** instruction — a `mutation` on every row of a `target`
   (`entity` plus a bare `m-predicate` predicate) matching that predicate, with
-  `assignments` on the amendment forms;
+  `assignments` on the amendment forms, written by one readless statement and
+  so admitted only over an unversioned, non-temporal target (`m-batch-write`);
 - a **caller-addressed** (target) instruction — an amendment (`amend` /
   `amendUntil`), a complete replacement (`replace` / `replaceUntil`), a
   deletion (`delete`), or a termination (`terminate` / `terminateUntil`) of the
@@ -250,8 +251,10 @@ members, nullability, and other structural failures retain their existing rules.
 
 Two producer operations converge on the same private immutable prepared-write
 algebra, and they are the one admissibility judgment every ingress crosses. Each
-resolves the target first and judges whether it admits the write: a temporal
-target refuses `delete`; the window must be stated as the verb's form requires,
+resolves the target first and judges whether it admits the write: a
+predicate-selected write refuses a versioned or temporal target
+(`set-based-write-target-unsupported`, `m-batch-write`) before anything else is
+judged; a temporal target refuses `delete`; the window must be stated as the verb's form requires,
 admitted by the target's temporal profile, and ordered; a non-temporal target
 refuses a milestone verb; and a temporal keyed instruction carries one row. Only
 then is the payload judged — a keyed row's subtype shape, members, and values, or
@@ -661,9 +664,8 @@ acquisition*). A request describes what to read and performs no read:
 
 | Request | What it reads | When |
 |---|---|---|
-| **Selection** | the rows a predicate-selected write on a versioned or temporal target will change — for a Bitemporal amendment, each matching object's rectangle current at its `validFrom` | when the write is buffered, after pending writes are flushed through the read gate |
 | **Target** | the one row a Locking caller-addressed write addresses, at `validFrom` for a Bitemporal target, when no pending write or live read already proves it; a temporal one whole, retained with the write | when the write is buffered, with no force-flush |
-| **Coverage** | the current milestones of one or several objects overlapping the parts of each object's window no row it holds covers, in statements naming a bounded number of object/part terms each | when the flush reaches the deferred unit — for a deferred group, each batch of its objects — inside its write batch |
+| **Coverage** | the current milestones of one or several objects overlapping the parts of each object's window no row it holds covers, in statements naming a bounded number of object/part terms each | when the flush reaches the deferred unit, inside its write batch |
 | **Completion** | nothing: the retained rows of a deferred range unit that are still current, each occurrence the target read left pending judged as a read judges it | when the flush reaches that unit, before its coverage is read |
 
 The unit of work hands each request a consumer of its own and receives the
@@ -672,10 +674,8 @@ documents, while the acquisition still holds them, adopts the row and document
 references it keeps into canonical evidence (`m-write-plan`), and retains
 nothing of the read itself; acquisition settles its resources however the
 consumer ends. A completion reaches the same kind of consumer with no read
-behind it. Where a write reads nothing, it requests nothing: whether a
-predicate write is readless — an unversioned Non-Temporal target — is decided
-once, when it is buffered, and a readless write reaches settlement already
-marked so, without a second routing decision there.
+behind it. Where a write reads nothing, it requests nothing: a predicate write
+is readless (`m-batch-write`), so it requests no acquisition at all.
 
 ## Write finalization
 
@@ -780,17 +780,16 @@ Four of those orderings are load-bearing and therefore normative:
   reads each produced row's Row Origin and each close's Close Cause and adds
   ordinary planned values; it changes no topology, target, gate, or affected-row
   policy, and emits no SQL. Every row a write produces — a new lineage's
-  opening, or a successor carried or changed from its predecessor, a
-  Materialized Write Group's rows included — is **finalized once**, before
+  opening, or a successor carried or changed from its predecessor — is
+  **finalized once**, before
   settlement chooses whether it is inserted or revises a row the attempt owns,
   and every value finalization adds is an executed assignment of the row
   (`m-write-plan` *Write Rows*). Each Non-Temporal update, keyed or readless, and
   each emitted close is **decorated once**; neither needs a complete row. A
   guard, a removal, a delete, and a milestone kept unchanged store no
-  represented value and are not audited. A Materialized Write Group keeps only
-  what its audit added, beside its compact evidence, so rebuilding one of its
-  steps audits nothing again, and the audit-neutral default answers each input
-  itself without resolving the Transaction Instant (ADR 0071, superseding ADR 0037).
+  represented value and are not audited. The audit-neutral default answers each
+  input itself without resolving the Transaction Instant (ADR 0071, superseding
+  ADR 0037).
 
 Stages are otherwise private. The stage list is an ordering contract, not an
 interface: nothing outside the planner may name, observe, or invoke a stage.
@@ -885,43 +884,19 @@ semantics already decided.
   units complete before later work runs*); any other caller's start is a failed
   precondition, and any other observed condition fails as that write's own
   shortfall would, the caller's first.
-- A **deferred group** is the deferred unit of a Bitemporal amendment's
-  Materialized Write Group (below). Its meaning is the group's one window and
-  assignment set, the gate, and the resolved instant, beside the starting rows
-  the group selected, which the unit's preparation takes over when its turn
-  comes so that the plan keeps none of them alive while it executes. Binding it
-  answers a **continuation** rather than steps: preparation in rounds, each
-  round the Planned Writes of the next batch of complete objects — possibly
-  none — settled only after every step of the round before it has executed and
-  been enforced, and nothing of that round is still held. Iterating or
-  indexing a round's Planned Writes acquires and settles nothing. Once no
-  round remains the continuation hands over what the whole unit's success
-  publishes, and however the unit ends its preparation is
-  released without preparing or publishing anything more; a failure releasing
-  it after an earlier failure leaves that earlier failure the one reported, and
-  one with no earlier failure refuses the unit's success.
 - Planned Writes is a **logical** sequence. An implementation MAY pack homogeneous
   runs and expose stable immutable views during iteration rather than allocating
   one container per step; every exposed view is immutable and stable, and equal
   views need not have object identity.
 - Each settled write — one keyed write with its expanded temporal topology, one
-  batch, one readless predicate write, or one Materialized Write Group — is one
-  **execution unit**. A unit's completion facts are produced values like its
-  steps, and a group's MAY be read on demand from the group's compact evidence.
-- A packed run of a Materialized Write Group's rows MAY be held **compactly** —
-  the group's own aligned evidence beside the facts settlement decided for the
-  whole group — and its step access reads those two and nothing else. It
-  **MUST NOT** consult a clock, a strategy, a Metamodel, an Inheritance Facet, or
-  a Temporal Facet there, and **MUST NOT** re-resolve a Milestone Successor or
-  re-derive the applicable member set: every one of those was answered while the
-  plan was being made. Reading one settled row's cells through an index a facet
-  compiled when the model was accepted is not a re-derivation.
+  batch, or one readless predicate write — is one **execution unit**. A unit's
+  completion facts are produced values like its steps.
 
 ### Execution units complete before later work runs
 
 The unit of work runs a finalized Write Plan unit by unit, in order. It hands
-each span of Planned Writes — a unit's planned steps, the steps its deferred
-range bound, or one round of its deferred group — to the step-execution port,
+each span of Planned Writes — a unit's planned steps, or the steps its deferred
+range bound — to the step-execution port,
 which executes every step of the span and has its effect enforced. As soon as
 every step of a unit has succeeded — at once for a unit with no step — and
 before any step of a later unit is taken, the unit of work completes the unit
@@ -935,8 +910,7 @@ register the rows the unit opened
 ```
 
 A deferred range unit's changed states, removals, and openings are those its
-binding produced; a deferred group's are those every round produced, published
-once, after the last round, and never per round. A milestone a unit kept unchanged (`m-temporal-write`
+binding produced. A milestone a unit kept unchanged (`m-temporal-write`
 *Unchanged milestones*) is
 no changed state, even where a guard executed for it, and derives nothing a
 later unit relies on: it still stands. A source that carries no observation — an unversioned
@@ -1038,8 +1012,7 @@ downstream, or a mode in which an observation-requiring write proceeds unobserve
 
 Structural absence extends to the buffer. A buffered write that has an
 observation is buffered **paired** with it — one keyed instruction and the one
-observation resolved for it, the keyed counterpart of a Materialized Write
-Group's own aligned evidence (below) — and a write with none carries no
+observation resolved for it — and a write with none carries no
 observation field for anything to be absent from. Absence is therefore the
 absence of the pairing rather than a field carrying it, which is what lets
 planning read a write's address, gate, and carried state off one object. What an
@@ -1063,35 +1036,9 @@ A temporal milestone such a write leaves exactly as it was is kept rather than
 closed and chained wherever that is proven (`m-temporal-write` *Unchanged
 milestones*).
 
-A predicate-selected write compares instead. The write-input comparison of a
-Materialized Write Group below, and the no-op elimination it performs before
-planning, use `m-document-codec`'s one effective-change classification, over the
-members the write explicitly assigns and, under those same names, the values the
-resolving read observed, and it answers identically under either Storage
-Layout. What this module states is which members it hands that operation and
-what it does with the answer; the rule it applies — scalar, whole occurrence,
-and undeclared key alike — is the codec's and is not restated here.
-
-A resolved row every assigned member of which the classification answers as
-**restored** is **eliminated**: it issues no DML, advances no version, consults
-no clock, and for a temporal entity performs no close and chains no row. That
-holds however the codec reached the answer. A Bitemporal amendment's group
-eliminates nothing at selection: its write reaches each object's later coverage
-too, so every milestone it reaches is judged unchanged for itself when the group
-settles (`m-temporal-write` *Unchanged milestones*), as a keyed write's are.
-
-Elimination decides the whole row and nothing smaller. A Materialized Write
-Group row that survives because one of its assigned members is effective
-executes **every** assignment, exactly as a keyed write does: a member the
-classification answers as restored is still written, so an assigned occurrence
-equal to its stored value replaces the stored subtree whole, keys no member
-declares included (`m-write-plan` *Write Rows*).
-
-Elimination is deliberately the conservative direction wherever that answer makes
-equal two documents a store spells differently: eliminating the row leaves the
-stored spelling standing where writing it would have replaced the assigned
-subtree whole. A row the codec finds nothing changed in is not the place to
-destroy stored state no assignment can name.
+A predicate-selected write's assignments are literal too: its one readless
+statement writes every row its predicate matches, whatever that row already
+holds (`m-batch-write`).
 
 ## Buffered, batched, ordered writes
 
@@ -1254,7 +1201,6 @@ with what the flush would have done:
 | destruction | destruction, same region | **deduplicate** — the second says what the first said and adds nothing |
 | destruction | assignment | **incompatible** — no write means to resurrect a row that is going away |
 | any | any, different region | **incompatible** for a non-temporal write; a temporal object's observed writes compose instead (below) |
-| a Materialized Write Group's selection | any | **incompatible** — the group is one compact indivisible unit, so a keyed intent has nothing to join |
 
 Merged assignments are literal: the merge keeps the caller's last word on each
 member, and a member set back to the value its source observed is still
@@ -1334,15 +1280,9 @@ write would settle against is already claimed by pending work it cannot join. Th
 remedy is the ordinary one: a participating read force-flushes the buffered intent
 and returns fresh state, which nothing claims.
 
-A **Materialized Write Group** claims every state its predicate resolution
-selected. A later keyed write of one of those states is refused rather than merged
-in, because merging would mean indexing and mutating the compact group. A
-Bitemporal amendment's group also reaches each selected object's later coverage
-when its flush reaches it, so a later observed write of any other state of a
-selected object is refused too: it would settle against coverage the group
-changes first. In the reverse order there is nothing to refuse: the group's
-resolving read force-flushes the buffer first, so it selects state no pending
-intent still holds.
+A readless predicate write claims nothing: it observes no state, and the
+ordering barrier it raises keeps every write on its own side (*Buffered,
+batched, ordered writes*).
 
 A coalescing witness encodes **both** buffered mutations explicitly by authoring
 the write step as an ordered **buffer-and-flush** scenario. `/scenario/<n>/write`
@@ -1362,107 +1302,6 @@ form and its authoring surface are the case format's (`m-case-format`); the
 instructions themselves are the canonical `write-instruction.schema.json` shapes, so
 an adapter exercises coalescing from the requested operations, never from the golden
 SQL.
-
-### Materialized Write Groups
-
-A predicate-selected write whose target requires per-row observation
-(`m-opt-lock`, ADR 0014 — a versioned or temporal target with no single-statement
-template) cannot be planned from buffered data alone. Its resolving read happens
-**before** the pure planning call, in Unit Work's write-input preparation, which:
-
-1. force-flushes preceding writes when the read needs read-your-own-writes;
-2. performs the resolving read through its row acquisition port (*Row
-   acquisition*);
-3. acquires the selected physical row locks when the Entity's Effective
-   Concurrency Strategy is Locking (`m-read-lock`);
-4. compares assigned members with their persisted values, using this module's
-   structural equality rules, for an assignment-bearing mutation other than a
-   Bitemporal amendment;
-5. records the effective rows in database resolution order; and
-6. produces **no item at all** when the result is empty or entirely no-op.
-
-Delete and terminate have no assignments to compare and therefore retain every
-resolved row. This streaming comparison is the one narrow result-dependent
-normalization performed before planning; it exists so comparison-only state is
-never carried into the planner merely to be discarded. Every no-op decision
-derivable from buffered data alone remains the planner's.
-
-One authored predicate becomes exactly one **Materialized Write Group**: the
-authored mutation and, for each selected row in database resolution order, that
-row's key value with either its observed version or its complete Predecessor Row
-state and optional raw document. The entries are aligned and number at least
-one. How the group holds them — aligned columns, the resolving read's own row
-state, or another compact form — is the implementation's, and none of it appears
-in a Write Plan.
-
-- The group is **private**. It is an input to planning, never a member of a Write
-  Plan, and it disappears during finalization.
-- It stays **indivisible** through batching and dependency ordering: the planner
-  moves it as one unit and never folds its rows into an unrelated buffered
-  instruction, never regroups them by statement kind, and never reorders them
-  internally. Each row's close-and-successor sequence stays adjacent.
-- Because the read observed only existing rows — and read-your-own-writes has
-  already flushed past any pending same-key insert — no same-object coalescing
-  candidate can structurally arise against it.
-- It contains no managed Entity object, no composite-key object per selected row,
-  no eager Predecessor Row object per selected row, no generic per-row planning
-  wrapper, and no observation-free variant. An empty resolution produces no
-  group.
-- A zero-row shortfall encountered while flushing the group aborts the **whole**
-  unit of work (`m-opt-lock`); a later row is never silently continued past it.
-
-#### A Bitemporal amendment's group settles at execution
-
-A Bitemporal `amend` or `amendUntil` selects each object by its rectangle current
-at the write's `validFrom` under current Transaction Time, after the dependency
-flush, and keeps every object its predicate matches there (`m-temporal-write`
-*Predicate-selected amendments span their requested extent*). The selected
-rectangles are its starting evidence; the coverage past them that the write's
-window reaches is no planning input, so planning finalizes the group to a
-**deferred group** (*Write Plan and Planned Writes*). When the flush reaches it,
-its objects settle in **batches**, in resolution order, each object whole:
-
-```text
-for the next batch of a bounded number of complete objects:
-  read the part of each object's window its starting rectangle leaves,
-    several objects to a statement, every statement before the batch settles
-  settle each object as a range over its starting rectangle and the rows read
-  execute and enforce the batch's steps
-  release what the batch read and settled
-publish the group's effects once, after the last batch
-```
-
-An object with nothing left to read still takes its place in a batch, and a read
-finding nothing in a part settles that part as a gap. A batch boundary never
-divides an object's history, its effects before its openings, the merging of
-the rows it produces, or the proof of any of its rectangles. Batch and statement bounds are private: neither is a
-caller option, and neither bounds the rows or bytes a read returns.
-
-The group is still one execution unit. No other unit's step runs between its
-batches, and no batch commits, publishes ownership, or spends anything: the
-group's effects are published once, after its last batch succeeds. The **first
-failure encountered** ends it — a failure executing an earlier batch precedes
-any acquisition or settlement of a later one, and a refusal settling a later
-batch follows the earlier batches' statements — and the attempt is doomed as for
-any failed flush. Retry classification applies to the failure that actually
-occurred (`m-auto-retry`). Everything the earlier batches executed rolls back
-with the attempt, transactional trigger effects included; sequence advances,
-effects outside the transaction, and time spent blocked do not.
-
-A later batch's reads run after the earlier batches executed. Under READ
-COMMITTED each read observes what committed before it and the attempt's own
-earlier writes, so several reads share no one snapshot, while each starting
-rectangle keeps the proof its selection observed and is never refreshed by a
-later read. Under Locking the selection locked the starting rectangles at the
-call; each later rectangle is locked when its object's batch reads it, and every
-lock an earlier batch took or a guard holds stays until the transaction ends.
-Stronger isolation behaves as its provider defines; no group-wide snapshot is
-taken.
-
-Planning keeps the buffered group no longer than it plans: once planning
-succeeds, the selected rows belong to the deferred group alone, and each batch
-releases the rows it took once its steps have executed. A planning refusal
-leaves the buffer as it was.
 
 ## The Transaction Instant
 
@@ -1496,8 +1335,7 @@ opened. Such a row has no history to preserve, and closing it would leave an
 empty `[T, T)` interval whose physical address collides with the row the
 earlier flush closed. The attempt therefore records, by complete physical
 address, every current row its successful execution units open — keyed inserts,
-temporal successors, and the successors of Materialized Write Groups alike —
-and retires a row from that record when a unit removes it. Reads record nothing.
+and temporal successors alike — and retires a row from that record when a unit removes it. Reads record nothing.
 A row whose key the database allocates has no address until its insert
 executes, so that insert answers the key as row-producing DML (`m-db-port`) and
 the unit records the row under it. The answer is validated before it is used:

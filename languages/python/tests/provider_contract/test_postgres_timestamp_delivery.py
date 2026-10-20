@@ -223,13 +223,12 @@ def _wire_span_query(entity: type[Any], valid: _Pin, tx: _Pin) -> dict[str, obje
     return _wire_query(entity, temporal={"valid-time": pin(valid), "transaction-time": pin(tx)})
 
 
-def _corrected(entity: type[Any]) -> Callable[[TxnContext], object]:
-    def correct(tx: TxnContext) -> object:
-        return tx.amend_where(
-            entity.where(entity.all),
-            entity.at.set(_CORRECTED.typed),
-            valid_from=_CORRECTED_FROM.typed,
-        )
+def _corrected(entity: type[Any]) -> Callable[[TxnContext], None]:
+    def correct(tx: TxnContext) -> None:
+        # Each keyed write starts where its source was read.
+        current = entity.where(entity.all).as_of(valid_time=_CORRECTED_FROM.typed)
+        for found in tx.find(current).results():
+            tx.amend(found.edit(at=_CORRECTED.typed))
 
     return correct
 

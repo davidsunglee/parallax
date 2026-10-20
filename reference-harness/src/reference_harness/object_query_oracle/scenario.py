@@ -34,8 +34,6 @@ from typing import Any
 
 from ..case import Case, Entity, entry_pairs, frozen_view
 from ..case_assertions import CaseFailure, coerce_identity_key, reported_against, rows_equal
-from ..predicate_write_validate import requires_predicate_write_materialization
-from ..serde import canonical
 from . import execute, graph, includes, materialize, retained, row, stream
 from .executor import ReadExecutor
 
@@ -178,14 +176,9 @@ class ScenarioRowObservations:
         if reference is not None:
             self._assert_reference_rows(step_index, reference, rows, entity)
         # The step is presented as the read it is, so the seam reads its result
-        # form off the step's own read semantics rather than being told one: the
-        # sole row-form step read is a materializing predicate write's resolve, and
-        # every other step is the object lane. That resolve is also the one read
-        # that widens its lane's Document-slot default, which no read case states
-        # and only the write it serves decides.
-        published = materialize.materialize_read(
-            step_read, rows, widened_documents=_widened_documents(case, step_index)
-        )
+        # form off the step's own read semantics rather than being told one: every
+        # step read is the object lane.
+        published = materialize.materialize_read(step_read, rows)
         rows = [materialize.materialize_variant_owner_node(case, entity, row) for row in published]
         return retained.Observation(
             rows=rows,
@@ -633,77 +626,6 @@ def _relationship_path_target(case: Case, start: Entity, path: str) -> Entity:
     return entity
 
 
-def _resolves_a_materializing_write(case: Case, step_index: int) -> bool:
-    """Whether the find at *step_index* is a materializing predicate write's own resolve.
-
-    That write is authored immediately after the find that resolves it, over that
-    find's own target and canonical predicate, and its target MATERIALIZES — a
-    versioned or temporal one does, while an unversioned, non-temporal `update` /
-    `delete` is readless and resolves nothing, so an ordinary find before one is an
-    ordinary find (`m-case-format` *Materializing cases*).
-
-    "That find's own target" is decided by MODEL IDENTITY, because a case may spell
-    an Entity either way: a find naming ``Subscriber`` and a write naming
-    ``parallax.compatibility.Subscriber`` are one materializing operation.
-    """
-    scenario = case.scenario
-    step = scenario[step_index]
-    query = step.get("objectQuery")
-    following = scenario[step_index + 1] if step_index + 1 < len(scenario) else None
-    write = following.get("write") if isinstance(following, Mapping) else None
-    if not isinstance(query, Mapping) or not isinstance(write, Mapping):
-        return False
-    target = write.get("target")
-    if not isinstance(target, Mapping) or not isinstance(target.get("predicate"), Mapping):
-        return False
-    if canonical(target["predicate"]) != canonical(query.get("predicate")):
-        return False
-    try:
-        written = case.model.entity(target["entity"])
-        read = case.model.entity(query["target"])
-    except (KeyError, TypeError):
-        return False
-    if written.canonical_name != read.canonical_name:
-        return False
-    return requires_predicate_write_materialization(written)
-
-
-def _widened_documents(case: Case, step_index: int) -> frozenset[str]:
-    """The Value Object occurrences a materializing write's resolve additionally needs.
-
-    A resolve is row-form, and row form omits the Value Object `Document` slots —
-    but this one read widens that default to the slots the WRITE it serves needs
-    (`m-case-format` *Read result form*). The unit of the widening is the SLOT, not
-    the member: under a Relational Document Layout one Structured Column carries
-    the Attributes and the occurrences together, so a write reaching any member
-    inside it needs the whole slot, and every occurrence the slot holds
-    materializes with it.
-
-    A TEMPORAL target's resolve records a complete Predecessor Row, so it needs
-    every declared slot. A VERSIONED target's resolve retains only the observed
-    version, so it needs the slots its own assignments reach into — and none at
-    all for a ``delete``, which assigns nothing. Every other step read is the
-    object lane and widens nothing, carrying every applicable occurrence already.
-    """
-    if not _resolves_a_materializing_write(case, step_index):
-        return frozenset()
-    written = case.model.entity(case.scenario[step_index + 1]["write"]["target"]["entity"])
-    document = case.model.storage_layout.document(written.canonical_name)
-    column, members = document.column, document.members
-    if not column:
-        return frozenset()
-    occurrences = frozenset(member.name for member in members if member.type_spelling is None)
-    if written.temporal_runtime_axes:
-        return occurrences
-    assignments = case.scenario[step_index + 1]["write"].get("assignments") or ()
-    assigned = {
-        str(assignment.get("attr", "")).rsplit(".", 1)[-1]
-        for assignment in assignments
-        if isinstance(assignment, Mapping)
-    }
-    return occurrences if assigned & {member.name for member in members} else frozenset()
-
-
 def _step_as_read(case: Case, step_index: int) -> Case:
     """The step at *step_index* presented as the READ case its materialization belongs to.
 
@@ -717,21 +639,14 @@ def _step_as_read(case: Case, step_index: int) -> Case:
     tolerance.
 
     A step's own ``expectRows`` names no form, so the form follows the step's read
-    semantics (`m-case-format` *Read result form*). An observation find, a resolving
-    ``load``, and a first ``access`` are the object lane; the sole row-form step read
-    is the materialized-predicate-write resolving find, which is an ordinary
-    preceding ``objectQuery`` step this oracle grades like any other and is
-    recognized as the resolve by the write it serves
-    (:func:`_resolves_a_materializing_write`), so an abstract table-per-concrete-subtype
-    step is graded on projecting the top-level Value Object `Document` slot its own
-    lane selects.
+    semantics (`m-case-format` *Read result form*): an observation find, a resolving
+    ``load``, and a first ``access`` are all the object lane.
     """
     step = case.scenario[step_index]
     return _as_read(
         case,
         {key: step[key] for key in ("objectQuery", "stream") if key in step},
         step.get("statements", []),
-        row_form=_resolves_a_materializing_write(case, step_index),
         grouped=isinstance(step.get("uow"), str),
     )
 
@@ -755,7 +670,7 @@ def _resolved_list_read(case: Case, step: Mapping[str, Any]) -> Case | None:
     query = case.scenario[source].get("objectQuery")
     if not isinstance(query, Mapping):
         return None
-    return _as_read(case, {"objectQuery": query}, step.get("statements", []), row_form=False)
+    return _as_read(case, {"objectQuery": query}, step.get("statements", []))
 
 
 def _as_read(
@@ -763,7 +678,6 @@ def _as_read(
     when: Mapping[str, Any],
     statements: Any,
     *,
-    row_form: bool,
     grouped: bool = False,
 ) -> Case:
     """*case* restated as the one-read `read` case *when* and *statements* describe.
@@ -781,10 +695,7 @@ def _as_read(
     resolved from the request over the root rather than read off the block's
     presence.
     """
-    then: dict[str, Any] = {
-        "statements": statements,
-        **({"rows": []} if row_form else {"graph": {}}),
-    }
+    then: dict[str, Any] = {"statements": statements, "graph": {}}
     if "tolerance" in case.then:
         then["tolerance"] = case.then["tolerance"]
     transactional = grouped or "uow" in case.when

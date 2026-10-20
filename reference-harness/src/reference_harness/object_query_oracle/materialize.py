@@ -31,7 +31,7 @@ that statement must say is a property of the layout rather than of any row.
 
 from __future__ import annotations
 
-from collections.abc import Collection, Iterator, Mapping
+from collections.abc import Iterator, Mapping
 from typing import Any, NamedTuple
 
 from ..case import Case, Entity, Model
@@ -257,9 +257,7 @@ def reference_identity_row(row: dict[str, Any]) -> dict[str, Any]:
 # --- the sequence, per kind of position --------------------------------------
 
 
-def materialize_read(
-    read: Case, rows: list[dict[str, Any]], *, widened_documents: Collection[str] = ()
-) -> list[PublishedRow]:
+def materialize_read(read: Case, rows: list[dict[str, Any]]) -> list[PublishedRow]:
     """The rows a read of the position its own Object Query names publishes.
 
     *read* is the ``read`` case whose golden statement returned *rows* — for a
@@ -270,15 +268,6 @@ def materialize_read(
     passed: a caller that could state it could state one the case contradicts, and
     a row-form read asks for the Attributes alone while an instance-form one
     additionally carries every applicable Value Object occurrence.
-
-    *widened_documents* is the one fact the read itself cannot carry: exactly one
-    internal read — a materializing predicate write's resolving find — projects
-    the Value Object `Document` slots the WRITE it serves needs, widening the
-    row-form default without changing lane (`m-case-format` *Read result form*).
-    Which slots those are is the write's answer, so they are named here rather
-    than derived. It cannot contradict the case: it only adds occurrences within
-    the lane the case already states, and it is inert for an instance-form read,
-    which carries every applicable occurrence already.
 
     The order is the sequence's own. The Relational Document Layout fan-out runs
     first, because it is what puts each member back under the result name the
@@ -298,7 +287,7 @@ def materialize_read(
     _refuse_a_case_the_sequence_cannot_read(read)
     instance_form = tpcs.is_instance_form(read)
     materialized = _materialize_target_tph_document_layout(
-        read, rows, include_value_objects=instance_form, widened=frozenset(widened_documents)
+        read, rows, include_value_objects=instance_form
     )
     if instance_form:
         materialized = _carrying_value_object_columns(read, materialized)
@@ -493,7 +482,6 @@ def _materialize_document_layout(
     rows: list[dict[str, Any]],
     *,
     include_value_objects: bool,
-    widened: frozenset[str] = frozenset(),
 ) -> list[dict[str, Any]]:
     """Fan a Relational Document Layout read's Structured Column out into the members
     it was asked for, under the result names a ``Columns`` layout would have used.
@@ -523,9 +511,7 @@ def _materialize_document_layout(
     if not column:
         return rows
     selected = [
-        member
-        for member in members
-        if include_value_objects or member.type_spelling is not None or member.name in widened
+        member for member in members if include_value_objects or member.type_spelling is not None
     ]
     materialized: list[dict[str, Any]] = []
     for row in rows:
@@ -612,7 +598,7 @@ def _leaf_nullable(entity: Entity, member: DocumentMember) -> bool:
 
 
 def _materialize_target_document_layout(
-    case: Case, rows: list[dict[str, Any]], *, include_value_objects: bool, widened: frozenset[str]
+    case: Case, rows: list[dict[str, Any]], *, include_value_objects: bool
 ) -> list[dict[str, Any]]:
     """:func:`_materialize_document_layout` over the case's own read target.
 
@@ -628,24 +614,23 @@ def _materialize_target_document_layout(
         case.model.entity(target_name),
         rows,
         include_value_objects=include_value_objects,
-        widened=widened,
     )
 
 
 def _materialize_target_tph_document_layout(
-    case: Case, rows: list[dict[str, Any]], *, include_value_objects: bool, widened: frozenset[str]
+    case: Case, rows: list[dict[str, Any]], *, include_value_objects: bool
 ) -> list[dict[str, Any]]:
     """Decode an abstract TPH document only after its raw tag resolves the variant."""
     position = query_position(case.object_query, case.model.entity_defs)
     if position is None or position.strategy != STRATEGY_TPH:
         return _materialize_target_document_layout(
-            case, rows, include_value_objects=include_value_objects, widened=widened
+            case, rows, include_value_objects=include_value_objects
         )
     family, target_name = position.family, position.target
     target = case.model.entity(target_name)
     if not case.model.storage_layout.document(target.canonical_name).column:
         return _materialize_target_document_layout(
-            case, rows, include_value_objects=include_value_objects, widened=widened
+            case, rows, include_value_objects=include_value_objects
         )
 
     tagged = _materialize_family_variant(case, rows)
@@ -669,7 +654,6 @@ def _materialize_target_tph_document_layout(
             case.model.entity(variant),
             [row],
             include_value_objects=include_value_objects,
-            widened=widened,
         )
         if not include_value_objects:
             for column_name in scalar_superset:

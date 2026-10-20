@@ -25,7 +25,6 @@ contract owners; this index does not add requirements.
 | Read Evidence | Read-derived identity, participation, and state facts evaluated for source-write admission, distinct from general publication provenance | [Unit of work](core/spec/m-unit-work.md) |
 | Row Acquisition | A write's read of the existing rows it needs, described by the unit of work and executed by the runtime | [Unit of work](core/spec/m-unit-work.md) |
 | Retained Starting Row | The row a Locking target write's acquisition read whole, kept as pending data its range reuses while no earlier unit changed it | [Unit of work](core/spec/m-unit-work.md) |
-| Deferred Group / Continuation | A Bitemporal predicate amendment's objects settled at execution in batches of complete objects, versus the execution-scoped preparation that answers each batch's writes | [Unit of work](core/spec/m-unit-work.md) |
 | Observed / Insertion-Authoring Write | A write authorized by genuine read provenance versus one authorized by an admitted insertion's own source | [Unit of work](core/spec/m-unit-work.md) |
 | Target Write | A caller-addressed mutation conditioned by the revision its caller states rather than by any source | [Unit of work](core/spec/m-unit-work.md) |
 | Planned Write | One finalized semantic execution step, distinct from the SQL that lowers it | [Write plan](core/spec/m-write-plan.md) |

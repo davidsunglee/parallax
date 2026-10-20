@@ -49,7 +49,7 @@
       ]
     },
     "predicateWriteInstruction": {
-      "description": "A predicate-selected (set-based) write: a mutation on every row of `target.entity` matching `target.predicate`, with `assignments` on the amendment forms. This is the set-based analogue of the keyed instruction; `m-batch-write` / `m-opt-lock` decide whether it lowers readless (unversioned non-temporal) or materializes per-row (versioned / temporal). Assignment list order is DATA order only — the target's Entity Layout determines the emitted SET columns and their binds.",
+      "description": "A predicate-selected (set-based) write: a mutation on every row of `target.entity` matching `target.predicate`, with `assignments` on the amendment forms. This is the set-based analogue of the keyed instruction. It lowers to one readless statement, so its target is an unversioned non-temporal Entity; a model-aware validator refuses any other target (`m-batch-write`). Assignment list order is DATA order only — the target's Entity Layout determines the emitted SET columns and their binds.",
       "type": "object",
       "additionalProperties": false,
       "required": ["mutation", "target"],

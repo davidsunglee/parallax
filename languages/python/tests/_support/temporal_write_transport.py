@@ -52,15 +52,13 @@ __all__ = [
     "Workload",
     "expected_history",
     "expected_realization",
-    "group_of",
-    "milestones",
-    "objects",
+    "object_key",
     "ordered_history",
     "seeded_history",
     "window",
 ]
 
-type Workload = Literal["keyed-amend", "target-replace", "predicate-amend", "collection-amend"]
+type Workload = Literal["keyed-amend", "target-replace", "collection-amend"]
 
 STATEMENT_CAP: Final = 64
 """The most statements one ordered write transport invocation presents."""
@@ -84,13 +82,10 @@ CELLS: Final[tuple[Cell, ...]] = (
     Cell("keyed-amend", 128),
     Cell("target-replace", 1),
     Cell("target-replace", 64),
-    Cell("predicate-amend", 1),
-    Cell("predicate-amend", 70),
     Cell("collection-amend", 64),
 )
-"""Small and wide ranges, one past both caps, and predicate groups of one
-object and of one crossing the continuation round boundary; the collection
-cell carries large, empty, duplicate-preserving, and nested collections."""
+"""Small and wide ranges and one past both caps; the collection cell carries
+large, empty, duplicate-preserving, and nested collections."""
 
 
 # --------------------------------------------------------------------------- #
@@ -244,21 +239,19 @@ def expected_realization(cell: Cell, *, ordered: bool) -> Realization:
     """What ``cell``'s one transaction presents to a connection that does, or
     does not, hold ``ordered`` write transport.
 
-    Each object closes every seeded milestone the window reaches and then
-    opens its head, the rows the window leaves, and its tail: an amendment one
-    row per milestone, a replacement one row over all of them.
+    The cell's one object closes every seeded milestone the window reaches and
+    then opens its head, the rows the window leaves, and its tail: an amendment
+    one row per milestone, a replacement one row over all of them.
     """
-    count = milestones(cell.workload, cell.size)
-    openings = 3 if cell.workload == "target-replace" else count + 2
-    alone, invocations, presented, widest = _closes(count, ordered=ordered)
-    each = len(objects(cell.workload, cell.size, 0))
+    openings = 3 if cell.workload == "target-replace" else cell.size + 2
+    alone, invocations, presented, widest = _closes(cell.size, ordered=ordered)
     return Realization(
-        alone * each,
-        invocations * each,
-        presented * each,
+        alone,
+        invocations,
+        presented,
         widest,
-        -(-openings // ENTRY_CAP) * each,
-        openings * each,
+        -(-openings // ENTRY_CAP),
+        openings,
         min(openings, ENTRY_CAP),
     )
 
@@ -298,18 +291,8 @@ def window(size: int) -> tuple[dt.datetime, dt.datetime]:
     return milestone_start(0) + _HEAD, milestone_start(milestones - 1) + _TAIL
 
 
-def milestones(workload: Workload, size: int) -> int:
-    return 1 if workload == "predicate-amend" else size
-
-
-def objects(workload: Workload, size: int, sample: int) -> tuple[int, ...]:
-    """The keys sample ``sample`` writes."""
-    if workload == "predicate-amend":
-        return tuple(group_of(sample) * 1000 + index for index in range(size))
-    return (sample + 1,)
-
-
-def group_of(sample: int) -> int:
+def object_key(sample: int) -> int:
+    """The key of the one object sample ``sample`` writes."""
     return sample + 1
 
 
@@ -318,24 +301,23 @@ def _label(workload: Workload, key: int, index: int) -> str:
 
 
 def seeded_history(workload: Workload, size: int, sample: int) -> list[HistoryRow]:
-    """The milestones sample ``sample``'s objects start with: adjacent, each
+    """The milestones sample ``sample``'s object starts with: adjacent, each
     holding a label of its own, so no two of them can ever merge."""
-    count = milestones(workload, size)
+    key = object_key(sample)
     rows: list[HistoryRow] = []
-    for key in objects(workload, size, sample):
-        for index in range(count):
-            end: object = INFINITY if index == count - 1 else milestone_start(index + 1)
-            rows.append(
-                HistoryRow(
-                    key,
-                    milestone_start(index),
-                    end,
-                    SEEDED_AT,
-                    INFINITY,
-                    _label(workload, key, index),
-                    index,
-                )
+    for index in range(size):
+        end: object = INFINITY if index == size - 1 else milestone_start(index + 1)
+        rows.append(
+            HistoryRow(
+                key,
+                milestone_start(index),
+                end,
+                SEEDED_AT,
+                INFINITY,
+                _label(workload, key, index),
+                index,
             )
+        )
     return rows
 
 
@@ -344,28 +326,23 @@ def expected_history(workload: Workload, size: int, sample: int) -> list[History
     seeded milestone the window reaches closed at the write's instant, and the
     current rows calculated piece by piece from the window."""
     seeded = seeded_history(workload, size, sample)
-    start, end = window(milestones(workload, size))
+    start, end = window(size)
     closed = [row._replace(tx_to=AMENDED_AT) for row in seeded]
-    opened: list[HistoryRow] = []
-    for key in objects(workload, size, sample):
-        own = [row for row in seeded if row.key == key]
-        first, last = own[0], own[-1]
-        opened.append(first._replace(valid_to=start, tx_from=AMENDED_AT))
-        if workload == "target-replace":
-            opened.append(HistoryRow(key, start, end, AMENDED_AT, INFINITY, REPLACED_LABEL, AMOUNT))
-        else:
-            for row in own:
-                piece_from = max(row.valid_from, start)
-                piece_to = end if row.valid_to is INFINITY else min(_finite(row.valid_to), end)
-                opened.append(
-                    row._replace(
-                        valid_from=piece_from,
-                        valid_to=piece_to,
-                        tx_from=AMENDED_AT,
-                        amount=AMOUNT,
-                    )
+    first, last = seeded[0], seeded[-1]
+    opened = [first._replace(valid_to=start, tx_from=AMENDED_AT)]
+    if workload == "target-replace":
+        key = object_key(sample)
+        opened.append(HistoryRow(key, start, end, AMENDED_AT, INFINITY, REPLACED_LABEL, AMOUNT))
+    else:
+        for row in seeded:
+            piece_from = max(row.valid_from, start)
+            piece_to = end if row.valid_to is INFINITY else min(_finite(row.valid_to), end)
+            opened.append(
+                row._replace(
+                    valid_from=piece_from, valid_to=piece_to, tx_from=AMENDED_AT, amount=AMOUNT
                 )
-        opened.append(last._replace(valid_from=end, tx_from=AMENDED_AT))
+            )
+    opened.append(last._replace(valid_from=end, tx_from=AMENDED_AT))
     return sorted([*closed, *opened], key=_order)
 
 

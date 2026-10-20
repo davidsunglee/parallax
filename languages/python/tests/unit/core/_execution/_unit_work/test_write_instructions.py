@@ -929,11 +929,11 @@ def test_member_name_honesty_accepts_declared_members() -> None:
     predicate = wi.deserialize(
         {
             "mutation": "amend",
-            "target": {"entity": "Account", "predicate": {"true": {}}},
-            "assignments": [{"attr": "Account.balance", "value": 0}],
+            "target": {"entity": "Wallet", "predicate": {"true": {}}},
+            "assignments": [{"attr": "Wallet.balance", "value": 0}],
         }
     )
-    wi.prepare_typed_write(predicate, _ACCOUNT)
+    wi.prepare_typed_write(predicate, _WALLET)
 
 
 @pytest.mark.parametrize(
@@ -1197,12 +1197,12 @@ def test_member_name_honesty_rejects_foreign_assignment_owner() -> None:
     predicate = wi.deserialize(
         {
             "mutation": "amend",
-            "target": {"entity": "Account", "predicate": {"true": {}}},
+            "target": {"entity": "Wallet", "predicate": {"true": {}}},
             "assignments": [{"attr": "Balance.value", "value": 0.00}],
         }
     )
     with pytest.raises(wi.WriteInstructionError, match="does not name a declared member"):
-        wi.prepare_typed_write(predicate, _ACCOUNT)
+        wi.prepare_typed_write(predicate, _WALLET)
 
 
 def test_member_name_honesty_rejects_a_duplicate_assignment() -> None:
@@ -1212,15 +1212,15 @@ def test_member_name_honesty_rejects_a_duplicate_assignment() -> None:
     predicate = wi.deserialize(
         {
             "mutation": "amend",
-            "target": {"entity": "Account", "predicate": {"true": {}}},
+            "target": {"entity": "Wallet", "predicate": {"true": {}}},
             "assignments": [
-                {"attr": "Account.balance", "value": 1},
-                {"attr": "Account.balance", "value": 2},
+                {"attr": "Wallet.balance", "value": 1},
+                {"attr": "Wallet.balance", "value": 2},
             ],
         }
     )
     with pytest.raises(wi.WriteInstructionError, match="is duplicated"):
-        wi.prepare_typed_write(predicate, _ACCOUNT)
+        wi.prepare_typed_write(predicate, _WALLET)
 
 
 def test_member_name_honesty_rejects_unknown_entity() -> None:
@@ -1270,8 +1270,8 @@ def test_a_canonical_spelling_resolves_where_the_bare_one_is_ambiguous() -> None
             "a row's history instead of removing it. Use 'delete' instead.",
         ),
         (
-            {"mutation": "terminate", "target": {"entity": "Account", "predicate": {"true": {}}}},
-            "Non-temporal objects like 'Account' do not support 'terminate_where', which "
+            {"mutation": "terminate", "target": {"entity": "Wallet", "predicate": {"true": {}}}},
+            "Non-temporal objects like 'Wallet' do not support 'terminate_where', which "
             "closes a row's history instead of removing it. Use 'delete_where' instead.",
         ),
     ],
@@ -1280,12 +1280,14 @@ def test_a_canonical_spelling_resolves_where_the_bare_one_is_ambiguous() -> None
 def test_a_milestone_verb_is_rejected_on_a_non_temporal_target(
     instruction: dict[str, Any], expected: str
 ) -> None:
-    # `Account` is versioned and non-temporal, so it has no milestone for a
-    # closing verb to address. Each verb names the alternative that keeps the
-    # caller's row effect, spelled for the surface the call arrived on, so the
-    # refusal is asserted in full.
+    # A non-temporal target has no milestone for a closing verb to address.
+    # Each verb names the alternative that keeps the caller's row effect,
+    # spelled for the surface the call arrived on, so the refusal is asserted
+    # in full.
+    write = wi.deserialize(instruction)
+    model = _ACCOUNT if isinstance(write, wi.KeyedWriteInstruction) else _WALLET
     with pytest.raises(wi.WriteInstructionError) as raised:
-        wi.prepare_wire_write(wi.deserialize(instruction), _ACCOUNT)
+        wi.prepare_wire_write(write, model)
     assert str(raised.value) == expected
 
 
@@ -1315,14 +1317,14 @@ def test_a_milestone_verb_is_rejected_on_a_non_temporal_target(
         },
         {
             "mutation": "amendUntil",
-            "target": {"entity": "Account", "predicate": {"true": {}}},
-            "assignments": [{"attr": "Account.balance", "value": 0}],
+            "target": {"entity": "Wallet", "predicate": {"true": {}}},
+            "assignments": [{"attr": "Wallet.balance", "value": 0}],
             "validFrom": _B1,
             "until": _B2,
         },
         {
             "mutation": "terminateUntil",
-            "target": {"entity": "Account", "predicate": {"true": {}}},
+            "target": {"entity": "Wallet", "predicate": {"true": {}}},
             "validFrom": _B1,
             "until": _B2,
         },
@@ -1343,11 +1345,17 @@ def test_a_bounded_verb_on_a_non_temporal_target_hears_its_window_refused_first(
     # an argument the caller can drop, heard ahead of the verb's own
     # applicability and of the `valid_from` the same pair states.
     mutation = instruction["mutation"]
+    write = wi.deserialize(instruction)
+    name, model = (
+        ("Account", _ACCOUNT)
+        if isinstance(write, wi.KeyedWriteInstruction)
+        else ("Wallet", _WALLET)
+    )
     with pytest.raises(wi.WriteInstructionError) as raised:
-        wi.prepare_wire_write(wi.deserialize(instruction), _ACCOUNT)
+        wi.prepare_wire_write(write, model)
     assert str(raised.value) == (
-        f"Account: a non-temporal {mutation!r} takes no until "
-        "('Account' declares no Valid-Time dimension to bound)"
+        f"{name}: a non-temporal {mutation!r} takes no until "
+        f"({name!r} declares no Valid-Time dimension to bound)"
     )
 
 
@@ -1448,15 +1456,17 @@ def test_member_name_honesty_rejects_a_primary_key_assignment() -> None:
     predicate = wi.deserialize(
         {
             "mutation": "amend",
-            "target": {"entity": "Account", "predicate": {"true": {}}},
-            "assignments": [{"attr": "Account.id", "value": 2}],
+            "target": {"entity": "Wallet", "predicate": {"true": {}}},
+            "assignments": [{"attr": "Wallet.id", "value": 2}],
         }
     )
     with pytest.raises(wi.WriteInstructionError, match="primary-key fields may not be assigned"):
-        wi.prepare_typed_write(predicate, _ACCOUNT)
+        wi.prepare_typed_write(predicate, _WALLET)
 
 
-def test_member_name_honesty_rejects_a_framework_owned_version_assignment() -> None:
+def test_a_versioned_target_is_refused_before_its_framework_owned_assignment() -> None:
+    # Only a versioned or temporal target declares a framework-owned member, and
+    # a predicate write refuses such a target before any assignment is judged.
     predicate = wi.deserialize(
         {
             "mutation": "amend",
@@ -1464,20 +1474,21 @@ def test_member_name_honesty_rejects_a_framework_owned_version_assignment() -> N
             "assignments": [{"attr": "Account.version", "value": 5}],
         }
     )
-    with pytest.raises(wi.WriteInstructionError, match="framework-owned fields"):
+    with pytest.raises(wi.InstructionRejectedError) as refused:
         wi.prepare_typed_write(predicate, _ACCOUNT)
+    assert refused.value.rule == wi.SET_BASED_WRITE_TARGET_UNSUPPORTED
 
 
 def test_member_name_honesty_rejects_a_scalar_type_mismatched_assignment() -> None:
     predicate = wi.deserialize(
         {
             "mutation": "amend",
-            "target": {"entity": "Account", "predicate": {"true": {}}},
-            "assignments": [{"attr": "Account.owner", "value": 42}],
+            "target": {"entity": "Wallet", "predicate": {"true": {}}},
+            "assignments": [{"attr": "Wallet.owner", "value": 42}],
         }
     )
     with pytest.raises(wi.WriteInstructionError, match="does not match the declared type"):
-        wi.prepare_typed_write(predicate, _ACCOUNT)
+        wi.prepare_typed_write(predicate, _WALLET)
 
 
 # --------------------------------------------------------------------------- #
@@ -1564,13 +1575,13 @@ def test_a_predicate_writes_inverted_between_window_is_rejected() -> None:
         {
             "mutation": "delete",
             "target": {
-                "entity": "Account",
-                "predicate": {"between": {"path": "Account.id", "lower": 10, "upper": 1}},
+                "entity": "Wallet",
+                "predicate": {"between": {"path": "Wallet.id", "lower": 10, "upper": 1}},
             },
         }
     )
     with pytest.raises(predicate_algebra.ModelRejectedError) as caught:
-        wi.prepare_typed_write(predicate, _ACCOUNT)
+        wi.prepare_typed_write(predicate, _WALLET)
     assert caught.value.rule == "between-bounds-inverted"
 
 
@@ -1599,14 +1610,14 @@ def test_a_predicate_writes_scope_is_judged_before_its_assignments() -> None:
         {
             "mutation": "amend",
             "target": {
-                "entity": "Account",
-                "predicate": {"between": {"path": "Account.id", "lower": 10, "upper": 1}},
+                "entity": "Wallet",
+                "predicate": {"between": {"path": "Wallet.id", "lower": 10, "upper": 1}},
             },
-            "assignments": [{"attr": "Account.id", "value": 2}],
+            "assignments": [{"attr": "Wallet.id", "value": 2}],
         }
     )
     with pytest.raises(predicate_algebra.ModelRejectedError) as caught:
-        wi.prepare_typed_write(predicate, _ACCOUNT)
+        wi.prepare_typed_write(predicate, _WALLET)
     assert caught.value.rule == "between-bounds-inverted"
 
 
@@ -2111,11 +2122,6 @@ _ALL = predicate_algebra.TrueNode()
             "Temporal objects like 'Position' do not support 'delete'",
         ),
         (
-            wi.PredicateWriteInstruction("delete", wi.PredicateSelection("Balance", _ALL)),
-            _BALANCE,
-            "Temporal objects like 'Balance' do not support 'delete_where'",
-        ),
-        (
             wi.KeyedWriteInstruction("insert", "Position", ({"id": 1, "nonsense": 1},)),
             _POSITION,
             "a bitemporal 'insert' requires valid_from",
@@ -2130,11 +2136,11 @@ _ALL = predicate_algebra.TrueNode()
         (
             wi.PredicateWriteInstruction(
                 "amend",
-                wi.PredicateSelection("Account", _ALL),
-                (wi.WriteAssignment("Account.nonsense", 1),),
+                wi.PredicateSelection("Wallet", _ALL),
+                (wi.WriteAssignment("Wallet.nonsense", 1),),
                 valid_from=_I1,
             ),
-            _ACCOUNT,
+            _WALLET,
             "a non-temporal 'amend' takes no valid_from",
         ),
         (
@@ -2162,18 +2168,6 @@ _ALL = predicate_algebra.TrueNode()
             "'terminateUntil' requires valid_from < until",
         ),
         (
-            wi.PredicateWriteInstruction(
-                "amend",
-                wi.PredicateSelection(
-                    "Position",
-                    predicate_algebra.Range(predicate_algebra.FieldSubject("Position.id"), 10, 1),
-                ),
-                (wi.WriteAssignment("Position.value", 1),),
-            ),
-            _POSITION,
-            "a bitemporal 'amend' requires valid_from",
-        ),
-        (
             wi.KeyedWriteInstruction("terminate", "Account", ({"id": 1, "nonsense": 1},)),
             _ACCOUNT,
             "Non-temporal objects like 'Account' do not support 'terminate'",
@@ -2181,7 +2175,6 @@ _ALL = predicate_algebra.TrueNode()
     ],
     ids=[
         "temporal-delete-before-members",
-        "temporal-delete-where",
         "bitemporal-requires-valid-from-before-members",
         "txtime-takes-no-valid-from-before-members",
         "non-temporal-takes-no-valid-from-before-assignments",
@@ -2189,7 +2182,6 @@ _ALL = predicate_algebra.TrueNode()
         "unbounded-verb-states-until",
         "reversed-window",
         "empty-window",
-        "window-before-predicate",
         "milestone-before-members",
     ],
 )
@@ -2199,6 +2191,58 @@ def test_the_target_is_judged_before_the_payload(
     with pytest.raises(wi.WriteInstructionError, match=message) as raised:
         prepare(instruction, model)
     assert not isinstance(raised.value, wi.InstructionRejectedError)
+
+
+_INVERTED_ID = predicate_algebra.Range(predicate_algebra.FieldSubject("Position.id"), 10, 1)
+
+
+@_PRODUCERS
+@pytest.mark.parametrize(
+    ("instruction", "model", "advice"),
+    [
+        (
+            wi.PredicateWriteInstruction(
+                "amend",
+                wi.PredicateSelection(
+                    "Account",
+                    predicate_algebra.Range(predicate_algebra.FieldSubject("Account.id"), 10, 1),
+                ),
+                (wi.WriteAssignment("Account.nonsense", 1),),
+                valid_from=_I1,
+            ),
+            _ACCOUNT,
+            "Account is versioned, so amend_where cannot change it without reading it. "
+            "Read it (find / stream) and amend each object, or use amend_if with the "
+            "version you hold.",
+        ),
+        (
+            wi.PredicateWriteInstruction("delete", wi.PredicateSelection("Balance", _ALL)),
+            _BALANCE,
+            "Balance is temporal, so delete_where cannot change it without reading it. "
+            "Read it (find / stream) and terminate each object, or use terminate_if with "
+            "the tx_start you hold.",
+        ),
+        (
+            wi.PredicateWriteInstruction(
+                "amend",
+                wi.PredicateSelection("Position", _INVERTED_ID),
+                (wi.WriteAssignment("Position.nonsense", 1),),
+            ),
+            _POSITION,
+            "Position is temporal, so amend_where cannot change it without reading it. "
+            "Read it (find / stream) and amend each object, or use amend_if with the "
+            "tx_start you hold.",
+        ),
+    ],
+    ids=["versioned-before-window-predicate-and-assignments", "temporal-delete", "bitemporal"],
+)
+def test_a_predicate_write_needing_an_observation_is_refused_before_anything_else(
+    prepare: Any, instruction: wi.PredicateWriteInstruction, model: Any, advice: str
+) -> None:
+    with pytest.raises(wi.InstructionRejectedError) as raised:
+        prepare(instruction, model)
+    assert raised.value.rule == wi.SET_BASED_WRITE_TARGET_UNSUPPORTED
+    assert str(raised.value) == advice
 
 
 @_PRODUCERS
@@ -2224,13 +2268,6 @@ def test_both_producers_normalize_an_aware_bound_to_utc(prepare: Any) -> None:
             wi.KeyedWriteInstruction("terminate", "Balance", ({"id": 1},)),
             _BALANCE,
             id="transaction-time",
-        ),
-        pytest.param(
-            wi.PredicateWriteInstruction(
-                "terminate", wi.PredicateSelection("Balance", predicate_algebra.TrueNode()), ()
-            ),
-            _BALANCE,
-            id="transaction-time-predicate",
         ),
     ],
 )
@@ -2300,7 +2337,7 @@ def test_a_plural_temporal_keyed_write_is_refused_before_its_members(prepare: An
         ("amend", (), "a predicate-selected 'amend' requires at least one assignment"),
         (
             "delete",
-            (wi.WriteAssignment("Account.balance", 1),),
+            (wi.WriteAssignment("Wallet.balance", 1),),
             "a predicate-selected 'delete' names nothing to assign",
         ),
     ],
@@ -2312,19 +2349,19 @@ def test_both_producers_judge_a_constructed_assignment_list(
     message: str,
 ) -> None:
     instruction = wi.PredicateWriteInstruction(
-        mutation, wi.PredicateSelection("Account", _ALL), assignments
+        mutation, wi.PredicateSelection("Wallet", _ALL), assignments
     )
     with pytest.raises(wi.WriteInstructionError, match=message):
-        prepare(instruction, _ACCOUNT)
+        prepare(instruction, _WALLET)
 
 
 # --------------------------------------------------------------------------- #
 # Each assignment is completed before the next: its reference, then its value. #
 # --------------------------------------------------------------------------- #
-def _account_update(*assignments: tuple[str, object]) -> wi.PredicateWriteInstruction:
+def _wallet_update(*assignments: tuple[str, object]) -> wi.PredicateWriteInstruction:
     return wi.PredicateWriteInstruction(
         "amend",
-        wi.PredicateSelection("Account", _ALL),
+        wi.PredicateSelection("Wallet", _ALL),
         tuple(wi.WriteAssignment(attr, value) for attr, value in assignments),
     )
 
@@ -2333,14 +2370,14 @@ def _account_update(*assignments: tuple[str, object]) -> wi.PredicateWriteInstru
 @pytest.mark.parametrize(
     ("assignments", "message"),
     [
-        ((("Account.nonsense", "not-a-decimal"),), "does not name a declared member"),
+        ((("Wallet.nonsense", "not-a-decimal"),), "does not name a declared member"),
         ((("Balance.value", "not-a-decimal"),), "does not name a declared member"),
         (
-            (("Account.owner", "Ada"), ("Account.owner", 5)),
+            (("Wallet.owner", "Ada"), ("Wallet.owner", 5)),
             "is duplicated",
         ),
         (
-            (("Account.nonsense", 1), ("Account.balance", "not-a-decimal")),
+            (("Wallet.nonsense", 1), ("Wallet.balance", "not-a-decimal")),
             "does not name a declared member",
         ),
     ],
@@ -2350,7 +2387,7 @@ def test_an_assignments_reference_fault_precedes_any_value_fault_it_or_a_later_o
     prepare: Any, assignments: tuple[tuple[str, object], ...], message: str
 ) -> None:
     with pytest.raises(wi.WriteInstructionError, match=message) as raised:
-        prepare(_account_update(*assignments), _ACCOUNT)
+        prepare(_wallet_update(*assignments), _WALLET)
     assert not isinstance(raised.value, wi.InstructionRejectedError)
 
 
@@ -2358,9 +2395,9 @@ def test_an_assignments_reference_fault_precedes_any_value_fault_it_or_a_later_o
 def test_an_earlier_assignments_value_fault_precedes_a_later_reference_fault(
     prepare: Any,
 ) -> None:
-    instruction = _account_update(("Account.balance", "not-a-decimal"), ("Account.nonsense", 1))
+    instruction = _wallet_update(("Wallet.balance", "not-a-decimal"), ("Wallet.nonsense", 1))
     with pytest.raises(wi.WriteInstructionError) as raised:
-        prepare(instruction, _ACCOUNT)
+        prepare(instruction, _WALLET)
     assert "declared member" not in str(raised.value)
     assert "balance" in str(raised.value)
 

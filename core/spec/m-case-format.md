@@ -599,9 +599,7 @@ view loaded empty (`[]`) or null.
 (**instance-form**) or the **values lane** (**row-form**) of `m-sql`'s *Read result form*
 — and that form fixes the read's **default** Document-slot selection (`m-sql`, *Read
 projection*: instance-form projects every applicable top-level Value Object
-`Document` slot; row-form omits those slots). Exactly one internal read widens that
-default without changing lane — the materialized-predicate-write resolving read
-below, whose need is decided by the write it serves.
+`Document` slot; row-form omits those slots).
 The form follows the read's **nature**, and a case expresses that nature in one of two
 ways, keyed on **where** the read is asserted — never on a bare member name alone:
 
@@ -635,39 +633,19 @@ ways, keyed on **where** the read is asserted — never on a bare member name al
   - A value-object-bearing target therefore projects its whole `Document` slot at
     **every** instance-form step above, even though the channel is `expectRows` /
     `observeRows`.
-  - The **internal materialized-predicate-write resolving read** — the "materializing
-    find" a set-based versioned / temporal predicate write consumes to plan its per-row
-    DML, resolving each matched row to its pk and gate values with **no instance
-    constructed** (`m-sql`, ADR 0014) — is the **sole row-form** (values lane) step read.
-    It projects only the `Document` slots the write it serves needs: a **temporal**
-    target's resolve projects **every** declared one, because the per-row observation it
-    records is a complete Predecessor Row (`m-unit-work`); a **versioned** target's
-    resolve retains only the observed version, so it projects only the documents its own
-    assignments compare against, and none at all for a `delete`. A reassigned document
-    still comes from the write instruction, never from the read.
 
 Row-form is **not a developer surface** — the idiomatic find API is instance-form
 (results always materialize). Row-form is the internal / conformance consumption lane
-(predicate `read` cases, the materialized predicate-write read, and aggregation
-results — `m-agg`). The form is **structural intent** an adapter's
+(predicate `read` cases and aggregation results — `m-agg`). The form is **structural intent** an adapter's
 `compile` MAY consume, exactly like `when.uow.concurrency`; it needs no schema field and
 no case edit. The two forms' Document-slot divergence is witnessed at **case** level, by
 the `then.rows` reads over `customer`, which omit `address`, against the `then.graph`
-reads of that same model, which project it. Two scenario witnesses pin the step-level
-pair, one per materializing target class. The `subscriber` witness pins the row-form
-**default**: a versioned predicate `delete` retains only the observed version, so its
-resolving read omits `address` while the managed find one step earlier — the same
-canonical query over the same row — projects it, the two goldens differing in that
-one slot.
-The `supplier` witness pins the **widening**: an audit-only close's resolving read
-projects `address` even though the close copies no payload, because the observation it
-records is a complete Predecessor Row.
+reads of that same model, which project it.
 The Document-slot delta is not the forms' only divergence overall: the
 abstract-target per-variant materialization narrowing established above (*Read
 targeting*, `then.graph`'s per-variant node shape vs `then.rows`'s concrete-superset
 row) is the other — a graph-assembly-time shape difference over the same
-non-Document Position Layout, not a Document projection difference. Neither witness is
-the sole value-object-bearing step read either, now that the
+non-Document Position Layout, not a Document projection difference. The
 lifecycle-action `load` / first-`access` witnesses carry value-object-bearing
 instance-form step reads (each projecting its read entity's own `address` Document
 slot). Every other entity read at a step (`balance`, `position`, `account`,
@@ -1249,10 +1227,7 @@ state:
 
 A **grouped** scenario write step owes none of its own: its group's find steps
 are what publish the values it settles against, and those finds already declare
-their own `databaseCalls`. A materializing predicate submission is the exception:
-its verb runs its own selection and its flush the coverage reads its amendment
-needs, inside the step, and only a state-graded case carries one, which grades
-no Database Calls.
+their own `databaseCalls`.
 
 A **conflict attempt** owes one, and a `when.attempts` sequence owes one PER
 attempt, because every attempt settles against a state of its own (*Conflict
@@ -1597,42 +1572,11 @@ coordinates the target profile uses. It states no rule refusing a query-wide
 clause: `write-instruction.schema.json` reaches the Predicate grammar directly,
 where ordering, the cap, Temporal Selections, result narrowing, and Includes have
 no spelling, so a result-shaping input never survives ingress to be classified. It rejects a predicate-selected
+write whose target is versioned or temporal before its predicate is judged
+(`set-based-write-target-unsupported`, `m-batch-write`), and a predicate-selected
 inheritance-family write before SQL, as `m-inheritance` requires.
 
-Materializing cases make the observation explicit: a preceding scenario read
-resolves the same target predicate and exposes the matched rows or observed
-versions; the following write instruction independently states what the caller
-requested. For every versioned or temporal target, model-aware validation MUST
-require that prior read to use the same concrete query `target` and canonical
-predicate. It is a real resolving read, not a cache hit: it declares exactly one
-Database Call and one authored golden read statement, plus `expectRows`. An empty
-`expectRows` is valid only as that real zero-match resolution (`1 + 0`); a
-zero-Database-Call/no-SQL step cannot materialize a predicate write. An
-unversioned, non-temporal `amend` or `delete` is the sole readless exception. The
-read is not inferred from its SQL and the write is not inferred from the read. A
-Bitemporal amendment's resolving read is the selection its verb makes: as of the
-write's `validFrom` on Valid Time and at Latest on Transaction Time
-(`m-temporal-write` *Predicate-selected amendments span their requested extent*).
-Such a write step states only selections whose rows cover the write's whole
-window; one reaching coverage past them is state-graded, because its flush reads
-that coverage. A materializing predicate submission of a state-graded buffer
-resolves through its own verb instead, with no authored find (*Buffered keyed
-write instructions*).
-
-For every resolved materialized row, the projection is descriptor-derived rather
-than inferred from golden SQL. It MUST include identity, an explicit observed
-optimistic version when present, and every current temporal axis boundary. An
-assignment-bearing update also includes the current scalar or whole value-object
-document of every assigned field, so per-row equality/no-op elimination is
-possible. A **temporal** target's resolve additionally includes every current
-non-milestone scalar payload column and every top-level value-object document
-column, on **every** verb it reaches — the close-only `terminate` that chains
-nothing included — because the per-row observation it records is a complete
-Predecessor Row (`m-unit-work`). That same observation is what a chained
-successor, or a preserved Valid-Time head or tail, reads its carried-forward
-values from. It does not project output generated by the framework — for example
-a bumped version, fresh Transaction-Time instant/open bound, or inheritance
-discriminator. A non-trivial scenario read MAY carry `referenceSql`,
+A non-trivial scenario read MAY carry `referenceSql`,
 with the same string-or-dialect-map shape
 as `then.referenceSql`; it is self-contained (rather than reusing golden binds)
 and must agree with its golden rows as the third oracle.
@@ -1654,12 +1598,8 @@ buffer MAY also carry such a replacement, whose coverage depends on what its
 flush reads, a **caller-addressed** submission
 (`row` with exactly one of `ifVersion` and `ifTxStart`, the
 `targetWriteInstruction`) and a
-**predicate** write (*State-graded scenarios*, below). A readless predicate
-write is an ordering barrier inside the buffer. A materializing one's verb
-flushes every submission of its unit of work still pending — those before it in
-its own buffer included — and then resolves its own selection, so its position
-in the buffer is a flush point, and what it selects is the stored state that
-flush leaves. The step's golden SQL (`statements`) is the **independent expected
+**predicate** write (*State-graded scenarios*, below). A predicate write is an
+ordering barrier inside the buffer. The step's golden SQL (`statements`) is the **independent expected
 lowering of that flush**, never the source an adapter deduces the writes from, so
 the step encodes **every** requested mutation explicitly and an adapter exercises
 the flush from the instructions themselves. Valid-Time bounds are `validFrom` and
@@ -1792,12 +1732,9 @@ Shortfall can arise from. The document's own rules are
 refused before any database: a submission's `on` resolves as *Settling against a
 grouped find* states, every `then.units` label names a group, a flush failure is
 reported where the group last flushes, and one group's submissions state one
-Transaction Instant. A find and a materializing predicate submission each flush
-what their group has pending, so neither an already-claimed refusal's earlier
-write nor a failing flush's submissions are separated from them by either; a
-materializing Bitemporal amendment, which reaches every state of each object it
-selects, may be the earlier write of an object of its Entity, and of any object
-of its Entity a failing flush names. For a committed group the independent evidence that the
+Transaction Instant. A find flushes what its group has pending, so neither an
+already-claimed refusal's earlier write nor a failing flush's submissions are
+separated from it by one. For a committed group the independent evidence that the
 stated rows are right is each language runner's real-database run against them.
 
 An adapter runs a state-graded case through its public verbs alone and reports
@@ -1813,8 +1750,7 @@ fate a golden-graded group stating none takes — or `rolledBack`: the group rol
 back after its last step instead. A rolled-back group stating no flush failure is
 one its callback abandons once its last step has run. A group stating a
 **`flushFailure`** is one a flush ended: `at` is where that flush ran — the
-group's last step, where that is a find, or a write step whose materializing
-predicate submission flushes, with writes pending before it, or `commit`, where
+group's last step, where that is a find, or `commit`, where
 the group's last step leaves writes pending — and `entity`, `key`,
 and `shortfall` are the object the failure reports and its Shortfall
 (`missingTarget` / `staleWrite` / `optimisticConflict` / `failedPrecondition`,
@@ -2647,9 +2583,9 @@ checked payload-shape-first then target-validity):
 - `abstract-write-target` — a create / update / delete / terminate handle aimed at
   an **abstract** root or abstract subtype. Writes are concrete-subtype only.
 
-**Instruction** rules (`m-unit-work` — a schema-valid keyed instruction whose own
-shape a model-aware validator MUST refuse pre-SQL, judged against the target's
-temporal profile rather than against any row's contents):
+**Instruction** rules (`m-unit-work`, `m-batch-write` — a schema-valid instruction
+whose own shape a model-aware validator MUST refuse pre-SQL, judged against the
+target's temporal profile and versioning rather than against any row's contents):
 
 - `temporal-keyed-write-multi-row` — a keyed instruction on a **temporal** target
   carries more than one row. Each row of a milestone chain closes its own current
@@ -2662,6 +2598,13 @@ temporal profile rather than against any row's contents):
   instruction cannot express. The row count a keyed instruction may carry depends
   on whether its target is temporal, which the schema cannot see, so the neutral
   schema states the general one-or-more bound and this decides it.
+- `set-based-write-target-unsupported` — a **predicate-selected** instruction
+  whose target is versioned or temporal. Each object such a target holds is
+  written against an observation of it — its version, or the milestone the write
+  closes — and a predicate-selected write is one readless statement that observes
+  nothing (`m-batch-write`). The rule is judged before the instruction's
+  predicate, inheritance family, and assignments, because no predicate or payload
+  could make the write admissible.
 
 **Model** rules (accepted-model formation — foundational, Inheritance, Storage Layout, and Relationship invariants that per-entity schema validation cannot express,
 carried inline under `when.model`):
@@ -2955,7 +2898,7 @@ of `when` + `given`, so only `run` grades it. Two criteria make a case run-only:
   run-only **regardless** of whether its emissions happen to be statically derivable,
   because its point is a runtime interaction a single `compile` cannot represent.
 - **`query-result-dependent`** — the emissions depend on a **query result**:
-  deep-fetch fan-out binds, materialized predicate writes, `sequence`-strategy PK
+  deep-fetch fan-out binds, `sequence`-strategy PK
   allocations (whose following `INSERT` binds registry-read values — a `max`-strategy
   insert folds the computation into its own SQL and stays eligible),
   framework-owned observed-version / `in_z` binds, a close whose address is read

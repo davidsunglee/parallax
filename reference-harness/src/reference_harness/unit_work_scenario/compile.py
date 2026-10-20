@@ -41,7 +41,6 @@ from typing import Any, Literal
 
 from ..case import Case, Entity, entry_pairs, entry_statements, names_earlier_step
 from ..case_assertions import CaseFailure
-from ..predicate_write_validate import requires_predicate_write_materialization
 
 # A mutate publishes rows conditionally, only when it declares expectRows.
 _ALWAYS_ROW_PUBLISHING_ACTIONS = frozenset({"load", "access"})
@@ -118,10 +117,7 @@ class Submission:
     primary-key values by attribute name — and are ``None`` for a predicate
     write, which names rows only its predicate selects. ``refusal`` is the code
     the entry declares its verb refuses it with, and ``settles_on`` the find its
-    ``on`` names, resolved. ``flushes`` marks a predicate write whose target
-    requires materialization: its verb flushes every submission of its group
-    still pending, those before it in its own step included, before it resolves
-    its selection.
+    ``on`` names, resolved.
     """
 
     pointer: str
@@ -133,7 +129,6 @@ class Submission:
     key: Mapping[str, Any] | None
     refusal: str | None
     settles_on: _SettledOn | None
-    flushes: bool = False
 
     @property
     def mutation(self) -> str:
@@ -459,14 +454,7 @@ def _submission(case: Case, index: int, position: int, entry: Mapping[str, Any])
     )
     entity: Entity | None = None
     key: Mapping[str, Any] | None = None
-    flushes = False
-    if kind == "predicate":
-        target = entry.get("target")
-        if isinstance(target, Mapping):
-            flushes = requires_predicate_write_materialization(
-                case.model.entity(str(target.get("entity", "")))
-            )
-    else:
+    if kind != "predicate":
         entity = case.model.entity(str(entry.get("entity", "")))
         row = entry.get("row") if kind == "target" else (entry.get("rows") or [None])[0]
         if isinstance(row, Mapping):
@@ -486,7 +474,6 @@ def _submission(case: Case, index: int, position: int, entry: Mapping[str, Any])
         key=key,
         refusal=refusal if isinstance(refusal, str) else None,
         settles_on=_settled_on(case, index, entry),
-        flushes=flushes,
     )
 
 
@@ -602,8 +589,6 @@ def _flush_failure(
     if not isinstance(authored, Mapping):
         return None
     last = members[-1]
-    # Several materializing predicate submissions of one step each flush there,
-    # and `at` cannot say which of them failed.
     candidates: dict[int | Literal["commit"], tuple[str, ...]] = {}
     for at, flushed in _group_flushes(members):
         if flushed and at in ("commit", last.index):
@@ -631,9 +616,9 @@ def _flush_failure(
 def _group_flushes(
     members: list[_CompiledStep],
 ) -> list[tuple[int | Literal["commit"], tuple[str, ...]]]:
-    """Each flush a group runs, in order: where it runs — a find's step, the
-    step of a predicate submission whose verb flushes, or ``"commit"`` — beside
-    the pointers of the submissions still pending when it began."""
+    """Each flush a group runs, in order: where it runs — a find's step or
+    ``"commit"`` — beside the pointers of the submissions still pending when it
+    began."""
     flushes: list[tuple[int | Literal["commit"], tuple[str, ...]]] = []
     pending: list[str] = []
     for step in members:
@@ -641,9 +626,6 @@ def _group_flushes(
             for submission in step.submissions:
                 if submission.refusal is not None:
                     continue
-                if submission.flushes:
-                    flushes.append((step.index, tuple(pending)))
-                    pending = []
                 pending.append(submission.pointer)
         elif isinstance(step, _RowPublishingStep):
             flushes.append((step.index, tuple(pending)))

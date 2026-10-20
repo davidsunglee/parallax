@@ -543,18 +543,6 @@ def test_a_target_and_an_observed_write_of_two_states_of_one_object_are_refused(
     assert _calls(port)[1] == expected
 
 
-def test_a_target_write_of_a_state_a_pending_group_selected_is_refused() -> None:
-    port = ScriptedAdapter(Transact(Read(rows=[_row(version=2)]), Write()))
-
-    def fn(tx: TxnContext) -> None:
-        tx.amend_where(mm.Account.where(mm.Account.id == 1), mm.Account.owner.set("Bo"))
-        with pytest.raises(WriteEvidenceError, match="already buffered"):
-            _patch(tx, balance="150.00")
-
-    account_db(port).transact(fn)
-    assert [type(call) for call in _calls(port)] == [ReadCall, WriteCall]
-
-
 # --------------------------------------------------------------------------- #
 # An object this attempt inserted is written through its source until commit. #
 # --------------------------------------------------------------------------- #

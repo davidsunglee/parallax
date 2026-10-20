@@ -1210,31 +1210,9 @@ def test_compile_scenario_case_lowers_a_snapshot_lane_write_step() -> None:
     assert database_calls == 2
 
 
-def test_run_scenario_case_refuses_a_materializing_predicate_write_on_the_snapshot_lane() -> None:
-    # A predicate write over a TEMPORAL target materializes: it resolves through
-    # the find before it. A find on this lane materializes the view a later access
-    # states, so the two step roles genuinely conflict and the refusal says so —
-    # never the readless diagnosis below.
-    value = "parallax.compatibility.Ledger.value"
-    write = {
-        "mutation": "amend",
-        "target": {
-            "entity": "parallax.compatibility.Ledger",
-            "predicate": {"lessThan": {"path": value, "value": "500.00"}},
-        },
-        "assignments": [{"attr": value, "value": "5.00"}],
-        "at": "2024-05-01T00:00:00+00:00",
-    }
-    port = _QueueWritePort([[dict(_LEDGER_2_ROW)]])
-    with pytest.raises(EngineError, match="MATERIALIZING predicate write"):
-        _run(_ledger_write_after_find_and_mutate(write), port)
-    assert port.writes == []
-
-
-def test_run_scenario_case_refuses_a_readless_predicate_write_on_the_snapshot_lane() -> None:
-    # An UNVERSIONED, non-temporal target owes no resolving read, so nothing about
-    # the shape conflicts with this lane: it is refused as unwired, which is a
-    # different fact about a different form than the materializing refusal above.
+def test_run_scenario_case_refuses_a_predicate_write_on_the_snapshot_lane() -> None:
+    # A predicate write owes no resolving read, so nothing about the shape
+    # conflicts with this lane: it is refused as unwired.
     write = {
         "mutation": "delete",
         "target": {
@@ -1245,7 +1223,7 @@ def test_run_scenario_case_refuses_a_readless_predicate_write_on_the_snapshot_la
         },
     }
     port = _QueueWritePort([[dict(_ORDER_ROW)], [dict(row) for row in _ORDER_1_ITEM_ROWS]])
-    with pytest.raises(EngineError, match="READLESS predicate write"):
+    with pytest.raises(EngineError, match="predicate write owes no resolving find"):
         _run(_write_between_find_and_access(write), port)
     assert port.writes == []
 

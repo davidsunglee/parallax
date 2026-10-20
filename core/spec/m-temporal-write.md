@@ -436,8 +436,8 @@ coverage; no isolation level is raised to prevent it. The result breaks
 valid state. A write binds to the rows
 it already holds — the rectangles it observed, unless an ordering barrier
 follows earlier writes of its object; the starting rectangles a Locking
-acquisition retained that are still current; the starting rectangle a
-predicate selected each object by; and a pending insertion's own window — and
+acquisition retained that are still current; and a pending insertion's own
+window — and
 reads only the coverage of its extent those leave. A rectangle
 created concurrently inside a held row's Valid-Time interval is therefore not
 reached: the write neither reads nor inactivates it, and it stays current
@@ -449,49 +449,15 @@ current row outside the framework's own writes while leaving its address and
 `in_z` as they were. Nothing here detects such a change; audit-only side effects
 and effects on unrelated data are unaffected.
 
-## Predicate-selected amendments span their requested extent
+## A predicate-selected write never reaches a temporal target
 
-A Bitemporal `amend` or `amendUntil` a predicate selects (`m-unit-work`
-*Materialized Write Groups*) has the requested extent `[validFrom, until)`,
-through infinity when unbounded, and reaches each object its predicate matched
-as an observed write reaches its object. Membership is decided once, at the
-call, after the transaction's pending writes flush: an object is selected when
-its rectangle current at `validFrom`, current on Transaction Time, matches the
-predicate, and that rectangle is the object's starting rectangle, held as a
-read holds it. The predicate never judges a later rectangle: one whose values
-no longer match is amended like any other the extent reaches, and an object
-whose only matching rectangle starts after `validFrom` is not selected. Where
-the selection holds more than one rectangle of one object, the call fails as
-Cardinality Corruption naming that object and the count, once the selection is
-read and before anything of the write is buffered or executed — exactly as a
-caller-addressed write whose read shows more than one rectangle containing its
-`validFrom` does (*Caller-addressed writes span their requested extent*).
-
-Each selected object's extent is applied as an observed write's is (*Observed
-writes span their requested extent*). Under Optimistic the starting rectangle
-gates on the `in_z` the selection observed, and a shortfall there is an ordinary
-conflict; a later rectangle is read inside the flush that writes it — under the
-shared lock under Locking (`m-read-lock`) — and gates on its own `in_z`. Gaps
-stay gaps. Every rectangle is judged for itself (*Unchanged milestones*): a
-starting rectangle already holding every assigned value keeps its milestone,
-and the same amendment still writes the later coverage it changes.
-
-```text
-Stored:   [January, April) 100 | [April, July) 200
-Amend where value = 100 from February until June, assigning 150
-Selected: the object, by [January, April)
-Final:    [January, February) 100 | [February, June) 150 | [June, July) 200
-```
-
-Both stored rectangles are inactivated under their own proofs; the parts the
-window changes hold one state and so are one row (*Merging produced
-successors*).
-
-The objects settle in batches when the flush reaches the write (`m-unit-work`
-*Materialized Write Groups*): a later rectangle is read when its object's batch
-is reached, after earlier batches executed, so it reflects their effects and
-whatever committed meanwhile, while the starting rectangle keeps the proof the
-selection observed.
+A predicate-selected write (`m-batch-write`) is one readless statement and
+observes no milestone, so it has none to close or chain from: it is refused for a
+Transaction-Time-Only or Bitemporal target before anything is read
+(`set-based-write-target-unsupported`, `m-batch-write`). A caller writes such a
+target through a read and observed writes, or through a caller-addressed write
+stating the `tx_start` it holds (*Caller-addressed writes span their requested
+extent*).
 
 ## Rectangles the attempt opened
 
@@ -601,22 +567,7 @@ over several predecessors runs every predecessor's effect before any opening:
 predecessors holding a caller's start first, in the order the callers stated
 them, then validated observations, then every other predecessor; its successors
 follow, and a replacement's Coverage Gaps come last. A row merged from several
-produced rows opens where the first of them would have. A predicate-selected
-mutation is expanded once for the mutation, never once per resolved row, and
-applied to each selected object in resolution order; a Bitemporal amendment's
-object is a range over its rectangles, every effect before any opening.
-
-A row a termination or a Transaction-Time-Only write selects is a predecessor
-like any other, transformed over its own Valid-Time coverage alone. The rows
-such a predicate selects are not confined to the mutation's window, so a
-Bitemporal row can start inside it or beyond it. One starting after `validFrom`
-has no `head`: its first successor starts where the row starts, never earlier,
-and the row is disposed of by ownership as any reached predecessor is. One
-starting at or after `until` is not reached and is left alone, with no
-statement and no change to its state. A Bitemporal amendment instead selects
-each object by the rectangle current at its `validFrom` and reaches the
-object's later coverage too (*Predicate-selected amendments span their
-requested extent*).
+produced rows opens where the first of them would have.
 
 A row opening a **new lineage** — an `insert`'s, each surviving part of a pending
 insert (`m-unit-work` *Same-transaction write coalescing*), and each Coverage
@@ -675,11 +626,7 @@ gap a replacement opens. It is by declared value: a replacement whose complete
 stated state a milestone already holds keeps that milestone whole, stored
 content no member declares included, although executing the same replacement on
 a changed milestone replaces that content where it assigns (`m-write-plan`
-*Write Rows*). A kept milestone is not a successor the write produced. A row a
-Transaction-Time-Only predicate-selected amendment selects is instead
-eliminated before planning when every assigned member is restored
-(`m-unit-work` *Comparing an assigned member with its persisted value*); every
-milestone a Bitemporal one reaches is judged here.
+*Write Rows*). A kept milestone is not a successor the write produced.
 
 ### Ownership disposal
 
@@ -859,21 +806,6 @@ is the advance a later stale writer then misses. No version column exists or
 advances. Current rows of the same key *outside* the written window keep their
 `in_z`: conflict granularity is the milestone, not the primary key. The
 conflict/retry contract itself is `m-opt-lock`.
-
-## Statement order when a set-based write materializes
-
-A set-based (predicate-selected) Transaction-Time-Only write **materializes** to per-row
-statements (`m-opt-lock`, ADR 0014; emission order is `m-sql`) — the set predicate
-cannot collapse to one statement because each close is keyed by its own resolved
-current-row (`pk and out_z = infinity`) and each chain carries that row's resolved
-columns. The golden emits those statements in the resolving read's **resolved-row
-order**, and each resolved row's **close-and-chain stays together as one adjacent
-unit** — the row's close `UPDATE` immediately followed by its chain `INSERT` —
-**never regrouped by statement kind** (all closes, then all inserts). This is the
-multi-statement-per-row generalization of `m-sql`'s "one keyed per-object write per
-resolved row": a `terminate` row contributes a lone close, an `amend` row a
-close-then-chain pair. `m-temporal-write-007` (terminate) and `m-temporal-write-009`
-(amend) are the corpus witnesses.
 
 ## Composition with inheritance
 

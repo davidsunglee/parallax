@@ -397,44 +397,6 @@ def test_a_wire_predicate_update_lowers_its_assignments_canonically() -> None:
     assert _writes(port) == [WriteCall("update person set name = %s where id = %s", ("Grace", 1))]
 
 
-def test_a_wire_predicate_terminate_over_a_temporal_target_materializes() -> None:
-    port = ScriptedAdapter(Transact(Read(rows=[balance_row(in_z=_TX_START)]), Write()))
-    db_for(BALANCE, port).transact(
-        lambda tx: tx.wire.terminate_where(
-            {
-                "entity": "parallax.compatibility.Balance",
-                "predicate": {"eq": {"path": "parallax.compatibility.Balance.id", "value": 1}},
-            }
-        )
-    )
-
-    assert len(_reads(port)) == 1
-    assert len(_writes(port)) == 1
-
-
-def test_the_bounded_predicate_verbs_reach_the_rectangle_split() -> None:
-    for verb, rows in (("update_where", 3), ("terminate_where", 2)):
-        port = ScriptedAdapter(Transact(Read(rows=[_position_row()]), Write(times=2)))
-        target: dict[str, object] = {
-            "entity": "parallax.compatibility.WherePosition",
-            "predicate": {"eq": {"path": "parallax.compatibility.WherePosition.id", "value": 1}},
-        }
-
-        def fn(tx: TxnContext, verb: str = verb, target: dict[str, object] = target) -> None:
-            if verb == "update_where":
-                tx.wire.amend_where(
-                    target, {"value": "300.00"}, valid_from=_VALID_FROM, until=_UNTIL
-                )
-            else:
-                tx.wire.terminate_where(target, valid_from=_VALID_FROM, until=_UNTIL)
-
-        own_root(
-            Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
-        ).using_database_login().transact(fn)
-        _close, opened = _writes(port)
-        assert len(inserted_rows(opened)) == rows
-
-
 # --------------------------------------------------------------------------- #
 # A keyed source is a hinted node Parallax published, and nothing else.       #
 # --------------------------------------------------------------------------- #

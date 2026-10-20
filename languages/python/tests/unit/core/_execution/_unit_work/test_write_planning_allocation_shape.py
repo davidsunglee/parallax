@@ -1,10 +1,8 @@
 """What write planning costs for what the flush did not hand it.
 
-Two shapes are graded here, and both are the same mistake at different scales: a
-structure planning derives whose size comes from something other than the writes
-it was given. The first is the model's Entity count, for Entities no write in the
-flush names; the second is a Materialized Write Group's resolved-row count, for
-rows the group already holds.
+The shape graded here is a structure planning derives whose size comes from
+something other than the writes it was given: the model's Entity count, for
+Entities no write in the flush names.
 
 A prepared write carries the exact target Metadata its ingress resolved, and the
 model's Inheritance and Temporal facets were compiled when the model was
@@ -29,68 +27,37 @@ index or a dependency graph would be built per call. And what a model-scoped
 planner KEEPS when it is built, which is where either would be held instead.
 Dependency ordering reads the referential rank the relationship module compiled
 with the model, so a flush builds no rank map either.
-
-The row readings are the ones whose seam is a settled plan rather than a call. A
-versioned group's segment holds no strategy; the strategy answers its arithmetic
-as a value the plan may keep, so each row's advanced version is an addition
-performed when that row's step is asked for rather than a second column beside
-the observed one the group already carries. What the plan KEEPS beyond the
-group's own columns is the same bytes at a hundred times the rows, and so is the
-high-water mark of the settlement window, which prices a row-sized structure
-built and released inside ``finalize``.
-
-Both row readings are taken of both materialized shapes, a versioned group
-settling into updates and a temporal one settling into closes, because the claim
-is about the resolved row rather than the arm that addresses it.
 """
 
 from __future__ import annotations
 
-import datetime as dt
 import sys
 import tracemalloc
 from collections.abc import Callable, Sequence
-from dataclasses import replace
-from typing import Final, NamedTuple
+from typing import Final
 
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work.instructions import (
-    PreparedPredicateWrite,
     prepare_typed_write,
 )
 from parallax.core._execution._unit_work.write_items import OrderedWrite
 from parallax.core._formation_profile import form_metamodel
-from parallax.core.base import INFINITY
 from parallax.core.metamodel import (
-    AsOfAxisMetadata,
-    AttributeIdentity,
     Metamodel,
     Table,
-    TemporalDimension,
 )
-from parallax.core.predicate import Comparison, FieldSubject
 from parallax.core.unit_work import (
     KeyedWriteInstruction,
-    MaterializedWriteGroup,
-    PredicateSelection,
-    PredicateWriteInstruction,
-    VersionedEvidenceBuilder,
-    WriteAssignment,
-    WritePlanner,
     WritePlanningRequest,
     object_key,
 )
 from tests._support.clock_probes import inert_instant
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY, observed_buffer
 from tests.unit._metamodel_support import Declaration, attribute, identity, key, source
-from tests.unit._metamodel_support import instant as timestamp
-from tests.unit._temporal_group_support import temporal_group
 from tests.unit.memory_instruments import (
     REPEATS,
     Seam,
-    Span,
     allocation,
-    high_water,
     in_a_child_interpreter,
     retained,
     serve_one_measurement,
@@ -105,23 +72,6 @@ MANY: Final = 800
 An index over this model would be two dictionaries of eight hundred entries
 against two of eight, which is tens of thousands of bytes against hundreds — no
 threshold is needed to tell the two readings apart, and none is used.
-"""
-
-FEW_ROWS: Final = 300
-"""The floor the resolved-row reading is compared against.
-
-Above CPython's small-integer cache, so the plan's own step count — the one
-value it keeps that the row count decides — is a freshly allocated integer at
-BOTH readings. That is what lets them be compared exactly rather than through a
-tolerance that a real per-row structure could hide under.
-"""
-
-MANY_ROWS: Final = FEW_ROWS * 100
-"""A hundred times :data:`FEW_ROWS`.
-
-An advanced-version tuple over this many rows is thirty thousand integer
-references against three hundred, so no threshold is needed to tell the two
-readings apart, and none is used.
 """
 
 INSTANT: Final = inert_instant()
@@ -149,177 +99,6 @@ def _model(entities: int) -> Metamodel:
             )
         )
     return form_metamodel(source(*declarations))
-
-
-def _versioned_model() -> Metamodel:
-    """An accepted model of one Entity carrying an optimistic-lock version.
-
-    One Entity, because the row reading grades a group's own resolved rows and
-    nothing about what else the model declares.
-    """
-    entity = identity("Entity0")
-    return form_metamodel(
-        source(
-            Declaration(
-                identity=entity,
-                container=Table("entity0"),
-                attributes=(
-                    key(entity),
-                    attribute(entity, "value"),
-                    replace(attribute(entity, "version"), optimistic_locking=True),
-                ),
-            )
-        )
-    )
-
-
-def _temporal_model() -> Metamodel:
-    """An accepted model of one Entity with a Transaction-Time as-of axis.
-
-    The other arm a Materialized Write Group settles into: its rows close
-    against a resolved instant rather than assign an advanced version, and it
-    carries the same single Entity for the same reason the versioned model does.
-    """
-    entity = identity("Entity0")
-    return form_metamodel(
-        source(
-            Declaration(
-                identity=entity,
-                container=Table("entity0"),
-                attributes=(
-                    key(entity),
-                    attribute(entity, "value"),
-                    timestamp(entity, "txStart"),
-                    timestamp(entity, "txEnd"),
-                ),
-                as_of_axes=(
-                    AsOfAxisMetadata(
-                        TemporalDimension.TRANSACTION_TIME,
-                        AttributeIdentity(entity, "txStart"),
-                        AttributeIdentity(entity, "txEnd"),
-                    ),
-                ),
-            )
-        )
-    )
-
-
-_OPENED: Final = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
-_VALID_FROM: Final = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
-
-
-def _bitemporal_model() -> Metamodel:
-    """An accepted model of one Entity with both as-of axes: the shape whose
-    amendment selects at its start and settles at execution instead."""
-    entity = identity("Entity0")
-    return form_metamodel(
-        source(
-            Declaration(
-                identity=entity,
-                container=Table("entity0"),
-                attributes=(
-                    key(entity),
-                    attribute(entity, "value"),
-                    timestamp(entity, "validStart"),
-                    timestamp(entity, "validEnd"),
-                    timestamp(entity, "txStart"),
-                    timestamp(entity, "txEnd"),
-                ),
-                as_of_axes=(
-                    AsOfAxisMetadata(
-                        TemporalDimension.VALID_TIME,
-                        AttributeIdentity(entity, "validStart"),
-                        AttributeIdentity(entity, "validEnd"),
-                    ),
-                    AsOfAxisMetadata(
-                        TemporalDimension.TRANSACTION_TIME,
-                        AttributeIdentity(entity, "txStart"),
-                        AttributeIdentity(entity, "txEnd"),
-                    ),
-                ),
-            )
-        )
-    )
-
-
-def _amendment_group(model: Metamodel, rows: int) -> MaterializedWriteGroup:
-    """A Bitemporal amendment group of ``rows`` objects, each selected by the
-    row current at the write's start."""
-    return temporal_group(
-        PredicateWriteInstruction(
-            "amend",
-            PredicateSelection(
-                "Entity0", Comparison("lessThan", FieldSubject("Entity0.value"), 1_000_000)
-            ),
-            (WriteAssignment("Entity0.value", 1_000_001),),
-            _VALID_FROM,
-        ),
-        model,
-        [
-            {
-                "id": row + 1,
-                "value": row,
-                "validStart": _OPENED,
-                "validEnd": INFINITY,
-                "txStart": _OPENED,
-                "txEnd": INFINITY,
-            }
-            for row in range(rows)
-        ],
-    )
-
-
-def _temporal_group(model: Metamodel, rows: int) -> MaterializedWriteGroup:
-    """A temporal Materialized Write Group of ``rows`` observed predecessors.
-
-    What a materializing terminate buffers: each row's whole predecessor state,
-    which each close is derived from, retained as the positional row the
-    resolving read judged.
-    """
-    return temporal_group(
-        PredicateWriteInstruction(
-            "terminate",
-            PredicateSelection(
-                "Entity0", Comparison("lessThan", FieldSubject("Entity0.value"), 1_000_000)
-            ),
-        ),
-        model,
-        [
-            {
-                "id": row + 1,
-                "value": row,
-                "txStart": _OPENED,
-                "txEnd": INFINITY,
-            }
-            for row in range(rows)
-        ],
-    )
-
-
-def _version_group(model: Metamodel, rows: int) -> MaterializedWriteGroup:
-    """A versioned Materialized Write Group of ``rows`` resolved rows.
-
-    Its key and version columns are the compact aligned storage a
-    materializing predicate write buffers, so a plan settled from it reaches
-    every per-row value by reference.
-    """
-    evidence = VersionedEvidenceBuilder(key_position=0, version_position=1)
-    for row in range(rows):
-        evidence.append((row + 1, row + 1))
-    sealed = evidence.seal()
-    assert sealed is not None
-    prepared = prepare_typed_write(
-        PredicateWriteInstruction(
-            "amend",
-            PredicateSelection(
-                "Entity0", Comparison("lessThan", FieldSubject("Entity0.value"), 1_000_000)
-            ),
-            assignments=(WriteAssignment("Entity0.value", 1),),
-        ),
-        model,
-    )
-    assert isinstance(prepared, PreparedPredicateWrite)
-    return MaterializedWriteGroup(mutation=prepared, evidence=sealed)
 
 
 def _prepared_writes(model: Metamodel, count: int) -> Sequence[OrderedWrite]:
@@ -395,76 +174,6 @@ def _planner_over(entities: int) -> Seam:
     return run
 
 
-class _Settlement(NamedTuple):
-    """One materialized shape, ready to settle: the planner and the request.
-
-    Both are built before any window opens, which is where a caller builds them:
-    a planner is model-scoped and a Planning Request is the value a unit of work
-    hands across the seam.
-    """
-
-    planner: WritePlanner
-    request: WritePlanningRequest
-
-
-def _versioned_settlement(rows: int) -> _Settlement:
-    """Settling a versioned group of ``rows`` resolved rows.
-
-    Its key and observation columns are the compact aligned storage a
-    materializing predicate write buffers, so a plan settled from it reaches
-    every per-row value by reference.
-    """
-    model = _versioned_model()
-    return _Settlement(
-        planner=build_write_planner(model),
-        request=WritePlanningRequest(
-            actor_identity=TEST_ACTOR_IDENTITY,
-            transaction_instant=INSTANT,
-            concurrency="optimistic",
-            buffered_writes=(_version_group(model, rows),),
-        ),
-    )
-
-
-def _temporal_settlement(rows: int) -> _Settlement:
-    """Settling a temporal group of ``rows`` observed predecessors.
-
-    Its own Transaction Instant rather than the shared holder, because closing a
-    predecessor resolves one — a holder resolved by an earlier settlement would
-    put that resolution in one reading and not the other.
-    """
-    model = _temporal_model()
-    return _Settlement(
-        planner=build_write_planner(model),
-        request=WritePlanningRequest(
-            actor_identity=TEST_ACTOR_IDENTITY,
-            transaction_instant=inert_instant(),
-            concurrency="optimistic",
-            buffered_writes=(_temporal_group(model, rows),),
-        ),
-    )
-
-
-def _deferred_settlement(rows: int) -> _Settlement:
-    """Finalizing a Bitemporal amendment group of ``rows`` objects, which
-    planning defers whole to its unit's turn."""
-    model = _bitemporal_model()
-    return _Settlement(
-        planner=build_write_planner(model),
-        request=WritePlanningRequest(
-            actor_identity=TEST_ACTOR_IDENTITY,
-            transaction_instant=inert_instant(),
-            concurrency="optimistic",
-            buffered_writes=(_amendment_group(model, rows),),
-        ),
-    )
-
-
-_MATERIALIZED_SHAPES: Final = (
-    ("a versioned group", _versioned_settlement),
-    ("a temporal group", _temporal_settlement),
-    ("a deferred group", _deferred_settlement),
-)
 """Both arms a Materialized Write Group settles into, under the same readings.
 
 A resolved row is a resolved row whether its step assigns an advanced version or
@@ -472,69 +181,6 @@ closes a predecessor, so a reading taken of one arm says nothing about the other
 A deferred group's plan holds its selected rows only by reference, for the
 continuation that settles them.
 """
-
-
-def _settled_group_plan(settlement: _Settlement) -> Seam:
-    """One ``finalize``, sampled while the plan it answered is alive.
-
-    The model, the planner, the group, and its columns are all built before the
-    window, so every byte still reachable at the sample is a byte the PLAN
-    keeps: a column the group already owned is reached by reference and weighs
-    nothing here, and a second structure sized by the resolved rows weighs
-    everything.
-    """
-
-    def run(sample: Callable[[], None]) -> None:
-        plan = settlement.planner.finalize(settlement.request)
-        sample()
-        del plan
-
-    return run
-
-
-def _settling_a_group(settlement: _Settlement) -> Span:
-    """The same ``finalize`` with the region opened around the call itself.
-
-    Everything the call reads is built before the region opens, and the plan it
-    answers is still alive when the region closes, so the roof covers what
-    settling ROSE to and not only what it kept: a row-sized structure built and
-    dropped inside ``finalize`` — a wrapper array, a materialized row sequence,
-    a comprehension over the resolved rows — is invisible to every reading taken
-    at a point afterwards and is inside this one.
-    """
-
-    def span(opened: Callable[[], None], closed: Callable[[], None]) -> None:
-        opened()
-        plan = settlement.planner.finalize(settlement.request)
-        closed()
-        del plan
-
-    return span
-
-
-@in_a_child_interpreter
-def test_a_materialized_groups_plan_keeps_nothing_per_resolved_row() -> None:
-    # A group's rows are already compact columns when planning receives them, so
-    # settling them adds nothing sized by their number: what the plan keeps is
-    # one segment over the facts settled for the whole group, and what each row's
-    # step assigns — an advanced version, a closed axis — is derived from the
-    # group's own columns when that step is asked for.
-    tracemalloc.start()
-    try:
-        for shape, settlement in _MATERIALIZED_SHAPES:
-            few = retained(_settled_group_plan(settlement(FEW_ROWS)))
-            many = retained(_settled_group_plan(settlement(MANY_ROWS)))
-            # The retained sample follows a collection, so it cannot see a
-            # row-sized structure built and released inside `finalize`; the
-            # high-water reading prices that.
-            peak_few = high_water(_settling_a_group(settlement(FEW_ROWS)))
-            peak_many = high_water(_settling_a_group(settlement(MANY_ROWS)))
-            assert few > 0, f"settling {shape} keeps nothing, or nothing is being measured"
-            assert many == few, shape
-            assert peak_few > 0, f"settling {shape} is free, or nothing is being measured"
-            assert peak_many == peak_few, shape
-    finally:
-        tracemalloc.stop()
 
 
 @in_a_child_interpreter

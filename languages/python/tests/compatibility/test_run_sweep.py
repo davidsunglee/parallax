@@ -13,7 +13,6 @@ gated; a skip is reported, never silent.
 from __future__ import annotations
 
 import contextlib
-import dataclasses
 import re
 from collections import Counter
 from collections.abc import Callable, Sequence
@@ -25,8 +24,8 @@ import pytest
 
 from parallax.conformance import adapter, case_format, concurrency_runner, engine, models
 from parallax.conformance.profile import Profile
-from parallax.core import inheritance, storage_layout
-from parallax.core.metamodel import Metamodel, entity_by_name
+from parallax.core import storage_layout
+from parallax.core.metamodel import Metamodel
 from tests._support.bind_positions import assert_zero_signs, statement_bind_positions
 from tests._support.corpus import (
     CollectionKinds,
@@ -392,66 +391,12 @@ def _case_uses_uow_grouping(case: case_format.Case) -> bool:
     between "this run-only case's observation is transaction-scoped, and the
     engine's `uow`-grouping seam (`scenario._run_uow_group`) is what makes it
     runnable" and every OTHER run-only reason a scenario/writeSequence case
-    carries (single-connection materializing predicate writes, deep-fetch
-    deferred loads, pk-gen sequence batch reservations — none of which the
+    carries (deep-fetch deferred loads, pk-gen sequence batch reservations —
+    none of which the
     run lane is ready to grade yet, exactly like before this remediation)."""
     when = cast("dict[str, Any]", case_document(case).get("when", {}))
     steps = cast("list[dict[str, Any]]", when.get("scenario", []))
     return any(isinstance(step.get("uow"), str) for step in steps)
-
-
-# The materializing predicate-write run-only scenarios
-# (`m-opt-lock` "Predicate-selected writes materialize when observations are
-# needed", ADR 0014): each resolves through its OWN internal read
-# (`tx.wire.update_where` and its family, paired with the immediately
-# preceding find step in ONE transaction, `scenario._run_materializing_pair`) —
-# query-result-dependent (`compileEligibility: run-only`), so `compile` never
-# grades them, but NONE of them declare `uow` grouping (unlike
-# `m-opt-lock-012`) — `_case_uses_uow_grouping` alone would wrongly exclude
-# every one of them, so this is their own explicit admission clause.
-# `m-value-object-047` joins here too (a corpus amendment): its trailing
-# verify find is an `asOf` read pinned strictly
-# inside the closed window, the SAME find lane every OTHER `asOf` case already
-# lowers — the case's own fourth step is not itself a materializing read, but
-# it is run-only and NOT `uow`-grouped, so this explicit admission clause is
-# still the only membership path that reaches it (`_reachable_write_cases`).
-# `m-value-object-066` is its versioned counterpart and reaches membership the
-# same way. Both are graded here precisely BECAUSE this lane compares each
-# emitted statement against its authored golden: the Document slot each
-# resolving read projects is observable nowhere else.
-# `m-opt-lock-019` is the Relational Document Layout member of that same family:
-# its resolving read must decode a Document Path out of the Structured Column
-# before the per-row no-op comparison, and only running it proves the comparison
-# saw the member's value rather than an absent column.
-# `m-temporal-write-036` is the member-free member of it: no member its resolve asks
-# for lives inside the Structured Column, so only the emitted select list proves
-# the observation projected it anyway, and only the emitted insert binds prove the
-# rectangles it chains were built from the document that read retained. It is
-# `single-connection` run-only rather than query-result-dependent (its `given.apply`
-# writes the key no authored member could), which changes nothing here: this set is
-# the admission clause for every run-only materializing pair whatever its reason.
-# `m-unit-work-042` is its restated-member witness: only the emitted insert binds
-# prove a surviving row executed the assigned occurrence its stored value already
-# equals, replacing the stored subtree and the undeclared keys inside it.
-_MATERIALIZING_PREDICATE_WRITE_SCENARIOS_EXERCISED: Final[frozenset[str]] = frozenset(
-    {
-        "m-opt-lock-003",
-        "m-opt-lock-004",
-        "m-opt-lock-014",
-        "m-opt-lock-015",
-        "m-opt-lock-019",
-        "m-temporal-write-007",
-        "m-temporal-write-009",
-        "m-temporal-write-026",
-        "m-temporal-write-027",
-        "m-temporal-write-028",
-        "m-temporal-write-029",
-        "m-temporal-write-036",
-        "m-unit-work-042",
-        "m-value-object-047",
-        "m-value-object-066",
-    }
-)
 
 
 # The snapshot-scenario cases whose own find step carries `objectQuery.includes`:
@@ -504,7 +449,6 @@ def _reachable_write_cases() -> list[case_format.Case]:
         for c in sweep.reachable_cases()
         if (
             c.case_id in WRITE_EXERCISED
-            or c.case_id in _MATERIALIZING_PREDICATE_WRITE_SCENARIOS_EXERCISED
             or c.case_id in _SNAPSHOT_INCLUDE_SCENARIOS_EXERCISED
             or (
                 c.case_id not in _INTERLEAVED_UOW_GROUP_CASES
@@ -577,12 +521,12 @@ def _grade_write_run(
         assert emission["sql"] == golden_sql, (case.case_id, emission)
         # `compare_binds` (the exact-Decimal-fallback comparison
         # `test_write_no_drift.py`'s typed-instance no-drift check already
-        # uses): a materializing write's carried-forward payload value
-        # is a REAL ``decimal``-typed bind sourced
-        # from the resolving read's own row (psycopg's native ``Decimal``,
-        # never lossily coerced to ``float`` for SQL execution — `m-core`),
-        # which a plain YAML-authored golden literal (``200.00``, a ``float``)
-        # only reconciles against in Decimal space, not by bare wire equality.
+        # uses): a temporal write's carried-forward payload value is a REAL
+        # ``decimal``-typed bind sourced from the row its observation holds
+        # (psycopg's native ``Decimal``, never lossily coerced to ``float`` for
+        # SQL execution — `m-core`), which a plain YAML-authored golden literal
+        # (``200.00``, a ``float``) only reconciles against in Decimal space, not
+        # by bare wire equality.
         compare_binds(
             emission["binds"],
             golden_binds,
@@ -736,68 +680,6 @@ def test_write_run_grading_rejects_a_float_zero_turned_negative(
     _grade_write_run(case, model, *_run_recording_writes(case, profile, profile_run))
 
 
-def _resolves_a_materializing_write(
-    model: Metamodel, steps: list[dict[str, Any]], index: int
-) -> bool:
-    """Whether the read step at ``index`` is a materializing predicate write's own
-    resolving read (`m-case-format` *Materializing cases*).
-
-    Such a write is authored immediately after the find that resolves it and over
-    that find's own target, in the predicate-selected object form rather than the
-    keyed buffer a list spells — and its target MATERIALIZES
-    (:func:`_materializes_when_written`). Adjacency and target alone would exclude
-    too much: a READLESS predicate write resolves nothing, so an ordinary find
-    before one publishes its rows like any other read and owns its entry.
-
-    "That find's own target" is decided by MODEL IDENTITY, because a case spells
-    an Entity either way it may (`m-case-format` *How a case spells an Entity*):
-    a read naming `Subscriber` and a write naming
-    `parallax.compatibility.Subscriber` are one target, and comparing the raw
-    spellings would expect an entry for a resolve that publishes nothing.
-    """
-    following = steps[index + 1] if index + 1 < len(steps) else None
-    write = None if following is None else following.get("write")
-    if not isinstance(write, dict):
-        return False
-    target = cast("dict[str, Any]", write).get("target")
-    if not isinstance(target, dict):
-        return False
-    entity = cast("dict[str, Any]", target).get("entity")
-    if not _names_one_entity(model, entity, steps[index]["objectQuery"]["target"]):
-        return False
-    return _materializes_when_written(model, cast("str", entity))
-
-
-def _materializes_when_written(model: Metamodel, entity_name: str) -> bool:
-    """Whether a predicate write against ``entity_name`` must resolve its rows
-    before it writes them.
-
-    A VERSIONED or TEMPORAL target materializes; an unversioned, non-temporal
-    `update` or `delete` is the sole readless exception (`m-case-format`
-    *Materializing cases*). Both profiles are owned by the family ROOT, so a
-    subtype spelling is answered from its root rather than from local declarations
-    that carry neither.
-    """
-    entity = entity_by_name(model, entity_name)
-    if entity is None:
-        return False
-    position = inheritance.view(model).entity(entity.identity)
-    root = None if position is None else model.entity(position.root)
-    if root is None:
-        return False
-    return bool(root.declared_as_of_axes) or any(
-        attribute.optimistic_locking for attribute in root.declared_attributes
-    )
-
-
-def _names_one_entity(model: Metamodel, left: object, right: object) -> bool:
-    """Whether two authored Entity spellings resolve to one declared Entity."""
-    if not isinstance(left, str) or not isinstance(right, str):
-        return False
-    resolved, other = entity_by_name(model, left), entity_by_name(model, right)
-    return resolved is not None and other is not None and resolved.identity == other.identity
-
-
 def _grade_step_rows(
     case: case_format.Case, model: Metamodel, steps: list[dict[str, Any]], envelope: Any
 ) -> None:
@@ -820,16 +702,12 @@ def _grade_step_rows(
 
     The pointer list is asserted whole, so a lane that stopped driving a step fails
     on the list rather than passing on the steps it still answers — the same rule
-    :func:`_grade_step_graphs` follows. The one read step that owns no entry is a
-    materializing predicate write's resolving read, identified from the case
-    (:func:`_resolves_a_materializing_write`) rather than from the engine's own
-    pairing, so the two disagreeing is a failure rather than a silent skip.
+    :func:`_grade_step_graphs` follows.
     """
     expected = [
         (f"/scenario/{index}", step.get("expectRows"), "stream" in step)
         for index, step in enumerate(steps)
-        if ("objectQuery" in step and not _resolves_a_materializing_write(model, steps, index))
-        or (step.get("action") == "mutate" and "expectRows" in step)
+        if "objectQuery" in step or (step.get("action") == "mutate" and "expectRows" in step)
     ]
     observed = cast("list[dict[str, Any]]", envelope["observations"].get("stepRows", []))
     assert [entry["at"] for entry in observed] == [at for at, _, _ in expected], (
@@ -844,29 +722,17 @@ def _grade_step_rows(
 
 
 # The `stepRows` oracle's own directional proof, run without a database: an
-# implementation that published the wrong values, stopped answering a step,
-# answered the ONE step that owns no entry, or published a delivery's roots out of
-# the order it delivered them must be refused rather than accepted.
+# implementation that published the wrong values, stopped answering a step, or
+# published a delivery's roots out of the order it delivered them must be
+# refused rather than accepted.
 #
-# `m-value-object-066` carries the pointer-list properties: its four steps are a
-# read, a materializing predicate write's resolving read, that write, and a verify
-# read — so its expected pointer list is a strict subset of its read steps, which
-# is the property a grader could silently get wrong. `m-unit-work-030` carries the
-# ORDER property: its two streamed steps each publish three roots across two pages,
-# so a swap inside one entry leaves the multiset intact and only a positional
-# comparison catches it.
-# `m-batch-write-005` carries the READLESS profile: Wallet is Account without the
-# optimistic-lock version and without a temporal axis, so its predicate delete
-# resolves nothing. The case authors the write before its verifying find, which
-# is the adjacency the exclusion keys on read backwards; reversing the two steps
-# builds the adjacency the corpus never authors, where the profile is the only
-# thing separating a published read from a write's internal resolve.
-_STEP_ROWS_ORACLE_CASE: Final[str] = "m-value-object-066"
-_STREAMED_STEP_ROWS_ORACLE_CASE: Final[str] = "m-unit-work-030"
-_READLESS_WRITE_ORACLE_CASE: Final[str] = "m-batch-write-005"
+# `m-unit-work-030` carries the ORDER property: its two streamed steps each
+# publish three roots across two pages, so a swap inside one entry leaves the
+# multiset intact and only a positional comparison catches it.
+_STEP_ROWS_ORACLE_CASE: Final[str] = "m-unit-work-030"
 
 
-def _step_rows_envelope(model: Metamodel, steps: list[dict[str, Any]]) -> dict[str, Any]:
+def _step_rows_envelope(steps: list[dict[str, Any]]) -> dict[str, Any]:
     """A conforming `stepRows` envelope for ``steps``: every read step the adapter
     drives, answering exactly the rows that step's own `expectRows` states.
 
@@ -879,37 +745,21 @@ def _step_rows_envelope(model: Metamodel, steps: list[dict[str, Any]]) -> dict[s
                 {"at": f"/scenario/{index}", "rows": deepcopy(step["expectRows"])}
                 for index, step in enumerate(steps)
                 if "objectQuery" in step
-                and not _resolves_a_materializing_write(model, steps, index)
             ]
         }
     }
 
 
-def _step_rows_oracle_case(
-    case_id: str = _STEP_ROWS_ORACLE_CASE,
-) -> tuple[case_format.Case, Metamodel, list[dict[str, Any]]]:
-    case = next(c for c in _WRITE_CASES if c.case_id == case_id)
+def _step_rows_oracle_case() -> tuple[case_format.Case, Metamodel, list[dict[str, Any]]]:
+    case = next(c for c in _WRITE_CASES if c.case_id == _STEP_ROWS_ORACLE_CASE)
     model = engine.load_case_metamodel(case)
     return case, model, cast("list[dict[str, Any]]", case_document(case)["when"]["scenario"])
 
 
-def test_grade_step_rows_accepts_a_run_that_published_what_every_step_states() -> None:
-    case, model, steps = _step_rows_oracle_case()
-    envelope = _step_rows_envelope(model, steps)
-
-    # Pinned as a literal rather than derived, so the exclusion this case exists to
-    # exercise is stated independently of the rule that computes it.
-    assert [entry["at"] for entry in envelope["observations"]["stepRows"]] == [
-        "/scenario/0",
-        "/scenario/3",
-    ]
-    _grade_step_rows(case, model, steps, envelope)
-
-
 def test_grade_step_rows_refuses_a_run_that_published_the_wrong_values() -> None:
     case, model, steps = _step_rows_oracle_case()
-    envelope = _step_rows_envelope(model, steps)
-    envelope["observations"]["stepRows"][0]["rows"] = [{"id": 2, "version": 1, "address": None}]
+    envelope = _step_rows_envelope(steps)
+    del envelope["observations"]["stepRows"][0]["rows"][0]
 
     with pytest.raises(AssertionError):
         _grade_step_rows(case, model, steps, envelope)
@@ -917,61 +767,16 @@ def test_grade_step_rows_refuses_a_run_that_published_the_wrong_values() -> None
 
 def test_grade_step_rows_refuses_a_run_that_left_a_step_unanswered() -> None:
     case, model, steps = _step_rows_oracle_case()
-    envelope = _step_rows_envelope(model, steps)
+    envelope = _step_rows_envelope(steps)
     del envelope["observations"]["stepRows"][-1]
 
     with pytest.raises(AssertionError):
         _grade_step_rows(case, model, steps, envelope)
 
 
-def test_grade_step_rows_refuses_an_entry_for_a_materializing_writes_own_resolve() -> None:
-    # The resolving read of a materializing predicate write hands its rows to no
-    # caller, so an adapter reporting one for it is reporting something it did not
-    # publish — captured at a port, or re-read.
-    case, model, steps = _step_rows_oracle_case()
-    envelope = _step_rows_envelope(model, steps)
-    envelope["observations"]["stepRows"].insert(
-        1, {"at": "/scenario/1", "rows": steps[1]["expectRows"]}
-    )
-
-    with pytest.raises(AssertionError):
-        _grade_step_rows(case, model, steps, envelope)
-
-
-def test_grade_step_rows_pairs_a_materializing_write_by_entity_rather_than_spelling() -> None:
-    # `m-case-format` admits the bare local name wherever it names exactly one
-    # declared Entity, so a resolving find spelled `Subscriber` and its write spelled
-    # `parallax.compatibility.Subscriber` are ONE materializing operation. A lexical
-    # pairing reads them as two and expects an entry for the internal resolve.
-    case, model, steps = _step_rows_oracle_case()
-    respelled = deepcopy(steps)
-    canonical = respelled[1]["objectQuery"]["target"]
-    respelled[1]["objectQuery"]["target"] = canonical.rpartition(".")[2]
-    assert respelled[1]["objectQuery"]["target"] != canonical
-
-    _grade_step_rows(case, model, respelled, _step_rows_envelope(model, steps))
-
-
-def test_grade_step_rows_expects_an_entry_for_a_find_before_a_readless_write() -> None:
-    # Adjacency alone does not make a read a write's internal resolve: an
-    # unversioned, non-temporal `update`/`delete` is readless (`m-case-format`
-    # *Materializing cases*), so a find before one is an ordinary read that
-    # publishes its rows and owns a `stepRows` entry like every other. Production
-    # runs that find on its own and reports it; a grader excluding it would reject
-    # a conforming run on the pointer list.
-    case, model, steps = _step_rows_oracle_case(_READLESS_WRITE_ORACLE_CASE)
-    write, find = steps
-    adjacent = [deepcopy(find), deepcopy(write)]
-    envelope = {
-        "observations": {"stepRows": [{"at": "/scenario/0", "rows": deepcopy(find["expectRows"])}]}
-    }
-
-    _grade_step_rows(case, model, adjacent, envelope)
-
-
 def test_grade_step_rows_accepts_a_delivery_that_published_its_roots_in_order() -> None:
-    case, model, steps = _step_rows_oracle_case(_STREAMED_STEP_ROWS_ORACLE_CASE)
-    envelope = _step_rows_envelope(model, steps)
+    case, model, steps = _step_rows_oracle_case()
+    envelope = _step_rows_envelope(steps)
 
     assert [entry["at"] for entry in envelope["observations"]["stepRows"]] == [
         "/scenario/0",
@@ -984,8 +789,8 @@ def test_grade_step_rows_refuses_a_delivery_that_published_its_roots_reordered()
     # The roots are the SAME three; only the sequence the delivery handed them over
     # in changed, which the Continuation Order fixes (`m-case-format` *Streamed read
     # steps*). A multiset comparison accepts this run.
-    case, model, steps = _step_rows_oracle_case(_STREAMED_STEP_ROWS_ORACLE_CASE)
-    envelope = _step_rows_envelope(model, steps)
+    case, model, steps = _step_rows_oracle_case()
+    envelope = _step_rows_envelope(steps)
     rows = envelope["observations"]["stepRows"][0]["rows"]
     rows[0], rows[-1] = rows[-1], rows[0]
 
@@ -997,40 +802,15 @@ def test_grade_step_rows_accepts_an_eager_step_whose_rows_arrived_reordered() ->
     # The positional rule is the STREAM's, not the channel's: an eager step states a
     # result set, whose order no case fixes, so it keeps the corpus-wide multiset
     # comparison.
-    case, model, steps = _step_rows_oracle_case(_STREAMED_STEP_ROWS_ORACLE_CASE)
+    case, model, steps = _step_rows_oracle_case()
     eager = deepcopy(steps)
     for step in eager:
         step.pop("stream", None)
-    envelope = _step_rows_envelope(model, eager)
+    envelope = _step_rows_envelope(eager)
     rows = envelope["observations"]["stepRows"][0]["rows"]
     rows[0], rows[-1] = rows[-1], rows[0]
 
     _grade_step_rows(case, model, eager, envelope)
-
-
-def test_run_scenario_case_pairs_a_materializing_write_spelled_bare(profile_run: Any) -> None:
-    """Production pairs a materializing predicate write with its resolving find by
-    ENTITY, not by spelling.
-
-    `m-case-format` admits the bare local name wherever it names exactly one
-    declared Entity, so respelling `m-value-object-066`'s resolving find bare
-    leaves the same case: one transaction, the resolve plus its per-row keyed
-    write, and no `stepRows` entry for the read that hands its rows to no caller.
-    A lexical pairing runs that find on its own and lets the write resolve a
-    second time, which the Database Call count and the pointer list both state.
-    """
-    case = next(c for c in _WRITE_CASES if c.case_id == _STEP_ROWS_ORACLE_CASE)
-    profile_run.reset(engine.load_case_setup_metamodel(case), case_fixtures(case))
-    document = deepcopy(dict(case.document))
-    steps = cast("list[dict[str, Any]]", cast("dict[str, Any]", document["when"])["scenario"])
-    canonical = cast("str", steps[1]["objectQuery"]["target"])
-    steps[1]["objectQuery"]["target"] = canonical.rpartition(".")[2]
-    assert steps[1]["objectQuery"]["target"] != canonical
-
-    run = engine.run_scenario_case(dataclasses.replace(case, document=document), profile_run.port)
-
-    assert run.database_calls == case_document(case)["then"]["databaseCalls"]
-    assert [entry["at"] for entry in run.step_rows] == ["/scenario/0", "/scenario/3"]
 
 
 def _grade_step_graphs(

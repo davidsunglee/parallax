@@ -2,8 +2,8 @@
 the shipped transport (`m-execution` *Flush execution*).
 
 Each cell is a public temporal write — a keyed amendment, a Wire target
-replacement, a predicate amendment, or a keyed amendment carrying collection
-documents — over its own freshly seeded objects. The one transaction a cell
+replacement, or a keyed amendment carrying collection documents — over its own
+freshly seeded object. The one transaction a cell
 runs must cross the port exactly as :func:`expected_realization` calculates
 from the workload — ordered invocations of its closes where the acquired
 connection holds ordered write transport, and multi-row inserts of its
@@ -41,9 +41,7 @@ from tests._support.temporal_write_transport import (
     Workload,
     expected_history,
     expected_realization,
-    group_of,
-    milestones,
-    objects,
+    object_key,
     ordered_history,
     seeded_history,
     window,
@@ -68,13 +66,6 @@ class TargetSpan(Bitemporal, table="trn_target_span", namespace=_NAMESPACE, layo
     amount: Attr[int]
 
 
-class GroupSpan(Bitemporal, table="trn_group_span", namespace=_NAMESPACE):
-    id: Attr[int] = attr(primary_key=True)
-    grp: Attr[int]
-    label: Attr[str] = attr(max_length=24)
-    amount: Attr[int]
-
-
 class CollectionSpan(
     Bitemporal, table="trn_collection_span", namespace=_NAMESPACE, layout=Document()
 ):
@@ -85,17 +76,15 @@ class CollectionSpan(
     legs: Attr[tuple[TransportLeg, ...]] = attr()
 
 
-_MODEL = DomainModel(KeyedSpan, TargetSpan, GroupSpan, CollectionSpan)
+_MODEL = DomainModel(KeyedSpan, TargetSpan, CollectionSpan)
 _ENTITIES: dict[Workload, type[Any]] = {
     "keyed-amend": KeyedSpan,
     "target-replace": TargetSpan,
-    "predicate-amend": GroupSpan,
     "collection-amend": CollectionSpan,
 }
 _TABLES: dict[Workload, str] = {
     "keyed-amend": "trn_keyed_span",
     "target-replace": "trn_target_span",
-    "predicate-amend": "trn_group_span",
     "collection-amend": "trn_collection_span",
 }
 _DOCUMENTED: frozenset[Workload] = frozenset({"target-replace", "collection-amend"})
@@ -128,8 +117,6 @@ def _fixtures(cell: Cell) -> dict[str, object]:
             "txStart": _instant(seeded.tx_from),
             "txEnd": _instant(seeded.tx_to),
         }
-        if cell.workload == "predicate-amend":
-            row["grp"] = group_of(0)
         if cell.workload == "collection-amend":
             row["tags"] = list(_TAGS)
             row["legs"] = [dict(leg) for leg in _LEGS]
@@ -138,12 +125,12 @@ def _fixtures(cell: Cell) -> dict[str, object]:
 
 
 def _write(cell: Cell) -> Callable[[TxnContext], None]:
-    workload, size = cell.workload, cell.size
-    start, end = window(milestones(workload, size))
+    workload = cell.workload
+    start, end = window(cell.size)
     entity = _ENTITIES[workload]
+    key = object_key(0)
     match workload:
         case "keyed-amend" | "collection-amend":
-            (key,) = objects(workload, size, 0)
 
             def amend(tx: TxnContext) -> None:
                 source = tx.find(entity.where(entity.id == key).as_of(valid_time=start)).result()
@@ -151,7 +138,6 @@ def _write(cell: Cell) -> Callable[[TxnContext], None]:
 
             return amend
         case "target-replace":
-            (key,) = objects(workload, size, 0)
 
             def replace(tx: TxnContext) -> None:
                 tx.wire.replace_if(
@@ -163,17 +149,6 @@ def _write(cell: Cell) -> Callable[[TxnContext], None]:
                 )
 
             return replace
-        case "predicate-amend":
-
-            def amend_group(tx: TxnContext) -> None:
-                tx.amend_where(
-                    GroupSpan.where(GroupSpan.grp == group_of(0)),
-                    GroupSpan.amount.set(AMOUNT),
-                    valid_from=start,
-                    until=end,
-                )
-
-            return amend_group
 
 
 def _concurrency(workload: Workload) -> _Concurrency:
@@ -184,8 +159,8 @@ def _stored(profile_run: Any, cell: Cell) -> tuple[list[HistoryRow], int | None]
     """The cell's stored history, and for the collection cell how many of its
     rows hold collections other than the seeded ones."""
     table = _TABLES[cell.workload]
-    keys = objects(cell.workload, cell.size, 0)
-    bounds = [min(keys), max(keys)]
+    key = object_key(0)
+    bounds = [key, key]
     port = profile_run.port
     if cell.workload in _DOCUMENTED:
         ((document,),) = port.execute(

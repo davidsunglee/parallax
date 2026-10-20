@@ -276,6 +276,42 @@ EXAMPLES: Final[list[Example]] = [
         "# raises ExecutionFailure"
         ' caused by WriteRejectedError(rule="write-required-value-object-missing")',
     ),
+    # Rejected-case preparation proofs for predicate writes: the Typed verb
+    # refuses the SAME instruction the corpus's own rejected lane prepares
+    # through Wire, naming the SAME classified rule — proven by
+    # `test_idiomatic_predicate_write_rejects_the_corpus_rule`
+    # (`tests/api/test_write_no_drift.py`).
+    Example(
+        "m-batch-write-047",
+        "A predicate amendment of a versioned Entity",
+        "db.transact(\n"
+        "    lambda tx: tx.amend_where(\n"
+        '        Account.where(Account.balance < Decimal("200.00")),\n'
+        '        Account.balance.set(Decimal("0.00")),\n'
+        "    )\n"
+        ")\n"
+        "# raises ExecutionFailure"
+        ' caused by InstructionRejectedError(rule="set-based-write-target-unsupported")',
+    ),
+    Example(
+        "m-batch-write-048",
+        "A predicate deletion of a Transaction-Time Entity",
+        'db.transact(lambda tx: tx.delete_where(Balance.where(Balance.acct_num == "A-1")))\n'
+        "# raises ExecutionFailure"
+        ' caused by InstructionRejectedError(rule="set-based-write-target-unsupported")',
+    ),
+    Example(
+        "m-batch-write-049",
+        "A predicate amendment of a Bitemporal Entity",
+        "db.transact(\n"
+        "    lambda tx: tx.amend_where(\n"
+        '        Position.where(Position.acct_num == "A-1"),\n'
+        '        Position.value.set(Decimal("0.00")),\n'
+        "    )\n"
+        ")\n"
+        "# raises ExecutionFailure"
+        ' caused by InstructionRejectedError(rule="set-based-write-target-unsupported")',
+    ),
     # Snapshot/graph semantics (m-snapshot-read, m-navigate x m-temporal-read):
     # each example IS an executable graph story
     # (`parallax.conformance.graph_stories`) — the snippet is the story's own
@@ -458,11 +494,7 @@ SKIP_REASONS: Final[dict[str, str]] = {
         "runner already exercises directly"
     ),
     "m-opt-lock": (
-        "the predicate-selected / materializing write forms (the readless "
-        "unversioned/non-temporal exception, and the versioned materialize-then-lower "
-        "family) are graded end-to-end by the compile/run conformance lanes (the "
-        "readless forms) or the run lane alone (the materializing ones, "
-        "query-result-dependent). The versioned keyed LOCKING-mode advance has an "
+        "the versioned keyed LOCKING-mode advance has an "
         "idiomatic story (`m-opt-lock-002`); the OPTIMISTIC-mode forms have none, for "
         "two DIFFERENT reasons: `-005` is a stale-gate case whose competing writer is "
         "applied out of band (`given.apply`), which no single-session story can stage, "
@@ -492,10 +524,9 @@ SKIP_REASONS: Final[dict[str, str]] = {
         "chaining update (`-006`, a single-session success whose observed `in_z` is "
         "FRESH, so what it adds over the exercised chaining-update stories is the "
         "framework-emitted `and in_z = ?` predicate on the closing UPDATE rather than a "
-        "developer spelling) and the materializing predicate-write scenarios "
-        "(`-007`/`-009`) are graded end-to-end by the run lane alone "
-        "(query-result-dependent: `-006` settles against its own group's find, "
-        "`-007`/`-009` against their own materializing read). `-018`/`-023` spell the "
+        "developer spelling) is graded end-to-end by the run lane alone "
+        "(query-result-dependent: it settles against its own group's find). "
+        "`-018`/`-023` spell the "
         "TERMINATE half of the bounded/plain verb pair whose UPDATE half is exercised "
         "(`-017`/`-022`), so what distinguishes them is which segments the rectangle "
         "split leaves re-inserted. `-020`/`-024` add no second writer at all — their "
@@ -503,9 +534,7 @@ SKIP_REASONS: Final[dict[str, str]] = {
         "exercised sibling is the framework-emitted `and in_z = ?` predicate no caller "
         "spells (`-020` closing exactly the rectangle its own group's find observed, "
         "query-result-dependent); `-021`, the stale-observation twin, has its own "
-        "case-scoped entry below. `-026`..`-029` are predicate-selected writes whose "
-        "`_where` verb the developer surface does carry, and what they pin is the per-resolved-row "
-        "close-and-re-insert lowering. Every one of those distinctions is an emitted-SQL "
+        "case-scoped entry below. Every one of those distinctions is an emitted-SQL "
         "or concurrency-staging contract, graded end-to-end by the compile/run "
         "conformance lanes (or the run lane alone for the query-result-dependent ones)"
     ),
@@ -535,10 +564,10 @@ SKIP_REASONS: Final[dict[str, str]] = {
         "could spell"
     ),
     "m-batch-write": (
-        "the set-based collapse / readless / materialize forms (multi-row INSERT "
-        "collapse, batched UPDATE, IN-list DELETE, readless predicate update/delete, "
-        "and the versioned materialize-then-lower family) are graded end-to-end by the "
-        "compile/run conformance lanes. The readless predicate delete has an idiomatic "
+        "the set-based collapse and readless forms (multi-row INSERT collapse, batched "
+        "UPDATE, IN-list DELETE, and readless predicate update/delete) are graded "
+        "end-to-end by the compile/run conformance lanes. The readless predicate delete "
+        "has an idiomatic "
         "story (`m-batch-write-005`, `tx.delete_where`); the remaining forms have none, "
         "each for its own reason. `-001`/`-002`/`-003` are BUFFERED keyed writes — "
         "multi-row insert, per-key versus batched update, IN-list delete — spelling the "
@@ -803,8 +832,7 @@ _BATCH_WRITE_VERSIONED_MATERIALIZE_REASON: Final[str] = (
     "run lane; no "
     "idiomatic story covers it because what it pins is the planner's refusal to collapse "
     "a versioned set delete into one IN-list statement, an emitted-SQL contract rather "
-    "than a developer spelling (the resolving read half is proven by "
-    "`m-opt-lock-003`/`-004`)"
+    "than a developer spelling"
 )
 # The optimistic-conflict boundary witnesses cover a conflict surfacing after
 # one attempt under a zero bound (`m-opt-lock-010`) and replayed to success by
@@ -1275,26 +1303,6 @@ _PER_VIEW_PIN_REASON: Final[str] = (
     "already shows, twice"
 )
 
-_VO_SCENARIO_COMBO_REASON: Final[str] = (
-    "a scenario combining a managed (instance-form) find, a MATERIALIZING "
-    "predicate-write resolving read (row-form, widened to project the VO document "
-    "because the Temporal Observation it records is a complete Predecessor Row — the "
-    "widening this case pins), and a txtime-write terminate under an "
-    "optimistic-lock gate: the materializing predicate-write machinery (m-temporal-write / "
-    "m-opt-lock / m-batch-write's readless/materialize split) is run-lane covered "
-    "(query-result-dependent, `compileEligibility: run-only`); no idiomatic story was "
-    "authored for this multi-capability combination scenario"
-)
-_VO_VERSIONED_RESOLVE_SCENARIO_REASON: Final[str] = (
-    "the versioned counterpart of that scenario: a managed (instance-form) find and a "
-    "MATERIALIZING predicate-write resolving read over the SAME predicate, where the "
-    "resolve keeps the row-form default (pk + version only, the VO document omitted) "
-    "because a Version Observation retains no predecessor row, followed by a "
-    "version-gated per-row delete. The same materializing predicate-write machinery is "
-    "run-lane covered (query-result-dependent, `compileEligibility: run-only`); no "
-    "idiomatic story was authored for this multi-capability combination scenario"
-)
-
 _METAMODEL_MODEL_REJECT_UNREACHABLE_REASON: Final[str] = (
     "a `when.model` foundational Metamodel invariant the fixed resolver classifies at "
     "model construction (a `MetamodelValidationError` issue), not a query or write "
@@ -1333,14 +1341,6 @@ _INVALID_ROOT_WRITE_VALUE_REASON: Final[str] = (
     "`tx.amend` verb and prove the diagnostic node is refused before DML. This case "
     "needs that invalid-root arranger rather than the generic provenance-token mapping "
     "used by m-unit-work-017 through -020"
-)
-
-_RESTATED_MEMBER_WITNESS_REASON: Final[str] = (
-    "the restated-member witness of a materializing predicate update: its stored "
-    "document carries keys no authored value can produce, seeded by out-of-band SQL, so "
-    "no idiomatic story can arrange it. The run sweep drives the case's own resolving "
-    "read and predicate update against real Postgres and grades the successor document "
-    "and the committed table state"
 )
 
 _SOURCE_ADMISSION_REASON: Final[str] = (
@@ -1576,7 +1576,6 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-unit-work-055": _SOURCE_ADMISSION_REASON,
     "m-unit-work-057": _SOURCE_ADMISSION_REASON,
     "m-unit-work-016": _TEMPORAL_KEYED_SINGLETON_UNREACHABLE_REASON,
-    "m-unit-work-042": _RESTATED_MEMBER_WITNESS_REASON,
     "m-unit-work-043": _TARGET_REPLACEMENT_TWIN_REASON,
     "m-unit-work-044": _TARGET_REPLACEMENT_TWIN_REASON,
     # -- buffered sequences, state-graded ------------------------------------ #
@@ -1660,10 +1659,6 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
             "m-batch-write-038",
             "m-batch-write-040",
             "m-batch-write-041",
-            "m-batch-write-043",
-            "m-batch-write-044",
-            "m-batch-write-045",
-            "m-batch-write-046",
             "m-read-lock-023",
             "m-temporal-write-061",
             "m-temporal-write-062",
@@ -1958,8 +1953,6 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     # -- m-value-object: remaining write-family siblings --------------------- #
     "m-value-object-045": _VO_BATCH_WRITE_REASON,
     "m-value-object-046": _VO_OPT_LOCK_CONFLICT_REASON,
-    "m-value-object-047": _VO_SCENARIO_COMBO_REASON,
-    "m-value-object-066": _VO_VERSIONED_RESOLVE_SCENARIO_REASON,
     "m-value-object-067": (
         "a top-level occurrence inside an ENTITY document (Relational Document Layout): "
         "the developer spelling is the ordinary whole-occurrence assignment every "

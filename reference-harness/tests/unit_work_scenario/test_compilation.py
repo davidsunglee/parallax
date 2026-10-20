@@ -202,7 +202,7 @@ def test_a_case_level_database_call_mismatch_is_refused(damaged_case) -> None:
 
 
 def test_a_step_golden_must_be_canonical(damaged_case) -> None:
-    case = damaged_case("m-opt-lock-003-versioned-set-based-materialize-optimistic.yaml")
+    case = damaged_case("m-opt-lock-001-no-op-update-no-dml.yaml")
     case.when["scenario"][0]["statements"][0]["sql"]["postgres"] = "SELECT t0.id FROM account t0"
     with pytest.raises(CaseFailure, match="not canonical"):
         assert_unit_work_scenario(case, RefusingProvider())

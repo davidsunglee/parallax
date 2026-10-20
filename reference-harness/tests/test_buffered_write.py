@@ -203,13 +203,13 @@ def test_buffer_over_different_primary_keys_is_accepted() -> None:
     assert _accepted(probe, _ACCOUNT)
 
 
-# --- a materializing predicate submission is state-graded only --------------
+# --- a predicate submission over a versioned target is refused ---------------
 
 
-def test_a_materializing_predicate_submission_is_refused_outside_state_grading() -> None:
-    # A versioned target's predicate write materializes through a resolving read,
-    # which flushes the buffer it stands in, so only a state-graded buffer, whose
-    # flush no golden lowers, carries one.
+def test_a_predicate_submission_over_a_versioned_target_is_refused() -> None:
+    # A versioned target's objects are each written against an observation of
+    # them, which one readless statement cannot make (`m-batch-write`), so no
+    # buffer carries such a submission, state-graded or not.
     probe = [
         {
             "mutation": "insert",
@@ -220,11 +220,8 @@ def test_a_materializing_predicate_submission_is_refused_outside_state_grading()
     ]
     errors: list[str] = []
     _validate_buffered_write(probe, _ACCOUNT, _OP, "probe", errors)
-    assert any("materializes" in error for error in errors)
+    assert any("set-based-write-target-unsupported" in error for error in errors)
     assert not _accepted(probe, _ACCOUNT)
-    state_graded: list[str] = []
-    _validate_buffered_write(probe, _ACCOUNT, _OP, "probe", state_graded, state_graded=True)
-    assert state_graded == []
 
 
 def _scenario_document(write: list[Any], **top: Any) -> dict[str, Any]:

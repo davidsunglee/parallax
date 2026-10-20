@@ -1,6 +1,6 @@
 """What a unit of work reads through its row acquisition and makes of the rows
-(`m-unit-work`), over an in-memory acquisition: predicate routing, selection
-evidence, and target cardinality and revision, without SQL or a database."""
+(`m-unit-work`), over an in-memory acquisition: a predicate write reads nothing,
+and a target read's cardinality and revision, without SQL or a database."""
 
 from __future__ import annotations
 
@@ -23,9 +23,7 @@ from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
 from parallax.core._execution._unit_work.acquisition import (
     RowConsumer,
     RowRequest,
-    SelectionReadRequest,
     TargetReadRequest,
-    consume_selection,
     consume_target,
 )
 from parallax.core._execution._unit_work.instructions import (
@@ -35,14 +33,12 @@ from parallax.core._execution._unit_work.instructions import (
     prepare_wire_write,
 )
 from parallax.core._execution._unit_work.uow import WriteBatchScope
-from parallax.core._execution._unit_work.write_items import VersionedEvidence
 from parallax.core.dialect import POSTGRES
 from parallax.core.inheritance import EntityMemberSelection
 from parallax.core.metamodel import EntityIdentity, Metamodel
 from parallax.core.unit_work import (
     CardinalityCorruptionError,
     Concurrency,
-    KeyedWriteInstruction,
     PredicateMutation,
     PredicateSelection,
     PredicateWriteInstruction,
@@ -53,14 +49,13 @@ from parallax.core.unit_work import (
     WriteBatchReason,
     WritePreconditionError,
 )
-from parallax.core.write_plan import ObjectKey, PredecessorRow, PredecessorRows
+from parallax.core.write_plan import ObjectKey, PredecessorRow
 from tests._support.planner_probes import NO_ROW_READS, TEST_ACTOR_IDENTITY
 from tests.unit.core._execution._unit_work._acquired_rows_support import HeldRows
 
 _MODELS = models.load_models()
 _ACCOUNT: Final = _MODELS["account"]
 _PERSON: Final = _MODELS["person"]
-_BALANCE: Final = _MODELS["balance"]
 _ABSENT: Final = object()
 
 
@@ -162,129 +157,15 @@ def _account_patch(*, version: int = 3) -> PreparedTargetWrite:
 
 
 # --------------------------------------------------------------------------- #
-# Predicate routing: decided once, by the unit of work.                       #
+# A predicate write is readless.                                              #
 # --------------------------------------------------------------------------- #
-def test_an_unversioned_non_temporal_predicate_write_is_routed_readless_and_reads_nothing() -> None:
+def test_a_predicate_write_is_buffered_readless_and_reads_nothing() -> None:
     uow, flushes = _uow(_PERSON)
     uow.buffer_predicate(_predicate(_PERSON, "Person"))
     uow.flush(trigger="pre_commit")
     # One unconditioned delete of the matching rows, which nothing read.
     (statement,) = flushes.simulated.statements
     assert statement.sql == "delete from person where id = ?"
-
-
-def test_a_versioned_predicate_write_reads_its_selection_once_after_pending_writes_flush() -> None:
-    log: list[str] = []
-    held = HeldRows(_ACCOUNT, [_account(1)])
-    uow, _flushes = _uow(_ACCOUNT, _Logged(held, log), log=log)
-    insert = prepare_typed_write(
-        KeyedWriteInstruction("insert", "Account", ({"id": 7, "owner": "Newton", "balance": 5},)),
-        _ACCOUNT,
-    )
-    uow.buffer(insert)
-    uow.buffer_predicate(_predicate(_ACCOUNT, "Account"))
-    assert log == ["flush:read_dependency", "read:SelectionReadRequest"]
-    (request,) = held.requests
-    assert isinstance(request, SelectionReadRequest)
-    assert not request.predecessors
-    assert request.version_position == _selection(_ACCOUNT, "Account").shape.position("version")
-
-
-def test_a_temporal_predicate_write_reads_its_selected_rows_whole() -> None:
-    held = HeldRows(_BALANCE)
-    uow, flushes = _uow(_BALANCE, held)
-    uow.buffer_predicate(_predicate(_BALANCE, "Balance", "terminate"))
-    (request,) = held.requests
-    assert isinstance(request, SelectionReadRequest)
-    assert request.predecessors
-    # A selection leaving no row buffers nothing.
-    uow.flush(trigger="pre_commit")
-    assert flushes.batches == 0
-
-
-# --------------------------------------------------------------------------- #
-# Selection evidence: adopted by reference, documents by original position.   #
-# --------------------------------------------------------------------------- #
-def _balance_rows(*values: str) -> list[tuple[object, ...]]:
-    selection = _selection(_BALANCE, "Balance")
-    position = selection.shape.position("value")
-    assert position is not None
-    rows: list[tuple[object, ...]] = []
-    for value in values:
-        cells: list[object] = [_ABSENT] * len(selection.bindings)
-        cells[position] = Decimal(value)
-        rows.append(tuple(cells))
-    return rows
-
-
-def _balance_selection_request() -> SelectionReadRequest:
-    write = _predicate(
-        _BALANCE, "Balance", "amend", (WriteAssignment("Balance.value", Decimal("5.00")),)
-    )
-    selection = _selection(_BALANCE, "Balance")
-    key = selection.shape.position("id")
-    assert key is not None
-    return SelectionReadRequest(write, key_position=key, version_position=None)
-
-
-def test_a_filtered_selection_adopts_each_surviving_row_and_its_own_document() -> None:
-    rows = _balance_rows("5.00", "6.00", "7.00")
-    documents = [object(), object(), object()]
-    evidence = consume_selection(
-        _balance_selection_request(),
-        _selection(_BALANCE, "Balance"),
-        iter(rows),
-        _ABSENT,
-        documents,
-        len(rows),
-    )
-    assert isinstance(evidence, PredecessorRows)
-    # The no-op first row is eliminated; each survivor keeps its own raw
-    # document, by its original position rather than its place in the evidence.
-    assert [evidence.rows[index] for index in range(len(evidence))] == rows[1:]
-    assert all(evidence.rows[index] is rows[index + 1] for index in range(len(evidence)))
-    assert [evidence.document(index) for index in range(len(evidence))] == documents[1:]
-    assert evidence.absent is _ABSENT
-
-
-def test_a_selection_without_a_document_column_carries_no_documents() -> None:
-    rows = _balance_rows("6.00")
-    evidence = consume_selection(
-        _balance_selection_request(),
-        _selection(_BALANCE, "Balance"),
-        iter(rows),
-        _ABSENT,
-        None,
-        len(rows),
-    )
-    assert isinstance(evidence, PredecessorRows)
-    assert evidence.documents is None
-
-
-def test_a_versioned_selection_keeps_each_rows_key_and_observed_version() -> None:
-    held = HeldRows(_ACCOUNT, [_account(1, version=4), _account(2, version=9)])
-    uow, flushes = _uow(_ACCOUNT, held)
-    uow.buffer_predicate(_predicate(_ACCOUNT, "Account"))
-    uow.flush(trigger="pre_commit")
-    assert len(flushes.simulated.statements) == 2
-    (request,) = held.requests
-    assert isinstance(request, SelectionReadRequest)
-    rows = held.rows
-    selection = _selection(_ACCOUNT, "Account")
-    evidence = consume_selection(
-        request, selection, iter(_positional(selection, rows)), _ABSENT, None, len(rows)
-    )
-    assert isinstance(evidence, VersionedEvidence)
-    assert (list(evidence.keys), list(evidence.versions)) == ([1, 2], [4, 9])
-
-
-def _positional(
-    selection: EntityMemberSelection, rows: Sequence[PredecessorRow]
-) -> list[tuple[object, ...]]:
-    return [
-        tuple(row.members.get(member.name, _ABSENT) for member in selection.shape.members)
-        for row in rows
-    ]
 
 
 # --------------------------------------------------------------------------- #

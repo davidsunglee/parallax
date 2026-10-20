@@ -211,9 +211,8 @@ stopped early, never started, or raised. The request kind decides the bracket:
 
 | Request | Bracket |
 |---|---|
-| Selection of a predicate write | its own Read under the attempt, after the unit of work has flushed pending writes through its read gate |
 | Target of a Locking caller-addressed write | its own Read under the attempt, with no force-flush |
-| Coverage of a deferred range or a deferred group's batch | a read Database Call inside the current Write Batch, opening no Read; one per bounded statement its uncovered parts need |
+| Coverage of a deferred range | a read Database Call inside the current Write Batch, opening no Read; one per bounded statement its uncovered parts need |
 | Completion of retained rows | none: no statement, Database Call, or activity, before the range's coverage is read |
 
 A row whose stored data is invalid is refused with the same judgement and
@@ -229,8 +228,8 @@ The unit of work runs the Write Plan a flush finalizes unit by unit, binding
 each deferred unit at its turn and completing each unit before the next
 (`m-unit-work` *Execution units complete before later work runs*). Execution
 implements the step-execution port: it runs each span of Planned Writes the
-unit of work hands it — a unit's planned steps, the steps a deferred range
-bound, or one round of a deferred group — inside the Write Batch the unit of
+unit of work hands it — a unit's planned steps, or the steps a deferred range
+bound — inside the Write Batch the unit of
 work opened for the flush. It lowers the span's Planned Writes through one
 shared path — the planner's payload preparer prepares what the statement about
 to run stores, and `m-sql` renders it — executes them through the port, and has

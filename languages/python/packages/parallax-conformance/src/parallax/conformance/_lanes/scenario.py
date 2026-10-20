@@ -101,7 +101,6 @@ from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.predicate import (
     CanonicalDocumentError,
-    PredicateNode,
 )
 from parallax.core.sql_gen import LoweredStatement, SqlGenError
 from parallax.core.temporal_read import TemporalReadError, TimeInterval
@@ -153,7 +152,6 @@ __all__ = [
     "flush_failure",
     "graph_rows",
     "group_tx_instant",
-    "is_materializing_write_step",
     "is_predicate_write_step",
     "lower_writes",
     "read_step_graph",
@@ -204,8 +202,7 @@ __all__ = [
 # m-opt-lock's own forward-error posture;
 # `simulated_temporal_store.SimulatedStoreError` is the refusal of a
 # composition the simulated rows cannot name. A deferred witness (the
-# materializing / auto-retry-
-# boundary forms) that reaches this engine-local write path without
+# auto-retry boundary forms) that reaches this engine-local write path without
 # a recorded observation must degrade to a reasoned `EngineError`, never an
 # uncaught crash of the sweep.
 LOWERING_ERRORS: Final[tuple[type[Exception], ...]] = (
@@ -396,47 +393,6 @@ def _refuse_unaccounted_document_milestone(
     )
 
 
-def _refuse_materialized_case_state(
-    model: AcceptedMetamodel,
-    entity: EntityMetadata,
-    row: Mapping[str, object],
-    store: SimulatedTemporalStore,
-) -> None:
-    """Refuse a keyed temporal write whose observation would come from case state
-    a materializing predicate write of this same case already moved
-    (:meth:`SimulatedTemporalStore.moved_by_materialization`).
-
-    That write resolved its own rows inside production, retired the milestone it
-    found for each and opened a successor, and returned neither the plan nor the
-    rows — so the milestone this lane still holds current for that key is one the
-    database closed. A close addressed at it matches no row.
-
-    The composition is refused rather than executed because the two would not even
-    fail the same way. A real caller could not have issued this write at all
-    without a Temporal Observation, which only a read supplies; their observation
-    would name the milestone the predicate write opened, and gating a close on the
-    retired one is what production reports as a stale write. This lane's
-    observation comes from tracked case state instead — the whole reason the
-    tracker exists — and would issue a well-formed statement that quietly affects
-    zero rows. Naming the shape is the only answer that cannot be silently wrong.
-
-    Scope is the milestone, not the case: a target the predicate write never named
-    keeps its tracked state, and a milestone this case's own later write opens for
-    the moved key is a current account of it again.
-    """
-    if not store.moved_by_materialization(model, entity, row):
-        return
-    raise EngineError(
-        f"a keyed temporal write on {entity.identity.canonical!r} settles against case state "
-        "that this case's own materializing predicate write already moved — that write closed "
-        "the tracked milestone and opened a successor inside production, whose plan this lane "
-        "never sees, so the close this write would address matches no row. A real caller could "
-        "reach this step only by READING the row, and would gate on the milestone the predicate "
-        "write opened; gating on the retired one is a stale write, not a zero-row success. "
-        "Author the materializing write and the keyed write as separate cases"
-    )
-
-
 def _shared_document_column(model: AcceptedMetamodel, entity_name: str) -> str | None:
     """The name of the shared Structured Column ``entity_name``'s rows carry under
     Relational Document Layout, or ``None`` under ``Columns``, which has none."""
@@ -525,11 +481,9 @@ class CaseStateEvidenceResolver:
     the entry named a find of its `uow` group with ``on``, the claim that find
     retained (:func:`_observation_from_source`).
 
-    A milestone a materializing predicate write of this case already moved
-    (:func:`_refuse_materialized_case_state`), and one whose stored members can
-    no longer account for the whole stored row
-    (:func:`_refuse_unaccounted_document_milestone`), are both refused before
-    the store answers. Resolving changes no stored row: the write's own
+    A milestone whose stored members can no longer account for the whole stored
+    row (:func:`_refuse_unaccounted_document_milestone`) is refused before the
+    store answers. Resolving changes no stored row: the write's own
     execution does, when its transaction flushes it.
     """
 
@@ -546,7 +500,6 @@ class CaseStateEvidenceResolver:
     ) -> tuple[TemporalObservation | None, WireEntity | None]:
         observation: TemporalObservation | None
         if self.named is None:
-            _refuse_materialized_case_state(self.model, entity, row, self.store)
             _refuse_unaccounted_document_milestone(self.model, entity, row, self.store)
             observation = self.store.predecessor_for(self.model, entity, row)
         else:
@@ -709,10 +662,9 @@ def is_predicate_write_step(raw_write: object) -> bool:
     lowers. A predicate write's `target` names its entity/predicate; a keyed
     write is a plain list of ``{mutation, entity, rows}`` entries — the SHAPE
     signal (a bare mapping vs. a list) is structural, never inferred from a
-    ``KeyError``; this shape routes to the readless/materializing
-    predicate-write
-    translation instead — see :func:`_lower_predicate_write_step` /
-    :func:`_run_materializing_pair`.
+    ``KeyError``; this shape routes to the readless predicate-write translation
+    instead — see :func:`_lower_predicate_write_step` /
+    :func:`_run_readless_predicate_write`.
     """
     return isinstance(raw_write, Mapping)
 
@@ -722,11 +674,6 @@ def write_entries(raw_write: object) -> Sequence[Mapping[str, object]]:
     LIST — callers check :func:`is_predicate_write_step` FIRST; this is never
     reached for a structured predicate-write instruction."""
     return cast("Sequence[Mapping[str, object]]", raw_write)
-
-
-def _is_versioned_entity(model: AcceptedMetamodel, entity_name: str) -> bool:
-    declaring = family_declarer(model, case_entity(model, entity_name))
-    return any(attr.optimistic_locking for attr in declaring.declared_attributes)
 
 
 def _observation_refusal(
@@ -992,8 +939,8 @@ def _build_instructions(
     `entity` key at all) refuses loudly here too — defensive coverage for the
     writeSequence path, which shares this function with every scenario write
     entry (the scenario `write`-field-is-itself-a-mapping shape is caught one
-    layer up, by :func:`is_predicate_write_step`, and routed to the
-    readless/materializing predicate-write translation instead — a predicate
+    layer up, by :func:`is_predicate_write_step`, and routed to the readless
+    predicate-write translation instead — a predicate
     write is never a legal writeSequence entry shape, `m-case-format`'s
     writeSequence vocabulary is keyed-only).
 
@@ -1493,8 +1440,7 @@ def _compile_find(
     :func:`_run_uow_group`): a Wire read inside ``db.transact`` with the
     scenario's authored keywords over a root connected with its configured
     options, so the shared-row-lock suffix is the one production resolves for
-    the step's own target Entity. A materializing predicate write's own resolving
-    read never reaches here: its case is `compileEligibility: run-only`.
+    the step's own target Entity.
     """
     return planned_read(
         context.serving,
@@ -1545,19 +1491,6 @@ def run_standalone_find(
             transact(db, lambda tx: tx.wire.find(query), **context.requests),
             observed,
         )
-
-
-def _names_one_entity(model: AcceptedMetamodel, left: str, right: str) -> bool:
-    """Whether two authored Entity spellings denote ONE Entity the model declares.
-
-    A case spells an Entity as the bare local name or as the canonical
-    ``<namespace>.<Entity>``, and both resolve by model identity (`m-case-format`
-    *How a case spells an Entity*), so the two legal spellings of one target must
-    pair. Total: an unresolvable spelling denotes no Entity and pairs with nothing,
-    leaving the refusal to the caller that owns the diagnostic.
-    """
-    resolved, other = entity_by_name(model, left), entity_by_name(model, right)
-    return resolved is not None and other is not None and resolved.identity == other.identity
 
 
 def graph_rows(
@@ -1739,10 +1672,6 @@ def _lower_scenario_step(
     raw_write = step["write"]
     rollback = step.get("rollback") is True
     if is_predicate_write_step(raw_write):
-        # Readless only (`m-batch-write-005`/`-006`) — a materializing predicate
-        # write never reaches the compile lane at all (its case's
-        # `compileEligibility: run-only` short-circuits before
-        # `_scenario_lowered` ever runs).
         statement = _lower_predicate_write_step(
             _prepared_case_predicate_write(cast("Mapping[str, object]", raw_write), context.model),
             context.model,
@@ -2440,169 +2369,6 @@ def _run_readless_predicate_write(
         with absorbing_rollback():
             transact(database, body, **context.requests)
         return observed.writes, observed.database_calls
-
-
-def is_materializing_write_step(
-    step: Mapping[str, object] | None, model: AcceptedMetamodel
-) -> PreparedPredicateWrite | None:
-    """If ``step`` is a write step whose ``write`` field is a structured
-    predicate instruction targeting a VERSIONED or TEMPORAL entity
-    (MATERIALIZES, `m-opt-lock` "Predicate-selected writes materialize when
-    observations are needed", ADR 0014), its core-produced
-    :class:`~parallax.core.unit_work.PreparedPredicateWrite` — ``None`` for a keyed
-    write step, a READLESS predicate write, a find step, or ``None`` itself
-    (no such step, e.g. the scenario's last step).
-
-    The returned prepared product holds producer-decoded managed assignment
-    values. A materializing write has no
-    separate simulated lowering (its own golden bind is graded against
-    the ACTUAL executed SQL, `_run_materializing_pair`'s own port observation),
-    so there is nothing for a decoded value to drift away from here.
-    """
-    if step is None or "write" not in step:
-        return None
-    raw_write = step["write"]
-    if not isinstance(raw_write, Mapping):
-        return None
-    instruction = instructions.deserialize(
-        case_document.canonical_predicate_doc(cast("Mapping[str, object]", raw_write))
-    )
-    if not isinstance(instruction, PredicateWriteInstruction):
-        return None
-    prepared = _case_ingress.prepare_case_write(instruction, model)
-    assert isinstance(prepared, PreparedPredicateWrite)
-    return prepared if _materializes(prepared, model) else None
-
-
-def _materializes(prepared: PreparedPredicateWrite, model: AcceptedMetamodel) -> bool:
-    """Whether ``prepared`` reads the rows it writes: its target is versioned
-    or temporal."""
-    target_name = prepared.selection.target.identity.canonical
-    return _is_temporal_entity(model, target_name) or _is_versioned_entity(model, target_name)
-
-
-def _canonical_write_predicate(step: Mapping[str, object]) -> PredicateNode:
-    """The canonical predicate a materializing write step selects by."""
-    instruction = instructions.deserialize(
-        case_document.canonical_predicate_doc(cast("Mapping[str, object]", step["write"]))
-    )
-    assert isinstance(instruction, PredicateWriteInstruction)  # the caller established this
-    predicate = instruction.target.predicate
-    assert isinstance(predicate, PredicateNode)  # a deserialized instruction is canonical
-    return predicate
-
-
-def _run_materializing_pair(
-    port: CaseDatabase,
-    context: CaseContext,
-    steps: Sequence[Mapping[str, object]],
-    index: int,
-    lifecycle: LifecycleRun,
-) -> tuple[list[LoweredStep], int]:
-    """Execute a MATERIALIZING predicate-write step (``index + 1``) whose
-    IMMEDIATELY PRECEDING step (``index``) is the resolving find that shares
-    its target entity — ONE transaction, `m-case-format` "Materializing
-    cases": "a preceding scenario read resolves the same target predicate ...
-    It is a real resolving read, not a cache hit". Production materialization
-    (``tx.wire.amend_where`` and its family) performs its OWN internal
-    resolve using the SAME predicate; with no concurrent writer between the
-    two steps, that resolve observes the IDENTICAL rows the corpus's own
-    preceding find step documents, so pairing them here reproduces the
-    corpus's own ``1 resolve + N per-row writes`` Database Call accounting
-    exactly — the resolve's Database Call is charged to the FIND step's pointer
-    (the corpus's own authoring convention), never double-counted against the
-    write step.
-
-    Reports the ACTUAL executed SQL, read off the delivered lifecycle, never a
-    separate pure re-lowering: a materializing write's per-row binds are
-    QUERY-RESULT-DEPENDENT, so there is no pure oracle to derive them from
-    independently of a real run. The resolve is the transaction's read
-    (materialization always resolves before it writes) and the ``N`` per-row
-    keyed writes are its DML, in resolved-row order — each in the canonical
-    Lowered Statement form the Database Call borrowed, so nothing stands between
-    what ran and what is reported.
-
-    What this transaction did to a TEMPORAL target's milestones is recorded on
-    ``store`` rather than tracked into it: the rows it closed and opened were
-    resolved and planned inside production, so no later step can settle against
-    them from case state, and one that tries is refused
-    (:func:`_refuse_materialized_case_state`). The record is staged on this
-    transaction's own outcome, exactly as every other unit's advances are — an
-    aborted pair moved nothing.
-    """
-    model = context.model
-    store = context.case_state()
-    find_step = steps[index]
-    write_step = steps[index + 1]
-    instruction = is_materializing_write_step(write_step, model)
-    assert instruction is not None  # the caller already established this via the same check
-    find = step_query(find_step, model)
-    target = find.target.canonical
-    write_target = instruction.selection.target.identity.canonical
-    write_predicate = _canonical_write_predicate(write_step)
-    if not _names_one_entity(model, target, write_target):
-        raise EngineError(
-            f"materializing predicate write at scenario step {index + 1} is not preceded by "
-            f"a resolving find over the SAME target entity (find targets {target!r}, write "
-            f"targets {write_target!r} — m-case-format 'Materializing cases' "
-            "requires the prior find to share the write's own target)"
-        )
-    # `m-case-format` "Materializing cases": for every versioned or temporal
-    # target, model-aware validation MUST require that prior find to use the same
-    # concrete target AND canonical predicate — same entity alone is not enough
-    # (a resolving find over a DIFFERENT predicate would silently observe the
-    # wrong rows). The read's own Temporal Selection is a sibling clause and the
-    # write target remains the bare predicate, so the two canonical predicates
-    # compare directly; planning the read would additionally inject interval
-    # predicates and is therefore still not the apples-to-apples form.
-    if find.predicate != write_predicate:
-        raise EngineError(
-            f"materializing predicate write at scenario step {index + 1} is not preceded by "
-            "a resolving find over the SAME canonical predicate as the write's own target "
-            f"predicate (find {find.predicate!r}, write {write_predicate!r} "
-            "— m-case-format 'Materializing cases' requires the prior find to use the same "
-            "concrete target and canonical predicate)"
-        )
-    tx_instant = entry_instant(cast("Mapping[str, object]", write_step["write"]))
-    instant = normalize_instant(dt.datetime.fromisoformat(tx_instant))
-    rollback = write_step.get("rollback") is True
-    observed = lifecycle.observation()
-    with Database.connect(
-        write_adapter(port, rollback=rollback),
-        context.serving,
-        options=context.options,
-        clock=FixedClock(instant),
-        lifecycle_provider=observed.provider,
-    ) as _root_database:
-        database = _root_database.using_database_login()
-
-        def body(tx: TxnContext) -> None:
-            _buffer_wire_predicate_write(
-                tx,
-                model,
-                cast("Mapping[str, object]", write_step["write"]),
-                instruction,
-            )
-
-        with store.transaction(rollback=rollback):
-            with absorbing_rollback():
-                transact(database, body, **context.requests)
-            store.note_materialized_write(case_entity(model, write_target))
-        # The split is the port method each statement ran through rather than a
-        # position in one flat list, so a resolve that issued more than one call, or
-        # a batch the planner split, still lands where the corpus authors it: the
-        # internal resolve against the FIND step's pointer, every DML statement
-        # against the write step's.
-        resolve = observed.reads
-        if not resolve:  # pragma: no cover - zero resolved rows still resolves (1 statement)
-            raise EngineError(
-                f"materializing predicate write at scenario step {index + 1} executed no "
-                "statements at all — even a zero-row resolve issues its own SELECT"
-            )
-        return [
-            LoweredStep(f"/scenario/{index}/objectQuery", resolve, False, False),
-            LoweredStep(f"/scenario/{index + 1}/write", observed.writes, True, rollback),
-        ], observed.database_calls
 
 
 def scenario_group_step_indices(steps: Sequence[Mapping[str, object]]) -> dict[str, list[int]]:
@@ -3348,8 +3114,7 @@ def run_group_step(
     exactly as an ungrouped one does (:func:`_run_readless_predicate_write`),
     but into the group's held transaction — and into ``tracked`` — so the flush
     that delivers it also orders the keyed writes buffered on either side of
-    it. A materializing one reads the rows it writes inside production, which
-    no simulated unit of work can, so ``tracked`` never holds one. A write step's
+    it. A write step's
     statements are those the group's flushes deliver for it, which its runner
     attributes once they ran (:func:`group_writes`), so the step answers none of
     its own; it records in ``state`` that it finished buffering. A FIND step
@@ -3376,7 +3141,7 @@ def run_group_step(
     if "write" in step and is_predicate_write_step(step["write"]):
         raw_write = cast("Mapping[str, object]", step["write"])
         prepared = _prepared_case_predicate_write(raw_write, model)
-        if tracked is not None and not _materializes(prepared, model):
+        if tracked is not None:
             tracked.buffer_predicate(prepared)
         _buffer_wire_predicate_write(tx, model, raw_write, prepared)
         state.buffered.append((index, len(observation.writes)))
@@ -3800,11 +3565,7 @@ def run_scenario_case(
     inside ONE ``db.transact`` (:func:`_run_uow_group`): the observing find
     and the versioned write it licenses execute in the SAME unit of work, so
     the write's version bind is a genuine transaction-scoped observation,
-    never an oracle. A MATERIALIZING predicate-write step pairs with its
-    IMMEDIATELY PRECEDING find step (:func:`_run_materializing_pair`) —
-    detected by a one-step LOOK-AHEAD before that find is lowered as an
-    ordinary standalone step, since `m-case-format`'s own "Materializing
-    cases" convention makes the preceding find the resolve.
+    never an oracle.
 
     Reports its observations as a :class:`ScenarioRun`. The `errors` channel is
     filled by the snapshot action-step lane alone, from its `expectError`
@@ -3817,10 +3578,7 @@ def run_scenario_case(
     read observed inside the group's transaction.
     `stepRows` is filled on both lanes too, by every read step this run drives —
     ungrouped, grouped, and streamed alike — and by every accepted `mutate`
-    declaring `expectRows`. A MATERIALIZING pair's resolving find drives none:
-    production performs that read internally while planning the write and hands
-    its rows to no caller, so the step reports no entry (`m-conformance-adapter`
-    *Per-step row observations*)."""
+    declaring `expectRows`."""
     lifecycle = lifecycle_run(lifecycle)
     if case.document.get("grading") == "state":
         return _run_state_graded_case(case, port, lifecycle)
@@ -3857,8 +3615,7 @@ def run_scenario_case(
         # (:func:`~parallax.conformance._mechanism.given_state.apply_given_apply`).
         # The tracker is deliberately
         # not re-seeded from it — it records which milestones the statements may
-        # have overtaken instead. A predicate write resolves through a real read that
-        # sees whatever they wrote; a keyed write's observation stays case state,
+        # have overtaken instead. A keyed write's observation stays case state,
         # and where that state can no longer be the whole stored row the write is
         # refused rather than silently rebuilt
         # (:func:`_refuse_unaccounted_document_milestone`).
@@ -3880,20 +3637,6 @@ def run_scenario_case(
                 continue
             step = steps[index]
             if "write" not in step:
-                next_step = steps[index + 1] if index + 1 < len(steps) else None
-                pairing = is_materializing_write_step(next_step, model)
-                if pairing is not None and _names_one_entity(
-                    model,
-                    step_query(step, model).target.canonical,
-                    pairing.selection.target.identity.canonical,
-                ):
-                    pair_lowered, pair_calls = _run_materializing_pair(
-                        port, context, steps, index, lifecycle
-                    )
-                    lowered.extend(pair_lowered)
-                    database_calls += pair_calls
-                    index += 2
-                    continue
                 read, read_observed = run_standalone_find(port, context, step, lifecycle)
                 database_calls += read_observed.database_calls
                 lowered.append(
@@ -3909,12 +3652,6 @@ def run_scenario_case(
             raw_write = step["write"]
             rollback = step.get("rollback") is True
             if is_predicate_write_step(raw_write):
-                # A materializing write reaching HERE (rather than being
-                # consumed by the look-ahead pairing above) was not preceded
-                # by a matching find — a malformed corpus case per
-                # `m-case-format`'s own validation requirement; finalization's
-                # defensive refusal surfaces it loudly rather than silently
-                # mishandling it. A READLESS write needs no pairing at all.
                 raw_predicate_write = cast("Mapping[str, object]", raw_write)
                 tx_instant = entry_instant(raw_predicate_write)
                 instruction = _prepared_case_predicate_write(raw_predicate_write, model)

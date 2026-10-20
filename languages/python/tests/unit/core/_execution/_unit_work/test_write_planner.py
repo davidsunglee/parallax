@@ -18,24 +18,21 @@ in-place adjacency.
 
 from __future__ import annotations
 
-import dataclasses
 import datetime as dt
 from collections.abc import Mapping, Sequence
 from decimal import Decimal
-from typing import Any, cast
+from typing import cast
 
 import pytest
 
-from parallax.core import opt_lock, relationship, temporal_read
 from parallax.core import predicate as predicate_algebra
+from parallax.core import relationship, temporal_read
 from parallax.core._execution import _planning as planning_composition
 from parallax.core._execution._planning import build_write_planner
-from parallax.core._execution._unit_work import instructions as instructions_module
 from parallax.core._execution._unit_work import keys as keys_module
 from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedWrite,
     PreparedPredicateWrite,
-    WriteInstructionError,
     derive_keyed_write,
     prepare_typed_write,
 )
@@ -58,7 +55,6 @@ from parallax.core.metamodel import (
     Table,
     UnresolvedDefiningRelationshipDeclaration,
     UnresolvedRelationshipJoin,
-    entity_by_name,
 )
 from parallax.core.relationship import _compile as relationship_compile
 from parallax.core.unit_work import (
@@ -119,7 +115,6 @@ from tests.unit._corpus_identity_support import corpus_entity, corpus_object_key
 from tests.unit._corpus_model_support import corpus_records, formed
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._metamodel_support import Declaration, attribute, identity, key, source
-from tests.unit._temporal_group_support import temporal_group
 from tests.unit.core._execution._unit_work._audit_support import RecordingAudit
 
 _MODELS = corpus_records()
@@ -1351,32 +1346,6 @@ def test_batching_never_merges_a_row_carrying_a_recorded_observation() -> None:
     assert len(plan.steps) == 2
 
 
-def test_batching_never_merges_across_an_intervening_materialized_write_group() -> None:
-    # A Materialized Write Group is opaque to batching AND a hard run boundary.
-    # The candidates around it are INSERTS, the one merge-eligible shape that
-    # carries no observation of its own (an opening row observes nothing), so
-    # nothing but the group's run boundary keeps them apart: adjacent, same
-    # entity, same mutation, same member set, they are precisely what the
-    # collapse decision admits, and they would settle as ONE two-entry insert
-    # if the group did not close the run it interrupted.
-    group = _version_group(
-        "Account", "amend", "id", [(9, 1)], [WriteAssignment("Account.balance", Decimal("5.00"))]
-    )
-    buffer: list[_TestBufferItem] = [
-        KeyedWriteInstruction(
-            "insert", "Account", ({"id": 1, "owner": "Ada", "balance": Decimal("5.00")},)
-        ),
-        group,
-        KeyedWriteInstruction(
-            "insert", "Account", ({"id": 2, "owner": "Bo", "balance": Decimal("5.00")},)
-        ),
-    ]
-    plan = _plan(buffer, _ACCOUNT)
-    inserts = [step for step in plan.steps if isinstance(step, PlannedInsert)]
-    assert [_insert_rows(step)[0]["id"] for step in inserts] == [1, 2]
-    assert all(len(step.entries) == 1 for step in inserts)
-
-
 def test_batching_never_touches_a_predicate_write() -> None:
     predicate = PredicateWriteInstruction(
         "delete",
@@ -1398,122 +1367,6 @@ def test_batching_never_touches_a_predicate_write() -> None:
         ),
         _WALLET,
     )
-
-
-# --------------------------------------------------------------------------- #
-# Materialized Write Group (`m-unit-work` "Materialized Write Groups", ADR    #
-# 0014): exempt from coalescing and from batching; dependency ordering moves  #
-# it as ONE block; settles lazily into one `PlannedWrite` per resolved row.   #
-# --------------------------------------------------------------------------- #
-def test_materialized_group_settles_to_one_step_per_resolved_row_in_order() -> None:
-    group = _version_group(
-        "Account",
-        "amend",
-        "id",
-        [(1, 1), (2, 1)],
-        [WriteAssignment("Account.balance", Decimal("10.00"))],
-    )
-    plan = _plan([group], _ACCOUNT)
-    assert len(plan.steps) == 2
-    ids: list[object] = []
-    for step in plan.steps:
-        assert isinstance(step, PlannedUpdate)
-        ids.append(_single_key(step))
-    assert ids == [1, 2]
-
-
-def test_no_materialized_group_carries_a_milestone_verb_on_a_non_temporal_target() -> None:
-    # `Account` is versioned and NON-temporal, so a `terminate` has nothing to
-    # close. Preparation refuses it before any group can be resolved, so no
-    # settled group consumes a row's version while dropping the verb's meaning.
-    with pytest.raises(WriteInstructionError, match="Non-temporal objects like 'Account'"):
-        _version_group("Account", "terminate", "id", [(1, 1)])
-
-
-def test_materialized_group_rejects_an_authored_version_assignment() -> None:
-    # A materializing predicate update's own assignment can never author the
-    # version attribute — the version is framework-owned end to end (`m-opt-
-    # lock` "Version values are framework-owned") — checked once for the
-    # whole group, since every resolved row shares the same assignment.
-    with pytest.raises(WriteInstructionError, match="framework-owned"):
-        _version_group("Account", "amend", "id", [(1, 1)], [WriteAssignment("Account.version", 9)])
-
-
-def test_settlement_refuses_a_group_that_reaches_it_assigning_the_version() -> None:
-    # Preparation already refuses the assignment above; settlement refuses it
-    # again for a group whose prepared write assigns it anyway.
-    group = _version_group(
-        "Account", "amend", "id", [(1, 1)], [WriteAssignment("Account.balance", Decimal("2.00"))]
-    )
-    prepared = group.mutation
-    (balance,) = prepared.managed_assignments
-    entity = entity_by_name(_ACCOUNT, "Account")
-    assert entity is not None
-    assigning_the_version = instructions_module._prepared_predicate_write(  # pyright: ignore[reportPrivateUsage] - the one producer, handed what preparation refuses
-        prepared.mutation,
-        prepared.selection,
-        (dataclasses.replace(balance, member=entity.attribute("version")),),
-        prepared.valid_time_window,
-    )
-    forged = dataclasses.replace(group, mutation=assigning_the_version)
-    with pytest.raises(opt_lock.CallerAuthoredVersionError):
-        _plan([forged], _ACCOUNT)
-
-
-def test_materialized_group_is_exempt_from_same_object_coalescing() -> None:
-    # A group's own row is never folded with an unrelated buffered insert of
-    # the SAME object identity — it passes through coalesce opaque.
-    insert = KeyedWriteInstruction(
-        "insert", "Account", ({"id": 1, "owner": "Ada", "balance": Decimal("1.00")},)
-    )
-    group = _version_group(
-        "Account", "amend", "id", [(1, 1)], [WriteAssignment("Account.balance", Decimal("2.00"))]
-    )
-    plan = _plan([insert, group], _ACCOUNT)
-    assert _shape(plan) == [("insert", "Account"), ("update", "Account")]
-
-
-def test_materialized_group_is_exempt_from_batching() -> None:
-    # A group's OWN member rows never re-batch into a multi-row instruction,
-    # even when they would otherwise be eligible (adjacent, same entity/
-    # mutation, uniform values) — each per-row gated write stays its own step
-    # (`m-batch-write`).
-    group = _version_group(
-        "Account",
-        "amend",
-        "id",
-        [(1, 1), (2, 1)],
-        [WriteAssignment("Account.balance", Decimal("5.00"))],
-    )
-    plan = _plan([group], _ACCOUNT)
-    assert len(plan.steps) == 2
-
-
-def test_materialized_group_moves_as_one_block_under_dependency_ordering() -> None:
-    # The group is ONE ordering unit: its rows stay ADJACENT and in their OWN
-    # resolved-row order, and the whole block moves relative to the OTHER
-    # buffered instruction, which the caller buffered FIRST yet which settles
-    # first only because ordering partitions by mutation. A delete group needs
-    # no uniform assignment across its rows, so it isolates the ordering
-    # property from the collapse decision. The target is versioned because a
-    # group carries observation columns, which only an observation-entitled
-    # target may hold; FK-rank ordering is proven on its own above.
-    group = _version_group("Account", "delete", "id", [(2, 1), (1, 1)])
-    other = KeyedWriteInstruction(
-        "insert", "Account", ({"id": 10, "owner": "Ada", "balance": Decimal("1.00")},)
-    )
-    plan = _plan([group, other], _ACCOUNT)
-    shapes: list[tuple[str, object]] = []
-    for step in plan.steps:
-        if isinstance(step, PlannedInsert):
-            shapes.append(("insert", _insert_rows(step)[0]["id"]))
-        else:
-            assert isinstance(step, PlannedDelete)
-            shapes.append(("delete", _single_key(step)))
-    # inserts before updates/deletes — the canonical INSERT -> UPDATE -> DELETE
-    # order; the group's OWN two rows stay adjacent and in their OWN resolved
-    # order (2 then 1), never re-sorted by id.
-    assert shapes == [("insert", 10), ("delete", 2), ("delete", 1)]
 
 
 # --------------------------------------------------------------------------- #
@@ -1695,9 +1548,9 @@ def test_a_prepared_finalize_resolves_targets_without_any_entity_spelling_scan(
 ) -> None:
     # Spelling resolution is raw authored input's own branch, and the buffer a
     # flush plans holds none: every arm settlement forks on is driven here —
-    # keyed insert, observed versioned update, readless predicate write,
-    # Materialized Write Group, and a bitemporal mutation — with the scan wired
-    # to fail, so reaching it at all is the failure rather than a slow path.
+    # keyed insert, observed versioned update, readless predicate write, and a
+    # bitemporal mutation — with the scan wired to fail, so reaching it at all
+    # is the failure rather than a slow path.
     model = formed(
         DescriptorMetamodel(
             entities=(
@@ -1725,14 +1578,6 @@ def test_a_prepared_finalize_resolves_targets_without_any_entity_spelling_scan(
         ),
         account_update,
         position_update,
-        _version_group(
-            "Account",
-            "amend",
-            "id",
-            [(9, 1)],
-            [WriteAssignment("Account.balance", Decimal("5.00"))],
-            model=model,
-        ),
         PredicateWriteInstruction(
             "delete",
             PredicateSelection(
@@ -1767,7 +1612,7 @@ def test_a_prepared_finalize_resolves_targets_without_any_entity_spelling_scan(
     kinds = [_step_mutation(step) for step in plan.steps]
     assert kinds.count("insert") >= 2  # the Wallet insert, plus the bitemporal successors
     assert "close" in kinds
-    assert kinds.count("update") == 2  # the addressed Account update and the group's one row
+    assert kinds.count("update") == 1  # the addressed Account update
     assert kinds[-1] == "delete"  # the readless predicate write, held at the barrier
 
 
@@ -1789,7 +1634,7 @@ _OPENED = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 
 def _temporal_family_writes() -> list[OrderedWrite]:
     """Observed updates of an inherited Transaction-Time-Only and an inherited
-    Bitemporal position, then a three-row group over a standalone target."""
+    Bitemporal position."""
     quote = KeyedWriteInstruction("amend", "SpotQuote", ({"id": 1, "price": Decimal("2.00")},))
     rate = KeyedWriteInstruction(
         "amend",
@@ -1814,22 +1659,6 @@ def _temporal_family_writes() -> list[OrderedWrite]:
             **transaction_time,
         },
     }
-    group = temporal_group(
-        PredicateWriteInstruction(
-            "terminate",
-            PredicateSelection(
-                "Balance",
-                predicate_algebra.Comparison(
-                    "lessThan", predicate_algebra.FieldSubject("Balance.value"), "1000000.00"
-                ),
-            ),
-        ),
-        _TEMPORAL_FAMILIES,
-        [
-            {"id": row, "acctNum": "B", "value": Decimal("1.00"), **transaction_time}
-            for row in (10, 11, 12)
-        ],
-    )
     return [
         *observed_buffer(
             [quote, rate],
@@ -1839,23 +1668,16 @@ def _temporal_family_writes() -> list[OrderedWrite]:
                 for key_, members in observed.items()
             },
         ),
-        group,
     ]
 
 
 def test_settlement_reads_each_temporal_mutations_family_shape_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # One read per addressed write and one per group, however many rows the group
-    # resolved, and none on step access: the shape dispatch read is the one every
-    # later decision — geometry, close address, gate, successor binding — reuses.
-    # What those decisions receive is the family's own interned object, so an
-    # inherited position hands on its root's shape rather than an equal rebuilt
-    # one.
+    # One read per addressed write, and none on step access: the shape dispatch
+    # read is the one every later decision — geometry, close address, gate,
+    # successor binding — reuses.
     facet = temporal_read.view(_TEMPORAL_FAMILIES)
-    owners = {
-        name: facet.shape(corpus_entity(name)) for name in ("SpotQuote", "DepositRate", "Balance")
-    }
     buffered = _temporal_family_writes()
     planner = build_write_planner(_TEMPORAL_FAMILIES)
     reads: list[str] = []
@@ -1874,19 +1696,15 @@ def test_settlement_reads_each_temporal_mutations_family_shape_once(
             buffered_writes=buffered,
         )
     )
-    assert reads == ["SpotQuote", "DepositRate", "Balance"]
+    assert reads == ["SpotQuote", "DepositRate"]
     _ = list(plan.steps)
     _ = plan.steps[len(plan.steps) - 1]
-    assert reads == ["SpotQuote", "DepositRate", "Balance"]
-    group_segment = plan.steps.segments[-1]
-    assert cast("Any", group_segment).backing.facts.shape is owners["Balance"]
-    assert len(group_segment) == 3
+    assert reads == ["SpotQuote", "DepositRate"]
 
 
 # --------------------------------------------------------------------------- #
-# Settlement reads the whole ordered sequence: eager runs pack around a        #
-# Materialized Write Group's own segment, provenance reaches the eager steps   #
-# alone, and the claims answered are the surviving carriers' own.              #
+# Settlement decorates each update once, and the claims answered are the     #
+# surviving carriers' own.                                                     #
 # --------------------------------------------------------------------------- #
 def _wallet_and_account() -> Metamodel:
     return formed(
@@ -1894,50 +1712,17 @@ def _wallet_and_account() -> Metamodel:
     )
 
 
-def _eager_group_eager(model: Metamodel) -> list[_TestBufferItem]:
-    """An update, a Materialized Write Group, and an update — one region, one
-    verb bucket, so dependency ordering leaves the three in buffer order."""
-    return [
-        KeyedWriteInstruction("amend", "Wallet", ({"id": 1, "balance": Decimal("2.00")},)),
-        _version_group(
-            "Account",
-            "amend",
-            "id",
-            [(9, 1)],
-            [WriteAssignment("Account.balance", Decimal("5.00"))],
-            model=model,
-        ),
-        KeyedWriteInstruction("amend", "Wallet", ({"id": 2, "balance": Decimal("3.00")},)),
-    ]
-
-
-def test_eager_runs_pack_on_each_side_of_a_groups_own_segment() -> None:
-    # Packing is a property of ADJACENCY, which is why settlement reads the whole
-    # ordered sequence rather than one item at a time: a run of eagerly settled
-    # steps stays one segment, and a Materialized Write Group always occupies its
-    # own, so a group between two eager writes yields three segments rather than
-    # one per input.
-    model = _wallet_and_account()
-    plan = _plan(_eager_group_eager(model), model)
-    assert [len(segment) for segment in plan.steps.segments] == [1, 1, 1]
-    assert _shape(plan) == [("update", "Wallet"), ("update", "Account"), ("update", "Wallet")]
-    # The group's own segment rebuilds its row on demand; the eager ones do not.
-    assert plan.steps[1] == plan.steps[1]
-    assert plan.steps[1] is not plan.steps[1]
-    assert plan.steps[0] is plan.steps[0]
+def _wallet_update() -> list[_TestBufferItem]:
+    return [KeyedWriteInstruction("amend", "Wallet", ({"id": 1, "balance": Decimal("2.00")},))]
 
 
 def test_audit_decorates_each_update_once_at_settlement_and_never_on_enumeration(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Audit follows topology and precedes freezing for every arm, the
-    # Materialized Write Group's included: an eager update reaches the strategy
-    # once and is frozen as the update it returned, and a group's rows are
-    # decorated once each while the group settles. The group keeps only the
-    # values its audit added, so rebuilding a row's step on demand reaches no
-    # strategy and still carries them.
-    owner = AttributeIdentity(corpus_entity("Account"), "owner")
-    audit = RecordingAudit(stamps={owner: "audited"})
+    # Audit follows topology and precedes freezing: an eager update reaches the
+    # strategy once and is frozen as the update it returned, so enumerating the
+    # plan again reaches no strategy.
+    audit = RecordingAudit()
     monkeypatch.setattr(planning_composition, "NO_AUDIT", audit)
     model = _wallet_and_account()
     plan = build_write_planner(model).finalize(
@@ -1945,20 +1730,15 @@ def test_audit_decorates_each_update_once_at_settlement_and_never_on_enumeration
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=_INSTANT,
             concurrency="locking",
-            buffered_writes=observed_buffer(_eager_group_eager(model), model, None),
+            buffered_writes=observed_buffer(_wallet_update(), model, None),
         )
     )
-    assert len(audit.updates) == 3
-    assert audit.actors == [TEST_ACTOR_IDENTITY] * 3
-    assert plan.steps[0] is audit.updates[0]
-    assert plan.steps[2] is audit.updates[2]
+    assert audit.actors == [TEST_ACTOR_IDENTITY]
+    (update,) = audit.updates
+    assert plan.steps[0] is update
 
-    grouped = [plan.steps[1] for _ in range(2)]
-
-    assert len(audit.updates) == 3
-    for step in grouped:
-        assert isinstance(step, PlannedUpdate)
-        assert step.assignments.attributes[owner] == "audited"
+    assert list(plan.steps) == [update]
+    assert audit.updates == [update]
 
 
 def test_audit_finalizes_the_rows_and_closes_temporal_expansion_produced(
@@ -2110,11 +1890,11 @@ def test_audit_may_not_state_a_temporal_rows_key_or_bounds(
 
 
 def test_audit_may_not_state_an_updated_rows_key(monkeypatch: pytest.MonkeyPatch) -> None:
-    stamp = AttributeIdentity(corpus_entity("Account"), "id")
+    stamp = AttributeIdentity(corpus_entity("Wallet"), "id")
     monkeypatch.setattr(planning_composition, "NO_AUDIT", RecordingAudit(stamps={stamp: 999}))
     model = _wallet_and_account()
     with pytest.raises(WritePlanningError, match="an update's decoration"):
-        _plan(_eager_group_eager(model), model)
+        _plan(_wallet_update(), model)
 
 
 def test_only_surviving_writes_carry_claims_into_execution_units() -> None:

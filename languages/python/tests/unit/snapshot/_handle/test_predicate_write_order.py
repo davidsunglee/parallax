@@ -2,13 +2,14 @@
 
 Every ``_where`` verb, Typed or Wire, enters one ingress: lifecycle re-entry,
 then the stated start, then the representation's own capture of its selection
-and assignments, then the one preparation that judges the target, the verb, the
-window, the predicate, the family, and each assignment in that order, and only
-then the buffering that routes a write readless or materializing. What a row
-fixes is the ANSWER that order gives — the refusal's class, code, message, the
-point it landed at, and the DML emitted — beside the whole port chronology, so a
-refusal that read or flushed anything, and an admitted write that read where its
-target is readless, are different answers rather than agreeing ones.
+and assignments, then the one preparation that judges the target — whether it
+can be written without being read at all, then the verb and the window — and
+then the predicate, the family, and each assignment in that order, and only
+then the buffering of one readless statement. What a row fixes is the ANSWER
+that order gives — the refusal's class, code, message, the point it landed at,
+and the DML emitted — beside the whole port chronology, so a refusal that read
+or flushed anything, and an admitted write that read anything, are different
+answers rather than agreeing ones.
 
 Each row states one expectation per representation that can express it and
 asserts it of each in turn; nothing here compares one representation to the
@@ -30,14 +31,13 @@ from typing import Final
 import pytest
 
 from parallax.core import QueryDefinitionError, inheritance
-from parallax.core.base import InstantError
+from parallax.core._execution._unit_work.instructions import InstructionRejectedError
 from parallax.core.predicate import CanonicalDocumentError, ModelRejectedError
 from parallax.core.unit_work import WriteInstructionError
 from tests._support.db_port import (
     BeginCall,
     CommitCall,
     PortCall,
-    ReadCall,
     RollbackCall,
     WriteCall,
 )
@@ -106,26 +106,13 @@ def _assert_row(row: _Row) -> None:
 
 
 _START_REFUSAL: Final = "valid_from=None states no start; omit valid_from rather than stating None"
-_POSITION_REQUIRES_START: Final = (
-    "WherePosition: a bitemporal 'amend' requires valid_from (the mutation's own Valid-Time "
-    "instant)"
-)
-_POSITION_INVERTED: Final = (
-    "'parallax.compatibility.WherePosition.id': decoded lower bound 10 is greater than decoded "
-    "upper bound 1, so the range is empty"
-)
-_NAIVE: Final = "a naive datetime is not a valid `timestamp`; attach a tzinfo"
-_UNSPELLABLE: Final = (
-    "datetime.datetime(1, 1, 1, 0, 0, tzinfo=datetime.timezone(datetime.timedelta(seconds=50400)))"
-    " is not a valid `timestamp`: no UTC datetime names its instant — an aware value at the "
-    "representational edge, or a tzinfo answering no usable offset"
-)
 _FAMILY_REFUSAL: Final = (
     "CardPayment: a predicate-selected (set-based) write on an inheritance-family entity is "
     "unsupported (subtype-write-set-based-unsupported) — per-object writes are keyed "
     "(m-inheritance 'Per-object writes are keyed; set-based inheritance writes are out of scope')"
 )
 _UNKNOWN_NODE: Final = "unknown predicate node 'nonsense'"
+_SET_BASED_WRITE_TARGET_UNSUPPORTED: Final = "set-based-write-target-unsupported"
 
 
 def _not_mutation_compatible(entity: str) -> _Expected:
@@ -146,31 +133,6 @@ def _shape_refusals(entity: str) -> Mapping[Representation, _Expected]:
     }
 
 
-def _bounded_pair(verb: str, missing: str) -> _Expected:
-    return _refused(
-        WriteInstructionError,
-        f"WherePosition: a bounded '{verb}' states its window as a pair, and {missing} is absent "
-        "— an unbounded write omits until rather than stating none",
-    )
-
-
-def _reversed(verb: str) -> _Expected:
-    return _refused(
-        WriteInstructionError,
-        f"WherePosition: '{verb}' requires valid_from < until — got "
-        "valid_from=datetime.datetime(2024, 7, 1, 0, 0, tzinfo=datetime.timezone.utc), "
-        "until=datetime.datetime(2024, 4, 1, 0, 0, tzinfo=datetime.timezone.utc)",
-    )
-
-
-def _temporal_delete(entity: str) -> _Expected:
-    return _refused(
-        WriteInstructionError,
-        f"Temporal objects like {entity!r} do not support 'delete_where', which physically "
-        "removes rows. Use 'terminate_where' instead.",
-    )
-
-
 def _no_valid_time(entity: str, profile: str, verb: str, keyword: str) -> _Expected:
     return _refused(
         WriteInstructionError,
@@ -179,59 +141,37 @@ def _no_valid_time(entity: str, profile: str, verb: str, keyword: str) -> _Expec
     )
 
 
+def _observation_needed(entity: str, kind: str, verb: str, sibling: str) -> _Expected:
+    """The refusal of a target that needs an observation, naming the verbs that
+    write such a target through a read or a revision its caller holds."""
+    revision = "version" if kind == "versioned" else "tx_start"
+    return _refused(
+        InstructionRejectedError,
+        f"{entity} is {kind}, so {verb}_where cannot change it without reading it. Read it "
+        f"(find / stream) and {sibling} each object, or use {sibling}_if with the {revision} "
+        "you hold.",
+        code=_SET_BASED_WRITE_TARGET_UNSUPPORTED,
+    )
+
+
 # --------------------------------------------------------------------------- #
-# An admitted write reaches the buffering its target routes it to: readless    #
-# for an unversioned Non-Temporal target, one resolving read for a versioned   #
-# or temporal one, under every public dispatch path.                           #
+# An admitted write is one readless statement: it reads nothing, under every  #
+# public dispatch path.                                                        #
 # --------------------------------------------------------------------------- #
 _READLESS: Final = _wrote(WriteCall)
-_MATERIALIZED_IN_PLACE: Final = _wrote(ReadCall, WriteCall)
-_MATERIALIZED_SUCCESSOR: Final = _wrote(ReadCall, WriteCall, WriteCall)
 
 _ADMITTED: Final[tuple[_Row, ...]] = (
     _Row(PredicateWriteScenario(PERSON_SELECTION, "amend"), _both(_READLESS)),
     _Row(PredicateWriteScenario(PERSON_SELECTION, "delete"), _both(_READLESS)),
-    _Row(PredicateWriteScenario(ACCOUNT_SELECTION, "amend"), _both(_MATERIALIZED_IN_PLACE)),
     _Row(
-        PredicateWriteScenario(ACCOUNT_SELECTION, "amend", concurrency="locking"),
-        _both(_MATERIALIZED_IN_PLACE),
-    ),
-    _Row(PredicateWriteScenario(ACCOUNT_SELECTION, "delete"), _both(_MATERIALIZED_IN_PLACE)),
-    _Row(PredicateWriteScenario(BALANCE_SELECTION, "amend"), _both(_MATERIALIZED_SUCCESSOR)),
-    _Row(PredicateWriteScenario(BALANCE_SELECTION, "terminate"), _both(_MATERIALIZED_IN_PLACE)),
-    _Row(
-        PredicateWriteScenario(POSITION_SELECTION, "amend", valid_from="stated"),
-        _both(_MATERIALIZED_SUCCESSOR),
-    ),
-    _Row(
-        PredicateWriteScenario(POSITION_SELECTION, "amend", valid_from="stated", until="stated"),
-        _both(_MATERIALIZED_SUCCESSOR),
-    ),
-    _Row(
-        PredicateWriteScenario(
-            POSITION_SELECTION,
-            "amend",
-            valid_from="stated",
-            until="stated",
-            concurrency="locking",
-        ),
-        _both(_MATERIALIZED_SUCCESSOR),
-    ),
-    _Row(
-        PredicateWriteScenario(POSITION_SELECTION, "terminate", valid_from="stated"),
-        _both(_MATERIALIZED_SUCCESSOR),
-    ),
-    _Row(
-        PredicateWriteScenario(
-            POSITION_SELECTION, "terminate", valid_from="stated", until="stated"
-        ),
-        _both(_MATERIALIZED_SUCCESSOR),
+        PredicateWriteScenario(PERSON_SELECTION, "amend", concurrency="locking"),
+        _both(_READLESS),
     ),
 )
 
 
 @pytest.mark.parametrize("row", _ADMITTED, ids=str)
-def test_an_admitted_predicate_write_is_buffered_as_its_target_routes_it(row: _Row) -> None:
+def test_an_admitted_predicate_write_is_buffered_as_one_readless_statement(row: _Row) -> None:
     _assert_row(row)
 
 
@@ -269,8 +209,8 @@ def test_a_stated_none_start_is_refused_before_anything_else_is_judged(row: _Row
 
 # --------------------------------------------------------------------------- #
 # Each representation captures its own selection before the model is asked    #
-# anything: its shape fault outranks an undeclared Entity, a window fault, and #
-# an assignment fault alike.                                                   #
+# anything: its shape fault outranks an undeclared Entity, the target's kind,  #
+# a window fault, and an assignment fault alike.                               #
 # --------------------------------------------------------------------------- #
 _REPRESENTATION_SHAPE: Final[tuple[_Row, ...]] = (
     _Row(
@@ -310,155 +250,157 @@ def test_a_selections_own_shape_is_judged_before_the_model_is_consulted(row: _Ro
 
 
 # --------------------------------------------------------------------------- #
-# The target's own rules: a temporal target spells removal `terminate_where`,  #
-# a Non-Temporal one has no history to terminate, and each profile admits only #
-# the window its As-Of Axes can bound — with a stated `until`, `None`          #
-# included, selecting the bounded verb and an omitted one the unbounded verb.  #
+# A target that needs an observation — versioned, Transaction-Time-Only, or    #
+# Bitemporal — is refused for every verb, naming the keyed and `_if` verbs     #
+# its kind admits: a temporal target is removed by `terminate`, a Non-Temporal #
+# one by `delete`, and each states the revision its kind carries.              #
 # --------------------------------------------------------------------------- #
-_TARGET_RULES: Final[tuple[_Row, ...]] = (
-    _Row(PredicateWriteScenario(BALANCE_SELECTION, "delete"), _both(_temporal_delete("Balance"))),
+_OBSERVED_TARGETS: Final[tuple[_Row, ...]] = (
     _Row(
-        PredicateWriteScenario(POSITION_SELECTION, "delete"),
-        _both(_temporal_delete("WherePosition")),
+        PredicateWriteScenario(ACCOUNT_SELECTION, "amend"),
+        _both(_observation_needed("Account", "versioned", "amend", "amend")),
+    ),
+    _Row(
+        PredicateWriteScenario(ACCOUNT_SELECTION, "delete"),
+        _both(_observation_needed("Account", "versioned", "delete", "delete")),
     ),
     _Row(
         PredicateWriteScenario(ACCOUNT_SELECTION, "terminate"),
-        _both(
-            _refused(
-                WriteInstructionError,
-                "Non-temporal objects like 'Account' do not support 'terminate_where', which "
-                "closes a row's history instead of removing it. Use 'delete_where' instead.",
-            )
-        ),
+        _both(_observation_needed("Account", "versioned", "terminate", "delete")),
     ),
     _Row(
-        PredicateWriteScenario(ACCOUNT_SELECTION, "amend", until="stated"),
-        _both(_no_valid_time("Account", "non-temporal", "amendUntil", "until")),
-    ),
-    # A bound the target cannot take is heard before the start it cannot take either.
-    _Row(
-        PredicateWriteScenario(ACCOUNT_SELECTION, "amend", valid_from="stated", until="stated"),
-        _both(_no_valid_time("Account", "non-temporal", "amendUntil", "until")),
+        PredicateWriteScenario(BALANCE_SELECTION, "amend"),
+        _both(_observation_needed("Balance", "temporal", "amend", "amend")),
     ),
     _Row(
-        PredicateWriteScenario(ACCOUNT_SELECTION, "terminate", until="stated"),
-        _both(_no_valid_time("Account", "non-temporal", "terminateUntil", "until")),
+        PredicateWriteScenario(BALANCE_SELECTION, "delete"),
+        _both(_observation_needed("Balance", "temporal", "delete", "terminate")),
     ),
     _Row(
-        PredicateWriteScenario(PERSON_SELECTION, "amend", valid_from="stated"),
-        _both(_no_valid_time("Person", "non-temporal", "amend", "valid_from")),
+        PredicateWriteScenario(BALANCE_SELECTION, "terminate"),
+        _both(_observation_needed("Balance", "temporal", "terminate", "terminate")),
     ),
     _Row(
-        PredicateWriteScenario(BALANCE_SELECTION, "terminate", valid_from="stated"),
-        _both(_no_valid_time("Balance", "Transaction-Time-Only", "terminate", "valid_from")),
+        PredicateWriteScenario(POSITION_SELECTION, "amend", valid_from="stated"),
+        _both(_observation_needed("WherePosition", "temporal", "amend", "amend")),
     ),
     _Row(
-        PredicateWriteScenario(POSITION_SELECTION, "amend"),
-        _both(_refused(WriteInstructionError, _POSITION_REQUIRES_START)),
+        PredicateWriteScenario(POSITION_SELECTION, "delete"),
+        _both(_observation_needed("WherePosition", "temporal", "delete", "terminate")),
     ),
     _Row(
-        PredicateWriteScenario(POSITION_SELECTION, "amend", until="stated"),
-        _both(_bounded_pair("amendUntil", "valid_from")),
-    ),
-    _Row(
-        PredicateWriteScenario(POSITION_SELECTION, "amend", valid_from="stated", until="none"),
-        _both(_bounded_pair("amendUntil", "until")),
-    ),
-    _Row(
-        PredicateWriteScenario(POSITION_SELECTION, "terminate", valid_from="stated", until="none"),
-        _both(_bounded_pair("terminateUntil", "until")),
-    ),
-    _Row(
-        PredicateWriteScenario(POSITION_SELECTION, "amend", valid_from="stated", until="reversed"),
-        _both(_reversed("amendUntil")),
-    ),
-    _Row(
-        PredicateWriteScenario(
-            POSITION_SELECTION, "terminate", valid_from="stated", until="reversed"
-        ),
-        _both(_reversed("terminateUntil")),
-    ),
-    # A bound that is no writable instant keeps `m-core`'s own classification.
-    _Row(
-        PredicateWriteScenario(POSITION_SELECTION, "amend", valid_from="naive"),
-        _both(_refused(InstantError, _NAIVE)),
-    ),
-    _Row(
-        PredicateWriteScenario(POSITION_SELECTION, "amend", valid_from="unspellable"),
-        _both(_refused(InstantError, _UNSPELLABLE)),
-    ),
-    _Row(
-        PredicateWriteScenario(POSITION_SELECTION, "terminate", valid_from="stated", until="naive"),
-        _both(_refused(InstantError, _NAIVE)),
-    ),
-    _Row(
-        PredicateWriteScenario(
-            POSITION_SELECTION, "terminate", valid_from="stated", until="unspellable"
-        ),
-        _both(_refused(InstantError, _UNSPELLABLE)),
+        PredicateWriteScenario(POSITION_SELECTION, "terminate", valid_from="stated"),
+        _both(_observation_needed("WherePosition", "temporal", "terminate", "terminate")),
     ),
 )
 
 
-@pytest.mark.parametrize("row", _TARGET_RULES, ids=str)
-def test_the_target_admits_the_verb_and_window_before_anything_it_selects(row: _Row) -> None:
+@pytest.mark.parametrize("row", _OBSERVED_TARGETS, ids=str)
+def test_a_target_needing_an_observation_is_refused_with_the_verbs_its_kind_admits(
+    row: _Row,
+) -> None:
     _assert_row(row)
 
 
 # --------------------------------------------------------------------------- #
-# Then the selection the model binds, then the family, then the assignments:  #
-# a window fault outranks a predicate the model refuses, Typed binding         #
-# precedes the family refusal, and the family refusal precedes any assignment. #
+# The target's kind is judged before anything else the model decides: the     #
+# window, the predicate, Typed binding, the family, and each assignment.      #
 # --------------------------------------------------------------------------- #
-_SELECTION_ORDER: Final[tuple[_Row, ...]] = (
+_POSITION_AMEND: Final = _observation_needed("WherePosition", "temporal", "amend", "amend")
+
+_KIND_FIRST: Final[tuple[_Row, ...]] = (
+    _Row(PredicateWriteScenario(POSITION_SELECTION, "amend"), _both(_POSITION_AMEND)),
     _Row(
-        PredicateWriteScenario(POSITION_SELECTION, "amend", selection="inverted"),
-        _both(_refused(WriteInstructionError, _POSITION_REQUIRES_START)),
+        PredicateWriteScenario(POSITION_SELECTION, "amend", until="stated"),
+        _both(_POSITION_AMEND),
     ),
     _Row(
-        PredicateWriteScenario(POSITION_SELECTION, "amend", selection="unbound"),
-        {"typed": _refused(WriteInstructionError, _POSITION_REQUIRES_START)},
+        PredicateWriteScenario(POSITION_SELECTION, "amend", valid_from="stated", until="reversed"),
+        _both(_POSITION_AMEND),
     ),
     _Row(
-        PredicateWriteScenario(
-            POSITION_SELECTION, "amend", valid_from="naive", selection="inverted"
-        ),
-        _both(_refused(InstantError, _NAIVE)),
-    ),
-    _Row(
-        PredicateWriteScenario(
-            POSITION_SELECTION, "amend", valid_from="unspellable", selection="inverted"
-        ),
-        _both(_refused(InstantError, _UNSPELLABLE)),
-    ),
-    _Row(
-        PredicateWriteScenario(
-            POSITION_SELECTION, "amend", valid_from="stated", until="naive", selection="inverted"
-        ),
-        _both(_refused(InstantError, _NAIVE)),
-    ),
-    _Row(
-        PredicateWriteScenario(
-            POSITION_SELECTION,
-            "amend",
-            valid_from="stated",
-            until="unspellable",
-            selection="inverted",
-        ),
-        _both(_refused(InstantError, _UNSPELLABLE)),
+        PredicateWriteScenario(POSITION_SELECTION, "amend", valid_from="naive"),
+        _both(_POSITION_AMEND),
     ),
     _Row(
         PredicateWriteScenario(
             POSITION_SELECTION, "amend", valid_from="stated", selection="inverted"
         ),
-        _both(_refused(ModelRejectedError, _POSITION_INVERTED)),
+        _both(_POSITION_AMEND),
     ),
     _Row(
-        PredicateWriteScenario(
-            POSITION_SELECTION, "amend", valid_from="stated", until="stated", selection="inverted"
-        ),
-        _both(_refused(ModelRejectedError, _POSITION_INVERTED)),
+        PredicateWriteScenario(POSITION_SELECTION, "amend", selection="unbound"),
+        {"typed": _POSITION_AMEND},
     ),
+    _Row(
+        PredicateWriteScenario(ACCOUNT_SELECTION, "amend", until="stated"),
+        _both(_observation_needed("Account", "versioned", "amend", "amend")),
+    ),
+    _Row(
+        PredicateWriteScenario(ACCOUNT_SELECTION, "amend", assignments="undeclared"),
+        _both(_observation_needed("Account", "versioned", "amend", "amend")),
+    ),
+    _Row(
+        PredicateWriteScenario(ACCOUNT_SELECTION, "amend", assignments="none"),
+        _both(_observation_needed("Account", "versioned", "amend", "amend")),
+    ),
+)
+
+
+@pytest.mark.parametrize("row", _KIND_FIRST, ids=str)
+def test_the_targets_kind_is_judged_before_anything_the_model_decides(row: _Row) -> None:
+    _assert_row(row)
+
+
+# --------------------------------------------------------------------------- #
+# A readless target's own rules: a Non-Temporal target has no history to       #
+# terminate, and admits no window — with a stated `until`, `None` included,    #
+# selecting the bounded verb and an omitted one the unbounded verb.            #
+# --------------------------------------------------------------------------- #
+_TARGET_RULES: Final[tuple[_Row, ...]] = (
+    _Row(
+        PredicateWriteScenario(PERSON_SELECTION, "terminate"),
+        _both(
+            _refused(
+                WriteInstructionError,
+                "Non-temporal objects like 'Person' do not support 'terminate_where', which "
+                "closes a row's history instead of removing it. Use 'delete_where' instead.",
+            )
+        ),
+    ),
+    _Row(
+        PredicateWriteScenario(PERSON_SELECTION, "amend", until="stated"),
+        _both(_no_valid_time("Person", "non-temporal", "amendUntil", "until")),
+    ),
+    # A bound the target cannot take is heard before the start it cannot take either.
+    _Row(
+        PredicateWriteScenario(PERSON_SELECTION, "amend", valid_from="stated", until="stated"),
+        _both(_no_valid_time("Person", "non-temporal", "amendUntil", "until")),
+    ),
+    _Row(
+        PredicateWriteScenario(PERSON_SELECTION, "terminate", until="stated"),
+        _both(_no_valid_time("Person", "non-temporal", "terminateUntil", "until")),
+    ),
+    _Row(
+        PredicateWriteScenario(PERSON_SELECTION, "amend", valid_from="stated"),
+        _both(_no_valid_time("Person", "non-temporal", "amend", "valid_from")),
+    ),
+)
+
+
+@pytest.mark.parametrize("row", _TARGET_RULES, ids=str)
+def test_a_readless_target_admits_the_verb_and_window_before_anything_it_selects(
+    row: _Row,
+) -> None:
+    _assert_row(row)
+
+
+# --------------------------------------------------------------------------- #
+# Then the selection the model binds, then the family, then the assignments:  #
+# Typed binding precedes the family refusal, and the family refusal precedes   #
+# any assignment.                                                              #
+# --------------------------------------------------------------------------- #
+_SELECTION_ORDER: Final[tuple[_Row, ...]] = (
     _Row(
         PredicateWriteScenario(
             PERSON_SELECTION, "amend", selection="inverted", assignments="undeclared"
@@ -523,38 +465,36 @@ def test_the_selection_then_the_family_then_the_assignments_are_judged(row: _Row
 
 
 # --------------------------------------------------------------------------- #
-# A materializing write's resolving read force-flushes what is pending, so an  #
-# admitted one flushes an earlier insert ahead of its read, and a refused one  #
-# is refused before that read: it reaches the database for nothing at all.    #
+# A predicate write reads nothing, so it flushes nothing pending: an admitted  #
+# one is buffered behind an earlier insert, and a refused one reaches the      #
+# database for nothing at all.                                                 #
 # --------------------------------------------------------------------------- #
 _PENDING: Final[tuple[_Row, ...]] = (
-    _Row(
-        PredicateWriteScenario(POSITION_SELECTION, "amend", valid_from="stated", pending=True),
-        _both(_wrote(WriteCall, ReadCall, WriteCall, WriteCall)),
-    ),
     _Row(
         PredicateWriteScenario(PERSON_SELECTION, "amend", pending=True),
         _both(_wrote(WriteCall, WriteCall)),
     ),
     _Row(
-        PredicateWriteScenario(
-            POSITION_SELECTION, "amend", valid_from="stated", selection="inverted", pending=True
+        PredicateWriteScenario(PERSON_SELECTION, "amend", selection="inverted", pending=True),
+        _both(
+            _refused(
+                ModelRejectedError,
+                "'parallax.compatibility.Person.id': decoded lower bound 10 is greater than "
+                "decoded upper bound 1, so the range is empty",
+            )
         ),
-        _both(_refused(ModelRejectedError, _POSITION_INVERTED)),
     ),
     _Row(
-        PredicateWriteScenario(
-            POSITION_SELECTION, "amend", valid_from="stated", until="none", pending=True
-        ),
-        _both(_bounded_pair("amendUntil", "until")),
+        PredicateWriteScenario(ACCOUNT_SELECTION, "amend", pending=True),
+        _both(_observation_needed("Account", "versioned", "amend", "amend")),
     ),
     _Row(
-        PredicateWriteScenario(POSITION_SELECTION, "amend", valid_from="naive", pending=True),
-        _both(_refused(InstantError, _NAIVE)),
+        PredicateWriteScenario(POSITION_SELECTION, "amend", valid_from="stated", pending=True),
+        _both(_POSITION_AMEND),
     ),
 )
 
 
 @pytest.mark.parametrize("row", _PENDING, ids=str)
-def test_a_refused_predicate_write_flushes_no_pending_write(row: _Row) -> None:
+def test_a_predicate_write_flushes_no_pending_write(row: _Row) -> None:
     _assert_row(row)

@@ -2,8 +2,8 @@
 
 An open upper bound is stored as native ``infinity``, which no ``datetime``
 holds; it must reach every read as the neutral unbounded instant, and a closed
-bound as the instant that closed it. Each target is written once, keyed or by
-predicate, so its history carries both kinds of bound, and each milestone is
+bound as the instant that closed it. Each target is written once through a keyed
+write, so its history carries both kinds of bound, and each milestone is
 read back eagerly and streamed, Typed and Wire. The Transaction-Time instants
 are scripted, so every expected bound is known in advance.
 """
@@ -41,7 +41,6 @@ class Position(Bitemporal, table="tb_position", namespace=_NAMESPACE):
 _MODEL = DomainModel(Ledger, Position)
 
 type Representation = Literal["typed", "wire"]
-type Writer = Literal["keyed", "predicate"]
 type Bound = dt.datetime | TemporalBound
 type Pin = dt.datetime | Literal["latest"]
 
@@ -124,31 +123,16 @@ def _wire_query(entity: type[Any], valid: Pin | None, tx: Pin) -> dict[str, obje
     }
 
 
-def _write(
-    representation: Representation, writer: Writer, entity: type[Any]
-) -> Callable[[TxnContext], None]:
-    name = f"{_NAMESPACE}.{entity.__name__}"
-    valid_from = _valid_from(entity, _CORRECTED_FROM)
-
+def _write(representation: Representation, entity: type[Any]) -> Callable[[TxnContext], None]:
     def write(tx: TxnContext) -> None:
         # A keyed write starts where its source was read.
         pinned: Pin | None = _CORRECTED_FROM if entity is Position else None
-        if writer == "keyed" and representation == "typed":
+        if representation == "typed":
             found = tx.find(_typed_query(entity, pinned, "latest")).result()
             tx.amend(found.edit(amount=_NEW))
-        elif writer == "keyed":
+        else:
             node = tx.wire.find(_wire_query(entity, pinned, "latest")).result()
             tx.wire.amend(node, {"amount": _NEW})
-        elif representation == "typed":
-            tx.amend_where(
-                entity.where(entity.id == 1), entity.amount.set(_NEW), **stated_start(valid_from)
-            )
-        else:
-            tx.wire.amend_where(
-                {"entity": name, "predicate": {"eq": {"path": f"{name}.id", "value": 1}}},
-                {"amount": _NEW},
-                **stated_start(valid_from),
-            )
 
     return write
 
@@ -192,10 +176,9 @@ def _streamed(stream: Any) -> list[Any]:
 
 
 @pytest.mark.parametrize("entity", [Ledger, Position], ids=["transaction-time", "bitemporal"])
-@pytest.mark.parametrize("writer", ["keyed", "predicate"])
 @pytest.mark.parametrize("representation", ["typed", "wire"])
 def test_each_milestone_reads_back_its_open_and_closed_bounds(
-    profile_run: Any, representation: Representation, writer: Writer, entity: type[Any]
+    profile_run: Any, representation: Representation, entity: type[Any]
 ) -> None:
     db = _served(profile_run)
     db.transact(
@@ -203,7 +186,7 @@ def test_each_milestone_reads_back_its_open_and_closed_bounds(
             entity(id=1, amount=_OLD), **stated_start(_valid_from(entity, _VALID_FROM))
         )
     )
-    db.transact(_write(representation, writer, entity))
+    db.transact(_write(representation, entity))
 
     milestones = _LEDGER_READS if entity is Ledger else _POSITION_READS
     for (valid, tx), milestone in milestones.items():

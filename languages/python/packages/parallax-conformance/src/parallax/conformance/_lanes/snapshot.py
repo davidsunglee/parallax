@@ -18,7 +18,6 @@ from parallax.conformance._lanes.scenario import (
     CaseContext,
     entry_instant,
     execute_keyed_unit,
-    is_materializing_write_step,
     is_predicate_write_step,
     lower_writes,
     read_step_graph,
@@ -90,25 +89,17 @@ def _check_action_step(case: case_format.Case, step: Mapping[str, object]) -> No
 
 
 def _snapshot_write_entries(
-    case: case_format.Case, model: AcceptedMetamodel, step: Mapping[str, object]
+    case: case_format.Case, step: Mapping[str, object]
 ) -> Sequence[Mapping[str, object]]:
     """One snapshot-read scenario write step's own keyed instruction buffer.
 
-    This lane admits the buffered KEYED form alone, and the three shapes it
-    refuses are refused for three different reasons, so the mapping-shaped ones
-    are CLASSIFIED before the diagnosis is written rather than sharing one:
+    This lane admits the buffered KEYED form alone, and the two shapes it
+    refuses are refused for two different reasons:
 
     - a legacy string label states no instruction to lower at all;
-    - a MATERIALIZING predicate write
-      (:func:`~parallax.conformance._lanes.scenario.is_materializing_write_step`)
-      resolves through the find step that precedes it, which the keyed
-      unit-of-work lane runs as one materializing pair, and a find HERE
-      materializes the snapshot whose view a later `access` states rather than
-      the rows a write settles against — the two step roles genuinely conflict,
-      so this refusal is permanent;
-    - a READLESS predicate write owes no resolving read at all, so nothing about
-      it conflicts with this lane; it is refused because the lane has not wired
-      it, never because the shape is wrong here.
+    - a predicate write owes no resolving read, so nothing about it conflicts
+      with this lane; it is refused because the lane has not wired it, never
+      because the shape is wrong here.
     """
     raw_write = step["write"]
     if isinstance(raw_write, list):
@@ -119,15 +110,8 @@ def _snapshot_write_entries(
             f"KEYED instruction list; {type(raw_write).__name__!r} is a legacy label, which "
             "states no instruction to lower at all"
         )
-    if is_materializing_write_step(step, model) is not None:
-        raise EngineError(
-            f"{case.path.name}: a MATERIALIZING predicate write resolves through the find "
-            "step before it, and a find HERE materializes the view a later `access` states "
-            "rather than the rows the write settles against — pairing the two would answer "
-            "a survival question with a resolve"
-        )
     raise EngineError(
-        f"{case.path.name}: a READLESS predicate write owes no resolving find, so nothing "
+        f"{case.path.name}: a predicate write owes no resolving find, so nothing "
         "about it conflicts with this lane — the lane simply does not wire the "
         "predicate-write translation yet, so the shape is unsupported rather than "
         "mis-authored"
@@ -181,7 +165,7 @@ def compile_scenario(
                 case "action":
                     _check_action_step(case, step)
                 case "write":
-                    entries = _snapshot_write_entries(case, model, step)
+                    entries = _snapshot_write_entries(case, step)
                     statements = lower_writes(
                         entries,
                         model,
@@ -408,7 +392,7 @@ def _run_snapshot_write_step(
     inside the unit carries out of it.
     """
     try:
-        entries = _snapshot_write_entries(case, context.model, step)
+        entries = _snapshot_write_entries(case, step)
         return execute_keyed_unit(
             port, context, entries, [], lifecycle, rollback=step.get("rollback") is True
         )

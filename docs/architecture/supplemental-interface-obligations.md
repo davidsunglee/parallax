@@ -13,8 +13,9 @@ Not every id here is an obligation. An entry whose stated reason does not surviv
 inspection is **withdrawn** and keeps its id as a tombstone, so that the failed
 claim stays visible and the number is never reused. A tombstone obliges nothing
 and the sentences above do not describe it: `SIO-014` was withdrawn because its
-reason was an authoring gap after all, and `SIO-020` because an ordinary
-single-layout case already states its assertion. Both are read apart from an
+reason was an authoring gap after all, `SIO-020` because an ordinary
+single-layout case already states its assertion, and `SIO-003` and `SIO-005`
+because the behavior they asserted was retired. Each is read apart from an
 obligation mechanically, by the schema below.
 
 ## What this is for
@@ -114,21 +115,14 @@ compatibility case is.
   reverse order is admitted and collapses to the destructive intent, so the pair
   is directional rather than symmetric.
 
-### SIO-003 — A keyed write of a state a predicate write already selected is refused
+### SIO-003 — Withdrawn: a keyed write of a state a predicate write already selected is refused
 
 - **Module tag**: `m-unit-work`
-- **Supplements**: *standalone*
-- **Why the corpus cannot state it**: **two** structural reasons at once. The
-  refusal needs the action-step lane, and the arrangement additionally needs a
-  predicate-selected write inside a `uow` group, which the scenario group runner
-  cannot express — its write step reads a buffered **keyed** entry list, so a
-  predicate-shaped entry has no route into a group.
-- **Required assertion**: a Materialized Write Group claims every state its
-  predicate selected. A later keyed write of one of those states raises the
-  already-claimed write-evidence refusal at that verb, without the group being
-  reindexed or mutated. The claim is one shared selection intent for the whole
-  group, so *every* keyed intent against a selected state is incompatible with it,
-  whatever that intent is.
+- **Withdrawn**: the behavior it asserted is retired. A predicate-selected write is
+  now one readless statement over an unversioned Non-Temporal target, refused for
+  every other target (`m-batch-write`), so it selects and claims no state a later
+  keyed write could meet.
+- **Residue**: none.
 
 ### SIO-004 — An unversioned Non-Temporal write after a destruction of the same object is refused
 
@@ -144,18 +138,12 @@ compatibility case is.
   Optimistic Key and the instruction kind; the absence of an observation is never
   the input that selects this arm.
 
-### SIO-005 — A keyed write of a state a predicate write did *not* select is admitted
+### SIO-005 — Withdrawn: a keyed write of a state a predicate write did *not* select is admitted
 
 - **Module tag**: `m-unit-work`
-- **Supplements**: *standalone* (the non-overlap partner of SIO-003)
-- **Why the corpus cannot state it**: the arrangement needs a predicate-selected
-  write inside a `uow` group, which the scenario group runner cannot express.
-- **Required assertion**: a Materialized Write Group's claim reaches exactly the
-  states its predicate selected. A keyed write of a different object of the same
-  Entity in the same unit of work is admitted and flushes normally. The reverse
-  order needs no claim at all, because the predicate write's resolving read
-  force-flushes the buffer first and therefore selects state no pending intent
-  still holds.
+- **Withdrawn**: retired with `SIO-003`: a predicate-selected write claims no
+  state, so there is no claim whose reach to assert.
+- **Residue**: none.
 
 ### SIO-006 — An edit chain that restores its own original emits no DML across two verbs
 

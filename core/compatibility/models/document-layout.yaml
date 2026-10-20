@@ -36,8 +36,7 @@
 # Column while `label` and `balance` live in the document the same UPDATE patches.
 # `balance` is a `decimal(18,2)`, whose document form is an exact digit string
 # (m-document-codec) — a member whose stored spelling differs from its Column
-# spelling, so a resolving read that skipped the decode would compare the wrong
-# thing.
+# spelling, so a read that skipped the decode would observe the wrong value.
 #
 # `Beacon` and `Mooring` exist for the projection rule alone, and they divide its two
 # halves. Both declare the same layout and NO document-resident member at all, so each
@@ -45,8 +44,8 @@
 # nothing ever extracts from. `Beacon` is the half that projects nothing: a row-form
 # read of its one member emits no document extraction whatsoever, because no member it
 # was asked for lives inside one. `Mooring` is the half that projects anyway: it is
-# Bitemporal, and a read that OBSERVES it — an instance-form find, or the resolving
-# read a predicate write materializes from — carries the stored document itself,
+# Bitemporal, and a read that OBSERVES it — an instance-form find, or the row
+# acquisition a keyed write makes — carries the stored document itself,
 # because that is what its Predecessor Row retains and what every rectangle a split
 # chains is built from.
 #
