@@ -29,7 +29,7 @@ from parallax.core._execution._unit_work import instructions as wi
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import INFINITY, JSON, InstantError
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
-from parallax.core.metamodel import Table
+from parallax.core.metamodel import Table, WriteAssignmentError
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.unit_work import WriteRejectedError
 from tests._support.repo import REPO_ROOT
@@ -211,6 +211,14 @@ _INSTRUCTIONS: list[tuple[str, dict[str, Any]]] = [
             "mutation": "amend",
             "target": {"entity": "Account", "predicate": {"true": {}}},
             "assignments": [{"attr": "Account.balance", "value": 0.00}],
+        },
+    ),
+    (
+        "predicate-update-assigning-nothing",
+        {
+            "mutation": "amend",
+            "target": {"entity": "Account", "predicate": {"true": {}}},
+            "assignments": [],
         },
     ),
     (
@@ -447,9 +455,9 @@ def test_keyed_structural_rejections(doc: dict[str, Any], match: str) -> None:
             {
                 "mutation": "amend",
                 "target": {"entity": "Account", "predicate": {"true": {}}},
-                "assignments": [],
+                "assignments": {"Account.balance": 0},
             },
-            "non-empty list",
+            "`assignments` must be a list",
         ),
         (
             {
@@ -2231,29 +2239,60 @@ def test_a_plural_temporal_keyed_write_is_refused_before_its_members(prepare: An
     assert raised.value.rule == "temporal-keyed-write-multi-row"
 
 
-@_PRODUCERS
-@pytest.mark.parametrize(
-    ("mutation", "assignments", "message"),
-    [
-        ("amend", (), "a predicate-selected 'amend' requires at least one assignment"),
-        (
+def test_a_constructed_deletion_assigns_nothing() -> None:
+    with pytest.raises(wi.WriteInstructionError, match="`delete` names nothing to assign"):
+        wi.PredicateWriteInstruction(
             "delete",
+            wi.PredicateSelection("Wallet", _ALL),
             (wi.WriteAssignment("Wallet.balance", 1),),
-            "a predicate-selected 'delete' names nothing to assign",
-        ),
-    ],
-)
-def test_both_producers_judge_a_constructed_assignment_list(
-    prepare: Any,
-    mutation: wi.PredicateMutation,
-    assignments: tuple[wi.WriteAssignment, ...],
-    message: str,
-) -> None:
-    instruction = wi.PredicateWriteInstruction(
-        mutation, wi.PredicateSelection("Wallet", _ALL), assignments
+        )
+
+
+@_PRODUCERS
+def test_an_amendment_assigning_nothing_prepares_an_empty_row(prepare: Any) -> None:
+    prepared = prepare(
+        wi.PredicateWriteInstruction("amend", wi.PredicateSelection("Wallet", _ALL)), _WALLET
     )
-    with pytest.raises(wi.WriteInstructionError, match=message):
-        prepare(instruction, _WALLET)
+    assert isinstance(prepared, wi.PreparedPredicateWrite)
+    assert prepared.row == {}
+    assert not prepared.assigns
+
+
+@pytest.mark.parametrize(
+    ("prepare", "balance"),
+    [(wi.prepare_typed_write, Decimal("1.50")), (wi.prepare_wire_write, "1.50")],
+    ids=["typed", "wire"],
+)
+def test_a_predicate_amendment_prepares_the_member_row_it_assigns(
+    prepare: Any, balance: object
+) -> None:
+    prepared = prepare(
+        _wallet_update(("Wallet.owner", "Ada"), ("Wallet.balance", balance)), _WALLET
+    )
+    assert isinstance(prepared, wi.PreparedPredicateWrite)
+    assert list(prepared.row) == ["owner", "balance"]
+    assert prepared.row == {"owner": "Ada", "balance": Decimal("1.50")}
+    assert prepared.assigns
+
+
+@_PRODUCERS
+def test_a_predicate_deletion_prepares_no_row(prepare: Any) -> None:
+    prepared = prepare(
+        wi.PredicateWriteInstruction("delete", wi.PredicateSelection("Wallet", _ALL)), _WALLET
+    )
+    assert isinstance(prepared, wi.PreparedPredicateWrite)
+    assert prepared.row == {}
+    assert not prepared.assigns
+
+
+@_PRODUCERS
+def test_a_predicate_amendment_never_assigns_the_key(prepare: Any) -> None:
+    with pytest.raises(
+        wi.WriteInstructionError, match="primary-key fields may not be assigned"
+    ) as raised:
+        prepare(_wallet_update(("Wallet.id", 5)), _WALLET)
+    assert isinstance(raised.value.__cause__, WriteAssignmentError)
+    assert raised.value.__cause__.rule == "primary-key"
 
 
 # --------------------------------------------------------------------------- #
@@ -2293,14 +2332,10 @@ def test_an_assignments_reference_fault_precedes_any_value_fault_it_or_a_later_o
 
 
 @_PRODUCERS
-def test_an_earlier_assignments_value_fault_precedes_a_later_reference_fault(
-    prepare: Any,
-) -> None:
+def test_every_assignments_reference_is_judged_before_any_value(prepare: Any) -> None:
     instruction = _wallet_update(("Wallet.balance", "not-a-decimal"), ("Wallet.nonsense", 1))
-    with pytest.raises(wi.WriteInstructionError) as raised:
+    with pytest.raises(wi.WriteInstructionError, match="does not name a declared member"):
         prepare(instruction, _WALLET)
-    assert "declared member" not in str(raised.value)
-    assert "balance" in str(raised.value)
 
 
 # --------------------------------------------------------------------------- #

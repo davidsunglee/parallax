@@ -17,9 +17,9 @@ from parallax.core.metamodel import (
 __all__ = [
     "BORROWED_SOURCE_ACCESS",
     "MAPPING_SOURCE_ACCESS",
+    "PreparedDocumentAuthoring",
     "SourceAccess",
     "prepare_authoring",
-    "prepare_member_authoring",
     "validate_member_authoring",
 ]
 
@@ -77,12 +77,19 @@ class _MappingSourceAccess:
 
 @dataclass(frozen=True, slots=True)
 class _BorrowedSourceAccess:
+    # A mapping is recognized first: no borrowed document is one, and the
+    # structural protocol check walks the source's attributes statically on
+    # every call, once per member of a borrowed row.
     def names(self, source: object, /) -> Iterable[str] | None:
+        if isinstance(source, Mapping):
+            return cast("Mapping[str, object]", source).keys()
         if isinstance(source, _BorrowedDocument):
             return source.__parallax_authoring_names__()
-        return MAPPING_SOURCE_ACCESS.names(source)
+        return None
 
     def member(self, source: object, name: str, /) -> object:
+        if isinstance(source, Mapping):
+            return cast("Mapping[str, object]", source)[name]
         if isinstance(source, _BorrowedDocument):
             return source.__parallax_authoring_member__(name)
         return MAPPING_SOURCE_ACCESS.member(source, name)
@@ -109,14 +116,6 @@ class PreparedDocumentAuthoring:
     failures: Mapping[int, AuthoringViolation]
 
 
-@dataclass(frozen=True, slots=True)
-class PreparedMemberAuthoring:
-    """One prepared member value and its optional structural failure."""
-
-    value: object
-    failure: AuthoringViolation | None
-
-
 def prepare_authoring(
     shape: MemberShape,
     source: object,
@@ -140,38 +139,6 @@ def prepare_authoring(
     )
     assert value is not None
     return PreparedDocumentAuthoring(value=value, failures=failures)
-
-
-def prepare_member_authoring(
-    member: Leaf | Occurrence,
-    source: object,
-    *,
-    source_access: SourceAccess,
-    normalize_leaf: LeafNormalizer,
-    path: str = "",
-    allow_marker: bool = False,
-) -> PreparedMemberAuthoring:
-    """Prepare one already-resolved authored member without a wrapper document."""
-    if isinstance(member, Leaf):
-        managed, failure = _author_leaf(
-            member,
-            source,
-            source_access=source_access,
-            normalize_leaf=normalize_leaf,
-            path=path,
-            allow_marker=allow_marker,
-            produce=True,
-        )
-        return PreparedMemberAuthoring(managed, failure)
-    value, failure = _author_occurrence(
-        member,
-        source,
-        source_access=source_access,
-        normalize_leaf=normalize_leaf,
-        path=path,
-        produce=True,
-    )
-    return PreparedMemberAuthoring(value, failure)
 
 
 def validate_member_authoring(

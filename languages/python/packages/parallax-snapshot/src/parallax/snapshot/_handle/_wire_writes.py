@@ -70,13 +70,10 @@ write's must name the object its source already addresses. Required wherever a
 verb's signature names it — the verbs that name no member are the destructive
 and close ones, which take no change set at all.
 
-``{}`` is a stated document, never an absent argument, and what it states
-differs by family for the reason the families differ. An amendment of one
-object assigns exactly what it names, so naming no member is the ordinary
-no-op. A predicate amendment lowers to the canonical assignment algebra, whose
-list must name at least one assignment, so ``{}`` is refused there exactly as
-``tx.amend_where(query)`` with no assignments is. A replacement's ``{}`` is its
-complete stated state, completed like any other."""
+``{}`` is a stated document, never an absent argument. An amendment assigns
+exactly what it names, so naming no member is the empty amendment: judged like
+any other, then dropped as the no-op it is, in every family. A replacement's
+``{}`` is its complete stated state, completed like any other."""
 
 type WirePredicateTarget = ObjectQuery[Any, Any] | Mapping[str, object]
 """A Wire predicate write's target: a Typed Object Query carrying nothing but
@@ -193,7 +190,8 @@ class WirePredicateWriteAdapter:
     `m-predicate`'s own refusal rather than whatever the model happens to say
     about the Entity or the assignments beside it. Each change is an
     assignment owned by the selection's own Entity spelling; preparation then
-    judges the target, the predicate, and each assignment in authored order.
+    judges the target, the predicate, every assignment's member, and only then
+    their values.
     """
 
     __slots__ = ("_changes", "_target")

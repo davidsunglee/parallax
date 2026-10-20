@@ -68,7 +68,6 @@ from parallax.core.document_codec._authoring import (
     BORROWED_SOURCE_ACCESS,
     MAPPING_SOURCE_ACCESS,
     prepare_authoring,
-    prepare_member_authoring,
     validate_member_authoring,
 )
 from parallax.core.document_codec._document import encode_managed_document
@@ -112,16 +111,17 @@ class _CountingNormalizer:
 
 
 def test_a_produced_collection_is_one_ordered_tuple_keeping_normalized_duplicates() -> None:
-    prepared = prepare_member_authoring(
-        _AMOUNTS,
-        (decimal.Decimal("1.5"), 7, decimal.Decimal("1.50")),
+    prepared = prepare_authoring(
+        MemberShape(members=(_AMOUNTS,)),
+        {"amounts": (decimal.Decimal("1.5"), 7, decimal.Decimal("1.50"))},
         source_access=BORROWED_SOURCE_ACCESS,
         normalize_leaf=_normalize,
     )
 
-    assert prepared.failure is None
-    assert prepared.value == (decimal.Decimal("1.5"), decimal.Decimal(7), decimal.Decimal("1.50"))
-    assert type(prepared.value) is tuple
+    assert prepared.failures == {}
+    amounts = prepared.value["amounts"]
+    assert amounts == (decimal.Decimal("1.5"), decimal.Decimal(7), decimal.Decimal("1.50"))
+    assert type(amounts) is tuple
 
 
 def test_validation_alone_normalizes_every_element_and_builds_no_collection() -> None:
@@ -154,9 +154,12 @@ def test_a_collection_reports_its_first_shape_or_element_violation(
 ) -> None:
     for produce in (True, False):
         failure = (
-            prepare_member_authoring(
-                _TAGS, source, source_access=MAPPING_SOURCE_ACCESS, normalize_leaf=_normalize
-            ).failure
+            prepare_authoring(
+                MemberShape(members=(_TAGS,)),
+                {"tags": source},
+                source_access=MAPPING_SOURCE_ACCESS,
+                normalize_leaf=_normalize,
+            ).failures.get(0)
             if produce
             else validate_member_authoring(
                 _TAGS, source, source_access=MAPPING_SOURCE_ACCESS, normalize_leaf=_normalize

@@ -53,7 +53,6 @@ __all__ = [
     "ObservedKeyedWrite",
     "OrderedWrite",
     "PendingOpening",
-    "ReadlessPredicateWrite",
     "TargetKeyedWrite",
     "TemporalContribution",
     "TemporalKeyedWrite",
@@ -63,32 +62,10 @@ __all__ = [
     "buffered_write",
     "chained_temporal_write",
     "composed_temporal_write",
-    "readless_write",
     "singleton_transform",
     "target_write",
     "temporal_contribution",
 ]
-
-
-@dataclass(frozen=True, slots=True, init=False)
-class ReadlessPredicateWrite:
-    """A predicate-selected write routed readless (`m-batch-write`
-    "Predicate-selected readless forms"): it settles as one statement over its
-    unversioned Non-Temporal target, with no read, no evidence, and no
-    equality-elimination pass, and stands in the buffer as an ordering barrier.
-
-    Only :func:`readless_write` constructs one, so holding one means the
-    routing decision was made.
-    """
-
-    instruction: PreparedPredicateWrite
-
-
-def readless_write(instruction: PreparedPredicateWrite) -> ReadlessPredicateWrite:
-    """``instruction`` routed readless."""
-    carrier = object.__new__(ReadlessPredicateWrite)
-    object.__setattr__(carrier, "instruction", instruction)
-    return carrier
 
 
 _REQUIRES_RETAINED_OBSERVATION: Final = (
@@ -566,7 +543,7 @@ class FollowingKeyedWrite:
 
 BufferItem = (
     PreparedKeyedWrite
-    | ReadlessPredicateWrite
+    | PreparedPredicateWrite
     | ClaimedKeyedWrite
     | InsertionKeyedWrite
     | TargetKeyedWrite
@@ -575,7 +552,7 @@ BufferItem = (
 
 type OrderedWrite = (
     PreparedKeyedWrite
-    | ReadlessPredicateWrite
+    | PreparedPredicateWrite
     | ObservedKeyedWrite
     | InsertionKeyedWrite
     | TargetKeyedWrite
@@ -601,11 +578,7 @@ def buffered_instruction(item: BufferItem) -> PreparedWrite:
     """The write instruction ``item`` carries, unwrapped from any envelope."""
     if isinstance(
         item,
-        ObservedKeyedWrite
-        | ObjectClaimedWrite
-        | InsertionKeyedWrite
-        | TargetKeyedWrite
-        | ReadlessPredicateWrite,
+        ObservedKeyedWrite | ObjectClaimedWrite | InsertionKeyedWrite | TargetKeyedWrite,
     ):
         return item.instruction
     return item

@@ -13,6 +13,7 @@ from parallax.core._execution._unit_work.instructions import (
     INSERT_MUTATIONS,
     ExpectedVersion,
     PreparedKeyedWrite,
+    PreparedPredicateWrite,
     derive_keyed_write,
 )
 from parallax.core._execution._unit_work.ranges import DeferredTemporalRange, bind_deferred
@@ -34,7 +35,6 @@ from parallax.core._execution._unit_work.write_items import (
     ObservedKeyedWrite,
     OrderedWrite,
     PendingOpening,
-    ReadlessPredicateWrite,
     TargetKeyedWrite,
     buffered_instruction,
 )
@@ -319,7 +319,7 @@ class WritePlanner:
             deletes.clear()
 
         for item in items:
-            if isinstance(item, ReadlessPredicateWrite):
+            if isinstance(item, PreparedPredicateWrite):
                 close_region()
                 ordered.append(item)
                 continue

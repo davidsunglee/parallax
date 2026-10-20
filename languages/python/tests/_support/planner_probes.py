@@ -24,7 +24,6 @@ from parallax.core._execution._unit_work.write_items import (
     BufferedWrite,
     OrderedWrite,
     TargetKeyedWrite,
-    readless_write,
 )
 from parallax.core.metamodel import EntityIdentity, Metamodel
 from parallax.core.unit_work import (
@@ -120,10 +119,10 @@ def observed_write(
     instruction: PreparedWrite, model: Metamodel, observation: WriteObservation | None
 ) -> OrderedWrite:
     """``instruction`` buffered against ``observation``, as the one write a
-    buffer holds; a predicate write, which carries none, routed readless."""
+    buffer holds; a predicate write carries none."""
     if isinstance(instruction, PreparedPredicateWrite):
-        assert observation is None  # a predicate write is evidenced by its own read
-        item: BufferItem = readless_write(instruction)
+        assert observation is None  # a readless predicate write observes nothing
+        item: BufferItem = instruction
     elif observation is None:
         item = instruction
     else:
@@ -175,13 +174,10 @@ def _prepared_item(
     item: BufferItem | KeyedWriteInstruction | PredicateWriteInstruction | PreparedPredicateWrite,
     model: Metamodel,
 ) -> BufferItem:
-    """``item`` as a unit of work buffers it: an authored keyed write prepared,
-    and a predicate write over a target these suites state is unversioned and
-    Non-Temporal routed readless."""
+    """``item`` as a unit of work buffers it: an authored keyed or predicate
+    write prepared."""
     if isinstance(item, KeyedWriteInstruction):
         return prepare_typed_write(item, model)
     if isinstance(item, PredicateWriteInstruction):
-        return readless_write(prepare_typed_write(item, model))
-    if isinstance(item, PreparedPredicateWrite):
-        return readless_write(item)
+        return prepare_typed_write(item, model)
     return item

@@ -574,6 +574,9 @@ SKIP_REASONS: Final[dict[str, str]] = {
         "same `tx.insert`/`tx.amend`/`tx.delete` verbs the exercised `m-unit-work` "
         "stories show (`-001`/`-005`/`-006`/`-009`), and adding only the planner's "
         "COLLAPSE decision, an emitted-SQL contract the compile lane grades byte-exact. "
+        "`-050`, the empty amendment, is `-006`'s `tx.amend_where` naming no "
+        "assignment, and its whole observable is that no statement runs, which the "
+        "lanes grade by database-call count. "
         "The versioned per-key materialize (`-004`) carries its own case-scoped "
         "entry below"
     ),

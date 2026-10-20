@@ -125,7 +125,6 @@ def test_schema_accepts_object_and_array_predicate_write_literals(literal: objec
 @pytest.mark.parametrize(
     ("mutation", "edits"),
     [
-        ("amend", {"assignments": []}),
         ("delete", {"assignments": [{"attr": "Wallet.balance", "value": 0.00}]}),
         ("terminate", {}),
         ("terminateUntil", {}),
@@ -141,6 +140,21 @@ def test_schema_enforces_predicate_write_verb_shape(
     if mutation != "amend":
         instruction.pop("assignments")
     instruction.update(edits)
+    assert next(_schema().iter_errors(_scenario_case(instruction)), None) is not None
+
+
+def test_an_amendment_assigning_nothing_is_a_valid_predicate_write() -> None:
+    # The empty amendment is judged like any other, then dropped (`m-batch-write`).
+    instruction = _update_instruction()
+    instruction["assignments"] = []
+    assert next(_schema().iter_errors(_scenario_case(instruction)), None) is None
+    entity = _wallet_entity()
+    validate_predicate_write(entity, instruction, [entity.definition])
+
+
+def test_schema_requires_an_amendment_to_state_its_assignments() -> None:
+    instruction = _update_instruction()
+    instruction.pop("assignments")
     assert next(_schema().iter_errors(_scenario_case(instruction)), None) is not None
 
 

@@ -743,28 +743,26 @@ def test_predicate_write_rejects_valid_selection_changes_that_name_unknown_membe
     assert _writes(port) == []
 
 
-def test_a_predicate_writes_first_failing_assignment_is_the_one_refused() -> None:
-    # Each assignment is completed — its member resolved, then its value
-    # decoded and judged — before the next one is visited.
+def test_a_predicate_writes_members_are_all_resolved_before_any_value_is_judged() -> None:
     port = ScriptedAdapter(Transact())
 
     def fn(tx: TxnContext) -> None:
         with pytest.raises(instructions.WriteInstructionError, match="declared member"):
             tx.wire.amend_where(_PERSON_TARGET, {"undeclared": 1, "name": 5})
-        with pytest.raises(instructions.InstructionRejectedError) as value_fault:
+        with pytest.raises(instructions.WriteInstructionError, match="declared member"):
             tx.wire.amend_where(_PERSON_TARGET, {"name": 5, "undeclared": 1})
+        with pytest.raises(instructions.InstructionRejectedError) as value_fault:
+            tx.wire.amend_where(_PERSON_TARGET, {"name": 5})
         assert value_fault.value.rule == "neutral-literal-type-mismatch"
 
     db_for(PERSON, port).transact(fn)
     assert _writes(port) == []
 
 
-def test_an_empty_change_document_is_a_keyed_no_op_and_a_predicate_refusal() -> None:
-    # `{}` is a document naming no member, never an absent argument, and what it
-    # states differs by family. A keyed update addresses one row whose values its
-    # source published, so naming none is the ordinary no-op. A selection has no
-    # published values to be a no-op against, and its change set lowers to the
-    # canonical assignment algebra, whose list must name at least one assignment.
+def test_an_empty_change_document_is_a_no_op_in_every_family() -> None:
+    # `{}` is a document naming no member, never an absent argument: the empty
+    # amendment, judged like any other and then dropped, whether it addresses one
+    # object or every row a selection matches.
     keyed = ScriptedAdapter(Transact(_ACCOUNT_READ))
     predicate = ScriptedAdapter(Transact())
 
@@ -772,10 +770,7 @@ def test_an_empty_change_document_is_a_keyed_no_op_and_a_predicate_refusal() -> 
         tx.wire.amend(_node(tx, _ACCOUNT_QUERY), {})
 
     def predicate_fn(tx: TxnContext) -> None:
-        with pytest.raises(
-            instructions.WriteInstructionError, match="requires at least one assignment"
-        ):
-            tx.wire.amend_where(_PERSON_TARGET, {})
+        tx.wire.amend_where(_PERSON_TARGET, {})
 
     db_for(ACCOUNT, keyed).transact(keyed_fn)
     db_for(PERSON, predicate).transact(predicate_fn)

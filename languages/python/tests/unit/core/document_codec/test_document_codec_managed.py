@@ -51,7 +51,6 @@ from parallax.core.document_codec._authoring import (
     BORROWED_SOURCE_ACCESS,
     MAPPING_SOURCE_ACCESS,
     prepare_authoring,
-    prepare_member_authoring,
     validate_member_authoring,
 )
 from parallax.core.document_codec._managed import EffectiveChangeSet
@@ -164,13 +163,13 @@ def test_member_validation_covers_null_marker_valid_and_invalid_leaves() -> None
     marker = {"computed": "server"}
 
     assert (
-        prepare_member_authoring(
-            flag,
-            marker,
+        prepare_authoring(
+            MemberShape(members=(flag,)),
+            {"flag": marker},
             source_access=MAPPING_SOURCE_ACCESS,
             normalize_leaf=_normalize,
-            allow_marker=True,
-        ).value
+            allow_root_markers=True,
+        ).value["flag"]
         == marker
     )
     assert (

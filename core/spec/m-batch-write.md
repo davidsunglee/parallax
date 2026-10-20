@@ -164,6 +164,14 @@ changed underneath it. Both effective strategies raise it, and the settled gate
 decides which one it is: a gated shortfall is an Optimistic Conflict, an ungated
 one a Stale Write (`m-unit-work`). Matching nothing is never either.
 
+An `amend` whose assignment list is empty is the **empty amendment**. It is
+judged exactly as any other predicate-selected write is — its target, including
+the refusal above, its predicate, and its inheritance family — and is then
+dropped before it is buffered: it emits no statement and makes no database call,
+and, being unbuffered, it is no ordering barrier. A keyed amendment expressing
+no member is empty in the same way (`m-unit-work`). `m-batch-write-050`
+witnesses it.
+
 ### A readless predicate write is an ordering barrier
 
 A readless predicate write **MUST** keep its authored position in the flush. It
@@ -197,6 +205,7 @@ versioned per-key delete. The predicate-write witnesses prove a distinct target:
 | `m-batch-write-009` | unversioned, non-temporal document-mapped `Traveler` update | one readless update replacing a top-level document-resident `many` whole at its path, every other key kept |
 | `m-batch-write-010` | unversioned, non-temporal document-mapped `NestedRoute` update | one readless update replacing a `one` whose authored content holds a nested `many`, its whole subtree included |
 | `m-batch-write-012`/`-013` | unversioned, non-temporal `CollectionTwinItem` update under each layout | one readless update assigning whole scalar collections and a `many` holding one, in Table Layout order |
+| `m-batch-write-050` | non-versioned `Wallet` update assigning nothing | judged, then dropped: no statement and no database call |
 | `m-batch-write-047` | versioned `Account` update | refused before its predicate and assignments: `set-based-write-target-unsupported` |
 | `m-batch-write-048` | Transaction-Time-Only `Balance` delete | refused: `set-based-write-target-unsupported` |
 | `m-batch-write-049` | Bitemporal `Position` update | refused: `set-based-write-target-unsupported` |

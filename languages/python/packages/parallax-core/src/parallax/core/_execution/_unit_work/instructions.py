@@ -23,9 +23,9 @@ from parallax.core.base import (
 from parallax.core.document_codec._authoring import (
     BORROWED_SOURCE_ACCESS,
     MAPPING_SOURCE_ACCESS,
+    PreparedDocumentAuthoring,
     SourceAccess,
     prepare_authoring,
-    prepare_member_authoring,
 )
 from parallax.core.metamodel import (
     AttributeMetadata,
@@ -45,7 +45,6 @@ from parallax.core.predicate import PredicateInterpretation, PredicateNode
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.wire import WireDecodingError, WireValue, decode_wire, encode_wire
 from parallax.core.write_plan.columns import freeze_retained_value
-from parallax.core.write_plan.planned_rows import PreparedAssignment
 from parallax.core.write_plan.steps import ResolvedMutationSelection
 
 __all__ = [
@@ -271,11 +270,19 @@ class PredicateSelection:
 @dataclass(frozen=True, slots=True)
 class PredicateWriteInstruction:
     """A predicate-selected (set-based) write: a ``mutation`` on every row of
-    ``target`` matching its predicate, with ``assignments`` on an amendment."""
+    ``target`` matching its predicate, with ``assignments`` on an amendment —
+    none at all being the empty amendment."""
 
     mutation: PredicateMutation
     target: PredicateSelection
     assignments: tuple[WriteAssignment, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.assignments and self.mutation not in AMEND_MUTATIONS:
+            raise WriteInstructionError(
+                f"predicate write: `{self.mutation}` names nothing to assign and carries no "
+                "`assignments`"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -333,7 +340,9 @@ class PreparedKeyedWrite:
 
 @dataclass(frozen=True, slots=True, init=False)
 class PreparedPredicateWrite:
-    """A predicate mutation over a resolved selection and managed assignments.
+    """A predicate mutation over a resolved selection and the managed row it
+    assigns every selected object: the members an amendment names, never the
+    key, and nothing for a deletion.
 
     Only this module's producers construct one, so holding one means the write
     was judged admissible against its target, which one readless statement
@@ -342,7 +351,11 @@ class PreparedPredicateWrite:
 
     mutation: PredicateMutation
     selection: ResolvedMutationSelection
-    managed_assignments: tuple[PreparedAssignment, ...]
+    row: Mapping[str, object]
+
+    @property
+    def assigns(self) -> bool:
+        return bool(self.row)
 
 
 @dataclass(frozen=True, slots=True)
@@ -407,12 +420,12 @@ def _prepared_keyed_write(
 def _prepared_predicate_write(
     mutation: PredicateMutation,
     selection: ResolvedMutationSelection,
-    managed_assignments: tuple[PreparedAssignment, ...],
+    row: Mapping[str, object],
 ) -> PreparedPredicateWrite:
     prepared = object.__new__(PreparedPredicateWrite)
     object.__setattr__(prepared, "mutation", mutation)
     object.__setattr__(prepared, "selection", selection)
-    object.__setattr__(prepared, "managed_assignments", managed_assignments)
+    object.__setattr__(prepared, "row", row)
     return prepared
 
 
@@ -445,12 +458,6 @@ def target_instruction(prepared: PreparedTargetWrite) -> PreparedKeyedWrite:
     return _prepared_keyed_write(
         prepared.mutation, prepared.target, (prepared.row,), prepared.valid_time_window
     )
-
-
-@dataclass(frozen=True, slots=True)
-class _TransformedRow:
-    row: Mapping[str, object]
-    failures: Mapping[int, AuthoringViolation]
 
 
 def derive_keyed_write(
@@ -638,8 +645,8 @@ def _target(node: Mapping[str, object]) -> PredicateSelection:
 
 def _assignments(node: Mapping[str, object]) -> tuple[WriteAssignment, ...]:
     raw = node.get("assignments")
-    if not isinstance(raw, list) or not raw:
-        raise WriteInstructionError("predicate write: `assignments` must be a non-empty list")
+    if not isinstance(raw, list):
+        raise WriteInstructionError("predicate write: `assignments` must be a list")
     out: list[WriteAssignment] = []
     for item in cast("list[object]", raw):
         if not isinstance(item, Mapping):
@@ -758,7 +765,7 @@ def serialize(instruction: WriteInstruction) -> dict[str, object]:
             "predicate": predicate_algebra.serialize(predicate),
         },
     }
-    if instruction.assignments:
+    if instruction.mutation in AMEND_MUTATIONS:
         predicate_body["assignments"] = [
             {"attr": a.attr, "value": a.value} for a in instruction.assignments
         ]
@@ -998,7 +1005,8 @@ def _prepare_write(
             authored_members=authored_members,
             members=members,
         )
-    # A predicate write states its assignments.
+    # A predicate write states its assignments, and its readless target
+    # declares no framework-owned member for an authored one to name.
     assert members is None
     return _prepare_predicate_write(
         instruction, model, converter=converter, source_access=source_access
@@ -1056,7 +1064,7 @@ def _prepare_predicate_write(
         instruction,
         model,
         entity,
-        position.member_selection,
+        position,
         converter=converter,
         source_access=source_access,
     )
@@ -1399,12 +1407,12 @@ def _prepare_target_payload(
         )
         validate_write(
             entity,
-            identity.row,
+            identity.value,
             model,
             mutation=instruction.mutation,
             known_failures=identity.failures,
         )
-        return identity.row, False
+        return identity.value, False
     prepared = _assigned_row(
         model,
         entity,
@@ -1470,7 +1478,7 @@ def _assigned_row(
         source_access=source_access,
         fill_missing_many=replaces,
     )
-    prepared = _completed(entity, position, transformed.row) if replaces else transformed.row
+    prepared = _completed(entity, position, transformed.value) if replaces else transformed.value
     for name, value in prepared.items():
         if name == key:
             continue
@@ -1482,7 +1490,13 @@ def _assigned_row(
             known_violation=failure,
             known_value_valid=failure is None,
         )
-    validate_write(entity, prepared, model, mutation="amend", known_failures=transformed.failures)
+    if transformed.failures:
+        # Every other check a sparse row's validation makes is one the
+        # judgement above already made, since no `many` member is nullable;
+        # an authoring failure, the key's included, is what is left to report.
+        validate_write(
+            entity, prepared, model, mutation="amend", known_failures=transformed.failures
+        )
     return prepared
 
 
@@ -1627,14 +1641,14 @@ def _prepare_keyed_payload(
             _judge_prepared_assignment(
                 entity,
                 _declared_member(selection, name),
-                only.row[name],
+                only.value[name],
                 known_violation=failure,
                 known_value_valid=failure is None,
             )
     for result in transformed:
         validate_write(
             entity,
-            result.row,
+            result.value,
             model,
             mutation=instruction.mutation,
             known_failures=result.failures,
@@ -1642,7 +1656,7 @@ def _prepare_keyed_payload(
     return _prepared_keyed_write(
         instruction.mutation,
         entity,
-        tuple(result.row for result in transformed),
+        tuple(result.value for result in transformed),
         valid_time_window,
     )
 
@@ -1666,7 +1680,7 @@ def _prepare_predicate_payload(
     instruction: PredicateWriteInstruction,
     model: AcceptedMetamodel,
     entity: EntityMetadata,
-    selection: inheritance.EntityMemberSelection,
+    position: inheritance.InheritanceEntityView,
     *,
     converter: _LeafConverter,
     source_access: SourceAccess,
@@ -1680,11 +1694,10 @@ def _prepare_predicate_payload(
     (``subtype-write-set-based-unsupported``) before any assignment, so
     ancestry resolution never arises for one.
 
-    Each assignment is completed before the next is visited: its reference must
-    name a member of the exact target, once, before its value is prepared and
-    judged. The first failing assignment therefore wins, and a reference fault
-    outranks a bad value on the same assignment. Authored order is data order
-    only; lowering emits columns in the target's Table Layout order.
+    An amendment's assignments form the one row it assigns every selected
+    object: each reference is judged before any value, and then the row is
+    judged member by member as an amendment of one object's row is. Assigning
+    nothing is the empty amendment, judged like any other.
     """
     predicate = instruction.target.predicate
     validated = (
@@ -1693,13 +1706,42 @@ def _prepare_predicate_payload(
         else predicate(entity, predicate_algebra.root_position(model, entity))
     )
     inheritance.reject_predicate_write(entity)
-    _judge_assignment_shape(entity, instruction.mutation, instruction.assignments)
-    seen: set[str] = set()
-    prepared: list[PreparedAssignment] = []
-    for assignment in instruction.assignments:
-        # The owner segment is RESOLVED rather than compared as text, so a
-        # canonical spelling names the target it denotes while an ambiguous
-        # bare one — which resolves nowhere — stays refused.
+    selection = ResolvedMutationSelection(entity, validated)
+    if instruction.mutation not in AMEND_MUTATIONS:
+        return _prepared_predicate_write(instruction.mutation, selection, _NO_ROW)
+    row = _row_from_assignments(model, entity, position, instruction.assignments)
+    assigned = _assigned_row(
+        model,
+        entity,
+        position,
+        row,
+        replaces=False,
+        converter=converter,
+        source_access=source_access,
+    )
+    return _prepared_predicate_write(instruction.mutation, selection, assigned)
+
+
+_NO_ROW: Final[Mapping[str, object]] = MappingProxyType({})
+
+
+def _row_from_assignments(
+    model: AcceptedMetamodel,
+    entity: EntityMetadata,
+    position: inheritance.InheritanceEntityView,
+    assignments: Sequence[WriteAssignment],
+) -> dict[str, object]:
+    """The member-name row ``assignments`` assign, in authored order.
+
+    A reference must name a member of the exact target, once, and never its
+    primary key, which a predicate-selected write never changes. The owner
+    segment is RESOLVED rather than compared as text, so a canonical spelling
+    names the target it denotes while an ambiguous bare one — which resolves
+    nowhere — stays refused.
+    """
+    selection = position.member_selection
+    row: dict[str, object] = {}
+    for assignment in assignments:
         owner_spelling, _, name = assignment.attr.rpartition(".")
         owner = entity_by_name(model, owner_spelling)
         member = selection.binding(name)
@@ -1708,51 +1750,17 @@ def _prepare_predicate_payload(
                 f"{entity.identity.name}: assignment {assignment.attr!r} does not name a "
                 f"declared member of {entity.identity.canonical}"
             )
-        if name in seen:
+        if name in row:
             raise WriteInstructionError(
                 f"{entity.identity.name}: assignment {assignment.attr!r} is duplicated — each "
                 "member may be assigned at most once"
             )
-        seen.add(name)
-        authored = prepare_member_authoring(
-            member.definition,
-            assignment.value,
-            source_access=source_access,
-            normalize_leaf=converter,
-            path=assignment.attr,
-            allow_marker=isinstance(member, AttributeMetadata),
-        )
-        _judge_prepared_assignment(
-            entity,
-            member,
-            authored.value,
-            known_violation=authored.failure,
-            known_value_valid=authored.failure is None,
-        )
-        prepared.append(PreparedAssignment(member, authored.value))
-    return _prepared_predicate_write(
-        instruction.mutation,
-        ResolvedMutationSelection(entity, validated),
-        tuple(prepared),
-    )
-
-
-def _judge_assignment_shape(
-    entity: EntityMetadata,
-    mutation: PredicateMutation,
-    assignments: Sequence[WriteAssignment],
-) -> None:
-    if mutation in AMEND_MUTATIONS:
-        if not assignments:
-            raise WriteInstructionError(
-                f"{entity.identity.name}: a predicate-selected {mutation!r} requires at least "
-                "one assignment"
+        if isinstance(member, AttributeMetadata) and isinstance(member.primary_key, PrimaryKey):
+            _judge_prepared_assignment(
+                entity, member, assignment.value, known_violation=None, known_value_valid=True
             )
-    elif assignments:
-        raise WriteInstructionError(
-            f"{entity.identity.name}: a predicate-selected {mutation!r} names nothing to "
-            "assign and takes no assignments"
-        )
+        row[name] = assignment.value
+    return row
 
 
 def _judge_prepared_assignment(
@@ -1884,7 +1892,7 @@ def coerce_typed_row(
         converter=_coerce_typed_leaf,
         source_access=BORROWED_SOURCE_ACCESS,
         fill_missing_many=False,
-    ).row
+    ).value
 
 
 type _LeafConverter = Callable[[Leaf, object, str], tuple[object, bool]]
@@ -1927,8 +1935,8 @@ def _transform_row(
     converter: _LeafConverter,
     source_access: SourceAccess,
     fill_missing_many: bool,
-) -> _TransformedRow:
-    prepared = prepare_authoring(
+) -> PreparedDocumentAuthoring:
+    return prepare_authoring(
         selection.shape,
         row,
         source_access=source_access,
@@ -1937,7 +1945,6 @@ def _transform_row(
         fill_missing_many=fill_missing_many,
         allow_root_markers=True,
     )
-    return _TransformedRow(prepared.value, prepared.failures)
 
 
 def _member_failure(
@@ -1945,6 +1952,8 @@ def _member_failure(
     name: str,
     failures: Mapping[int, AuthoringViolation],
 ) -> AuthoringViolation | None:
+    if not failures:
+        return None
     position = selection.shape.position(name)
     return None if position is None else failures.get(position)
 

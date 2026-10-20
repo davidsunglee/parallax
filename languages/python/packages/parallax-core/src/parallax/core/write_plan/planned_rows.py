@@ -1,16 +1,13 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
 from typing import Final, cast
 
 from parallax.core.inheritance import InheritanceEntityView, InheritanceFacet
 from parallax.core.metamodel import (
     AttributeIdentity,
-    AttributeMetadata,
     EntityMetadata,
     ValueObjectIdentity,
-    ValueObjectMetadata,
 )
 from parallax.core.write_plan.steps import (
     MAX_PLUS_ONE,
@@ -24,18 +21,14 @@ from parallax.core.write_plan.steps import (
 )
 
 __all__ = [
-    "PreparedAssignment",
     "WritePlanningError",
-    "assigned_name",
     "entity_view",
     "key_target",
     "key_tuple",
     "planned_assignments",
     "planned_cell",
     "planned_row",
-    "prepared_assignments",
     "resolve_row",
-    "resolved_assignments",
 ]
 
 # A scalar cell's recognized DB-computed marker kinds
@@ -51,20 +44,6 @@ class WritePlanningError(ValueError):
     """A buffered write cannot be settled into a Planned Write — a caller
     wiring defect the planner refuses loudly rather than settling wrongly
     (e.g. a row naming a member outside its Entity's family)."""
-
-
-@dataclass(frozen=True, slots=True)
-class PreparedAssignment:
-    """One resolved assignment member and its owned managed value."""
-
-    member: AttributeMetadata | ValueObjectMetadata
-    value: object
-
-    @property
-    def attr(self) -> str:
-        if isinstance(self.member, AttributeMetadata):
-            return f"{self.member.identity.entity.canonical}.{self.member.identity.name}"
-        return f"{self.member.identity.entity.canonical}.{self.member.identity.path[-1]}"
 
 
 def planned_row(
@@ -95,38 +74,6 @@ def planned_assignments(
 ) -> PlannedAssignments:
     attributes, value_objects = resolve_row(entity, view, row, context="update")
     return adopt_planned_assignments(attributes, value_objects)
-
-
-def prepared_assignments(
-    entity: EntityMetadata, assignments: Sequence[PreparedAssignment]
-) -> PlannedAssignments:
-    """Resolved predicate assignments in their final member-identity maps."""
-    attributes, value_objects = resolved_assignments(entity, assignments, "update")
-    return adopt_planned_assignments(attributes, value_objects)
-
-
-def resolved_assignments(
-    entity: EntityMetadata, assignments: Sequence[PreparedAssignment], context: str
-) -> tuple[dict[AttributeIdentity, PlannedValue], dict[ValueObjectIdentity, object]]:
-    """Prepared assignments keyed by member identity, each Attribute cell's
-    marker classified for ``context``."""
-    attributes: dict[AttributeIdentity, PlannedValue] = {}
-    value_objects: dict[ValueObjectIdentity, object] = {}
-    for assignment in assignments:
-        member = assignment.member
-        if isinstance(member, AttributeMetadata):
-            attributes[member.identity] = planned_cell(
-                entity, member.identity.name, assignment.value, context
-            )
-        else:
-            value_objects[member.identity] = assignment.value
-    return attributes, value_objects
-
-
-def assigned_name(assignment: PreparedAssignment) -> str:
-    """The declared member name one prepared assignment writes."""
-    identity = assignment.member.identity
-    return identity.name if isinstance(identity, AttributeIdentity) else identity.path[-1]
 
 
 def resolve_row(

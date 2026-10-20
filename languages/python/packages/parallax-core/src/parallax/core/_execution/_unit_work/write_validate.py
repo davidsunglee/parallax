@@ -76,16 +76,20 @@ def validate_write(
     full_document = mutation in _FULL_DOCUMENT_MUTATIONS
     owner = entity.identity.name
     for attribute in view.applicable_attributes:
-        if attribute.framework_owned:
+        if attribute.framework_owned or not (full_document or attribute.identity.name in row):
             continue
         _check_entity_attribute(
             row,
             attribute,
             required=full_document,
             owner=owner,
-            known_failure=known_failures.get(view.member_selection.position(attribute.identity)),
+            known_failure=known_failures.get(view.member_selection.position(attribute.identity))
+            if known_failures
+            else None,
         )
     for value_object in view.applicable_value_objects:
+        if not (full_document or value_object.identity.path[-1] in row):
+            continue
         _check_value_object_member(
             row,
             value_object,
@@ -93,7 +97,9 @@ def validate_write(
             owner=owner,
             known_violation=known_failures.get(
                 view.member_selection.position(value_object.identity)
-            ),
+            )
+            if known_failures
+            else None,
         )
 
 

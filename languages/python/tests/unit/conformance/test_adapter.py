@@ -128,7 +128,7 @@ assignments:
     assert isinstance(prepared, PreparedPredicateWrite)
     assert isinstance(prepared.selection.predicate, ResolvedComparison)
     assert prepared.selection.predicate.value == decimal.Decimal("200.00")
-    assert prepared.managed_assignments[0].value == decimal.Decimal("0.00")
+    assert prepared.row == {"balance": decimal.Decimal("0.00")}
 
 
 def test_case_write_adapter_normalizes_managed_temporal_bounds() -> None:
