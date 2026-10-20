@@ -6,7 +6,7 @@ derived from it, the resolution of transaction options, the serving and adoption
 of Model Editions, and the **Attempts**, writable or read-only, that run each
 physical transaction attempt. It executes reads by handing them to `m-read-delivery` under the
 conditions it establishes, and executes writes by running each span of Planned
-Writes the unit of work hands it from the Write Plan `m-unit-work` finalizes and
+Steps the unit of work hands it from the Write Plan `m-unit-work` finalizes and
 acquiring the rows a write needs to read. Per the dependency graph it depends on `m-unit-work`
 for admission, evidence, finalization, and effects; `m-read-delivery` for every
 read it executes; `m-write-plan` for the Planned Steps it runs;
@@ -255,7 +255,7 @@ remains, the effect would be its run's only one and runs alone, and the taken
 step waits its turn. An ordinary failure taking that step propagates only once
 the effect running alone has succeeded; a control-flow or fatal one propagates
 before that effect is lowered. The whole result is validated before any of it
-is interpreted, so a malformed one fails the batch with the integrity error
+is interpreted, so a malformed one fails the invocation with the integrity error
 ahead of any shortfall it reports. Confirmed outcomes are then enforced in
 original order against the exact steps they were lowered from: an earlier
 shortfall outranks a later statement failure or interruption, a statement

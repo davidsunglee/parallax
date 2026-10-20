@@ -423,7 +423,7 @@ def test_a_deferred_range_binds_only_once_every_earlier_unit_completed() -> None
 def test_planning_and_deferred_binding_borrow_the_one_live_ownership(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # The flush drains its batch after planning, and the earlier unit's
+    # The flush drains its buffer after planning, and the earlier unit's
     # completion publishes into the very ownership the range then binds under.
     planned: list[TemporalWriteOwnership] = []
     bound: list[tuple[TemporalWriteOwnership, bool]] = []

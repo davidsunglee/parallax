@@ -156,7 +156,7 @@ class WritePlanner:
         """Plan one flush: eliminate no-ops, batch, order, and hand the whole
         ordered sequence to the compiler — answering the plan, whose execution
         units carry the claims the settled writes held. Admission already
-        composed the batch, so finalization indexes nothing again.
+        composed the buffer, so finalization indexes nothing again.
 
         Pure with respect to its inputs — no database I/O, no direct clock
         access, no SQL. ``request.actor_identity`` is accepted and never

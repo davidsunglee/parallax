@@ -1,10 +1,10 @@
 # m-sql — SQL Generation & Equivalence Contract
 
-`m-sql` is the contract that turns resolved read and planned-write products
+`m-sql` is the contract that turns resolved read and planned-step products
 into per-dialect SQL, and the rules that make "equivalent SQL per database"
 **testable**. `m-sql` depends on `m-object-query` and `m-deep-fetch` (resolved
-flat reads), `m-predicate` (elaborated selections), `m-write-plan` (planned
-writes), `m-document-codec` and `m-wire` (canonical document values), and
+flat reads), `m-predicate` (elaborated selections), `m-write-plan` (Planned
+Steps), `m-document-codec` and `m-wire` (canonical document values), and
 `m-dialect` (the dialect that decides concrete SQL).
 It reads canonical model identities from `m-metamodel`, family and
 discriminator semantics from `m-inheritance`, physical Tables and slots from

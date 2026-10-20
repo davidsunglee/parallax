@@ -338,7 +338,7 @@ def test_participating_work_acquires_nothing_of_its_own() -> None:
     (root,) = recorder.roots
     (attempt,) = _of(root, TransactionAttemptStarted)
     resources = _of(root, AcquisitionStarted) + _of(root, ReleaseStarted)
-    # One pair, and the attempt owns both: the read, the batch, and the call
+    # One pair, and the attempt owns both: the read, the Flush, and the call
     # beneath them opened none of their own.
     assert [event.parent_activity_id for event in resources] == [attempt.activity_id] * 2
     assert adapter.acquisitions == 1

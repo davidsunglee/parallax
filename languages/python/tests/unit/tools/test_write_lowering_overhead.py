@@ -344,7 +344,7 @@ def _documents(statement_binds: Sequence[object]) -> list[object]:
 
 def _rows(statement: lowering_support.Executed) -> list[tuple[object, ...]]:
     """The binds of each value tuple ``statement`` renders: one per Planned
-    Write, since a run of temporal openings shares one multi-row insert
+    Step, since a run of temporal openings shares one multi-row insert
     (`m-execution` *Flush execution*); any other statement is one."""
     tuples = statement.sql.count("), (") + 1 if statement.sql.startswith("insert") else 1
     width = len(statement.binds) // tuples

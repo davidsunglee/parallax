@@ -1,7 +1,7 @@
 # m-write-plan — Planned Steps and Write Observations
 
 `m-write-plan` specifies the finalized semantic form of a write — the Planned
-Write algebra and the Write Target, Write Gate, and Affected Rows Policy
+Step algebra and the Write Target, Write Gate, and Affected Rows Policy
 vocabulary it is built from — the Write Observation a write against existing
 state retains, including a temporal write's Predecessor Row, and the neutral
 vocabulary of the payload a write persists. Per the dependency graph it depends
