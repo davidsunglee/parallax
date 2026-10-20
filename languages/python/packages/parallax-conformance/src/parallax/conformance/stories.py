@@ -322,6 +322,18 @@ def wallet_predicate_delete_is_readless(db: ScopedDatabase) -> list[Entity]:
     return db.transact(fn)
 
 
+def wallet_predicate_amend_is_readless(db: ScopedDatabase) -> list[Entity]:
+    def fn(tx: TxnContext) -> list[Entity]:
+        tx.amend_where(
+            Wallet.where(Wallet.balance < Decimal("200.00")),
+            Wallet.balance.set(Decimal("150.00")),
+            Wallet.owner.set("Updated"),
+        )
+        return list(tx.find(Wallet.where(Wallet.owner == "Updated")).results())
+
+    return db.transact(fn)
+
+
 def bitemporal_insert_until_opens_one_bounded_rectangle(db: ScopedDatabase) -> None:
     def fn(tx: TxnContext) -> None:
         tx.insert(
@@ -809,6 +821,13 @@ WRITE_STORIES: Final[tuple[WriteStory, ...]] = (
         "commit",
         "wallet",
         wallet_predicate_delete_is_readless,
+    ),
+    WriteStory(
+        "m-batch-write-006",
+        "A predicate-selected amendment over an unversioned entity is readless",
+        "commit",
+        "wallet",
+        wallet_predicate_amend_is_readless,
     ),
     WriteStory(
         "m-temporal-write-017",

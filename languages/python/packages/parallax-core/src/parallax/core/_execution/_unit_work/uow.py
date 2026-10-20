@@ -212,10 +212,9 @@ class UnitOfWork:
     source licenses here, flushes it once more before commit, and has it
     :meth:`discard` its state when the attempt does not commit.
 
-    Every row a write reads — a predicate's selection, a caller-addressed
-    target's starting state, a deferred range's coverage — is read through
-    ``acquire_rows`` and consumed into evidence while the read's resources are
-    live.
+    Every row a write reads — a caller-addressed target's starting state, a
+    deferred range's coverage — is read through ``acquire_rows`` and consumed
+    into evidence while the read's resources are live.
     """
 
     __slots__ = (

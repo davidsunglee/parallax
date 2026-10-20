@@ -397,6 +397,25 @@ def test_a_wire_predicate_update_lowers_its_assignments_canonically() -> None:
     assert _writes(port) == [WriteCall("update person set name = %s where id = %s", ("Grace", 1))]
 
 
+def test_a_wire_predicate_write_takes_a_typed_query_as_its_selection() -> None:
+    # A service builds its selection in the Typed DSL and hands over a Wire
+    # change document; the query is kept as authored, so the statement is the
+    # one either Typed or Wire alone emits.
+    port = ScriptedAdapter(Transact(Write(times=2)))
+
+    def fn(tx: TxnContext) -> None:
+        query = mm.Person.where(mm.Person.id == 1)
+        tx.wire.amend_where(query, {"name": "Grace"})
+        tx.wire.delete_where(query)
+
+    db_for(PERSON, port).transact(fn)
+    assert _reads(port) == []
+    assert _writes(port) == [
+        WriteCall("update person set name = %s where id = %s", ("Grace", 1)),
+        WriteCall("delete from person where id = %s", (1,)),
+    ]
+
+
 # --------------------------------------------------------------------------- #
 # A keyed source is a hinted node Parallax published, and nothing else.       #
 # --------------------------------------------------------------------------- #
@@ -663,11 +682,7 @@ def test_every_update_verb_requires_the_change_document_its_signature_states() -
         with pytest.raises(instructions.WriteInstructionError, match="document of names"):
             tx.wire.amend(node, none_changes, until=_UNTIL)
         with pytest.raises(instructions.WriteInstructionError, match="document of names"):
-            tx.wire.amend_where(_POSITION_TARGET, none_changes, valid_from=_VALID_FROM)
-        with pytest.raises(instructions.WriteInstructionError, match="document of names"):
-            tx.wire.amend_where(
-                _POSITION_TARGET, none_changes, valid_from=_VALID_FROM, until=_UNTIL
-            )
+            tx.wire.amend_where(_POSITION_TARGET, none_changes)
 
     own_root(
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))

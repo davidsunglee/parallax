@@ -154,11 +154,15 @@ remains primary with rollback failure attached through native chaining.
 Write verbs are on the `TxnContext`; their snake_case temporal parameters bind
 the corresponding core operations. Inserts accept fresh constructed values;
 later mutations require provenance where the core evidence rules prescribe it.
-Evidence is never a caller-supplied address. Set-based writes take an Object
-Query; amendment verbs also take Assignments. A set-based write is one readless
-statement, so over a versioned or temporal Entity it is refused at the call with
-a `WriteInstructionError` naming the keyed and conditional verbs that write such
-an Entity (`m-batch-write`).
+Evidence is never a caller-supplied address. The set-based writes are
+`amend_where(query, *assignments)` and `delete_where(query)`, taking a
+mutation-compatible Typed Object Query and `Attr.set(...)` Assignments, and
+`tx.wire.amend_where(target, changes, /)` and `tx.wire.delete_where(target, /)`,
+taking that Typed query, kept as authored, or the canonical `{entity, predicate}`
+selection document — never an Object Query node or its document. A set-based
+write is one readless statement, so it takes no window, and over a versioned or
+temporal Entity it is refused at the call with a `WriteInstructionError` naming
+the keyed and conditional verbs that write such an Entity (`m-batch-write`).
 
 The method names the authority. `amend`, `replace`, `delete`, and `terminate`
 take a source — a value a read of the writing transaction attempt published, a
@@ -183,8 +187,8 @@ names a revision, never a value to store; the canonical instruction keeps
 `ifVersion` and `ifTxStart`.
 
 Every windowed verb — `insert`, `amend`, `amend_if`, `replace`, `replace_if`,
-`terminate`, `terminate_if`, `amend_where`, and `terminate_where`, on the
-`TxnContext` and on `tx.wire` — takes a keyword-only `until`. Omitting it selects the core unbounded
+`terminate`, and `terminate_if`, on the `TxnContext` and on `tx.wire` — takes a
+keyword-only `until`. Omitting it selects the core unbounded
 verb; stating it — `None` included — selects the bounded one, whose window core
 preparation judges before an empty amendment is dropped. Every verb taking
 `valid_from` treats omission alone as absence: a stated `None` is refused, so a
@@ -201,6 +205,12 @@ against the class's own ancestry before they are flattened, so an inherited
 member applies and a foreign or duplicated one is refused. A Wire `amend`
 assigns every key its change document names. Equal values are assigned either
 way, and a change naming nothing writes nothing.
+
+Each representation names a conditional write's object by one rule. A Wire
+document names it by its key entries: `amend_if` and `replace_if` take the key
+beside changes or a whole state, and `delete_if` and `terminate_if` a key-only
+document. A Typed call names it with `key=`, unless its payload is an instance,
+which always holds its own key, so `replace_if(instance)` takes no `key=`.
 
 A Typed `replace(source)` and `replace_if(payload, ...)` state the value's
 complete writable state. A Wire `replace(source, data)` states `data` alone;

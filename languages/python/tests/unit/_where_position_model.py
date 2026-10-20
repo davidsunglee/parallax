@@ -1,4 +1,4 @@
-"""The `_where`-verb materialization suites' local Bitemporal Entity.
+"""The write suites' local Bitemporal Entity.
 
 `models/position.yaml` has a shared mirror (`parallax.conformance.story_models.Position`),
 but it is not a drop-in: it maps to table `position` with columns `pos_id`/`val`,

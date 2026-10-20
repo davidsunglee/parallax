@@ -182,18 +182,18 @@ def test_predicate_delete_rejects_assignments() -> None:
     )
 
 
-def test_predicate_until_requires_both_valid_time_bounds() -> None:
-    # A bounded `*Until` predicate write is over `[validFrom, until)`
-    # (m-temporal-write); both bounds are required.
-    doc = {
-        "mutation": "terminateUntil",
-        "target": {"entity": "Position", "predicate": {"eq": {"path": "Position.id", "value": 1}}},
-        "validFrom": "2024-01-01T00:00:00+00:00",
-        "until": "2024-06-01T00:00:00+00:00",
+def test_a_predicate_write_states_no_milestone_verb_and_no_window() -> None:
+    # Its target is unversioned and non-temporal (m-batch-write), so it has no
+    # history to close and no Valid Time to bound.
+    delete = {
+        "mutation": "delete",
+        "target": {"entity": "Account", "predicate": {"eq": {"path": "Account.id", "value": 1}}},
     }
-    assert _valid(doc)
-    assert not _valid({key: value for key, value in doc.items() if key != "until"})
-    assert not _valid({key: value for key, value in doc.items() if key != "validFrom"})
+    assert _valid(delete)
+    for mutation in ("terminate", "amendUntil", "terminateUntil"):
+        assert not _valid({**delete, "mutation": mutation})
+    for bound in ("validFrom", "until"):
+        assert not _valid({**delete, bound: "2024-01-01T00:00:00+00:00"})
 
 
 # --- caller-addressed (target) instructions ------------------------------------

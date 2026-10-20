@@ -2737,7 +2737,7 @@
       ]
     },
     "predicateWrite": {
-      "description": "A predicate-selected write over the canonical instruction shape. `validFrom` and `until` are Valid-Time bounds; `at` is Clock-supplied Transaction-Time context and is not a durable instruction member.",
+      "description": "A predicate-selected write over the canonical instruction shape. Its target is unversioned and Non-Temporal, so it carries no Valid-Time bound and no Transaction-Time context.",
       "type": "object",
       "additionalProperties": false,
       "required": ["mutation", "target"],
@@ -2748,36 +2748,11 @@
           "type": "array",
           "minItems": 1,
           "items": { "$ref": "write-instruction.schema.json#/$defs/writeAssignment" }
-        },
-        "at": {
-          "description": "The Clock-supplied finite Transaction-Time instant for a temporal predicate write.",
-          "type": "string",
-          "minLength": 1
-        },
-        "validFrom": {
-          "description": "The Valid-Time lower bound of a plain or bounded temporal operation.",
-          "type": "string",
-          "minLength": 1
-        },
-        "until": {
-          "description": "The exclusive Valid-Time upper bound of a bounded operation (`thru_z`), paired with `validFrom`.",
-          "type": "string",
-          "minLength": 1
         }
       },
-      "allOf": [
-        {
-          "if": { "properties": { "mutation": { "enum": ["amend", "amendUntil"] } } },
-          "then": { "required": ["assignments"] },
-          "else": { "not": { "required": ["assignments"] } }
-        },
-        {
-          "description": "A bounded predicate write is over `[validFrom, until)`, so it must carry both Valid-Time bounds; unbounded forms must omit `until`.",
-          "if": { "properties": { "mutation": { "enum": ["amendUntil", "terminateUntil"] } } },
-          "then": { "required": ["validFrom", "until"] },
-          "else": { "not": { "required": ["until"] } }
-        }
-      ]
+      "if": { "properties": { "mutation": { "const": "amend" } } },
+      "then": { "required": ["assignments"] },
+      "else": { "not": { "required": ["assignments"] } }
     },
     "keyedWrite": {
       "description": "A keyed submission inside a buffered scenario. `validFrom` and `until` are Valid-Time bounds; `at` is Clock-supplied Transaction-Time context. Flush-only observations are not durable row members. `on` names the value an observed write is handed, and `expectError` the refusal its verb raises at the call.",
@@ -2872,7 +2847,7 @@
       ]
     },
     "submission": {
-      "description": "One entry of an ordered buffer, addressed by the pointer `/scenario/<n>/write/<k>`, dispatched on the member it carries: `rows` a keyed instruction, `row` a caller-addressed one, and `target` a predicate write — a readless ordering barrier (state-graded cases only). Each references the canonical write-instruction vocabulary and layers only the `at` / `validFrom` / `until` authoring surface, plus the entry's own `on` and `expectError`.",
+      "description": "One entry of an ordered buffer, addressed by the pointer `/scenario/<n>/write/<k>`, dispatched on the member it carries: `rows` a keyed instruction, `row` a caller-addressed one, and `target` a predicate write — a readless ordering barrier (state-graded cases only). Each references the canonical write-instruction vocabulary; a keyed or caller-addressed entry layers only the `at` / `validFrom` / `until` authoring surface, plus the entry's own `on` and `expectError`.",
       "oneOf": [
         { "$ref": "#/$defs/keyedWrite" },
         { "$ref": "#/$defs/targetSubmission" },

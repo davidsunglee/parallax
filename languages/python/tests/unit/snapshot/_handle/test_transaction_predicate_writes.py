@@ -400,7 +400,10 @@ def test_where_verb_rejects_an_assignment_addressing_another_entity() -> None:
     port = ScriptedAdapter(Transact())
 
     def fn(tx: TxnContext) -> None:
-        tx.amend_where(mm.Ticket.where(mm.Ticket.id == 1), mm.Badge.holder.set("Ada"))
+        tx.amend_where(
+            mm.Ticket.where(mm.Ticket.id == 1),
+            mm.Badge.holder.set("Ada"),  # pyright: ignore[reportArgumentType]
+        )
 
     with raises_contextualized(
         instructions.WriteInstructionError,

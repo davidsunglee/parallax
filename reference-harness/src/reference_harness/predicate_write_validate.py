@@ -5,8 +5,7 @@ selection is exactly an `m-predicate` node, since a set-based write shapes no
 result and the Object Query clauses have no spelling in that position.  This
 module resolves the neutral shape against a descriptor before any SQL is emitted:
 the target must be one a readless statement can write, the predicate must resolve
-over it, assignments must name assignable domain attributes exactly once, and
-temporal coordinates must fit the target's profile.
+over it, and assignments must name assignable domain attributes exactly once.
 """
 
 from __future__ import annotations
@@ -69,9 +68,7 @@ def validate_predicate_write(
     except RejectionError as exc:
         raise PredicateWriteValidationError(str(exc)) from exc
 
-    mutation = instruction.get("mutation")
-    _assert_temporal_shape(mutation, instruction)
-    if mutation in ("amend", "amendUntil"):
+    if instruction.get("mutation") == "amend":
         _assert_assignments(entity, instruction.get("assignments"))
 
 
@@ -221,15 +218,4 @@ def _assert_value_object_document(ref: str, value_object: dict[str, Any], docume
             continue
         _assert_value_object_assignment(
             f"{ref}.{nested['name']}", nested, document.get(nested["name"])
-        )
-
-
-def _assert_temporal_shape(mutation: Any, instruction: dict[str, Any]) -> None:
-    """A readless target is non-temporal, so it takes no temporal coordinate and
-    no milestone verb."""
-    if any(instruction.get(name) is not None for name in ("at", "validFrom", "until")):
-        raise PredicateWriteValidationError("non-temporal predicate write carries temporal bounds")
-    if mutation not in ("amend", "delete"):
-        raise PredicateWriteValidationError(
-            f"non-temporal target does not support predicate mutation {mutation!r}"
         )

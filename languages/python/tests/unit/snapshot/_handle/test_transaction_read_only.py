@@ -71,7 +71,6 @@ def test_the_read_only_context_reads_and_names_no_write_verb() -> None:
         "terminate",
         "amend_where",
         "delete_where",
-        "terminate_where",
     }
     assert writes <= set(dir(TxnContext))
     assert not writes & set(dir(ReadOnlyTxnContext))

@@ -49,12 +49,13 @@ class TxnContext:
     read and returns ``Snapshot[T]``: force-flush + the lock suffix each
     materialized level's own target Entity calls for, otherwise identical to
     :meth:`ScopedDatabase.find`. The predicate-selected ``_where`` verb family
-    — :meth:`amend_where`, :meth:`delete_where`, :meth:`terminate_where` —
-    writes every row a mutation-compatible Object Query selects in one readless
-    statement over an unversioned, non-temporal target, and preparation refuses
-    every other target (ADR 0075). Every windowed verb selects its bounded form with keyword-only
-    ``until``, and a stated ``valid_from`` or ``until`` of ``None`` is refused
-    rather than read as omission. A reference used after its attempt ended
+    — :meth:`amend_where` and :meth:`delete_where` — writes every row a
+    mutation-compatible Object Query selects in one readless statement over an
+    unversioned, non-temporal target, takes no window, and preparation refuses
+    every other target (ADR 0075). Every windowed verb selects its bounded form
+    with keyword-only ``until``, and a stated ``valid_from`` or ``until`` of
+    ``None`` is refused rather than read as omission. A reference used after its
+    attempt ended
     raises ``EscapedTransactionError``: the attempt's lifetime fences every
     verb.
 
@@ -155,10 +156,10 @@ class TxnContext:
         )
         bind_insertion(instance, opened.authority)
 
-    def amend(
+    def amend[E: EntityBase](
         self,
-        source: EntityBase,
-        *assignments: AttributeAssignment[Any],
+        source: E,
+        *assignments: AttributeAssignment[E],
         until: dt.datetime | Omitted = OMITTED,
     ) -> None:
         """Buffer an amendment of the object ``source`` was read or inserted
@@ -490,60 +491,24 @@ class TxnContext:
         """
         return self._attempt.read_rows(query)
 
-    def amend_where(
-        self,
-        query: ObjectQuery[Any, Any],
-        *assignments: AttributeAssignment[Any],
-        valid_from: dt.datetime | Omitted = OMITTED,
-        until: dt.datetime | Omitted = OMITTED,
+    def amend_where[E: EntityBase](
+        self, query: ObjectQuery[E, Any], *assignments: AttributeAssignment[E]
     ) -> None:
-        """A predicate-selected amendment: ``query`` MUST be mutation-compatible
-        (nothing but a target and a predicate); ``assignments`` are
-        ``Attr.set(value)`` calls, non-empty, no duplicate field, each addressing
-        the query's exact target. Readless (one statement) for an unversioned,
-        non-temporal target; a versioned or temporal target MATERIALIZES
-        (`m-opt-lock`, ADR 0014) — see
-        :class:`~parallax.snapshot._handle._typed_writes.TypedPredicateWriteAdapter`,
-        the Typed predicate representation every ``_where`` verb here enters
-        the attempt with.
+        """Buffer an amendment of every row ``query`` selects, in one readless
+        statement: the members ``assignments`` names, every other member kept.
 
-        A Bitemporal target requires ``valid_from``; ``until`` bounds the
-        correction to ``[valid_from, until)``, and both follow :meth:`insert`'s
-        rules."""
-        self._attempt.predicate_write(
-            TypedPredicateWriteAdapter(query, assignments),
-            "amend",
-            valid_from=valid_from,
-            until=until,
-        )
+        ``query`` carries nothing but its target and predicate
+        (``query-not-mutation-compatible`` otherwise), and ``assignments`` are
+        ``Attr.set(...)`` calls naming members of its exact target, at least
+        one and each at most once. A versioned or temporal target, which each
+        object's write must observe, is refused before anything else is judged
+        (``set-based-write-target-unsupported``)."""
+        self._attempt.predicate_write(TypedPredicateWriteAdapter(query, assignments), "amend")
 
     def delete_where(self, query: ObjectQuery[Any, Any]) -> None:
-        """A predicate-selected ``delete`` over a NON-temporal target
-        : readless for an unversioned target; a versioned one
-         MATERIALIZES to one observation-backed per-row delete per resolved row
-         — in both modes, since each row's write requires that row's own prior
-         observation — with no no-op elimination, because a delete changes a
-         row's existence, never a value (`m-opt-lock`)."""
+        """Buffer a deletion of every row ``query`` selects, in one readless
+        statement, under :meth:`amend_where`'s query and target rules."""
         self._attempt.predicate_write(TypedPredicateWriteAdapter(query, ()), "delete")
-
-    def terminate_where(
-        self,
-        query: ObjectQuery[Any, Any],
-        *,
-        valid_from: dt.datetime | Omitted = OMITTED,
-        until: dt.datetime | Omitted = OMITTED,
-    ) -> None:
-        """A predicate-selected terminate over a TEMPORAL target, which always
-        materializes — a temporal predicate write has no readless template.
-        Transaction-Time-Only takes no ``valid_from``; Bitemporal requires it, and
-        ``until`` bounds the window to ``[valid_from, until)``, both under
-        :meth:`insert`'s rules."""
-        self._attempt.predicate_write(
-            TypedPredicateWriteAdapter(query, ()),
-            "terminate",
-            valid_from=valid_from,
-            until=until,
-        )
 
 
 def transaction_for(attempt: TxnAttempt) -> TxnContext:

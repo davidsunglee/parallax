@@ -1342,18 +1342,6 @@ def test_finalization_gives_a_readless_predicate_write_an_unbounded_expectation(
     assert step.affected_rows == ANY_COUNT
 
 
-def test_a_predicate_verb_with_no_readless_template_is_refused() -> None:
-    # `terminate` and the `*Until` forms name a milestone, and every temporal
-    # target materializes to keyed writes at buffer time, so no readless
-    # statement shape exists for one — refused rather than settled into a step
-    # no statement could render.
-    with pytest.raises(ValueError, match="do not support 'terminate_where'"):
-        _finalize(
-            PredicateWriteInstruction("terminate", PredicateSelection("Wallet", oa.TrueNode())),
-            WALLET,
-        )
-
-
 def test_a_keyed_write_row_omitting_its_primary_key_addresses_nothing() -> None:
     # Refused where the target is settled, rather than lowered into an identity
     # predicate whose bind was never supplied.

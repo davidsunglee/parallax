@@ -1532,15 +1532,14 @@ The canonical write-instruction vocabulary — this predicate-selected shape and
 the keyed `writeSequence` shape — is **hosted in
 [`write-instruction.schema.json`](../schemas/write-instruction.schema.json)**
 (`m-unit-work`, the write-side analogue of `object-query.schema.json`); this document
-references that canonical shape rather than redefining it. `validFrom` is the
-Valid-Time lower bound and `until` the bounded operation's exclusive Valid-Time
-upper bound. `at` is harness/Clock-supplied Transaction-Time context, never an
-instruction field or alias. The schema and corpus adopt these final spellings;
-no translation alias is conforming.
+references that canonical shape rather than redefining it. A predicate-selected
+write's target is unversioned and non-temporal (`m-batch-write`), so it carries no
+Valid-Time bound and no Transaction-Time context. The schema and corpus adopt
+these final spellings; no translation alias is conforming.
 
 ```yaml
 - write:
-    mutation: amend                     # amend | delete | terminate | amendUntil | terminateUntil
+    mutation: amend                     # amend | delete
     target:
       entity: Account
       predicate:
@@ -1555,20 +1554,16 @@ are deliberately small and structural:
 
 | Field | Required | Rule |
 |---|---|---|
-| `mutation` | yes | one of `amend`, `delete`, `terminate`, `amendUntil`, `terminateUntil` |
+| `mutation` | yes | one of `amend`, `delete` |
 | `target.entity` | yes | exact concrete descriptor entity the write begins from |
 | `target.predicate` | yes | one schema-valid `m-predicate` node; a set-based write shapes no result, so the Object Query clauses have no spelling in this position |
-| `assignments` | only `amend` / `amendUntil` | ordered `{attr, value}` data; nonempty and unique; `attr` names an assignable qualified top-level attribute or value object. An attribute takes a neutral scalar/null literal; a value object takes its complete object/array document or null according to its declared multiplicity/nullability. |
-| `at` | temporal target | harness-supplied Transaction-Time instant for close/chain behavior; context, not an instruction member |
-| `validFrom` | Bitemporal target | Valid-Time lower bound for the plain or bounded temporal write |
-| `until` | `amendUntil` / `terminateUntil` | bounded write's exclusive upper bound |
+| `assignments` | only `amend` | ordered `{attr, value}` data; nonempty and unique; `attr` names an assignable qualified top-level attribute or value object. An attribute takes a neutral scalar/null literal; a value object takes its complete object/array document or null according to its declared multiplicity/nullability. |
 
-Delete and terminate mutations carry **no** assignments. Assignment list order is
+A delete carries **no** assignments. Assignment list order is
 not SQL order: the target's Entity Layout order determines the emitted `set`
 columns and assignment binds. The model-aware validator validates the predicate
-against `predicate.schema.json` and checks its entity scope, rejects duplicate or
-framework-owned/unassignable assignments, and requires only the temporal
-coordinates the target profile uses. It states no rule refusing a query-wide
+against `predicate.schema.json` and checks its entity scope, and rejects
+duplicate or framework-owned/unassignable assignments. It states no rule refusing a query-wide
 clause: `write-instruction.schema.json` reaches the Predicate grammar directly,
 where ordering, the cap, Temporal Selections, result narrowing, and Includes have
 no spelling, so a result-shaping input never survives ingress to be classified. It rejects a predicate-selected
@@ -1588,9 +1583,9 @@ instruction: `/scenario/<n>/write` is then a list of **one or more submissions**
 a single unit of work accumulates and **flushes together** (`m-unit-work`
 buffered, batched, ordered writes), each addressed by its own pointer
 `/scenario/<n>/write/<k>`. Each entry **references** the canonical
-write-instruction `$defs` rather than redefining them, layering only the `at` /
-`validFrom` / `until` authoring surface and the entry's own `on` and
-`expectError`. In a golden-graded case every entry is a **keyed** instruction
+write-instruction `$defs` rather than redefining them; a keyed or caller-addressed
+entry layers only the `at` / `validFrom` / `until` authoring surface and the
+entry's own `on` and `expectError`. In a golden-graded case every entry is a **keyed** instruction
 (`mutation` + `entity` + `rows`, the case-format analogue of
 `write-instruction.schema.json`'s `keyedWriteInstruction`) its verb accepts,
 never a source-authorized `replace` / `replaceUntil`. A state-graded case's

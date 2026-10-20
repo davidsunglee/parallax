@@ -317,9 +317,8 @@ def _transaction_entry_points(tx: TxnContext) -> dict[str, _Work]:
         "replace_if": lambda: tx.replace_if(UNUSED, valid_from=NO_START, until=FIXED),
         "delete": lambda: tx.delete(UNUSED),
         "terminate": lambda: tx.terminate(UNUSED, until=FIXED),
-        "amend_where": lambda: tx.amend_where(UNUSED, UNUSED, valid_from=NO_START, until=FIXED),
+        "amend_where": lambda: tx.amend_where(UNUSED, UNUSED),
         "delete_where": lambda: tx.delete_where(UNUSED),
-        "terminate_where": lambda: tx.terminate_where(UNUSED, valid_from=NO_START, until=FIXED),
         "wire.insert": lambda: tx.wire.insert(UNUSED, UNUSED, valid_from=NO_START, until=FIXED),
         "wire.amend": lambda: tx.wire.amend(UNUSED, UNUSED, until=FIXED),
         "wire.amend_if": lambda: tx.wire.amend_if(UNUSED, UNUSED, valid_from=NO_START, until=FIXED),
@@ -328,13 +327,8 @@ def _transaction_entry_points(tx: TxnContext) -> dict[str, _Work]:
         "wire.editable_data": lambda: tx.wire.editable_data(UNUSED),
         "wire.delete": lambda: tx.wire.delete(UNUSED),
         "wire.terminate": lambda: tx.wire.terminate(UNUSED, until=FIXED),
-        "wire.amend_where": lambda: tx.wire.amend_where(
-            UNUSED, UNUSED, valid_from=NO_START, until=FIXED
-        ),
+        "wire.amend_where": lambda: tx.wire.amend_where(UNUSED, UNUSED),
         "wire.delete_where": lambda: tx.wire.delete_where(UNUSED),
-        "wire.terminate_where": lambda: tx.wire.terminate_where(
-            UNUSED, valid_from=NO_START, until=FIXED
-        ),
     }
 
 

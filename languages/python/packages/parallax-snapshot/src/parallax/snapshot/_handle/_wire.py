@@ -393,55 +393,26 @@ class WireTransactionView(WireDatabaseView):
         mutation, bound = window_mutation("terminate", "terminateUntil", until)
         wire_keyed_write(self._attempt, mutation, observed, until=bound)
 
-    def amend_where(
-        self,
-        target: WirePredicateTarget,
-        changes: WireChanges,
-        *,
-        valid_from: dt.datetime | Omitted = OMITTED,
-        until: dt.datetime | Omitted = OMITTED,
-    ) -> None:
-        """A predicate-selected Wire amendment over ``target`` — the canonical
-        ``{entity, predicate}`` selection, never an Object Query. Readless (one
-        statement) for an unversioned Non-Temporal target; a versioned or temporal
-        target materializes to one observation-backed per-row write. A Bitemporal
-        target requires ``valid_from``, and both bounds follow :meth:`insert`'s
-        rules.
+    def amend_where(self, target: WirePredicateTarget, changes: WireChanges, /) -> None:
+        """Buffer an amendment of every row ``target`` selects, in one readless
+        statement, exactly as ``tx.amend_where`` does: the members ``changes``
+        names, every other member kept.
 
-        ``changes`` names at least one member. It lowers to the same canonical
-        assignment algebra ``tx.amend_where``'s ``.set(...)`` spelling does, and
-        that algebra's list is non-empty, so ``{}`` is refused here rather than
-        being the no-op it is for a keyed amendment — which addresses one row a
-        caller already holds, where a selection holds none."""
-        self._attempt.predicate_write(
-            WirePredicateWriteAdapter(target, changes),
-            "amend",
-            valid_from=valid_from,
-            until=until,
-        )
+        ``target`` is a Typed Object Query, held to ``tx.amend_where``'s rules
+        and kept as authored, or the canonical ``{entity, predicate}``
+        selection document. ``changes`` names at least one member: it lowers to
+        the same canonical assignment algebra ``tx.amend_where``'s
+        ``.set(...)`` spelling does, and that algebra's list is non-empty, so
+        ``{}`` is refused here rather than being the no-op it is for a keyed
+        amendment."""
+        self._attempt.predicate_write(WirePredicateWriteAdapter(target, changes), "amend")
 
-    def delete_where(self, target: WirePredicateTarget) -> None:
-        """A predicate-selected Wire ``delete`` over a NON-temporal ``target``.
+    def delete_where(self, target: WirePredicateTarget, /) -> None:
+        """Buffer a deletion of every row ``target`` selects, in one readless
+        statement, under :meth:`amend_where`'s target rules.
 
         The sanctioned spelling for unconditional intent: it says outright that
         the caller means to remove whatever matches, rather than arriving there
         by building a value nothing was read into.
         """
         self._attempt.predicate_write(WirePredicateWriteAdapter(target), "delete")
-
-    def terminate_where(
-        self,
-        target: WirePredicateTarget,
-        *,
-        valid_from: dt.datetime | Omitted = OMITTED,
-        until: dt.datetime | Omitted = OMITTED,
-    ) -> None:
-        """A predicate-selected Wire terminate over a TEMPORAL ``target``:
-        Transaction-Time-Only takes no ``valid_from``; Bitemporal requires it, and
-        both bounds follow :meth:`insert`'s rules."""
-        self._attempt.predicate_write(
-            WirePredicateWriteAdapter(target),
-            "terminate",
-            valid_from=valid_from,
-            until=until,
-        )

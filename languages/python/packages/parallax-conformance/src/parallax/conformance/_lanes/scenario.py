@@ -1337,7 +1337,7 @@ def lower_writes(
 def _prepared_case_predicate_write(
     raw_write: Mapping[str, object], model: AcceptedMetamodel
 ) -> PreparedPredicateWrite:
-    instruction = instructions.deserialize(case_document.canonical_predicate_doc(raw_write))
+    instruction = instructions.deserialize(raw_write)
     assert isinstance(instruction, PredicateWriteInstruction)
     prepared = _case_ingress.prepare_case_write(instruction, model)
     assert isinstance(prepared, PreparedPredicateWrite)
@@ -1402,32 +1402,17 @@ def _buffer_wire_predicate_write(
     verb prepares them again. Dict insertion order preserves the authored
     assignment order; the Entity Layout still decides emitted SET order.
     """
-    authored = case_document.canonical_predicate_doc(raw_write)
-    target = cast("Mapping[str, object]", authored["target"])
+    target = cast("Mapping[str, object]", raw_write["target"])
     managed_changes = {
         assignment.attr.rpartition(".")[2]: assignment.value
         for assignment in prepared.managed_assignments
     }
     changes = ActualWireProjection(model).entity_values(prepared.selection.target, managed_changes)
-    valid_from, until = _authored_bounds(prepared.valid_time_window)
     match prepared.mutation:
         case "amend":
-            tx.wire.amend_where(target, changes, **_stated_start(valid_from))
+            tx.wire.amend_where(target, changes)
         case "delete":
             tx.wire.delete_where(target)
-        case "terminate":
-            tx.wire.terminate_where(target, **_stated_start(valid_from))
-        case "amendUntil":
-            tx.wire.amend_where(
-                target,
-                changes,
-                valid_from=_required(valid_from),
-                until=_required(until),
-            )
-        case "terminateUntil":
-            tx.wire.terminate_where(
-                target, valid_from=_required(valid_from), until=_required(until)
-            )
 
 
 def _compile_find(

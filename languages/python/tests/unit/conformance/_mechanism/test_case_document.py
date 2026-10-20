@@ -49,23 +49,3 @@ def test_eligibility_reads_the_case_declaration() -> None:
 def test_eligibility_non_run_only_declaration_is_compile_eligible() -> None:
     case = _synthetic({"compileEligibility": {"mode": "eligible"}})
     assert case_document.eligibility(case) is None
-
-
-def test_canonical_predicate_doc_preserves_valid_time_bounds_and_drops_at() -> None:
-    # `at` is Clock context, never an instruction field. Valid-Time bounds
-    # already use their canonical instruction spelling.
-    doc = case_document.canonical_predicate_doc(
-        {
-            "mutation": "terminateUntil",
-            "target": {
-                "entity": "Position",
-                "predicate": {"eq": {"path": "Position.id", "value": 1}},
-            },
-            "at": "2024-10-01T00:00:00+00:00",
-            "validFrom": "2024-07-01T00:00:00+00:00",
-            "until": "2024-09-01T00:00:00+00:00",
-        }
-    )
-    assert "at" not in doc
-    assert doc["validFrom"] == "2024-07-01T00:00:00+00:00"
-    assert doc["until"] == "2024-09-01T00:00:00+00:00"

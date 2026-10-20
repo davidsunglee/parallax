@@ -28,6 +28,8 @@ _GUIDE_CASE_IDS = (
     "m-temporal-write-017",
     "m-temporal-write-042",
     "m-unit-work-041",
+    "m-batch-write-005",
+    "m-batch-write-006",
     "m-execution-002",
 )
 
