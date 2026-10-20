@@ -2,18 +2,15 @@
 execution*, `m-sql` *Requested ranges*), and the Write Group a keyed loop over
 distinct objects executes as (`m-unit-work` *Write Group formation*).
 
-Each proof runs the same public writes twice: once as execution realizes them,
-grouping the openings, and once with the internal entry cap at one, so each
-opening runs as the singleton statement it lowers to alone. What a scripted
-port cannot establish is here: that PostgreSQL stores from one multi-row
-statement exactly the history the singleton statements store, collections of
-every shape included, and that a grouped statement fails as a whole with its
-own native diagnostic — which can differ from the error the earliest failing
-opening raises alone — while the attempt still rolls back, refuses further
-work, and reports that diagnostic's own retry verdict. A grouped insert whose
-rows belong to several objects fails the same way, naming no row, and a Write
-Group enforcing every effect before any insert reports a later object's
-shortfall ahead of an earlier object's insert failure.
+Each opening proof runs the same public writes twice: once as execution
+realizes them, grouping the openings, and once with the internal entry cap at
+one, so each opening runs as the singleton statement it lowers to alone. What a
+scripted port cannot establish is here: that PostgreSQL stores from one
+multi-row statement exactly the history the singleton statements store,
+collections of every shape included, and that a grouped statement fails as a
+whole with its own native diagnostic — which can differ from the error the
+earliest failing opening raises alone — while the attempt still rolls back,
+refuses further work, and reports that diagnostic's own retry verdict.
 """
 
 from __future__ import annotations

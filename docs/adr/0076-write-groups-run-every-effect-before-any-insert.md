@@ -1,14 +1,15 @@
 # Write Groups run every effect before any insert
 
-A flush executes its Write Plan as Write Groups: consecutive settled writes of
-one mutation phase over distinct objects, at most 64 of them, that execute as
-one sequence of Planned Steps and complete together. A group lays out every
+A flush executes its Write Plan as Write Groups: runs of at most 64 consecutive
+settled writes of one mutation phase over distinct objects, each executing as
+one sequence of Planned Steps and completing together. A group lays out every
 settled write's effects first and every settled write's inserts after them,
 each write's own order kept (`m-unit-work` *Write Group formation*). This
 supersedes the part of ADR 0045 that kept a temporal close adjacent to its
 successors with no unrelated step between them. A temporal mutation still
 expands in place, at its ordered position, and its own steps still keep its
-close ahead of its successors; only other objects' steps may now come between.
+closes ahead of its successors; the steps grouping adds between them are only
+other objects'.
 
 Executing writes one at a time cost at least one call per object, because
 execution batches only contiguous steps. Laying a group out effects-first makes
@@ -24,10 +25,11 @@ removal-dependent reinsertions keep their positions.
 
 The bound limits what a failing insert wastes. Every insert of a group waits
 behind every effect of the group, which has already executed and taken its
-locks, so the bound keeps that work proportional to 64 objects rather than to
-the flush. It is the planner's own constant, separate from execution's
-per-call statement and row caps, and correctness does not depend on it: the
-attempt is doomed either way.
+locks, so the bound keeps that work to the effects of 64 settled writes rather
+than to every settled write of the flush. A batch is one settled write, so the
+bound does not cap the rows a group's effects cover. It is the planner's own
+constant, separate from execution's per-call statement and row caps, and
+correctness does not depend on it: the attempt is doomed either way.
 
 The accepted cost is failure precedence. Where two objects of one group would
 each fail, the one presented first is reported, so a later object's effect

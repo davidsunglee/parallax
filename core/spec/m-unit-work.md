@@ -782,10 +782,9 @@ Four of those orderings are load-bearing and therefore normative:
   different row.
 - **Temporal expansion follows ordering.** A surviving temporal mutation stays
   one indivisible write through stages 3–4 and expands at its already-decided
-  position in stage 7 (ADR 0045), so its own steps hold its close ahead of its
-  successors and nothing of its own between them. In a Write Group of several
-  settled writes, other objects' steps may come between a close and its
-  successors (*Write Group formation*; ADR 0076).
+  position in stage 7 (ADR 0045), so its own steps hold its closes ahead of its
+  successors. In a Write Group of several settled writes, other objects' steps
+  may also come between them (*Write Group formation*; ADR 0076).
 - **Audit follows topology and precedes realization and lowering.** Stage 8
   reads each produced row's Row Origin and each close's Close Cause and adds
   ordinary planned values; it changes no topology, target, gate, or affected-row
@@ -923,8 +922,8 @@ objects they write are distinct:
   Inheritance Family's primary key: every row of a batch, and the one object a
   keyed, composed, or step-less write names. A write naming an object the open
   group already holds starts the next group.
-- A group holds at most 64 settled writes, so what a group's inserts wait behind
-  grows with that bound rather than with the flush.
+- A group holds at most 64 settled writes, so a group's inserts wait behind the
+  effects of at most that many settled writes, however many the flush holds.
 - A deferred settled write, a write whose insert the database allocates a key
   for, and a write naming no complete key — a readless predicate write, or an
   insert whose key is absent or database-computed — each form a group of their
