@@ -1581,20 +1581,17 @@ def test_run_case_runs_a_genuine_batch_collapse_write() -> None:
     assert port.writes == 2
 
 
-def test_run_case_lowers_a_pk_gen_sequence_batch_that_decomposes_per_row() -> None:
+def test_run_case_lowers_a_pk_gen_sequence_batch_as_one_grouped_insert() -> None:
     # m-pk-gen-008: a reachable claimed writeSequence whose SECOND entry hands
-    # out 2 of a reserved 3-id block — `statements: 2` for 2 rows (the case
-    # author's own declared per-row DECOMPOSE intent, distinct from the
-    # collapse-intent case above), so the engine splits it into two
-    # independent single-row INSERTs (m-pk-gen)
-    # rather than refusing. The registry UPDATE's `{increment: 3}` marker
-    # folds into a self-referential `next_val = next_val + ?` SET.
+    # out 2 of a reserved 3-id block. The engine buffers each row as its own
+    # single-row insert (m-pk-gen), which the planner never collapses, and
+    # execution inserts both rows of the distinct objects with one grouped
+    # statement. The registry UPDATE's `{increment: 3}` marker folds into a
+    # self-referential `next_val = next_val + ?` SET.
     case_path = case_format.default_cases_dir() / "m-pk-gen-008-sequence-batch-partial.yaml"
     envelope = adapter.run_case(case_path, _PROFILE.on_stand_in(_WritePort()))
     assert envelope["status"] == "ok", envelope
-    # The registry UPDATE + two independent Pass INSERTs (never one collapsed
-    # multi-row INSERT — the id list is derived, not authored).
-    assert len(envelope["emissions"]) == 3, envelope["emissions"]
+    assert len(envelope["emissions"]) == 2, envelope["emissions"]
 
 
 # --------------------------------------------------------------------------- #

@@ -627,6 +627,14 @@ _OBJECT_CLAIM_COALESCING_REASON: Final[str] = (
     "end and `tests/unit/test_write_claims.py` pins per rule"
 )
 
+_WRITE_GROUP_WITNESS_REASON: Final[str] = (
+    "a Write Group call-shape witness: it buffers ordinary inserts an idiomatic story "
+    "already shows, and what the case grades is that execution inserts two distinct "
+    "objects' rows with one statement — an execution property the compile/run conformance "
+    "lanes grade end to end and `tests/unit/snapshot/_handle/test_transaction_write_groups.py` "
+    "pins per call shape"
+)
+
 _OBSERVED_GENERATION_REASON: Final[str] = (
     "an object-state KEYING witness: it grades which of a unit of work's several "
     "observed generations of one key a write settles against, which a case states by "
@@ -1584,6 +1592,7 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-unit-work-025": _OBSERVED_STATE_COALESCING_REASON,
     "m-unit-work-026": _OBJECT_CLAIM_COALESCING_REASON,
     "m-unit-work-027": _OBJECT_CLAIM_COALESCING_REASON,
+    "m-unit-work-058": _WRITE_GROUP_WITNESS_REASON,
     "m-unit-work-017": _WRITE_VALUE_PROVENANCE_REASON,
     "m-unit-work-018": _WRITE_VALUE_PROVENANCE_REASON,
     "m-unit-work-019": _WRITE_VALUE_PROVENANCE_REASON,

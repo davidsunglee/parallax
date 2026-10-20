@@ -1460,6 +1460,19 @@ one statement, N value tuples — not N statements:
   binds: [<row1…>, <row2…>, <row3…>]
 ```
 
+Separate single-entry inserts of one entity naming the same members and holding
+no generated value — inserts of distinct objects one Write Group lays out
+together (`m-unit-work` *Write Group formation*) — take the same multi-row form
+when they are adjacent, each row still its own Planned Step (`m-execution`
+*Flush execution*). A `sequence`-allocated block handed to two objects
+(`m-pk-gen-008`) inserts them in one statement:
+
+```yaml
+- sql:
+    postgres: insert into pass(id, zone) values (?, ?), (?, ?)
+  binds: [1, north, 2, south]
+```
+
 A batched **update** of the same column over several keys is one keyed `UPDATE`
 per distinct key (or a single statement with an `IN` predicate when the new value
 is uniform across the keys):

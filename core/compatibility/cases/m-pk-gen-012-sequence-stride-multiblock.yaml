@@ -18,8 +18,8 @@ when:
         - { name: voucher_seq, nextVal: { increment: 20 } }
     - mutation: insert
       entity: parallax.compatibility.Voucher
-      statements: 2
-      note: "100,110"
+      statements: 1
+      note: "100,110 in one grouped insert"
       rows:
         - { id: 100, label: spring }
         - { id: 110, label: summer }
@@ -31,8 +31,8 @@ when:
         - { name: voucher_seq, nextVal: { increment: 20 } }
     - mutation: insert
       entity: parallax.compatibility.Voucher
-      statements: 2
-      note: "120,130"
+      statements: 1
+      note: "120,130 in one grouped insert"
       rows:
         - { id: 120, label: autumn }
         - { id: 130, label: winter }
@@ -43,29 +43,21 @@ then:
         mariadb: update pk_sequence set next_val = next_val + ? where name = ?
       binds: [20, voucher_seq]
     - sql:
-        postgres: insert into voucher(id, label) values (?, ?)
-        mariadb: insert into voucher(id, label) values (?, ?)
-      binds: [100, spring]
-    - sql:
-        postgres: insert into voucher(id, label) values (?, ?)
-        mariadb: insert into voucher(id, label) values (?, ?)
-      binds: [110, summer]
+        postgres: insert into voucher(id, label) values (?, ?), (?, ?)
+        mariadb: insert into voucher(id, label) values (?, ?), (?, ?)
+      binds: [100, spring, 110, summer]
     - sql:
         postgres: update pk_sequence set next_val = next_val + ? where name = ?
         mariadb: update pk_sequence set next_val = next_val + ? where name = ?
       binds: [20, voucher_seq]
     - sql:
-        postgres: insert into voucher(id, label) values (?, ?)
-        mariadb: insert into voucher(id, label) values (?, ?)
-      binds: [120, autumn]
-    - sql:
-        postgres: insert into voucher(id, label) values (?, ?)
-        mariadb: insert into voucher(id, label) values (?, ?)
-      binds: [130, winter]
+        postgres: insert into voucher(id, label) values (?, ?), (?, ?)
+        mariadb: insert into voucher(id, label) values (?, ?), (?, ?)
+      binds: [120, autumn, 130, winter]
   tableState:
     voucher:
       - { id: 100, label: spring }
       - { id: 110, label: summer }
       - { id: 120, label: autumn }
       - { id: 130, label: winter }
-  databaseCalls: 6
+  databaseCalls: 4

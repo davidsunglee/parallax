@@ -1,10 +1,11 @@
-"""Grouped temporal openings through execution's shared physical lowering
-(`m-sql` *Requested ranges*, `m-execution` *Flush execution*).
+"""Grouped inserts through execution's shared physical lowering (`m-sql`
+*Requested ranges* and *Batched insert / update*, `m-execution` *Flush
+execution*), taken here mostly through temporal openings.
 
-A run of contiguous single-entry openings of one temporal Entity that name the
-same members and hold no generated value compiles, one entry at a time, into
-one multi-row insert carrying exactly the binds and bind metadata the openings'
-own statements carry, in order. The run ends untouched at a step that cannot
+A run of contiguous single-entry inserts of one Entity that name the same
+members and hold no generated value compiles, one entry at a time, into one
+multi-row insert carrying exactly the binds and bind metadata the inserts' own
+statements carry, in order. The run ends untouched at a step that cannot
 join it, and at its capacity before another step is even taken; a later
 opening's ordinary failure leaves the statement holding exactly the openings
 before it. A dry traversal of settled steps answers the statements execution
@@ -227,16 +228,13 @@ def _wire(*steps: PlannedStep, meta: Metamodel = _META) -> tuple[object, ...]:
 
 
 # --------------------------------------------------------------------------- #
-# Which steps begin a grouped opening.                                         #
+# Which steps begin a grouped insert.                                          #
 # --------------------------------------------------------------------------- #
 
 
-def test_a_temporal_single_entry_insert_without_generated_values_begins_a_grouped_opening() -> None:
+def test_any_single_entry_insert_without_generated_values_begins_a_grouped_insert() -> None:
     (opening,) = _openings(1)
     assert _cursor(()).grouped_insert_start(opening) is opening
-
-
-def test_every_other_step_lowers_alone() -> None:
     account_meta = model_of(MODELS["account"])
     account = entity_by_name(account_meta, "Account")
     assert account is not None
@@ -255,13 +253,16 @@ def test_every_other_step_lowers_alone() -> None:
             ),
         ),
     )
+    account_cursor = LoweringCursor((), LayoutPayloadPreparer(account_meta), account_meta, POSTGRES)
+    assert account_cursor.grouped_insert_start(non_temporal) is non_temporal
+
+
+def test_every_other_step_lowers_alone() -> None:
     (opening,) = _openings(1)
     generated = _opening(
         PlannedRow(attributes={**opening.entries[0].row.attributes, _attr("id"): MAX_PLUS_ONE})
     )
     logical = PlannedInsert(entity=_POSITION, entries=(*opening.entries, *_openings(2)[1].entries))
-    account_cursor = LoweringCursor((), LayoutPayloadPreparer(account_meta), account_meta, POSTGRES)
-    assert account_cursor.grouped_insert_start(non_temporal) is None
     cursor = _cursor(())
     for step in (generated, logical, _close(1)):
         assert cursor.grouped_insert_start(step) is None

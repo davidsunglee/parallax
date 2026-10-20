@@ -952,7 +952,7 @@ def test_a_row_its_settled_write_removed_is_no_longer_owned() -> None:
         uow.buffer(_balance_update_from(1, _FIXED))
 
     _run(body, meta=_BALANCE, steps=simulated)
-    assert _kinds(simulated) == ["insert", "insert", "delete", "delete", "close", "insert"]
+    assert _kinds(simulated) == ["insert", "delete", "delete", "close", "insert"]
 
 
 def test_a_row_whose_start_is_the_attempts_instant_is_not_owned_without_its_opening() -> None:
@@ -966,24 +966,68 @@ def test_a_row_whose_start_is_the_attempts_instant_is_not_owned_without_its_open
 
 
 def test_each_settled_write_spends_its_evidence_before_the_next_group_executes() -> None:
-    first = _account_write("amend", 1, 7)
-    second = _account_write("amend", 2, 3)
-    assert isinstance(first, ObservedKeyedWrite) and isinstance(second, ObservedKeyedWrite)
-    retained = (first.retained_observation, second.retained_observation)
+    writes = (
+        _account_write("amend", 1, 7),
+        _account_write("amend", 2, 3),
+        _account_write("delete", 3, 1),
+    )
+    retained = tuple(
+        write.retained_observation for write in writes if isinstance(write, ObservedKeyedWrite)
+    )
     seen: list[tuple[bool, ...]] = []
 
     def spent() -> tuple[bool, ...]:
         return tuple(observation.consumed for observation in retained)
 
     def body(uow: UnitOfWork) -> None:
-        uow.buffer(first)
-        uow.buffer(second)
+        for write in writes:
+            uow.buffer(write)
 
     _run(
         body,
         steps=ObservedSteps(_simulated(), observe=lambda _position, _steps: seen.append(spent())),
     )
-    assert [*seen, spent()] == [(False, False), (True, False), (True, True)]
+    # The two amendments share the update phase's group; the deletion is the
+    # delete phase's own.
+    assert [*seen, spent()] == [
+        (False, False, False),
+        (True, True, False),
+        (True, True, True),
+    ]
+
+
+def test_full_groups_publish_in_turn_and_a_failed_one_ends_the_flush() -> None:
+    claims = [_account_claim(account_id, 1) for account_id in range(1, 131)]
+    spent: list[int] = []
+
+    def body(uow: UnitOfWork) -> None:
+        for account_id, claim in enumerate(claims, start=1):
+            uow.buffer(_account_amend(account_id, uow.retain(claim)))
+        uow.read(lambda: None)
+
+    _run(
+        body,
+        steps=ObservedSteps(
+            _simulated(),
+            observe=lambda _position, _steps: spent.append(sum(c.consumed for c in claims)),
+        ),
+    )
+    assert spent == [0, 64, 128]
+    assert all(claim.consumed for claim in claims)
+
+    failing = [_account_claim(account_id, 1) for account_id in range(1, 131)]
+    steps = ObservedSteps(_simulated(), failing=1, failure=RuntimeError("the second group failed"))
+
+    def failed(uow: UnitOfWork) -> None:
+        for account_id, claim in enumerate(failing, start=1):
+            uow.buffer(_account_amend(account_id, uow.retain(claim)))
+        with pytest.raises(RuntimeError, match="the second group failed"):
+            uow.read(lambda: None)
+
+    with pytest.raises(RollbackOnlyError):
+        _run(failed, steps=steps)
+    assert [claim.consumed for claim in failing] == [True] * 64 + [False] * 66
+    assert steps.executions == 2
 
 
 def test_a_caught_execution_failure_still_dooms_the_attempt() -> None:
@@ -1195,8 +1239,15 @@ def test_each_settled_write_names_its_sources_state_itself() -> None:
     assert [tuple(write.changed) for write in settled_writes(plan)] == [(first.key,), (second.key,)]
 
 
-def test_a_failed_group_publishes_nothing_while_the_group_before_it_stays_published() -> None:
-    failure = RuntimeError("the second settled write failed")
+@pytest.mark.parametrize(
+    ("failing", "published"),
+    [(0, (False, False, False)), (1, (True, True, False))],
+    ids=["the-amendments-group-fails", "the-deletion-group-fails"],
+)
+def test_a_failed_group_publishes_nothing_while_the_group_before_it_stays_published(
+    failing: int, published: tuple[bool, ...]
+) -> None:
+    failure = RuntimeError("the group failed")
     claims: list[RetainedObservation] = []
 
     def body(uow: UnitOfWork) -> None:
@@ -1204,14 +1255,21 @@ def test_a_failed_group_publishes_nothing_while_the_group_before_it_stays_publis
             claim = uow.retain(_account_claim(account_id, version))
             claims.append(claim)
             uow.buffer(_account_amend(account_id, claim))
-        with pytest.raises(RuntimeError, match="the second settled write failed"):
+        deleted = uow.retain(_account_claim(3, 1))
+        claims.append(deleted)
+        uow.buffer(
+            buffered_write(
+                _prepared_keyed(KeyedWriteInstruction("delete", "Account", ({"id": 3},)), _ACCOUNT),
+                deleted,
+            )
+        )
+        with pytest.raises(RuntimeError, match="the group failed"):
             uow.read(lambda: None)
 
     with pytest.raises(RollbackOnlyError):
-        _run(body, steps=ObservedSteps(_simulated(), failing=1, failure=failure))
-    first, second = claims
-    assert (first.consumed, first.invalidated) == (True, True)
-    assert (second.consumed, second.invalidated) == (False, False)
+        _run(body, steps=ObservedSteps(_simulated(), failing=failing, failure=failure))
+    assert tuple(claim.consumed for claim in claims) == published
+    assert tuple(claim.invalidated for claim in claims) == published
 
 
 def test_a_settled_write_with_no_step_spends_its_source_and_changes_nothing() -> None:

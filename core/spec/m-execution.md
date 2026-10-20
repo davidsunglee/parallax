@@ -243,9 +243,11 @@ later step's lowering failure cannot overtake it. A failed execution completes
 no settled write, and the failure dooms the attempt.
 
 Where the connection holds ordered write transport (`m-db-port`), a run of two
-or more contiguous count-only temporal effects — closes, guards, revisions, and
-removals — is presented in one invocation instead of one call each; every other
-step, and every step on a connection holding none, runs alone. Whether a step
+or more contiguous count-only effects on one row each — temporal closes,
+guards, revisions, and removals, and Non-Temporal updates and deletes of one
+key that expect an exact count — is presented in one invocation instead of one
+call each; every other step, a multi-key or predicate-selected one included,
+and every step on a connection holding none, runs alone. Whether a step
 may join a run is decided from the step itself before its payload is demanded,
 including the bound on binds its statement promises to fit the dialect's limit;
 a statement exceeding that promise is a lowering failure. A run never crosses an
@@ -278,33 +280,44 @@ follows is submitted. Rollback, rollback-only state, retry classification of
 the failure that propagates, and the precedence of cancellation and fatal
 exceptions are unchanged.
 
-Execution inserts a run of contiguous temporal openings — single-entry inserts
-of one Entity naming the same members and holding no generated value — with
-one multi-row statement (`m-sql` *Requested ranges*), on every connection.
-Each opening remains its own Planned Step, and the statement is one ordinary
-Database Call. Whether an opening may join is decided from the step before its
-payload is demanded. Before another step is looked at the statement must have
+Execution inserts a run of contiguous single-entry inserts of one Entity naming
+the same members and holding no generated value — a range's temporal openings,
+or inserts of distinct objects one Write Group lays out together — with one
+multi-row statement (`m-sql` *Requested ranges* and *Batched insert / update*),
+on every connection, whatever the Entity's temporality. Each insert remains its
+own Planned Step, and the statement is one ordinary Database Call. Whether an
+insert may join is decided from the step before its payload is demanded. Before another step is looked at the statement must have
 room for one more entry within the dialect's bind limit (`m-dialect`) and an
 internal entry cap; at that capacity the statement runs before another step is
 looked at, and otherwise the one step looked at that cannot join waits,
 unprepared, until the statement has run. A run never crosses a Write Group or
-an effect, so no opening moves ahead of the effect it follows. Any other insert
-runs alone as before, and a logical multi-entry insert is never split.
+an effect, so no insert moves ahead of an effect before it. A logical
+multi-entry insert, which batching formed by membership (`m-batch-write`), runs
+alone and is never split or joined; any other insert runs alone as before.
 
-Preparing or appending a later opening of a run may fail ordinarily.
-The openings appended before it are then inserted as the one statement they were
+Preparing or appending a later insert of a run may fail ordinarily.
+The inserts appended before it are then inserted as the one statement they were
 selected as — never prepared again or inserted one at a time — and that failure
 propagates only where the statement succeeds. A failure preparing the run's
-first opening inserts nothing, and a control-flow or fatal exception inserts
+first insert inserts nothing, and a control-flow or fatal exception inserts
 none of the run.
 
-A grouped statement succeeds or fails as a whole. Its failure is the
-statement's own database error, classified and judged for retry as any
-statement's is; it can name another constraint, message, or category than the
-error the earliest failing opening would raise alone, and it is neither
-attributed to an opening nor explained by replaying or reading anything. A Write
-Group whose statement fails completes none of its settled writes, and its
-attempt rolls back and becomes rollback-only exactly as for any other failure.
+A grouped statement succeeds or fails as a whole, however many objects its rows
+belong to. Its failure is the statement's own database error, classified and
+judged for retry as any statement's is; it can name another constraint,
+message, or category than the error the earliest failing row would raise alone,
+and it is neither attributed to a row or an object nor explained by replaying or
+reading anything. A Write Group whose statement fails completes none of its
+settled writes, and its attempt rolls back and becomes rollback-only exactly as
+for any other failure.
+
+A Write Group presents every effect before any insert (`m-unit-work` *Write
+Group formation*), so where two of its settled writes would each fail, the
+failure presented first is the one that propagates: a later write's effect
+shortfall can precede an earlier write's insert violation, and the two can
+differ in retry eligibility. Either way the group completes none of its settled
+writes and its attempt is doomed; which of two independent failures is reported
+is not promised to match executing each settled write alone.
 
 ## What the suite pins down
 

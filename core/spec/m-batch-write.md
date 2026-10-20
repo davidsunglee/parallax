@@ -29,6 +29,11 @@ Delete whose Key Target holds several key tuples.
 - An implementation **MUST NOT** introduce a batch flag, batch identifier, group
   wrapper, or per-row batch annotation. Two writes either share a step or they do
   not, and that is the whole of the decision.
+- Execution grouping is a separate fact. A Write Group (`m-unit-work` *Write
+  Group formation*) decides which settled writes execute and complete together,
+  and execution may present their steps in shared calls (`m-execution`), but two
+  writes of one group never share a step: membership in one step stays this
+  module's decision alone.
 - Incompatible writes remain **separate logical steps**. In particular a
   **per-row gated** write (`m-opt-lock`) can never join another: its gate binds
   one row's observed version, so each stays its own step even where a driver

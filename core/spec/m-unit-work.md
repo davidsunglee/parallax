@@ -782,8 +782,10 @@ Four of those orderings are load-bearing and therefore normative:
   different row.
 - **Temporal expansion follows ordering.** A surviving temporal mutation stays
   one indivisible write through stages 3–4 and expands at its already-decided
-  position in stage 7 (ADR 0045), so its close and successors are adjacent and no
-  unrelated step interleaves.
+  position in stage 7 (ADR 0045), so its own steps hold its close ahead of its
+  successors and nothing of its own between them. In a Write Group of several
+  settled writes, other objects' steps may come between a close and its
+  successors (*Write Group formation*; ADR 0076).
 - **Audit follows topology and precedes realization and lowering.** Stage 8
   reads each produced row's Row Origin and each close's Close Cause and adds
   ordinary planned values; it changes no topology, target, gate, or affected-row
@@ -905,6 +907,39 @@ topology and correctness semantics already decided.
   produced values like its steps, and belongs to exactly one Write Group. A
   deferred settled write's group plans no step of its own.
 
+### Write Group formation
+
+Settlement forms the Write Groups as it settles the sequence stage 4 ordered.
+Within each region (*Buffered, batched, ordered writes*), the inserts, then the
+updates, then the deletes are each one **mutation phase**. A readless predicate
+write is a phase of its own at its barrier, and an insert that must follow the
+removal clearing its way starts a new region. A Write Group never spans two
+mutation phases.
+
+Consecutive settled writes of one mutation phase share a Write Group while the
+objects they write are distinct:
+
+- Each settled write names its **complete** set of Object Keys under its
+  Inheritance Family's primary key: every row of a batch, and the one object a
+  keyed, composed, or step-less write names. A write naming an object the open
+  group already holds starts the next group.
+- A group holds at most 64 settled writes, so what a group's inserts wait behind
+  grows with that bound rather than with the flush.
+- A deferred settled write, a write whose insert the database allocates a key
+  for, and a write naming no complete key — a readless predicate write, or an
+  insert whose key is absent or database-computed — each form a group of their
+  own.
+- A settled write with no step joins like any other and completes with its group.
+
+A group's Planned Steps are every settled write's effects — each step that is
+not an insert — followed by every settled write's inserts, each write's own
+order kept within both. An update- or delete-phase write's inserts open the
+successors of its own effects, and an insert-phase write produces only inserts,
+so the layout moves only successors, and only past other objects' steps: no
+insert moves behind an effect of another mutation phase. Nothing else is
+reordered: the phases, the referential order, and the authored order of updates
+are stage 4's, and no key sort applies.
+
 ### Write Groups complete before later work runs
 
 The unit of work runs a finalized Write Plan Write Group by Write Group, in
@@ -915,7 +950,8 @@ soon as every step of a group has succeeded — at once for a group with no step
 — and before any step of a later group executes, the unit of work completes
 every settled write of the group synchronously, in order; a deferred settled
 write binds and executes its range at its turn first. No settled write of a
-group depends on another's completion. Completing a settled write:
+group depends on another's completion, because their objects are distinct
+(*Write Group formation*). Completing a settled write:
 
 ```text
 spend the source authority of every write the settled write composed
@@ -1561,6 +1597,7 @@ cases:
 | fk-ordering / flush cases | buffered writes flush ordered by foreign-key dependency |
 | insert-then-amend coalescing (`m-unit-work-008`, `m-temporal-write-008`, `m-temporal-write-030`) | a same-transaction insert-then-amend flushes as one write with the final value — no intermediate milestone (non-temporal / Transaction-Time-Only / Bitemporal) |
 | insert-then-delete cancellation (`m-unit-work-010`) | a same-transaction insert-then-delete cancels — the flush emits no DML for that object |
+| grouped inserts of distinct objects (`m-unit-work-058`) | inserts batching left as separate Planned Steps share one Write Group once ordering makes them adjacent, and execution inserts them with one statement |
 | dirty-read refusal (`m-unit-work-031`) | at Read Committed, a reading unit of work observes the committed row while a concurrent one holds an uncommitted write to it |
 | nonrepeatable-read refusal (`m-unit-work-032`, `-033`, `-034`) | at Repeatable Read, a unit of work's second read answers what its first did across a peer's committed write — for a plain find, a deep fetch's own included level, and a streamed delivery's pages |
 

@@ -132,7 +132,7 @@ class WriteCall:
 
 def inserted_rows(call: WriteCall) -> tuple[tuple[Bind, ...], ...]:
     """The binds of each row the insert ``call`` carries, one per value tuple
-    its statement renders: a run of temporal openings shares one multi-row
+    its statement renders: a run of single-entry inserts shares one multi-row
     statement (`m-execution` *Flush execution*)."""
     tuples = call.sql.count("), (") + 1
     width, extra = divmod(len(call.binds), tuples)

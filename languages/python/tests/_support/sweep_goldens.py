@@ -169,6 +169,7 @@ _READLESS_PREDICATE_WRITE_SCENARIOS: Final[frozenset[str]] = frozenset(
     }
 )
 _READLESS_BARRIER_SCENARIOS: Final[frozenset[str]] = frozenset({"m-batch-write-011"})
+_WRITE_GROUP_SCENARIOS: Final[frozenset[str]] = frozenset({"m-unit-work-058"})
 _LOCKING_FALLBACK_SCENARIOS: Final[frozenset[str]] = frozenset({"m-opt-lock-023"})
 _OBJECT_CLAIM_COALESCING_SCENARIOS: Final[frozenset[str]] = frozenset(
     {"m-unit-work-026", "m-unit-work-027"}
@@ -306,6 +307,7 @@ WRITE_EXERCISED: Final[frozenset[str]] = (
     | _TEMPORAL_COALESCING_SCENARIOS
     | _READLESS_PREDICATE_WRITE_SCENARIOS
     | _READLESS_BARRIER_SCENARIOS
+    | _WRITE_GROUP_SCENARIOS
     | _LOCKING_FALLBACK_SCENARIOS
     | _OBJECT_CLAIM_COALESCING_SCENARIOS
     | _PIN_CONTRAST_SCENARIOS

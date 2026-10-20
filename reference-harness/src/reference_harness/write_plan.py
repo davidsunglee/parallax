@@ -596,8 +596,9 @@ def insert_value_rows(case: Case, statement: str, binds: list[Any]) -> list[list
     """An INSERT's binds, one list per value tuple it renders, in tuple order.
 
     A multi-row INSERT carries one value tuple per row — a batched insert
-    (`m-batch-write`) and a run of temporal openings sharing one statement
-    (`m-sql` *Requested ranges*) alike — so a row's binds are found by counting
+    (`m-batch-write`) and a run of single-entry inserts sharing one statement
+    (`m-sql` *Requested ranges* and *Batched insert / update*) alike — so a
+    row's binds are found by counting
     each tuple's own placeholders rather than by assuming one row per statement.
     Read through :func:`_sql_scan`, so neither a bracket nor a `?` inside a quoted
     identifier or a string literal is taken for syntax.

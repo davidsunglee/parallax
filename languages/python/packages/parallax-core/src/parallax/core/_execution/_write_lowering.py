@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections.abc import Iterator
 from typing import Final, NamedTuple
 
-from parallax.core import temporal_read
 from parallax.core.dialect import Dialect
 from parallax.core.metamodel import (
     AttributeIdentity,
@@ -20,8 +19,11 @@ from parallax.core.sql_gen._write import (
 )
 from parallax.core.write_plan.payload import RowPayload, WritePayloadPreparer
 from parallax.core.write_plan.steps import (
+    ExactCount,
+    KeyTarget,
     MaxPlusOne,
     PlannedClose,
+    PlannedDelete,
     PlannedInsert,
     PlannedStep,
     PlannedTemporalGuard,
@@ -44,10 +46,10 @@ _GROUPED_INSERT_ROWS: Final = 64
 
 
 class GroupedInsert(NamedTuple):
-    """One statement inserting a run of temporal openings, and how the run
+    """One statement inserting a run of single-entry inserts, and how the run
     ended: at ``following``, the step that could not join it, taken but neither
     prepared nor lowered; at ``failure``, raised ordinarily preparing or
-    appending a later opening, the statement then holding exactly the entries
+    appending a later insert, the statement then holding exactly the entries
     appended before it; or at neither, where the statement reached its capacity
     or the steps ran out."""
 
@@ -93,20 +95,19 @@ class LoweringCursor:
         return lowered_within(step, parameter_ceiling, self._payloads, self._meta, self._dialect)
 
     def grouped_insert_start(self, step: PlannedStep) -> PlannedInsert | None:
-        """``step`` where it can begin a grouped insert — a temporal
-        Entity's single-entry insert holding no generated value — decided before
-        its payload is demanded; ``None`` where it lowers alone."""
+        """``step`` where it can begin a grouped insert — a single-entry insert
+        holding no generated value — decided before its payload is demanded;
+        ``None`` where it lowers alone."""
         if (
             isinstance(step, PlannedInsert)
             and len(step.entries) == 1
-            and _temporal(self._meta, step.entity)
             and not _generates(step.entries[0])
         ):
             return step
         return None
 
     def lowered_grouped_insert(self, first: PlannedInsert) -> GroupedInsert:
-        """``first`` and the compatible openings following it, as one
+        """``first`` and the compatible inserts following it, as one
         multi-row statement.
 
         Before another step is taken the statement must have room for one more
@@ -147,13 +148,13 @@ def stream_physical(
     dialect: Dialect,
 ) -> Iterator[LoweredStatement]:
     """Each statement ``steps`` execute as, in order: a run of compatible
-    temporal openings as the one statement inserting them all, and every other
-    step as the one statement it lowers to.
+    single-entry inserts as the one statement inserting them all, and every
+    other step as the one statement it lowers to.
 
     The runs are selected and lowered by the very cursor operations execution
     selects and lowers them by, so the statements a dry traversal of settled
     steps answers are the statements their execution runs. A run ended by a
-    later opening's failure answers the statement holding the openings before
+    later insert's failure answers the statement holding the inserts before
     it, then raises that failure.
     """
     cursor = LoweringCursor(steps, payloads, meta, dialect)
@@ -185,10 +186,11 @@ def ordered_parameter_ceiling(step: PlannedStep, dialect: Dialect) -> int | None
     carries where ordered write transport can present it, computed before its
     payload is demanded; ``None`` where the step must run alone.
 
-    Only a count-only temporal effect qualifies — a close, guard, revision, or
-    removal — and only one whose ceiling fits the dialect's configured parameter
-    limit. Every other step, and one whose ceiling exceeds that limit, runs
-    alone.
+    Only a count-only effect on one row qualifies — a temporal close, guard,
+    revision, or removal, or a Non-Temporal update or delete of one key that
+    expects an exact count — and only one whose ceiling fits the dialect's
+    configured parameter limit. Every other step, and one whose ceiling exceeds
+    that limit, runs alone.
     """
     match step:
         case (
@@ -196,6 +198,8 @@ def ordered_parameter_ceiling(step: PlannedStep, dialect: Dialect) -> int | None
             | PlannedTemporalRevision()
             | PlannedTemporalRemoval()
             | PlannedTemporalGuard()
+            | PlannedUpdate(target=KeyTarget(key_values=(_,)), affected_rows=ExactCount())
+            | PlannedDelete(target=KeyTarget(key_values=(_,)), affected_rows=ExactCount())
         ):
             ceiling = effect_parameter_ceiling(step)
             return ceiling if ceiling <= dialect.max_bind_parameters else None
@@ -247,13 +251,6 @@ def _row_payload(
     return payloads.row(entity, entry) if entry.prepared is None else entry.prepared
 
 
-def _temporal(meta: Metamodel, entity: EntityIdentity) -> bool:
-    return isinstance(
-        temporal_read.view(meta).shape(entity),
-        temporal_read.TransactionTimeOnly | temporal_read.Bitemporal,
-    )
-
-
 def _generates(entry: WriteRow) -> bool:
     return any(isinstance(value, MaxPlusOne) for value in entry.row.attributes.values())
 
@@ -263,7 +260,7 @@ def _joining(
     entity: EntityIdentity,
     members: frozenset[AttributeIdentity | ValueObjectIdentity],
 ) -> WriteRow | None:
-    """``step``'s one entry where it can join a grouped opening of ``entity``
+    """``step``'s one entry where it can join a grouped insert of ``entity``
     whose entries name ``members``: placement follows the Entity and the
     members named, never the values held."""
     match step:
