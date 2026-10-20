@@ -416,6 +416,102 @@ def test_a_wire_predicate_write_takes_a_typed_query_as_its_selection() -> None:
     ]
 
 
+def test_a_wire_predicate_replacement_completes_its_data_and_never_writes_its_key() -> None:
+    port = ScriptedAdapter(Transact(Write()))
+    db_for(PERSON, port).transact(
+        lambda tx: tx.wire.replace_where(_PERSON_TARGET, {"id": 7, "name": "Grace"})
+    )
+
+    assert _reads(port) == []
+    assert _writes(port) == [WriteCall("update person set name = %s where id = %s", ("Grace", 1))]
+
+
+def test_a_wire_predicate_replacement_states_what_a_published_node_holds() -> None:
+    # A read result is a whole state, so it is handed over as it is; its key
+    # addresses nothing, since the selection names the rows written.
+    port = ScriptedAdapter(Transact(Read(rows=[dict(_PERSON_ROW)]), Write()))
+    other: dict[str, object] = {
+        "entity": "parallax.compatibility.Person",
+        "predicate": {"eq": {"path": "parallax.compatibility.Person.id", "value": 2}},
+    }
+
+    def fn(tx: TxnContext) -> None:
+        tx.wire.replace_where(other, _node(tx, _PERSON_QUERY))
+
+    db_for(PERSON, port).transact(fn)
+    assert len(_reads(port)) == 1
+    assert _writes(port) == [WriteCall("update person set name = %s where id = %s", ("Ada", 2))]
+
+
+def test_a_wire_predicate_replacement_refuses_a_node_of_another_entity() -> None:
+    port = ScriptedAdapter(Transact(Read(rows=[dict(_PERSON_ROW)])))
+    passports: dict[str, object] = {"entity": "Passport", "predicate": {"true": {}}}
+
+    def fn(tx: TxnContext) -> None:
+        node = _node(tx, _PERSON_QUERY)
+        with pytest.raises(
+            instructions.WriteInstructionError,
+            match=r"over parallax\.compatibility\.Passport states a whole state of that "
+            r"Entity, and this node was published for parallax\.compatibility\.Person",
+        ):
+            tx.wire.replace_where(passports, node)
+
+    db_for(PERSON, port).transact(fn)
+    assert _writes(port) == []
+
+
+def test_a_wire_predicate_replacement_states_no_relationship() -> None:
+    port = ScriptedAdapter(Transact())
+
+    def fn(tx: TxnContext) -> None:
+        with pytest.raises(
+            instructions.WriteInstructionError,
+            match=r"Person: predicate write row names undeclared member\(s\) \['passport'\]",
+        ):
+            tx.wire.replace_where(_PERSON_TARGET, {"name": "Grace", "passport": {"number": "X"}})
+
+    db_for(PERSON, port).transact(fn)
+    assert _writes(port) == []
+
+
+class ReadOnlyBadge(Entity, table="wire_badge", namespace="parallax.compatibility"):
+    """A LOCAL entity declaring a read-only member beside a writable one: no
+    corpus readless Entity declares one."""
+
+    id: Attr[int] = attr(primary_key=True)
+    label: Attr[str | None] = attr(max_length=16)
+    issued: Attr[str | None] = attr(max_length=16, read_only=True)
+
+
+BADGE_META = DomainModel(ReadOnlyBadge)
+_BADGE_TARGET: dict[str, object] = {
+    "entity": "parallax.compatibility.ReadOnlyBadge",
+    "predicate": {"eq": {"path": "parallax.compatibility.ReadOnlyBadge.id", "value": 1}},
+}
+
+
+def test_a_predicate_replacement_never_writes_a_read_only_member() -> None:
+    # Wire refuses one stated; Typed's instance holds it and leaves it out.
+    port = ScriptedAdapter(Transact(Write()))
+
+    def fn(tx: TxnContext) -> None:
+        with pytest.raises(
+            instructions.WriteInstructionError, match="issued: read-only fields may not be assigned"
+        ):
+            tx.wire.replace_where(_BADGE_TARGET, {"label": "gold", "issued": "2024"})
+        tx.replace_where(
+            ReadOnlyBadge.where(ReadOnlyBadge.id == 1),
+            ReadOnlyBadge(id=1, label="gold", issued="2024"),
+        )
+
+    own_root(
+        Database.connect(port, BADGE_META, clock=FixedClock(FIXED))
+    ).using_database_login().transact(fn)
+    assert _writes(port) == [
+        WriteCall("update wire_badge set label = %s where id = %s", ("gold", 1))
+    ]
+
+
 # --------------------------------------------------------------------------- #
 # A keyed source is a hinted node Parallax published, and nothing else.       #
 # --------------------------------------------------------------------------- #
@@ -683,6 +779,8 @@ def test_every_update_verb_requires_the_change_document_its_signature_states() -
             tx.wire.amend(node, none_changes, until=_UNTIL)
         with pytest.raises(instructions.WriteInstructionError, match="document of names"):
             tx.wire.amend_where(_POSITION_TARGET, none_changes)
+        with pytest.raises(instructions.WriteInstructionError, match="document of names"):
+            tx.wire.replace_where(_POSITION_TARGET, none_changes)
 
     own_root(
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))

@@ -318,6 +318,7 @@ def _transaction_entry_points(tx: TxnContext) -> dict[str, _Work]:
         "delete": lambda: tx.delete(UNUSED),
         "terminate": lambda: tx.terminate(UNUSED, until=FIXED),
         "amend_where": lambda: tx.amend_where(UNUSED, UNUSED),
+        "replace_where": lambda: tx.replace_where(UNUSED, UNUSED),
         "delete_where": lambda: tx.delete_where(UNUSED),
         "wire.insert": lambda: tx.wire.insert(UNUSED, UNUSED, valid_from=NO_START, until=FIXED),
         "wire.amend": lambda: tx.wire.amend(UNUSED, UNUSED, until=FIXED),
@@ -328,6 +329,7 @@ def _transaction_entry_points(tx: TxnContext) -> dict[str, _Work]:
         "wire.delete": lambda: tx.wire.delete(UNUSED),
         "wire.terminate": lambda: tx.wire.terminate(UNUSED, until=FIXED),
         "wire.amend_where": lambda: tx.wire.amend_where(UNUSED, UNUSED),
+        "wire.replace_where": lambda: tx.wire.replace_where(UNUSED, UNUSED),
         "wire.delete_where": lambda: tx.wire.delete_where(UNUSED),
     }
 

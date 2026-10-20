@@ -49,7 +49,7 @@
       ]
     },
     "predicateWriteInstruction": {
-      "description": "A predicate-selected (set-based) write: a mutation on every row of `target.entity` matching `target.predicate`, with `assignments` on an amendment. An empty `assignments` list is the empty amendment, judged like any other and then dropped, with no statement. This is the set-based analogue of the keyed instruction. It lowers to one readless statement, so its target is an unversioned non-temporal Entity; a model-aware validator refuses any other target (`m-batch-write`). Assignment list order is DATA order only — the target's Entity Layout determines the emitted SET columns and their binds.",
+      "description": "A predicate-selected (set-based) write: a mutation on every row of `target.entity` matching `target.predicate`, with `assignments` on an amendment and a `row` on a replacement. An empty `assignments` list is the empty amendment, judged like any other and then dropped, with no statement. A replacement's `row` states each selected object's complete writable state, completed when the write is prepared exactly as any replacement's is; a primary-key member it states addresses nothing, since the predicate selects the rows, and is never written. This is the set-based analogue of the keyed instruction. It lowers to one readless statement, so its target is an unversioned non-temporal Entity; a model-aware validator refuses any other target (`m-batch-write`). Assignment list order and row member order are DATA order only — the target's Entity Layout determines the emitted SET columns and their binds.",
       "type": "object",
       "additionalProperties": false,
       "required": ["mutation", "target"],
@@ -59,17 +59,35 @@
         "assignments": {
           "type": "array",
           "items": { "$ref": "#/$defs/writeAssignment" }
-        }
+        },
+        "row": { "$ref": "#/$defs/writeRow" }
       },
       "allOf": [
         {
-          "description": "An amendment (`amend`) MUST carry `assignments`, possibly empty; a deletion (`delete`) MUST NOT.",
+          "description": "An amendment (`amend`) MUST carry `assignments`, possibly empty, and no `row`.",
           "if": {
             "properties": { "mutation": { "const": "amend" } },
             "required": ["mutation"]
           },
-          "then": { "required": ["assignments"] },
-          "else": { "not": { "required": ["assignments"] } }
+          "then": { "required": ["assignments"], "not": { "required": ["row"] } }
+        },
+        {
+          "description": "A replacement (`replace`) MUST carry `row`, possibly empty, and no `assignments`.",
+          "if": {
+            "properties": { "mutation": { "const": "replace" } },
+            "required": ["mutation"]
+          },
+          "then": { "required": ["row"], "not": { "required": ["assignments"] } }
+        },
+        {
+          "description": "A deletion (`delete`) carries neither `assignments` nor `row`.",
+          "if": {
+            "properties": { "mutation": { "const": "delete" } },
+            "required": ["mutation"]
+          },
+          "then": {
+            "not": { "anyOf": [{ "required": ["assignments"] }, { "required": ["row"] }] }
+          }
         }
       ]
     },
@@ -213,8 +231,8 @@
       "enum": ["amend", "amendUntil", "replace", "replaceUntil", "delete", "terminate", "terminateUntil"]
     },
     "predicateMutation": {
-      "description": "The predicate-selected (set-based) write mutation surface: `amend` and `delete`. Its target is unversioned and Non-Temporal, so it has no history to close and no Valid Time to bound: no `terminate` and no bounded `*Until` form. A set-based write has no `insert` form — there is no predicate to select rows that do not yet exist — and no replacement. `compatibility-case.schema.json`'s `predicateWrite` references this enum rather than redefining it.",
-      "enum": ["amend", "delete"]
+      "description": "The predicate-selected (set-based) write mutation surface: `amend`, `replace`, and `delete`. Its target is unversioned and Non-Temporal, so it has no history to close and no Valid Time to bound: no `terminate` and no bounded `*Until` form. A set-based write has no `insert` form — there is no predicate to select rows that do not yet exist. `compatibility-case.schema.json`'s `predicateWrite` references this enum rather than redefining it.",
+      "enum": ["amend", "replace", "delete"]
     }
   }
 }

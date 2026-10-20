@@ -1,0 +1,91 @@
+# A predicate-selected replacement under Relational Document Layout patches each
+# writable member's own path of the shared document, in canonical placement order:
+# an omitted nullable member is completed as JSON null at its path, never by
+# removing its key, and an omitted `many` as the empty array. A key the model
+# declares nowhere, which only `given.apply` can store, sits at no member's path,
+# so it survives (m-batch-write, m-storage-layout).
+model: models/document-layout.yaml
+tags: [m-batch-write, m-unit-work, m-storage-layout, m-document-codec, m-sql, predicate-write, readless, replace, scenario, update, json, document-layout, slice-snapshot-1, slice-managed-1]
+shape: scenario
+compileEligibility:
+  mode: run-only
+  reason: single-connection
+  note: "given.apply stores a document key no member of the model declares"
+given:
+  apply:
+    - sql: insert into traveler(id, payload) values (?, ?)
+      binds:
+        - 4
+        - displayName: Dee
+          score: 12
+          note: east wing
+          address:
+            city: Tromso
+          tags:
+            - { label: crew }
+          badge: gold
+when:
+  scenario:
+    - write:
+        mutation: replace
+        target:
+          entity: parallax.compatibility.Traveler
+          predicate:
+            eq:
+              path: parallax.compatibility.Traveler.id
+              value: 4
+        row:
+          displayName: Dee
+          score: 13
+      databaseCalls: 1
+      statements:
+        - sql:
+            postgres: update traveler set payload = jsonb_set(jsonb_set(jsonb_set(jsonb_set(jsonb_set(jsonb_set(payload, ?, cast(? as jsonb)), ?, cast(? as jsonb)), ?, cast(? as jsonb)), ?, cast(? as jsonb)), ?, cast(? as jsonb)), ?, cast(? as jsonb)) where id = ?
+            mariadb: update traveler set payload = json_set(payload, ?, json_extract(?, '$'), ?, json_extract(?, '$'), ?, json_extract(?, '$'), ?, json_extract(?, '$'), ?, json_extract(?, '$'), ?, json_extract(?, '$')) where id = ?
+          binds:
+            postgres: ['{displayName}', Dee, '{score}', 13, '{joinedOn}', null, '{note}', null, '{address}', null, '{tags}', [], 4]
+            mariadb: ['$.displayName', Dee, '$.score', 13, '$.joinedOn', null, '$.note', null, '$.address', null, '$.tags', [], 4]
+then:
+  databaseCalls: 1
+  tableState:
+    traveler:
+      - id: 1
+        payload:
+          displayName: Ada
+          score: 7
+          joinedOn: "2026-01-15"
+          note: north wing
+          address:
+            city: Oslo
+            geo:
+              country: "NO"
+          tags:
+            - { label: founder }
+            - { label: staff }
+      - id: 2
+        payload:
+          displayName: Bo
+          score: 30
+          joinedOn: "2025-12-31"
+          address:
+            city: Bergen
+            geo:
+              country: "NO"
+          tags: []
+      - id: 3
+        payload:
+          displayName: Cyd
+          score: null
+          joinedOn: null
+          note: null
+          address: null
+          tags: []
+      - id: 4
+        payload:
+          displayName: Dee
+          score: 13
+          joinedOn: null
+          note: null
+          address: null
+          tags: []
+          badge: gold

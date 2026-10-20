@@ -2737,7 +2737,7 @@
       ]
     },
     "predicateWrite": {
-      "description": "A predicate-selected write over the canonical instruction shape. Its target is unversioned and Non-Temporal, so it carries no Valid-Time bound and no Transaction-Time context.",
+      "description": "A predicate-selected write over the canonical instruction shape: `assignments` on an amendment, a `row` on a replacement, and neither on a deletion. Its target is unversioned and Non-Temporal, so it carries no Valid-Time bound and no Transaction-Time context.",
       "type": "object",
       "additionalProperties": false,
       "required": ["mutation", "target"],
@@ -2747,11 +2747,25 @@
         "assignments": {
           "type": "array",
           "items": { "$ref": "write-instruction.schema.json#/$defs/writeAssignment" }
-        }
+        },
+        "row": { "$ref": "write-instruction.schema.json#/$defs/writeRow" }
       },
-      "if": { "properties": { "mutation": { "const": "amend" } } },
-      "then": { "required": ["assignments"] },
-      "else": { "not": { "required": ["assignments"] } }
+      "allOf": [
+        {
+          "if": { "properties": { "mutation": { "const": "amend" } } },
+          "then": { "required": ["assignments"], "not": { "required": ["row"] } }
+        },
+        {
+          "if": { "properties": { "mutation": { "const": "replace" } } },
+          "then": { "required": ["row"], "not": { "required": ["assignments"] } }
+        },
+        {
+          "if": { "properties": { "mutation": { "const": "delete" } } },
+          "then": {
+            "not": { "anyOf": [{ "required": ["assignments"] }, { "required": ["row"] }] }
+          }
+        }
+      ]
     },
     "keyedWrite": {
       "description": "A keyed submission inside a buffered scenario. `validFrom` and `until` are Valid-Time bounds; `at` is Clock-supplied Transaction-Time context. Flush-only observations are not durable row members. `on` names the value an observed write is handed, and `expectError` the refusal its verb raises at the call.",

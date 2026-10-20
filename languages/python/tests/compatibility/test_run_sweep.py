@@ -441,6 +441,14 @@ _SNAPSHOT_INCLUDE_SCENARIOS_EXERCISED: Final[frozenset[str]] = frozenset(
 )
 
 
+# The scenario cases a `given.apply` makes `compileEligibility: run-only`
+# (single-connection), graded here in full exactly as a `WRITE_EXERCISED` scenario
+# is, and kept out of that set because it couples compile grading in.
+# `m-batch-write-054` stores a document key no member declares, which only
+# out-of-band SQL can, to show a replacement leaves it in place.
+_GIVEN_APPLY_SCENARIOS_EXERCISED: Final[frozenset[str]] = frozenset({"m-batch-write-054"})
+
+
 def _reachable_write_cases() -> list[case_format.Case]:
     from parallax.conformance import sweep
 
@@ -450,6 +458,7 @@ def _reachable_write_cases() -> list[case_format.Case]:
         if (
             c.case_id in WRITE_EXERCISED
             or c.case_id in _SNAPSHOT_INCLUDE_SCENARIOS_EXERCISED
+            or c.case_id in _GIVEN_APPLY_SCENARIOS_EXERCISED
             or (
                 c.case_id not in _INTERLEAVED_UOW_GROUP_CASES
                 and engine.eligibility(c) is not None

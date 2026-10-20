@@ -297,34 +297,58 @@ class TypedKeyedInsertSource:
 class TypedPredicateWriteAdapter:
     """The Typed predicate-selected write: a mutation-compatible
     :class:`~parallax.core.object_query.ObjectQuery` plus ``Attr.set(...)``
-    assignments, stated as the :class:`~parallax.core.unit_work.PredicateWriteInstruction`
+    assignments, or the instance whose writable state a replacement states,
+    stated as the :class:`~parallax.core.unit_work.PredicateWriteInstruction`
     every ingress prepares.
 
     Inert when constructed and private to one verb call. The query's own form is
     its one representation judgment, made once :meth:`prepare` is asked
     (:func:`typed_selection`): a query carrying a result-shaping, temporal,
     narrowing, or deep-fetch clause is no write target, and no instruction has
-    a spelling for such a clause. Everything the instruction states is judged
-    by :func:`~parallax.core._execution._unit_work.instructions.prepare_typed_write`.
+    a spelling for such a clause. A replacement's instance is then used only as
+    data, as a caller-conditioned replacement's is, and must be one of the
+    queried Entity. Everything the instruction states is judged by
+    :func:`~parallax.core._execution._unit_work.instructions.prepare_typed_write`.
     """
 
-    __slots__ = ("_assignments", "_query")
+    __slots__ = ("_payload", "_query")
 
     def __init__(
-        self, query: ObjectQuery[Any, Any], assignments: Sequence[AttributeAssignment[Any]]
+        self,
+        query: ObjectQuery[Any, Any],
+        payload: Sequence[AttributeAssignment[Any]] | EntityBase,
     ) -> None:
         self._query = query
-        self._assignments = assignments
+        self._payload = payload
 
     def prepare(
         self, write_model: SelectedWriteModel, mutation: PredicateMutation
     ) -> PreparedPredicateWrite:
-        instruction = PredicateWriteInstruction(
-            mutation,
-            typed_selection(self._query, write_model),
-            write_assignments(self._assignments),
-        )
+        selection = typed_selection(self._query, write_model)
+        payload = self._payload
+        if mutation in REPLACE_MUTATIONS:
+            row = _replacement_row(write_model, selection, cast("EntityBase", payload))
+            instruction = PredicateWriteInstruction(mutation, selection, row=row)
+        else:
+            assignments = cast("Sequence[AttributeAssignment[Any]]", payload)
+            instruction = PredicateWriteInstruction(
+                mutation, selection, write_assignments(assignments)
+            )
         return instructions.prepare_typed_write(instruction, write_model.model.meta)
+
+
+def _replacement_row(
+    write_model: SelectedWriteModel, selection: PredicateSelection, payload: EntityBase
+) -> Mapping[str, object]:
+    """The writable state ``payload`` holds, once it is judged an instance of
+    the Entity ``selection`` writes."""
+    entity = metadata_of_instance(write_model.model.meta, payload)
+    if entity.identity.canonical != selection.entity:
+        raise instructions.WriteInstructionError(
+            f"`replace_where` over {selection.entity} states a whole state of that Entity, and "
+            f"this payload is a {entity.identity.canonical}"
+        )
+    return write_model.codec.writable_row(payload)
 
 
 class TypedInstanceTargetWriteAdapter:

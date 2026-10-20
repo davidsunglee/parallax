@@ -1,7 +1,7 @@
 """Predicate-selected (`*_where`) write unit tests for `parallax.snapshot._handle`.
 
 The set-based verb family covers the mutation-compatibility guard, Assignment
-composition, inheritance rejection, the readless statement an unversioned
+composition, the replaced state, inheritance rejection, the readless statement an unversioned
 non-temporal target buffers, and the refusal of every target that needs an
 observation (`m-batch-write`).
 
@@ -310,6 +310,95 @@ def test_readless_delete_where_buffers_one_statement_no_read() -> None:
         WriteCall(POSTGRES.to_driver_sql("delete from person where id = ?"), (1,)),
         CommitCall(),
     ]
+
+
+def test_readless_replace_where_writes_the_instances_whole_state_but_never_its_key() -> None:
+    port = ScriptedAdapter(Transact(Write()))
+
+    def fn(tx: TxnContext) -> None:
+        tx.replace_where(mm.Person.where(mm.Person.id == 1), mm.Person(id=9, name="Grace"))
+
+    own_root(
+        Database.connect(port, PERSON, clock=FixedClock(FIXED))
+    ).using_database_login().transact(fn)
+    assert port.calls == [
+        BeginCall(),
+        WriteCall(POSTGRES.to_driver_sql("update person set name = ? where id = ?"), ("Grace", 1)),
+        CommitCall(),
+    ]
+
+
+def test_readless_replace_where_completes_each_omitted_member_at_its_document_path() -> None:
+    # An omitted nullable member is JSON null at its own path and an omitted
+    # `many` the empty array, each patched in canonical placement order, so no
+    # key the replacement does not write is touched.
+    port = ScriptedAdapter(Transact(Write()))
+
+    def fn(tx: TxnContext) -> None:
+        tx.replace_where(mm.Traveler.where(mm.Traveler.id == 1), mm.Traveler(id=1, note="east"))
+
+    own_root(
+        Database.connect(port, mm.DOCUMENT_LAYOUT_MODEL, clock=FixedClock(FIXED))
+    ).using_database_login().transact(fn)
+    patch = "payload"
+    for _ in range(6):
+        patch = f"jsonb_set({patch}, ?, cast(? as jsonb))"
+    assert port.calls == [
+        BeginCall(),
+        WriteCall(
+            POSTGRES.to_driver_sql(f"update traveler set payload = {patch} where id = ?"),
+            (
+                "{displayName}",
+                "null",
+                "{score}",
+                "null",
+                "{joinedOn}",
+                "null",
+                "{note}",
+                '"east"',
+                "{address}",
+                "null",
+                "{tags}",
+                JsonDocument(()),
+                1,
+            ),
+        ),
+        CommitCall(),
+    ]
+
+
+def test_a_replacement_of_an_entity_writing_nothing_but_its_key_is_dropped() -> None:
+    port = ScriptedAdapter(Transact())
+
+    def fn(tx: TxnContext) -> None:
+        tx.replace_where(mm.Beacon.where(mm.Beacon.id == 1), mm.Beacon(id=1))
+
+    own_root(
+        Database.connect(port, mm.DOCUMENT_LAYOUT_MODEL, clock=FixedClock(FIXED))
+    ).using_database_login().transact(fn)
+    assert port.calls == [BeginCall(), CommitCall()]
+
+
+def test_replace_where_refuses_a_payload_of_another_entity() -> None:
+    # The type checker refuses it; preparation's caller is the runtime, which
+    # can be handed anything.
+    port = ScriptedAdapter(Transact())
+
+    def fn(tx: TxnContext) -> None:
+        tx.replace_where(
+            mm.Person.where(mm.Person.id == 1),
+            mm.Passport(id=1, person_id=1, number="X"),  # pyright: ignore[reportArgumentType]
+        )
+
+    with raises_contextualized(
+        instructions.WriteInstructionError,
+        match=r"`replace_where` over parallax\.compatibility\.Person states a whole state of "
+        r"that Entity, and this payload is a parallax\.compatibility\.Passport",
+    ):
+        own_root(
+            Database.connect(port, PERSON, clock=FixedClock(FIXED))
+        ).using_database_login().transact(fn)
+    assert not any(isinstance(op, (ReadCall, WriteCall)) for op in port.calls)
 
 
 def test_readless_update_where_through_a_shared_join_buffers_one_statement_no_read() -> None:

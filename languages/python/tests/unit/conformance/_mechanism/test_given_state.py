@@ -376,6 +376,33 @@ def test_apply_given_apply_is_a_no_op_when_given_carries_no_apply_list() -> None
     )
 
 
+def test_apply_given_apply_binds_a_mapping_as_the_document_it_stores() -> None:
+    document = {"displayName": "Dee", "badge": "gold"}
+    case = case_format.Case(
+        path=Path("m-batch-write-999-synthetic.yaml"),
+        case_id="m-batch-write-999",
+        shape="scenario",
+        tags=("m-batch-write", "slice-snapshot-1"),
+        model="models/document-layout.yaml",
+        document={
+            "model": "models/document-layout.yaml",
+            "given": {
+                "apply": [
+                    {
+                        "sql": "insert into traveler(id, payload) values (?, ?)",
+                        "binds": [4, document],
+                    }
+                ]
+            },
+        },
+    )
+    port = FakeWritePort()
+    apply_given_apply(case, port, None)
+    assert port.writes == [
+        ("insert into traveler(id, payload) values (%s, %s)", [4, JsonDocument(document)])
+    ]
+
+
 def test_fixture_seeding_tracks_current_milestones_with_managed_axis_ends() -> None:
     # The `position` fixtures spell the open bound as the published literal; the
     # store holds the managed bound, so the milestone current on both axes covers

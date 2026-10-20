@@ -152,6 +152,103 @@ def test_an_amendment_assigning_nothing_is_a_valid_predicate_write() -> None:
     validate_predicate_write(entity, instruction, [entity.definition])
 
 
+def _replace_instruction(row: dict[str, object]) -> dict[str, object]:
+    return {
+        "mutation": "replace",
+        "target": {
+            "entity": "Wallet",
+            "predicate": {"lessThan": {"path": "Wallet.balance", "value": "200.00"}},
+        },
+        "row": row,
+    }
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        {"owner": "Ada", "balance": "1.00"},
+        {"id": 7, "owner": "Ada", "balance": "1.00"},
+    ],
+    ids=["keyless", "stating-a-key"],
+)
+def test_a_complete_replacement_row_is_a_valid_predicate_write(row: dict[str, object]) -> None:
+    # A replacement states a whole state; a key it states addresses nothing, since
+    # the predicate selects the rows, and is accepted (`m-batch-write`).
+    instruction = _replace_instruction(row)
+    assert next(_schema().iter_errors(_scenario_case(instruction)), None) is None
+    entity = _wallet_entity()
+    validate_predicate_write(entity, instruction, [entity.definition])
+
+
+@pytest.mark.parametrize(
+    "edits",
+    [
+        {"assignments": []},
+        {"row": None},
+        {"observedVersion": 1},
+    ],
+    ids=["assignments", "no-row", "observation-key"],
+)
+def test_schema_enforces_predicate_replacement_shape(edits: dict[str, object]) -> None:
+    instruction = _replace_instruction({"owner": "Ada", "balance": "1.00"})
+    for key, value in edits.items():
+        if value is None:
+            instruction.pop(key)
+        elif key == "observedVersion":
+            row = instruction["row"]
+            assert isinstance(row, dict)
+            row[key] = value
+        else:
+            instruction[key] = value
+    assert next(_schema().iter_errors(_scenario_case(instruction)), None) is not None
+
+
+def test_schema_refuses_a_row_beside_an_amendment_or_a_deletion() -> None:
+    amendment = _update_instruction()
+    amendment["row"] = {"owner": "Ada"}
+    deletion = _update_instruction()
+    deletion["mutation"] = "delete"
+    deletion.pop("assignments")
+    deletion["row"] = {}
+    for instruction in (amendment, deletion):
+        assert next(_schema().iter_errors(_scenario_case(instruction)), None) is not None
+
+
+def test_a_replacement_omitting_a_required_member_is_refused_with_its_rule() -> None:
+    entity = _wallet_entity()
+    with pytest.raises(RejectionError) as refused:
+        validate_predicate_write(
+            entity, _replace_instruction({"owner": "Ada"}), [entity.definition]
+        )
+    assert refused.value.rule == "write-required-attribute-missing"
+
+
+def test_a_replacement_omitting_a_required_value_object_is_refused_with_its_rule() -> None:
+    entity = load_model(_COMPATIBILITY_ROOT, "models/shipment.yaml").root_entity
+    instruction = _replace_instruction({"name": "Express"})
+    instruction["target"] = {"entity": "Shipment", "predicate": {"true": {}}}
+    with pytest.raises(RejectionError) as refused:
+        validate_predicate_write(entity, instruction, [entity.definition])
+    assert refused.value.rule == "write-required-value-object-missing"
+
+
+@pytest.mark.parametrize(
+    ("row", "message"),
+    [
+        ({"owner": "Ada", "balance": "1.00", "nickname": "A"}, "does not declare"),
+        ({"owner": "Ada", "balance": 7}, "type-mismatch"),
+        ({"id": "seven", "owner": "Ada", "balance": "1.00"}, "replacement key 'id'"),
+    ],
+    ids=["undeclared", "ill-typed-member", "ill-typed-key"],
+)
+def test_model_validator_rejects_an_invalid_replacement_row(
+    row: dict[str, object], message: str
+) -> None:
+    entity = _wallet_entity()
+    with pytest.raises(PredicateWriteValidationError, match=message):
+        validate_predicate_write(entity, _replace_instruction(row), [entity.definition])
+
+
 def test_schema_requires_an_amendment_to_state_its_assignments() -> None:
     instruction = _update_instruction()
     instruction.pop("assignments")

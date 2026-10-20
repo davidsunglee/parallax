@@ -30,6 +30,7 @@ from parallax.core._execution._unit_work.effects import (
 )
 from parallax.core._execution._unit_work.instructions import (
     AMEND_MUTATIONS,
+    ASSIGNMENT_MUTATIONS,
     ExpectedTxStart,
     KeyedMutation,
     PreparedPredicateWrite,
@@ -361,10 +362,11 @@ class UnitOfWork:
         forms"): preparation has refused every target that needs an
         observation.
 
-        An amendment that assigns no member is the empty write: having been
-        validated, it is dropped here rather than buffered, so it seals no
+        An amendment that assigns no member is the empty write, and so is a
+        replacement of an Entity whose only writable member is its key: having
+        been validated, it is dropped here rather than buffered, so it seals no
         barrier region between the writes around it."""
-        if prepared.mutation in AMEND_MUTATIONS and not prepared.assigns:
+        if prepared.mutation in ASSIGNMENT_MUTATIONS and not prepared.assigns:
             return
         self.buffer(prepared)
 

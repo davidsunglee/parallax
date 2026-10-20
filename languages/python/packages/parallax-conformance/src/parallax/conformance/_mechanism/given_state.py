@@ -295,5 +295,9 @@ def apply_given_apply(
         store.note_out_of_band_write()
     for entry in cast("list[Mapping[str, object]]", entries):
         sql = cast("str", entry["sql"])
-        binds = cast("list[object]", entry.get("binds", []))
+        # A mapping bind is a whole document a Structured Column stores.
+        binds = [
+            JsonDocument(cast("Mapping[str, object]", bind)) if isinstance(bind, Mapping) else bind
+            for bind in cast("list[object]", entry.get("binds", []))
+        ]
         port.execute_write(port.dialect.to_driver_sql(sql), driver_binds(binds))

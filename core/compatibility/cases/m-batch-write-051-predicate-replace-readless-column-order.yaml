@@ -1,0 +1,42 @@
+# A predicate-selected REPLACEMENT over an unversioned, non-temporal entity is one
+# readless UPDATE writing each selected row's whole stated state: its SET clause
+# follows the Entity Layout's Table Layout order, not the row's authored member
+# order, and its assignment binds precede its predicate binds (m-batch-write).
+model: models/wallet.yaml
+tags: [m-batch-write, m-sql, m-unit-work, predicate-write, readless, replace, scenario, slice-snapshot-1]
+shape: scenario
+when:
+  scenario:
+    - write:
+        mutation: replace
+        target:
+          entity: parallax.compatibility.Wallet
+          predicate:
+            lessThan:
+              path: parallax.compatibility.Wallet.balance
+              value: "200.00"
+        row:
+          balance: "150.00"
+          owner: Replaced
+      databaseCalls: 1
+      statements:
+        - sql:
+            postgres: update wallet set owner = ?, balance = ? where balance < ?
+          binds: [Replaced, "150.00", "200.00"]
+    - objectQuery:
+        target: parallax.compatibility.Wallet
+        predicate:
+          eq:
+            path: parallax.compatibility.Wallet.owner
+            value: Replaced
+      databaseCalls: 1
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance from wallet t0 where t0.owner = ? for share of t0
+          binds: [Replaced]
+      referenceSql: select id, owner, balance from wallet where owner = 'Replaced'
+      expectRows:
+        - { id: 1, owner: Replaced, balance: "150.00" }
+        - { id: 3, owner: Replaced, balance: "150.00" }
+then:
+  databaseCalls: 2

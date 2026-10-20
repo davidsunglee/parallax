@@ -1,0 +1,20 @@
+# A predicate-selected replacement of a Bitemporal Entity is refused when it is
+# prepared, before its row is judged: each selected object's current rectangle
+# must be observed before it is split, and one readless statement observes nothing.
+model: models/position.yaml
+tags: [m-batch-write, m-temporal-write, rejected, predicate-write, replace, temporal, bitemporal, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  write:
+    mutation: replace
+    target:
+      entity: parallax.compatibility.Position
+      predicate:
+        eq:
+          path: parallax.compatibility.Position.acctNum
+          value: A-1
+    row:
+      acctNum: A-1
+      value: "0.00"
+then:
+  rejectedRule: set-based-write-target-unsupported

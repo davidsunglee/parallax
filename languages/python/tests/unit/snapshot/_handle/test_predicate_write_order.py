@@ -3,9 +3,10 @@
 Every ``_where`` verb, Typed or Wire, enters one ingress: lifecycle re-entry,
 then the representation's own capture of its selection and assignments, then
 the one preparation that judges whether the target can be written without being
-read at all, and then the predicate, the family, every assignment's member, and
-their values, in that order, and only then the buffering of one readless
-statement, or of nothing for an amendment assigning nothing. What a row fixes is the ANSWER
+read at all, and then the predicate, the family, every assignment's member or
+replaced state's member, and their values, in that order, and only then the
+buffering of one readless statement, or of nothing for an amendment assigning
+nothing. What a row fixes is the ANSWER
 that order gives — the refusal's class, code, message, the point it landed at,
 and the DML emitted — beside the whole port chronology, so a refusal that read
 or flushed anything, and an admitted write that read anything, are different
@@ -16,7 +17,9 @@ asserts it of each in turn; nothing here compares one representation to the
 other. A fault only one representation has a spelling for — an unfinished Typed
 path — is a Typed row alone, and a shape fault each representation spells its
 own way states each one's own refusal. A Wire call handed the Typed query, or an
-Object Query node or document, is a Wire row alone.
+Object Query node or document, is a Wire row alone, and so is a replacement
+stating a document an instance cannot be: one naming the key apart from its
+state, an undeclared member, or nothing at all.
 
 Detailed assignment-order, document-shape, and lifecycle re-entry rules stay
 with their owners: core preparation's suite, ``test_wire_writes.py``, and the
@@ -34,7 +37,7 @@ import pytest
 from parallax.core import QueryDefinitionError, inheritance
 from parallax.core._execution._unit_work.instructions import InstructionRejectedError
 from parallax.core.predicate import CanonicalDocumentError, ModelRejectedError
-from parallax.core.unit_work import WriteInstructionError
+from parallax.core.unit_work import WriteInstructionError, WriteRejectedError
 from tests._support.db_port import (
     BeginCall,
     CommitCall,
@@ -49,6 +52,7 @@ from tests.unit.snapshot._handle._write_order_drivers import (
     PERSON_SELECTION,
     POSITION_SELECTION,
     REPRESENTATIONS,
+    TRAVELER_SELECTION,
     UNDECLARED_SELECTION,
     Answer,
     PredicateTarget,
@@ -167,6 +171,20 @@ _ADMITTED: Final[tuple[_Row, ...]] = (
     ),
     _Row(PredicateWriteScenario(PERSON_SELECTION, "amend", wire_target="query"), _wire(_READLESS)),
     _Row(PredicateWriteScenario(PERSON_SELECTION, "delete", wire_target="query"), _wire(_READLESS)),
+    _Row(PredicateWriteScenario(PERSON_SELECTION, "replace"), _both(_READLESS)),
+    _Row(
+        PredicateWriteScenario(PERSON_SELECTION, "replace", wire_target="query"),
+        _wire(_READLESS),
+    ),
+    _Row(
+        PredicateWriteScenario(PERSON_SELECTION, "replace", assignments="keyed"),
+        _wire(_READLESS),
+    ),
+    _Row(PredicateWriteScenario(TRAVELER_SELECTION, "replace"), _both(_READLESS)),
+    _Row(
+        PredicateWriteScenario(TRAVELER_SELECTION, "replace", assignments="none"),
+        _wire(_READLESS),
+    ),
 )
 
 
@@ -274,12 +292,12 @@ _OBSERVED_KINDS: Final[tuple[tuple[PredicateTarget, str, str], ...]] = (
     (BALANCE_SELECTION, "Balance", "temporal"),
     (POSITION_SELECTION, "WherePosition", "temporal"),
 )
-_VERBS: Final[tuple[PredicateVerb, ...]] = ("amend", "delete")
+_VERBS: Final[tuple[PredicateVerb, ...]] = ("amend", "replace", "delete")
 
 
 def _sibling(verb: PredicateVerb, kind: str) -> str:
-    if verb == "amend":
-        return "amend"
+    if verb != "delete":
+        return verb
     return "terminate" if kind == "temporal" else "delete"
 
 
@@ -316,6 +334,7 @@ def test_a_target_needing_an_observation_is_refused_with_the_verbs_its_kind_admi
 # --------------------------------------------------------------------------- #
 _POSITION_AMEND: Final = _observation_needed("WherePosition", "temporal", "amend", "amend")
 _ACCOUNT_AMEND: Final = _observation_needed("Account", "versioned", "amend", "amend")
+_ACCOUNT_REPLACE: Final = _observation_needed("Account", "versioned", "replace", "replace")
 
 _KIND_FIRST: Final[tuple[_Row, ...]] = (
     _Row(
@@ -345,6 +364,14 @@ _KIND_FIRST: Final[tuple[_Row, ...]] = (
     _Row(
         PredicateWriteScenario(ACCOUNT_SELECTION, "amend", assignments="none"),
         _both(_ACCOUNT_AMEND),
+    ),
+    _Row(
+        PredicateWriteScenario(ACCOUNT_SELECTION, "replace", assignments="undeclared"),
+        _wire(_ACCOUNT_REPLACE),
+    ),
+    _Row(
+        PredicateWriteScenario(ACCOUNT_SELECTION, "replace", assignments="none"),
+        _wire(_ACCOUNT_REPLACE),
     ),
 )
 
@@ -435,6 +462,36 @@ _SELECTION_ORDER: Final[tuple[_Row, ...]] = (
         ),
         _wire(_UNDECLARED_WIRE_CHANGE),
     ),
+    _Row(
+        PredicateWriteScenario(CARD_PAYMENT_SELECTION, "replace"),
+        _both(_refused(inheritance.InheritanceError, _FAMILY_REFUSAL)),
+    ),
+    _Row(
+        PredicateWriteScenario(CARD_PAYMENT_SELECTION, "replace", assignments="undeclared"),
+        _wire(_refused(inheritance.InheritanceError, _FAMILY_REFUSAL)),
+    ),
+    _Row(
+        PredicateWriteScenario(PERSON_SELECTION, "replace", selection="inverted"),
+        _both(_INVERTED),
+    ),
+    _Row(
+        PredicateWriteScenario(PERSON_SELECTION, "replace", assignments="undeclared"),
+        _wire(
+            _refused(
+                WriteInstructionError,
+                "Person: predicate write row names undeclared member(s) ['undeclared']",
+            )
+        ),
+    ),
+    _Row(
+        PredicateWriteScenario(PERSON_SELECTION, "replace", assignments="none"),
+        _wire(
+            _refused(
+                WriteRejectedError,
+                "Person.name: a replacement states every required member, and this one is absent",
+            )
+        ),
+    ),
 )
 
 
@@ -488,6 +545,10 @@ def test_an_amendment_assigning_nothing_is_judged_and_then_dropped(row: _Row) ->
 _PENDING: Final[tuple[_Row, ...]] = (
     _Row(
         PredicateWriteScenario(PERSON_SELECTION, "amend", pending=True),
+        _both(_wrote(WriteCall, WriteCall)),
+    ),
+    _Row(
+        PredicateWriteScenario(PERSON_SELECTION, "replace", pending=True),
         _both(_wrote(WriteCall, WriteCall)),
     ),
     _Row(

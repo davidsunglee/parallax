@@ -155,14 +155,19 @@ Write verbs are on the `TxnContext`; their snake_case temporal parameters bind
 the corresponding core operations. Inserts accept fresh constructed values;
 later mutations require provenance where the core evidence rules prescribe it.
 Evidence is never a caller-supplied address. The set-based writes are
-`amend_where(query, *assignments)` and `delete_where(query)`, taking a
-mutation-compatible Typed Object Query and `Attr.set(...)` Assignments, and
-`tx.wire.amend_where(target, changes, /)` and `tx.wire.delete_where(target, /)`,
+`amend_where(query, *assignments)`, `replace_where(query, payload)`, and
+`delete_where(query)`, taking a mutation-compatible Typed Object Query,
+`Attr.set(...)` Assignments, and an instance of the queried Entity used only as
+data, and `tx.wire.amend_where(target, changes, /)`,
+`tx.wire.replace_where(target, data, /)`, and `tx.wire.delete_where(target, /)`,
 taking that Typed query, kept as authored, or the canonical `{entity, predicate}`
-selection document — never an Object Query node or its document. A set-based
-write is one readless statement, so it takes no window, and over a versioned or
-temporal Entity it is refused at the call with a `WriteInstructionError` naming
-the keyed and conditional verbs that write such an Entity (`m-batch-write`).
+selection document — never an Object Query node or its document — and a
+replacement's data as a document or as a node Parallax published for the
+selected Entity. A replacement payload's key addresses nothing and is never
+written. A set-based write is one readless statement, so it takes no window, and
+over a versioned or temporal Entity it is refused at the call with a
+`WriteInstructionError` naming the keyed and conditional verbs that write such
+an Entity (`m-batch-write`).
 
 The method names the authority. `amend`, `replace`, `delete`, and `terminate`
 take a source — a value a read of the writing transaction attempt published, a
