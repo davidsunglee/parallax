@@ -1,10 +1,10 @@
 """The Write Plan's own contract (m-write-plan values, `m-unit-work` *Write Plan
-and Planned Writes*).
+and Planned Steps*).
 
-An empty Planned Writes is the one canonical result for a flush that survives
-nothing, and Planned Writes is a logical sequence whose views compare by value
+An empty Planned Steps is the one canonical result for a flush that survives
+nothing, and Planned Steps is a logical sequence whose views compare by value
 rather than by object identity. A borrowed span of it reads only the steps it
-spans, once each per pass. A plan's execution units partition its steps in
+spans, once each per pass. A plan's settled writes partition its steps in
 order, and an attempt that opened nothing owns, proved, and derived nothing.
 """
 
@@ -22,16 +22,16 @@ from parallax.core.write_plan.plan import (
     NO_TEMPORAL_WRITE_OWNERSHIP,
     OPEN_BITEMPORAL_ENDS,
     BoundRange,
+    CompletionFacts,
     DeferredRange,
-    ExecutionUnit,
     OwnedEndpoint,
     PlannedWrites,
-    UnitEffects,
+    SettledWrite,
     WriteStepView,
     eager_segment,
     eager_writes,
 )
-from parallax.core.write_plan.steps import NEW_LINEAGE, PlannedRow, PlannedWrite, WriteRow
+from parallax.core.write_plan.steps import NEW_LINEAGE, PlannedRow, PlannedStep, WriteRow
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._corpus_model_support import target as entity_of
 
@@ -77,7 +77,7 @@ def test_planned_steps_indexing_out_of_range_raises() -> None:
 def test_planned_steps_compares_unequal_to_a_non_planned_steps_value() -> None:
     step = _insert(1)
     steps = PlannedWrites(segments=(eager_segment((step,)),))
-    assert steps != "not a Planned Writes value"
+    assert steps != "not a Planned Steps value"
 
 
 class _CountingSegment:
@@ -91,7 +91,7 @@ class _CountingSegment:
     def __len__(self) -> int:
         return len(self._keys)
 
-    def step(self, index: int) -> PlannedWrite:
+    def step(self, index: int) -> PlannedStep:
         self.asked.append(index)
         return _insert(self._keys[index])
 
@@ -143,9 +143,9 @@ def test_a_view_holds_its_owner_and_two_positions_only() -> None:
 @pytest.mark.parametrize(("first", "stop"), [(-1, 1), (2, 1), (0, 4), (4, 4)])
 def test_a_view_spans_positions_within_its_owner_in_order(first: int, stop: int) -> None:
     steps = PlannedWrites((eager_segment((_insert(1), _insert(2), _insert(3))),))
-    with pytest.raises(ValueError, match="within its 3 Planned Write"):
+    with pytest.raises(ValueError, match="within its 3 Planned Step"):
         steps.view(first, stop)
-    with pytest.raises(ValueError, match="within its 3 Planned Write"):
+    with pytest.raises(ValueError, match="within its 3 Planned Step"):
         WriteStepView(steps, first, stop)
 
 
@@ -174,24 +174,26 @@ def test_an_attempt_that_opened_nothing_has_proved_and_derived_nothing() -> None
 
 def test_a_plan_without_units_forms_one_unit_of_every_step() -> None:
     steps = PlannedWrites((eager_segment((_insert(1), _insert(2))),))
-    assert WritePlan(steps=steps).units == (ExecutionUnit(end=2),)
+    assert WritePlan(steps=steps).units == (SettledWrite(end=2),)
     assert WritePlan().units == ()
 
 
 def test_a_plans_units_follow_its_steps_in_order_and_end_with_them() -> None:
     steps = PlannedWrites((eager_segment((_insert(1), _insert(2))),))
     with pytest.raises(ValueError, match="follow its steps in order"):
-        WritePlan(steps=steps, units=(ExecutionUnit(end=2), ExecutionUnit(end=1)))
+        WritePlan(steps=steps, units=(SettledWrite(end=2), SettledWrite(end=1)))
     with pytest.raises(ValueError, match="end where its 2 step"):
-        WritePlan(steps=steps, units=(ExecutionUnit(end=1),))
+        WritePlan(steps=steps, units=(SettledWrite(end=1),))
 
 
 _EFFECTS = ("changed", "removed", "opened", "derived", "concludes")
 
 
-@pytest.mark.parametrize("result", [ExecutionUnit, BoundRange])
-def test_every_result_extends_the_one_flat_effects_vocabulary(result: type[UnitEffects]) -> None:
-    assert issubclass(result, UnitEffects)
+@pytest.mark.parametrize("result", [SettledWrite, BoundRange])
+def test_every_result_extends_the_one_flat_effects_vocabulary(
+    result: type[CompletionFacts],
+) -> None:
+    assert issubclass(result, CompletionFacts)
     names = [field.name for field in dataclasses.fields(result)]
     assert names[: len(_EFFECTS)] == list(_EFFECTS)
     assert all(field.kw_only for field in dataclasses.fields(result))
@@ -200,15 +202,15 @@ def test_every_result_extends_the_one_flat_effects_vocabulary(result: type[UnitE
 
 
 def test_effects_are_held_in_slots_on_the_unit_and_bound_range_themselves() -> None:
-    for value in (ExecutionUnit(end=0), BoundRange(steps=PlannedWrites())):
+    for value in (SettledWrite(end=0), BoundRange(steps=PlannedWrites())):
         assert not hasattr(value, "__dict__")
 
 
 def test_a_unit_publishes_nothing_it_does_not_name() -> None:
-    unit = ExecutionUnit(end=0)
+    unit = SettledWrite(end=0)
     assert [getattr(unit, name) for name in _EFFECTS] == [(), (), NO_OPENINGS, (), None]
     assert not any(
-        isinstance(getattr(unit, field.name), UnitEffects) for field in dataclasses.fields(unit)
+        isinstance(getattr(unit, field.name), CompletionFacts) for field in dataclasses.fields(unit)
     )
     assert (unit.claim, unit.deferred) == (None, None)
 
@@ -221,11 +223,11 @@ def test_a_deferred_unit_spans_no_step_between_the_units_around_it() -> None:
     steps = PlannedWrites((eager_segment((_insert(1), _insert(2))),))
     deferred = _Deferred()
     units = (
-        ExecutionUnit(end=1),
-        ExecutionUnit(end=1, deferred=deferred),
-        ExecutionUnit(end=1, deferred=deferred),
-        ExecutionUnit(end=2),
+        SettledWrite(end=1),
+        SettledWrite(end=1, deferred=deferred),
+        SettledWrite(end=1, deferred=deferred),
+        SettledWrite(end=2),
     )
     assert WritePlan(steps=steps, units=units).units == units
-    leading = (ExecutionUnit(end=0, deferred=deferred), ExecutionUnit(end=2))
+    leading = (SettledWrite(end=0, deferred=deferred), SettledWrite(end=2))
     assert WritePlan(steps=steps, units=leading).units == leading

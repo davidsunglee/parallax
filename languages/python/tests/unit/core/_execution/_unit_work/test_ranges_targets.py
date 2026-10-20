@@ -16,8 +16,8 @@ import pytest
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work.acquisition import CoverageReadRequest
 from parallax.core._execution._unit_work.write_items import (
-    BufferItem,
-    ComposedTemporalWrite,
+    AdmittedWrite,
+    CoalescedTemporalWrite,
     ObservedKeyedWrite,
     TargetKeyedWrite,
     chained_temporal_write,
@@ -45,8 +45,8 @@ from parallax.core.write_plan.plan import (
     Derivation,
     DerivedRow,
     Descent,
-    ExecutionUnit,
     OwnedEndpoint,
+    SettledWrite,
     TemporalWriteOwnership,
 )
 from parallax.core.write_plan.steps import (
@@ -94,8 +94,8 @@ from tests.unit.core._execution._unit_work._temporal_targets_support import (
 # Binding: the caller's start, replacement extent, and destruction.            #
 # --------------------------------------------------------------------------- #
 def _deferred_unit(
-    *writes: BufferItem, concurrency: str = "optimistic", guards: bool = False
-) -> ExecutionUnit:
+    *writes: AdmittedWrite, concurrency: str = "optimistic", guards: bool = False
+) -> SettledWrite:
     plan = build_write_planner(POSITION).finalize(
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
@@ -111,7 +111,7 @@ def _deferred_unit(
 
 
 def _bound(
-    unit: ExecutionUnit,
+    unit: SettledWrite,
     rows: Sequence[PredecessorRow],
     *,
     ownership: TemporalWriteOwnership = NO_TEMPORAL_WRITE_OWNERSHIP,
@@ -121,7 +121,7 @@ def _bound(
     return bind_held(POSITION, unit, rows, transaction_instant=_instant(), ownership=ownership)
 
 
-def _coverage(unit: ExecutionUnit) -> CoverageReadRequest:
+def _coverage(unit: SettledWrite) -> CoverageReadRequest:
     """The coverage read ``unit``'s deferred range asks for."""
     return coverage_read(POSITION, unit, transaction_instant=_instant())
 
@@ -409,13 +409,13 @@ def test_a_replacement_fills_only_its_own_window_beside_a_disjoint_destruction()
 # Continuation across a barrier: what an earlier unit of the flush proved.     #
 # --------------------------------------------------------------------------- #
 def _chained_unit(
-    *writes: BufferItem,
+    *writes: AdmittedWrite,
     leads: bool = False,
     follows: bool = True,
     concurrency: str = "optimistic",
-) -> ExecutionUnit:
+) -> SettledWrite:
     (composed,) = admitted_writes(POSITION, list(writes))
-    assert isinstance(composed, ComposedTemporalWrite | TargetKeyedWrite | ObservedKeyedWrite)
+    assert isinstance(composed, CoalescedTemporalWrite | TargetKeyedWrite | ObservedKeyedWrite)
     plan = build_write_planner(POSITION).finalize(
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,

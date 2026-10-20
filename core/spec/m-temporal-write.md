@@ -6,7 +6,7 @@ expansion** that realizes both — one Coverage Transform of a written object's
 existing coverage, applied by one Predecessor Expansion to each existing
 milestone it reaches. A temporal write chains milestone rows rather than
 mutating a value in place, which is what produces the audit trail. Per the
-dependency graph it depends on `m-write-plan`, whose Planned Write algebra and
+dependency graph it depends on `m-write-plan`, whose Planned Step algebra and
 Predecessor Rows it settles into; on `m-temporal-read`, whose intervals and axes
 it shares with as-of reads; on `m-inheritance`, `m-core`, and `m-metamodel` for
 the family-effective state it carries; and on `m-document-codec` for effective
@@ -346,7 +346,7 @@ opening splits it, and an amendment never extends it beyond its own window
 the opening establishes the same state there it would once the insertion had
 executed, settled in the opening's own unit at the normal flush: no flush runs
 at the call and no intermediate insertion is written. The stored coverage past
-the opening's window is read inside the write batch, each rectangle the composed
+the opening's window is read inside the flush, each rectangle the composed
 writes reach is transformed under its own proof, the opening's surviving pieces
 open as new lineages, and every remaining part of the replacement's extent opens
 with its complete state; pieces of identical stored state among them open as one
@@ -501,7 +501,7 @@ Expansion is **neutral**: it names no SQL, dialect, physical column, or statemen
 and takes no dialect argument, which is what lets it live inside planning while
 column participation and quoting stay in lowering. An implementation **MUST NOT**
 expose a milestone plan, a milestone step, or a per-row expansion value on any
-cross-module interface; only the Planned Writes it produces, and the effects
+cross-module interface; only the Planned Steps it produces, and the effects
 their success publishes, leave it.
 
 ### Coverage Transform

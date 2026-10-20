@@ -1,4 +1,4 @@
-# m-write-plan — Planned Writes and Write Observations
+# m-write-plan — Planned Steps and Write Observations
 
 `m-write-plan` specifies the finalized semantic form of a write — the Planned
 Write algebra and the Write Target, Write Gate, and Affected Rows Policy
@@ -12,14 +12,14 @@ each observation to the write it settles; `m-write-payload` prepares what each
 write persists; `m-sql` lowers the algebra with those prepared values (`m-sql`
 *Private compiler inputs*). None depends on another for it.
 
-## The Planned Write algebra
+## The Planned Step algebra
 
-A **Planned Write** is one finalized semantic execution step. It may address one
+A **Planned Step** is one finalized semantic execution step. It may address one
 row or many, and its target, row topology, concurrency decision, and expected
 effect are all settled before SQL lowering. The algebra is **closed**:
 
 ```text
-PlannedWrite =
+PlannedStep =
     PlannedInsert(entity, entries: NonEmpty[WriteRow])
   | PlannedUpdate(entity, target, assignments, concurrency, affected_rows)
   | PlannedClose(entity, target, assignments, cause, concurrency, affected_rows)
@@ -176,7 +176,7 @@ the planner resolves every caller-supplied value before a step is settled.
 WriteTarget = KeyTarget | ResolvedMutationSelection | MilestoneTarget
 ```
 
-A **Write Target** is the semantic row selection of a Planned Write. It is
+A **Write Target** is the semantic row selection of a Planned Step. It is
 distinct from observed predecessor state and from any concurrency condition.
 
 ```text
@@ -421,7 +421,7 @@ AssignmentPayload(entity, assignments: PlannedAssignments, cells: [PayloadCell])
 PayloadCell(contributor, value)
 ```
 
-A Planned Write states what a write means; what it **persists** is its payload.
+A Planned Step states what a write means; what it **persists** is its payload.
 This module declares the payload vocabulary and the interface that prepares it,
 so that settlement and lowering share one preparer without the algebra depending
 on storage placement. `m-write-payload` implements the interface; the execution

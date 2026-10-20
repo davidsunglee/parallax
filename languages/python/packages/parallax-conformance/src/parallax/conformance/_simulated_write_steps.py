@@ -12,7 +12,7 @@ from parallax.core.metamodel import Metamodel
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.write_plan.payload import WritePayloadPreparer
 from parallax.core.write_plan.plan import WriteStepView
-from parallax.core.write_plan.steps import PlannedWrite
+from parallax.core.write_plan.steps import PlannedStep
 
 __all__ = ["SimulatedWriteSteps"]
 
@@ -97,7 +97,7 @@ class SimulatedWriteSteps:
         self._statements.extend(lowered)
         return allocated
 
-    def _lowered(self, steps: Iterable[PlannedWrite]) -> tuple[LoweredStatement, ...]:
+    def _lowered(self, steps: Iterable[PlannedStep]) -> tuple[LoweredStatement, ...]:
         return tuple(stream_physical(steps, self._payloads, self._meta, self._dialect))
 
 
@@ -117,7 +117,7 @@ class _Applied:
         self._meta = meta
         self.refusal: SimulatedStoreError | None = None
 
-    def __iter__(self) -> Iterator[PlannedWrite]:
+    def __iter__(self) -> Iterator[PlannedStep]:
         for step in self.span:
             if self.refusal is None:
                 try:

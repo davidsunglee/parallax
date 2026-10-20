@@ -45,6 +45,10 @@ from parallax.core.execution_lifecycle import (
     DirectFailure,
     ExecutionEvent,
     ExecutionLifecycleProvider,
+    FlushCompleted,
+    FlushFailed,
+    FlushFinished,
+    FlushStarted,
     JoinedInvocation,
     JoinedInvocationRaised,
     JoinedInvocationReturned,
@@ -72,13 +76,9 @@ from parallax.core.execution_lifecycle import (
     TransactionAttemptStarted,
     TransactionInvocationFinished,
     TransactionInvocationStarted,
-    WriteBatchCompleted,
-    WriteBatchFailed,
-    WriteBatchFinished,
-    WriteBatchStarted,
 )
 from parallax.core.sql_gen import LoweredStatement
-from parallax.core.unit_work import WriteBatchReason
+from parallax.core.unit_work import FlushTrigger
 
 __all__ = [
     "LifecycleObservation",
@@ -133,7 +133,7 @@ _READ_INTERFACE: Final[dict[ReadInterface, str]] = {
     "rows": "rows",
 }
 
-_WRITE_BATCH_TRIGGER: Final[dict[WriteBatchReason, str]] = {
+_FLUSH_TRIGGER: Final[dict[FlushTrigger, str]] = {
     "read_dependency": "read-dependency",
     "pre_commit": "pre-commit",
 }
@@ -272,10 +272,10 @@ class LifecycleObservation:
         )
 
     def own_reads_since(self, mark: int) -> tuple[LoweredStatement, ...]:
-        """Every read issued after ``mark`` Database Calls outside a write batch.
+        """Every read issued after ``mark`` Database Calls outside a flush.
 
         A participating read's force-flush can itself read: the coverage a
-        deferred unit binds is acquired inside the batch. That read is a
+        deferred settled write binds is acquired inside the flush. That read is a
         Database Call of the flush, which no step's emissions name (`m-case-format`
         "Resolving reads a write owes"), so the read that triggered the flush
         reports only the statements it issued itself.
@@ -285,9 +285,9 @@ class LifecycleObservation:
         for root in self.roots:
             flushing = False
             for event in root.events:
-                if isinstance(event, WriteBatchStarted):
+                if isinstance(event, FlushStarted):
                     flushing = True
-                elif isinstance(event, WriteBatchFinished):
+                elif isinstance(event, FlushFinished):
                     flushing = False
                 elif isinstance(event, DatabaseCallStarted):
                     if position >= mark and event.kind == "read" and not flushing:
@@ -495,7 +495,7 @@ def _transition(event: ExecutionEvent, indexer: _StatementIndexer) -> dict[str, 
     match event:
         case (
             ReadStarted()
-            | WriteBatchStarted()
+            | FlushStarted()
             | DatabaseCallStarted()
             | TransactionInvocationStarted()
             | TransactionAttemptStarted()
@@ -519,8 +519,8 @@ def _started(event: ActivityStarted, indexer: _StatementIndexer) -> dict[str, ob
                     **_stated("edition", edition),
                 }
             }
-        case WriteBatchStarted(trigger=trigger):
-            return {"writeBatchStarted": {"trigger": _WRITE_BATCH_TRIGGER[trigger]}}
+        case FlushStarted(trigger=trigger):
+            return {"flushStarted": {"trigger": _FLUSH_TRIGGER[trigger]}}
         case DatabaseCallStarted(target=target, kind=kind, statement=statement):
             return {
                 "databaseCallStarted": {
@@ -562,8 +562,8 @@ def _finished(event: ActivityFinished) -> dict[str, object]:
     match event:
         case ReadFinished(outcome=outcome):
             return {"readFinished": _read_outcome(outcome)}
-        case WriteBatchFinished(outcome=outcome):
-            return {"writeBatchFinished": _write_batch_outcome(outcome)}
+        case FlushFinished(outcome=outcome):
+            return {"flushFinished": _flush_outcome(outcome)}
         case DatabaseCallFinished(outcome=outcome):
             return {"databaseCallFinished": _database_call_outcome(outcome)}
         case TransactionInvocationFinished(outcome=outcome):
@@ -616,11 +616,11 @@ def _read_outcome(outcome: ReadCompleted | ReadFailed) -> dict[str, object]:
             assert_never(unreachable)
 
 
-def _write_batch_outcome(outcome: WriteBatchCompleted | WriteBatchFailed) -> dict[str, object]:
+def _flush_outcome(outcome: FlushCompleted | FlushFailed) -> dict[str, object]:
     match outcome:
-        case WriteBatchCompleted():
+        case FlushCompleted():
             return {"outcome": "completed"}
-        case WriteBatchFailed(failure):
+        case FlushFailed(failure):
             return {"outcome": "failed", **_activity_failure(failure)}
         case _ as unreachable:  # pragma: no cover - exhaustiveness guard
             assert_never(unreachable)

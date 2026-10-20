@@ -126,7 +126,7 @@ class PortTally:
 
     @property
     def logical_writes(self) -> int:
-        """The Planned Writes the statements carried, however they were grouped."""
+        """The Planned Steps the statements carried, however they were grouped."""
         return self.effects + self.ordered_statements + self.inserted_rows
 
 

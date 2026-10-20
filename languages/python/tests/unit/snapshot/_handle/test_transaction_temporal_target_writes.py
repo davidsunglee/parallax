@@ -1038,7 +1038,7 @@ def _barrier(tx: TxnContext) -> None:
 
 
 def _owned(start: dt.datetime, value: str = "100.00", acct_num: str = "A") -> MappingRow:
-    """A row an earlier execution unit of the same attempt opened."""
+    """A row an earlier settled write of the same attempt opened."""
     return {**_rectangle(start, INFINITY_INSTANT, value, tx_start=FIXED), "acct_num": acct_num}
 
 

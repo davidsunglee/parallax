@@ -28,7 +28,7 @@ one Publication once, while a stream reuses one across every Page it reads and
 releases it when the delivery ends, on exhaustion, failure, or early close
 alike. Delivery invokes it inside the enclosing Read or Stream activity and never
 returns a Page for a lifecycle to publish later. A Publication states the
-representation its read reports (`m-execution-lifecycle` *Read, write-batch, and
+representation its read reports (`m-execution-lifecycle` *Read, flush, and
 database-call events*) and the
 Model Edition the read adopted, publishes one root's values on request, and
 composes an eager result from a whole Page by publishing its roots. Origins an

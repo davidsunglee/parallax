@@ -41,12 +41,12 @@ from parallax.core.write_plan.observe import WriteObservation
 from parallax.core.write_plan.plan import SourceAuthority
 
 __all__ = [
+    "AdmittedWrite",
     "AfterRemoval",
-    "BufferItem",
-    "BufferedWrite",
     "ChainedTemporalWrite",
     "ClaimedKeyedWrite",
-    "ComposedTemporalWrite",
+    "CoalescedTemporalWrite",
+    "CoalescedWrite",
     "FollowingKeyedWrite",
     "InsertionKeyedWrite",
     "ObjectClaimedWrite",
@@ -216,7 +216,7 @@ class TargetKeyedWrite:
 def target_write(
     prepared: PreparedTargetWrite, families: inheritance.InheritanceFacet
 ) -> TargetKeyedWrite:
-    """``prepared`` as the buffer item that carries its caller's condition: the
+    """``prepared`` as the admitted write that carries its caller's condition: the
     keyed write it executes as, claimed at the scope its expectation names."""
     instruction = target_instruction(prepared)
     key = resolve_object_key(instruction, families)
@@ -246,7 +246,7 @@ def buffered_write(
     source: SourceAuthority | None = None,
     authority: InsertionIdentity | None = None,
 ) -> PreparedKeyedWrite | ClaimedKeyedWrite | InsertionKeyedWrite:
-    """``instruction`` as the buffer item that settles against ``evidence``.
+    """``instruction`` as the admitted write that settles against ``evidence``.
 
     A retained observation travels with the write so settlement can spend it.
     An object key requires ``source``, the authority an object-claimed write's
@@ -295,7 +295,7 @@ class TemporalContribution:
 
 
 @dataclass(frozen=True, slots=True)
-class ComposedTemporalWrite:
+class CoalescedTemporalWrite:
     """Every pending observed write of one temporal object, composed in
     authored order at the position of the first.
 
@@ -317,7 +317,7 @@ class ComposedTemporalWrite:
 
 
 @dataclass(frozen=True, slots=True)
-class ChainedTemporalWrite(ComposedTemporalWrite):
+class ChainedTemporalWrite(CoalescedTemporalWrite):
     """One ordering-barrier region's composition of a temporal object whose
     other pending writes stand in other regions of the same buffer.
 
@@ -334,7 +334,7 @@ class ChainedTemporalWrite(ComposedTemporalWrite):
 
 
 def chained_temporal_write(
-    held: TemporalKeyedWrite | ComposedTemporalWrite,
+    held: TemporalKeyedWrite | CoalescedTemporalWrite,
     key_name: str,
     *,
     leads: bool = False,
@@ -342,7 +342,7 @@ def chained_temporal_write(
 ) -> ChainedTemporalWrite:
     """``held`` as a composition of its barrier region, leading or following
     the object's writes in other regions as stated, and as it already did."""
-    composed = held if isinstance(held, ComposedTemporalWrite) else _composed(held, key_name)
+    composed = held if isinstance(held, CoalescedTemporalWrite) else _composed(held, key_name)
     if isinstance(composed, ChainedTemporalWrite):
         leads = leads or composed.leads
         follows = follows or composed.follows
@@ -377,8 +377,8 @@ def temporal_contribution(item: TemporalKeyedWrite) -> TemporalContribution:
 
 
 def composed_temporal_write(
-    held: TemporalKeyedWrite | ComposedTemporalWrite, arriving: TemporalKeyedWrite, key_name: str
-) -> ComposedTemporalWrite:
+    held: TemporalKeyedWrite | CoalescedTemporalWrite, arriving: TemporalKeyedWrite, key_name: str
+) -> CoalescedTemporalWrite:
     """``held`` followed by ``arriving``, one temporal object's writes composed
     in authored order.
 
@@ -387,13 +387,13 @@ def composed_temporal_write(
     condition stays. A caller's condition already held over the same window
     adds nothing to keep.
     """
-    if not isinstance(held, ComposedTemporalWrite):
+    if not isinstance(held, CoalescedTemporalWrite):
         held = _composed(held, key_name)
     contribution = temporal_contribution(arriving)
     contributions = held.contributions
     if contribution.condition is None or contribution not in contributions:
         contributions = (*contributions, contribution)
-    return ComposedTemporalWrite(
+    return CoalescedTemporalWrite(
         target=held.target,
         key=held.key,
         contributions=contributions,
@@ -401,9 +401,9 @@ def composed_temporal_write(
     )
 
 
-def _composed(item: TemporalKeyedWrite, key_name: str) -> ComposedTemporalWrite:
+def _composed(item: TemporalKeyedWrite, key_name: str) -> CoalescedTemporalWrite:
     row = item.instruction.rows[0]
-    return ComposedTemporalWrite(
+    return CoalescedTemporalWrite(
         target=item.instruction.target,
         key={key_name: row[key_name]},
         contributions=(temporal_contribution(item),),
@@ -541,7 +541,7 @@ class FollowingKeyedWrite:
     advances: int
 
 
-BufferItem = (
+AdmittedWrite = (
     PreparedKeyedWrite
     | PreparedPredicateWrite
     | ClaimedKeyedWrite
@@ -557,10 +557,10 @@ type OrderedWrite = (
     | InsertionKeyedWrite
     | TargetKeyedWrite
     | FollowingKeyedWrite
-    | ComposedTemporalWrite
+    | CoalescedTemporalWrite
     | PendingOpening
 )
-"""One element of the sequence settlement reads: a buffer item once the
+"""One element of the sequence settlement reads: an admitted write once the
 planner's rewriting stages have finished with it.
 
 An object-claimed write is absent by construction rather than by convention:
@@ -569,12 +569,12 @@ ordinary instruction it always was, so batching, ordering, and settlement see an
 unversioned write as the bare instruction they measure every other one by.
 """
 
-type BufferedWrite = OrderedWrite | AfterRemoval
-"""One composed buffered write as finalization receives it: what settlement
+type CoalescedWrite = OrderedWrite | AfterRemoval
+"""One coalesced write as finalization receives it: what settlement
 reads, or inserts that must follow an earlier removal."""
 
 
-def buffered_instruction(item: BufferItem) -> PreparedWrite:
+def buffered_instruction(item: AdmittedWrite) -> PreparedWrite:
     """The write instruction ``item`` carries, unwrapped from any envelope."""
     if isinstance(
         item,

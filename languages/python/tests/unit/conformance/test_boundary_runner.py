@@ -335,7 +335,7 @@ def test_a_join_repeating_the_boundarys_level_is_accepted() -> None:
 def test_run_boundary_actions_join_runs_the_rest_inside_a_joined_unit_of_work() -> None:
     # A joined call shares the outer transaction (`m-unit-work`), so the write
     # after the `join` buffers onto the SAME unit of work and reaches the
-    # database under the OUTER boundary's pre-commit batch —
+    # database under the OUTER boundary's pre-commit flush —
     # `m-execution-lifecycle-006`.
     port = _FakePort(rows=[{"id": 2, "owner": "Linus", "balance": Decimal("250.00"), "version": 1}])
     db = _db(port)

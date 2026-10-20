@@ -44,10 +44,10 @@ from parallax.core.write_plan.steps import (
     PlannedAssignments,
     PlannedClose,
     PlannedDelete,
+    PlannedStep,
     PlannedTemporalRemoval,
     PlannedTemporalRevision,
     PlannedUpdate,
-    PlannedWrite,
     SelfIncrement,
 )
 
@@ -356,7 +356,7 @@ class SimulatedTemporalStore:
             )
         return candidates[0]
 
-    def apply(self, model: Metamodel, step: PlannedWrite) -> None:
+    def apply(self, model: Metamodel, step: PlannedStep) -> None:
         """Change the stored rows as executing ``step`` changes the rows a
         database holds.
 

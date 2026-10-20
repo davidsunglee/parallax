@@ -15,13 +15,13 @@ from parallax.core.write_plan.steps import (
     NonTemporalConcurrency,
     PlannedAssignments,
     PlannedDelete,
+    PlannedStep,
     PlannedUpdate,
     Shortfall,
     Versioned,
     VersionGate,
     adopt_planned_assignments,
 )
-from parallax.core.write_plan.steps import PlannedWrite as PlannedStep
 
 __all__ = [
     "DELETION",

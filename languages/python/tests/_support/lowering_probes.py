@@ -3,7 +3,7 @@ write's DML.
 
 Each settled step lowers alone through the shipped seam
 (:func:`~parallax.core._execution._write_lowering.lowered`), one statement per
-Planned Write, whatever statements execution then groups them into. A unit test
+Planned Step, whatever statements execution then groups them into. A unit test
 usually pins the statements of one instruction, so this plans it — through the
 SAME production wiring :func:`~parallax.core._execution._planning.build_write_planner`
 builds — as the one-instruction buffer it means, and hands back the lowered
@@ -30,7 +30,7 @@ from parallax.core.write_payload import LayoutPayloadPreparer
 from parallax.core.write_plan import WriteObservation
 from parallax.core.write_plan.payload import WritePayloadPreparer
 from parallax.core.write_plan.plan import NO_TEMPORAL_WRITE_OWNERSHIP, TemporalWriteOwnership
-from parallax.core.write_plan.steps import PlannedWrite as PlannedStep
+from parallax.core.write_plan.steps import PlannedStep
 from tests._support.clock_probes import inert_instant
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY, observed_write
 

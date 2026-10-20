@@ -1,6 +1,6 @@
-"""Construction invariants of the finalized Planned Write algebra (m-write-plan).
+"""Construction invariants of the finalized Planned Step algebra (m-write-plan).
 
-A Planned Write is what SQL lowering receives with every semantic question
+A Planned Step is what SQL lowering receives with every semantic question
 already settled, so the shapes that would leave one unsettled must be
 unconstructible rather than merely unusual: an insert with no entries, an entry
 row naming no member, and entries of one step disagreeing about which members or

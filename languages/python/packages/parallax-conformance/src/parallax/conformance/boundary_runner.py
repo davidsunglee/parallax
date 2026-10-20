@@ -245,7 +245,7 @@ def run_boundary_actions[E: Entity](
       and runs every REMAINING action inside it, carrying the row already
       observed. A joined call shares the outer transaction (`m-unit-work`), so
       its closure receives the same context and its buffered writes reach the
-      database in the OUTER boundary's own pre-commit batch — which is exactly
+      database in the OUTER boundary's own pre-commit flush — which is exactly
       what `m-execution-lifecycle-006` asserts. An unqualified join reuses that
       scope; a qualified join derives an independent scope from the same root.
       A mode or an option the transaction was not opened with is refused there

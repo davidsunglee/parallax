@@ -117,7 +117,7 @@ class AcquireRows(Protocol):
     returns once the read's resources are settled, however the consumer left.
 
     A target request reads in a Read of its own; a coverage request reads in
-    the Write Batch whose flush reaches its deferred range. A
+    the Flush activity of the flush reaching its deferred range. A
     :class:`CompletionRequest` reads nothing: its rows are judged with no
     statement, Database Call, or activity, and its consumer runs over them.
     """

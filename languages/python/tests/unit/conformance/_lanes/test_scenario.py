@@ -63,7 +63,7 @@ from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.temporal_read import Edge
 from parallax.core.unit_work import (
-    BufferItem,
+    AdmittedWrite,
     Concurrency,
     MissingTargetError,
     OptimisticLockConflictError,
@@ -4028,11 +4028,11 @@ def test_a_staged_writer_runs_at_a_requested_read_committed_over_a_snapshot_root
     assert len(port.writes) == 2
 
 
-def _admitted(monkeypatch: pytest.MonkeyPatch) -> list[BufferItem | PreparedTargetWrite]:
-    admitted: list[BufferItem | PreparedTargetWrite] = []
+def _admitted(monkeypatch: pytest.MonkeyPatch) -> list[AdmittedWrite | PreparedTargetWrite]:
+    admitted: list[AdmittedWrite | PreparedTargetWrite] = []
     admit = scenario._SimulatedUnit._admit  # pyright: ignore[reportPrivateUsage] - observes what the lane hands its simulated unit of work
 
-    def recorded(unit: Any, item: BufferItem | PreparedTargetWrite) -> None:
+    def recorded(unit: Any, item: AdmittedWrite | PreparedTargetWrite) -> None:
         admitted.append(item)
         admit(unit, item)
 

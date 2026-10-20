@@ -628,7 +628,7 @@ two-byte parameter-count field expresses. Every dialect declares it as a
 positive integer. It bounds each statement alone: statements a transport sends
 together each carry their own allowance rather than sharing one. A lowering
 that combines separately planned writes into one statement keeps that statement
-within the limit; a statement whose bind count one Planned Write already fixes
+within the limit; a statement whose bind count one Planned Step already fixes
 is neither split nor refused on this account, and the database's own refusal
 stands.
 

@@ -9,7 +9,7 @@ arrived with it. Every case therefore passes a recording body and grades the
 moment that body ran.
 
 That is where the two orderings live. A participating eager read force-flushes
-and then opens its Read INSIDE that flush, so the dependency Write Batch is the
+and then opens its Read INSIDE that flush, so the dependency Flush is the
 Read's ordered sibling under one attempt; a participating page does the same
 around its Stream Batch. A standalone read and a standalone page flush nothing
 and own their roots, and a standalone read is begun by adopting the Serving
@@ -46,9 +46,9 @@ from parallax.core.entity._model import model_of
 from parallax.core.execution import ExecutionFailure, ServingModel, prepare_model
 from parallax.core.execution_lifecycle import (
     ExecutionEvent,
+    FlushStarted,
     ReadStarted,
     StreamStarted,
-    WriteBatchStarted,
 )
 from parallax.core.execution_lifecycle._activity import ActivityTarget, StreamActivity
 from parallax.core.metamodel import EntityIdentity
@@ -180,17 +180,17 @@ def _parentage(
 _UNDER_THE_ATTEMPT: Final = (
     "TransactionInvocation",
     "TransactionAttempt",
-    "WriteBatch",
+    "Flush",
     "Read",
     "Stream",
 )
 """The activity kinds an ordering claim about a participating read is made over;
-the attempt's own connection lease and each batch's Database Calls are other
+the attempt's own connection lease and each Flush's Database Calls are other
 suites' subjects."""
 
 
-def _batch_triggers(root: RecordedRoot) -> list[str]:
-    return [event.trigger for event in root.events if isinstance(event, WriteBatchStarted)]
+def _flush_triggers(root: RecordedRoot) -> list[str]:
+    return [event.trigger for event in root.events if isinstance(event, FlushStarted)]
 
 
 # --------------------------------------------------------------------------- #
@@ -353,11 +353,11 @@ def test_a_participating_eager_read_force_flushes_before_its_body_runs() -> None
 
     assert body.only.writes == 1
     (root,) = provider.roots
-    assert _batch_triggers(root) == ["read_dependency"]
+    assert _flush_triggers(root) == ["read_dependency"]
 
 
-def test_a_participating_read_opens_inside_the_flush_as_the_batchs_ordered_sibling() -> None:
-    # The Read is a child of the ATTEMPT and the flush's Write Batch is its
+def test_a_participating_read_opens_inside_the_flush_as_its_activitys_ordered_sibling() -> None:
+    # The Read is a child of the ATTEMPT and the flush's activity is its
     # ordered sibling — never its parent — which is what makes the activity tree
     # a record of causation rather than of nesting.
     provider = RecordingLifecycleProvider()
@@ -376,23 +376,23 @@ def test_a_participating_read_opens_inside_the_flush_as_the_batchs_ordered_sibli
     assert [name for name, _activity, _parent in shown] == [
         "TransactionInvocationStarted",
         "TransactionAttemptStarted",
-        "WriteBatchStarted",
-        "WriteBatchFinished",
+        "FlushStarted",
+        "FlushFinished",
         "ReadStarted",
         "ReadFinished",
         "TransactionAttemptFinished",
         "TransactionInvocationFinished",
     ]
-    batch, read = shown[2], shown[4]
-    assert (batch[2], read[2]) == (attempt, attempt)
-    assert batch[1] != read[1]
-    # And the body itself ran after the whole batch and inside the Read.
+    flush, read = shown[2], shown[4]
+    assert (flush[2], read[2]) == (attempt, attempt)
+    assert flush[1] != read[1]
+    # And the body itself ran after the whole Flush and inside the Read.
     ran = [name for name in body.only.transitions if name.startswith(_UNDER_THE_ATTEMPT)]
     assert ran == [
         "TransactionInvocationStarted",
         "TransactionAttemptStarted",
-        "WriteBatchStarted",
-        "WriteBatchFinished",
+        "FlushStarted",
+        "FlushFinished",
         "ReadStarted",
     ]
 
@@ -517,14 +517,14 @@ def test_every_participating_page_flushes_first_and_opens_its_batch_inside_that_
 
     assert body.only.writes == 1
     (root,) = provider.roots
-    assert _batch_triggers(root) == ["read_dependency"]
+    assert _flush_triggers(root) == ["read_dependency"]
     shown = _parentage(root, _UNDER_THE_ATTEMPT)
     assert [name for name, _activity, _parent in shown] == [
         "TransactionInvocationStarted",
         "TransactionAttemptStarted",
         "StreamStarted",
-        "WriteBatchStarted",
-        "WriteBatchFinished",
+        "FlushStarted",
+        "FlushFinished",
         "StreamBatchStarted",
         "StreamBatchFinished",
         "StreamFinished",

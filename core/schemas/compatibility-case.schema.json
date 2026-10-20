@@ -2291,8 +2291,8 @@
         "parent": {"type": ["integer", "null"], "minimum": 1},
         "readStarted": {"$ref": "#/$defs/lifecycleReadStarted"},
         "readFinished": {"$ref": "#/$defs/lifecycleActivityOutcome"},
-        "writeBatchStarted": {"$ref": "#/$defs/lifecycleWriteBatchStarted"},
-        "writeBatchFinished": {"$ref": "#/$defs/lifecycleActivityOutcome"},
+        "flushStarted": {"$ref": "#/$defs/lifecycleFlushStarted"},
+        "flushFinished": {"$ref": "#/$defs/lifecycleActivityOutcome"},
         "databaseCallStarted": {"$ref": "#/$defs/lifecycleDatabaseCallStarted"},
         "databaseCallFinished": {"$ref": "#/$defs/lifecycleDatabaseCallFinished"},
         "transactionInvocationStarted": {"$ref": "#/$defs/lifecycleInvocationStarted"},
@@ -2311,8 +2311,8 @@
       "oneOf": [
         {"required": ["readStarted"]},
         {"required": ["readFinished"]},
-        {"required": ["writeBatchStarted"]},
-        {"required": ["writeBatchFinished"]},
+        {"required": ["flushStarted"]},
+        {"required": ["flushFinished"]},
         {"required": ["databaseCallStarted"]},
         {"required": ["databaseCallFinished"]},
         {"required": ["transactionInvocationStarted"]},
@@ -2429,7 +2429,7 @@
       "properties": {"edition": {"type": "string", "minLength": 1}}
     },
     "lifecycleReadStarted": {
-      "description": "A Read opened over `target` through `interface`, after public preflight and after any read-dependency Write Batch. `interface` is the public read interface that publishes the result — `typed`, `wire`, or the internal `rows` values lane — which is what distinguishes two reads of one Entity differing only in what they materialize. `edition` is the Model Edition a STANDALONE Read adopted for itself — the model descriptor's file stem the adapter prepared the case's model under (m-conformance-adapter), asserted literally — and is required exactly where the Read is the root activity; a participating Read carries none, because the attempt it hangs under already stated the edition it inherits.",
+      "description": "A Read opened over `target` through `interface`, after public preflight and after any read-dependency Flush. `interface` is the public read interface that publishes the result — `typed`, `wire`, or the internal `rows` values lane — which is what distinguishes two reads of one Entity differing only in what they materialize. `edition` is the Model Edition a STANDALONE Read adopted for itself — the model descriptor's file stem the adapter prepared the case's model under (m-conformance-adapter), asserted literally — and is required exactly where the Read is the root activity; a participating Read carries none, because the attempt it hangs under already stated the edition it inherits.",
       "type": "object",
       "additionalProperties": false,
       "required": ["target", "interface"],
@@ -2439,8 +2439,8 @@
         "edition": {"type": "string", "minLength": 1}
       }
     },
-    "lifecycleWriteBatchStarted": {
-      "description": "A nonempty unit-of-work buffer is being flushed, naming the CLOSED `m-unit-work` trigger that produced it: `read-dependency` for the batch a dependent read forced — which finishes before the Read it enabled starts — or `pre-commit` for the boundary-owned final batch. An empty buffer emits nothing at all, so a batch in the stream always had something to write.",
+    "lifecycleFlushStarted": {
+      "description": "A nonempty unit-of-work buffer is being flushed, naming the CLOSED `m-unit-work` trigger that produced it: `read-dependency` for the flush a dependent read forced — which finishes before the Read it enabled starts — or `pre-commit` for the boundary-owned final flush. An empty buffer emits nothing at all, so a Flush in the stream always had something to write.",
       "type": "object",
       "additionalProperties": false,
       "required": ["trigger"],
@@ -2625,7 +2625,7 @@
       "allOf": [{"$ref": "#/$defs/lifecycleFailure"}]
     },
     "lifecycleActivityOutcome": {
-      "description": "A Read, Write Batch, or Stream Batch reached its terminal outcome: `completed` or `failed`. A Write Batch that planning reduced to zero DML completes exactly like one that ran statements — the buffer was spent either way — and a Read completes when its public result is ready.",
+      "description": "A Read, Flush, or Stream Batch reached its terminal outcome: `completed` or `failed`. A Flush that planning reduced to zero DML completes exactly like one that ran statements — the buffer was spent either way — and a Read completes when its public result is ready.",
       "type": "object",
       "additionalProperties": false,
       "required": ["outcome"],
@@ -2638,7 +2638,7 @@
       "allOf": [{"$ref": "#/$defs/lifecycleFailure"}]
     },
     "lifecycleAttemptFinished": {
-      "description": "One physical attempt reached its terminal outcome. `committed` ends the invocation. `rolledBack` and `rollbackFailed` carry the Attempt Failure: `phase` locates it inside the attempt — `callback` (the callback and everything it caused, joined invocations and read-dependency batches included), `pre-commit` (the boundary-owned final batch), `commit` (the durability call) — without exposing a stack location or an internal planner stage, and `retryEligible` is the CLASSIFIER's verdict under the effective policy, independent of the remaining budget and claiming nothing about whether another attempt occurred. `rollbackFailed` additionally admits `rollbackCode`, the stable code of the SECOND live failure, prefixed because two failures collide on one event. `beginFailed` is the boundary that never opened: the attempt had adopted its edition and started, no callback ran, and the failure is terminal by rule — so it carries no `phase` (nothing inside the attempt ran) and no `retryEligible` (no classifier verdict is consulted). Its attribution is the ordinary rule rather than a fixed answer: an attempt whose own Acquisition granted no connection names that Acquisition and is `caused`, while one whose boundary refused to open on a connection it did acquire has no child holding the failure and is `direct`. Either way the invocation above finishes `failed` caused by it.",
+      "description": "One physical attempt reached its terminal outcome. `committed` ends the invocation. `rolledBack` and `rollbackFailed` carry the Attempt Failure: `phase` locates it inside the attempt — `callback` (the callback and everything it caused, joined invocations and read-dependency flushes included), `pre-commit` (the boundary-owned final flush), `commit` (the durability call) — without exposing a stack location or an internal planner stage, and `retryEligible` is the CLASSIFIER's verdict under the effective policy, independent of the remaining budget and claiming nothing about whether another attempt occurred. `rollbackFailed` additionally admits `rollbackCode`, the stable code of the SECOND live failure, prefixed because two failures collide on one event. `beginFailed` is the boundary that never opened: the attempt had adopted its edition and started, no callback ran, and the failure is terminal by rule — so it carries no `phase` (nothing inside the attempt ran) and no `retryEligible` (no classifier verdict is consulted). Its attribution is the ordinary rule rather than a fixed answer: an attempt whose own Acquisition granted no connection names that Acquisition and is `caused`, while one whose boundary refused to open on a connection it did acquire has no child holding the failure and is `direct`. Either way the invocation above finishes `failed` caused by it.",
       "type": "object",
       "additionalProperties": false,
       "required": ["outcome"],

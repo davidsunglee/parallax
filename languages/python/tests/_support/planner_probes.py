@@ -21,13 +21,13 @@ from parallax.core._execution._unit_work.retain import RetainedObservation
 from parallax.core._execution._unit_work.strategy import ActorIdentity
 from parallax.core._execution._unit_work.write_items import (
     AfterRemoval,
-    BufferedWrite,
+    CoalescedWrite,
     OrderedWrite,
     TargetKeyedWrite,
 )
 from parallax.core.metamodel import EntityIdentity, Metamodel
 from parallax.core.unit_work import (
-    BufferItem,
+    AdmittedWrite,
     KeyedWriteInstruction,
     PredicateWriteInstruction,
     SubjectActor,
@@ -79,7 +79,7 @@ class RecordingSource:
 
 def observed_buffer(
     buffer: Sequence[
-        BufferItem | KeyedWriteInstruction | PredicateWriteInstruction | PreparedPredicateWrite
+        AdmittedWrite | KeyedWriteInstruction | PredicateWriteInstruction | PreparedPredicateWrite
     ],
     model: Metamodel,
     observations: Mapping[ObjectKey, WriteObservation] | None,
@@ -98,7 +98,7 @@ def observed_buffer(
     """
     prepared = [_prepared_item(item, model) for item in buffer]
     retained: dict[ObjectKey, RetainedObservation] = {}
-    resolved: list[BufferItem] = []
+    resolved: list[AdmittedWrite] = []
     for item in prepared:
         if not observations or not isinstance(item, PreparedKeyedWrite):
             resolved.append(item)
@@ -122,7 +122,7 @@ def observed_write(
     buffer holds; a predicate write carries none."""
     if isinstance(instruction, PreparedPredicateWrite):
         assert observation is None  # a readless predicate write observes nothing
-        item: BufferItem = instruction
+        item: AdmittedWrite = instruction
     elif observation is None:
         item = instruction
     else:
@@ -131,9 +131,11 @@ def observed_write(
     return _settled(only)
 
 
-def admitted_writes(model: Metamodel, writes: Sequence[BufferItem]) -> tuple[BufferedWrite, ...]:
-    """``writes`` admitted in authored order into one pending batch, and that
-    batch's composed writes, under the Optimistic strategy, whose confirmation
+def admitted_writes(
+    model: Metamodel, writes: Sequence[AdmittedWrite]
+) -> tuple[CoalescedWrite, ...]:
+    """``writes`` admitted in authored order into one buffer, and that
+    buffer's composed writes, under the Optimistic strategy, whose confirmation
     of a caller's revision reads nothing."""
     admission = WriteAdmission(model, inserted_version=_no_insertion_authorizes)
     for item in writes:
@@ -163,7 +165,7 @@ def retained_observation(
     )
 
 
-def _settled(item: BufferedWrite) -> OrderedWrite:
+def _settled(item: CoalescedWrite) -> OrderedWrite:
     """``item`` as settlement reads it: these suites buffer no insert that
     waits on an earlier removal."""
     assert not isinstance(item, AfterRemoval)
@@ -171,9 +173,12 @@ def _settled(item: BufferedWrite) -> OrderedWrite:
 
 
 def _prepared_item(
-    item: BufferItem | KeyedWriteInstruction | PredicateWriteInstruction | PreparedPredicateWrite,
+    item: AdmittedWrite
+    | KeyedWriteInstruction
+    | PredicateWriteInstruction
+    | PreparedPredicateWrite,
     model: Metamodel,
-) -> BufferItem:
+) -> AdmittedWrite:
     """``item`` as a unit of work buffers it: an authored keyed or predicate
     write prepared."""
     if isinstance(item, KeyedWriteInstruction):

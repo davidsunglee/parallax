@@ -146,7 +146,7 @@ def _writes(events: list[ExecutionEvent]) -> list[str]:
 
 def _singletons(patched: pytest.MonkeyPatch) -> None:
     """Cap each grouped opening at one entry, so every opening runs alone."""
-    patched.setattr(_write_lowering, "_OPENING_ENTRY_CAP", 1)
+    patched.setattr(_write_lowering, "_GROUPED_INSERT_ROWS", 1)
 
 
 def _realized(

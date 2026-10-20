@@ -35,14 +35,14 @@ from parallax.core.metamodel import AttributeIdentity, entity_by_name
 from parallax.core.sql_gen import LoweredStatement, SqlGenError
 from parallax.core.unit_work import KeyedWriteInstruction, MissingTargetError, WritePlanningRequest
 from parallax.core.write_plan import WritePlan
-from parallax.core.write_plan.plan import ExecutionUnit, PlannedWrites
+from parallax.core.write_plan.plan import PlannedWrites, SettledWrite
 from parallax.core.write_plan.steps import (
     MISSING_TARGET,
     UNVERSIONED,
     ExactCount,
     KeyTarget,
     PlannedDelete,
-    PlannedWrite,
+    PlannedStep,
 )
 from tests._support.clock_probes import instant_at
 from tests._support.db_port import Read, ReadCall, ScriptedAdapter, Write, WriteCall
@@ -53,14 +53,14 @@ from tests.unit.core._execution._write_step_support import (
     HeldSteps,
     alone,
     close,
+    open_flush,
     opening,
     physical,
     run_plan,
     step_executor,
-    write_batch,
 )
 
-_OPENING_CAP: Final = "parallax.core._execution._write_lowering._OPENING_ENTRY_CAP"
+_GROUPED_INSERT_CAP: Final = "parallax.core._execution._write_lowering._GROUPED_INSERT_ROWS"
 
 
 @dataclass
@@ -73,14 +73,14 @@ class _Executed:
 
 
 def _execute(segment: HeldSteps, provider: ExecutionLifecycleProvider | None = None) -> _Executed:
-    """Execute ``segment`` as one span inside one Write Batch over its port,
+    """Execute ``segment`` as one span inside one Flush over its port,
     recording whatever it raised."""
     executed = _Executed(segment)
     view = PlannedWrites((segment,)).view(0, len(segment))
     try:
-        with write_batch(provider) as batch:
+        with open_flush(provider) as flush:
             executed.answered = step_executor(segment.port).execute(
-                view, allocates=False, batch=batch
+                view, allocates=False, flush=flush
             )
     except BaseException as raised:
         executed.raised = raised
@@ -110,8 +110,8 @@ def test_a_shortfall_is_enforced_before_the_next_step_is_taken() -> None:
     port = ScriptedAdapter(Write(affected=0))
     segment = HeldSteps(port, (_delete(1), _delete(2)))
     view = PlannedWrites((segment,)).view(0, len(segment))
-    with pytest.raises(MissingTargetError), write_batch() as batch:
-        step_executor(port, _ACCOUNT_META).execute(view, allocates=False, batch=batch)
+    with pytest.raises(MissingTargetError), open_flush() as flush:
+        step_executor(port, _ACCOUNT_META).execute(view, allocates=False, flush=flush)
     assert segment.asked == [(0, 0)]
     assert len(port.calls) == 1
 
@@ -147,9 +147,9 @@ def test_an_allocating_span_answers_the_keys_its_insert_returned() -> None:
     (unit,) = plan.units
     assert unit.opened.allocated
     port = ScriptedAdapter(Read(rows=[{"id": 42}]))
-    with write_batch() as batch:
+    with open_flush() as flush:
         answered = step_executor(port, meta).execute(
-            plan.steps.view(0, unit.end), allocates=True, batch=batch
+            plan.steps.view(0, unit.end), allocates=True, flush=flush
         )
     assert answered == (42,)
     # The insert ran as row-producing DML rather than as a counted write.
@@ -170,7 +170,7 @@ def test_a_run_of_openings_is_one_call_and_the_step_ending_it_is_lowered_only_af
     lowered_at: list[int] = []
     lowered_alone = LoweringCursor.lowered
 
-    def lowering(cursor: LoweringCursor, step: PlannedWrite) -> LoweredStatement:
+    def lowering(cursor: LoweringCursor, step: PlannedStep) -> LoweredStatement:
         lowered_at.append(len(port.calls))
         return lowered_alone(cursor, step)
 
@@ -194,7 +194,7 @@ def test_a_run_of_openings_is_one_call_and_the_step_ending_it_is_lowered_only_af
 def test_the_step_after_a_capped_run_is_taken_only_once_its_statement_ran(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(_OPENING_CAP, 2)
+    monkeypatch.setattr(_GROUPED_INSERT_CAP, 2)
     openings = (opening(1), opening(2), opening(3))
     port = ScriptedAdapter(Write(affected=2), Write())
     executed = _execute(HeldSteps(port, openings))
@@ -253,7 +253,7 @@ def test_a_control_flow_exception_taking_a_later_opening_inserts_none_of_the_run
 def test_the_statements_a_span_runs_are_the_ones_its_dry_traversal_answers(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(_OPENING_CAP, 2)
+    monkeypatch.setattr(_GROUPED_INSERT_CAP, 2)
     steps = (close(1), opening(1), opening(2), opening(3), close(2), opening(4))
     statements = physical(*steps)
     assert len(statements) == 5
@@ -283,10 +283,10 @@ def test_a_run_of_openings_never_reaches_into_a_later_units_span() -> None:
     claims = (_Claim(port), _Claim(port))
     plan = WritePlan(
         steps=PlannedWrites((HeldSteps(port, (*first, *second)),)),
-        units=(ExecutionUnit(end=4, claim=claims[0]), ExecutionUnit(end=5, claim=claims[1])),
+        units=(SettledWrite(end=4, claim=claims[0]), SettledWrite(end=5, claim=claims[1])),
     )
-    with write_batch() as batch:
-        run_plan(port, plan, batch)
+    with open_flush() as flush:
+        run_plan(port, plan, flush)
     assert port.calls == [*physical(*first), *physical(*second)]
     # Each unit completed once its own statements ran.
     assert [claim.spent_at for claim in claims] == [2, 3]
@@ -301,10 +301,10 @@ def test_a_unit_whose_grouped_statement_fails_completes_nothing_and_takes_no_lat
     claims = (_Claim(port), _Claim(port))
     plan = WritePlan(
         steps=PlannedWrites((segment,)),
-        units=(ExecutionUnit(end=4, claim=claims[0]), ExecutionUnit(end=5, claim=claims[1])),
+        units=(SettledWrite(end=4, claim=claims[0]), SettledWrite(end=5, claim=claims[1])),
     )
-    with pytest.raises(DatabaseError) as raised, write_batch() as batch:
-        run_plan(port, plan, batch)
+    with pytest.raises(DatabaseError) as raised, open_flush() as flush:
+        run_plan(port, plan, flush)
     assert raised.value is violation
     assert segment.taken == [0, 1, 2, 3]
     assert [claim.spent_at for claim in claims] == [None, None]

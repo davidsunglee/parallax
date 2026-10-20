@@ -26,7 +26,7 @@ from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import AttributeMetadata, EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.unit_work import (
-    BufferItem,
+    AdmittedWrite,
     KeyedWriteInstruction,
     WritePlanningRequest,
     WriteRejectedError,
@@ -92,7 +92,7 @@ GENERATED_KEY_LEAF = _generated_key_leaf()
 
 
 def _flush_and_lower(
-    buffer: list[BufferItem | KeyedWriteInstruction], model: Metamodel
+    buffer: list[AdmittedWrite | KeyedWriteInstruction], model: Metamodel
 ) -> list[LoweredStatement]:
     """Plan ``buffer`` with the production wiring, then lower the plan."""
     instant = inert_instant()
@@ -247,7 +247,7 @@ def test_collapses_dispatches_by_mutation() -> None:
 # --------------------------------------------------------------------------- #
 def test_same_shape_insert_run_collapses_into_one_multi_row_statement() -> None:
     model, _ = WALLET
-    buffer: list[BufferItem | KeyedWriteInstruction] = [
+    buffer: list[AdmittedWrite | KeyedWriteInstruction] = [
         KeyedWriteInstruction(
             "insert", "Wallet", ({"id": 10, "owner": "Mira", "balance": Decimal("100.00")},)
         ),
@@ -262,7 +262,7 @@ def test_same_shape_insert_run_collapses_into_one_multi_row_statement() -> None:
 
 def test_insert_preparation_refuses_a_missing_required_slot_before_grouping() -> None:
     model, _ = WALLET
-    buffer: list[BufferItem | KeyedWriteInstruction] = [
+    buffer: list[AdmittedWrite | KeyedWriteInstruction] = [
         KeyedWriteInstruction(
             "insert", "Wallet", ({"id": 10, "owner": "Mira", "balance": Decimal("100.00")},)
         ),
@@ -274,7 +274,7 @@ def test_insert_preparation_refuses_a_missing_required_slot_before_grouping() ->
 
 def test_one_invalid_insert_refuses_the_whole_candidate_run_before_grouping() -> None:
     model, _ = WALLET
-    buffer: list[BufferItem | KeyedWriteInstruction] = [
+    buffer: list[AdmittedWrite | KeyedWriteInstruction] = [
         KeyedWriteInstruction(
             "insert", "Wallet", ({"id": 10, "owner": "Mira", "balance": Decimal("100.00")},)
         ),
@@ -305,7 +305,7 @@ def test_delete_grouping_ignores_members_the_statement_never_uses() -> None:
     # carrying different non-key payload members are the SAME physical shape and
     # must reach one `IN`-list statement.
     model, _ = WALLET
-    buffer: list[BufferItem | KeyedWriteInstruction] = [
+    buffer: list[AdmittedWrite | KeyedWriteInstruction] = [
         KeyedWriteInstruction(
             "delete", "Wallet", ({"id": 10, "owner": "Mira", "balance": Decimal("100.00")},)
         ),
@@ -321,7 +321,7 @@ def test_update_grouping_still_splits_on_a_differing_set_clause() -> None:
     # clause), so a differing assignable selection stays a differing group —
     # each side then collapses on its own uniform values.
     model, _ = WALLET
-    buffer: list[BufferItem | KeyedWriteInstruction] = [
+    buffer: list[AdmittedWrite | KeyedWriteInstruction] = [
         KeyedWriteInstruction("amend", "Wallet", ({"id": 10, "balance": Decimal("5.00")},)),
         KeyedWriteInstruction("amend", "Wallet", ({"id": 11, "balance": Decimal("5.00")},)),
         KeyedWriteInstruction("amend", "Wallet", ({"id": 12, "owner": "Omar"},)),
@@ -342,7 +342,7 @@ def test_row_member_order_alone_never_splits_a_batch_group() -> None:
     # The grouping key is the TABLE-ordered slot selection, so two rows naming
     # the same members in different payload order stay one group.
     model, _ = WALLET
-    buffer: list[BufferItem | KeyedWriteInstruction] = [
+    buffer: list[AdmittedWrite | KeyedWriteInstruction] = [
         KeyedWriteInstruction(
             "insert", "Wallet", ({"id": 10, "owner": "Mira", "balance": Decimal("100.00")},)
         ),

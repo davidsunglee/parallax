@@ -32,13 +32,14 @@ from parallax.core._execution._unit_work.instructions import (
     prepare_typed_write,
     prepare_wire_write,
 )
-from parallax.core._execution._unit_work.uow import WriteBatchScope
+from parallax.core._execution._unit_work.uow import FlushScope
 from parallax.core.dialect import POSTGRES
 from parallax.core.inheritance import EntityMemberSelection
 from parallax.core.metamodel import EntityIdentity, Metamodel
 from parallax.core.unit_work import (
     CardinalityCorruptionError,
     Concurrency,
+    FlushTrigger,
     PredicateMutation,
     PredicateSelection,
     PredicateWriteInstruction,
@@ -46,7 +47,6 @@ from parallax.core.unit_work import (
     TransactionSettings,
     UnitOfWork,
     WriteAssignment,
-    WriteBatchReason,
     WritePreconditionError,
 )
 from parallax.core.write_plan import ObjectKey, PredecessorRow
@@ -61,15 +61,15 @@ _ABSENT: Final = object()
 
 @dataclass(slots=True)
 class _Flushes:
-    """Each flush's Write Batch entered in ``log`` beside the row reads it
+    """Each flush's activity entered in ``log`` beside the row reads it
     orders against, and every statement its spans lowered to."""
 
     log: list[str]
     simulated: SimulatedWriteSteps
-    batches: int = 0
+    opened: int = 0
 
-    def __call__(self, trigger: WriteBatchReason, /) -> WriteBatchScope:
-        self.batches += 1
+    def __call__(self, trigger: FlushTrigger, /) -> FlushScope:
+        self.opened += 1
         self.log.append(f"flush:{trigger}")
         return contextlib.nullcontext()
 
@@ -109,7 +109,7 @@ def _uow(
         planner=planner,
         actor_identity=TEST_ACTOR_IDENTITY,
         evidence_policy_for=opt_lock.view(meta).required_key,
-        write_batch_opening=flushes,
+        flush_opening=flushes,
     )
     return uow, flushes
 
@@ -221,7 +221,7 @@ def test_a_locking_target_reading_several_rows_is_corruption_with_their_exact_co
         uow.buffer_target(_account_patch())
     assert (corrupt.value.expected, corrupt.value.actual) == (1, 3)
     uow.flush(trigger="pre_commit")
-    assert flushes.batches == 0
+    assert flushes.opened == 0
 
 
 def test_a_locking_target_reading_no_row_fails_its_callers_precondition() -> None:

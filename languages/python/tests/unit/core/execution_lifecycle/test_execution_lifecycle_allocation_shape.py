@@ -41,9 +41,9 @@ from parallax.core.execution_lifecycle import ExecutionLifecycleHandler, RootExe
 from parallax.core.execution_lifecycle._activity import (
     INERT,
     DeliveryState,
+    FlushActivity,
     InstalledLifecycle,
     ReadActivity,
-    WriteBatchActivity,
     open_read_root,
     open_transaction_root,
 )
@@ -127,8 +127,8 @@ def _unobserved_transaction(sample: Callable[[], None]) -> None:
     """The whole transaction seam, driven the way composition drives it.
 
     The scopes a transaction opens are the ones no read reaches — the invocation,
-    the attempt whose start the port body announces, the batch a flush runs
-    inside, the enforcement bracket that follows each write, and the observation
+    the attempt whose start the port body announces, the activity a flush
+    runs inside, the enforcement bracket that follows each write, and the observation
     of an ordered transport invocation with its own bracket — so the free path
     they take is graded here rather than inferred from the read's.
     """
@@ -142,17 +142,17 @@ def _unobserved_transaction(sample: Callable[[], None]) -> None:
         ) as invocation,
         invocation.attempt("edition") as attempt,
     ):
-        with attempt.write_batch("pre_commit") as batch:
-            with batch.database_call(STATEMENT, "write", TARGET) as call:
+        with attempt.flush("pre_commit") as flush:
+            with flush.database_call(STATEMENT, "write", TARGET) as call:
                 call.write_completed(AFFECTED)
-            with batch.enforcing(call), batch.ordered_calls(ORDERED) as calls:
+            with flush.enforcing(call), flush.ordered_calls(ORDERED) as calls:
                 calls.finish_calls(calls.invoke(present, ORDERED))
                 with calls.enforcing(0):
                     sample()
         attempt.committed()
 
 
-def _flush_under(batch: WriteBatchActivity) -> Seam:
+def _flush_under(flush: FlushActivity) -> Seam:
     """The other seam an unobserved operation drives: a flush's Database Call.
 
     The activity is closed over rather than named as a module global, which is
@@ -162,7 +162,7 @@ def _flush_under(batch: WriteBatchActivity) -> Seam:
     """
 
     def run(sample: Callable[[], None]) -> None:
-        with batch.database_call(STATEMENT, "write", TARGET) as call:
+        with flush.database_call(STATEMENT, "write", TARGET) as call:
             call.write_completed(AFFECTED)
             sample()
 
@@ -295,7 +295,7 @@ def test_after_a_decline_the_scopes_cost_what_the_default_path_costs() -> None:
 
 
 @in_a_child_interpreter
-def test_an_unobserved_write_batch_allocates_nothing_either() -> None:
+def test_an_unobserved_flush_allocates_nothing_either() -> None:
     # A transaction's flush publishes under the same shared inert activity, so
     # the claim is one claim: the write seam is graded by the same measurement
     # rather than by a reader noticing that it looks like the read seam.
@@ -310,7 +310,7 @@ def test_an_unobserved_write_batch_allocates_nothing_either() -> None:
 
 @in_a_child_interpreter
 def test_an_unobserved_transaction_allocates_nothing_across_its_whole_seam() -> None:
-    # The invocation, the attempt, the batch, the enforcement brackets, and an
+    # The invocation, the attempt, the Flush, the enforcement brackets, and an
     # ordered invocation's observation are more scopes an unobserved operation
     # opens, and the specification costs every one of them at nothing.
     tracemalloc.start()
@@ -340,7 +340,7 @@ def test_a_declined_root_keeps_no_tracked_object_of_its_opening_alive() -> None:
 
 
 @in_a_child_interpreter
-def test_an_unobserved_write_batch_leaves_no_tracked_object_alive_either() -> None:
+def test_an_unobserved_flush_leaves_no_tracked_object_alive_either() -> None:
     assert _survivors_without_coverage_state(_flush_under(INERT)) == []
 
 

@@ -28,8 +28,8 @@ from parallax.core._execution._unit_work.strategy import (
 )
 from parallax.core._execution._unit_work.write_items import (
     AfterRemoval,
-    BufferedWrite,
-    ComposedTemporalWrite,
+    CoalescedTemporalWrite,
+    CoalescedWrite,
     FollowingKeyedWrite,
     InsertionKeyedWrite,
     ObservedKeyedWrite,
@@ -54,7 +54,7 @@ __all__ = [
     "WritePlanningRequest",
 ]
 
-type BufferedWrites = Sequence[BufferedWrite]
+type CoalescedWrites = Sequence[CoalescedWrite]
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -65,7 +65,7 @@ class WritePlanningRequest:
     captured Execution Authority, and field order emphasizes that without
     making it a positional API.
 
-    ``buffered_writes`` is the pending batch as
+    ``buffered_writes`` is the buffer as
     :class:`~parallax.core._execution._unit_work.admission.WriteAdmission`
     composed it, in authored order: one item per coalesced write, one composed
     write per temporal object's observed writes, and no write a later one
@@ -79,7 +79,7 @@ class WritePlanningRequest:
     actor_identity: ActorIdentity
     transaction_instant: TransactionInstant
     concurrency: Concurrency
-    buffered_writes: BufferedWrites
+    buffered_writes: CoalescedWrites
     ownership: TemporalWriteOwnership = NO_TEMPORAL_WRITE_OWNERSHIP
     counts_unchanged_rows: bool = False
 
@@ -241,28 +241,28 @@ class WritePlanner:
         arithmetic = self._concurrency.version_arithmetic()
         return arithmetic.initial if advanced_from is None else arithmetic.advance(advanced_from)
 
-    def _form_batches(self, buffer: Sequence[BufferedWrite]) -> list[BufferedWrite]:
-        result: list[BufferedWrite] = []
-        run: list[PreparedKeyedWrite] = []
-        run_group: object = None
+    def _form_batches(self, buffer: Sequence[CoalescedWrite]) -> list[CoalescedWrite]:
+        result: list[CoalescedWrite] = []
+        candidates: list[PreparedKeyedWrite] = []
+        batch: object = None
 
-        def group_key(item: PreparedKeyedWrite) -> object:
-            return self._batching.group_key(self._model, item.target, item.mutation, item.rows[0])
+        def batch_key(item: PreparedKeyedWrite) -> object:
+            return self._batching.batch_key(self._model, item.target, item.mutation, item.rows[0])
 
-        def flush_run() -> None:
-            if not run:
+        def close_batch() -> None:
+            if not candidates:
                 return
-            entity = run[0].target
-            rows = [row for w in run for row in w.rows]
-            if len(run) == 1:
-                result.extend(run)
-            elif self._batching.collapses(self._model, entity, run[0].mutation, rows):
-                result.append(_merge_rows(run))
+            entity = candidates[0].target
+            rows = [row for w in candidates for row in w.rows]
+            if len(candidates) == 1:
+                result.extend(candidates)
+            elif self._batching.collapses(self._model, entity, candidates[0].mutation, rows):
+                result.append(_merge_rows(candidates))
             else:
-                result.extend(run)
-            run.clear()
+                result.extend(candidates)
+            candidates.clear()
 
-        # A write carrying an observation is never merged into a multi-row run:
+        # A write carrying an observation is never merged into a multi-row batch:
         # a merged statement shares ONE address, ONE assignment shape, and ONE
         # affected-row total, while every fact an observation licenses is
         # per-row — the milestone a close addresses, the version it advances
@@ -273,30 +273,30 @@ class WritePlanner:
         # branch below as its own singleton, because carrying an observation IS
         # being wrapped — no map and no key recomputation decides it, for
         # versioned and temporal alike. A carrier is single-row by
-        # construction, so the run this skips is the only way its row could
+        # construction, so the batch this skips is the only way its row could
         # have joined a multi-row statement.
         for item in _decomposed_updates(buffer, self._temporal_facet):
             if isinstance(item, PreparedKeyedWrite) and len(item.rows) == 1:
-                item_group = group_key(item)
+                item_batch = batch_key(item)
                 if (
-                    run
-                    and run[-1].target == item.target
-                    and run[-1].mutation == item.mutation
-                    and run[-1].valid_time_window == item.valid_time_window
-                    and item_group == run_group
+                    candidates
+                    and candidates[-1].target == item.target
+                    and candidates[-1].mutation == item.mutation
+                    and candidates[-1].valid_time_window == item.valid_time_window
+                    and item_batch == batch
                 ):
-                    run.append(item)
+                    candidates.append(item)
                     continue
-                flush_run()
-                run.append(item)
-                run_group = item_group
+                close_batch()
+                candidates.append(item)
+                batch = item_batch
             else:
-                flush_run()
+                close_batch()
                 result.append(item)
-        flush_run()
+        close_batch()
         return result
 
-    def _order(self, items: Sequence[BufferedWrite]) -> list[OrderedWrite]:
+    def _order(self, items: Sequence[CoalescedWrite]) -> list[OrderedWrite]:
         """``items`` in flush order: each readless predicate write stays where it
         was authored, and within each region between them inserts go in
         ascending referential rank, then updates in authored order, then deletes
@@ -329,7 +329,7 @@ class WritePlanner:
                 # authored after it orders with it as usual.
                 close_region()
                 item = item.insert
-            if isinstance(item, ComposedTemporalWrite):
+            if isinstance(item, CoalescedTemporalWrite):
                 if item.assigns:
                     updates.append(item)
                 else:
@@ -357,8 +357,8 @@ _RANK = itemgetter(0)
 
 
 def _decomposed_updates(
-    buffer: Sequence[BufferedWrite], temporal_facet: temporal_read.TemporalFacet
-) -> list[BufferedWrite]:
+    buffer: Sequence[CoalescedWrite], temporal_facet: temporal_read.TemporalFacet
+) -> list[CoalescedWrite]:
     """``buffer`` with every PREFORMED multi-row non-temporal keyed update split
     back into one single-row instruction per row.
 
@@ -384,7 +384,7 @@ def _decomposed_updates(
     multi-row milestone chain it is rather than silently settling it as several
     chains the caller never authored.
     """
-    decomposed: list[BufferedWrite] = []
+    decomposed: list[CoalescedWrite] = []
     for item in buffer:
         if not isinstance(item, PreparedKeyedWrite) or not _splits_into_rows(item, temporal_facet):
             decomposed.append(item)
@@ -424,10 +424,10 @@ def _merge_rows(run: Sequence[PreparedKeyedWrite]) -> PreparedKeyedWrite:
 
 
 def _without_noop_rows(
-    item: BufferedWrite,
+    item: CoalescedWrite,
     families: inheritance.InheritanceFacet,
     temporal_facet: temporal_read.TemporalFacet,
-) -> BufferedWrite | None:
+) -> CoalescedWrite | None:
     """``item`` with its known no-op rows gone, or ``None`` when none survive.
 
     An update row naming only key members changes nothing: a key ADDRESSES the
@@ -458,7 +458,7 @@ def _without_noop_rows(
     narrower instruction.
     """
     if isinstance(
-        item, ComposedTemporalWrite | PendingOpening | AfterRemoval | FollowingKeyedWrite
+        item, CoalescedTemporalWrite | PendingOpening | AfterRemoval | FollowingKeyedWrite
     ):
         return item
     if isinstance(item, TargetKeyedWrite) and isinstance(item.expectation, ExpectedVersion):

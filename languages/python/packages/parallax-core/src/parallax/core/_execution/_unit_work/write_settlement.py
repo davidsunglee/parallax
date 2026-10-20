@@ -32,7 +32,7 @@ from parallax.core._execution._unit_work.strategy import (
     ConcurrencyStrategy,
 )
 from parallax.core._execution._unit_work.write_items import (
-    ComposedTemporalWrite,
+    CoalescedTemporalWrite,
     FollowingKeyedWrite,
     InsertionKeyedWrite,
     ObservedKeyedWrite,
@@ -65,9 +65,9 @@ from parallax.core.write_plan.plan import (
     AllocatedOpening,
     BoundRange,
     CombinedSourceAuthority,
-    ExecutionUnit,
     Openings,
     PlannedWrites,
+    SettledWrite,
     SourceAuthority,
     TemporalWriteOwnership,
     WritePlan,
@@ -91,12 +91,12 @@ from parallax.core.write_plan.steps import (
     PlannedAssignments,
     PlannedDelete,
     PlannedInsert,
+    PlannedStep,
     PlannedUpdate,
     PlannedValue,
     WriteRow,
     shortfall_classification,
 )
-from parallax.core.write_plan.steps import PlannedWrite as PlannedStep
 
 __all__ = ["WritePlanCompiler"]
 
@@ -157,10 +157,10 @@ class WritePlanCompiler:
     ) -> WritePlan:
         """The whole ordered sequence as one Write Plan.
 
-        Each execution unit carries the claim its surviving write settled
+        Each settled write carries the claim its surviving write settled
         against. An item the planner's earlier stages retired — folded into a
         pending insert, cancelled against one, or eliminated as a known no-op —
-        never reaches this loop, and therefore no execution unit carries the
+        never reaches this loop, and therefore no settled write carries the
         evidence it was holding (`m-unit-work` "A successful execution unit
         consumes").
 
@@ -172,7 +172,7 @@ class WritePlanCompiler:
         here; ``transaction_instant`` is threaded unevaluated until a surviving
         temporal write needs it.
 
-        Each ordered item settles into one execution unit, which records what
+        Each ordered item settles into one settled write, which records what
         its success changes: the claim it spends, the observed state it
         revises, and the rows it removes and opens. ``ownership`` answers which
         current rows this attempt already opened, so a write against one of
@@ -191,7 +191,7 @@ class WritePlanCompiler:
         unit of new lineages they leave of its window.
         """
         pending: list[PlannedStep] = []
-        units: list[ExecutionUnit] = []
+        units: list[SettledWrite] = []
         count = 0
         audit = AuditDecoration(self._audit, actor_identity, transaction_instant, self._settled)
         for item in ordered_writes:
@@ -232,14 +232,14 @@ class WritePlanCompiler:
                 count = unit.end
                 units.append(unit)
                 continue
-            assert not isinstance(item, ComposedTemporalWrite)
+            assert not isinstance(item, CoalescedTemporalWrite)
             settled, claim, own_state = self._settle_keyed(
                 item, concurrency, transaction_instant, shape, audit, advances
             )
             pending.extend(settled.steps)
             count += len(settled.steps)
             units.append(
-                ExecutionUnit(
+                SettledWrite(
                     end=count,
                     claim=claim,
                     changed=(
@@ -254,7 +254,7 @@ class WritePlanCompiler:
     def _carrier_shape(self, item: OrderedWrite) -> TemporalShape | None:
         """The Temporal Shape of a buffered carrier's target, read once at
         dispatch; ``None`` for a bare instruction, whose settlement reads it."""
-        if isinstance(item, ComposedTemporalWrite):
+        if isinstance(item, CoalescedTemporalWrite):
             return self._temporal_facet.shape(item.target.identity)
         if isinstance(item, PendingOpening):
             return self._temporal_facet.shape(item.insert.target.identity)
@@ -417,7 +417,7 @@ class WritePlanCompiler:
 
     def _range(
         self,
-        item: ComposedTemporalWrite | ObservedKeyedWrite | InsertionKeyedWrite | TargetKeyedWrite,
+        item: CoalescedTemporalWrite | ObservedKeyedWrite | InsertionKeyedWrite | TargetKeyedWrite,
         shape: TransactionTimeOnly | Bitemporal,
         concurrency: Concurrency,
         tx_instant: TransactionInstant,
@@ -426,7 +426,7 @@ class WritePlanCompiler:
         *,
         start: int,
         guards: bool,
-    ) -> tuple[PlannedWrites, ExecutionUnit]:
+    ) -> tuple[PlannedWrites, SettledWrite]:
         """``item`` settled as a range over its temporal object's coverage: the
         steps it binds now and the unit they form from ``start``, or no step
         and the unit carrying the deferred range execution binds.
@@ -438,7 +438,9 @@ class WritePlanCompiler:
         gates on, and carries state forward from, which is refused before the
         attempt captures its instant.
         """
-        entity = item.target if isinstance(item, ComposedTemporalWrite) else item.instruction.target
+        entity = (
+            item.target if isinstance(item, CoalescedTemporalWrite) else item.instruction.target
+        )
         if isinstance(item, ObservedKeyedWrite) and not isinstance(
             item.observation, TemporalObservation
         ):
@@ -458,9 +460,9 @@ class WritePlanCompiler:
         )
         claim = range_claims(item)
         if isinstance(ranged, DeferredTemporalRange):
-            return PlannedWrites(), ExecutionUnit(end=start, claim=claim, deferred=ranged)
+            return PlannedWrites(), SettledWrite(end=start, claim=claim, deferred=ranged)
         steps = ranged.steps
-        return steps, ExecutionUnit(
+        return steps, SettledWrite(
             end=start + len(steps),
             claim=claim,
             changed=ranged.changed,
@@ -597,7 +599,7 @@ class WritePlanCompiler:
         *,
         start: int,
         guards: bool,
-    ) -> tuple[PlannedWrites, ExecutionUnit]:
+    ) -> tuple[PlannedWrites, SettledWrite]:
         """A pending Bitemporal insertion and the writes it authorized since,
         settled as the one unit of new lineages they leave of its window,
         together with any stored coverage a replacement it authorized reaches
@@ -621,9 +623,9 @@ class WritePlanCompiler:
             guards=guards,
         )
         if isinstance(ranged, DeferredTemporalRange):
-            return PlannedWrites(), ExecutionUnit(end=start, deferred=ranged)
+            return PlannedWrites(), SettledWrite(end=start, deferred=ranged)
         steps = ranged.steps
-        return steps, ExecutionUnit(
+        return steps, SettledWrite(
             end=start + len(steps),
             changed=ranged.changed,
             removed=ranged.removed,

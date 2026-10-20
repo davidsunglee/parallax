@@ -16,7 +16,7 @@ from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import Metamodel
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.unit_work import (
-    BufferItem,
+    AdmittedWrite,
     Concurrency,
     DatabaseLoginActor,
     KeyedWriteInstruction,
@@ -77,7 +77,7 @@ def _statements(plan: WritePlan, model: Metamodel) -> list[LoweredStatement]:
 
 
 def _assert_neutral(
-    buffer: list[BufferItem | KeyedWriteInstruction | PredicateWriteInstruction],
+    buffer: list[AdmittedWrite | KeyedWriteInstruction | PredicateWriteInstruction],
     model: Metamodel,
     *,
     observations: dict[ObjectKey, WriteObservation] | None = None,
@@ -144,7 +144,7 @@ def test_a_readless_predicate_write_is_actor_neutral() -> None:
 
 
 def test_a_batched_insert_run_is_actor_neutral() -> None:
-    buffer: list[BufferItem | KeyedWriteInstruction | PredicateWriteInstruction] = [
+    buffer: list[AdmittedWrite | KeyedWriteInstruction | PredicateWriteInstruction] = [
         KeyedWriteInstruction(
             "insert", "Wallet", ({"id": 1, "owner": "Ada", "balance": Decimal("1")},)
         ),

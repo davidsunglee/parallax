@@ -9,7 +9,7 @@ from typing import Final, Protocol
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.write_plan.keys import ObjectKey, ObjectStateKey
-from parallax.core.write_plan.steps import INFINITY, PlannedWrite, TemporalUpperBound
+from parallax.core.write_plan.steps import INFINITY, PlannedStep, TemporalUpperBound
 
 __all__ = [
     "NO_OPENINGS",
@@ -19,18 +19,18 @@ __all__ = [
     "AllocatedOpening",
     "BoundRange",
     "CombinedSourceAuthority",
+    "CompletionFacts",
     "DeferredRange",
     "Derivation",
     "DerivedRow",
     "Descent",
-    "ExecutionUnit",
     "Openings",
     "OwnedEndpoint",
     "PlannedWrites",
+    "SettledWrite",
     "SourceAuthority",
     "StepSegment",
     "TemporalWriteOwnership",
-    "UnitEffects",
     "WritePlan",
     "WriteStepView",
     "eager_segment",
@@ -39,21 +39,21 @@ __all__ = [
 
 
 class StepSegment(Protocol):
-    """One homogeneous, positive-length run of a Write Plan's Planned Writes.
+    """One homogeneous, positive-length run of a Write Plan's Planned Steps.
 
     A segment exposes only its length and a materialize-on-demand accessor;
     nothing about how it is backed is part of the contract.
     """
 
     def __len__(self) -> int: ...
-    def step(self, index: int) -> PlannedWrite: ...
+    def step(self, index: int) -> PlannedStep: ...
 
 
 @dataclass(frozen=True, slots=True)
 class _EagerSegment:
     """A segment over already-settled steps, held as one immutable tuple."""
 
-    steps: tuple[PlannedWrite, ...]
+    steps: tuple[PlannedStep, ...]
 
     def __post_init__(self) -> None:
         if not self.steps:
@@ -62,21 +62,21 @@ class _EagerSegment:
     def __len__(self) -> int:
         return len(self.steps)
 
-    def step(self, index: int) -> PlannedWrite:
+    def step(self, index: int) -> PlannedStep:
         return self.steps[index]
 
 
-def eager_segment(steps: Sequence[PlannedWrite]) -> StepSegment:
+def eager_segment(steps: Sequence[PlannedStep]) -> StepSegment:
     """A Step Segment wrapping already-settled steps, in order."""
     return _EagerSegment(tuple(steps))
 
 
 @dataclass(frozen=True, slots=True)
 class PlannedWrites:
-    """The immutable ordered logical sequence of Planned Writes a Write Plan exposes.
+    """The immutable ordered logical sequence of Planned Steps a Write Plan exposes.
 
     Backed by segments (:class:`StepSegment`) rather than one flat tuple, each
-    asked for one Planned Write at a time.
+    asked for one Planned Step at a time.
     """
 
     segments: tuple[StepSegment, ...] = ()
@@ -95,12 +95,12 @@ class PlannedWrites:
     def __len__(self) -> int:
         return self._length
 
-    def __iter__(self) -> Iterator[PlannedWrite]:
+    def __iter__(self) -> Iterator[PlannedStep]:
         for segment in self.segments:
             for index in range(len(segment)):
                 yield segment.step(index)
 
-    def __getitem__(self, position: int) -> PlannedWrite:
+    def __getitem__(self, position: int) -> PlannedStep:
         length = self._length
         resolved = position if position >= 0 else position + length
         if not 0 <= resolved < length:
@@ -119,8 +119,8 @@ class PlannedWrites:
         return len(self) == len(other) and all(a == b for a, b in zip(self, other, strict=True))
 
     # Equality reads the logical sequence, not the segmentation, so two
-    # Planned Writes values packed differently can compare equal — the same
-    # reason no meaningful `__hash__` exists (Planned Writes is a value never
+    # Planned Steps values packed differently can compare equal — the same
+    # reason no meaningful `__hash__` exists (Planned Steps is a value never
     # used as a mapping/set key).
     __hash__ = None  # pyright: ignore[reportAssignmentType] - deliberately unhashable
 
@@ -143,14 +143,14 @@ class WriteStepView:
     def __post_init__(self) -> None:
         if not 0 <= self.first <= self.stop <= len(self.owner):
             raise ValueError(
-                f"a view spans positions within its {len(self.owner)} Planned Write(s) in "
+                f"a view spans positions within its {len(self.owner)} Planned Step(s) in "
                 f"order, not {self.first} to {self.stop}"
             )
 
     def __len__(self) -> int:
         return self.stop - self.first
 
-    def __iter__(self) -> Iterator[PlannedWrite]:
+    def __iter__(self) -> Iterator[PlannedStep]:
         position = self.first
         stop = self.stop
         if position == stop:
@@ -169,8 +169,8 @@ class WriteStepView:
             segment_index += 1
 
 
-def eager_writes(steps: Sequence[PlannedWrite]) -> PlannedWrites:
-    """The Planned Writes sequence of already-settled ``steps``, in order: one
+def eager_writes(steps: Sequence[PlannedStep]) -> PlannedWrites:
+    """The Planned Steps sequence of already-settled ``steps``, in order: one
     eager segment, or none for no step."""
     return PlannedWrites((eager_segment(steps),)) if steps else PlannedWrites()
 
@@ -199,7 +199,7 @@ OPEN_BITEMPORAL_ENDS: Final[tuple[TemporalUpperBound, ...]] = (INFINITY, INFINIT
 
 @dataclass(frozen=True, slots=True)
 class DerivedRow:
-    """One current row a unit left of an original: its address, the Valid Time
+    """One current row a settled write left of an original: its address, the Valid Time
     the row covers, and the part of it the original contributed — the whole
     row unless the row merged successors of several contributors. Both are
     ``None`` on a Transaction-Time-Only object."""
@@ -211,14 +211,14 @@ class DerivedRow:
 
 @dataclass(frozen=True, slots=True)
 class Derivation:
-    """One original an execution unit transformed under protection — a guarded
-    effect that succeeded, or the shared lock the unit held — and the current
+    """One original a settled write transformed under protection — a guarded
+    effect that succeeded, or the shared lock the write held — and the current
     rows it left in that original's place.
 
-    ``original`` is the exact state the unit found, ``valid_time_coverage`` the
+    ``original`` is the exact state the write found, ``valid_time_coverage`` the
     Valid Time it covered (``None`` on a Transaction-Time-Only object), and
     ``owned`` its own address where the attempt had opened it. ``rows`` holds
-    each nonempty row the unit derived from it, a row revised in place among
+    each nonempty row the write derived from it, a row revised in place among
     them, with the part of each the original contributed.
     """
 
@@ -233,7 +233,7 @@ class Descent:
     """What one current row the attempt opened derives from within the running
     flush: the Valid Time it covers as opened (``None`` on a
     Transaction-Time-Only object), and each protected original that stood
-    before the flush began, through however many of its units, beside the
+    before the flush began, through however many of its settled writes, beside the
     disjoint part of the row it contributed. A row merged from several
     originals' successors names each; any other names one, over the whole
     row."""
@@ -253,7 +253,7 @@ class Descent:
 
 class TemporalWriteOwnership(Protocol):
     """Read-only access to the temporal rows the planning attempt opened
-    successfully, and to what the running flush's earlier units proved.
+    successfully, and to what the running flush's earlier settled writes proved.
 
     It reads the attempt's own record of executed openings, never an
     inference from a row's Transaction-Time start equalling the attempt's
@@ -278,7 +278,7 @@ class TemporalWriteOwnership(Protocol):
         ...
 
     def proven(self, original: ObjectStateKey, /) -> Derivation | None:
-        """How an earlier execution unit of the running flush transformed
+        """How an earlier settled write of the running flush transformed
         ``original``, if one did."""
         ...
 
@@ -334,14 +334,14 @@ NO_TEMPORAL_WRITE_OWNERSHIP: Final[TemporalWriteOwnership] = _NoTemporalWriteOwn
 
 class SourceAuthority(Protocol):
     """Source authority admission already accepted, which a successful
-    execution unit spends."""
+    settled write spends."""
 
     def consume(self) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)
 class CombinedSourceAuthority:
-    """Several distinct source authorities one unit spends together."""
+    """Several distinct source authorities one settled write spends together."""
 
     members: tuple[SourceAuthority, ...]
 
@@ -352,7 +352,7 @@ class CombinedSourceAuthority:
 
 @dataclass(frozen=True, slots=True)
 class AllocatedOpening:
-    """A row an execution unit opens whose key the database allocates: its
+    """A row a settled write opens whose key the database allocates: its
     address is complete once the insert that opens it answers the key."""
 
     entity: EntityIdentity
@@ -361,10 +361,10 @@ class AllocatedOpening:
 
 @dataclass(frozen=True, slots=True)
 class Openings:
-    """The owned rows an execution unit opens, by what each derives from:
+    """The owned rows a settled write opens, by what each derives from:
     ``continued`` holds an insert's row and every row an admitted insertion
     contributed whole, ``shared`` each row it contributed only some parts of,
-    with those parts in order, and ``fresh`` every other row. A row the unit
+    with those parts in order, and ``fresh`` every other row. A row the write
     revised in place into a merged extent, or whose insertion's parts it
     narrowed, is among them again under its own address. ``allocated`` holds,
     in step order, each row whose key its insert answers."""
@@ -379,18 +379,18 @@ NO_OPENINGS: Final[Openings] = Openings()
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class UnitEffects:
-    """What one execution unit's success publishes, complete.
+class CompletionFacts:
+    """What completing one settled write applies, complete.
 
-    ``changed`` names every observed state the unit changes, its own source's
+    ``changed`` names every observed state the write changes, its own source's
     included; executing a step changes nothing by itself, so a guard proving a
     milestone unchanged names none. ``removed`` and ``opened`` are the owned
-    rows it retires and registers. ``derived`` records the originals the unit
-    transformed and the rows it left of each, for a later unit of the same
-    flush whose conditions those originals carry; a unit no later one depends
-    on records none. ``concludes`` names the object of a range that follows
-    ordering barriers and leads none: no later unit of the flush consumes what
-    earlier units proved about that object.
+    rows it retires and registers. ``derived`` records the originals the write
+    transformed and the rows it left of each, for a later settled write of the
+    same flush whose conditions those originals carry; a write no later one
+    depends on records none. ``concludes`` names the object of a range that
+    follows ordering barriers and leads none: no later settled write of the
+    flush consumes what earlier ones proved about that object.
     """
 
     changed: Iterable[ObjectStateKey] = ()
@@ -401,36 +401,37 @@ class UnitEffects:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class BoundRange(UnitEffects):
-    """What a range became once bound to its coverage: the Planned Writes it
-    executes, in order, beside the effects their success publishes."""
+class BoundRange(CompletionFacts):
+    """What a range became once bound to its coverage: the Planned Steps it
+    executes, in order, beside the completion facts their success publishes."""
 
     steps: PlannedWrites
 
 
 class DeferredRange:
     """A finalized range whose physical steps depend on coverage no planning
-    input knew, which the unit of work that planned it binds at its unit's
-    turn. Field-free here: what binding reads belongs to its unit-of-work
+    input knew, which the unit of work that planned it binds at its settled
+    write's turn. Field-free here: what binding reads belongs to its unit-of-work
     subclass."""
 
     __slots__ = ()
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class ExecutionUnit(UnitEffects):
-    """One execution unit of a Write Plan and what its success publishes.
+class SettledWrite(CompletionFacts):
+    """One caller write after settlement in a Write Plan, and the completion
+    facts its success applies.
 
-    A unit spans the plan's steps up to the exclusive offset ``end``, after the
-    previous unit's. Its effects are applied only once every one of its steps
-    has succeeded, and before any later unit executes, after it spends the
-    source authority ``claim``. Removals are retired before openings are
-    registered, so a row removed and reopened at one address remains owned, and
-    an insertion whose last row the unit removed still stands when a row the
-    unit opened continues it.
+    It spans the plan's steps up to the exclusive offset ``end``, after the
+    previous settled write's. Its facts are applied only once every one of its
+    steps has succeeded, and before any later settled write executes, after it
+    spends the source authority ``claim``. Removals are retired before openings
+    are registered, so a row removed and reopened at one address remains owned,
+    and an insertion whose last row the write removed still stands when a row
+    the write opened continues it.
 
-    A unit with a ``deferred`` range has no planned step of its own: its steps
-    and effects come from binding that range at the unit's turn.
+    A settled write with a ``deferred`` range has no planned step of its own:
+    its steps and facts come from binding that range at its turn.
     """
 
     end: int
@@ -446,28 +447,28 @@ class WritePlan:
     cancellation or known no-op elimination; there is no empty-plan sentinel and
     no second result variant.
 
-    ``units`` partitions ``steps`` into execution units, in order and ending
-    where the steps end; a plan given none forms one unit of every step, which
-    publishes nothing.
+    ``units`` partitions ``steps`` into settled writes, in order and ending
+    where the steps end; a plan given none forms one settled write of every step,
+    which publishes nothing.
     """
 
     steps: PlannedWrites = PlannedWrites()
-    units: tuple[ExecutionUnit, ...] = ()
+    units: tuple[SettledWrite, ...] = ()
 
     def __post_init__(self) -> None:
         length = len(self.steps)
         units = self.units
         if not units:
             if length:
-                object.__setattr__(self, "units", (ExecutionUnit(end=length),))
+                object.__setattr__(self, "units", (SettledWrite(end=length),))
             return
         previous = 0
         for unit in units:
             if unit.end < previous:
-                raise ValueError("a Write Plan's execution units follow its steps in order")
+                raise ValueError("a Write Plan's settled writes follow its steps in order")
             previous = unit.end
         if previous != length:
             raise ValueError(
-                f"a Write Plan's execution units end where its {length} step(s) end, not at "
+                f"a Write Plan's settled writes end where its {length} step(s) end, not at "
                 f"{previous}"
             )

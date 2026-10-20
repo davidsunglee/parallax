@@ -1,4 +1,4 @@
-"""Range settlement and binding (`m-unit-work` *Write Plan and Planned Writes*).
+"""Range settlement and binding (`m-unit-work` *Write Plan and Planned Steps*).
 
 A range binds through one binding whether planning already knew its coverage or
 the executor read it; a deferred range is data the unit of work binds under the
@@ -24,8 +24,8 @@ from parallax.core._execution._unit_work.instructions import (
     prepare_wire_write,
 )
 from parallax.core._execution._unit_work.write_items import (
-    BufferItem,
-    ComposedTemporalWrite,
+    AdmittedWrite,
+    CoalescedTemporalWrite,
     ObservedKeyedWrite,
     TemporalContribution,
     target_write,
@@ -55,9 +55,9 @@ from parallax.core.write_plan.plan import (
     NO_TEMPORAL_WRITE_OWNERSHIP,
     BoundRange,
     DeferredRange,
-    ExecutionUnit,
     Openings,
     OwnedEndpoint,
+    SettledWrite,
     TemporalWriteOwnership,
     WritePlan,
 )
@@ -67,9 +67,9 @@ from parallax.core.write_plan.steps import (
     Finite,
     PlannedClose,
     PlannedInsert,
+    PlannedStep,
     PlannedTemporalRemoval,
     PlannedTemporalRevision,
-    PlannedWrite,
     WriteRow,
 )
 from tests._support.clock_probes import CountingClock, instant_at
@@ -124,7 +124,7 @@ def _retained(row: PredecessorRow) -> RetainedObservation:
 
 def _update(
     evidence: RetainedObservation, valid_from: dt.datetime, until: dt.datetime
-) -> BufferItem:
+) -> AdmittedWrite:
     mutation: KeyedMutation = "amendUntil"
     prepared = prepare_wire_write(
         KeyedWriteInstruction(
@@ -135,7 +135,7 @@ def _update(
     return buffered_write(prepared, evidence)
 
 
-def _target(valid_from: dt.datetime, until: dt.datetime) -> BufferItem:
+def _target(valid_from: dt.datetime, until: dt.datetime) -> AdmittedWrite:
     prepared = prepare_wire_write(
         TargetWriteInstruction(
             "amendUntil",
@@ -152,7 +152,7 @@ def _target(valid_from: dt.datetime, until: dt.datetime) -> BufferItem:
 
 
 def _plan(
-    *writes: BufferItem,
+    *writes: AdmittedWrite,
     instant: TransactionInstant | None = None,
     ownership: TemporalWriteOwnership = NO_TEMPORAL_WRITE_OWNERSHIP,
 ) -> WritePlan:
@@ -167,7 +167,7 @@ def _plan(
     )
 
 
-def _deferred(plan: WritePlan) -> tuple[ExecutionUnit, CoverageReadRequest]:
+def _deferred(plan: WritePlan) -> tuple[SettledWrite, CoverageReadRequest]:
     """``plan``'s one deferred unit, and the coverage read the unit of work asks
     for when it binds that unit's range."""
     (unit,) = plan.units
@@ -178,7 +178,7 @@ def _deferred(plan: WritePlan) -> tuple[ExecutionUnit, CoverageReadRequest]:
 
 
 def _bind(
-    unit: ExecutionUnit,
+    unit: SettledWrite,
     rows: Sequence[PredecessorRow],
     *,
     ownership: TemporalWriteOwnership = NO_TEMPORAL_WRITE_OWNERSHIP,
@@ -193,7 +193,7 @@ def _bind(
     )
 
 
-def _windows(steps: Iterable[PlannedWrite]) -> list[tuple[object, object, object]]:
+def _windows(steps: Iterable[PlannedStep]) -> list[tuple[object, object, object]]:
     windows: list[tuple[object, object, object]] = []
     for step in steps:
         if isinstance(step, PlannedInsert):
@@ -362,7 +362,7 @@ def test_a_deferred_range_its_planner_did_not_finalize_is_refused_before_any_rea
     ids=["stored", "opened-by-the-attempt"],
 )
 def test_an_overlapped_observation_is_retired_by_whoever_owns_its_row(
-    ownership: TemporalWriteOwnership, retired: type[PlannedWrite]
+    ownership: TemporalWriteOwnership, retired: type[PlannedStep]
 ) -> None:
     earlier = _retained(_span(_JAN, _JUN, 100))
     later = _retained(_span(_MAR, INFINITY, 200, tx_start=_T1))
@@ -401,7 +401,7 @@ class _Compositions:
 
     def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
         self.built = 0
-        for composing in (ComposedTemporalWrite, TemporalContribution):
+        for composing in (CoalescedTemporalWrite, TemporalContribution):
             original = composing.__init__
 
             def counting(
@@ -461,7 +461,7 @@ def test_a_temporal_write_holding_no_temporal_observation_is_refused_before_the_
         _SPANS,
     )
     assert isinstance(prepared, PreparedKeyedWrite)
-    item: BufferItem = (
+    item: AdmittedWrite = (
         prepared
         if observation is None
         else ObservedKeyedWrite(

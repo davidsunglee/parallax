@@ -55,6 +55,10 @@ from parallax.core.execution_lifecycle import (
     CausedFailure,
     DirectFailure,
     ExecutionEvent,
+    FlushCompleted,
+    FlushFailed,
+    FlushFinished,
+    FlushStarted,
     JoinedInvocation,
     JoinedInvocationRaised,
     JoinedInvocationReturned,
@@ -71,10 +75,6 @@ from parallax.core.execution_lifecycle import (
     TransactionInvocationFinished,
     TransactionInvocationOutcome,
     TransactionInvocationStarted,
-    WriteBatchCompleted,
-    WriteBatchFailed,
-    WriteBatchFinished,
-    WriteBatchStarted,
 )
 from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.unit_work import (
@@ -149,7 +149,7 @@ def _increase_balance(tx: TxnContext) -> None:
 # --------------------------------------------------------------------------- #
 # The committed topology.                                                      #
 # --------------------------------------------------------------------------- #
-def test_one_invocation_roots_its_attempt_its_batches_and_its_read() -> None:
+def test_one_invocation_roots_its_attempt_its_flushes_and_its_read() -> None:
     recorder = RecordingLifecycleProvider()
     port = ScriptedAdapter(Transact(Write(), Read(rows=[NEW_ROW]), Write()))
 
@@ -162,7 +162,7 @@ def test_one_invocation_roots_its_attempt_its_batches_and_its_read() -> None:
     assert _db(port, recorder).transact(body) == "ok"
 
     root = _only(recorder)
-    # The dependency batch and the Read it enables are ordered SIBLINGS under the
+    # The dependency flush and the Read it enables are ordered SIBLINGS under the
     # attempt: the flush happens inside `uow.read`, before the Read opens, so
     # neither contains the other.
     assert _tree(root.events) == [
@@ -170,18 +170,18 @@ def test_one_invocation_roots_its_attempt_its_batches_and_its_read() -> None:
         ("TransactionAttemptStarted", 2, 1),
         ("AcquisitionStarted", 3, 2),
         ("AcquisitionFinished", 3, 2),
-        ("WriteBatchStarted", 4, 2),
+        ("FlushStarted", 4, 2),
         ("DatabaseCallStarted", 5, 4),
         ("DatabaseCallFinished", 5, 4),
-        ("WriteBatchFinished", 4, 2),
+        ("FlushFinished", 4, 2),
         ("ReadStarted", 6, 2),
         ("DatabaseCallStarted", 7, 6),
         ("DatabaseCallFinished", 7, 6),
         ("ReadFinished", 6, 2),
-        ("WriteBatchStarted", 8, 2),
+        ("FlushStarted", 8, 2),
         ("DatabaseCallStarted", 9, 8),
         ("DatabaseCallFinished", 9, 8),
-        ("WriteBatchFinished", 8, 2),
+        ("FlushFinished", 8, 2),
         ("ReleaseStarted", 10, 2),
         ("ReleaseFinished", 10, 2),
         ("TransactionAttemptFinished", 2, 1),
@@ -216,7 +216,7 @@ def test_a_requested_isolation_opens_no_activity_of_its_own() -> None:
     assert observed("serializable") == observed("read_committed")
 
 
-def test_each_batch_names_the_trigger_that_forced_it() -> None:
+def test_each_flush_names_the_trigger_that_forced_it() -> None:
     recorder = RecordingLifecycleProvider()
     port = ScriptedAdapter(Transact(Write(), Read(rows=[NEW_ROW]), Write()))
 
@@ -228,10 +228,10 @@ def test_each_batch_names_the_trigger_that_forced_it() -> None:
     _db(port, recorder).transact(body)
 
     root = _only(recorder)
-    batches = [event for event in root.events if isinstance(event, WriteBatchStarted)]
-    assert [batch.trigger for batch in batches] == ["read_dependency", "pre_commit"]
-    finished = [event for event in root.events if isinstance(event, WriteBatchFinished)]
-    assert [batch.outcome for batch in finished] == [WriteBatchCompleted(), WriteBatchCompleted()]
+    flushes = [event for event in root.events if isinstance(event, FlushStarted)]
+    assert [flush.trigger for flush in flushes] == ["read_dependency", "pre_commit"]
+    finished = [event for event in root.events if isinstance(event, FlushFinished)]
+    assert [flush.outcome for flush in finished] == [FlushCompleted(), FlushCompleted()]
 
 
 def test_the_resolved_policy_the_caller_asked_for_is_what_the_invocation_reports() -> None:
@@ -285,7 +285,7 @@ def test_a_joined_invocation_states_no_level_of_its_own() -> None:
     ]
 
 
-def test_an_empty_buffer_opens_no_write_batch_at_all() -> None:
+def test_an_empty_buffer_opens_no_flush_at_all() -> None:
     recorder = RecordingLifecycleProvider()
     _db(ScriptedAdapter(Transact(Read(rows=[NEW_ROW]))), recorder).transact(
         lambda tx: tx.find(mm.Account.where(mm.Account.id == 7)).result()
@@ -338,26 +338,26 @@ def test_a_retried_invocation_holds_both_attempts_under_one_root() -> None:
         "TransactionAttemptStarted",
         "AcquisitionStarted",
         "AcquisitionFinished",
-        "WriteBatchStarted",
+        "FlushStarted",
         "DatabaseCallStarted",
         "DatabaseCallFinished",
-        "WriteBatchFinished",
+        "FlushFinished",
         "ReleaseStarted",
         "ReleaseFinished",
         "TransactionAttemptFinished",
         "TransactionAttemptStarted",
         "AcquisitionStarted",
         "AcquisitionFinished",
-        "WriteBatchStarted",
+        "FlushStarted",
         "DatabaseCallStarted",
         "DatabaseCallFinished",
-        "WriteBatchFinished",
+        "FlushFinished",
         "ReleaseStarted",
         "ReleaseFinished",
         "TransactionAttemptFinished",
         "TransactionInvocationFinished",
     ]
-    # A retry re-executes the callback, so the second attempt runs its own batch
+    # A retry re-executes the callback, so the second attempt runs its own Flush
     # and its own call — every activity of the first is closed before it starts.
     rolled_back, committed = _attempt_outcomes(root)
     assert isinstance(rolled_back, AttemptRolledBack)
@@ -507,9 +507,9 @@ def test_a_callback_failure_is_the_callback_phase() -> None:
     assert isinstance(rolled_back.failure.failure, DirectFailure)
 
 
-def test_a_failure_in_the_final_batch_is_the_pre_commit_phase() -> None:
+def test_a_failure_in_the_final_flush_is_the_pre_commit_phase() -> None:
     # The port reports one body failure however it arose, so the phase is decided
-    # by exception identity against the pre-commit batch's own failure — not by
+    # by exception identity against the pre-commit flush's own failure — not by
     # which half of the body happened to run last.
     recorder = RecordingLifecycleProvider()
     port = ScriptedAdapter(Transact(Read(rows=[NEW_ROW]), Write(affected=0)))
@@ -522,9 +522,9 @@ def test_a_failure_in_the_final_batch_is_the_pre_commit_phase() -> None:
     assert rolled_back.failure.phase == "pre_commit"
 
 
-def test_a_failure_in_a_dependency_batch_is_still_the_callback_phase() -> None:
-    # The dependency batch runs because the CALLBACK asked for a read, so a
-    # failure inside it belongs to the callback: only the automatic batch after
+def test_a_failure_in_a_dependency_flush_is_still_the_callback_phase() -> None:
+    # The dependency flush runs because the CALLBACK asked for a read, so a
+    # failure inside it belongs to the callback: only the automatic flush after
     # the callback returned is the pre-commit phase.
     recorder = RecordingLifecycleProvider()
     port = ScriptedAdapter(Transact(Read(rows=[NEW_ROW]), Write(affected=0)))
@@ -537,8 +537,8 @@ def test_a_failure_in_a_dependency_batch_is_still_the_callback_phase() -> None:
         _db(port, recorder).transact(body, max_retries=0)
 
     root = _only(recorder)
-    batch = next(event for event in root.events if isinstance(event, WriteBatchStarted))
-    assert batch.trigger == "read_dependency"
+    flush = next(event for event in root.events if isinstance(event, FlushStarted))
+    assert flush.trigger == "read_dependency"
     (rolled_back,) = _attempt_outcomes(root)
     assert isinstance(rolled_back, AttemptRolledBack)
     assert rolled_back.failure.phase == "callback"
@@ -611,7 +611,7 @@ def test_a_joined_call_is_a_child_of_the_attempt_and_opens_no_attempt() -> None:
 
     root = _only(recorder)
     # The joined activity runs no attempt of its own, and the write it buffered
-    # reaches the OUTER attempt's pre-commit batch — a joined boundary adds no
+    # reaches the OUTER attempt's pre-commit flush — a joined boundary adds no
     # third trigger.
     assert _tree(root.events) == [
         ("TransactionInvocationStarted", 1, None),
@@ -620,10 +620,10 @@ def test_a_joined_call_is_a_child_of_the_attempt_and_opens_no_attempt() -> None:
         ("AcquisitionFinished", 3, 2),
         ("TransactionInvocationStarted", 4, 2),
         ("TransactionInvocationFinished", 4, 2),
-        ("WriteBatchStarted", 5, 2),
+        ("FlushStarted", 5, 2),
         ("DatabaseCallStarted", 6, 5),
         ("DatabaseCallFinished", 6, 5),
-        ("WriteBatchFinished", 5, 2),
+        ("FlushFinished", 5, 2),
         ("ReleaseStarted", 7, 2),
         ("ReleaseFinished", 7, 2),
         ("TransactionAttemptFinished", 2, 1),
@@ -670,7 +670,7 @@ def test_a_joined_callback_that_raises_is_reported_as_raising_and_nothing_more()
 # --------------------------------------------------------------------------- #
 def test_a_zero_row_write_names_the_call_that_completed_as_the_cause() -> None:
     # The call reached the database and came back, so it COMPLETED; the shortfall
-    # is judged afterwards and belongs to the batch. Attribution is by the
+    # is judged afterwards and belongs to the Flush. Attribution is by the
     # enforcement bracket rather than by which call ran last.
     recorder = RecordingLifecycleProvider()
     port = ScriptedAdapter(Transact(Read(rows=[NEW_ROW]), Write(affected=0)))
@@ -679,10 +679,10 @@ def test_a_zero_row_write_names_the_call_that_completed_as_the_cause() -> None:
         _db(port, recorder).transact(_increase_balance, max_retries=0)
 
     root = _only(recorder)
-    batch_finished = next(event for event in root.events if isinstance(event, WriteBatchFinished))
-    call_finished = root.events[root.events.index(batch_finished) - 1]
-    assert isinstance(batch_finished.outcome, WriteBatchFailed)
-    failure = batch_finished.outcome.failure
+    flush_finished = next(event for event in root.events if isinstance(event, FlushFinished))
+    call_finished = root.events[root.events.index(flush_finished) - 1]
+    assert isinstance(flush_finished.outcome, FlushFailed)
+    failure = flush_finished.outcome.failure
     assert isinstance(failure, CausedFailure)
     assert failure.cause_activity_id == call_finished.activity_id
     assert failure.diagnostic.qualified_type.endswith("OptimisticLockConflictError")
@@ -1348,7 +1348,7 @@ class _QuarantiningHandler:
 
     Quarantine is delivery's own contract (`test_execution_lifecycle_delivery.py`
     grades that); what is graded here is the transaction it happens inside — the
-    scopes an attempt, a batch, and a joined invocation still have to leave once
+    scopes an attempt, a Flush, and a joined invocation still have to leave once
     nothing is listening.
     """
 
@@ -1386,7 +1386,7 @@ def test_a_handler_quarantined_at_the_root_leaves_every_later_scope_silent() -> 
     handler, provider = _quarantined_at(1)
     port = ScriptedAdapter(Transact(Read(rows=[NEW_ROW]), Write()))
 
-    # A dependency batch, a Read, and a pre-commit batch would all open here, and
+    # A dependency flush, a Read, and a pre-commit flush would all open here, and
     # a scope that finds delivery dead does the rest of its lifecycle work not at
     # all rather than doing it and dropping the result.
     assert _db(port, provider).transact(_increase_balance) is None
@@ -1396,10 +1396,10 @@ def test_a_handler_quarantined_at_the_root_leaves_every_later_scope_silent() -> 
     assert port.calls[-1] == CommitCall()
 
 
-def test_a_handler_quarantined_inside_a_batch_still_leaves_the_batch() -> None:
+def test_a_handler_quarantined_inside_a_flush_still_leaves_the_flush() -> None:
     # The attempt's connection stands between the attempt and its first work, so
-    # the batch is the fifth event rather than the third.
-    handler, provider = _quarantined_at(5)  # invocation, attempt, acquisition, then the batch
+    # the Flush is the fifth event rather than the third.
+    handler, provider = _quarantined_at(5)  # invocation, attempt, acquisition, then the Flush
     port = ScriptedAdapter(Transact(Write()))
 
     _db(port, provider).transact(lambda tx: tx.insert(new_account()))
@@ -1409,7 +1409,7 @@ def test_a_handler_quarantined_inside_a_batch_still_leaves_the_batch() -> None:
         "TransactionAttemptStarted",
         "AcquisitionStarted",
         "AcquisitionFinished",
-        "WriteBatchStarted",
+        "FlushStarted",
     ]
     assert port.calls[-1] == CommitCall()
 

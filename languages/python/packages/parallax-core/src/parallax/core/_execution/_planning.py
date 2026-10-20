@@ -43,7 +43,7 @@ def prepare_model(model: DomainModel, *, edition: str) -> ModelSelection:
 @dataclass(frozen=True, slots=True)
 class _BatchingAdapter:
     """``m-batch-write``'s collapse-eligibility policy plus the layout-derived
-    physical grouping key, structurally satisfying ``BatchingStrategy``."""
+    batch key, structurally satisfying ``BatchingStrategy``."""
 
     def collapses(
         self,
@@ -54,7 +54,7 @@ class _BatchingAdapter:
     ) -> bool:
         return batch_write.collapses(model, entity, mutation, rows)
 
-    def group_key(
+    def batch_key(
         self, model: Metamodel, entity: EntityMetadata, mutation: str, row: Mapping[str, object]
     ) -> object:
         return collapse_group_key(model, entity, mutation, row)

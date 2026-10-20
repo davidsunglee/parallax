@@ -33,12 +33,12 @@ from parallax.core._execution._unit_work.retain import (
     RetainedObservation,
 )
 from parallax.core._execution._unit_work.write_items import (
+    AdmittedWrite,
     AfterRemoval,
-    BufferedWrite,
-    BufferItem,
     ChainedTemporalWrite,
     ClaimedKeyedWrite,
-    ComposedTemporalWrite,
+    CoalescedTemporalWrite,
+    CoalescedWrite,
     FollowingKeyedWrite,
     InsertionKeyedWrite,
     ObjectClaimedWrite,
@@ -60,11 +60,11 @@ from parallax.core.write_plan.keys import ObjectKey, ObjectStateKey, VersionedOb
 from parallax.core.write_plan.observe import TemporalObservation
 from parallax.core.write_plan.plan import (
     AllocatedOpening,
+    CompletionFacts,
     Openings,
     OwnedEndpoint,
     SourceAuthority,
     TemporalWriteOwnership,
-    UnitEffects,
 )
 
 __all__ = [
@@ -161,9 +161,9 @@ class NoInsertionAuthority:
 
 NO_INSERTION_AUTHORITY: Final = NoInsertionAuthority()
 
-type _PendingItem = BufferItem | ComposedTemporalWrite | PendingOpening | None
+type _PendingItem = AdmittedWrite | CoalescedTemporalWrite | PendingOpening | None
 
-type _PendingTemporal = TemporalKeyedWrite | ComposedTemporalWrite
+type _PendingTemporal = TemporalKeyedWrite | CoalescedTemporalWrite
 """What a temporal object's pending writes against its existing coverage are:
 one write still alone, or several composed."""
 
@@ -175,7 +175,7 @@ _TEMPORAL: Final = (
     ObservedKeyedWrite,
     InsertionKeyedWrite,
     TargetKeyedWrite,
-    ComposedTemporalWrite,
+    CoalescedTemporalWrite,
 )
 
 _SEVERAL: Final = object()
@@ -184,7 +184,7 @@ scope."""
 
 
 class WriteAdmission:
-    """One unit of work's accepted writes: the pending batch composed as each
+    """One unit of work's accepted writes: the buffer composed as each
     write is admitted, every claim it holds, and the insertions the attempt
     admitted (`m-unit-work` "Observed-State Coalescing").
 
@@ -202,7 +202,7 @@ class WriteAdmission:
     * a temporal object's writes against its existing coverage — observed ones,
       those an admitted insertion authorized, and those a caller addressed
       alike — compose into one
-      :class:`~parallax.core._execution._unit_work.write_items.ComposedTemporalWrite`,
+      :class:`~parallax.core._execution._unit_work.write_items.CoalescedTemporalWrite`,
       whose transform keeps only surviving values while every write's
       condition stays. Two writes of one observed state over one window simply
       coalesce, as a non-temporal pair does. Writes of the object over disjoint
@@ -220,9 +220,9 @@ class WriteAdmission:
     its object.
 
     Planning borrows :meth:`composed_writes` and :attr:`ownership` without
-    changing either; only a successfully planned batch is drained
+    changing either; only a successfully planned buffer is drained
     (:meth:`drain_planned`). The insertions, and the temporal rows the
-    attempt's successful units opened, outlive every batch.
+    attempt's successful settled writes opened, outlive every buffer.
     """
 
     __slots__ = (
@@ -256,7 +256,7 @@ class WriteAdmission:
         self._inserted_version = inserted_version
         self._ownership = WriteOwnership()
         self._writes: list[_PendingItem] = []
-        # Every claim the batch holds, by its scope: the position of the write
+        # Every claim the buffer holds, by its scope: the position of the write
         # that holds it. A temporal object's writes against its coverage are
         # indexed by object instead (`_temporal`).
         self._claims: dict[ClaimScope, int] = {}
@@ -264,8 +264,8 @@ class WriteAdmission:
         self._sources: list[SourceAuthority] = []
         # Objects a pending write removes whole, the positions of inserts that
         # must follow a removal of an earlier insertion, and the insertions the
-        # batch linked — each allocated by the first write it records, since
-        # most batches hold none.
+        # buffer linked — each allocated by the first write it records, since
+        # most buffers hold none.
         self._removals: set[ObjectKey] | None = None
         self._after_removal: set[int] | None = None
         self._linked: list[InsertionRecord] | None = None
@@ -276,11 +276,11 @@ class WriteAdmission:
         # question that needs it and kept current from then on.
         self._claimed_objects: dict[ObjectKey, Hashable] | None = None
         # Where the latest barrier stands and what the regions before it hold —
-        # allocated by the first barrier, since most batches carry none.
+        # allocated by the first barrier, since most buffers carry none.
         self._regions: _Regions | None = None
 
     def __bool__(self) -> bool:
-        """Whether the pending batch has anything for a flush to process —
+        """Whether the buffer has anything for a flush to process —
         composed writes, or writes composition left nothing of."""
         return bool(self._writes)
 
@@ -292,12 +292,12 @@ class WriteAdmission:
 
     def admit(
         self,
-        item: BufferItem,
+        item: AdmittedWrite,
         *,
         confirm_target: Callable[[TargetKeyedWrite], TargetKeyedWrite],
         insertion_advice: KeyedWriteRefusalAdvice | None = None,
     ) -> BufferOutcome:
-        """Accept ``item`` into the pending batch under the authority it
+        """Accept ``item`` into the buffer under the authority it
         carries, composing it there — all of it, or nothing.
 
         A write a caller addressed is refused where this attempt inserted its
@@ -357,13 +357,13 @@ class WriteAdmission:
         self._add_existing(item, instruction, key, record, verdict=verdict, temporal=temporal)
         return BufferOutcome.BUFFERED
 
-    def composed_writes(self) -> tuple[BufferedWrite, ...]:
-        """The pending batch's composed writes, in authored order, with every
+    def composed_writes(self) -> tuple[CoalescedWrite, ...]:
+        """The buffer's composed writes, in authored order, with every
         cancelled write gone, every object claim unwrapped to its own
         instruction, every Bitemporal opening composed with the writes its
         insertion authorized, and every insert that must follow a removal
         marked as such."""
-        written: list[BufferedWrite] = []
+        written: list[CoalescedWrite] = []
         after_removal = self._after_removal or ()
         follows = {} if self._regions is None else self._regions.follows
         for index, item in enumerate(self._writes):
@@ -387,12 +387,12 @@ class WriteAdmission:
         return tuple(written)
 
     def drain_planned(self) -> Sequence[SourceAuthority]:
-        """End the pending batch its flush planned, answering every
+        """End the buffer its flush planned, answering every
         observation-free source authority its writes were admitted through, in
         admission order, for the flush to spend once its plan succeeds.
 
-        An insertion the batch buffered is stored from then on, unless a later
-        write of the batch removes it, and a removal of everything an earlier
+        An insertion the buffer held is stored from then on, unless a later
+        write of the buffer removes it, and a removal of everything an earlier
         insertion of an object opened retires that insertion's authority.
         """
         sources = self._sources
@@ -414,7 +414,7 @@ class WriteAdmission:
                         record.stored_count = 1
                     record.set_earliest_stored_anchor(None if window is None else window.start)
                 record.unlink()
-        self._clear_batch()
+        self._clear_buffer()
         return sources
 
     def record_version_advance(self, state: VersionedObjectStateKey) -> None:
@@ -425,27 +425,27 @@ class WriteAdmission:
         if record is not None:
             record.advanced_from = state.version
 
-    def complete_unit(self, effects: UnitEffects, allocated_keys: tuple[object, ...]) -> None:
-        """Retire the owned rows a successful unit removed, then register the
-        rows it opened — those whose keys the database allocated named by
-        ``allocated_keys`` — and what it derived from its originals."""
-        opened = effects.opened
+    def complete(self, facts: CompletionFacts, allocated_keys: tuple[object, ...]) -> None:
+        """Retire the owned rows a successful settled write removed, then
+        register the rows it opened — those whose keys the database allocated
+        named by ``allocated_keys`` — and what it derived from its originals."""
+        opened = facts.opened
         self._ownership.complete(
-            effects.removed,
+            facts.removed,
             _resolve_allocated_openings(opened, allocated_keys) if allocated_keys else opened,
-            effects.derived,
-            effects.concludes,
+            facts.derived,
+            facts.concludes,
         )
 
     def release_continuity(self) -> None:
-        """End what the flush's units proved for later ones."""
+        """End what the flush's settled writes proved for later ones."""
         self._ownership.release_continuity()
 
     def discard(self) -> None:
-        """Drop the pending batch, its claims and source authorities unspent,
+        """Drop the buffer, its claims and source authorities unspent,
         and every insertion and owned row of the attempt."""
         self._sources.clear()
-        self._clear_batch()
+        self._clear_buffer()
         self._ownership.clear()
 
     def insertion_identity(self, target: ObjectKey) -> InsertionIdentity | None:
@@ -717,7 +717,7 @@ class WriteAdmission:
 
     def _add_existing(
         self,
-        item: BufferItem,
+        item: AdmittedWrite,
         instruction: PreparedKeyedWrite,
         key: ObjectKey,
         record: InsertionRecord | None,
@@ -725,8 +725,8 @@ class WriteAdmission:
         verdict: ClaimVerdict | None,
         temporal: bool,
     ) -> None:
-        """Compose an admitted write against existing state into the pending
-        batch."""
+        """Compose an admitted write against existing state into the
+        buffer."""
         if instruction.mutation in DESTRUCTIVE_MUTATIONS and not isinstance(
             self._temporal_facet.shape(instruction.target.identity), temporal_read.Bitemporal
         ):
@@ -1010,7 +1010,7 @@ class WriteAdmission:
         Regions stand in authored order rather than temporal order, so their
         streams are merged by start, holding one interval per region rather
         than copying any. Duplicate and overlapping intervals may remain. The
-        view reads the batch as it stands, so it is consumed before the batch
+        view reads the buffer as it stands, so it is consumed before the buffer
         changes.
         """
         streams = [_destroyed(held) for held in self._compositions(key, after)]
@@ -1054,7 +1054,7 @@ class WriteAdmission:
         regions = self._regions
         return regions is not None and index < regions.start
 
-    def _is_temporal(self, item: BufferItem) -> bool:
+    def _is_temporal(self, item: AdmittedWrite) -> bool:
         """Whether ``item`` is a write of a temporal object against its existing
         coverage, the writes that compose by object rather than by claimed
         scope."""
@@ -1071,7 +1071,7 @@ class WriteAdmission:
             raise ValueError(f"{entity.identity.canonical}: the model declares no such entity")
         return position.primary_key.identity.name
 
-    def _clear_batch(self) -> None:
+    def _clear_buffer(self) -> None:
         self._writes.clear()
         self._claims.clear()
         self._temporal.clear()
@@ -1084,7 +1084,7 @@ class WriteAdmission:
 
 
 class _Regions:
-    """The barrier regions of a batch that holds a readless predicate write.
+    """The barrier regions of a buffer that holds a readless predicate write.
 
     ``start`` is the position of the latest barrier: every write before it
     stands in a closed region. ``temporal`` holds where each temporal object's
@@ -1114,7 +1114,7 @@ def _composed_intents(
 ) -> tuple[tuple[ObjectStateKey | None, WriteIntent], ...]:
     """Each write ``held`` composes, as the scope it claims and the intent it
     states over its window."""
-    if not isinstance(held, ComposedTemporalWrite):
+    if not isinstance(held, CoalescedTemporalWrite):
         intent = keyed_intent(held.instruction)
         assert intent is not None  # a write against existing coverage is no insert
         scope = held.retained_observation.key if isinstance(held, ObservedKeyedWrite) else None
@@ -1135,7 +1135,7 @@ def _intent(contribution: TemporalContribution) -> WriteIntent:
 
 def _destroyed(held: _PendingTemporal) -> Iterator[TimeInterval]:
     """The Valid-Time intervals ``held`` destroys, ordered by start."""
-    if isinstance(held, ComposedTemporalWrite):
+    if isinstance(held, CoalescedTemporalWrite):
         for segment in held.transform.segments:
             if segment.assigned is None:
                 window = segment.valid_time_window
@@ -1154,13 +1154,13 @@ _START: Final = attrgetter("start")
 
 def _targeted(held: _PendingTemporal) -> bool:
     """Whether a caller-addressed write is among ``held``."""
-    if isinstance(held, ComposedTemporalWrite):
+    if isinstance(held, CoalescedTemporalWrite):
         return any(contribution.condition is not None for contribution in held.contributions)
     return isinstance(held, TargetKeyedWrite)
 
 
 def _contributions(held: _PendingTemporal) -> tuple[TemporalContribution, ...]:
-    if isinstance(held, ComposedTemporalWrite):
+    if isinstance(held, CoalescedTemporalWrite):
         return held.contributions
     return (temporal_contribution(held),)
 

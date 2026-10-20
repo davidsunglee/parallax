@@ -9,7 +9,7 @@ conditions it establishes, and executes writes by running each span of Planned
 Writes the unit of work hands it from the Write Plan `m-unit-work` finalizes and
 acquiring the rows a write needs to read. Per the dependency graph it depends on `m-unit-work`
 for admission, evidence, finalization, and effects; `m-read-delivery` for every
-read it executes; `m-write-plan` for the Planned Writes it runs;
+read it executes; `m-write-plan` for the Planned Steps it runs;
 `m-write-payload` for the payload preparer model preparation wires into the
 Write Planner and every statement stores; `m-sql` for the statements it lowers; `m-deep-fetch` for the row reads acquisition plans;
 `m-execution-authority` for the authority a scope captures; `m-auto-retry` for
@@ -212,7 +212,7 @@ stopped early, never started, or raised. The request kind decides the bracket:
 | Request | Bracket |
 |---|---|
 | Target of a Locking caller-addressed write | its own Read under the attempt, with no force-flush |
-| Coverage of a deferred range | a read Database Call inside the current Write Batch, opening no Read; one per bounded statement its uncovered parts need |
+| Coverage of a deferred range | a read Database Call inside the current Flush, opening no Read; one per bounded statement its uncovered parts need |
 | Completion of retained rows | none: no statement, Database Call, or activity, before the range's coverage is read |
 
 A row whose stored data is invalid is refused with the same judgement and
@@ -227,10 +227,10 @@ row alone, with the judgement and refusal the read would have applied to them.
 The unit of work runs the Write Plan a flush finalizes unit by unit, binding
 each deferred unit at its turn and completing each unit before the next
 (`m-unit-work` *Execution units complete before later work runs*). Execution
-implements the step-execution port: it runs each span of Planned Writes the
+implements the step-execution port: it runs each span of Planned Steps the
 unit of work hands it — a unit's planned steps, or the steps a deferred range
-bound — inside the Write Batch the unit of
-work opened for the flush. It lowers the span's Planned Writes through one
+bound — inside the Flush the unit of
+work opened for the flush. It lowers the span's Planned Steps through one
 shared path — the planner's payload preparer prepares what the statement about
 to run stores, and `m-sql` renders it — executes them through the port, and has
 the unit of work enforce each step's affected rows; for a unit opening rows
@@ -281,7 +281,7 @@ exceptions are unchanged.
 Execution inserts a run of contiguous temporal openings — single-entry inserts
 of one Entity naming the same members and holding no generated value — with
 one multi-row statement (`m-sql` *Requested ranges*), on every connection.
-Each opening remains its own Planned Write, and the statement is one ordinary
+Each opening remains its own Planned Step, and the statement is one ordinary
 Database Call. Whether an opening may join is decided from the step before its
 payload is demanded. Before another step is taken the statement must have room
 for one more entry within the dialect's bind limit (`m-dialect`) and an

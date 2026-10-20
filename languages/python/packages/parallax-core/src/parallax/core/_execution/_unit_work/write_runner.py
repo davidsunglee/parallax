@@ -16,10 +16,10 @@ from parallax.core._execution._unit_work.write_planner import WritePlanner
 from parallax.core.write_plan.keys import ObjectStateKey
 from parallax.core.write_plan.plan import (
     BoundRange,
+    CompletionFacts,
     DeferredRange,
-    ExecutionUnit,
+    SettledWrite,
     TemporalWriteOwnership,
-    UnitEffects,
     WritePlan,
     WriteStepView,
 )
@@ -32,11 +32,11 @@ __all__ = ["ExecuteWriteSteps", "acquire_and_bind_range", "run_write_plan"]
 
 
 class ExecuteWriteSteps(Protocol):
-    """How a flush has one span of Planned Writes executed: a unit's planned
-    steps, or the steps its deferred range bound.
+    """How a flush has one span of Planned Steps executed: a settled write's
+    planned steps, or the steps its deferred range bound.
 
     A normal return means every step of the span executed and its effect was
-    enforced, in order; it completes no unit and commits nothing. With
+    enforced, in order; it completes no settled write and commits nothing. With
     ``allocates``, it answers the key the database allocated for each row a
     row-producing insert of the span opened, in step order, and otherwise none.
     The span is borrowed: nothing of it stays reachable once the call returns.
@@ -46,41 +46,43 @@ class ExecuteWriteSteps(Protocol):
 
 
 def run_write_plan(owner: UnitOfWork, plan: WritePlan, execute: ExecuteWriteSteps, /) -> None:
-    """Execute ``plan``'s units in order through ``execute``, completing each
-    in ``owner`` as soon as its steps succeeded and before any step of a later
-    unit is taken.
+    """Execute ``plan``'s settled writes in order through ``execute``,
+    completing each in ``owner`` as soon as its steps succeeded and before any
+    step of a later one is taken.
 
-    A deferred unit binds at its turn, against the ownership and continuity
-    every earlier unit published: to the retained rows it reuses and the
-    coverage they leave. A unit with no step still
-    completes. A unit that fails completes nothing, and nothing after it is
-    prepared, bound, or executed.
+    A deferred settled write binds at its turn, against the ownership and
+    continuity every earlier one published: to the retained rows it reuses and
+    the coverage they leave. A settled write with no step still completes. One
+    that fails completes nothing, and nothing after it is prepared, bound, or
+    executed.
     """
-    complete = owner._complete_unit  # pyright: ignore[reportPrivateUsage] - the owner's completion
+    complete = owner._complete_write  # pyright: ignore[reportPrivateUsage] - the owner's completion
     steps = plan.steps
     start = 0
-    for unit in plan.units:
-        allocated = execute(steps.view(start, unit.end), allocates=bool(unit.opened.allocated))
-        start = unit.end
-        _require_allocated(unit, allocated)
-        deferred = unit.deferred
-        complete(unit, unit if deferred is None else _deferred(owner, deferred, execute), allocated)
+    for write in plan.units:
+        allocated = execute(steps.view(start, write.end), allocates=bool(write.opened.allocated))
+        start = write.end
+        _require_allocated(write, allocated)
+        deferred = write.deferred
+        complete(
+            write, write if deferred is None else _deferred(owner, deferred, execute), allocated
+        )
 
 
-def _require_allocated(unit: ExecutionUnit, allocated: tuple[object, ...]) -> None:
-    expected = len(unit.opened.allocated)
+def _require_allocated(write: SettledWrite, allocated: tuple[object, ...]) -> None:
+    expected = len(write.opened.allocated)
     if len(allocated) != expected:
         raise UnitOfWorkError(
-            f"an execution unit opening {expected} row(s) whose keys the database allocates "
+            f"a settled write opening {expected} row(s) whose keys the database allocates "
             f"executed answering {len(allocated)} key(s)"
         )
 
 
 def _deferred(
     owner: UnitOfWork, deferred: DeferredRange, execute: ExecuteWriteSteps
-) -> UnitEffects:
+) -> CompletionFacts:
     """What ``deferred`` publishes once bound under ``owner``'s current
-    ownership and executed: the range's bound effects."""
+    ownership and executed: the range's bound completion facts."""
     bound = acquire_and_bind_range(
         deferred,
         acquire_rows=owner.acquire_rows,

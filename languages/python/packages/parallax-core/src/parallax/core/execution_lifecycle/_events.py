@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Literal
 from uuid import UUID
 
-from parallax.core._execution._unit_work.uow import Concurrency, WriteBatchReason
+from parallax.core._execution._unit_work.uow import Concurrency, FlushTrigger
 from parallax.core.db_port import AccessMode, AcquisitionReason, CleanupResult, IsolationLevel
 from parallax.core.diagnostics import FailureDiagnostic
 from parallax.core.execution_lifecycle._diagnostics import (
@@ -79,7 +79,7 @@ type ReadOutcome = ReadCompleted | ReadFailed
 class ReadStarted(_Event):
     """A Read opened over ``target`` through ``interface``.
 
-    It starts after public preflight and any read-dependency Write Batch, and
+    It starts after public preflight and any read-dependency Flush, and
     spans planning, lowering, all of its Database Calls, conversion,
     materialization, and publication. ``edition`` is the Model Edition a
     standalone Read adopted for itself, and ``None`` for a participating Read,
@@ -113,7 +113,7 @@ class DatabaseWriteCompleted:
 
     A count that falls short of what the step addressed is still a COMPLETION —
     the call reached the database and came back — and post-call enforcement of
-    that shortfall is the enclosing Write Batch's failure, not the call's.
+    that shortfall is the enclosing Flush's failure, not the call's.
     """
 
     affected_rows: int
@@ -204,42 +204,42 @@ class DatabaseCallFinished(_Event):
 
 
 @dataclass(frozen=True, slots=True)
-class WriteBatchCompleted:
-    """Every write the batch still held after planning reached the database.
+class FlushCompleted:
+    """Every write the Flush still held after planning reached the database.
 
-    A batch planning reduced to no DML at all completes exactly like one that
+    A Flush planning reduced to no DML at all completes exactly like one that
     ran statements: the buffer was spent either way.
     """
 
 
 @dataclass(frozen=True, slots=True)
-class WriteBatchFailed:
-    """The batch did not spend its buffer."""
+class FlushFailed:
+    """The Flush did not spend its buffer."""
 
     failure: ActivityFailure
 
 
-type WriteBatchOutcome = WriteBatchCompleted | WriteBatchFailed
-"""How a Write Batch ended, a closed union of exactly one member."""
+type FlushOutcome = FlushCompleted | FlushFailed
+"""How a Flush ended, a closed union of exactly one member."""
 
 
 @dataclass(frozen=True, slots=True)
-class WriteBatchStarted(_Event):
+class FlushStarted(_Event):
     """A nonempty unit-of-work buffer is being flushed for ``trigger``.
 
-    It starts BEFORE planning, so a batch a planning refusal ended is still a
-    batch that started, and it spans planning, lowering, every Database Call, and
+    It starts BEFORE planning, so a Flush a planning refusal ended is still a
+    Flush that started, and it spans planning, lowering, every Database Call, and
     affected-row enforcement. An empty buffer produces no activity at all.
     """
 
-    trigger: WriteBatchReason
+    trigger: FlushTrigger
 
 
 @dataclass(frozen=True, slots=True)
-class WriteBatchFinished(_Event):
-    """The batch reached its terminal outcome."""
+class FlushFinished(_Event):
+    """The Flush reached its terminal outcome."""
 
-    outcome: WriteBatchOutcome
+    outcome: FlushOutcome
 
 
 @dataclass(frozen=True, slots=True)
@@ -345,8 +345,8 @@ type AttemptPhase = Literal["callback", "pre_commit", "commit"]
 """Where inside a physical attempt its failure arose.
 
 ``callback`` covers the callback itself and everything it caused — joined
-invocations, reads, and read-dependency batches. ``pre_commit`` is the final
-automatic batch after the callback returned. ``commit`` is the durability call.
+invocations, reads, and read-dependency flushes. ``pre_commit`` is the final
+automatic flush after the callback returned. ``commit`` is the durability call.
 """
 
 
@@ -624,7 +624,7 @@ class ReleaseFinished(_Event):
 
 type ActivityStarted = (
     ReadStarted
-    | WriteBatchStarted
+    | FlushStarted
     | DatabaseCallStarted
     | TransactionInvocationStarted
     | TransactionAttemptStarted
@@ -637,7 +637,7 @@ type ActivityStarted = (
 
 type ActivityFinished = (
     ReadFinished
-    | WriteBatchFinished
+    | FlushFinished
     | DatabaseCallFinished
     | TransactionInvocationFinished
     | TransactionAttemptFinished

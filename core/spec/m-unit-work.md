@@ -11,7 +11,7 @@ Write algebra it produces and the Write Observations it carries, on
 derivation, but **not** on `m-sql`. The
 dialect-specific SQL the unit of work executes (the read-lock suffix, the
 set-based forms) is produced by `m-sql` and run by the execution runtime
-(`m-execution`) through the step-execution, write-batch, and row-acquisition
+(`m-execution`) through the step-execution, flush, and row-acquisition
 ports this module declares, so `m-unit-work` takes no direct edge to SQL generation. (`m-op-list` and
 `m-navigate` in turn depend on `m-unit-work`, because a list is an
 query-backed view resolved within a unit of work.)
@@ -22,7 +22,7 @@ identity map (`m-identity-map`), and the process-wide identity + query caches
 (`m-process-cache`, deferred).
 
 `m-unit-work` also owns **write finalization**: the Write Planner and its stage
-order, which settle buffered writes into `m-write-plan`'s Planned Write algebra;
+order, which settle buffered writes into `m-write-plan`'s Planned Step algebra;
 the authoritative affected-row enforcer; and the Write Effect Error family that
 enforcer raises (ADR 0041, ADR 0048). Sibling policy modules
 (`m-batch-write`, `m-opt-lock`, `m-read-lock`) keep their own policies and
@@ -51,14 +51,14 @@ opens a transaction with no unit of work at all. Within one unit of work:
   and no caller-invoked one — physical write timing stays encapsulated, and a
   batch that reached the database is therefore attributable to exactly one of
   the two. The joined (nested) boundary adds no third trigger: it shares the
-  outer unit of work's buffer, and the outer boundary's pre-commit batch is what
+  outer unit of work's buffer, and the outer boundary's pre-commit flush is what
   flushes it. The second trigger is named for when it runs, because
   **finalization** already names the planner stage every batch of either trigger
   goes through.
 
 Where an implementation owns connection lifetimes (`m-db-port`), each **attempt**
 holds one connection. It is acquired after the attempt begins and before the
-physical boundary opens, every read, write batch and participating delivery
+physical boundary opens, every read, flush and participating delivery
 inside the attempt runs on it, and it is released **before the attempt
 finishes** — so a retry acquires afresh rather than replaying over what its
 predecessor left, and the same physical connection coming back is the resource's
@@ -233,7 +233,7 @@ document losslessly (`serialize(deserialize(x)) == x`), the write-side of the
 whether its bounds suit the target is judged when the write is prepared.
 
 A Write Instruction is **buffered author intent** and stays that until flush. It
-is never a Planned Write, and a Planned Write is never serialized back into one.
+is never a Planned Step, and a Planned Step is never serialized back into one.
 
 ### Serialized write elaboration
 
@@ -455,7 +455,7 @@ dooms the attempt.
 While the insert is pending, the writes it licenses compose over the coverage it
 opens (*Same-transaction write coalescing*). Once a flush has executed it, the
 same writes transform the stored rows: the object's current coverage from the
-anchor is read inside the write batch — under the shared row lock where the
+anchor is read inside the flush — under the shared row lock where the
 Entity's Effective Concurrency Strategy is Locking — and every row the attempt
 opened is revised or removed in place (*Rows the attempt opened*). A versioned
 Non-Temporal row advances from the version the attempt's own writes left it at,
@@ -673,7 +673,7 @@ acquisition*). A request describes what to read and performs no read:
 | Request | What it reads | When |
 |---|---|---|
 | **Target** | the one row a Locking caller-addressed write addresses, at `validFrom` for a Bitemporal target, when no pending write or live read already proves it; a temporal one whole, retained with the write | when the write is buffered, with no force-flush |
-| **Coverage** | the current milestones of one or several objects overlapping the parts of each object's window no row it holds covers, in statements naming a bounded number of object/part terms each | when the flush reaches the deferred unit, inside its write batch |
+| **Coverage** | the current milestones of one or several objects overlapping the parts of each object's window no row it holds covers, in statements naming a bounded number of object/part terms each | when the flush reaches the deferred unit, inside that flush |
 | **Completion** | nothing: the retained rows of a deferred range unit that are still current, each occurrence the target read left pending judged as a read judges it | when the flush reaches that unit, before its coverage is read |
 
 The unit of work hands each request a consumer of its own and receives the
@@ -700,7 +700,7 @@ finalize(
         actor_identity:       ActorIdentity,
         transaction_instant:  TransactionInstant,
         concurrency_preference: ConcurrencyPreference,
-        buffered_writes:      BufferedWrites,
+        buffered_writes:      CoalescedWrites,
         ownership:            AttemptOwnership,
     )
 ) -> WritePlan
@@ -750,7 +750,7 @@ joined rather than resolving one of its own. A re-executed attempt opens a
 fresh unit of work and may be handed a different planner — the one belonging
 to whatever accepted Metamodel that attempt adopted.
 
-The term **step** is reserved for one logical Planned Write; the term **stage**
+The term **step** is reserved for one logical Planned Step; the term **stage**
 describes one private transformation inside the pipeline below.
 
 ### The planning pipeline
@@ -768,7 +768,7 @@ The Write Planner privately owns this stage order:
    predecessors planning holds (`m-temporal-write`), or finalize a requested
    range whose coverage no planning input holds
 8. audit: finalize each produced row, and decorate each update and close
-9. freeze the Planned Writes
+9. freeze the Planned Steps
 ```
 
 Four of those orderings are load-bearing and therefore normative:
@@ -805,7 +805,7 @@ interface: nothing outside the planner may name, observe, or invoke a stage.
 Stages 1–4 rewrite the buffered sequence: they merge, drop, split, and reorder
 it. Stages 5–9 are **Write Settlement**, and the sequence stops changing shape
 there — settlement reads it once, validates the observation each surviving write
-carries as it settles that write, and only Planned Writes come out. Settlement
+carries as it settles that write, and only Planned Steps come out. Settlement
 is owned by the planner and constructed for the same accepted Metamodel: it
 reuses that model's compiled facets, never observes model publication, and is
 never rebound after one. It is reached through exactly **one** private
@@ -815,7 +815,7 @@ settlement at all. That operation answers the Write Planning Result, which the
 planner returns unchanged: the planner neither wraps nor reconstructs it, so no
 fact about a settled write is decided twice.
 
-### Write Plan and Planned Writes
+### Write Plan and Planned Steps
 
 ```text
 WritePlan(steps: PlannedWrites, units: ExecutionUnits)
@@ -828,7 +828,7 @@ ExecutionUnits: an ordered partition of those steps, each unit with the
 ```
 
 A **Write Plan** is the immutable, **execution-ordered** result of one planning
-call. Its Planned Writes contain every Planned Write that survives coalescing,
+call. Its Planned Steps contain every Planned Step that survives coalescing,
 cancellation, and known no-op elimination, with temporal topology and correctness
 semantics already decided.
 
@@ -849,7 +849,7 @@ semantics already decided.
   else. Carrying an operation is therefore not what makes something a producer —
   advancing an observed version by an already-fixed step is the strategy's
   settled answer restated, not a fresh decision.
-- An **empty** Planned Writes sequence is the one canonical result for complete
+- An **empty** Planned Steps sequence is the one canonical result for complete
   cancellation or known no-op elimination. There is no empty-plan sentinel and no
   second result variant.
 - A **deferred range unit** is the one exception to fully expanded topology. A
@@ -861,7 +861,7 @@ semantics already decided.
   planned step, and its meaning is data: it retains no binder, Attempt
   Ownership, clock, strategy, or Actor Identity. When the flush reaches it,
   the unit of work acquires the object's current rows over the range not
-  already covered (*Row acquisition*) — inside the write batch and under
+  already covered (*Row acquisition*) — inside the flush and under
   `m-read-lock`'s shared lock when the effective strategy is Locking — and binds
   those rows, or the absence of any, with the observed ones into the unit's
   physical steps before they run.
@@ -892,7 +892,7 @@ semantics already decided.
   units complete before later work runs*); any other caller's start is a failed
   precondition, and any other observed condition fails as that write's own
   shortfall would, the caller's first.
-- Planned Writes is a **logical** sequence. An implementation MAY pack homogeneous
+- Planned Steps is a **logical** sequence. An implementation MAY pack homogeneous
   runs and expose stable immutable views during iteration rather than allocating
   one container per step; every exposed view is immutable and stable, and equal
   views need not have object identity.
@@ -903,7 +903,7 @@ semantics already decided.
 ### Execution units complete before later work runs
 
 The unit of work runs a finalized Write Plan unit by unit, in order. It hands
-each span of Planned Writes — a unit's planned steps, or the steps its deferred
+each span of Planned Steps — a unit's planned steps, or the steps its deferred
 range bound — to the step-execution port,
 which executes every step of the span and has its effect enforced. As soon as
 every step of a unit has succeeded — at once for a unit with no step — and
@@ -952,9 +952,9 @@ the earlier unit's sources as usual: a proof serves only the writes admitted
 before the flush began, never a later submission, and it ends with the flush,
 however the flush ends.
 
-## Planned Writes and Write Observations
+## Planned Steps and Write Observations
 
-`m-write-plan` owns the Planned Write algebra — Row Origin and Close Cause,
+`m-write-plan` owns the Planned Step algebra — Row Origin and Close Cause,
 planned rows and assignments, the Write Target, the Write Gate and its
 concurrency decision, and the Affected Rows Policy — and the Write Observation
 vocabulary: the Object Key and Object State Key that address evidence, and
@@ -1123,7 +1123,7 @@ pending insert.
   state over its whole window there too, as it would once the insertion had
   executed: still without a flush at the call or an intermediate insertion, the
   opening settles as one unit at the normal flush that reads the stored coverage
-  past its window inside the write batch, transforms each row the composed
+  past its window inside the flush, transforms each row the composed
   writes reach under its own proof, opens the surviving pieces, and opens the
   replacement's remaining extent (`m-temporal-write` *Observed writes span their
   requested extent*). Every other composed edit reaches past the opening's window
@@ -1403,7 +1403,7 @@ The unit of work owns the **authoritative** interpretation of every non-insert
 execution result:
 
 ```text
-enforce_affected_rows(step: PlannedWrite, actual_count: NonNegativeInt)
+enforce_affected_rows(step: PlannedStep, actual_count: NonNegativeInt)
 ```
 
 The executor reports the driver's affected-row count and asks this module what it
@@ -1420,7 +1420,7 @@ OptimisticLockConflictError | CardinalityCorruptionError
 
 Each error carries the same semantic payload — the Entity Identity, the Write
 Target (retained by reference), the expected count, and the actual count — and
-**nothing else**: no SQL, statement index, driver exception, whole Planned Write,
+**nothing else**: no SQL, statement index, driver exception, whole Planned Step,
 assignments, or observation. That keeps the diagnostic stable across dialects and
 lets `m-auto-retry` recognize the canonical Optimistic Lock Conflict Error
 without depending on an optional concurrency module.
@@ -1442,7 +1442,7 @@ retriable.
 Multiple `ExactCount` steps MAY share one driver batch **only** when the adapter
 returns one affected-row count aligned with each logical step; the unit of work
 then enforces each count against its own step. One **aggregate** count is
-sufficient only for a single Planned Write whose own Key Target holds several
+sufficient only for a single Planned Step whose own Key Target holds several
 keys, because that one target owns the aggregate expectation. An aggregate-only
 backend **MUST** execute distinct `ExactCount` steps separately; it MAY still
 reuse statement preparation and stream bind rows. This is what preserves exact
@@ -1492,7 +1492,7 @@ Unit Work preference and derives the safe per-Entity result instead of exposing
 per-Entity overrides.
 
 The Write Planner consumes the Concurrency Preference and the model's Optimistic
-Lock Facet, settles each Planned Write's gate or explicit `Ungated` decision, and
+Lock Facet, settles each Planned Step's gate or explicit `Ungated` decision, and
 retains neither the preference nor the Effective Concurrency Strategy in the
 Write Plan.
 

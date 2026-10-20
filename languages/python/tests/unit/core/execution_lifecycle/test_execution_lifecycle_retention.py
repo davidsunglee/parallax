@@ -203,6 +203,7 @@ from parallax.core.execution_lifecycle import (
 from parallax.core.execution_lifecycle._activity import (
     DatabaseCallActivity,
     DeliveryState,
+    FlushActivity,
     InstalledLifecycle,
     JoinedInvocationActivity,
     ReadActivity,
@@ -210,7 +211,6 @@ from parallax.core.execution_lifecycle._activity import (
     StreamBatchActivity,
     TransactionAttemptActivity,
     TransactionInvocationActivity,
-    WriteBatchActivity,
     open_read_root,
     open_stream_root,
     open_transaction_root,
@@ -730,8 +730,8 @@ def _begun_attempt(
     return invocation, attempt
 
 
-def _write_batch_chain(stack: ExitStack, installed: InstalledLifecycle) -> tuple[object, ...]:
-    """An invocation, its attempt, a Write Batch, and the call the batch issued.
+def _flush_chain(stack: ExitStack, installed: InstalledLifecycle) -> tuple[object, ...]:
+    """An invocation, its attempt, a Flush, and the call the Flush issued.
 
     The deepest shape the algebra admits, and the one the concurrency grid is
     read over beside the shallowest: a per-root cost that grew with the roots
@@ -739,15 +739,15 @@ def _write_batch_chain(stack: ExitStack, installed: InstalledLifecycle) -> tuple
     than in one that holds two.
     """
     invocation, attempt = _begun_attempt(stack, installed)
-    batch = stack.enter_context(attempt.write_batch("pre_commit"))
-    call = stack.enter_context(batch.database_call(STATEMENT, "write", TARGET))
+    flush = stack.enter_context(attempt.flush("pre_commit"))
+    call = stack.enter_context(flush.database_call(STATEMENT, "write", TARGET))
     # The count is measured off the same list the shallow call reports the length
     # of, rather than named as a constant: an integer a module already holds is a
     # reference and an integer a call computes is an allocation, and a call has to
     # weigh what it weighs for its DEPTH rather than for where its number came
     # from.
     call.write_completed(len(SMALL))
-    return (invocation, attempt, batch, call)
+    return (invocation, attempt, flush, call)
 
 
 def _participating_read_chain(
@@ -819,11 +819,11 @@ def _joined_invocation_chain(stack: ExitStack, installed: InstalledLifecycle) ->
 _SHAPES: Final = (
     (_read_chain, (ReadActivity, DatabaseCallActivity)),
     (
-        _write_batch_chain,
+        _flush_chain,
         (
             TransactionInvocationActivity,
             TransactionAttemptActivity,
-            WriteBatchActivity,
+            FlushActivity,
             DatabaseCallActivity,
         ),
     ),
@@ -871,7 +871,7 @@ _ACTIVITY_KINDS: Final = (
     StreamBatchActivity,
     TransactionAttemptActivity,
     TransactionInvocationActivity,
-    WriteBatchActivity,
+    FlushActivity,
 )
 """The activity Protocols this runtime implements.
 
@@ -1448,7 +1448,7 @@ def test_live_lifecycle_memory_is_linear_in_the_roots_open_at_once() -> None:
     # line that has to hold at every count: in objects if it allocated one per
     # root, and in references if it only pointed at the roots that were already
     # there.
-    for shape in (_read_chain, _write_batch_chain):
+    for shape in (_read_chain, _flush_chain):
         measured = {
             (roots, providers): _live(_concurrent_roots(roots, providers, shape))
             for providers in _PROVIDERS
@@ -1479,7 +1479,7 @@ def test_live_lifecycle_memory_is_linear_in_the_roots_open_at_once() -> None:
     try:
         kept = {
             _Point(roots, max(_PROVIDERS), 0): retained(
-                _concurrent_roots(roots, max(_PROVIDERS), _write_batch_chain)
+                _concurrent_roots(roots, max(_PROVIDERS), _flush_chain)
             )
             for roots in (min(_ROOTS), max(_ROOTS))
         }

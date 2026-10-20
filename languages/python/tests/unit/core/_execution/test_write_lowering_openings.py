@@ -24,7 +24,7 @@ import pytest
 from parallax.conformance.class_models import MODELS
 from parallax.core import Attr, Bitemporal, Document, DomainModel, ValueObject, attr
 from parallax.core._execution._write_lowering import (
-    LoweredOpening,
+    GroupedInsert,
     LoweringCursor,
     lowered,
     stream_physical,
@@ -62,15 +62,15 @@ from parallax.core.write_plan.steps import (
     PlannedClose,
     PlannedInsert,
     PlannedRow,
+    PlannedStep,
     RowOrigin,
     WriteRow,
 )
-from parallax.core.write_plan.steps import PlannedWrite as PlannedStep
 from tests._support.clock_probes import instant_at
 from tests._support.lowering_probes import lower_instruction, lower_instruction_steps, lowered_steps
 from tests.unit._corpus_model_support import corpus_records, formed
 
-_OPENINGS: Final = "parallax.core._execution._write_lowering._OPENING_ENTRY_CAP"
+_GROUPED_INSERT_CAP: Final = "parallax.core._execution._write_lowering._GROUPED_INSERT_ROWS"
 _META: Final = model_of(MODELS["position"])
 _ENTITY = entity_by_name(_META, "Position")
 assert _ENTITY is not None
@@ -201,10 +201,10 @@ def _cursor(
     )
 
 
-def _grouped(cursor: LoweringCursor) -> LoweredOpening:
-    first = cursor.opening(_first(cursor))
+def _grouped(cursor: LoweringCursor) -> GroupedInsert:
+    first = cursor.grouped_insert_start(_first(cursor))
     assert first is not None
-    return cursor.lowered_opening(first)
+    return cursor.lowered_grouped_insert(first)
 
 
 def _first(cursor: LoweringCursor) -> PlannedStep:
@@ -242,7 +242,7 @@ def _wire(*steps: PlannedStep, meta: Metamodel = _META) -> tuple[object, ...]:
 
 def test_a_temporal_single_entry_insert_without_generated_values_begins_a_grouped_opening() -> None:
     (opening,) = _openings(1)
-    assert _cursor(_Taken(())).opening(opening) is opening
+    assert _cursor(_Taken(())).grouped_insert_start(opening) is opening
 
 
 def test_every_other_step_lowers_alone() -> None:
@@ -270,10 +270,10 @@ def test_every_other_step_lowers_alone() -> None:
     )
     logical = PlannedInsert(entity=_POSITION, entries=(*opening.entries, *_openings(2)[1].entries))
     account_cursor = LoweringCursor((), LayoutPayloadPreparer(account_meta), account_meta, POSTGRES)
-    assert account_cursor.opening(non_temporal) is None
+    assert account_cursor.grouped_insert_start(non_temporal) is None
     cursor = _cursor(_Taken(()))
     for step in (generated, logical, _close(1)):
-        assert cursor.opening(step) is None
+        assert cursor.grouped_insert_start(step) is None
 
 
 # --------------------------------------------------------------------------- #
@@ -361,7 +361,7 @@ def test_another_objects_opening_of_the_same_shape_joins_the_run() -> None:
 def test_the_entry_cap_ends_a_run_before_another_step_is_taken(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(_OPENINGS, 2)
+    monkeypatch.setattr(_GROUPED_INSERT_CAP, 2)
     steps = _openings(5)
     taken = _Taken(steps)
     cursor = _cursor(taken)
@@ -401,7 +401,7 @@ def test_an_opening_wider_than_the_bind_limit_alone_still_inserts_alone() -> Non
 # --------------------------------------------------------------------------- #
 
 
-def _prefix_after(steps: tuple[PlannedStep, ...], cursor: LoweringCursor) -> LoweredOpening:
+def _prefix_after(steps: tuple[PlannedStep, ...], cursor: LoweringCursor) -> GroupedInsert:
     opening = _grouped(cursor)
     assert opening.following is None
     assert (opening.statement.sql, opening.statement.binds) == _joined(*steps[:2])

@@ -1,8 +1,8 @@
-# Read dependency (m-execution-lifecycle): the batch a dependent read forced
+# Read dependency (m-execution-lifecycle): the Flush a dependent read forced
 # carries the `read-dependency` trigger and FINISHES before the Read it enabled
 # starts.
 model: models/account.yaml
-tags: [m-execution-lifecycle, m-unit-work, slice-snapshot-1, write-batch, read-dependency]
+tags: [m-execution-lifecycle, m-unit-work, slice-snapshot-1, flush, read-dependency]
 shape: scenario
 when:
   uow:
@@ -28,7 +28,7 @@ when:
             path: parallax.compatibility.Account.id
             value: 7
       databaseCalls: 1
-      note: the dependent find forces the buffered insert out as a read-dependency batch, then observes it; the group COMMITS after this, its last step
+      note: the dependent find forces the buffered insert out as a read-dependency flush, then observes it; the group COMMITS after this, its last step
       statements:
         - sql:
             postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? for share of t0
@@ -66,7 +66,7 @@ then:
           - sequence: 5
             activity: 4
             parent: 2
-            writeBatchStarted: { trigger: read-dependency }
+            flushStarted: { trigger: read-dependency }
           - sequence: 6
             activity: 5
             parent: 4
@@ -81,7 +81,7 @@ then:
           - sequence: 8
             activity: 4
             parent: 2
-            writeBatchFinished: { outcome: completed }
+            flushFinished: { outcome: completed }
           - sequence: 9
             activity: 6
             parent: 2

@@ -7,7 +7,7 @@ provenance decoration by hand. A caller does resolve the observation a write
 settles against, at the verb that holds the value, and buffers it on the write.
 These tests drive it directly — through the
 SAME production wiring ``parallax.core._execution._planning.build_write_planner``
-builds — asserting complete ``PlannedWrite`` shapes and plan-wide ordering,
+builds — asserting complete ``PlannedStep`` shapes and plan-wide ordering,
 never a private stage function: same-transaction coalescing (insert-then-update
 in place per temporal flavor; insert-then-delete cancellation), dependency
 ordering over the descriptor graph and the readless-predicate-write barriers
@@ -56,7 +56,7 @@ from parallax.core.metamodel import (
 )
 from parallax.core.relationship import _compile as relationship_compile
 from parallax.core.unit_work import (
-    BufferItem,
+    AdmittedWrite,
     Concurrency,
     KeyedWriteInstruction,
     PredicateSelection,
@@ -92,8 +92,8 @@ from parallax.core.write_plan.steps import (
     KeyTarget,
     PlannedDelete,
     PlannedRow,
+    PlannedStep,
     PlannedUpdate,
-    PlannedWrite,
     ResolvedMutationSelection,
     Versioned,
     VersionGate,
@@ -131,11 +131,11 @@ _B1_MANAGED = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 _INSTANT = inert_instant()
 
 
-type _TestBufferItem = BufferItem | KeyedWriteInstruction | PredicateWriteInstruction
+type _TestAdmittedWrite = AdmittedWrite | KeyedWriteInstruction | PredicateWriteInstruction
 
 
 def _plan(
-    buffer: Sequence[_TestBufferItem],
+    buffer: Sequence[_TestAdmittedWrite],
     model: Metamodel,
     *,
     observations: dict[ObjectKey, WriteObservation] | None = None,
@@ -159,16 +159,16 @@ def _row_values(row: PlannedRow) -> dict[str, object]:
     return values
 
 
-def _insert_rows(step: PlannedWrite) -> list[dict[str, object]]:
+def _insert_rows(step: PlannedStep) -> list[dict[str, object]]:
     assert isinstance(step, PlannedInsert)
     return [_row_values(entry.row) for entry in step.entries]
 
 
-def _step_entity(step: PlannedWrite) -> str:
+def _step_entity(step: PlannedStep) -> str:
     return step.entity.name
 
 
-def _step_mutation(step: PlannedWrite) -> str:
+def _step_mutation(step: PlannedStep) -> str:
     if isinstance(step, PlannedInsert):
         return "insert"
     if isinstance(step, PlannedUpdate):
@@ -536,7 +536,7 @@ def test_multi_row_and_predicate_writes_do_not_coalesce() -> None:
 # Dependency ordering (foreign-key parents-before-children).                  #
 # --------------------------------------------------------------------------- #
 def test_inserts_order_parents_before_children() -> None:
-    buffer: list[_TestBufferItem] = [
+    buffer: list[_TestAdmittedWrite] = [
         KeyedWriteInstruction("insert", "OrderStatus", ({"id": 100, "orderId": 1, "code": "new"},)),
         KeyedWriteInstruction(
             "insert", "OrderTag", ({"id": 1000, "orderId": 1, "label": "x", "priority": 1},)
@@ -564,7 +564,7 @@ def test_inserts_order_parents_before_children() -> None:
 
 
 def test_deletes_order_children_before_parents() -> None:
-    buffer: list[_TestBufferItem] = [
+    buffer: list[_TestAdmittedWrite] = [
         KeyedWriteInstruction("delete", "Order", ({"id": 1},)),
         KeyedWriteInstruction("delete", "OrderItem", ({"id": 10},)),
         KeyedWriteInstruction("delete", "OrderStatus", ({"id": 100},)),
@@ -574,7 +574,7 @@ def test_deletes_order_children_before_parents() -> None:
 
 
 def test_mixed_flush_is_insert_then_update_then_delete() -> None:
-    buffer: list[_TestBufferItem] = [
+    buffer: list[_TestAdmittedWrite] = [
         KeyedWriteInstruction("delete", "OrderStatus", ({"id": 100},)),
         KeyedWriteInstruction("amend", "OrderItem", ({"id": 10, "quantity": 5},)),
         KeyedWriteInstruction(
@@ -604,7 +604,7 @@ def test_one_to_one_relationships_contribute_no_fk_edge() -> None:
     # Person <-> Passport are both one-to-one: neither the many-to-one nor the
     # one-to-many edge fires, so ranking falls back to the accepted model's own
     # canonical Entity order.
-    buffer: list[_TestBufferItem] = [
+    buffer: list[_TestAdmittedWrite] = [
         KeyedWriteInstruction("insert", "Person", ({"id": 1, "name": "A"},)),
         KeyedWriteInstruction("insert", "Passport", ({"id": 2, "personId": 1, "number": "X"},)),
     ]
@@ -639,7 +639,7 @@ def test_a_defining_many_to_one_orders_its_source_after_its_target() -> None:
             ),
         )
     )
-    buffer: list[_TestBufferItem] = [
+    buffer: list[_TestAdmittedWrite] = [
         KeyedWriteInstruction("insert", "Alpha", ({"id": 1, "zetaId": 2},)),
         KeyedWriteInstruction("insert", "Zeta", ({"id": 2},)),
     ]
@@ -666,7 +666,7 @@ def test_ordering_reads_each_ranked_writes_compiled_rank_once_and_derives_none(
 
     monkeypatch.setattr(type(facet), "referential_rank", recording)
     monkeypatch.setattr(relationship_compile, "_referential_ranks", refuse)
-    buffer: list[_TestBufferItem] = [
+    buffer: list[_TestAdmittedWrite] = [
         KeyedWriteInstruction(
             "insert", "OrderItem", ({"id": 10, "orderId": 1, "sku": "A", "quantity": 1},)
         ),
@@ -704,7 +704,7 @@ def test_an_instruction_naming_an_undeclared_entity_is_a_planning_error() -> Non
     # instruction naming one the accepted Metamodel does not declare is refused
     # as a caller wiring defect during planning — never silently ranked first
     # by the ordering stage's own defensive fallback and lowered anyway.
-    buffer: list[_TestBufferItem] = [
+    buffer: list[_TestAdmittedWrite] = [
         KeyedWriteInstruction(
             "insert", "OrderItem", ({"id": 10, "orderId": 1, "sku": "A", "quantity": 1},)
         ),
@@ -722,7 +722,7 @@ def test_an_undeclared_entitys_keyed_update_survives_elision_to_the_same_refusal
     # pairs an undeclared insert with a resolvable one): pairing this update with
     # any undeclared insert of the same entity would let the insert's own
     # refusal fire first and leave elision's behavior unobserved.
-    buffer: list[_TestBufferItem] = [KeyedWriteInstruction("amend", "Gadget", ({"id": 1},))]
+    buffer: list[_TestAdmittedWrite] = [KeyedWriteInstruction("amend", "Gadget", ({"id": 1},))]
     with pytest.raises(ValueError, match="Gadget"):
         _plan(buffer, _ORDERS)
 
@@ -752,7 +752,7 @@ def test_no_keyed_write_crosses_a_readless_predicate_write_in_either_direction()
     # push the leading delete to the back, moving BOTH across the predicate
     # write — a readless predicate does not reveal which rows it matches, so
     # either move could change what it writes. The barrier pins all three.
-    buffer: list[_TestBufferItem] = [
+    buffer: list[_TestAdmittedWrite] = [
         KeyedWriteInstruction("delete", "OrderItem", ({"id": 10},)),
         _predicate_update("Order"),
         KeyedWriteInstruction(
@@ -790,7 +790,7 @@ def test_fk_ordering_still_applies_independently_within_each_barrier_region() ->
     # Ordering is unconstrained WITHIN a region: each side is bucketed and
     # ordered on its own (parents before children), and the two sides never
     # see each other's items.
-    buffer: list[_TestBufferItem] = [
+    buffer: list[_TestAdmittedWrite] = [
         KeyedWriteInstruction(
             "insert", "OrderItem", ({"id": 10, "orderId": 1, "sku": "A", "quantity": 1},)
         ),
@@ -819,7 +819,7 @@ def test_fk_ordering_still_applies_independently_within_each_barrier_region() ->
 
 
 def test_two_readless_predicate_writes_partition_the_buffer_into_three_regions() -> None:
-    buffer: list[_TestBufferItem] = [
+    buffer: list[_TestAdmittedWrite] = [
         KeyedWriteInstruction("delete", "Order", ({"id": 1},)),
         _predicate_update("Order"),
         KeyedWriteInstruction("delete", "OrderItem", ({"id": 10},)),
@@ -1142,7 +1142,7 @@ def test_an_unversioned_multi_key_update_settles_to_one_aggregate_planned_write(
     # statement over one multi-key Key Target, so it settles to one Planned
     # Update whose expectation is the whole target's key count — never one step
     # per key.
-    buffer: list[_TestBufferItem] = [
+    buffer: list[_TestAdmittedWrite] = [
         KeyedWriteInstruction("amend", "Wallet", ({"id": 1, "balance": Decimal("5.00")},)),
         KeyedWriteInstruction("amend", "Wallet", ({"id": 2, "balance": Decimal("5.00")},)),
         KeyedWriteInstruction("amend", "Wallet", ({"id": 3, "balance": Decimal("5.00")},)),
@@ -1175,7 +1175,7 @@ def test_a_readless_predicate_write_carries_an_unbounded_expectation() -> None:
 # Batching (m-batch-write's collapse-eligibility policy, production-wired).   #
 # --------------------------------------------------------------------------- #
 def test_batching_merges_adjacent_same_entity_same_mutation_inserts() -> None:
-    buffer: list[_TestBufferItem] = [
+    buffer: list[_TestAdmittedWrite] = [
         KeyedWriteInstruction(
             "insert", "Wallet", ({"id": 1, "owner": "Ada", "balance": Decimal("1.00")},)
         ),
@@ -1193,7 +1193,7 @@ def test_batching_merges_adjacent_same_entity_same_mutation_inserts() -> None:
 
 
 def test_batching_merges_uniform_updates_but_not_a_lone_row() -> None:
-    buffer: list[_TestBufferItem] = [
+    buffer: list[_TestAdmittedWrite] = [
         KeyedWriteInstruction("amend", "Wallet", ({"id": 1, "balance": Decimal("5.00")},))
     ]
     plan = _plan(buffer, _WALLET)
@@ -1209,7 +1209,7 @@ def test_a_known_no_op_between_two_uniform_updates_does_not_prevent_their_batch(
     # boundary between the two uniform updates surrounding it. Batching first
     # would instead leave the no-op splitting the run, and the two survivors
     # would settle as two separate singleton steps rather than one batch.
-    buffer: list[_TestBufferItem] = [
+    buffer: list[_TestAdmittedWrite] = [
         KeyedWriteInstruction("amend", "Wallet", ({"id": 1, "balance": Decimal("5.00")},)),
         KeyedWriteInstruction("amend", "Wallet", ({"id": 2},)),  # a known no-op: only the PK
         KeyedWriteInstruction("amend", "Wallet", ({"id": 3, "balance": Decimal("5.00")},)),
@@ -1221,7 +1221,7 @@ def test_a_known_no_op_between_two_uniform_updates_does_not_prevent_their_batch(
 
 
 def test_batching_declines_a_non_uniform_update_run_leaving_rows_separate() -> None:
-    buffer: list[_TestBufferItem] = [
+    buffer: list[_TestAdmittedWrite] = [
         KeyedWriteInstruction("amend", "Wallet", ({"id": 1, "balance": Decimal("111.00")},)),
         KeyedWriteInstruction("amend", "Wallet", ({"id": 2, "balance": Decimal("222.00")},)),
     ]
@@ -1230,7 +1230,7 @@ def test_batching_declines_a_non_uniform_update_run_leaving_rows_separate() -> N
 
 
 def test_batching_never_regroups_across_an_intervening_different_entity() -> None:
-    buffer: list[_TestBufferItem] = [
+    buffer: list[_TestAdmittedWrite] = [
         KeyedWriteInstruction(
             "insert", "Wallet", ({"id": 1, "owner": "Ada", "balance": Decimal("1.00")},)
         ),
@@ -1357,7 +1357,7 @@ def test_a_bounded_bitemporal_update_expands_in_place_between_unrelated_writes()
     )
     key_ = object_key(position_update, _POSITION)
     assert key_ is not None
-    buffer: list[_TestBufferItem] = [
+    buffer: list[_TestAdmittedWrite] = [
         KeyedWriteInstruction(
             "insert", "Wallet", ({"id": 1, "owner": "Ada", "balance": Decimal("1.00")},)
         ),
@@ -1382,7 +1382,7 @@ def test_a_bounded_bitemporal_update_expands_in_place_between_unrelated_writes()
     assert len(middle) >= 2  # a close plus at least one chained successor
 
 
-def _position_value_and_valid_time(step: PlannedWrite) -> list[tuple[object, ...]]:
+def _position_value_and_valid_time(step: PlannedStep) -> list[tuple[object, ...]]:
     return [(row["value"], row["validStart"], row["validEnd"]) for row in _insert_rows(step)]
 
 
@@ -1504,7 +1504,7 @@ def test_a_prepared_finalize_resolves_targets_without_any_entity_spelling_scan(
     account_key = object_key(account_update, model)
     position_key = object_key(position_update, model)
     assert account_key is not None and position_key is not None
-    buffer: list[_TestBufferItem] = [
+    buffer: list[_TestAdmittedWrite] = [
         KeyedWriteInstruction(
             "insert", "Wallet", ({"id": 1, "owner": "Ada", "balance": Decimal("1.00")},)
         ),
@@ -1644,7 +1644,7 @@ def _wallet_and_account() -> Metamodel:
     )
 
 
-def _wallet_update() -> list[_TestBufferItem]:
+def _wallet_update() -> list[_TestAdmittedWrite]:
     return [KeyedWriteInstruction("amend", "Wallet", ({"id": 1, "balance": Decimal("2.00")},))]
 
 

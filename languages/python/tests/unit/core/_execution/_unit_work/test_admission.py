@@ -1,6 +1,6 @@
 """Write admission (`m-unit-work` "Observed-State Coalescing"), observed at the
 owner's interface where the write verbs cannot say it precisely: when a
-caller-addressed write's confirmation is consulted, how a planned batch drains into the
+caller-addressed write's confirmation is consulted, how a planned buffer drains into the
 live ownership, and the window rules a temporal object's caller-addressed
 writes meet that the verb matrices do not reach. What a caller sees through
 the verbs is the snapshot and API suites'."""
@@ -26,10 +26,10 @@ from parallax.core._execution._unit_work.instructions import (
 )
 from parallax.core._execution._unit_work.retain import RetainedTargetState
 from parallax.core._execution._unit_work.write_items import (
+    AdmittedWrite,
     AfterRemoval,
-    BufferItem,
     ChainedTemporalWrite,
-    ComposedTemporalWrite,
+    CoalescedTemporalWrite,
     InsertionKeyedWrite,
     TargetKeyedWrite,
     target_write,
@@ -59,9 +59,9 @@ from parallax.core.write_plan.keys import (
 from parallax.core.write_plan.plan import (
     OPEN_BITEMPORAL_ENDS,
     AllocatedOpening,
+    CompletionFacts,
     Openings,
     OwnedEndpoint,
-    UnitEffects,
 )
 from parallax.core.write_plan.steps import INFINITY as PLANNED_INFINITY
 from parallax.core.write_plan.steps import Finite
@@ -109,19 +109,19 @@ def _unversioned(entity: EntityIdentity, advanced_from: int | None) -> int | Non
     return None
 
 
-def _admitted(*writes: BufferItem, meta: Metamodel = POSITION) -> WriteAdmission:
+def _admitted(*writes: AdmittedWrite, meta: Metamodel = POSITION) -> WriteAdmission:
     admission = WriteAdmission(meta, inserted_version=_unversioned)
     for write in writes:
         admission.admit(write, confirm_target=_confirmed)
     return admission
 
 
-def _admit(admission: WriteAdmission, *writes: BufferItem) -> None:
+def _admit(admission: WriteAdmission, *writes: AdmittedWrite) -> None:
     for write in writes:
         admission.admit(write, confirm_target=_confirmed)
 
 
-def _refused(admission: WriteAdmission, write: BufferItem) -> None:
+def _refused(admission: WriteAdmission, write: AdmittedWrite) -> None:
     with pytest.raises(WriteEvidenceError) as refusal:
         admission.admit(write, confirm_target=_confirmed)
     assert refusal.value.code == "write-evidence-already-claimed"
@@ -131,7 +131,7 @@ def _account(account_id: int) -> ObjectKey:
     return ObjectKey(_ACCOUNT_ENTITY, (("id", account_id),))
 
 
-def _account_observed(account_id: int, version: int) -> BufferItem:
+def _account_observed(account_id: int, version: int) -> AdmittedWrite:
     prepared = prepare_wire_write(
         KeyedWriteInstruction("amend", "Account", ({"id": account_id, "owner": "Bo"},)), _ACCOUNT
     )
@@ -246,7 +246,7 @@ def test_the_write_confirmation_answers_is_the_one_composed() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# A planned batch drains into the live ownership; discard spends nothing.     #
+# A planned buffer drains into the live ownership; discard spends nothing.    #
 # --------------------------------------------------------------------------- #
 def test_a_batch_composition_left_nothing_of_still_needs_its_flush() -> None:
     admission = WriteAdmission(_ACCOUNT, inserted_version=_unversioned)
@@ -263,7 +263,7 @@ def test_a_batch_composition_left_nothing_of_still_needs_its_flush() -> None:
     assert not admission
 
 
-def _person_write(person_id: int, source: RecordingSource) -> BufferItem:
+def _person_write(person_id: int, source: RecordingSource) -> AdmittedWrite:
     prepared = prepare_wire_write(
         KeyedWriteInstruction("amend", "Person", ({"id": person_id, "name": "Grace"},)), _PERSON
     )
@@ -299,7 +299,7 @@ def test_discard_leaves_pending_authority_unspent_and_forgets_every_insertion() 
     _admit(admission, insertion)
     ownership = admission.ownership
     endpoint = OwnedEndpoint(ENTITY, (1,), OPEN_BITEMPORAL_ENDS)
-    admission.complete_unit(UnitEffects(opened=Openings(fresh=(endpoint,))), ())
+    admission.complete(CompletionFacts(opened=Openings(fresh=(endpoint,))), ())
     admission.discard()
     assert not source.consumed
     assert not admission
@@ -320,8 +320,8 @@ def test_completion_publishes_into_the_ownership_planning_borrowed() -> None:
     _admit(admission, observed_write("amendUntil", START, acctNum="B"))
     admission.drain_planned()
     opening = AllocatedOpening(ENTITY, OPEN_BITEMPORAL_ENDS)
-    admission.complete_unit(
-        UnitEffects(changed=_Untraversable(), opened=Openings(allocated=(opening,))), (42,)
+    admission.complete(
+        CompletionFacts(changed=_Untraversable(), opened=Openings(allocated=(opening,))), (42,)
     )
     assert admission.ownership is ownership
     assert ownership.owns(OwnedEndpoint(ENTITY, (42,), OPEN_BITEMPORAL_ENDS))
@@ -360,7 +360,7 @@ def _stored_insertion_across_two_rows() -> WriteAdmission:
     admission.drain_planned()
     split = OwnedEndpoint(ENTITY, (1,), (Finite(instant=JUN), PLANNED_INFINITY))
     tail = OwnedEndpoint(ENTITY, (1,), OPEN_BITEMPORAL_ENDS)
-    admission.complete_unit(UnitEffects(opened=Openings(continued=(split, tail))), ())
+    admission.complete(CompletionFacts(opened=Openings(continued=(split, tail))), ())
     return admission
 
 
@@ -405,7 +405,7 @@ def test_a_restated_caller_condition_is_kept_once_however_often_it_is_overwritte
             addressed_write(replaces=True, acctNum="Z", value=value),
         )
     (composed,) = admission.composed_writes()
-    assert isinstance(composed, ComposedTemporalWrite)
+    assert isinstance(composed, CoalescedTemporalWrite)
     assert [contribution.condition for contribution in composed.contributions] == [
         ExpectedTxStart(T0)
     ]

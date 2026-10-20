@@ -48,12 +48,12 @@ __all__ = [
     "PlannedDelete",
     "PlannedInsert",
     "PlannedRow",
+    "PlannedStep",
     "PlannedTemporalGuard",
     "PlannedTemporalRemoval",
     "PlannedTemporalRevision",
     "PlannedUpdate",
     "PlannedValue",
-    "PlannedWrite",
     "ResolvedMutationSelection",
     "RowOrigin",
     "SelfIncrement",
@@ -483,7 +483,7 @@ class MilestoneTarget:
 
 
 type WriteTarget = KeyTarget | ResolvedMutationSelection | MilestoneTarget
-"""The semantic row selection of a Planned Write, distinct from observed
+"""The semantic row selection of a Planned Step, distinct from observed
 predecessor state and from any concurrency condition."""
 
 
@@ -896,7 +896,7 @@ class PlannedTemporalGuard:
         _require_one_milestone(self.entity, self.concurrency, self.affected_rows, "guard")
 
 
-type PlannedWrite = (
+type PlannedStep = (
     PlannedInsert
     | PlannedUpdate
     | PlannedClose

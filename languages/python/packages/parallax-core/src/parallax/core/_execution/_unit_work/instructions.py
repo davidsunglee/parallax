@@ -259,7 +259,7 @@ class PredicateSelection:
     This is the instruction-level carrier an authored :class:`PredicateWriteInstruction`
     holds, distinct from the prepared product buffering retains and from the
     finalized :class:`~parallax.core.unit_work.
-    planned.WriteTarget` a Planned Write settles into. Preparation resolves
+    planned.WriteTarget` a Planned Step settles into. Preparation resolves
     either form once and retains only the resolved predicate.
     """
 

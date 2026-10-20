@@ -264,7 +264,7 @@ given:
 A multi-statement (deep fetch) golden is an ordered list of entries — one per
 deep-fetch level or per DML statement a write sequence executes, so openings one
 multi-row insert carries are one entry (`m-sql` *Requested ranges*), not one
-per Planned Write; each entry carries only its own
+per Planned Step; each entry carries only its own
 `binds`, and a statement with no binds omits the `binds` key entirely:
 
 ```yaml

@@ -201,7 +201,7 @@ def test_a_root_its_page_fetched_before_an_own_change_cannot_write_from_that_sta
 
 def test_a_read_only_delivery_emits_no_dml_at_all() -> None:
     # An empty buffer is one truthiness check, so a loop that writes nothing pays
-    # nothing for the per-page flush — no DML, and no Write Batch to open.
+    # nothing for the per-page flush — no DML, and no Flush to open.
     port = ScriptedAdapter(
         Transact(*paged_reads([_account_row(index) for index in (1, 2, 3)], size=2))
     )

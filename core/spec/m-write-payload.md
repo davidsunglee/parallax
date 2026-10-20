@@ -1,6 +1,6 @@
 # m-write-payload — Persisted Write Payloads
 
-`m-write-payload` specifies how the values a Planned Write stores are assembled:
+`m-write-payload` specifies how the values a Planned Step stores are assembled:
 where each member is placed, how each document a row or assignment stores is
 composed, and how two prepared rows compare as persisted state. It is the one
 assembler of write payloads. Per the dependency graph it depends on

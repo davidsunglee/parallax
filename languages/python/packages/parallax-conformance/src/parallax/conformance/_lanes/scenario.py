@@ -107,7 +107,7 @@ from parallax.core.temporal_read import TemporalReadError, TimeInterval
 from parallax.core.unit_work import (
     AMEND_MUTATIONS,
     INSERT_MUTATIONS,
-    BufferItem,
+    AdmittedWrite,
     CardinalityCorruptionError,
     Concurrency,
     KeyedWriteInstruction,
@@ -1230,7 +1230,7 @@ class _SimulatedUnit:
             self._source = _SimulatedSourceAuthority()
         self._admit(buffered_write(instruction, evidence, source=self._source))
 
-    def _admit(self, item: BufferItem | PreparedTargetWrite) -> None:
+    def _admit(self, item: AdmittedWrite | PreparedTargetWrite) -> None:
         try:
             if isinstance(item, PreparedTargetWrite):
                 self._uow.buffer_target(item)

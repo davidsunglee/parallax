@@ -22,7 +22,7 @@ from parallax.core._execution._unit_work.retain import RetainedObservation, Reta
 from parallax.core._execution._unit_work.strategy import AuditDecoration
 from parallax.core._execution._unit_work.write_items import (
     ChainedTemporalWrite,
-    ComposedTemporalWrite,
+    CoalescedTemporalWrite,
     InsertionKeyedWrite,
     ObservedKeyedWrite,
     PendingOpening,
@@ -91,11 +91,11 @@ class _Original:
     valid_time_coverage: TimeInterval | None
 
 
-def range_claims(item: ComposedTemporalWrite | TemporalKeyedWrite) -> SourceAuthority | None:
+def range_claims(item: CoalescedTemporalWrite | TemporalKeyedWrite) -> SourceAuthority | None:
     """The distinct retained observations a range's unit spends, each once."""
     if isinstance(item, ObservedKeyedWrite):
         return item.retained_observation
-    if not isinstance(item, ComposedTemporalWrite):
+    if not isinstance(item, CoalescedTemporalWrite):
         return None
     distinct: list[RetainedObservation] = []
     for contribution in item.contributions:
@@ -110,7 +110,7 @@ def range_claims(item: ComposedTemporalWrite | TemporalKeyedWrite) -> SourceAuth
 
 
 def _known_originals(
-    composed: ComposedTemporalWrite,
+    composed: CoalescedTemporalWrite,
     facts: TemporalFacts,
     key_attribute: AttributeIdentity,
     key_value: object,
@@ -157,7 +157,7 @@ _EXISTENCE: Final = object()
 of: the current row itself, wherever it lies on an axis that has no Valid Time."""
 
 
-def _anchor(composed: ComposedTemporalWrite) -> object:
+def _anchor(composed: CoalescedTemporalWrite) -> object:
     """Where a composed range requires current coverage because an insertion
     authorized one of its writes: that insertion's own start, which every such
     write states as its window's start."""
@@ -183,7 +183,7 @@ class _StartingCondition:
     expected: dt.datetime
 
 
-def _conditions(composed: ComposedTemporalWrite) -> tuple[_StartingCondition, ...]:
+def _conditions(composed: CoalescedTemporalWrite) -> tuple[_StartingCondition, ...]:
     """The distinct starting conditions the callers of a composed range's
     addressed writes state, in authored order: one per exact-window operation,
     where admission let in only writes that agree on it, and another for each
@@ -666,7 +666,7 @@ class DeferredTemporalRange(DeferredRange):
 
 
 def settle_range(
-    item: ComposedTemporalWrite | TemporalKeyedWrite,
+    item: CoalescedTemporalWrite | TemporalKeyedWrite,
     *,
     view: InheritanceEntityView,
     shape: TransactionTimeOnly | Bitemporal,
@@ -817,10 +817,10 @@ def _with_opening(
 
 
 def _range_of(
-    item: ComposedTemporalWrite | TemporalKeyedWrite, key_attribute: AttributeIdentity
+    item: CoalescedTemporalWrite | TemporalKeyedWrite, key_attribute: AttributeIdentity
 ) -> tuple[EntityMetadata, object, CoverageTransform]:
     """The object ``item`` writes, its key value, and its transform."""
-    if isinstance(item, ComposedTemporalWrite):
+    if isinstance(item, CoalescedTemporalWrite):
         return item.target, item.key[key_attribute.name], item.transform
     instruction = item.instruction
     return (
@@ -831,7 +831,7 @@ def _range_of(
 
 
 def _known(
-    item: ComposedTemporalWrite | TemporalKeyedWrite,
+    item: CoalescedTemporalWrite | TemporalKeyedWrite,
     facts: TemporalFacts,
     key_attribute: AttributeIdentity,
     key_value: object,
@@ -845,7 +845,7 @@ def _known(
     """What planning knows of ``item``'s range: the originals it binds and
     validates, its insertion anchor, its callers' starting conditions, and the
     starting rows their admissions retained."""
-    if isinstance(item, ComposedTemporalWrite):
+    if isinstance(item, CoalescedTemporalWrite):
         originals, validations = _known_originals(item, facts, key_attribute, key_value)
         retained = tuple(
             contribution.retained

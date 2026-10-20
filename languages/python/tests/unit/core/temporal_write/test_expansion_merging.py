@@ -51,10 +51,10 @@ from parallax.core.write_plan.steps import (
     PlannedAssignments,
     PlannedClose,
     PlannedInsert,
+    PlannedStep,
     PlannedTemporalGuard,
     PlannedTemporalRemoval,
     PlannedTemporalRevision,
-    PlannedWrite,
     WriteRow,
     adopt_planned_row,
 )
@@ -202,7 +202,7 @@ def _amending(
     return NO_TRANSFORM.followed_by(window, assigned, replaces=replaces)
 
 
-def _windows(steps: Iterable[PlannedWrite]) -> list[tuple[object, object, object, object]]:
+def _windows(steps: Iterable[PlannedStep]) -> list[tuple[object, object, object, object]]:
     windows: list[tuple[object, object, object, object]] = []
     for step in steps:
         if isinstance(step, PlannedInsert):
@@ -214,7 +214,7 @@ def _windows(steps: Iterable[PlannedWrite]) -> list[tuple[object, object, object
     return windows
 
 
-def _kinds(steps: Iterable[PlannedWrite]) -> list[type[PlannedWrite]]:
+def _kinds(steps: Iterable[PlannedStep]) -> list[type[PlannedStep]]:
     return [type(step) for step in steps]
 
 

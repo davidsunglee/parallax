@@ -10,7 +10,7 @@ from decimal import Decimal
 from parallax.core import temporal_read
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work.instructions import prepare_wire_write
-from parallax.core._execution._unit_work.write_items import BufferItem
+from parallax.core._execution._unit_work.write_items import AdmittedWrite
 from parallax.core.base import INFINITY
 from parallax.core.metamodel import EntityIdentity, Metamodel
 from parallax.core.unit_work import (
@@ -30,12 +30,12 @@ from parallax.core.write_plan.keys import TemporalObjectStateKey
 from parallax.core.write_plan.plan import (
     NO_TEMPORAL_WRITE_OWNERSHIP,
     BoundRange,
-    ExecutionUnit,
+    SettledWrite,
     TemporalWriteOwnership,
     WritePlan,
 )
 from parallax.core.write_plan.steps import (
-    PlannedWrite,
+    PlannedStep,
 )
 from tests._support.clock_probes import instant_at
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY, admitted_writes
@@ -103,7 +103,7 @@ def observed_write(
     until: dt.datetime | None = None,
     assigned: Mapping[str, object] | None = None,
     **members: object,
-) -> BufferItem:
+) -> AdmittedWrite:
     prepared = prepare_wire_write(
         KeyedWriteInstruction(
             mutation, entity, ({"id": 1, **(assigned or {}), **members},), valid_from, until
@@ -115,7 +115,7 @@ def observed_write(
 
 def planned(
     meta: Metamodel,
-    *writes: BufferItem,
+    *writes: AdmittedWrite,
     concurrency: str = "optimistic",
     counts_unchanged_rows: bool = True,
     ownership: TemporalWriteOwnership = NO_TEMPORAL_WRITE_OWNERSHIP,
@@ -138,7 +138,7 @@ def bound_range(
     rows: Sequence[PredecessorRow],
     *,
     ownership: TemporalWriteOwnership = NO_TEMPORAL_WRITE_OWNERSHIP,
-) -> tuple[ExecutionUnit, BoundRange]:
+) -> tuple[SettledWrite, BoundRange]:
     (unit,) = plan.units
     return unit, bind_held(
         meta,
@@ -149,11 +149,11 @@ def bound_range(
     )
 
 
-def step_kinds(steps: Iterable[PlannedWrite]) -> list[str]:
+def step_kinds(steps: Iterable[PlannedStep]) -> list[str]:
     return [type(step).__name__ for step in steps]
 
 
-def opened_windows(steps: Iterable[PlannedWrite]) -> list[tuple[object, object, object]]:
+def opened_windows(steps: Iterable[PlannedStep]) -> list[tuple[object, object, object]]:
     windows: list[tuple[object, object, object]] = []
     for step in steps:
         if isinstance(step, PlannedInsert):

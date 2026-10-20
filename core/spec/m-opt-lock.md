@@ -152,7 +152,7 @@ the observed version last.
 ### A gate carries only its equality predicate
 
 The gate decision is settled **during planning**, and what survives onto the
-planned write is only what the statement still has to render. `m-write-plan`'s
+planned step is only what the statement still has to render. `m-write-plan`'s
 [Write Gate](m-write-plan.md#write-gate-and-the-concurrency-decision) owns the
 `VersionGate`, `TemporalGate`, and `Ungated` shapes and the `Versioned` decision
 that names a versioned target's Attribute.
