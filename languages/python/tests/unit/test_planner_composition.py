@@ -9,11 +9,10 @@ the drive is then followed all the way to the statements it emits.
 
 The chain is closed link by link. Every planning the drive performed ran on a
 planner the factory built. Every step sequence taken through a
-``LoweringCursor`` is by identity the steps of a plan one of those plannings
-returned, or a span borrowed from them — directly, or as the span a simulated
-step execution applies to its store while lowering takes it — and the plans
-streamed are the plans planned, in order, so a factory plan the lane discarded
-is named too. Every step
+``LoweringCursor`` is by identity the steps of one Write Group of a plan one of
+those plannings returned, whether execution or a simulated step execution
+lowers it, and the groups streamed are the groups planned, each once and in
+order, so a factory plan the lane discarded is named too. Every step
 rendered by ``compile_write_step`` — the function that turns a settled step into
 a statement of its own — is by identity a step of one of those streamed
 sequences; the drives here settle no run of temporal openings, which the cursor
@@ -54,7 +53,7 @@ injects is the neutral one, so no planner a write path reaches can decorate.
 from __future__ import annotations
 
 import sys
-from collections.abc import Callable, Iterable
+from collections.abc import Callable
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
@@ -62,7 +61,7 @@ from types import ModuleType
 
 import pytest
 
-from parallax.conformance import _simulated_write_steps, case_format, engine
+from parallax.conformance import case_format, engine
 from parallax.core._execution import _planning
 from parallax.core._execution._publication import write_projection
 from parallax.core._execution._unit_work.strategy import (
@@ -79,7 +78,6 @@ from parallax.core.sql_gen._write import StepPayload, compile_write_step
 from parallax.core.unit_work import NO_AUDIT, WritePlanner, WritePlanningRequest
 from parallax.core.write_plan import WritePlan
 from parallax.core.write_plan.payload import WritePayloadPreparer
-from parallax.core.write_plan.plan import WriteStepView
 from parallax.core.write_plan.steps import PlannedStep
 from parallax.snapshot import TxnContext
 from tests._support import mirrored_models as mm
@@ -127,7 +125,7 @@ class _Composition:
     lane: str
     built: list[_Built]
     planned: list[_Planning]
-    lowered: list[Iterable[PlannedStep]]
+    lowered: list[tuple[PlannedStep, ...]]
     rendered: list[PlannedStep]
 
     def escaped(self) -> list[WritePlanningRequest]:
@@ -138,38 +136,20 @@ class _Composition:
             if not any(one.planner is built.planner for built in self.built)
         ]
 
-    def sources(self) -> list[object]:
-        """Each sequence the streams read from, a span standing for the sequence
-        it was borrowed from, once per run of streams reading the same one."""
-        sources: list[object] = []
-        for streamed in map(_span_of, self.lowered):
-            source = streamed.owner if isinstance(streamed, WriteStepView) else streamed
-            if not sources or sources[-1] is not source:
-                sources.append(source)
-        return sources
+    def planned_groups(self) -> list[tuple[PlannedStep, ...]]:
+        """Each Write Group's steps of every plan planned here, in order."""
+        return [group.steps for one in self.planned for group in one.plan.groups]
 
-    def unaccounted(self) -> list[object]:
+    def unaccounted(self) -> list[tuple[PlannedStep, ...]]:
         """The streamed sequences no planning recorded here produced."""
+        planned = self.planned_groups()
         return [
-            source
-            for source in self.sources()
-            if not any(source is one.plan.steps for one in self.planned)
+            streamed for streamed in self.lowered if not any(streamed is steps for steps in planned)
         ]
 
     def steps_of_lowered_plans(self) -> list[PlannedStep]:
         """Every step the streamed sequences hold, in the order streaming reaches them."""
-        return [step for streamed in self.lowered for step in _span_of(streamed)]
-
-
-def _span_of(streamed: Iterable[PlannedStep]) -> Iterable[PlannedStep]:
-    """What ``streamed`` takes its steps from: the span a simulated step
-    execution applies as lowering takes it, or the sequence itself.
-
-    Iterating the applied span itself would apply its steps again, so the span
-    is what is read back.
-    """
-    applied = _simulated_write_steps._Applied  # pyright: ignore[reportPrivateUsage] - the support adapter's own span wrapper
-    return streamed.span if isinstance(streamed, applied) else streamed
+        return [step for streamed in self.lowered for step in streamed]
 
 
 def _bindings_of(original: object) -> list[tuple[ModuleType, str]]:
@@ -237,7 +217,7 @@ def _watch(lane: str, monkeypatch: pytest.MonkeyPatch) -> _Composition:
         return finalized
 
     def cursor(
-        steps: Iterable[PlannedStep],
+        steps: tuple[PlannedStep, ...],
         payloads: WritePayloadPreparer,
         meta: Metamodel,
         dialect: Dialect,
@@ -274,16 +254,16 @@ def _assert_planned_only_through_the_factory(seen: _Composition, plannings: int)
     )
     unaccounted = seen.unaccounted()
     assert not unaccounted, (
-        f"{seen.lane}: {len(unaccounted)} of {len(seen.sources())} step sequences reached the "
+        f"{seen.lane}: {len(unaccounted)} of {len(seen.lowered)} step sequences reached the "
         f"write-lowering seam without any planning recorded here having produced them, so "
         f"something other than this factory's planners planned them"
     )
-    assert [id(one.plan.steps) for one in seen.planned] == [
-        id(source) for source in seen.sources()
+    assert [id(steps) for steps in seen.planned_groups()] == [
+        id(streamed) for streamed in seen.lowered
     ], (
-        f"{seen.lane}: {len(seen.planned)} plannings produced plans but {len(seen.sources())} "
-        f"reached the write-lowering seam — a plan this factory produced was discarded, or one "
-        f"was lowered twice"
+        f"{seen.lane}: {len(seen.planned)} plannings produced {len(seen.planned_groups())} Write "
+        f"Groups but {len(seen.lowered)} step sequences reached the write-lowering seam — a "
+        f"plan this factory produced was discarded, or a group was lowered twice"
     )
     assert [id(step) for step in seen.rendered] == [
         id(step) for step in seen.steps_of_lowered_plans()

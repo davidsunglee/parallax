@@ -135,7 +135,7 @@ from parallax.core.write_plan.steps import (
 from parallax.descriptor import _records
 from tests._support.clock_probes import inert_instant
 from tests._support.lowering_probes import lower_instruction, lower_instruction_steps, lowered_steps
-from tests._support.planner_probes import TEST_ACTOR_IDENTITY, observed_buffer
+from tests._support.planner_probes import TEST_ACTOR_IDENTITY, observed_buffer, plan_steps
 from tests.unit._corpus_identity_support import corpus_object_key
 from tests.unit._corpus_model_support import formed, records
 from tests.unit._corpus_model_support import model as corpus_model
@@ -185,7 +185,7 @@ def _flush_and_lower(
     return [
         statement
         for _step, statement in lowered_steps(
-            plan.steps, LayoutPayloadPreparer(model), model, POSTGRES
+            plan_steps(plan), LayoutPayloadPreparer(model), model, POSTGRES
         )
     ]
 

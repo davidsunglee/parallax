@@ -59,7 +59,7 @@ from parallax.core.write_plan.steps import (
     PlannedUpdate,
 )
 from tests._support.clock_probes import inert_instant
-from tests._support.planner_probes import TEST_ACTOR_IDENTITY, observed_buffer
+from tests._support.planner_probes import TEST_ACTOR_IDENTITY, observed_buffer, plan_steps
 from tests.unit._corpus_model_support import model as corpus_model
 
 _ACCOUNT = corpus_model("account")
@@ -87,7 +87,7 @@ def _locking_policy(
             buffered_writes=observed_buffer([write], model, observations),
         )
     )
-    (step,) = plan.steps
+    (step,) = plan_steps(plan)
     assert isinstance(step, PlannedUpdate | PlannedDelete)  # neither write opens a row
     return step, step.affected_rows
 

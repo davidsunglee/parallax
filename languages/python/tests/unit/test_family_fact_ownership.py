@@ -70,7 +70,6 @@ from parallax.core.write_plan import (
     WriteObservation,
 )
 from parallax.core.write_plan.keys import TemporalObjectStateKey, VersionedObjectStateKey
-from parallax.core.write_plan.plan import WriteStepView
 from parallax.core.write_plan.steps import (
     PlannedClose,
     PlannedDelete,
@@ -96,7 +95,12 @@ from tests._support.db_port import (
 )
 from tests._support.lowering_probes import lowered_steps
 from tests._support.model_capabilities import graph_construction_for
-from tests._support.planner_probes import NO_ROW_READS, TEST_ACTOR_IDENTITY, observed_buffer
+from tests._support.planner_probes import (
+    NO_ROW_READS,
+    TEST_ACTOR_IDENTITY,
+    observed_buffer,
+    plan_steps,
+)
 from tests._support.root_ownership import own_root
 from tests.unit._corpus_model_support import corpus_records, formed
 from tests.unit._judged_evidence_support import judged_rows, retained_sources
@@ -238,7 +242,7 @@ def test_planning_and_lowering_prepared_writes_take_the_version_from_its_owner(
         )
     )
     lowered: list[tuple[PlannedStep, LoweredStatement]] = list(
-        lowered_steps(plan.steps, LayoutPayloadPreparer(_MODEL), _MODEL, POSTGRES)
+        lowered_steps(plan_steps(plan), LayoutPayloadPreparer(_MODEL), _MODEL, POSTGRES)
     )
 
     assert callers == []
@@ -303,10 +307,10 @@ def test_admitting_planning_and_lowering_temporal_writes_take_axes_from_the_fami
             buffered_writes=_temporal_writes(),
         )
     )
-    steps = list(plan.steps)
-    assert list(plan.steps) == steps
+    steps = list(plan_steps(plan))
+    assert list(plan_steps(plan)) == steps
     payloads = LayoutPayloadPreparer(_TEMPORAL_MODEL)
-    lowered = list(lowered_steps(plan.steps, payloads, _TEMPORAL_MODEL, POSTGRES))
+    lowered = list(lowered_steps(plan_steps(plan), payloads, _TEMPORAL_MODEL, POSTGRES))
 
     assert callers == []
     assert len(lowered) == len(steps)
@@ -503,9 +507,9 @@ def test_materializing_an_inherited_milestone_page_reads_axes_from_the_family_sh
         assert pin_of(conforming) == Pin(tx_time=_OPENED, valid_time=_VALID_FROM)
 
 
-def _no_flush(steps: WriteStepView, /, *, allocates: bool) -> tuple[object, ...]:
+def _no_flush(steps: tuple[PlannedStep, ...], /, *, allocates: bool) -> tuple[object, ...]:
     """Step execution for a test that never flushes."""
-    raise AssertionError(f"no span executes, yet {len(steps)} step(s) were handed over")
+    raise AssertionError(f"no step executes, yet {len(steps)} step(s) were handed over")
 
 
 _EVIDENCE: Final = {

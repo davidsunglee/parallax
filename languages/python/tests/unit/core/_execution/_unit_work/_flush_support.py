@@ -1,6 +1,6 @@
 """A unit of work's flush as simulated step execution runs it: the kind of
-each statement a span lowered to, and the execution of each span observed, or
-failed, as the flush reaches it."""
+each statement its steps lowered to, and each execution observed, or failed,
+as the flush reaches it."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from typing import Final
 
 from parallax.conformance._simulated_write_steps import SimulatedWriteSteps
 from parallax.core.sql_gen import LoweredStatement
-from parallax.core.write_plan.plan import WriteStepView
+from parallax.core.write_plan.steps import PlannedStep
 
 __all__ = ["ObservedSteps", "statement_kinds"]
 
@@ -38,21 +38,22 @@ def statement_kinds(statements: Iterable[LoweredStatement]) -> list[str]:
 
 @dataclass(slots=True)
 class ObservedSteps:
-    """``simulated`` executing each span a flush hands it, after ``observe``
-    is called with the span's position among those handed so far; the span
-    at ``failing`` raises ``failure`` instead of executing."""
+    """``simulated`` executing each step sequence a flush hands it, after
+    ``observe`` is called with the sequence's position among those handed so
+    far and the exact sequence; the execution at ``failing`` raises ``failure``
+    instead."""
 
     simulated: SimulatedWriteSteps
-    observe: Callable[[int], object] | None = None
+    observe: Callable[[int, tuple[PlannedStep, ...]], object] | None = None
     failing: int | None = None
     failure: BaseException | None = None
-    spans: int = 0
+    executions: int = 0
 
-    def __call__(self, steps: WriteStepView, /, *, allocates: bool) -> tuple[object, ...]:
-        position = self.spans
-        self.spans = position + 1
+    def __call__(self, steps: tuple[PlannedStep, ...], /, *, allocates: bool) -> tuple[object, ...]:
+        position = self.executions
+        self.executions = position + 1
         if self.observe is not None:
-            self.observe(position)
+            self.observe(position, steps)
         if position == self.failing and self.failure is not None:
             raise self.failure
         return self.simulated(steps, allocates=allocates)

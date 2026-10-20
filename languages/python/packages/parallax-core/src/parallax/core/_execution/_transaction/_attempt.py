@@ -91,7 +91,7 @@ from parallax.core.read_delivery._row_lane import (
 from parallax.core.read_delivery._stream import StreamDelivery, check_batch_size
 from parallax.core.sql_gen._compile import CompiledRead, compile_read
 from parallax.core.temporal_read import Pin
-from parallax.core.write_plan.plan import WriteStepView
+from parallax.core.write_plan.steps import PlannedStep
 
 __all__ = [
     "PredicateWriteAdapter",
@@ -468,8 +468,8 @@ class TxnAttempt(_TxnAttemptBase):
         self._options = options
         # One flush is ONE Flush activity however many statements its plan
         # lowers to. The unit of work opens it before planning and executes
-        # every span of the plan inside it, so each span runs under the activity
-        # its flush opened; a flush never nests.
+        # every Write Group of the plan inside it, so each group's steps run
+        # under the activity its flush opened; a flush never nests.
         self._flush: FlushActivity = INERT
         self._uow = UnitOfWork(
             settings=TransactionSettings(
@@ -747,7 +747,7 @@ class TxnAttempt(_TxnAttemptBase):
         return flush
 
     def _execute_write_steps(
-        self, steps: WriteStepView, /, *, allocates: bool
+        self, steps: tuple[PlannedStep, ...], /, *, allocates: bool
     ) -> tuple[object, ...]:
         """Execute ``steps`` as calls of the current flush's Flush activity."""
         return self._step_executor.execute(steps, allocates=allocates, flush=self._flush)

@@ -44,7 +44,12 @@ from parallax.core.write_plan.keys import (
 )
 from parallax.core.write_plan.plan import CombinedSourceAuthority, WritePlan
 from tests._support.clock_probes import instant_at
-from tests._support.planner_probes import TEST_ACTOR_IDENTITY, admitted_writes
+from tests._support.planner_probes import (
+    TEST_ACTOR_IDENTITY,
+    admitted_writes,
+    plan_steps,
+    settled_writes,
+)
 from tests.unit._corpus_model_support import corpus_records, formed
 
 _BALANCE = formed(corpus_records()["balance"])
@@ -105,9 +110,9 @@ def test_two_observations_of_one_transaction_time_row_validate_the_earlier() -> 
     # Two observations of one Transaction-Time-Only row cannot both be current:
     # the later-authored one is the milestone the composition rewrites, and the
     # earlier is closed on its own gated address first, so a stale condition
-    # fails before anything opens. Both sources are spent by the one unit.
+    # fails before anything opens. Both sources are spent by the one write.
     plan = _plan(_write("amend", _STALE, value="150.00"), _write("amend", _CURRENT, value="175.00"))
-    steps = list(plan.steps)
+    steps = list(plan_steps(plan))
     assert [type(step) for step in steps] == [PlannedClose, PlannedClose, PlannedInsert]
     assert [step.cause for step in steps if isinstance(step, PlannedClose)] == [
         TERMINATED,
@@ -119,9 +124,9 @@ def test_two_observations_of_one_transaction_time_row_validate_the_earlier() -> 
     assert {ident.name: value for ident, value in entry.row.attributes.items()}["value"] == (
         Decimal("175.00")
     )
-    (unit,) = plan.units
-    assert isinstance(unit.claim, CombinedSourceAuthority)
-    unit.claim.consume()
+    (write,) = settled_writes(plan)
+    assert isinstance(write.claim, CombinedSourceAuthority)
+    write.claim.consume()
     assert _STALE.consumed and _CURRENT.consumed
 
 
@@ -132,18 +137,20 @@ def test_terminations_through_two_observations_compose_to_destruction_alone() ->
     composed = admitted_writes(_BALANCE, [_write("terminate", stale), _write("terminate", current)])
     (write,) = composed
     assert isinstance(write, CoalescedTemporalWrite) and not write.assigns
-    steps = list(_plan(_write("terminate", stale), _write("terminate", current)).steps)
+    steps = list(plan_steps(_plan(_write("terminate", stale), _write("terminate", current))))
     assert [type(step) for step in steps] == [PlannedClose, PlannedClose]
 
 
 def test_a_termination_after_an_update_through_another_observation_ends_the_row() -> None:
     stale, current = _observation(_JAN, "100.00"), _observation(_MAR, "120.00")
     steps = list(
-        _plan(
-            _write("amend", stale, value="150.00"),
-            _write("terminate", current),
-            _write("terminate", current),
-        ).steps
+        plan_steps(
+            _plan(
+                _write("amend", stale, value="150.00"),
+                _write("terminate", current),
+                _write("terminate", current),
+            )
+        )
     )
     assert [type(step) for step in steps] == [PlannedClose, PlannedClose]
 
@@ -256,6 +263,6 @@ def test_two_observed_rectangles_bind_at_planning_when_they_cover_the_range() ->
             buffered_writes=writes,
         )
     )
-    assert [type(step) for step in plan.steps] == [PlannedClose] * 2 + [PlannedInsert] * 3
-    (unit,) = plan.units
-    assert unit.deferred is None
+    assert [type(step) for step in plan_steps(plan)] == [PlannedClose] * 2 + [PlannedInsert] * 3
+    (write,) = settled_writes(plan)
+    assert write.deferred is None

@@ -58,7 +58,7 @@ from parallax.core.unit_work import (
     StaleWriteError,
 )
 from parallax.core.write_plan import WritePlan
-from parallax.core.write_plan.plan import PlannedWrites, SettledWrite
+from parallax.core.write_plan.plan import SettledWrite, WriteGroup
 from parallax.core.write_plan.steps import PlannedInsert, PlannedStep
 from tests._support.db_port import (
     Ordered,
@@ -69,7 +69,7 @@ from tests._support.db_port import (
 )
 from tests.unit.core._execution._write_step_support import (
     POSITION,
-    HeldSteps,
+    RecordingPreparer,
     alone,
     close,
     guard,
@@ -97,41 +97,40 @@ def _lost() -> DatabaseError:
 
 @dataclass
 class _Executed:
-    """What one execution of a span did: what it answered or what it raised."""
+    """What one execution of steps did: what it prepared, and what it answered
+    or what it raised."""
 
-    segment: HeldSteps
+    preparer: RecordingPreparer
     answered: tuple[object, ...] | None = None
     raised: BaseException | None = None
 
 
-def _execute_held(
-    segment: HeldSteps, provider: ExecutionLifecycleProvider | None = None
+def _execute(
+    port: ScriptedAdapter,
+    *steps: PlannedStep,
+    provider: ExecutionLifecycleProvider | None = None,
+    failing: int | None = None,
+    failure: BaseException | None = None,
 ) -> _Executed:
-    """Execute ``segment`` as one span inside one Flush over its port.
+    """Execute ``steps`` inside one Flush over ``port``, recording what was
+    prepared.
 
     A failure is caught outside the Flush and recorded, so the Flush finishes
     with it and the script reads as the calls alone.
     """
-    executed = _Executed(segment)
-    view = PlannedWrites((segment,)).view(0, len(segment))
+    executed = _Executed(RecordingPreparer(port, steps, failing=failing, failure=failure))
     try:
         with open_flush(provider) as flush:
-            executed.answered = step_executor(segment.port).execute(
-                view, allocates=False, flush=flush
+            executed.answered = step_executor(port, payloads=executed.preparer).execute(
+                steps, allocates=False, flush=flush
             )
     except BaseException as raised:
         executed.raised = raised
     return executed
 
 
-def _execute(
-    port: ScriptedAdapter, *steps: PlannedStep, provider: ExecutionLifecycleProvider | None = None
-) -> _Executed:
-    return _execute_held(HeldSteps(port, steps), provider)
-
-
 # --------------------------------------------------------------------------- #
-# Selection: which steps share an invocation, and when each is taken.          #
+# Selection: which steps share an invocation, and when each is prepared.      #
 # --------------------------------------------------------------------------- #
 
 
@@ -152,9 +151,9 @@ def test_a_connection_without_ordered_transport_runs_and_lowers_each_effect_alon
     executed = _execute(port, *steps)
     assert executed.raised is None
     assert port.calls == [alone(step) for step in steps]
-    # Each effect is taken only once the one before it ran: nothing is
+    # Each effect is prepared only once the one before it ran: nothing is
     # gathered into an invocation ahead of its turn.
-    assert executed.segment.asked == [(0, 0), (1, 1), (2, 2)]
+    assert executed.preparer.prepared == [(0, 0), (1, 1), (2, 2)]
 
 
 def _lowering_recorded(
@@ -182,7 +181,7 @@ def _lowering_recorded(
 @dataclass
 class _Claim:
     """Source authority recording how many port calls had been made when a
-    unit spent it."""
+    settled write spent it."""
 
     port: ScriptedAdapter
     spent_at: int | None = None
@@ -191,38 +190,43 @@ class _Claim:
         self.spent_at = len(self.port.calls)
 
 
-def _units(port: ScriptedAdapter, *ends: int) -> tuple[tuple[SettledWrite, ...], list[_Claim]]:
-    claims = [_Claim(port) for _end in ends]
-    return tuple(
-        SettledWrite(end=end, claim=claim) for end, claim in zip(ends, claims, strict=True)
-    ), claims
+def _plan(
+    port: ScriptedAdapter, *groups: tuple[PlannedStep, ...]
+) -> tuple[WritePlan, list[_Claim]]:
+    """A plan of one Write Group holding ``steps`` for each of ``groups``, its
+    one settled write spending a claim of its own."""
+    claims = [_Claim(port) for _steps in groups]
+    plan = WritePlan(
+        tuple(
+            WriteGroup((SettledWrite(claim=claim),), steps)
+            for steps, claim in zip(groups, claims, strict=True)
+        )
+    )
+    return plan, claims
 
 
-def test_a_run_never_reaches_into_a_later_units_span() -> None:
+def test_a_run_never_reaches_into_a_later_groups_steps() -> None:
     steps = (close(1), close(2), close(3), close(4))
     port = ScriptedAdapter(
         Write(), Ordered(OrderedWriteResultComplete((1, 1))), Write(), ordered=True
     )
-    units, claims = _units(port, 1, 3, 4)
-    plan = WritePlan(steps=PlannedWrites((HeldSteps(port, steps),)), units=units)
+    plan, claims = _plan(port, steps[:1], steps[1:3], steps[3:])
     with open_flush() as flush:
         run_plan(port, plan, flush)
-    # The first unit's close would be the only one of its run, since a run
-    # never reaches into the next unit, so it runs alone; so does the last's.
+    # The first group's close would be the only one of its run, since a run
+    # never reaches into the next group, so it runs alone; so does the last's.
     assert port.calls == [alone(steps[0]), ordered(*steps[1:3]), alone(steps[3])]
     assert [claim.spent_at for claim in claims] == [1, 2, 3]
 
 
-def test_a_failed_run_completes_its_unit_never_and_takes_no_later_units_step() -> None:
-    segment = HeldSteps(
-        ScriptedAdapter(Ordered(OrderedWriteResultComplete((1, 0))), ordered=True),
-        (close(1), close(2), close(3)),
-    )
-    units, claims = _units(segment.port, 2, 3)
-    plan = WritePlan(steps=PlannedWrites((segment,)), units=units)
+def test_a_failed_run_completes_its_group_never_and_prepares_no_later_groups_step() -> None:
+    port = ScriptedAdapter(Ordered(OrderedWriteResultComplete((1, 0))), ordered=True)
+    steps = (close(1), close(2), close(3))
+    preparer = RecordingPreparer(port, steps)
+    plan, claims = _plan(port, steps[:2], steps[2:])
     with pytest.raises(StaleWriteError), open_flush() as flush:
-        run_plan(segment.port, plan, flush)
-    assert segment.taken == [0, 1]
+        run_plan(port, plan, flush, payloads=preparer)
+    assert preparer.positions == [0, 1]
     assert [claim.spent_at for claim in claims] == [None, None]
 
 
@@ -244,10 +248,10 @@ def test_a_step_transport_cannot_carry_ends_the_run_untouched_until_the_run_is_e
         alone(insert(9)),
         ordered(close(3), close(4)),
     ]
-    # The insert was taken to end the run — the one step looked ahead — and
-    # lowered only once the run before it had been enforced; the close after it
-    # was taken, unprepared, to end the insert's own statement.
-    assert executed.segment.asked == [(0, 0), (1, 0), (2, 0), (3, 1), (4, 2)]
+    # The insert was looked at to end the run and prepared only once the run
+    # before it had been enforced; the close after it was looked at, still
+    # unprepared, to end the insert's own statement.
+    assert executed.preparer.prepared == [(0, 0), (1, 0), (2, 1), (3, 2), (4, 2)]
     assert lowered_at == [(2, 1)]
 
 
@@ -260,10 +264,11 @@ def test_an_effect_that_would_be_its_runs_only_one_runs_alone_before_anything_af
     executed = _execute(port, *steps)
     assert executed.raised is None
     assert port.calls == [alone(step) for step in steps]
-    # The insert was taken, unprepared, to decide the close runs alone, and
-    # lowered only once the close ran; the guard, taken to end the insert's
-    # statement, was lowered once that ran and, the last step, ran alone too.
-    assert executed.segment.asked == [(0, 0), (1, 0), (2, 1)]
+    # The insert was looked at, unprepared, to decide the close runs alone,
+    # and prepared only once the close ran; the guard, looked at to end the
+    # insert's statement, was lowered once that ran and, the last step, ran
+    # alone too.
+    assert executed.preparer.prepared == [(0, 0), (1, 1)]
     assert lowered_at == [(0, 0), (1, 1), (2, 2)]
 
 
@@ -277,34 +282,7 @@ def _reaches(error: BaseException, held: object) -> bool:
     return False
 
 
-@pytest.mark.parametrize(
-    ("failure", "affected", "raised"),
-    [
-        (RuntimeError("the next step cannot be rebuilt"), 1, "failure"),
-        (RuntimeError("never raised"), 0, "shortfall"),
-        (KeyboardInterrupt(), 1, "failure"),
-    ],
-    ids=["ordinary", "shortfall-wins", "fatal"],
-)
-def test_a_lone_effects_look_ahead_failing_runs_it_alone_only_for_an_ordinary_failure(
-    failure: BaseException, affected: int, raised: str
-) -> None:
-    steps = (close(1), close(2))
-    ordinary = isinstance(failure, Exception)
-    port = ScriptedAdapter(*((Write(affected=affected),) if ordinary else ()), ordered=True)
-    executed = _execute_held(HeldSteps(port, steps, failing=1, failure=failure))
-    propagated = executed.raised
-    if raised == "shortfall":
-        assert isinstance(propagated, StaleWriteError)
-        assert propagated.__context__ is None
-        assert not _reaches(propagated, failure)
-    else:
-        assert propagated is failure
-    # Nothing was lowered before the look ahead, so a fatal one runs nothing.
-    assert port.calls == ([alone(steps[0])] if ordinary else [])
-
-
-def test_the_statement_cap_ends_a_run_before_another_step_is_taken(
+def test_the_statement_cap_ends_a_run_before_another_step_is_prepared(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(_CAP, 2)
@@ -316,7 +294,7 @@ def test_the_statement_cap_ends_a_run_before_another_step_is_taken(
     assert executed.raised is None
     # The last close, the only one left after the cap, runs alone.
     assert port.calls == [ordered(*steps[:2]), ordered(*steps[2:4]), alone(steps[4])]
-    assert executed.segment.asked == [(0, 0), (1, 0), (2, 1), (3, 1), (4, 2)]
+    assert executed.preparer.prepared == [(0, 0), (1, 0), (2, 1), (3, 1), (4, 2)]
 
 
 def test_an_effect_whose_parameter_ceiling_exceeds_the_dialect_limit_runs_alone() -> None:
@@ -527,25 +505,26 @@ def test_a_later_lowering_failure_presents_the_prefix_then_propagates(
     executed = _execute(port, *steps)
     assert executed.raised is failure
     assert port.calls == [ordered(*steps[:2])]
-    # Nothing after the failing step is taken.
-    assert executed.segment.taken == [0, 1, 2]
+    # Nothing at or after the failing step is prepared.
+    assert executed.preparer.positions == [0, 1]
 
 
 @pytest.mark.parametrize("presented", [True, False], ids=["ordinary", "fatal"])
-def test_a_later_effect_failing_to_be_taken_drains_only_an_ordinary_failures_prefix(
+def test_a_later_effect_failing_to_be_prepared_drains_only_an_ordinary_failures_prefix(
     presented: bool,
 ) -> None:
     # Built per case: a failure kept past the case would keep what its
     # traceback reached alive into every later one.
     failure = (
-        RuntimeError("the predecessor cannot be rebuilt") if presented else KeyboardInterrupt()
+        RuntimeError("the assignments cannot be prepared") if presented else KeyboardInterrupt()
     )
-    steps = (close(1), close(2), close(3))
+    steps = (close(1), close(2), close(3), close(4))
     entries = (Ordered(OrderedWriteResultComplete((1, 1))),) if presented else ()
     port = ScriptedAdapter(*entries, ordered=True)
-    executed = _execute_held(HeldSteps(port, steps, failing=2, failure=failure))
+    executed = _execute(port, *steps, failing=2, failure=failure)
     assert executed.raised is failure
     assert port.calls == ([ordered(*steps[:2])] if presented else [])
+    assert executed.preparer.positions == [0, 1, 2]
 
 
 def test_a_prefix_failure_wins_over_the_lowering_failure_it_overtook(

@@ -311,7 +311,7 @@ def test_discard_leaves_pending_authority_unspent_and_forgets_every_insertion() 
 
 class _Untraversable:
     def __iter__(self) -> Iterator[ObjectStateKey]:
-        raise AssertionError("completion traversed the unit's changed states")
+        raise AssertionError("completion traversed the settled write's changed states")
 
 
 def test_completion_publishes_into_the_ownership_planning_borrowed() -> None:
@@ -473,7 +473,7 @@ def test_a_shared_token_names_whatever_rectangle_holds_each_start() -> None:
 def test_admission_across_a_barrier_judges_every_write_of_the_object() -> None:
     admission = _admitted(addressed_write(valid_from=FEB, until=APR, value="1.00"), _barrier())
     _refused(admission, observed_write("amendUntil", WHOLE, valid_from=MAR, until=JUN, acctNum="O"))
-    # One window and one start compose, though they execute as two units.
+    # One window and one start compose, though they execute as two settled writes.
     _admit(admission, observed_write("amendUntil", WHOLE, valid_from=FEB, until=APR, acctNum="O"))
     first, _barrier_write, second = admission.composed_writes()
     assert isinstance(first, ChainedTemporalWrite) and first.leads

@@ -1,9 +1,9 @@
-"""The attempt's live write ownership (`m-unit-work`): the rows its units
+"""The attempt's live write ownership (`m-unit-work`): the rows its settled writes
 opened, the insertions it admitted and how much of each stays stored, and what
-the running flush's units proved for later ones.
+the running flush's settled writes proved for later ones.
 
 Insertion records come from real admission and drain; every other fact is
-published by completion, as a successful unit publishes it. The
+published by completion, as a successful settled write publishes it. The
 ``OpenedRows`` fake the planning suites read is held to the same
 ``TemporalWriteOwnership`` answers here.
 """
@@ -128,8 +128,8 @@ def _original(start: dt.datetime, tx_start: dt.datetime) -> ObjectStateKey:
 # --------------------------------------------------------------------------- #
 # Owned rows and the insertions they continue.                                #
 # --------------------------------------------------------------------------- #
-def test_a_row_a_unit_removes_and_reopens_at_one_address_stays_owned() -> None:
-    # Removals are retired before openings register, so the row a unit
+def test_a_row_a_settled_write_removes_and_reopens_at_one_address_stays_owned() -> None:
+    # Removals are retired before openings register, so the row a settled write
     # reopened at the address it removed is still the attempt's to revise.
     endpoint = OwnedEndpoint(_KEY.entity, (1,), (Finite(instant=_JUN), PLANNED_INFINITY))
     ownership = WriteOwnership()
@@ -242,7 +242,7 @@ def test_a_row_named_again_after_its_insertion_ended_is_no_longer_tagged() -> No
 
 
 # --------------------------------------------------------------------------- #
-# What the running flush's units proved for later ones.                       #
+# What the running flush's settled writes proved for later ones.              #
 # --------------------------------------------------------------------------- #
 def test_a_proven_originals_descendants_are_exactly_those_overlapping_the_window() -> None:
     original = _original(_JAN, _T0)
@@ -357,7 +357,7 @@ def test_a_row_derived_from_a_merged_row_inherits_each_original_by_intersection(
     first, second = _original(_JAN, _T0), _original(_JUN, _SECOND_START)
     merged = _position_endpoint(_AUG)
     ownership = _merged_ownership(first, second)
-    # A later unit splits the merged row at May: its head [April, May) came
+    # A later settled write splits the merged row at May: its head [April, May) came
     # from the first original alone, its tail [May, August) from both.
     revised = _original(_APR, _REVISED_AT)
     head = _position_endpoint(_MAY)
@@ -407,7 +407,7 @@ def test_a_row_merged_from_one_originals_adjacent_parts_names_it_once() -> None:
             ),
         ),
     )
-    # A later unit merges both rows the original left, revising the second
+    # A later settled write merges both rows the original left, revising the second
     # into [January, June); each part inherits the original over its own
     # Valid Time, and the two parts are one.
     revised_left, revised_right = _original(_JAN, _REVISED_AT), _original(_APR, _REVISED_AT)

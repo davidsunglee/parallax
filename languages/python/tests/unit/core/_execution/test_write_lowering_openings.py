@@ -14,8 +14,8 @@ runs, through the same cursor operations.
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Iterator, Mapping
-from dataclasses import dataclass, replace
+from collections.abc import Mapping
+from dataclasses import replace
 from decimal import Decimal
 from typing import Final
 
@@ -175,30 +175,22 @@ class _Preparer(LayoutPayloadPreparer):
         return super().row(entity, write_row)
 
 
-@dataclass
-class _Taken:
-    """``steps`` handed out one at a time, counting how many were taken and
-    raising ``failure`` instead of handing out the step at ``failing``."""
-
-    steps: tuple[PlannedStep, ...]
-    failing: int | None = None
-    failure: BaseException | None = None
-    taken: int = 0
-
-    def __iter__(self) -> Iterator[PlannedStep]:
-        for index, step in enumerate(self.steps):
-            self.taken += 1
-            if index == self.failing and self.failure is not None:
-                raise self.failure
-            yield step
-
-
 def _cursor(
-    taken: _Taken, preparer: LayoutPayloadPreparer | None = None, dialect: Dialect = POSTGRES
+    steps: tuple[PlannedStep, ...],
+    preparer: LayoutPayloadPreparer | None = None,
+    dialect: Dialect = POSTGRES,
 ) -> LoweringCursor:
     return LoweringCursor(
-        taken, LayoutPayloadPreparer(_META) if preparer is None else preparer, _META, dialect
+        steps, LayoutPayloadPreparer(_META) if preparer is None else preparer, _META, dialect
     )
+
+
+def _remaining(cursor: LoweringCursor) -> list[PlannedStep]:
+    """The steps ``cursor`` has not yet taken, in order."""
+    rest: list[PlannedStep] = []
+    while (step := cursor.take()) is not None:
+        rest.append(step)
+    return rest
 
 
 def _grouped(cursor: LoweringCursor) -> GroupedInsert:
@@ -242,7 +234,7 @@ def _wire(*steps: PlannedStep, meta: Metamodel = _META) -> tuple[object, ...]:
 
 def test_a_temporal_single_entry_insert_without_generated_values_begins_a_grouped_opening() -> None:
     (opening,) = _openings(1)
-    assert _cursor(_Taken(())).grouped_insert_start(opening) is opening
+    assert _cursor(()).grouped_insert_start(opening) is opening
 
 
 def test_every_other_step_lowers_alone() -> None:
@@ -271,7 +263,7 @@ def test_every_other_step_lowers_alone() -> None:
     logical = PlannedInsert(entity=_POSITION, entries=(*opening.entries, *_openings(2)[1].entries))
     account_cursor = LoweringCursor((), LayoutPayloadPreparer(account_meta), account_meta, POSTGRES)
     assert account_cursor.grouped_insert_start(non_temporal) is None
-    cursor = _cursor(_Taken(()))
+    cursor = _cursor(())
     for step in (generated, logical, _close(1)):
         assert cursor.grouped_insert_start(step) is None
 
@@ -284,17 +276,17 @@ def test_every_other_step_lowers_alone() -> None:
 def test_a_run_of_openings_is_one_statement_of_every_entry_in_order() -> None:
     steps = _openings(4)
     preparer = _Preparer()
-    taken = _Taken(steps)
-    statement, following, failure = _grouped(_cursor(taken, preparer))
+    cursor = _cursor(steps, preparer)
+    statement, following, failure = _grouped(cursor)
     assert (statement.sql, statement.binds) == _joined(*steps)
     assert statement.wire_binds() == _wire(*steps)
     assert statement.is_compiler_proven
-    assert (following, failure, taken.taken) == (None, None, 4)
+    assert (following, failure, _remaining(cursor)) == (None, None, [])
     assert preparer.prepared == [step.entries[0] for step in steps]
 
 
 def test_entries_of_one_signature_share_repeated_bind_metadata() -> None:
-    statement, _following, _failure = _grouped(_cursor(_Taken(_openings(3))))
+    statement, _following, _failure = _grouped(_cursor(_openings(3)))
     spans = statement.typed_bind_spans
     assert spans
     assert all(isinstance(span, _RepeatedTypedBindSpan) and span.repetitions == 3 for span in spans)
@@ -311,7 +303,7 @@ def test_backing_an_entry_already_carries_is_inserted_without_preparing_it_again
         for step in plain
     )
     preparer = _Preparer()
-    statement, _following, _failure = _grouped(_cursor(_Taken(steps), preparer))
+    statement, _following, _failure = _grouped(_cursor(steps, preparer))
     assert preparer.prepared == []
     assert (statement.sql, statement.binds) == _joined(*plain)
 
@@ -342,18 +334,18 @@ def test_a_step_that_cannot_join_ends_the_run_taken_but_unprepared(kind: str) ->
     run = _openings(2)
     steps = (*run, boundary, *_openings(1))
     preparer = _Preparer()
-    taken = _Taken(steps)
-    statement, following, failure = _grouped(_cursor(taken, preparer))
+    cursor = _cursor(steps, preparer)
+    statement, following, failure = _grouped(cursor)
     assert following is boundary
     assert failure is None
     assert (statement.sql, statement.binds) == _joined(*steps[:2])
-    assert taken.taken == len(run) + 1
+    assert _remaining(cursor) == list(steps[len(run) + 1 :])
     assert preparer.prepared == [step.entries[0] for step in run]
 
 
 def test_another_objects_opening_of_the_same_shape_joins_the_run() -> None:
     steps = (*_openings(1), _opening(_row(2, _JUN)))
-    statement, following, _failure = _grouped(_cursor(_Taken(steps)))
+    statement, following, _failure = _grouped(_cursor(steps))
     assert following is None
     assert (statement.sql, statement.binds) == _joined(*steps)
 
@@ -363,22 +355,21 @@ def test_the_entry_cap_ends_a_run_before_another_step_is_taken(
 ) -> None:
     monkeypatch.setattr(_GROUPED_INSERT_CAP, 2)
     steps = _openings(5)
-    taken = _Taken(steps)
-    cursor = _cursor(taken)
+    cursor = _cursor(steps)
     first = _grouped(cursor)
     assert (first.statement.sql, first.statement.binds) == _joined(*steps[:2])
-    assert (first.following, first.failure, taken.taken) == (None, None, 2)
+    assert (first.following, first.failure) == (None, None)
     second = _grouped(cursor)
     assert (second.statement.sql, second.statement.binds) == _joined(*steps[2:4])
     third = _grouped(cursor)
     assert (third.statement.sql, third.statement.binds) == _joined(steps[4])
-    assert taken.taken == 5
+    assert _remaining(cursor) == []
 
 
 def test_the_dialects_bind_limit_bounds_every_statement_of_a_run() -> None:
     steps = _openings(5)
     width = len(_alone(steps[0]).binds)
-    cursor = _cursor(_Taken(steps), dialect=replace(POSTGRES, max_bind_parameters=2 * width + 1))
+    cursor = _cursor(steps, dialect=replace(POSTGRES, max_bind_parameters=2 * width + 1))
     assert [
         (opening.statement.sql, opening.statement.binds)
         for opening in (_grouped(cursor), _grouped(cursor), _grouped(cursor))
@@ -388,12 +379,10 @@ def test_the_dialects_bind_limit_bounds_every_statement_of_a_run() -> None:
 def test_an_opening_wider_than_the_bind_limit_alone_still_inserts_alone() -> None:
     steps = _openings(2)
     width = len(_alone(steps[0]).binds)
-    taken = _Taken(steps)
-    statement, following, failure = _grouped(
-        _cursor(taken, dialect=replace(POSTGRES, max_bind_parameters=width - 1))
-    )
+    cursor = _cursor(steps, dialect=replace(POSTGRES, max_bind_parameters=width - 1))
+    statement, following, failure = _grouped(cursor)
     assert (statement.sql, statement.binds) == _joined(steps[0])
-    assert (following, failure, taken.taken) == (None, None, 1)
+    assert (following, failure, _remaining(cursor)) == (None, None, [steps[1]])
 
 
 # --------------------------------------------------------------------------- #
@@ -408,7 +397,7 @@ def _prefix_after(steps: tuple[PlannedStep, ...], cursor: LoweringCursor) -> Gro
     assert opening.statement.wire_binds() == _wire(*steps[:2])
     assert (
         opening.statement.typed_bind_spans
-        == _grouped(_cursor(_Taken(steps[:2]))).statement.typed_bind_spans
+        == _grouped(_cursor(steps[:2])).statement.typed_bind_spans
     )
     return opening
 
@@ -417,13 +406,13 @@ def test_a_later_preparation_failure_ends_the_run_with_the_prefix_unchanged() ->
     steps = _openings(4)
     failure = ValueError("the third row cannot be prepared")
     preparer = _Preparer(failing={id(steps[2].entries[0]): failure})
-    assert _prefix_after(steps, _cursor(_Taken(steps), preparer)).failure is failure
+    assert _prefix_after(steps, _cursor(steps, preparer)).failure is failure
 
 
 def test_a_later_typed_cell_refusal_ends_the_run_with_the_prefix_unchanged() -> None:
     steps = _openings(2)
     wrong = _opening(_row(1, _MAR, _JUN, value="not a decimal"))
-    opening = _prefix_after((*steps, wrong), _cursor(_Taken((*steps, wrong, *_openings(1)))))
+    opening = _prefix_after((*steps, wrong), _cursor((*steps, wrong, *_openings(1))))
     assert isinstance(opening.failure, SqlGenError)
 
 
@@ -437,34 +426,27 @@ def test_a_later_entry_storing_other_cells_than_its_shape_promised_ends_the_run(
         values=narrowed.values[1:],
     )
     broken = replace(steps[2], entries=(replace(steps[2].entries[0], prepared=promise_broken),))
-    opening = _prefix_after((*steps[:2], broken), _cursor(_Taken((*steps[:2], broken))))
+    opening = _prefix_after((*steps[:2], broken), _cursor((*steps[:2], broken)))
     assert isinstance(opening.failure, SqlGenError)
     assert "same cells" in str(opening.failure)
-
-
-def test_a_later_step_failing_to_be_taken_ends_the_run_with_the_prefix_unchanged() -> None:
-    steps = _openings(4)
-    failure = RuntimeError("the third step cannot be rebuilt")
-    opening = _prefix_after(steps, _cursor(_Taken(steps, failing=2, failure=failure)))
-    assert opening.failure is failure
 
 
 def test_the_first_openings_failure_raises_with_no_statement() -> None:
     steps = _openings(2)
     failure = ValueError("the first row cannot be prepared")
     preparer = _Preparer(failing={id(steps[0].entries[0]): failure})
-    taken = _Taken(steps)
+    cursor = _cursor(steps, preparer)
     with pytest.raises(ValueError) as raised:
-        _grouped(_cursor(taken, preparer))
+        _grouped(cursor)
     assert raised.value is failure
-    assert taken.taken == 1
+    assert _remaining(cursor) == list(steps[1:])
 
 
 def test_a_control_flow_exception_preparing_a_later_opening_propagates() -> None:
     steps = _openings(3)
     preparer = _Preparer(failing={id(steps[1].entries[0]): KeyboardInterrupt()})
     with pytest.raises(KeyboardInterrupt):
-        _grouped(_cursor(_Taken(steps), preparer))
+        _grouped(_cursor(steps, preparer))
 
 
 # --------------------------------------------------------------------------- #
@@ -617,9 +599,8 @@ def test_a_collection_binds_as_one_document_and_its_elements_widen_no_entry(name
     widths = {len(_alone(step, _SPANS).binds) for step in steps}
     assert len(widths) == 1
     (width,) = widths
-    taken = _Taken(steps)
     cursor = LoweringCursor(
-        taken,
+        steps,
         LayoutPayloadPreparer(_SPANS),
         _SPANS,
         replace(POSTGRES, max_bind_parameters=2 * width),

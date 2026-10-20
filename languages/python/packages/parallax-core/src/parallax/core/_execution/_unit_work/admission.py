@@ -287,7 +287,7 @@ class WriteAdmission:
     @property
     def ownership(self) -> TemporalWriteOwnership:
         """The attempt's live ownership, which planning and deferred binding
-        read as the flush's earlier units left it."""
+        read as the flush's earlier settled writes left it."""
         return self._ownership
 
     def admit(
@@ -418,7 +418,7 @@ class WriteAdmission:
         return sources
 
     def record_version_advance(self, state: VersionedObjectStateKey) -> None:
-        """Note that a completed unit advanced ``state``'s row past its
+        """Note that a completed write advanced ``state``'s row past its
         version, which a write a standing insertion of it authorizes claims
         from then on."""
         record = self._ownership.insertion_record(state.object)

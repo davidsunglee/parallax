@@ -92,7 +92,7 @@ class _Original:
 
 
 def range_claims(item: CoalescedTemporalWrite | TemporalKeyedWrite) -> SourceAuthority | None:
-    """The distinct retained observations a range's unit spends, each once."""
+    """The distinct retained observations a range's write spends, each once."""
     if isinstance(item, ObservedKeyedWrite):
         return item.retained_observation
     if not isinstance(item, CoalescedTemporalWrite):
@@ -327,7 +327,7 @@ class _RangeMeaning:
     ``facts.instant`` is the attempt's resolved instant. ``valid_time_window``
     is the final transform's enclosing window, derived once when settlement
     begins and shared by the coverage check, acquisition, and continuation;
-    ``None`` on a Transaction-Time-Only object. ``derives`` says a later unit
+    ``None`` on a Transaction-Time-Only object. ``derives`` says a later settled write
     of the same flush depends on what this one does to its originals, so its
     bound range records it (:class:`Derivation`). ``opening`` is the pending
     insertion a replacement reaching past it settles with.
@@ -392,7 +392,7 @@ class _TemporalRangeBinder:
         gate where only execution can. The originals they start from are
         affected first, in the order the callers stated them, so a lost start
         fails ahead of every other original's effect; one guard serves every
-        start one original holds. A condition an earlier unit of the flush
+        start one original holds. A condition an earlier settled write of the flush
         already proved (``discharged``, by its position) is judged no further.
         Validations follow, then the remaining originals, and a replacement's
         extent then opens its complete state over every gap the originals leave.
@@ -502,7 +502,7 @@ class _TemporalRangeBinder:
         object binds to — the current rows of its whole window — beside the
         positions of the caller conditions the flush has already proved.
 
-        The units before the barrier may have transformed the originals this
+        The settled writes before the barrier may have transformed the originals this
         range's writes were admitted against. An observed original still
         standing is an ordinary original. One the flush transformed under
         protection has proven its condition, provided every row derived from it
@@ -655,7 +655,7 @@ class DeferredTemporalRange(DeferredRange):
     for a range bound at planning. A ``continued`` range follows earlier writes
     of its object across an ordering barrier, so it binds to the current rows
     alone — the reused rows and those it read — judging its observed originals
-    and caller conditions against what the earlier units proved.
+    and caller conditions against what the earlier settled writes proved.
     """
 
     meaning: _RangeMeaning
@@ -701,9 +701,9 @@ def settle_range(
 
     A composition an ordering barrier kept after earlier writes of the same
     object (:class:`~parallax.core._execution._unit_work.write_items.ChainedTemporalWrite`)
-    always binds at execution: the units before the barrier changed coverage
+    always binds at execution: the settled writes before the barrier changed coverage
     no planning input knows, and the conditions it was admitted with may
-    already have been proven on the originals those units transformed. One a
+    already have been proven on the originals those settled writes transformed. One a
     later region follows records what it derives.
 
     ``instant`` is the attempt's already-resolved Transaction Instant, which a
@@ -763,7 +763,7 @@ def settle_opening(
     guards: bool = False,
 ) -> BoundRange | DeferredTemporalRange:
     """A pending Bitemporal insertion and the writes its insertion authorized
-    since, settled as one unit: the insertion's authored state seeds every
+    since, settled as one write: the insertion's authored state seeds every
     surviving part of its own window, with the composed assignments overlaid
     there, and no predecessor is fabricated for it.
 

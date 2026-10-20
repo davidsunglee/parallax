@@ -32,7 +32,7 @@ from parallax.core.write_plan.payload import WritePayloadPreparer
 from parallax.core.write_plan.plan import NO_TEMPORAL_WRITE_OWNERSHIP, TemporalWriteOwnership
 from parallax.core.write_plan.steps import PlannedStep
 from tests._support.clock_probes import inert_instant
-from tests._support.planner_probes import TEST_ACTOR_IDENTITY, observed_write
+from tests._support.planner_probes import TEST_ACTOR_IDENTITY, observed_write, plan_steps
 
 __all__ = ["lower_instruction", "lower_instruction_steps", "lowered_steps"]
 
@@ -102,7 +102,7 @@ def _stream(
             counts_unchanged_rows=dialect.counts_unchanged_rows,
         )
     )
-    return list(lowered_steps(plan.steps, LayoutPayloadPreparer(model), model, dialect))
+    return list(lowered_steps(plan_steps(plan), LayoutPayloadPreparer(model), model, dialect))
 
 
 def _prepared(instruction: WriteInstruction, model: Metamodel) -> PreparedWrite:

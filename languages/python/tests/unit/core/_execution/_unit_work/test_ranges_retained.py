@@ -32,7 +32,7 @@ from parallax.core.write_plan import PlannedClose, PlannedInsert, PredecessorRow
 from parallax.core.write_plan.keys import ObjectStateKey, TemporalObjectStateKey
 from parallax.core.write_plan.plan import NO_TEMPORAL_WRITE_OWNERSHIP, BoundRange, SettledWrite
 from tests._support.clock_probes import instant_at
-from tests._support.planner_probes import TEST_ACTOR_IDENTITY, admitted_writes
+from tests._support.planner_probes import TEST_ACTOR_IDENTITY, admitted_writes, settled_writes
 from tests.unit._positional_row_support import positional_row
 from tests.unit.core._execution._unit_work._acquired_rows_support import HeldRows
 from tests.unit.core._execution._unit_work._temporal_targets_support import (
@@ -90,16 +90,16 @@ def _planned(
             buffered_writes=tuple(buffered),
         )
     )
-    (unit,) = plan.units
-    return unit
+    (write,) = settled_writes(plan)
+    return write
 
 
-def _unit(
+def _settled(
     *writes: AdmittedWrite, concurrency: str = "locking", follows: bool = False
 ) -> SettledWrite:
-    unit = _planned(*writes, concurrency=concurrency, follows=follows)
-    assert isinstance(unit.deferred, DeferredTemporalRange)
-    return unit
+    settled = _planned(*writes, concurrency=concurrency, follows=follows)
+    assert isinstance(settled.deferred, DeferredTemporalRange)
+    return settled
 
 
 def _always(state: ObjectStateKey, read_at: int) -> bool:
@@ -108,12 +108,12 @@ def _always(state: ObjectStateKey, read_at: int) -> bool:
 
 
 def _bind(
-    unit: SettledWrite,
+    settled: SettledWrite,
     stored: Sequence[PredecessorRow],
     *,
     current: Callable[[ObjectStateKey, int], bool] = _always,
 ) -> tuple[BoundRange, HeldRows]:
-    deferred = unit.deferred
+    deferred = settled.deferred
     assert isinstance(deferred, DeferredTemporalRange)
     held = HeldRows(POSITION, stored, overlapping=True)
     bound = acquire_and_bind_range(
@@ -152,8 +152,8 @@ _LATER = rectangle(JUN, INFINITY, "200.00")
 
 def test_a_current_retained_row_covering_the_window_is_reused_without_a_read() -> None:
     state = _held(_START)
-    unit = _unit(_holding(addressed_write(until=MAY, value="150.00"), state))
-    bound, held = _bind(unit, [_START])
+    settled = _settled(_holding(addressed_write(until=MAY, value="150.00"), state))
+    bound, held = _bind(settled, [_START])
     (completion,) = held.requests
     assert isinstance(completion, CompletionRequest)
     assert len([step for step in bound.steps if isinstance(step, PlannedClose)]) == 1
@@ -163,8 +163,8 @@ def test_a_current_retained_row_covering_the_window_is_reused_without_a_read() -
 
 
 def test_only_the_coverage_a_retained_row_leaves_is_read() -> None:
-    unit = _unit(_holding(addressed_write(value="150.00"), _held(_START)))
-    bound, held = _bind(unit, [_START, _LATER])
+    settled = _settled(_holding(addressed_write(value="150.00"), _held(_START)))
+    bound, held = _bind(settled, [_START, _LATER])
     assert isinstance(held.requests[0], CompletionRequest)
     assert _coverage_windows(held) == [(TimeInterval(JUN, SEP),)]
     # The equal changed parts of the reused row and the row read merge.
@@ -178,9 +178,9 @@ def test_only_the_coverage_a_retained_row_leaves_is_read() -> None:
 def test_a_row_two_reads_both_return_is_bound_once() -> None:
     # The in-memory acquisition answers the reused row to the coverage read too;
     # the same physical state is one original, not cardinality corruption.
-    unit = _unit(_holding(addressed_write(value="150.00"), _held(_START)))
+    settled = _settled(_holding(addressed_write(value="150.00"), _held(_START)))
     held_rows = HeldRows(POSITION, [_START, _LATER])
-    deferred = unit.deferred
+    deferred = settled.deferred
     assert isinstance(deferred, DeferredTemporalRange)
     bound = acquire_and_bind_range(
         deferred,
@@ -199,8 +199,8 @@ def test_overlapping_rows_one_read_returns_beside_a_reused_row_are_each_bound() 
     # Two current rows sharing a start on both axes are distinct physical rows.
     ending = rectangle(JUN, SEP, "200.00")
     unbounded = rectangle(JUN, INFINITY, "300.00")
-    unit = _unit(_holding(addressed_write(value="150.00"), _held(_START)))
-    bound, held = _bind(unit, [_START, ending, unbounded])
+    settled = _settled(_holding(addressed_write(value="150.00"), _held(_START)))
+    bound, held = _bind(settled, [_START, ending, unbounded])
     assert _coverage_windows(held) == [(TimeInterval(JUN, SEP),)]
     closes = [step for step in bound.steps if isinstance(step, PlannedClose)]
     assert len(closes) == 3
@@ -208,10 +208,10 @@ def test_overlapping_rows_one_read_returns_beside_a_reused_row_are_each_bound() 
 
 @pytest.mark.parametrize("replaces", [False, True], ids=["amendment", "replacement"])
 def test_a_part_a_read_finds_empty_is_a_gap_and_is_read_once(replaces: bool) -> None:
-    unit = _unit(
+    settled = _settled(
         _holding(addressed_write(replaces=replaces, value="150.00", acctNum="Z"), _held(_START))
     )
-    bound, held = _bind(unit, [_START])
+    bound, held = _bind(settled, [_START])
     assert len(_coverage_windows(held)) == 1
     windows = [window[:2] for window in _windows(bound)]
     # A replacement's gap opens its complete state, which the changed part
@@ -237,8 +237,8 @@ def test_the_parts_retained_rows_leave_are_read_in_reads_of_bounded_terms(
     monkeypatch: pytest.MonkeyPatch, terms: int
 ) -> None:
     monkeypatch.setattr(ranges_module, "_COVERAGE_TERMS", terms)
-    unit = _unit(*_two_starts())
-    bound, held = _bind(unit, [_EARLY, _MIDDLE, _CENTRE, _LATE])
+    settled = _settled(*_two_starts())
+    bound, held = _bind(settled, [_EARLY, _MIDDLE, _CENTRE, _LATE])
     parts = (TimeInterval(MAR, MAY), TimeInterval(JUL, AUG))
     assert _coverage_windows(held) == ([parts] if terms > 1 else [(part,) for part in parts])
     # The rectangle between the two windows is read, and left as it stands.
@@ -248,14 +248,14 @@ def test_the_parts_retained_rows_leave_are_read_in_reads_of_bounded_terms(
 
 def test_a_stale_retained_row_is_discarded_unjudged_and_its_coverage_read() -> None:
     stale = _held(_START, read_at=1)
-    unit = _unit(_holding(addressed_write(value="150.00"), stale))
+    settled = _settled(_holding(addressed_write(value="150.00"), stale))
     judged: list[int] = []
 
     def current(state: ObjectStateKey, read_at: int) -> bool:
         judged.append(read_at)
         return False
 
-    _bound, held = _bind(unit, [_START, _LATER], current=current)
+    _bound, held = _bind(settled, [_START, _LATER], current=current)
     assert judged == [1]
     assert not any(isinstance(request, CompletionRequest) for request in held.requests)
     assert _coverage_windows(held) == [(TimeInterval(MAR, SEP),)]
@@ -264,16 +264,16 @@ def test_a_stale_retained_row_is_discarded_unjudged_and_its_coverage_read() -> N
 
 def test_an_optimistic_range_reuses_no_retained_row() -> None:
     state = _held(_START)
-    unit = _unit(_holding(addressed_write(value="150.00"), state), concurrency="optimistic")
-    _bound, held = _bind(unit, [_START, _LATER])
+    settled = _settled(_holding(addressed_write(value="150.00"), state), concurrency="optimistic")
+    _bound, held = _bind(settled, [_START, _LATER])
     assert not any(isinstance(request, CompletionRequest) for request in held.requests)
     assert _coverage_windows(held) == [(TimeInterval(MAR, SEP),)]
     assert state.take() is None
 
 
 def test_a_range_after_a_barrier_reuses_a_current_row_and_reads_the_rest() -> None:
-    unit = _unit(_holding(addressed_write(value="150.00"), _held(_START)), follows=True)
-    bound, held = _bind(unit, [_START, _LATER])
+    settled = _settled(_holding(addressed_write(value="150.00"), _held(_START)), follows=True)
+    bound, held = _bind(settled, [_START, _LATER])
     assert isinstance(held.requests[0], CompletionRequest)
     assert _coverage_windows(held) == [(TimeInterval(JUN, SEP),)]
     assert _windows(bound)[0][:2] == (JAN, MAR)
@@ -281,11 +281,11 @@ def test_a_range_after_a_barrier_reuses_a_current_row_and_reads_the_rest() -> No
 
 def test_a_retained_row_is_released_by_a_range_that_binds_twice() -> None:
     state = _held(_START)
-    unit = _unit(_holding(addressed_write(value="150.00"), state))
-    _bind(unit, [_START, _LATER])
+    settled = _settled(_holding(addressed_write(value="150.00"), state))
+    _bind(settled, [_START, _LATER])
     # A second binding of the same description finds nothing retained, so it
     # reads its whole window rather than reusing what the first one consumed.
-    _bound, held = _bind(unit, [_START, _LATER])
+    _bound, held = _bind(settled, [_START, _LATER])
     assert _coverage_windows(held) == [(TimeInterval(MAR, SEP),)]
 
 
@@ -295,19 +295,19 @@ def test_a_retained_row_is_completed_as_one_original_beside_an_observed_one() ->
     state = RetainedTargetState(
         _state(_START), 0, positional_row(_SHAPE, _START.members, absent=ABSENT), None
     )
-    unit = _unit(
+    settled = _settled(
         _holding(addressed_write(valid_from=APR, value="150.00"), state),
         observed_write("amendUntil", observed, valid_from=APR, until=SEP, value="150.00"),
     )
-    _bound, held = _bind(unit, [_START, _LATER])
+    _bound, held = _bind(settled, [_START, _LATER])
     assert not any(isinstance(request, CompletionRequest) for request in held.requests)
     assert state.take() is None
 
 
 def test_without_a_freshness_judge_every_retained_row_is_discarded() -> None:
     state = _held(_START)
-    unit = _unit(_holding(addressed_write(value="150.00"), state))
-    deferred = unit.deferred
+    settled = _settled(_holding(addressed_write(value="150.00"), state))
+    deferred = settled.deferred
     assert isinstance(deferred, DeferredTemporalRange)
     held = HeldRows(POSITION, [_START, _LATER], overlapping=True)
     acquire_and_bind_range(
@@ -325,9 +325,9 @@ def test_without_a_freshness_judge_every_retained_row_is_discarded() -> None:
 def test_a_range_bound_at_planning_releases_the_row_it_retained() -> None:
     whole = rectangle(JAN, INFINITY, "100.00")
     state = _held(whole)
-    unit = _planned(
+    settled = _planned(
         observed_write("amendUntil", retained(whole), valid_from=MAR, until=APR, value="150.00"),
         _holding(addressed_write(valid_from=APR, until=MAY, value="175.00"), state),
     )
-    assert unit.deferred is None
+    assert settled.deferred is None
     assert state.take() is None

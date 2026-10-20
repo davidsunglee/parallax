@@ -73,7 +73,12 @@ from parallax.core.write_plan.steps import (
     WriteRow,
 )
 from tests._support.clock_probes import CountingClock, instant_at
-from tests._support.planner_probes import TEST_ACTOR_IDENTITY, admitted_writes
+from tests._support.planner_probes import (
+    TEST_ACTOR_IDENTITY,
+    admitted_writes,
+    plan_steps,
+    settled_writes,
+)
 from tests.unit._corpus_model_support import model
 from tests.unit.core._execution._unit_work._acquired_rows_support import (
     HeldRows,
@@ -168,17 +173,17 @@ def _plan(
 
 
 def _deferred(plan: WritePlan) -> tuple[SettledWrite, CoverageReadRequest]:
-    """``plan``'s one deferred unit, and the coverage read the unit of work asks
-    for when it binds that unit's range."""
-    (unit,) = plan.units
-    assert unit.deferred is not None
-    return unit, coverage_read(
-        _SPANS, unit, transaction_instant=instant_at(_PLANNED_AT.isoformat())
+    """``plan``'s one deferred write, and the coverage read the unit of work asks
+    for when it binds that write's range."""
+    (write,) = settled_writes(plan)
+    assert write.deferred is not None
+    return write, coverage_read(
+        _SPANS, write, transaction_instant=instant_at(_PLANNED_AT.isoformat())
     )
 
 
 def _bind(
-    unit: SettledWrite,
+    settled: SettledWrite,
     rows: Sequence[PredecessorRow],
     *,
     ownership: TemporalWriteOwnership = NO_TEMPORAL_WRITE_OWNERSHIP,
@@ -186,7 +191,7 @@ def _bind(
 ) -> BoundRange:
     return bind_held(
         _SPANS,
-        unit,
+        settled,
         rows,
         ownership=ownership,
         transaction_instant=transaction_instant or instant_at(_PLANNED_AT.isoformat()),
@@ -206,19 +211,14 @@ def _windows(steps: Iterable[PlannedStep]) -> list[tuple[object, object, object]
 def test_a_range_binds_alike_whether_planning_knew_its_coverage_or_execution_read_it() -> None:
     head, tail = _retained(_HEAD), _retained(_TAIL)
     known = _plan(_update(head, _MAR, _JUN), _update(tail, _JUN, _SEP))
-    (planned,) = known.units
+    (planned,) = settled_writes(known)
     assert planned.deferred is None
     read, acquisition = _deferred(_plan(_update(head, _MAR, _SEP)))
     assert acquisition.terms[0].valid_time_windows == (temporal_read.TimeInterval(_JUN, _SEP),)
 
     bound = _bind(read, [_TAIL])
 
-    assert bound.steps == known.steps
-    # A bound range holds its settled steps as the one sequence owner an
-    # executor borrows spans of, the same sequence a plan's steps are.
-    (segment,) = bound.steps.segments
-    assert list(bound.steps.view(1, len(bound.steps))) == list(known.steps)[1:]
-    assert len(segment) == len(known.steps)
+    assert bound.steps == plan_steps(known)
     # The changed parts of both originals hold the same complete state, so
     # they merge into one row; each original is still closed under its own
     # proof.
@@ -233,15 +233,15 @@ def test_a_range_binds_alike_whether_planning_knew_its_coverage_or_execution_rea
         (),
     ]
     assert (bound.removed, bound.derived, bound.concludes) == ((), (), None)
-    # A deferred unit's plan entry publishes nothing of its own beside its claim.
+    # A deferred settled write's plan entry publishes nothing of its own beside its claim.
     assert (tuple(read.changed), read.opened, read.claim) == ((), Openings(), head)
 
 
 def test_a_read_that_found_no_row_binds_the_range_to_what_it_observed() -> None:
     head = _retained(_HEAD)
-    unit, _acquisition = _deferred(_plan(_update(head, _MAR, _SEP)))
+    settled, _acquisition = _deferred(_plan(_update(head, _MAR, _SEP)))
 
-    bound = _bind(unit, [])
+    bound = _bind(settled, [])
 
     assert [type(step) for step in bound.steps] == [PlannedClose, PlannedInsert, PlannedInsert]
     assert _windows(bound.steps) == [(_JAN, _MAR, 100), (_MAR, _JUN, 300)]
@@ -249,17 +249,17 @@ def test_a_read_that_found_no_row_binds_the_range_to_what_it_observed() -> None:
 
 
 def test_a_caller_start_the_read_did_not_find_fails_as_its_precondition() -> None:
-    unit, _acquisition = _deferred(_plan(_target(_MAR, _SEP)))
+    settled, _acquisition = _deferred(_plan(_target(_MAR, _SEP)))
     with pytest.raises(WritePreconditionError):
-        _bind(unit, [])
+        _bind(settled, [])
 
 
 def test_binding_reads_the_ownership_the_attempt_holds_when_it_binds() -> None:
-    unit, _acquisition = _deferred(_plan(_target(_JUN, _SEP)))
+    settled, _acquisition = _deferred(_plan(_target(_JUN, _SEP)))
     endpoint = OwnedEndpoint(_SPAN, (1,), (OPEN_END, OPEN_END))
 
-    stored = _bind(unit, [_TAIL])
-    owned = _bind(unit, [_TAIL], ownership=OpenedRows(frozenset({endpoint})))
+    stored = _bind(settled, [_TAIL])
+    owned = _bind(settled, [_TAIL], ownership=OpenedRows(frozenset({endpoint})))
 
     assert [type(step) for step in stored.steps] == [PlannedClose, PlannedInsert, PlannedInsert]
     # The same plan entry, bound once the attempt owns the row it starts from,
@@ -274,13 +274,13 @@ def test_binding_reads_the_ownership_the_attempt_holds_when_it_binds() -> None:
 def test_binding_stamps_the_instant_planning_resolved_and_reads_no_clock() -> None:
     head = _retained(_HEAD)
     planning = CountingClock([_PLANNED_AT])
-    unit, _acquisition = _deferred(
+    settled, _acquisition = _deferred(
         _plan(_update(head, _MAR, _SEP), instant=TransactionInstant(planning))
     )
     assert planning.calls == 1
     unread = CountingClock([])
 
-    bound = _bind(unit, [_TAIL], transaction_instant=TransactionInstant(unread))
+    bound = _bind(settled, [_TAIL], transaction_instant=TransactionInstant(unread))
 
     assert unread.calls == 0
     stamped = {
@@ -305,18 +305,18 @@ def test_every_produced_row_and_close_is_audited_once_whether_the_range_bound_no
 
     known = _plan(_update(head, _MAR, _JUN), _update(tail, _JUN, _SEP))
     assert sorted(map(id, audit.closes)) == sorted(
-        id(step) for step in known.steps if isinstance(step, PlannedClose)
+        id(step) for step in plan_steps(known) if isinstance(step, PlannedClose)
     )
     # Every produced row is finalized once, the two that then merge included,
     # and the merged row is not finalized again.
     assert [_row_window(row) for row in audit.rows] == _PRODUCED
-    assert _windows(tuple(known.steps)) == _MERGED
+    assert _windows(tuple(plan_steps(known))) == _MERGED
 
     audit.rows.clear()
     audit.closes.clear()
-    unit, _acquisition = _deferred(_plan(_update(head, _MAR, _SEP)))
+    settled, _acquisition = _deferred(_plan(_update(head, _MAR, _SEP)))
     assert (audit.rows, audit.closes) == ([], [])
-    bound = _bind(unit, [_TAIL])
+    bound = _bind(settled, [_TAIL])
     assert sorted(map(id, audit.closes)) == sorted(
         id(step) for step in bound.steps if isinstance(step, PlannedClose)
     )
@@ -367,9 +367,9 @@ def test_an_overlapped_observation_is_retired_by_whoever_owns_its_row(
     earlier = _retained(_span(_JAN, _JUN, 100))
     later = _retained(_span(_MAR, INFINITY, 200, tx_start=_T1))
     plan = _plan(_update(earlier, _MAR, _APR), _update(later, _MAY, _JUL), ownership=ownership)
-    (unit,) = plan.units
-    assert unit.deferred is None
-    validation, closing, *successors = plan.steps
+    (write,) = settled_writes(plan)
+    assert write.deferred is None
+    validation, closing, *successors = plan_steps(plan)
     # The earlier observation is only validated: it retires its own row ahead
     # of the later one's close, and every successor derives from the later one.
     assert type(validation) is retired
@@ -384,8 +384,8 @@ def test_an_overlapped_observation_is_retired_by_whoever_owns_its_row(
         (_MAY, _JUL, 300),
         (_JUL, INFINITY, 200),
     ]
-    assert tuple(unit.changed) == (earlier.key, later.key)
-    assert tuple(unit.removed) == (
+    assert tuple(write.changed) == (earlier.key, later.key)
+    assert tuple(write.removed) == (
         ()
         if retired is PlannedClose
         else (OwnedEndpoint(_SPAN, (1,), (Finite(instant=_JUN), OPEN_END)),)
@@ -422,21 +422,21 @@ def test_a_lone_observed_write_inside_its_predecessor_binds_at_once_from_its_own
     assert isinstance(buffered, ObservedKeyedWrite)
     plan = _plan(buffered)
     assert built.built == 0
-    (unit,) = plan.units
-    assert unit.deferred is None
-    assert unit.claim is head
-    assert [type(step) for step in plan.steps] == [
+    (write,) = settled_writes(plan)
+    assert write.deferred is None
+    assert write.claim is head
+    assert [type(step) for step in plan_steps(plan)] == [
         PlannedClose,
         PlannedInsert,
         PlannedInsert,
         PlannedInsert,
     ]
-    assert _windows(tuple(plan.steps)) == [
+    assert _windows(tuple(plan_steps(plan))) == [
         (_JAN, _MAR, 100),
         (_MAR, _APR, 300),
         (_APR, _JUN, 100),
     ]
-    assert tuple(unit.changed) == (head.key,)
+    assert tuple(write.changed) == (head.key,)
 
 
 def test_a_lone_write_reaching_past_what_it_observed_reads_only_the_rest(
@@ -444,10 +444,10 @@ def test_a_lone_write_reaching_past_what_it_observed_reads_only_the_rest(
 ) -> None:
     head = _retained(_HEAD)
     built = _Compositions(monkeypatch)
-    unit, acquisition = _deferred(_plan(_update(head, _MAR, _SEP)))
+    settled, acquisition = _deferred(_plan(_update(head, _MAR, _SEP)))
     assert built.built == 0
     assert acquisition.terms[0].valid_time_windows == (temporal_read.TimeInterval(_JUN, _SEP),)
-    assert unit.claim is head
+    assert settled.claim is head
 
 
 @pytest.mark.parametrize("observation", [None, VersionObservation(observed_version=1)])

@@ -705,8 +705,8 @@ class UnitOfWork:
         return read_fn()
 
     def flush(self, *, trigger: FlushTrigger) -> None:
-        """Plan the buffered writes and run the plan settled write by settled
-        write, each span of its steps executed and enforced through the injected
+        """Plan the buffered writes and run the plan Write Group by Write
+        Group, each group's steps executed and enforced through the injected
         :class:`~parallax.core._execution._unit_work.write_runner.ExecuteWriteSteps`.
 
         ``trigger`` names which of the two flush reasons this call is, and every
@@ -716,8 +716,8 @@ class UnitOfWork:
         planning refusal is inside the Flush rather than beside it and a Flush
         planning reduces to no DML at all still ends the way it began.
 
-        Each settled write of the plan completes as soon as its steps succeed,
-        before any step of the next settled write is taken: it spends the
+        Each settled write of the plan completes as soon as its group's steps
+        succeed, before any step of a later group executes: it spends the
         evidence every write it composed was admitted through — an overwritten
         or physically empty one included — invalidates evidence of the states
         it changed, retires the owned rows it removed, and registers the rows

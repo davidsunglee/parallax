@@ -41,6 +41,7 @@ from parallax.core.write_plan.steps import (
     TemporalGate,
 )
 from parallax.core.write_plan.steps import INFINITY as OPEN_END
+from tests._support.planner_probes import plan_steps, settled_writes
 from tests.unit.core._execution._unit_work._ownership_support import OpenedRows
 from tests.unit.core._execution._unit_work._unchanged_milestones_support import (
     APR,
@@ -77,7 +78,7 @@ _FROM_MARCH = retained_state(SPANS, SPAN, _FIRST)
 
 
 def test_a_range_keeps_each_unchanged_original_and_transforms_only_the_changed_one() -> None:
-    unit, bound = bound_range(
+    settled, bound = bound_range(
         SPANS,
         planned(
             SPANS,
@@ -113,8 +114,8 @@ def test_a_range_keeps_each_unchanged_original_and_transforms_only_the_changed_o
     middle = TemporalObjectStateKey(
         ObjectKey(SPAN, (("id", 1),)), temporal_read.milestone_edge(shape, _MIDDLE, None)
     )
-    # The deferred unit's effects are the bound range's, never its plan entry's.
-    assert (tuple(bound.changed), tuple(unit.changed)) == ((middle,), ())
+    # The deferred settled write's effects are the bound range's, never its plan entry's.
+    assert (tuple(bound.changed), tuple(settled.changed)) == ((middle,), ())
 
 
 def test_a_range_assigning_every_original_a_new_value_transforms_them_all() -> None:
@@ -170,7 +171,7 @@ def test_a_net_equal_composition_leaves_its_original_unchanged() -> None:
             SPANS, "SequenceSpan", "amendUntil", whole, valid_from=MAR, until=JUN, amount=100
         ),
     )
-    assert step_kinds(plan.steps) == ["PlannedTemporalGuard"]
+    assert step_kinds(plan_steps(plan)) == ["PlannedTemporalGuard"]
 
 
 def test_an_original_part_of_which_the_composition_destroys_is_changed() -> None:
@@ -199,7 +200,7 @@ def test_an_original_part_of_which_the_composition_destroys_is_changed() -> None
     # The first original only takes its own amount; the second loses
     # [October, December) as well, so it is closed and reopened around the hole,
     # its equal [June, September) and [September, October) as one row.
-    assert step_kinds(plan.steps) == [
+    assert step_kinds(plan_steps(plan)) == [
         "PlannedTemporalGuard",
         "PlannedClose",
         "PlannedInsert",
@@ -231,7 +232,7 @@ def test_an_original_whose_start_the_composition_destroys_is_changed() -> None:
         ),
     )
     # What survives of the second original no longer begins where it did.
-    assert step_kinds(plan.steps) == ["PlannedTemporalGuard", "PlannedClose", "PlannedInsert"]
+    assert step_kinds(plan_steps(plan)) == ["PlannedTemporalGuard", "PlannedClose", "PlannedInsert"]
 
 
 def test_a_window_a_caller_addressed_keeps_a_milestone_it_leaves_unchanged() -> None:
@@ -259,7 +260,7 @@ def test_a_window_a_caller_addressed_keeps_a_milestone_it_leaves_unchanged() -> 
     )
     # The caller's start is the rectangle kept, so its guard binds the stated
     # start and a shortfall against it is that caller's failed precondition.
-    (guard,) = plan.steps
+    (guard,) = plan_steps(plan)
     assert isinstance(guard, PlannedTemporalGuard)
     assert guard.concurrency.observed_start == T0
     assert guard.affected_rows == ExactCount(expected=1, on_shortfall=FAILED_PRECONDITION)
@@ -304,15 +305,15 @@ def test_an_update_restating_its_milestone_is_one_guard_on_the_observed_start() 
     plan = planned(
         BALANCES, observed_write(BALANCES, "Balance", "amend", _RESTATED, value="100.00")
     )
-    (guard,) = plan.steps
+    (guard,) = plan_steps(plan)
     assert isinstance(guard, PlannedTemporalGuard)
     assert guard.target.end_values == TRANSACTION_TIME_ENDS
     assert isinstance(guard.concurrency, TemporalGate)
     assert guard.concurrency.observed_start == T0
     assert guard.affected_rows == ExactCount(expected=1, on_shortfall=OPTIMISTIC_CONFLICT)
-    (unit,) = plan.units
+    (write,) = settled_writes(plan)
     # The claim is spent, and the state it observed is named changed by nobody.
-    assert (unit.claim, tuple(unit.changed)) == (_RESTATED, ())
+    assert (write.claim, tuple(write.changed)) == (_RESTATED, ())
 
 
 def test_without_a_count_that_proves_it_an_unchanged_milestone_is_closed_and_chained() -> None:
@@ -321,10 +322,10 @@ def test_without_a_count_that_proves_it_an_unchanged_milestone_is_closed_and_cha
         observed_write(BALANCES, "Balance", "amend", _RESTATED, value="100.00"),
         counts_unchanged_rows=False,
     )
-    assert step_kinds(plan.steps) == ["PlannedClose", "PlannedInsert"]
-    (unit,) = plan.units
-    # Closing it changes the observed state, which the unit names itself.
-    assert (unit.claim, tuple(unit.changed)) == (_RESTATED, (_RESTATED.key,))
+    assert step_kinds(plan_steps(plan)) == ["PlannedClose", "PlannedInsert"]
+    (write,) = settled_writes(plan)
+    # Closing it changes the observed state, which the write names itself.
+    assert (write.claim, tuple(write.changed)) == (_RESTATED, (_RESTATED.key,))
 
 
 def test_under_locking_the_held_lock_proves_an_unchanged_milestone_without_a_statement() -> None:
@@ -334,9 +335,9 @@ def test_under_locking_the_held_lock_proves_an_unchanged_milestone_without_a_sta
         concurrency="locking",
         counts_unchanged_rows=False,
     )
-    assert len(plan.steps) == 0
-    (unit,) = plan.units
-    assert (unit.claim, tuple(unit.changed)) == (_RESTATED, ())
+    assert len(plan_steps(plan)) == 0
+    (write,) = settled_writes(plan)
+    assert (write.claim, tuple(write.changed)) == (_RESTATED, ())
 
 
 _REOPENED = OpenedRows(frozenset({OwnedEndpoint(BALANCE, (1,), TRANSACTION_TIME_ENDS)}))
@@ -349,7 +350,7 @@ def test_a_milestone_the_attempt_opened_needs_no_statement_to_stay_unchanged() -
         observed_write(BALANCES, "Balance", "amend", opened, value="100.00"),
         ownership=_REOPENED,
     )
-    assert len(plan.steps) == 0
+    assert len(plan_steps(plan)) == 0
 
 
 def test_an_earlier_milestone_at_an_address_the_attempt_reopened_is_not_proven_by_ownership() -> (
@@ -360,7 +361,7 @@ def test_an_earlier_milestone_at_an_address_the_attempt_reopened_is_not_proven_b
         observed_write(BALANCES, "Balance", "amend", _RESTATED, value="100.00"),
         ownership=_REOPENED,
     )
-    (revision,) = plan.steps
+    (revision,) = plan_steps(plan)
     assert isinstance(revision, PlannedTemporalRevision)
     assert isinstance(revision.concurrency, TemporalGate)
     assert revision.concurrency.observed_start == T0
@@ -383,7 +384,7 @@ def test_a_stale_start_at_an_address_the_attempt_reopened_is_its_callers_precond
         target,
         ownership=_REOPENED,
     )
-    (revision,) = plan.steps
+    (revision,) = plan_steps(plan)
     assert isinstance(revision, PlannedTemporalRevision)
     assert isinstance(revision.concurrency, TemporalGate)
     assert revision.concurrency.observed_start == T0
@@ -400,7 +401,7 @@ def test_owning_another_row_lends_no_proof_to_an_unchanged_milestone_the_attempt
         counts_unchanged_rows=False,
         ownership=another,
     )
-    assert step_kinds(plan.steps) == ["PlannedClose", "PlannedInsert"]
+    assert step_kinds(plan_steps(plan)) == ["PlannedClose", "PlannedInsert"]
 
 
 def test_a_member_its_selection_does_not_declare_is_never_held() -> None:
@@ -421,12 +422,12 @@ def test_an_update_changing_any_member_closes_and_chains(members: Mapping[str, o
     plan = planned(
         BALANCES, observed_write(BALANCES, "Balance", "amend", _RESTATED, assigned=members)
     )
-    assert step_kinds(plan.steps) == ["PlannedClose", "PlannedInsert"]
+    assert step_kinds(plan_steps(plan)) == ["PlannedClose", "PlannedInsert"]
 
 
 def test_a_terminate_is_never_unchanged() -> None:
     plan = planned(BALANCES, observed_write(BALANCES, "Balance", "terminate", _RESTATED))
-    assert step_kinds(plan.steps) == ["PlannedClose"]
+    assert step_kinds(plan_steps(plan)) == ["PlannedClose"]
 
 
 _NOTED = retained_state(SPANS, SPAN, span_row(JAN, INFINITY, 100, "a", {"note": "n1"}))
@@ -467,7 +468,7 @@ def test_a_bitemporal_write_inside_its_rectangle_compares_every_assigned_member(
             assigned=members,
         ),
     )
-    assert step_kinds(plan.steps) == (
+    assert step_kinds(plan_steps(plan)) == (
         ["PlannedTemporalGuard"]
         if kept
         else ["PlannedClose", "PlannedInsert", "PlannedInsert", "PlannedInsert"]

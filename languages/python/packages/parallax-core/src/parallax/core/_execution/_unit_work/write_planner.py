@@ -32,6 +32,7 @@ from parallax.core._execution._unit_work.write_items import (
     CoalescedWrite,
     FollowingKeyedWrite,
     InsertionKeyedWrite,
+    MutationPhase,
     ObservedKeyedWrite,
     OrderedWrite,
     PendingOpening,
@@ -153,9 +154,9 @@ class WritePlanner:
         return self._payloads
 
     def finalize(self, request: WritePlanningRequest) -> WritePlan:
-        """Plan one flush: eliminate no-ops, batch, order, and hand the whole
-        ordered sequence to the compiler — answering the plan, whose execution
-        units carry the claims the settled writes held. Admission already
+        """Plan one flush: eliminate no-ops, batch, order into mutation phases,
+        and hand them all to the compiler — answering the plan, whose settled
+        writes carry the claims their writes held. Admission already
         composed the buffer, so finalization indexes nothing again.
 
         Pure with respect to its inputs — no database I/O, no direct clock
@@ -171,8 +172,9 @@ class WritePlanner:
         The three stages here REWRITE the sequence — drop, split, reorder.
         The Write Plan
         :meth:`~parallax.core._execution._unit_work.write_settlement.WritePlanCompiler.compile`
-        answers is returned unchanged, because packing, provenance, and each
-        unit's claim are decided there and nothing is left for the planner to add.
+        answers is returned unchanged, because its Write Groups, provenance, and
+        each settled write's claim are decided there and nothing is left for
+        the planner to add.
         """
         survivors = [
             item
@@ -209,7 +211,7 @@ class WritePlanner:
 
         Its temporal meaning, concurrency, and gates were fixed when the plan
         was made; binding reads ``ownership`` as the running flush's earlier
-        units left it and never recaptures the instant. The configured audit
+        Write Groups left it and never recaptures the instant. The configured audit
         finalizes each row the binding produces once, and decorates each close
         it emits, with ``actor_identity`` and ``transaction_instant``, changing no
         topology and classifying no gate.
@@ -296,38 +298,30 @@ class WritePlanner:
         close_batch()
         return result
 
-    def _order(self, items: Sequence[CoalescedWrite]) -> list[OrderedWrite]:
-        """``items`` in flush order: each readless predicate write stays where it
-        was authored, and within each region between them inserts go in
-        ascending referential rank, then updates in authored order, then deletes
-        in descending rank. Both sorts are stable. Inserts that depend on an
-        earlier removal open a new region, as a barrier does, so the removal
-        precedes them while they still order with what follows them."""
-        ordered: list[OrderedWrite] = []
+    def _order(self, items: Sequence[CoalescedWrite]) -> list[MutationPhase]:
+        """``items`` as mutation phases in flush order: each readless predicate
+        write is a phase of its own where it was authored, and within each
+        region between them the inserts in ascending referential rank, then the
+        updates in authored order, then the deletes in descending rank are a
+        phase each, an empty one omitted. Both sorts are stable. Inserts that
+        depend on an earlier removal open a new region, as a barrier does, so
+        the removal precedes them while they still order with what follows
+        them."""
+        phases: list[MutationPhase] = []
         inserts: list[tuple[int, OrderedWrite]] = []
         updates: list[OrderedWrite] = []
         deletes: list[tuple[int, OrderedWrite]] = []
 
-        def close_region() -> None:
-            inserts.sort(key=_RANK)
-            deletes.sort(key=_RANK, reverse=True)
-            ordered.extend(item for _, item in inserts)
-            ordered.extend(updates)
-            ordered.extend(item for _, item in deletes)
-            inserts.clear()
-            updates.clear()
-            deletes.clear()
-
         for item in items:
             if isinstance(item, PreparedPredicateWrite):
-                close_region()
-                ordered.append(item)
+                _close_region(phases, inserts, updates, deletes)
+                phases.append((item,))
                 continue
             if isinstance(item, AfterRemoval):
                 # Everything authored before the removal-dependent insert
                 # executes first, the removal it depends on included; what is
                 # authored after it orders with it as usual.
-                close_region()
+                _close_region(phases, inserts, updates, deletes)
                 item = item.insert
             if isinstance(item, CoalescedTemporalWrite):
                 if item.assigns:
@@ -342,8 +336,8 @@ class WritePlanner:
                 inserts.append((self._rank(instruction), item))
             elif instruction.mutation in DESTRUCTIVE_MUTATIONS:
                 deletes.append((self._rank(instruction), item))
-        close_region()
-        return ordered
+        _close_region(phases, inserts, updates, deletes)
+        return phases
 
     def _rank(self, instruction: PreparedKeyedWrite) -> int:
         return self._ranked(instruction.target)
@@ -354,6 +348,28 @@ class WritePlanner:
 
 
 _RANK = itemgetter(0)
+
+
+def _close_region(
+    phases: list[MutationPhase],
+    inserts: list[tuple[int, OrderedWrite]],
+    updates: list[OrderedWrite],
+    deletes: list[tuple[int, OrderedWrite]],
+) -> None:
+    """Append a region's nonempty phases to ``phases`` — its inserts by
+    ascending rank, its updates as authored, its deletes by descending rank —
+    and empty the region."""
+    if inserts:
+        inserts.sort(key=_RANK)
+        phases.append(tuple(item for _, item in inserts))
+        inserts.clear()
+    if updates:
+        phases.append(tuple(updates))
+        updates.clear()
+    if deletes:
+        deletes.sort(key=_RANK, reverse=True)
+        phases.append(tuple(item for _, item in deletes))
+        deletes.clear()
 
 
 def _decomposed_updates(

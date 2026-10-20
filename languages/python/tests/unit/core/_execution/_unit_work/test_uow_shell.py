@@ -98,7 +98,13 @@ from parallax.core.write_plan.plan import (
 from parallax.core.write_plan.steps import INFINITY as PLANNED_INFINITY
 from parallax.core.write_plan.steps import NEW_LINEAGE, Finite, PlannedUpdate
 from tests._support.clock_probes import CountingClock
-from tests._support.planner_probes import TEST_ACTOR_IDENTITY, RecordingSource, admitted_writes
+from tests._support.planner_probes import (
+    TEST_ACTOR_IDENTITY,
+    RecordingSource,
+    admitted_writes,
+    plan_steps,
+    settled_writes,
+)
 from tests.unit._corpus_identity_support import corpus_object_key
 from tests.unit._where_position_model import (
     WherePosition,
@@ -470,10 +476,10 @@ def test_two_writes_of_one_claim_merge_and_answer_it_once() -> None:
             buffered_writes=admitted_writes(_ACCOUNT, carriers),
         )
     )
-    (step,) = finalized.steps
+    (step,) = plan_steps(finalized)
     assert isinstance(step, PlannedUpdate)
     assert _member_value(step.assignments.attributes, "balance") == Decimal("150.00")
-    assert [unit.claim for unit in finalized.units] == [retained]
+    assert [write.claim for write in settled_writes(finalized)] == [retained]
 
 
 def test_a_fully_empty_transaction_never_touches_the_clock() -> None:
@@ -554,7 +560,7 @@ def _opener(order: list[str]) -> OpenFlush:
 
 def test_each_flush_is_a_scope_around_its_own_planning_and_execution() -> None:
     order: list[str] = []
-    steps = ObservedSteps(_simulated(), observe=lambda _span: order.append("executed"))
+    steps = ObservedSteps(_simulated(), observe=lambda _position, _steps: order.append("executed"))
 
     def body(tx: UnitOfWork) -> None:
         tx.buffer(_account_insert(1))
@@ -757,18 +763,18 @@ def test_every_accepted_object_source_is_spent_in_buffering_order_after_the_flus
     simulated = _simulated(_PERSON_META)
     spent: list[str] = []
     seen: list[list[str]] = []
-    steps = ObservedSteps(simulated, observe=lambda _span: seen.append(list(spent)))
+    steps = ObservedSteps(simulated, observe=lambda _position, _steps: seen.append(list(spent)))
 
     _run(lambda uow: _buffer_composed_person_writes(uow, spent), steps=steps, meta=_PERSON_META)
     assert sorted(_kinds(simulated)) == ["delete", "update"]
-    assert steps.spans > 1
-    assert seen == [[]] * steps.spans
+    assert steps.executions > 1
+    assert seen == [[]] * steps.executions
     assert spent == ["amend", "other", "coalesced", "delete", "again"]
 
-    failure = RuntimeError("the last unit failed")
+    failure = RuntimeError("the last settled write failed")
     unspent: list[str] = []
-    failing = ObservedSteps(_simulated(_PERSON_META), failing=steps.spans - 1, failure=failure)
-    with pytest.raises(RuntimeError, match="the last unit failed"):
+    failing = ObservedSteps(_simulated(_PERSON_META), failing=steps.executions - 1, failure=failure)
+    with pytest.raises(RuntimeError, match="the last settled write failed"):
         _run(
             lambda uow: _buffer_composed_person_writes(uow, unspent),
             steps=failing,
@@ -930,7 +936,7 @@ def _balance_terminate_from(key: int, tx_start: object) -> AdmittedWrite:
     )
 
 
-def test_a_row_its_unit_removed_is_no_longer_owned() -> None:
+def test_a_row_its_settled_write_removed_is_no_longer_owned() -> None:
     simulated = _simulated(_BALANCE)
 
     def body(uow: UnitOfWork) -> None:
@@ -959,7 +965,7 @@ def test_a_row_whose_start_is_the_attempts_instant_is_not_owned_without_its_open
     assert _kinds(simulated) == ["close", "insert"]
 
 
-def test_each_unit_spends_its_evidence_before_the_next_unit_executes() -> None:
+def test_each_settled_write_spends_its_evidence_before_the_next_group_executes() -> None:
     first = _account_write("amend", 1, 7)
     second = _account_write("amend", 2, 3)
     assert isinstance(first, ObservedKeyedWrite) and isinstance(second, ObservedKeyedWrite)
@@ -973,7 +979,10 @@ def test_each_unit_spends_its_evidence_before_the_next_unit_executes() -> None:
         uow.buffer(first)
         uow.buffer(second)
 
-    _run(body, steps=ObservedSteps(_simulated(), observe=lambda _span: seen.append(spent())))
+    _run(
+        body,
+        steps=ObservedSteps(_simulated(), observe=lambda _position, _steps: seen.append(spent())),
+    )
     assert [*seen, spent()] == [(False, False), (True, False), (True, True)]
 
 
@@ -1048,7 +1057,7 @@ _JAN = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 _DEC = dt.datetime(2024, 12, 1, tzinfo=dt.UTC)
 
 
-def test_a_unit_that_changes_nothing_spends_its_evidence_and_leaves_its_state_fresh() -> None:
+def test_a_write_that_changes_nothing_spends_its_evidence_and_leaves_its_state_fresh() -> None:
     # A termination starting where the rectangle the attempt opened already
     # ends reaches past it, so its coverage is read at execution; finding none
     # there, the range binds to no step at all.
@@ -1109,7 +1118,7 @@ def test_a_unit_that_changes_nothing_spends_its_evidence_and_leaves_its_state_fr
 @pytest.mark.parametrize(
     ("value", "kept"), [("100.00", True), ("150.00", False)], ids=["unchanged", "changed"]
 )
-def test_a_guarded_unit_spends_its_source_and_leaves_an_unchanged_state_fresh(
+def test_a_guarded_write_spends_its_source_and_leaves_an_unchanged_state_fresh(
     value: str, kept: bool
 ) -> None:
     members = {
@@ -1144,7 +1153,7 @@ def test_a_guarded_unit_spends_its_source_and_leaves_an_unchanged_state_fresh(
         assert claim.consumed
         assert claim.invalidated is not kept
         # Evidence an earlier read of the same rows builds now is still evidence
-        # of the stored state exactly when the unit left that state as it was.
+        # of the stored state exactly when the settled write left that state as it was.
         late = uow.retain(RetainedObservation(state, observation, None), read_at=read_at)
         assert late.invalidated is not kept
 
@@ -1170,7 +1179,7 @@ def _account_claim(account_id: int, version: int) -> RetainedObservation:
     )
 
 
-def test_each_unit_names_its_sources_state_itself() -> None:
+def test_each_settled_write_names_its_sources_state_itself() -> None:
     first, second = _account_claim(1, 7), _account_claim(2, 3)
     plan = build_write_planner(_ACCOUNT).finalize(
         WritePlanningRequest(
@@ -1182,12 +1191,12 @@ def test_each_unit_names_its_sources_state_itself() -> None:
             ),
         )
     )
-    # Nothing infers a unit's changed state from a step.
-    assert [tuple(unit.changed) for unit in plan.units] == [(first.key,), (second.key,)]
+    # Nothing infers a settled write's changed state from a step.
+    assert [tuple(write.changed) for write in settled_writes(plan)] == [(first.key,), (second.key,)]
 
 
-def test_a_failed_unit_publishes_nothing_while_the_unit_before_it_stays_published() -> None:
-    failure = RuntimeError("the second unit failed")
+def test_a_failed_group_publishes_nothing_while_the_group_before_it_stays_published() -> None:
+    failure = RuntimeError("the second settled write failed")
     claims: list[RetainedObservation] = []
 
     def body(uow: UnitOfWork) -> None:
@@ -1195,7 +1204,7 @@ def test_a_failed_unit_publishes_nothing_while_the_unit_before_it_stays_publishe
             claim = uow.retain(_account_claim(account_id, version))
             claims.append(claim)
             uow.buffer(_account_amend(account_id, claim))
-        with pytest.raises(RuntimeError, match="the second unit failed"):
+        with pytest.raises(RuntimeError, match="the second settled write failed"):
             uow.read(lambda: None)
 
     with pytest.raises(RollbackOnlyError):
@@ -1205,7 +1214,7 @@ def test_a_failed_unit_publishes_nothing_while_the_unit_before_it_stays_publishe
     assert (second.consumed, second.invalidated) == (False, False)
 
 
-def test_a_unit_with_no_step_spends_its_source_and_changes_nothing() -> None:
+def test_a_settled_write_with_no_step_spends_its_source_and_changes_nothing() -> None:
     members = {
         "id": 1,
         "acctNum": "A",
@@ -1314,7 +1323,7 @@ def _observed_amendment(claim: RetainedObservation) -> AdmittedWrite:
     return buffered_write(observed, claim)
 
 
-def test_a_unit_a_barrier_kept_back_binds_on_what_the_earlier_unit_spent_and_proved() -> None:
+def test_a_write_a_barrier_kept_back_binds_on_what_the_earlier_write_spent_and_proved() -> None:
     original = TemporalObservation(predecessor=_position_row(_JAN, _T0))
     key = corpus_object_key("WherePosition", ("id", 1))
     shape = temporal_read.view(_BARRIERED).shape(key.entity)
@@ -1346,14 +1355,14 @@ def test_a_unit_a_barrier_kept_back_binds_on_what_the_earlier_unit_spent_and_pro
 
     with pytest.raises(WritePreconditionError):
         _run(body, meta=_BARRIERED, steps=simulated, rows=_Watched(coverage, reading))
-    # The earlier unit spent the shared source and invalidated its state
+    # The earlier settled write spent the shared source and invalidated its state
     # before the later one bound, which then ran no close of its own.
     assert seen[0][:2] == (True, True)
     assert later and "close" not in later
     _assert_optimistic_targets_read_nothing(coverage)
 
 
-def test_an_objects_proofs_serve_every_unit_following_it_in_the_flush() -> None:
+def test_an_objects_proofs_serve_every_settled_write_following_it_in_the_flush() -> None:
     original = TemporalObservation(predecessor=_position_row(_JAN, _T0))
     key = corpus_object_key("WherePosition", ("id", 1))
     shape = temporal_read.view(_BARRIERED).shape(key.entity)
@@ -1377,8 +1386,8 @@ def test_an_objects_proofs_serve_every_unit_following_it_in_the_flush() -> None:
         uow.read(lambda: None)
 
     _run(body, meta=_BARRIERED, steps=simulated, rows=_Watched(held, reading))
-    # Each unit a barrier kept back read its own coverage and bound on what
-    # the earlier unit proved; the last ran no close of its own.
+    # Each settled write a barrier kept back read its own coverage and bound on what
+    # the earlier settled write proved; the last ran no close of its own.
     assert len(reached) == 2
     assert "close" not in statement_kinds(simulated.statements[reached[1] :])
     _assert_optimistic_targets_read_nothing(held)
@@ -1521,7 +1530,7 @@ def test_a_doomed_lifetime_refuses_an_empty_predicate_write() -> None:
 def _opening_geometry(plan: WritePlan) -> set[tuple[object, object, object]]:
     """Each row a plan's inserts open, by Valid Time and value."""
     rows: set[tuple[object, object, object]] = set()
-    for step in plan.steps:
+    for step in plan_steps(plan):
         if isinstance(step, PlannedInsert):
             (entry,) = step.entries
             cells = {identity.name: value for identity, value in entry.row.attributes.items()}
@@ -1529,7 +1538,7 @@ def _opening_geometry(plan: WritePlan) -> set[tuple[object, object, object]]:
     return rows
 
 
-def test_a_pending_opening_settles_as_one_unit_of_the_new_lineages_its_edits_leave() -> None:
+def test_a_pending_opening_settles_as_one_write_of_the_new_lineages_its_edits_leave() -> None:
     insert = _prepared_keyed(
         KeyedWriteInstruction(
             "insert",
@@ -1558,21 +1567,21 @@ def test_a_pending_opening_settles_as_one_unit_of_the_new_lineages_its_edits_lea
         )
     )
     # No predecessor is fabricated for the insert: every surviving part of its
-    # own window opens as a new lineage, together, as one unit.
-    (unit,) = plan.units
-    assert {type(step) for step in plan.steps} == {PlannedInsert}
-    assert {step.entries[0].origin for step in plan.steps} == {NEW_LINEAGE}  # type: ignore[union-attr]
+    # own window opens as a new lineage, together, as one write.
+    (write,) = settled_writes(plan)
+    assert {type(step) for step in plan_steps(plan)} == {PlannedInsert}
+    assert {step.entries[0].origin for step in plan_steps(plan)} == {NEW_LINEAGE}  # type: ignore[union-attr]
     assert _opening_geometry(plan) == {
         (_FEB, _APR, Decimal("2.00")),
         (_APR, _JUN, Decimal("1.00")),
         (_AUG, INFINITY, Decimal("1.00")),
     }
-    assert tuple(unit.opened.continued) == (
+    assert tuple(write.opened.continued) == (
         _position_endpoint(_APR),
         _position_endpoint(_JUN),
         _position_endpoint(None),
     )
-    assert (tuple(unit.changed), tuple(unit.opened.fresh)) == ((), ())
+    assert (tuple(write.changed), tuple(write.opened.fresh)) == ((), ())
 
 
 def _position_endpoint(end: dt.datetime | None) -> OwnedEndpoint:

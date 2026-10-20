@@ -649,7 +649,7 @@ which `tools/check_scope_ownership.py` demands (*Filesystem ownership*, below).
   readers the Wire write verbs use, so the claims and keys it settles are the
   ones a real write settles against; both are implementation-private, so no
   exported name reaches them. Conformance support's simulated step execution
-  lowers each span a unit of work hands it without a database through
+  lowers each step sequence a unit of work hands it without a database through
   execution's `stream_physical` when it records the statements, rather than
   reaching the `m-sql` write-step compiler. The case loader's `wire._json.authored_number` reach is the production YAML
   token-preservation seam. Compatibility inputs use canonical Wire literals, so

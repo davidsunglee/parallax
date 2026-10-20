@@ -38,7 +38,7 @@ from parallax.core.write_plan.steps import (
     PlannedStep,
 )
 from tests._support.clock_probes import instant_at
-from tests._support.planner_probes import TEST_ACTOR_IDENTITY, admitted_writes
+from tests._support.planner_probes import TEST_ACTOR_IDENTITY, admitted_writes, settled_writes
 from tests.unit._corpus_model_support import model
 from tests.unit.core._execution._unit_work._acquired_rows_support import bind_held
 
@@ -139,10 +139,10 @@ def bound_range(
     *,
     ownership: TemporalWriteOwnership = NO_TEMPORAL_WRITE_OWNERSHIP,
 ) -> tuple[SettledWrite, BoundRange]:
-    (unit,) = plan.units
-    return unit, bind_held(
+    (write,) = settled_writes(plan)
+    return write, bind_held(
         meta,
-        unit,
+        write,
         rows,
         ownership=ownership,
         transaction_instant=instant_at(NOW.isoformat()),

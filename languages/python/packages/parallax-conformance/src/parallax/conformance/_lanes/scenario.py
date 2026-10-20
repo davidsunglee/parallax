@@ -1117,9 +1117,9 @@ class _SimulatedSourceAuthority:
 class _SimulatedUnit:
     """The unit of work one simulated transaction buffers its writes through:
     an ordinary :class:`~parallax.core.unit_work.UnitOfWork`, so what the lane
-    buffers is admitted, composed, planned, and executed unit by unit exactly
-    as an attempt's own writes are, every span it executes changing the case's
-    simulated rows (:func:`_simulated_unit`).
+    buffers is admitted, composed, planned, and executed Write Group by Write
+    Group exactly as an attempt's own writes are, every step sequence it
+    executes changing the case's simulated rows (:func:`_simulated_unit`).
 
     Every write it buffers settles against authority of this unit's own, as
     an application's would against its source's: an observation is retained
