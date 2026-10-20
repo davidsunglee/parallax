@@ -117,8 +117,6 @@ FLUSH_METRICS: Final = (
     "execution.transientBytesPerObject",
     *WORK_CELLS,
 )
-"""What a cross-object flush answers: per-flush timing, bytes per flush and per
-object, and the exact work its execution presented to the port."""
 RETAINED_WARMUPS: Final = WARMUP
 
 _MONITORING_TOOL_IDS: Final = range(6)
@@ -360,9 +358,6 @@ def _per_unit(samples: Sequence[int | float], units: int) -> list[float]:
 
 
 class _Stopwatch:
-    """Elapsed nanoseconds summed over every region it was opened and closed
-    around."""
-
     __slots__ = ("_opened", "total")
 
     def __init__(self) -> None:
@@ -400,10 +395,6 @@ class _RegionalPeak:
 
 @dataclass(frozen=True, slots=True)
 class _FlushDriver:
-    """One cross-object case's flush: ``run`` reads every object, amends each,
-    and commits, calling the marks ``regions`` holds at that moment, and refuses
-    a flush that presented other work than its case states."""
-
     objects: int
     regions: lowering_support.FlushRegions
     run: Callable[[], lowering_support.FlushWork]
@@ -465,9 +456,6 @@ def _execution_peak(driver: _FlushDriver) -> int:
 
 
 def _plan_kept(driver: _FlushDriver) -> int:
-    """What finalization kept, read as a retained increment across it and
-    answered as at least zero, as :func:`_kept_by_the_verb` answers."""
-
     def checkpoint(sample: Sampler) -> None:
         driver.marked(planning=sample, planned=sample)
 
@@ -475,8 +463,6 @@ def _plan_kept(driver: _FlushDriver) -> int:
 
 
 def _measure_flush(name: str, *, warmups: int, measured: int) -> dict[str, object]:
-    """One cross-object case's samples over its planning and execution regions,
-    the plan it retained, and the work it presented."""
     case = lowering_support.cross_object_case_named(name)
     with _flush_driver_for(case) as driver:
         with untraced():

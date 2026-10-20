@@ -137,7 +137,6 @@ POSITIVE_METRICS: Final = frozenset(
         *(m for m in FLUSH_UNITS if m.startswith("work.")),
     }
 )
-"""The metrics no reading can answer as zero: time passes and work is presented."""
 
 KEYED_WINDOW: Final = "keyed-write"
 RESPONSE_WINDOW: Final = "wire-insert-response"
@@ -321,8 +320,6 @@ def _samples(value: object, name: str, expected: int, *, positive: bool) -> tupl
 
 
 def _units(value: object, case: str) -> int:
-    """The denominator a child divided by: positive, and a cross-object
-    flush's own objects."""
     units = _positive_integer(value, "units")
     objects = CROSS_OBJECT_OBJECTS.get(case, units)
     if units != objects:
