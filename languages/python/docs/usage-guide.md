@@ -439,6 +439,36 @@ def a_root_default_is_overridden_per_call_and_a_join_inherits_the_override(
         return db.transact(outer, isolation="serializable")
 ```
 
+## A predicate-selected delete over an unversioned entity is readless
+
+Corpus case: `m-batch-write-005`
+
+```python
+def wallet_predicate_delete_is_readless(db: ScopedDatabase) -> list[Entity]:
+    def fn(tx: TxnContext) -> list[Entity]:
+        tx.delete_where(Wallet.where(Wallet.balance < Decimal("200.00")))
+        return list(tx.find(Wallet.where(Wallet.balance < Decimal("200.00"))).results())
+
+    return db.transact(fn)
+```
+
+## A predicate-selected amendment over an unversioned entity is readless
+
+Corpus case: `m-batch-write-006`
+
+```python
+def wallet_predicate_amend_is_readless(db: ScopedDatabase) -> list[Entity]:
+    def fn(tx: TxnContext) -> list[Entity]:
+        tx.amend_where(
+            Wallet.where(Wallet.balance < Decimal("200.00")),
+            Wallet.balance.set(Decimal("150.00")),
+            Wallet.owner.set("Updated"),
+        )
+        return list(tx.find(Wallet.where(Wallet.owner == "Updated")).results())
+
+    return db.transact(fn)
+```
+
 ## Reads run in one read-only transaction at a chosen isolation
 
 Corpus case: `m-execution-002`

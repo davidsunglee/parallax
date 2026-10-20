@@ -81,8 +81,8 @@ identity and can be executed against any model that accepts their target.
 
 Each operation consuming a Typed predicate binds it to the model that operation
 adopted: an eager read or a predicate-selected write once, a stream once at
-entry for all of its pages, and a Typed query handed to a Wire read under the
-same Typed operand policy. A literal prepared at authoring is adopted only where
+entry for all of its pages, and a Typed query handed to a Wire read or a Wire
+predicate-selected write under the same Typed operand policy. A literal prepared at authoring is adopted only where
 that model declares the member with the identical neutral type — Decimal
 precision and scale and float width included — and is otherwise refused with
 `QueryDefinitionError(query-expression-invalid)` before I/O.
@@ -100,7 +100,7 @@ Omitted Transaction Time means Latest. Bitemporal queries must select Valid
 Time explicitly. Latest has no `now` alias: an ordinary finite current-clock
 datetime is a finite pin. Temporal naming is `valid_time` / `tx_time` on queries,
 `Pin`, and `Edge`; mutation keywords are `valid_from`, on inserts and
-predicate-selected writes, and the keyword-only `until` (*Write verbs* in
+conditional writes, and the keyword-only `until` (*Write verbs* in
 [execution](execution.md)).
 
 ## Eager results

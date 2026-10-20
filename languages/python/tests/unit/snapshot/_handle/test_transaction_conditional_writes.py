@@ -383,6 +383,20 @@ def test_explicit_source_assignments_write_exactly_what_they_name() -> None:
     )
 
 
+def test_a_source_assignment_addressing_another_entity_is_refused() -> None:
+    # The type checker refuses an assignment of another Entity beside a source;
+    # preparation still refuses one a caller passes past it.
+    port = ScriptedAdapter(Transact(Read(rows=[_row()])))
+
+    def fn(tx: TxnContext) -> None:
+        found = tx.find(mm.Account.where(mm.Account.id == 1)).result()
+        with pytest.raises(WriteInstructionError, match="declares or inherits"):
+            tx.amend(found, Wallet.balance.set(Decimal(1)))  # pyright: ignore[reportArgumentType]
+
+    account_db(port).transact(fn)
+    assert [type(call) for call in _calls(port)] == [ReadCall]
+
+
 def test_an_empty_edit_adds_no_history_to_refuse_beside_assignments() -> None:
     calls = _read_then(
         lambda tx, found: tx.amend(found.edit(), mm.Account.balance.set(Decimal("5.00")))
@@ -546,18 +560,6 @@ _STARTS: dict[str, Callable[[TxnContext], object]] = {
     "wire.replace_if": lambda tx: tx.wire.replace_if(
         "Account", {"id": 1, "owner": "Bo", "balance": "1"}, version=3, valid_from=_NONE
     ),
-    "amend_where": lambda tx: tx.amend_where(
-        mm.Account.where(mm.Account.id == 1), mm.Account.owner.set("Bo"), valid_from=_NONE
-    ),
-    "wire.amend_where": lambda tx: tx.wire.amend_where(
-        {"entity": "Account", "predicate": _ONE}, {"owner": "Bo"}, valid_from=_NONE
-    ),
-    "terminate_where": lambda tx: tx.terminate_where(
-        mm.Account.where(mm.Account.id == 1), valid_from=_NONE
-    ),
-    "wire.terminate_where": lambda tx: tx.wire.terminate_where(
-        {"entity": "Account", "predicate": _ONE}, valid_from=_NONE
-    ),
 }
 
 
@@ -570,7 +572,9 @@ def test_a_stated_none_start_is_refused_rather_than_read_as_omission(verb: str) 
 # The retired logical spellings are gone, not aliased.                         #
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize("owner", [TxnContext, WireTransactionView], ids=["typed", "wire"])
-@pytest.mark.parametrize("name", ["update", "update_where", "amend_target", "replace_target"])
+@pytest.mark.parametrize(
+    "name", ["update", "update_where", "terminate_where", "amend_target", "replace_target"]
+)
 def test_no_retired_method_remains(owner: type[object], name: str) -> None:
     assert not hasattr(owner, name)
 

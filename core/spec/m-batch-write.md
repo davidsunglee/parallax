@@ -93,8 +93,8 @@ whose target is versioned (any Attribute of its family declares
 `optimisticLocking`) or temporal (Transaction-Time-Only or Bitemporal), with the
 pre-SQL rule `set-based-write-target-unsupported` (`m-case-format` *Rejected
 cases*). It is judged once the target Entity resolves and before the write's
-verb, window, predicate, inheritance family, or assignments, because none of
-them could make the write admissible. The refusal is a preparation refusal
+predicate, inheritance family, or assignments, because none of them could make
+the write admissible. The refusal is a preparation refusal
 (`m-unit-work`): nothing is read, nothing pending is flushed, and the attempt is
 not doomed. An implementation's refusal **SHOULD** name the writes that reach
 such a target: reading its objects and writing each one by key, or a
@@ -106,8 +106,9 @@ Transaction-Time-Only, and a Bitemporal target.
 
 ## Predicate-selected readless forms
 
-A predicate-selected write emits exactly one statement, whatever members it
-assigns. A Value
+A predicate-selected write is an `amend` or a `delete`. Its target has no history
+to close and no Valid Time to bound, so the family has no milestone verb and
+states no window. It emits exactly one statement, whatever members it assigns. A Value
 Object occurrence — `one` or `many`, any nested `many` it holds included — and a
 scalar collection are each assigned whole at their own path, exactly as any
 other amendment assigns them (`m-storage-layout`): the statement reads no stored
@@ -198,7 +199,7 @@ versioned per-key delete. The predicate-write witnesses prove a distinct target:
 | `m-batch-write-012`/`-013` | unversioned, non-temporal `CollectionTwinItem` update under each layout | one readless update assigning whole scalar collections and a `many` holding one, in Table Layout order |
 | `m-batch-write-047` | versioned `Account` update | refused before its predicate and assignments: `set-based-write-target-unsupported` |
 | `m-batch-write-048` | Transaction-Time-Only `Balance` delete | refused: `set-based-write-target-unsupported` |
-| `m-batch-write-049` | Bitemporal `Position` update | refused before any window is judged: `set-based-write-target-unsupported` |
+| `m-batch-write-049` | Bitemporal `Position` update | refused: `set-based-write-target-unsupported` |
 
 The two families share SQL terminology but not an observation contract: an `IN`
 list can collapse an already tracked set, whereas a predicate write starts from an

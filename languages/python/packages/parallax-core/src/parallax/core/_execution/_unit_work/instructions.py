@@ -100,8 +100,10 @@ KeyedMutation = Literal[
     "terminateUntil",
 ]
 # The predicate-selected (set-based) mutation surface: there is no `insert` — a
-# predicate cannot select rows that do not yet exist — and no replacement.
-PredicateMutation = Literal["amend", "delete", "terminate", "amendUntil", "terminateUntil"]
+# predicate cannot select rows that do not yet exist — and no replacement. A
+# readless target has no history to close and no Valid Time to bound, so no
+# milestone verb or bounded form.
+PredicateMutation = Literal["amend", "delete"]
 # The caller-addressed (target) mutation surface: an amendment, a complete
 # replacement, a deletion, or a termination of one existing object, each with
 # its bounded form where one exists.
@@ -109,12 +111,11 @@ TargetMutation = Literal[
     "amend", "amendUntil", "replace", "replaceUntil", "delete", "terminate", "terminateUntil"
 ]
 
-# Which of the keyed, predicate, and caller-addressed verb surfaces a mutation
-# arrived through. Carried only so a refusal can name methods the caller can act
-# on: one mutation token is spelled by three methods, and answering a
-# `terminate_where` call with "use `delete`" names the addressed verb, which
-# selects nothing.
-type _WriteSurface = Literal["keyed", "predicate", "target"]
+# Which of the keyed and caller-addressed verb surfaces a mutation arrived
+# through. Carried only so a refusal can name methods the caller can act on: one
+# mutation token is spelled by two methods, and answering a `terminate_if` call
+# with "use `delete`" names the source-authorized verb, which takes no revision.
+type _WriteSurface = Literal["keyed", "target"]
 
 INSERT_MUTATIONS: Final[frozenset[str]] = frozenset({"insert", "insertUntil"})
 """The keyed mutations that OPEN a row rather than write against an existing
@@ -149,15 +150,15 @@ one definition."""
 _KEYED_MUTATIONS: Final[frozenset[str]] = (
     INSERT_MUTATIONS | ASSIGNMENT_MUTATIONS | DESTRUCTIVE_MUTATIONS
 )
-_PREDICATE_MUTATIONS: Final[frozenset[str]] = AMEND_MUTATIONS | DESTRUCTIVE_MUTATIONS
+_PREDICATE_MUTATIONS: Final[frozenset[str]] = frozenset({"amend", "delete"})
 _TARGET_MUTATIONS: Final[frozenset[str]] = ASSIGNMENT_MUTATIONS | DESTRUCTIVE_MUTATIONS
 
 BOUNDED_MUTATIONS: Final[frozenset[str]] = frozenset(
     {"insertUntil", "amendUntil", "terminateUntil", "replaceUntil"}
 )
-"""The mutations whose window is a PAIR of Valid-Time bounds, keyed,
-predicate-selected, and target alike; every other form carries no `until` — its
-window runs `[validFrom, infinity)`, or the target is non-temporal."""
+"""The mutations whose window is a PAIR of Valid-Time bounds, keyed and target
+alike; every other form carries no `until` — its window runs `[validFrom,
+infinity)`, or the target is non-temporal."""
 
 # The framework-owned transaction observation is NOT durable instruction state, so
 # these control keys are forbidden on a write row. All THREE that
@@ -270,14 +271,11 @@ class PredicateSelection:
 @dataclass(frozen=True, slots=True)
 class PredicateWriteInstruction:
     """A predicate-selected (set-based) write: a ``mutation`` on every row of
-    ``target`` matching its predicate, with ``assignments`` on the amendment
-    forms."""
+    ``target`` matching its predicate, with ``assignments`` on an amendment."""
 
     mutation: PredicateMutation
     target: PredicateSelection
     assignments: tuple[WriteAssignment, ...] = ()
-    valid_from: dt.datetime | None = None
-    until: dt.datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -337,15 +335,14 @@ class PreparedKeyedWrite:
 class PreparedPredicateWrite:
     """A predicate mutation over a resolved selection and managed assignments.
 
-    ``valid_time_window`` is the judged window, ``None`` for a target without
-    Valid Time. Only this module's producers construct one, so holding one
-    means the write was judged admissible against its target.
+    Only this module's producers construct one, so holding one means the write
+    was judged admissible against its target, which one readless statement
+    writes.
     """
 
     mutation: PredicateMutation
     selection: ResolvedMutationSelection
     managed_assignments: tuple[PreparedAssignment, ...]
-    valid_time_window: TimeInterval | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -411,13 +408,11 @@ def _prepared_predicate_write(
     mutation: PredicateMutation,
     selection: ResolvedMutationSelection,
     managed_assignments: tuple[PreparedAssignment, ...],
-    valid_time_window: TimeInterval | None,
 ) -> PreparedPredicateWrite:
     prepared = object.__new__(PreparedPredicateWrite)
     object.__setattr__(prepared, "mutation", mutation)
     object.__setattr__(prepared, "selection", selection)
     object.__setattr__(prepared, "managed_assignments", managed_assignments)
-    object.__setattr__(prepared, "valid_time_window", valid_time_window)
     return prepared
 
 
@@ -489,11 +484,12 @@ def deserialize(doc: object) -> WriteInstruction:
 
     Discriminates the three shapes by their required carrier (``rows`` -> keyed,
     ``target`` -> predicate, ``row`` -> caller-addressed), validates the closed
-    shape, the mutation enum, the
-    Valid-Time-bound pairing rules (a bounded ``*Until`` carries both bounds, every
-    other form carries no ``until``), that a caller-addressed write states exactly
-    one revision, and — for a keyed write — that no row carries a forbidden
-    observation control key or a smuggled Transaction-Time instant.
+    shape, the mutation enum, the keyed and caller-addressed Valid-Time-bound
+    pairing rules (a bounded ``*Until`` carries both bounds, every other form
+    carries no ``until``; a predicate write carries no bound at all), that a
+    caller-addressed write states exactly one revision, and — for a keyed write
+    — that no row carries a forbidden observation control key or a smuggled
+    Transaction-Time instant.
 
     Each bound is a finite canonical ``timestamp`` decoded by the Wire codec, whose
     refusals keep their ``neutral-literal-*`` classification; ``infinity`` is no
@@ -662,11 +658,7 @@ def _assignments(node: Mapping[str, object]) -> tuple[WriteAssignment, ...]:
 
 
 def _predicate(node: Mapping[str, object]) -> PredicateWriteInstruction:
-    _reject_extra(
-        node,
-        frozenset({"mutation", "target", "assignments", "validFrom", "until"}),
-        "predicate write",
-    )
+    _reject_extra(node, frozenset({"mutation", "target", "assignments"}), "predicate write")
     _require(node, ("mutation", "target"), "predicate write")
     mutation = _mutation(node, _PREDICATE_MUTATIONS, "predicate write")
     target = _target(node)
@@ -682,15 +674,8 @@ def _predicate(node: Mapping[str, object]) -> PredicateWriteInstruction:
                 "and MUST NOT carry `assignments`"
             )
         assignments = ()
-    valid_from = _bound(node, "validFrom", "predicate write")
-    until = _bound(node, "until", "predicate write")
-    _check_valid_time_bounds(mutation, valid_from, until, "predicate write")
     return PredicateWriteInstruction(
-        mutation=cast("PredicateMutation", mutation),
-        target=target,
-        assignments=assignments,
-        valid_from=valid_from,
-        until=until,
+        mutation=cast("PredicateMutation", mutation), target=target, assignments=assignments
     )
 
 
@@ -777,7 +762,6 @@ def serialize(instruction: WriteInstruction) -> dict[str, object]:
         predicate_body["assignments"] = [
             {"attr": a.attr, "value": a.value} for a in instruction.assignments
         ]
-    _emit_bounds(predicate_body, instruction.valid_from, instruction.until)
     return predicate_body
 
 
@@ -803,9 +787,7 @@ def _spelled(mutation: str, surface: _WriteSurface) -> str:
     caller can act on. Scoped to the two applicability refusals below, whose
     verbs state no window; every other message in this module still names the
     token it was given."""
-    if surface == "keyed":
-        return mutation
-    return f"{mutation}_where" if surface == "predicate" else f"{mutation}_if"
+    return mutation if surface == "keyed" else f"{mutation}_if"
 
 
 def _temporal_delete_refusal(
@@ -849,9 +831,7 @@ def _non_temporal_milestone_refusal(
     )
 
 
-def _temporal_singleton_refusal(
-    entity_name: str, instruction: KeyedWriteInstruction | PredicateWriteInstruction
-) -> str | None:
+def _temporal_singleton_refusal(entity_name: str, instruction: KeyedWriteInstruction) -> str | None:
     """Why a TEMPORAL target refuses ``instruction``'s ROW COUNT, or ``None``
     when this rule has nothing to say about it.
 
@@ -862,7 +842,7 @@ def _temporal_singleton_refusal(
     rather than one wider write (`m-unit-work` "A temporal keyed instruction
     carries exactly one row").
     """
-    if not isinstance(instruction, KeyedWriteInstruction) or len(instruction.rows) == 1:
+    if len(instruction.rows) == 1:
         return None
     return (
         f"{entity_name!r}: a keyed {instruction.mutation!r} on a temporal target carries "
@@ -997,18 +977,9 @@ def _prepare_write(
     authored_members: Set[str] | None,
     members: Callable[[], Mapping[str, object]] | None,
 ) -> PreparedWrite | PreparedTargetWrite:
-    """The sole admissibility judgment of a write: its target first, then its
-    payload.
-
-    The target stage resolves the Entity, then asks whether it admits the verb
-    (both halves of temporal applicability), the window, and the row count. A
-    predicate write first asks whether its target can be written without being
-    read at all (:func:`_judge_readless_family`).
-    Only then is the payload measured — a keyed row's subtype shape, members,
-    and values, or a predicate write's selecting predicate, family refusal, and
-    assignments in authored order — so a call whose verb or window is wrong for
-    its target hears that before any complaint about what it carries.
-    """
+    """The sole admissibility judgment of a write, each family's target first
+    and then its payload, so a call whose verb or window is wrong for its
+    target hears that before any complaint about what it carries."""
     if isinstance(instruction, TargetWriteInstruction):
         return _prepare_target_write(
             instruction,
@@ -1018,37 +989,74 @@ def _prepare_write(
             authored_members=authored_members,
             members=members,
         )
-    keyed = isinstance(instruction, KeyedWriteInstruction)
-    entity = resolve_target(model, instruction.entity if keyed else instruction.target.entity)
-    if not keyed:
-        position = _family_position(model, entity)
-        _judge_readless_family(model, entity, position, instruction.mutation)
-    window = _judge_target(model, entity, instruction)
+    if isinstance(instruction, KeyedWriteInstruction):
+        return _prepare_keyed_write(
+            instruction,
+            model,
+            converter=converter,
+            source_access=source_access,
+            authored_members=authored_members,
+            members=members,
+        )
+    # A predicate write states its assignments.
+    assert members is None
+    return _prepare_predicate_write(
+        instruction, model, converter=converter, source_access=source_access
+    )
+
+
+def _prepare_keyed_write(
+    instruction: KeyedWriteInstruction,
+    model: AcceptedMetamodel,
+    *,
+    converter: _LeafConverter,
+    source_access: SourceAccess,
+    authored_members: Set[str] | None,
+    members: Callable[[], Mapping[str, object]] | None,
+) -> PreparedKeyedWrite:
+    """Judge a keyed write: its verb and window against its target, then its
+    row count, then its rows' subtype shape, members, and values."""
+    entity = resolve_target(model, instruction.entity)
+    shape = temporal_read.view(model).shape(entity.identity)
+    window = _judge_applicability(model, entity, shape, instruction, surface="keyed")
+    if _is_temporal(shape):
+        plural = _temporal_singleton_refusal(entity.identity.name, instruction)
+        if plural is not None:
+            raise InstructionRejectedError(TEMPORAL_KEYED_WRITE_MULTI_ROW, plural)
     if members is not None:
-        # A predicate write states its assignments.
-        assert isinstance(instruction, KeyedWriteInstruction)
         assigned = members()
         (row,) = instruction.rows
         instruction = replace(instruction, rows=({**row, **assigned},))
         authored_members = assigned.keys()
-    selection = _member_selection(model, entity)
-    if isinstance(instruction, KeyedWriteInstruction):
-        return _prepare_keyed_payload(
-            instruction,
-            model,
-            entity,
-            selection,
-            window,
-            converter=converter,
-            source_access=source_access,
-            authored_members=authored_members,
-        )
+    return _prepare_keyed_payload(
+        instruction,
+        model,
+        entity,
+        _member_selection(model, entity),
+        window,
+        converter=converter,
+        source_access=source_access,
+        authored_members=authored_members,
+    )
+
+
+def _prepare_predicate_write(
+    instruction: PredicateWriteInstruction,
+    model: AcceptedMetamodel,
+    *,
+    converter: _LeafConverter,
+    source_access: SourceAccess,
+) -> PreparedPredicateWrite:
+    """Judge a predicate write: whether its target can be written without
+    being read at all, then its selecting predicate, family, and assignments."""
+    entity = resolve_target(model, instruction.target.entity)
+    position = _family_position(model, entity)
+    _judge_readless_family(model, entity, position, instruction.mutation)
     return _prepare_predicate_payload(
         instruction,
         model,
         entity,
-        selection,
-        window,
+        position.member_selection,
         converter=converter,
         source_access=source_access,
     )
@@ -1075,31 +1083,19 @@ def _judge_readless_family(
         )
 
 
-_PREDICATE_VERBS: Final[Mapping[str, str]] = MappingProxyType(
-    {
-        "amend": "amend",
-        "amendUntil": "amend",
-        "delete": "delete",
-        "terminate": "terminate",
-        "terminateUntil": "terminate",
-    }
-)
-
-
 def _readless_family_advice(
     entity: EntityMetadata,
     position: inheritance.InheritanceEntityView,
     shape: temporal_read.TemporalShape | None,
     mutation: PredicateMutation,
 ) -> str:
-    verb = _PREDICATE_VERBS[mutation]
     temporal = _is_temporal(shape)
-    # A destructive verb's keyed sibling is the one the target's kind admits.
-    sibling = verb if verb == "amend" else "terminate" if temporal else "delete"
+    # A deletion's keyed sibling is the destructive verb the target's kind admits.
+    sibling = mutation if mutation == "amend" else "terminate" if temporal else "delete"
     revision = "version" if _is_versioned(position) else "tx_start"
     return (
         f"{entity.identity.name} is {'temporal' if temporal else 'versioned'}, so "
-        f"{verb}_where cannot change it without reading it. Read it (find / stream) and "
+        f"{mutation}_where cannot change it without reading it. Read it (find / stream) and "
         f"{sibling} each object, or use {sibling}_if with the {revision} you hold."
     )
 
@@ -1120,14 +1116,16 @@ def _is_temporal(shape: temporal_read.TemporalShape | None) -> bool:
     return isinstance(shape, temporal_read.TransactionTimeOnly | temporal_read.Bitemporal)
 
 
-def _judge_target(
+def _judge_applicability(
     model: AcceptedMetamodel,
     entity: EntityMetadata,
-    instruction: KeyedWriteInstruction | PredicateWriteInstruction,
+    shape: temporal_read.TemporalShape | None,
+    instruction: KeyedWriteInstruction | TargetWriteInstruction,
+    *,
+    surface: _WriteSurface,
 ) -> TimeInterval | None:
-    """Judge the verb, window, and row count against ``entity``'s Temporal
-    Shape, and answer the managed window, ``None`` for a target without Valid
-    Time.
+    """Judge the verb and window against ``entity``'s Temporal Shape, and
+    answer the managed window, ``None`` for a target without Valid Time.
 
     A temporal ``delete`` is refused before the window: ``delete`` states no
     bound in any spelling, so answering it by naming the ``valid_from`` a
@@ -1137,12 +1135,8 @@ def _judge_target(
     an argument it can drop, while a boundless ``terminate`` clears the window
     and is refused for its verb.
     """
-    surface: _WriteSurface = (
-        "keyed" if isinstance(instruction, KeyedWriteInstruction) else "predicate"
-    )
     name = entity.identity.name
-    shape = temporal_read.view(model).shape(entity.identity)
-    temporal = isinstance(shape, temporal_read.TransactionTimeOnly | temporal_read.Bitemporal)
+    temporal = _is_temporal(shape)
     if temporal:
         refusal = _temporal_delete_refusal(name, instruction.mutation, surface=surface)
         if refusal is not None:
@@ -1154,11 +1148,7 @@ def _judge_target(
         instruction.valid_from,
         instruction.until,
     )
-    if temporal:
-        plural = _temporal_singleton_refusal(name, instruction)
-        if plural is not None:
-            raise InstructionRejectedError(TEMPORAL_KEYED_WRITE_MULTI_ROW, plural)
-    else:
+    if not temporal:
         refusal = _non_temporal_milestone_refusal(name, instruction.mutation, surface=surface)
         if refusal is not None:
             raise WriteInstructionError(refusal)
@@ -1243,35 +1233,21 @@ def _prepare_target_write(
     authored_members: Set[str] | None,
     members: Callable[[], Mapping[str, object]] | None,
 ) -> PreparedTargetWrite:
-    """Judge a caller-addressed write: its target, verb, and window, then its
-    revision arguments, then its payload.
+    """Judge a caller-addressed write: its verb and window, then its revision
+    arguments, then its payload.
 
-    The verb's applicability follows the keyed rule, a temporal ``delete``
-    heard before the window and a non-temporal ``terminate`` after it
-    (:func:`_judge_target`). The revision arguments are judged ahead of the
-    payload because they decide what the write may be at all — a target with
-    no revision, one whose revision kind the caller misstated, or one whose
-    required revision is missing is refused before any member it names is
-    weighed.
+    The verb's applicability follows the keyed rule
+    (:func:`_judge_applicability`). The revision arguments are judged ahead of
+    the payload because they decide what the write may be at all — a target
+    with no revision, one whose revision kind the caller misstated, or one
+    whose required revision is missing is refused before any member it names
+    is weighed.
     """
     entity = resolve_target(model, instruction.entity)
     shape = temporal_read.view(model).shape(entity.identity)
-    root = _family_root(model, entity)
-    name = entity.identity.name
-    temporal = isinstance(shape, temporal_read.TransactionTimeOnly | temporal_read.Bitemporal)
-    if temporal:
-        refusal = _temporal_delete_refusal(name, instruction.mutation, surface="target")
-        if refusal is not None:
-            raise WriteInstructionError(refusal)
-    window = _judge_window(
-        root, shape, instruction.mutation, instruction.valid_from, instruction.until
-    )
-    if not temporal:
-        refusal = _non_temporal_milestone_refusal(name, instruction.mutation, surface="target")
-        if refusal is not None:
-            raise WriteInstructionError(refusal)
+    window = _judge_applicability(model, entity, shape, instruction, surface="target")
     position = _family_position(model, entity)
-    expectation = _judge_expectation(root, shape, position, instruction)
+    expectation = _judge_expectation(position.root, shape, position, instruction)
     if members is not None:
         instruction = replace(instruction, row={**instruction.row, **members()})
     row, assigns = _prepare_target_payload(
@@ -1691,7 +1667,6 @@ def _prepare_predicate_payload(
     model: AcceptedMetamodel,
     entity: EntityMetadata,
     selection: inheritance.EntityMemberSelection,
-    valid_time_window: TimeInterval | None,
     *,
     converter: _LeafConverter,
     source_access: SourceAccess,
@@ -1759,7 +1734,6 @@ def _prepare_predicate_payload(
         instruction.mutation,
         ResolvedMutationSelection(entity, validated),
         tuple(prepared),
-        valid_time_window,
     )
 
 

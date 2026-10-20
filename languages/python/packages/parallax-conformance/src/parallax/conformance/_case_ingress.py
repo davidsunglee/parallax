@@ -255,13 +255,7 @@ def _normalize_instruction(
         instruction.target.entity,
         _normalize_predicate(predicate_node, model),
     )
-    return PredicateWriteInstruction(
-        instruction.mutation,
-        selection,
-        assignments,
-        instruction.valid_from,
-        instruction.until,
-    )
+    return PredicateWriteInstruction(instruction.mutation, selection, assignments)
 
 
 def _entity_members(

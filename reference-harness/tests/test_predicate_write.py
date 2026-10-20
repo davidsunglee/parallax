@@ -127,8 +127,10 @@ def test_schema_accepts_object_and_array_predicate_write_literals(literal: objec
     [
         ("amend", {"assignments": []}),
         ("delete", {"assignments": [{"attr": "Wallet.balance", "value": 0.00}]}),
-        ("terminate", {"assignments": [{"attr": "Wallet.balance", "value": 0.00}]}),
-        ("terminateUntil", {"until": None}),
+        ("terminate", {}),
+        ("terminateUntil", {}),
+        ("delete", {"validFrom": "2024-01-01T00:00:00+00:00"}),
+        ("delete", {"at": "2024-01-01T00:00:00+00:00"}),
     ],
 )
 def test_schema_enforces_predicate_write_verb_shape(
@@ -136,9 +138,9 @@ def test_schema_enforces_predicate_write_verb_shape(
 ) -> None:
     instruction = _update_instruction()
     instruction["mutation"] = mutation
-    if mutation in {"delete", "terminate", "terminateUntil"}:
+    if mutation != "amend":
         instruction.pop("assignments")
-    instruction.update({key: value for key, value in edits.items() if value is not None})
+    instruction.update(edits)
     assert next(_schema().iter_errors(_scenario_case(instruction)), None) is not None
 
 

@@ -202,7 +202,7 @@ def _rejected_predicate_write(
     case: case_format.Case, row: Mapping[str, object], model: AcceptedMetamodel
 ) -> str:
     try:
-        instruction = instructions.deserialize(case_document.canonical_predicate_doc(row))
+        instruction = instructions.deserialize(row)
     except WritePlanningError as exc:  # pragma: no cover - schema validation owns malformed writes
         raise EngineError(f"{case.path.name}: {exc}") from exc
     # A `target` implies a predicate write.

@@ -53,6 +53,7 @@ __all__ = [
     "TypedKeyedInsertSource",
     "TypedKeyedWriteSource",
     "TypedPredicateWriteAdapter",
+    "typed_selection",
 ]
 
 
@@ -99,6 +100,22 @@ def prepared_typed_write(
         members=members,
     )
     return prepared
+
+
+def typed_selection(
+    query: ObjectQuery[Any, Any], write_model: SelectedWriteModel
+) -> PredicateSelection:
+    """``query`` as the selection a predicate write states, refused as no write
+    target unless it is mutation-compatible.
+
+    The authored predicate is captured, never encoded: the selection carries
+    the Typed interpretation of it, bound lazily against ``write_model``.
+    """
+    selection = mutation_selection(query)
+    return PredicateSelection(
+        selection.target.canonical,
+        typed_interpretation(selection.predicate, write_model.model.meta, write_model.classes),
+    )
 
 
 def write_assignments(
@@ -284,15 +301,11 @@ class TypedPredicateWriteAdapter:
     every ingress prepares.
 
     Inert when constructed and private to one verb call. The query's own form is
-    its one representation judgment, made once :meth:`prepare` is asked: a query
-    carrying a result-shaping, temporal, narrowing, or deep-fetch clause is no
-    write target (:func:`~parallax.core.object_query.mutation_selection`,
-    ``query-not-mutation-compatible``), and no instruction has a spelling for
-    such a clause. The authored predicate is captured, never encoded: the
-    instruction carries the Typed adapter over it, bound lazily against the
-    write projection the attempt lends. Everything the instruction states is
-    judged by
-    :func:`~parallax.core._execution._unit_work.instructions.prepare_typed_write`.
+    its one representation judgment, made once :meth:`prepare` is asked
+    (:func:`typed_selection`): a query carrying a result-shaping, temporal,
+    narrowing, or deep-fetch clause is no write target, and no instruction has
+    a spelling for such a clause. Everything the instruction states is judged
+    by :func:`~parallax.core._execution._unit_work.instructions.prepare_typed_write`.
     """
 
     __slots__ = ("_assignments", "_query")
@@ -304,26 +317,14 @@ class TypedPredicateWriteAdapter:
         self._assignments = assignments
 
     def prepare(
-        self,
-        write_model: SelectedWriteModel,
-        mutation: PredicateMutation,
-        *,
-        valid_from: dt.datetime | None,
-        until: dt.datetime | None,
+        self, write_model: SelectedWriteModel, mutation: PredicateMutation
     ) -> PreparedPredicateWrite:
-        selection = mutation_selection(self._query)
-        meta = write_model.model.meta
         instruction = PredicateWriteInstruction(
             mutation,
-            PredicateSelection(
-                selection.target.canonical,
-                typed_interpretation(selection.predicate, meta, write_model.classes),
-            ),
+            typed_selection(self._query, write_model),
             write_assignments(self._assignments),
-            valid_from,
-            until,
         )
-        return instructions.prepare_typed_write(instruction, meta)
+        return instructions.prepare_typed_write(instruction, write_model.model.meta)
 
 
 class TypedInstanceTargetWriteAdapter:

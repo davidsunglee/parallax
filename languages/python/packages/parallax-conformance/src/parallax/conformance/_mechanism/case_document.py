@@ -11,7 +11,6 @@ from parallax.core.unit_work import Concurrency
 __all__ = [
     "RunOnly",
     "batch_size_of",
-    "canonical_predicate_doc",
     "concurrency",
     "eligibility",
     "has_action_step",
@@ -137,19 +136,3 @@ def has_action_step(steps: Sequence[Mapping[str, object]]) -> bool:
     at all. **Both** paths execute `write:` steps: the shapes overlap in the
     write step alone, which is why the split is drawn on the action step."""
     return any("action" in step for step in steps)
-
-
-def canonical_predicate_doc(raw_write: Mapping[str, object]) -> dict[str, object]:
-    """A scenario predicate-write step's own ``write`` field, translated to the
-    canonical ``write-instruction.schema.json`` predicate shape
-    (`m-case-format` "Predicate-selected write instruction"): ``at`` (the
-    Clock-context Transaction-Time instant) is DROPPED — never an instruction
-    field, ADR 0010. ``validFrom`` and ``until`` already use the canonical
-    spelling. Every caller that hands a raw case document to
-    :func:`~parallax.core._execution._unit_work.instructions.deserialize` routes through
-    this first — the canonical deserializer rejects ``at``/``until`` outright
-    as unexpected keys.
-    """
-    doc = dict(raw_write)
-    doc.pop("at", None)
-    return doc

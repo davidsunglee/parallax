@@ -7,8 +7,8 @@ asserts it of each representation in turn. Each write family states only the
 axes its own order reads. A :class:`KeyedWriteScenario` names the target Entity,
 the verb, the Concurrency Preference, how the source value was obtained, what
 the caller authored, and which window it stated. A
-:class:`PredicateWriteScenario` names the selection, the assignments, the
-original window keywords, and any pending write ahead of it. A
+:class:`PredicateWriteScenario` names the selection, how a Wire call spells it,
+the assignments, and any pending write ahead of it. A
 :class:`TargetWriteScenario` names the addressed input, the revision and window
 keywords, and any pending write ahead of it. Neither reads a source in the
 writing attempt: a predicate or conditional write consults none.
@@ -45,7 +45,7 @@ from decimal import Decimal
 from typing import Any, Final, Literal, cast
 
 from parallax.conformance.vo_models import ContactAddress, ContactGeo, ContactPhone, ContactPoint
-from parallax.core import DomainModel, Predicate
+from parallax.core import DomainModel, Predicate, object_query
 from parallax.core._execution._unit_work.instructions import InstructionRejectedError
 from parallax.core.base import SQL_NULL, DocumentValue, PresentDocument
 from parallax.core.db_port import MappingRow
@@ -56,6 +56,7 @@ from parallax.core.execution import ExecutionFailure
 from parallax.core.object_query._fluent import ObjectQuery
 from parallax.core.predicate._interpretation import COMPARE
 from parallax.snapshot import ReadOnlyTxnContext, ScopedDatabase, TxnContext, WireEntity
+from parallax.snapshot._handle._wire_writes import WirePredicateTarget
 from tests._support import inheritance_models as im
 from tests._support import mirrored_models as mm
 from tests._support.db_port import (
@@ -140,6 +141,7 @@ __all__ = [
     "Until",
     "Verb",
     "Window",
+    "WireTarget",
     "WriteScenario",
     "answer",
     "answered",
@@ -639,8 +641,8 @@ class KeyedWriteScenario:
         return "-".join(parts)
 
 
-type PredicateVerb = Literal["amend", "delete", "terminate"]
-"""The base verb of a ``_where`` call: ``amend`` is ``amend_where``."""
+type PredicateVerb = Literal["amend", "delete"]
+"""The verb of a ``_where`` call: ``amend`` is ``amend_where``."""
 
 type Selection = Literal["ordinary", "inverted", "unbound", "unshaped"]
 """What the selecting predicate states.
@@ -652,6 +654,13 @@ Typed path, which only the Typed representation can author. ``unshaped`` is each
 representation's own shape fault: a Typed query carrying a result-shaping clause,
 and a Wire predicate node the canonical algebra has no spelling for.
 """
+
+type WireTarget = Literal["document", "query", "query_node", "query_document"]
+"""How a Wire call spells its selection: the canonical ``{entity, predicate}``
+document, the Typed query the Typed call hands over, or — neither of them a
+write target — the canonical Object Query node of that selection and its
+serialized document. The Typed call spells it one way, so every spelling but
+``document`` is Wire alone."""
 
 type Assignments = Literal["ordinary", "undeclared", "none"]
 """What an amendment assigns: the target's own member, a member the target does
@@ -788,9 +797,8 @@ class PredicateWriteScenario:
 
     target: PredicateTarget
     verb: PredicateVerb
-    valid_from: Start = "omitted"
-    until: Until = "omitted"
     selection: Selection = "ordinary"
+    wire_target: WireTarget = "document"
     assignments: Assignments = "ordinary"
     concurrency: Concurrency = "optimistic"
     pending: bool = False
@@ -802,12 +810,10 @@ class PredicateWriteScenario:
         if self.label:
             return self.label
         parts = [self.target.name, f"{self.verb}_where", self.concurrency]
-        if self.valid_from != "omitted":
-            parts.append(f"valid-from-{self.valid_from}")
-        if self.until != "omitted":
-            parts.append(f"until-{self.until}")
         if self.selection != "ordinary":
             parts.append(f"{self.selection}-selection")
+        if self.wire_target != "document":
+            parts.append(f"wire-{self.wire_target}")
         if self.verb == "amend" and self.assignments != "ordinary":
             parts.append(f"{self.assignments}-assignments")
         if self.pending:
@@ -1065,8 +1071,9 @@ def reachable(scenario: WriteScenario, representation: Representation) -> bool:
     crossing is reachable, and is exactly the one the repeated-insert refusal
     is asked over.
 
-    One predicate shape is Typed alone: an ``unbound`` selection, whose
-    unfinished path no Wire document has a spelling for.
+    A predicate shape spelled through a Wire target other than the canonical
+    document is Wire alone; an ``unbound`` selection spelled as that document is
+    Typed alone, since its unfinished path has no document spelling.
 
     A conditional shape is reachable where its representation spells it: a
     mapping key is Typed alone; the Wire-only documents, a published node handed
@@ -1075,6 +1082,8 @@ def reachable(scenario: WriteScenario, representation: Representation) -> bool:
     replacement is always addressed by an instance.
     """
     if isinstance(scenario, PredicateWriteScenario):
+        if scenario.wire_target != "document":
+            return representation == "wire"
         return scenario.selection != "unbound" or representation == "typed"
     if isinstance(scenario, TargetWriteScenario):
         return _target_reachable(scenario, representation)
@@ -1510,11 +1519,10 @@ def _predicate_body(
 ) -> None:
     if scenario.pending:
         _open_pending(tx, scenario.target, representation)
-    window = _stated_window(scenario)
     if representation == "typed":
-        _call_typed_predicate(tx, scenario, window)
+        _call_typed_predicate(tx, scenario)
     else:
-        _call_wire_predicate(tx, scenario, window)
+        _call_wire_predicate(tx, scenario)
 
 
 def _open_pending(tx: TxnContext, target: PredicateTarget, representation: Representation) -> None:
@@ -1525,7 +1533,7 @@ def _open_pending(tx: TxnContext, target: PredicateTarget, representation: Repre
         tx.wire.insert(target.entity, dict(target.payload), **stated_start(target.valid_from))
 
 
-def _stated_window(scenario: PredicateWriteScenario | TargetWriteScenario) -> dict[str, Any]:
+def _stated_window(scenario: TargetWriteScenario) -> dict[str, Any]:
     """The window keywords exactly as the scenario states them: an omitted one
     is not passed, and every other one is, ``None`` included."""
     instants: Mapping[str, dt.datetime | None] = {
@@ -1546,8 +1554,7 @@ def _stated_window(scenario: PredicateWriteScenario | TargetWriteScenario) -> di
     elif scenario.until != "omitted":
         window["until"] = instants[scenario.until]
     if window and scenario.verb == "delete":
-        # Neither `delete_where` nor `delete_if` has a window keyword to state
-        # one through.
+        # `delete_if` has no window keyword to state one through.
         raise AssertionError(f"{scenario}: a deletion states no window")
     return window
 
@@ -1576,32 +1583,47 @@ def _typed_assignments(scenario: PredicateWriteScenario) -> tuple[AttributeAssig
     return (target.typed_change if scenario.assignments == "ordinary" else target.typed_undeclared,)
 
 
-def _call_typed_predicate(
-    tx: TxnContext, scenario: PredicateWriteScenario, window: Mapping[str, Any]
-) -> None:
+def _call_typed_predicate(tx: TxnContext, scenario: PredicateWriteScenario) -> None:
     query = _typed_query(scenario)
     match scenario.verb:
         case "amend":
-            tx.amend_where(query, *_typed_assignments(scenario), **window)
+            tx.amend_where(query, *_typed_assignments(scenario))
         case "delete":
             tx.delete_where(query)
-        case "terminate":
-            tx.terminate_where(query, **window)
 
 
-def _wire_selection(scenario: PredicateWriteScenario) -> Mapping[str, object]:
-    entity = scenario.target.entity
-    path = f"{entity}.id"
+def _wire_target(scenario: PredicateWriteScenario) -> WirePredicateTarget:
+    match scenario.wire_target:
+        case "document":
+            return {"entity": scenario.target.entity, "predicate": _wire_predicate(scenario)}
+        case "query":
+            return _typed_query(scenario)
+        case "query_node":
+            return cast("WirePredicateTarget", object_query.deserialize(_query_document(scenario)))
+        case "query_document":
+            return _query_document(scenario)
+
+
+def _wire_predicate(scenario: PredicateWriteScenario) -> Mapping[str, object]:
+    path = f"{scenario.target.entity}.id"
     match scenario.selection:
         case "ordinary":
-            predicate: Mapping[str, object] = {"eq": {"path": path, "value": _PREDICATE_KEY}}
+            return {"eq": {"path": path, "value": _PREDICATE_KEY}}
         case "inverted":
-            predicate = {"between": {"path": path, "lower": 10, "upper": _PREDICATE_KEY}}
+            return {"between": {"path": path, "lower": 10, "upper": _PREDICATE_KEY}}
         case "unshaped":
-            predicate = {"nonsense": {}}
+            return {"nonsense": {}}
         case "unbound":
             raise AssertionError(f"{scenario}: no Wire document spells an unfinished path")
-    return {"entity": entity, "predicate": predicate}
+
+
+def _query_document(scenario: PredicateWriteScenario) -> Mapping[str, object]:
+    """The canonical Object Query document selecting the target's stored object."""
+    entity = scenario.target.entity
+    return {
+        "target": entity,
+        "predicate": {"eq": {"path": f"{entity}.id", "value": _PREDICATE_KEY}},
+    }
 
 
 def _wire_changes(scenario: PredicateWriteScenario) -> Mapping[str, object]:
@@ -1614,17 +1636,13 @@ def _wire_changes(scenario: PredicateWriteScenario) -> Mapping[str, object]:
             return {}
 
 
-def _call_wire_predicate(
-    tx: TxnContext, scenario: PredicateWriteScenario, window: Mapping[str, Any]
-) -> None:
-    selection = _wire_selection(scenario)
+def _call_wire_predicate(tx: TxnContext, scenario: PredicateWriteScenario) -> None:
+    target = _wire_target(scenario)
     match scenario.verb:
         case "amend":
-            tx.wire.amend_where(selection, _wire_changes(scenario), **window)
+            tx.wire.amend_where(target, _wire_changes(scenario))
         case "delete":
-            tx.wire.delete_where(selection)
-        case "terminate":
-            tx.wire.terminate_where(selection, **window)
+            tx.wire.delete_where(target)
 
 
 def _target_reachable(scenario: TargetWriteScenario, representation: Representation) -> bool:

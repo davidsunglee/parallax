@@ -148,10 +148,11 @@ how `m-predicate` hosts `predicate.schema.json`; `m-case-format` and
   names, `replace` states the object's complete writable state
   (*Source-authorized replacement*), and `delete` / `terminate` end it, each
   with its bounded `*Until` form where one exists;
-- a **predicate-selected** instruction — a `mutation` on every row of a `target`
-  (`entity` plus a bare `m-predicate` predicate) matching that predicate, with
-  `assignments` on the amendment forms, written by one readless statement and
-  so admitted only over an unversioned, non-temporal target (`m-batch-write`);
+- a **predicate-selected** instruction — an `amend` or `delete` of every row of
+  a `target` (`entity` plus a bare `m-predicate` predicate) matching that
+  predicate, with `assignments` on the amendment, written by one readless
+  statement and so admitted only over an unversioned, non-temporal target, which
+  has no history to close and no Valid Time to bound (`m-batch-write`);
 - a **caller-addressed** (target) instruction — an amendment (`amend` /
   `amendUntil`), a complete replacement (`replace` / `replaceUntil`), a
   deletion (`delete`), or a termination (`terminate` / `terminateUntil`) of the
@@ -251,10 +252,11 @@ members, nullability, and other structural failures retain their existing rules.
 
 Two producer operations converge on the same private immutable prepared-write
 algebra, and they are the one admissibility judgment every ingress crosses. Each
-resolves the target first and judges whether it admits the write: a
+resolves the target first and judges whether it admits the write. A
 predicate-selected write refuses a versioned or temporal target
 (`set-based-write-target-unsupported`, `m-batch-write`) before anything else is
-judged; a temporal target refuses `delete`; the window must be stated as the verb's form requires,
+judged. A keyed or caller-addressed write is judged for applicability: a temporal
+target refuses `delete`; the window must be stated as the verb's form requires,
 admitted by the target's temporal profile, and ordered; a non-temporal target
 refuses a milestone verb; and a temporal keyed instruction carries one row. Only
 then is the payload judged — a keyed row's subtype shape, members, and values, or

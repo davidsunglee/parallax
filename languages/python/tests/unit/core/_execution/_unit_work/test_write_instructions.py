@@ -224,32 +224,6 @@ _INSTRUCTIONS: list[tuple[str, dict[str, Any]]] = [
         },
     ),
     (
-        "predicate-terminate-audit",
-        {
-            "mutation": "terminate",
-            "target": {"entity": "Balance", "predicate": {"true": {}}},
-        },
-    ),
-    (
-        "predicate-update-bitemporal-plain",
-        {
-            "mutation": "amend",
-            "target": {"entity": "Position", "predicate": {"true": {}}},
-            "assignments": [{"attr": "Position.value", "value": 150.00}],
-            "validFrom": _B1,
-        },
-    ),
-    (
-        "predicate-updateUntil-bitemporal-bounded",
-        {
-            "mutation": "amendUntil",
-            "target": {"entity": "Position", "predicate": {"true": {}}},
-            "assignments": [{"attr": "Position.value", "value": 150.00}],
-            "validFrom": _B1,
-            "until": _B2,
-        },
-    ),
-    (
         "target-update-versioned",
         {
             "mutation": "amend",
@@ -302,15 +276,6 @@ _INSTRUCTIONS: list[tuple[str, dict[str, Any]]] = [
             "entity": "Position",
             "row": {"id": 9, "acctNum": "D", "value": 1.0},
             "ifTxStart": _B1,
-            "validFrom": _B1,
-            "until": _B2,
-        },
-    ),
-    (
-        "predicate-terminateUntil-bitemporal-bounded",
-        {
-            "mutation": "terminateUntil",
-            "target": {"entity": "Position", "predicate": {"true": {}}},
             "validFrom": _B1,
             "until": _B2,
         },
@@ -465,27 +430,12 @@ def test_keyed_structural_rejections(doc: dict[str, Any], match: str) -> None:
             },
             "MUST NOT carry `assignments`",
         ),
-        (
-            {
-                "mutation": "terminate",
-                "target": {"entity": "Balance", "predicate": {"true": {}}},
-                "assignments": [{"attr": "Balance.value", "value": 0}],
-            },
-            "MUST NOT carry `assignments`",
-        ),
-        (
-            {
-                "mutation": "terminateUntil",
-                "target": {"entity": "Position", "predicate": {"true": {}}},
-                "assignments": [{"attr": "Position.value", "value": 0}],
-                "validFrom": _B1,
-                "until": _B2,
-            },
-            "MUST NOT carry `assignments`",
-        ),
-        (
-            {"mutation": "insert", "target": {"entity": "Account", "predicate": {"true": {}}}},
-            "`mutation` must be one of",
+        *(
+            (
+                {"mutation": mutation, "target": {"entity": "Position", "predicate": {"true": {}}}},
+                "`mutation` must be one of",
+            )
+            for mutation in ("insert", "terminate", "amendUntil", "terminateUntil", "replace")
         ),
         ({"mutation": "delete", "target": [1, 2]}, "`target` must be a mapping"),
         ({"mutation": "delete", "target": {"entity": "Account"}}, "missing required"),
@@ -517,14 +467,16 @@ def test_keyed_structural_rejections(doc: dict[str, Any], match: str) -> None:
             },
             "`Class.member` reference",
         ),
-        (
-            {
-                "mutation": "amendUntil",
-                "target": {"entity": "Position", "predicate": {"true": {}}},
-                "assignments": [{"attr": "Position.value", "value": 0}],
-                "validFrom": _B1,
-            },
-            "MUST carry both",
+        *(
+            (
+                {
+                    "mutation": "delete",
+                    "target": {"entity": "Position", "predicate": {"true": {}}},
+                    bound: _B1,
+                },
+                rf"unexpected key\(s\) \['{bound}'\]",
+            )
+            for bound in ("validFrom", "until", "at")
         ),
     ],
 )
@@ -1101,6 +1053,7 @@ def test_typed_temporal_bounds_stay_native_until_wire_serialization() -> None:
         wi.deserialize({**serialized, "rows": [{"id": 1, "value": "5.00"}]}),
         _POSITION,
     )
+    assert isinstance(wire_prepared, wi.PreparedKeyedWrite)
     assert wire_prepared.valid_time_window == prepared.valid_time_window
 
 
@@ -1261,34 +1214,18 @@ def test_a_canonical_spelling_resolves_where_the_bare_one_is_ambiguous() -> None
 # Target/mutation applicability (m-case-format "requires only the temporal      #
 # coordinates the target profile uses").                                        #
 # --------------------------------------------------------------------------- #
-@pytest.mark.parametrize(
-    ("instruction", "expected"),
-    [
-        (
-            {"mutation": "terminate", "entity": "Account", "rows": [{"id": 1}]},
-            "Non-temporal objects like 'Account' do not support 'terminate', which closes "
-            "a row's history instead of removing it. Use 'delete' instead.",
-        ),
-        (
-            {"mutation": "terminate", "target": {"entity": "Wallet", "predicate": {"true": {}}}},
-            "Non-temporal objects like 'Wallet' do not support 'terminate_where', which "
-            "closes a row's history instead of removing it. Use 'delete_where' instead.",
-        ),
-    ],
-    ids=["keyed-terminate", "predicate-terminate"],
-)
-def test_a_milestone_verb_is_rejected_on_a_non_temporal_target(
-    instruction: dict[str, Any], expected: str
-) -> None:
+def test_a_milestone_verb_is_rejected_on_a_non_temporal_target() -> None:
     # A non-temporal target has no milestone for a closing verb to address.
-    # Each verb names the alternative that keeps the caller's row effect,
+    # The verb names the alternative that keeps the caller's row effect,
     # spelled for the surface the call arrived on, so the refusal is asserted
     # in full.
-    write = wi.deserialize(instruction)
-    model = _ACCOUNT if isinstance(write, wi.KeyedWriteInstruction) else _WALLET
+    write = wi.deserialize({"mutation": "terminate", "entity": "Account", "rows": [{"id": 1}]})
     with pytest.raises(wi.WriteInstructionError) as raised:
-        wi.prepare_wire_write(write, model)
-    assert str(raised.value) == expected
+        wi.prepare_wire_write(write, _ACCOUNT)
+    assert str(raised.value) == (
+        "Non-temporal objects like 'Account' do not support 'terminate', which closes "
+        "a row's history instead of removing it. Use 'delete' instead."
+    )
 
 
 @pytest.mark.parametrize(
@@ -1315,27 +1252,8 @@ def test_a_milestone_verb_is_rejected_on_a_non_temporal_target(
             "validFrom": _B1,
             "until": _B2,
         },
-        {
-            "mutation": "amendUntil",
-            "target": {"entity": "Wallet", "predicate": {"true": {}}},
-            "assignments": [{"attr": "Wallet.balance", "value": 0}],
-            "validFrom": _B1,
-            "until": _B2,
-        },
-        {
-            "mutation": "terminateUntil",
-            "target": {"entity": "Wallet", "predicate": {"true": {}}},
-            "validFrom": _B1,
-            "until": _B2,
-        },
     ],
-    ids=[
-        "keyed-insertUntil",
-        "keyed-updateUntil",
-        "keyed-terminateUntil",
-        "predicate-updateUntil",
-        "predicate-terminateUntil",
-    ],
+    ids=["keyed-insertUntil", "keyed-updateUntil", "keyed-terminateUntil"],
 )
 def test_a_bounded_verb_on_a_non_temporal_target_hears_its_window_refused_first(
     instruction: dict[str, Any],
@@ -1345,17 +1263,11 @@ def test_a_bounded_verb_on_a_non_temporal_target_hears_its_window_refused_first(
     # an argument the caller can drop, heard ahead of the verb's own
     # applicability and of the `valid_from` the same pair states.
     mutation = instruction["mutation"]
-    write = wi.deserialize(instruction)
-    name, model = (
-        ("Account", _ACCOUNT)
-        if isinstance(write, wi.KeyedWriteInstruction)
-        else ("Wallet", _WALLET)
-    )
     with pytest.raises(wi.WriteInstructionError) as raised:
-        wi.prepare_wire_write(write, model)
+        wi.prepare_wire_write(wi.deserialize(instruction), _ACCOUNT)
     assert str(raised.value) == (
-        f"{name}: a non-temporal {mutation!r} takes no until "
-        f"({name!r} declares no Valid-Time dimension to bound)"
+        f"Account: a non-temporal {mutation!r} takes no until "
+        "('Account' declares no Valid-Time dimension to bound)"
     )
 
 
@@ -2035,6 +1947,7 @@ def test_a_keyed_row_aimed_at_an_abstract_target_is_rejected() -> None:
 # --------------------------------------------------------------------------- #
 def test_a_document_bound_decodes_to_the_instant_it_spells() -> None:
     instruction = wi.deserialize(dict(_INSTRUCTIONS[6][1]))
+    assert isinstance(instruction, wi.KeyedWriteInstruction)
     assert (instruction.valid_from, instruction.until) == (_I1, _I2)
 
 
@@ -2092,7 +2005,7 @@ def test_a_prepared_write_has_no_field_constructor() -> None:
             prepared.mutation, prepared.target, prepared.rows, prepared.valid_time_window
         )
     with pytest.raises(TypeError):
-        cast("Any", wi.PreparedPredicateWrite)("delete", None, (), prepared.valid_time_window)
+        cast("Any", wi.PreparedPredicateWrite)("delete", None, ())
     derived = wi.derive_keyed_write(prepared, ({"id": 2},))
     assert (derived.mutation, derived.target, derived.valid_time_window) == (
         prepared.mutation,
@@ -2134,16 +2047,6 @@ _ALL = predicate_algebra.TrueNode()
             "a Transaction-Time-Only 'amend' takes no valid_from",
         ),
         (
-            wi.PredicateWriteInstruction(
-                "amend",
-                wi.PredicateSelection("Wallet", _ALL),
-                (wi.WriteAssignment("Wallet.nonsense", 1),),
-                valid_from=_I1,
-            ),
-            _WALLET,
-            "a non-temporal 'amend' takes no valid_from",
-        ),
-        (
             wi.KeyedWriteInstruction("amendUntil", "Position", ({"id": 1},), valid_from=_I1),
             _POSITION,
             "states its window as a pair, and until is absent",
@@ -2177,7 +2080,6 @@ _ALL = predicate_algebra.TrueNode()
         "temporal-delete-before-members",
         "bitemporal-requires-valid-from-before-members",
         "txtime-takes-no-valid-from-before-members",
-        "non-temporal-takes-no-valid-from-before-assignments",
         "half-a-pair",
         "unbounded-verb-states-until",
         "reversed-window",
@@ -2208,7 +2110,6 @@ _INVERTED_ID = predicate_algebra.Range(predicate_algebra.FieldSubject("Position.
                     predicate_algebra.Range(predicate_algebra.FieldSubject("Account.id"), 10, 1),
                 ),
                 (wi.WriteAssignment("Account.nonsense", 1),),
-                valid_from=_I1,
             ),
             _ACCOUNT,
             "Account is versioned, so amend_where cannot change it without reading it. "
@@ -2234,7 +2135,7 @@ _INVERTED_ID = predicate_algebra.Range(predicate_algebra.FieldSubject("Position.
             "tx_start you hold.",
         ),
     ],
-    ids=["versioned-before-window-predicate-and-assignments", "temporal-delete", "bitemporal"],
+    ids=["versioned-before-predicate-and-assignments", "temporal-delete", "bitemporal"],
 )
 def test_a_predicate_write_needing_an_observation_is_refused_before_anything_else(
     prepare: Any, instruction: wi.PredicateWriteInstruction, model: Any, advice: str

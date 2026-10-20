@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 from collections.abc import Callable
-from typing import Any, Literal, Protocol, Self, cast, overload
+from typing import Any, Literal, Protocol, Self, cast
 
 from parallax.core import deep_fetch
 from parallax.core._execution._family import entity_layout
@@ -95,7 +95,6 @@ from parallax.core.write_plan.plan import WriteStepView
 
 __all__ = [
     "PredicateWriteAdapter",
-    "PredicateWriteVerb",
     "ReadOnlyTxnAttempt",
     "TargetWriteAdapter",
     "TargetWriteVerb",
@@ -103,30 +102,19 @@ __all__ = [
 ]
 
 
-PredicateWriteVerb = Literal["amend", "delete", "terminate"]
-"""The intent a predicate-selected write states: the base verb, never its
-bounded token, which the attempt selects from the caller's ``until``."""
-
-
 class PredicateWriteAdapter(Protocol):
     """A representation's predicate-selected write, inert until the attempt asks
     for it.
 
     Constructed around the caller's original selection and assignments, judging
-    nothing, so no representation refusal precedes the attempt's re-entry and
-    stated-start checks. :meth:`prepare` is asked once, after both: it captures
-    that input, authors the canonical instruction, and returns what the one
-    write preparation produced for it, borrowing ``write_model`` for the call
-    alone.
+    nothing, so no representation refusal precedes the attempt's re-entry
+    check. :meth:`prepare` is asked once, after it: it captures that input,
+    authors the canonical instruction, and returns what the one write
+    preparation produced for it, borrowing ``write_model`` for the call alone.
     """
 
     def prepare(
-        self,
-        write_model: SelectedWriteModel,
-        mutation: PredicateMutation,
-        *,
-        valid_from: dt.datetime | None,
-        until: dt.datetime | None,
+        self, write_model: SelectedWriteModel, mutation: PredicateMutation
     ) -> PreparedPredicateWrite: ...
 
 
@@ -161,14 +149,6 @@ class TargetWriteAdapter(Protocol):
     ) -> PreparedTargetWrite: ...
 
 
-@overload
-def _bounded_mutation(
-    verb: PredicateWriteVerb, until: dt.datetime | Omitted
-) -> tuple[PredicateMutation, dt.datetime | None]: ...
-@overload
-def _bounded_mutation(
-    verb: TargetWriteVerb, until: dt.datetime | Omitted
-) -> tuple[TargetMutation, dt.datetime | None]: ...
 def _bounded_mutation(
     verb: TargetWriteVerb, until: dt.datetime | Omitted
 ) -> tuple[TargetMutation, dt.datetime | None]:
@@ -582,28 +562,18 @@ class TxnAttempt(_TxnAttemptBase):
         )
 
     def predicate_write(
-        self,
-        adapter: PredicateWriteAdapter,
-        verb: PredicateWriteVerb,
-        /,
-        *,
-        valid_from: dt.datetime | Omitted = OMITTED,
-        until: dt.datetime | Omitted = OMITTED,
+        self, adapter: PredicateWriteAdapter, mutation: PredicateMutation, /
     ) -> None:
         """Run one predicate-selected write in its ingress order, then buffer it
         readless.
 
-        Re-entry is refused first, then a stated start judged, and only then is
-        ``adapter`` asked to prepare the write under this attempt's write
-        projection: the window and the predicate, the family, and the
-        assignments are preparation's to judge. A stated ``until``, ``None``
-        included, selects the bounded verb.
+        Re-entry is refused first, and only then is ``adapter`` asked to
+        prepare the write under this attempt's write projection: the target's
+        kind, the predicate, the family, and the assignments are preparation's
+        to judge.
         """
         refuse_reentry(self._lifecycle)
-        start = stated_valid_from(valid_from)
-        mutation, bound = _bounded_mutation(verb, until)
-        prepared = adapter.prepare(self._write, mutation, valid_from=start, until=bound)
-        self._uow.buffer_predicate(prepared)
+        self._uow.buffer_predicate(adapter.prepare(self._write, mutation))
 
     def target_write(
         self,

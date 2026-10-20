@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 from collections.abc import Callable, Mapping, Sequence, Set
-from typing import cast
+from typing import Any, cast
 
 from parallax.core import predicate as predicate_algebra
 from parallax.core._execution._family import family_view
@@ -34,6 +34,7 @@ from parallax.core._execution._unit_work.instructions import (
 )
 from parallax.core.execution_lifecycle._activity import refuse_reentry
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
+from parallax.core.object_query._fluent import ObjectQuery
 from parallax.core.wire import WireValue, decode_wire
 from parallax.core.write_plan import ObjectKey
 from parallax.snapshot._handle._sources import (
@@ -41,6 +42,7 @@ from parallax.snapshot._handle._sources import (
     resolve_keyed_insert,
     resolve_keyed_write_source,
 )
+from parallax.snapshot._handle._typed_writes import typed_selection
 from parallax.snapshot._publication._wire import (
     WireEntity,
     authoring_of,
@@ -76,11 +78,13 @@ list must name at least one assignment, so ``{}`` is refused there exactly as
 ``tx.amend_where(query)`` with no assignments is. A replacement's ``{}`` is its
 complete stated state, completed like any other."""
 
-type WirePredicateTarget = Mapping[str, object]
-"""A Wire predicate write's target: exactly ``{"entity", "predicate"}``, the
-canonical selection shape — never an Object Query, because ordering, the cap,
-temporal selection, result narrowing, and Include Paths all shape a RESULT and a
-set-based write has none to shape."""
+type WirePredicateTarget = ObjectQuery[Any, Any] | Mapping[str, object]
+"""A Wire predicate write's target: a Typed Object Query carrying nothing but
+its target and predicate, kept as authored, or exactly ``{"entity",
+"predicate"}``, the canonical selection document. An Object Query node or its
+document is no write target: ordering, the cap, temporal selection, result
+narrowing, and Include Paths all shape a RESULT, and a set-based write has none
+to shape."""
 
 
 def wire_insert(
@@ -175,21 +179,21 @@ def wire_keyed_write(
 class WirePredicateWriteAdapter:
     """The Wire predicate-selected write over ``target``.
 
-    The Wire spelling of the ``_where`` family: the canonical ``{entity,
-    predicate}`` selection plus an authored changes document, lowered to the
-    SAME :class:`~parallax.core.unit_work.PredicateWriteInstruction` the Typed verbs build.
-    No second set-based write semantics are introduced — this adapter only
-    states the target and the assignments differently.
+    The Wire spelling of the ``_where`` family: a Typed selection or the
+    canonical ``{entity, predicate}`` one, plus an authored changes document,
+    lowered to the SAME :class:`~parallax.core.unit_work.PredicateWriteInstruction`
+    the Typed verbs build. No second set-based write semantics are introduced —
+    this adapter only states the target and the assignments differently.
 
-    Inert when constructed. Once :meth:`prepare` is asked, both caller
-    documents are captured and judged for shape before anything is resolved
-    from the model, the same lead the keyed verb gives them — and a selection's
+    Inert when constructed. Once :meth:`prepare` is asked, the selection and the
+    changes are captured and judged for shape before anything is resolved from
+    the model, the same lead the keyed verb gives them. A Typed query takes the
+    Typed adapter's path (:func:`typed_selection`); a selection document's
     shape runs to the bottom of its predicate, so a malformed node is
     `m-predicate`'s own refusal rather than whatever the model happens to say
-    about the Entity, the window, or the assignments beside it. The predicate
-    parsed there is the one the instruction carries, and each change is an
-    assignment owned by the target's own spelling; preparation then judges the
-    target, the window, the predicate, and each assignment in authored order.
+    about the Entity or the assignments beside it. Each change is an
+    assignment owned by the selection's own Entity spelling; preparation then
+    judges the target, the predicate, and each assignment in authored order.
     """
 
     __slots__ = ("_changes", "_target")
@@ -199,15 +203,14 @@ class WirePredicateWriteAdapter:
         self._changes = changes
 
     def prepare(
-        self,
-        write_model: SelectedWriteModel,
-        mutation: PredicateMutation,
-        *,
-        valid_from: dt.datetime | None,
-        until: dt.datetime | None,
+        self, write_model: SelectedWriteModel, mutation: PredicateMutation
     ) -> PreparedPredicateWrite:
-        selection = _selection_shape(
-            _authored_document(self._target, "a predicate-selected write's canonical target")
+        selection = (
+            typed_selection(self._target, write_model)
+            if isinstance(self._target, ObjectQuery)
+            else _wire_selection(
+                _authored_document(self._target, "a predicate-selected write's canonical target")
+            )
         )
         authored = _authored_changes(mutation, self._changes)
         instruction = PredicateWriteInstruction(
@@ -217,8 +220,6 @@ class WirePredicateWriteAdapter:
                 WriteAssignment(f"{selection.entity}.{member}", value)
                 for member, value in authored.items()
             ),
-            valid_from,
-            until,
         )
         return instructions.prepare_wire_write(instruction, write_model.model.meta)
 
@@ -663,13 +664,13 @@ def _concrete_entity(meta: Metamodel, entity: EntityIdentity) -> EntityMetadata:
     return record
 
 
-def _selection_shape(target: Mapping[str, object]) -> PredicateSelection:
+def _wire_selection(target: Mapping[str, object]) -> PredicateSelection:
     """The selection ``target`` states, refusing anything but the canonical
     selection shape.
 
     Judged whole before the model is consulted: a selection that states no
     well-formed predicate has stated no target, and answering it with an
-    unknown-Entity, inadmissible-bound, or illegal-assignment verdict would
+    unknown-Entity, unwritable-target, or illegal-assignment verdict would
     report the defect the fixed order places later. The node is `m-predicate`'s
     to judge, so a malformed one carries that module's
     :class:`~parallax.core.predicate.CanonicalDocumentError` while the selection

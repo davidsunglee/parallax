@@ -540,10 +540,9 @@ def test_sparse_update_does_not_trip_required_attribute_missing_for_an_untouched
 
 def _position_row_dt() -> MappingRow:
     """The KEYED-verb tests' own row fixture: real ``datetime`` values (never
-    the bare ISO strings :func:`_position_row` uses) — a KEYED verb's own
+    the bare ISO strings :func:`_position_row` uses), because a KEYED verb's own
     first read runs through the ordinary developer-facing ``tx.find`` (wrap
-    into a real node and milestone-edge computation),
-    unlike a ``_where`` verb's internal resolving read, which never wraps."""
+    into a real node and milestone-edge computation)."""
     return {
         "id": 1,
         "acct_num": "A",
@@ -557,12 +556,8 @@ def _position_row_dt() -> MappingRow:
 
 # --------------------------------------------------------------------------- #
 # Typed KEYED temporal-window verbs: `update` and `terminate`, plain and       #
-# bounded by `until`, starting at the source's own Valid-Time pin — the KEYED #
-# siblings of `update_where` / `terminate_where`, sharing the SAME `_buffer`   #
-# seam and the SAME prepared-write window judgment, so a keyed and a          #
-# predicate-selected write over the identical bitemporal correction lower to  #
-# the identical rectangle split (`m-temporal-write-017/018/022/023`'s own       #
-# witnessed shape, replayed here through the KEYED verb instead of `_where`). #
+# bounded by `until`, starting at the source's own Valid-Time pin, lowering    #
+# to the rectangle split `m-temporal-write-017/018/022/023` witness.           #
 # --------------------------------------------------------------------------- #
 def test_keyed_update_lowers_a_plain_bitemporal_correction() -> None:
     # m-temporal-write-022 "plain-update-split", replayed through the KEYED verb:
@@ -760,8 +755,6 @@ _UNIFIED_OPERATIONS = (
     "replace",
     "replace_if",
     "terminate",
-    "amend_where",
-    "terminate_where",
 )
 
 
@@ -776,8 +769,7 @@ def test_one_method_per_operation_selects_its_bound_by_keyword(
     until = inspect.signature(getattr(owner, operation)).parameters["until"]
     assert until.kind is inspect.Parameter.KEYWORD_ONLY
     assert until.default is OMITTED
-    suffixed = {f"{operation}_until", f"{operation.removesuffix('_where')}_until_where"}
-    assert not any(hasattr(owner, name) for name in suffixed)
+    assert not hasattr(owner, f"{operation}_until")
 
 
 def _rectangle(start: dt.datetime, end: object, value: str) -> MappingRow:
@@ -1008,10 +1000,9 @@ def test_an_inherited_positions_window_is_judged_by_its_family_shape(
 # Window-order validation:                                                    #
 # A bounded form additionally requires `until`, with                          #
 # `valid_from < until` ... all validated at build" — an EQUAL and a        #
-# REVERSED window both reject, at the verb call, before any buffering, for    #
-# BOTH the KEYED and the `_where` verb families — the ONE window judgment of  #
-# write preparation (`parallax.core._execution._unit_work.instructions`) makes them all  #
-# converge.                                                                   #
+# REVERSED window both reject, at the verb call, before any buffering — the   #
+# ONE window judgment of write preparation                                    #
+# (`parallax.core._execution._unit_work.instructions`).                       #
 # --------------------------------------------------------------------------- #
 def test_a_bounded_keyed_update_rejects_an_equal_window_bound() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[_position_row_dt()])))

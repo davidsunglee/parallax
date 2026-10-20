@@ -155,6 +155,7 @@ def test_case_write_adapter_carries_the_decoded_case_temporal_bounds() -> None:
             "validFrom": "2024-02-01T00:00:00.000000Z",
         }
     )
+    assert isinstance(instruction, instructions.KeyedWriteInstruction)
     assert instruction.valid_from == dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
     prepared = _case_ingress.prepare_case_write(instruction, models.load_models()["position"])
     assert isinstance(prepared, PreparedKeyedWrite)
