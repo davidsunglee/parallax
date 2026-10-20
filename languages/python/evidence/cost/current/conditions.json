@@ -1,21 +1,4 @@
 {
-  "adjustment": {
-    "date": "2026-10-19",
-    "redigested": {
-      "members": [
-        "instance-state",
-        "lifecycle-overhead",
-        "snapshot-delivery"
-      ],
-      "producingCommit": "bc9add4bea1bc740b60ed4e28bc3413e186f8f17",
-      "unchanged": "every reading, sample, comparison, and measurement condition; the measured workload inputs and code identity at the producing commit equal HEAD's",
-      "workloadDigest": {
-        "atCapture": "1484a076705bf0cd2a153bb5cd2794515caafe3c92a9d62babee6132ac86633c",
-        "redigestedUnder": "92a2d8278eba1ea762d4f9f49317ed33a7fa61a1907b8aa504ab11f4274858d0"
-      }
-    },
-    "schemaVersion": 1
-  },
   "members": {
     "feature-boundary": {
       "runtimes": {
@@ -26,7 +9,7 @@
           "version": "3.13.16"
         },
         "3.14": {
-          "executable": "/Users/david/Code/parallax/languages/python/.venv/bin/python",
+          "executable": "/Users/david/.humanlayer/workspaces/cor-223-cleanup-predicate-writes-api-yhcb8e/parallax/languages/python/.venv/bin/python",
           "implementation": "CPython",
           "status": "available",
           "version": "3.14.8"
@@ -48,7 +31,7 @@
           "version": "3.13.16"
         },
         "3.14": {
-          "executable": "/Users/david/Code/parallax/languages/python/.venv/bin/python",
+          "executable": "/Users/david/.humanlayer/workspaces/cor-223-cleanup-predicate-writes-api-yhcb8e/parallax/languages/python/.venv/bin/python",
           "implementation": "CPython",
           "status": "available",
           "version": "3.14.8"
@@ -68,7 +51,7 @@
           "status": "unavailable"
         },
         "3.14": {
-          "executable": "/Users/david/Code/parallax/languages/python/.venv/bin/python",
+          "executable": "/Users/david/.humanlayer/workspaces/cor-223-cleanup-predicate-writes-api-yhcb8e/parallax/languages/python/.venv/bin/python",
           "implementation": "CPython",
           "status": "available",
           "version": "3.14.8"
@@ -87,7 +70,7 @@
           "version": "3.13.16"
         },
         "3.14": {
-          "executable": "/Users/david/Code/parallax/languages/python/.venv/bin/python",
+          "executable": "/Users/david/.humanlayer/workspaces/cor-223-cleanup-predicate-writes-api-yhcb8e/parallax/languages/python/.venv/bin/python",
           "implementation": "CPython",
           "status": "available",
           "version": "3.14.8"
@@ -95,7 +78,7 @@
       },
       "sources": {
         "tests/unit/_delivery_control_support.py": "deb006e98068a7f059c2771500d378cf6757dcaa37baf84feec1beab37e9f115",
-        "tests/unit/_leaf_type_support.py": "b54e7354d7896e549a6dc14268fd5a5ec4189f0cd071f3c896305c2795d5731e",
+        "tests/unit/_leaf_type_support.py": "ba71d340b0a45e885b18ef6a7db6dcdf249e2e76949730de2525fc9c2dcef112",
         "tests/unit/_snapshot_materialization_support.py": "419afb567aba7c12a64d0ab924349724bac2ff5b805b7f410906d46eff6a4495",
         "tests/unit/_structural_geometry_support.py": "41673306e078cb7e920bbf5c11d348bfe68da531a4abef21d9f653cb3ae99dd3",
         "tests/unit/_workload_spelling_support.py": "c84e87a236d549df8423293c7b05cf5a5ebb6c5a20149ffa1b9abe57527d8636",
@@ -113,21 +96,20 @@
           "version": "3.13.16"
         },
         "3.14": {
-          "executable": "/Users/david/Code/parallax/languages/python/.venv/bin/python",
+          "executable": "/Users/david/.humanlayer/workspaces/cor-223-cleanup-predicate-writes-api-yhcb8e/parallax/languages/python/.venv/bin/python",
           "implementation": "CPython",
           "status": "available",
           "version": "3.14.8"
         }
       },
       "sources": {
-        "tests/unit/_leaf_type_support.py": "b54e7354d7896e549a6dc14268fd5a5ec4189f0cd071f3c896305c2795d5731e",
-        "tests/unit/_predicate_acquisition_support.py": "798ffbf251e2b92040804ac5797e104fe66247a71c9223f1d1f5ba934320d0d7",
+        "tests/unit/_leaf_type_support.py": "ba71d340b0a45e885b18ef6a7db6dcdf249e2e76949730de2525fc9c2dcef112",
         "tests/unit/_structural_geometry_support.py": "41673306e078cb7e920bbf5c11d348bfe68da531a4abef21d9f653cb3ae99dd3",
         "tests/unit/_workload_spelling_support.py": "c84e87a236d549df8423293c7b05cf5a5ebb6c5a20149ffa1b9abe57527d8636",
-        "tests/unit/_write_lowering_support.py": "52d7f08c809d6274b299e65e1b695497b8166f32d32e00098dcebe1a5e574d36",
+        "tests/unit/_write_lowering_support.py": "87f7d1bc0c94fe0f154c27bbfede26bd1adb4de911347f0d45e8de9fb9ecfbcc",
         "tests/unit/memory_instruments.py": "cc1c8140dd4a66aa886b9d014ec10adebb9a8dbfac23a3cd73d2bf837723894a",
-        "tools/write_lowering_overhead.py": "6c43b4601b816b8dceb5de068eb6c02c70c2a075e7d8ab8623f3d54b9723254a",
-        "tools/write_lowering_reading.py": "05061134e2dc7d4ee528c03fd7a55f5534b654ce814a41c381b9fa40fcd873e5"
+        "tools/write_lowering_overhead.py": "7674c6c6537c3f51f9843b7acd63711590ce9c1e5a31525e4cada0cf3b68cd3e",
+        "tools/write_lowering_reading.py": "cdce3d8059fdd5510b40f250ae4d16d08373ec6a21d43c55668b93556691cfb5"
       }
     }
   },
