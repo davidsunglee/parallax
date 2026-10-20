@@ -77,7 +77,7 @@ from parallax.core.entity._expressions import AuthoredPath, UnfinishedOperation
 from parallax.core.entity._layout import LayoutCatalog
 from parallax.core.entity._model import DomainModel as _Fixed
 from parallax.core.entity._model import class_index, model_of
-from parallax.core.execution import QueryTargetError, ServingModel, prepare_model
+from parallax.core.execution import ExecutionFailure, QueryTargetError, ServingModel, prepare_model
 from parallax.core.execution_lifecycle import (
     DirectFailure,
     ExecutionEvent,
@@ -130,7 +130,7 @@ from tests._support.db_port import (
     inserted_rows,
 )
 from tests._support.root_ownership import own_root
-from tests.unit import _predicate_acquisition_support as acquisition_support
+from tests.unit import _milestone_rows_support as milestone_rows
 from tests.unit._document_layout_support import document_model
 from tests.unit._document_layout_support import entity as document_layout_entity
 from tests.unit._gc_reachability import reachable_objects
@@ -2283,9 +2283,47 @@ def _plain(value: object) -> object:
     return value
 
 
+_MILESTONE_ROWS = 8
+
+
+class _Abandoned(Exception):
+    """Raised once the write is buffered, so its transaction rolls back unflushed."""
+
+
+def _materialize_milestones(layout: milestone_rows.Layout) -> None:
+    """Buffer one interior Wire ``amend_where`` over eight stored milestones of
+    ``layout``'s Entity, then abandon its transaction before any flush."""
+    entity = milestone_rows.ENTITY_CLASSES[milestone_rows.LAYOUTS.index(layout)]
+    name = entity.identity.canonical
+    target = {
+        "entity": name,
+        "predicate": {"greaterThanEquals": {"path": f"{name}.id", "value": 1}},
+    }
+    port = milestone_rows.MilestonePort(
+        lambda key: milestone_rows.stored_row(layout, key), _MILESTONE_ROWS
+    )
+
+    def body(transaction: TxnContext) -> None:
+        transaction.wire.amend_where(
+            target,
+            {"title": "title-changed"},
+            valid_from=dt.datetime(2026, 3, 1, tzinfo=dt.UTC),
+            until=dt.datetime(2026, 9, 1, tzinfo=dt.UTC),
+        )
+        raise _Abandoned
+
+    clock = FixedClock(dt.datetime(2026, 2, 1, tzinfo=dt.UTC))
+    with (
+        Database(port.open(), milestone_rows.MODEL, clock=clock) as root,
+        pytest.raises(ExecutionFailure) as failure,
+    ):
+        root.using_database_login().transact(body, concurrency="optimistic")
+    assert isinstance(failure.value.cause, _Abandoned)
+
+
 @pytest.mark.parametrize("layout", ["columns", "document"])
 def test_a_materializing_temporal_write_retains_each_resolved_row_whole_by_reference(
-    monkeypatch: pytest.MonkeyPatch, layout: acquisition_support.Layout
+    monkeypatch: pytest.MonkeyPatch, layout: milestone_rows.Layout
 ) -> None:
     # Every resolved row of a temporal resolve is retained as the positional
     # row the read judged — scalars, the primary key, every axis bound
@@ -2294,27 +2332,27 @@ def test_a_materializing_temporal_write_retains_each_resolved_row_whole_by_refer
     # Column rides beside it under Relational Document Layout and is absent
     # under `Columns`. Acquisition views no row by member name, copies no
     # cell, and keeps no second key column: the key is read at its position.
-    case = acquisition_support.case_named(f"acquisition.rows-8.{layout}")
     groups, views = _recorded_groups_and_views(monkeypatch)
     traversals = _traversals(monkeypatch)
-    with acquisition_support.database(case) as handle:
-        acquisition_support.acquire(handle, case)
+    _materialize_milestones(layout)
 
     assert len(traversals) == 1
     assert views == []
     (group,) = groups
     evidence = group.evidence
     assert isinstance(evidence, PredecessorRows)
-    assert len(evidence) == case.rows
-    assert [evidence.key(index) for index in range(case.rows)] == list(range(1, case.rows + 1))
-    for index in range(case.rows):
+    assert len(evidence) == _MILESTONE_ROWS
+    assert [evidence.key(index) for index in range(_MILESTONE_ROWS)] == list(
+        range(1, _MILESTONE_ROWS + 1)
+    )
+    for index in range(_MILESTONE_ROWS):
         key = index + 1
         row = evidence.rows[index]
         assert type(row) is tuple
         predecessor = PredecessorRow.over_row(
             evidence.selection, row, evidence.document(index), evidence.absent
         )
-        stored = acquisition_support.stored_row(layout, key)
+        stored = milestone_rows.stored_row(layout, key)
         members = (
             cast("Mapping[str, object]", stored["payload"]) if layout == "document" else stored
         )
@@ -2323,9 +2361,9 @@ def test_a_materializing_temporal_write_retains_each_resolved_row_whole_by_refer
             "title": members["title"],
             "address": members["address"],
             "tags": tuple(cast("Sequence[object]", members["tags"])),
-            "validStart": acquisition_support.VALID_START,
+            "validStart": milestone_rows.VALID_START,
             "validEnd": INFINITY,
-            "txStart": acquisition_support.TX_START,
+            "txStart": milestone_rows.TX_START,
             "txEnd": INFINITY,
         }
         if layout == "document":
@@ -2342,10 +2380,8 @@ def test_a_buffered_group_reaches_no_page_builder_or_row_view(
     # The buffered group is kept alive here past the transaction; nothing it
     # holds is the Page it was read from, a Root View over it, the builders
     # that accumulated it, or a named view of a row.
-    case = acquisition_support.case_named("acquisition.rows-8.document")
     groups, _views = _recorded_groups_and_views(monkeypatch)
-    with acquisition_support.database(case) as handle:
-        acquisition_support.acquire(handle, case)
+    _materialize_milestones("document")
 
     (group,) = groups
     evidence = group.evidence

@@ -34,7 +34,6 @@ kibibytes, each converted to bytes by :func:`reading_bytes`."""
 GATED_WINDOWS: Final = frozenset(
     {
         "keyed-write",
-        "predicate-acquisition",
         "model-preparation",
         "provider-free-delivery",
         "read-plan-compilation",

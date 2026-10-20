@@ -103,8 +103,6 @@ from parallax.postgres._connection import adapt_binds
 from parallax.snapshot import Database, ScopedDatabase, TxnContext, WireEntity
 from tests._support.db_port import ConnectsAsItself, body_outcome, projected_rows
 from tests.unit import _leaf_type_support as leaf_support
-from tests.unit import _predicate_acquisition_support as acquisition_support
-from tests.unit import _predicate_flush_support as flush_support
 from tests.unit import _structural_geometry_support as geometry_support
 
 __all__ = [
@@ -259,11 +257,10 @@ _CATEGORICAL: Final[Mapping[tuple[str, Layout], type[Entity]]] = {
 ENTITY_CLASSES: Final[tuple[type[Entity], ...]] = (
     *_CATEGORICAL.values(),
     *geometry_support.ENTITY_CLASSES,
-    *acquisition_support.ENTITY_CLASSES,
 )
-"""Every Entity the write model prepares: the categorical matrix, the geometry
-families, and the predicate-acquisition families, so one model-preparation
-checkpoint prices the whole structural workload."""
+"""Every Entity the write model prepares: the categorical matrix and the
+geometry families, so one model-preparation checkpoint prices the whole
+structural workload."""
 
 MODEL: Final = DomainModel(*ENTITY_CLASSES)
 CATALOG: Final = CatalogedModel(model_of(MODEL))
@@ -914,8 +911,6 @@ def write_lowering_digest() -> str:
     for module in (
         Path(__file__),
         Path(geometry_support.__file__),
-        Path(acquisition_support.__file__),
-        Path(flush_support.__file__),
         Path(leaf_support.__file__),
     ):
         digest.update(module.read_bytes())

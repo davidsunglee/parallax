@@ -7,8 +7,6 @@ Columns or document layout, and a preparation mode:
 
 * ``source-keyed`` — one bounded Bitemporal amendment of a node the transaction
   read, producing a close and a head, middle, and tail successor;
-* ``predicate`` — one bounded Bitemporal ``amend_where`` resolving and
-  revising 32 targets;
 * ``target-patch`` — one caller-addressed bounded Wire amendment;
 * ``target-replace`` — one caller-addressed bounded replacement across three
   stored intervals and the two gaps between them;
@@ -16,17 +14,17 @@ Columns or document layout, and a preparation mode:
 * ``read-stream`` — the same query consumed completely in 32-root pages.
 
 Every write window opens at the public verb and closes once ``transact`` has
-returned: preparation, buffering, any read the write makes itself (a
-resolving read, a coverage read at flush), the pre-commit flush's planning,
-settlement, and SQL lowering, production bind adaptation, psycopg's dump of
-every bind, and the provider-free commit. A read the caller makes to obtain a
-source is outside it. Every read window is one complete delivery. Public
-writes prepare every invocation, so they have a preparation-inclusive mode
-only. A read is measured both ways: ``preparation-inclusive`` over a root whose
-read-plan cache holds nothing (capacity zero), so every delivery compiles its
-plan; ``reused-execution`` over a root whose cache already holds the compiled
-plan before the first sample. In both modes the prepared model and the root are
-composed once, outside every window.
+returned: preparation, buffering, any read the write makes itself (a coverage
+read at flush), the pre-commit flush's planning, settlement, and SQL lowering,
+production bind adaptation, psycopg's dump of every bind, and the provider-free
+commit. A read the caller makes to obtain a source is outside it. Every read
+window is one complete delivery. Public writes prepare every invocation, so
+they have a preparation-inclusive mode only. A read is measured both ways:
+``preparation-inclusive`` over a root whose read-plan cache holds nothing
+(capacity zero), so every delivery compiles its plan; ``reused-execution`` over
+a root whose cache already holds the compiled plan before the first sample. In
+both modes the prepared model and the root are composed once, outside every
+window.
 
 An *algorithm cell* names one shared interval algorithm and an input size, and
 drives the owner of that algorithm through the public verbs of one Typed
@@ -104,7 +102,7 @@ from parallax.core.read_delivery._read_plan import DEFAULT_READ_PLAN_CACHE_CAPAC
 from parallax.postgres._connection import adapt_binds, initialize_connection
 from parallax.snapshot import Database, ScopedDatabase, TxnContext
 from tests._support.db_port import ConnectsAsItself, body_outcome, projected_rows
-from tests.unit import _predicate_acquisition_support as acquisition_support
+from tests.unit import _milestone_rows_support as milestone_rows
 from tests.unit import _write_lowering_support as lowering_support
 
 __all__ = [
@@ -136,9 +134,7 @@ __all__ = [
     "support_digest",
 ]
 
-type Flow = Literal[
-    "source-keyed", "predicate", "target-patch", "target-replace", "read-eager", "read-stream"
-]
+type Flow = Literal["source-keyed", "target-patch", "target-replace", "read-eager", "read-stream"]
 type Interface = Literal["typed", "wire"]
 type Layout = Literal["columns", "document"]
 type Mode = Literal["preparation-inclusive", "reused-execution"]
@@ -146,7 +142,6 @@ type Algorithm = Literal["replacement-gaps", "destruction-merge", "removal-windo
 
 FLOWS: Final[tuple[Flow, ...]] = (
     "source-keyed",
-    "predicate",
     "target-patch",
     "target-replace",
     "read-eager",
@@ -162,10 +157,7 @@ ALGORITHMS: Final[tuple[Algorithm, ...]] = (
 )
 SIZES: Final[tuple[int, ...]] = (8, 32, 128)
 
-_WRITE_FLOWS: Final[frozenset[Flow]] = frozenset(
-    {"source-keyed", "predicate", "target-patch", "target-replace"}
-)
-_PREDICATE_TARGETS: Final = 32
+_WRITE_FLOWS: Final[frozenset[Flow]] = frozenset({"source-keyed", "target-patch", "target-replace"})
 _READ_ROOTS: Final = 128
 _PAGE_SIZE: Final = 32
 _REFUSALS_PER_WINDOW: Final = 4
@@ -327,8 +319,6 @@ def expected_outcome(cell: Cell) -> Outcome:
             # Three closes, then one insert of the head and tail and one row
             # over the replaced intervals and the gaps between them.
             return Outcome(statements=4, reads=1)
-        case "predicate":
-            return Outcome(statements=2 * _PREDICATE_TARGETS, reads=1)
         case "read-eager":
             return Outcome(reads=1, roots=_READ_ROOTS)
         case "read-stream":
@@ -344,11 +334,6 @@ _FLOW_STAGES: Final[Mapping[Flow, str]] = {
         "a bounded Bitemporal tx.amend or tx.wire.amend over a node read before the window: "
         "verb, preparation, buffering, pre-commit flush (planning, settlement, SQL lowering), "
         "bind adaptation and dump of the close and three successors, and transact's return"
-    ),
-    "predicate": (
-        "a bounded Bitemporal tx.amend_where or tx.wire.amend_where: verb, preparation, the "
-        "resolving read over 32 rows, materialization and buffering, the pre-commit flush of "
-        "32 closes and 96 successors, bind adaptation and dump, and transact's return"
     ),
     "target-patch": (
         "a caller-addressed bounded tx.wire.amend_if stating tx_start: verb, preparation, "
@@ -419,8 +404,7 @@ def description(cell: Cell) -> Description:
     if isinstance(cell, AlgorithmCell):
         return Description(_ALGORITHM_STAGES[cell.algorithm], _SETUP + _ALGORITHM_SETUP, cell.size)
     if cell.flow in _WRITE_FLOWS:
-        units = _PREDICATE_TARGETS if cell.flow == "predicate" else 1
-        return Description(_FLOW_STAGES[cell.flow], _SETUP, units)
+        return Description(_FLOW_STAGES[cell.flow], _SETUP, 1)
     return Description(_FLOW_STAGES[cell.flow], _SETUP + _MODE_SETUP[cell.mode], _READ_ROOTS)
 
 
@@ -528,36 +512,8 @@ class _CountingPort(lowering_support.AcceptingPort):
         return 1
 
 
-class _CompletingAcquisitionPort(acquisition_support.AcquisitionPort):
-    """The predicate-acquisition port, completing the flush its window now
-    includes: every statement's binds are serialized, and each write affects
-    one row."""
-
-    __slots__ = ("counter",)
-
-    def __init__(self, stored: Callable[[int], Mapping[str, object]], rows: int) -> None:
-        super().__init__(stored, rows)
-        self.counter = _Counter()
-
-    def execute(
-        self,
-        sql: str,
-        binds: Sequence[object],
-        document_reads: Sequence[DocumentReadOrdinals] = (),
-    ) -> list[Row]:
-        serialize(binds)
-        self.counter.reads += 1
-        return super().execute(sql, binds, document_reads)
-
-    def execute_write(self, sql: str, binds: Sequence[object]) -> int:
-        del sql
-        serialize(binds)
-        self.counter.statements += 1
-        return 1
-
-
 class _PagedReadPort(ConnectsAsItself):
-    """``roots`` current acquisition milestones answered in key order, one
+    """``roots`` current milestones answered in key order, one
     page per limited statement whose binds are serialized. A page answers one
     lookahead row beyond its size, which the next page answers again;
     :meth:`reset` restarts delivery."""
@@ -590,7 +546,7 @@ class _PagedReadPort(ConnectsAsItself):
         first = self._delivered + 1
         self._delivered += taken - 1 if limited and taken == size else taken
         rows = (
-            {**acquisition_support.stored_row(self._layout, key), "parallax_seek_0": key}
+            {**milestone_rows.stored_row(self._layout, key), "parallax_seek_0": key}
             for key in range(first, first + taken)
         )
         return projected_rows(sql, rows, document_reads)
@@ -700,46 +656,12 @@ def _gapped(stored: Mapping[str, object]) -> tuple[dict[str, object], ...]:
     )
 
 
-@contextmanager
-def _predicate_driver(cell: FlowCell) -> Generator[Driver]:
-    case = acquisition_support.case_named(f"acquisition.rows-{_PREDICATE_TARGETS}.{cell.layout}")
-    port = _CompletingAcquisitionPort(case.stored, case.rows)
-    entity = cast("Any", case.entity)
-    with Database(
-        port.open(), _serving(case.model), clock=FixedClock(acquisition_support.INSTANT)
-    ) as root:
-        handle = root.using_database_login()
-
-        def body(tx: TxnContext, stopwatch: Stopwatch) -> None:
-            stopwatch.start()
-            window = {
-                "valid_from": acquisition_support.INTERIOR_FROM,
-                "until": acquisition_support.INTERIOR_UNTIL,
-            }
-            if cell.interface == "wire":
-                tx.wire.amend_where(case.target, case.changes, **window)
-            else:
-                tx.amend_where(
-                    entity.where(entity.id >= 1),
-                    entity.title.set(acquisition_support.ASSIGNED_TITLE),
-                    **window,
-                )
-
-        def run(stopwatch: Stopwatch) -> Outcome:
-            port.counter.reset()
-            handle.transact(lambda tx: body(tx, stopwatch), concurrency="optimistic")
-            stopwatch.stop()
-            return port.counter.outcome()
-
-        yield Driver(run, port.counter.outcome)
-
-
 def _read_query(cell: FlowCell) -> object:
     entity = cast(
         "Any",
-        acquisition_support.AcquisitionColumns
+        milestone_rows.MilestoneColumns
         if cell.layout == "columns"
-        else acquisition_support.AcquisitionDocument,
+        else milestone_rows.MilestoneDocument,
     )
     if cell.interface == "typed":
         return entity.where(entity.id >= 1).as_of(valid_time=LATEST, tx_time=LATEST)
@@ -769,7 +691,7 @@ def _read_driver(cell: FlowCell) -> Generator[Driver]:
     port = _PagedReadPort(cell.layout, _READ_ROOTS)
     capacity = 0 if cell.mode == "preparation-inclusive" else DEFAULT_READ_PLAN_CACHE_CAPACITY
     with Database(
-        port.open(), _serving(acquisition_support.MODEL), read_plan_cache_capacity=capacity
+        port.open(), _serving(milestone_rows.MODEL), read_plan_cache_capacity=capacity
     ) as root:
         deliver = _delivery(root.using_database_login(), cell)
         if cell.mode == "reused-execution":
@@ -786,8 +708,6 @@ def _read_driver(cell: FlowCell) -> Generator[Driver]:
 
 
 def _flow_driver(cell: FlowCell) -> AbstractContextManager[Driver]:
-    if cell.flow == "predicate":
-        return _predicate_driver(cell)
     if cell.flow in ("read-eager", "read-stream"):
         return _read_driver(cell)
     case_family = {
@@ -1061,7 +981,8 @@ def measure(cell: Cell, *, warmups: int, measured: int) -> Reading:
 def support_digest() -> str:
     """The SHA-256 digest of this module and every workload source it reuses."""
     digest = hashlib.sha256()
-    digest.update(Path(__file__).read_bytes())
-    digest.update(b"\0")
+    for module in (Path(__file__), Path(milestone_rows.__file__)):
+        digest.update(module.read_bytes())
+        digest.update(b"\0")
     digest.update(lowering_support.write_lowering_digest().encode("utf-8"))
     return digest.hexdigest()

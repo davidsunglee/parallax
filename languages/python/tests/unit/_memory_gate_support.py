@@ -112,21 +112,9 @@ OWNERS: Final[tuple[GateOwner, ...]] = (
     ),
     GateOwner(
         WRITE_MODULE,
-        "test_predicate_acquisition_stays_within_its_gates_and_amortizes_over_rows",
-        WRITE_SUBJECT,
-        _prefixed("acquisition."),
-    ),
-    GateOwner(
-        WRITE_MODULE,
         "test_the_leaf_type_inserts_stay_within_their_memory_gates",
         WRITE_SUBJECT,
         _prefixed("leaf."),
-    ),
-    GateOwner(
-        WRITE_MODULE,
-        "test_leaf_type_acquisition_stays_within_its_memory_gates",
-        WRITE_SUBJECT,
-        _prefixed("leaf-acquisition."),
     ),
     GateOwner(
         WRITE_MODULE,

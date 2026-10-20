@@ -416,7 +416,7 @@ python-report-instance-state:
     cd {{python}} && uv run python tools/instance_state_overhead.py
 
 [metadata("runtime:medium")]
-[doc("Structural write evidence: keyed writes through driver serialization, predicate acquisition, and model preparation, on every supported CPython minor.")]
+[doc("Structural write evidence: keyed writes through driver serialization, the public Wire insert, and model preparation, on every supported CPython minor.")]
 python-report-write-lowering:
     cd {{python}} && uv run python tools/write_lowering_overhead.py
 

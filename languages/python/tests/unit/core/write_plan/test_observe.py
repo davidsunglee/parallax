@@ -24,7 +24,7 @@ from parallax.core.metamodel import AttributeIdentity, EntityIdentity
 from parallax.core.temporal_read import Bitemporal, milestone_edge, valid_time_coverage
 from parallax.core.write_plan import EntityStateRow, PredecessorRow
 from parallax.core.write_plan.observe import AssignedComparison
-from tests.unit import _predicate_acquisition_support as acquisition
+from tests.unit import _milestone_rows_support as milestone_rows
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._document_layout_support import PERSON, columns_model, document_model
 from tests.unit._positional_row_support import positional_row
@@ -322,13 +322,13 @@ def test_direct_predecessor_construction_owns_its_members_and_document() -> None
 # --------------------------------------------------------------------------- #
 # Axis ends and Valid-Time coverage, read from the row the predecessor holds.  #
 # --------------------------------------------------------------------------- #
-_BITEMPORAL_MODEL = model_of(acquisition.MODEL)
+_BITEMPORAL_MODEL = model_of(milestone_rows.MODEL)
 _VALID_FROM = dt.datetime(2026, 1, 1, tzinfo=dt.UTC)
 _VALID_UNTIL = dt.datetime(2026, 9, 1, tzinfo=dt.UTC)
 _OPENED = dt.datetime(2026, 2, 1, tzinfo=dt.UTC)
 _BITEMPORAL_LAYOUTS = pytest.mark.parametrize(
     "entity",
-    [acquisition.AcquisitionColumns, acquisition.AcquisitionDocument],
+    milestone_rows.ENTITY_CLASSES,
     ids=["columns", "document"],
 )
 _VALID_ENDS = pytest.mark.parametrize("valid_end", [_VALID_UNTIL, INFINITY], ids=["finite", "open"])

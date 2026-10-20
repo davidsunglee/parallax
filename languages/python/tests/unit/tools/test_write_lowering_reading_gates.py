@@ -1,24 +1,19 @@
 """The memory gates over the structural write windows, and what they can see.
 
 `spec/memory-gates.yaml` holds one blocking ceiling per retained checkpoint and
-per high-water mark of every keyed-write, predicate-acquisition, and
-model-preparation case, the leaf-type families' among them, derived from the
-retained capture the file names as its basis. Each family below reads its cases
-through the same child the report measures with —
-:func:`write_lowering_reading.measure`, the identical windows, roots, and
-warm-ups — and grades the retained and transient readings against their gates.
-The acquisition family additionally grades its scaling domain: the per-row
-readings must not grow with the row count, since the resolving read's planning
-is a fixed cost the rows amortize and nothing production keeps is sized by rows
-squared.
+per high-water mark of every keyed-write and model-preparation case, the
+leaf-type inserts among them, derived from the retained capture the file names
+as its basis. Each family below reads its cases through the same child the
+report measures with — :func:`write_lowering_reading.measure`, the identical
+windows, roots, and warm-ups — and grades the retained and transient readings
+against their gates, and the per-unit readings of any scaling domain its
+workloads form against that domain's order.
 
 Beside the gates, seeded regressions prove what each one detects. A retained
 duplication is seeded at the preparation seam as a per-instruction registry
 holding a detached copy of every prepared row; a peak-increasing copy is seeded
 at the serialization seam as a complete mutable copy of every document bind held
-across the driver dump; the acquisition scaling seeds are a resolving port that
-keeps a copy of every row it answered and one that keeps a key tuple per row,
-sized by the row count. Every seed is a monkeypatch inside the child and ships
+across the driver dump. Every seed is a monkeypatch inside the child and ships
 nowhere.
 
 What the gates cannot see is pinned as well: a duplicate traversal that
@@ -46,10 +41,9 @@ from parallax.conformance.budget import MemoryGates
 from parallax.core._execution import _write_lowering
 from parallax.core._execution._unit_work import instructions
 from parallax.core._execution._write_lowering import LoweringCursor
-from parallax.core.base import DocumentValue, PresentDocument, detach_json_container
+from parallax.core.base import detach_json_container
 from parallax.core.db_port import JsonDocument
 from tests.unit import _memory_gate_support as gate_support
-from tests.unit import _predicate_acquisition_support as acquisition_support
 from tests.unit import _write_lowering_support as lowering_support
 from tests.unit.memory_instruments import in_a_child_interpreter, serve_one_measurement
 
@@ -137,10 +131,10 @@ def _outside(workload: str, cell: str, reading: _Reading) -> bool:
 
 class _Registry:
     """The holder a seeded regression keeps its duplicates in: what a
-    per-instruction registry, a retained provider batch, or an eager per-row
-    structure would own. It accumulates, as a retained regression does — a
-    checkpoint counts what the sampled run added to it, and a holder that merely
-    replaced its previous entry would show no growth at all."""
+    per-instruction registry or a duplicate formed model would own. It
+    accumulates, as a retained regression does — a checkpoint counts what the
+    sampled run added to it, and a holder that merely replaced its previous
+    entry would show no growth at all."""
 
     __slots__ = ("kept",)
 
@@ -189,33 +183,6 @@ def _copying_binds(serialize: Callable[..., Any]) -> Callable[..., Any]:
     return serialized
 
 
-def _copied_row(row: Sequence[object]) -> tuple[object, ...]:
-    return tuple(
-        PresentDocument(cast("DocumentValue", detach_json_container(cell.document)))
-        if isinstance(cell, PresentDocument)
-        else detach_json_container(cell)
-        for cell in row
-    )
-
-
-def _keeping_row_copies(project: Callable[..., Any]) -> Callable[..., Any]:
-    def projected(*args: object, **kwargs: object) -> Any:
-        rows = project(*args, **kwargs)
-        _REGISTRY.keep([_copied_row(row) for row in rows])
-        return rows
-
-    return projected
-
-
-def _keeping_keys_per_row(project: Callable[..., Any]) -> Callable[..., Any]:
-    def projected(*args: object, **kwargs: object) -> Any:
-        rows = project(*args, **kwargs)
-        _REGISTRY.keep([tuple(range(len(rows))) for _ in rows])
-        return rows
-
-    return projected
-
-
 def _lowering_twice(lower: Callable[..., Any]) -> Callable[..., Any]:
     def lowered(*args: object, **kwargs: object) -> Any:
         lower(*args, **kwargs)
@@ -244,22 +211,8 @@ def test_the_changed_ancestor_successors_stay_within_their_memory_gates() -> Non
 
 
 @in_a_child_interpreter
-def test_predicate_acquisition_stays_within_its_gates_and_amortizes_over_rows() -> None:
-    _within_gates(
-        gate_support.owner_of(
-            test_predicate_acquisition_stays_within_its_gates_and_amortizes_over_rows
-        )
-    )
-
-
-@in_a_child_interpreter
 def test_the_leaf_type_inserts_stay_within_their_memory_gates() -> None:
     _within_gates(gate_support.owner_of(test_the_leaf_type_inserts_stay_within_their_memory_gates))
-
-
-@in_a_child_interpreter
-def test_leaf_type_acquisition_stays_within_its_memory_gates() -> None:
-    _within_gates(gate_support.owner_of(test_leaf_type_acquisition_stays_within_its_memory_gates))
 
 
 @in_a_child_interpreter
@@ -320,40 +273,6 @@ def test_a_seeded_mutable_copy_of_every_document_bind_trips_the_transient_gate()
             reading = _Reading(workload)
             assert _outside(workload, TRANSIENT, reading), workload
             assert not _outside(workload, RETAINED, reading), workload
-
-
-@in_a_child_interpreter
-def test_seeded_per_row_retention_trips_the_acquisition_gates_and_their_amortization() -> None:
-    # Two scaling regressions at the resolving read. A port that keeps a copy of
-    # every row it answered, its document included, duplicates one row per
-    # resolved row, which the per-row gates see at every level. The copy is what
-    # makes it a duplicate: the group itself retains the answered rows' decoded
-    # documents by transfer, so keeping those same rows would add little beyond
-    # what production already holds. A structure sized by the row count and kept
-    # per row grows with rows squared: per row it is small at eight rows and large
-    # at a hundred and twenty-eight, so the per-row readings stop falling with the
-    # row count, which is the amortization the scaling domain requires.
-    levels = acquisition_support.CASES
-    domain_columns = [case.name for case in levels if case.layout == "columns"]
-    with pytest.MonkeyPatch.context() as patched:
-        patched.setattr(
-            acquisition_support,
-            "projected_rows",
-            _keeping_row_copies(acquisition_support.projected_rows),
-        )
-        for workload in ("acquisition.rows-32.columns", "acquisition.rows-128.document"):
-            assert _outside(workload, RETAINED, _Reading(workload)), workload
-    _REGISTRY.clear()
-    with pytest.MonkeyPatch.context() as patched:
-        patched.setattr(
-            acquisition_support,
-            "projected_rows",
-            _keeping_keys_per_row(acquisition_support.projected_rows),
-        )
-        per_row = [_Reading(workload).values[RETAINED] for workload in domain_columns]
-        assert not all(later <= earlier for earlier, later in pairwise(per_row)), per_row
-        assert _outside(domain_columns[-1], RETAINED, _Reading(domain_columns[-1]))
-    _REGISTRY.clear()
 
 
 @in_a_child_interpreter

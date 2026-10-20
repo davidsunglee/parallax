@@ -1,5 +1,5 @@
-"""The leaf-type Value Object structures the leaf-type read, keyed-write, and
-predicate-acquisition families measure, under both storage layouts.
+"""The leaf-type Value Object structures the leaf-type read and keyed-write
+families measure, under both storage layouts.
 
 Every type the leaf-type manifest names is declared at one geometry,
 :func:`~parallax.conformance.workloads.leaf_type_level`: a root occurrence and
@@ -8,9 +8,8 @@ type, every leaf populated. The leaves live inside structured documents under
 both layouts, so two types differ only in how production decodes, compares,
 publishes, and encodes a leaf, never in where it is stored. Each type has a
 non-temporal Entity per layout, which the reads materialize and the inserts
-open, and a Bitemporal one per layout, which the predicate acquisition
-resolves. A stored row spells every leaf in its canonical Wire form, as the
-driver answers a document.
+open. A stored row spells every leaf in its canonical Wire form, as the driver
+answers a document.
 
 A leaf's value is a function of its index and of the occurrence's key alone,
 so rows of one type weigh the same and every value is taken on its type's
@@ -23,9 +22,8 @@ as cheaply as the String control's, rather than encoded from that value. String
 is the control each type is read against, valued exactly as the geometry
 families value their leaves. Where a geometry cell already measures
 that structure — the level's read and its Typed insert — the geometry cell is
-the control and the String type declares none; the Wire insert and the
-acquisition, which no geometry case measures at this level, read a String cell
-of their own.
+the control and the String type declares none; the Wire insert, which no
+geometry case measures at this level, reads a String cell of its own.
 
 Exported names carry no leading underscore: importing an underscored name across
 modules is a ``reportPrivateUsage`` error under pyright strict, so privacy is
@@ -52,7 +50,6 @@ from parallax.conformance.workloads import (
 )
 from parallax.core import (
     Attr,
-    Bitemporal,
     Document,
     DomainModel,
     Entity,
@@ -70,7 +67,6 @@ from tests._support.db_port import ConnectsAsItself, projected_rows
 from tests.unit._workload_spelling_support import LEAF_PREFIX, leaf_value
 
 __all__ = [
-    "ACQUIRED_TYPES",
     "CONTROL",
     "LAYOUTS",
     "LEVEL",
@@ -81,7 +77,6 @@ __all__ = [
     "Layout",
     "LeafPort",
     "LeafType",
-    "acquisition_entity",
     "body_document",
     "entity_class",
     "instance",
@@ -280,9 +275,6 @@ _DECLARED_TYPES: Final[tuple[LeafType, ...]] = (CONTROL, *MEASURED_TYPES)
 WIRE_INSERTED_TYPES: Final[tuple[LeafType, ...]] = (CONTROL, *MEASURED_TYPES)
 """Every type a Wire insert opens a row of: the measured types and their
 String control, which no geometry case inserts through Wire."""
-ACQUIRED_TYPES: Final[tuple[LeafType, ...]] = (CONTROL, *MEASURED_TYPES)
-"""Every type the predicate acquisition resolves rows of: the measured types
-and their String control, which no geometry case acquires."""
 
 
 def leaf_type_named(name: str) -> LeafType:
@@ -308,11 +300,7 @@ def _value_object(name: str, leaf: LeafType) -> type[ValueObject]:
 
 
 def _entity(
-    name: str,
-    body: type[ValueObject],
-    item: type[ValueObject],
-    layout: Layout,
-    base: type[Entity],
+    name: str, body: type[ValueObject], item: type[ValueObject], layout: Layout
 ) -> type[Entity]:
     namespace = {
         "__annotations__": {"id": Attr[int], _ONE: Attr[body], _MANY: Attr[tuple[item, ...]]},
@@ -322,7 +310,7 @@ def _entity(
     keywords: dict[str, object] = {"table": name.lower(), "namespace": _NAMESPACE}
     if layout == "document":
         keywords["layout"] = Document(column="payload")
-    return cast("type[Entity]", type(name, (base,), namespace, **keywords))
+    return cast("type[Entity]", type(name, (Entity,), namespace, **keywords))
 
 
 @dataclass(frozen=True, slots=True)
@@ -332,7 +320,6 @@ class _Declared:
     body: type[ValueObject]
     item: type[ValueObject]
     entities: Mapping[Layout, type[Entity]]
-    acquired: Mapping[Layout, type[Entity]]
 
 
 def _declared(leaf: LeafType) -> _Declared:
@@ -342,13 +329,7 @@ def _declared(leaf: LeafType) -> _Declared:
         body,
         item,
         {
-            layout: _entity(f"Leaf{leaf.title}{layout.capitalize()}", body, item, layout, Entity)
-            for layout in LAYOUTS
-        },
-        {
-            layout: _entity(
-                f"LeafAcquisition{leaf.title}{layout.capitalize()}", body, item, layout, Bitemporal
-            )
+            layout: _entity(f"Leaf{leaf.title}{layout.capitalize()}", body, item, layout)
             for layout in LAYOUTS
         },
     )
@@ -357,12 +338,7 @@ def _declared(leaf: LeafType) -> _Declared:
 _DECLARED: Final[Mapping[str, _Declared]] = {leaf.id: _declared(leaf) for leaf in _DECLARED_TYPES}
 
 MODEL: Final = DomainModel(
-    *(
-        entities[layout]
-        for declared in _DECLARED.values()
-        for entities in (declared.entities, declared.acquired)
-        for layout in LAYOUTS
-    )
+    *(declared.entities[layout] for declared in _DECLARED.values() for layout in LAYOUTS)
 )
 """Every leaf-type Entity, a model of its own: joining the structural write
 model would move what that model's preparation and every read of it retain."""
@@ -371,11 +347,6 @@ model would move what that model's preparation and every read of it retain."""
 def entity_class(leaf: LeafType, layout: Layout) -> type[Entity]:
     """The non-temporal Entity a read materializes and an insert opens."""
     return _DECLARED[leaf.id].entities[layout]
-
-
-def acquisition_entity(leaf: LeafType, layout: Layout) -> type[Entity]:
-    """The Bitemporal Entity the predicate acquisition resolves rows of."""
-    return _DECLARED[leaf.id].acquired[layout]
 
 
 def _document_placement(cls: type[Entity]) -> tuple[str, tuple[str, ...]]:
@@ -389,18 +360,14 @@ def _document_placement(cls: type[Entity]) -> tuple[str, tuple[str, ...]]:
 
 
 _DOCUMENT_PLACEMENTS: Final[Mapping[type[Entity], tuple[str, tuple[str, ...]]]] = {
-    entities["document"]: _document_placement(entities["document"])
+    declared.entities["document"]: _document_placement(declared.entities["document"])
     for declared in _DECLARED.values()
-    for entities in (declared.entities, declared.acquired)
 }
 """Where each document-layout Entity's stored row carries its members, resolved
 once so composing a row consults nothing but this mapping."""
 
 _LEAF_TYPE_OF: Final[Mapping[type[Entity], LeafType]] = {
-    entity: leaf
-    for leaf in _DECLARED_TYPES
-    for entities in (_DECLARED[leaf.id].entities, _DECLARED[leaf.id].acquired)
-    for entity in entities.values()
+    entity: leaf for leaf in _DECLARED_TYPES for entity in _DECLARED[leaf.id].entities.values()
 }
 
 
@@ -433,7 +400,7 @@ def instance(leaf: LeafType, layout: Layout, key: int) -> Entity:
 
 def stored_row(entity: type[Entity], key: int) -> dict[str, object]:
     """One stored row of ``entity`` as the driver would answer it, keyed by
-    physical column; a temporal Entity's bounds are the caller's to add."""
+    physical column."""
     row = wire_row(_LEAF_TYPE_OF[entity], key)
     placement = _DOCUMENT_PLACEMENTS.get(entity)
     if placement is None:

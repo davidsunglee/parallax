@@ -108,7 +108,7 @@ from tests._support.planner_probes import (
     observed_buffer,
     retained_observation,
 )
-from tests.unit import _predicate_acquisition_support as acquisition_support
+from tests.unit import _milestone_rows_support as milestone_rows
 from tests.unit._corpus_identity_support import corpus_entity, corpus_object_key
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._gc_reachability import reachable_objects
@@ -128,6 +128,9 @@ _WALLET = corpus_model("wallet")
 # stage first needs it, so every non-temporal test below shares one uncaptured
 # holder rather than pinning an instant it would never read.
 _INSTANT = inert_instant()
+_ASSIGNED_TITLE = "title-changed"
+_INTERIOR_FROM = dt.datetime(2026, 3, 1, tzinfo=dt.UTC)
+_INTERIOR_UNTIL = dt.datetime(2026, 9, 1, tzinfo=dt.UTC)
 
 
 type _TestBufferItem = BufferItem | KeyedWriteInstruction | PredicateWriteInstruction
@@ -649,10 +652,10 @@ def test_a_literal_keyed_write_overlays_every_member_it_assigns(
     assert _insert_rows(successor)[0]["value"] == Decimal("9.00")
 
 
-def _acquisition_update_until(model: Metamodel) -> PreparedPredicateWrite:
-    """The acquisition workload's interior ``updateUntil`` over its Relational
-    Document family, assigning the workload's changed title to every row."""
-    entity = acquisition_support.case_named("acquisition.rows-8.document").entity.identity.canonical
+def _milestone_update_until(model: Metamodel) -> PreparedPredicateWrite:
+    """An interior ``updateUntil`` over the Relational Document milestone
+    Entity, assigning one changed title to every row."""
+    entity = milestone_rows.MilestoneDocument.identity.canonical
     prepared = prepare_typed_write(
         PredicateWriteInstruction(
             "amendUntil",
@@ -662,9 +665,9 @@ def _acquisition_update_until(model: Metamodel) -> PreparedPredicateWrite:
                     "greaterThanEquals", predicate_algebra.FieldSubject(f"{entity}.id"), 1
                 ),
             ),
-            (WriteAssignment(f"{entity}.title", acquisition_support.ASSIGNED_TITLE),),
-            acquisition_support.INTERIOR_FROM,
-            acquisition_support.INTERIOR_UNTIL,
+            (WriteAssignment(f"{entity}.title", _ASSIGNED_TITLE),),
+            _INTERIOR_FROM,
+            _INTERIOR_UNTIL,
         ),
         model,
     )
@@ -681,8 +684,8 @@ def test_a_keyed_and_a_materialized_successor_lower_to_the_same_statements() -> 
     # producer freezes the raw document once for the row: the head and tail
     # bind that one immutable copy, and the changed successor's patch reuses
     # its subtrees.
-    model = model_of(acquisition_support.MODEL)
-    mutation = _acquisition_update_until(model)
+    model = model_of(milestone_rows.MODEL)
+    mutation = _milestone_update_until(model)
     target = mutation.selection.target
     layout = LayoutCatalog(model).entity(target.identity)
     selection = layout.member_selection
@@ -693,9 +696,9 @@ def test_a_keyed_and_a_materialized_successor_lower_to_the_same_statements() -> 
             "title": "title-1",
             "address": {"city": "Oslo", "geo": {"country": "NO"}},
             "tags": [{"label": "a"}],
-            "validStart": acquisition_support.VALID_START,
+            "validStart": milestone_rows.VALID_START,
             "validEnd": INFINITY,
-            "txStart": acquisition_support.TX_START,
+            "txStart": milestone_rows.TX_START,
             "txEnd": INFINITY,
         },
         absent=ABSENT,
@@ -715,9 +718,9 @@ def test_a_keyed_and_a_materialized_successor_lower_to_the_same_statements() -> 
     keyed = KeyedWriteInstruction(
         "amendUntil",
         target.identity.canonical,
-        ({"id": 1, "title": acquisition_support.ASSIGNED_TITLE},),
-        acquisition_support.INTERIOR_FROM,
-        acquisition_support.INTERIOR_UNTIL,
+        ({"id": 1, "title": _ASSIGNED_TITLE},),
+        _INTERIOR_FROM,
+        _INTERIOR_UNTIL,
     )
     key_ = object_key(keyed, model)
     assert key_ is not None
@@ -755,7 +758,7 @@ def test_a_keyed_and_a_materialized_successor_lower_to_the_same_statements() -> 
         )
         assert [head["title"], changed["title"], tail["title"]] == [
             "title-1",
-            acquisition_support.ASSIGNED_TITLE,
+            _ASSIGNED_TITLE,
             "title-1",
         ]
         assert all(document["charterCode"] == "NB-118" for document in (head, changed, tail))
@@ -776,17 +779,17 @@ def test_a_restated_occurrence_is_assigned_whole_and_keeps_no_key_its_value_omit
     # the changed successor writes the stated subtree — not the stored one, and
     # not the stored key no member declares — beside the patched `title`, while
     # every member the row does not name is carried.
-    model = model_of(acquisition_support.MODEL)
-    target = _acquisition_update_until(model).selection.target
+    model = model_of(milestone_rows.MODEL)
+    target = _milestone_update_until(model).selection.target
     selection = LayoutCatalog(model).entity(target.identity).member_selection
     members: dict[str, object] = {
         "id": 1,
         "title": "title-1",
         "address": {"city": "Oslo", "geo": {"country": "NO"}},
         "tags": [{"label": "a"}],
-        "validStart": acquisition_support.VALID_START,
+        "validStart": milestone_rows.VALID_START,
         "validEnd": INFINITY,
-        "txStart": acquisition_support.TX_START,
+        "txStart": milestone_rows.TX_START,
         "txEnd": INFINITY,
     }
     stored: dict[str, object] = {
@@ -808,12 +811,12 @@ def test_a_restated_occurrence_is_assigned_whole_and_keeps_no_key_its_value_omit
             (
                 {
                     "id": 1,
-                    "title": acquisition_support.ASSIGNED_TITLE,
+                    "title": _ASSIGNED_TITLE,
                     "address": {"city": "Oslo", "geo": {"country": "NO"}},
                 },
             ),
-            acquisition_support.INTERIOR_FROM,
-            acquisition_support.INTERIOR_UNTIL,
+            _INTERIOR_FROM,
+            _INTERIOR_UNTIL,
         ),
         model,
     )
@@ -833,7 +836,7 @@ def test_a_restated_occurrence_is_assigned_whole_and_keeps_no_key_its_value_omit
     assert documents == [
         {
             **stored,
-            "title": acquisition_support.ASSIGNED_TITLE,
+            "title": _ASSIGNED_TITLE,
             "address": {"city": "Oslo", "geo": {"country": "NO"}},
         }
     ]
@@ -1689,10 +1692,10 @@ def test_an_unowned_transaction_time_group_reads_no_row_while_it_settles(
 # Documents: one immutable view per row, shared by its sibling successors and #
 # released after the last; effects and cell-only steps freeze none.           #
 # --------------------------------------------------------------------------- #
-def _acquisition_terminate_until(model: Metamodel) -> PreparedPredicateWrite:
-    """The acquisition workload's interior ``terminateUntil`` over its
-    Relational Document family."""
-    entity = acquisition_support.case_named("acquisition.rows-8.document").entity.identity.canonical
+def _milestone_terminate_until(model: Metamodel) -> PreparedPredicateWrite:
+    """An interior ``terminateUntil`` over the Relational Document milestone
+    Entity."""
+    entity = milestone_rows.MilestoneDocument.identity.canonical
     prepared = prepare_typed_write(
         PredicateWriteInstruction(
             "terminateUntil",
@@ -1703,8 +1706,8 @@ def _acquisition_terminate_until(model: Metamodel) -> PreparedPredicateWrite:
                 ),
             ),
             (),
-            acquisition_support.INTERIOR_FROM,
-            acquisition_support.INTERIOR_UNTIL,
+            _INTERIOR_FROM,
+            _INTERIOR_UNTIL,
         ),
         model,
     )
@@ -1715,8 +1718,8 @@ def _acquisition_terminate_until(model: Metamodel) -> PreparedPredicateWrite:
 def _document_group(
     *titles: str,
 ) -> tuple[Metamodel, MaterializedWriteGroup, list[dict[str, object]]]:
-    model = model_of(acquisition_support.MODEL)
-    mutation = _acquisition_terminate_until(model)
+    model = model_of(milestone_rows.MODEL)
+    mutation = _milestone_terminate_until(model)
     layout = LayoutCatalog(model).entity(mutation.selection.target.identity)
     selection = layout.member_selection
     evidence = PredecessorRowsBuilder(
@@ -1739,9 +1742,9 @@ def _document_group(
                     "title": title,
                     "address": {"city": "Oslo", "geo": {"country": "NO"}},
                     "tags": [{"label": label} for label in "abcdefgh"],
-                    "validStart": acquisition_support.VALID_START,
+                    "validStart": milestone_rows.VALID_START,
                     "validEnd": INFINITY,
-                    "txStart": acquisition_support.TX_START,
+                    "txStart": milestone_rows.TX_START,
                     "txEnd": INFINITY,
                 },
                 absent=ABSENT,

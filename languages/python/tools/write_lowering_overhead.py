@@ -5,13 +5,10 @@ reading is taken by ``write_lowering_reading.py`` in an isolated child process:
 the twenty categorical keyed-write cases, the caller-addressed target writes
 beside them, the geometry inserts, the changed-ancestor successors, and the
 leaf-type inserts through their public verbs and the flush's actual driver
-serialization, the predicate-acquisition
-families to their buffered group, the predicate-flush workloads from their verb
-through their batched flush and commit, the public Wire insert to the node it
-answers, and the two model-preparation checkpoints. The leaf-type cases are
-read only on the supported minors the leaf-type manifest scopes them to.
-Measurements are observations: only an incomplete matrix changes this
-command's exit status.
+serialization, the public Wire insert to the node it answers, and the two
+model-preparation checkpoints. The leaf-type cases are read only on the
+supported minors the leaf-type manifest scopes them to. Measurements are
+observations: only an incomplete matrix changes this command's exit status.
 """
 
 from __future__ import annotations
@@ -108,8 +105,6 @@ checkpoint and every ``calls.*`` observation is one median, so each carries a
 single sample."""
 
 KEYED_WINDOW: Final = "keyed-write"
-ACQUISITION_WINDOW: Final = "predicate-acquisition"
-FLUSH_WINDOW: Final = "predicate-flush"
 RESPONSE_WINDOW: Final = "wire-insert-response"
 MODEL_WINDOW: Final = "model-preparation"
 MODEL_CASE: Final = "model.prepared"
@@ -123,20 +118,6 @@ WINDOW_DESCRIPTIONS: Final[Mapping[str, str]] = {
         "serialization, and the commit; a target's own coverage read at flush over "
         "provider-free rows, but no earlier read and no database execution"
     ),
-    ACQUISITION_WINDOW: (
-        "one public tx.wire.amend_where bounded by until over a Bitemporal target, from the "
-        "caller's target and changes documents through preparation and production "
-        "acquisition over freshly composed resolving rows to a buffered Materialized "
-        "Write Group; no flush or serialization"
-    ),
-    FLUSH_WINDOW: (
-        "one public tx.wire.amend_where bounded by until over a Bitemporal target, from the "
-        "caller's target and changes documents through selection at valid_from over "
-        "provider-free rows, buffering, and the pre-commit flush's batched coverage reads, "
-        "settlement, and SQL lowering, until transact returns; the port observes each "
-        "write's binds without production bind adaptation or driver serialization; the "
-        "retained checkpoint is the first write naming the last selected object"
-    ),
     RESPONSE_WINDOW: (
         "one public tx.wire.insert of a nested, polymorphic Create Payload inside an open "
         "transaction, from the payload arriving to the frozen node it answers; no flush, "
@@ -147,10 +128,8 @@ WINDOW_DESCRIPTIONS: Final[Mapping[str, str]] = {
 
 sys.path.insert(0, str(WORKSPACE))
 
-# `sys.path` gains the workspace above, so these imports cannot precede it; that is
-# what the E402 suppression each one carries records.
-from tests.unit import _predicate_acquisition_support as acquisition_support  # noqa: E402
-from tests.unit import _predicate_flush_support as flush_support  # noqa: E402
+# `sys.path` gains the workspace above, so this import cannot precede it; that is
+# what its E402 suppression records.
 from tests.unit import _write_lowering_support as lowering_support  # noqa: E402
 
 if Path(lowering_support.__file__ or "").resolve() != SUPPORT_MODULE:
@@ -161,50 +140,53 @@ if Path(lowering_support.__file__ or "").resolve() != SUPPORT_MODULE:
 
 WINDOWS: Final[Mapping[str, str]] = {
     **{case.name: KEYED_WINDOW for case in lowering_support.CASES},
-    **{case.name: ACQUISITION_WINDOW for case in acquisition_support.CASES},
-    **{case.name: ACQUISITION_WINDOW for case in acquisition_support.LEAF_CASES},
     **{case.name: RESPONSE_WINDOW for case in lowering_support.RESPONSE_CASES},
     MODEL_CASE: MODEL_WINDOW,
     MODEL_FAMILY_CASE: MODEL_WINDOW,
-    **{case.name: FLUSH_WINDOW for case in flush_support.CASES},
 }
 """Every case the child can be asked for, and the window it reads."""
 
 CASE_NAMES: Final = tuple(WINDOWS)
-FLUSH_CASE_NAMES: Final = tuple(case.name for case in flush_support.CASES)
-"""The predicate-flush workloads, added after the target writes."""
-BEFORE_FLUSH_CASE_NAMES: Final = tuple(name for name in CASE_NAMES if name not in FLUSH_CASE_NAMES)
-"""The case set captures were taken over before the predicate-flush workloads."""
 CONTROL_CASE_NAMES: Final = (
     *(case.name for case in lowering_support.RESPONSE_CASES),
     MODEL_FAMILY_CASE,
 )
 """The cases added as before/after controls beside the lowering matrix: the
 public insert response and the family-bearing preparation."""
-LEAF_TYPE_CASE_NAMES: Final = (
-    *(case.name for case in lowering_support.CASES if case.family == lowering_support.LEAF_FAMILY),
-    *(case.name for case in acquisition_support.LEAF_CASES),
+LEAF_TYPE_CASE_NAMES: Final = tuple(
+    case.name for case in lowering_support.CASES if case.family == lowering_support.LEAF_FAMILY
 )
-"""The leaf-type inserts and acquisitions, added after the controls."""
+"""The leaf-type inserts, read only on the supported minors the leaf-type
+manifest scopes them to."""
 TARGET_CASE_NAMES: Final = tuple(case.name for case in lowering_support.CASES if case.addressed)
-"""The caller-addressed target writes, added after the leaf-type families."""
-BEFORE_TARGET_CASE_NAMES: Final = tuple(
-    name for name in BEFORE_FLUSH_CASE_NAMES if name not in TARGET_CASE_NAMES
+"""The caller-addressed target writes."""
+RETIRED_WINDOWS: Final[Mapping[str, str]] = {
+    "acquisition.rows-8.columns": "predicate-acquisition",
+    "acquisition.rows-32.columns": "predicate-acquisition",
+    "acquisition.rows-128.columns": "predicate-acquisition",
+    "acquisition.rows-8.document": "predicate-acquisition",
+    "acquisition.rows-32.document": "predicate-acquisition",
+    "acquisition.rows-128.document": "predicate-acquisition",
+}
+"""The cases the retained legacy captures read that no child reads any more,
+and the window each was read over."""
+ENVELOPE_WINDOWS: Final[Mapping[str, str]] = {**WINDOWS, **RETIRED_WINDOWS}
+"""Every case a write-lowering envelope may carry, and the window it was read
+over."""
+LEGACY_CASE_NAMES: Final = (
+    *(
+        name
+        for name in CASE_NAMES
+        if WINDOWS[name] == KEYED_WINDOW
+        and name not in TARGET_CASE_NAMES
+        and name not in LEAF_TYPE_CASE_NAMES
+    ),
+    *RETIRED_WINDOWS,
+    MODEL_CASE,
 )
-"""The case set captures were taken over before the target writes."""
-BEFORE_LEAF_TYPE_CASE_NAMES: Final = tuple(
-    name for name in BEFORE_TARGET_CASE_NAMES if name not in LEAF_TYPE_CASE_NAMES
-)
-"""The case set captures were taken over before the leaf-type families."""
-LEGACY_CASE_NAMES: Final = tuple(
-    name for name in BEFORE_LEAF_TYPE_CASE_NAMES if name not in CONTROL_CASE_NAMES
-)
-"""The case set the retained captures were taken over, before the controls."""
+"""The case set the retained captures were taken over."""
 CASE_COVERAGES: Final[Mapping[str, tuple[str, ...]]] = {
     "current": CASE_NAMES,
-    "before predicate flush": BEFORE_FLUSH_CASE_NAMES,
-    "before target writes": BEFORE_TARGET_CASE_NAMES,
-    "before leaf types": BEFORE_LEAF_TYPE_CASE_NAMES,
     "legacy": LEGACY_CASE_NAMES,
 }
 """Every complete case set a write-lowering envelope may carry, by the name a
@@ -432,7 +414,7 @@ def expected_addresses(
     for runtime in runtimes:
         for case in runtime_cases(runtime, case_names):
             addresses.update((runtime, case, metric) for metric in METRICS)
-            if WINDOWS[case] == KEYED_WINDOW:
+            if ENVELOPE_WINDOWS[case] == KEYED_WINDOW:
                 addresses.update((runtime, case, f"calls.{name}") for name in call_names)
     return frozenset(addresses)
 

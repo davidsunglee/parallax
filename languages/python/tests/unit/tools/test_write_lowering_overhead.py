@@ -15,11 +15,7 @@ from parallax.conformance.budget import BudgetContract
 from parallax.conformance.cost_envelope import validate
 from parallax.core.base import detach_json_container
 from parallax.core.db_port import DocumentReadOrdinals, JsonDocument, Row
-from parallax.core.unit_work import BufferItem, MaterializedWriteGroup, UnitOfWork
-from parallax.core.write_plan import PredecessorRows
 from tests.unit import _leaf_type_support as leaf_support
-from tests.unit import _predicate_acquisition_support as acquisition_support
-from tests.unit import _predicate_flush_support as flush_support
 from tests.unit import _write_lowering_support as lowering_support
 from tests.unit.tools._provenance_support import pin_dirty_tree
 
@@ -65,59 +61,42 @@ def _matrix(*runtimes: str) -> report.Matrix:
 # --------------------------------------------------------------------------- #
 # The matrix: every case the protocol names, on every supported minor.         #
 # --------------------------------------------------------------------------- #
-def test_the_matrix_names_every_keyed_acquisition_and_model_case_once() -> None:
+def test_the_matrix_names_every_keyed_response_and_model_case_once() -> None:
     keyed = [case.name for case in lowering_support.CASES]
     leaf_keyed = [
         case.name for case in lowering_support.CASES if case.family == lowering_support.LEAF_FAMILY
     ]
-    acquisition = [case.name for case in acquisition_support.CASES]
-    leaf_acquisition = [case.name for case in acquisition_support.LEAF_CASES]
+    target = [case.name for case in lowering_support.CASES if case.addressed]
     response = [case.name for case in lowering_support.RESPONSE_CASES]
-    flush = [case.name for case in flush_support.CASES]
     assert (
         *keyed,
-        *acquisition,
-        *leaf_acquisition,
         *response,
         report.MODEL_CASE,
         report.MODEL_FAMILY_CASE,
-        *flush,
     ) == report.CASE_NAMES
-    assert tuple(flush) == report.FLUSH_CASE_NAMES
-    assert tuple(name for name in report.CASE_NAMES if name not in flush) == (
-        report.BEFORE_FLUSH_CASE_NAMES
-    )
     assert len(set(report.CASE_NAMES)) == len(report.CASE_NAMES)
     assert (*response, report.MODEL_FAMILY_CASE) == report.CONTROL_CASE_NAMES
-    assert (*leaf_keyed, *leaf_acquisition) == report.LEAF_TYPE_CASE_NAMES
-    target = [case.name for case in lowering_support.CASES if case.addressed]
+    assert tuple(leaf_keyed) == report.LEAF_TYPE_CASE_NAMES
     assert tuple(target) == report.TARGET_CASE_NAMES
-    before_targets = [name for name in keyed if name not in target]
-    assert (
-        *before_targets,
-        *acquisition,
-        *leaf_acquisition,
-        *response,
-        report.MODEL_CASE,
-        report.MODEL_FAMILY_CASE,
-    ) == report.BEFORE_TARGET_CASE_NAMES
-    before_leaf_types = [name for name in before_targets if name not in leaf_keyed]
-    assert (
-        *before_leaf_types,
-        *acquisition,
-        *response,
-        report.MODEL_CASE,
-        report.MODEL_FAMILY_CASE,
-    ) == report.BEFORE_LEAF_TYPE_CASE_NAMES
-    assert (*before_leaf_types, *acquisition, report.MODEL_CASE) == report.LEGACY_CASE_NAMES
+    legacy_keyed = [name for name in keyed if name not in target and name not in leaf_keyed]
+    assert (*legacy_keyed, *report.RETIRED_WINDOWS, report.MODEL_CASE) == report.LEGACY_CASE_NAMES
     assert report.CASE_COVERAGES == {
         "current": report.CASE_NAMES,
-        "before predicate flush": report.BEFORE_FLUSH_CASE_NAMES,
-        "before target writes": report.BEFORE_TARGET_CASE_NAMES,
-        "before leaf types": report.BEFORE_LEAF_TYPE_CASE_NAMES,
         "legacy": report.LEGACY_CASE_NAMES,
     }
     assert len(supported_minors()) == 2
+
+
+def test_a_retired_case_is_carried_by_an_envelope_but_read_by_no_child() -> None:
+    assert not set(report.RETIRED_WINDOWS) & set(report.WINDOWS)
+    assert not set(report.RETIRED_WINDOWS.values()) & set(report.WINDOW_DESCRIPTIONS)
+    assert report.ENVELOPE_WINDOWS == {**report.WINDOWS, **report.RETIRED_WINDOWS}
+    for case in report.RETIRED_WINDOWS:
+        assert report.selected_cases([case]) == ()
+        assert all(
+            report.unit_of(report.ENVELOPE_WINDOWS[case], metric).endswith("/row")
+            for metric in report.METRICS
+        )
 
 
 def test_twenty_categorical_cases_cross_every_layout_and_ingress() -> None:
@@ -356,31 +335,6 @@ def test_a_leaf_type_insert_writes_every_leaf_in_its_canonical_wire_spelling() -
         assert documents == [expected["body"], expected["items"]], case.name
 
 
-def test_acquisition_cases_cover_every_row_level_under_both_layouts() -> None:
-    assert {case.name for case in acquisition_support.CASES} == {
-        f"acquisition.{level.id}.{layout}"
-        for level in workloads.ACQUISITION_LEVELS
-        for layout in workloads.STRUCTURAL_LAYOUTS
-    }
-    assert all(
-        report.WINDOWS[case.name] == report.ACQUISITION_WINDOW for case in acquisition_support.CASES
-    )
-    assert report.WINDOWS[report.MODEL_CASE] == report.MODEL_WINDOW
-
-
-def test_leaf_type_acquisition_covers_every_acquired_type_and_level_under_both_layouts() -> None:
-    assert {case.name for case in acquisition_support.LEAF_CASES} == {
-        f"leaf-acquisition.{type_id}.{level.id}.{layout}"
-        for type_id in (workloads.LEAF_CONTROL_TYPE_ID, *workloads.LEAF_TYPE_IDS)
-        for level in workloads.leaf_acquisition_levels()
-        for layout in workloads.STRUCTURAL_LAYOUTS
-    }
-    assert all(
-        report.WINDOWS[case.name] == report.ACQUISITION_WINDOW and case.model is leaf_support.MODEL
-        for case in acquisition_support.LEAF_CASES
-    )
-
-
 # --------------------------------------------------------------------------- #
 # The fixture: what each keyed case lowers to, and what the driver dumps.      #
 # --------------------------------------------------------------------------- #
@@ -478,68 +432,6 @@ def test_a_non_temporal_changed_update_revises_the_row_it_read_in_place() -> Non
         assert statement.sql.startswith("update ")
 
 
-class _CountingPort(acquisition_support.AcquisitionPort):
-    reads = 0
-    delivered = 0
-
-    def execute(
-        self,
-        sql: str,
-        binds: Sequence[object],
-        document_reads: Sequence[DocumentReadOrdinals] = (),
-    ) -> list[Row]:
-        rows = super().execute(sql, binds, document_reads)
-        type(self).reads += 1
-        type(self).delivered += len(rows)
-        return rows
-
-
-def test_acquisition_resolves_every_row_once_and_stops_before_any_flush(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(acquisition_support, "AcquisitionPort", _CountingPort)
-    buffered: list[MaterializedWriteGroup] = []
-    buffer = UnitOfWork.buffer
-
-    def recording_buffer(uow: UnitOfWork, instruction: BufferItem) -> None:
-        if isinstance(instruction, MaterializedWriteGroup):
-            buffered.append(instruction)
-        buffer(uow, instruction)
-
-    monkeypatch.setattr(UnitOfWork, "buffer", recording_buffer)
-    for case in (*acquisition_support.CASES, *acquisition_support.LEAF_CASES):
-        _CountingPort.reads = 0
-        _CountingPort.delivered = 0
-        buffered.clear()
-        marks: list[str] = []
-        with acquisition_support.database(case) as handle:
-            acquisition_support.acquire(
-                handle,
-                case,
-                opened=lambda marks=marks: marks.append("opened"),
-                closed=lambda marks=marks: marks.append("closed"),
-            )
-        assert marks == ["opened", "closed"]
-        assert _CountingPort.reads == 1
-        assert _CountingPort.delivered == case.rows
-        # What the window leaves buffered is one group retaining every
-        # resolved row's judged positional state, and no per-row row view.
-        (group,) = buffered
-        evidence = group.evidence
-        assert isinstance(evidence, PredecessorRows)
-        assert len(evidence) == case.rows
-        assert (evidence.documents is None) == (case.layout == "columns")
-        assert all(type(row) is tuple for row in evidence.rows)
-        ((assigned, value),) = case.changes.items()
-        assert all(
-            (row if case.layout == "columns" else cast("Mapping[str, object]", row["payload"]))[
-                assigned
-            ]
-            != value
-            for row in acquisition_support.AcquisitionPort(case.stored, case.rows).rows()
-        )
-
-
 def test_the_workload_digest_covers_every_defining_source(monkeypatch: pytest.MonkeyPatch) -> None:
     digest = lowering_support.write_lowering_digest()
     assert len(digest) == 64
@@ -608,7 +500,7 @@ def test_empty_or_unparsable_child_output_is_an_unavailable_cell(output: str) ->
 
 
 def test_a_non_keyed_case_reports_no_pass_observations() -> None:
-    for case in (acquisition_support.CASES[0].name, report.MODEL_CASE):
+    for case in (lowering_support.RESPONSE_CASES[0].name, report.MODEL_CASE):
         assert isinstance(_reading(case), report.ChildReading)
         assert isinstance(
             report._decoded(  # pyright: ignore[reportPrivateUsage] - child protocol under test
@@ -633,8 +525,6 @@ def test_envelope_carries_every_address_with_its_window_runtime_and_unit() -> No
     assert envelope.provenance.sampling["retainedWarmups"] == 200
     assert set(cast("Mapping[str, str]", envelope.provenance.sampling["windows"])) == {
         report.KEYED_WINDOW,
-        report.ACQUISITION_WINDOW,
-        report.FLUSH_WINDOW,
         report.RESPONSE_WINDOW,
         report.MODEL_WINDOW,
     }
@@ -757,9 +647,9 @@ def test_diagnostic_options_are_refused_outside_diagnostic_mode(
     assert "usage:" in capsys.readouterr().err
     assert report.main(["--diagnostic", "--case", "nothing-matches"]) == 2
     assert "no case matches" in capsys.readouterr().err
-    assert report.selected_cases(["acquisition.rows-8.*"]) == (
-        "acquisition.rows-8.columns",
-        "acquisition.rows-8.document",
+    assert report.selected_cases(["txtime.unchanged.*.wire"]) == (
+        "txtime.unchanged.columns.wire",
+        "txtime.unchanged.document.wire",
     )
 
 
@@ -959,58 +849,20 @@ def test_the_family_model_is_its_own_preparation_beside_the_structural_model() -
     assert {cls.__name__ for cls in lowering_support.FAMILY_ENTITY_CLASSES} == {"Pet", "Dog", "Cat"}
 
 
-def test_the_control_cases_are_the_difference_between_the_two_earlier_case_coverages() -> None:
-    before_leaf_types = report.expected_addresses(
-        ("3.14",), report.CALL_NAMES, report.BEFORE_LEAF_TYPE_CASE_NAMES
-    )
-    legacy = report.expected_addresses(("3.14",), report.CALL_NAMES, report.LEGACY_CASE_NAMES)
-    assert legacy < before_leaf_types
-    assert before_leaf_types - legacy == {
-        ("3.14", case, metric) for case in report.CONTROL_CASE_NAMES for metric in report.METRICS
-    }
-    assert all(not address[2].startswith("calls.") for address in before_leaf_types - legacy)
-
-
-def test_the_leaf_type_cases_are_the_difference_the_leaf_type_coverage_tier_adds() -> None:
-    before_targets = report.expected_addresses(
-        ("3.14",), report.CALL_NAMES, report.BEFORE_TARGET_CASE_NAMES
-    )
-    before_leaf_types = report.expected_addresses(
-        ("3.14",), report.CALL_NAMES, report.BEFORE_LEAF_TYPE_CASE_NAMES
-    )
-    assert before_leaf_types < before_targets
-    assert {case for _runtime, case, _cell in before_targets - before_leaf_types} == set(
-        report.LEAF_TYPE_CASE_NAMES
-    )
-
-
-def test_the_flush_cases_are_the_difference_the_latest_case_coverage_adds() -> None:
+def test_the_legacy_coverage_drops_the_later_cases_and_carries_the_retired_ones() -> None:
     runtimes = supported_minors()
     current = report.expected_addresses(runtimes)
-    before_flush = report.expected_addresses(
-        runtimes, report.CALL_NAMES, report.BEFORE_FLUSH_CASE_NAMES
-    )
-    assert before_flush < current
-    assert current - before_flush == {
+    legacy = report.expected_addresses(runtimes, report.CALL_NAMES, report.LEGACY_CASE_NAMES)
+    assert {case for _runtime, case, _cell in current - legacy} == {
+        *report.CONTROL_CASE_NAMES,
+        *report.LEAF_TYPE_CASE_NAMES,
+        *report.TARGET_CASE_NAMES,
+    }
+    assert legacy - current == {
         (runtime, case, metric)
         for runtime in runtimes
-        for case in report.FLUSH_CASE_NAMES
+        for case in report.RETIRED_WINDOWS
         for metric in report.METRICS
-    }
-
-
-def test_the_target_cases_are_the_difference_between_the_two_coverages_before_the_flush() -> None:
-    runtimes = supported_minors()
-    current = report.expected_addresses(runtimes, report.CALL_NAMES, report.BEFORE_FLUSH_CASE_NAMES)
-    before_targets = report.expected_addresses(
-        runtimes, report.CALL_NAMES, report.BEFORE_TARGET_CASE_NAMES
-    )
-    assert before_targets < current
-    assert current - before_targets == {
-        (runtime, case, cell)
-        for runtime in runtimes
-        for case in report.TARGET_CASE_NAMES
-        for cell in (*report.METRICS, *(f"calls.{name}" for name in report.CALL_NAMES))
     }
 
 
