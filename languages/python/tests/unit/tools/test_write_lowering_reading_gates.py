@@ -1,11 +1,10 @@
 """The memory gates over the structural write windows, and what they can see.
 
-`spec/memory-gates.yaml` holds one blocking ceiling per retained checkpoint and
-per high-water mark of every keyed-write and model-preparation case, the
-leaf-type inserts among them, and per flush and per object of every
-cross-object flush's retained plan and execution high-water mark, derived from
-the retained capture the file names as its basis. Each family below reads its
-cases through the same child the report measures with —
+`spec/memory-gates.yaml` holds one blocking ceiling per byte-unit reading that
+the retained capture it names as its basis took over a window
+:data:`parallax.conformance.budget.GATED_WINDOWS` gates, so a case that capture
+has not read has no gate for its family to grade. Each family below reads its
+gated cases through the same child the report measures with —
 :func:`write_lowering_reading.measure`, the identical windows, roots, and
 warm-ups — and grades each gated reading against its gate, and the per-unit
 readings of any scaling domain its workloads form against that domain's order.
@@ -89,8 +88,6 @@ pass observation a duplicate lowering doubles."""
 
 
 class _Reading:
-    """One case's readings and its pass observations."""
-
     __slots__ = ("calls", "values")
 
     def __init__(self, workload: str) -> None:

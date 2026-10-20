@@ -1042,11 +1042,9 @@ CROSS_OBJECT_CASES: Final[tuple[CrossObjectCase, ...]] = (
         work=FlushWork(67, 4, 64, 64),
     ),
 )
-"""The cross-object family under the default Optimistic strategy: one full
-Transaction-Time group, the same amendment over two full groups and a tail, and
-one full Bitemporal group whose writes each open a head, a changed middle, and
-a tail. Each group's closes share ordered invocations and its successors
-grouped inserts."""
+"""Keyed amendments under the default Optimistic strategy: each Write Group's
+closes share ordered invocations and its successors grouped inserts, and a
+Bitemporal interior amendment opens a head, a changed middle, and a tail."""
 
 
 def cross_object_case_named(name: str) -> CrossObjectCase:
@@ -1088,7 +1086,6 @@ class OrderedAcceptingPort(AcceptingPort):
         self.reset()
 
     def reset(self) -> None:
-        """Count from nothing, as a new flush does."""
         self._statements = self._invocations = 0
         self._largest_ordered = self._largest_insert = 0
 
@@ -1173,7 +1170,7 @@ def flush_objects(handle: ScopedDatabase, case: CrossObjectCase) -> None:
 
 
 def unmarked() -> None:
-    """The mark a region no reading observes: the flush runs unobserved."""
+    pass
 
 
 @dataclass(slots=True)

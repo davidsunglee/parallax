@@ -1116,10 +1116,6 @@ def _observed_flush(
 def test_a_cross_object_flush_executes_its_groups_between_completions_outside_every_region(
     case: lowering_support.CrossObjectCase, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Only the regions' own marks may enclose a statement, and every settled
-    # write of a group completes after its region closes and before the next
-    # opens, so no completion is read as execution and none waits for the
-    # flush's end.
     port = _observed_flush(case, monkeypatch)
     calls = {
         "cross-object.txtime.changed-64.columns.typed": [["ordered", "statement"]],
