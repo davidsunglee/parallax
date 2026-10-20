@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Iterator, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Final, Literal, cast
+from typing import Final, Literal
 
-from parallax.core import inheritance, temporal_read
+from parallax.core import inheritance
 from parallax.core._execution._unit_work.claims import (
     ClaimScope,
     SettledEvidence,
@@ -33,21 +33,10 @@ from parallax.core._execution._unit_work.retain import (
     RetainedTargetState,
 )
 from parallax.core.base import INFINITY, TemporalBound
-from parallax.core.metamodel import (
-    EntityIdentity,
-    EntityMetadata,
-    Metamodel,
-)
-from parallax.core.temporal_read import TemporalShape, TimeInterval, milestone_edge
+from parallax.core.metamodel import EntityMetadata
+from parallax.core.temporal_read import TimeInterval
 from parallax.core.temporal_write.coverage import NO_TRANSFORM, CoverageTransform, Successor
-from parallax.core.write_plan.columns import ChunkedColumnBuilder, ColumnSlice, whole
-from parallax.core.write_plan.keys import (
-    ObjectKey,
-    ObjectStateKey,
-    TemporalObjectStateKey,
-    VersionedObjectStateKey,
-)
-from parallax.core.write_plan.materialized import PredecessorRows
+from parallax.core.write_plan.keys import ObjectKey, VersionedObjectStateKey
 from parallax.core.write_plan.observe import WriteObservation
 from parallax.core.write_plan.plan import SourceAuthority
 
@@ -59,9 +48,7 @@ __all__ = [
     "ClaimedKeyedWrite",
     "ComposedTemporalWrite",
     "FollowingKeyedWrite",
-    "GroupStateKeys",
     "InsertionKeyedWrite",
-    "MaterializedWriteGroup",
     "ObjectClaimedWrite",
     "ObservedKeyedWrite",
     "OrderedWrite",
@@ -70,67 +57,17 @@ __all__ = [
     "TargetKeyedWrite",
     "TemporalContribution",
     "TemporalKeyedWrite",
-    "VersionedEvidence",
-    "VersionedEvidenceBuilder",
     "buffered_claim_scope",
     "buffered_instruction",
     "buffered_object_key",
     "buffered_write",
     "chained_temporal_write",
     "composed_temporal_write",
-    "group_state_keys",
     "readless_write",
     "singleton_transform",
     "target_write",
     "temporal_contribution",
 ]
-
-
-@dataclass(frozen=True, slots=True)
-class VersionedEvidence:
-    """Each selected row's family key value and the optimistic-lock version it
-    was read at, aligned in resolution order."""
-
-    keys: ColumnSlice[object]
-    versions: ColumnSlice[int]
-
-    def __post_init__(self) -> None:
-        if len(self.keys) != len(self.versions):
-            raise ValueError(
-                "Versioned Evidence aligns one version with each key: "
-                f"{len(self.keys)} keys, {len(self.versions)} versions"
-            )
-        if not self.versions:
-            raise ValueError("Versioned Evidence addresses at least one row")
-
-    def __len__(self) -> int:
-        return len(self.versions)
-
-
-type GroupEvidence = VersionedEvidence | PredecessorRows
-"""One authored predicate's aligned evidence, one entry per selected row."""
-
-
-@dataclass(frozen=True, slots=True)
-class MaterializedWriteGroup:
-    """One authored predicate's compact, private, indivisible planning input.
-
-    The group holds no managed Entity object, no per-row keyed-write wrapper,
-    and no per-row Predecessor Row object.
-
-    ``evidence`` is not optional, so a group exists only for a target entitled
-    to evidence: a predicate write against an unversioned Non-Temporal target
-    stays readless and never materializes at all. Which targets those are needs
-    the model, so — exactly as for :class:`ObservedKeyedWrite` — the model-aware
-    settlement refuses a group whose target turns out to be neither versioned
-    nor temporal rather than settling it Unversioned with its evidence dropped.
-    """
-
-    mutation: PreparedPredicateWrite
-    evidence: GroupEvidence
-
-    def __len__(self) -> int:
-        return len(self.evidence)
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -152,66 +89,6 @@ def readless_write(instruction: PreparedPredicateWrite) -> ReadlessPredicateWrit
     carrier = object.__new__(ReadlessPredicateWrite)
     object.__setattr__(carrier, "instruction", instruction)
     return carrier
-
-
-class VersionedEvidenceBuilder:
-    """Accumulates :class:`VersionedEvidence` from judged positional rows."""
-
-    __slots__ = ("_key_position", "_keys", "_version_position", "_versions")
-
-    def __init__(self, *, key_position: int, version_position: int) -> None:
-        self._key_position = key_position
-        self._version_position = version_position
-        self._keys: ChunkedColumnBuilder[object] = ChunkedColumnBuilder()
-        self._versions: ChunkedColumnBuilder[int] = ChunkedColumnBuilder()
-
-    def append(self, row: tuple[object, ...]) -> None:
-        self._keys.append(row[self._key_position])
-        self._versions.append(cast("int", row[self._version_position]))
-
-    def seal(self) -> VersionedEvidence | None:
-        """The evidence appended so far, or ``None`` when nothing was."""
-        if not self._versions:
-            return None
-        return VersionedEvidence(whole(self._keys.build()), whole(self._versions.build()))
-
-
-def group_state_keys(group: MaterializedWriteGroup, meta: Metamodel) -> GroupStateKeys:
-    """Each exact state ``group`` selected, in resolution order, keyed as a
-    keyed read's own observation of that row would be."""
-    entity = group.mutation.selection.target
-    position = inheritance.view(meta).entity(entity.identity)
-    if position is None:  # pragma: no cover - the facet covers every accepted Entity
-        raise ValueError(f"{entity.identity.canonical}: the model declares no such entity")
-    shape = temporal_read.view(meta).shape(entity.identity)
-    if shape is None:  # pragma: no cover - the facet covers every accepted Entity
-        raise ValueError(f"{entity.identity.canonical}: the model declares no such entity")
-    return GroupStateKeys(
-        entity.identity, position.primary_key.identity.name, group.evidence, shape
-    )
-
-
-@dataclass(frozen=True, slots=True)
-class GroupStateKeys:
-    """Each exact state a group's ``evidence`` selected, in resolution order,
-    read on demand from the facts a facet already answered for the group."""
-
-    entity: EntityIdentity
-    key: str
-    evidence: GroupEvidence
-    shape: TemporalShape
-
-    def __iter__(self) -> Iterator[ObjectStateKey]:
-        entity, key, evidence = self.entity, self.key, self.evidence
-        if isinstance(evidence, VersionedEvidence):
-            for value, version in zip(evidence.keys, evidence.versions, strict=True):
-                yield VersionedObjectStateKey(ObjectKey(entity, ((key, value),)), version)
-            return
-        for index in range(len(evidence)):
-            yield TemporalObjectStateKey(
-                ObjectKey(entity, ((key, evidence.key(index)),)),
-                milestone_edge(self.shape, evidence, index),
-            )
 
 
 _REQUIRES_RETAINED_OBSERVATION: Final = (
@@ -693,7 +570,6 @@ BufferItem = (
     | ClaimedKeyedWrite
     | InsertionKeyedWrite
     | TargetKeyedWrite
-    | MaterializedWriteGroup
 )
 
 
@@ -706,7 +582,6 @@ type OrderedWrite = (
     | FollowingKeyedWrite
     | ComposedTemporalWrite
     | PendingOpening
-    | MaterializedWriteGroup
 )
 """One element of the sequence settlement reads: a buffer item once the
 planner's rewriting stages have finished with it.
@@ -723,13 +598,7 @@ reads, or inserts that must follow an earlier removal."""
 
 
 def buffered_instruction(item: BufferItem) -> PreparedWrite:
-    """The write instruction ``item`` carries, unwrapped from any envelope.
-
-    A Materialized Write Group answers the predicate write it materialized,
-    which is what dependency ordering ranks it by.
-    """
-    if isinstance(item, MaterializedWriteGroup):
-        return item.mutation
+    """The write instruction ``item`` carries, unwrapped from any envelope."""
     if isinstance(
         item,
         ObservedKeyedWrite

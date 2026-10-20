@@ -75,9 +75,11 @@ from parallax.core.write_plan import (
     object_state_key_from_observation,
 )
 from parallax.core.write_plan.plan import (
+    OPEN_BITEMPORAL_ENDS,
     BoundRange,
     DeferredRange,
     ExecutionUnit,
+    OwnedEndpoint,
     PlannedWrites,
     TemporalWriteOwnership,
     WritePlan,
@@ -433,9 +435,11 @@ def test_planning_and_deferred_binding_borrow_the_one_live_ownership(
 
     def binding(planner: WritePlanner, *args: Any, **kwargs: Any) -> BoundRange:
         ownership = kwargs["ownership"]
-        bound.append(
-            (ownership, ownership.owns_any(corpus_object_key("Position", ("id", 2)).entity))
+        # The earlier unit amended object 2 from April on, opening its current tail.
+        opened = OwnedEndpoint(
+            corpus_object_key("Position", ("id", 2)).entity, (2,), OPEN_BITEMPORAL_ENDS
         )
+        bound.append((ownership, ownership.owns(opened)))
         return bind(planner, *args, **kwargs)
 
     monkeypatch.setattr(WritePlanner, "finalize", planning)

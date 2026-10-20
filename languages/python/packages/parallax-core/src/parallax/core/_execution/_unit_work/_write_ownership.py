@@ -135,7 +135,7 @@ class WriteOwnership:
     so its size follows what the attempt wrote rather than what it read.
     """
 
-    __slots__ = ("_addresses", "_continuity", "_endpoints", "_owning", "_records", "_tags")
+    __slots__ = ("_addresses", "_continuity", "_endpoints", "_records", "_tags")
 
     def __init__(self) -> None:
         self._records: dict[ObjectKey, InsertionRecord] = {}
@@ -144,11 +144,6 @@ class WriteOwnership:
         self._addresses: dict[_ObjectAddress, InsertionRecord] = {}
         self._endpoints: set[OwnedEndpoint] = set()
         self._tags: dict[OwnedEndpoint, _InsertionTag] = {}
-        # Every Entity some owned row has been an object of, so a group of an
-        # Entity the attempt never opened a row of is planned without a
-        # per-row check. It only grows; an Entity whose rows were all removed
-        # merely keeps its groups on the per-row path.
-        self._owning: set[EntityIdentity] = set()
         # What units of the running flush proved for later ones, allocated by
         # the first unit that records anything and released once no object's
         # proofs remain, or when the flush ends however it ends.
@@ -156,9 +151,6 @@ class WriteOwnership:
 
     def owns(self, endpoint: OwnedEndpoint, /) -> bool:
         return endpoint in self._endpoints
-
-    def owns_any(self, entity: EntityIdentity, /) -> bool:
-        return entity in self._owning
 
     def continues_insertion(self, endpoint: OwnedEndpoint, /) -> bool:
         return endpoint in self._tags
@@ -355,7 +347,6 @@ class WriteOwnership:
 
     def _register(self, endpoint: OwnedEndpoint) -> None:
         self._endpoints.add(endpoint)
-        self._owning.add(endpoint.entity)
 
     def _tag(
         self,
@@ -400,7 +391,6 @@ class WriteOwnership:
         self._addresses.clear()
         self._endpoints.clear()
         self._tags.clear()
-        self._owning.clear()
         self.release_continuity()
 
 

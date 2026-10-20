@@ -69,7 +69,6 @@ __all__ = [
     "admits_shortfall",
     "adopt_planned_assignments",
     "adopt_planned_row",
-    "assignments_added",
     "shortfall_classification",
     "shortfall_for",
 ]
@@ -907,31 +906,3 @@ type PlannedWrite = (
     | PlannedTemporalGuard
 )
 """The closed algebra of finalized semantic execution steps."""
-
-
-def assignments_added(
-    stated: PlannedAssignments | None, final: PlannedAssignments | None
-) -> PlannedAssignments | None:
-    """The assignments ``final`` makes beyond ``stated``, which it keeps, or
-    ``None`` where it makes no other.
-
-    What an audit hook added to a row, close, or update, so compact backing can
-    hold that alone and lay it over the value it rebuilds on demand.
-    """
-    if final is None or final is stated:
-        return None
-    if stated is None:
-        return final
-    attributes = {
-        identity: value
-        for identity, value in final.attributes.items()
-        if identity not in stated.attributes
-    }
-    value_objects = {
-        identity: value
-        for identity, value in final.value_objects.items()
-        if identity not in stated.value_objects
-    }
-    if not attributes and not value_objects:
-        return None
-    return adopt_planned_assignments(attributes, value_objects)

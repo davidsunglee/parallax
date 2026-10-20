@@ -327,7 +327,6 @@ def test_completion_publishes_into_the_ownership_planning_borrowed() -> None:
     )
     assert admission.ownership is ownership
     assert ownership.owns(OwnedEndpoint(ENTITY, (42,), OPEN_BITEMPORAL_ENDS))
-    assert ownership.owns_any(ENTITY)
 
 
 def test_a_completed_version_advance_scopes_the_next_write_its_insertion_authorizes() -> None:

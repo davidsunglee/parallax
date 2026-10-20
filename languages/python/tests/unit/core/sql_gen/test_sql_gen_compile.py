@@ -46,7 +46,7 @@ from parallax.core.navigate import (
 )
 from parallax.core.object_query import TemporalSelection
 from parallax.core.object_query._nodes import TemporalDimension
-from parallax.core.object_query._resolved import latest_temporal_selections
+from parallax.core.object_query._resolved import ResolvedLatestSelection
 from parallax.core.predicate import ModelRejectedError
 from parallax.core.predicate._resolved import (
     ResolvedComparison,
@@ -806,7 +806,7 @@ def _guarded_read(
 ) -> CompiledRead:
     entity = target(meta, name)
     root = inheritance.root_metadata(inheritance.view(meta), meta, entity.identity)
-    selections = latest_temporal_selections(root)
+    selections = tuple(ResolvedLatestSelection(axis) for axis in root.declared_as_of_axes)
     modes: dict[str, TemporalResolution] = {
         "injected": RootSelections(selections),
         "retained": PropagatedRootSelections(selections),

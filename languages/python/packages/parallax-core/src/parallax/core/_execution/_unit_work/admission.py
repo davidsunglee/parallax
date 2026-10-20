@@ -1,18 +1,15 @@
 from __future__ import annotations
 
 import heapq
-from collections.abc import Callable, Hashable, Iterator, Mapping, Sequence, Set
+from collections.abc import Callable, Hashable, Iterator, Mapping, Sequence
 from dataclasses import replace
 from enum import Enum
-from itertools import islice
 from operator import attrgetter
 from typing import Final, Literal, cast, final
 
 from parallax.core import inheritance, temporal_read
 from parallax.core._execution._unit_work._write_ownership import InsertionRecord, WriteOwnership
 from parallax.core._execution._unit_work.claims import (
-    SELECTION_INTENT,
-    SPANNING_SELECTION_INTENT,
     ClaimScope,
     ClaimVerdict,
     WriteIntent,
@@ -22,7 +19,6 @@ from parallax.core._execution._unit_work.claims import (
     keyed_intent,
 )
 from parallax.core._execution._unit_work.instructions import (
-    AMEND_MUTATIONS,
     ASSIGNMENT_MUTATIONS,
     DESTRUCTIVE_MUTATIONS,
     INSERT_MUTATIONS,
@@ -44,7 +40,6 @@ from parallax.core._execution._unit_work.write_items import (
     ComposedTemporalWrite,
     FollowingKeyedWrite,
     InsertionKeyedWrite,
-    MaterializedWriteGroup,
     ObjectClaimedWrite,
     ObservedKeyedWrite,
     PendingOpening,
@@ -56,7 +51,6 @@ from parallax.core._execution._unit_work.write_items import (
     buffered_object_key,
     chained_temporal_write,
     composed_temporal_write,
-    group_state_keys,
     temporal_contribution,
 )
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
@@ -188,8 +182,6 @@ _SEVERAL: Final = object()
 """What the object view records for an object claimed at more than one
 scope."""
 
-_NOTHING_SPANNED: Final[frozenset[ObjectKey]] = frozenset()
-
 
 class WriteAdmission:
     """One unit of work's accepted writes: the pending batch composed as each
@@ -214,9 +206,7 @@ class WriteAdmission:
       whose transform keeps only surviving values while every write's
       condition stays. Two writes of one observed state over one window simply
       coalesce, as a non-temporal pair does. Writes of the object over disjoint
-      windows stay separate operations inside it, each with its own condition;
-    * a Materialized Write Group claims every state it selected, and stands as
-      one indivisible write.
+      windows stay separate operations inside it, each with its own condition.
 
     A readless predicate write is an ordering barrier no write composes across:
     a write of an object whose insert stands before one is a write of the row
@@ -243,12 +233,10 @@ class WriteAdmission:
         "_families",
         "_inserted_version",
         "_linked",
-        "_meta",
         "_ownership",
         "_regions",
         "_removals",
         "_sources",
-        "_spanned",
         "_temporal",
         "_temporal_facet",
         "_writes",
@@ -260,7 +248,6 @@ class WriteAdmission:
         *,
         inserted_version: Callable[[EntityIdentity, int | None], int | None],
     ) -> None:
-        self._meta = meta
         self._families = inheritance.view(meta)
         self._temporal_facet = temporal_read.view(meta)
         # The version a row this attempt inserted holds, given the version its
@@ -269,11 +256,10 @@ class WriteAdmission:
         self._inserted_version = inserted_version
         self._ownership = WriteOwnership()
         self._writes: list[_PendingItem] = []
-        # Every claim the batch holds, by its scope: a keyed write's is the
-        # position of the write that holds it, and a group's selection its
-        # shared intent. A temporal object's writes against its coverage are
+        # Every claim the batch holds, by its scope: the position of the write
+        # that holds it. A temporal object's writes against its coverage are
         # indexed by object instead (`_temporal`).
-        self._claims: dict[ClaimScope, int | WriteIntent] = {}
+        self._claims: dict[ClaimScope, int] = {}
         self._temporal: dict[ObjectKey, int] = {}
         self._sources: list[SourceAuthority] = []
         # Objects a pending write removes whole, the positions of inserts that
@@ -286,11 +272,9 @@ class WriteAdmission:
         # The scope of each object's pending caller-conditioned write,
         # allocated by the first such write.
         self._conditioned: dict[ObjectKey, ClaimScope] | None = None
-        # The scope each claimed object is claimed at, and the objects a
-        # spanning selection reaches every state of — each built by the first
+        # The scope each claimed object is claimed at, built by the first
         # question that needs it and kept current from then on.
         self._claimed_objects: dict[ObjectKey, Hashable] | None = None
-        self._spanned: Set[ObjectKey] | None = _NOTHING_SPANNED
         # Where the latest barrier stands and what the regions before it hold —
         # allocated by the first barrier, since most batches carry none.
         self._regions: _Regions | None = None
@@ -323,9 +307,7 @@ class WriteAdmission:
         its caller's revision is confirmed, or refuses it. A write an insertion
         authorized is admitted only while that authority stands. An arriving
         keyed intent a held claim cannot absorb is refused
-        (``write-evidence-already-claimed``); a group colliding with a held
-        claim raises :class:`UnitOfWorkError`, withdrawing the claims it had
-        taken.
+        (``write-evidence-already-claimed``).
 
         An insert opens an insertion of its object, issuing its identity
         (:meth:`insertion_identity`) and keeping ``insertion_advice`` for a
@@ -337,9 +319,6 @@ class WriteAdmission:
         """
         if isinstance(item, TargetKeyedWrite):
             self._admit_target(item, confirm_target)
-        elif isinstance(item, MaterializedWriteGroup):
-            self._claim_selection(item)
-            self._writes.append(item)
         elif isinstance(item, ReadlessPredicateWrite):
             self._seal()
             self._writes.append(item)
@@ -525,7 +504,7 @@ class WriteAdmission:
         verdict: ClaimVerdict | None = None
         temporal = self._is_temporal(item)
         if temporal:
-            admitted = self._admits_temporal(item, key) and key not in self._objects()
+            admitted = self._admits_temporal(item, key)
             proven = self._states_window(key, instruction.valid_time_window)
         else:
             intent = keyed_intent(instruction)
@@ -587,10 +566,9 @@ class WriteAdmission:
             message=(
                 f"{item.instruction.target.identity.canonical}: a write already buffered in this "
                 "transaction claims what this one settles against, for an intent it cannot be "
-                "combined with — a different Valid-Time region composes no interval, an "
-                "assignment after a destructive intent resurrects nothing, and a predicate "
-                "write's selected rows are one compact group; read the row through this "
-                "transaction to flush the buffered intent and settle against fresh state"
+                "combined with — a different Valid-Time region composes no interval, and an "
+                "assignment after a destructive intent resurrects nothing; read the row through "
+                "this transaction to flush the buffered intent and settle against fresh state"
             ),
             object_key=claimed,
         )
@@ -600,72 +578,25 @@ class WriteAdmission:
     ) -> None:
         """Refuse a temporal object's write against existing coverage that
         cannot compose with the object's pending writes, judged over every one
-        of them, or whose observed state a selection claims.
+        of them.
 
         A write an insertion authorized of an object whose insert is still
         pending composes with that opening instead, as already judged; its
         object's other compositions still bound it.
         """
-        scope = item.retained_observation.key if isinstance(item, ObservedKeyedWrite) else None
-        if not self._admits_temporal(item, key) or (
-            scope is not None and (scope in self._claims or self._spans(key))
-        ):
+        if not self._admits_temporal(item, key):
             raise _already_claimed(item.instruction.target, key)
 
-    def _claim_selection(self, group: MaterializedWriteGroup) -> None:
-        # The resolving read force-flushed the batch, so no pending intent can
-        # hold a state the group selected; a collision is a caller defect, and
-        # withdrawal re-derives only the claimed prefix rather than retaining
-        # every key on the success path.
-        mutation = group.mutation
-        # A Bitemporal amendment reaches each object's coverage past the row it
-        # selected when its flush reaches it, so a write observing any other
-        # state of such an object would settle against coverage the group
-        # changes first.
-        intent = (
-            SPANNING_SELECTION_INTENT
-            if mutation.mutation in AMEND_MUTATIONS
-            and isinstance(
-                self._temporal_facet.shape(mutation.selection.target.identity),
-                temporal_read.Bitemporal,
-            )
-            else SELECTION_INTENT
-        )
-        claims = self._claims
-        claimed = 0
-        try:
-            for state in group_state_keys(group, self._meta):
-                held = claims.get(state)
-                verdict = (
-                    "incompatible"
-                    if isinstance(held, int) or self._composes_state(state)
-                    else admits(held, intent)
-                )
-                if verdict != "admit":
-                    raise UnitOfWorkError(
-                        f"a Materialized Write Group's selection of {state!r} collides "
-                        f"with a claim this buffer already holds ({verdict})"
-                    )
-                self._claim(state, intent, state.object)
-                claimed += 1
-        except BaseException:
-            for state in islice(group_state_keys(group, self._meta), claimed):
-                del claims[state]
-            self._claimed_objects = None
-            raise
-
-    def _claim(self, scope: ClaimScope, claim: int | WriteIntent, key: ObjectKey) -> None:
-        self._claims[scope] = claim
+    def _claim(self, scope: ClaimScope, position: int, key: ObjectKey) -> None:
+        self._claims[scope] = position
         objects = self._claimed_objects
         if objects is not None:
             _note_scope(objects, key, scope)
-        if isinstance(claim, WriteIntent) and claim.spans:
-            self._spanned = None
 
     def _held_intent(self, scope: ClaimScope) -> WriteIntent | None:
         held = self._claims.get(scope)
-        if held is None or isinstance(held, WriteIntent):
-            return held
+        if held is None:
+            return None
         write = self._writes[held]
         assert isinstance(write, _CLAIMED)
         return keyed_intent(write.instruction)
@@ -677,27 +608,6 @@ class WriteAdmission:
             for scope in self._claims:
                 _note_scope(objects, claimed_object(scope), scope)
         return objects
-
-    def _spans(self, key: ObjectKey) -> bool:
-        """Whether a selection the batch holds reaches every state of object
-        ``key``, not only the one it names."""
-        spanned = self._spanned
-        if spanned is None:
-            spanned = self._spanned = {
-                claimed_object(scope)
-                for scope, held in self._claims.items()
-                if isinstance(held, WriteIntent) and held.spans
-            } or _NOTHING_SPANNED
-        return key in spanned
-
-    def _composes_state(self, state: ObjectStateKey) -> bool:
-        """Whether a pending write of a temporal object claims observed state
-        ``state``."""
-        return any(
-            scope == state
-            for held in self._compositions(state.object)
-            for scope, _intent in _composed_intents(held)
-        )
 
     def _open_insertion(
         self,
@@ -860,7 +770,6 @@ class WriteAdmission:
                 self._conditioned = {}
             self._conditioned[key] = scope
         index = self._claims.get(scope)
-        assert not isinstance(index, WriteIntent)  # a selection admits no keyed write
         if index is not None and self._closed(index) and verdict in ("coalesce", "supersede"):
             # A barrier stands between the two: each keeps its own side, and
             # this one starts from the state the earlier one leaves.
@@ -1171,7 +1080,6 @@ class WriteAdmission:
         self._linked = None
         self._conditioned = None
         self._claimed_objects = None
-        self._spanned = _NOTHING_SPANNED
         self._regions = None
 
 
@@ -1361,10 +1269,9 @@ def _already_claimed(target: EntityMetadata, key: ObjectKey) -> WriteEvidenceErr
         message=(
             f"{target.identity.canonical}: a write already buffered in this transaction cannot "
             "be composed with this one — an assignment after a destructive intent over its "
-            "window resurrects nothing, a destructive intent composes only with writes of "
-            "exactly its own window, and a predicate write's selected rows are one compact "
-            "group; read the row through this transaction to flush the buffered intent and "
-            "settle against fresh state"
+            "window resurrects nothing, and a destructive intent composes only with writes of "
+            "exactly its own window; read the row through this transaction to flush the "
+            "buffered intent and settle against fresh state"
         ),
         object_key=key,
     )

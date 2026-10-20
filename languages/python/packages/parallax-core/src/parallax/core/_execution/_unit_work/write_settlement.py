@@ -3,28 +3,22 @@ from __future__ import annotations
 from collections.abc import Container, Mapping, Sequence
 
 from parallax.core._execution._unit_work.clock import TransactionInstant
-from parallax.core._execution._unit_work.group_segments import (
-    DELETION,
-    AddressedFacts,
-    NonTemporalEmission,
-    NonTemporalFacts,
-    NonTemporalGroupSegment,
-    Revision,
-    TemporalGroupSegment,
-    VersionOverlay,
-    non_temporal_step,
-)
 from parallax.core._execution._unit_work.instructions import (
-    AMEND_MUTATIONS,
     ASSIGNMENT_MUTATIONS,
     INSERT_MUTATIONS,
     PreparedKeyedWrite,
     PreparedPredicateWrite,
 )
+from parallax.core._execution._unit_work.non_temporal_settlement import (
+    DELETION,
+    AddressedFacts,
+    NonTemporalFacts,
+    Revision,
+    VersionOverlay,
+    non_temporal_step,
+)
 from parallax.core._execution._unit_work.ranges import (
-    DeferredGroupRange,
     DeferredTemporalRange,
-    defer_group,
     range_claims,
     settle_opening,
     settle_range,
@@ -40,28 +34,22 @@ from parallax.core._execution._unit_work.strategy import (
 from parallax.core._execution._unit_work.write_items import (
     ComposedTemporalWrite,
     FollowingKeyedWrite,
-    GroupStateKeys,
     InsertionKeyedWrite,
-    MaterializedWriteGroup,
     ObservedKeyedWrite,
     OrderedWrite,
     PendingOpening,
     ReadlessPredicateWrite,
     TargetKeyedWrite,
-    VersionedEvidence,
 )
 from parallax.core.inheritance import InheritanceFacet
-from parallax.core.metamodel import AttributeIdentity, AttributeMetadata, EntityMetadata, Metamodel
+from parallax.core.metamodel import AttributeIdentity, EntityMetadata, Metamodel
 from parallax.core.temporal_read import (
-    NON_TEMPORAL,
     Bitemporal,
     TemporalFacet,
     TemporalShape,
     TransactionTimeOnly,
 )
-from parallax.core.temporal_write.coverage import NO_TRANSFORM
 from parallax.core.temporal_write.expansion import (
-    PredecessorExpander,
     TemporalFacts,
     entry_ends,
     opening,
@@ -71,7 +59,6 @@ from parallax.core.write_plan.keys import (
     ObjectStateKey,
     VersionedObjectStateKey,
 )
-from parallax.core.write_plan.materialized import PredecessorRows
 from parallax.core.write_plan.observe import TemporalObservation, WriteObservation
 from parallax.core.write_plan.payload import WritePayloadPreparer
 from parallax.core.write_plan.plan import (
@@ -83,15 +70,12 @@ from parallax.core.write_plan.plan import (
     Openings,
     PlannedWrites,
     SourceAuthority,
-    StepSegment,
     TemporalWriteOwnership,
     WritePlan,
-    eager_segment,
     eager_writes,
 )
 from parallax.core.write_plan.planned_rows import (
     WritePlanningError,
-    assigned_name,
     entity_view,
     planned_assignments,
     planned_row,
@@ -121,9 +105,9 @@ __all__ = ["WritePlanCompiler"]
 
 class WritePlanCompiler:
     """The Write Planner's own compiler of ordered writes into a Write Plan
-    (`m-unit-work`): it interprets each write's concurrency and its ordinary,
-    grouped, or temporal semantics and audit, and assembles step segments,
-    unit boundaries, claims, and proposed effects.
+    (`m-unit-work`): it interprets each write's concurrency and its ordinary
+    or temporal semantics and audit, and assembles its steps, unit
+    boundaries, claims, and proposed effects.
 
     Constructed once per accepted Metamodel by the planner that owns it, with
     that model, the Inheritance and Temporal facets it compiled, the
@@ -182,25 +166,9 @@ class WritePlanCompiler:
         evidence it was holding (`m-unit-work` "A successful execution unit
         consumes").
 
-        Packing is a property of adjacency, which is why the whole sequence
-        crosses in one call: a run of eagerly settled steps stays one eager
-        segment, and a Materialized Write Group always occupies its own. A
-        group's every group-wide semantic fact — temporal expansion, the
-        gate/concurrency decision, the affected-row policy, the assignment
-        shape, and the resolved instant if the group needs one — is decided
-        into that segment before this returns; the segment, and the ``WritePlan``
-        it becomes part of, retain no group, concurrency mode, Transaction
-        Instant, or strategy object. Only the PER-ROW data stays as the group's
-        own compact evidence, and a row's ``PlannedWrite`` is rebuilt from that
-        evidence and the already-settled facts one at a time, on demand, so a
-        large materialized run never forces a parallel ``PlannedWrite``-per-row
-        object graph merely by being planned.
-
-        Audit reaches every write as it settles, before anything is packed: each
-        row a write produces — an opening, or a successor carried or changed —
-        is finalized once, and each update and close it emits is decorated
-        once. A Materialized Write Group's segment keeps only what its audit
-        added, so enumerating its steps audits nothing again.
+        Audit reaches every write as it settles: each row a write produces —
+        an opening, or a successor carried or changed — is finalized once, and
+        each update and close it emits is decorated once.
 
         ``actor_identity`` is passed to the audit port and never inspected
         here; ``transaction_instant`` is threaded unevaluated until a surviving
@@ -224,40 +192,15 @@ class WritePlanCompiler:
         insertion settles with the writes its insertion authorized as the one
         unit of new lineages they leave of its window.
         """
-        segments: list[StepSegment] = []
         pending: list[PlannedStep] = []
         units: list[ExecutionUnit] = []
         count = 0
         audit = AuditDecoration(self._audit, actor_identity, transaction_instant, self._settled)
-
-        def flush_pending() -> None:
-            if pending:
-                segments.append(eager_segment(tuple(pending)))
-                pending.clear()
-
         for item in ordered_writes:
             advances = 0
             if isinstance(item, FollowingKeyedWrite):
                 advances = item.advances
                 item = item.write
-            if isinstance(item, MaterializedWriteGroup):
-                flush_pending()
-                segment = self._settle_group(
-                    item,
-                    concurrency,
-                    transaction_instant,
-                    ownership,
-                    audit,
-                    guards=counts_unchanged_rows,
-                )
-                if isinstance(segment, DeferredGroupRange):
-                    units.append(ExecutionUnit(end=count, deferred=segment))
-                    continue
-                if len(segment):
-                    segments.append(segment)
-                    count += len(segment)
-                units.append(segment.unit(count))
-                continue
             shape = self._carrier_shape(item)
             if isinstance(item, PendingOpening):
                 assert isinstance(shape, Bitemporal)  # only a Bitemporal opening is composed
@@ -291,7 +234,7 @@ class WritePlanCompiler:
                 count = unit.end
                 units.append(unit)
                 continue
-            assert not isinstance(item, ComposedTemporalWrite | MaterializedWriteGroup)
+            assert not isinstance(item, ComposedTemporalWrite)
             settled, claim, own_state = self._settle_keyed(
                 item, concurrency, transaction_instant, shape, audit, advances
             )
@@ -308,8 +251,7 @@ class WritePlanCompiler:
                     opened=settled.opened,
                 )
             )
-        flush_pending()
-        return WritePlan(steps=PlannedWrites(tuple(segments)), units=tuple(units))
+        return WritePlan(steps=eager_writes(pending), units=tuple(units))
 
     def _carrier_shape(self, item: OrderedWrite) -> TemporalShape | None:
         """The Temporal Shape of a buffered carrier's target, read once at
@@ -560,10 +502,9 @@ class WritePlanCompiler:
 
         The sole site for each of these decisions, whichever representation the
         mutation arrived as: which members the family makes applicable, and
-        which Attribute (if any) carries the optimistic version. An eagerly
-        settled instruction and a Materialized Write Group therefore cannot
-        answer any of them differently. What only a write against EXISTING rows
-        settles belongs to :meth:`_addressed_facts` instead.
+        which Attribute (if any) carries the optimistic version. What only a
+        write against EXISTING rows settles belongs to :meth:`_addressed_facts`
+        instead.
         """
         return NonTemporalFacts(
             entity=entity,
@@ -732,168 +673,6 @@ class WritePlanCompiler:
             self._concurrency.reject_authored_version(entity.identity, version_attr)
         return self._concurrency.require_version(entity.identity, observation)
 
-    def _settle_group(
-        self,
-        group: MaterializedWriteGroup,
-        concurrency: Concurrency,
-        tx_instant: TransactionInstant,
-        ownership: TemporalWriteOwnership,
-        audit: AuditDecoration,
-        *,
-        guards: bool,
-    ) -> NonTemporalGroupSegment | TemporalGroupSegment | DeferredGroupRange:
-        """One Materialized Write Group as one already-settled segment, or as
-        the deferred range a Bitemporal amendment settles at execution.
-
-        Every group-wide semantic fact — the temporal expansion, the gate and
-        concurrency decision, the affected-row policy, the assignment shape,
-        and (only when the surviving group needs one) the concrete Transaction
-        Instant literal — is decided HERE, once, before this method returns.
-        The returned segment carries none of the group, the concurrency mode,
-        the Transaction Instant, or a strategy object: its ``step`` rebuilds
-        one row's Planned Write from these already-decided facts and the
-        group's own compact evidence alone.
-
-        A Bitemporal amendment selected each object by the row current at its
-        ``valid_from`` and reaches the object's later coverage too, which no
-        planning input holds: each object settles at execution as a range from
-        that row (:func:`~parallax.core._execution._unit_work.ranges.defer_group`), whose
-        unchanged milestones ``guards`` lets an Optimistic guard prove.
-        """
-        entity = group.mutation.selection.target
-        shape = self._temporal_facet.shape(entity.identity)
-        if isinstance(shape, Bitemporal) and group.mutation.mutation in AMEND_MUTATIONS:
-            return defer_group(
-                group,
-                view=entity_view(self._families, entity),
-                shape=shape,
-                gated=self._concurrency.gates(concurrency, self._model, entity.identity),
-                # Reaching a surviving temporal group is what makes the attempt
-                # capture its instant, once for every object it selected.
-                instant=tx_instant.value(),
-                guards=guards,
-            )
-        if isinstance(shape, TransactionTimeOnly | Bitemporal):
-            return self._settle_temporal_group(
-                group, entity, shape, concurrency, tx_instant, ownership, audit
-            )
-        return self._settle_versioned_group(group, entity, concurrency, audit)
-
-    def _settle_versioned_group(
-        self,
-        group: MaterializedWriteGroup,
-        entity: EntityMetadata,
-        concurrency: Concurrency,
-        audit: AuditDecoration,
-    ) -> NonTemporalGroupSegment:
-        """A versioned (non-temporal) Materialized Write Group's segment.
-
-        The group's facts are settled through the same
-        :meth:`_non_temporal_facts` and :meth:`_addressed_facts` an eagerly
-        settled keyed write crosses, and the segment holds them by reference.
-        Every row shares the SAME gate/ungated decision and the SAME assignment
-        overlay (`m-batch-write`'s set-based semantics extended to the
-        materializing case); only the observed version differs per row, which is
-        why it alone stays a per-row column — and it stays the group's OWN
-        column, advanced at step access through the arithmetic the update's
-        emission carries rather than copied into a second one.
-
-        A group's evidence is not optional, so an entity this
-        group's own Concurrency Strategy does not recognize as versioned is
-        refused here rather than settled Unversioned with its evidence dropped —
-        the same entitlement rule an ordinary keyed write meets in
-        :meth:`_observed_version`.
-        """
-        evidence = group.evidence
-        assert isinstance(evidence, VersionedEvidence)
-        facts = self._non_temporal_facts(entity)
-        addressed = self._addressed_facts(facts, concurrency)
-        mutation = group.mutation.mutation
-        if facts.version_attribute is None:
-            _require_unobserved(entity, mutation, evidence)
-        emission: NonTemporalEmission = DELETION
-        if mutation != "delete":
-            if facts.version_attribute is not None and any(
-                isinstance(assignment.member, AttributeMetadata)
-                and assignment.member.identity == facts.version_attribute
-                for assignment in group.mutation.managed_assignments
-            ):
-                self._concurrency.reject_authored_version(entity.identity, facts.version_attribute)
-            emission = Revision(
-                prepared_assignments(entity, group.mutation.managed_assignments),
-                self._version_overlay(facts.version_attribute),
-            )
-        segment = NonTemporalGroupSegment(
-            facts=facts,
-            addressed=addressed,
-            key_name=addressed.key_attributes[0].name,
-            keys=evidence.keys,
-            versions=evidence.versions,
-            emission=emission,
-            # One resolved row is one independently gated step, so every row of
-            # the group shares this one expectation rather than building its own.
-            affected_rows=ExactCount(expected=1, on_shortfall=addressed.shortfall),
-            changed=GroupStateKeys(
-                entity.identity, facts.view.primary_key.identity.name, evidence, NON_TEMPORAL
-            ),
-        )
-        if audit.neutral or not isinstance(emission, Revision):
-            return segment
-        return segment.audited_by(audit)
-
-    def _settle_temporal_group(
-        self,
-        group: MaterializedWriteGroup,
-        entity: EntityMetadata,
-        shape: TransactionTimeOnly | Bitemporal,
-        concurrency: Concurrency,
-        tx_instant: TransactionInstant,
-        ownership: TemporalWriteOwnership,
-        audit: AuditDecoration,
-    ) -> TemporalGroupSegment:
-        """A temporal Materialized Write Group's segment.
-
-        The group's one mutation is one transform over every selected row,
-        settled through the same :class:`PredecessorExpander` a range expands
-        its originals through — the only clock consultation this group's whole
-        flush makes, however many rows it resolved — which decides each row's
-        disposition before the segment exists
-        (:meth:`~parallax.core.temporal_write.expansion.PredecessorExpander.settle_group`).
-        The segment then builds each step from the settled backing and the
-        group's own evidence alone, and neither consults the attempt's
-        ownership again.
-        """
-        evidence = group.evidence
-        assert isinstance(evidence, PredecessorRows)
-        mutation = group.mutation
-        view = entity_view(self._families, entity)
-        transform = NO_TRANSFORM.followed_by(
-            mutation.valid_time_window,
-            (
-                {
-                    assigned_name(assignment): assignment.value
-                    for assignment in mutation.managed_assignments
-                }
-                if mutation.mutation in AMEND_MUTATIONS
-                else None
-            ),
-            replaces=False,
-        )
-        expansion = PredecessorExpander(
-            # Reaching a surviving temporal group is what makes the attempt
-            # capture its instant, once for every row it resolved.
-            TemporalFacts(entity=entity, view=view, shape=shape, instant=tx_instant.value()),
-            transform,
-            key_attribute=view.primary_key.identity,
-            gated=self._concurrency.gates(concurrency, self._model, entity.identity),
-            ownership=ownership,
-            audit=audit,
-            payloads=self._payloads,
-        )
-        return TemporalGroupSegment(
-            expansion.settle_group(evidence, mutation.managed_assignments), evidence
-        )
-
 
 def _unobserved_close(entity: EntityMetadata, mutation: str) -> WritePlanningError:
     return WritePlanningError(
@@ -954,10 +733,6 @@ def _addressed_assignments(
     PREFORMED multi-row instruction too: the planner's batch decomposition splits
     one into its rows before the collapse decision, so no update arrives here
     having skipped it.
-
-    A Materialized Write Group has no counterpart to this: its assignments are
-    the authored predicate write's own, uniform across every resolved row and
-    carrying no key members to project out.
     """
     key_names = frozenset(attribute.name for attribute in addressed.key_attributes)
     return planned_assignments(
@@ -993,17 +768,18 @@ def _decorated(audit: AuditDecoration, step: PlannedStep) -> PlannedStep:
     return audit.decorate_update(step) if isinstance(step, PlannedUpdate) else step
 
 
-def _require_unobserved(entity: EntityMetadata, mutation: str, observation: object | None) -> None:
+def _require_unobserved(
+    entity: EntityMetadata, mutation: str, observation: WriteObservation | None
+) -> None:
     """Refuse ``observation`` when the target it arrived for is entitled to none.
 
     Reached only once the caller has established that the target is neither
     temporal nor versioned, which is the one shape `m-unit-work` declares
     observationless ("unversioned Non-Temporal writes have no observation",
     absence structural). Whether a write may hold evidence at all needs the
-    model, so the buffered carriers — a keyed
-    :class:`~parallax.core._execution._unit_work.write_items.ObservedKeyedWrite` and a
-    :class:`~parallax.core._execution._unit_work.write_items.MaterializedWriteGroup`'s
-    evidence — can only refuse the instruction-local half and
+    model, so the buffered carrier, a keyed
+    :class:`~parallax.core._execution._unit_work.write_items.ObservedKeyedWrite`,
+    can only refuse the instruction-local half and
     delegate this half to the model-aware settlement. This is that delegation:
     every carrier that IS settled crosses it, whatever produced it, so a
     producer that resolves evidence a target cannot carry is told rather than

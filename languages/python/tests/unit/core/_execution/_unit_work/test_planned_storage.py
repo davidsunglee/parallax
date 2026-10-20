@@ -1,9 +1,5 @@
-"""Compact private storage of materialized write planning (m-unit-work, Docker-free).
-
-Covers versioned evidence and the state keys temporal evidence answers, then
-what a Write Plan retains once it is finalized: what a producer produced, never
-the producer. Bounded wrapper allocation is a separate invariant from storage
-shape and correctness.
+"""What a finalized Write Plan retains (m-unit-work, Docker-free): what a
+producer produced for one settled write, never the producer.
 """
 
 from __future__ import annotations
@@ -11,13 +7,12 @@ from __future__ import annotations
 import datetime as dt
 from decimal import Decimal
 from types import FunctionType, MethodType
-from typing import cast
 
 import pytest
 
 from parallax.conformance import models
 from parallax.conformance.scripted_clock import FixedClock
-from parallax.core import Entity, inheritance
+from parallax.core import inheritance
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work.instructions import (
     PreparedTargetWrite,
@@ -32,38 +27,29 @@ from parallax.core._execution._unit_work.strategy import (
     BatchingStrategy,
     ConcurrencyStrategy,
 )
-from parallax.core._execution._unit_work.write_items import GroupStateKeys, target_write
+from parallax.core._execution._unit_work.write_items import target_write
 from parallax.core._execution._unit_work.write_settlement import (
     WritePlanCompiler,  # producer-reach regression only
 )
 from parallax.core._formation_profile import BUILTIN_MANIFEST
-from parallax.core.base import INFINITY
 from parallax.core.metamodel import FacetKey
 from parallax.core.model_formation import ModelCompilerRequirement
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.temporal_write.expansion import PredecessorExpander
 from parallax.core.unit_work import (
     KeyedWriteInstruction,
-    MaterializedWriteGroup,
     SystemClock,
     TransactionInstant,
     VersionArithmetic,
-    VersionedEvidence,
-    VersionedEvidenceBuilder,
     WritePlanner,
     WritePlanningRequest,
 )
 from parallax.core.write_payload import LayoutPayloadPreparer
 from parallax.core.write_plan import (
-    ChunkedColumnBuilder,
-    PredecessorRows,
     WritePlan,
-    whole,
 )
-from parallax.core.write_plan.keys import TemporalObjectStateKey
 from tests._support.clock_probes import CountingClock, inert_instant
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY, admitted_writes
-from tests.unit import _milestone_rows_support as milestone_rows
 from tests.unit._gc_reachability import reachable_objects
 from tests.unit.core._execution._unit_work._ownership_support import OpenedRows
 
@@ -75,55 +61,10 @@ _JAN, _MAR = (dt.datetime(2026, month, 1, tzinfo=dt.UTC) for month in (1, 3))
 
 
 # --------------------------------------------------------------------------- #
-# Group evidence: the states a group selected, and its versioned columns.      #
-# --------------------------------------------------------------------------- #
-@pytest.mark.parametrize("entity", milestone_rows.ENTITY_CLASSES, ids=milestone_rows.LAYOUTS)
-def test_a_groups_state_keys_read_no_axis_end(
-    monkeypatch: pytest.MonkeyPatch, entity: type[Entity]
-) -> None:
-    def refuse(*_arguments: object) -> object:
-        raise AssertionError("a state key read an axis end")
-
-    evidence, shape = milestone_rows.milestones(entity, (_JAN, _MAR), (_MAR, INFINITY))
-    monkeypatch.setattr(PredecessorRows, "axis_end", refuse)
-
-    keys = list(GroupStateKeys(entity.identity, "id", evidence, shape))
-
-    assert [cast("TemporalObjectStateKey", key).milestone.valid_time for key in keys] == [
-        _JAN,
-        _MAR,
-    ]
-
-
-def test_versioned_evidence_aligns_one_version_with_each_key() -> None:
-    builder = VersionedEvidenceBuilder(key_position=0, version_position=2)
-    builder.append((1, "A", 3))
-    builder.append((2, "B", 5))
-    evidence = builder.seal()
-    assert evidence is not None
-    assert (list(evidence.keys), list(evidence.versions), len(evidence)) == ([1, 2], [3, 5], 2)
-
-    versions: ChunkedColumnBuilder[int] = ChunkedColumnBuilder()
-    versions.append(3)
-    with pytest.raises(ValueError, match="one version with each key"):
-        VersionedEvidence(keys=evidence.keys, versions=whole(versions.build()))
-    with pytest.raises(ValueError, match="at least one row"):
-        VersionedEvidence(
-            keys=whole(ChunkedColumnBuilder[object]().build()),
-            versions=whole(ChunkedColumnBuilder[int]().build()),
-        )
-
-
-def test_a_versioned_evidence_builder_that_appended_nothing_seals_to_nothing() -> None:
-    assert VersionedEvidenceBuilder(key_position=0, version_position=1).seal() is None
-
-
-# --------------------------------------------------------------------------- #
 # Finalizing: a Write Plan may retain what a producer produced for one        #
 # settled write, never the producer.                                          #
 # --------------------------------------------------------------------------- #
 _PRODUCER_CLASSES = (
-    MaterializedWriteGroup,
     TransactionInstant,
     FixedClock,
     SystemClock,

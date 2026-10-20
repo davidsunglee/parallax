@@ -7,16 +7,13 @@ from parallax.core._execution._unit_work.acquisition import AcquireRows, consume
 from parallax.core._execution._unit_work.admission import UnitOfWorkError
 from parallax.core._execution._unit_work.clock import TransactionInstant
 from parallax.core._execution._unit_work.ranges import (
-    DeferredGroupRange,
     DeferredTemporalRange,
-    GroupContinuation,
     coverage_reads,
     retained_completion,
 )
 from parallax.core._execution._unit_work.strategy import ActorIdentity
 from parallax.core._execution._unit_work.write_planner import WritePlanner
 from parallax.core.write_plan.keys import ObjectStateKey
-from parallax.core.write_plan.materialized import PredecessorRows
 from parallax.core.write_plan.plan import (
     BoundRange,
     DeferredRange,
@@ -26,6 +23,7 @@ from parallax.core.write_plan.plan import (
     WritePlan,
     WriteStepView,
 )
+from parallax.core.write_plan.predecessor_rows import PredecessorRows
 
 if TYPE_CHECKING:
     from parallax.core._execution._unit_work.uow import UnitOfWork
@@ -35,8 +33,7 @@ __all__ = ["ExecuteWriteSteps", "acquire_and_bind_range", "run_write_plan"]
 
 class ExecuteWriteSteps(Protocol):
     """How a flush has one span of Planned Writes executed: a unit's planned
-    steps, the steps its deferred range bound, or one round of its deferred
-    group.
+    steps, or the steps its deferred range bound.
 
     A normal return means every step of the span executed and its effect was
     enforced, in order; it completes no unit and commits nothing. With
@@ -54,8 +51,8 @@ def run_write_plan(owner: UnitOfWork, plan: WritePlan, execute: ExecuteWriteStep
     unit is taken.
 
     A deferred unit binds at its turn, against the ownership and continuity
-    every earlier unit published: a range to the retained rows it reuses and the
-    coverage they leave, a group round by round. A unit with no step still
+    every earlier unit published: to the retained rows it reuses and the
+    coverage they leave. A unit with no step still
     completes. A unit that fails completes nothing, and nothing after it is
     prepared, bound, or executed.
     """
@@ -83,60 +80,18 @@ def _deferred(
     owner: UnitOfWork, deferred: DeferredRange, execute: ExecuteWriteSteps
 ) -> UnitEffects:
     """What ``deferred`` publishes once bound under ``owner``'s current
-    ownership and executed: a range's bound effects, or what a group's
-    continuation finishes with."""
-    planner = owner._planner  # pyright: ignore[reportPrivateUsage] - the owner's binding inputs
-    ownership = owner._admission.ownership  # pyright: ignore[reportPrivateUsage] - the owner's binding inputs
-    actor = owner._actor_identity  # pyright: ignore[reportPrivateUsage] - the owner's binding inputs
-    instant = owner._transaction_instant  # pyright: ignore[reportPrivateUsage] - the owner's binding inputs
-    if isinstance(deferred, DeferredGroupRange):
-        continuation = planner.prepare_group(
-            deferred,
-            acquire_rows=owner.acquire_rows,
-            ownership=ownership,
-            actor_identity=actor,
-            transaction_instant=instant,
-        )
-        return _run_group(continuation, execute)
+    ownership and executed: the range's bound effects."""
     bound = acquire_and_bind_range(
         deferred,
         acquire_rows=owner.acquire_rows,
-        planner=planner,
-        ownership=ownership,
-        actor_identity=actor,
-        transaction_instant=instant,
+        planner=owner._planner,  # pyright: ignore[reportPrivateUsage] - the owner's binding inputs
+        ownership=owner._admission.ownership,  # pyright: ignore[reportPrivateUsage] - the owner's binding inputs
+        actor_identity=owner._actor_identity,  # pyright: ignore[reportPrivateUsage] - the owner's binding inputs
+        transaction_instant=owner._transaction_instant,  # pyright: ignore[reportPrivateUsage] - the owner's binding inputs
         current=owner._current,  # pyright: ignore[reportPrivateUsage] - the owner's freshness check
     )
     execute(bound.steps.view(0, len(bound.steps)), allocates=False)
     return bound
-
-
-def _run_group(continuation: GroupContinuation, execute: ExecuteWriteSteps) -> UnitEffects:
-    """Execute every round ``continuation`` prepares, each only once the
-    previous one's steps all succeeded, and answer what it finishes with;
-    close it however that ends.
-
-    A round's writes are released before the next is pulled, so nothing
-    executed stays reachable from here while later work is prepared. A
-    failure closing the continuation after an earlier failure is noted on the
-    earlier one, which propagates; one with no earlier failure refuses the
-    unit's success itself.
-    """
-    try:
-        writes = continuation.pull()
-        while writes is not None:
-            execute(writes.view(0, len(writes)), allocates=False)
-            writes = None
-            writes = continuation.pull()
-        effects = continuation.finish()
-    except BaseException as failure:
-        try:
-            continuation.close()
-        except BaseException as cleanup:
-            failure.add_note(f"closing the deferred unit's preparation also failed: {cleanup!r}")
-        raise
-    continuation.close()
-    return effects
 
 
 def acquire_and_bind_range(

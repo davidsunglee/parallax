@@ -807,8 +807,8 @@ def position_documents(
     occurrences the position actually has, in the Position Layout's own order,
     rather than re-projecting the family superset from a round-tripped name. It
     is keyed to the position and not to the read's result form: a default
-    row-form read projects no document column, while the explicit
-    materializing-write widening lane may project selected or complete documents.
+    row-form read projects no document column, while a row-acquisition read
+    that widens its projection may project selected or complete documents.
 
     Answered from the Position Layout's logical MEMBER sequence and each
     branch's placements rather than from its physical columns, because an
@@ -858,9 +858,9 @@ def document_projection(
     own; the ones placed at a Document Path are what make the Structured Column
     needed, and it is then projected **once**, raw, whatever their number.
 
-    ``observation`` is the read's own lane: an instance-form read, or the
-    materializing predicate-write resolve that widens its projection to every
-    declared member. Such a read observes the stored document itself and not only
+    ``observation`` is the read's own lane: an instance-form read, or a
+    row-acquisition read that widens its projection to every declared member
+    (`m-sql` *Result form*). Such a read observes the stored document itself and not only
     the members decoded out of it — a Predecessor Row retains the raw document
     (`m-write-plan`) — so it projects the Table's Structured Column wherever there
     is one, fanning out however many members it asked for, zero included. Outside

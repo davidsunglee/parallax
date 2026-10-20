@@ -6,7 +6,6 @@ from parallax.core.write_plan.keys import (
     ObjectStateKey,
     object_state_key_from_observation,
 )
-from parallax.core.write_plan.materialized import PredecessorRows, PredecessorRowsBuilder
 from parallax.core.write_plan.observe import (
     EntityStateRow,
     PredecessorRow,
@@ -16,6 +15,7 @@ from parallax.core.write_plan.observe import (
 )
 from parallax.core.write_plan.plan import WritePlan
 from parallax.core.write_plan.planned_rows import WritePlanningError
+from parallax.core.write_plan.predecessor_rows import PredecessorRows, PredecessorRowsBuilder
 from parallax.core.write_plan.steps import SUPERSEDED, TERMINATED, PlannedClose, PlannedInsert
 
 __all__ = [

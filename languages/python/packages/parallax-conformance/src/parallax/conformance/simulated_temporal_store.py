@@ -672,14 +672,11 @@ class _CaseStateAcquisition:
             return consumer(
                 request, selection, iter(completed), _ABSENT, request.documents, len(completed)
             )
-        if isinstance(request, CoverageReadRequest):
-            rows = self.store.coverage_rows(self.model, request)
-        elif isinstance(request, TargetReadRequest):
-            rows = self.store.target_rows(self.model, request)
-        else:  # pragma: no cover - planning and target confirmation request nothing else
-            raise TypeError(
-                f"case state answers coverage, target, and completion requests, not {request!r}"
-            )
+        rows = (
+            self.store.coverage_rows(self.model, request)
+            if isinstance(request, CoverageReadRequest)
+            else self.store.target_rows(self.model, request)
+        )
         return consumer(request, selection, iter(rows), _ABSENT, None, len(rows))
 
 

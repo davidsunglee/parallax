@@ -5,7 +5,6 @@ from dataclasses import dataclass, field
 from typing import Final, Literal, NamedTuple
 
 from parallax.core import inheritance, relationship
-from parallax.core._execution._unit_work.instructions import PreparedPredicateWrite
 from parallax.core.base import INFINITY, ManagedValue
 from parallax.core.inheritance import InheritanceEntityView, InheritanceFacet
 from parallax.core.metamodel import (
@@ -73,7 +72,6 @@ __all__ = [
     "RootRef",
     "plan",
     "plan_coverage_read",
-    "plan_mutation_read",
     "plan_root",
     "plan_target_read",
 ]
@@ -233,44 +231,6 @@ def plan_root(
         projection=_projection_for(entity, inheritance.view(model), projection),
         limit=query.limit,
         paging=query.paging,
-    )
-
-
-def plan_mutation_read(
-    write: PreparedPredicateWrite,
-    *,
-    model: Metamodel,
-    temporal: tuple[ResolvedTemporalSelection, ...],
-    projection: ReadProjectionRequest,
-) -> PlannedEntityQuery:
-    """Produce the one planned flat read required to materialize a predicate write."""
-    entity = write.selection.target
-    families = inheritance.view(model)
-    predicate = resolve_temporal_visibility(
-        write.selection.predicate, target=entity, model=model, resolution=RootSelections(temporal)
-    )
-    assigned = frozenset(
-        assignment.member.identity.path[-1]
-        for assignment in write.managed_assignments
-        if not isinstance(assignment.member, AttributeMetadata)
-    )
-    requested = projection.value_objects
-    if requested == "all":
-        value_objects: Literal["all"] | frozenset[str] = "all"
-    elif requested == "none":
-        value_objects = assigned
-    else:
-        value_objects = requested | assigned
-    resolved_projection = _projection_for(
-        entity,
-        families,
-        ReadProjectionRequest(value_objects, projection.observe_structured_document),
-    )
-    return PlannedEntityQuery(
-        target=entity.identity,
-        entity=entity,
-        predicate=predicate,
-        projection=resolved_projection,
     )
 
 
