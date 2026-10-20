@@ -38,7 +38,10 @@ from parallax.core._execution._unit_work.acquisition import (
     RowRequest,
     TargetReadRequest,
 )
-from parallax.core._execution._unit_work.instructions import KeyedWrite, PreparedKeyedWrite
+from parallax.core._execution._unit_work.instructions import (
+    KeyedWriteInstruction,
+    PreparedKeyedWrite,
+)
 from parallax.core._execution._unit_work.write_items import ObservedKeyedWrite
 from parallax.core.base import INFINITY
 from parallax.core.inheritance import EntityMemberSelection
@@ -212,7 +215,7 @@ def _planned(
     instruction = instructions.deserialize(
         {"mutation": "insert", "entity": entity_name, "rows": [members], "validFrom": valid_from}
     )
-    assert isinstance(instruction, KeyedWrite)  # a `rows` document is a keyed write
+    assert isinstance(instruction, KeyedWriteInstruction)  # a `rows` document is a keyed write
     prepared = instructions.prepare_wire_write(instruction, POSITION)
     return (
         build_write_planner(POSITION)
@@ -256,7 +259,7 @@ def test_a_milestone_no_planned_step_closes_stays_stored_as_it_was(value: str, k
     observed = store.predecessor_for(POSITION, POSITION_ENTITY, {"id": 1})
     assert observed is not None
     prepared = instructions.prepare_wire_write(
-        KeyedWrite(
+        KeyedWriteInstruction(
             "amendUntil",
             "Position",
             ({"id": 1, "value": value},),
@@ -326,7 +329,7 @@ def test_an_applied_non_temporal_insert_stores_nothing() -> None:
             "rows": [{"id": 1, "owner": "Ada", "balance": "0.00"}],
         }
     )
-    assert isinstance(instruction, KeyedWrite)  # a `rows` document is a keyed write
+    assert isinstance(instruction, KeyedWriteInstruction)  # a `rows` document is a keyed write
     account = models.load_models()["account"]
     prepared = instructions.prepare_wire_write(instruction, account)
     plan = build_write_planner(account).finalize(
@@ -370,7 +373,7 @@ def _rectangles(
         if until is not None:
             document["until"] = until
         instruction = instructions.deserialize(document)
-        assert isinstance(instruction, KeyedWrite)  # a `rows` document is a keyed write
+        assert isinstance(instruction, KeyedWriteInstruction)  # a `rows` document is a keyed write
         entries.append(instructions.prepare_wire_write(instruction, POSITION))
     return (
         build_write_planner(POSITION)

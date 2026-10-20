@@ -59,13 +59,13 @@ from parallax.core.metamodel import AttributeIdentity, EntityMetadata, Metamodel
 from parallax.core.unit_work import (
     BufferItem,
     Concurrency,
-    KeyedWrite,
+    KeyedWriteInstruction,
     MaterializedWriteGroup,
     PredicateSelection,
-    PredicateWrite,
+    PredicateWriteInstruction,
     RetainedObservation,
     RollbackOnlyError,
-    TargetWrite,
+    TargetWriteInstruction,
     TransactionSettings,
     UnitOfWork,
     UnitOfWorkError,
@@ -271,7 +271,7 @@ _MAR: Final = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
 
 def _span_insert() -> PreparedKeyedWrite:
     prepared = prepare_typed_write(
-        KeyedWrite(
+        KeyedWriteInstruction(
             "insert",
             Span.identity.canonical,
             ({"id": {"computed": "maxPlusOne"}, "amount": 1},),
@@ -299,7 +299,8 @@ def _span_amend(key: int) -> BufferItem:
         ObjectKey(Span.identity, (("id", key),)), observation, shape
     )
     prepared = prepare_typed_write(
-        KeyedWrite("amend", Span.identity.canonical, ({"id": key, "amount": 2},), _MAR), _SPANS
+        KeyedWriteInstruction("amend", Span.identity.canonical, ({"id": key, "amount": 2},), _MAR),
+        _SPANS,
     )
     assert isinstance(prepared, PreparedKeyedWrite)
     return buffered_write(prepared, RetainedObservation(state, observation, None))
@@ -367,7 +368,7 @@ class _Watched:
 
 def _target(valid_from: dt.datetime, until: dt.datetime, value: str) -> PreparedTargetWrite:
     prepared = prepare_wire_write(
-        TargetWrite(
+        TargetWriteInstruction(
             "amendUntil",
             "Position",
             {"id": 1, "value": value},
@@ -386,7 +387,8 @@ _JAN, _APR, _JUN, _SEP = (dt.datetime(2024, month, 1, tzinfo=dt.UTC) for month i
 
 def _observed_amend(key: int, claim: RetainedObservation) -> BufferItem:
     prepared = prepare_wire_write(
-        KeyedWrite("amend", "Position", ({"id": key, "value": "150.00"},), _APR), TARGET_POSITION
+        KeyedWriteInstruction("amend", "Position", ({"id": key, "value": "150.00"},), _APR),
+        TARGET_POSITION,
     )
     assert isinstance(prepared, PreparedKeyedWrite)
     return buffered_write(prepared, claim)
@@ -515,7 +517,7 @@ def _state(row: dict[str, object]) -> ObjectStateKey:
 
 def _amended(*rows: dict[str, object]) -> MaterializedWriteGroup:
     return temporal_group(
-        PredicateWrite(
+        PredicateWriteInstruction(
             "amendUntil",
             PredicateSelection(
                 "Position",
@@ -800,7 +802,7 @@ _FEB, _AUG = (dt.datetime(2024, month, 1, tzinfo=dt.UTC) for month in (2, 8))
 
 def _barrier() -> PreparedPredicateWrite:
     barrier = prepare_wire_write(
-        PredicateWrite(
+        PredicateWriteInstruction(
             "amend",
             PredicateSelection(
                 "RunnerTag",
@@ -849,7 +851,7 @@ def test_a_unit_kept_behind_a_barrier_binds_on_the_rows_and_ownership_earlier_un
         rows=_Watched(store.acquisition(_BARRIERED), watch),
     )
     amendment = prepare_wire_write(
-        KeyedWrite(
+        KeyedWriteInstruction(
             "amendUntil",
             "WherePosition",
             ({"id": 1, "acctNum": "O"},),
@@ -860,7 +862,7 @@ def test_a_unit_kept_behind_a_barrier_binds_on_the_rows_and_ownership_earlier_un
     )
     assert isinstance(amendment, PreparedKeyedWrite)
     target = prepare_wire_write(
-        TargetWrite(
+        TargetWriteInstruction(
             "amendUntil",
             "WherePosition",
             {"id": 1, "value": "175.00"},

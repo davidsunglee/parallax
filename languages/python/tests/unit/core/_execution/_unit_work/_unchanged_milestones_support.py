@@ -15,7 +15,7 @@ from parallax.core.base import INFINITY
 from parallax.core.metamodel import EntityIdentity, Metamodel
 from parallax.core.unit_work import (
     KeyedMutation,
-    KeyedWrite,
+    KeyedWriteInstruction,
     RetainedObservation,
     WritePlanningRequest,
     buffered_write,
@@ -105,7 +105,7 @@ def observed_write(
     **members: object,
 ) -> BufferItem:
     prepared = prepare_wire_write(
-        KeyedWrite(
+        KeyedWriteInstruction(
             mutation, entity, ({"id": 1, **(assigned or {}), **members},), valid_from, until
         ),
         meta,

@@ -29,8 +29,8 @@ from parallax.core._execution._unit_work.write_items import (
 from parallax.core.metamodel import EntityIdentity, Metamodel
 from parallax.core.unit_work import (
     BufferItem,
-    KeyedWrite,
-    PredicateWrite,
+    KeyedWriteInstruction,
+    PredicateWriteInstruction,
     SubjectActor,
     buffered_write,
     object_key,
@@ -79,7 +79,9 @@ class RecordingSource:
 
 
 def observed_buffer(
-    buffer: Sequence[BufferItem | KeyedWrite | PredicateWrite | PreparedPredicateWrite],
+    buffer: Sequence[
+        BufferItem | KeyedWriteInstruction | PredicateWriteInstruction | PreparedPredicateWrite
+    ],
     model: Metamodel,
     observations: Mapping[ObjectKey, WriteObservation] | None,
 ) -> list[OrderedWrite]:
@@ -170,14 +172,15 @@ def _settled(item: BufferedWrite) -> OrderedWrite:
 
 
 def _prepared_item(
-    item: BufferItem | KeyedWrite | PredicateWrite | PreparedPredicateWrite, model: Metamodel
+    item: BufferItem | KeyedWriteInstruction | PredicateWriteInstruction | PreparedPredicateWrite,
+    model: Metamodel,
 ) -> BufferItem:
     """``item`` as a unit of work buffers it: an authored keyed write prepared,
     and a predicate write over a target these suites state is unversioned and
     Non-Temporal routed readless."""
-    if isinstance(item, KeyedWrite):
+    if isinstance(item, KeyedWriteInstruction):
         return prepare_typed_write(item, model)
-    if isinstance(item, PredicateWrite):
+    if isinstance(item, PredicateWriteInstruction):
         return readless_write(prepare_typed_write(item, model))
     if isinstance(item, PreparedPredicateWrite):
         return readless_write(item)

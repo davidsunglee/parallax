@@ -28,7 +28,11 @@ from parallax.core.db_port import (
 )
 from parallax.core.execution import ExecutionFailure
 from parallax.core.execution_lifecycle import AttemptRolledBack, TransactionAttemptFinished
-from parallax.core.unit_work import MaterializedWriteGroup, PredicateSelection, PredicateWrite
+from parallax.core.unit_work import (
+    MaterializedWriteGroup,
+    PredicateSelection,
+    PredicateWriteInstruction,
+)
 from tests._support.db_port import (
     BeginCall,
     CommitCall,
@@ -49,7 +53,7 @@ def _terminated(*keys: int) -> MaterializedWriteGroup:
     """The termination, from where they start, of the selected Positions
     ``keys``: one unit closing each, and opening nothing."""
     return temporal_group(
-        PredicateWrite(
+        PredicateWriteInstruction(
             "terminate",
             PredicateSelection(
                 "Position",

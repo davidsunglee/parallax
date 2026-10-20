@@ -59,17 +59,17 @@ __all__ = [
     "ExpectedVersion",
     "InstructionRejectedError",
     "KeyedMutation",
-    "KeyedWrite",
+    "KeyedWriteInstruction",
     "PredicateMutation",
     "PredicateSelection",
-    "PredicateWrite",
+    "PredicateWriteInstruction",
     "PreparedKeyedWrite",
     "PreparedPredicateWrite",
     "PreparedTargetWrite",
     "PreparedWrite",
     "TargetExpectation",
     "TargetMutation",
-    "TargetWrite",
+    "TargetWriteInstruction",
     "WriteAssignment",
     "WriteInstruction",
     "WriteInstructionError",
@@ -202,7 +202,7 @@ class InstructionRejectedError(WriteInstructionError):
 
 
 @dataclass(frozen=True, slots=True)
-class KeyedWrite:
+class KeyedWriteInstruction:
     """An authored keyed write: a ``mutation`` on one ``entity`` carrying flat
     attribute-named neutral write input (``rows``).
 
@@ -251,7 +251,7 @@ class PredicateSelection:
     ``m-predicate`` selection: a canonical Predicate node, or the adapter that
     interprets a frontend's own captured predicate at the checked target.
 
-    This is the instruction-level carrier an authored :class:`PredicateWrite`
+    This is the instruction-level carrier an authored :class:`PredicateWriteInstruction`
     holds, distinct from the prepared product buffering retains and from the
     finalized :class:`~parallax.core.unit_work.
     planned.WriteTarget` a Planned Write settles into. Preparation resolves
@@ -263,7 +263,7 @@ class PredicateSelection:
 
 
 @dataclass(frozen=True, slots=True)
-class PredicateWrite:
+class PredicateWriteInstruction:
     """A predicate-selected (set-based) write: a ``mutation`` on every row of
     ``target`` matching its predicate, with ``assignments`` on the amendment
     forms."""
@@ -276,7 +276,7 @@ class PredicateWrite:
 
 
 @dataclass(frozen=True, slots=True)
-class TargetWrite:
+class TargetWriteInstruction:
     """An authored caller-addressed write of one existing ``entity`` object.
 
     ``row`` names the object by its primary key beside the members the write
@@ -310,7 +310,7 @@ class TargetWrite:
             object.__setattr__(self, "row", MappingProxyType(dict(self.row)))
 
 
-WriteInstruction = KeyedWrite | PredicateWrite | TargetWrite
+WriteInstruction = KeyedWriteInstruction | PredicateWriteInstruction | TargetWriteInstruction
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -598,7 +598,7 @@ def _rows(node: Mapping[str, object]) -> tuple[Mapping[str, object], ...]:
     return tuple(rows)
 
 
-def _keyed(node: Mapping[str, object]) -> KeyedWrite:
+def _keyed(node: Mapping[str, object]) -> KeyedWriteInstruction:
     _reject_extra(
         node, frozenset({"mutation", "entity", "rows", "validFrom", "until"}), "keyed write"
     )
@@ -609,7 +609,7 @@ def _keyed(node: Mapping[str, object]) -> KeyedWrite:
     valid_from = _bound(node, "validFrom", "keyed write")
     until = _bound(node, "until", "keyed write")
     _check_valid_time_bounds(mutation, valid_from, until, "keyed write")
-    return KeyedWrite(
+    return KeyedWriteInstruction(
         mutation=cast("KeyedMutation", mutation),
         entity=entity,
         rows=rows,
@@ -656,7 +656,7 @@ def _assignments(node: Mapping[str, object]) -> tuple[WriteAssignment, ...]:
     return tuple(out)
 
 
-def _predicate(node: Mapping[str, object]) -> PredicateWrite:
+def _predicate(node: Mapping[str, object]) -> PredicateWriteInstruction:
     _reject_extra(
         node,
         frozenset({"mutation", "target", "assignments", "validFrom", "until"}),
@@ -680,7 +680,7 @@ def _predicate(node: Mapping[str, object]) -> PredicateWrite:
     valid_from = _bound(node, "validFrom", "predicate write")
     until = _bound(node, "until", "predicate write")
     _check_valid_time_bounds(mutation, valid_from, until, "predicate write")
-    return PredicateWrite(
+    return PredicateWriteInstruction(
         mutation=cast("PredicateMutation", mutation),
         target=target,
         assignments=assignments,
@@ -689,7 +689,7 @@ def _predicate(node: Mapping[str, object]) -> PredicateWrite:
     )
 
 
-def _target_write(node: Mapping[str, object]) -> TargetWrite:
+def _target_write(node: Mapping[str, object]) -> TargetWriteInstruction:
     _reject_extra(
         node,
         frozenset({"mutation", "entity", "row", "ifVersion", "ifTxStart", "validFrom", "until"}),
@@ -716,7 +716,7 @@ def _target_write(node: Mapping[str, object]) -> TargetWrite:
     valid_from = _bound(node, "validFrom", "target write")
     until = _bound(node, "until", "target write")
     _check_valid_time_bounds(mutation, valid_from, until, "target write")
-    instruction = TargetWrite(
+    instruction = TargetWriteInstruction(
         mutation=cast("TargetMutation", mutation),
         entity=entity,
         row=row,
@@ -735,7 +735,7 @@ def _target_write(node: Mapping[str, object]) -> TargetWrite:
 
 def serialize(instruction: WriteInstruction) -> dict[str, object]:
     """Emit the canonical minimal write-instruction document for one instruction."""
-    if isinstance(instruction, TargetWrite):
+    if isinstance(instruction, TargetWriteInstruction):
         target_body: dict[str, object] = {
             "mutation": instruction.mutation,
             "entity": instruction.entity,
@@ -747,7 +747,7 @@ def serialize(instruction: WriteInstruction) -> dict[str, object]:
             target_body["ifTxStart"] = _wire_bound(instruction.if_tx_start)
         _emit_bounds(target_body, instruction.valid_from, instruction.until)
         return target_body
-    if isinstance(instruction, KeyedWrite):
+    if isinstance(instruction, KeyedWriteInstruction):
         keyed_body: dict[str, object] = {
             "mutation": instruction.mutation,
             "entity": instruction.entity,
@@ -845,7 +845,7 @@ def _non_temporal_milestone_refusal(
 
 
 def _temporal_singleton_refusal(
-    entity_name: str, instruction: KeyedWrite | PredicateWrite
+    entity_name: str, instruction: KeyedWriteInstruction | PredicateWriteInstruction
 ) -> str | None:
     """Why a TEMPORAL target refuses ``instruction``'s ROW COUNT, or ``None``
     when this rule has nothing to say about it.
@@ -857,7 +857,7 @@ def _temporal_singleton_refusal(
     rather than one wider write (`m-unit-work` "A temporal keyed instruction
     carries exactly one row").
     """
-    if not isinstance(instruction, KeyedWrite) or len(instruction.rows) == 1:
+    if not isinstance(instruction, KeyedWriteInstruction) or len(instruction.rows) == 1:
         return None
     return (
         f"{entity_name!r}: a keyed {instruction.mutation!r} on a temporal target carries "
@@ -869,7 +869,7 @@ def _temporal_singleton_refusal(
 
 @overload
 def prepare_typed_write(
-    instruction: TargetWrite,
+    instruction: TargetWriteInstruction,
     model: AcceptedMetamodel,
     *,
     authored_members: Set[str] | None = None,
@@ -877,7 +877,7 @@ def prepare_typed_write(
 ) -> PreparedTargetWrite: ...
 @overload
 def prepare_typed_write(
-    instruction: KeyedWrite,
+    instruction: KeyedWriteInstruction,
     model: AcceptedMetamodel,
     *,
     authored_members: Set[str] | None = None,
@@ -885,7 +885,7 @@ def prepare_typed_write(
 ) -> PreparedKeyedWrite: ...
 @overload
 def prepare_typed_write(
-    instruction: PredicateWrite,
+    instruction: PredicateWriteInstruction,
     model: AcceptedMetamodel,
     *,
     authored_members: Set[str] | None = None,
@@ -927,7 +927,7 @@ def prepare_typed_write(
 
 @overload
 def prepare_wire_write(
-    instruction: TargetWrite,
+    instruction: TargetWriteInstruction,
     model: AcceptedMetamodel,
     *,
     authored_members: Set[str] | None = None,
@@ -935,7 +935,7 @@ def prepare_wire_write(
 ) -> PreparedTargetWrite: ...
 @overload
 def prepare_wire_write(
-    instruction: KeyedWrite,
+    instruction: KeyedWriteInstruction,
     model: AcceptedMetamodel,
     *,
     authored_members: Set[str] | None = None,
@@ -943,7 +943,7 @@ def prepare_wire_write(
 ) -> PreparedKeyedWrite: ...
 @overload
 def prepare_wire_write(
-    instruction: PredicateWrite,
+    instruction: PredicateWriteInstruction,
     model: AcceptedMetamodel,
     *,
     authored_members: Set[str] | None = None,
@@ -1002,7 +1002,7 @@ def _prepare_write(
     assignments in authored order — so a call whose verb or window is wrong for
     its target hears that before any complaint about what it carries.
     """
-    if isinstance(instruction, TargetWrite):
+    if isinstance(instruction, TargetWriteInstruction):
         return _prepare_target_write(
             instruction,
             model,
@@ -1011,17 +1011,18 @@ def _prepare_write(
             authored_members=authored_members,
             members=members,
         )
-    keyed = isinstance(instruction, KeyedWrite)
+    keyed = isinstance(instruction, KeyedWriteInstruction)
     entity = resolve_target(model, instruction.entity if keyed else instruction.target.entity)
     window = _judge_target(model, entity, instruction)
     if members is not None:
-        assert isinstance(instruction, KeyedWrite)  # a predicate write states its assignments
+        # A predicate write states its assignments.
+        assert isinstance(instruction, KeyedWriteInstruction)
         assigned = members()
         (row,) = instruction.rows
         instruction = replace(instruction, rows=({**row, **assigned},))
         authored_members = assigned.keys()
     selection = _member_selection(model, entity)
-    if isinstance(instruction, KeyedWrite):
+    if isinstance(instruction, KeyedWriteInstruction):
         return _prepare_keyed_payload(
             instruction,
             model,
@@ -1044,7 +1045,9 @@ def _prepare_write(
 
 
 def _judge_target(
-    model: AcceptedMetamodel, entity: EntityMetadata, instruction: KeyedWrite | PredicateWrite
+    model: AcceptedMetamodel,
+    entity: EntityMetadata,
+    instruction: KeyedWriteInstruction | PredicateWriteInstruction,
 ) -> TimeInterval | None:
     """Judge the verb, window, and row count against ``entity``'s Temporal
     Shape, and answer the managed window, ``None`` for a target without Valid
@@ -1058,7 +1061,9 @@ def _judge_target(
     an argument it can drop, while a boundless ``terminate`` clears the window
     and is refused for its verb.
     """
-    surface: _WriteSurface = "keyed" if isinstance(instruction, KeyedWrite) else "predicate"
+    surface: _WriteSurface = (
+        "keyed" if isinstance(instruction, KeyedWriteInstruction) else "predicate"
+    )
     name = entity.identity.name
     shape = temporal_read.view(model).shape(entity.identity)
     temporal = isinstance(shape, temporal_read.TransactionTimeOnly | temporal_read.Bitemporal)
@@ -1154,7 +1159,7 @@ def _judge_window(
 
 
 def _prepare_target_write(
-    instruction: TargetWrite,
+    instruction: TargetWriteInstruction,
     model: AcceptedMetamodel,
     *,
     converter: _LeafConverter,
@@ -1209,7 +1214,7 @@ def _judge_expectation(
     root: EntityIdentity,
     shape: temporal_read.TemporalShape | None,
     position: inheritance.InheritanceEntityView,
-    instruction: TargetWrite,
+    instruction: TargetWriteInstruction,
 ) -> TargetExpectation:
     """The starting condition a target write states, judged against the
     family's own revision kind (`m-opt-lock`): a versioned family takes
@@ -1263,7 +1268,7 @@ def _judge_expectation(
     return ExpectedTxStart(normalize_instant(_stated_instant(root, mutation, "tx_start", value)))
 
 
-def _stated_conditions(instruction: TargetWrite) -> tuple[str, ...]:
+def _stated_conditions(instruction: TargetWriteInstruction) -> tuple[str, ...]:
     """The conditions a target write states: the ones its caller named where
     its interface tells naming from omission, else every one carrying a
     value."""
@@ -1299,7 +1304,7 @@ def _missing(root: EntityIdentity, mutation: str, required: str) -> str:
 
 
 def _prepare_target_payload(
-    instruction: TargetWrite,
+    instruction: TargetWriteInstruction,
     model: AcceptedMetamodel,
     entity: EntityMetadata,
     position: inheritance.InheritanceEntityView,
@@ -1496,7 +1501,7 @@ def _stated_instant(root: EntityIdentity, mutation: str, bound: str, value: obje
 
 
 def _prepare_keyed_payload(
-    instruction: KeyedWrite,
+    instruction: KeyedWriteInstruction,
     model: AcceptedMetamodel,
     entity: EntityMetadata,
     selection: inheritance.EntityMemberSelection,
@@ -1608,7 +1613,7 @@ def _refuse_framework_owned(
 
 
 def _prepare_predicate_payload(
-    instruction: PredicateWrite,
+    instruction: PredicateWriteInstruction,
     model: AcceptedMetamodel,
     entity: EntityMetadata,
     selection: inheritance.EntityMemberSelection,

@@ -52,7 +52,7 @@ from parallax.core.read_delivery._page import (
 from parallax.core.temporal_read import Edge, Pin
 from parallax.core.unit_work import (
     BufferItem,
-    KeyedWrite,
+    KeyedWriteInstruction,
     ReadEvidence,
     RetainedObservation,
     TransactionSettings,
@@ -506,7 +506,7 @@ def test_evidence_is_keyed_by_the_rows_own_entity_through_inherited_members() ->
     # `DepositRate` is a concrete subtype of the bitemporal root `Rate`, whose own
     # declaration owns the primary key and both axes. The key still names the
     # subtype, because that is the class a developer's later `tx.amend(copy)`
-    # carries (`m-unit-work` `KeyedWrite.entity`), and the declared-name view
+    # carries (`m-unit-work` `KeyedWriteInstruction.entity`), and the declared-name view
     # resolves each inherited member at its canonical position (`from_z` /
     # `validStart`, `in_z` / `txStart`).
     columns: Mapping[str, object] = {
@@ -607,7 +607,7 @@ def test_a_participating_read_stamps_its_own_unit_of_works_participation() -> No
 # --------------------------------------------------------------------------- #
 def _balance_update(model: AcceptedMetamodel, hint: ReadEvidence) -> BufferItem:
     instruction = prepare_typed_write(
-        KeyedWrite("amend", "Balance", ({"id": 1, "value": Decimal("6.00")},)), model
+        KeyedWriteInstruction("amend", "Balance", ({"id": 1, "value": Decimal("6.00")},)), model
     )
     assert hint.observation is not None
     return buffered_write(

@@ -38,7 +38,7 @@ from parallax.core._execution._planning import build_write_planner
 from parallax.core.auto_retry import RetryCandidate, retry_eligible, run_with_retry
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity, Metamodel
 from parallax.core.unit_work import (
-    KeyedWrite,
+    KeyedWriteInstruction,
     MissingTargetError,
     OptimisticLockConflictError,
     StaleWriteError,
@@ -70,7 +70,7 @@ _KEY_2 = KeyTarget(key_attributes=(AttributeIdentity(_ROW_2, "id"),), key_values
 
 
 def _locking_policy(
-    write: KeyedWrite, model: Metamodel, *, observed: int | None
+    write: KeyedWriteInstruction, model: Metamodel, *, observed: int | None
 ) -> tuple[PlannedWrite, AffectedRows]:
     """The single step a Locking-mode unit of work plans for ``write``, and the
     Affected Rows Policy it carries."""
@@ -95,13 +95,13 @@ def _locking_policy(
 @pytest.mark.parametrize(
     "write",
     [
-        KeyedWrite("amend", "Account", ({"id": 2, "balance": Decimal("250.00")},)),
-        KeyedWrite("delete", "Account", ({"id": 2},)),
+        KeyedWriteInstruction("amend", "Account", ({"id": 2, "balance": Decimal("250.00")},)),
+        KeyedWriteInstruction("delete", "Account", ({"id": 2},)),
     ],
     ids=["amend", "delete"],
 )
 def test_a_versioned_locking_write_reaching_no_row_is_the_non_retriable_stale_write(
-    write: KeyedWrite,
+    write: KeyedWriteInstruction,
 ) -> None:
     # The Locking arm renders no gate — the shared read lock is what makes the
     # write correct — so a shortfall cannot be a gate that came up short.
@@ -114,13 +114,13 @@ def test_a_versioned_locking_write_reaching_no_row_is_the_non_retriable_stale_wr
 @pytest.mark.parametrize(
     "write",
     [
-        KeyedWrite("amend", "Wallet", ({"id": 2, "balance": Decimal("250.00")},)),
-        KeyedWrite("delete", "Wallet", ({"id": 2},)),
+        KeyedWriteInstruction("amend", "Wallet", ({"id": 2, "balance": Decimal("250.00")},)),
+        KeyedWriteInstruction("delete", "Wallet", ({"id": 2},)),
     ],
     ids=["amend", "delete"],
 )
 def test_an_unversioned_write_reaching_no_row_is_the_non_retriable_missing_target(
-    write: KeyedWrite,
+    write: KeyedWriteInstruction,
 ) -> None:
     # An unversioned Non-Temporal row observes no state, so no gate could have
     # come up short and no version could have moved: what the shortfall says is

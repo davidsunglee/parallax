@@ -43,7 +43,7 @@ from parallax.core.sql_gen import LoweredStatement, SqlGenError
 from parallax.core.sql_gen._context import (
     _RepeatedTypedBindSpan,  # pyright: ignore[reportPrivateUsage]
 )
-from parallax.core.unit_work import KeyedWrite
+from parallax.core.unit_work import KeyedWriteInstruction
 from parallax.core.write_payload import LayoutPayloadPreparer
 from parallax.core.write_plan import PredecessorRow, TemporalObservation
 from parallax.core.write_plan.payload import RowPayload
@@ -505,7 +505,7 @@ _CORPUS: Final = corpus_records()
 def test_a_settled_range_keeps_its_logical_steps_and_groups_only_its_openings() -> None:
     # m-temporal-write-017: one close, then head, middle, and tail successors.
     model = formed(_CORPUS["position"])
-    instruction = KeyedWrite(
+    instruction = KeyedWriteInstruction(
         "amendUntil",
         "Position",
         ({"id": 1, "value": Decimal("200.00")},),

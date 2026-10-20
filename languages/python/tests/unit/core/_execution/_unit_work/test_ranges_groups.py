@@ -30,7 +30,7 @@ from parallax.core.unit_work import (
     MaterializedWriteGroup,
     PredicateMutation,
     PredicateSelection,
-    PredicateWrite,
+    PredicateWriteInstruction,
     WriteAssignment,
     WritePlanningRequest,
 )
@@ -91,7 +91,7 @@ def _group(
 ) -> MaterializedWriteGroup:
     bounds = (_FEB, _JUN) if mutation.endswith("Until") else (_FEB,)
     return temporal_group(
-        PredicateWrite(
+        PredicateWriteInstruction(
             mutation,
             PredicateSelection(
                 "Position",
@@ -175,7 +175,7 @@ def _windows(steps: Iterable[PlannedWrite]) -> list[tuple[str, object, object, o
 
 def test_an_assignment_no_opened_row_expresses_is_refused_while_planning() -> None:
     group = temporal_group(
-        PredicateWrite(
+        PredicateWriteInstruction(
             "amendUntil",
             PredicateSelection(
                 "Position",

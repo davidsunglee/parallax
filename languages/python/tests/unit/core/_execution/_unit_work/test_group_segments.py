@@ -51,11 +51,11 @@ from parallax.core.temporal_write.expansion import PredecessorExpander
 from parallax.core.unit_work import (
     BufferItem,
     Concurrency,
-    KeyedWrite,
+    KeyedWriteInstruction,
     MaterializedWriteGroup,
     PredicateMutation,
     PredicateSelection,
-    PredicateWrite,
+    PredicateWriteInstruction,
     TransactionInstant,
     VersionedEvidenceBuilder,
     WriteAssignment,
@@ -130,7 +130,7 @@ _WALLET = corpus_model("wallet")
 _INSTANT = inert_instant()
 
 
-type _TestBufferItem = BufferItem | KeyedWrite | PredicateWrite
+type _TestBufferItem = BufferItem | KeyedWriteInstruction | PredicateWriteInstruction
 
 
 def _plan(
@@ -199,7 +199,7 @@ def _step_mutation(step: PlannedWrite) -> str:
     return "delete"
 
 
-def _prepared_keyed(write: KeyedWrite, model: Metamodel) -> PreparedKeyedWrite:
+def _prepared_keyed(write: KeyedWriteInstruction, model: Metamodel) -> PreparedKeyedWrite:
     prepared = prepare_typed_write(write, model)
     assert isinstance(prepared, PreparedKeyedWrite)
     return prepared
@@ -227,7 +227,7 @@ def _version_group(
         evidence.append((key_value, version))
     sealed = evidence.seal()
     assert sealed is not None
-    predicate = PredicateWrite(
+    predicate = PredicateWriteInstruction(
         mutation,
         PredicateSelection(
             entity,
@@ -274,7 +274,7 @@ def _one_row_temporal_group(assigned: Decimal) -> MaterializedWriteGroup:
     """A Materialized Write Group resolving the one row
     :data:`_BALANCE_PREDECESSOR` describes, under the same update."""
     return temporal_group(
-        PredicateWrite(
+        PredicateWriteInstruction(
             "amend",
             PredicateSelection(
                 "Balance",
@@ -300,7 +300,7 @@ def test_one_temporal_row_settles_identically_addressed_and_materialized() -> No
     # equal step for step. A drift between the arms is precisely what a
     # second derivation site would produce.
     assigned = Decimal("9.00")
-    addressed = KeyedWrite("amend", "Balance", ({"id": 1, "value": assigned},))
+    addressed = KeyedWriteInstruction("amend", "Balance", ({"id": 1, "value": assigned},))
     key_ = object_key(addressed, _BALANCE)
     assert key_ is not None
     eager = _plan(
@@ -329,7 +329,7 @@ def test_an_audit_replacing_an_authored_value_reaches_the_rebuilt_group_successo
     monkeypatch.setattr(
         planning_composition, "NO_AUDIT", RecordingAudit(stamps={value: Decimal("77.00")})
     )
-    addressed = KeyedWrite("amend", "Balance", ({"id": 1, "value": Decimal("9.00")},))
+    addressed = KeyedWriteInstruction("amend", "Balance", ({"id": 1, "value": Decimal("9.00")},))
     key_ = object_key(addressed, _BALANCE)
     assert key_ is not None
     eager = _plan(
@@ -365,7 +365,7 @@ def test_one_versioned_row_settles_identically_addressed_and_materialized() -> N
     # exactly. Their CARDINALITY is the one thing they do not share, and it is
     # not in evidence here: both plans carry one step over one key.
     assigned = Decimal("5.00")
-    addressed = KeyedWrite("amend", "Account", ({"id": 9, "balance": assigned},))
+    addressed = KeyedWriteInstruction("amend", "Account", ({"id": 9, "balance": assigned},))
     key_ = object_key(addressed, _ACCOUNT)
     assert key_ is not None
     eager = _plan(
@@ -407,7 +407,7 @@ def _temporal_topology_group(
     )
     axes: dict[str, object] = {"validStart": _OPENED_AT, "validEnd": INFINITY} if bitemporal else {}
     return temporal_group(
-        PredicateWrite(
+        PredicateWriteInstruction(
             mutation,
             PredicateSelection(
                 entity,
@@ -498,7 +498,7 @@ def test_indexing_a_temporal_group_constructs_only_the_requested_step(
 
 def test_a_temporal_groups_marker_no_opened_row_expresses_is_refused_while_planning() -> None:
     group = temporal_group(
-        PredicateWrite(
+        PredicateWriteInstruction(
             "amend",
             PredicateSelection(
                 "Balance",
@@ -525,7 +525,7 @@ def test_a_temporal_groups_marker_no_opened_row_expresses_is_refused_while_plann
 
 def test_a_bitemporal_close_refuses_a_row_that_holds_no_valid_time_end() -> None:
     group = temporal_group(
-        PredicateWrite(
+        PredicateWriteInstruction(
             "terminate",
             PredicateSelection(
                 "Position",
@@ -568,7 +568,7 @@ def _refuse_member_comparison(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def _position_update(*assignments: WriteAssignment, account: str) -> MaterializedWriteGroup:
     return temporal_group(
-        PredicateWrite(
+        PredicateWriteInstruction(
             "amend",
             PredicateSelection(
                 "Position",
@@ -636,7 +636,9 @@ def test_a_literal_keyed_write_overlays_every_member_it_assigns(
 ) -> None:
     _refuse_member_comparison(monkeypatch)
     prepared = _prepared_keyed(
-        KeyedWrite("amend", "Balance", ({"id": 1, "acctNum": "B", "value": Decimal("9.00")},)),
+        KeyedWriteInstruction(
+            "amend", "Balance", ({"id": 1, "acctNum": "B", "value": Decimal("9.00")},)
+        ),
         _BALANCE,
     )
     observation = TemporalObservation(predecessor=PredecessorRow(members=_BALANCE_PREDECESSOR))
@@ -652,7 +654,7 @@ def _acquisition_update_until(model: Metamodel) -> PreparedPredicateWrite:
     Document family, assigning the workload's changed title to every row."""
     entity = acquisition_support.case_named("acquisition.rows-8.document").entity.identity.canonical
     prepared = prepare_typed_write(
-        PredicateWrite(
+        PredicateWriteInstruction(
             "amendUntil",
             PredicateSelection(
                 entity,
@@ -710,7 +712,7 @@ def test_a_keyed_and_a_materialized_successor_lower_to_the_same_statements() -> 
     evidence.append(row, stored)
     sealed = evidence.seal()
     assert sealed is not None
-    keyed = KeyedWrite(
+    keyed = KeyedWriteInstruction(
         "amendUntil",
         target.identity.canonical,
         ({"id": 1, "title": acquisition_support.ASSIGNED_TITLE},),
@@ -800,7 +802,7 @@ def test_a_restated_occurrence_is_assigned_whole_and_keeps_no_key_its_value_omit
         else PredecessorRow(members, document=stored)
     )
     prepared = _prepared_keyed(
-        KeyedWrite(
+        KeyedWriteInstruction(
             "amendUntil",
             target.identity.canonical,
             (
@@ -852,7 +854,7 @@ def test_a_surviving_row_executes_a_restored_leaf_beside_an_effective_value_obje
         "phones": [{"type": "mobile", "number": "111"}],
     }
     group = temporal_group(
-        PredicateWrite(
+        PredicateWriteInstruction(
             "amend",
             PredicateSelection(
                 "Branch",
@@ -1016,7 +1018,7 @@ def test_a_bitemporal_amendment_of_rows_the_attempt_never_opened_opens_every_suc
 def test_a_group_never_opens_a_successor_that_covers_no_valid_time() -> None:
     model = _POSITION
     group = temporal_group(
-        PredicateWrite(
+        PredicateWriteInstruction(
             "amend",
             PredicateSelection(
                 "Position",
@@ -1085,7 +1087,7 @@ def _position_rows(*starts: dt.datetime) -> list[dict[str, object]]:
 def _position_group(mutation: PredicateMutation, *starts: dt.datetime) -> MaterializedWriteGroup:
     bounded = mutation.endswith("Until")
     return temporal_group(
-        PredicateWrite(
+        PredicateWriteInstruction(
             mutation,
             PredicateSelection(
                 "Position",
@@ -1160,7 +1162,7 @@ def _position_row(
 def _selected(mutation: PredicateMutation, *rows: dict[str, object]) -> MaterializedWriteGroup:
     bounded = mutation.endswith("Until")
     return temporal_group(
-        PredicateWrite(
+        PredicateWriteInstruction(
             mutation,
             PredicateSelection(
                 "Position",
@@ -1330,7 +1332,7 @@ def test_an_owned_row_a_group_reaches_is_revised_with_what_it_already_holds() ->
     # at its address, stating the value it holds, while the rows around it are
     # closed and chained.
     group = temporal_group(
-        PredicateWrite(
+        PredicateWriteInstruction(
             "amend",
             PredicateSelection(
                 "Balance",
@@ -1394,7 +1396,7 @@ def test_a_group_no_row_of_which_takes_a_step_adds_no_segment_but_still_complete
 
 def test_a_bitemporal_group_refuses_a_row_that_holds_no_valid_time_start() -> None:
     group = temporal_group(
-        PredicateWrite(
+        PredicateWriteInstruction(
             "terminate",
             PredicateSelection(
                 "Position",
@@ -1535,7 +1537,7 @@ def test_an_owned_row_settles_identically_through_a_keyed_write_and_a_group(
         else (_WINDOW_FROM,)
     )
     assigned = {"value": Decimal("9.00")} if mutation.startswith("amend") else {}
-    keyed = KeyedWrite(mutation, entity, ({"id": 1, **assigned},), *bounds)
+    keyed = KeyedWriteInstruction(mutation, entity, ({"id": 1, **assigned},), *bounds)
     key_ = object_key(keyed, model)
     assert key_ is not None
     eager = build_write_planner(model).finalize(
@@ -1552,7 +1554,7 @@ def test_an_owned_row_settles_identically_through_a_keyed_write_and_a_group(
         )
     )
     group = temporal_group(
-        PredicateWrite(
+        PredicateWriteInstruction(
             mutation,
             PredicateSelection(
                 entity,
@@ -1692,7 +1694,7 @@ def _acquisition_terminate_until(model: Metamodel) -> PreparedPredicateWrite:
     Relational Document family."""
     entity = acquisition_support.case_named("acquisition.rows-8.document").entity.identity.canonical
     prepared = prepare_typed_write(
-        PredicateWrite(
+        PredicateWriteInstruction(
             "terminateUntil",
             PredicateSelection(
                 entity,
@@ -1822,7 +1824,7 @@ def test_an_owned_row_revised_by_a_multi_assignment_group_assigns_every_member(
     assigned: dict[str, object] = {"acctNum": "B-1", "value": Decimal("9.00")}
     assigned[restored] = stored[restored]
     group = temporal_group(
-        PredicateWrite(
+        PredicateWriteInstruction(
             "amend",
             PredicateSelection(
                 "Balance",
@@ -1854,7 +1856,7 @@ def test_an_owned_row_revised_by_a_group_assigns_the_occurrence_and_the_leaf_it_
         "phones": [{"type": "mobile", "number": "111"}],
     }
     group = temporal_group(
-        PredicateWrite(
+        PredicateWriteInstruction(
             "amend",
             PredicateSelection(
                 "Branch",

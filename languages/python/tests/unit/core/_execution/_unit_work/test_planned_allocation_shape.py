@@ -2,19 +2,19 @@
 
 The design's own accepted regression check (`docs/architecture/parallax-
 write-planner-design.md` "Compact Python representation"): a materializing
-predicate write used to build a `list[KeyedWrite]` and a parallel `pending`
+predicate write used to build a `list[KeyedWriteInstruction]` and a parallel `pending`
 list of `(ObjectKey, WriteObservation)` pairs, both sized by the resolving
 read's own result count — "a million input wrappers" the design names as the
 avoidable cost. The unit of work's selection consumer
 (:func:`~parallax.core._execution._unit_work.acquisition.consume_selection`) streams each
 selected row's key and observation values directly into bounded column
-builders and constructs no `KeyedWrite` at all while buffering, so a selection
+builders and constructs no `KeyedWriteInstruction` at all while buffering, so a selection
 of five rows and one of eight hundred rows both construct exactly zero
-`KeyedWrite` instances during materialization — independent of the selected-row
+`KeyedWriteInstruction` instances during materialization — independent of the selected-row
 count, following `test_storage_layout_facet.py`'s own retained-size regression
 precedent.
 
-`KeyedWrite` is a real, transient wrapper `WritePlanner` still constructs —
+`KeyedWriteInstruction` is a real, transient wrapper `WritePlanner` still constructs —
 one at a time, discarded once its step is settled — when a Materialized Write
 Group's own row is later lowered; that happens only once the unit of work
 flushes. Counting constructions once the write is buffered, with no flush
@@ -38,9 +38,9 @@ from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
 from parallax.core._execution._unit_work.instructions import prepare_typed_write
 from parallax.core.unit_work import (
     KeyedMutation,
-    KeyedWrite,
+    KeyedWriteInstruction,
     PredicateSelection,
-    PredicateWrite,
+    PredicateWriteInstruction,
     TransactionSettings,
     UnitOfWork,
     WriteAssignment,
@@ -76,10 +76,10 @@ def test_materialization_constructs_no_keyed_write_regardless_of_row_count(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     constructed: list[object] = []
-    original_init = KeyedWrite.__init__
+    original_init = KeyedWriteInstruction.__init__
 
     def counting_init(
-        self: KeyedWrite,
+        self: KeyedWriteInstruction,
         mutation: KeyedMutation,
         entity: str,
         rows: tuple[Mapping[str, object], ...],
@@ -90,7 +90,7 @@ def test_materialization_constructs_no_keyed_write_regardless_of_row_count(
         original_init(self, mutation, entity, rows, valid_from, until)
 
     prepared = prepare_typed_write(
-        PredicateWrite(
+        PredicateWriteInstruction(
             "amend",
             PredicateSelection(
                 "Account",
@@ -102,7 +102,7 @@ def test_materialization_constructs_no_keyed_write_regardless_of_row_count(
         ),
         _ACCOUNT,
     )
-    monkeypatch.setattr(KeyedWrite, "__init__", counting_init)
+    monkeypatch.setattr(KeyedWriteInstruction, "__init__", counting_init)
 
     during_materialization: dict[int, int] = {}
     for row_count in (5, 800):

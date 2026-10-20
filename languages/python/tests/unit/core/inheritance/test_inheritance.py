@@ -83,7 +83,7 @@ from parallax.core.metamodel import AsOfAxisLocation as AxisLocation
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.metamodel._resolve import UNRESOLVED_ENTITY_REFERENCE
 from parallax.core.model_formation import MetamodelValidationError
-from parallax.core.unit_work import KeyedWrite, WriteRejectedError
+from parallax.core.unit_work import KeyedWriteInstruction, WriteRejectedError
 from parallax.descriptor._adapter import unresolved_metamodel
 from parallax.descriptor._parse import parse_document
 from parallax.descriptor._records import (
@@ -461,7 +461,7 @@ def _assignment_rejects(value: object) -> bool:
 def _row_rejects(value: object) -> bool:
     row = {"id": 1, "amount": value}
     try:
-        prepare_typed_write(KeyedWrite("insert", "Invoice", (row,)), _INVOICE_ACCEPTED)
+        prepare_typed_write(KeyedWriteInstruction("insert", "Invoice", (row,)), _INVOICE_ACCEPTED)
     except WriteRejectedError:
         return True
     return False

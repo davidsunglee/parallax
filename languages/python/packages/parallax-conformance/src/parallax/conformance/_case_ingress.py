@@ -41,10 +41,10 @@ from parallax.core.metamodel import (
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.object_query import AsOf, AsOfRange, ObjectQueryNode, TemporalSelection
 from parallax.core.unit_work import (
-    KeyedWrite,
+    KeyedWriteInstruction,
     PredicateSelection,
-    PredicateWrite,
-    TargetWrite,
+    PredicateWriteInstruction,
+    TargetWriteInstruction,
     WriteAssignment,
 )
 from parallax.core.wire import WireDecodingError, WireValue, decode_wire
@@ -57,11 +57,11 @@ type _ScalarMember = AttributeMetadata | ValueObjectAttributeMetadata
 
 @overload
 def prepare_case_write(
-    instruction: TargetWrite, model: AcceptedMetamodel
+    instruction: TargetWriteInstruction, model: AcceptedMetamodel
 ) -> PreparedTargetWrite: ...
 @overload
 def prepare_case_write(
-    instruction: KeyedWrite | PredicateWrite, model: AcceptedMetamodel
+    instruction: KeyedWriteInstruction | PredicateWriteInstruction, model: AcceptedMetamodel
 ) -> PreparedWrite: ...
 @overload
 def prepare_case_write(
@@ -206,12 +206,14 @@ def _normalize_instruction(
     instruction: WriteInstruction, model: AcceptedMetamodel
 ) -> WriteInstruction:
     target_name = (
-        instruction.target.entity if isinstance(instruction, PredicateWrite) else instruction.entity
+        instruction.target.entity
+        if isinstance(instruction, PredicateWriteInstruction)
+        else instruction.entity
     )
     entity = entity_by_name(model, target_name)
     if entity is None:
         return instruction
-    if isinstance(instruction, TargetWrite):
+    if isinstance(instruction, TargetWriteInstruction):
         members = _entity_members(model, entity)
         return replace(
             instruction,
@@ -220,7 +222,7 @@ def _normalize_instruction(
                 for name, value in instruction.row.items()
             },
         )
-    if isinstance(instruction, KeyedWrite):
+    if isinstance(instruction, KeyedWriteInstruction):
         members = _entity_members(model, entity)
         rows = tuple(
             {
@@ -229,7 +231,7 @@ def _normalize_instruction(
             }
             for row in instruction.rows
         )
-        return KeyedWrite(
+        return KeyedWriteInstruction(
             instruction.mutation,
             instruction.entity,
             rows,
@@ -253,7 +255,7 @@ def _normalize_instruction(
         instruction.target.entity,
         _normalize_predicate(predicate_node, model),
     )
-    return PredicateWrite(
+    return PredicateWriteInstruction(
         instruction.mutation,
         selection,
         assignments,

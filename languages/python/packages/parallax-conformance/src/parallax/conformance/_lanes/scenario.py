@@ -111,14 +111,14 @@ from parallax.core.unit_work import (
     BufferItem,
     CardinalityCorruptionError,
     Concurrency,
-    KeyedWrite,
+    KeyedWriteInstruction,
     MissingTargetError,
     OptimisticLockConflictError,
-    PredicateWrite,
+    PredicateWriteInstruction,
     RetainedObservation,
     StaleWriteError,
     SubjectActor,
-    TargetWrite,
+    TargetWriteInstruction,
     TransactionSettings,
     UnitOfWork,
     WriteEffectError,
@@ -1069,7 +1069,7 @@ def _build_instructions(
         instruction = instructions.deserialize(
             {"mutation": mutation, "entity": entity_name, "rows": [clean_row]}
         )
-        assert isinstance(instruction, KeyedWrite)  # a `rows` document is a keyed write
+        assert isinstance(instruction, KeyedWriteInstruction)  # a `rows` document is a keyed write
         prepared = _case_ingress.prepare_case_write(instruction, model)
         if binds_observations and not opens_a_row:
             key = object_key(prepared, model)
@@ -1099,7 +1099,7 @@ def _build_target_instruction(
             if name in ("mutation", "entity", "row", "ifVersion", "ifTxStart", "validFrom", "until")
         }
     )
-    assert isinstance(instruction, TargetWrite)  # a `row` document is a target write
+    assert isinstance(instruction, TargetWriteInstruction)  # a `row` document is a target write
     return _ResolvedWrite(_case_ingress.prepare_case_write(instruction, model), None)
 
 
@@ -1391,7 +1391,7 @@ def _prepared_case_predicate_write(
     raw_write: Mapping[str, object], model: AcceptedMetamodel
 ) -> PreparedPredicateWrite:
     instruction = instructions.deserialize(case_document.canonical_predicate_doc(raw_write))
-    assert isinstance(instruction, PredicateWrite)
+    assert isinstance(instruction, PredicateWriteInstruction)
     prepared = _case_ingress.prepare_case_write(instruction, model)
     assert isinstance(prepared, PreparedPredicateWrite)
     return prepared
@@ -2037,7 +2037,7 @@ def _is_framework_write(
     is shaped like a marker, and only a scalar Attribute can carry the marker
     form at all (`m-case-format` "Write-sequence cases").
     """
-    if not isinstance(instruction, (KeyedWrite, PreparedKeyedWrite)):
+    if not isinstance(instruction, (KeyedWriteInstruction, PreparedKeyedWrite)):
         return False
     entity = (
         instruction.target.identity.canonical
@@ -2467,7 +2467,7 @@ def is_materializing_write_step(
     instruction = instructions.deserialize(
         case_document.canonical_predicate_doc(cast("Mapping[str, object]", raw_write))
     )
-    if not isinstance(instruction, PredicateWrite):
+    if not isinstance(instruction, PredicateWriteInstruction):
         return None
     prepared = _case_ingress.prepare_case_write(instruction, model)
     assert isinstance(prepared, PreparedPredicateWrite)
@@ -2486,7 +2486,7 @@ def _canonical_write_predicate(step: Mapping[str, object]) -> PredicateNode:
     instruction = instructions.deserialize(
         case_document.canonical_predicate_doc(cast("Mapping[str, object]", step["write"]))
     )
-    assert isinstance(instruction, PredicateWrite)  # the caller established this
+    assert isinstance(instruction, PredicateWriteInstruction)  # the caller established this
     predicate = instruction.target.predicate
     assert isinstance(predicate, PredicateNode)  # a deserialized instruction is canonical
     return predicate
@@ -4084,7 +4084,7 @@ def _resolve_conflict_writes(
         instruction = instructions.deserialize(
             {"mutation": mutation, "entity": target, "rows": [clean_row]}
         )
-        assert isinstance(instruction, KeyedWrite)  # a `rows` document is a keyed write
+        assert isinstance(instruction, KeyedWriteInstruction)  # a `rows` document is a keyed write
         prepared = _case_ingress.prepare_case_write(instruction, model)
         resolved.append(
             _ConflictWrite(clean_row, prepared, object_key(prepared, model), observation)

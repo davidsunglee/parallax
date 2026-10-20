@@ -21,12 +21,12 @@ from parallax.core._execution._unit_work.instructions import (
     KeyedMutation,
     PredicateMutation,
     PredicateSelection,
-    PredicateWrite,
+    PredicateWriteInstruction,
     PreparedKeyedWrite,
     PreparedPredicateWrite,
     PreparedTargetWrite,
     TargetMutation,
-    TargetWrite,
+    TargetWriteInstruction,
     WriteAssignment,
 )
 from parallax.core.entity import AttributeAssignment, EntityRowCodec
@@ -280,7 +280,7 @@ class TypedKeyedInsertSource:
 class TypedPredicateWriteAdapter:
     """The Typed predicate-selected write: a mutation-compatible
     :class:`~parallax.core.object_query.ObjectQuery` plus ``Attr.set(...)``
-    assignments, stated as the :class:`~parallax.core.unit_work.PredicateWrite`
+    assignments, stated as the :class:`~parallax.core.unit_work.PredicateWriteInstruction`
     every ingress prepares.
 
     Inert when constructed and private to one verb call. The query's own form is
@@ -313,7 +313,7 @@ class TypedPredicateWriteAdapter:
     ) -> PreparedPredicateWrite:
         selection = mutation_selection(self._query)
         meta = write_model.model.meta
-        instruction = PredicateWrite(
+        instruction = PredicateWriteInstruction(
             mutation,
             PredicateSelection(
                 selection.target.canonical,
@@ -328,7 +328,7 @@ class TypedPredicateWriteAdapter:
 
 class TypedInstanceTargetWriteAdapter:
     """The Typed caller-conditioned replacement: ``instance``'s every populated
-    writable member as the row a :class:`~parallax.core.unit_work.TargetWrite`
+    writable member as the row a :class:`~parallax.core.unit_work.TargetWriteInstruction`
     states, beside the caller's own revision.
 
     Inert when constructed and private to one verb call. What produced the
@@ -355,7 +355,7 @@ class TypedInstanceTargetWriteAdapter:
     ) -> PreparedTargetWrite:
         meta = write_model.model.meta
         entity = metadata_of_instance(meta, self._instance)
-        instruction = TargetWrite(
+        instruction = TargetWriteInstruction(
             mutation,
             entity.identity.canonical,
             write_model.codec.writable_row(self._instance),
@@ -418,7 +418,7 @@ class TypedKeyTargetWriteAdapter:
             return instructions.assigned_members(meta, entity, write_assignments(assignments))
 
         key_name = family_view(meta, entity).primary_key.identity.name
-        instruction = TargetWrite(
+        instruction = TargetWriteInstruction(
             mutation,
             entity.identity.canonical,
             {key_name: key},

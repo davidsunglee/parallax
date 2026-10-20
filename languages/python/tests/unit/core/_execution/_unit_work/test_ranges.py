@@ -35,9 +35,9 @@ from parallax.core.base import INFINITY
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.unit_work import (
     KeyedMutation,
-    KeyedWrite,
+    KeyedWriteInstruction,
     RetainedObservation,
-    TargetWrite,
+    TargetWriteInstruction,
     TransactionInstant,
     WritePlanningRequest,
     WritePreconditionError,
@@ -127,7 +127,9 @@ def _update(
 ) -> BufferItem:
     mutation: KeyedMutation = "amendUntil"
     prepared = prepare_wire_write(
-        KeyedWrite(mutation, "SequenceSpan", ({"id": 1, "amount": 300},), valid_from, until),
+        KeyedWriteInstruction(
+            mutation, "SequenceSpan", ({"id": 1, "amount": 300},), valid_from, until
+        ),
         _SPANS,
     )
     return buffered_write(prepared, evidence)
@@ -135,7 +137,7 @@ def _update(
 
 def _target(valid_from: dt.datetime, until: dt.datetime) -> BufferItem:
     prepared = prepare_wire_write(
-        TargetWrite(
+        TargetWriteInstruction(
             "amendUntil",
             "SequenceSpan",
             {"id": 1, "amount": 300},
@@ -453,7 +455,9 @@ def test_a_temporal_write_holding_no_temporal_observation_is_refused_before_the_
     observation: VersionObservation | None,
 ) -> None:
     prepared = prepare_wire_write(
-        KeyedWrite("amendUntil", "SequenceSpan", ({"id": 1, "amount": 300},), _MAR, _APR),
+        KeyedWriteInstruction(
+            "amendUntil", "SequenceSpan", ({"id": 1, "amount": 300},), _MAR, _APR
+        ),
         _SPANS,
     )
     assert isinstance(prepared, PreparedKeyedWrite)

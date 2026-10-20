@@ -4,7 +4,7 @@ from collections.abc import Mapping
 
 from parallax.core import inheritance
 from parallax.core._execution._unit_work.instructions import (
-    KeyedWrite,
+    KeyedWriteInstruction,
     PreparedKeyedWrite,
     PreparedWrite,
     WriteInstruction,
@@ -32,7 +32,7 @@ def object_key(instruction: WriteInstruction | PreparedWrite, model: Metamodel) 
     """
     if isinstance(instruction, PreparedKeyedWrite):
         return resolve_object_key(instruction, inheritance.view(model))
-    if not isinstance(instruction, KeyedWrite) or len(instruction.rows) != 1:
+    if not isinstance(instruction, KeyedWriteInstruction) or len(instruction.rows) != 1:
         return None
     entity = entity_by_name(model, instruction.entity)
     if entity is None:

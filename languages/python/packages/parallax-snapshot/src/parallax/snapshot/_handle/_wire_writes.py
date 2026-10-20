@@ -24,12 +24,12 @@ from parallax.core._execution._unit_work.instructions import (
     KeyedMutation,
     PredicateMutation,
     PredicateSelection,
-    PredicateWrite,
+    PredicateWriteInstruction,
     PreparedKeyedWrite,
     PreparedPredicateWrite,
     PreparedTargetWrite,
     TargetMutation,
-    TargetWrite,
+    TargetWriteInstruction,
     WriteAssignment,
 )
 from parallax.core.execution_lifecycle._activity import refuse_reentry
@@ -177,7 +177,7 @@ class WirePredicateWriteAdapter:
 
     The Wire spelling of the ``_where`` family: the canonical ``{entity,
     predicate}`` selection plus an authored changes document, lowered to the
-    SAME :class:`~parallax.core.unit_work.PredicateWrite` the Typed verbs build.
+    SAME :class:`~parallax.core.unit_work.PredicateWriteInstruction` the Typed verbs build.
     No second set-based write semantics are introduced — this adapter only
     states the target and the assignments differently.
 
@@ -210,7 +210,7 @@ class WirePredicateWriteAdapter:
             _authored_document(self._target, "a predicate-selected write's canonical target")
         )
         authored = _authored_changes(mutation, self._changes)
-        instruction = PredicateWrite(
+        instruction = PredicateWriteInstruction(
             mutation,
             selection,
             tuple(
@@ -286,7 +286,7 @@ class WireTargetWriteAdapter:
                 + (" or a node Parallax published" if mutation in REPLACE_MUTATIONS else "")
                 + f", and {type(target).__name__} is neither"
             )
-        instruction = TargetWrite(
+        instruction = TargetWriteInstruction(
             mutation,
             entity_name,
             row,

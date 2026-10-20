@@ -70,10 +70,10 @@ from parallax.core.metamodel import (
 )
 from parallax.core.predicate import Comparison, FieldSubject
 from parallax.core.unit_work import (
-    KeyedWrite,
+    KeyedWriteInstruction,
     MaterializedWriteGroup,
     PredicateSelection,
-    PredicateWrite,
+    PredicateWriteInstruction,
     VersionedEvidenceBuilder,
     WriteAssignment,
     WritePlanner,
@@ -246,7 +246,7 @@ def _amendment_group(model: Metamodel, rows: int) -> MaterializedWriteGroup:
     """A Bitemporal amendment group of ``rows`` objects, each selected by the
     row current at the write's start."""
     return temporal_group(
-        PredicateWrite(
+        PredicateWriteInstruction(
             "amend",
             PredicateSelection(
                 "Entity0", Comparison("lessThan", FieldSubject("Entity0.value"), 1_000_000)
@@ -277,7 +277,7 @@ def _temporal_group(model: Metamodel, rows: int) -> MaterializedWriteGroup:
     resolving read judged.
     """
     return temporal_group(
-        PredicateWrite(
+        PredicateWriteInstruction(
             "terminate",
             PredicateSelection(
                 "Entity0", Comparison("lessThan", FieldSubject("Entity0.value"), 1_000_000)
@@ -309,7 +309,7 @@ def _version_group(model: Metamodel, rows: int) -> MaterializedWriteGroup:
     sealed = evidence.seal()
     assert sealed is not None
     prepared = prepare_typed_write(
-        PredicateWrite(
+        PredicateWriteInstruction(
             "amend",
             PredicateSelection(
                 "Entity0", Comparison("lessThan", FieldSubject("Entity0.value"), 1_000_000)
@@ -324,7 +324,10 @@ def _version_group(model: Metamodel, rows: int) -> MaterializedWriteGroup:
 
 def _prepared_writes(model: Metamodel, count: int) -> Sequence[OrderedWrite]:
     return observed_buffer(
-        [KeyedWrite("amend", "Entity0", ({"id": row + 1, "value": row},)) for row in range(count)],
+        [
+            KeyedWriteInstruction("amend", "Entity0", ({"id": row + 1, "value": row},))
+            for row in range(count)
+        ],
         model,
         None,
     )
@@ -363,7 +366,7 @@ def _key_derivation_over(entities: int, *, prepared: bool) -> Seam:
     index over the model to answer with.
     """
     model = _model(entities)
-    raw = KeyedWrite("amend", "Entity0", ({"id": 1, "value": 2},))
+    raw = KeyedWriteInstruction("amend", "Entity0", ({"id": 1, "value": 2},))
     instruction = prepare_typed_write(raw, model) if prepared else raw
 
     def run(sample: Callable[[], None]) -> None:

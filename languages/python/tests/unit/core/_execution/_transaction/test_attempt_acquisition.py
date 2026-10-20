@@ -50,7 +50,7 @@ from parallax.core.metamodel import (
 from parallax.core.read_delivery import StoredDataDecodingError
 from parallax.core.read_delivery._row_converter import ReadRowConverter
 from parallax.core.temporal_read import TimeInterval
-from parallax.core.unit_work import CardinalityCorruptionError, TargetWrite
+from parallax.core.unit_work import CardinalityCorruptionError, TargetWriteInstruction
 from parallax.core.write_plan import ObjectKey
 from parallax.descriptor import domain_model_from_document
 from tests._support.adoption import raises_contextualized
@@ -77,7 +77,10 @@ def _account(account_id: int = 1) -> MappingRow:
 
 def _patch(*, version: int = 3) -> PreparedTargetWrite:
     return prepare_wire_write(
-        TargetWrite("amend", "Account", {"id": 1, "balance": "9.00"}, if_version=version), _META
+        TargetWriteInstruction(
+            "amend", "Account", {"id": 1, "balance": "9.00"}, if_version=version
+        ),
+        _META,
     )
 
 
@@ -115,7 +118,7 @@ def _ledger(*, balance: DocumentValue = "1.00") -> MappingRow:
 
 def _ledger_patch() -> PreparedTargetWrite:
     return prepare_wire_write(
-        TargetWrite("amend", "Ledger", {"id": 1, "label": "Z"}, if_version=3),
+        TargetWriteInstruction("amend", "Ledger", {"id": 1, "label": "Z"}, if_version=3),
         model_of(_LEDGER),
     )
 
@@ -310,7 +313,7 @@ def test_a_coverage_read_is_a_read_call_of_the_write_batch_reaching_its_range() 
     }
     port = ScriptedAdapter(Transact(Read(rows=[stored]), Write(), Write()))
     patch = prepare_wire_write(
-        TargetWrite("amend", "Balance", {"id": 1, "value": "9.00"}, if_tx_start=_T0),
+        TargetWriteInstruction("amend", "Balance", {"id": 1, "value": "9.00"}, if_tx_start=_T0),
         model_of(_BALANCE),
     )
     scope(port, _BALANCE, provider=recorder).transact(
@@ -352,7 +355,9 @@ def test_each_deferred_range_reads_its_coverage_only_once_the_unit_before_it_ran
     )
     patches = [
         prepare_wire_write(
-            TargetWrite("amend", "Balance", {"id": key, "value": "9.00"}, if_tx_start=_T0),
+            TargetWriteInstruction(
+                "amend", "Balance", {"id": key, "value": "9.00"}, if_tx_start=_T0
+            ),
             model_of(_BALANCE),
         )
         for key in (1, 2)
@@ -593,7 +598,7 @@ def test_a_write_reusing_a_pending_participation_reads_and_judges_nothing_again(
 
     def amend(tags: list[str]) -> PreparedTargetWrite:
         return prepare_wire_write(
-            TargetWrite(
+            TargetWriteInstruction(
                 "amend",
                 metadata.identity.canonical,
                 {"id": 1, "tags": tags},
@@ -629,7 +634,7 @@ def test_an_optimistic_target_reads_no_collection_until_its_flush_covers_it(
     def fn(tx: TxnAttempt) -> None:
         tx.uow.buffer_target(
             prepare_wire_write(
-                TargetWrite(
+                TargetWriteInstruction(
                     "amend",
                     metadata.identity.canonical,
                     {"id": 1, "amount": 5},
@@ -718,7 +723,7 @@ def test_a_retained_rows_invalid_occurrence_fails_at_its_flush_not_its_call(
     def fn(tx: TxnAttempt) -> None:
         tx.uow.buffer_target(
             prepare_wire_write(
-                TargetWrite(
+                TargetWriteInstruction(
                     "amend",
                     metadata.identity.canonical,
                     {"id": 1, "amount": 5},
@@ -811,7 +816,7 @@ def test_a_retaining_reads_invalid_attribute_is_refused_at_its_call(
         with pytest.raises(StoredDataDecodingError) as caught:
             tx.uow.buffer_target(
                 prepare_wire_write(
-                    TargetWrite(
+                    TargetWriteInstruction(
                         "amend",
                         metadata.identity.canonical,
                         {"id": 1, "amount": 5},

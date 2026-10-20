@@ -20,7 +20,7 @@ from parallax.core.metamodel import EntityIdentity
 from parallax.core.unit_work import (
     BufferItem,
     KeyedMutation,
-    KeyedWrite,
+    KeyedWriteInstruction,
     RetainedObservation,
     WriteEvidenceError,
     WritePlanningRequest,
@@ -83,7 +83,7 @@ def _write(
     mutation: KeyedMutation, evidence: RetainedObservation, **members: object
 ) -> ObservedKeyedWrite:
     prepared = prepare_wire_write(
-        KeyedWrite(mutation, "Balance", ({"id": 1, **members},)), _BALANCE
+        KeyedWriteInstruction(mutation, "Balance", ({"id": 1, **members},)), _BALANCE
     )
     item = buffered_write(prepared, evidence)
     assert isinstance(item, ObservedKeyedWrite)
@@ -179,7 +179,7 @@ def test_a_bitemporal_write_carrying_no_temporal_observation_is_refused_as_unobs
     # refusal rather than a range.
     model = formed(corpus_records()["position"])
     prepared = prepare_wire_write(
-        KeyedWrite(
+        KeyedWriteInstruction(
             "amend",
             "Position",
             ({"id": 1, "value": "1.00"},),
@@ -233,7 +233,8 @@ def test_two_observed_rectangles_bind_at_planning_when_they_cover_the_range() ->
 
     def update(valid_from: dt.datetime, value: str, observed: TemporalObservation) -> BufferItem:
         prepared = prepare_wire_write(
-            KeyedWrite("amend", "Position", ({"id": 1, "value": value},), valid_from), model
+            KeyedWriteInstruction("amend", "Position", ({"id": 1, "value": value},), valid_from),
+            model,
         )
         state = object_state_key_from_observation(
             ObjectKey(position, (("id", 1),)), observed, shape

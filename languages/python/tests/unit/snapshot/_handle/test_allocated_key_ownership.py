@@ -16,7 +16,7 @@ from parallax.conformance.scripted_clock import ScriptedClock
 from parallax.core import MAX, Attr, Bitemporal, Document, DomainModel, TxTemporal, attr
 from parallax.core._execution._unit_work.instructions import prepare_typed_write
 from parallax.core.entity._model import model_of
-from parallax.core.unit_work import KeyedWrite
+from parallax.core.unit_work import KeyedWriteInstruction
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.root_ownership import own_root
 from tests._support.write_bounds import stated_start
@@ -78,7 +78,7 @@ def _plain(row: tuple[object, ...]) -> tuple[object, ...]:
 def _insert_allocated(
     tx: TxnContext, entity: type[Any], valid_from: dt.datetime | None = None, **row: object
 ) -> None:
-    instruction = KeyedWrite(
+    instruction = KeyedWriteInstruction(
         "insert",
         entity.identity.canonical,
         ({"id": {"computed": "maxPlusOne"}, **row},),

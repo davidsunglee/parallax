@@ -100,7 +100,7 @@ rows:
 def test_case_write_adapter_accepts_canonical_wire_and_managed_decimal_values() -> None:
     model = models.load_models()["account"]
     for value in ("5.00", decimal.Decimal("5.00")):
-        instruction = instructions.KeyedWrite(
+        instruction = instructions.KeyedWriteInstruction(
             "insert",
             "parallax.compatibility.Account",
             ({"id": 7, "owner": "Newton", "balance": value, "version": 1},),
@@ -133,7 +133,7 @@ assignments:
 
 def test_case_write_adapter_normalizes_managed_temporal_bounds() -> None:
     stated = dt.datetime(2024, 7, 1, 2, tzinfo=dt.timezone(dt.timedelta(hours=2)))
-    instruction = instructions.KeyedWrite(
+    instruction = instructions.KeyedWriteInstruction(
         "amend",
         "parallax.compatibility.Position",
         ({"id": 1, "value": decimal.Decimal("5.00")},),
@@ -180,7 +180,7 @@ rows:
 """
         )
     )
-    assert isinstance(instruction, instructions.KeyedWrite)
+    assert isinstance(instruction, instructions.KeyedWriteInstruction)
     authored = instruction.rows[0][member]
 
     with mock.patch.object(instructions, "decode_wire", wraps=wire.decode_wire) as decode_wire:
@@ -195,7 +195,7 @@ rows:
 
 
 def test_case_write_adapter_leaves_malformed_values_for_core_classification() -> None:
-    instruction = instructions.KeyedWrite(
+    instruction = instructions.KeyedWriteInstruction(
         "insert",
         "parallax.compatibility.Account",
         ({"id": 7, "owner": "Newton", "balance": True, "version": 1},),
@@ -206,7 +206,7 @@ def test_case_write_adapter_leaves_malformed_values_for_core_classification() ->
 
 
 def test_case_write_adapter_leaves_unknown_entities_for_core_classification() -> None:
-    instruction = instructions.KeyedWrite("insert", "Missing", ({"id": 1},))
+    instruction = instructions.KeyedWriteInstruction("insert", "Missing", ({"id": 1},))
     with pytest.raises(instructions.WriteInstructionError, match="declares no entity 'Missing'"):
         _case_ingress.prepare_case_write(instruction, models.load_models()["account"])
 
@@ -216,7 +216,7 @@ def test_case_write_adapter_normalizes_nested_value_object_documents() -> None:
     # document its shape gives it: every declared leaf decoded into its managed
     # carrier at every depth, and a key no member declares taking no part — the same
     # canonical form the occurrence is stored in.
-    instruction = instructions.KeyedWrite(
+    instruction = instructions.KeyedWriteInstruction(
         "insert",
         "parallax.compatibility.Sample",
         (

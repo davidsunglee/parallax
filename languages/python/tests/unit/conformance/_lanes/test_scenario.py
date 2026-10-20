@@ -71,7 +71,7 @@ from parallax.core.unit_work import (
     MissingTargetError,
     OptimisticLockConflictError,
     PredicateSelection,
-    PredicateWrite,
+    PredicateWriteInstruction,
     ReadEvidence,
     RetainedObservation,
     StaleWriteError,
@@ -1778,7 +1778,7 @@ def test_a_supplied_materialized_group_executes_round_by_round_in_a_simulated_tr
     store = SimulatedTemporalStore()
     store.seed_fixtures(meta, entity, rows)
     group = temporal_group(
-        PredicateWrite(
+        PredicateWriteInstruction(
             "amendUntil",
             PredicateSelection(
                 "Position",
@@ -3105,7 +3105,7 @@ def test_run_scenario_case_chains_a_key_inserted_after_a_materializing_pair() ->
 def test_is_materializing_write_step_returns_none_for_a_keyed_write_shape() -> None:
     # `_is_materializing_write_step`'s SHAPE guard: a keyed-write step's
     # `write` field is the buffered-entry LIST (`m-case-format`'s
-    # `bufferedWriteSequence` shape) — never a `PredicateWrite` pairing
+    # `bufferedWriteSequence` shape) — never a `PredicateWriteInstruction` pairing
     # candidate. Peeked by the scenario run lane's own one-step look-ahead
     # (`run_scenario_case`); no reachable corpus scenario puts an ungrouped
     # find immediately before an ungrouped keyed write (every such adjacency
@@ -3120,7 +3120,7 @@ def test_is_materializing_write_step_returns_none_for_a_keyed_write_shape() -> N
 
 def test_is_materializing_write_step_returns_none_for_a_non_predicate_mapping() -> None:
     # Defensive coverage: a `write` field that IS a mapping but deserializes
-    # to something other than a `PredicateWrite` (never schema-legal — the
+    # to something other than a `PredicateWriteInstruction` (never schema-legal — the
     # mapping `write` shape is `predicateWrite`-only, `m-case-format`) still
     # falls through to `None` rather than an assertion failure.
     meta = model_facts.load_case_metamodel(_case("m-unit-work-001"))
@@ -3563,7 +3563,7 @@ def test_run_conflict_case_wraps_a_lowering_failure_as_engine_error() -> None:
 
 def test_predicate_writes_require_no_keyed_unit_source_read_or_framework_classification() -> None:
     model = models.load_models()["account"]
-    instruction = instructions.PredicateWrite(
+    instruction = instructions.PredicateWriteInstruction(
         "amend",
         instructions.PredicateSelection("parallax.compatibility.Account", predicate.TrueNode()),
         (instructions.WriteAssignment("parallax.compatibility.Account.owner", "Ada"),),

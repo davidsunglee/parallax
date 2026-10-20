@@ -19,9 +19,9 @@ from parallax.core.unit_work import (
     BufferItem,
     Concurrency,
     DatabaseLoginActor,
-    KeyedWrite,
+    KeyedWriteInstruction,
     PredicateSelection,
-    PredicateWrite,
+    PredicateWriteInstruction,
     SubjectActor,
     TransactionInstant,
     WritePlanningRequest,
@@ -77,7 +77,7 @@ def _statements(plan: WritePlan, model: Metamodel) -> list[LoweredStatement]:
 
 
 def _assert_neutral(
-    buffer: list[BufferItem | KeyedWrite | PredicateWrite],
+    buffer: list[BufferItem | KeyedWriteInstruction | PredicateWriteInstruction],
     model: Metamodel,
     *,
     observations: dict[ObjectKey, WriteObservation] | None = None,
@@ -108,14 +108,14 @@ def _assert_neutral(
 
 
 def test_a_non_temporal_insert_is_actor_neutral() -> None:
-    insert = KeyedWrite(
+    insert = KeyedWriteInstruction(
         "insert", "Account", ({"id": 1, "owner": "Ada", "balance": Decimal("5.00")},)
     )
     _assert_neutral([insert], _ACCOUNT)
 
 
 def test_a_versioned_update_with_an_observation_is_actor_neutral() -> None:
-    update = KeyedWrite("amend", "Account", ({"id": 1, "balance": Decimal("175.00")},))
+    update = KeyedWriteInstruction("amend", "Account", ({"id": 1, "balance": Decimal("175.00")},))
     key = object_key(update, _ACCOUNT)
     assert key is not None
     _assert_neutral(
@@ -127,11 +127,11 @@ def test_a_versioned_update_with_an_observation_is_actor_neutral() -> None:
 
 
 def test_a_keyed_delete_is_actor_neutral() -> None:
-    _assert_neutral([KeyedWrite("delete", "Wallet", ({"id": 1}, {"id": 2}))], _WALLET)
+    _assert_neutral([KeyedWriteInstruction("delete", "Wallet", ({"id": 1}, {"id": 2}))], _WALLET)
 
 
 def test_a_readless_predicate_write_is_actor_neutral() -> None:
-    predicate = PredicateWrite(
+    predicate = PredicateWriteInstruction(
         "delete",
         PredicateSelection(
             "Wallet",
@@ -144,15 +144,19 @@ def test_a_readless_predicate_write_is_actor_neutral() -> None:
 
 
 def test_a_batched_insert_run_is_actor_neutral() -> None:
-    buffer: list[BufferItem | KeyedWrite | PredicateWrite] = [
-        KeyedWrite("insert", "Wallet", ({"id": 1, "owner": "Ada", "balance": Decimal("1")},)),
-        KeyedWrite("insert", "Wallet", ({"id": 2, "owner": "Bo", "balance": Decimal("2")},)),
+    buffer: list[BufferItem | KeyedWriteInstruction | PredicateWriteInstruction] = [
+        KeyedWriteInstruction(
+            "insert", "Wallet", ({"id": 1, "owner": "Ada", "balance": Decimal("1")},)
+        ),
+        KeyedWriteInstruction(
+            "insert", "Wallet", ({"id": 2, "owner": "Bo", "balance": Decimal("2")},)
+        ),
     ]
     _assert_neutral(buffer, _WALLET)
 
 
 def test_a_temporal_close_and_chain_is_actor_neutral() -> None:
-    update = KeyedWrite(
+    update = KeyedWriteInstruction(
         "amend", "Balance", ({"id": 1, "acctNum": "A", "value": Decimal("175.00")},)
     )
     key = object_key(update, _BALANCE)

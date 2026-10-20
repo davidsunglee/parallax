@@ -20,7 +20,7 @@ from parallax.core._execution._unit_work.instructions import (
     ASSIGNMENT_MUTATIONS,
     INSERT_MUTATIONS,
     KeyedMutation,
-    KeyedWrite,
+    KeyedWriteInstruction,
     PreparedKeyedWrite,
     TargetMutation,
     WriteInstructionError,
@@ -423,14 +423,14 @@ def keyed_instruction(
     *,
     valid_from: dt.datetime | None = None,
     until: dt.datetime | None = None,
-) -> KeyedWrite:
+) -> KeyedWriteInstruction:
     """One single-row authored keyed instruction.
 
     The bounds ride the instruction's dimension-explicit fields as the caller
     passed them, never the row: an As-Of Axis endpoint is framework-owned, and
     preparation judges the window against the target.
     """
-    return KeyedWrite(mutation, entity.canonical, (row,), valid_from, until)
+    return KeyedWriteInstruction(mutation, entity.canonical, (row,), valid_from, until)
 
 
 def validate_source_pin(identity: EntityIdentity, pin: Pin | None) -> None:

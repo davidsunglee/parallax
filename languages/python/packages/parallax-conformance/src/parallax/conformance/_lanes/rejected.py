@@ -19,7 +19,11 @@ from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.model_formation import MetamodelValidationError
 from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.predicate import CanonicalDocumentError, ModelRejectedError
-from parallax.core.unit_work import KeyedWrite, PredicateWrite, WriteRejectedError
+from parallax.core.unit_work import (
+    KeyedWriteInstruction,
+    PredicateWriteInstruction,
+    WriteRejectedError,
+)
 from parallax.core.write_plan import WritePlanningError
 from parallax.descriptor import (
     DescriptorError,
@@ -201,7 +205,8 @@ def _rejected_predicate_write(
         instruction = instructions.deserialize(case_document.canonical_predicate_doc(row))
     except WritePlanningError as exc:  # pragma: no cover - schema validation owns malformed writes
         raise EngineError(f"{case.path.name}: {exc}") from exc
-    if not isinstance(instruction, PredicateWrite):  # pragma: no cover - target implies predicate
+    # A `target` implies a predicate write.
+    if not isinstance(instruction, PredicateWriteInstruction):  # pragma: no cover
         raise EngineError(f"{case.path.name}: rejected predicate write decoded as keyed")
     try:
         _case_ingress.prepare_case_write(instruction, model)
@@ -219,7 +224,7 @@ def _rejected_bare_row(
     target = case_entity(model, _rejected_target(case, model))
     try:
         durable_row = {name: value for name, value in row.items() if name != "observedVersion"}
-        instruction = KeyedWrite("insert", target.identity.canonical, (durable_row,))
+        instruction = KeyedWriteInstruction("insert", target.identity.canonical, (durable_row,))
         _case_ingress.prepare_case_write(instruction, model)
     except (instructions.InstructionRejectedError, WriteRejectedError) as exc:
         return exc.rule

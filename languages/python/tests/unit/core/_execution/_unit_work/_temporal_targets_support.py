@@ -20,9 +20,9 @@ from parallax.core.base import INFINITY
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.unit_work import (
     KeyedMutation,
-    KeyedWrite,
+    KeyedWriteInstruction,
     RetainedObservation,
-    TargetWrite,
+    TargetWriteInstruction,
     buffered_write,
 )
 from parallax.core.write_plan import (
@@ -81,7 +81,7 @@ def addressed_write(
     )
     return target_write(
         prepare_wire_write(
-            TargetWrite(
+            TargetWriteInstruction(
                 mutation,
                 "Position",
                 {"id": 1, **members},
@@ -104,7 +104,8 @@ def observed_write(
     **members: object,
 ) -> ObservedKeyedWrite:
     prepared = prepare_wire_write(
-        KeyedWrite(mutation, "Position", ({"id": 1, **members},), valid_from, until), POSITION
+        KeyedWriteInstruction(mutation, "Position", ({"id": 1, **members},), valid_from, until),
+        POSITION,
     )
     item = buffered_write(prepared, evidence)
     assert isinstance(item, ObservedKeyedWrite)
