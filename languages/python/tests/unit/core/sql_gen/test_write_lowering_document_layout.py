@@ -24,8 +24,13 @@ from typing import Final, cast
 
 import pytest
 
+from parallax.core import predicate as predicate_algebra
 from parallax.core._execution._keyed_sql import collapse_group_key
-from parallax.core._execution._unit_work.instructions import WriteInstruction
+from parallax.core._execution._unit_work.instructions import (
+    PredicateSelection,
+    PredicateWriteInstruction,
+    WriteInstruction,
+)
 from parallax.core._execution._write_lowering import lowered
 from parallax.core.base import FrozenMap, retain_document_value
 from parallax.core.db_port import JsonDocument
@@ -154,6 +159,41 @@ def test_an_assigned_none_writes_json_null_rather_than_removing_the_key() -> Non
         KeyedWriteInstruction("amend", "Person", ({"id": 1, "displayName": None},))
     )
     assert statement.binds == ("{displayName}", "null", 1)
+
+
+def test_a_predicate_replacement_completes_every_omitted_member_at_its_own_path() -> None:
+    # A completed null is the document's null at the member's path and an omitted
+    # `many` the empty array, so the statement removes no key and touches none it
+    # does not write.
+    (statement,) = _lower(
+        PredicateWriteInstruction(
+            "replace",
+            PredicateSelection(
+                "Person",
+                predicate_algebra.Comparison(
+                    op="eq", subject=predicate_algebra.FieldSubject("Person.id"), value=1
+                ),
+            ),
+            row={"score": 9},
+        )
+    )
+    patch = "payload"
+    for _ in range(5):
+        patch = f"jsonb_set({patch}, ?, cast(? as jsonb))"
+    assert statement.sql == f"update person set payload = {patch} where id = ?"
+    assert statement.binds == (
+        "{displayName}",
+        "null",
+        "{score}",
+        "9",
+        "{joinedOn}",
+        "null",
+        "{address}",
+        "null",
+        "{tags}",
+        JsonDocument(()),
+        1,
+    )
 
 
 def test_assigning_a_one_occurrence_binds_its_whole_subtree_at_its_own_path() -> None:

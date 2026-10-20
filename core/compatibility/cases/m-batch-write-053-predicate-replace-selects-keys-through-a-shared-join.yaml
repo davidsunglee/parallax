@@ -1,0 +1,37 @@
+# A predicate-selected replacement whose predicate reads a shared to-one join takes
+# the key-selecting form an amendment takes: the target's key is tested for
+# membership in a selection of the matched rows, inside the one statement. The
+# omitted nullable `shippedOn` is written null, so each selected row's earlier
+# shipping date is gone (m-batch-write).
+model: models/orders.yaml
+tags: [m-batch-write, m-sql, m-unit-work, m-dialect, predicate-write, readless, replace, relationship, to-one, traversal, scenario, update, slice-snapshot-1]
+shape: scenario
+given:
+  fixtures: true
+when:
+  scenario:
+    - write:
+        mutation: replace
+        target:
+          entity: parallax.compatibility.OrderItem
+          predicate:
+            eq: {path: parallax.compatibility.OrderItem.order.name, value: Ada}
+        row:
+          orderId: 1
+          sku: Z
+          quantity: 9
+      databaseCalls: 1
+      statements:
+        - sql:
+            postgres: update order_item set order_id = ?, sku = ?, quantity = ?, shipped_on = ? where id in (select t0.id from order_item t0 left join orders t1 on t1.id = t0.order_id where t1.name = ?)
+            mariadb: update order_item set order_id = ?, sku = ?, quantity = ?, shipped_on = ? where id in (select t0.id from order_item t0 left join orders t1 on t1.id = t0.order_id where t1.name = ?)
+          binds: [1, Z, 9, null, Ada]
+then:
+  databaseCalls: 1
+  tableState:
+    order_item:
+      - { id: 11, order_id: 1, sku: Z, quantity: 9, shipped_on: null }
+      - { id: 12, order_id: 1, sku: Z, quantity: 9, shipped_on: null }
+      - { id: 21, order_id: 2, sku: A-300, quantity: 4, shipped_on: 2024-02-20 }
+      - { id: 421, order_id: 42, sku: A-999, quantity: 3, shipped_on: 2024-03-10 }
+      - { id: 422, order_id: 42, sku: B-200, quantity: 5, shipped_on: 2024-02-05 }

@@ -228,33 +228,17 @@ def normalize_case_write(
     entity = entity_by_name(model, target_name)
     if entity is None:
         return instruction
+    members = _entity_members(model, entity)
     if isinstance(instruction, TargetWriteInstruction):
-        members = _entity_members(model, entity)
-        return replace(
-            instruction,
-            row={
-                name: _normalize_member(members[name], value) if name in members else value
-                for name, value in instruction.row.items()
-            },
-        )
+        return replace(instruction, row=_normalize_row(members, instruction.row))
     if isinstance(instruction, KeyedWriteInstruction):
-        members = _entity_members(model, entity)
-        rows = tuple(
-            {
-                name: _normalize_member(members[name], value) if name in members else value
-                for name, value in row.items()
-            }
-            for row in instruction.rows
-        )
         return KeyedWriteInstruction(
             instruction.mutation,
             instruction.entity,
-            rows,
+            tuple(_normalize_row(members, row) for row in instruction.rows),
             instruction.valid_from,
             instruction.until,
         )
-
-    members = _entity_members(model, entity)
     assignments = tuple(
         WriteAssignment(
             assignment.attr,
@@ -270,7 +254,21 @@ def normalize_case_write(
         instruction.target.entity,
         _normalize_predicate(predicate_node, model),
     )
-    return PredicateWriteInstruction(instruction.mutation, selection, assignments)
+    return PredicateWriteInstruction(
+        instruction.mutation,
+        selection,
+        assignments,
+        None if instruction.row is None else _normalize_row(members, instruction.row),
+    )
+
+
+def _normalize_row(
+    members: Mapping[str, AttributeMetadata | ValueObjectMetadata], row: Mapping[str, object]
+) -> dict[str, object]:
+    return {
+        name: _normalize_member(members[name], value) if name in members else value
+        for name, value in row.items()
+    }
 
 
 def _entity_members(

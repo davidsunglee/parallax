@@ -1539,7 +1539,7 @@ these final spellings; no translation alias is conforming.
 
 ```yaml
 - write:
-    mutation: amend                     # amend | delete
+    mutation: amend                     # amend | replace | delete
     target:
       entity: Account
       predicate:
@@ -1554,16 +1554,19 @@ are deliberately small and structural:
 
 | Field | Required | Rule |
 |---|---|---|
-| `mutation` | yes | one of `amend`, `delete` |
+| `mutation` | yes | one of `amend`, `replace`, `delete` |
 | `target.entity` | yes | exact concrete descriptor entity the write begins from |
 | `target.predicate` | yes | one schema-valid `m-predicate` node; a set-based write shapes no result, so the Object Query clauses have no spelling in this position |
 | `assignments` | only `amend` | ordered `{attr, value}` data, unique, and empty for the empty amendment, which emits no statement (`m-batch-write`); `attr` names an assignable qualified top-level attribute or value object. An attribute takes a neutral scalar/null literal; a value object takes its complete object/array document or null according to its declared multiplicity/nullability. |
+| `row` | only `replace` | the selected objects' complete writable state, keyed by member name like a keyed row and possibly `{}`; it is completed as every replacement is (`m-unit-work`), and a primary-key member it states is accepted and never written (`m-batch-write`) |
 
-A delete carries **no** assignments. Assignment list order is
-not SQL order: the target's Entity Layout order determines the emitted `set`
-columns and assignment binds. The model-aware validator validates the predicate
+A delete carries **no** assignments and no row, and a replace carries a row and
+no assignments. Neither assignment list order nor row member order is SQL
+order: the target's Entity Layout order determines the emitted `set` columns
+and assignment binds. The model-aware validator validates the predicate
 against `predicate.schema.json` and checks its entity scope, and rejects
-duplicate or framework-owned/unassignable assignments. It states no rule refusing a query-wide
+duplicate or framework-owned/unassignable assignments, and a replacement row
+naming an undeclared or unassignable member or omitting a required one. It states no rule refusing a query-wide
 clause: `write-instruction.schema.json` reaches the Predicate grammar directly,
 where ordering, the cap, Temporal Selections, result narrowing, and Includes have
 no spelling, so a result-shaping input never survives ingress to be classified. It rejects a predicate-selected

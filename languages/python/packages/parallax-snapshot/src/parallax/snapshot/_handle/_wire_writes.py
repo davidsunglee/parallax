@@ -65,8 +65,10 @@ type WireChanges = Mapping[str, object]
 """A Wire write's authored assignments: declared member names to accepted wire
 values. Version, temporal-axis, computed, read-only, and relationship members
 are refused rather than assigned. A primary-key entry is addressing data, never
-an assignment: a conditional write's names the object it writes, and a source
-write's must name the object its source already addresses. Required wherever a
+an assignment: a conditional write's names the object it writes, a source
+write's must name the object its source already addresses, and a predicate
+replacement's addresses nothing, since its selection does, and is never
+written. Required wherever a
 verb's signature names it — the verbs that name no member are the destructive
 and close ones, which take no change set at all.
 
@@ -177,32 +179,38 @@ class WirePredicateWriteAdapter:
     """The Wire predicate-selected write over ``target``.
 
     The Wire spelling of the ``_where`` family: a Typed selection or the
-    canonical ``{entity, predicate}`` one, plus an authored changes document,
-    lowered to the SAME :class:`~parallax.core.unit_work.PredicateWriteInstruction`
-    the Typed verbs build. No second set-based write semantics are introduced —
-    this adapter only states the target and the assignments differently.
+    canonical ``{entity, predicate}`` one, plus an authored changes document, a
+    replacement's data, or a node Parallax published, lowered to the SAME
+    :class:`~parallax.core.unit_work.PredicateWriteInstruction` the Typed verbs
+    build. No second set-based write semantics are introduced — this adapter
+    only states the target and the payload differently.
 
     Inert when constructed. Once :meth:`prepare` is asked, the selection and the
-    changes are captured and judged for shape before anything is resolved from
+    payload are captured and judged for shape before anything is resolved from
     the model, the same lead the keyed verb gives them. A Typed query takes the
     Typed adapter's path (:func:`typed_selection`); a selection document's
     shape runs to the bottom of its predicate, so a malformed node is
     `m-predicate`'s own refusal rather than whatever the model happens to say
-    about the Entity or the assignments beside it. Each change is an
-    assignment owned by the selection's own Entity spelling; preparation then
-    judges the target, the predicate, every assignment's member, and only then
-    their values.
+    about the Entity or the payload beside it. Each change is an assignment
+    owned by the selection's own Entity spelling. A replacement's node — checked
+    before the mapping case, since a node is itself a mapping — must be one
+    Parallax published for the selection's own Entity, and states the writable
+    state it published, borrowed rather than copied. Preparation then judges
+    the target, the predicate, every member, and only then their values.
     """
 
-    __slots__ = ("_changes", "_target")
+    __slots__ = ("_payload", "_target")
 
-    def __init__(self, target: WirePredicateTarget, changes: WireChanges | None = None) -> None:
+    def __init__(
+        self, target: WirePredicateTarget, payload: WireChanges | WireEntity | None = None
+    ) -> None:
         self._target = target
-        self._changes = changes
+        self._payload = payload
 
     def prepare(
         self, write_model: SelectedWriteModel, mutation: PredicateMutation
     ) -> PreparedPredicateWrite:
+        meta = write_model.model.meta
         selection = (
             typed_selection(self._target, write_model)
             if isinstance(self._target, ObjectQuery)
@@ -210,16 +218,40 @@ class WirePredicateWriteAdapter:
                 _authored_document(self._target, "a predicate-selected write's canonical target")
             )
         )
-        authored = _authored_changes(mutation, self._changes)
-        instruction = PredicateWriteInstruction(
-            mutation,
-            selection,
-            tuple(
-                WriteAssignment(f"{selection.entity}.{member}", value)
-                for member, value in authored.items()
-            ),
+        payload = self._payload
+        if mutation in REPLACE_MUTATIONS:
+            row = (
+                _published_replacement(meta, selection, payload)
+                if isinstance(payload, WireEntity)
+                else _authored_changes(mutation, payload)
+            )
+            instruction = PredicateWriteInstruction(mutation, selection, row=row)
+        else:
+            authored = _authored_changes(mutation, payload)
+            instruction = PredicateWriteInstruction(
+                mutation,
+                selection,
+                tuple(
+                    WriteAssignment(f"{selection.entity}.{member}", value)
+                    for member, value in authored.items()
+                ),
+            )
+        return instructions.prepare_wire_write(instruction, meta)
+
+
+def _published_replacement(
+    meta: Metamodel, selection: PredicateSelection, node: WireEntity
+) -> Mapping[str, object]:
+    """The writable state ``node`` published, once it is judged a node of the
+    Entity ``selection`` writes."""
+    entity = published_entity(meta, node, "`replace_where`")
+    target = instructions.resolve_target(meta, selection.entity)
+    if entity.identity != target.identity:
+        raise instructions.WriteInstructionError(
+            f"a Wire `replace_where` over {target.identity.canonical} states a whole state of "
+            f"that Entity, and this node was published for {entity.identity.canonical}"
         )
-        return instructions.prepare_wire_write(instruction, write_model.model.meta)
+    return _published_writable(meta, entity, node, copy=False)
 
 
 class WireTargetWriteAdapter:

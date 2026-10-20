@@ -337,6 +337,9 @@ def _write_selection(
         _predicate(
             case, _root_scope(case, selection_entity), predicate, f"{where}.target.predicate"
         )
+    row = carrier.get("row")
+    if isinstance(row, Mapping):
+        _entity_row(case, selection_entity, row, f"{where}.row")
     assignments = carrier.get("assignments")
     if not isinstance(assignments, Sequence) or isinstance(assignments, (str, bytes)):
         return

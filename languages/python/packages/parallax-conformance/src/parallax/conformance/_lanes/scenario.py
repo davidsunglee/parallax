@@ -1389,7 +1389,7 @@ def _buffer_wire_predicate_write(
     tx: TxnContext, model: AcceptedMetamodel, raw_write: Mapping[str, object]
 ) -> None:
     """Buffer one scenario predicate write through its public Wire verb, which
-    prepares the case's own authored target and changes, once.
+    prepares the case's own authored target and changes or row, once.
 
     Only a synthetic case's managed carrier values are spelled in Wire first
     (:func:`~parallax.conformance._case_ingress.normalize_case_write`). Dict
@@ -1409,6 +1409,9 @@ def _buffer_wire_predicate_write(
                     for assignment in authored.assignments
                 },
             )
+        case "replace":
+            assert authored.row is not None  # a replacement states its row
+            tx.wire.replace_where(target, authored.row)
         case "delete":
             tx.wire.delete_where(target)
 

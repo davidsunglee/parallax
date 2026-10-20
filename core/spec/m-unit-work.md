@@ -148,11 +148,13 @@ how `m-predicate` hosts `predicate.schema.json`; `m-case-format` and
   names, `replace` states the object's complete writable state
   (*Source-authorized replacement*), and `delete` / `terminate` end it, each
   with its bounded `*Until` form where one exists;
-- a **predicate-selected** instruction — an `amend` or `delete` of every row of
-  a `target` (`entity` plus a bare `m-predicate` predicate) matching that
-  predicate, with `assignments` on the amendment, written by one readless
-  statement and so admitted only over an unversioned, non-temporal target, which
-  has no history to close and no Valid Time to bound (`m-batch-write`);
+- a **predicate-selected** instruction — an `amend`, `replace`, or `delete` of
+  every row of a `target` (`entity` plus a bare `m-predicate` predicate)
+  matching that predicate, with `assignments` on the amendment and a `row`
+  stating the complete writable state on the replacement, written by one
+  readless statement and so admitted only over an unversioned, non-temporal
+  target, which has no history to close and no Valid Time to bound
+  (`m-batch-write`);
 - a **caller-addressed** (target) instruction — an amendment (`amend` /
   `amendUntil`), a complete replacement (`replace` / `replaceUntil`), a
   deletion (`delete`), or a termination (`terminate` / `terminateUntil`) of the
@@ -235,8 +237,8 @@ is never a Planned Write, and a Planned Write is never serialized back into one.
 
 ### Serialized write elaboration
 
-A serialized keyed or caller-addressed row, or a predicate-selected assignment, is
-structural input, not a planned value. After resolving the exact target Entity and member identity, the
+A serialized keyed, caller-addressed, or predicate-selected row, or a
+predicate-selected assignment, is structural input, not a planned value. After resolving the exact target Entity and member identity, the
 write frontend calls `m-wire.decodeWire(member.neutralType, literal)` exactly
 once for each non-null authored leaf. Null is handled by the member's nullability
 rule and is never passed to the Neutral Wire Codec. Recursive Value Object
@@ -260,8 +262,10 @@ target refuses `delete`; the window must be stated as the verb's form requires,
 admitted by the target's temporal profile, and ordered; a non-temporal target
 refuses a milestone verb; and a temporal keyed instruction carries one row. Only
 then is the payload judged — a keyed row's subtype shape, members, and values, or
-a predicate-selected write's predicate, family refusal, and assignments, every
-assignment's member resolved, in authored order, before any value is judged. `prepareWireWrite` applies the serialized decoding above;
+a predicate-selected write's predicate, family refusal, and payload: an
+amendment's every assignment member resolved, in authored order, before any
+value is judged, and a replacement's row naming declared members only, then
+completed and judged as every replacement is (*Source-authorized replacement*). `prepareWireWrite` applies the serialized decoding above;
 `prepareTypedWrite` applies `m-core.coerceNeutralInput` followed by managed
 membership and retains developer-facing mismatch errors. Neither consumer may
 choose the other policy from the runtime carrier it happens to receive.
@@ -506,15 +510,16 @@ on a Bitemporal object the start that source names. Provenance, pins, evidence, 
 invalidation follow the amendment's rules unchanged; the write takes no
 condition or start of its own.
 
-Every replacement, source-authorized or caller-addressed, states the same
-**completed writable state**. Each writable member it omits is completed rather
+Every replacement, source-authorized, caller-addressed, or predicate-selected,
+states the same **completed writable state**. Each writable member it omits is completed rather
 than carried forward: an omitted required scalar or single value object is
 refused, an omitted nullable one is written null, and an omitted collection is
 written empty. Nothing is filled from the source's evidence or any predecessor;
 the state excludes framework-owned revision and temporal members, read-only
 members other than the primary key, derived inheritance metadata, and
 relationships, whose loadedness never changes it. The key addresses the object
-and is never assigned. A replacement whose completed state equals what a
+and is never assigned; a predicate-selected replacement's predicate selects its
+rows, so a key its row states addresses nothing and is never written. A replacement whose completed state equals what a
 milestone holds keeps that milestone exactly as an equal amendment does
 (`m-temporal-write` *Unchanged milestones*).
 
@@ -1041,8 +1046,9 @@ milestones*).
 
 A predicate-selected write's assignments are literal too: its one readless
 statement writes every row its predicate matches, whatever that row already
-holds. An amendment of it expressing no member is empty as well, and is
-dropped once judged (`m-batch-write`).
+holds. An amendment of it expressing no member is empty as well, and so is a
+replacement of an Entity whose only writable member is its key, since the
+key is never written; each is dropped once judged (`m-batch-write`).
 
 ## Buffered, batched, ordered writes
 

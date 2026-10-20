@@ -5,7 +5,8 @@ selection is exactly an `m-predicate` node, since a set-based write shapes no
 result and the Object Query clauses have no spelling in that position.  This
 module resolves the neutral shape against a descriptor before any SQL is emitted:
 the target must be one a readless statement can write, the predicate must resolve
-over it, and assignments must name assignable domain attributes exactly once.
+over it, an amendment's assignments must name assignable domain attributes exactly
+once, and a replacement's row must state a complete writable state.
 """
 
 from __future__ import annotations
@@ -18,7 +19,14 @@ from .predicate_paths import EntityScope
 from .predicate_validate import validate_predicate
 from .query_references import collect_reference_classes
 from .storage_layout import is_scalar_collection
-from .value_object_resolve import RejectionError, decode_typed_literal, literal_matches_type
+from .value_object_resolve import (
+    WRITE_REQUIRED_ATTRIBUTE_MISSING,
+    WRITE_REQUIRED_VALUE_OBJECT_MISSING,
+    RejectionError,
+    decode_typed_literal,
+    literal_matches_type,
+)
+from .write_validate import assignment_violation, undeclared_members
 
 SET_BASED_WRITE_TARGET_UNSUPPORTED = "set-based-write-target-unsupported"
 
@@ -68,8 +76,11 @@ def validate_predicate_write(
     except RejectionError as exc:
         raise PredicateWriteValidationError(str(exc)) from exc
 
-    if instruction.get("mutation") == "amend":
+    mutation = instruction.get("mutation")
+    if mutation == "amend":
         _assert_assignments(entity, instruction.get("assignments"))
+    elif mutation == "replace":
+        _assert_replacement(entity, instruction.get("row"))
 
 
 def _assert_readless_target(entity: Entity, mutation: Any) -> None:
@@ -133,6 +144,67 @@ def _assert_assignments(entity: Entity, assignments: Any) -> None:
             _assert_value_object_assignment(ref, value_object, assignment.get("value"))
             continue
         _assert_attribute_assignment(ref, attribute, assignment.get("value"))
+
+
+def _assert_replacement(entity: Entity, row: Any) -> None:
+    """Validate a replacement's row (`m-unit-work` *Source-authorized
+    replacement*): it names declared members only and omits no required one,
+    and every member it states but the primary key is one a caller may
+    assign. The predicate selects the rows, so a stated key addresses nothing:
+    it need only be a value of its declared type, and is never written."""
+    if not isinstance(row, dict):  # pragma: no cover - structural schema guard
+        raise PredicateWriteValidationError("a predicate replacement needs a row")
+    unknown = undeclared_members(entity, row)
+    if unknown:
+        raise PredicateWriteValidationError(
+            f"replacement row names {unknown}, which {entity.name!r} does not declare"
+        )
+    _assert_complete(entity, row)
+    for name, value in row.items():
+        attribute = next(
+            (candidate for candidate in entity.attributes if candidate["name"] == name), None
+        )
+        if attribute is not None and attribute.get("primaryKey"):
+            if not literal_matches_type(value, attribute.get("type")):
+                raise PredicateWriteValidationError(
+                    f"replacement key {name!r} does not match declared type "
+                    f"{attribute.get('type')!r}"
+                )
+            continue
+        violation = assignment_violation(entity, name, value)
+        if violation is not None:
+            raise PredicateWriteValidationError(violation)
+
+
+def _assert_complete(entity: Entity, row: dict[str, Any]) -> None:
+    """Refuse a replacement row omitting a member a replacement must state: a
+    required, writable, non-key scalar, or a required `one` value object. A
+    readless target declares no framework-owned member, and an omitted `many`
+    or scalar collection is its empty collection."""
+    for attribute in entity.attributes:
+        if (
+            attribute["name"] in row
+            or attribute.get("primaryKey")
+            or attribute.get("readOnly")
+            or attribute.get("nullable", False)
+            or is_scalar_collection(attribute)
+        ):
+            continue
+        raise RejectionError(
+            WRITE_REQUIRED_ATTRIBUTE_MISSING,
+            f"{entity.name}.{attribute['name']}: a replacement states every required member",
+        )
+    for value_object in entity.value_objects:
+        if (
+            value_object["name"] in row
+            or value_object.get("multiplicity", "one") == "many"
+            or value_object.get("nullable", False)
+        ):
+            continue
+        raise RejectionError(
+            WRITE_REQUIRED_VALUE_OBJECT_MISSING,
+            f"{entity.name}.{value_object['name']}: a replacement states every required member",
+        )
 
 
 def _assert_attribute_assignment(ref: str, attribute: dict[str, Any], value: Any) -> None:

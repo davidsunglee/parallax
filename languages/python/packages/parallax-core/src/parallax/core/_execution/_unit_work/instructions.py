@@ -99,10 +99,10 @@ KeyedMutation = Literal[
     "terminateUntil",
 ]
 # The predicate-selected (set-based) mutation surface: there is no `insert` — a
-# predicate cannot select rows that do not yet exist — and no replacement. A
-# readless target has no history to close and no Valid Time to bound, so no
-# milestone verb or bounded form.
-PredicateMutation = Literal["amend", "delete"]
+# predicate cannot select rows that do not yet exist. A readless target has no
+# history to close and no Valid Time to bound, so no milestone verb or bounded
+# form.
+PredicateMutation = Literal["amend", "delete", "replace"]
 # The caller-addressed (target) mutation surface: an amendment, a complete
 # replacement, a deletion, or a termination of one existing object, each with
 # its bounded form where one exists.
@@ -149,7 +149,7 @@ one definition."""
 _KEYED_MUTATIONS: Final[frozenset[str]] = (
     INSERT_MUTATIONS | ASSIGNMENT_MUTATIONS | DESTRUCTIVE_MUTATIONS
 )
-_PREDICATE_MUTATIONS: Final[frozenset[str]] = frozenset({"amend", "delete"})
+_PREDICATE_MUTATIONS: Final[frozenset[str]] = frozenset({"amend", "delete", "replace"})
 _TARGET_MUTATIONS: Final[frozenset[str]] = ASSIGNMENT_MUTATIONS | DESTRUCTIVE_MUTATIONS
 
 BOUNDED_MUTATIONS: Final[frozenset[str]] = frozenset(
@@ -270,19 +270,42 @@ class PredicateSelection:
 @dataclass(frozen=True, slots=True)
 class PredicateWriteInstruction:
     """A predicate-selected (set-based) write: a ``mutation`` on every row of
-    ``target`` matching its predicate, with ``assignments`` on an amendment —
-    none at all being the empty amendment."""
+    ``target`` matching its predicate. An amendment carries ``assignments`` —
+    none at all being the empty amendment — and a replacement the ``row``
+    stating each selected object's complete writable state; a deletion carries
+    neither."""
 
     mutation: PredicateMutation
     target: PredicateSelection
     assignments: tuple[WriteAssignment, ...] = ()
+    row: Mapping[str, object] | None = None
 
     def __post_init__(self) -> None:
         if self.assignments and self.mutation not in AMEND_MUTATIONS:
             raise WriteInstructionError(
-                f"predicate write: `{self.mutation}` names nothing to assign and carries no "
+                f"predicate write: `{self.mutation}` assigns no members and carries no "
                 "`assignments`"
             )
+        replaces = self.mutation in REPLACE_MUTATIONS
+        if self.row is None:
+            if replaces:
+                raise WriteInstructionError(
+                    f"predicate write: `{self.mutation}` states each selected object's whole "
+                    "writable state and carries a `row`"
+                )
+            return
+        if not replaces:
+            raise WriteInstructionError(
+                f"predicate write: `{self.mutation}` states no whole state and carries no `row`"
+            )
+        forbidden = sorted(set(self.row) & _FORBIDDEN_ROW_KEYS)
+        if forbidden:
+            raise WriteInstructionError(
+                f"predicate write: row carries forbidden observation control key(s) {forbidden} "
+                "(a predicate-selected write observes nothing)"
+            )
+        if not isinstance(self.row, MappingProxyType):
+            object.__setattr__(self, "row", MappingProxyType(dict(self.row)))
 
 
 @dataclass(frozen=True, slots=True)
@@ -341,8 +364,8 @@ class PreparedKeyedWrite:
 @dataclass(frozen=True, slots=True, init=False)
 class PreparedPredicateWrite:
     """A predicate mutation over a resolved selection and the managed row it
-    assigns every selected object: the members an amendment names, never the
-    key, and nothing for a deletion.
+    assigns every selected object: the members an amendment names or a
+    replacement completes, never the key, and nothing for a deletion.
 
     Only this module's producers construct one, so holding one means the write
     was judged admissible against its target, which one readless statement
@@ -490,7 +513,8 @@ def deserialize(doc: object) -> WriteInstruction:
     """Parse a canonical write-instruction document into a frozen instruction.
 
     Discriminates the three shapes by their required carrier (``rows`` -> keyed,
-    ``target`` -> predicate, ``row`` -> caller-addressed), validates the closed
+    ``target`` -> predicate, ``row`` -> caller-addressed, unless it rides
+    beside a predicate replacement's ``target``), validates the closed
     shape, the mutation enum, the keyed and caller-addressed Valid-Time-bound
     pairing rules (a bounded ``*Until`` carries both bounds, every other form
     carries no ``until``; a predicate write carries no bound at all), that a
@@ -507,7 +531,12 @@ def deserialize(doc: object) -> WriteInstruction:
             f"write instruction must be a mapping, got {type(doc).__name__}"
         )
     node = cast("Mapping[str, object]", doc)
-    carriers = [key for key in ("rows", "target", "row") if key in node]
+    # A predicate-selected replacement states its `row` beside its `target`.
+    carriers = [
+        key
+        for key in ("rows", "target", "row")
+        if key in node and not (key == "row" and "target" in node)
+    ]
     if len(carriers) > 1:
         raise WriteInstructionError(
             f"write instruction is ambiguous: it carries {carriers}, and `rows` (keyed), "
@@ -665,25 +694,35 @@ def _assignments(node: Mapping[str, object]) -> tuple[WriteAssignment, ...]:
 
 
 def _predicate(node: Mapping[str, object]) -> PredicateWriteInstruction:
-    _reject_extra(node, frozenset({"mutation", "target", "assignments"}), "predicate write")
+    _reject_extra(node, frozenset({"mutation", "target", "assignments", "row"}), "predicate write")
     _require(node, ("mutation", "target"), "predicate write")
     mutation = _mutation(node, _PREDICATE_MUTATIONS, "predicate write")
     target = _target(node)
-    has_assignments = "assignments" in node
-    if mutation in AMEND_MUTATIONS:
-        if not has_assignments:
-            raise WriteInstructionError(f"predicate write: `{mutation}` MUST carry `assignments`")
-        assignments = _assignments(node)
-    else:
-        if has_assignments:
-            raise WriteInstructionError(
-                f"predicate write: `{mutation}` names nothing to assign "
-                "and MUST NOT carry `assignments`"
-            )
-        assignments = ()
-    return PredicateWriteInstruction(
-        mutation=cast("PredicateMutation", mutation), target=target, assignments=assignments
+    payload = (
+        "assignments"
+        if mutation in AMEND_MUTATIONS
+        else "row"
+        if mutation in REPLACE_MUTATIONS
+        else None
     )
+    for key in ("assignments", "row"):
+        if key == payload and key not in node:
+            raise WriteInstructionError(f"predicate write: `{mutation}` MUST carry `{key}`")
+        if key != payload and key in node:
+            raise WriteInstructionError(f"predicate write: `{mutation}` MUST NOT carry `{key}`")
+    return PredicateWriteInstruction(
+        mutation=cast("PredicateMutation", mutation),
+        target=target,
+        assignments=_assignments(node) if payload == "assignments" else (),
+        row=_predicate_row(node) if payload == "row" else None,
+    )
+
+
+def _predicate_row(node: Mapping[str, object]) -> Mapping[str, object]:
+    raw = node.get("row")
+    if not isinstance(raw, Mapping):
+        raise WriteInstructionError("predicate write: `row` must be a mapping")
+    return dict(cast("Mapping[str, object]", raw))
 
 
 def _target_write(node: Mapping[str, object]) -> TargetWriteInstruction:
@@ -769,6 +808,8 @@ def serialize(instruction: WriteInstruction) -> dict[str, object]:
         predicate_body["assignments"] = [
             {"attr": a.attr, "value": a.value} for a in instruction.assignments
         ]
+    if instruction.row is not None:
+        predicate_body["row"] = dict(instruction.row)
     return predicate_body
 
 
@@ -1005,7 +1046,7 @@ def _prepare_write(
             authored_members=authored_members,
             members=members,
         )
-    # A predicate write states its assignments, and its readless target
+    # A predicate write states its payload whole, and its readless target
     # declares no framework-owned member for an authored one to name.
     assert members is None
     return _prepare_predicate_write(
@@ -1056,7 +1097,7 @@ def _prepare_predicate_write(
     source_access: SourceAccess,
 ) -> PreparedPredicateWrite:
     """Judge a predicate write: whether its target can be written without
-    being read at all, then its selecting predicate, family, and assignments."""
+    being read at all, then its selecting predicate, family, and payload."""
     entity = resolve_target(model, instruction.target.entity)
     position = _family_position(model, entity)
     _judge_readless_family(model, entity, position, instruction.mutation)
@@ -1099,7 +1140,7 @@ def _readless_family_advice(
 ) -> str:
     temporal = _is_temporal(shape)
     # A deletion's keyed sibling is the destructive verb the target's kind admits.
-    sibling = mutation if mutation == "amend" else "terminate" if temporal else "delete"
+    sibling = mutation if mutation != "delete" else "terminate" if temporal else "delete"
     revision = "version" if _is_versioned(position) else "tx_start"
     return (
         f"{entity.identity.name} is {'temporal' if temporal else 'versioned'}, so "
@@ -1686,18 +1727,22 @@ def _prepare_predicate_payload(
     source_access: SourceAccess,
 ) -> PreparedPredicateWrite:
     """Judge a predicate write's payload in `m-case-format`'s order: the
-    selecting predicate, the family refusal, then the assignments.
+    selecting predicate, the family refusal, then the row it assigns.
 
     The predicate is measured with the whole ``validate_predicate``
     vocabulary: a canonical node is validated, an interpreting adapter invoked,
     once, at the target's own position. An inheritance-family target is then refused
-    (``subtype-write-set-based-unsupported``) before any assignment, so
+    (``subtype-write-set-based-unsupported``) before any member, so
     ancestry resolution never arises for one.
 
     An amendment's assignments form the one row it assigns every selected
     object: each reference is judged before any value, and then the row is
     judged member by member as an amendment of one object's row is. Assigning
-    nothing is the empty amendment, judged like any other.
+    nothing is the empty amendment, judged like any other. A replacement's row
+    names declared members only, and is completed and judged exactly as every
+    other replacement's is (:func:`_assigned_row`). A key it states addresses
+    nothing, since the predicate selects the rows, so it is dropped once the
+    row is judged and is never written.
     """
     predicate = instruction.target.predicate
     validated = (
@@ -1707,18 +1752,27 @@ def _prepare_predicate_payload(
     )
     inheritance.reject_predicate_write(entity)
     selection = ResolvedMutationSelection(entity, validated)
-    if instruction.mutation not in AMEND_MUTATIONS:
+    if instruction.mutation not in ASSIGNMENT_MUTATIONS:
         return _prepared_predicate_write(instruction.mutation, selection, _NO_ROW)
-    row = _row_from_assignments(model, entity, position, instruction.assignments)
+    row = instruction.row
+    if row is None:
+        row = _row_from_assignments(model, entity, position, instruction.assignments)
+    else:
+        _judge_row_members(model, entity, position.member_selection, row, None, "predicate")
     assigned = _assigned_row(
         model,
         entity,
         position,
         row,
-        replaces=False,
+        replaces=instruction.mutation in REPLACE_MUTATIONS,
         converter=converter,
         source_access=source_access,
     )
+    key = position.primary_key.identity.name
+    if key in assigned:
+        assigned = MappingProxyType(
+            {name: value for name, value in assigned.items() if name != key}
+        )
     return _prepared_predicate_write(instruction.mutation, selection, assigned)
 
 

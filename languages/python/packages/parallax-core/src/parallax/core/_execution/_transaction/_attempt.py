@@ -106,7 +106,7 @@ class PredicateWriteAdapter(Protocol):
     """A representation's predicate-selected write, inert until the attempt asks
     for it.
 
-    Constructed around the caller's original selection and assignments, judging
+    Constructed around the caller's original selection and payload, judging
     nothing, so no representation refusal precedes the attempt's re-entry
     check. :meth:`prepare` is asked once, after it: it captures that input,
     authors the canonical instruction, and returns what the one write
@@ -569,7 +569,7 @@ class TxnAttempt(_TxnAttemptBase):
 
         Re-entry is refused first, and only then is ``adapter`` asked to
         prepare the write under this attempt's write projection: the target's
-        kind, the predicate, the family, and the assignments are preparation's
+        kind, the predicate, the family, and the payload are preparation's
         to judge.
         """
         refuse_reentry(self._lifecycle)

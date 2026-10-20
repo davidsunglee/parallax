@@ -1073,6 +1073,27 @@ def test_a_readless_predicate_update_through_a_shared_join_is_one_key_selecting_
     assert statement.binds == ("Z", "Ada", 3)
 
 
+def test_a_readless_predicate_replacement_lowers_its_completed_state_as_an_update() -> None:
+    # The completed state takes the update's own rules: Table Layout order,
+    # assignment binds before the selection's, the key-selecting form through a
+    # shared join, the omitted nullable written null, and the stated key not at all.
+    predicate = PredicateWriteInstruction(
+        "replace",
+        PredicateSelection(
+            "OrderItem",
+            oa.Comparison(op="eq", subject=oa.FieldSubject("OrderItem.order.name"), value="Ada"),
+        ),
+        row={"quantity": 9, "sku": "Z", "orderId": 1, "id": 77},
+    )
+    (statement,) = _lower(predicate, ORDERS)
+    assert statement.sql == (
+        "update order_item set order_id = ?, sku = ?, quantity = ?, shipped_on = ? where id in "
+        "(select t0.id from order_item t0 left join orders t1 on t1.id = t0.order_id "
+        "where t1.name = ?)"
+    )
+    assert statement.binds == (1, "Z", 9, None, "Ada")
+
+
 def test_value_object_document_is_not_mistaken_for_a_marker() -> None:
     # A DB-computed marker is a SCALAR cell's shape. A value-object member
     # resolves to its own Value Object identity, so its whole-document mapping is

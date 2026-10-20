@@ -2768,6 +2768,38 @@ def test_run_scenario_case_executes_a_readless_predicate_write() -> None:
     assert len(port.writes) == 1 and port.commits == 1
 
 
+def test_run_scenario_case_executes_a_readless_predicate_replacement() -> None:
+    # The case's own row reaches `tx.wire.replace_where`, which completes it and
+    # never writes the key it states.
+    case = _synthetic_write(
+        "scenario",
+        {
+            "model": "models/wallet.yaml",
+            "when": {
+                "scenario": [
+                    {
+                        "write": {
+                            "mutation": "replace",
+                            "target": {
+                                "entity": "Wallet",
+                                "predicate": {
+                                    "lessThan": {"path": "Wallet.balance", "value": "200.00"}
+                                },
+                            },
+                            "row": {"id": 9, "balance": "1.00", "owner": "Ada"},
+                        }
+                    }
+                ]
+            },
+        },
+    )
+    port = FakeWritePort()
+    run = scenario.run_scenario_case(case, port)
+    assert run.database_calls == 1
+    assert run.emissions[0].sql == "update wallet set owner = ?, balance = ? where balance < ?"
+    assert len(port.writes) == 1 and port.commits == 1
+
+
 def test_run_scenario_case_readless_predicate_write_rollback_aborts_but_counts_the_call() -> None:
     # `_run_readless_predicate_write`'s own abort contract mirrors the keyed-
     # write one (`test_run_scenario_case_rollback_step_aborts_but_counts_the_

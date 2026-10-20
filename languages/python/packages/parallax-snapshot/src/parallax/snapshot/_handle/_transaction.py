@@ -49,7 +49,8 @@ class TxnContext:
     read and returns ``Snapshot[T]``: force-flush + the lock suffix each
     materialized level's own target Entity calls for, otherwise identical to
     :meth:`ScopedDatabase.find`. The predicate-selected ``_where`` verb family
-    — :meth:`amend_where` and :meth:`delete_where` — writes every row a
+    — :meth:`amend_where`, :meth:`replace_where`, and :meth:`delete_where` —
+    writes every row a
     mutation-compatible Object Query selects in one readless statement over an
     unversioned, non-temporal target, takes no window, and preparation refuses
     every other target (ADR 0075). Every windowed verb selects its bounded form
@@ -505,6 +506,20 @@ class TxnContext:
         object's write must observe, is refused before anything else is judged
         (``set-based-write-target-unsupported``)."""
         self._attempt.predicate_write(TypedPredicateWriteAdapter(query, assignments), "amend")
+
+    def replace_where[E: EntityBase](self, query: ObjectQuery[E, Any], payload: E) -> None:
+        """Buffer a replacement of every row ``query`` selects, in one readless
+        statement, with ``payload``'s whole writable state, under
+        :meth:`amend_where`'s query and target rules.
+
+        ``payload`` is an instance of the queried Entity, used only as data, as
+        :meth:`replace_if` uses it: whatever produced it is not consulted. Its
+        state is completed as :meth:`replace` completes it — an omitted
+        nullable member is written empty, an omitted ``many`` the empty
+        collection, and an omitted required member is refused — and its key
+        addresses nothing, since ``query`` selects the rows, so it is never
+        written."""
+        self._attempt.predicate_write(TypedPredicateWriteAdapter(query, payload), "replace")
 
     def delete_where(self, query: ObjectQuery[Any, Any]) -> None:
         """Buffer a deletion of every row ``query`` selects, in one readless

@@ -18,7 +18,7 @@ from parallax.conformance import case_format
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.read_models import Balance, Payment
 from parallax.conformance.stories import WRITE_STORIES, WriteStory
-from parallax.conformance.story_models import Account, Position
+from parallax.conformance.story_models import Account, Position, Wallet
 from parallax.conformance.vo_models import (
     ContactAddress,
     ContactGeo,
@@ -552,8 +552,9 @@ REJECTED_WRITE_BUILDERS: dict[str, Callable[[TxnContext], None]] = {
 # case id -> the model `_KeyedSeedPort` connects against.
 REJECTED_WRITE_MODELS: dict[str, str] = {"m-inheritance-088": "payment"}
 
-# The Contact/Shipment value-object write-input rejects the corpus grades
-# through `validate_write` over a raw document. The class grammar carries
+# The Contact/Shipment value-object write-input rejects, and the Wallet
+# replacement omitting a required member, that the corpus grades over a raw
+# document. The class grammar carries
 # nullability on the annotation alone, so a declared-non-nullable member is a
 # required Python field and the same defect is refused one step earlier, at
 # construction — the representation-specific rejection the declarations binding sanctions for a
@@ -570,7 +571,7 @@ REJECTED_WRITE_MODELS: dict[str, str] = {"m-inheritance-088": "payment"}
 #   shared seam, carries no equivalence obligation": it pins WHERE the Python
 #   representation refuses (class creation) and that the refusal names the very
 #   member the corpus omits, which is the only reason this file may stop short
-#   of driving `tx.insert` for these five.
+#   of driving `tx.insert` or `tx.replace_where` for these six.
 #
 #   `test_the_declared_structure_classifies_the_corpus_rule` discharges
 #   m-case-format.md "Rejected cases": "The harness (and every language
@@ -596,6 +597,7 @@ INCOMPLETE_DOCUMENT_BUILDERS: dict[str, tuple[str, Callable[[], object]]] = {
         lambda: ContactAddress(street="3 Harbour Rd", city="Oslo"),
     ),
     "m-value-object-044": ("destination", lambda: Shipment(id=5, name="Express")),
+    "m-batch-write-055": ("balance", lambda: Wallet(id=1, owner="Ada")),
 }
 
 
@@ -626,7 +628,11 @@ def test_the_declared_structure_classifies_the_corpus_rule(case_id: str) -> None
     model = model_of(domain_model)
     target = _rejected_write_target(domain_model)
     authored = cast("Mapping[str, object]", case_document(case)["when"]["write"])
-    instruction = KeyedWriteInstruction("insert", target.identity.canonical, (authored,))
+    instruction = (
+        instructions.deserialize(authored)
+        if "target" in authored
+        else KeyedWriteInstruction("insert", target.identity.canonical, (authored,))
+    )
     with pytest.raises(WriteRejectedError) as exc_info:
         instructions.prepare_wire_write(instruction, model)
     assert exc_info.value.rule == expected_rule
@@ -679,9 +685,9 @@ REJECTED_PREDICATE_WRITES: dict[str, tuple[str, Callable[[TxnContext], None]]] =
     ),
     "m-batch-write-049": (
         "position",
-        lambda tx: tx.amend_where(
+        lambda tx: tx.replace_where(
             Position.where(Position.acct_num == "A-1"),
-            Position.value.set(Decimal("0.00")),
+            Position(id=1, acct_num="A-1", value=Decimal("0.00")),
         ),
     ),
 }

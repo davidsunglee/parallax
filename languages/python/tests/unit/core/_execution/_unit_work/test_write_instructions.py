@@ -222,6 +222,22 @@ _INSTRUCTIONS: list[tuple[str, dict[str, Any]]] = [
         },
     ),
     (
+        "predicate-replace-nontemporal",
+        {
+            "mutation": "replace",
+            "target": {"entity": "Account", "predicate": {"true": {}}},
+            "row": {"owner": "Ada", "balance": 0.00},
+        },
+    ),
+    (
+        "predicate-replace-stating-nothing",
+        {
+            "mutation": "replace",
+            "target": {"entity": "Account", "predicate": {"true": {}}},
+            "row": {},
+        },
+    ),
+    (
         "predicate-delete-nontemporal",
         {
             "mutation": "delete",
@@ -443,7 +459,7 @@ def test_keyed_structural_rejections(doc: dict[str, Any], match: str) -> None:
                 {"mutation": mutation, "target": {"entity": "Position", "predicate": {"true": {}}}},
                 "`mutation` must be one of",
             )
-            for mutation in ("insert", "terminate", "amendUntil", "terminateUntil", "replace")
+            for mutation in ("insert", "terminate", "amendUntil", "terminateUntil", "replaceUntil")
         ),
         ({"mutation": "delete", "target": [1, 2]}, "`target` must be a mapping"),
         ({"mutation": "delete", "target": {"entity": "Account"}}, "missing required"),
@@ -485,6 +501,52 @@ def test_keyed_structural_rejections(doc: dict[str, Any], match: str) -> None:
                 rf"unexpected key\(s\) \['{bound}'\]",
             )
             for bound in ("validFrom", "until", "at")
+        ),
+        (
+            {"mutation": "replace", "target": {"entity": "Account", "predicate": {"true": {}}}},
+            "`replace` MUST carry `row`",
+        ),
+        (
+            {
+                "mutation": "replace",
+                "target": {"entity": "Account", "predicate": {"true": {}}},
+                "row": {},
+                "assignments": [],
+            },
+            "`replace` MUST NOT carry `assignments`",
+        ),
+        (
+            {
+                "mutation": "amend",
+                "target": {"entity": "Account", "predicate": {"true": {}}},
+                "assignments": [],
+                "row": {},
+            },
+            "`amend` MUST NOT carry `row`",
+        ),
+        (
+            {
+                "mutation": "delete",
+                "target": {"entity": "Account", "predicate": {"true": {}}},
+                "row": {},
+            },
+            "`delete` MUST NOT carry `row`",
+        ),
+        (
+            {
+                "mutation": "replace",
+                "target": {"entity": "Account", "predicate": {"true": {}}},
+                "row": [1],
+            },
+            "`row` must be a mapping",
+        ),
+        (
+            {
+                "mutation": "replace",
+                "target": {"entity": "Account", "predicate": {"true": {}}},
+                "row": {"owner": "Ada", "observedVersion": 3},
+            },
+            r"forbidden observation control key\(s\) \['observedVersion'\]",
         ),
     ],
 )
@@ -2142,8 +2204,22 @@ _INVERTED_ID = predicate_algebra.Range(predicate_algebra.FieldSubject("Position.
             "Read it (find / stream) and amend each object, or use amend_if with the "
             "tx_start you hold.",
         ),
+        (
+            wi.PredicateWriteInstruction(
+                "replace", wi.PredicateSelection("Account", _ALL), row={"nonsense": 1}
+            ),
+            _ACCOUNT,
+            "Account is versioned, so replace_where cannot change it without reading it. "
+            "Read it (find / stream) and replace each object, or use replace_if with the "
+            "version you hold.",
+        ),
     ],
-    ids=["versioned-before-predicate-and-assignments", "temporal-delete", "bitemporal"],
+    ids=[
+        "versioned-before-predicate-and-assignments",
+        "temporal-delete",
+        "bitemporal",
+        "versioned-replacement-before-its-row",
+    ],
 )
 def test_a_predicate_write_needing_an_observation_is_refused_before_anything_else(
     prepare: Any, instruction: wi.PredicateWriteInstruction, model: Any, advice: str
@@ -2240,12 +2316,103 @@ def test_a_plural_temporal_keyed_write_is_refused_before_its_members(prepare: An
 
 
 def test_a_constructed_deletion_assigns_nothing() -> None:
-    with pytest.raises(wi.WriteInstructionError, match="`delete` names nothing to assign"):
+    with pytest.raises(wi.WriteInstructionError, match="`delete` assigns no members"):
         wi.PredicateWriteInstruction(
             "delete",
             wi.PredicateSelection("Wallet", _ALL),
             (wi.WriteAssignment("Wallet.balance", 1),),
         )
+
+
+@pytest.mark.parametrize(
+    ("mutation", "row", "message"),
+    [
+        ("replace", None, "`replace` states each selected object's whole writable state"),
+        ("amend", {}, "`amend` states no whole state and carries no `row`"),
+        ("delete", {}, "`delete` states no whole state and carries no `row`"),
+    ],
+)
+def test_a_constructed_predicate_write_carries_a_row_exactly_when_it_replaces(
+    mutation: wi.PredicateMutation, row: Mapping[str, object] | None, message: str
+) -> None:
+    with pytest.raises(wi.WriteInstructionError, match=message):
+        wi.PredicateWriteInstruction(mutation, wi.PredicateSelection("Wallet", _ALL), row=row)
+
+
+def test_a_constructed_replacements_row_is_a_frozen_view() -> None:
+    authored: dict[str, object] = {"owner": "Ada"}
+    instruction = wi.PredicateWriteInstruction(
+        "replace", wi.PredicateSelection("Wallet", _ALL), row=authored
+    )
+    authored["owner"] = "Bo"
+    assert instruction.row == {"owner": "Ada"}
+    with pytest.raises(TypeError):
+        cast("dict[str, object]", instruction.row)["owner"] = "Cy"
+
+
+def _wallet_replacement(row: Mapping[str, object]) -> wi.PredicateWriteInstruction:
+    return wi.PredicateWriteInstruction("replace", wi.PredicateSelection("Wallet", _ALL), row=row)
+
+
+@pytest.mark.parametrize(
+    ("prepare", "balance"),
+    [(wi.prepare_typed_write, Decimal("1.50")), (wi.prepare_wire_write, "1.50")],
+    ids=["typed", "wire"],
+)
+def test_a_predicate_replacement_drops_the_key_it_states(prepare: Any, balance: object) -> None:
+    prepared = prepare(_wallet_replacement({"id": 9, "balance": balance, "owner": "Ada"}), _WALLET)
+    assert isinstance(prepared, wi.PreparedPredicateWrite)
+    assert prepared.row == {"balance": Decimal("1.50"), "owner": "Ada"}
+    assert prepared.assigns
+
+
+_DOCUMENT_LAYOUT = _MODELS["document-layout"]
+
+
+@_PRODUCERS
+def test_a_predicate_replacement_completes_every_member_it_omits(prepare: Any) -> None:
+    prepared = prepare(
+        wi.PredicateWriteInstruction(
+            "replace", wi.PredicateSelection("Traveler", _ALL), row={"note": "east"}
+        ),
+        _DOCUMENT_LAYOUT,
+    )
+    assert prepared.row == {
+        "note": "east",
+        "displayName": None,
+        "score": None,
+        "joinedOn": None,
+        "address": None,
+        "tags": (),
+    }
+
+
+@_PRODUCERS
+def test_a_predicate_replacement_of_a_key_only_entity_assigns_nothing(prepare: Any) -> None:
+    prepared = prepare(
+        wi.PredicateWriteInstruction(
+            "replace", wi.PredicateSelection("Beacon", _ALL), row={"id": 3}
+        ),
+        _DOCUMENT_LAYOUT,
+    )
+    assert prepared.row == {}
+    assert not prepared.assigns
+
+
+@_PRODUCERS
+def test_a_predicate_replacement_refuses_an_omitted_required_member(prepare: Any) -> None:
+    with pytest.raises(WriteRejectedError, match=r"Wallet\.balance: .*absent") as refused:
+        prepare(_wallet_replacement({"owner": "Ada"}), _WALLET)
+    assert refused.value.rule == "write-required-attribute-missing"
+
+
+@_PRODUCERS
+def test_a_predicate_replacement_names_declared_members_only(prepare: Any) -> None:
+    with pytest.raises(
+        wi.WriteInstructionError,
+        match=r"Wallet: predicate write row names undeclared member\(s\) \['nickname'\]",
+    ):
+        prepare(_wallet_replacement({"owner": "Ada", "nickname": "A"}), _WALLET)
 
 
 @_PRODUCERS

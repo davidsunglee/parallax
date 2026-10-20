@@ -405,6 +405,23 @@ class WireTransactionView(WireDatabaseView):
         empty amendment, judged and then dropped, so no statement runs."""
         self._attempt.predicate_write(WirePredicateWriteAdapter(target, changes), "amend")
 
+    def replace_where(
+        self, target: WirePredicateTarget, data: Mapping[str, object] | WireEntity, /
+    ) -> None:
+        """Buffer a replacement of every row ``target`` selects, in one readless
+        statement, exactly as ``tx.replace_where`` does, under
+        :meth:`amend_where`'s target rules.
+
+        ``data`` is the selected objects' whole writable state in accepted wire
+        spellings, completed as :meth:`replace` completes it, a read-only
+        member or a name the Entity does not declare refused rather than
+        stored. Handed a node Parallax
+        published instead, the node's writable state is the replacement, and
+        the node must be one of the selected Entity. A primary-key entry
+        addresses nothing, since ``target`` selects the rows, so it is accepted
+        and never written."""
+        self._attempt.predicate_write(WirePredicateWriteAdapter(target, data), "replace")
+
     def delete_where(self, target: WirePredicateTarget, /) -> None:
         """Buffer a deletion of every row ``target`` selects, in one readless
         statement, under :meth:`amend_where`'s target rules.

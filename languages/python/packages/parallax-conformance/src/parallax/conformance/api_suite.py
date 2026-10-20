@@ -302,15 +302,27 @@ EXAMPLES: Final[list[Example]] = [
     ),
     Example(
         "m-batch-write-049",
-        "A predicate amendment of a Bitemporal Entity",
+        "A predicate replacement of a Bitemporal Entity",
         "db.transact(\n"
-        "    lambda tx: tx.amend_where(\n"
+        "    lambda tx: tx.replace_where(\n"
         '        Position.where(Position.acct_num == "A-1"),\n'
-        '        Position.value.set(Decimal("0.00")),\n'
+        '        Position(id=1, acct_num="A-1", value=Decimal("0.00")),\n'
         "    )\n"
         ")\n"
         "# raises ExecutionFailure"
         ' caused by InstructionRejectedError(rule="set-based-write-target-unsupported")',
+    ),
+    Example(
+        "m-batch-write-055",
+        "A predicate replacement omitting a required member",
+        "db.transact(\n"
+        "    lambda tx: tx.replace_where(\n"
+        '        Wallet.where(Wallet.balance < Decimal("200.00")),\n'
+        '        Wallet(id=1, owner="Ada"),\n'
+        "    )\n"
+        ")\n"
+        "# raises ValidationError naming balance: an instance states every required\n"
+        "# member, so Typed refuses the omission when the payload is constructed",
     ),
     # Snapshot/graph semantics (m-snapshot-read, m-navigate x m-temporal-read):
     # each example IS an executable graph story
@@ -576,7 +588,10 @@ SKIP_REASONS: Final[dict[str, str]] = {
         "COLLAPSE decision, an emitted-SQL contract the compile lane grades byte-exact. "
         "`-050`, the empty amendment, is `-006`'s `tx.amend_where` naming no "
         "assignment, and its whole observable is that no statement runs, which the "
-        "lanes grade by database-call count. "
+        "lanes grade by database-call count. `-051` through `-054` are `tx.replace_where` "
+        "spelling the same readless update as `-006`/`-015`, adding only the "
+        "completed SET, an emitted-SQL contract the conformance lanes grade "
+        "byte-exact. "
         "The versioned per-key materialize (`-004`) carries its own case-scoped "
         "entry below"
     ),

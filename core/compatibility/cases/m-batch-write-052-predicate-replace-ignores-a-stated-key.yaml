@@ -1,0 +1,42 @@
+# A predicate-selected replacement's row may state a primary key, as a whole state
+# read or echoed back carries one, but its predicate selects the rows, so the key
+# addresses nothing: it is accepted and never written. The statement assigns the
+# other members, their binds ahead of the predicate's (m-batch-write).
+model: models/wallet.yaml
+tags: [m-batch-write, m-sql, m-unit-work, predicate-write, readless, replace, scenario, slice-snapshot-1]
+shape: scenario
+when:
+  scenario:
+    - write:
+        mutation: replace
+        target:
+          entity: parallax.compatibility.Wallet
+          predicate:
+            eq:
+              path: parallax.compatibility.Wallet.owner
+              value: Linus
+        row:
+          id: 99
+          owner: Lin
+          balance: "300.00"
+      databaseCalls: 1
+      statements:
+        - sql:
+            postgres: update wallet set owner = ?, balance = ? where owner = ?
+          binds: [Lin, "300.00", Linus]
+    - objectQuery:
+        target: parallax.compatibility.Wallet
+        predicate:
+          eq:
+            path: parallax.compatibility.Wallet.owner
+            value: Lin
+      databaseCalls: 1
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance from wallet t0 where t0.owner = ? for share of t0
+          binds: [Lin]
+      referenceSql: select id, owner, balance from wallet where owner = 'Lin'
+      expectRows:
+        - { id: 2, owner: Lin, balance: "300.00" }
+then:
+  databaseCalls: 2

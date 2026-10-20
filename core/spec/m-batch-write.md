@@ -93,7 +93,7 @@ whose target is versioned (any Attribute of its family declares
 `optimisticLocking`) or temporal (Transaction-Time-Only or Bitemporal), with the
 pre-SQL rule `set-based-write-target-unsupported` (`m-case-format` *Rejected
 cases*). It is judged once the target Entity resolves and before the write's
-predicate, inheritance family, or assignments, because none of them could make
+predicate, inheritance family, or payload, because none of them could make
 the write admissible. The refusal is a preparation refusal
 (`m-unit-work`): nothing is read, nothing pending is flushed, and the attempt is
 not doomed. An implementation's refusal **SHOULD** name the writes that reach
@@ -106,9 +106,9 @@ Transaction-Time-Only, and a Bitemporal target.
 
 ## Predicate-selected readless forms
 
-A predicate-selected write is an `amend` or a `delete`. Its target has no history
-to close and no Valid Time to bound, so the family has no milestone verb and
-states no window. It emits exactly one statement, whatever members it assigns. A Value
+A predicate-selected write is an `amend`, a `replace`, or a `delete`. Its target
+has no history to close and no Valid Time to bound, so the family has no
+milestone verb and states no window. It emits exactly one statement, whatever members it assigns. A Value
 Object occurrence — `one` or `many`, any nested `many` it holds included — and a
 scalar collection are each assigned whole at their own path, exactly as any
 other amendment assigns them (`m-storage-layout`): the statement reads no stored
@@ -150,8 +150,24 @@ that waits for the concurrent commit and then excludes the row. Under
 PostgreSQL's Repeatable Read the same race raises the snapshot conflict
 `m-db-error` classifies as retryable, whichever form the write takes.
 
+`replace` states a whole state rather than changes. Its `row` is completed as
+every replacement's is (`m-unit-work` *Source-authorized replacement*): an
+omitted nullable member is written null, an omitted collection is written
+empty, and an omitted required member is refused before anything is buffered
+(`write-required-attribute-missing` / `write-required-value-object-missing`).
+The completed state then lowers exactly as an `amend` assigning every one of its
+members does — the same Table Layout order, the same binds ahead of the
+predicate's, and the same key-selecting form through a shared to-one join.
+Its predicate selects the rows, so a primary-key member the row states
+addresses nothing: it is accepted, so a state read or echoed back needs no
+stripping, and it is never written. Under Relational Document Layout a
+completed null is JSON null at the member's own path, never the removal of its
+key, so a document key no member declares survives the replacement as it
+survives any amendment.
+
 `m-batch-write-005` pins readless predicate delete and
 `m-batch-write-006` pins the update's layout-order SQL and bind determinism.
+`m-batch-write-051`–`-055` pin the replacement.
 
 A readless statement that **matches zero rows succeeds with zero affected rows —
 never an error.** Ordinary SQL set semantics already make `update … where
@@ -170,7 +186,9 @@ the refusal above, its predicate, and its inheritance family — and is then
 dropped before it is buffered: it emits no statement and makes no database call,
 and, being unbuffered, it is no ordering barrier. A keyed amendment expressing
 no member is empty in the same way (`m-unit-work`). `m-batch-write-050`
-witnesses it.
+witnesses it. A `replace` of an Entity whose only writable member is its key
+writes nothing either, since the key is never written, and is dropped the same
+way.
 
 ### A readless predicate write is an ordering barrier
 
@@ -206,9 +224,14 @@ versioned per-key delete. The predicate-write witnesses prove a distinct target:
 | `m-batch-write-010` | unversioned, non-temporal document-mapped `NestedRoute` update | one readless update replacing a `one` whose authored content holds a nested `many`, its whole subtree included |
 | `m-batch-write-012`/`-013` | unversioned, non-temporal `CollectionTwinItem` update under each layout | one readless update assigning whole scalar collections and a `many` holding one, in Table Layout order |
 | `m-batch-write-050` | non-versioned `Wallet` update assigning nothing | judged, then dropped: no statement and no database call |
+| `m-batch-write-051` | non-versioned `Wallet` replacement | one readless update; a reversed authored row still emits Table Layout order and assignment-before-predicate binds |
+| `m-batch-write-052` | non-versioned `Wallet` replacement stating a key | the key is accepted and never written |
+| `m-batch-write-053` | unversioned, non-temporal `OrderItem` replacement through a shared to-one join | the key-selecting form; the omitted nullable `shippedOn` written null |
+| `m-batch-write-054` | unversioned, non-temporal document-mapped `Traveler` replacement | omitted members completed as JSON null and the empty array at their paths; an undeclared document key survives |
+| `m-batch-write-055` | non-versioned `Wallet` replacement omitting `balance` | refused: `write-required-attribute-missing` |
 | `m-batch-write-047` | versioned `Account` update | refused before its predicate and assignments: `set-based-write-target-unsupported` |
 | `m-batch-write-048` | Transaction-Time-Only `Balance` delete | refused: `set-based-write-target-unsupported` |
-| `m-batch-write-049` | Bitemporal `Position` update | refused: `set-based-write-target-unsupported` |
+| `m-batch-write-049` | Bitemporal `Position` replacement | refused: `set-based-write-target-unsupported` |
 
 The two families share SQL terminology but not an observation contract: an `IN`
 list can collapse an already tracked set, whereas a predicate write starts from an

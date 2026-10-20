@@ -8,7 +8,7 @@ axes its own order reads. A :class:`KeyedWriteScenario` names the target Entity,
 the verb, the Concurrency Preference, how the source value was obtained, what
 the caller authored, and which window it stated. A
 :class:`PredicateWriteScenario` names the selection, how a Wire call spells it,
-the assignments, and any pending write ahead of it. A
+the assignments or replaced state, and any pending write ahead of it. A
 :class:`TargetWriteScenario` names the addressed input, the revision and window
 keywords, and any pending write ahead of it. Neither reads a source in the
 writing attempt: a predicate or conditional write consults none.
@@ -106,6 +106,7 @@ __all__ = [
     "POSITION_TARGET",
     "REPRESENTATIONS",
     "TARGETS",
+    "TRAVELER_SELECTION",
     "TX_PIN",
     "UNDECLARED_CONDITIONAL",
     "UNDECLARED_SELECTION",
@@ -641,7 +642,7 @@ class KeyedWriteScenario:
         return "-".join(parts)
 
 
-type PredicateVerb = Literal["amend", "delete"]
+type PredicateVerb = Literal["amend", "replace", "delete"]
 """The verb of a ``_where`` call: ``amend`` is ``amend_where``."""
 
 type Selection = Literal["ordinary", "inverted", "unbound", "unshaped"]
@@ -662,10 +663,16 @@ write target — the canonical Object Query node of that selection and its
 serialized document. The Typed call spells it one way, so every spelling but
 ``document`` is Wire alone."""
 
-type Assignments = Literal["ordinary", "undeclared", "none"]
+type Assignments = Literal["ordinary", "undeclared", "none", "keyed"]
 """What an amendment assigns: the target's own member, a member the target does
 not declare, or nothing at all. The destructive and close verbs assign nothing
-whatever this states."""
+whatever this states.
+
+What a replacement states: ``ordinary`` is the target's whole state — a Typed
+instance, which always holds its key, and a Wire document stating none —
+``keyed`` that document beside the key, ``undeclared`` beside a member the
+target does not declare, and ``none`` the empty document. Each but
+``ordinary`` is a Wire document alone."""
 
 type Start = Literal["omitted", "stated", "none", "naive", "unspellable"]
 """The ``valid_from`` keyword a call states: omitted, an instant, a stated
@@ -705,6 +712,10 @@ class PredicateTarget:
     valid_from: dt.datetime | None = None
     fresh: Callable[[], EntityBase] | None = None
     payload: Mapping[str, object] | None = None
+    typed_state: Callable[[], EntityBase] | None = None
+    """The whole state a Typed replacement states, as an instance of the target."""
+    wire_state: Mapping[str, object] | None = None
+    """The same whole state as a Wire document stating no key."""
 
 
 PERSON_SELECTION: Final = PredicateTarget(
@@ -718,6 +729,23 @@ PERSON_SELECTION: Final = PredicateTarget(
     typed_undeclared=mm.Account.owner.set("Grace"),
     fresh=lambda: mm.Person(id=9, name="Newton"),
     payload={"id": 9, "name": "Newton"},
+    typed_state=lambda: mm.Person(id=1, name="Grace"),
+    wire_state={"name": "Grace"},
+)
+
+# Every member but the key is nullable or a `many`, so its empty document is a
+# whole state.
+TRAVELER_SELECTION: Final = PredicateTarget(
+    name="traveler",
+    profile="non_temporal",
+    model=mm.DOCUMENT_LAYOUT_MODEL,
+    entity="parallax.compatibility.Traveler",
+    entity_class=mm.Traveler,
+    typed_change=mm.Traveler.note.set("east"),
+    wire_change={"note": "east"},
+    typed_undeclared=mm.Trip.destination.set("Oslo"),
+    typed_state=lambda: mm.Traveler(id=1, display_name="Ada"),
+    wire_state={"displayName": "Ada"},
 )
 
 ACCOUNT_SELECTION: Final = PredicateTarget(
@@ -731,6 +759,8 @@ ACCOUNT_SELECTION: Final = PredicateTarget(
     typed_undeclared=mm.Person.name.set("Grace"),
     fresh=lambda: mm.Account(id=9, owner="Newton", balance=Decimal("5.00")),
     payload={"id": 9, "owner": "Newton", "balance": "5.00"},
+    typed_state=lambda: mm.Account(id=1, owner="Ada", balance=Decimal("125.00")),
+    wire_state={"owner": "Ada", "balance": "125.00"},
 )
 
 BALANCE_SELECTION: Final = PredicateTarget(
@@ -742,6 +772,8 @@ BALANCE_SELECTION: Final = PredicateTarget(
     typed_change=mm.Balance.value.set(Decimal("125.00")),
     wire_change={"value": "125.00"},
     typed_undeclared=mm.Person.name.set("Grace"),
+    typed_state=lambda: mm.Balance(id=1, acct_num="A-1", value=Decimal("125.00")),
+    wire_state={"acctNum": "A-1", "value": "125.00"},
 )
 
 POSITION_SELECTION: Final = PredicateTarget(
@@ -756,6 +788,8 @@ POSITION_SELECTION: Final = PredicateTarget(
     valid_from=VALID_FROM,
     fresh=lambda: WherePosition(id=2, acct_num="B", value=Decimal("10.00")),
     payload={"id": 2, "acctNum": "B", "value": "10.00"},
+    typed_state=lambda: WherePosition(id=1, acct_num="A", value=Decimal("300.00")),
+    wire_state={"acctNum": "A", "value": "300.00"},
 )
 
 # A table-per-hierarchy family member: a set-based write over it is refused
@@ -770,6 +804,8 @@ CARD_PAYMENT_SELECTION: Final = PredicateTarget(
     typed_change=im.CardPayment.card_network.set("visa"),
     wire_change={"cardNetwork": "visa"},
     typed_undeclared=im.Payment.amount.set(Decimal("1.00")),
+    typed_state=lambda: im.CardPayment(id=1, amount=Decimal("1.00"), card_network="visa"),
+    wire_state={"amount": "1.00", "cardNetwork": "visa"},
 )
 
 # An Entity the connected model does not declare, spelled the same way through
@@ -814,7 +850,7 @@ class PredicateWriteScenario:
             parts.append(f"{self.selection}-selection")
         if self.wire_target != "document":
             parts.append(f"wire-{self.wire_target}")
-        if self.verb == "amend" and self.assignments != "ordinary":
+        if self.verb != "delete" and self.assignments != "ordinary":
             parts.append(f"{self.assignments}-assignments")
         if self.pending:
             parts.append("pending")
@@ -1072,7 +1108,8 @@ def reachable(scenario: WriteScenario, representation: Representation) -> bool:
     is asked over.
 
     A predicate shape spelled through a Wire target other than the canonical
-    document is Wire alone; an ``unbound`` selection spelled as that document is
+    document is Wire alone, and so is a replacement stating anything but its
+    target's whole state; an ``unbound`` selection spelled as that document is
     Typed alone, since its unfinished path has no document spelling.
 
     A conditional shape is reachable where its representation spells it: a
@@ -1082,7 +1119,9 @@ def reachable(scenario: WriteScenario, representation: Representation) -> bool:
     replacement is always addressed by an instance.
     """
     if isinstance(scenario, PredicateWriteScenario):
-        if scenario.wire_target != "document":
+        if scenario.wire_target != "document" or (
+            scenario.verb == "replace" and scenario.assignments != "ordinary"
+        ):
             return representation == "wire"
         return scenario.selection != "unbound" or representation == "typed"
     if isinstance(scenario, TargetWriteScenario):
@@ -1588,6 +1627,9 @@ def _call_typed_predicate(tx: TxnContext, scenario: PredicateWriteScenario) -> N
     match scenario.verb:
         case "amend":
             tx.amend_where(query, *_typed_assignments(scenario))
+        case "replace":
+            assert scenario.target.typed_state is not None
+            tx.replace_where(query, scenario.target.typed_state())
         case "delete":
             tx.delete_where(query)
 
@@ -1634,6 +1676,22 @@ def _wire_changes(scenario: PredicateWriteScenario) -> Mapping[str, object]:
             return {"undeclared": 1}
         case "none":
             return {}
+        case "keyed":
+            raise AssertionError(f"{scenario}: an amendment's changes state no key")
+
+
+def _wire_state(scenario: PredicateWriteScenario) -> Mapping[str, object]:
+    state = scenario.target.wire_state
+    assert state is not None
+    match scenario.assignments:
+        case "ordinary":
+            return dict(state)
+        case "keyed":
+            return {"id": _PREDICATE_KEY, **state}
+        case "undeclared":
+            return {**state, "undeclared": 1}
+        case "none":
+            return {}
 
 
 def _call_wire_predicate(tx: TxnContext, scenario: PredicateWriteScenario) -> None:
@@ -1641,6 +1699,8 @@ def _call_wire_predicate(tx: TxnContext, scenario: PredicateWriteScenario) -> No
     match scenario.verb:
         case "amend":
             tx.wire.amend_where(target, _wire_changes(scenario))
+        case "replace":
+            tx.wire.replace_where(target, _wire_state(scenario))
         case "delete":
             tx.wire.delete_where(target)
 
