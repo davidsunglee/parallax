@@ -1,6 +1,6 @@
 """The keyed write ingress names the object a write addresses once, for every
-representation: by the source's Read Evidence or insertion authority, or else by
-the row the write prepared."""
+representation: by the source's Read Evidence, or else by the row the write
+prepared."""
 
 from __future__ import annotations
 
@@ -145,9 +145,9 @@ def test_a_resolved_source_names_the_object_its_evidence_or_else_its_authoring_n
 
 @pytest.mark.parametrize(
     ("named", "account_id"),
-    [("evidence", 2), ("authoring", 3), ("neither", 1)],
+    [("evidence", 2), ("both", 2), ("authoring", 1), ("neither", 1)],
 )
-def test_an_evidence_refusal_names_the_source_object_before_the_prepared_row(
+def test_an_evidence_refusal_names_the_read_object_before_the_prepared_row(
     named: Named, account_id: int
 ) -> None:
     refused: list[WriteEvidenceError] = []
