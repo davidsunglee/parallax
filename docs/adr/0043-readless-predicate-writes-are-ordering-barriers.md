@@ -1,3 +1,7 @@
+---
+status: superseded by ADR-0077
+---
+
 # Readless predicate writes are ordering barriers
 
 A Readless Write partitions the pending write stream into independently
