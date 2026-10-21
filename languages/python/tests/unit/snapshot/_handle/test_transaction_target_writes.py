@@ -1,4 +1,4 @@
-"""Caller-addressed patch, replacement, and deletion through the public verbs
+"""Target patch, replacement, and deletion through the public verbs
 (scripted port).
 
 A target write names an existing object by key and states its own starting

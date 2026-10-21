@@ -1,6 +1,6 @@
 """Scalar collections follow their owner's write lifecycle under both layouts.
 
-A collection is a whole-member scalar attribute: keyed, conditional, target,
+A collection is a whole-member scalar attribute: keyed, target, target,
 and predicate-selected writes assign it whole, a replacement fills one it omits
 with the empty collection, versions advance and temporal milestones chain as
 for any other member, and an equal collection is an unchanged value. Expected
@@ -258,7 +258,7 @@ def test_a_replacement_fills_every_omitted_collection_with_the_empty_collection(
 @_STRATEGIES
 @_REPRESENTATIONS
 @_TICKETS
-def test_a_conditional_amendment_and_replacement_carry_collections(
+def test_a_target_amendment_and_replacement_carry_collections(
     profile_run: Any,
     entity: type[Any],
     representation: _Representation,

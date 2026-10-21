@@ -114,7 +114,7 @@ class Submission:
 
     ``pointer`` is the entry's own case pointer, which a refusal and a reference
     name it by. ``entity`` and ``key`` name the one object a keyed or
-    caller-addressed submission writes — the canonical Entity spelling and its
+    target submission writes — the canonical Entity spelling and its
     primary-key values by attribute name — and are ``None`` for a predicate
     write, which names rows only its predicate selects. ``refusal`` is the code
     the entry declares its verb refuses it with, and ``settles_on`` the find its
@@ -529,7 +529,7 @@ def _assert_submission_sources(
         if submission.kind != "keyed" or submission.inserts:
             raise CaseFailure(
                 f"{where} carries `on`, which only an observed keyed write takes: an insert "
-                f"opens its row and a caller-addressed or predicate write names its own."
+                f"opens its row and a target or predicate write names its own."
             )
         if not isinstance(source, str):
             continue
@@ -561,7 +561,7 @@ def _assert_golden_submissions(case: Case, submissions: list[Submission]) -> Non
 
     A golden-graded step's SQL is the independent lowering of its keyed buffer,
     graded statement by statement against the find each write settles against;
-    neither a caller-addressed nor a predicate submission, nor a refused one, has
+    neither a target nor a predicate submission, nor a refused one, has
     a golden statement that grading could align it with.
     """
     for submission in submissions:

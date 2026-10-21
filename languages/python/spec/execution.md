@@ -167,7 +167,7 @@ selected Entity. A replacement payload's key addresses nothing and is never
 written. A set-based write is one readless statement, so it takes no window, and
 over a versioned or temporal Entity it is refused at the call with an
 `InstructionRejectedError`, the `WriteInstructionError` whose `rule` is
-`set-based-write-target-unsupported`, naming the keyed and conditional verbs that
+`set-based-write-target-unsupported`, naming the keyed and target verbs that
 write such an Entity (`m-batch-write`). Every verb of the family returns an `int`, the
 affected-row count `m-batch-write` defines: the statement runs at the call,
 after the writes the transaction buffered before it, so its database errors
@@ -183,13 +183,13 @@ produced its source was authored to start, and a source read at Valid-Time
 earlier attempt published raises `WriteEvidenceError(write-evidence-unavailable)`
 at the call under either concurrency preference, an amendment naming nothing
 included (`m-unit-work` *Current-attempt source admission*); its caller states
-the revision that value carries through a conditional verb instead.
+the revision that value carries through a target verb instead.
 `amend_if`, `replace_if`, `delete_if`, and `terminate_if` address an object
 themselves and require exactly one keyword-only revision: `version` for a
 versioned Entity or `tx_start` for a temporal one. Presence is counted before
 any value is judged: none, both, a stated `None`, or a revision the Entity does
 not take is refused, and no missing revision falls back on a source. An
-unversioned Non-Temporal Entity has no revision, so every conditional verb
+unversioned Non-Temporal Entity has no revision, so every target verb
 refuses it with `WriteInstructionError`; it is written through a read of the
 writing transaction, whose shared lock the Locking fallback takes. The keyword
 names a revision, never a value to store; the canonical instruction keeps
@@ -215,7 +215,7 @@ member applies and a foreign or duplicated one is refused. A Wire `amend`
 assigns every key its change document names. Equal values are assigned either
 way, and a change naming nothing writes nothing.
 
-Each representation names a conditional write's object by one rule. A Wire
+Each representation names a target write's object by one rule. A Wire
 document names it by its key entries: `amend_if` and `replace_if` take the key
 beside changes or a whole state, and `delete_if` and `terminate_if` a key-only
 document. A Typed call names it with `key=`, unless its payload is an instance,
@@ -247,7 +247,7 @@ transaction that read the same milestone can still write it once this one
 commits, where a close would have made it conflict. Under Locking, and for rows
 the transaction opened itself, nothing is written. Either way the milestone's
 sources stay as they were, so a later write through one needs no fresh read. A
-conditional write's guard binds its `tx_start` instead, so losing that
+target write's guard binds its `tx_start` instead, so losing that
 milestone is still the caller's failed precondition; a versioned non-temporal
 target advances its version, equal values included.
 
@@ -261,8 +261,8 @@ node unpickles as plain domain data that authorizes nothing — so pickling an
 inserted instance succeeds, unlike a read's node. Inserting the same instance
 again once its earlier insertion was removed rebinds it; drafts derived before
 keep the earlier, retired authority.
-A conditional write addresses an existing object by key under its caller's own
-revision (`m-unit-work` *Caller-addressed writes*). Each returns `None`. A
+A target write addresses an existing object by key under its caller's own
+revision (`m-unit-work` *Target writes*). Each returns `None`. A
 Bitemporal one states `valid_from`, and `until` bounds it exactly as it bounds
 `insert`; a Transaction-Time-Only one takes neither. `tx_start` is the
 milestone start the caller's query returned, an aware `datetime`, never this

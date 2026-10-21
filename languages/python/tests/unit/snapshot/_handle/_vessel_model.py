@@ -1,4 +1,4 @@
-"""A versioned table-per-hierarchy family for caller-addressed writes of a
+"""A versioned table-per-hierarchy family for target writes of a
 subtype, which state the version their family's root declares."""
 
 from __future__ import annotations

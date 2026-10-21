@@ -250,7 +250,7 @@ def transaction_time_only_chain_update_from_existing_history(db: ScopedDatabase)
     db.transact(update)
 
 
-def transaction_time_only_conditional_replacement_gates_on_the_callers_milestone(
+def transaction_time_only_target_replacement_gates_on_the_callers_milestone(
     db: ScopedDatabase,
 ) -> None:
     def insert(tx: TxnContext) -> None:
@@ -266,7 +266,7 @@ def transaction_time_only_conditional_replacement_gates_on_the_callers_milestone
     db.transact(replace)
 
 
-def transaction_time_only_conditional_termination_gates_on_the_callers_milestone(
+def transaction_time_only_target_termination_gates_on_the_callers_milestone(
     db: ScopedDatabase,
 ) -> None:
     def insert(tx: TxnContext) -> None:
@@ -287,28 +287,28 @@ def versioned_update_advances_the_version_ungated_in_locking_mode(db: ScopedData
     db.transact(fn, concurrency="locking")
 
 
-def conditional_amendment_gates_on_the_callers_version(db: ScopedDatabase) -> None:
+def target_amendment_gates_on_the_callers_version(db: ScopedDatabase) -> None:
     def fn(tx: TxnContext) -> None:
         tx.amend_if(Account, Account.balance.set(Decimal("250.00")), key=2, version=1)
 
     db.transact(fn)
 
 
-def conditional_replacement_states_every_writable_member(db: ScopedDatabase) -> None:
+def target_replacement_states_every_writable_member(db: ScopedDatabase) -> None:
     def fn(tx: TxnContext) -> None:
         tx.replace_if(Account(id=3, owner="Hopper", balance=Decimal("12.00")), version=1)
 
     db.transact(fn)
 
 
-def conditional_deletion_gates_on_the_callers_version(db: ScopedDatabase) -> None:
+def target_deletion_gates_on_the_callers_version(db: ScopedDatabase) -> None:
     def fn(tx: TxnContext) -> None:
         tx.delete_if(Account, key=2, version=1)
 
     db.transact(fn)
 
 
-def locking_conditional_deletion_reads_its_row_under_the_shared_lock(db: ScopedDatabase) -> None:
+def locking_target_deletion_reads_its_row_under_the_shared_lock(db: ScopedDatabase) -> None:
     def fn(tx: TxnContext) -> None:
         tx.delete_if(Account, key=1, version=1)
 
@@ -399,7 +399,7 @@ def bitemporal_amend_until_splits_head_middle_tail(db: ScopedDatabase) -> None:
     db.transact(split)
 
 
-def bitemporal_conditional_amendment_gates_on_the_callers_milestone(db: ScopedDatabase) -> None:
+def bitemporal_target_amendment_gates_on_the_callers_milestone(db: ScopedDatabase) -> None:
     def insert(tx: TxnContext) -> None:
         tx.insert(
             Position(id=1, acct_num="A", value=Decimal("100.00")),
@@ -419,7 +419,7 @@ def bitemporal_conditional_amendment_gates_on_the_callers_milestone(db: ScopedDa
     db.transact(patch)
 
 
-def bitemporal_conditional_replacement_acquires_its_start_under_locking(db: ScopedDatabase) -> None:
+def bitemporal_target_replacement_acquires_its_start_under_locking(db: ScopedDatabase) -> None:
     def insert(tx: TxnContext) -> None:
         tx.insert(
             Position(id=1, acct_num="A", value=Decimal("100.00")),
@@ -772,15 +772,15 @@ WRITE_STORIES: Final[tuple[WriteStory, ...]] = (
         "A Transaction-Time-Only target replacement gates on its caller's milestone",
         "commit",
         "balance",
-        transaction_time_only_conditional_replacement_gates_on_the_callers_milestone,
+        transaction_time_only_target_replacement_gates_on_the_callers_milestone,
         clock=_temporal_write_002_clock,
     ),
     WriteStory(
         "m-temporal-write-069",
-        "A Transaction-Time-Only conditional termination gates on its caller's milestone",
+        "A Transaction-Time-Only target termination gates on its caller's milestone",
         "commit",
         "balance",
-        transaction_time_only_conditional_termination_gates_on_the_callers_milestone,
+        transaction_time_only_target_termination_gates_on_the_callers_milestone,
         clock=_temporal_write_002_clock,
     ),
     WriteStory(
@@ -792,31 +792,31 @@ WRITE_STORIES: Final[tuple[WriteStory, ...]] = (
     ),
     WriteStory(
         "m-opt-lock-027",
-        "A conditional amendment states its key and the version its caller last observed",
+        "A target amendment states its key and the version its caller last observed",
         "commit",
         "account",
-        conditional_amendment_gates_on_the_callers_version,
+        target_amendment_gates_on_the_callers_version,
     ),
     WriteStory(
         "m-opt-lock-028",
-        "A conditional replacement states the object's whole writable state",
+        "A target replacement states the object's whole writable state",
         "commit",
         "account",
-        conditional_replacement_states_every_writable_member,
+        target_replacement_states_every_writable_member,
     ),
     WriteStory(
         "m-opt-lock-039",
-        "A conditional deletion states its key and the version its caller last observed",
+        "A target deletion states its key and the version its caller last observed",
         "commit",
         "account",
-        conditional_deletion_gates_on_the_callers_version,
+        target_deletion_gates_on_the_callers_version,
     ),
     WriteStory(
         "m-opt-lock-040",
-        "A Locking conditional deletion reads its row under the shared lock",
+        "A Locking target deletion reads its row under the shared lock",
         "commit",
         "account",
-        locking_conditional_deletion_reads_its_row_under_the_shared_lock,
+        locking_target_deletion_reads_its_row_under_the_shared_lock,
     ),
     WriteStory(
         "m-batch-write-005",
@@ -842,10 +842,10 @@ WRITE_STORIES: Final[tuple[WriteStory, ...]] = (
     ),
     WriteStory(
         "m-temporal-write-042",
-        "A bitemporal conditional amendment states its window and its caller's milestone",
+        "A bitemporal target amendment states its window and its caller's milestone",
         "commit",
         "position",
-        bitemporal_conditional_amendment_gates_on_the_callers_milestone,
+        bitemporal_target_amendment_gates_on_the_callers_milestone,
         clock=_temporal_write_017_clock,
     ),
     WriteStory(
@@ -853,7 +853,7 @@ WRITE_STORIES: Final[tuple[WriteStory, ...]] = (
         "A Locking bitemporal target replacement reads its start under the shared lock",
         "commit",
         "position",
-        bitemporal_conditional_replacement_acquires_its_start_under_locking,
+        bitemporal_target_replacement_acquires_its_start_under_locking,
         clock=_temporal_write_002_clock,
     ),
     WriteStory(

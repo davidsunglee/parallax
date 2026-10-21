@@ -2,7 +2,7 @@
 
 ``tx.wire.editable_data`` copies a published node's key and writable members
 into fresh mutable containers by the model's selection, and a published node is
-itself a conditional replacement's whole state. These tests grade what the copy
+itself a target replacement's whole state. These tests grade what the copy
 holds and leaves out, that it is independent of the node, that it serves any
 verb, and that neither it nor a node-stated replacement reads anything or
 borrows the node's authority.
@@ -111,7 +111,7 @@ def test_editable_data_leaves_derived_variant_metadata_out() -> None:
     db_for(PAYMENT, port).transact(fn)
 
 
-def test_editable_data_serves_a_conditional_replacement_and_an_insertion() -> None:
+def test_editable_data_serves_a_target_replacement_and_an_insertion() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[_ACCOUNT_ROW]), Write(), Write()))
 
     def fn(tx: TxnContext) -> None:
@@ -157,7 +157,7 @@ def test_editable_data_takes_a_node_parallax_published(value: object) -> None:
     assert _calls(port) == []
 
 
-def test_a_published_node_states_a_conditional_replacement_whole() -> None:
+def test_a_published_node_states_a_target_replacement_whole() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[_ACCOUNT_ROW]), Write()))
 
     def fn(tx: TxnContext) -> None:

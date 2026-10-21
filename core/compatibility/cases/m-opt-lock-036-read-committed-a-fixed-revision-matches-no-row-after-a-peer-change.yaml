@@ -1,6 +1,6 @@
-# A caller-addressed update states version 1 for account 2, which a peer moves to
+# A target update states version 1 for account 2, which a peer moves to
 # version 2 after this transaction's first read. At Read Committed the gate matches no
-# row, the shortfall a caller-addressed write reports as a failed precondition.
+# row, the shortfall a target write reports as a failed precondition.
 model: models/account.yaml
 tags: [m-opt-lock, m-unit-work, isolation, concurrency, target-write, read-committed, slice-snapshot-1]
 shape: concurrencySuccess

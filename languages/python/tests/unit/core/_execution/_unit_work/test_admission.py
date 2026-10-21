@@ -1,7 +1,7 @@
 """Write admission (`m-unit-work` "Observed-State Coalescing"), observed at the
 owner's interface where the write verbs cannot say it precisely: when a
-caller-addressed write's confirmation is consulted, how a planned buffer drains into the
-live ownership, and the window rules a temporal object's caller-addressed
+target write's confirmation is consulted, how a planned buffer drains into the
+live ownership, and the window rules a temporal object's target
 writes meet that the verb matrices do not reach. What a caller sees through
 the verbs is the snapshot and API suites'."""
 
@@ -170,7 +170,7 @@ def _account_amend(account_id: int) -> PreparedKeyedWrite:
 
 
 # --------------------------------------------------------------------------- #
-# A caller-addressed write is confirmed once acceptance leaves it unproven.   #
+# A target write is confirmed once acceptance leaves it unproven.   #
 # --------------------------------------------------------------------------- #
 class _Confirmations:
     def __init__(self) -> None:
@@ -397,7 +397,7 @@ def test_a_composed_removal_reaches_the_whole_insertion_only_with_every_row(
 
 
 # --------------------------------------------------------------------------- #
-# A temporal object's caller-addressed writes meet every other write of it.   #
+# A temporal object's target writes meet every other write of it.   #
 # --------------------------------------------------------------------------- #
 def test_a_restated_caller_condition_is_kept_once_however_often_it_is_overwritten() -> None:
     admission = _admitted(addressed_write(value="1.00"))

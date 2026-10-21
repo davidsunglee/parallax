@@ -6,7 +6,7 @@ real database shows is that a delivery keeps reading under the selection it
 entered with while a publication lands between its pages, that a refusal a
 result under A delays until an accessor inside a transaction under B keeps A
 while the transaction reports B, that a result read under A licenses no source
-write in a transaction under B yet still states the revision a conditional
+write in a transaction under B yet still states the revision a target
 write validated under B is checked against — Typed and Wire alike — and that
 the committed row is what B's transaction wrote.
 """
@@ -144,7 +144,7 @@ def test_a_typed_value_read_under_a_states_the_revision_a_write_under_b_is_check
 
     def body(tx: TxnContext) -> str:
         # No read of this attempt produced the value, so it licenses no source
-        # write; the version it published is what the conditional write states.
+        # write; the version it published is what the target write states.
         with pytest.raises(WriteEvidenceError) as refused:
             tx.amend(account.edit(balance=account.balance + Decimal("1.00")))
         assert refused.value.code == "write-evidence-unavailable"

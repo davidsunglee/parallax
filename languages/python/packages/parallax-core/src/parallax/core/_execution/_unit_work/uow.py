@@ -165,7 +165,7 @@ class AttemptLifetime(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class StoredTarget:
-    """What a target acquisition found of the stored state a caller-addressed
+    """What a target acquisition found of the stored state a target
     write starts from: its version, where its family has one, or its current
     Transaction-Time start, where its family is temporal."""
 
@@ -216,7 +216,7 @@ class UnitOfWork:
     source licenses here, flushes it once more before commit, and has it
     :meth:`discard` its state when the attempt does not commit.
 
-    Every row a write reads — a caller-addressed target's starting state, a
+    Every row a write reads — a target's starting state, a
     deferred range's coverage — is read through ``acquire_rows`` and consumed
     into evidence while the read's resources are live.
     """
@@ -344,7 +344,7 @@ class UnitOfWork:
         is what keeps a write's evidence alive once the caller releases the
         source value it came from.
 
-        A caller-addressed carrier
+        A target carrier
         (:class:`~parallax.core._execution._unit_work.write_items.TargetKeyedWrite`)
         is admitted as :meth:`buffer_target` describes, its caller's revision
         confirmed under this attempt's concurrency strategy.
@@ -414,7 +414,7 @@ class UnitOfWork:
             raise
 
     def buffer_target(self, prepared: PreparedTargetWrite) -> None:
-        """Admit a caller-addressed write and buffer it — all of it, or nothing.
+        """Admit a target write and buffer it — all of it, or nothing.
 
         An amendment that assigns no member is the empty write: it is dropped
         here, having been validated, before any condition, participation, or
@@ -485,7 +485,7 @@ class UnitOfWork:
     def _confirm_temporal_target(
         self, item: TargetKeyedWrite, key: ObjectKey, expectation: ExpectedTxStart
     ) -> TargetKeyedWrite:
-        """Prove a Locking caller-addressed write of a temporal object starts
+        """Prove a Locking target write of a temporal object starts
         from the state its caller stated, or refuse it, answering the write
         with the row it read where it read one.
 

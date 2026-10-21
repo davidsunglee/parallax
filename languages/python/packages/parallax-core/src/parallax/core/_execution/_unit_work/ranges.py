@@ -449,7 +449,7 @@ class _TemporalRangeBinder:
         without it: the anchor is where the authority starts, never shifted to
         coverage that survives elsewhere.
 
-        A range a caller addressed requires the coverage at each of its
+        A target write range requires the coverage at each of its
         operations' starts to stand at the Transaction-Time start that caller
         stated, literally, and fails as that caller's precondition otherwise —
         before anything executes where the coverage shows it, and at that
@@ -496,7 +496,7 @@ class _TemporalRangeBinder:
         )
 
     def _starts(self, predecessors: Sequence[_RangePredecessor]) -> tuple[_RangePredecessor, ...]:
-        """The distinct predecessors the range's caller-addressed operations
+        """The distinct predecessors the range's target operations
         start from, in the order their conditions were stated, once the
         coverage shows each stands at its caller's Transaction-Time start; the
         first that does not fails as that caller's precondition."""
@@ -535,7 +535,7 @@ class _TemporalRangeBinder:
         range reused and those it read — at coordinates none of them holds,
         ordered by start.
 
-        A caller-addressed operation's start names one current row, so more than
+        A target operation's start names one current row, so more than
         one current row holding that start is Cardinality Corruption — an
         invariant failure that outranks the caller's precondition. Under Locking
         every known predecessor is held under the shared lock or was written by
@@ -626,7 +626,7 @@ def settle_range(
     execution and the range binds then. A write an insertion authorized
     observed nothing, so a range of such writes alone always reads its
     coverage, and requires coverage at the insertion's anchor once read. So
-    does a write a caller addressed, whose caller's condition requires the
+    does a target write, whose caller's condition requires the
     coverage at its start to stand at the Transaction-Time start it states;
     the starting row its Locking admission read whole travels with the range,
     which reuses it as coverage if it is still current at execution. A range

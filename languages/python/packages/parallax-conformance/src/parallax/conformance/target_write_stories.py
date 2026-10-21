@@ -22,7 +22,7 @@ __all__ = [
 
 @dataclass(frozen=True, slots=True)
 class ClosingReport:
-    """The reviewed accounts each conditional deletion removed or refused, and
+    """The reviewed accounts each target deletion removed or refused, and
     the accounts left standing."""
 
     closed: tuple[int, ...]

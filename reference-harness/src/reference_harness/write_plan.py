@@ -108,7 +108,7 @@ def _entry_object_keys(case: Case, entry: dict[str, Any]) -> list[tuple[str, tup
 
 
 type AcquiredStart = Callable[[dict[str, Any]], tuple[Any, Any] | None]
-"""The Valid-Time ``[start, end)`` of the row a Locking caller-addressed
+"""The Valid-Time ``[start, end)`` of the row a Locking target
 Bitemporal entry's acquisition holds — the rectangle its ``validFrom`` lies in —
 or ``None`` where the case's history does not tell."""
 
@@ -128,7 +128,7 @@ def unit_resolving_reads(
     read-your-own-writes, and an entry carrying a DB-computed write marker states
     the framework's own bookkeeping, which no public verb accepts.
 
-    A caller-addressed entry resolves no source either. Under Locking it owes
+    A target entry resolves no source either. Under Locking it owes
     one acquisition of each object it writes instead, which a second write of
     the same object reuses. A temporal one also owes the read of the coverage
     its window reaches, which its flush makes once per object — unless every
@@ -171,7 +171,7 @@ def unit_resolving_reads(
 
 
 class _TargetWindow(NamedTuple):
-    """A temporal caller-addressed entry's requested Valid-Time window — ``None``
+    """A temporal target entry's requested Valid-Time window — ``None``
     on a Transaction-Time-Only object — and what its acquisition holds of it:
     ``None`` where it acquired nothing or the history does not tell,
     ``_WHOLE`` for a Transaction-Time-Only object's one current row."""
@@ -198,7 +198,7 @@ def _target_window(
 
 def _held_whole(windows: list[_TargetWindow]) -> bool:
     """Whether the rows one object's acquisitions hold cover the window its
-    caller-addressed entries reach together, so its flush reads no coverage."""
+    target entries reach together, so its flush reads no coverage."""
     if any(window.held is None for window in windows):
         return False
     if any(window.held is _WHOLE for window in windows):
@@ -230,7 +230,7 @@ def _instant(value: Any) -> dt.datetime:
 
 
 def _acquires(case: Case, entity: Entity) -> bool:
-    """Whether a caller-addressed write of ``entity`` acquires its row: under the
+    """Whether a target write of ``entity`` acquires its row: under the
     Locking strategy, which a ``locking`` preference imposes and an unversioned
     Non-Temporal target always takes."""
     return case.concurrency_mode == "locking" or (

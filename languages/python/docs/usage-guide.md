@@ -121,7 +121,7 @@ Corpus case: `m-unit-work-056`
 @dataclass(frozen=True, slots=True)
 class ReviewedWriteReport:
     """Whether the reviewed value licensed a source write, and the balance the
-    conditional write committed."""
+    target write committed."""
 
     source_write_refused: bool
     balance: Decimal
@@ -160,24 +160,24 @@ def a_reviewed_value_is_written_under_the_version_its_review_saw(
         return ReviewedWriteReport(refused, db.find(query).result().balance)
 ```
 
-## A conditional amendment states its key and the version its caller last observed
+## A target amendment states its key and the version its caller last observed
 
 Corpus case: `m-opt-lock-027`
 
 ```python
-def conditional_amendment_gates_on_the_callers_version(db: ScopedDatabase) -> None:
+def target_amendment_gates_on_the_callers_version(db: ScopedDatabase) -> None:
     def fn(tx: TxnContext) -> None:
         tx.amend_if(Account, Account.balance.set(Decimal("250.00")), key=2, version=1)
 
     db.transact(fn)
 ```
 
-## A conditional replacement states the object's whole writable state
+## A target replacement states the object's whole writable state
 
 Corpus case: `m-opt-lock-028`
 
 ```python
-def conditional_replacement_states_every_writable_member(db: ScopedDatabase) -> None:
+def target_replacement_states_every_writable_member(db: ScopedDatabase) -> None:
     def fn(tx: TxnContext) -> None:
         tx.replace_if(Account(id=3, owner="Hopper", balance=Decimal("12.00")), version=1)
 
@@ -191,7 +191,7 @@ Corpus case: `m-opt-lock-041`
 ```python
 @dataclass(frozen=True, slots=True)
 class ClosingReport:
-    """The reviewed accounts each conditional deletion removed or refused, and
+    """The reviewed accounts each target deletion removed or refused, and
     the accounts left standing."""
 
     closed: tuple[int, ...]
@@ -352,12 +352,12 @@ def bitemporal_amend_until_splits_head_middle_tail(db: ScopedDatabase) -> None:
     db.transact(split)
 ```
 
-## A bitemporal conditional amendment states its window and its caller's milestone
+## A bitemporal target amendment states its window and its caller's milestone
 
 Corpus case: `m-temporal-write-042`
 
 ```python
-def bitemporal_conditional_amendment_gates_on_the_callers_milestone(db: ScopedDatabase) -> None:
+def bitemporal_target_amendment_gates_on_the_callers_milestone(db: ScopedDatabase) -> None:
     def insert(tx: TxnContext) -> None:
         tx.insert(
             Position(id=1, acct_num="A", value=Decimal("100.00")),

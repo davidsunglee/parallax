@@ -1,6 +1,6 @@
 # Columns half of the versioned scalar collection write proof: an amendment assigns
 # a whole collection in the same statement that advances and gates the version, and
-# a caller-addressed replacement writes every collection it omits as the empty
+# a target replacement writes every collection it omits as the empty
 # collection. Its twin authors the same writes under Relational Document Layout.
 model: models/scalar-collection-lifecycle-layout-twin-columns.yaml
 tags: [m-opt-lock, m-unit-work, m-storage-layout, m-document-codec, m-sql, write-sequence, update, json, layout-twin, columns, slice-snapshot-1, slice-managed-1]

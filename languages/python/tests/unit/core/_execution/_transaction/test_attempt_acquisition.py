@@ -300,7 +300,7 @@ def test_the_read_is_settled_however_its_consumer_leaves(
 
 
 def test_a_coverage_read_is_a_read_call_of_the_flush_reaching_its_range() -> None:
-    # An Optimistic caller-addressed write of a Transaction-Time object reads
+    # An Optimistic target write of a Transaction-Time object reads
     # nothing at its call; its range reads the object's coverage when the flush
     # reaches it, inside that flush's activity and with no Read of its own.
     recorder = RecordingLifecycleProvider()
@@ -334,7 +334,7 @@ def test_a_coverage_read_is_a_read_call_of_the_flush_reaching_its_range() -> Non
 
 
 def test_each_deferred_range_reads_its_coverage_only_once_the_write_before_it_ran() -> None:
-    # Two Optimistic caller-addressed writes are two deferred settled writes of one flush:
+    # Two Optimistic target writes are two deferred settled writes of one flush:
     # each reads its coverage at its own turn, so the second settled write's read follows
     # the first settled write's statements rather than being prepared alongside them.
     recorder = RecordingLifecycleProvider()

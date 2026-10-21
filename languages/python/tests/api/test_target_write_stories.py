@@ -1,4 +1,4 @@
-"""The fixed-revision conditional family through the shipped public surface
+"""The target write family through the shipped public surface
 (`spec/execution.md`), against a real Postgres: the usage guide's own stories,
 in which versions a read-only review saw condition later deletions, and a row
 with no revision is written through a read of the writing transaction.
@@ -12,7 +12,7 @@ from typing import Any
 from parallax.conformance import engine, provision
 from parallax.conformance.case_format import default_cases_dir, load_case
 from parallax.conformance.class_models import MODELS
-from parallax.conformance.conditional_family_stories import (
+from parallax.conformance.target_write_stories import (
     ClosingReport,
     an_unversioned_wallet_is_written_through_a_read_of_the_writing_transaction,
     reviewed_accounts_are_deleted_under_the_versions_their_review_saw,

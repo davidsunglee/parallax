@@ -1041,7 +1041,7 @@ def _build_instructions(
 def _build_target_instruction(
     entry: Mapping[str, object], model: AcceptedMetamodel
 ) -> _ResolvedWrite:
-    """A caller-addressed entry as the target instruction it states, prepared by
+    """A target entry as the target instruction it states, prepared by
     the one producer every ingress reaches. It carries its caller's revision
     and no evidence of any read."""
     instruction = instructions.deserialize(
@@ -1121,7 +1121,7 @@ class _SimulatedUnit:
     observation-free write of an unversioned row carries Read Evidence of its
     own, stamped with a participation no unit of work issued. A write
     that unit of work refuses to admit is refused as the case's composition
-    rather than leaked as the production refusal. A caller-addressed write is
+    rather than leaked as the production refusal. A target write is
     buffered as the attempt's own is, through
     :meth:`~parallax.core.unit_work.UnitOfWork.buffer_target`: under Locking it
     is confirmed against the case state's stored row.
@@ -1257,7 +1257,7 @@ def _simulated_unit(
     implementation, at ``tx_instant``. Its steps run through simulated step
     execution over ``store``, which records the statements they lower to where
     ``record_statements``; a deferred range or group reads its coverage, and a
-    Locking caller-addressed write its stored row, from ``store``. ``store``
+    Locking target write its stored row, from ``store``. ``store``
     is the caller's to stage: a transaction's rows advance as its flushes
     execute and stand or fall with the caller's
     :meth:`~SimulatedTemporalStore.transaction`. The lifetime closes however
@@ -2935,7 +2935,7 @@ def _buffer_wire_keyed(
 def _buffer_wire_target(
     tx: TxnContext, model: AcceptedMetamodel, instruction: PreparedTargetWrite
 ) -> None:
-    """Buffer ONE caller-addressed write through the public ``tx.wire`` verb
+    """Buffer ONE target write through the public ``tx.wire`` verb
     its mutation names, with the caller's own revision beside its document."""
     entity_name = instruction.target.identity.canonical
     document = ActualWireProjection(model).entity_values(instruction.target, dict(instruction.row))
@@ -3369,7 +3369,7 @@ def _submit(
             _execute_wire_predicate_write(tx, model, entry)
         elif "row" in entry:
             target = _build_target_instruction(entry, model).instruction
-            assert isinstance(target, PreparedTargetWrite)  # a `row` entry is caller-addressed
+            assert isinstance(target, PreparedTargetWrite)  # a `row` entry is a target write
             _buffer_wire_target(tx, model, target)
         else:
             on = entry.get("on")

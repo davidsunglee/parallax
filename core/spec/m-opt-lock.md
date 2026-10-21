@@ -207,7 +207,7 @@ Locking strategy that read is also what acquired the shared lock; under the
 Optimistic strategy the database gate remains the concurrency authority. A
 version a standalone read, a read-only transaction, or an earlier attempt
 observed is no such version, however authentic: its caller states it through a
-caller-addressed write instead (below). An implementation **MUST NOT**
+target write instead (below). An implementation **MUST NOT**
 accept a caller-authored or reconstructed version value as the gate or as
 the new version; the new version is always runtime-computed (`observed + 1`).
 "Caller-driven" refers to conflict *handling* only, never to the version *value*.
@@ -218,7 +218,7 @@ version, but still requires the same evidence: current lock participation under
 Locking, or observed-version evidence a read of the current attempt retained under
 Optimistic.
 
-A **caller-addressed** write (`m-unit-work` *Caller-addressed writes*) is the one
+A **target** write (`m-unit-work` *Target writes*) is the one
 exception, and it is not a version value in a row: its caller states, as an
 argument of its own, the version an earlier query returned, as a **precondition**
 on the state the write starts from. Under Optimistic the gate binds that stated
@@ -227,17 +227,17 @@ alike; under Locking the version a locked read of the row holds is compared
 with it before the write is admitted, and the write is ungated. An amendment or
 replacement advances to the framework's own new version (`stated + 1`), and
 nothing in the payload, a read's evidence, or the stored row ever stands in for
-the statement. A versioned caller-addressed write that states no version is
+the statement. A versioned target write that states no version is
 refused before any database access, as is a version stated for a temporal
 target. An unversioned Non-Temporal target has no revision to state, so every
-caller-addressed write of one is refused before any database access, whatever
+target write of one is refused before any database access, whatever
 it states: its caller writes it through a read of the writing attempt instead,
 under the effective Locking strategy that protects it.
-A temporal caller-addressed write states the Transaction-Time start of the
+A temporal target write states the Transaction-Time start of the
 milestone it starts from instead (`ifTxStart`): the starting inactivation's gate
 binds it under Optimistic, and under Locking the locked read's `in_z` is compared
 with it. Every later milestone the write's window reaches is gated on its own
-`in_z`, read inside the flush (`m-temporal-write` *Caller-addressed writes span
+`in_z`, read inside the flush (`m-temporal-write` *Target writes span
 their requested extent*).
 
 ### Empty updates issue no DML
@@ -276,8 +276,8 @@ write (`m-batch-write`) is one readless statement and observes no row, so it has
 no version to gate on or advance from: it is refused for a versioned target, as
 for a Transaction-Time one, before anything is read
 (`set-based-write-target-unsupported`, `m-batch-write`). A caller writes such a
-target through a read and keyed writes, or through a caller-addressed write
-stating the version it holds (*Caller-addressed writes*, `m-unit-work`).
+target through a read and keyed writes, or through a target write
+stating the version it holds (*Target writes*, `m-unit-work`).
 
 ### Temporal entities derive the version from Transaction Time
 
@@ -310,7 +310,7 @@ counting a matched row it left unchanged (`m-dialect` *Unchanged-row count*);
 without that count no guard is issued and the milestone is closed and chained.
 Under Locking the shared lock already proves the unchanged milestone and no
 statement is issued for it (`m-read-lock`). The guard on the milestone holding a
-caller-addressed write's start binds the caller's stated `ifTxStart`, as that
+target write's start binds the caller's stated `ifTxStart`, as that
 milestone's close would, and its zero-row shortfall is the caller's failed
 precondition (*Conflict detection*), never the retriable conflict.
 
@@ -368,7 +368,7 @@ half: its shortfall is a failed precondition (`m-write-plan` *Affected Rows
 Policy*), because re-running the transaction re-states the same version against
 the same stored row. Where a write's gate binds both a caller's stated version and
 an observation of the same state — one composed from both — the shortfall is the
-caller's. A temporal caller-addressed write's starting gate is classified the
+caller's. A temporal target write's starting gate is classified the
 same way, whether a close or a guard carries it; a later milestone's gate in the
 same write is an ordinary conflict,
 retried with the caller's stated start unchanged.

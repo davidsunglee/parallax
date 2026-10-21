@@ -1,4 +1,4 @@
-"""Caller-addressed patch, replacement, and termination of temporal objects, against
+"""Target patch, replacement, and termination of temporal objects, against
 real Postgres.
 
 A web client holds a key, the Valid-Time instant it edits from, and the
@@ -1291,7 +1291,7 @@ def test_a_rolled_back_insertion_replacement_leaves_nothing(
 
 
 # --------------------------------------------------------------------------- #
-# A historical observation can state a conditional replacement under a current #
+# A historical observation can state a target replacement under a current #
 # condition and new bounds, without being copied first.                        #
 # --------------------------------------------------------------------------- #
 @_SPAN_AXES

@@ -235,7 +235,7 @@ def test_an_original_whose_start_the_composition_destroys_is_changed() -> None:
     assert step_kinds(plan_steps(plan)) == ["PlannedTemporalGuard", "PlannedClose", "PlannedInsert"]
 
 
-def test_a_window_a_caller_addressed_keeps_a_milestone_it_leaves_unchanged() -> None:
+def test_a_window_a_target_keeps_a_milestone_it_leaves_unchanged() -> None:
     whole = retained_state(SPANS, SPAN, span_row(JAN, INFINITY, 100, "a"))
     target = target_write(
         prepare_wire_write(

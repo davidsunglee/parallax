@@ -2,7 +2,7 @@
 
 The report owns the runtime-by-case matrix and the Cost Report Envelope. Each
 reading is taken by ``write_lowering_reading.py`` in an isolated child process:
-the twenty categorical keyed-write cases, the caller-addressed target writes
+the twenty categorical keyed-write cases, the target writes
 beside them, the geometry inserts, the changed-ancestor successors, and the
 leaf-type inserts through their public verbs and the flush's actual driver
 serialization, the public Wire insert to the node it answers, and the two
@@ -147,7 +147,7 @@ MODEL_FAMILY_CASE: Final = "model.prepared.family"
 WINDOW_DESCRIPTIONS: Final[Mapping[str, str]] = {
     KEYED_WINDOW: (
         "one public Typed or Wire keyed verb over a row its transaction already read, "
-        "or one caller-addressed target write over a row its transaction never read, "
+        "or one target write over a row its transaction never read, "
         "until transact returns: preparation, buffering, the pre-commit flush's "
         "settlement and SQL lowering, production bind adaptation, psycopg's document "
         "serialization, and the commit; a target's own coverage read at flush over "
@@ -206,7 +206,7 @@ LEAF_TYPE_CASE_NAMES: Final = tuple(
 """The leaf-type inserts, read only on the supported minors the leaf-type
 manifest scopes them to."""
 TARGET_CASE_NAMES: Final = tuple(case.name for case in lowering_support.CASES if case.addressed)
-"""The caller-addressed target writes."""
+"""The target writes."""
 CROSS_OBJECT_OBJECTS: Final[Mapping[str, int]] = {
     case.name: case.objects for case in lowering_support.CROSS_OBJECT_CASES
 }

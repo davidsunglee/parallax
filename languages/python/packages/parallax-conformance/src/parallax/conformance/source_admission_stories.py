@@ -22,7 +22,7 @@ _TARGET_ID = 2
 @dataclass(frozen=True, slots=True)
 class ReviewedWriteReport:
     """Whether the reviewed value licensed a source write, and the balance the
-    conditional write committed."""
+    target write committed."""
 
     source_write_refused: bool
     balance: Decimal

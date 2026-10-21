@@ -104,7 +104,7 @@ the write admissible. The refusal is a preparation refusal
 (`m-unit-work`): nothing is read, nothing pending is flushed, and the attempt is
 not doomed. An implementation's refusal **SHOULD** name the writes that reach
 such a target: reading its objects and writing each one by key, or a
-caller-addressed write stating the revision the caller holds — and, for a
+target write stating the revision the caller holds — and, for a
 temporal target, a termination rather than a deletion.
 
 `m-batch-write-047`, `-048`, and `-049` witness the refusal for a versioned, a

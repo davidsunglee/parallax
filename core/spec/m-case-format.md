@@ -1152,7 +1152,7 @@ like a marker; the two are disambiguated by the field's declared metamodel role
 (resolved from the Entity Layout slot's contributor), not by the value's shape
 (`m-value-object`, `m-storage-layout`).
 
-A step MAY instead be a **caller-addressed** (target) write: it carries one `row`
+A step MAY instead be a **target** write: it carries one `row`
 rather than `rows`, a `mutation` of `amend` / `amendUntil` (an amendment),
 `replace` / `replaceUntil` (a complete replacement), `delete` (a deletion), or
 `terminate` / `terminateUntil` (a termination), and exactly one caller's
@@ -1213,10 +1213,10 @@ state:
 - an entry whose mutation is **not a Keyed Mutation** owes none. `cascadeDelete`
   is the only such mutation the corpus authors: no keyed verb states it, so it
   resolves no source.
-- a **caller-addressed** entry resolves no source: its caller states the object
+- a **target** entry resolves no source: its caller states the object
   and the revision. Under the Locking strategy its target Entity's Effective
   Concurrency Strategy takes, it owes instead **one acquisition per object** —
-  the locked point read that participation requires (`m-unit-work` *Caller-addressed
+  the locked point read that participation requires (`m-unit-work` *Target
   writes*) — and none under Optimistic. A temporal one also owes **one coverage
   read per object**, the read of the coverage its window reaches that its flush
   makes (`m-temporal-write`) — unless, under Locking, the rows its acquisitions
@@ -1429,7 +1429,7 @@ an observation derived from case state. Two obligations follow:
   then settles against the later find's row.
 
 The reference is legal only where every part of it is meaningful: on an observed
-keyed submission (an insert opens its row, and a caller-addressed or predicate
+keyed submission (an insert opens its row, and a target or predicate
 submission names its own) of a step that declares `uow` (evidence is
 transaction-scoped, and an ungrouped write shares a unit of work with no find),
 naming an EARLIER step of the SAME group that is a find.
@@ -1596,14 +1596,14 @@ instruction: `/scenario/<n>/write` is then a list of **one or more submissions**
 a single unit of work accumulates and **flushes together** (`m-unit-work`
 buffered, batched, ordered writes), each addressed by its own pointer
 `/scenario/<n>/write/<k>`. Each entry **references** the canonical
-write-instruction `$defs` rather than redefining them; a keyed or caller-addressed
+write-instruction `$defs` rather than redefining them; a keyed or target
 entry layers only the `at` / `validFrom` / `until` authoring surface and the
 entry's own `on` and `expectError`. In a golden-graded case every entry is a **keyed** instruction
 (`mutation` + `entity` + `rows`, the case-format analogue of
 `write-instruction.schema.json`'s `keyedWriteInstruction`) its verb accepts,
 never a source-authorized `replace` / `replaceUntil`. A state-graded case's
 buffer MAY also carry such a replacement, whose coverage depends on what its
-flush reads, a **caller-addressed** submission
+flush reads, a **target** submission
 (`row` with exactly one of `ifVersion` and `ifTxStart`, the
 `targetWriteInstruction`) and a
 **predicate** write (*State-graded scenarios*, below). A predicate write executes
@@ -1721,8 +1721,8 @@ declare are the closed vocabulary `m-unit-work` owns:
 
 - `write-evidence-already-claimed` — the write cannot join the pending writes of
   its object (`m-unit-work` *Observed-State Coalescing*);
-- `write-evidence-inserted` — a caller-addressed write of an object its unit of
-  work admitted an insertion of (`m-unit-work` *Caller-addressed writes*);
+- `write-evidence-inserted` — a target write of an object its unit of
+  work admitted an insertion of (`m-unit-work` *Target writes*);
 - `write-evidence-consumed` — a source-backed write whose source reaches no
   state its unit of work still protects, such as one whose object an earlier
   flush of that unit of work deleted (`m-unit-work` *Observation ownership and
@@ -1737,7 +1737,7 @@ committed group's Transaction Instant, or a row such a group opened, current or
 closed by a later one, and every starting row survives so. No two current rows of
 one key overlap in Valid Time. An already-claimed refusal meets an earlier write of
 its object still pending in its group — no find of the group runs between them —
-and an inserted-object refusal is a caller-addressed write of an object its group
+and an inserted-object refusal is a target write of an object its group
 inserted earlier. A rolled-back group's instant stands on no row, and what only it
 names stands as it started. A flush failure names an object the failing flush
 writes, through a submission still pending when that flush began and its

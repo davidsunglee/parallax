@@ -208,7 +208,7 @@ class InsertionKeyedWrite:
 
 @dataclass(frozen=True, slots=True)
 class TargetKeyedWrite:
-    """A keyed write of an existing object a caller addressed, carrying the
+    """A target write of one existing object, carrying the
     starting condition the caller stated rather than a read's evidence.
 
     ``scope`` is the claim scope that condition names — the exact version a
@@ -310,14 +310,14 @@ class TemporalContribution:
     ``retained_observation`` is the evidence an observed write settles
     against, and ``source_evidence`` the Read Evidence of every source whose
     write it is, by identity, which keeps their demand alive while the write is
-    pending or planned and which only binding reads, for their pins. A write a
-    caller addressed has neither, and ``condition`` is the Transaction-Time
+    pending or planned and which only binding reads, for their pins. A
+    target write has neither, and ``condition`` is the Transaction-Time
     start its caller requires of the coverage at its window's start. A write
     an admitted insertion authorized has none of them: its condition is the
     coverage at its window's start, the insertion's own anchor, which execution
     requires. Values the write assigned live in the composed transform, where a
     later write may overwrite them; the condition stays required whatever
-    happens to them. ``retained`` is the starting row a caller-addressed
+    happens to them. ``retained`` is the starting row a target
     write's Locking admission read whole: data its range may reuse, not part
     of what the write is.
     """
@@ -359,8 +359,8 @@ class CoalescedTemporalWrite:
 
 type TemporalKeyedWrite = ObservedKeyedWrite | InsertionKeyedWrite | TargetKeyedWrite
 """One keyed write of a temporal object that composes with that object's other
-pending writes: an observed one, one an admitted insertion authorized, or one a
-caller addressed."""
+pending writes: an observed one, one an admitted insertion authorized, or a
+target write."""
 
 
 def temporal_contribution(item: TemporalKeyedWrite) -> TemporalContribution:

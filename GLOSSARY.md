@@ -26,7 +26,7 @@ contract owners; this index does not add requirements.
 | Row Acquisition | A write's read of the existing rows it needs, described by the unit of work and executed by the runtime | [Unit of work](core/spec/m-unit-work.md) |
 | Retained Starting Row | The row a Locking target write's acquisition read whole, kept as pending data its range reuses while no earlier settled write changed it | [Unit of work](core/spec/m-unit-work.md) |
 | Observed / Insertion-Authoring Write | A write authorized by genuine read provenance versus one authorized by an admitted insertion's own source | [Unit of work](core/spec/m-unit-work.md) |
-| Target Write | A caller-addressed mutation conditioned by the revision its caller states rather than by any source | [Unit of work](core/spec/m-unit-work.md) |
+| Target Write | A write addressing one existing logical object by primary key under the starting revision its caller states, independently of a source value | [Unit of work](core/spec/m-unit-work.md) |
 | Settled Write | One caller write after settlement: the completion facts it publishes and the Planned Steps it executes | [Unit of work](core/spec/m-unit-work.md) |
 | Write Group | Settled writes of a Write Plan that execute as one sequence of Planned Steps and complete together, before any later group executes | [Unit of work](core/spec/m-unit-work.md) |
 | Mutation Phase | A region's inserts, its updates, or its deletes in flush order; no Write Group spans two | [Unit of work](core/spec/m-unit-work.md) |

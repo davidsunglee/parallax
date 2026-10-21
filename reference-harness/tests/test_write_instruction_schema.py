@@ -3,7 +3,7 @@
 `write-instruction.schema.json` is the write-side analogue of
 `object-query.schema.json`: the canonical, axis-explicit vocabulary a unit of work
 buffers. These tests pin the three instruction shapes (keyed, predicate, and
-caller-addressed), the axis-explicit Valid-Time bounds, the absence of a
+target), the axis-explicit Valid-Time bounds, the absence of a
 Transaction-Time-instant field, and the verb / bound conditionals.
 """
 
@@ -196,7 +196,7 @@ def test_a_predicate_write_states_no_milestone_verb_and_no_window() -> None:
         assert not _valid({**delete, bound: "2024-01-01T00:00:00+00:00"})
 
 
-# --- caller-addressed (target) instructions ------------------------------------
+# --- target instructions ------------------------------------
 
 
 def test_target_writes_carry_one_row_and_exactly_one_callers_revision() -> None:

@@ -1,4 +1,4 @@
-"""A temporal Position's stored rectangles, observations, and caller-addressed
+"""A temporal Position's stored rectangles, observations, and target
 and observed writes, shared by the admission and range-binding suites."""
 
 from __future__ import annotations

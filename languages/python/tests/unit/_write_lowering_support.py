@@ -26,7 +26,7 @@ authors against it are outside it. The unchanged cases author no member at all,
 which is the amendment that changes nothing: a member restated at its stored value
 is a literal assignment and writes like any other.
 
-The caller-addressed target cases revise a row their transaction never read:
+The target cases revise a row their transaction never read:
 a Wire amendment (``tx.wire.amend_if``) or a Typed or Wire replacement
 (``tx.replace_if``, ``tx.wire.replace_if``) states the key, the
 Transaction-Time start its temporal caller last observed, and a Bitemporal

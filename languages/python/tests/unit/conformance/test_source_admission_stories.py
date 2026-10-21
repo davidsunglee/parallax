@@ -18,7 +18,7 @@ from tests._support.db_port import BeginCall, Read, ScriptedAdapter, Transact, W
 _ROW = {"id": 2, "owner": "Linus", "balance": Decimal("250.00"), "version": 1}
 
 
-def test_the_documented_story_refuses_the_source_write_and_gates_the_conditional_one() -> None:
+def test_the_documented_story_refuses_the_source_write_and_gates_the_target_one() -> None:
     port = ScriptedAdapter(
         Transact(Read(rows=[_ROW])),
         Transact(Write()),

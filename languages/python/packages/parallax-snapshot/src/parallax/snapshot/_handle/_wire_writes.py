@@ -65,7 +65,7 @@ type WireChanges = Mapping[str, object]
 """A Wire write's authored assignments: declared member names to accepted wire
 values. Version, temporal-axis, computed, read-only, and relationship members
 are refused rather than assigned. A primary-key entry is addressing data, never
-an assignment: a conditional write's names the object it writes, a source
+an assignment: a target write's names the object it writes, a source
 write's must name the object its source already addresses, and a predicate
 replacement's addresses nothing, since its selection does, and is never
 written. Required wherever a

@@ -11,7 +11,7 @@ the caller authored, and which window it stated. A
 the assignments or replaced state, and any pending write ahead of it. A
 :class:`TargetWriteScenario` names the addressed input, the revision and window
 keywords, and any pending write ahead of it. Neither reads a source in the
-writing attempt: a predicate or conditional write consults none.
+writing attempt: a predicate or target write consults none.
 
 Two readings of what a call produced. :func:`answer` is the one a fixed
 expectation is stated against: the refusal's class, code, verb-phase message, and
@@ -86,30 +86,30 @@ from tests.unit._where_position_model import (
 )
 
 __all__ = [
-    "ACCOUNT_CONDITIONAL",
     "ACCOUNT_SELECTION",
     "ACCOUNT_TARGET",
-    "BALANCE_CONDITIONAL",
+    "ACCOUNT_TARGET_WRITE",
     "BALANCE_SELECTION",
     "BALANCE_TARGET",
+    "BALANCE_TARGET_WRITE",
     "BLANK_CONTACT_TARGET",
     "CARD_PAYMENT_SELECTION",
     "CONCURRENCIES",
     "CONTACT_TARGET",
     "DOCUMENT_TARGETS",
     "OUTSIDE_SOURCES",
-    "PERSON_CONDITIONAL",
     "PERSON_SELECTION",
     "PERSON_TARGET",
-    "POSITION_CONDITIONAL",
+    "PERSON_TARGET_WRITE",
     "POSITION_SELECTION",
     "POSITION_TARGET",
+    "POSITION_TARGET_WRITE",
     "REPRESENTATIONS",
     "TARGETS",
     "TRAVELER_SELECTION",
     "TX_PIN",
-    "UNDECLARED_CONDITIONAL",
     "UNDECLARED_SELECTION",
+    "UNDECLARED_TARGET_WRITE",
     "UNTIL",
     "VALID_FROM",
     "VERBS",
@@ -119,7 +119,6 @@ __all__ = [
     "Change",
     "Completed",
     "Concurrency",
-    "ConditionalTarget",
     "Gate",
     "KeyedWriteScenario",
     "Outcome",
@@ -138,6 +137,7 @@ __all__ = [
     "Start",
     "Target",
     "TargetVerb",
+    "TargetWriteFixture",
     "TargetWriteScenario",
     "Until",
     "Verb",
@@ -908,7 +908,7 @@ a document. ``unaddressable`` names neither an Entity Class nor a spelling.
 
 type Pending = Literal["none", "unrelated", "addressed"]
 """What is buffered, in the scenario's own representation, ahead of the
-conditional write: nothing, an insert of an unrelated object, or an insert of
+target write: nothing, an insert of an unrelated object, or an insert of
 the very object the write addresses."""
 
 _STALE_VERSION: Final = 3
@@ -916,8 +916,8 @@ _STALE_TX_START: Final = dt.datetime(2023, 12, 1, tzinfo=dt.UTC)
 
 
 @dataclass(frozen=True, slots=True)
-class ConditionalTarget:
-    """One conditional-write target, addressable from both representations.
+class TargetWriteFixture:
+    """One target write fixture, addressable from both representations.
 
     ``entity_class`` spells the Typed address and ``entity`` the Wire one, of
     the object keyed ``1``. ``row`` is what a read of that object answers — the
@@ -947,7 +947,7 @@ class ConditionalTarget:
     valid_from: dt.datetime | None = None
 
 
-ACCOUNT_CONDITIONAL: Final = ConditionalTarget(
+ACCOUNT_TARGET_WRITE: Final = TargetWriteFixture(
     name="account",
     profile="non_temporal",
     gate="version",
@@ -965,7 +965,7 @@ ACCOUNT_CONDITIONAL: Final = ConditionalTarget(
     payload=ACCOUNT_TARGET.payload,
 )
 
-PERSON_CONDITIONAL: Final = ConditionalTarget(
+PERSON_TARGET_WRITE: Final = TargetWriteFixture(
     name="person",
     profile="non_temporal",
     gate="none",
@@ -983,7 +983,7 @@ PERSON_CONDITIONAL: Final = ConditionalTarget(
     payload=PERSON_TARGET.payload,
 )
 
-BALANCE_CONDITIONAL: Final = ConditionalTarget(
+BALANCE_TARGET_WRITE: Final = TargetWriteFixture(
     name="balance",
     profile="transaction_time",
     gate="axis",
@@ -1001,7 +1001,7 @@ BALANCE_CONDITIONAL: Final = ConditionalTarget(
     payload=BALANCE_TARGET.payload,
 )
 
-POSITION_CONDITIONAL: Final = ConditionalTarget(
+POSITION_TARGET_WRITE: Final = TargetWriteFixture(
     name="position",
     profile="bitemporal",
     gate="axis",
@@ -1023,7 +1023,7 @@ POSITION_CONDITIONAL: Final = ConditionalTarget(
 # An Entity the connected model does not declare, spelled the same way through
 # either representation: the Account class and its canonical name against a model
 # of Person alone.
-UNDECLARED_CONDITIONAL: Final = ConditionalTarget(
+UNDECLARED_TARGET_WRITE: Final = TargetWriteFixture(
     name="undeclared",
     profile="non_temporal",
     gate="version",
@@ -1044,16 +1044,16 @@ UNDECLARED_CONDITIONAL: Final = ConditionalTarget(
 
 @dataclass(frozen=True, slots=True)
 class TargetWriteScenario:
-    """One caller-addressed conditional write, stated without naming a
+    """One target write, stated without naming a
     representation.
 
-    It carries no source, pin, provenance, or insertion authority: a conditional
+    It carries no source, pin, provenance, or insertion authority: a target
     write consults none, so the only read scripted for it is the one its
     target's revision kind and Concurrency Preference make, and a ``published``
     value's standalone read outside the writing transaction.
     """
 
-    target: ConditionalTarget
+    target: TargetWriteFixture
     verb: TargetVerb
     revision: Revision = "applicable"
     valid_from: Start = "omitted"
@@ -1112,7 +1112,7 @@ def reachable(scenario: WriteScenario, representation: Representation) -> bool:
     target's whole state; an ``unbound`` selection spelled as that document is
     Typed alone, since its unfinished path has no document spelling.
 
-    A conditional shape is reachable where its representation spells it: a
+    A target shape is reachable where its representation spells it: a
     mapping key is Typed alone; the Wire-only documents, a published node handed
     a verb other than a replacement or beside data, and a destructive or
     replacing write naming an undeclared member are Wire alone; and a Typed
@@ -1840,7 +1840,7 @@ def _stated_revision(scenario: TargetWriteScenario) -> dict[str, Any]:
             return {applicable: stale}
 
 
-def _undeclared_assignment(target: ConditionalTarget) -> AttributeAssignment[Any]:
+def _undeclared_assignment(target: TargetWriteFixture) -> AttributeAssignment[Any]:
     """An assignment of a member ``target`` does not declare, as a caller could
     construct one without ``Attr.set``."""
     return AttributeAssignment(AttributeRef(target.entity, "nickname"), "x")

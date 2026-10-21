@@ -149,10 +149,10 @@ A write the insertion itself authorized after its insert flushed observed no
 row: the object's current row is read inside the flush that writes it, and is
 revised or removed as above (`m-unit-work` *Insertion authority*).
 
-### A caller-addressed write
+### A target write
 
-A caller-addressed amendment, replacement, or termination (`m-unit-work`
-*Caller-addressed writes*) observed no row either: it states the `in_z` of the
+A target amendment, replacement, or termination (`m-unit-work`
+*Target writes*) observed no row either: it states the `in_z` of the
 current row its caller last observed as `ifTxStart`, and takes no Valid-Time
 bound. The current row is read inside the flush that writes it. An amendment or
 replacement closes and chains it as an `amend` does — an amendment's chained
@@ -308,8 +308,8 @@ coordinated*):
   current rectangle exists, and the write continues to the coverage beyond it.
   A replacement opens its complete state over every part of its extent no
   current rectangle covers — a gap, or the coverage after a scheduled
-  termination — once, after every inactivation, exactly as a caller-addressed
-  replacement does (*Caller-addressed writes span their requested extent*).
+  termination — once, after every inactivation, exactly as a target
+  replacement does (*Target writes span their requested extent*).
   Its authority is its source's: a source whose evidence or insertion
   authority fails licenses no opening, so a replacement is never an upsert;
 - a rectangle outside the extent is untouched; adjacent pieces the write opens
@@ -356,10 +356,10 @@ with its complete state; pieces of identical stored state among them open as one
 row (*Merging produced successors*). The opening's own window is coverage, so a part of it an
 earlier composed write destroyed is not reopened.
 
-## Caller-addressed writes span their requested extent
+## Target writes span their requested extent
 
-A caller-addressed amendment, replacement, or termination (`m-unit-work`
-*Caller-addressed writes*) states its own `validFrom`, any instant inside a
+A target amendment, replacement, or termination (`m-unit-work`
+*Target writes*) states its own `validFrom`, any instant inside a
 current rectangle, and its requested extent is `[validFrom, until)`, through
 infinity when unbounded. It requires a current rectangle containing `validFrom`
 whose `in_z` is the caller's stated `ifTxStart`. That point condition describes
@@ -369,7 +369,7 @@ including any changed since the caller's query, and each is inactivated under
 its own `in_z`. A caller who reviewed January's state and states its start
 therefore still amends, replaces, or ends a February rectangle another writer
 changed after that review; protecting the whole reviewed window is a separate
-capability no caller-addressed write offers.
+capability no target write offers.
 
 | Mutation | Inside its requested extent |
 |---|---|
@@ -398,7 +398,7 @@ has changed it and reads only the rectangles it does not cover, under the same
 lock (`m-unit-work` *Retained starting rows*), so no inactivation is gated
 (`m-read-lock`).
 
-A caller-addressed write composes with observed writes of one window and one
+A target write composes with observed writes of one window and one
 starting state (`m-unit-work` *Observed-State Coalescing*): a replacement's
 extent survives an assignment composed after it and ends at a destruction,
 which opens no gap only to destroy it.
@@ -462,8 +462,8 @@ A predicate-selected write (`m-batch-write`) is one readless statement and
 observes no milestone, so it has none to close or chain from: it is refused for a
 Transaction-Time-Only or Bitemporal target before anything is read
 (`set-based-write-target-unsupported`, `m-batch-write`). A caller writes such a
-target through a read and observed writes, or through a caller-addressed write
-stating the `tx_start` it holds (*Caller-addressed writes span their requested
+target through a read and observed writes, or through a target write
+stating the `tx_start` it holds (*Target writes span their requested
 extent*).
 
 ## Rectangles the attempt opened
@@ -496,7 +496,7 @@ Optimistic, and every resulting row keeps `in_z = txInstant`:
 | **terminate** at `V = s` | delete the rectangle |
 
 An amendment every assigned value of which the rectangle already holds over the
-part it reaches — observed, insertion-authored, or caller-addressed — writes
+part it reaches — observed, insertion-authored, or target — writes
 nothing at all: the rectangle is unchanged and is neither split nor revised.
 Ownership is never inferred from `in_z = txInstant`.
 
@@ -591,7 +591,7 @@ than the one it already holds there — compared by `m-document-codec`'s
 effective-change classification over the assigned members alone, an amendment's
 assignments or a replacement's complete stated writable state, never over a
 source's earlier value or an intermediate edit. Authority takes no part in the
-judgment: an observed, an insertion-authored, and a caller-addressed write alike
+judgment: an observed, an insertion-authored, and a target write alike
 keep an unchanged milestone rather than closing it and chaining an equal
 successor, wherever its unchanged state is proven without changing it:
 
@@ -604,7 +604,7 @@ successor, wherever its unchanged state is proven without changing it:
   **Planned Temporal Guard**: a write that matches the milestone only at its
   observed address and Transaction-Time start, changes no value, and holds the
   row's write lock until the transaction ends. The guard on the milestone
-  holding a caller-addressed write's start binds that caller's stated
+  holding a target write's start binds that caller's stated
   `ifTxStart`, and its shortfall is the caller's failed precondition; every
   other guard binds the milestone's own observed start, and its shortfall is the
   milestone's ordinary conflict. Matching is the proof, so a database whose

@@ -26,9 +26,9 @@ read strategy to a compiled read, and the dialect returns an object find with it
 shared-row-lock form appended (Postgres `for share of t0`; MariaDB `lock in share
 mode`). `m-unit-work` contains no dialect-specific SQL shaping.
 
-A **caller-addressed** write under the effective Locking strategy that holds no
+A **target** write under the effective Locking strategy that holds no
 pending or live read of the state it names acquires one (`m-unit-work`
-*Caller-addressed writes*): a point read of the one row its key names — the
+*Target writes*): a point read of the one row its key names — the
 current row of a temporal object, and on a Bitemporal one the rectangle
 containing the write's `validFrom` — taking the same shared row lock, which
 licenses its ungated write exactly as a find's lock licenses an observed one. It
@@ -43,7 +43,7 @@ A write under Locking that leaves a locked row exactly as it was
 when the row was read, or read for the write inside its flush, holds until the
 transaction ends, so the row is still what was read and no optimistic guard is
 added. The lock protects only the rows read under it; the starting-row lock a
-caller-addressed write acquires never stands in for the rows its window reaches,
+target write acquires never stands in for the rows its window reaches,
 which its flush reads under the lock before keeping any of them.
 
 ### What one temporal observation locks

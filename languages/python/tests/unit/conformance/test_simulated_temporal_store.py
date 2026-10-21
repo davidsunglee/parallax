@@ -857,7 +857,7 @@ def test_an_uncommitted_transaction_forgets_the_out_of_band_statements_it_ran(
 
 
 # --------------------------------------------------------------------------- #
-# A caller-addressed write's target read answers what the case state holds.   #
+# A target write's target read answers what the case state holds.   #
 # --------------------------------------------------------------------------- #
 ACCOUNT = models.load_models()["account"]
 _ACCOUNT_ENTITY = ACCOUNT.entity(EntityIdentity("parallax.compatibility", "Account"))

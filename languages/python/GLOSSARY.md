@@ -19,6 +19,6 @@ Python-specific spelling and public semantics live in the
 | Edit | A copy-based write input derived from an entity value | [Execution](spec/execution.md) |
 | Insertion source | The inserted instance, its later edits, or the node a Wire insert answered | [Execution](spec/execution.md) |
 | Source write | A mutation of the object a published or inserted value addresses, under that source's authority | [Execution](spec/execution.md) |
-| Conditional write | A caller-addressed mutation conditioned by an explicitly stated revision rather than a source's authority | [Execution](spec/execution.md) |
+| Target write | The core [target write](../../GLOSSARY.md), spelled by the `*_if` verbs | [Execution](spec/execution.md) |
 
 Private implementation names belong in their defining code, not this glossary.
