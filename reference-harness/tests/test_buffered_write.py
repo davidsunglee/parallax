@@ -6,7 +6,7 @@ together. It spans a single keyed write, a mixed multi-object flush (insert /
 update / delete of DIFFERENT objects), and the two-keyed same-object coalescing
 pair alike — same-object folding at flush is the RUNTIME coalescing rule, not a
 structural constraint, so no cross-entry same-entity / same-primary-key equality is
-imposed. A state-graded scenario's buffer may also carry caller-addressed
+imposed. A state-graded scenario's buffer may also carry target
 submissions and readless predicate writes; a golden-graded one stays keyed.
 
 The generality is over objects and mutations, not over PROVENANCE: an entry
@@ -473,7 +473,7 @@ def test_a_target_submission_stating_another_condition_is_refused(
 ) -> None:
     errors: list[str] = []
     _validate_buffered_write([entry], entity_defs, _OP, "probe", errors)
-    assert any("caller-addressed write" in error for error in errors)
+    assert any("target write" in error for error in errors)
 
 
 # --- a row naming a non-member is REJECTED (member honesty, harness) -------------

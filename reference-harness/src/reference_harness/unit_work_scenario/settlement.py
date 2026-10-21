@@ -25,7 +25,7 @@ rows is. The proofs read the document and those rows alone:
   Transaction-Time-Only key has at most one;
 - **refusals** — each declared refusal has the structure its code needs: an
   already-claimed submission meets an earlier pending write of its object in its
-  group, an inserted-object refusal is a caller-addressed write of an object
+  group, an inserted-object refusal is a target write of an object
   the group inserted earlier, and a consumed-evidence refusal is a keyed write
   of an object an earlier write of its group wrote and a find or a flushing
   predicate submission of the group has since flushed;
@@ -413,7 +413,7 @@ def _assert_refusal(scenario: CompiledScenario, submission: Submission) -> None:
         if submission.kind != "target" or not inserted:
             raise CaseFailure(
                 f"{case.path.name}: {submission.pointer} is refused as a write of an inserted "
-                f"object, which only a caller-addressed write of an object its group inserted "
+                f"object, which only a target write of an object its group inserted "
                 f"earlier is."
             )
     elif submission.refusal == "write-evidence-consumed":

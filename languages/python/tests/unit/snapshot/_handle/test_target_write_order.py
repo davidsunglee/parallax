@@ -1,4 +1,4 @@
-"""The conditional-write order, stated once and asserted of both representations.
+"""The target-write order, stated once and asserted of both representations.
 
 Every ``_if`` verb, Typed or Wire, enters one ingress: lifecycle re-entry, then
 the stated start, then the representation's own capture of what it addresses,
@@ -18,7 +18,7 @@ or a Wire document no Typed call can state — is that representation's row alon
 
 Detailed revision rules, Wire document-shape diagnostics, Locking acquisition
 reuse, temporal coverage and retry, and lifecycle re-entry stay with their
-owners: core preparation's suite, the conditional and target-write suites, and
+owners: core preparation's suite, the target-write ingress and behavior suites, and
 the execution-lifecycle re-entry suite.
 """
 
@@ -46,12 +46,12 @@ from tests._support.db_port import (
     WriteCall,
 )
 from tests.unit.snapshot._handle._write_order_drivers import (
-    ACCOUNT_CONDITIONAL,
-    BALANCE_CONDITIONAL,
-    PERSON_CONDITIONAL,
-    POSITION_CONDITIONAL,
+    ACCOUNT_TARGET_WRITE,
+    BALANCE_TARGET_WRITE,
+    PERSON_TARGET_WRITE,
+    POSITION_TARGET_WRITE,
     REPRESENTATIONS,
-    UNDECLARED_CONDITIONAL,
+    UNDECLARED_TARGET_WRITE,
     Answer,
     Phase,
     Representation,
@@ -136,10 +136,10 @@ def _assert_row(row: _Row) -> None:
 
 
 _ACCOUNT, _BALANCE, _PERSON, _POSITION = (
-    ACCOUNT_CONDITIONAL,
-    BALANCE_CONDITIONAL,
-    PERSON_CONDITIONAL,
-    POSITION_CONDITIONAL,
+    ACCOUNT_TARGET_WRITE,
+    BALANCE_TARGET_WRITE,
+    PERSON_TARGET_WRITE,
+    POSITION_TARGET_WRITE,
 )
 
 _START_REFUSAL: Final = "valid_from=None states no start; omit valid_from rather than stating None"
@@ -237,7 +237,7 @@ def _undeclared_member(entity: str) -> _Expected:
 def _key_alone(entity: str, verb: str, member: str) -> _Expected:
     return _refused(
         WriteInstructionError,
-        f"{entity}: a caller-addressed '{verb}' names its object by its primary key alone, and "
+        f"{entity}: a target '{verb}' names its object by its primary key alone, and "
         f"this row also states ['{member}']",
     )
 
@@ -318,7 +318,7 @@ _ADMITTED: Final[tuple[_Row, ...]] = (
 
 
 @pytest.mark.parametrize("row", _ADMITTED, ids=str)
-def test_an_admitted_conditional_write_is_buffered_as_its_target_routes_it(row: _Row) -> None:
+def test_an_admitted_target_write_is_buffered_as_its_target_routes_it(row: _Row) -> None:
     _assert_row(row)
 
 
@@ -350,7 +350,7 @@ _PENDING_ADMITTED: Final[tuple[_Row, ...]] = (
 
 
 @pytest.mark.parametrize("row", _PENDING_ADMITTED, ids=str)
-def test_a_conditional_write_leaves_earlier_pending_work_to_the_commit(row: _Row) -> None:
+def test_a_target_write_leaves_earlier_pending_work_to_the_commit(row: _Row) -> None:
     _assert_row(row)
 
 
@@ -484,7 +484,7 @@ _STATED_NONE_START: Final[tuple[_Row, ...]] = (
         _both(_refused(WriteInstructionError, _START_REFUSAL)),
     ),
     _Row(
-        TargetWriteScenario(UNDECLARED_CONDITIONAL, "replace", valid_from="none"),
+        TargetWriteScenario(UNDECLARED_TARGET_WRITE, "replace", valid_from="none"),
         _both(_refused(WriteInstructionError, _START_REFUSAL)),
     ),
     _Row(
@@ -528,14 +528,14 @@ _REPRESENTATION_SHAPE: Final[tuple[_Row, ...]] = (
         ),
     ),
     _Row(
-        TargetWriteScenario(UNDECLARED_CONDITIONAL, "amend", until="stated"),
+        TargetWriteScenario(UNDECLARED_TARGET_WRITE, "amend", until="stated"),
         {
             "typed": _refused(TypeError, _UNDECLARED_MODEL_TYPED),
             "wire": _refused(WriteInstructionError, _UNDECLARED_MODEL_WIRE),
         },
     ),
     _Row(
-        TargetWriteScenario(UNDECLARED_CONDITIONAL, "replace", until="stated"),
+        TargetWriteScenario(UNDECLARED_TARGET_WRITE, "replace", until="stated"),
         {
             "typed": _refused(TypeError, _UNDECLARED_MODEL_TYPED),
             "wire": _refused(WriteInstructionError, _UNDECLARED_MODEL_WIRE),
@@ -990,5 +990,5 @@ _PENDING_REFUSED: Final[tuple[_Row, ...]] = (
 
 
 @pytest.mark.parametrize("row", _PENDING_REFUSED, ids=str)
-def test_a_refused_conditional_write_flushes_no_pending_write(row: _Row) -> None:
+def test_a_refused_target_write_flushes_no_pending_write(row: _Row) -> None:
     _assert_row(row)

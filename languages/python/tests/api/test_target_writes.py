@@ -1,4 +1,4 @@
-"""Caller-addressed patch, replacement, and deletion of Non-Temporal rows, against
+"""Target patch, replacement, and deletion of Non-Temporal rows, against
 real Postgres.
 
 A web client holds a key and the version an earlier query returned. Each case
@@ -280,19 +280,19 @@ def test_a_revision_that_no_longer_holds_fails_without_retry_and_changes_nothing
 
 
 @_WALLET_AXES
-def test_an_unversioned_row_takes_no_conditional_write_and_is_written_through_a_read(
+def test_an_unversioned_row_takes_no_target_write_and_is_written_through_a_read(
     profile_run: Any, entity: type[Any]
 ) -> None:
     db = _seeded(profile_run, entity)
 
     def fn(tx: TxnContext) -> None:
-        for conditional in (
+        for target_write in (
             lambda: tx.wire.amend_if(_name(entity), {"id": 1, "label": "patched"}, version=1),
             lambda: tx.wire.replace_if(_name(entity), {"id": 1, "label": "replaced"}, version=1),
             lambda: tx.wire.delete_if(_name(entity), {"id": 1}, version=1),
         ):
             with pytest.raises(WriteInstructionError, match="has none to state"):
-                conditional()
+                target_write()
         tx.amend(_read(tx, entity).edit(label="patched"))
 
     db.transact(fn)

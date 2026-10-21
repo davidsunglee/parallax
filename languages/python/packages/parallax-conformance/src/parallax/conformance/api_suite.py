@@ -7,7 +7,6 @@ from typing import Final
 
 from parallax.conformance import (
     case_format,
-    conditional_family_stories,
     conflict_replay_stories,
     database_options_stories,
     edit_runner,
@@ -16,6 +15,7 @@ from parallax.conformance import (
     read_only_stories,
     snapshot_recipes,
     source_admission_stories,
+    target_write_stories,
 )
 from parallax.conformance.claim import SNAPSHOT_CLAIM, Claim
 from parallax.conformance.graph_stories import GRAPH_STORIES, graph_story_snippet
@@ -394,26 +394,26 @@ EXAMPLES: Final[list[Example]] = [
         "A value read before the transaction is written under the version it showed",
         source_admission_stories.source_admission_snippet(),
     ),
-    # The fixed-revision conditional family (m-unit-work *Caller-addressed
-    # writes*): the case states a stale and a missing deletion failing their
+    # The target write family (m-unit-work *Target writes*): the case states a
+    # stale and a missing deletion failing their
     # precondition, and the run lane grades it. What this story adds is the
     # caller's workflow — versions a read-only review saw, stated through
     # `delete_if` in later transactions, one of them outdated by another writer.
-    # Executed against real Postgres by `tests/api/test_conditional_family.py`.
+    # Executed against real Postgres by `tests/api/test_target_write_stories.py`.
     Example(
         "m-opt-lock-041",
         "Accounts reviewed earlier are deleted under the versions the review saw",
-        conditional_family_stories.reviewed_deletion_snippet(),
+        target_write_stories.reviewed_deletion_snippet(),
     ),
     # The unversioned Locking fallback (m-unit-work *Strategy selection*): an
-    # Entity with no revision takes no caller-addressed write, so it is written
+    # Entity with no revision takes no target write, so it is written
     # through a read of the writing transaction, whose shared lock the case's
     # golden statements render. Executed against real Postgres by
-    # `tests/api/test_conditional_family.py`.
+    # `tests/api/test_target_write_stories.py`.
     Example(
         "m-opt-lock-023",
         "A row with no revision is written through a read of the writing transaction",
-        conditional_family_stories.unversioned_write_snippet(),
+        target_write_stories.unversioned_write_snippet(),
     ),
     # Recoverable-conflict replay (m-auto-retry): the case grades the gate race
     # production's own loop replays, each attempt's statements and the final

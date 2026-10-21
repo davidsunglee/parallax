@@ -68,7 +68,7 @@ class TxnContext:
     :meth:`read_rows` is the values lane over this same transaction — a
     first-party row-form read, not a third public result format. There is no
     write peer of it: every write, first-party callers included, is stated
-    through the keyed, predicate, and caller-addressed verbs, Typed or Wire — an
+    through the keyed, predicate, and target verbs, Typed or Wire — an
     existing row addressed by a value this store published, from a read or from
     the insert that opened the row, a fresh row by the payload an insert opens it
     with, a set by a selection plus its assignments, and an existing object by
@@ -80,7 +80,7 @@ class TxnContext:
     def __init__(self, attempt: TxnAttempt, codec: EntityRowCodec) -> None:
         # The attempt is this transaction's every read and write: its reads
         # participate in its unit of work on its connection, its keyed,
-        # predicate, and caller-addressed verbs admit into that unit of work,
+        # predicate, and target verbs admit into that unit of work,
         # and its own installed lifecycle is what makes "the originating Handle
         # or Transaction" one re-entry refusal rather than two. The codec is the
         # adopted selection's, which every Typed verb derives its rows through.

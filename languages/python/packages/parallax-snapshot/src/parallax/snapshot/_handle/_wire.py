@@ -69,7 +69,7 @@ class WireDatabaseView:
     transaction, as ``rtx.find`` is: on that transaction's attempt and
     connection, taking no participation lock. Either way it retains no Read
     Evidence on the values it publishes, which stay stored values a
-    caller-addressed write can state a revision from.
+    target write can state a revision from.
     """
 
     __slots__ = ("_reads",)

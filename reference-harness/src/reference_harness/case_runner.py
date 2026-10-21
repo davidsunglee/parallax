@@ -902,7 +902,7 @@ def _assert_write_step_count(case: Case, dialect: str) -> None:
     resolving read per entry writing against existing state
     (:func:`write_plan.unit_resolving_reads`) — the read a keyed write verb's source
     requires, which is work the framework genuinely does. A Locking
-    caller-addressed Bitemporal entry's acquisition holds the rectangle the
+    target Bitemporal entry's acquisition holds the rectangle the
     case's own history leaves current at its ``validFrom``
     (:func:`_acquired_start`), which decides whether its flush reads any
     coverage beyond it.
@@ -1723,7 +1723,7 @@ def _assert_temporal_input(
         # close is: a gated one appends the observed milestone's `in_z` LAST, and the
         # gate's bind is reconstructed from the case's own history rather than
         # authored on the step (:func:`_observed_milestone_start`) — or, on a
-        # caller-addressed step, is the start its caller states (:func:`_gate_start`).
+        # target step, is the start its caller states (:func:`_gate_start`).
         expected = [at, *close_address_binds(case, entity, pk, None)]
         gated = has_temporal_gate(statement, transaction_time["start_column"], dialect)
         if gated or step.get("target"):
@@ -2135,7 +2135,7 @@ def _gate_start(case: Case, step: dict[str, Any], observed: Any) -> Any:
     """The Transaction-Time start *step*'s starting close gates on.
 
     An observed write's is the ``observed`` start its history leaves. A
-    caller-addressed step's is the ``ifTxStart`` its caller states, which it
+    target step's is the ``ifTxStart`` its caller states, which it
     MUST state, and which its history MUST leave as that starting milestone's
     ``in_z`` (`m-case-format`) — a golden graded against the history alone would
     pass whatever token the step carried.
@@ -2145,12 +2145,12 @@ def _gate_start(case: Case, step: dict[str, Any], observed: Any) -> Any:
     stated = step.get("ifTxStart")
     if stated is None:
         raise CaseFailure(
-            f"{case.path.name}: a temporal caller-addressed step MUST state `ifTxStart`, "
+            f"{case.path.name}: a temporal target step MUST state `ifTxStart`, "
             f"the Transaction-Time start its starting close gates on."
         )
     if not write_value_equal(stated, observed):
         raise CaseFailure(
-            f"{case.path.name}: a caller-addressed step states `ifTxStart` {stated!r}, but "
+            f"{case.path.name}: a target step states `ifTxStart` {stated!r}, but "
             f"the case's own history leaves its starting milestone at {observed!r}."
         )
     return stated
@@ -2176,7 +2176,7 @@ def _observed_rectangle(case: Case, entity: Entity, step: dict[str, Any], pk: An
 
 
 def _acquired_start(case: Case, step: dict[str, Any]) -> tuple[Any, Any] | None:
-    """The Valid-Time ``[start, end)`` of the rectangle a caller-addressed
+    """The Valid-Time ``[start, end)`` of the rectangle a target
     Bitemporal *step*'s acquisition reads — the one its history leaves current
     holding its ``validFrom`` — or None where the replay leaves no such one."""
     entity = case.model.entity(step["entity"])

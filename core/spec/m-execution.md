@@ -168,7 +168,7 @@ never by an option, a join, or a read:
   is an **access-mode mismatch**, refused before its callback runs;
 - immutable results remain readable after commit, while a live stream cannot
   outlive its attempt; no result licenses a source mutation in a later writable
-  attempt, though the revisions it carries can state a caller-addressed write's
+  attempt, though the revisions it carries can state a target write's
   condition (`m-unit-work` *Current-attempt source admission*).
 
 Read-only prohibits modeled mutations. It promises nothing about external
@@ -211,7 +211,7 @@ stopped early, never started, or raised. The request kind decides the bracket:
 
 | Request | Bracket |
 |---|---|
-| Target of a Locking caller-addressed write | its own Read under the attempt, with no force-flush |
+| Target of a Locking target write | its own Read under the attempt, with no force-flush |
 | Coverage of a deferred range | a read Database Call inside the current Flush, opening no Read; one per bounded statement its uncovered parts need |
 | Completion of retained rows | none: no statement, Database Call, or activity, before the range's coverage is read |
 

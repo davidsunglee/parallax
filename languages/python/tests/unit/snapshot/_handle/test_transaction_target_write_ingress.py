@@ -4,10 +4,10 @@ The method names a write's authority: ``amend`` and ``replace`` take a source,
 while ``amend_if``, ``replace_if``, ``delete_if``, and ``terminate_if`` take
 exactly one revision their caller states. These tests grade the revision rules
 in their fixed order, the refusal of a target with no revision, the Typed
-conditional verbs' class-and-key addressing and assignment judgment, the Typed
+target verbs' class-and-key addressing and assignment judgment, the Typed
 source amendment's two exclusive authoring forms, the stated-``None`` refusals
 of every start, and the retired spellings — each against what the call puts on
-the wire, which for a refusal is nothing. Where each conditional verb's
+the wire, which for a refusal is nothing. Where each target verb's
 refusals fall relative to one another is ``test_target_write_order.py``'s.
 """
 
@@ -114,7 +114,7 @@ _VERBS = [
 ]
 
 
-def _conditional(verb: str, entity: type[Entity], **stated: Any) -> Callable[[TxnContext], None]:
+def _target(verb: str, entity: type[Entity], **stated: Any) -> Callable[[TxnContext], None]:
     """``verb`` over the object id 1 of ``entity``, an Account or a Wallet, which
     share the members each verb writes."""
     name = entity.__name__
@@ -139,10 +139,10 @@ def _conditional(verb: str, entity: type[Entity], **stated: Any) -> Callable[[Tx
 
 @pytest.mark.parametrize(("condition", "match"), _CONDITIONS)
 @pytest.mark.parametrize("verb", _VERBS)
-def test_a_conditional_write_states_exactly_the_one_revision_its_entity_takes(
+def test_a_target_write_states_exactly_the_one_revision_its_entity_takes(
     verb: str, condition: dict[str, object], match: str
 ) -> None:
-    _refused(_conditional(verb, mm.Account, **condition), match)
+    _refused(_target(verb, mm.Account, **condition), match)
 
 
 @pytest.mark.parametrize(
@@ -151,14 +151,14 @@ def test_a_conditional_write_states_exactly_the_one_revision_its_entity_takes(
     ids=["none", "version", "tx-start", "both"],
 )
 @pytest.mark.parametrize("verb", _VERBS)
-def test_an_unversioned_target_takes_no_conditional_write(
+def test_an_unversioned_target_takes_no_target_write(
     verb: str, condition: dict[str, object]
 ) -> None:
     port = ScriptedAdapter(Transact())
 
     def fn(tx: TxnContext) -> None:
         with pytest.raises(WriteInstructionError, match="has none to state"):
-            _conditional(verb, Wallet, **condition)(tx)
+            _target(verb, Wallet, **condition)(tx)
 
     db_for(MODELS["wallet"], port).transact(fn)
     assert _calls(port) == []
@@ -177,12 +177,12 @@ def test_an_unversioned_target_takes_no_conditional_write(
         WireTransactionView.terminate_if,
     ],
 )
-def test_no_conditional_verb_takes_an_unversioned_assertion(method: Callable[..., None]) -> None:
+def test_no_target_verb_takes_an_unversioned_assertion(method: Callable[..., None]) -> None:
     assert "unversioned" not in inspect.signature(method).parameters
 
 
 # --------------------------------------------------------------------------- #
-# A conditional deletion names its object by its primary key alone.           #
+# A target deletion names its object by its primary key alone.           #
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize(
     ("document", "match"),
@@ -194,9 +194,7 @@ def test_no_conditional_verb_takes_an_unversioned_assertion(method: Callable[...
     ],
     ids=["member", "no-key", "undeclared", "ill-typed-key"],
 )
-def test_a_conditional_deletion_states_its_key_alone(
-    document: dict[str, object], match: str
-) -> None:
+def test_a_target_deletion_states_its_key_alone(document: dict[str, object], match: str) -> None:
     _refused(
         lambda tx: tx.wire.delete_if("Account", document, version=3),
         match,
@@ -205,10 +203,10 @@ def test_a_conditional_deletion_states_its_key_alone(
 
 
 # --------------------------------------------------------------------------- #
-# Typed conditional amendment: a concrete class, its scalar key, and           #
+# Typed target amendment: a concrete class, its scalar key, and           #
 # assignments judged against that class's ancestry before they are flattened. #
 # --------------------------------------------------------------------------- #
-def test_a_typed_conditional_amendment_writes_its_assignments_under_its_version() -> None:
+def test_a_typed_target_amendment_writes_its_assignments_under_its_version() -> None:
     port = ScriptedAdapter(Transact(Write()))
     account_db(port).transact(
         lambda tx: tx.amend_if(
@@ -218,7 +216,7 @@ def test_a_typed_conditional_amendment_writes_its_assignments_under_its_version(
     assert _calls(port) == [WriteCall(_GATED_BALANCE, (Decimal("175.00"), 4, 1, 3))]
 
 
-def test_an_equal_conditional_assignment_is_still_written() -> None:
+def test_an_equal_target_assignment_is_still_written() -> None:
     port = ScriptedAdapter(Transact(Write()))
     account_db(port).transact(
         lambda tx: tx.amend_if(
@@ -240,20 +238,20 @@ _TYPED_KEYED: dict[str, Callable[[TxnContext, object], None]] = {
 @pytest.mark.parametrize(
     "key", [(1,), {"id": 1}, [1], {1}], ids=["tuple", "mapping", "list", "set"]
 )
-def test_a_conditional_key_is_one_scalar_value(verb: str, key: object) -> None:
+def test_a_target_key_is_one_scalar_value(verb: str, key: object) -> None:
     _refused(lambda tx: _TYPED_KEYED[verb](tx, key), "one scalar primary-key value")
 
 
 @pytest.mark.parametrize("verb", list(_TYPED_KEYED))
 @pytest.mark.parametrize("key", ["one", True, 1.5], ids=["string", "boolean", "fraction"])
-def test_a_conditional_key_is_judged_against_the_key_type(verb: str, key: object) -> None:
+def test_a_target_key_is_judged_against_the_key_type(verb: str, key: object) -> None:
     _refused(lambda tx: _TYPED_KEYED[verb](tx, key), "declared type", WriteRejectedError)
 
 
 @pytest.mark.parametrize(
     "entity", [int, "Account", Wallet], ids=["foreign-class", "spelling", "another-models"]
 )
-def test_a_typed_conditional_amendment_takes_an_entity_class_of_its_model(entity: object) -> None:
+def test_a_typed_target_amendment_takes_an_entity_class_of_its_model(entity: object) -> None:
     _refused(
         lambda tx: tx.amend_if(cast("Any", entity), mm.Account.owner.set("Bo"), key=1, version=3),
         "Entity Class",
@@ -297,7 +295,7 @@ def test_an_inherited_assignment_applies_to_a_concrete_target() -> None:
     assert write.binds == ("Skua", 8, 4, 4, "ferry", 3)
 
 
-def test_a_conditional_deletion_of_a_concrete_target_is_guarded_by_its_tag() -> None:
+def test_a_target_deletion_of_a_concrete_target_is_guarded_by_its_tag() -> None:
     port = ScriptedAdapter(Transact(Write()))
     db_for(VESSEL, port).transact(lambda tx: tx.delete_if(Ferry, key=4, version=3))
     assert _calls(port) == [
@@ -334,7 +332,7 @@ class Locker(Entity, table="locker", namespace="parallax.conditional"):
     version: Attr[int] = attr(type=Int32, optimistic_locking=True)
 
 
-def test_a_conditional_key_addresses_the_key_attribute_whatever_its_name() -> None:
+def test_a_target_key_addresses_the_key_attribute_whatever_its_name() -> None:
     port = ScriptedAdapter(Transact(Write(), Write()))
 
     def fn(tx: TxnContext) -> None:

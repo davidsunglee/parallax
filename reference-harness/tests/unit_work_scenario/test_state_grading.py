@@ -252,7 +252,7 @@ def test_an_empty_predicate_submission_leaves_the_writes_before_it_pending(
     _grade(case)
 
 
-def test_an_inserted_object_refusal_is_a_caller_addressed_write_of_an_insert(
+def test_an_inserted_object_refusal_is_a_target_write_of_an_insert(
     damaged_case: CaseLoader,
 ) -> None:
     case = damaged_case(_REFUSALS)
@@ -294,7 +294,7 @@ def test_a_flush_failure_names_an_object_its_flush_writes(damaged_case: CaseLoad
 
 
 def test_a_flush_failure_names_a_shortfall_its_group_can_reach(damaged_case: CaseLoader) -> None:
-    # Only caller-addressed writes of span 4 stand in the group, and their gate's
+    # Only target writes of span 4 stand in the group, and their gate's
     # shortfall is a failed precondition, never an observed write's conflict.
     case = damaged_case(_ROLLBACK)
     case.then["units"]["stale"]["flushFailure"]["shortfall"] = "optimisticConflict"

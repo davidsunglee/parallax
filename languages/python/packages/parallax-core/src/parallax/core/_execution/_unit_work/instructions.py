@@ -103,14 +103,14 @@ KeyedMutation = Literal[
 # history to close and no Valid Time to bound, so no milestone verb or bounded
 # form.
 PredicateMutation = Literal["amend", "delete", "replace"]
-# The caller-addressed (target) mutation surface: an amendment, a complete
+# The target write mutation surface: an amendment, a complete
 # replacement, a deletion, or a termination of one existing object, each with
 # its bounded form where one exists.
 TargetMutation = Literal[
     "amend", "amendUntil", "replace", "replaceUntil", "delete", "terminate", "terminateUntil"
 ]
 
-# Which of the keyed and caller-addressed verb surfaces a mutation arrived
+# Which of the keyed and target verb surfaces a mutation arrived
 # through. Carried only so a refusal can name methods the caller can act on: one
 # mutation token is spelled by two methods, and answering a `terminate_if` call
 # with "use `delete`" names the source-authorized verb, which takes no revision.
@@ -310,7 +310,7 @@ class PredicateWriteInstruction:
 
 @dataclass(frozen=True, slots=True)
 class TargetWriteInstruction:
-    """An authored caller-addressed write of one existing ``entity`` object.
+    """An authored target write of one existing ``entity`` object.
 
     ``row`` names the object by its primary key beside the members the write
     states: the assignments of an ``amend``, the complete writable state of a
@@ -403,7 +403,7 @@ type TargetExpectation = ExpectedVersion | ExpectedTxStart
 
 @dataclass(frozen=True, slots=True, init=False)
 class PreparedTargetWrite:
-    """A caller-addressed write over an exact resolved target, its owned managed
+    """A target write over an exact resolved target, its owned managed
     row, its judged Valid-Time window — ``None`` for a target without Valid
     Time — and its validated starting expectation.
 
@@ -513,12 +513,12 @@ def deserialize(doc: object) -> WriteInstruction:
     """Parse a canonical write-instruction document into a frozen instruction.
 
     Discriminates the three shapes by their required carrier (``rows`` -> keyed,
-    ``target`` -> predicate, ``row`` -> caller-addressed, unless it rides
+    ``target`` -> predicate, ``row`` -> target, unless it rides
     beside a predicate replacement's ``target``), validates the closed
-    shape, the mutation enum, the keyed and caller-addressed Valid-Time-bound
+    shape, the mutation enum, the keyed and target Valid-Time-bound
     pairing rules (a bounded ``*Until`` carries both bounds, every other form
     carries no ``until``; a predicate write carries no bound at all), that a
-    caller-addressed write states exactly one revision, and — for a keyed write
+    target write states exactly one revision, and — for a keyed write
     — that no row carries a forbidden observation control key or a smuggled
     Transaction-Time instant.
 
@@ -540,7 +540,7 @@ def deserialize(doc: object) -> WriteInstruction:
     if len(carriers) > 1:
         raise WriteInstructionError(
             f"write instruction is ambiguous: it carries {carriers}, and `rows` (keyed), "
-            "`target` (predicate), and `row` (caller-addressed) each name a different shape"
+            "`target` (predicate), and `row` (target write) each name a different shape"
         )
     if carriers == ["rows"]:
         return _keyed(node)
@@ -549,8 +549,7 @@ def deserialize(doc: object) -> WriteInstruction:
     if carriers == ["row"]:
         return _target_write(node)
     raise WriteInstructionError(
-        "write instruction must carry `rows` (keyed), `target` (predicate), or `row` "
-        "(caller-addressed)"
+        "write instruction must carry `rows` (keyed), `target` (predicate), or `row` (target write)"
     )
 
 
@@ -763,7 +762,7 @@ def _target_write(node: Mapping[str, object]) -> TargetWriteInstruction:
     )
     if instruction.if_version is None and instruction.if_tx_start is None:
         raise WriteInstructionError(
-            "target write: states no revision, and a caller-addressed write states exactly one "
+            "target write: states no revision, and a target write states exactly one "
             "of `ifVersion` and `ifTxStart`"
         )
     return instruction
@@ -944,7 +943,7 @@ def prepare_typed_write(
     ``authored_members`` names the members a caller assigned explicitly rather
     than through an edit chain that already judged them, so each is judged as
     an assignment. ``members`` produces explicit assignments a keyed or
-    caller-addressed write adds to its one row: it is asked only once the
+    target write adds to its one row: it is asked only once the
     target, the window, and any condition admit the write, so a fault in what
     it judges is heard after theirs, and each member it answers is judged as
     an assignment."""
@@ -1002,7 +1001,7 @@ def prepare_wire_write(
     ``authored_members`` names the row members a Wire caller explicitly wrote:
     an insert's payload keys, judged as insert authoring, or an update's change
     keys, judged as assignments. A neutral instruction omits it, and its row is
-    judged as row content alone. A caller-addressed write judges every member
+    judged as row content alone. A target write judges every member
     its row states beside the key as an assignment either way. ``members``
     follows :func:`prepare_typed_write`'s rule.
     """
@@ -1282,7 +1281,7 @@ def _prepare_target_write(
     authored_members: Set[str] | None,
     members: Callable[[], Mapping[str, object]] | None,
 ) -> PreparedTargetWrite:
-    """Judge a caller-addressed write: its verb and window, then its revision
+    """Judge a target write: its verb and window, then its revision
     arguments, then its payload.
 
     The verb's applicability follows the keyed rule
@@ -1435,7 +1434,7 @@ def _prepare_target_payload(
         stated = sorted(name for name in row if name != key)
         if stated:
             raise WriteInstructionError(
-                f"{entity.identity.name}: a caller-addressed {instruction.mutation!r} names its "
+                f"{entity.identity.name}: a target {instruction.mutation!r} names its "
                 f"object by its primary key alone, and this row also states {stated}"
             )
         identity = _transform_row(

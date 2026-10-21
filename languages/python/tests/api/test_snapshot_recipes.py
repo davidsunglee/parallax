@@ -483,7 +483,7 @@ _BALANCE_ROW: MappingRow = {
 
 class _CannedBalancePort(ConnectsAsItself):
     """A fake `m-db-port` answering the recipe's Wire read and then its
-    conditional write's own read of the stated milestone with one standing
+    target write's own read of the stated milestone with one standing
     Balance row, and every write with one affected row."""
 
     dialect: Dialect = POSTGRES

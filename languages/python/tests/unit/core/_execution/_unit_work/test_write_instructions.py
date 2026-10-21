@@ -2,7 +2,7 @@
 
 Proves the canonical write-instruction serde round-trip contract
 (``serialize(deserialize(x)) == x``) over every instruction shape — keyed,
-predicate-selected, and caller-addressed, non-temporal / audit-only / bitemporal
+predicate-selected, and target, non-temporal / audit-only / bitemporal
 bounded and unbounded
 — cross-checked against ``core/schemas/write-instruction.schema.json`` itself, plus
 the structural rejection branches (the axis-explicit Valid-Time-bound pairing, the
@@ -108,7 +108,7 @@ _I2 = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 
 # Every canonical instruction shape, authored in the axis-explicit spelling with no
 # Transaction-Time instant (Clock context) — the coalescing witnesses' target buffered
-# form and the full keyed, predicate, and caller-addressed mutation surface.
+# form and the full keyed, predicate, and target mutation surface.
 _INSTRUCTIONS: list[tuple[str, dict[str, Any]]] = [
     (
         "keyed-insert-nontemporal",

@@ -585,7 +585,7 @@ OPTIMISTIC_CONFLICT: Final[OptimisticConflict] = OptimisticConflict()
 @dataclass(frozen=True, slots=True)
 class FailedPrecondition:
     """A gate binding a caller's stated starting revision no longer held: the
-    state the caller addressed is gone, or a later revision replaced it."""
+    target write's starting state is gone, or a later revision replaced it."""
 
 
 FAILED_PRECONDITION: Final[FailedPrecondition] = FailedPrecondition()

@@ -611,7 +611,7 @@ re-read: a failed flush ends the unit of work, so there is nothing left to read.
 A **state-graded** scenario (`m-case-format` *State-graded scenarios*) is run
 through the implementation's public verbs alone. The adapter hands each submission
 to the verb its form names — a keyed write through the value its `on` names, a
-caller-addressed write with its caller's revision, a readless predicate write
+target write with its caller's revision, a readless predicate write
 through its predicate verb — catches exactly the refusal a submission declares,
 abandons a group whose fate is a plain rollback once its last step has run, and
 otherwise runs each group to commit, recording a flush failure where the flush

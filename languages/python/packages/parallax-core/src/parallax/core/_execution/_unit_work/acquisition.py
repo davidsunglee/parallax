@@ -27,7 +27,7 @@ __all__ = [
 
 @dataclass(frozen=True, slots=True)
 class TargetReadRequest:
-    """The stored row a caller-addressed write of ``key`` starts from, read under
+    """The stored row a target write of ``key`` starts from, read under
     the shared row lock: the row current at Valid-Time ``valid_from`` of a
     Bitemporal object, which is ``None`` for any other.
 

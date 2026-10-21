@@ -201,11 +201,11 @@ class WriteAdmission:
       Bitemporal opening composes them over its coverage instead
       (:class:`~parallax.core._execution._unit_work.write_items.PendingOpening`);
     * writes claiming one non-temporal scope coalesce by the claim algebra
-      (:func:`~parallax.core._execution._unit_work.claims.admits`), a write a
-      caller addressed keeping its condition through every overwrite and
+      (:func:`~parallax.core._execution._unit_work.claims.admits`), a
+      target write keeping its condition through every overwrite and
       destruction;
     * a temporal object's writes against its existing coverage — observed ones,
-      those an admitted insertion authorized, and those a caller addressed
+      those an admitted insertion authorized, and target writes
       alike — compose into one
       :class:`~parallax.core._execution._unit_work.write_items.CoalescedTemporalWrite`,
       whose transform keeps only surviving values while every write's
@@ -299,7 +299,7 @@ class WriteAdmission:
         """Accept ``item`` into the buffer under the authority it
         carries, composing it there — all of it, or nothing.
 
-        A write a caller addressed is refused where this attempt inserted its
+        A target write is refused where this attempt inserted its
         object (``write-evidence-inserted``) or it cannot join the object's
         pending writes; only then, unless a pending write of the same state
         already proves its starting state, ``confirm_target`` answers it as
@@ -505,7 +505,7 @@ class WriteAdmission:
             proven = self._states_window(key, instruction.valid_time_window)
         else:
             intent = keyed_intent(instruction)
-            assert intent is not None  # a caller-addressed write is no insert
+            assert intent is not None  # a target write is no insert
             held = self._objects().get(key)
             verdict = admits(self._held_intent(scope), intent)
             admitted = (held is None or held == scope) and verdict != "incompatible"
@@ -813,8 +813,8 @@ class WriteAdmission:
 
         Observed writes and those an insertion authorized compose with each
         other by the window algebra
-        (:func:`~parallax.core._execution._unit_work.claims.admits_composed`). A write a
-        caller addressed meets each other write of the object on its own terms:
+        (:func:`~parallax.core._execution._unit_work.claims.admits_composed`). A
+        target write meets each other write of the object on its own terms:
 
         * over exactly its window, the two start from one state — the caller's
           stated Transaction-Time start and the observed rectangle's agreeing —
@@ -1121,7 +1121,7 @@ def _destroyed(held: _PendingTemporal) -> Iterator[TimeInterval]:
 
 
 def _targeted(held: _PendingTemporal) -> bool:
-    """Whether a caller-addressed write is among ``held``."""
+    """Whether a target write is among ``held``."""
     if isinstance(held, CoalescedTemporalWrite):
         return any(contribution.condition is not None for contribution in held.contributions)
     return isinstance(held, TargetKeyedWrite)

@@ -426,44 +426,44 @@ def _valid_keyed_entry_entity(
 
 
 def _target_refusal(entity: Entity, instruction: dict[str, Any]) -> str | None:
-    """Why a caller-addressed submission's verb, row, revision or window does
-    not fit its target, or ``None`` (`m-unit-work` *Caller-addressed writes*).
+    """Why a target submission's verb, row, revision or window does
+    not fit its target, or ``None`` (`m-unit-work` *Target writes*).
 
     The model decides all four, which the case schema cannot see: a temporal
-    target is deleted by no caller-addressed write and a Non-Temporal one is
+    target is deleted by no target write and a Non-Temporal one is
     terminated by none; the row is judged as
     :func:`~reference_harness.write_validate.target_row_violation` judges it,
     and a destructive write's names the key alone; a temporal target states
     ``ifTxStart`` and a versioned Non-Temporal one ``ifVersion``, while an
-    unversioned one has no revision and takes no caller-addressed write; a
+    unversioned one has no revision and takes no target write; a
     Bitemporal target states ``validFrom``, and a Transaction-Time-Only or
     Non-Temporal one no window.
     """
     mutation = instruction.get("mutation")
     axes = {axis.dimension for axis in temporal_axes(entity.runtime_facts)}
     if mutation == ("delete" if axes else "terminate"):
-        return f"a caller-addressed write of {entity.name} takes no `{mutation}`"
+        return f"a target write of {entity.name} takes no `{mutation}`"
     replaces = mutation in ("replace", "replaceUntil")
     violation = target_row_violation(entity, instruction["row"], replaces=replaces)
     if violation is not None:
-        return f"a caller-addressed write of {entity.name} — {violation}"
+        return f"a target write of {entity.name} — {violation}"
     keys = {attribute["name"] for attribute in entity.attributes if attribute.get("primaryKey")}
     if mutation in ("delete", "terminate", "terminateUntil") and set(instruction["row"]) - keys:
-        return f"a caller-addressed write of {entity.name} by `{mutation}` names its key alone"
+        return f"a target write of {entity.name} by `{mutation}` names its key alone"
     versioned = any(attribute.get("optimisticLocking") for attribute in entity.attributes)
     revision = "ifTxStart" if axes else "ifVersion" if versioned else None
     if revision is None:
-        return f"{entity.name} has no revision to state, so it takes no caller-addressed write"
+        return f"{entity.name} has no revision to state, so it takes no target write"
     stated = [name for name in ("ifVersion", "ifTxStart") if name in instruction]
     if stated != [revision]:
         return (
-            f"a caller-addressed write of {entity.name} states {stated or 'no revision'}, "
+            f"a target write of {entity.name} states {stated or 'no revision'}, "
             f"but its target takes `{revision}`"
         )
     bitemporal = "valid-time" in axes
     if bitemporal != ("validFrom" in instruction) or (not bitemporal and "until" in instruction):
         takes = "a window from `validFrom`" if bitemporal else "no window"
-        return f"a caller-addressed write of {entity.name} takes {takes}"
+        return f"a target write of {entity.name} takes {takes}"
     return None
 
 

@@ -119,7 +119,7 @@ class RetainedObservation:
 
 
 class RetainedTargetState:
-    """The stored row a Locking caller-addressed temporal write's acquisition
+    """The stored row a Locking temporal target write's acquisition
     read whole, kept for the range that write settles as pending data rather
     than evidence: its Attributes judged, its Value Object occurrences still
     pending, its raw Structured Column beside them.

@@ -1493,7 +1493,7 @@ def _account_target(version: int) -> PreparedTargetWrite:
         ),
     ],
 )
-def test_a_caller_addressed_carrier_is_admitted_as_its_verb_admits_it(
+def test_a_target_carrier_is_admitted_as_its_verb_admits_it(
     meta: Metamodel,
     target: Callable[[], PreparedTargetWrite],
     rows: tuple[PredecessorRow, ...],
@@ -1526,7 +1526,7 @@ def test_a_caller_addressed_carrier_is_admitted_as_its_verb_admits_it(
 
 
 @pytest.mark.parametrize("route", ["carrier", "verb"])
-def test_a_locking_caller_addressed_write_is_confirmed_once_on_every_route(route: str) -> None:
+def test_a_locking_target_write_is_confirmed_once_on_every_route(route: str) -> None:
     stored = PredecessorRow(
         members={"id": 1, "owner": "Ada", "balance": Decimal("5.00"), "version": 2}
     )

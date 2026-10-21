@@ -173,8 +173,8 @@ def assignment_violation(
 
 
 def target_row_violation(entity: Entity, row: dict[str, Any], *, replaces: bool) -> str | None:
-    """Why *entity* refuses a caller-addressed write's *row*, or ``None``
-    (`m-unit-work` *Caller-addressed writes*).
+    """Why *entity* refuses a target write's *row*, or ``None``
+    (`m-unit-work` *Target writes*).
 
     The row names its object by every primary-key member, each stating a value
     that member admits, never null. Every other member it states is judged as
@@ -187,7 +187,7 @@ def target_row_violation(entity: Entity, row: dict[str, Any], *, replaces: bool)
     for attribute in keys:
         path = f"{entity.name}.{attribute['name']}"
         if attribute["name"] not in row:
-            return f"{path}: a caller-addressed write states every primary-key member"
+            return f"{path}: a target write states every primary-key member"
         judge = partial(_validate_attribute, row, attribute, path=path, marker_exempt=False)
         detail = _violation_detail(judge)
         if detail is not None:

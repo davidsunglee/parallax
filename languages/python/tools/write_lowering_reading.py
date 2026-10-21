@@ -8,7 +8,7 @@ Four windows are read. A keyed-write case reads its row inside one
 transaction and runs from the public keyed verb until ``transact`` returns:
 preparation, buffering, and the pre-commit flush's settlement, SQL lowering,
 production bind adaptation, and psycopg's own document serialization. A
-caller-addressed target reads nothing before its verb, so its own coverage read
+target reads nothing before its verb, so its own coverage read
 at flush falls inside that window. A public insert case runs one
 ``tx.wire.insert`` of a nested, polymorphic payload inside an open transaction
 to the frozen node it answers, and stops before the commit that flushes the

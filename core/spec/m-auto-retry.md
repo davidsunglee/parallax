@@ -110,7 +110,7 @@ concurrency module. An implementation **MUST NOT** require the composition root
 to inject the conflict type into the retry classifier, and **MUST NOT** take a
 `m-auto-retry --> m-opt-lock` edge to name it.
 
-The Write Precondition Error a caller-addressed write raises (`m-unit-work`) is
+The Write Precondition Error a target write raises (`m-unit-work`) is
 never in the retriable set, and neither is a doom it caused: a retry re-states
 the same caller revision against the same stored row.
 

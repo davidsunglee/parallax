@@ -898,7 +898,7 @@ class Case:
 
     @cached_property
     def write_sequence(self) -> list[dict[str, Any]]:
-        """The ``writeSequence`` steps, each caller-addressed step stated as the
+        """The ``writeSequence`` steps, each target step stated as the
         keyed update its golden grades — built once, so a step keeps its
         identity for every check that locates it among the others.
 
@@ -1513,7 +1513,7 @@ def discover_cases(compatibility_root: Path) -> list[Case]:
 # therefore graded once rather than once per dialect.
 _DIALECT_FREE_SHAPES = frozenset({"rejected", "evolution"})
 
-# The keyed mutation each caller-addressed writeSequence mutation is graded as:
+# The keyed mutation each target writeSequence mutation is graded as:
 # a replacement's golden states its completed row, so it grades as the update of
 # its bounded or unbounded form, and every other verb as itself.
 _TARGET_STEP_MUTATIONS: Final[Mapping[str, str]] = {

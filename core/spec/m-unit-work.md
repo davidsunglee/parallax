@@ -163,19 +163,19 @@ how `m-predicate` hosts `predicate.schema.json`; `m-case-format` and
   readless statement at its call and so admitted only over an unversioned,
   non-temporal target, which has no history to close and no Valid Time to bound
   (`m-batch-write`);
-- a **caller-addressed** (target) instruction — an amendment (`amend` /
+- a **target** instruction — an amendment (`amend` /
   `amendUntil`), a complete replacement (`replace` / `replaceUntil`), a
   deletion (`delete`), or a termination (`terminate` / `terminateUntil`) of the
   one existing `entity` object its `row` names by primary key, carrying exactly
   one caller's starting revision as `ifVersion` or `ifTxStart`
-  (*Caller-addressed writes*).
+  (*Target writes*).
 
 The embedded predicate is a canonical `m-predicate` node, legal vocabulary here
 because `m-unit-work` already depends on `m-predicate` (the dependency-graph edge);
 the write instruction is the sole place the write side reaches the algebra.
 
 **How a write instruction spells the Entity it addresses.** A keyed or
-caller-addressed instruction's `entity`, a predicate-selected instruction's
+target instruction's `entity`, a predicate-selected instruction's
 `target.entity`, and the Entity prefix
 of every `assignments[].attr` all carry an Entity spelling, and all three obey
 `m-metamodel`'s identifier constraint and parse rule: an Entity's local name begins
@@ -245,7 +245,7 @@ is never a Planned Step, and a Planned Step is never serialized back into one.
 
 ### Serialized write elaboration
 
-A serialized keyed, caller-addressed, or predicate-selected row, or a
+A serialized keyed, target, or predicate-selected row, or a
 predicate-selected assignment, is structural input, not a planned value. After resolving the exact target Entity and member identity, the
 write frontend calls `m-wire.decodeWire(member.neutralType, literal)` exactly
 once for each non-null authored leaf. Null is handled by the member's nullability
@@ -265,7 +265,7 @@ algebra, and they are the one admissibility judgment every ingress crosses. Each
 resolves the target first and judges whether it admits the write. A
 predicate-selected write refuses a versioned or temporal target
 (`set-based-write-target-unsupported`, `m-batch-write`) before anything else is
-judged. A keyed or caller-addressed write is judged for applicability: a temporal
+judged. A keyed or target write is judged for applicability: a temporal
 target refuses `delete`; the window must be stated as the verb's form requires,
 admitted by the target's temporal profile, and ordered; a non-temporal target
 refuses a milestone verb; and a temporal keyed instruction carries one row. Only
@@ -285,7 +285,7 @@ position-keyed findings from that same pass rather than walking the document
 again. A validation-only caller invokes the same traversal without constructing
 successful managed output.
 
-A caller-addressed instruction is judged in its own fixed order: its target,
+A target instruction is judged in its own fixed order: its target,
 verb, and window first, as above; then its revision arguments against the
 target's revision kind — an unversioned Non-Temporal target, which has no
 revision kind, is refused before any argument is weighed, and otherwise
@@ -427,8 +427,8 @@ Three consequences are normative:
   whatever failure deriving its row would have produced.
 
 The `delete`, `terminate`, and `terminateUntil` verbs derive an identity row alone
-and take no position on provenance; nor do caller-addressed verbs, which address
-their object by key (*Caller-addressed writes*).
+and take no position on provenance; nor do target write verbs, which address
+their object by key (*Target writes*).
 
 ### Insertion authority
 
@@ -507,8 +507,8 @@ nothing is dropped only once its source is admitted, so stating nothing never
 lets an ineligible source pass. Replay re-runs the callback's reads rather than
 refreshing a captured value, so a value an earlier attempt published licenses
 nothing in the attempt that replays it. A caller holding an earlier observation
-states the revision it observed through a caller-addressed write instead
-(*Caller-addressed writes*).
+states the revision it observed through a target write instead
+(*Target writes*).
 
 ### Source-authorized replacement
 
@@ -520,7 +520,7 @@ on a Bitemporal object the start that source names. Provenance, pins, evidence, 
 invalidation follow the amendment's rules unchanged; the write takes no
 condition or start of its own.
 
-Every replacement, source-authorized, caller-addressed, or predicate-selected,
+Every replacement, source-authorized, target, or predicate-selected,
 states the same **completed writable state**. Each writable member it omits is completed rather
 than carried forward: an omitted required scalar or single value object is
 refused, an omitted nullable one is written null, and an omitted collection is
@@ -535,7 +535,7 @@ milestone holds keeps that milestone exactly as an equal amendment does
 
 The replacement intent belongs to the verb, so it survives every carrier and
 composition a write travels through — an observed, insertion-authorized, or
-caller-addressed write, and the composition of a pending insertion — whatever
+target write, and the composition of a pending insertion — whatever
 authorized it. On a Bitemporal object a replacement establishes its state over
 its whole window: rows it reaches take the completed state, and every part of
 the window no current row covers opens with it (`m-temporal-write` *Observed
@@ -545,14 +545,17 @@ an upsert, and existing-row proofs still do not coordinate concurrent creation
 inside a gap, which can leave invalid overlapping coverage (`m-temporal-write`
 *Concurrent creation in gaps is not coordinated*).
 
-### Caller-addressed writes
+### Target writes
 
-A **caller-addressed** (target) write is addressed by the object's primary key
-and conditioned by the starting revision its caller states — the version, or the
-Transaction-Time start of the milestone, an earlier query returned — never by a
-read's evidence or by anything the payload carries. An **amendment** assigns the
-members it names and leaves every other member as stored; a **replacement**
-states the object's whole writable state, completed exactly as a
+A **target write** addresses one existing logical object by primary key under
+the starting revision its caller states, independently of a source value. The
+revision is the version or Transaction-Time start of the milestone an earlier
+query returned; it never comes from a read's evidence or anything the payload
+carries. A predicate write remains predicate-selected even when its predicate
+names a primary key or matches one object.
+
+An **amendment** assigns the members it names and leaves every other member as
+stored; a **replacement** states the object's whole writable state, completed exactly as a
 source-authorized one is (*Source-authorized replacement*); a **deletion**
 removes a Non-Temporal object; and a **termination** ends a temporal object's
 coverage over its window, as a keyed `terminate` does (`m-temporal-write`). None
@@ -562,7 +565,7 @@ requires `ifVersion` and a temporal one `ifTxStart`. The revision a caller
 states never changes: a replayed callback states it again, and nothing an
 attempt reads replaces it. An unversioned Non-Temporal target has no revision a
 caller could state, so no write can detect a change to it since a caller's
-query, and it takes no caller-addressed write: a caller writes it through a read
+query, and it takes no target write: a caller writes it through a read
 of the writing attempt, whose shared lock protects it (*Strategy selection*). A
 write that states its condition is never admitted under a source's authority
 instead, and a source-authorized write states no condition.
@@ -589,7 +592,7 @@ observed write's (*deferred settled write*): its flush reads the coverage its
 window reaches that no row its settled write already holds covers, an amendment assigns
 to each existing interval and creates nothing,
 and a replacement also opens its state over every gap of its window
-(`m-temporal-write` *Caller-addressed writes span their requested extent*). Where
+(`m-temporal-write` *Target writes span their requested extent*). Where
 that read shows no current row at `validFrom`, or one at another
 Transaction-Time start, the write is a failed precondition before any of its
 statements executes.
@@ -642,7 +645,7 @@ a deleted row from a revised one. A failure at
 flush dooms the attempt like any other execution failure.
 
 An object this attempt **admitted an insertion** of is refused to every
-nonempty caller-addressed write, before and after a flush, whatever became of
+nonempty target write, before and after a flush, whatever became of
 the insertion, as a write-evidence failure tagged **`write-evidence-inserted`**:
 until commit, it is written through its insertion's source or a fresh read. The
 attempt keeps that admission for its whole life for this reason alone (*Rows the
@@ -683,7 +686,7 @@ acquisition*). A request describes what to read and performs no read:
 
 | Request | What it reads | When |
 |---|---|---|
-| **Target** | the one row a Locking caller-addressed write addresses, at `validFrom` for a Bitemporal target, when no pending write or live read already proves it; a temporal one whole, retained with the write | when the write is buffered, with no force-flush |
+| **Target** | the one row a Locking target write addresses, at `validFrom` for a Bitemporal target, when no pending write or live read already proves it; a temporal one whole, retained with the write | when the write is buffered, with no force-flush |
 | **Coverage** | the current milestones of one or several objects overlapping the parts of each object's window no row it holds covers, in statements naming a bounded number of object/part terms each | when the flush reaches the deferred settled write, inside that flush |
 | **Completion** | nothing: the retained rows of a deferred settled write that are still current, each occurrence the target read left pending judged as a read judges it | when the flush reaches that write, before its coverage is read |
 
@@ -898,7 +901,7 @@ topology and correctness semantics already decided.
   source continuation every earlier settled write published. Binding audits each row
   it produces and each close it emits once, as stage 8 does for a write settled
   at planning, changing no topology or gate. A range whose observed rows already cover it
-  settles at planning like any other write. A caller-addressed temporal write is
+  settles at planning like any other write. A target temporal write is
   such a range whatever it composes with, unless observed rows of its
   composition cover its window; its meaning also carries the caller's starting
   condition, which binding judges against the rows read before any step exists,
@@ -1333,25 +1336,26 @@ member, and a member set back to the value its source observed is still
 assigned. A superseded or coalesced write's source condition is kept by the
 survivor, which claims the same scope.
 
-**A caller-addressed write claims the state its revision names** — the object at
+**A target write claims the state its revision names** — the object at
 its stated version — so it composes with observed writes of that same state by
 the table above: an amendment and an observed assignment merge member by
 member, a replacement replaces what came before it and is overlaid by what
 follows, and a destruction — an observed one, or the caller's own deletion —
 supersedes both while keeping the caller's condition, which the destruction's
 own gate then binds.
-One object's writes start from one state: a caller-addressed write is refused
+One object's writes start from one state: a target write is refused
 where any other write of the object pending — another stated revision, or an
 observation of another state — stands at another scope, and so is an observed
-write of another state while a caller-addressed write of the object is pending.
+write of another state while a target write of the object is pending.
 The survivor of a composition keeps the caller's condition, its revision intent,
 and every source the composed writes were admitted through; a shortfall against
 its gate is the caller's failed precondition, ahead of any observed write's own
 classification.
 
-A caller-addressed write of a **temporal** object joins that object's
+A target write of a **temporal** object joins that object's
 composition (next paragraph), judged against every write of the object still
-pending — overwritten ones included — and not only the latest. Against each one, at least one of the two caller-addressed:
+pending — overwritten ones included — and not only the latest. In each pair,
+at least one write is a target write:
 
 - over **exactly the same window**, the two are one operation and start from
   one state: the caller's stated Transaction-Time start and the observed
@@ -1468,8 +1472,8 @@ Anything else is a **Write Result Error**, an invariant failure that is never
 retriable and, like any failure while executing, dooms the attempt.
 Every admitted insertion stays recorded until the attempt ends, even once
 everything it opened was removed or a pending removal cancelled it, because a
-caller-addressed write of the object is refused on that admission alone
-(*Caller-addressed writes*).
+target write of the object is refused on that admission alone
+(*Target writes*).
 The record survives flushes and joined scopes, ends at commit or rollback, and
 starts empty on retry. The row an admitted insertion's own insert opens is
 tagged with that insertion in the record, and so is every successor of the part
@@ -1542,7 +1546,7 @@ without depending on an optional concurrency module.
 A `FailedPrecondition` shortfall raises the **Write Precondition Error**
 instead, carrying the Entity Identity, the object's key, and the revision the
 caller stated — no count, because what failed is the caller's condition rather
-than an effect (*Caller-addressed writes*). It is the same error a Locking
+than an effect (*Target writes*). It is the same error a Locking
 submission raises when its acquisition finds the condition already false.
 
 Retriability follows the classification, not the raising site: an Optimistic Lock

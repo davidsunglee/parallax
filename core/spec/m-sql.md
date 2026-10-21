@@ -1367,7 +1367,7 @@ A rectangle the write leaves unchanged (`m-temporal-write` *Unchanged milestones
 neither inactivated nor reopened. Under Optimistic, where the dialect's write
 count includes unchanged rows (`m-dialect`), its place in that order is taken by
 a guard on its own address, gated on its observed `in_z` — or, for the rectangle
-holding a caller-addressed write's start, on the caller's stated `ifTxStart`:
+holding a target write's start, on the caller's stated `ifTxStart`:
 
 | Target | Guard | Binds |
 |---|---|---|
@@ -1378,7 +1378,7 @@ A table-per-hierarchy subtype's tag guard follows the key, as in an
 inactivation. Under Locking, and for a rectangle the attempt opened, nothing is
 emitted for an unchanged rectangle.
 
-A caller-addressed temporal write (`m-temporal-write` *Caller-addressed writes span
+A target temporal write (`m-temporal-write` *Target writes span
 their requested extent*) observed nothing, so under Optimistic its coverage read
 starts at its own `validFrom`; a Transaction-Time-Only one reads `… where
 t0.bal_id = ? and t0.out_z = ?` with `[pk, infinity]`. Separate operations over

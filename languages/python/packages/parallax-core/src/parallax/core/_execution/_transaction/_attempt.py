@@ -126,13 +126,13 @@ class PredicateWriteAdapter(Protocol):
 
 
 TargetWriteVerb = Literal["amend", "replace", "delete", "terminate"]
-"""The intent a caller-addressed conditional write states: the base verb,
+"""The intent a target write states: the base verb,
 never its bounded token, which the attempt selects from the caller's
 ``until``."""
 
 
 class TargetWriteAdapter(Protocol):
-    """A representation's caller-addressed conditional write, inert until the
+    """A representation's target write, inert until the
     attempt asks for it.
 
     Constructed around the caller's original addressed input, judging nothing,
@@ -597,7 +597,7 @@ class TxnAttempt(_TxnAttemptBase):
         valid_from: dt.datetime | Omitted = OMITTED,
         until: dt.datetime | Omitted = OMITTED,
     ) -> None:
-        """Run one caller-addressed conditional write in its ingress order, then
+        """Run one target write in its ingress order, then
         buffer it, reading the state it starts from where its Effective
         Concurrency Strategy needs participation.
 
@@ -709,7 +709,7 @@ class TxnAttempt(_TxnAttemptBase):
             release_page_rows(page)
 
     def _target_read(self, request: TargetReadRequest) -> CompiledRead:
-        """The point read of the row a caller-addressed write starts from: the
+        """The point read of the row a target write starts from: the
         current row at ``valid_from`` of a Bitemporal object, the current one of
         any other, read whole where the request retains it."""
         meta = self._write.model.meta

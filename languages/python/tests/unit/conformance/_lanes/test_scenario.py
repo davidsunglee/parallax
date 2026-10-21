@@ -1599,7 +1599,7 @@ def _counting_case_state_reads(monkeypatch: pytest.MonkeyPatch) -> dict[str, int
         pytest.param("m-temporal-write-043", {"target": 1, "coverage": 0}, id="locking-replace"),
     ],
 )
-def test_a_caller_addressed_entry_compiles_through_target_admission(
+def test_a_target_entry_compiles_through_target_admission(
     case_id: str, reads: dict[str, int], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # An authored `ifVersion` or `ifTxStart` is the caller's condition, never
@@ -4146,7 +4146,7 @@ def test_a_target_step_is_written_from_its_callers_revision_with_no_source_read(
     assert [e.case_pointer for e in emissions] == ["/writeSequence/0"]
 
 
-def test_a_target_deletion_step_is_written_through_its_conditional_verb() -> None:
+def test_a_target_deletion_step_is_written_through_its_target_verb() -> None:
     port = FakeWritePort()
     _emissions, _table_state, database_calls = scenario.run_write_sequence_case(
         _load_case("m-opt-lock-039"), port

@@ -1,7 +1,7 @@
-"""The Usage Guide's conditional-family stories, over a fake port.
+"""The Usage Guide's target write stories, over a fake port.
 
 Each story is documentation that runs: its source IS the guide's snippet, and
-`tests/api/test_conditional_family.py` executes it against real Postgres. This
+`tests/api/test_target_write_stories.py` executes it against real Postgres. This
 is the database-free half — the same calls over a scripted port — so a snippet
 that stopped compiling, a deletion that stopped stating its reviewed version,
 or an unversioned write that stopped reading under the shared lock fails on the
@@ -15,7 +15,7 @@ from decimal import Decimal
 import pytest
 
 from parallax.conformance.class_models import MODELS
-from parallax.conformance.conditional_family_stories import (
+from parallax.conformance.target_write_stories import (
     ClosingReport,
     an_unversioned_wallet_is_written_through_a_read_of_the_writing_transaction,
     reviewed_accounts_are_deleted_under_the_versions_their_review_saw,

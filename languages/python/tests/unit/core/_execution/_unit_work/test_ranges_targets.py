@@ -1,5 +1,5 @@
 """What a temporal object's composed writes bind to (`m-temporal-write`
-*Caller-addressed writes span their requested extent*), driven through range
+*Target writes span their requested extent*), driven through range
 binding without a database: the caller's start, a replacement's extent,
 destruction, disjoint operations under one transform, what a range binds to
 once earlier writes of its object completed, and what a range leaves for the

@@ -457,7 +457,7 @@ class SimulatedTemporalStore:
         """The row acquisition a unit of work planning against this case state
         reads through, answering each request from the rows this store holds
         through the consumer the request came with, as execution's own read
-        would: a coverage read with :meth:`coverage_rows`, a caller-addressed
+        would: a coverage read with :meth:`coverage_rows`, a target
         write's target read with :meth:`target_rows`, and the completion of
         rows such a read retained with those rows as they are, read again from
         nowhere. Any other request is refused."""

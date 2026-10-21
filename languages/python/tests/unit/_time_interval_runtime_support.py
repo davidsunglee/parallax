@@ -7,8 +7,8 @@ Columns or document layout, and a preparation mode:
 
 * ``source-keyed`` — one bounded Bitemporal amendment of a node the transaction
   read, producing a close and a head, middle, and tail successor;
-* ``target-patch`` — one caller-addressed bounded Wire amendment;
-* ``target-replace`` — one caller-addressed bounded replacement across three
+* ``target-patch`` — one bounded target Wire amendment;
+* ``target-replace`` — one bounded target replacement across three
   stored intervals and the two gaps between them;
 * ``read-eager`` — one fully delivered 128-root Latest/Latest Bitemporal find;
 * ``read-stream`` — the same query consumed completely in 32-root pages.
@@ -30,7 +30,7 @@ An *algorithm cell* names one shared interval algorithm and an input size, and
 drives the owner of that algorithm through the public verbs of one Typed
 Columns transaction:
 
-* ``replacement-gaps`` — ``size`` adjacent caller-addressed replacements of one
+* ``replacement-gaps`` — ``size`` adjacent target replacements of one
   object, over ``size / 2`` stored intervals each followed by a gap, so stored
   coverage spans replacement segments; the window is the whole transaction,
   including the coverage read and gap filling at flush;
@@ -337,12 +337,12 @@ _FLOW_STAGES: Final[Mapping[Flow, str]] = {
         "bind adaptation and dump of the close and three successors, and transact's return"
     ),
     "target-patch": (
-        "a caller-addressed bounded tx.wire.amend_if stating tx_start: verb, preparation, "
+        "a bounded target tx.wire.amend_if stating tx_start: verb, preparation, "
         "buffering, the flush's coverage read and starting-revision check, settlement, SQL "
         "lowering, bind adaptation and dump, and transact's return"
     ),
     "target-replace": (
-        "a caller-addressed bounded tx.replace_if or tx.wire.replace_if stating tx_start over "
+        "a bounded target tx.replace_if or tx.wire.replace_if stating tx_start over "
         "three stored intervals and two gaps: verb, preparation, the flush's coverage read and "
         "starting-revision check, settlement with gap filling, SQL lowering, bind adaptation "
         "and dump, and transact's return"
@@ -368,7 +368,7 @@ _MODE_SETUP: Final[Mapping[Mode, str]] = {
 }
 _ALGORITHM_STAGES: Final[Mapping[Algorithm, str]] = {
     "replacement-gaps": (
-        "size adjacent caller-addressed tx.replace_if calls stating tx_start, then the flush's "
+        "size adjacent target tx.replace_if calls stating tx_start, then the flush's "
         "coverage read over size/2 stored intervals with gaps, composition, gap filling, SQL "
         "lowering, bind adaptation and dump, and transact's return"
     ),

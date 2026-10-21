@@ -1,4 +1,4 @@
-"""What a caller-addressed range does with the starting rows its Locking
+"""What a target range does with the starting rows its Locking
 acquisitions retained (`m-unit-work` *Retained starting rows*), driven through
 the unit of work's own binding over an in-memory acquisition: a current row is
 completed and reused without a read, only the coverage nothing held is read, a

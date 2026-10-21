@@ -330,7 +330,7 @@ def plan_target_read(
     valid_from: ManagedValue | None = None,
     whole: bool = False,
 ) -> PlannedEntityQuery:
-    """The one flat point read of the stored row a caller-addressed write starts
+    """The one flat point read of the stored row a target write starts
     from: the object ``key`` names — on a temporal object its current row, at
     Valid-Time ``valid_from`` on a Bitemporal one — projected with no document,
     since what is read is the row's presence and revision, or projected

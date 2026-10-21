@@ -1,4 +1,4 @@
-"""Caller-addressed patch and replacement of temporal objects through the public
+"""Target patch and replacement of temporal objects through the public
 verbs (scripted port).
 
 A temporal target states its key, its Valid-Time window where its family has
