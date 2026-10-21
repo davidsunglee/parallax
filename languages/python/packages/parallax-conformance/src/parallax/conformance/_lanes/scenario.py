@@ -113,7 +113,9 @@ from parallax.core.unit_work import (
     KeyedWriteInstruction,
     MissingTargetError,
     OptimisticLockConflictError,
+    ParticipationToken,
     PredicateWriteInstruction,
+    ReadEvidence,
     RetainedObservation,
     StaleWriteError,
     SubjectActor,
@@ -1100,20 +1102,6 @@ def _resolve_entries(
     return resolved
 
 
-class _SimulatedSourceAuthority:
-    """The consumption a simulated transaction's observation-free writes spend
-    in place of a real source's: it records consumption and grants nothing
-    else — no read, lock, or participation."""
-
-    __slots__ = ("consumed",)
-
-    def __init__(self) -> None:
-        self.consumed = False
-
-    def consume(self) -> None:
-        self.consumed = True
-
-
 class _SimulatedUnit:
     """The unit of work one simulated transaction buffers its writes through:
     an ordinary :class:`~parallax.core.unit_work.UnitOfWork`, so what the lane
@@ -1126,8 +1114,8 @@ class _SimulatedUnit:
     here, detached from any participation, so nothing a real read retained is
     spent; a write with no observation, of an object this unit's own insertion
     opened, is authorized by the identity this unit issued; and an
-    observation-free write of an unversioned row spends a
-    :class:`_SimulatedSourceAuthority` the writes of one flush share. A write
+    observation-free write of an unversioned row carries Read Evidence of its
+    own, stamped with a participation no unit of work issued. A write
     that unit of work refuses to admit is refused as the case's composition
     rather than leaked as the production refusal. A caller-addressed write is
     buffered as the attempt's own is, through
@@ -1140,7 +1128,7 @@ class _SimulatedUnit:
     held group buffers before the unit's next flush, which empties it.
     """
 
-    __slots__ = ("_model", "_source", "_steps", "_uow", "inserted")
+    __slots__ = ("_model", "_participation", "_steps", "_uow", "inserted")
 
     def __init__(
         self, model: AcceptedMetamodel, uow: UnitOfWork, steps: SimulatedWriteSteps
@@ -1148,7 +1136,7 @@ class _SimulatedUnit:
         self._model = model
         self._uow = uow
         self._steps = steps
-        self._source = _SimulatedSourceAuthority()
+        self._participation = ParticipationToken()
         self.inserted: set[ObjectKey] = set()
 
     @property
@@ -1226,9 +1214,8 @@ class _SimulatedUnit:
         if not isinstance(evidence, ObjectKey):
             self._admit(buffered_write(instruction, evidence))
             return
-        if self._source.consumed:
-            self._source = _SimulatedSourceAuthority()
-        self._admit(buffered_write(instruction, evidence, source=self._source))
+        source = ReadEvidence(instruction.target.identity, evidence, self._participation, None)
+        self._admit(buffered_write(instruction, evidence, source=source))
 
     def _admit(self, item: AdmittedWrite | PreparedTargetWrite) -> None:
         try:

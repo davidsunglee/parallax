@@ -1,0 +1,140 @@
+model: models/buffered-sequence-layout-twin-document.yaml
+tags: [m-unit-work, m-opt-lock, m-read-lock, m-storage-layout, m-sql, scenario, observed-state, continuation, layout-twin, document-layout, slice-snapshot-1, slice-managed-1]
+shape: scenario
+grading: state
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "state-graded: each flush writes against coverage its own reads and the attempt's earlier units leave, so no golden statement is stated to compile against (m-case-format 'State-graded scenarios')"
+given:
+  fixtures: true
+when:
+  uow:
+    concurrency: optimistic
+  scenario:
+    - uow: continued
+      objectQuery:
+        target: parallax.compatibility.SequenceAccount
+        predicate:
+          eq:
+            path: parallax.compatibility.SequenceAccount.id
+            value: 1
+      note: "observe account 1 at version 1"
+      expectRows:
+        - { id: 1, balance: 10, memo: { note: m1 }, version: 1 }
+    - uow: continued
+      write:
+        - mutation: amend
+          entity: parallax.compatibility.SequenceAccount
+          row: { id: 1, balance: 20 }
+          ifVersion: 1
+      note: "a caller's write of the state step 0 observed"
+    - uow: continued
+      objectQuery:
+        target: parallax.compatibility.SequenceAccount
+        predicate:
+          eq:
+            path: parallax.compatibility.SequenceAccount.id
+            value: 1
+      note: "the read flushes that write and observes version 2"
+      expectRows:
+        - { id: 1, balance: 20, memo: { note: m1 }, version: 2 }
+    - uow: continued
+      write:
+        - mutation: amend
+          "on": 0
+          entity: parallax.compatibility.SequenceAccount
+          rows:
+            - { id: 1, memo: { note: after } }
+        - mutation: amend
+          "on": 2
+          entity: parallax.compatibility.SequenceAccount
+          rows:
+            - { id: 1, balance: 30 }
+      note: "step 0's source continues at version 2, where step 2's fresh source claims the same state: one write, advancing once"
+    - uow: continued
+      objectQuery:
+        target: parallax.compatibility.SequenceTag
+        predicate:
+          eq:
+            path: parallax.compatibility.SequenceTag.id
+            value: 1
+      note: "observe tag 1, flushing the account's write"
+      expectRows:
+        - { id: 1, quantity: 5, label: t }
+    - uow: continued
+      write:
+        - mutation: amend
+          "on": 4
+          entity: parallax.compatibility.SequenceTag
+          rows:
+            - { id: 1, quantity: 7 }
+      note: "quantity 7"
+    - uow: continued
+      objectQuery:
+        target: parallax.compatibility.SequenceTag
+        predicate:
+          eq:
+            path: parallax.compatibility.SequenceTag.id
+            value: 1
+      note: "the read flushes that amendment"
+      expectRows:
+        - { id: 1, quantity: 7, label: t }
+    - uow: continued
+      write:
+        - mutation: amend
+          "on": 4
+          entity: parallax.compatibility.SequenceTag
+          rows:
+            - { id: 1, label: kept }
+      note: "step 4's source still writes under the lock its read took, and assigns only its label"
+    - uow: deleted
+      objectQuery:
+        target: parallax.compatibility.SequenceTag
+        predicate:
+          eq:
+            path: parallax.compatibility.SequenceTag.id
+            value: 2
+      note: "observe tag 2"
+      expectRows:
+        - { id: 2, quantity: 9, label: u }
+    - uow: deleted
+      write:
+        - mutation: delete
+          "on": 8
+          entity: parallax.compatibility.SequenceTag
+          rows:
+            - { id: 2 }
+      note: "delete tag 2"
+    - uow: deleted
+      objectQuery:
+        target: parallax.compatibility.SequenceTag
+        predicate:
+          eq:
+            path: parallax.compatibility.SequenceTag.id
+            value: 2
+      note: "the read flushes the deletion and finds no tag 2"
+      expectRows: []
+    - uow: deleted
+      write:
+        - mutation: insert
+          entity: parallax.compatibility.SequenceTag
+          rows:
+            - { id: 2, quantity: 4, label: again }
+        - mutation: amend
+          "on": 8
+          entity: parallax.compatibility.SequenceTag
+          rows:
+            - { id: 2, label: stale }
+          expectError: write-evidence-consumed
+      note: "a fresh insertion of the key revives nothing of the source the deletion ended"
+then:
+  units:
+    continued: { outcome: committed }
+    deleted: { outcome: committed }
+  tableState:
+    sequence_tag:
+      - { id: 1, payload: { quantity: 7, label: kept } }
+      - { id: 2, payload: { quantity: 4, label: again } }
+    sequence_account:
+      - { id: 1, version: 3, payload: { balance: 30, memo: { note: after } } }

@@ -461,15 +461,12 @@ def test_run_scenario_case_settles_a_write_against_the_delivery_that_published_i
     assert len(port.writes) == 2
 
 
-def test_run_scenario_case_settles_on_the_named_delivery_rather_than_the_latest_one() -> None:
-    # The observation a write settles against is the one the delivery it NAMES
-    # recorded, never the group's most recent reading of the key: with
-    # `m-unit-work-030`'s second write moved onto the FIRST delivery, the state it
-    # reaches for is the one that delivery published — and the first write already
-    # spent it, so this write is refused rather than gated on the version the
-    # SECOND delivery observed. An implementation holding one observation per key,
-    # or resolving a write from the group's latest reading, emits a `version = 2`
-    # gate here and commits.
+def test_run_scenario_case_continues_a_named_delivery_past_its_flushed_write() -> None:
+    # With `m-unit-work-030`'s second write moved onto the FIRST delivery, the
+    # source it names observed the version the first write advanced from, and
+    # that write's completion carries the source's authority on to the version
+    # it produced: the second write gates on version 2 exactly as it does
+    # through the second delivery, reading nothing more to do so.
     source = _case("m-unit-work-030")
     document = cast(
         "dict[str, Any]",
@@ -480,10 +477,13 @@ def test_run_scenario_case_settles_on_the_named_delivery_rather_than_the_latest_
         entry["on"] = 0
     port = _two_delivery_port()
 
-    with pytest.raises(WriteEvidenceError, match="write-evidence-consumed"):
-        scenario.run_scenario_case(
-            dataclasses.replace(_case("m-unit-work-030"), document=document), port
-        )
+    scenario.run_scenario_case(
+        dataclasses.replace(_case("m-unit-work-030"), document=document), port
+    )
+    assert [tuple(binds) for _sql, binds in port.writes] == [
+        (decimal.Decimal("125.00"), 2, 1, 1),
+        (decimal.Decimal("175.00"), 3, 1, 2),
+    ]
 
 
 def test_run_scenario_case_reports_each_streamed_steps_own_delivered_roots() -> None:
@@ -1926,7 +1926,9 @@ def test_a_held_groups_case_state_advances_where_its_own_reads_flush_it(
     apply = SimulatedTemporalStore.apply
 
     def recorded(store: SimulatedTemporalStore, model: Any, step: Any) -> None:
-        spent = any(source.consumed for source in sources)
+        spent = any(
+            source.observation is not None and source.observation.consumed for source in sources
+        )
         applied.append((type(step).__name__, len(port.reads), len(port.writes), spent))
         apply(store, model, step)
 
@@ -1954,34 +1956,26 @@ def test_a_held_groups_case_state_advances_where_its_own_reads_flush_it(
     assert original.consumed
 
 
-def test_a_tracked_observation_free_write_spends_none_of_its_public_source(
+def test_a_tracked_observation_free_write_keeps_none_of_its_public_source(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # m-unit-work-026's two writes go through the one value its resolving read
-    # published. Their tracked copies share a simulated source of their own, so
-    # the tracked flush, which runs first, leaves that value's authority for
-    # production's own flush to spend.
+    # published. Their tracked copies each carry simulated evidence of their
+    # own, so the tracked unit of work keeps nothing of that value's evidence.
     sources = _tracked_sources(monkeypatch)
-    spent_when_tracked: list[bool] = []
-    apply = SimulatedTemporalStore.apply
-
-    def recorded(store: SimulatedTemporalStore, model: Any, step: Any) -> None:
-        spent_when_tracked.append(any(source.consumed for source in sources))
-        apply(store, model, step)
-
-    monkeypatch.setattr(SimulatedTemporalStore, "apply", recorded)
     admitted = _admitted(monkeypatch)
     item = {"id": 21, "order_id": 2, "sku": "B", "quantity": 1, "shipped_on": None}
     scenario.run_scenario_case(_load_case("m-unit-work-026"), FakeWritePort(find_rows=[item]))
-    assert spent_when_tracked == [False]
     first, second = admitted
     assert isinstance(first, ObjectClaimedWrite)
     assert isinstance(second, ObjectClaimedWrite)
     original, again = sources
-    assert original.observation is None
-    assert first.source is second.source
-    assert original is again and first.source is not original
-    assert original.consumed
+    assert original.observation is None and original is again
+    (simulated,) = first.source_evidence
+    (other,) = second.source_evidence
+    assert simulated is not other
+    assert all(held is not original for held in (simulated, other))
+    assert simulated.participation is other.participation is not original.participation
 
 
 def test_a_write_its_public_verb_refuses_is_never_tracked(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -4102,7 +4096,7 @@ def test_a_compiled_write_of_an_object_its_transaction_inserted_is_insertion_aut
 
 
 @pytest.mark.parametrize("case_id", ["m-unit-work-026", "m-unit-work-027"])
-def test_a_compiled_observation_free_write_spends_the_source_its_transaction_shares(
+def test_a_compiled_observation_free_write_carries_simulated_evidence_of_its_object(
     case_id: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     admitted = _admitted(monkeypatch)
@@ -4110,11 +4104,13 @@ def test_a_compiled_observation_free_write_spends_the_source_its_transaction_sha
     first, second = admitted
     assert isinstance(first, ObjectClaimedWrite)
     assert isinstance(second, ObjectClaimedWrite)
-    assert first.source is second.source
-    assert getattr(first.source, "consumed", None) is True
+    ((one,), (two,)) = (first.source_evidence, second.source_evidence)
+    assert one is not two and one.participation is two.participation
+    assert (one.observation, two.observation) == (None, None)
+    assert one.object_key == two.object_key
 
 
-def test_each_flush_of_a_compiled_group_spends_a_source_of_its_own(
+def test_each_compiled_write_of_a_group_carries_evidence_of_its_own(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     admitted = _admitted(monkeypatch)
@@ -4157,8 +4153,8 @@ def test_each_flush_of_a_compiled_group_spends_a_source_of_its_own(
     first, second = admitted
     assert isinstance(first, ObjectClaimedWrite)
     assert isinstance(second, ObjectClaimedWrite)
-    assert first.source is not second.source
-    assert [getattr(item.source, "consumed", None) for item in (first, second)] == [True, True]
+    ((one,), (two,)) = (first.source_evidence, second.source_evidence)
+    assert one is not two
 
 
 def test_a_target_step_is_written_from_its_callers_revision_with_no_source_read() -> None:

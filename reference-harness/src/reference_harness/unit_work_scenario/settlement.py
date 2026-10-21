@@ -25,8 +25,10 @@ rows is. The proofs read the document and those rows alone:
   Transaction-Time-Only key has at most one;
 - **refusals** — each declared refusal has the structure its code needs: an
   already-claimed submission meets an earlier pending write of its object in its
-  group, and an inserted-object refusal is a caller-addressed write of an object
-  the group inserted earlier;
+  group, an inserted-object refusal is a caller-addressed write of an object
+  the group inserted earlier, and a consumed-evidence refusal is a keyed write
+  of an object an earlier write of its group wrote and a find of the group has
+  since flushed;
 - **flush failures** — the object a failure names is one the failing flush
   writes, by a submission still pending when it began that the Shortfall can
   arise from.
@@ -413,6 +415,20 @@ def _assert_refusal(scenario: CompiledScenario, submission: Submission) -> None:
                 f"{case.path.name}: {submission.pointer} is refused as a write of an inserted "
                 f"object, which only a caller-addressed write of an object its group inserted "
                 f"earlier is."
+            )
+    elif submission.refusal == "write-evidence-consumed":
+        flushed = [
+            other
+            for other in earlier
+            if not other.inserts
+            and _names_same_object(other, submission)
+            and not _pending_at(scenario, other, submission)
+        ]
+        if submission.kind != "keyed" or not flushed:
+            raise CaseFailure(
+                f"{case.path.name}: {submission.pointer} is refused as consumed evidence, which "
+                f"only a keyed write of an object an earlier write of its group wrote, flushed "
+                f"since by a find of the group, is."
             )
 
 

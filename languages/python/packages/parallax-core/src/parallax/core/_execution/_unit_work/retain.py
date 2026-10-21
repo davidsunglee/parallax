@@ -177,15 +177,6 @@ class RetainedTargetState:
         return row, document
 
 
-class _Spent:
-    """An observation-free origin's context once a write completed through it."""
-
-    __slots__ = ("context",)
-
-    def __init__(self, context: ParticipationToken | tuple[ParticipationToken, Pin]) -> None:
-        self.context: Final = context
-
-
 class ReadEvidence:
     """What one source value privately retains about the writable attempt's
     read that produced it.
@@ -203,16 +194,14 @@ class ReadEvidence:
     a writable attempt, a milestone-set read, and no read at all each leave a
     value without one.
 
-    An origin with no observation still carries one mutable fact, moving one
-    way: whether a successful write already completed through it
-    (:attr:`consumed`). Every value derived from the source shares the origin,
-    so completing through one spends them all; an origin with an observation
-    defers both questions to that shared observation instead.
+    Immutable and compared by value, yet weakly referenceable: the writing
+    attempt registers published evidence by identity, so equal evidence two
+    reads published keeps two independent lifetimes.
     """
 
-    __slots__ = ("_context", "_source")
+    __slots__ = ("__weakref__", "_context", "_source")
 
-    _context: ParticipationToken | tuple[ParticipationToken, Pin] | _Spent
+    _context: ParticipationToken | tuple[ParticipationToken, Pin]
     _source: ObjectKey | tuple[ObjectKey, RetainedObservation] | tuple[EntityIdentity, str, object]
 
     def __init__(
@@ -253,38 +242,12 @@ class ReadEvidence:
     @property
     def participation(self) -> ParticipationToken:
         context = self._context
-        if isinstance(context, _Spent):
-            context = context.context
         return context if isinstance(context, ParticipationToken) else context[0]
 
     @property
     def pin(self) -> Pin | None:
         context = self._context
-        if isinstance(context, _Spent):
-            context = context.context
         return context[1] if isinstance(context, tuple) else None
-
-    @property
-    def consumed(self) -> bool:
-        """Whether a successful write already completed through this source.
-
-        Answered by the shared observation where the origin has one, and by the
-        origin itself otherwise.
-        """
-        observation = self.observation
-        if observation is not None:
-            return observation.consumed
-        return isinstance(self._context, _Spent)
-
-    def consume(self) -> None:
-        """Spend this source's authority, once a write through it completed."""
-        observation = self.observation
-        if observation is not None:
-            observation.consume()
-            return
-        context = self._context
-        if not isinstance(context, _Spent):
-            object.__setattr__(self, "_context", _Spent(context))
 
     def __setattr__(self, name: str, value: object) -> None:
         del value

@@ -38,15 +38,12 @@ from parallax.core.metamodel import EntityIdentity, entity_by_name
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.unit_work import (
-    MissingTargetError,
     RetainedObservation,
-    WriteEvidenceError,
     WriteRejectedError,
 )
-from parallax.core.write_plan import ObjectKey, ObjectStateKey
+from parallax.core.write_plan import ObjectKey, ObjectStateKey, VersionObservation
 from parallax.core.write_plan.keys import TemporalObjectStateKey, VersionedObjectStateKey
 from parallax.snapshot import ScopedDatabase, TxnContext, WireEntity
-from parallax.snapshot._inspection import snapshot_state_of
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
@@ -195,14 +192,15 @@ def test_a_participating_row_read_force_flushes_a_pending_write_first() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# What a published node's own claim is spent on.                               #
+# What a published node's own claim observed, once its write completes.        #
 # --------------------------------------------------------------------------- #
 
 
-def test_a_baseline_equal_update_writes_literally_and_spends_its_claim() -> None:
+def test_a_baseline_equal_update_writes_literally_and_changes_its_claims_state() -> None:
     # An update restating the value the source published is still an assignment:
     # it composes after the update buffered before it, its final value reaches
-    # the wire under the version guard, and the claim it carried is spent.
+    # the wire under the version guard, and the state the claim observed is no
+    # longer the stored one.
     port = ScriptedAdapter(Transact(Read(rows=[ACCOUNT_ROW]), Write(times=2)))
 
     def fn(tx: TxnContext) -> RetainedObservation:
@@ -222,13 +220,13 @@ def test_a_baseline_equal_update_writes_literally_and_spends_its_claim() -> None
     update = writes[1]
     assert update.sql == UPDATE_SQL
     assert update.binds == (Decimal("10"), 2, 3, 1)
-    assert spent.consumed is True
+    assert spent.invalidated and not spent.consumed
 
 
-def test_a_surviving_write_spends_its_own_claim() -> None:
-    # The other half of the same rule: the claim a settled write carried is spent
-    # once the executor returns, so a later transaction handed the same still-live
-    # evidence is refused rather than writing over what this one wrote.
+def test_a_surviving_write_changes_its_own_claims_state() -> None:
+    # The other half of the same rule: once the executor returns, the claim a
+    # settled write carried no longer describes the stored row, which its own
+    # values and observation still do not pretend otherwise.
     port = ScriptedAdapter(Transact(Read(rows=[ACCOUNT_ROW]), Write()))
 
     def fn(tx: TxnContext) -> RetainedObservation:
@@ -237,12 +235,14 @@ def test_a_surviving_write_spends_its_own_claim() -> None:
         tx.wire.amend(snapshot.result(), {"balance": "11.00"})
         return claim
 
-    assert _run(port, fn).consumed is True
+    claim = _run(port, fn)
+    assert claim.invalidated and not claim.consumed
+    assert claim.evidence == VersionObservation(observed_version=1)
     assert port.calls[2] == WriteCall(UPDATE_SQL, (Decimal("11.00"), 2, 3, 1))
 
 
 # --------------------------------------------------------------------------- #
-# An observation-free source is spent through its own origin.                  #
+# An observation-free source continues under the lock its read took.           #
 # --------------------------------------------------------------------------- #
 
 _PERSON_ROW: MappingRow = {"id": 1, "name": "Ada"}
@@ -275,18 +275,15 @@ def _rename(tx: TxnContext, source: mm.Person | WireEntity, name: str) -> None:
         tx.amend(source.edit(name=name))
 
 
-def _refused_as_spent(write: Callable[[], None]) -> None:
-    with pytest.raises(WriteEvidenceError) as refused:
-        write()
-    assert refused.value.code == "write-evidence-consumed"
-
-
 @pytest.mark.parametrize("name", ["Grace", "Ada"], ids=["changed", "equal"])
 @pytest.mark.parametrize("representation", _REPRESENTATIONS)
-def test_a_completed_unversioned_write_spends_its_source(representation: str, name: str) -> None:
-    # An unversioned row's read observes no state, yet the source it published
-    # is still spent once a write through it completes — an equal value as much
-    # as a changed one — while a fresh read of the same row is fresh authority.
+def test_a_completed_unversioned_write_leaves_its_source_writable(
+    representation: str, name: str
+) -> None:
+    # An unversioned row's read observes no state, and the shared lock it took
+    # still stands once a write through it completes — an equal value as much
+    # as a changed one — so the source and a fresh read of the same row both
+    # write again, as one object's coalesced write.
     port = ScriptedAdapter(
         Transact(
             Read(rows=[_PERSON_ROW]),
@@ -300,22 +297,24 @@ def test_a_completed_unversioned_write_spends_its_source(representation: str, na
         source = _read_person(tx, representation)
         _rename(tx, source, name)
         fresh = _read_person(tx, representation)
-        _refused_as_spent(lambda: _rename(tx, source, "Hopper"))
-        _rename(tx, fresh, "Hopper")
+        _rename(tx, source, "Hopper")
+        _rename(tx, fresh, "Lovelace")
 
     db_for(PERSON, port).transact(fn)
     writes = [call for call in port.calls if isinstance(call, WriteCall)]
     assert writes == [
         WriteCall(_PERSON_UPDATE[0], (name, 1)),
-        WriteCall(_PERSON_UPDATE[0], ("Hopper", 1)),
+        WriteCall(_PERSON_UPDATE[0], ("Lovelace", 1)),
     ]
 
 
-def test_every_copy_derived_from_an_unversioned_source_shares_its_completion() -> None:
+def test_every_copy_derived_from_an_unversioned_source_shares_its_authority() -> None:
     # Two edits of one read compose before the flush that completes them, and
-    # completion spends the source they share: neither the read value nor any
-    # copy derived from it, before or after, writes again.
-    port = ScriptedAdapter(Transact(Read(rows=[_PERSON_ROW]), Write(), Read(rows=[_PERSON_ROW])))
+    # the read value and every copy derived from it, before or after, write
+    # again afterwards under the same authority.
+    port = ScriptedAdapter(
+        Transact(Read(rows=[_PERSON_ROW]), Write(), Read(rows=[_PERSON_ROW]), Write())
+    )
 
     def fn(tx: TxnContext) -> None:
         source = tx.find(mm.Person.where(mm.Person.id == 1)).result()
@@ -323,12 +322,15 @@ def test_every_copy_derived_from_an_unversioned_source_shares_its_completion() -
         tx.amend(source.edit(name="Hopper"))
         tx.amend(early)
         tx.find(mm.Person.where(mm.Person.id == 1))
-        _refused_as_spent(lambda: tx.amend(source.edit(name="Lovelace")))
-        _refused_as_spent(lambda: tx.amend(early.edit(name="Lovelace")))
+        tx.amend(source.edit(name="Lovelace"))
+        tx.amend(early.edit(name="Turing"))
 
     db_for(PERSON, port).transact(fn)
     writes = [call for call in port.calls if isinstance(call, WriteCall)]
-    assert writes == [WriteCall(*_PERSON_UPDATE)]
+    assert writes == [
+        WriteCall(*_PERSON_UPDATE),
+        WriteCall(_PERSON_UPDATE[0], ("Turing", 1)),
+    ]
 
 
 def test_an_empty_unversioned_update_neither_writes_nor_spends_its_source() -> None:
@@ -343,26 +345,6 @@ def test_an_empty_unversioned_update_neither_writes_nor_spends_its_source() -> N
     db_for(PERSON, port).transact(fn)
     writes = [call for call in port.calls if isinstance(call, WriteCall)]
     assert writes == [WriteCall(*_PERSON_UPDATE)]
-
-
-def test_a_failed_unversioned_write_leaves_its_source_unspent() -> None:
-    # A failed execution is not completion: the source is not spent, though
-    # the attempt it ran in can do no further work.
-    port = ScriptedAdapter(Transact(Read(rows=[_PERSON_ROW]), Write(affected=0)))
-    sources: list[mm.Person] = []
-
-    def fn(tx: TxnContext) -> None:
-        source = tx.find(mm.Person.where(mm.Person.id == 1)).result()
-        sources.append(source)
-        tx.amend(source.edit(name="Grace"))
-
-    with raises_contextualized(MissingTargetError):
-        db_for(PERSON, port).transact(fn)
-    (source,) = sources
-    state = snapshot_state_of(source)
-    assert state is not None
-    assert state.read_evidence is not None
-    assert state.read_evidence.consumed is False
 
 
 # --------------------------------------------------------------------------- #

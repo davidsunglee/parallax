@@ -568,8 +568,8 @@ def keyed_write(
     and ``until`` together, and the source is admitted — by that standing
     authority, or by read evidence of this attempt — before an amendment that
     expresses no member is dropped as the empty set it is, so stating nothing
-    never lets an ineligible source pass. Dropping it buffers nothing and spends
-    no evidence. A replacement is never empty: it states the object's complete
+    never lets an ineligible source pass. Dropping it buffers nothing and
+    changes no evidence. A replacement is never empty: it states the object's complete
     writable state, completed from whatever it omits. A refused write leaves the
     admissions as it found them, because the buffer admits all or nothing.
     """

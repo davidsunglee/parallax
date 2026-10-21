@@ -201,6 +201,17 @@ def test_an_inserted_object_refusal_is_a_caller_addressed_write_of_an_insert(
         _grade(case)
 
 
+def test_a_consumed_evidence_refusal_follows_a_flushed_write_of_its_object(
+    damaged_case: CaseLoader,
+) -> None:
+    # The refused write's own group wrote its object, but nothing has flushed
+    # that write yet.
+    case = damaged_case(_REFUSALS)
+    case.when["scenario"][2]["write"][2]["expectError"] = "write-evidence-consumed"
+    with pytest.raises(CaseFailure, match="refused as consumed evidence"):
+        _grade(case)
+
+
 # --- flush failures ----------------------------------------------------------
 
 

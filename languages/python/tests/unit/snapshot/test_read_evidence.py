@@ -142,29 +142,20 @@ def test_a_read_evidence_is_an_immutable_value_over_its_complete_claim() -> None
         origin.pin = None  # pyright: ignore[reportAttributeAccessIssue] - the refusal is this test's subject
 
 
-def test_spending_an_origin_spends_its_observation_or_itself() -> None:
-    # An origin with an observation defers to that shared observation; one
-    # without carries its own one-way status, and keeps answering the same
-    # participation once spent, so equality and hashing do not move.
+def test_equal_read_evidence_keeps_two_weakly_referenced_lifetimes() -> None:
+    # Equality and hashing compare the claim, while a weak reference follows the
+    # one value it was taken of: two equal evidences die independently.
     object_key = ObjectKey(mm.Account.identity, (("id", 1),))
     participation = ParticipationToken()
-    observation = RetainedObservation(
-        VersionedObjectStateKey(object_key, 4),
-        VersionObservation(observed_version=4),
-        participation,
-    )
-    observed = ReadEvidence(mm.Account.identity, object_key, participation, observation)
-    observed.consume()
-    assert observed.consumed and observation.consumed
-
-    unversioned = ReadEvidence(mm.Account.identity, object_key, participation, None)
-    before = hash(unversioned)
-    assert not unversioned.consumed
-    unversioned.consume()
-    unversioned.consume()
-    assert unversioned.consumed
-    assert unversioned.participation is participation and unversioned.pin is None
-    assert hash(unversioned) == before
+    first = ReadEvidence(mm.Account.identity, object_key, participation, None)
+    second = ReadEvidence(mm.Account.identity, object_key, participation, None)
+    assert first == second and hash(first) == hash(second)
+    held = weakref.ref(first)
+    kept = weakref.ref(second)
+    del first
+    gc.collect()
+    assert held() is None
+    assert kept() is second
 
 
 def test_no_exported_name_reaches_a_read_evidence() -> None:
@@ -699,26 +690,42 @@ def test_releasing_every_source_makes_the_transactions_index_forget_the_state() 
 
 
 # --------------------------------------------------------------------------- #
-# Consumption: what a successful flush spends.                                #
+# Continuation: a successful flush advances a source's authority, not its     #
+# observation.                                                                #
 # --------------------------------------------------------------------------- #
-def test_a_successful_flush_consumes_the_evidence_its_write_used() -> None:
+def test_a_successful_flush_leaves_its_sources_observation_literal() -> None:
+    # The write changed the state the source observed, so that observation no
+    # longer describes the stored row; the source's own values and observation
+    # stay exactly what its read returned.
     port = ScriptedAdapter(Transact(_ACCOUNT_READ, Write()))
 
-    def fn(tx: TxnContext) -> object:
+    def fn(tx: TxnContext) -> tuple[mm.Account, object]:
         node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         tx.amend(node.edit(balance=Decimal("125.00")))
-        return _typed_hint(node)
+        return node, _typed_hint(node)
 
-    hint = cast("Any", account_db(port).transact(fn))
-    assert hint.observation.consumed is True
+    node, hint = account_db(port).transact(fn)
+    observation = cast("Any", hint).observation
+    assert observation.evidence == VersionObservation(observed_version=4)
+    assert observation.invalidated and not observation.consumed
+    assert (node.balance, node.version) == (Decimal("100.00"), 4)
 
 
-def test_reusing_a_consumed_source_after_the_flush_is_refused() -> None:
-    # A consumed source stays an ordinary readable value; what it no longer
-    # carries is authority, because the state it observed is not the stored state
-    # any more. The dependent read in the middle forces the first write out, and
-    # the refusal is at the second verb, before any DML of its own.
-    port = ScriptedAdapter(Transact(_ACCOUNT_READ, Write(), _ACCOUNT_READ))
+@pytest.mark.parametrize(
+    ("concurrency", "binds"),
+    [
+        ("optimistic", (Decimal("150.00"), 6, 1, 5)),
+        ("locking", (Decimal("150.00"), 6, 1)),
+    ],
+)
+def test_a_source_reused_after_its_flush_continues_from_the_version_its_write_produced(
+    concurrency: Concurrency, binds: tuple[object, ...]
+) -> None:
+    # The dependent read in the middle forces the first write out. The source's
+    # authority continues from the version that write produced, under the
+    # database gate or the lock the write holds, while it still states only
+    # what its own edit assigns. No read of the row is added for it.
+    port = ScriptedAdapter(Transact(_ACCOUNT_READ, Write(), _ACCOUNT_READ, Write()))
 
     def fn(tx: TxnContext) -> None:
         node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
@@ -726,35 +733,13 @@ def test_reusing_a_consumed_source_after_the_flush_is_refused() -> None:
         tx.find(mm.Account.where(mm.Account.id == 1))
         tx.amend(node.edit(balance=Decimal("150.00")))
 
-    with raises_contextualized(WriteEvidenceError) as refusal:
-        account_db(port).transact(fn)
-    assert refusal.value.code == "write-evidence-consumed"
-    assert [type(op) for op in port.calls].count(WriteCall) == 1
+    account_db(port).transact(fn, concurrency=concurrency)
+    first, second = (call for call in port.calls if isinstance(call, WriteCall))
+    assert tuple(first.binds[:2]) == (Decimal("125.00"), 5)
+    assert tuple(second.binds) == binds
 
 
-def test_a_locking_source_consumed_by_a_flush_cannot_drive_a_second_write() -> None:
-    # Consumption is strategy-independent. The shared row lock licenses a write
-    # against the state the locked read saw; it says nothing about a state this
-    # unit of work has itself already written past, so the participating source
-    # that drove the surviving write carries no authority for a second one. The
-    # dependent read in the middle is what forces that first write out.
-    port = ScriptedAdapter(
-        Transact(Read(rows=[dict(_ACCOUNT_ROW)]), Write(), Read(rows=[dict(_ACCOUNT_ROW)]))
-    )
-
-    def fn(tx: TxnContext) -> None:
-        node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
-        tx.amend(node.edit(balance=Decimal("125.00")))
-        tx.find(mm.Account.where(mm.Account.id == 1))
-        tx.amend(node.edit(balance=Decimal("150.00")))
-
-    with raises_contextualized(WriteEvidenceError) as refusal:
-        account_db(port).transact(fn, concurrency="locking")
-    assert refusal.value.code == "write-evidence-consumed"
-    assert [type(op) for op in port.calls].count(WriteCall) == 1
-
-
-def test_an_intent_eliminated_before_dml_consumes_nothing() -> None:
+def test_an_intent_eliminated_before_dml_changes_nothing() -> None:
     # An edited copy expressing no member is admitted and then buffers nothing
     # and issues no statement, so the evidence its source carries is still about
     # the stored state and still licenses a later write of the same attempt.
@@ -763,7 +748,7 @@ def test_an_intent_eliminated_before_dml_consumes_nothing() -> None:
     def fn(tx: TxnContext) -> None:
         node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         tx.amend(node.edit())
-        assert cast("Any", _typed_hint(node)).observation.consumed is False
+        assert cast("Any", _typed_hint(node)).observation.invalidated is False
         tx.amend(node.edit(balance=Decimal("125.00")))
 
     account_db(port).transact(fn)
@@ -787,7 +772,7 @@ def test_an_aborted_flush_spends_no_evidence() -> None:
 
     with raises_contextualized(RuntimeError, match="abort"):
         db.transact(doomed)
-    assert cast("Any", _typed_hint(escaped[0])).observation.consumed is False
+    assert cast("Any", _typed_hint(escaped[0])).observation.invalidated is False
 
 
 # --------------------------------------------------------------------------- #

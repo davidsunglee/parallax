@@ -14,6 +14,8 @@ managed runner's, and is tested there.
 from __future__ import annotations
 
 import datetime as dt
+import gc
+import weakref
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from decimal import Decimal
@@ -93,15 +95,14 @@ from parallax.core.write_plan.keys import VersionedObjectStateKey
 from parallax.core.write_plan.plan import (
     OPEN_BITEMPORAL_ENDS,
     OwnedEndpoint,
-    SourceAuthority,
 )
 from parallax.core.write_plan.steps import INFINITY as PLANNED_INFINITY
 from parallax.core.write_plan.steps import NEW_LINEAGE, Finite, PlannedUpdate
 from tests._support.clock_probes import CountingClock
 from tests._support.planner_probes import (
     TEST_ACTOR_IDENTITY,
-    RecordingSource,
     admitted_writes,
+    object_source,
     plan_steps,
     settled_writes,
 )
@@ -451,11 +452,11 @@ def test_evidence_of_this_attempt_carrying_no_observation_licenses_no_gated_writ
     _run(body)
 
 
-def test_two_writes_of_one_claim_merge_and_answer_it_once() -> None:
+def test_two_writes_of_one_claim_merge_and_advance_it_once() -> None:
     # Two edits of a single source value hold one claim, and Observed-State
     # Coalescing makes them one write: the assignments merge in authored order,
     # the later value wins the member both name, and the merged write's one
-    # settled write keeps the identical retained observation both held.
+    # settled write advances the state both observed, once.
     state = VersionedObjectStateKey(corpus_object_key("Account", ("id", 1)), 7)
     retained = RetainedObservation(state, VersionObservation(observed_version=7), None)
     carriers = [
@@ -479,7 +480,9 @@ def test_two_writes_of_one_claim_merge_and_answer_it_once() -> None:
     (step,) = plan_steps(finalized)
     assert isinstance(step, PlannedUpdate)
     assert _member_value(step.assignments.attributes, "balance") == Decimal("150.00")
-    assert [write.claim for write in settled_writes(finalized)] == [retained]
+    assert [
+        (write.claim, tuple(write.changed), write.advanced) for write in settled_writes(finalized)
+    ] == [(None, (state,), (state,))]
 
 
 def test_a_fully_empty_transaction_never_touches_the_clock() -> None:
@@ -683,18 +686,15 @@ _PERSON_META = model_of(PERSON)
 
 
 def _person_write(
-    mutation: KeyedMutation, person_id: int, source: SourceAuthority | None = None
+    mutation: KeyedMutation, person_id: int, source: ReadEvidence | None = None
 ) -> AdmittedWrite:
     """An unversioned Non-Temporal Person write settling against its object."""
     row: dict[str, object] = {"id": person_id}
     if mutation == "amend":
         row["name"] = "Grace"
     prepared = _prepared_keyed(KeyedWriteInstruction(mutation, "Person", (row,)), _PERSON_META)
-    return buffered_write(
-        prepared,
-        corpus_object_key("Person", ("id", person_id)),
-        source=RecordingSource() if source is None else source,
-    )
+    key = corpus_object_key("Person", ("id", person_id))
+    return buffered_write(prepared, key, source=object_source(key) if source is None else source)
 
 
 def test_a_retained_observation_claims_its_state_and_compatible_intents_combine() -> None:
@@ -740,47 +740,53 @@ def test_an_object_claimed_write_claims_its_instructions_object() -> None:
     assert sorted(_kinds(simulated)) == ["delete", "update"]
 
 
-@dataclass(frozen=True, slots=True)
-class _OrderedSource:
-    name: str
-    spent: list[str]
-
-    def consume(self) -> None:
-        self.spent.append(self.name)
-
-
-def _buffer_composed_person_writes(uow: UnitOfWork, spent: list[str]) -> None:
+def _buffer_composed_person_writes(uow: UnitOfWork) -> list[weakref.ref[ReadEvidence]]:
     # The second amendment of 1 coalesces into the first, the first deletion
-    # supersedes their merge, and the second deduplicates into it.
-    uow.buffer(_person_write("amend", 1, _OrderedSource("amend", spent)))
-    uow.buffer(_person_write("amend", 2, _OrderedSource("other", spent)))
-    uow.buffer(_person_write("amend", 1, _OrderedSource("coalesced", spent)))
-    uow.buffer(_person_write("delete", 1, _OrderedSource("delete", spent)))
-    uow.buffer(_person_write("delete", 1, _OrderedSource("again", spent)))
+    # supersedes their merge, and the second deduplicates into it. The two
+    # sources of 1's deletions are equal yet distinct.
+    one = corpus_object_key("Person", ("id", 1))
+    sources = [
+        object_source(one),
+        object_source(corpus_object_key("Person", ("id", 2))),
+        object_source(one),
+        object_source(one),
+        object_source(one),
+    ]
+    writes: tuple[tuple[KeyedMutation, int], ...] = (
+        ("amend", 1),
+        ("amend", 2),
+        ("amend", 1),
+        ("delete", 1),
+        ("delete", 1),
+    )
+    for (mutation, person_id), source in zip(writes, sources, strict=True):
+        uow.buffer(_person_write(mutation, person_id, source))
+    return [weakref.ref(source) for source in sources]
 
 
-def test_every_accepted_object_source_is_spent_in_buffering_order_after_the_flush() -> None:
+def test_every_composed_object_source_stays_reachable_until_its_settled_write_is_gone() -> None:
     simulated = _simulated(_PERSON_META)
-    spent: list[str] = []
-    seen: list[list[str]] = []
-    steps = ObservedSteps(simulated, observe=lambda _position, _steps: seen.append(list(spent)))
+    held: list[weakref.ref[ReadEvidence]] = []
+    seen: list[int] = []
 
-    _run(lambda uow: _buffer_composed_person_writes(uow, spent), steps=steps, meta=_PERSON_META)
+    def observe(_position: int, _steps: object) -> None:
+        gc.collect()
+        seen.append(sum(source() is not None for source in held))
+
+    def body(uow: UnitOfWork) -> None:
+        held.extend(_buffer_composed_person_writes(uow))
+        gc.collect()
+        # Only the pending writes reach the sources now.
+        assert all(source() is not None for source in held)
+
+    steps = ObservedSteps(simulated, observe=observe)
+    _run(body, steps=steps, meta=_PERSON_META)
     assert sorted(_kinds(simulated)) == ["delete", "update"]
-    assert steps.executions > 1
-    assert seen == [[]] * steps.executions
-    assert spent == ["amend", "other", "coalesced", "delete", "again"]
-
-    failure = RuntimeError("the last settled write failed")
-    unspent: list[str] = []
-    failing = ObservedSteps(_simulated(_PERSON_META), failing=steps.executions - 1, failure=failure)
-    with pytest.raises(RuntimeError, match="the last settled write failed"):
-        _run(
-            lambda uow: _buffer_composed_person_writes(uow, unspent),
-            steps=failing,
-            meta=_PERSON_META,
-        )
-    assert unspent == []
+    # Coalescing, supersession, and deduplication kept every source while the
+    # plan executed, and nothing kept any once the flush released its plan.
+    assert seen == [len(held)] * steps.executions
+    gc.collect()
+    assert all(source() is None for source in held)
 
 
 def test_a_refused_carrier_or_claim_leaves_claims_and_pending_inserts_as_they_were() -> None:
@@ -965,7 +971,7 @@ def test_a_row_whose_start_is_the_attempts_instant_is_not_owned_without_its_open
     assert _kinds(simulated) == ["close", "insert"]
 
 
-def test_each_settled_write_spends_its_evidence_before_the_next_group_executes() -> None:
+def test_each_settled_write_publishes_its_change_before_the_next_group_executes() -> None:
     writes = (
         _account_write("amend", 1, 7),
         _account_write("amend", 2, 3),
@@ -977,9 +983,11 @@ def test_each_settled_write_spends_its_evidence_before_the_next_group_executes()
     seen: list[tuple[bool, ...]] = []
 
     def spent() -> tuple[bool, ...]:
-        return tuple(observation.consumed for observation in retained)
+        return tuple(observation.invalidated for observation in retained)
 
     def body(uow: UnitOfWork) -> None:
+        for observation in retained:
+            assert uow.retain(observation) is observation
         for write in writes:
             uow.buffer(write)
 
@@ -1009,11 +1017,11 @@ def test_full_groups_publish_in_turn_and_a_failed_one_ends_the_flush() -> None:
         body,
         steps=ObservedSteps(
             _simulated(),
-            observe=lambda _position, _steps: spent.append(sum(c.consumed for c in claims)),
+            observe=lambda _position, _steps: spent.append(sum(c.invalidated for c in claims)),
         ),
     )
     assert spent == [0, 64, 128]
-    assert all(claim.consumed for claim in claims)
+    assert all(claim.invalidated for claim in claims)
 
     failing = [_account_claim(account_id, 1) for account_id in range(1, 131)]
     steps = ObservedSteps(_simulated(), failing=1, failure=RuntimeError("the second group failed"))
@@ -1026,7 +1034,7 @@ def test_full_groups_publish_in_turn_and_a_failed_one_ends_the_flush() -> None:
 
     with pytest.raises(RollbackOnlyError):
         _run(failed, steps=steps)
-    assert [claim.consumed for claim in failing] == [True] * 64 + [False] * 66
+    assert [claim.invalidated for claim in failing] == [True] * 64 + [False] * 66
     assert steps.executions == 2
 
 
@@ -1050,7 +1058,7 @@ def test_a_caught_execution_failure_still_dooms_the_attempt() -> None:
     with pytest.raises(RollbackOnlyError) as exc:
         _run(body, steps=steps)
     assert exc.value.__cause__ is failure
-    assert not claimed.retained_observation.consumed
+    assert not claimed.retained_observation.invalidated
 
 
 def test_a_planning_refusal_leaves_the_attempt_usable() -> None:
@@ -1236,7 +1244,10 @@ def test_each_settled_write_names_its_sources_state_itself() -> None:
         )
     )
     # Nothing infers a settled write's changed state from a step.
-    assert [tuple(write.changed) for write in settled_writes(plan)] == [(first.key,), (second.key,)]
+    assert [(tuple(write.changed), write.advanced) for write in settled_writes(plan)] == [
+        ((first.key,), (first.key,)),
+        ((second.key,), (second.key,)),
+    ]
 
 
 @pytest.mark.parametrize(
@@ -1268,7 +1279,6 @@ def test_a_failed_group_publishes_nothing_while_the_group_before_it_stays_publis
 
     with pytest.raises(RollbackOnlyError):
         _run(body, steps=ObservedSteps(_simulated(), failing=failing, failure=failure))
-    assert tuple(claim.consumed for claim in claims) == published
     assert tuple(claim.invalidated for claim in claims) == published
 
 

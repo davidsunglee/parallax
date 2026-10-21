@@ -17,6 +17,7 @@ import pytest
 from parallax.conformance.class_models import MODELS as CLASS_MODELS
 from parallax.core import inheritance
 from parallax.core import predicate as predicate_algebra
+from parallax.core._execution._unit_work._write_ownership import SourceRefusal
 from parallax.core._execution._unit_work.admission import BufferOutcome, WriteAdmission
 from parallax.core._execution._unit_work.instructions import (
     ExpectedTxStart,
@@ -24,13 +25,18 @@ from parallax.core._execution._unit_work.instructions import (
     PreparedPredicateWrite,
     prepare_wire_write,
 )
-from parallax.core._execution._unit_work.retain import RetainedTargetState
+from parallax.core._execution._unit_work.retain import (
+    ParticipationToken,
+    ReadEvidence,
+    RetainedTargetState,
+)
 from parallax.core._execution._unit_work.write_items import (
     AdmittedWrite,
     AfterRemoval,
     ChainedTemporalWrite,
     CoalescedTemporalWrite,
     InsertionKeyedWrite,
+    ObjectClaimedWrite,
     TargetKeyedWrite,
     target_write,
 )
@@ -59,13 +65,13 @@ from parallax.core.write_plan.keys import (
 from parallax.core.write_plan.plan import (
     OPEN_BITEMPORAL_ENDS,
     AllocatedOpening,
-    CompletionFacts,
     Openings,
     OwnedEndpoint,
+    WriteCompletion,
 )
 from parallax.core.write_plan.steps import INFINITY as PLANNED_INFINITY
 from parallax.core.write_plan.steps import Finite
-from tests._support.planner_probes import RecordingSource
+from tests._support.planner_probes import object_source
 from tests.unit._corpus_model_support import corpus_records, formed
 from tests.unit.core._execution._unit_work._temporal_targets_support import (
     APR,
@@ -259,20 +265,28 @@ def test_a_batch_composition_left_nothing_of_still_needs_its_flush() -> None:
     assert outcome is BufferOutcome.CANCELLED_PENDING_INSERT
     assert admission
     assert admission.composed_writes() == ()
-    assert admission.drain_planned() == []
+    admission.drain_planned()
     assert not admission
 
 
-def _person_write(person_id: int, source: RecordingSource) -> AdmittedWrite:
+def _person(person_id: int) -> ObjectKey:
+    return ObjectKey(_PERSON_ENTITY, (("id", person_id),))
+
+
+def _person_write(person_id: int, source: ReadEvidence) -> AdmittedWrite:
     prepared = prepare_wire_write(
         KeyedWriteInstruction("amend", "Person", ({"id": person_id, "name": "Grace"},)), _PERSON
     )
     assert isinstance(prepared, PreparedKeyedWrite)
-    return buffered_write(prepared, ObjectKey(_PERSON_ENTITY, (("id", person_id),)), source=source)
+    return buffered_write(prepared, _person(person_id), source=source)
 
 
-def test_drain_hands_over_every_object_source_in_admission_order_and_starts_afresh() -> None:
-    first, other, coalesced = RecordingSource(), RecordingSource(), RecordingSource()
+def test_coalesced_object_claimed_writes_keep_every_distinct_source_evidence() -> None:
+    participation = ParticipationToken()
+    first, other, coalesced = (
+        object_source(_person(person_id), participation) for person_id in (1, 2, 1)
+    )
+    assert first == coalesced and first is not coalesced
     admission = _admitted(
         _person_write(1, first),
         _person_write(2, other),
@@ -280,18 +294,21 @@ def test_drain_hands_over_every_object_source_in_admission_order_and_starts_afre
         _person_write(1, first),
         meta=_PERSON,
     )
-    sources = admission.drain_planned()
-    assert list(sources) == [first, other, coalesced, first]
-    assert not any((first.consumed, other.consumed, coalesced.consumed))
-    later = RecordingSource()
-    _admit(admission, _person_write(1, later))
-    assert list(sources) == [first, other, coalesced, first]
-    assert list(admission.drain_planned()) == [later]
+    one, two = admission.composed_writes()
+    assert isinstance(one, ObjectClaimedWrite) and isinstance(two, ObjectClaimedWrite)
+    assert [tuple(map(id, write.source_evidence)) for write in (one, two)] == [
+        (id(first), id(coalesced)),
+        (id(other),),
+    ]
+    admission.drain_planned()
+    assert admission.composed_writes() == ()
 
 
-def test_discard_leaves_pending_authority_unspent_and_forgets_every_insertion() -> None:
-    source = RecordingSource()
+def test_discard_forgets_every_source_registration_and_insertion() -> None:
+    source = object_source(_person(1))
     admission = _admitted(_person_write(1, source), meta=_PERSON)
+    admission.register_read_evidence(source, _person(1), read_at=0, fresh=False)
+    assert admission.resolve_source(source) is SourceRefusal.STALE
     insertion = prepare_wire_write(
         KeyedWriteInstruction("insert", "Person", ({"id": 9, "name": "Ada"},)), _PERSON
     )
@@ -299,11 +316,10 @@ def test_discard_leaves_pending_authority_unspent_and_forgets_every_insertion() 
     _admit(admission, insertion)
     ownership = admission.ownership
     endpoint = OwnedEndpoint(ENTITY, (1,), OPEN_BITEMPORAL_ENDS)
-    admission.complete(CompletionFacts(opened=Openings(fresh=(endpoint,))), ())
+    admission.complete(WriteCompletion(opened=Openings(fresh=(endpoint,))), (), at=1)
     admission.discard()
-    assert not source.consumed
+    assert admission.resolve_source(source) == _person(1)
     assert not admission
-    assert admission.drain_planned() == []
     assert admission.insertion_identity(ObjectKey(_PERSON_ENTITY, (("id", 9),))) is None
     assert admission.ownership is ownership
     assert not ownership.owns(endpoint)
@@ -321,7 +337,9 @@ def test_completion_publishes_into_the_ownership_planning_borrowed() -> None:
     admission.drain_planned()
     opening = AllocatedOpening(ENTITY, OPEN_BITEMPORAL_ENDS)
     admission.complete(
-        CompletionFacts(changed=_Untraversable(), opened=Openings(allocated=(opening,))), (42,)
+        WriteCompletion(changed=_Untraversable(), opened=Openings(allocated=(opening,))),
+        (42,),
+        at=1,
     )
     assert admission.ownership is ownership
     assert ownership.owns(OwnedEndpoint(ENTITY, (42,), OPEN_BITEMPORAL_ENDS))
@@ -343,7 +361,9 @@ def test_a_completed_version_advance_scopes_the_next_write_its_insertion_authori
     _admit(admission, InsertionKeyedWrite(_account_amend(9), identity))
     (before,) = admission.composed_writes()
     admission.drain_planned()
-    admission.record_version_advance(VersionedObjectStateKey(_account(9), 1))
+    admission.complete(
+        WriteCompletion(advanced=(VersionedObjectStateKey(_account(9), 1),)), (), at=1
+    )
     _admit(admission, InsertionKeyedWrite(_account_amend(9), identity))
     (after,) = admission.composed_writes()
     assert isinstance(before, InsertionKeyedWrite) and isinstance(after, InsertionKeyedWrite)
@@ -351,7 +371,9 @@ def test_a_completed_version_advance_scopes_the_next_write_its_insertion_authori
         VersionedObjectStateKey(_account(9), 1),
         VersionedObjectStateKey(_account(9), 2),
     )
-    assert advanced == [None, 1]
+    # Completion asks once for the version its update produced, and the later
+    # write once for the version it claims.
+    assert advanced == [None, 1, 1]
 
 
 def _stored_insertion_across_two_rows() -> WriteAdmission:
@@ -360,7 +382,7 @@ def _stored_insertion_across_two_rows() -> WriteAdmission:
     admission.drain_planned()
     split = OwnedEndpoint(ENTITY, (1,), (Finite(instant=JUN), PLANNED_INFINITY))
     tail = OwnedEndpoint(ENTITY, (1,), OPEN_BITEMPORAL_ENDS)
-    admission.complete(CompletionFacts(opened=Openings(continued=(split, tail))), ())
+    admission.complete(WriteCompletion(opened=Openings(continued=(split, tail))), (), at=1)
     return admission
 
 

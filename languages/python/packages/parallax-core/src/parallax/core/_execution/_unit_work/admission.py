@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import heapq
-from collections.abc import Callable, Hashable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Hashable, Iterator, Mapping
 from dataclasses import replace
 from enum import Enum
 from operator import attrgetter
 from typing import Final, Literal, cast, final
 
 from parallax.core import inheritance, temporal_read
-from parallax.core._execution._unit_work._write_ownership import InsertionRecord, WriteOwnership
+from parallax.core._execution._unit_work._write_ownership import (
+    InsertionRecord,
+    SourceRefusal,
+    WriteOwnership,
+)
 from parallax.core._execution._unit_work.claims import (
     ClaimScope,
     ClaimVerdict,
@@ -30,7 +34,7 @@ from parallax.core._execution._unit_work.instructions import (
 from parallax.core._execution._unit_work.retain import (
     InsertionIdentity,
     KeyedWriteRefusalAdvice,
-    RetainedObservation,
+    ReadEvidence,
 )
 from parallax.core._execution._unit_work.write_items import (
     AdmittedWrite,
@@ -60,11 +64,10 @@ from parallax.core.write_plan.keys import ObjectKey, ObjectStateKey, VersionedOb
 from parallax.core.write_plan.observe import TemporalObservation
 from parallax.core.write_plan.plan import (
     AllocatedOpening,
-    CompletionFacts,
     Openings,
     OwnedEndpoint,
-    SourceAuthority,
     TemporalWriteOwnership,
+    WriteCompletion,
 )
 
 __all__ = [
@@ -93,9 +96,11 @@ type WriteEvidenceErrorCode = Literal[
 
 The first three partition what can be wrong with a source's evidence at the
 verb: there is none the target Entity's Effective Concurrency Strategy can use,
-the evidence there is has been spent by a successful flush, or a write already
-buffered in this unit of work claimed the scope this one settles against, for an
-intent this one cannot join. The fourth refuses a caller's own condition on an
+the evidence there is reaches no state this attempt still protects — spent by
+a successful flush, published from rows a completed write changed, or of an
+object a completed deletion removed — or a write already buffered in this unit
+of work claimed the scope this one settles against, for an intent this one
+cannot join. The fourth refuses a caller's own condition on an
 object this attempt inserted, which only that insertion's source or a read
 addresses. A conflict the database discovers later is a different thing
 entirely and keeps its own flush-time classification.
@@ -117,7 +122,8 @@ class WriteEvidenceError(LookupError):
 
     A ``LookupError`` because every code reports that the evidence this write
     needs is not there for it to use: never recorded for this source, recorded
-    and already spent, or still live but claimed by an intent this unit of work
+    and no longer reaching a protected state, or still live but claimed by an
+    intent this unit of work
     already buffered at the scope this write settles against, which this one
     cannot join. ``object_key`` is the object the write addressed, always
     visible so a caller can say WHICH write was refused; the Read Evidence and the
@@ -236,7 +242,6 @@ class WriteAdmission:
         "_ownership",
         "_regions",
         "_removals",
-        "_sources",
         "_temporal",
         "_temporal_facet",
         "_writes",
@@ -254,14 +259,13 @@ class WriteAdmission:
         # last completed update advanced from: the scope a write its insertion
         # authorized claims once the row is stored.
         self._inserted_version = inserted_version
-        self._ownership = WriteOwnership()
+        self._ownership = WriteOwnership(version_after=inserted_version)
         self._writes: list[_PendingItem] = []
         # Every claim the buffer holds, by its scope: the position of the write
         # that holds it. A temporal object's writes against its coverage are
         # indexed by object instead (`_temporal`).
         self._claims: dict[ClaimScope, int] = {}
         self._temporal: dict[ObjectKey, int] = {}
-        self._sources: list[SourceAuthority] = []
         # Objects a pending write removes whole, the positions of inserts that
         # must follow a removal of an earlier insertion, and the insertions the
         # buffer linked — each allocated by the first write it records, since
@@ -342,8 +346,6 @@ class WriteAdmission:
             self._check_temporal_claims(cast("ObservedKeyedWrite | InsertionKeyedWrite", item), key)
         else:
             verdict = self._check_keyed_claim(item, key)
-        if isinstance(item, ObjectClaimedWrite):
-            self._sources.append(item.source)
         instruction = item if isinstance(item, PreparedKeyedWrite) else item.instruction
         if key is None:
             self._writes.append(item)
@@ -359,9 +361,8 @@ class WriteAdmission:
 
     def composed_writes(self) -> tuple[CoalescedWrite, ...]:
         """The buffer's composed writes, in authored order, with every
-        cancelled write gone, every object claim unwrapped to its own
-        instruction, every Bitemporal opening composed with the writes its
-        insertion authorized, and every insert that must follow a removal
+        cancelled write gone, every Bitemporal opening composed with the writes
+        its insertion authorized, and every insert that must follow a removal
         marked as such."""
         written: list[CoalescedWrite] = []
         after_removal = self._after_removal or ()
@@ -383,20 +384,16 @@ class WriteAdmission:
             ):
                 written.append(FollowingKeyedWrite(item, advances))
             else:
-                written.append(item.instruction if isinstance(item, ObjectClaimedWrite) else item)
+                written.append(item)
         return tuple(written)
 
-    def drain_planned(self) -> Sequence[SourceAuthority]:
-        """End the buffer its flush planned, answering every
-        observation-free source authority its writes were admitted through, in
-        admission order, for the flush to spend once its plan succeeds.
+    def drain_planned(self) -> None:
+        """End the buffer its flush planned.
 
         An insertion the buffer held is stored from then on, unless a later
         write of the buffer removes it, and a removal of everything an earlier
         insertion of an object opened retires that insertion's authority.
         """
-        sources = self._sources
-        self._sources = []
         if self._removals is not None:
             for target in self._removals:
                 record = self._ownership.insertion_record(target)
@@ -415,26 +412,42 @@ class WriteAdmission:
                     record.set_earliest_stored_anchor(None if window is None else window.start)
                 record.unlink()
         self._clear_buffer()
-        return sources
 
-    def record_version_advance(self, state: VersionedObjectStateKey) -> None:
-        """Note that a completed write advanced ``state``'s row past its
-        version, which a write a standing insertion of it authorizes claims
-        from then on."""
-        record = self._ownership.insertion_record(state.object)
-        if record is not None:
-            record.advanced_from = state.version
+    def register_read_evidence(
+        self, evidence: ReadEvidence, target: ObjectKey, *, read_at: int, fresh: bool
+    ) -> None:
+        """Register a published Non-Temporal source's exact ``evidence``
+        (:meth:`~parallax.core._execution._unit_work._write_ownership.WriteOwnership.register_read_evidence`)."""
+        self._ownership.register_read_evidence(evidence, target, read_at=read_at, fresh=fresh)
 
-    def complete(self, facts: CompletionFacts, allocated_keys: tuple[object, ...]) -> None:
-        """Retire the owned rows a successful settled write removed, then
-        register the rows it opened — those whose keys the database allocated
-        named by ``allocated_keys`` — and what it derived from its originals."""
-        opened = facts.opened
+    def resolve_source(
+        self, evidence: ReadEvidence
+    ) -> VersionedObjectStateKey | ObjectKey | SourceRefusal:
+        """The protected current state a registered Non-Temporal source's
+        authority reaches, or why it reaches none."""
+        return self._ownership.resolve_source(evidence)
+
+    def complete(
+        self, completion: WriteCompletion, allocated_keys: tuple[object, ...], *, at: int
+    ) -> None:
+        """Publish one successful settled write's ``completion`` at change count
+        ``at``: each versioned row it advanced, which a write a standing
+        insertion of it authorizes claims from then on, and the source authority
+        it continues or ends; the owned rows it removed, retired before the rows
+        it opened — those whose keys the database allocated named by
+        ``allocated_keys`` — are registered, with what it derived from its
+        originals."""
+        for state in completion.advanced:
+            record = self._ownership.insertion_record(state.object)
+            if record is not None:
+                record.advanced_from = state.version
+        self._ownership.continue_sources(completion.advanced, completion.destroyed, at=at)
+        opened = completion.opened
         self._ownership.complete(
-            facts.removed,
+            completion.removed,
             _resolve_allocated_openings(opened, allocated_keys) if allocated_keys else opened,
-            facts.derived,
-            facts.concludes,
+            completion.derived,
+            completion.concludes,
         )
 
     def release_continuity(self) -> None:
@@ -442,9 +455,8 @@ class WriteAdmission:
         self._ownership.release_continuity()
 
     def discard(self) -> None:
-        """Drop the buffer, its claims and source authorities unspent,
-        and every insertion and owned row of the attempt."""
-        self._sources.clear()
+        """Drop the buffer and its claims, and every insertion, owned row, and
+        source registration of the attempt."""
         self._clear_buffer()
         self._ownership.clear()
 
@@ -759,8 +771,7 @@ class WriteAdmission:
         never by its key alone, so writes of two states of one key may
         interleave without either displacing the other. A write an insertion
         authorized meets an observed write of the same state as its peer, and
-        the survivor keeps the observed write's evidence, which it still
-        spends.
+        the survivor keeps the observed write's evidence.
         """
         writes = self._writes
         scope = buffered_claim_scope(item, key)
@@ -1201,15 +1212,14 @@ def _with_composed_authority(
 ) -> _Claimed:
     """``instruction`` in the carrier of whichever of two writes of one scope
     a caller conditioned, else whichever a read authorized — ``first`` where
-    both or neither were.
+    both or neither were — retaining the exact source evidence of both.
 
     A caller's condition outranks a read's evidence because it must still be
-    met whatever the survivor writes, and the survivor then spends every
-    retained observation either write was admitted through. A read's evidence
-    outranks an insertion's authority because the survivor still has to spend
-    it, and the two settle against the same state. Where both were read, both
-    were admitted through the one live observation their attempt holds for that
-    state (`UnitOfWork.retain`), so the survivor's claim is the other's too.
+    met whatever the survivor writes. A read's evidence outranks an insertion's
+    authority, since the two settle against the same state. Sources resolving
+    to one scope may have observed different states, or published equal but
+    distinct evidence, so the survivor keeps every source's evidence by
+    identity rather than the one its carrier held.
     """
     target = (
         first
@@ -1218,25 +1228,23 @@ def _with_composed_authority(
         if isinstance(second, TargetKeyedWrite)
         else None
     )
-    if target is not None:
-        retained = target.retained_observations
-        for write in (first, second):
-            for observation in _retained_observations(write):
-                if all(observation is not held for held in retained):
-                    retained = (*retained, observation)
-        return replace(target, instruction=instruction, retained_observations=retained)
-    carrier = second if isinstance(first, InsertionKeyedWrite) else first
-    return replace(carrier, instruction=instruction)
-
-
-def _retained_observations(write: _Claimed) -> tuple[RetainedObservation, ...]:
-    if isinstance(write, TargetKeyedWrite):
-        return write.retained_observations
-    # Only an observed write shares a caller's scope: an object-claimed write's
-    # unversioned object has no version a caller could state, and a caller
-    # addressing an object this attempt inserted is refused.
-    assert isinstance(write, ObservedKeyedWrite)
-    return (write.retained_observation,)
+    carrier = (
+        target
+        if target is not None
+        else second
+        if isinstance(first, InsertionKeyedWrite)
+        else first
+    )
+    if isinstance(carrier, InsertionKeyedWrite):
+        return replace(carrier, instruction=instruction)
+    retained = carrier.source_evidence
+    for write in (first, second):
+        if write is carrier or isinstance(write, InsertionKeyedWrite):
+            continue
+        for evidence in write.source_evidence:
+            if all(evidence is not held for held in retained):
+                retained = (*retained, evidence)
+    return replace(carrier, instruction=instruction, source_evidence=retained)
 
 
 def _coalesced(

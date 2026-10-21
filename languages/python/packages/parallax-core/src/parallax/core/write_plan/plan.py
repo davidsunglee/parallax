@@ -7,7 +7,7 @@ from typing import Final, Protocol
 
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.temporal_read import TimeInterval
-from parallax.core.write_plan.keys import ObjectKey, ObjectStateKey
+from parallax.core.write_plan.keys import ObjectKey, ObjectStateKey, VersionedObjectStateKey
 from parallax.core.write_plan.steps import INFINITY, PlannedStep, TemporalUpperBound
 
 __all__ = [
@@ -18,7 +18,6 @@ __all__ = [
     "AllocatedOpening",
     "BoundRange",
     "CombinedSourceAuthority",
-    "CompletionFacts",
     "DeferredRange",
     "Derivation",
     "DerivedRow",
@@ -28,6 +27,7 @@ __all__ = [
     "SettledWrite",
     "SourceAuthority",
     "TemporalWriteOwnership",
+    "WriteCompletion",
     "WriteGroup",
     "WritePlan",
 ]
@@ -191,8 +191,8 @@ NO_TEMPORAL_WRITE_OWNERSHIP: Final[TemporalWriteOwnership] = _NoTemporalWriteOwn
 
 
 class SourceAuthority(Protocol):
-    """Source authority admission already accepted, which a successful
-    settled write spends."""
+    """Temporal source authority admission already accepted, which a
+    successful settled write spends."""
 
     def consume(self) -> None: ...
 
@@ -237,21 +237,28 @@ NO_OPENINGS: Final[Openings] = Openings()
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class CompletionFacts:
-    """What completing one settled write applies, complete.
+class WriteCompletion:
+    """What one settled write's success publishes, complete.
 
-    ``changed`` names every observed state the write changes, its own source's
-    included; executing a step changes nothing by itself, so a guard proving a
-    milestone unchanged names none. ``removed`` and ``opened`` are the owned
-    rows it retires and registers. ``derived`` records the originals the write
-    transformed and the rows it left of each, for a later settled write of the
-    same flush whose conditions those originals carry; a write no later one
-    depends on records none. ``concludes`` names the object of a range that
-    follows ordering barriers and leads none: no later settled write of the
-    flush consumes what earlier ones proved about that object.
+    ``changed`` names every state the write changes, its own source's
+    included — an Observed State Key for a versioned or temporal object and an
+    Object Key for each unversioned Non-Temporal one — for the freshness of
+    reads that acquired rows before it; executing a step changes nothing by
+    itself, so a guard proving a milestone unchanged names none. ``advanced``
+    names the protected state each surviving versioned Non-Temporal update
+    advanced from, and ``destroyed`` every Non-Temporal object a keyed deletion
+    removed. ``removed`` and ``opened`` are the owned rows it retires and
+    registers. ``derived`` records the originals the write transformed and the
+    rows it left of each, for a later settled write of the same flush whose
+    conditions those originals carry; a write no later one depends on records
+    none. ``concludes`` names the object of a range that follows ordering
+    barriers and leads none: no later settled write of the flush consumes what
+    earlier ones proved about that object.
     """
 
-    changed: Iterable[ObjectStateKey] = ()
+    changed: Iterable[ObjectKey | ObjectStateKey] = ()
+    advanced: tuple[VersionedObjectStateKey, ...] = ()
+    destroyed: tuple[ObjectKey, ...] = ()
     removed: Iterable[OwnedEndpoint] = ()
     opened: Openings = NO_OPENINGS
     derived: tuple[Derivation, ...] = ()
@@ -259,9 +266,9 @@ class CompletionFacts:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class BoundRange(CompletionFacts):
+class BoundRange(WriteCompletion):
     """What a range became once bound to its coverage: the Planned Steps it
-    executes, in order, beside the completion facts their success publishes."""
+    executes, in order, beside the completion their success publishes."""
 
     steps: tuple[PlannedStep, ...]
 
@@ -276,19 +283,19 @@ class DeferredRange:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class SettledWrite(CompletionFacts):
+class SettledWrite(WriteCompletion):
     """One caller write after settlement in a Write Plan, and the completion
-    facts its success applies.
+    its success publishes.
 
-    Its facts are applied only once every step of its Write Group has
-    succeeded, and before any later group executes, after it spends the source
-    authority ``claim``. Removals are retired before openings are registered,
-    so a row removed and reopened at one address remains owned, and an
-    insertion whose last row the write removed still stands when a row the
-    write opened continues it.
+    Its completion is published only once every step of its Write Group has
+    succeeded, and before any later group executes, after it spends the
+    temporal source authority ``claim``. Removals are retired before openings
+    are registered, so a row removed and reopened at one address remains owned,
+    and an insertion whose last row the write removed still stands when a row
+    the write opened continues it.
 
     A settled write with a ``deferred`` range has no planned step of its own:
-    its steps and facts come from binding that range at its turn.
+    its steps and completion come from binding that range at its turn.
     """
 
     claim: SourceAuthority | None = None

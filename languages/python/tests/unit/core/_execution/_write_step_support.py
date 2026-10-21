@@ -252,10 +252,13 @@ def run_plan(
     flush: FlushActivity,
     meta: Metamodel = POSITION_META,
     payloads: WritePayloadPreparer | None = None,
+    *,
+    units: list[UnitOfWork] | None = None,
 ) -> None:
     """``plan`` run group by group by a fresh unit of work, each group's steps
     executed by the production executor of an attempt over ``port`` as calls
-    of ``flush``, preparing payloads through ``payloads`` where given."""
+    of ``flush``, preparing payloads through ``payloads`` where given; the unit
+    of work is appended to ``units`` before the plan runs."""
     executor = step_executor(port, meta, payloads)
 
     def execute(steps: tuple[PlannedStep, ...], /, *, allocates: bool) -> tuple[object, ...]:
@@ -273,6 +276,8 @@ def run_plan(
         actor_identity=TEST_ACTOR_IDENTITY,
         evidence_policy_for=opt_lock.view(meta).required_key,
     )
+    if units is not None:
+        units.append(uow)
     run_write_plan(uow, plan, execute)
 
 

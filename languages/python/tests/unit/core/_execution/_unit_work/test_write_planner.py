@@ -17,6 +17,7 @@ optimistic-mode gates, and temporal in-place adjacency.
 
 from __future__ import annotations
 
+import dataclasses
 import datetime as dt
 from collections.abc import Mapping, Sequence
 from decimal import Decimal
@@ -34,11 +35,13 @@ from parallax.core._execution._unit_work.instructions import (
     derive_keyed_write,
     prepare_typed_write,
 )
+from parallax.core._execution._unit_work.retain import ParticipationToken, ReadEvidence
 from parallax.core._execution._unit_work.write_items import (
     ObjectClaimedWrite,
     ObservedKeyedWrite,
     OrderedWrite,
 )
+from parallax.core._execution._unit_work.write_settlement import SettledWriteWithSource
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import INFINITY
 from parallax.core.metamodel import (
@@ -102,7 +105,7 @@ from parallax.descriptor._records import Metamodel as DescriptorMetamodel
 from tests._support.clock_probes import CountingClock, inert_instant, instant_at
 from tests._support.planner_probes import (
     TEST_ACTOR_IDENTITY,
-    RecordingSource,
+    object_source,
     observed_buffer,
     plan_steps,
     retained_observation,
@@ -211,7 +214,9 @@ def _observed(
 
 
 def _claimed(write: KeyedWriteInstruction) -> ObjectClaimedWrite:
-    return ObjectClaimedWrite(_prepared_keyed(write, _WALLET), RecordingSource())
+    (row,) = write.rows
+    source = object_source(corpus_object_key("Wallet", ("id", row["id"])))
+    return ObjectClaimedWrite(_prepared_keyed(write, _WALLET), (source,))
 
 
 def _shape(plan: WritePlan) -> list[tuple[str, str]]:
@@ -427,8 +432,9 @@ def test_identical_object_claimed_destructions_plan_one_step() -> None:
 
 def test_object_claimed_writes_of_two_rows_still_collapse_into_one_batch() -> None:
     # A claim is per object, so two objects' deletes are two claims — and each
-    # leaves coalescing as the bare instruction it always was, which is what keeps
-    # `m-batch-write`'s set-based collapse reachable for unversioned rows.
+    # batches as the bare instruction it carries would, which is what keeps
+    # `m-batch-write`'s set-based collapse reachable for unversioned rows. The
+    # batch keeps both sources and destroys both objects.
     first = _claimed(KeyedWriteInstruction("delete", "Wallet", ({"id": 1},)))
     second = _claimed(KeyedWriteInstruction("delete", "Wallet", ({"id": 2},)))
     plan = _plan([first, second], _WALLET)
@@ -436,6 +442,11 @@ def test_object_claimed_writes_of_two_rows_still_collapse_into_one_batch() -> No
     assert isinstance(step, PlannedDelete)
     assert isinstance(step.target, KeyTarget)
     assert step.target.key_values == ((1,), (2,))
+    (write,) = settled_writes(plan)
+    assert isinstance(write, SettledWriteWithSource)
+    assert write.source_evidence == (*first.source_evidence, *second.source_evidence)
+    keys = tuple(corpus_object_key("Wallet", ("id", key)) for key in (1, 2))
+    assert (tuple(write.changed), write.destroyed, write.advanced) == (keys, keys, ())
 
 
 def _assignment_values(step: PlannedUpdate) -> dict[str, object]:
@@ -1831,31 +1842,44 @@ def test_audit_may_not_state_an_updated_rows_key(monkeypatch: pytest.MonkeyPatch
         _plan(_wallet_update(), model)
 
 
-def test_only_surviving_writes_carry_claims_into_settled_writes() -> None:
+def test_only_surviving_writes_carry_their_sources_into_settled_writes() -> None:
     # Two surviving writes settle against one observed state — a destruction and
     # an assignment of one state are a pair no verb admitted as combinable, so
-    # both are left standing — and each one's settled write carries that one claim. A
-    # carrier the earlier stages retire takes its claim out of the flush with it:
-    # the key-only update below is known no-op work, eliminated at stage 2, and
-    # never settled, so its claim is absent by ABSENCE rather than by a second
-    # filter.
-    observation = VersionObservation(observed_version=7)
-    shared = RetainedObservation(
-        VersionedObjectStateKey(corpus_object_key("Account", ("id", 1)), 7), observation, None
-    )
+    # both are left standing — and each one's settled write keeps its own
+    # source and publishes its own outcome. A carrier the earlier stages retire
+    # takes its source out of the flush with it: the key-only update below is
+    # known no-op work, eliminated at stage 2, and never settled, so its source
+    # is absent by ABSENCE rather than by a second filter.
+    one = corpus_object_key("Account", ("id", 1))
+    state = VersionedObjectStateKey(one, 7)
+    shared = RetainedObservation(state, VersionObservation(observed_version=7), None)
     retired_observation = VersionObservation(observed_version=4)
     retired = RetainedObservation(
         VersionedObjectStateKey(corpus_object_key("Account", ("id", 2)), 4),
         retired_observation,
         None,
     )
+    sources = [
+        ReadEvidence(one.entity, one, ParticipationToken(), shared),
+        ReadEvidence(one.entity, one, ParticipationToken(), shared),
+        ReadEvidence(retired.key.object.entity, retired.key.object, ParticipationToken(), retired),
+    ]
     buffer = [
-        _observed(KeyedWriteInstruction("delete", "Account", ({"id": 1},)), shared),
-        _observed(
-            KeyedWriteInstruction("amend", "Account", ({"id": 1, "balance": Decimal("9.00")},)),
-            shared,
+        dataclasses.replace(
+            _observed(KeyedWriteInstruction("delete", "Account", ({"id": 1},)), shared),
+            source_evidence=(sources[0],),
         ),
-        _observed(KeyedWriteInstruction("amend", "Account", ({"id": 2},)), retired),
+        dataclasses.replace(
+            _observed(
+                KeyedWriteInstruction("amend", "Account", ({"id": 1, "balance": Decimal("9.00")},)),
+                shared,
+            ),
+            source_evidence=(sources[1],),
+        ),
+        dataclasses.replace(
+            _observed(KeyedWriteInstruction("amend", "Account", ({"id": 2},)), retired),
+            source_evidence=(sources[2],),
+        ),
     ]
     finalized = build_write_planner(_ACCOUNT).finalize(
         WritePlanningRequest(
@@ -1866,7 +1890,14 @@ def test_only_surviving_writes_carry_claims_into_settled_writes() -> None:
         )
     )
     assert [_step_mutation(step) for step in plan_steps(finalized)] == ["update", "delete"]
-    assert [write.claim for write in settled_writes(finalized)] == [shared, shared]
+    update, delete = settled_writes(finalized)
+    assert isinstance(update, SettledWriteWithSource)
+    assert isinstance(delete, SettledWriteWithSource)
+    assert (update.source_evidence, delete.source_evidence) == ((sources[1],), (sources[0],))
+    assert [
+        (write.claim, tuple(write.changed), write.advanced, write.destroyed)
+        for write in (update, delete)
+    ] == [(None, (state,), (state,), ()), (None, (state,), (), (one,))]
 
 
 # --------------------------------------------------------------------------- #

@@ -100,6 +100,7 @@ from parallax.core.unit_work import (
     KeyedWriteInstruction,
     PredicateSelection,
     PredicateWriteInstruction,
+    UnitOfWork,
     WriteAssignment,
     WritePlanningRequest,
 )
@@ -1826,38 +1827,36 @@ def test_a_revision_patching_no_document_lowers_whatever_its_predecessor_held(
 def test_a_refused_revision_fails_its_group_after_earlier_groups_completed() -> None:
     # Execution demands each step's payload at its own turn: the earlier group
     # and the refused group's own earlier step have run, the refused group
-    # completes none of its writes, and no later group executes.
-    claims = (_Claim(), _Claim(), _Claim(), _Claim())
+    # completes none of its writes, and no later group executes. Each settled
+    # write changes one object, so the unit of work's change count says how
+    # many completed.
+    def settled(key: int) -> SettledWrite:
+        return SettledWrite(changed=(ObjectKey(_SEQUENCE_SPAN, (("id", key),)),))
+
     known = _span_revision({"amount": 300}, predecessor_document_is_object=True, key=1)
     plan = WritePlan(
         (
-            WriteGroup((SettledWrite(claim=claims[0]),), (known,)),
+            WriteGroup((settled(1),), (known,)),
             WriteGroup(
-                (SettledWrite(claim=claims[1]), SettledWrite(claim=claims[2])),
+                (settled(2), settled(3)),
                 (
                     _span_revision({"amount": 300}, predecessor_document_is_object=True, key=2),
                     _span_revision({"amount": 300}, predecessor_document_is_object=False, key=3),
                 ),
             ),
             WriteGroup(
-                (SettledWrite(claim=claims[3]),),
+                (settled(4),),
                 (_span_revision({"amount": 300}, predecessor_document_is_object=True, key=4),),
             ),
         )
     )
     port = ScriptedAdapter(Write(), Write())
+    units: list[UnitOfWork] = []
     with open_flush() as flush, pytest.raises(SqlGenError, match="not known to be an object"):
-        run_plan(port, plan, flush, _SPANS_DOCUMENT)
+        run_plan(port, plan, flush, _SPANS_DOCUMENT, units=units)
     assert [call.binds[-3] for call in port.calls if isinstance(call, WriteCall)] == [1, 2]
-    assert [claim.consumed for claim in claims] == [True, False, False, False]
-
-
-@dataclasses.dataclass
-class _Claim:
-    consumed: bool = False
-
-    def consume(self) -> None:
-        self.consumed = True
+    (uow,) = units
+    assert uow.freshness == 1
 
 
 def test_the_compiler_places_no_cell_its_layout_does_not_hold() -> None:

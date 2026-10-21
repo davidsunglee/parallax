@@ -75,7 +75,12 @@ from parallax.core.read_delivery._page_reader import (
 )
 from parallax.core.read_delivery._publication import Publication
 from parallax.core.read_delivery._read_plan import ReadPlanCache, ReadPlanner
-from parallax.core.unit_work import Concurrency, ParticipationToken, RetainedObservation
+from parallax.core.unit_work import (
+    Concurrency,
+    ParticipationToken,
+    ReadEvidence,
+    RetainedObservation,
+)
 from parallax.snapshot import (
     Snapshot,
     SnapshotConnectionError,
@@ -164,6 +169,9 @@ class _EvidenceContext:
         del read_at
         self.retained.append(observation)
         return observation
+
+    def register_read_evidence(self, evidence: ReadEvidence, /, *, read_at: int) -> None:
+        del evidence, read_at
 
 
 class _Recording:

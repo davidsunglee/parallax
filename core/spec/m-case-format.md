@@ -1711,7 +1711,11 @@ declare are the closed vocabulary `m-unit-work` owns:
 - `write-evidence-already-claimed` — the write cannot join the pending writes of
   its object (`m-unit-work` *Observed-State Coalescing*);
 - `write-evidence-inserted` — a caller-addressed write of an object its unit of
-  work admitted an insertion of (`m-unit-work` *Caller-addressed writes*).
+  work admitted an insertion of (`m-unit-work` *Caller-addressed writes*);
+- `write-evidence-consumed` — a source-backed write whose source reaches no
+  state its unit of work still protects, such as one whose object an earlier
+  flush of that unit of work deleted (`m-unit-work` *Observation ownership and
+  lifetime*).
 
 The harness grades that a state-graded case is **consistent**, not that SQL
 produces it: it provisions, reads back the rows the case starts from, and proves

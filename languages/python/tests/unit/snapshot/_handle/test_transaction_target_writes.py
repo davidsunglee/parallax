@@ -444,21 +444,33 @@ def _x(tx: TxnContext, _source: mm.Account) -> None:
 def test_exact_window_target_and_observed_writes_compose_into_one_statement(
     steps: tuple[_Step, ...], statement: WriteCall
 ) -> None:
-    port = ScriptedAdapter(Transact(Read(rows=[_row()]), Write(), Read(rows=[])))
-    spent: list[BaseException] = []
+    # Once the composed write completes, a deletion has ended the source's
+    # authority, while an assignment has advanced it to the version it
+    # produced, from which the source writes again.
+    deletes = statement.sql == _GATED_DELETE
+    port = ScriptedAdapter(
+        Transact(Read(rows=[_row()]), Write(), Read(rows=[]), *(() if deletes else (Write(),)))
+    )
+    ended: list[BaseException] = []
 
     def fn(tx: TxnContext) -> None:
         source = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         for step in steps:
             step(tx, source)
         tx.find(mm.Account.where(mm.Account.id == 2))
+        if not deletes:
+            tx.amend(source.edit(owner="Again"))
+            return
         with pytest.raises(WriteEvidenceError) as refused:
             tx.amend(source.edit(owner="Again"))
-        spent.append(refused.value)
+        ended.append(refused.value)
 
     account_db(port).transact(fn)
     assert _calls(port)[1] == statement
-    assert cast("WriteEvidenceError", spent[0]).code == "write-evidence-consumed"
+    if deletes:
+        assert cast("WriteEvidenceError", ended[0]).code == "write-evidence-consumed"
+    else:
+        assert _calls(port)[3] == WriteCall(_GATED_OWNER, ("Again", 5, 1, 4))
 
 
 def test_a_composed_write_whose_gate_fails_reports_the_callers_precondition() -> None:

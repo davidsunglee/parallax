@@ -17,7 +17,11 @@ from parallax.core._execution._unit_work.instructions import (
     PreparedWrite,
     prepare_typed_write,
 )
-from parallax.core._execution._unit_work.retain import RetainedObservation
+from parallax.core._execution._unit_work.retain import (
+    ParticipationToken,
+    ReadEvidence,
+    RetainedObservation,
+)
 from parallax.core._execution._unit_work.strategy import ActorIdentity
 from parallax.core._execution._unit_work.write_items import (
     AfterRemoval,
@@ -42,8 +46,8 @@ from parallax.core.write_plan.steps import PlannedStep
 __all__ = [
     "NO_ROW_READS",
     "TEST_ACTOR_IDENTITY",
-    "RecordingSource",
     "admitted_writes",
+    "object_source",
     "observed_buffer",
     "observed_write",
     "plan_steps",
@@ -71,14 +75,19 @@ class _NoRowReads:
 NO_ROW_READS: Final[AcquireRows] = _NoRowReads()
 
 
-class RecordingSource:
-    __slots__ = ("consumed",)
-
-    def __init__(self) -> None:
-        self.consumed = False
-
-    def consume(self) -> None:
-        self.consumed = True
+def object_source(
+    target: ObjectKey, participation: ParticipationToken | None = None
+) -> ReadEvidence:
+    """Observation-free Read Evidence of ``target``, stamped with
+    ``participation``, by default one no unit of work issued: what an
+    object-claimed write keeps where a suite admits it directly rather than
+    through a verb."""
+    return ReadEvidence(
+        target.entity,
+        target,
+        ParticipationToken() if participation is None else participation,
+        None,
+    )
 
 
 def observed_buffer(

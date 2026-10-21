@@ -1114,33 +1114,51 @@ def test_typed_update_does_not_detour_through_wire_projection(
     assert len(_writes(port)) == 1
 
 
-def test_a_wire_source_whose_evidence_a_flush_spent_is_refused() -> None:
-    port = ScriptedAdapter(Transact(_ACCOUNT_READ, Write(), _ACCOUNT_READ))
+def test_a_wire_source_continues_from_the_version_its_flushed_write_produced() -> None:
+    port = ScriptedAdapter(Transact(_ACCOUNT_READ, Write(), _ACCOUNT_READ, Write()))
 
     def fn(tx: TxnContext) -> None:
         node = _node(tx, _ACCOUNT_QUERY)
         tx.wire.amend(node, {"balance": "125.00"})
-        # The dependent read force-flushes, which spends the claim the write carried.
+        # The dependent read force-flushes the first write, which advances the
+        # version the source's authority reaches.
         tx.wire.find(_ACCOUNT_QUERY)
-        with pytest.raises(WriteEvidenceError) as exc_info:
-            tx.wire.amend(node, {"balance": "150.00"})
-        assert exc_info.value.code == "write-evidence-consumed"
+        tx.wire.amend(node, {"balance": "150.00"})
 
     db_for(ACCOUNT, port).transact(fn)
+    assert [tuple(write.binds) for write in _writes(port)] == [
+        (Decimal("125.00"), 5, 1, 4),
+        (Decimal("150.00"), 6, 1, 5),
+    ]
+
+
+def test_two_sources_of_one_version_both_continue_into_one_later_write() -> None:
+    port = ScriptedAdapter(Transact(_ACCOUNT_READ, _ACCOUNT_READ, Write(), _ACCOUNT_READ, Write()))
+
+    def fn(tx: TxnContext) -> None:
+        sources = (_node(tx, _ACCOUNT_QUERY), _node(tx, _ACCOUNT_QUERY))
+        tx.wire.amend(sources[0], {"owner": "Lin"})
+        tx.wire.amend(sources[1], {"owner": "Ana"})
+        tx.wire.find(_ACCOUNT_QUERY).results()
+        # Both now reach the version their coalesced write produced, so their
+        # next writes coalesce there too.
+        tx.wire.amend(sources[0], {"balance": "150.00"})
+        tx.wire.amend(sources[1], {"owner": "Bo"})
+
+    db_for(ACCOUNT, port).transact(fn)
+    assert [tuple(write.binds) for write in _writes(port)] == [
+        ("Ana", 5, 1, 4),
+        ("Bo", Decimal("150.00"), 6, 1, 5),
+    ]
 
 
 @pytest.mark.parametrize(
     ("first_verb", "second_verb"),
-    [("amend", "amend"), ("amend", "delete"), ("delete", "delete")],
-    ids=["coalesced", "superseded", "deduplicated"],
+    [("amend", "delete"), ("delete", "delete")],
+    ids=["superseded", "deduplicated"],
 )
-def test_two_sources_of_one_version_are_both_spent(first_verb: str, second_verb: str) -> None:
-    deletes = second_verb == "delete"
-    port = ScriptedAdapter(
-        Transact(
-            _ACCOUNT_READ, _ACCOUNT_READ, Write(), Read(rows=[] if deletes else [_ACCOUNT_ROW])
-        )
-    )
+def test_two_sources_of_one_deleted_version_both_end(first_verb: str, second_verb: str) -> None:
+    port = ScriptedAdapter(Transact(_ACCOUNT_READ, _ACCOUNT_READ, Write(), Read(rows=[])))
 
     def write(tx: TxnContext, verb: str, source: WireEntity, owner: str) -> None:
         if verb == "amend":
