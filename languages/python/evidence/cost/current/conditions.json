@@ -1,4 +1,19 @@
 {
+  "adjustment": {
+    "date": "2026-10-21",
+    "redigested": {
+      "members": [
+        "write-lowering"
+      ],
+      "producingCommit": "90ff69ccbe4e4334b9c1f07adb35d67f42886947",
+      "unchanged": "every reading, sample, comparison, and measurement condition; the measured workload inputs and code identity at the producing commit equal HEAD's",
+      "workloadDigest": {
+        "atCapture": "1fd8c5cc57a74544412a37ac9e3f5799c7fa62ef559151113ed97d1051708d72",
+        "redigestedUnder": "6651570e92e0323c1fec000d3f9a20ee71bd410a7f131f79e859af499eb5fdb4"
+      }
+    },
+    "schemaVersion": 1
+  },
   "members": {
     "feature-boundary": {
       "runtimes": {

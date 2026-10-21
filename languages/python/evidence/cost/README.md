@@ -30,14 +30,16 @@ without resolving that commit; the ancestry advisory alone consults Git history.
 This is an integrity check of reviewed evidence, not an attestation that the
 observations cannot be forged.
 
-Rebase and squash merges rewrite branch commits. Prefer capturing at a commit
-already on `main` and landing the evidence on top of it, which keeps
-`--redigest` available. Capture on the branch instead when the change makes the
-committed capture stale, so `python-check-evidence` stays green through the
-merge. The current capture was taken on its change's branch for that reason:
-its producing commit is a branch commit, and its `main` counterpart is the
-rebase merge's rewrite of the same change. Because the producing commit is not
-an ancestor of `main`, `--redigest` cannot re-state this capture.
+Rebase and squash merges rewrite branch commits. Snapshot redigest requires an
+ancestor of the inspected checkout; write-lowering redigest accepts the exact
+resolvable producing commit after proving its captured sources and workload
+identity. Prefer capturing at a commit already on `main`, so source history
+remains available. The current capture was taken on its change's branch because
+that change made the previous capture stale. Its producing commit remains the
+original branch commit after the rebase merge. Its write-lowering workload
+digest was subsequently re-stated without new measurements; the amendment in
+[conditions](current/conditions.json) records both digests and preserves that
+producing commit and the original instrument hashes.
 
 The current collector completed on 2026-10-20, 19:14:27–20:13:55 UTC, in
 59m28s wall time. It ran on a Mac17,4 (Apple M5, 10 cores, 32 GiB), macOS
@@ -47,7 +49,7 @@ source hashes; [durations](current/durations.json) record collection telemetry.
 The dependency lock SHA-256 is
 `bc4f54c3d6fbf5268d3a324ecb0409c2bcf2e0b0d0920f3ec0a7e0f1c4494557`.
 The portfolio SHA-256 is
-`1a8897eac9f7b7ea742832fe77d810c3c8005608245eeab48e95165832fce01d`.
+`631ca85dc9f727f5f98b9c647a1181ce105eef03d53dbd84a1b64c2a43196ecf`.
 
 No competing tests or measurements ran, but other interactive sessions and
 system indexing were active: the one-minute load average reached 5.7 in the
@@ -191,12 +193,28 @@ uv run --project languages/python python languages/python/tools/cost_report.py \
   --redigest languages/python/evidence/cost/current/portfolio.json
 ```
 
-It proves that the measured workload inputs at the capture's producing commit
-digest to HEAD's workload digest, and that the commit's own code reports HEAD's
-generated-key offset, frozen manifests, and generated dataset rows. It then
-amends the members recording the stale digest and records the adjustment as
-reclassification does. It refuses a changed Budget Contract, a prior
-adjustment, or any unproven input and writes nothing.
+The command selects stale Snapshot and write-lowering identities independently.
+For Snapshot, it proves that the measured inputs at the producing ancestor
+digest to HEAD's identity, and that the commit's own code reports HEAD's
+generated-key offset, frozen manifests, and generated dataset rows.
+
+For write lowering, it checks each captured workload source hash against the
+exact producing commit and reconstructs that commit's recorded digest under
+either the legacy raw-source definition or the current definition. It then
+proves that executable workload syntax and the commit's frozen structural and
+leaf manifests equal HEAD's. The current identity includes the shared workload
+spelling helper and ignores comments, formatting, standalone documentation
+strings, and only the workload's own digest declaration. Assigned literals and
+operational expressions remain part of the identity. Prose edits therefore
+need no amendment after migration to the current definition.
+
+All required proofs finish before writing. The command amends only stale
+workload digest fields and records their old and new values in conditions;
+readings, samples, comparisons, durations, producing provenance, and captured
+instrument hashes remain unchanged. It refuses a changed Budget Contract, a
+prior adjustment, missing producing history or source proof, or a meaningful
+workload or frozen-input change and writes nothing. Use a new capture for a
+changed measured workload. Do not amend the fixed historical bases.
 
 The former previous/COR-191 comparisons can be reconstructed using Git revisions
 `3535d3e0f` and `dc65ef88`. Export both `portfolio.json` and `conditions.json`
