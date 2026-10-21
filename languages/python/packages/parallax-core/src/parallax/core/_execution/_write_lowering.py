@@ -17,7 +17,12 @@ from parallax.core.sql_gen._write import (
     compile_write_step,
     effect_parameter_ceiling,
 )
-from parallax.core.write_plan.payload import RowPayload, WritePayloadPreparer
+from parallax.core.write_plan.payload import (
+    AssignmentPayload,
+    PatchedDocument,
+    RowPayload,
+    WritePayloadPreparer,
+)
 from parallax.core.write_plan.steps import (
     ExactCount,
     KeyTarget,
@@ -239,10 +244,25 @@ def _demanded(step: PlannedStep, payloads: WritePayloadPreparer) -> StepPayload:
                 payloads.row(entity, entry) if entry.prepared is None else entry.prepared
                 for entry in entries
             )
-        case PlannedUpdate() | PlannedClose() | PlannedTemporalRevision():
+        case PlannedTemporalRevision():
+            return _predictable_revision(step, payloads.assignments(step.entity, step.assignments))
+        case PlannedUpdate() | PlannedClose():
             return payloads.assignments(step.entity, step.assignments)
         case _:
             return None
+
+
+def _predictable_revision(
+    step: PlannedTemporalRevision, payload: AssignmentPayload
+) -> AssignmentPayload:
+    if not step.predecessor_document_is_object and any(
+        isinstance(value, PatchedDocument) for value in payload.values
+    ):
+        raise SqlGenError(
+            f"{step.entity.canonical}: a revision patches the Structured Column of a row "
+            "whose stored document is not known to be an object"
+        )
+    return payload
 
 
 def _row_payload(

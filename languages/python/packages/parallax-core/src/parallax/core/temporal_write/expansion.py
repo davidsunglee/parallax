@@ -983,6 +983,7 @@ def _own_step(
         assignments=_revision_assignments(facts, kept, predecessor),
         concurrency=closing.concurrency,
         affected_rows=closing.affected_rows,
+        predecessor_document_is_object=isinstance(predecessor.document, Mapping),
     )
 
 

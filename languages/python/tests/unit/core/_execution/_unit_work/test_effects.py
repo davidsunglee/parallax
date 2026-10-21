@@ -162,6 +162,7 @@ def _revision(shortfall: Shortfall = STALE_WRITE) -> PlannedTemporalRevision:
         assignments=_RENAME,
         concurrency=_CLOSE_CONCURRENCY[shortfall],
         affected_rows=ExactCount(expected=1, on_shortfall=shortfall),
+        predecessor_document_is_object=False,
     )
 
 

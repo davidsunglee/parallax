@@ -552,6 +552,7 @@ def _revision(valid_end: dt.datetime | None, **assigned: object) -> PlannedTempo
         ),
         concurrency=UNGATED,
         affected_rows=ExactCount(1, STALE_WRITE),
+        predecessor_document_is_object=False,
     )
 
 
@@ -719,6 +720,7 @@ def test_a_value_object_assignment_replaces_the_stored_occurrence_whole() -> Non
             ),
             concurrency=UNGATED,
             affected_rows=ExactCount(1, STALE_WRITE),
+            predecessor_document_is_object=True,
         ),
     )
     revised = store.predecessor_for(model, entity, {"id": 7})

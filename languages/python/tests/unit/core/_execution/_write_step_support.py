@@ -118,6 +118,7 @@ def revision(key: int) -> PlannedTemporalRevision:
         assignments=PlannedAssignments(attributes={position_attribute("value"): Decimal("2.50")}),
         concurrency=_GATE,
         affected_rows=ExactCount(1, OPTIMISTIC_CONFLICT),
+        predecessor_document_is_object=False,
     )
 
 

@@ -336,6 +336,35 @@ def test_an_owned_rectangle_is_revised_into_the_successor_keeping_its_address() 
     assert expanded.removed == ()
 
 
+@pytest.mark.parametrize(
+    ("document", "is_object"),
+    [
+        ({"amount": 100, "legacy": "kept"}, True),
+        ({}, True),
+        (None, False),
+        (["legacy", "old"], False),
+        ("legacy", False),
+    ],
+    ids=["object", "empty-object", "absent-or-null", "array", "scalar"],
+)
+def test_a_revision_records_whether_its_predecessors_document_is_an_object(
+    document: object, is_object: bool
+) -> None:
+    stored = PredecessorRow(members=_STORED.members, document=document)
+    expanded = _expand(
+        _expansion(
+            _SPAN_FACTS,
+            _assigning(TimeInterval(_MAR, INFINITY), {"amount": 300}),
+            ownership=OpenedRows(frozenset({_endpoint(INFINITY)})),
+        ),
+        _SPAN_FACTS,
+        stored,
+    )
+    revision, _head = expanded.steps
+    assert isinstance(revision, PlannedTemporalRevision)
+    assert revision.predecessor_document_is_object is is_object
+
+
 def test_an_owned_rectangle_no_successor_keeps_is_removed_and_its_survivors_opened() -> None:
     owned = OpenedRows(frozenset({_endpoint(INFINITY)}))
     expanded = _expand(

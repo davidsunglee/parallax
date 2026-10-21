@@ -381,8 +381,11 @@ duplicate or refuses the predicate before it reaches here (`m-sql`, `m-dialect`)
 `applyPreparedPatches` applies ordered prepared patches to a document in memory
 and returns the result. It never reads the database and never issues a
 statement; composing the equivalent database expression from the same prepared
-values is `m-sql`'s and `m-dialect`'s job, and the two MUST agree, which is what
-makes an in-memory successor and a path-patched `UPDATE` interchangeable.
+values is `m-sql`'s and `m-dialect`'s job, and over an object root the two MUST
+agree, which is what makes an in-memory successor and a path-patched `UPDATE`
+interchangeable. A root that is not an object is not that domain: this
+operation starts an object there, while the database expression does what its
+engine does (`m-dialect` *Document mutation-expression form*).
 
 `preparePatches` resolves each path against `shape` for the same reason every other
 operation here takes one. A `SetScalar` carries managed scalar content — one
