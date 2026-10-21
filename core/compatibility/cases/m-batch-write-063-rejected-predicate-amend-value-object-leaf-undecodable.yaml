@@ -1,7 +1,3 @@
-# A predicate-selected amendment assigns a Value Object occurrence whole, and
-# decodes each leaf it states at that leaf's own position: a number where the
-# leaf declares `string` is refused with the classified Wire literal rule, before
-# anything executes (m-batch-write, m-unit-work, m-value-object).
 model: models/shipment.yaml
 tags: [m-batch-write, m-unit-work, m-value-object, m-wire, rejected, predicate-write, readless, slice-snapshot-1, slice-managed-1]
 shape: rejected
