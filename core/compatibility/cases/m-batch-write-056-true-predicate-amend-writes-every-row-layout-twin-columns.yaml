@@ -1,8 +1,3 @@
-# Columns half of the whole-table predicate amendment proof: an unversioned,
-# non-temporal predicate-selected update whose predicate is `true` selects every
-# row, as `true` does in a read, so its one statement carries no `where` clause
-# and counts every row of the Table. Its twin authors the same write under
-# Relational Document Layout.
 model: models/storage-layout-transparency-layout-twin-columns.yaml
 tags: [m-batch-write, m-unit-work, m-storage-layout, m-document-codec, m-sql, predicate-write, readless, scenario, update, layout-twin, columns, slice-snapshot-1, slice-managed-1]
 shape: scenario

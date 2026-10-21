@@ -1,7 +1,3 @@
-# A predicate-selected amendment decodes each assigned literal against its member's
-# declared type before anything executes: a JSON number is no `decimal` Wire
-# spelling, so it is refused with the same classified rule a replacement stating it
-# is (m-batch-write, m-unit-work, m-wire).
 model: models/wallet.yaml
 tags: [m-batch-write, m-unit-work, m-wire, rejected, predicate-write, readless, slice-snapshot-1, slice-managed-1]
 shape: rejected
