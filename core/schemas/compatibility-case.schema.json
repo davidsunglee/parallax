@@ -2821,8 +2821,8 @@
       ]
     },
     "submissionRefusal": {
-      "description": "The refusal a submission's verb raises at the call, before anything is buffered (m-unit-work): `write-evidence-already-claimed` — the write cannot join the pending writes of its object; `write-evidence-inserted` — a caller-addressed write of an object its unit of work admitted an insertion of. A refused submission corresponds to a caller that catches the refusal and continues, so the unit of work keeps every earlier submission. State-graded cases only.",
-      "enum": ["write-evidence-already-claimed", "write-evidence-inserted"]
+      "description": "The refusal a submission's verb raises at the call, before anything is buffered (m-unit-work): `write-evidence-already-claimed` — the write cannot join the pending writes of its object; `write-evidence-inserted` — a caller-addressed write of an object its unit of work admitted an insertion of; `write-evidence-consumed` — a source-backed write whose source reaches no state its unit of work still protects, such as one whose object a completed deletion removed. A refused submission corresponds to a caller that catches the refusal and continues, so the unit of work keeps every earlier submission. State-graded cases only.",
+      "enum": ["write-evidence-already-claimed", "write-evidence-inserted", "write-evidence-consumed"]
     },
     "targetSubmission": {
       "description": "A caller-addressed (target) submission inside a buffered scenario: `write-instruction.schema.json`'s `targetWriteInstruction` — one `row` naming an existing object by primary key, exactly one caller's revision as `ifVersion` or `ifTxStart`, and on a Bitemporal target `validFrom` with an optional `until` — beside the Clock-supplied `at`. State-graded cases only.",

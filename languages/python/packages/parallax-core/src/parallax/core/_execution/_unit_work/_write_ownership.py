@@ -2,18 +2,24 @@ from __future__ import annotations
 
 import bisect
 import datetime as dt
-from collections.abc import Iterable, Iterator
-from typing import Final, Literal, final
+import weakref
+from collections.abc import Callable, Iterable, Iterator
+from enum import Enum
+from typing import Final, Literal, cast, final
 
-from parallax.core._execution._unit_work.retain import InsertionIdentity, KeyedWriteRefusalAdvice
+from parallax.core._execution._unit_work.retain import (
+    InsertionIdentity,
+    KeyedWriteRefusalAdvice,
+    ReadEvidence,
+)
 from parallax.core.base import INFINITY, TemporalBound
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.temporal_read import TimeInterval
-from parallax.core.write_plan.keys import ObjectKey, ObjectStateKey
+from parallax.core.write_plan.keys import ObjectKey, ObjectStateKey, VersionedObjectStateKey
 from parallax.core.write_plan.plan import Derivation, Descent, Openings, OwnedEndpoint
 from parallax.core.write_plan.steps import Finite
 
-__all__ = ["InsertionRecord", "PendingInsertionState", "WriteOwnership"]
+__all__ = ["InsertionRecord", "PendingInsertionState", "SourceRefusal", "WriteOwnership"]
 
 type PendingInsertionState = Literal["opening", "before_removal", "ended_opening"]
 """How an insertion of the buffer stands, while the buffer links it.
@@ -121,6 +127,82 @@ type _InsertionTag = tuple[InsertionIdentity, tuple[TimeInterval, ...] | None]
 """The admission an owned row continues, and the parts of the row it
 contributed in order, ``None`` where it contributed the whole row."""
 
+type _SourceScope = VersionedObjectStateKey | ObjectKey
+"""The protected state a Non-Temporal source's authority reaches: a versioned
+row's exact state, or an unversioned row's object, whose shared lock covers
+every state it is in."""
+
+
+class SourceRefusal(Enum):
+    """Why a Non-Temporal source's evidence reaches no protected state.
+
+    ``STALE`` evidence was published from rows a read acquired before a
+    completed write of this attempt changed them; ``ENDED`` evidence's object a
+    completed keyed deletion of this attempt removed after its read.
+    """
+
+    STALE = "stale"
+    ENDED = "ended"
+
+
+class _ReadRegistration(weakref.ref[ReadEvidence]):
+    """The exact weak reference one Read Evidence published after a completed
+    change of this attempt is registered by.
+
+    ``key`` is the evidence's identity, which the registration is indexed by
+    and still names once the evidence is gone. ``read_at`` is the change count
+    its read captured, which places the read before or after each later
+    destruction of its object, and ``None`` for evidence its publication judged
+    stale.
+    """
+
+    __slots__ = ("key", "read_at")
+
+    key: int
+    read_at: int | None
+
+    def __new__(
+        cls,
+        evidence: ReadEvidence,
+        callback: Callable[[_ReadRegistration], object],
+        read_at: int | None,
+    ) -> _ReadRegistration:
+        registration = super().__new__(cls, evidence, callback)
+        registration.key = id(evidence)
+        registration.read_at = read_at
+        return registration
+
+    def __init__(
+        self,
+        evidence: ReadEvidence,
+        callback: Callable[[_ReadRegistration], object],
+        read_at: int | None,
+    ) -> None:
+        # The reference is made whole by __new__.
+        del evidence, callback, read_at
+
+    @property
+    def fresh_at_publication(self) -> bool:
+        """The judgment made once, when the evidence was published: whether no
+        completed write of the attempt had changed what its read acquired."""
+        return self.read_at is not None
+
+
+class _ReleaseRegistration:
+    """The one callback every registration of an ownership shares, holding its
+    owner weakly, so neither a registration nor the evidence it refers to keeps
+    the attempt's ownership alive."""
+
+    __slots__ = ("_owner",)
+
+    def __init__(self, owner: WriteOwnership) -> None:
+        self._owner = weakref.ref(owner)
+
+    def __call__(self, registration: _ReadRegistration) -> None:
+        owner = self._owner()
+        if owner is not None:
+            owner._release_read_evidence(registration)  # pyright: ignore[reportPrivateUsage] - the registration's own owner
+
 
 class WriteOwnership:
     """The attempt's write-owned facts about the objects it writes.
@@ -131,13 +213,47 @@ class WriteOwnership:
     admission's own insert, or a successor of the part of a row an admission
     contributed — is tagged with that admission's identity, and with the parts
     of it the admission contributed where that is not the whole row; a
-    successor of coverage no admission opened is not. Reads never add to it,
-    so its size follows what the attempt wrote rather than what it read.
+    successor of coverage no admission opened is not. Reads add no row to it,
+    so its rows follow what the attempt wrote rather than what it read.
+
+    It also answers what this attempt's completed writes did to the states
+    Non-Temporal sources reach. Each versioned object a completed update
+    advanced keeps the version its first such update advanced from and the
+    version the latest produced, and each object a completed keyed deletion
+    removed keeps when that happened; reads add neither. Evidence a read
+    published after a completed change is registered by a weak identity
+    reference with what its publication judged, and its registration goes with
+    the last value or pending or planned write reaching it. A source holds
+    nothing of its ownership. ``version_after`` answers the version a row of an
+    Entity holds once a completed update advanced it from a version.
     """
 
-    __slots__ = ("_addresses", "_continuity", "_endpoints", "_records", "_tags")
+    __slots__ = (
+        "__weakref__",
+        "_addresses",
+        "_continuity",
+        "_current_versions",
+        "_destroyed",
+        "_endpoints",
+        "_read_registrations",
+        "_records",
+        "_release",
+        "_tags",
+        "_version_after",
+    )
 
-    def __init__(self) -> None:
+    def __init__(
+        self, *, version_after: Callable[[EntityIdentity, int | None], int | None]
+    ) -> None:
+        self._version_after = version_after
+        # Every registered source by its evidence's identity; each versioned
+        # object's protected versions, from the one its first completed update
+        # advanced from to the one its latest produced; and the change count at
+        # which a completed deletion last removed each object.
+        self._read_registrations: dict[int, _ReadRegistration] = {}
+        self._current_versions: dict[ObjectKey, tuple[int, int]] = {}
+        self._destroyed: dict[ObjectKey, int] = {}
+        self._release = _ReleaseRegistration(self)
         self._records: dict[ObjectKey, InsertionRecord] = {}
         # The Bitemporal records again, by the address an owned row names its
         # object with, so tagging a row needs no key of its own.
@@ -193,6 +309,81 @@ class WriteOwnership:
 
     def insertion_record(self, target: ObjectKey) -> InsertionRecord | None:
         return self._records.get(target)
+
+    def register_read_evidence(
+        self, evidence: ReadEvidence, target: ObjectKey, *, read_at: int, fresh: bool
+    ) -> None:
+        """Register Non-Temporal ``evidence`` of ``target`` a read capturing
+        change count ``read_at`` published, ``fresh`` where no completed change
+        preceded its publication of what it observed.
+
+        A fresh source of an object no completed deletion removed was read
+        before any deletion that completes later, which is what unregistered
+        evidence answers, so only the rest are registered."""
+        if fresh and target not in self._destroyed:
+            return
+        self._read_registrations[id(evidence)] = _ReadRegistration(
+            evidence, self._release, read_at if fresh else None
+        )
+
+    def resolve_source(self, evidence: ReadEvidence) -> _SourceScope | SourceRefusal:
+        """The protected state Non-Temporal ``evidence``'s authority reaches —
+        the state it observed, or the version this attempt's completed updates
+        produced from it — or why it reaches none.
+
+        Unregistered evidence was published fresh, before any completed
+        deletion of its object, so it was read before every one of them.
+        """
+        registration = self._read_registrations.get(id(evidence))
+        read_at = 0
+        if registration is not None and registration() is evidence:
+            if not registration.fresh_at_publication:
+                return SourceRefusal.STALE
+            read_at = cast("int", registration.read_at)
+        target = evidence.object_key
+        destroyed = self._destroyed.get(target) if self._destroyed else None
+        if destroyed is not None and destroyed > read_at:
+            return SourceRefusal.ENDED
+        observation = evidence.observation
+        if observation is None:
+            return target
+        observed = observation.key
+        assert isinstance(observed, VersionedObjectStateKey)  # a Non-Temporal observation
+        versions = self._current_versions.get(target)
+        if versions is None or not versions[0] <= observed.version < versions[1]:
+            return observed
+        return VersionedObjectStateKey(target, versions[1])
+
+    def continue_sources(
+        self,
+        advanced: Iterable[VersionedObjectStateKey],
+        destroyed: Iterable[ObjectKey],
+        *,
+        at: int,
+    ) -> None:
+        """Publish what one successful settled write, completing at change
+        count ``at``, did to the protected states Non-Temporal sources reach:
+        each versioned state it ``advanced`` from now stands at the version it
+        produced, and each object it ``destroyed`` ends every source read before
+        it, so no later state of the object, a reinserted one's included,
+        revives them."""
+        versions = self._current_versions
+        for state in advanced:
+            target = state.object
+            produced = self._version_after(target.entity, state.version)
+            assert produced is not None  # only a versioned row advances
+            held = versions.get(target)
+            first = held[0] if held is not None and held[1] == state.version else state.version
+            versions[target] = (first, produced)
+        for target in destroyed:
+            self._destroyed[target] = at
+            versions.pop(target, None)
+
+    def _release_read_evidence(self, registration: _ReadRegistration) -> None:
+        """Forget a registration whose evidence is gone."""
+        key = registration.key
+        if self._read_registrations.get(key) is registration:
+            del self._read_registrations[key]
 
     def authorized_insertion(self, identity: InsertionIdentity) -> InsertionRecord | None:
         """The record whose standing authority ``identity`` is, if any."""
@@ -392,6 +583,9 @@ class WriteOwnership:
         self._endpoints.clear()
         self._tags.clear()
         self.release_continuity()
+        self._read_registrations.clear()
+        self._current_versions.clear()
+        self._destroyed.clear()
 
 
 class _FlushContinuity:

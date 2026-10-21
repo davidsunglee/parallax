@@ -132,7 +132,7 @@ def test_a_row_a_settled_write_removes_and_reopens_at_one_address_stays_owned() 
     # Removals are retired before openings register, so the row a settled write
     # reopened at the address it removed is still the attempt's to revise.
     endpoint = OwnedEndpoint(_KEY.entity, (1,), (Finite(instant=_JUN), PLANNED_INFINITY))
-    ownership = WriteOwnership()
+    ownership = WriteOwnership(version_after=_no_version)
     ownership.complete((), Openings(fresh=(endpoint,)))
     ownership.complete((endpoint,), Openings(fresh=(endpoint,)))
     assert ownership.owns(endpoint)
@@ -251,7 +251,7 @@ def test_a_proven_originals_descendants_are_exactly_those_overlapping_the_window
         (_position_endpoint(_JUN), TimeInterval(_APR, _JUN)),
         (_position_endpoint(None), TimeInterval(_AUG, INFINITY)),
     )
-    ownership = WriteOwnership()
+    ownership = WriteOwnership(version_after=_no_version)
     for endpoint, _coverage in rows:
         ownership.complete((), Openings(fresh=(endpoint,)))
     ownership.complete(
@@ -318,7 +318,7 @@ def _merged_derivations(
 
 
 def _merged_ownership(first: ObjectStateKey, second: ObjectStateKey) -> WriteOwnership:
-    ownership = WriteOwnership()
+    ownership = WriteOwnership(version_after=_no_version)
     merged = _position_endpoint(_AUG)
     ownership.complete(
         (),
@@ -390,7 +390,7 @@ def test_a_row_derived_from_a_merged_row_inherits_each_original_by_intersection(
 
 def test_a_row_merged_from_one_originals_adjacent_parts_names_it_once() -> None:
     first = _original(_JAN, _T0)
-    ownership = WriteOwnership()
+    ownership = WriteOwnership(version_after=_no_version)
     left, right = _position_endpoint(_APR), _position_endpoint(_JUN)
     ownership.complete(
         (),
@@ -437,7 +437,7 @@ def test_a_row_merged_from_one_originals_adjacent_parts_names_it_once() -> None:
 
 def test_a_part_of_a_row_no_proven_original_held_descends_from_none() -> None:
     first = _original(_JAN, _T0)
-    ownership = WriteOwnership()
+    ownership = WriteOwnership(version_after=_no_version)
     merged = _position_endpoint(_JUN)
     # The original contributed [January, April) of the merged row; a gap
     # opened the rest.
@@ -471,7 +471,7 @@ def test_a_part_of_a_row_no_proven_original_held_descends_from_none() -> None:
 
 def test_an_original_that_left_no_row_stays_proven_until_its_object_concludes() -> None:
     first = _original(_JAN, _T0)
-    ownership = WriteOwnership()
+    ownership = WriteOwnership(version_after=_no_version)
     # Terminated over its whole coverage, the original contributed no row.
     ownership.complete((), NO_OPENINGS, (Derivation(first, TimeInterval(_JAN, _APR), None, ()),))
     assert ownership.proven(first) is not None
@@ -519,7 +519,7 @@ def test_the_fake_reaches_no_part_without_valid_time_through_a_bounded_window() 
     log = EntityIdentity("parallax.compatibility", "TransactionLog")
     row = OwnedEndpoint(log, (1,), TRANSACTION_TIME_ENDS)
     original = _original(_JAN, _T0)
-    production = WriteOwnership()
+    production = WriteOwnership(version_after=_no_version)
     production.complete(
         (),
         Openings(fresh=(row,)),

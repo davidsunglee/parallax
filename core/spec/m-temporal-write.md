@@ -716,7 +716,7 @@ that predecessor is removed under its gate and the merged row opened. Equal
 stored state does not make one predecessor's assignments stand for another's:
 only the predecessor ending the merged row is revised, and only by its own.
 
-Every original's part of a merged row is recorded with the settled write's completion facts
+Every original's part of a merged row is recorded with the settled write's completion
 (`m-unit-work` *Write Groups complete before later work runs*): writes the
 flush admitted before a barrier follow each original to the merged row over the
 part it contributed, never over the rest, and an insertion keeps only the part

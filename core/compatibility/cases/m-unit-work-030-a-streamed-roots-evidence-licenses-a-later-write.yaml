@@ -79,7 +79,7 @@ when:
           rows:
             - { id: 1, balance: "175.00" }
       databaseCalls: 1
-      note: settle against the SECOND delivery — the gate binds version 2; naming step 0 would gate on a version the row has left
+      note: settle against the SECOND delivery — the gate binds version 2, the version it observed
       statements:
         - sql:
             postgres: update account set balance = ?, version = ? where id = ? and version = ?

@@ -54,7 +54,12 @@ from parallax.core.execution_lifecycle._activity import ActivityTarget, StreamAc
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.read_delivery._page import Page
 from parallax.core.read_delivery._page_reader import EMPTY_PAGE_ORIGIN_COLLECTOR
-from parallax.core.unit_work import Concurrency, ParticipationToken, RetainedObservation
+from parallax.core.unit_work import (
+    Concurrency,
+    ParticipationToken,
+    ReadEvidence,
+    RetainedObservation,
+)
 from tests._support.db_port import ScriptedAdapter, Transact, Write, WriteCall
 from tests.unit.core._execution._execution_support import (
     ACCOUNT,
@@ -593,6 +598,9 @@ class _EvidenceContext:
     ) -> RetainedObservation:
         del read_at
         return observation
+
+    def register_read_evidence(self, evidence: ReadEvidence, /, *, read_at: int) -> None:
+        del evidence, read_at
 
 
 @pytest.mark.parametrize("scanned", [False, True], ids=["observed", "scanned"])

@@ -23,6 +23,7 @@ from parallax.core._execution._unit_work import instructions
 from parallax.core._execution._unit_work.claims import (
     admits,
     admits_composed,
+    claim_scope,
 )
 from parallax.core._execution._unit_work.instructions import (
     ExpectedVersion,
@@ -47,7 +48,7 @@ from parallax.core.unit_work import (
 )
 from parallax.core.write_plan import ObjectKey, VersionObservation
 from parallax.core.write_plan.keys import VersionedObjectStateKey
-from tests._support.planner_probes import RecordingSource
+from tests._support.planner_probes import object_source
 from tests.unit._where_position_model import (
     WHERE_POSITION_META,
 )
@@ -61,6 +62,7 @@ _UNTIL = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
 _ASSIGNMENT = WriteIntent(kind="assignment")
 _DESTRUCTIVE = WriteIntent(kind="destructive")
 _OBJECT = ObjectKey(EntityIdentity("parallax.compatibility", "Account"), (("id", 1),))
+_PERSON_ONE = ObjectKey(EntityIdentity("parallax.compatibility", "Person"), (("id", 1),))
 _STATE = VersionedObjectStateKey(
     ObjectKey(EntityIdentity("parallax.compatibility", "Account"), ()), 4
 )
@@ -307,6 +309,23 @@ def test_the_claim_scope_derivation_is_total_over_the_write_kind(
     )
 
 
+@pytest.mark.parametrize(
+    ("evidence", "scope"),
+    [
+        (_RETAINED, _RETAINED.key),
+        (VersionedObjectStateKey(_OBJECT, 9), VersionedObjectStateKey(_OBJECT, 9)),
+        (_OBJECT, _OBJECT),
+        (None, None),
+    ],
+    ids=["observed", "continued", "object", "nothing"],
+)
+def test_a_settled_evidence_claims_the_scope_it_names(evidence: object, scope: object) -> None:
+    # An observation claims the state it observed; a continued versioned
+    # source, the protected state its authority reaches; an unversioned
+    # source, its object.
+    assert claim_scope(evidence) == scope  # pyright: ignore[reportArgumentType]
+
+
 def test_a_state_keyed_target_handed_no_observation_claims_nothing() -> None:
     # The state arm answers what its source retained, and a producer that retained
     # none settles against nothing here — the required-observation rule refuses it
@@ -343,25 +362,25 @@ def test_an_object_claim_refuses_to_wrap_an_insert_or_a_multi_row_write() -> Non
         )
         prepared = instructions.prepare_wire_write(insertion, _PERSON_META)
         assert isinstance(prepared, PreparedKeyedWrite)
-        ObjectClaimedWrite(prepared, RecordingSource())
+        ObjectClaimedWrite(prepared, (object_source(_PERSON_ONE),))
     with pytest.raises(ValueError, match="an object claim addresses one object"):
-        ObjectClaimedWrite(_prepared_person_delete(1, 2), RecordingSource())
+        ObjectClaimedWrite(_prepared_person_delete(1, 2), (object_source(_PERSON_ONE),))
 
 
-def test_an_object_claimed_write_requires_the_source_its_flush_spends() -> None:
-    # The object key is the claim; the source authority beside it is what a
-    # successful flush spends, so neither the factory nor the carrier admits a
-    # write without one.
+def test_an_object_claimed_write_requires_the_source_it_was_admitted_through() -> None:
+    # The object key is the claim; the source evidence beside it is what keeps
+    # that source's demand alive, so neither the factory nor the carrier admits
+    # a write without one.
     prepared = _prepared_person_delete(1)
-    person = ObjectKey(EntityIdentity("parallax.compatibility", "Person"), (("id", 1),))
-    message = "An object-claimed write requires the source whose authority successful execution"
+    message = "An object-claimed write requires the source evidence it was admitted through"
     with pytest.raises(ValueError, match=message):
-        buffered_write(prepared, person)
+        buffered_write(prepared, _PERSON_ONE)
     with pytest.raises(ValueError, match=message):
-        ObjectClaimedWrite(prepared, None)  # pyright: ignore[reportArgumentType]
-    source = RecordingSource()
-    claimed = buffered_write(prepared, person, source=source)
-    assert isinstance(claimed, ObjectClaimedWrite) and claimed.source is source
+        ObjectClaimedWrite(prepared, ())
+    source = object_source(_PERSON_ONE)
+    claimed = buffered_write(prepared, _PERSON_ONE, source=source)
+    assert isinstance(claimed, ObjectClaimedWrite)
+    assert claimed.source_evidence == (source,) and claimed.source_evidence[0] is source
 
 
 @pytest.mark.parametrize(

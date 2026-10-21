@@ -61,7 +61,15 @@ from tests._support.db_port import (
 )
 from tests._support.root_ownership import own_root
 from tests.unit._stream_page_support import paged_reads
-from tests.unit._transact_support import ACCOUNT, FIXED, account_db, db_for, deadlock, new_account
+from tests.unit._transact_support import (
+    ACCOUNT,
+    FIXED,
+    PERSON,
+    account_db,
+    db_for,
+    deadlock,
+    new_account,
+)
 from tests.unit.snapshot._handle import _mixed_strategy_model as mx
 
 _UPDATE_SQL = POSTGRES.to_driver_sql(
@@ -197,6 +205,51 @@ def test_a_root_its_page_fetched_before_an_own_change_cannot_write_from_that_sta
     account_db(port).transact(fn, concurrency="optimistic")
     assert refusals == ["write-evidence-consumed"]
     assert sum(isinstance(call, WriteCall) for call in port.calls) == 1
+
+
+@pytest.mark.parametrize("deleted", [False, True], ids=["updated", "deleted-and-reinserted"])
+def test_an_unversioned_root_its_page_fetched_before_a_keyed_change_writes_nothing(
+    deleted: bool,
+) -> None:
+    # An unversioned row observes no state, so the page's own read stamp is
+    # what dates the root it still delivers: a keyed write of that object
+    # completed after the page ran — a deletion followed by a fresh insertion
+    # included — leaves the root no authority, while the first root, published
+    # before the change, keeps its own.
+    people = [{"id": 1, "name": "Ada"}, {"id": 2, "name": "Bo"}]
+    change = (
+        (Write(), Read(rows=[]), Write(), Read(rows=[{"id": 2, "name": "Cy"}]))
+        if deleted
+        else (Write(), Read(rows=[{"id": 2, "name": "Cy"}]))
+    )
+    port = ScriptedAdapter(
+        Transact(*paged_reads(people, size=2), Read(rows=[people[1]]), *change, Write())
+    )
+    refusals: list[str] = []
+    published: list[mm.Person] = []
+
+    def fn(tx: TxnContext) -> None:
+        with tx.stream(mm.Person.where(mm.Person.id >= 1), batch_size=2) as stream:
+            for person in stream:
+                if person.id == 1:
+                    other = tx.find(mm.Person.where(mm.Person.id == 2)).result()
+                    if deleted:
+                        tx.delete(other)
+                        tx.find(mm.Person.where(mm.Person.id == 2)).results()
+                        tx.insert(mm.Person(id=2, name="Cy"))
+                    else:
+                        tx.amend(other.edit(name="Cy"))
+                    tx.find(mm.Person.where(mm.Person.id == 2)).result()
+                    published.append(person)
+                    continue
+                with pytest.raises(WriteEvidenceError) as refused:
+                    tx.amend(person.edit(name="Stale"))
+                refusals.append(refused.value.code)
+                tx.amend(published[0].edit(name="First"))
+
+    db_for(PERSON, port).transact(fn)
+    assert refusals == ["write-evidence-consumed"]
+    assert [call.binds for call in port.calls if isinstance(call, WriteCall)][-1] == ("First", 1)
 
 
 def test_a_read_only_delivery_emits_no_dml_at_all() -> None:
@@ -396,15 +449,14 @@ def test_a_streamed_roots_claim_refuses_an_intent_it_cannot_join(
 
 
 @pytest.mark.parametrize("representation", _REPRESENTATIONS)
-def test_a_consumed_streamed_root_restores_silently_and_refuses_a_change(
+def test_a_streamed_root_continues_from_the_version_its_flushed_write_produced(
     representation: _Representation,
 ) -> None:
-    # The dependent read flushes the first write and spends the root's evidence.
-    # A write that only puts back what the root observed is a no-op settled
-    # before any evidence is asked for, so the spent evidence refuses nothing
-    # until a write actually needs it.
+    # The dependent read flushes the first write, which advances the version
+    # the root's authority reaches; the root's own values stay what it observed.
+    # Its later writes compose at that version and gate on it.
     port = ScriptedAdapter(
-        Transact(Read(rows=[_account_row(1)]), Write(), Read(rows=[_account_row(2)]))
+        Transact(Read(rows=[_account_row(1)]), Write(), Read(rows=[_account_row(2)]), Write())
     )
 
     def fn(tx: TxnContext) -> None:
@@ -414,10 +466,11 @@ def test_a_consumed_streamed_root_restores_silently_and_refuses_a_change(
         _restore(tx, representation, root)
         _update(tx, representation, root, "150.00")
 
-    with raises_contextualized(WriteEvidenceError) as refusal:
-        account_db(port).transact(fn)
-    assert refusal.value.code == "write-evidence-consumed"
-    assert _kinds(port).count(WriteCall) == 1
+    account_db(port).transact(fn)
+    assert [call for call in port.calls if isinstance(call, WriteCall)] == [
+        WriteCall(_UPDATE_SQL, (Decimal("125.00"), 2, 1, 1)),
+        WriteCall(_UPDATE_SQL, (Decimal("150.00"), 3, 1, 2)),
+    ]
 
 
 @pytest.mark.parametrize("representation", _REPRESENTATIONS)

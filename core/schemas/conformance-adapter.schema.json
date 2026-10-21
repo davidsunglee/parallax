@@ -245,7 +245,8 @@
             "write-value-foreign-lifecycle",
             "write-evidence-unavailable",
             "write-evidence-already-claimed",
-            "write-evidence-inserted"
+            "write-evidence-inserted",
+            "write-evidence-consumed"
           ]
         },
         "native": {}

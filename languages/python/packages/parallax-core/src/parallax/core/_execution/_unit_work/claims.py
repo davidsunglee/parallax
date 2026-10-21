@@ -7,7 +7,7 @@ from typing import Final, Literal
 from parallax.core._execution._unit_work.instructions import INSERT_MUTATIONS, PreparedKeyedWrite
 from parallax.core._execution._unit_work.retain import RetainedObservation
 from parallax.core.temporal_read import TimeInterval
-from parallax.core.write_plan.keys import ObjectKey, ObjectStateKey
+from parallax.core.write_plan.keys import ObjectKey, ObjectStateKey, VersionedObjectStateKey
 
 __all__ = [
     "ClaimScope",
@@ -84,17 +84,21 @@ sweep it in.
 """
 
 
-type SettledEvidence = RetainedObservation | ObjectKey
-"""What one keyed write against existing state settles against, in the two
+type SettledEvidence = RetainedObservation | VersionedObjectStateKey | ObjectKey
+"""What one keyed write against existing state settles against, in the three
 shapes a source can supply — which is also what decides the admitted write it
 becomes and the claim it takes:
 
 * a RETAINED observation is a read's own claim on one exact observed state: the
-  write settles against that state, claims it, and a successful flush spends it;
+  write settles against that state and claims it;
+* a VERSIONED STATE is the protected current state a versioned Non-Temporal
+  source's authority reaches — the state it observed, or the one this
+  attempt's own completed writes left it at — which the write settles against
+  and claims, its source's observation travelling beside it unchanged;
 * an OBJECT KEY is what an unversioned Non-Temporal row's write settles against.
   Its evidence is the shared row lock, which is held on the object rather than on
-  a state, so the object is what it claims; the source authority the write is
-  admitted through travels beside it, and a successful flush spends that.
+  a state, so the object is what it claims; the source the write is admitted
+  through travels beside it.
 
 A write against existing state that addresses no single object is derived
 neither and settles against nothing: an instruction naming several rows, or a
@@ -109,15 +113,13 @@ def claim_scope(evidence: SettledEvidence | None) -> ClaimScope | None:
     """The scope the write settling against ``evidence`` claims, or ``None``
     where it claims nothing.
 
-    Total over the two shapes above, so a caller reads one answer rather than
+    Total over the three shapes above, so a caller reads one answer rather than
     pairing an evidence value with a separately derived address that could name
     a different state than the evidence it travels with.
     """
     if isinstance(evidence, RetainedObservation):
         return evidence.key
-    if isinstance(evidence, ObjectKey):
-        return evidence
-    return None
+    return evidence
 
 
 def claimed_object(scope: ClaimScope) -> ObjectKey:

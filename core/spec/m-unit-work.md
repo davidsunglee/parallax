@@ -462,7 +462,8 @@ Non-Temporal row advances from the version the attempt's own writes left it at,
 which needs no read. Such writes compose with observed writes of the same object
 in authored order — over unequal windows on a temporal object, and at one claim
 scope on a Non-Temporal one — each keeping its own anchor or source condition;
-completion spends the observed sources and not the insertion's authority.
+completion treats the observed sources as *Observation ownership and lifetime*
+states, and spends nothing of the insertion's authority.
 
 A further insertion of an object is a repeat, refused as **AlreadyStored**,
 while anything an admitted insertion of it opened is pending, or is stored and
@@ -489,8 +490,9 @@ is buffered and before any database access, whatever key or revision it shares
 with the stored row: it participated in nothing the writing attempt can stand
 on. The strategy then decides what the participating read must also prove —
 under Locking, the shared lock it holds; under Optimistic, the observation the
-gate binds (`m-opt-lock`) — and consumed or invalidated evidence is refused as
-*Observation ownership and lifetime* states.
+gate binds (`m-opt-lock`) — and evidence that reaches no state this attempt
+still protects is refused, as a write-evidence failure tagged
+**`write-evidence-consumed`**, as *Observation ownership and lifetime* states.
 
 Admission precedes the empty amendment's elimination: an amendment that assigns
 nothing is dropped only once its source is admitted, so stating nothing never
@@ -824,8 +826,9 @@ WritePlan(groups: WriteGroups)
 WriteGroups: an immutable, ordered, possibly empty sequence of Write Groups
 WriteGroup(writes: SettledWrites, steps: PlannedSteps)
 SettledWrites: the group's settled writes in order, at least one, each with the
-    claims it spends, the Observed States it changes, and the attempt-owned
-    rows it removes and opens
+    completion its success publishes: the temporal claims it spends, the states
+    it changes, advances, and destroys, and the attempt-owned rows it removes
+    and opens
 PlannedSteps: the immutable, ordered, possibly empty sequence of Planned Steps
     the group's settled writes execute, indexable and repeatable
 ```
@@ -953,8 +956,10 @@ group depends on another's completion, because their objects are distinct
 (*Write Group formation*). Completing a settled write:
 
 ```text
-spend the source authority of every write the settled write composed
-invalidate evidence of every Observed State the settled write changed
+spend the temporal source authority of every write the settled write composed
+record every state the settled write changed, invalidating its observations
+advance the Non-Temporal sources of every versioned state it updated
+end the Non-Temporal sources of every object it deleted
 retire the attempt-owned rows the settled write removed
 register the rows the settled write opened
 ```
@@ -963,11 +968,14 @@ A deferred settled write's changed states, removals, and openings are those its
 binding produced. A milestone a settled write kept unchanged (`m-temporal-write`
 *Unchanged milestones*) is
 no changed state, even where a guard executed for it, and derives nothing a
-later settled write relies on: it still stands. A source that carries no
-observation — an unversioned Non-Temporal read's — has no state for a settled
-write to name; its authority is spent
-on the source itself once the flush that held its write succeeds, and every
-value derived from that source shares it. Removals are retired before openings
+later settled write relies on: it still stands. A Non-Temporal update or
+deletion changes the state it addresses — a versioned row's observed state, or
+an unversioned row's object, which observes no state — whether or not its
+values equal what was stored; an update of a versioned row advances that state
+to the version it writes, and a keyed deletion destroys every object it
+addresses, all of a batch's included (*Observation ownership and lifetime*).
+A readless predicate write identifies no object and publishes none of these.
+Removals are retired before openings
 are registered, so a row removed and reopened at one physical address remains
 owned, and an insertion whose last tagged row the settled write removed still
 stands when a row the settled write opened is tagged with it. Nothing is
@@ -1013,12 +1021,14 @@ A retained observation belongs to the **source values that observed it**, not to
 the transaction that ran the read. An implementation **MUST** make the evidence
 reachable from the source value and **MUST NOT** make eligibility depend on a
 transaction-scoped store. A transaction retains only a **weak index** of the
-states its own reads have seen, plus the **participation** those reads license.
-Only a value a read of the writing attempt produced is eligible at all
+states its own reads have seen, a **weak registration** of each Non-Temporal
+source its reads published, the **participation** those reads license, and what
+its own completed writes established about the states they produced. Only a
+value a read of the writing attempt produced is eligible at all
 (*Current-attempt source admission*); among those, eligibility follows the rules
 below.
 
-Three rules follow, and an implementation **MUST** exhibit all three:
+These rules follow, and an implementation **MUST** exhibit all of them:
 
 - **Eligibility is liveness.** An observation stays eligible while at least one
   live source value or one buffered write reaches it, and becomes unavailable
@@ -1030,21 +1040,44 @@ Three rules follow, and an implementation **MUST** exhibit all three:
   upgrades or overwrites the evidence an older live value carries. Two reads that
   resolve to **one** observed state within a transaction share **one** retained
   observation, exactly as two graph positions reaching one node do.
-- **A successful settled write consumes.** Every observation an admitted
-  write used is spent when the settled write it composed into completes —
-  whether or not its own values survived, and whether or not the write emitted a
-  statement — and a value still tied to a spent observation cannot drive
-  another write; the caller must read again. An amendment assigning no member
-  consumes nothing, and a failed flush dooms the attempt, so nothing needs
-  restoring. A source with no observation is spent the same way, on the
-  source's own provenance shared by every value derived from it, once the flush
-  holding its write succeeds; spending it consumes neither the transaction's
-  participation nor any other source.
+- **A successful temporal settled write consumes.** Every Temporal
+  Observation an admitted write used is spent when the settled write it
+  composed into completes — whether or not its own values survived, and whether
+  or not the write emitted a statement — and a value still tied to a spent
+  observation cannot drive another write; the caller must read again. An
+  amendment assigning no member consumes nothing, and a failed flush dooms the
+  attempt, so nothing needs restoring.
+- **Own writes continue Non-Temporal sources.** A Non-Temporal source's
+  authority follows the protected state it reaches, and its values and
+  observation never change. A versioned source reaches the state it observed
+  until a settled write of this attempt completes an update of that state —
+  through this source, another source, a caller's stated revision, or an
+  insertion's authority — and from then on the version that update wrote,
+  through any number of such updates, without another read. Its write settles
+  against that state, gated on it under Optimistic and protected by the lock
+  the attempt's own write holds under Locking. An unversioned source's shared
+  lock covers every state of its object, so its own completed updates leave it
+  standing. A completed keyed deletion of an object ends every source of it
+  for good: an insertion admitted at the same key later grants a fresh
+  authority, which no earlier source shares. A write through an ended source is
+  refused at the verb as `write-evidence-consumed`. A readless predicate write
+  ends nothing and advances nothing, since it identifies no row.
+- **A source publishes as fresh as its read.** Evidence published from rows a
+  read acquired before a settled write of this attempt completed a change of
+  what it observed — a versioned or temporal row's observed state, or an
+  unversioned row's object — licenses no write, however long after that change
+  it is published, whatever source the change came through, and even once its
+  object was reinserted; a write through it is refused as
+  `write-evidence-consumed`. A read after the change publishes fresh evidence.
+  The judgment is made once, when the evidence is published, so a later change
+  never makes an already published Non-Temporal source stale: that source
+  follows the continuation rule above.
 - **An own change invalidates.** When a settled write successfully revises,
   closes, or removes an observed state, every observation of that state the
-  attempt's reads produced becomes ineligible for further writes, even one no
+  attempt's reads produced no longer describes the stored row, even one no
   write used and even when the changed row keeps its address and revision
-  token. The rule is judged against the state the rows had **when the read
+  token, and a temporal source tied to it becomes ineligible for further
+  writes. The rule is judged against the state the rows had **when the read
   acquired them**: evidence built later from an earlier read's rows is
   ineligible too. A read after the change observes fresh, eligible evidence.
   Invalidation is per Observed State — an unaffected rectangle of the same
@@ -1070,8 +1103,8 @@ observation field for anything to be absent from. Absence is therefore the
 absence of the pairing rather than a field carrying it, which is what lets
 planning read a write's address, gate, and carried state off one object. What an
 unobserved write MAY still travel with is what *Observed-State Coalescing* below
-gives it: the claim scope it takes, and the source authority it spends. Neither
-is an observation, and neither survives the stage that reads it.
+gives it: the claim scope it takes, and the source it was admitted through.
+Neither is an observation.
 
 ### Comparing an assigned member with its persisted value
 
@@ -1209,7 +1242,11 @@ state either, so a default taken on a missing observation would sweep it in:
 - a **versioned or temporal** existing-row write is claimed at its **Observed
   State Key**, because what such writes share is the evidence they settle against
   and two writes of one key that observed two different states are two independent
-  intents; and
+  intents. A versioned Non-Temporal source's write is claimed at the protected
+  state its authority reaches (*Observation ownership and lifetime*): sources
+  that observed different states share one claim once this attempt's own
+  completed writes carried them to the same current state, while equal keys or
+  versions never relate two sources by themselves; and
 - an **unversioned Non-Temporal** existing-row write is claimed at its **Object
   Key**, because the shared row lock its evidence rule demands is held on the
   object and covers every state the row can be in. Two such writes can never have
@@ -1274,9 +1311,9 @@ where any other write of the object pending — another stated revision, or an
 observation of another state — stands at another scope, and so is an observed
 write of another state while a caller-addressed write of the object is pending.
 The survivor of a composition keeps the caller's condition, its revision intent,
-and every observation the composed writes were admitted through, which its
-completion spends; a shortfall against its gate is the caller's failed
-precondition, ahead of any observed write's own classification.
+and every source the composed writes were admitted through; a shortfall against
+its gate is the caller's failed precondition, ahead of any observed write's own
+classification.
 
 A caller-addressed write of a **temporal** object joins that object's
 composition (next paragraph), judged against every write of the object still

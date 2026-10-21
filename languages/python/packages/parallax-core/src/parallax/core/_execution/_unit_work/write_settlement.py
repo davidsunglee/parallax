@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Container, Mapping, Sequence
+from dataclasses import dataclass
 from typing import Final
 
 from parallax.core._execution._unit_work.clock import TransactionInstant
@@ -24,7 +25,7 @@ from parallax.core._execution._unit_work.ranges import (
     settle_opening,
     settle_range,
 )
-from parallax.core._execution._unit_work.retain import RetainedObservation
+from parallax.core._execution._unit_work.retain import ReadEvidence
 from parallax.core._execution._unit_work.strategy import (
     ActorIdentity,
     AuditDecoration,
@@ -37,6 +38,8 @@ from parallax.core._execution._unit_work.write_items import (
     FollowingKeyedWrite,
     InsertionKeyedWrite,
     MutationPhase,
+    ObjectClaimedBatch,
+    ObjectClaimedWrite,
     ObservedKeyedWrite,
     OrderedWrite,
     PendingOpening,
@@ -57,6 +60,7 @@ from parallax.core.temporal_write.expansion import (
     openings,
 )
 from parallax.core.write_plan.keys import (
+    ObjectKey,
     ObjectStateKey,
     VersionedObjectStateKey,
 )
@@ -66,10 +70,8 @@ from parallax.core.write_plan.plan import (
     NO_TEMPORAL_WRITE_OWNERSHIP,
     AllocatedOpening,
     BoundRange,
-    CombinedSourceAuthority,
     Openings,
     SettledWrite,
-    SourceAuthority,
     TemporalWriteOwnership,
     WriteGroup,
     WritePlan,
@@ -99,7 +101,21 @@ from parallax.core.write_plan.steps import (
     shortfall_classification,
 )
 
-__all__ = ["WritePlanCompiler"]
+__all__ = ["SettledWriteWithSource", "WritePlanCompiler"]
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SettledWriteWithSource(SettledWrite):
+    """A settled write that keeps alive the exact Read Evidence of every
+    Non-Temporal source whose write it settled, by identity.
+
+    ``source_evidence`` is an inert lifetime edge: while the plan holding the
+    write stays reachable its sources stay registered, and nothing reads it —
+    completion publishes from the write's own completion.
+    """
+
+    source_evidence: tuple[ReadEvidence, ...]
+
 
 _GROUP_WRITES: Final = 64
 """The most settled writes one Write Group holds. In a group of updates or
@@ -170,12 +186,12 @@ class WritePlanCompiler:
     ) -> WritePlan:
         """Every mutation phase, in flush order, as one Write Plan.
 
-        Each settled write carries the claim its surviving write settled
-        against. An item the planner's earlier stages retired — folded into a
-        pending insert, cancelled against one, or eliminated as a known no-op —
-        never reaches this loop, and therefore no settled write carries the
-        evidence it was holding (`m-unit-work` "A successful settled write
-        consumes").
+        Each settled write carries the temporal claim its surviving write
+        settled against, or the exact Read Evidence of the Non-Temporal sources
+        it settled (:class:`SettledWriteWithSource`). An item the planner's
+        earlier stages retired — folded into a pending insert, cancelled against
+        one, or eliminated as a known no-op — never reaches this loop, and
+        therefore no settled write carries the evidence it was holding.
 
         Audit reaches every write as it settles: each row a write produces —
         an opening, or a successor carried or changed — is finalized once, and
@@ -186,8 +202,8 @@ class WritePlanCompiler:
         temporal write needs it.
 
         Each ordered item settles into one settled write, which records what
-        its success changes: the claim it spends, the observed state it
-        revises, and the rows it removes and opens. Consecutive settled writes
+        its success publishes: the claim it spends, the states it changes,
+        advances, or destroys, and the rows it removes and opens. Consecutive settled writes
         of one mutation phase over distinct objects share a Write Group of at
         most :data:`_GROUP_WRITES`, laid out as every write's effects and then
         every write's inserts, each write's own order kept. A deferred write, a
@@ -256,20 +272,36 @@ class WritePlanCompiler:
                 item, shape, concurrency, transaction_instant, ownership, audit, guards=guards
             )
         if isinstance(shape, TransactionTimeOnly | Bitemporal):
-            assert not isinstance(item, PreparedKeyedWrite | PreparedPredicateWrite)
+            assert not isinstance(
+                item,
+                PreparedKeyedWrite
+                | PreparedPredicateWrite
+                | ObjectClaimedWrite
+                | ObjectClaimedBatch,
+            )
             return self._range(
                 item, shape, concurrency, transaction_instant, ownership, audit, guards=guards
             )
         assert not isinstance(item, CoalescedTemporalWrite)
-        settled, claim, own_state = self._settle_keyed(
-            item, concurrency, transaction_instant, shape, audit, advances
-        )
-        write = SettledWrite(
-            claim=claim,
-            changed=settled.changed if own_state is None else (*settled.changed, own_state),
-            removed=settled.removed,
-            opened=settled.opened,
-        )
+        settled = self._settle_keyed(item, concurrency, transaction_instant, shape, audit, advances)
+        evidence = _source_evidence(item)
+        if not evidence:
+            write = SettledWrite(
+                changed=settled.changed,
+                advanced=settled.advanced,
+                destroyed=settled.destroyed,
+                removed=settled.removed,
+                opened=settled.opened,
+            )
+        else:
+            write = SettledWriteWithSource(
+                source_evidence=evidence,
+                changed=settled.changed,
+                advanced=settled.advanced,
+                destroyed=settled.destroyed,
+                removed=settled.removed,
+                opened=settled.opened,
+            )
         return write, settled.steps
 
     def _carrier_shape(self, item: OrderedWrite) -> TemporalShape | None:
@@ -289,6 +321,8 @@ class WritePlanCompiler:
             PreparedKeyedWrite
             | PreparedPredicateWrite
             | ObservedKeyedWrite
+            | ObjectClaimedWrite
+            | ObjectClaimedBatch
             | InsertionKeyedWrite
             | TargetKeyedWrite
         ),
@@ -297,60 +331,37 @@ class WritePlanCompiler:
         shape: TemporalShape | None,
         audit: AuditDecoration,
         advances: int = 0,
-    ) -> tuple[BoundRange, SourceAuthority | None, VersionedObjectStateKey | None]:
-        """One ordered keyed write's settled steps and effects, beside the
-        claim its settled write spends and the state its carrier itself names as
-        changed. ``advances`` is how many versions earlier writes of its scope
-        a barrier kept before it advance the row past the state that scope
-        names.
-
-        A write spending a retained observation changes that state wherever
-        its steps change the row it observed."""
+    ) -> BoundRange:
+        """One ordered keyed write's settled steps and completion.
+        ``advances`` is how many versions earlier writes of its scope a barrier
+        kept before it advance the row past the state that scope names."""
         if isinstance(item, PreparedPredicateWrite):
             view = entity_view(self._families, item.selection.target)
-            return (
-                BoundRange(steps=(_readless_step(item, view, audit),)),
-                None,
-                None,
-            )
-        own_state: VersionedObjectStateKey | None = None
+            return BoundRange(steps=(_readless_step(item, view, audit),))
         observation: WriteObservation | None = None
-        claim: SourceAuthority | None = None
-        source: ObjectStateKey | None = None
-        if isinstance(item, ObservedKeyedWrite):
-            retained = item.retained_observation
-            instruction, observation = item.instruction, retained.evidence
-            claim = retained
-            source = retained.key
-        elif isinstance(item, TargetKeyedWrite | InsertionKeyedWrite):
-            instruction = item.instruction
-            scope = item.scope
-            if isinstance(scope, VersionedObjectStateKey):
-                own_state = (
-                    VersionedObjectStateKey(scope.object, self._advanced(scope.version, advances))
-                    if advances
-                    else scope
-                )
-                advances = 0
-            if isinstance(item, TargetKeyedWrite):
-                claim = _target_claim(item)
-                if isinstance(claim, RetainedObservation):
-                    source = claim.key
-        else:
+        scope: ObjectStateKey | ObjectKey | None = None
+        if isinstance(item, PreparedKeyedWrite):
             instruction = item
-        settled = self._settle(
+        else:
+            instruction = item.instruction
+            if isinstance(item, ObservedKeyedWrite):
+                observation = item.observation
+                scope = item.scope
+            elif not isinstance(item, ObjectClaimedWrite | ObjectClaimedBatch):
+                scope = item.scope
+        own_version: int | None = None
+        if isinstance(scope, VersionedObjectStateKey):
+            own_version = self._advanced(scope.version, advances)
+        return self._settle(
             instruction,
             observation,
             concurrency,
             tx_instant,
             shape,
             audit,
-            source=source,
-            own_version=None if own_state is None else own_state.version,
+            own_version=own_version,
             conditioned=isinstance(item, TargetKeyedWrite),
-            advances=advances,
         )
-        return settled, claim, own_state
 
     def _advanced(self, version: int, advances: int) -> int:
         arithmetic = self._concurrency.version_arithmetic()
@@ -369,20 +380,19 @@ class WritePlanCompiler:
         shape: TemporalShape | None,
         audit: AuditDecoration,
         *,
-        source: ObjectStateKey | None = None,
         own_version: int | None = None,
         conditioned: bool = False,
-        advances: int = 0,
     ) -> BoundRange:
-        """One ordered write's steps and effects. ``source`` is the observed
-        state the write's claim names, which it changes wherever it changes the
-        row it observed. ``own_version`` is the version a write
-        advances from in place of an observed one: the version this attempt's
-        own writes left a row it inserted at, or the version a caller's
-        condition requires. ``conditioned`` says the gate binds that caller's
-        condition, so a shortfall against it is a failed precondition.
-        ``advances`` moves an observed version past the writes of its state a
-        barrier kept before this one.
+        """One ordered write's steps and completion. ``own_version`` is the
+        version a write advances from in place of the one its ``observation``
+        names: the protected state its source's authority reaches, the version
+        this attempt's own writes left a row it inserted at, or the version a
+        caller's condition requires. ``conditioned`` says the gate binds that
+        caller's condition, so a shortfall against it is a failed precondition.
+
+        A versioned update advances the state it starts from and a deletion
+        destroys every object it addresses; an unversioned write changes each
+        object it addresses without advancing anything.
 
         A temporal write reaching here travels with no carrier the range path
         takes: an insert opens a new lineage, and any other closes a milestone
@@ -393,24 +403,18 @@ class WritePlanCompiler:
         if isinstance(shape, TransactionTimeOnly | Bitemporal):
             if instruction.mutation not in INSERT_MUTATIONS:
                 raise _unobserved_close(entity, instruction.mutation)
-            return self._settle_temporal_insert(
-                entity, shape, instruction, tx_instant, source, audit
-            )
+            return self._settle_temporal_insert(entity, shape, instruction, tx_instant, audit)
         facts = self._non_temporal_facts(entity)
-        changed = _changes(source)
         if instruction.mutation == "insert":
-            return BoundRange(
-                steps=(self._settle_insert(facts, instruction, audit),),
-                changed=changed,
-            )
+            return BoundRange(steps=(self._settle_insert(facts, instruction, audit),))
         addressed = self._addressed_facts(facts, concurrency, conditioned=conditioned)
         observed_version = (
-            own_version
-            if own_version is not None
-            else self._observed_version(entity, instruction, facts.version_attribute, observation)
+            self._observed_version(entity, instruction, facts.version_attribute, observation)
+            if observation is not None or own_version is None
+            else None
         )
-        if advances and observed_version is not None:
-            observed_version = self._advanced(observed_version, advances)
+        if own_version is not None:
+            observed_version = own_version
         step = _decorated(
             audit,
             non_temporal_step(
@@ -434,7 +438,18 @@ class WritePlanCompiler:
                 ),
             ),
         )
-        return BoundRange(steps=(step,), changed=changed)
+        objects = _addressed_objects(facts, instruction)
+        destroyed = objects if instruction.mutation == "delete" else ()
+        if observed_version is None:
+            return BoundRange(steps=(step,), changed=objects, destroyed=destroyed)
+        (target,) = objects  # an observed version addresses exactly one row
+        state = VersionedObjectStateKey(target, observed_version)
+        return BoundRange(
+            steps=(step,),
+            changed=(state,),
+            advanced=() if destroyed else (state,),
+            destroyed=destroyed,
+        )
 
     def _range(
         self,
@@ -576,7 +591,6 @@ class WritePlanCompiler:
         shape: TransactionTimeOnly | Bitemporal,
         instruction: PreparedKeyedWrite,
         tx_instant: TransactionInstant,
-        source: ObjectStateKey | None,
         audit: AuditDecoration,
     ) -> BoundRange:
         """One temporal insert as the new lineage it opens over its prepared
@@ -600,7 +614,6 @@ class WritePlanCompiler:
         )
         return BoundRange(
             steps=inserts,
-            changed=_changes(source),
             opened=Openings(
                 continued=openings(facts, inserts),
                 allocated=_allocated(facts, inserts) if allocates else (),
@@ -744,17 +757,24 @@ def _unobserved_close(entity: EntityMetadata, mutation: str) -> WritePlanningErr
     )
 
 
-def _target_claim(item: TargetKeyedWrite) -> SourceAuthority | None:
-    """What a caller-conditioned settled write spends: the observations of the
-    observed writes composed into it, if any."""
-    retained = item.retained_observations
-    if not retained:
-        return None
-    return retained[0] if len(retained) == 1 else CombinedSourceAuthority(retained)
+def _source_evidence(item: OrderedWrite) -> tuple[ReadEvidence, ...]:
+    """The exact Read Evidence a Non-Temporal carrier retains, if any."""
+    if isinstance(item, ObservedKeyedWrite | ObjectClaimedWrite | ObjectClaimedBatch):
+        return item.source_evidence
+    if isinstance(item, TargetKeyedWrite):
+        return item.source_evidence
+    return ()
 
 
-def _changes(source: ObjectStateKey | None) -> tuple[ObjectStateKey, ...]:
-    return () if source is None else (source,)
+def _addressed_objects(
+    facts: NonTemporalFacts, instruction: PreparedKeyedWrite
+) -> tuple[ObjectKey, ...]:
+    """Every object an addressed Non-Temporal write names, one per row, keyed
+    as admission and reads key them: its concrete Entity and its family's
+    primary key."""
+    entity = facts.entity.identity
+    name = facts.view.primary_key.identity.name
+    return tuple(ObjectKey(entity, ((name, row[name]),)) for row in instruction.rows)
 
 
 def _returns_allocated_key(

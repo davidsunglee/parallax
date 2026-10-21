@@ -16,9 +16,9 @@ from parallax.core._execution._unit_work.write_planner import WritePlanner
 from parallax.core.write_plan.keys import ObjectStateKey
 from parallax.core.write_plan.plan import (
     BoundRange,
-    CompletionFacts,
     DeferredRange,
     TemporalWriteOwnership,
+    WriteCompletion,
     WritePlan,
 )
 from parallax.core.write_plan.predecessor_rows import PredecessorRows
@@ -81,7 +81,7 @@ def run_write_plan(owner: UnitOfWork, plan: WritePlan, execute: ExecuteWriteStep
 
 def _deferred(
     owner: UnitOfWork, deferred: DeferredRange, execute: ExecuteWriteSteps
-) -> CompletionFacts:
+) -> WriteCompletion:
     """What ``deferred`` publishes once bound under ``owner``'s current
     ownership and executed: the range's bound completion facts."""
     bound = acquire_and_bind_range(

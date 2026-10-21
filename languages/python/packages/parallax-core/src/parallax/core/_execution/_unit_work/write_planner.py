@@ -33,6 +33,8 @@ from parallax.core._execution._unit_work.write_items import (
     FollowingKeyedWrite,
     InsertionKeyedWrite,
     MutationPhase,
+    ObjectClaimedBatch,
+    ObjectClaimedWrite,
     ObservedKeyedWrite,
     OrderedWrite,
     PendingOpening,
@@ -245,7 +247,7 @@ class WritePlanner:
 
     def _form_batches(self, buffer: Sequence[CoalescedWrite]) -> list[CoalescedWrite]:
         result: list[CoalescedWrite] = []
-        candidates: list[PreparedKeyedWrite] = []
+        candidates: list[PreparedKeyedWrite | ObjectClaimedWrite] = []
         batch: object = None
 
         def batch_key(item: PreparedKeyedWrite) -> object:
@@ -254,12 +256,13 @@ class WritePlanner:
         def close_batch() -> None:
             if not candidates:
                 return
-            entity = candidates[0].target
-            rows = [row for w in candidates for row in w.rows]
+            instructions = [_batched_instruction(w) for w in candidates]
+            first = instructions[0]
+            rows = [row for w in instructions for row in w.rows]
             if len(candidates) == 1:
                 result.extend(candidates)
-            elif self._batching.collapses(self._model, entity, candidates[0].mutation, rows):
-                result.append(_merge_rows(candidates))
+            elif self._batching.collapses(self._model, first.target, first.mutation, rows):
+                result.append(_merged_batch(candidates, _merge_rows(instructions)))
             else:
                 result.extend(candidates)
             candidates.clear()
@@ -277,18 +280,23 @@ class WritePlanner:
         # versioned and temporal alike. A carrier is single-row by
         # construction, so the batch this skips is the only way its row could
         # have joined a multi-row statement.
+        # An object-claimed write batches exactly as the bare instruction it
+        # carries would, keeping its source evidence in the batch.
         for item in _decomposed_updates(buffer, self._temporal_facet):
-            if isinstance(item, PreparedKeyedWrite) and len(item.rows) == 1:
-                item_batch = batch_key(item)
-                if (
-                    candidates
-                    and candidates[-1].target == item.target
-                    and candidates[-1].mutation == item.mutation
-                    and candidates[-1].valid_time_window == item.valid_time_window
-                    and item_batch == batch
-                ):
-                    candidates.append(item)
-                    continue
+            instruction = item.instruction if isinstance(item, ObjectClaimedWrite) else item
+            if isinstance(instruction, PreparedKeyedWrite) and len(instruction.rows) == 1:
+                assert isinstance(item, PreparedKeyedWrite | ObjectClaimedWrite)
+                item_batch = batch_key(instruction)
+                if candidates:
+                    last = _batched_instruction(candidates[-1])
+                    if (
+                        last.target == instruction.target
+                        and last.mutation == instruction.mutation
+                        and last.valid_time_window == instruction.valid_time_window
+                        and item_batch == batch
+                    ):
+                        candidates.append(item)
+                        continue
                 close_batch()
                 candidates.append(item)
                 batch = item_batch
@@ -428,6 +436,26 @@ def _key_name(families: inheritance.InheritanceFacet, entity: EntityMetadata) ->
     return position.primary_key.identity.name
 
 
+def _batched_instruction(item: PreparedKeyedWrite | ObjectClaimedWrite) -> PreparedKeyedWrite:
+    return item.instruction if isinstance(item, ObjectClaimedWrite) else item
+
+
+def _merged_batch(
+    run: Sequence[PreparedKeyedWrite | ObjectClaimedWrite], merged: PreparedKeyedWrite
+) -> PreparedKeyedWrite | ObjectClaimedBatch:
+    """``merged``, the one instruction ``run`` collapsed into, with every
+    distinct source evidence the run's object-claimed writes retained."""
+    retained = {
+        id(held): held
+        for item in run
+        if isinstance(item, ObjectClaimedWrite)
+        for held in item.source_evidence
+    }
+    if not retained:
+        return merged
+    return ObjectClaimedBatch(instruction=merged, source_evidence=tuple(retained.values()))
+
+
 def _merge_rows(run: Sequence[PreparedKeyedWrite]) -> PreparedKeyedWrite:
     """One multi-row :class:`PreparedKeyedWrite` carrying every row of ``run``'s
     single-row instructions, in run (buffer) order — the same
@@ -471,7 +499,12 @@ def _without_noop_rows(
     narrower instruction.
     """
     if isinstance(
-        item, CoalescedTemporalWrite | PendingOpening | AfterRemoval | FollowingKeyedWrite
+        item,
+        CoalescedTemporalWrite
+        | PendingOpening
+        | AfterRemoval
+        | FollowingKeyedWrite
+        | ObjectClaimedBatch,
     ):
         return item
     if isinstance(item, TargetKeyedWrite) and isinstance(item.expectation, ExpectedVersion):
@@ -529,6 +562,8 @@ def _settled_attributes(
 def _ordered_instruction(
     item: PreparedKeyedWrite
     | ObservedKeyedWrite
+    | ObjectClaimedWrite
+    | ObjectClaimedBatch
     | InsertionKeyedWrite
     | TargetKeyedWrite
     | FollowingKeyedWrite

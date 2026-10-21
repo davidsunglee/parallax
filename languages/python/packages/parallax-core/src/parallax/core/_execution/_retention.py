@@ -101,11 +101,12 @@ publishes the value the row is gone."""
 class ReadEvidenceContext(Protocol):
     """The unit of work an observing read files into, satisfied structurally.
 
-    A read needs exactly three things from a transaction — the participation
-    its reads stamp, the freshness its rows were acquired at, and the chance to
-    answer evidence it already holds for a state this read saw again — so it
-    names those three rather than the whole scope. Only a writable attempt's
-    read has one; every other read collects no Read Evidence at all.
+    A read needs exactly four things from a transaction — the participation
+    its reads stamp, the freshness its rows were acquired at, the chance to
+    answer evidence it already holds for a state this read saw again, and the
+    registration of each evidence it publishes — so it names those four rather
+    than the whole scope. Only a writable attempt's read has one; every other
+    read collects no Read Evidence at all.
     """
 
     @property
@@ -117,6 +118,8 @@ class ReadEvidenceContext(Protocol):
     def retain(
         self, observation: RetainedObservation, /, *, read_at: int | None = None
     ) -> RetainedObservation: ...
+
+    def register_read_evidence(self, evidence: ReadEvidence, /, *, read_at: int) -> None: ...
 
 
 type _Locator = ExplicitVersion | TransactionTimeOnly | Bitemporal
@@ -272,6 +275,7 @@ class _DeferredReadEvidenceMap(Mapping[int, ReadEvidence]):
         return shape
 
     def _settle(self, key: int, origin: ReadEvidence) -> None:
+        self._evidence_context.register_read_evidence(origin, read_at=self._read_at)
         self._resolved[key] = origin
         self._resolved_count += 1
         if self._resolved_count == len(self._observations):
@@ -321,6 +325,10 @@ def defer_read_evidence(
     An unversioned Non-Temporal row observes no state, yet still yields a Read
     Origin naming the object and the participation its read licensed, which is
     the whole of what an effective-Locking write asks of it.
+
+    Each evidence is registered with ``evidence_context`` as it resolves, before
+    any value carrying it is usable, together with the freshness the read
+    captured.
 
     ``pin`` is the read's whole-graph as-of coordinate and no part of the
     evidence, so two pins selecting one milestone retain one state. Each hint of

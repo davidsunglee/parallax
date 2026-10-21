@@ -307,8 +307,8 @@ def test_an_unversioned_row_takes_no_conditional_write_and_is_written_through_a_
 @pytest.mark.parametrize(
     "sequence, stored",
     [
-        pytest.param("P-O-O", (1, "observed", "observed", _SPEC, [{"code": "a"}], 2)),
-        pytest.param("R-O-P", (1, "patched", "observed", None, _NO_MARKS, 2)),
+        pytest.param("P-O-O", (1, "again", "observed", _SPEC, [{"code": "a"}], 3)),
+        pytest.param("R-O-P", (1, "again", "observed", None, _NO_MARKS, 3)),
         pytest.param("O-R-D", None),
         pytest.param("P-D", None),
     ],
@@ -339,6 +339,11 @@ def test_target_and_observed_writes_of_one_state_compose_into_one_effect(
                 )
                 tx.amend(source)
         _read_other(tx, entity)
+        # The composed write's completion advances the source to the version it
+        # produced, or ends it with the object it deleted.
+        if stored is not None:
+            tx.amend(source.edit(label="again"))
+            return
         with pytest.raises(WriteEvidenceError, match="write-evidence-consumed"):
             tx.amend(source.edit(label="again"))
 

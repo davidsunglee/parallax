@@ -1612,6 +1612,8 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
             "m-unit-work-048",
             "m-unit-work-049",
             "m-unit-work-050",
+            "m-unit-work-059",
+            "m-unit-work-060",
             "m-temporal-write-044",
             "m-temporal-write-045",
             "m-temporal-write-046",

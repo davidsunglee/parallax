@@ -21,10 +21,10 @@ from parallax.core.write_plan.plan import (
     NO_TEMPORAL_WRITE_OWNERSHIP,
     OPEN_BITEMPORAL_ENDS,
     BoundRange,
-    CompletionFacts,
     DeferredRange,
     OwnedEndpoint,
     SettledWrite,
+    WriteCompletion,
     WriteGroup,
 )
 from parallax.core.write_plan.steps import NEW_LINEAGE, PlannedRow, WriteRow
@@ -95,14 +95,14 @@ def test_an_attempt_that_opened_nothing_has_proved_and_derived_nothing() -> None
     assert NO_TEMPORAL_WRITE_OWNERSHIP.descent(endpoint) is None
 
 
-_EFFECTS = ("changed", "removed", "opened", "derived", "concludes")
+_EFFECTS = ("changed", "advanced", "destroyed", "removed", "opened", "derived", "concludes")
 
 
 @pytest.mark.parametrize("result", [SettledWrite, BoundRange])
 def test_every_result_extends_the_one_flat_effects_vocabulary(
-    result: type[CompletionFacts],
+    result: type[WriteCompletion],
 ) -> None:
-    assert issubclass(result, CompletionFacts)
+    assert issubclass(result, WriteCompletion)
     names = [field.name for field in dataclasses.fields(result)]
     assert names[: len(_EFFECTS)] == list(_EFFECTS)
     assert all(field.kw_only for field in dataclasses.fields(result))
@@ -119,9 +119,9 @@ def test_plan_values_are_held_in_slots_on_themselves() -> None:
 
 def test_a_settled_write_publishes_nothing_it_does_not_name() -> None:
     write = SettledWrite()
-    assert [getattr(write, name) for name in _EFFECTS] == [(), (), NO_OPENINGS, (), None]
+    assert [getattr(write, name) for name in _EFFECTS] == [(), (), (), (), NO_OPENINGS, (), None]
     assert not any(
-        isinstance(getattr(write, field.name), CompletionFacts)
+        isinstance(getattr(write, field.name), WriteCompletion)
         for field in dataclasses.fields(write)
     )
     assert (write.claim, write.deferred) == (None, None)

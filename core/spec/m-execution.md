@@ -237,7 +237,7 @@ the port, and has the unit of work enforce each step's affected rows; for steps
 opening rows whose keys the database allocates, it answers those keys in step
 order. An execution returns once every step it was handed has succeeded, and
 holds nothing of them afterwards. Execution neither walks a plan's Write Groups
-nor interprets their settled writes' completion facts, so no later group's
+nor interprets their settled writes' completions, so no later group's
 statement is prepared or lowered before the earlier group completes, and a
 later step's lowering failure cannot overtake it. A failed execution completes
 no settled write, and the failure dooms the attempt.
