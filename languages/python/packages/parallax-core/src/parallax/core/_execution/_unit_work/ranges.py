@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Callable, Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence, Set
 from dataclasses import dataclass
 from operator import attrgetter
 from typing import Final, cast
@@ -165,7 +165,8 @@ def _known_predecessors(
     Two predecessors whose coverage overlaps cannot both describe current
     state, so the later one is bound and the earlier is validated alone: its
     guarded effect fails unless the database itself holds overlapping current
-    coverage.
+    coverage. The held rows come last and are bound without comparing them to
+    each other, since one object's current rows never overlap.
     """
     distinct: list[_RangePredecessor] = []
     continuing = False
@@ -183,16 +184,18 @@ def _known_predecessors(
         )
         if all(predecessor.state != held.state for held in distinct):
             distinct.append(predecessor)
-    if continuing:
-        _add_current(
-            distinct,
+    bound = (
+        _held(
             facts,
             key_attribute,
             key_value,
             ownership,
             composed.transform.valid_time_window,
+            excluding={observed.state for observed in distinct},
         )
-    bound: list[_RangePredecessor] = []
+        if continuing
+        else []
+    )
     validated: list[_RangePredecessor] = []
     for predecessor in reversed(distinct):
         if any(_overlapping(predecessor, held) for held in bound):
@@ -204,24 +207,24 @@ def _known_predecessors(
     return tuple(bound), tuple(validated)
 
 
-def _add_current(
-    predecessors: list[_RangePredecessor],
+def _held(
     facts: TemporalFacts,
     key_attribute: AttributeIdentity,
     key_value: object,
     ownership: TemporalWriteOwnership,
     window: TimeInterval | None,
-) -> None:
-    """Add to ``predecessors`` every current row of the object over ``window``
-    the attempt's completed writes produced and hold, whichever source's
-    continuation holds it, except a state already among them."""
+    *,
+    excluding: Set[ObjectStateKey] = frozenset(),
+) -> list[_RangePredecessor]:
+    """Every current row of the object over ``window`` the attempt's
+    completed writes produced and hold, whichever source's continuation holds
+    it, in Valid-Time order, except a state ``excluding`` names."""
     target = _object_key(facts, key_attribute, key_value)
-    known = {held.state for held in predecessors}
-    for row in ownership.current_rows(target, window):
-        predecessor = _predecessor(facts, key_attribute, key_value, row, None)
-        if predecessor.state not in known:
-            known.add(predecessor.state)
-            predecessors.append(predecessor)
+    held = (
+        _predecessor(facts, key_attribute, key_value, row, None)
+        for row in ownership.current_rows(target, window)
+    )
+    return [predecessor for predecessor in held if predecessor.state not in excluding]
 
 
 _START: Final = attrgetter("start")
@@ -905,9 +908,7 @@ def _known(
         return (), (), _UNANCHORED, conditions, retained
     observed = item.retained_observation
     if _continuation(ownership, _observed_source(observed, item.source_evidence)):
-        current: list[_RangePredecessor] = []
-        _add_current(current, facts, key_attribute, key_value, ownership, window)
-        _order_by_start(current)
+        current = _held(facts, key_attribute, key_value, ownership, window)
         return tuple(current), (), _UNANCHORED, (), ()
     observation = observed.evidence
     assert isinstance(observation, TemporalObservation)  # settlement refuses any other

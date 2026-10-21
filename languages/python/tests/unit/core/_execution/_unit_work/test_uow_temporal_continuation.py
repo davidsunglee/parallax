@@ -28,6 +28,7 @@ from parallax.conformance.simulated_temporal_store import SimulatedTemporalStore
 from parallax.core import opt_lock
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
+from parallax.core._execution._unit_work import ranges
 from parallax.core._execution._unit_work._write_ownership import WriteOwnership
 from parallax.core._execution._unit_work.acquisition import (
     CoverageReadRequest,
@@ -248,6 +249,35 @@ def test_repeated_writes_through_one_source_hold_its_current_rows_and_no_history
     contributions = ownership._contributions  # pyright: ignore[reportPrivateUsage] - the reverse view's size
     (origin,) = ownership._origins.values()  # pyright: ignore[reportPrivateUsage] - the one origin's geometry
     assert len(contributions) == len(origin.lineage.contributions) == len(stored)
+
+
+def test_a_composed_range_binds_the_rows_held_for_its_source_without_comparing_them(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = _Session()
+    source = session.observed()
+    for round_ in range(20):
+        end = _FEB + dt.timedelta(days=40 - round_)
+        session.flush((_write(_FEB, end, value=f"{round_ + 1}.00"), source))
+    held = len(session.held())
+    compared = 0
+    overlapping = ranges._overlapping  # pyright: ignore[reportPrivateUsage] - the comparison counted
+
+    def counted(*predecessors: Any) -> bool:
+        nonlocal compared
+        compared += 1
+        return overlapping(*predecessors)
+
+    monkeypatch.setattr(ranges, "_overlapping", counted)
+    session.uow.buffer(buffered_write(_write(_FEB, acctNum="Z"), source))
+    session.uow.buffer(buffered_write(_write(_FEB, _MAR, value="150.00"), source))
+    _flush_buffered(session)
+    assert session.requests == []
+    assert compared <= held
+    stored = session.stored()
+    assert session.held() == stored
+    assert [row[3] for row in stored] == ["A", *["Z"] * (len(stored) - 1)]
+    assert stored[1][4] == Decimal("150.00")
 
 
 def test_a_pre_commit_flush_which_no_submission_follows_records_nothing_for_continuation() -> None:
