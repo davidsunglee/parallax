@@ -95,7 +95,7 @@ facts and decides nothing about any transaction's state:
   "Observed-State Coalescing").
 
 The composition root binds the connected model's `required_key` lookup into
-each unit of work, which applies its own participation, consumption, and claim
+each unit of work, which applies its own participation, continuation, and claim
 state to these answers. The dependency stays `m-opt-lock --> m-unit-work`: the
 unit of work reaches this policy only through the lookup it was handed.
 

@@ -985,7 +985,7 @@
                 "required": ["objectQuery"]
               },
               {
-                "description": "A write step: applies golden DML between finds. By default the DML is COMMITTED so a later find observes it; with `rollback: true` an UNGROUPED step's DML is applied and then ROLLED BACK; a grouped step's fate is its group's (`then.units`). A no-op write issues NO DML: it declares `databaseCalls: 0` and lists no `statements`. A grouped write's submission MAY name the read step whose result it settles against with `on` (m-case-format *Settling against a grouped find*): the write then consumes the observation that read recorded, rather than one resolved from case state.",
+                "description": "A write step: applies golden DML between finds. By default the DML is COMMITTED so a later find observes it; with `rollback: true` an UNGROUPED step's DML is applied and then ROLLED BACK; a grouped step's fate is its group's (`then.units`). A no-op write issues NO DML: it declares `databaseCalls: 0` and lists no `statements`. A grouped write's submission MAY name the read step whose result it settles against with `on` (m-case-format *Settling against a grouped find*): the write then settles against the observation that read recorded, rather than one resolved from case state.",
                 "required": ["write"]
               },
               {

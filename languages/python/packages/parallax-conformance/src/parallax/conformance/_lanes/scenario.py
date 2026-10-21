@@ -305,12 +305,12 @@ class _ResolvedWrite:
 
     ``supplied_observation`` is the evidence a simulated transaction that
     executes nothing settles the write against: its unit of work retains a copy
-    of its own (:meth:`_SimulatedUnit.buffer`), so nothing it settles against is
-    spent anywhere else. A run lane needs no peer of it: it states each write
-    through the public verb its mutation names, against the value this unit's
-    own read published, and tracks only what that verb accepted
-    (:func:`_submit_tracked_write`). An entry needing no evidence at all carries
-    none.
+    of its own (:meth:`_SimulatedUnit.buffer`), so its completions never
+    invalidate evidence anything else retained. A run lane needs no peer of it:
+    it states each write through the public verb its mutation names, against
+    the value this unit's own read published, and tracks only what that verb
+    accepted (:func:`_submit_tracked_write`). An entry needing no evidence at
+    all carries none.
 
     ``source_node`` is that value, where the lane's evidence already resolved it
     (:class:`GroupEvidenceResolver`), so the real write is addressed by the very
@@ -434,9 +434,10 @@ def _temporal_entry_row(
     """The ONE case-authored row a TEMPORAL write entry mutates.
 
     `m-unit-work` "A temporal keyed instruction carries exactly one row": each row
-    closes its own current milestone, consumes its own Temporal Observation, and
-    opens its own successors, and a temporal entity never collapses into a
-    set-based statement (`m-batch-write`), so several rows under one entry denote
+    closes its own current milestone, settles against its own Temporal
+    Observation, and opens its own successors, and a temporal entity never
+    collapses into a set-based statement (`m-batch-write`), so several rows under
+    one entry denote
     several independent milestone chains rather than one wider write. That rule
     forbids reducing the entry to a first row the case did not single out, so it
     is refused HERE, where the authoring diagnosis can name the entry. The shared
@@ -462,8 +463,9 @@ class TemporalEvidenceResolver(Protocol):
     """Where a grouped or ungrouped temporal write's predecessor comes from — the
     one decision about a temporal write that differs by lane.
 
-    ``resolve`` answers the observation the write's close and chain consume, and
-    the published value it came from where the answer was resolved from one.
+    ``resolve`` answers the observation the write's close and chain settle
+    against, and the published value it came from where the answer was resolved
+    from one.
     """
 
     def resolve(
@@ -569,7 +571,7 @@ def _build_temporal_instruction(
     unit_inserted: set[ObjectKey],
 ) -> _ResolvedWrite:
     """One TEMPORAL writeSequence/scenario entry -> its canonical keyed
-    instruction plus the observation its close/chain consumes, which
+    instruction plus the observation its close/chain settles against, which
     ``evidence`` answers (:class:`TemporalEvidenceResolver`).
 
     The corpus and canonical instruction share the same ``validFrom`` / ``until``
@@ -579,8 +581,8 @@ def _build_temporal_instruction(
 
     That row reaches the same :func:`_durable_row` seam every other producer's
     does, which entitles a temporal row to no observation control key at all —
-    the observation this entry consumes is a whole predecessor milestone, never a
-    cell the row carried.
+    the observation this entry settles against is a whole predecessor
+    milestone, never a cell the row carried.
 
     ``unit_inserted`` is the SAME choreography unit's own running set of
     (entity, pk) pairs a PRIOR entry in this SAME buffer already inserted
@@ -1111,9 +1113,10 @@ class _SimulatedUnit:
 
     Every write it buffers settles against authority of this unit's own, as
     an application's would against its source's: an observation is retained
-    here, detached from any participation, so nothing a real read retained is
-    spent; a write with no observation, of an object this unit's own insertion
-    opened, is authorized by the identity this unit issued; and an
+    here, detached from any participation, so this unit's completions never
+    invalidate what a real read retained; a write with no observation, of an
+    object this unit's own insertion opened, is authorized by the identity this
+    unit issued; and an
     observation-free write of an unversioned row carries Read Evidence of its
     own, stamped with a participation no unit of work issued. A write
     that unit of work refuses to admit is refused as the case's composition
@@ -2759,8 +2762,8 @@ def _source_find_nodes(
     if published is None:
         raise EngineError(
             f"scenario[{index}]: settles against step {source}, which is not an EARLIER find "
-            "step of its own `uow` group — the evidence a write consumes is transaction-scoped "
-            "(m-case-format 'Settling against a grouped find')"
+            "step of its own `uow` group — the evidence a write settles against is "
+            "transaction-scoped (m-case-format 'Settling against a grouped find')"
         )
     return published
 
@@ -2810,9 +2813,9 @@ def _submit_tracked_write(
     The public value a keyed write is addressed by is chosen once, and the
     tracked write settles as the public one did through it, under authority of
     the tracking unit's own (:meth:`_SimulatedUnit.mirror`): its flush may run
-    before production's, so it never spends what the public write will. A write
-    the verb refuses or drops is never tracked, and an insert keeps the value
-    the verb answered for the rest of the unit.
+    before production's, so it never invalidates what the public write settles
+    against. A write the verb refuses or drops is never tracked, and an insert
+    keeps the value the verb answered for the rest of the unit.
     """
     instruction = write.instruction
     if isinstance(instruction, PreparedTargetWrite):

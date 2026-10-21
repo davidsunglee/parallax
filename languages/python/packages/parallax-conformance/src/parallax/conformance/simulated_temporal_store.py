@@ -110,7 +110,7 @@ class MilestoneEdgeError(SimulatedStoreError):
 
 @dataclass(frozen=True, slots=True)
 class _StoredRow:
-    """One current stored milestone: the observation a later write consumes,
+    """One current stored milestone: the observation a later write settles against,
     and the complete address a planned step names it by."""
 
     observation: TemporalObservation

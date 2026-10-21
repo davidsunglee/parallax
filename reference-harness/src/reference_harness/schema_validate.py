@@ -332,7 +332,7 @@ def _validate_buffered_write(
       other lane applies.
     * **the temporal singleton** — an entry on a temporal entity carries exactly ONE
       row (`m-unit-work` "A temporal keyed instruction carries exactly one row"),
-      since each row closes its own milestone, consumes its own observation, and
+      since each row closes its own milestone, settles against its own observation, and
       chains its own successors. The row count a keyed entry may carry depends on
       whether its target is temporal, which only the model knows, so the schema
       states the general one-or-more bound and the singleton is decided by
@@ -579,7 +579,7 @@ def _validate_settled_write(steps: list[Any], index: int, label: str, errors: li
     The case schema settles the SHAPE of the reference — that a submission names
     ONE index rather than a set. What one step cannot state about another is
     left: the named step MUST be an earlier step, and a find of the write's own
-    `uow` group. Evidence a write consumes is transaction-scoped and published by
+    `uow` group. Evidence a write settles against is transaction-scoped and published by
     a read, so a reference from an ungrouped write, to a later step, to a write,
     or to a find of another group names evidence that never reaches it.
 

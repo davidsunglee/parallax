@@ -527,8 +527,8 @@ def test_whole_tree_validation_rejects_a_non_member_buffered_row_key(tmp_path: P
 
 
 def test_a_plural_temporal_buffer_entry_is_rejected() -> None:
-    # Each row of a milestone chain closes its own milestone, consumes its own
-    # observation, and chains its own successors, so a temporal keyed instruction
+    # Each row of a milestone chain closes its own milestone, settles against its
+    # own observation, and chains its own successors, so a temporal keyed instruction
     # carries exactly one row. The shared `rows` array admits a plural authoring
     # because the bound depends on whether the target is temporal, which only the
     # model knows — so the rule is decided here, at the authoring boundary both
