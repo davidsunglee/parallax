@@ -29,7 +29,7 @@ contract owners; this index does not add requirements.
 | Target Write | A caller-addressed mutation conditioned by the revision its caller states rather than by any source | [Unit of work](core/spec/m-unit-work.md) |
 | Settled Write | One caller write after settlement: the completion facts it publishes and the Planned Steps it executes | [Unit of work](core/spec/m-unit-work.md) |
 | Write Group | Settled writes of a Write Plan that execute as one sequence of Planned Steps and complete together, before any later group executes | [Unit of work](core/spec/m-unit-work.md) |
-| Mutation Phase | A region's inserts, its updates, or its deletes in flush order, or one readless predicate write; no Write Group spans two | [Unit of work](core/spec/m-unit-work.md) |
+| Mutation Phase | A region's inserts, its updates, or its deletes in flush order; no Write Group spans two | [Unit of work](core/spec/m-unit-work.md) |
 | Planned Step | One finalized semantic execution step, distinct from the SQL that lowers it | [Write plan](core/spec/m-write-plan.md) |
 | Object Key / Object State Key | A logical object across its states versus one version or temporal milestone of that object | [Write plan](core/spec/m-write-plan.md) |
 | Write Observation / Predecessor Row | The evidence a write against existing state retains, and the complete observed row a temporal one carries | [Write plan](core/spec/m-write-plan.md) |
@@ -49,7 +49,7 @@ contract owners; this index does not add requirements.
 | Snapshot | A published value graph with explicit loading state | [Snapshot reads](core/spec/m-snapshot-read.md) |
 | Execution Activity | An observable unit of execution work | [Execution lifecycle](core/spec/m-execution-lifecycle.md) |
 | Single statement / Returning insert / Ordered invocation / Grouped insert | The call shapes execution presents a sequence of Planned Steps in: one statement alone, an insert answering the keys the database allocated, contiguous count-only effects in one ordered transport invocation, and contiguous single-entry inserts in one multi-row statement | [Execution](core/spec/m-execution.md) |
-| Flush | The activity spanning one flush of a unit-of-work buffer, from planning through every Database Call and affected-row enforcement | [Execution lifecycle](core/spec/m-execution-lifecycle.md) |
+| Flush | The activity spanning one flush of a unit-of-work buffer, and of a predicate-selected write executing after it, from planning through every Database Call and affected-row enforcement | [Execution lifecycle](core/spec/m-execution-lifecycle.md) |
 | Model Edition / Serving Model | Model evolution identity and the published model holder | [Execution](core/spec/m-execution.md) |
 | Conformance Slice | An exact corpus claim, not a package or implementation layer | [Slices](core/spec/slices.md) |
 | Behavioral Module / Enforcement Scope / Artifact | Portable behavior, checked source boundary, and shipped package | [Modules](core/spec/modules.md) |
