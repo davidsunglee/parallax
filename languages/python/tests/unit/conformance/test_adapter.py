@@ -763,6 +763,23 @@ def test_run_case_scenario_reports_database_calls_and_the_rows_its_read_step_pub
     ]
 
 
+class _TwoRowWritePort(_WritePort):
+    """``_WritePort`` whose every write reports two affected rows."""
+
+    def execute_write(self, sql: str, binds: Sequence[object]) -> int:
+        return 2
+
+
+def test_run_case_scenario_reports_the_count_a_predicate_write_step_returned() -> None:
+    case_path = case_format.default_cases_dir() / "m-batch-write-005-predicate-delete-readless.yaml"
+    envelope = adapter.run_case(case_path, _PROFILE.on_stand_in(_TwoRowWritePort()))
+    validate_adapter_envelope(envelope)
+    assert envelope["status"] == "ok", envelope
+    assert envelope["observations"]["stepAffectedRows"] == [
+        {"at": "/scenario/0", "affectedRows": 2}
+    ]
+
+
 def test_run_case_write_sequence_reports_table_state_and_database_calls() -> None:
     # The write-sequence observation reads back every model table after commit
     # (m-conformance-adapter "write-sequence cases report tableState"); the fake
