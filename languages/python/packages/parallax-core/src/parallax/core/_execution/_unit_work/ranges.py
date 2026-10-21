@@ -115,20 +115,11 @@ def range_source_evidence(
     return tuple(distinct)
 
 
-def _continuation(ownership: TemporalWriteOwnership, source: _ObservedSource) -> bool | None:
+def _continues(ownership: TemporalWriteOwnership, source: _ObservedSource) -> bool:
     """Whether every source of ``source`` continues through what the
-    attempt's completed writes left of its observed state, ``False`` where
-    some source's pin lost it, and ``None`` where no completed write changed
-    that state."""
-    reach: bool | None = None
-    for pin in source.pins:
-        continues = ownership.continues(source.observation, pin)
-        if continues is None:
-            return None
-        if not continues:
-            return False
-        reach = True
-    return reach
+    attempt's completed writes left of its observed state: not where no
+    completed write changed that state, nor where some source's pin lost it."""
+    return all(ownership.continues(source.observation, pin) for pin in source.pins)
 
 
 def _observed_source(
@@ -172,7 +163,7 @@ def _known_predecessors(
         retained = contribution.retained_observation
         if retained is None:  # an insertion or a caller authorized it, and it observed nothing
             continue
-        if _continuation(ownership, _observed_source(retained, contribution.source_evidence)):
+        if _continues(ownership, _observed_source(retained, contribution.source_evidence)):
             continuing = True
             continue
         observation = retained.evidence
@@ -798,7 +789,7 @@ def _known(
         retained = () if item.retained is None else (item.retained,)
         return (), (), _UNANCHORED, conditions, retained
     observed = item.retained_observation
-    if _continuation(ownership, _observed_source(observed, item.source_evidence)):
+    if _continues(ownership, _observed_source(observed, item.source_evidence)):
         current = _held(facts, key_attribute, key_value, ownership, window)
         return tuple(current), (), _UNANCHORED, (), ()
     observation = observed.evidence
