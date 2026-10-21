@@ -22,7 +22,6 @@ from parallax.core._execution._unit_work.instructions import (
     KeyedMutation,
     KeyedWriteInstruction,
     PreparedKeyedWrite,
-    TargetMutation,
     WriteInstructionError,
 )
 from parallax.core._execution._unit_work.keys import object_key
@@ -58,7 +57,6 @@ __all__ = [
     "stated_valid_from",
     "target_revision_arguments",
     "validate_source_pin",
-    "window_mutation",
 ]
 
 KEYED_WRITE_VALUE_CODES: Final[frozenset[str]] = frozenset(
@@ -471,22 +469,6 @@ def retained[T](filed: T | None) -> T:
     """
     assert filed is not None
     return filed
-
-
-def window_mutation[M: KeyedMutation | TargetMutation](
-    unbounded: M, bounded: M, until: dt.datetime | Omitted
-) -> tuple[M, dt.datetime | None]:
-    """The portable verb a public method's ``until`` argument selects, beside
-    the bound it carries.
-
-    Omission selects the unbounded verb; any stated argument selects the bounded
-    one with that argument as its bound, ``None`` included, so core preparation
-    refuses a missing bound rather than this representation reading it as
-    omission. Nothing else about the bound is judged here.
-    """
-    if isinstance(until, Omitted):
-        return unbounded, None
-    return bounded, until
 
 
 @dataclass(frozen=True, slots=True)

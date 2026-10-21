@@ -15,7 +15,6 @@ from parallax.core._execution._keyed_writes import (
     keyed_write,
     stated_valid_from,
     target_revision_arguments,
-    window_mutation,
 )
 from parallax.core._execution._options import OMITTED, Omitted, ReadOnlyTxnOptions, TxnOptions
 from parallax.core._execution._publication import SelectedReadModel, SelectedWriteModel
@@ -104,8 +103,8 @@ __all__ = [
     "PredicateWriteAdapter",
     "ReadOnlyTxnAttempt",
     "TargetWriteAdapter",
-    "TargetWriteVerb",
     "TxnAttempt",
+    "WriteVerb",
 ]
 
 
@@ -125,10 +124,9 @@ class PredicateWriteAdapter(Protocol):
     ) -> PreparedPredicateWrite: ...
 
 
-TargetWriteVerb = Literal["amend", "replace", "delete", "terminate"]
-"""The intent a target write states: the base verb,
-never its bounded token, which the attempt selects from the caller's
-``until``."""
+WriteVerb = Literal["amend", "replace", "delete", "terminate"]
+"""The base verb a write over an existing object states, before its ``until``
+selects the bounded form."""
 
 
 class TargetWriteAdapter(Protocol):
@@ -156,19 +154,33 @@ class TargetWriteAdapter(Protocol):
     ) -> PreparedTargetWrite: ...
 
 
+def _window_mutation[M: KeyedMutation](
+    unbounded: M, bounded: M, until: dt.datetime | Omitted
+) -> tuple[M, dt.datetime | None]:
+    """The token a caller's ``until`` selects, beside the bound it carries.
+
+    Omission selects the unbounded token; any stated argument selects the
+    bounded one with that argument as its bound, ``None`` included, so
+    preparation refuses a missing bound rather than reading it as omission.
+    """
+    if isinstance(until, Omitted):
+        return unbounded, None
+    return bounded, until
+
+
 def _bounded_mutation(
-    verb: TargetWriteVerb, until: dt.datetime | Omitted
+    verb: WriteVerb, until: dt.datetime | Omitted
 ) -> tuple[TargetMutation, dt.datetime | None]:
     """The instruction token and bound a base verb and its ``until`` select."""
     if verb == "amend":
-        return window_mutation("amend", "amendUntil", until)
+        return _window_mutation("amend", "amendUntil", until)
     if verb == "replace":
-        return window_mutation("replace", "replaceUntil", until)
+        return _window_mutation("replace", "replaceUntil", until)
     if verb == "terminate":
-        return window_mutation("terminate", "terminateUntil", until)
+        return _window_mutation("terminate", "terminateUntil", until)
     # Deletion has no bounded form, so a stated bound reaches preparation beside
     # the unbounded verb, which refuses it.
-    return window_mutation("delete", "delete", until)
+    return _window_mutation("delete", "delete", until)
 
 
 class _TxnAttemptBase:
@@ -540,26 +552,29 @@ class TxnAttempt(_TxnAttemptBase):
     def keyed_write(
         self,
         source: KeyedWriteSource,
-        mutation: KeyedMutation,
+        verb: WriteVerb,
         /,
         *,
-        until: dt.datetime | None = None,
+        until: dt.datetime | Omitted = OMITTED,
     ) -> None:
         """Run one keyed write over existing state in the Keyed Write
-        Validation Order."""
-        keyed_write(self._write.model, self._uow, self._lifecycle, source, mutation, until=until)
+        Validation Order, its ``until`` selecting the bounded verb as
+        :meth:`target_write`'s does."""
+        mutation, bound = _bounded_mutation(verb, until)
+        keyed_write(self._write.model, self._uow, self._lifecycle, source, mutation, until=bound)
 
     def keyed_insert(
         self,
         source: KeyedInsertSource,
-        mutation: KeyedMutation,
         /,
         *,
         valid_from: dt.datetime | Omitted = OMITTED,
-        until: dt.datetime | None = None,
+        until: dt.datetime | Omitted = OMITTED,
     ) -> OpenedKeyedWrite:
         """Open a row through the insert's own door, answering the authority
-        its admission granted."""
+        its admission granted; a stated ``until``, ``None`` included, selects
+        the bounded insert."""
+        mutation, bound = _window_mutation("insert", "insertUntil", until)
         return keyed_insert(
             self._write.model,
             self._uow,
@@ -567,7 +582,7 @@ class TxnAttempt(_TxnAttemptBase):
             source,
             mutation,
             valid_from=valid_from,
-            until=until,
+            until=bound,
         )
 
     def predicate_write(
@@ -589,7 +604,7 @@ class TxnAttempt(_TxnAttemptBase):
     def target_write(
         self,
         adapter: TargetWriteAdapter,
-        verb: TargetWriteVerb,
+        verb: WriteVerb,
         /,
         *,
         version: object = OMITTED,
