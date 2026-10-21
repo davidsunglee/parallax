@@ -73,7 +73,7 @@ from parallax.core.write_plan import (
     WritePlanningError,
 )
 from parallax.core.write_plan.keys import TemporalObjectStateKey
-from parallax.core.write_plan.plan import OwnedEndpoint
+from parallax.core.write_plan.plan import TemporalRowCoordinates
 from parallax.core.write_plan.steps import (
     INFINITY,
     NEW_LINEAGE,
@@ -103,8 +103,11 @@ from tests.unit._judged_evidence_support import judged_evidence
 from tests.unit.core._execution._unit_work._ownership_support import OpenedRows
 
 
-def _no_flush(steps: tuple[PlannedStep, ...], /, *, allocates: bool) -> tuple[object, ...]:
+def _no_flush(
+    steps: tuple[PlannedStep, ...], /, *, allocates: bool, **capture: object
+) -> tuple[object, ...]:
     """Step execution for a test that never flushes."""
+    del allocates, capture
     raise AssertionError(f"no step executes, yet {len(steps)} step(s) were handed over")
 
 
@@ -1461,7 +1464,7 @@ def _owning(entity: EntityIdentity, *ends: object) -> OpenedRows:
     return OpenedRows(
         frozenset(
             {
-                OwnedEndpoint(
+                TemporalRowCoordinates(
                     entity,
                     (1,),
                     tuple(INFINITY if end is None else Finite(instant=end) for end in ends),

@@ -1895,9 +1895,8 @@ def test_only_surviving_writes_carry_their_sources_into_settled_writes() -> None
     assert isinstance(delete, SettledWriteWithSource)
     assert (update.source_evidence, delete.source_evidence) == ((sources[1],), (sources[0],))
     assert [
-        (write.claim, tuple(write.changed), write.advanced, write.destroyed)
-        for write in (update, delete)
-    ] == [(None, (state,), (state,), ()), (None, (state,), (), (one,))]
+        (tuple(write.changed), write.advanced, write.destroyed) for write in (update, delete)
+    ] == [((state,), (state,), ()), ((state,), (), (one,))]
 
 
 # --------------------------------------------------------------------------- #

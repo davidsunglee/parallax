@@ -629,14 +629,13 @@ def test_evidence_resolved_after_an_own_change_to_its_state_is_invalidated() -> 
         stale = unsubmitted[0].observation
         assert stale is not None
         assert stale.invalidated
-        assert not stale.consumed
         assert stale is not writer.observation
         other = unaffected[0].observation
         assert other is not None and not other.invalidated
         fresh = judged_evidence(model, entity, _balance_columns(), evidence_context=uow)[
             0
         ].observation
-        assert fresh is not None and not fresh.invalidated and not fresh.consumed
+        assert fresh is not None and not fresh.invalidated
 
     _in_transaction(model, observe)
 
@@ -655,6 +654,6 @@ def test_an_own_change_invalidates_a_built_observation_no_write_used() -> None:
         uow.buffer(_balance_update(model, writer))
         assert not built.invalidated  # buffered, not yet completed
         uow.read(lambda: None)
-        assert built.invalidated and built.consumed
+        assert built.invalidated
 
     _in_transaction(model, observe)

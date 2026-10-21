@@ -71,25 +71,23 @@ class ParticipationToken:
     __slots__ = ()
 
 
-_CONSUMED: Final = 1
-_INVALIDATED: Final = 2
-
-
 class RetainedObservation:
     """One observed state's evidence, owned by the values that observed it.
 
     ``key`` is the exact state the evidence is about, ``evidence`` the database
     evidence itself, and ``participation`` the unit of work whose read produced
-    it, where a read did.
+    it, where a read did. Every source of one observed state shares it, so its
+    identity is that state's identity within the attempt, and its lifetime the
+    lifetime of the last value or pending or planned write reaching it.
 
-    :attr:`consumed` and :attr:`invalidated` are the two mutable facts, and each
-    moves one way. They live on this shared object rather than in a
-    transaction-side set because both must OUTLIVE the transaction that set
-    them: a later transaction handed the same still-live source must be refused,
-    and a set that died with the flush could not say so.
+    :attr:`invalidated` is its one mutable fact, which moves one way. It lives
+    on this shared object rather than in a transaction-side set because it must
+    OUTLIVE the transaction that set it: a later transaction handed the same
+    still-live source must not mistake it for current evidence, and a set that
+    died with the transaction could not say so.
     """
 
-    __slots__ = ("__weakref__", "_spent", "evidence", "key", "participation")
+    __slots__ = ("__weakref__", "_invalidated", "evidence", "key", "participation")
 
     def __init__(
         self,
@@ -100,39 +98,24 @@ class RetainedObservation:
         self.key: Final = key
         self.evidence: Final = evidence
         self.participation: Final = participation
-        # Both one-way facts in one slot, since every retained read pays for it:
-        # `_CONSUMED` and `_INVALIDATED` bits.
-        self._spent = 0
-
-    @property
-    def consumed(self) -> bool:
-        """Whether a successful flush has already spent this evidence.
-
-        A consumed source stays an ordinary readable value; what it no longer
-        carries is authority, because the state it observed is not the stored
-        state any more.
-        """
-        return bool(self._spent & _CONSUMED)
-
-    def consume(self) -> None:
-        """Spend this evidence, at the successful flush of a write that used it."""
-        self._spent |= _CONSUMED
+        self._invalidated = False
 
     @property
     def invalidated(self) -> bool:
         """Whether a successful change of this transaction's own has since
-        revised, closed, or removed the state this evidence describes.
+        revised, closed, or removed the state this evidence describes — even
+        where the changed row keeps the same address and revision token — or a
+        read published it from rows acquired before such a change.
 
-        Distinct from consumption, which records that a write spent this
-        evidence: an observation no write ever used is still invalidated when
-        another write changes its state, even when the changed row keeps the
-        same address and revision token.
+        An invalidated observation no longer describes the stored state; what
+        its sources may still write is what the attempt's own completed writes
+        left of that state, which the unit of work answers.
         """
-        return bool(self._spent & _INVALIDATED)
+        return self._invalidated
 
     def invalidate(self) -> None:
         """Record that a successful own change replaced the observed state."""
-        self._spent |= _INVALIDATED
+        self._invalidated = True
 
 
 class RetainedTargetState:

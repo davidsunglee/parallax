@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Final, cast, overload
 
 from parallax.core._execution._unit_work.effects import (
@@ -27,8 +27,13 @@ from parallax.core.execution_lifecycle._activity import (
 )
 from parallax.core.metamodel import Metamodel
 from parallax.core.sql_gen import LoweredStatement
-from parallax.core.write_plan.payload import WritePayloadPreparer
-from parallax.core.write_plan.steps import PlannedInsert, PlannedStep
+from parallax.core.write_plan.payload import PatchedDocument, WritePayloadPreparer
+from parallax.core.write_plan.steps import (
+    PlannedInsert,
+    PlannedStep,
+    PlannedTemporalRevision,
+    WriteRow,
+)
 
 __all__ = ["WriteStepExecutor"]
 
@@ -73,10 +78,16 @@ class WriteStepExecutor:
         *,
         allocates: bool,
         flush: FlushActivity,
+        capture_insert: Callable[[WriteRow, object | None], None] | None = None,
+        capture_revision: Callable[[PlannedTemporalRevision, PatchedDocument | None], None]
+        | None = None,
     ) -> tuple[object, ...]:
         """Lower, execute, and enforce each of ``steps`` in order as calls of
         ``flush``, and answer the keys the database allocated, in step order,
-        where ``allocates`` asks for any.
+        where ``allocates`` asks for any. The payloads lowering demands are
+        handed to ``capture_insert`` and ``capture_revision`` as
+        :class:`~parallax.core._execution._write_lowering.LoweringCursor`
+        describes, where they are given; executing decides nothing of them.
 
         Each statement stores the payload the preparer prepares for it when its
         turn comes. A temporal mutation's effect on its predecessor precedes the
@@ -108,7 +119,14 @@ class WriteStepExecutor:
         """
         allocated: list[object] = []
         transport = self._ordered
-        cursor = LoweringCursor(steps, self._payloads, self._meta, self._connection.dialect)
+        cursor = LoweringCursor(
+            steps,
+            self._payloads,
+            self._meta,
+            self._connection.dialect,
+            capture_insert=capture_insert,
+            capture_revision=capture_revision,
+        )
         step = cursor.take()
         while step is not None:
             if transport is not None:

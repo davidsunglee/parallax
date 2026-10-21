@@ -35,7 +35,7 @@ from parallax.core.base import INFINITY as OPEN
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity, Metamodel
 from parallax.core.sql_gen import LoweredStatement, SqlGenError
-from parallax.core.sql_gen._write import effect_parameter_ceiling
+from parallax.core.sql_gen._write import StepPayload, compile_write_step, effect_parameter_ceiling
 from parallax.core.unit_work import (
     KeyedWriteInstruction,
     PredicateSelection,
@@ -43,7 +43,6 @@ from parallax.core.unit_work import (
     WritePlanningRequest,
 )
 from parallax.core.write_plan import SUPERSEDED
-from parallax.core.write_plan.payload import WritePayloadPreparer
 from parallax.core.write_plan.steps import (
     INFINITY,
     MISSING_TARGET,
@@ -340,12 +339,12 @@ def test_every_single_key_non_temporal_effect_the_corpus_lowers_keeps_its_ceilin
     # Every keyed write case the compile lane grades, under every layout,
     # inheritance strategy, and concurrency its models declare.
     kept: list[PlannedUpdate | PlannedDelete] = []
-    lowering = _write_lowering.lowered
+    compiling = compile_write_step
 
     def checked(
-        step: PlannedStep, payloads: WritePayloadPreparer, meta: Metamodel, dialect: Dialect
+        step: PlannedStep, payload: StepPayload, meta: Metamodel, dialect: Dialect
     ) -> LoweredStatement:
-        statement = lowering(step, payloads, meta, dialect)
+        statement = compiling(step, payload, meta, dialect)
         if isinstance(step, PlannedUpdate | PlannedDelete):
             ceiling = ordered_parameter_ceiling(step, dialect)
             if ceiling is not None:
@@ -353,7 +352,7 @@ def test_every_single_key_non_temporal_effect_the_corpus_lowers_keeps_its_ceilin
                 kept.append(step)
         return statement
 
-    monkeypatch.setattr(_write_lowering, "lowered", checked)
+    monkeypatch.setattr(_write_lowering, "compile_write_step", checked)
     cases = case_format.default_cases_dir()
     for case_id in sorted(WRITE_EXERCISED):
         (path,) = cases.glob(f"{case_id}-*.yaml")

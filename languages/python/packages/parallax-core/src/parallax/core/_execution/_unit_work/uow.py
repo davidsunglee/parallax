@@ -71,13 +71,9 @@ from parallax.core.write_plan.keys import (
     ObjectKey,
     ObjectStateKey,
     TemporalObjectStateKey,
-    VersionedObjectStateKey,
 )
-from parallax.core.write_plan.observe import PredecessorRow, TemporalObservation
-from parallax.core.write_plan.plan import (
-    SettledWrite,
-    WriteCompletion,
-)
+from parallax.core.write_plan.observe import PredecessorRow
+from parallax.core.write_plan.plan import CurrentRowOutput, WriteCompletion
 from parallax.core.write_plan.steps import KeyTarget
 
 __all__ = [
@@ -272,21 +268,25 @@ class UnitOfWork:
         # The connected model's write-evidence policy, bound once per accepted
         # model by model preparation, which alone may reach `m-opt-lock`.
         self._evidence_policy_for = evidence_policy_for
+        # This index is not an owner: a retained observation lives as
+        # long as some source value or buffered or planned write reaches it, and
+        # this entry disappears with the last of them (`m-unit-work` "Observation
+        # lifetime"). What the index is for is recognizing a state this
+        # transaction has already seen, so a reread of one state answers the
+        # evidence the earlier read's values already carry rather than a second
+        # copy of it — and telling ownership which observed states a completed
+        # write's changes may still serve a source of.
+        self._observations: WeakValueDictionary[ObjectStateKey, RetainedObservation] = (
+            WeakValueDictionary()
+        )
         # The accepted writes, composed as each is admitted, each carrying the
         # claims its verbs resolved for it and the evidence of the sources it
         # was admitted through — the strong reference that keeps that evidence
         # alive after its source value is released — beside this attempt's
         # admitted insertions, the current temporal rows it opened, and what
         # its completed writes did to the states its sources reach.
-        self._admission = WriteAdmission(meta, inserted_version=planner.inserted_version)
-        # This index is not an owner: a retained observation lives as
-        # long as some source value or buffered write reaches it, and this entry
-        # disappears with the last of them (`m-unit-work` "Observation lifetime").
-        # What the index is for is recognizing a state this transaction has
-        # already seen, so a reread of one state answers the evidence the earlier
-        # read's values already carry rather than a second copy of it.
-        self._observations: WeakValueDictionary[ObjectStateKey, RetainedObservation] = (
-            WeakValueDictionary()
+        self._admission = WriteAdmission(
+            meta, inserted_version=planner.inserted_version, observations=self._observations
         )
         # How many settled writes have changed a state so far, and the count at
         # which each changed state — an observed state, or an unversioned
@@ -521,16 +521,13 @@ class UnitOfWork:
 
     def _participates(self, scope: ObjectStateKey | ObjectKey) -> bool:
         """Whether a live read of exactly ``scope`` this attempt holds — under
-        its shared lock, unspent, and describing the stored state — already
+        its shared lock, and still describing the stored state — already
         proves it."""
         if isinstance(scope, ObjectKey):
             return False
         held = self._observations.get(scope)
         return (
-            held is not None
-            and held.participation is self._participation
-            and not held.consumed
-            and not held.invalidated
+            held is not None and held.participation is self._participation and not held.invalidated
         )
 
     def insertion_identity(self, target: ObjectKey) -> InsertionIdentity | None:
@@ -589,16 +586,16 @@ class UnitOfWork:
         * **Optimistic** — the license is the database gate, so the read must
           also have retained the observation the gate binds.
 
-        A Non-Temporal source's authority continues through this attempt's own
-        completed writes: it settles against the protected state they left the
-        row at — for a versioned row, the version they produced — while its
-        observation stays what it read. A source published from rows a read
-        acquired before a completed write changed them, and a source of an
-        object a completed keyed deletion removed, are refused. A temporal
-        source whose evidence a successful flush already spent, or describing a
-        state a later successful change of this transaction replaced, is
-        refused under BOTH strategies: either way the state the source observed
-        is no longer the stored state, and a held lock does not restore it.
+        A source's authority continues through this attempt's own completed
+        writes while its observation stays what it read: a versioned
+        Non-Temporal source settles against the version they produced, an
+        unversioned one against its object, and a temporal one against what
+        they left of the state it observed. Under BOTH strategies a source
+        published from rows a read acquired before a completed write changed
+        them is refused, and so is one those writes ended — of an object a
+        completed keyed deletion removed, or a temporal source whose observed
+        state they left nothing of at its Valid-Time pin: a held lock does not
+        restore a state the attempt itself replaced.
         """
         self._ensure_open()
         identity = target.identity.canonical
@@ -629,20 +626,6 @@ class UnitOfWork:
                 ),
                 object_key=object_key,
             )
-        if observation is not None and isinstance(observation.evidence, TemporalObservation):
-            if observation.consumed:
-                raise WriteEvidenceError(
-                    code="write-evidence-consumed",
-                    message=(
-                        f"{identity}: a write through this value's source already completed in "
-                        "a flush of this unit of work, so its evidence is spent; read the row "
-                        "again and write what that read returns"
-                    ),
-                    object_key=object_key,
-                )
-            if observation.invalidated:
-                raise _stale_source(identity, object_key)
-            return settled
         if settled is None:
             return None
         resolved = self._admission.resolve_source(read_evidence)
@@ -652,10 +635,11 @@ class UnitOfWork:
             raise WriteEvidenceError(
                 code="write-evidence-consumed",
                 message=(
-                    f"{identity}: a deletion this transaction completed removed the object "
-                    "this value's source read, so the source authorizes no further write, "
-                    "whatever was inserted at its key since; read the row again and write what "
-                    "that read returns"
+                    f"{identity}: a write this transaction completed left nothing of what this "
+                    "value's source read — a deletion of its object, or the coverage at the "
+                    "Valid-Time instant it was read at — so the source authorizes no further "
+                    "write, whatever was inserted there since; read the row again and write "
+                    "what that read returns"
                 ),
                 object_key=object_key,
             )
@@ -667,24 +651,12 @@ class UnitOfWork:
         ``read_at``, predates a completed change of what it observed.
 
         Before any change completed, every read precedes every later change
-        and nothing is judged. A Non-Temporal source's registration lasts while
-        some value or pending or planned write reaches ``evidence``; a temporal
-        source's evidence is judged by its observation instead.
+        and nothing is judged
+        (:meth:`~parallax.core._execution._unit_work._write_ownership.WriteOwnership.register_read_evidence`).
         """
         if not self._freshness:
             return
-        observation = evidence.observation
-        if observation is None:
-            target = evidence.object_key
-            state: VersionedObjectStateKey | ObjectKey = target
-        elif isinstance(observation.key, VersionedObjectStateKey):
-            state = observation.key
-            target = state.object
-        else:
-            return
-        self._admission.register_read_evidence(
-            evidence, target, read_at=read_at, fresh=self._current(state, read_at)
-        )
+        self._admission.register_read_evidence(evidence, read_at=read_at, current=self._current)
 
     @property
     def freshness(self) -> int:
@@ -704,8 +676,8 @@ class UnitOfWork:
         A reread that resolves to a state some live value already observed
         answers THAT value's evidence, so one observed state has one claim
         within a transaction however many reads reach it — the same rule
-        graph aliases already follow. A state whose evidence a flush has spent
-        is not reused: the row has moved on, so a fresh read is fresh evidence.
+        graph aliases already follow. A state an own change replaced is not
+        reused: a fresh read of the state the row is in now is fresh evidence.
 
         ``read_at`` is the :attr:`freshness` the producing read captured, by
         default now. Evidence built from a read that ran before a later
@@ -718,7 +690,7 @@ class UnitOfWork:
             observation.invalidate()
             return observation
         held = self._observations.get(key)
-        if held is not None and not held.consumed and not held.invalidated:
+        if held is not None and not held.invalidated:
             return held
         self._observations[key] = observation
         return observation
@@ -758,14 +730,16 @@ class UnitOfWork:
         planning reduces to no DML at all still ends the way it began.
 
         Each settled write of the plan completes as soon as its group's steps
-        succeed, before any step of a later group executes: it spends the
-        temporal evidence every write it composed was admitted through — an
-        overwritten or physically empty one included — records the states it
-        changed, continues or ends the authority of the Non-Temporal sources
-        whose state it advanced or removed, retires the owned rows it removed,
-        and registers the rows it opened. A deferred settled write binds at its
-        turn against what every earlier one published. Spending is idempotent,
-        so a claim several settled writes carry is spent once.
+        succeed, before any step of a later group executes: it records the
+        states it changed, continues or ends the authority of the sources whose
+        state it advanced, transformed, or removed, retires the owned rows it
+        removed, and registers the rows it opened. A deferred settled write
+        binds at its turn against what every earlier one published. What a
+        flush's writes leave for its sources outlives the flush, and the
+        current rows a later submission may continue from are captured as they
+        execute. The pre-commit flush, which no submission follows, captures
+        none and records only what a later barrier region of it continues
+        from.
 
         A failure while executing, binding, or completing dooms the attempt's
         lifetime before it propagates, so a caller that catches it can do no
@@ -781,61 +755,54 @@ class UnitOfWork:
             return
         opening = self.flush_opening
         if opening is None:
-            self._flush_buffer()
+            self._flush_buffer(trigger)
             return
         with opening(trigger):
-            self._flush_buffer()
+            self._flush_buffer(trigger)
 
-    def _flush_buffer(self) -> None:
+    def _flush_buffer(self, trigger: FlushTrigger) -> None:
         admission = self._admission
         # The planning request is the flush's last reference to the writes it
         # planned, so it ends with the call: once planning succeeds and the
         # buffer drains, what a plan's deferred settled write took over is
         # released as it executes rather than held until the flush ends.
+        concluding = trigger == "pre_commit"
         plan = self._planner.finalize(
             WritePlanningRequest(
                 actor_identity=self._actor_identity,
                 transaction_instant=self._transaction_instant,
                 concurrency=self.settings.concurrency,
                 buffered_writes=admission.composed_writes(),
-                ownership=admission.ownership,
+                ownership=admission.concluding_ownership() if concluding else admission.ownership,
                 counts_unchanged_rows=self.settings.counts_unchanged_rows,
             )
         )
         admission.drain_planned()
         try:
-            run_write_plan(self, plan, self.execute_write_steps)
+            run_write_plan(self, plan, self.execute_write_steps, captures=not concluding)
         except BaseException as failure:
             self._lifetime.doom(failure)
             raise
-        finally:
-            admission.release_continuity()
 
     def _complete_write(
-        self, write: SettledWrite, completion: WriteCompletion, allocated: tuple[object, ...]
+        self,
+        completion: WriteCompletion,
+        allocated: tuple[object, ...],
+        captured: tuple[tuple[CurrentRowOutput, object | None], ...] = (),
     ) -> None:
         """Publish one successful settled write's ``completion``: its own, or
         that of the range its deferred coverage bound.
 
-        Every temporal source authority the write's composed writes settled
-        against is spent; live evidence of every observed state it changed is
-        invalidated and every change recorded, so a read that ran before it
-        cannot later publish eligible evidence of that state or object; the
-        Non-Temporal sources whose state it advanced continue from the version
-        it produced, and those of every object it deleted end; then the owned
-        rows it removed are retired before the rows it opened, completed by the
-        keys the database ``allocated``, are registered.
-
-        What the write ``derived`` from its originals stays for the writes a
-        barrier kept after it: those were admitted with conditions on the same
-        originals, which this write's guarded effects or held locks have now
-        proven. Spending and invalidation still apply to them; no later
-        submission is admitted on these proofs. The object's proofs end when
-        the settled write that ``concludes`` it completes, or with the flush.
+        Live evidence of every observed state it changed is invalidated and
+        every change recorded, so a read that ran before it cannot later
+        publish eligible evidence of that state or object; the Non-Temporal
+        sources whose state it advanced continue from the version it produced,
+        and those of every object it deleted end; the owned rows it removed are
+        retired before the rows it opened, completed by the keys the database
+        ``allocated``, are registered; and what it left of each observed
+        temporal state a live source shares is recorded, with the rows its
+        execution ``captured`` for them.
         """
-        claim = write.claim
-        if claim is not None:
-            claim.consume()
         stamp = self._freshness + 1
         changed_any = False
         for key in completion.changed:
@@ -843,7 +810,7 @@ class UnitOfWork:
             self._invalidate(key, stamp)
         if changed_any:
             self._freshness = stamp
-        self._admission.complete(completion, allocated, at=self._freshness)
+        self._admission.complete(completion, allocated, at=self._freshness, captured=captured)
 
     def _invalidate(self, key: ObjectKey | ObjectStateKey, stamp: int) -> None:
         if not isinstance(key, ObjectKey):
@@ -860,7 +827,7 @@ class UnitOfWork:
         commit.
 
         The rollback the attempt performs erases any force-flushed rows, and
-        buffered claims are released rather than spent: nothing this attempt
+        buffered claims are released with it: nothing this attempt
         wrote survives, so evidence a later attempt is handed is still about
         stored state.
         """

@@ -4,7 +4,8 @@ and Planned Steps*).
 A plan of no Write Group is the one canonical result for a flush that survives
 nothing. Each Write Group owns the tuple of its Planned Steps and the settled
 writes it completes, and holds at least one; a deferred settled write's group
-plans no step. An attempt that opened nothing owns, proved, and derived nothing.
+plans no step. An attempt that opened nothing owns nothing, and holds nothing
+for any source to continue from.
 """
 
 from __future__ import annotations
@@ -22,8 +23,8 @@ from parallax.core.write_plan.plan import (
     OPEN_BITEMPORAL_ENDS,
     BoundRange,
     DeferredRange,
-    OwnedEndpoint,
     SettledWrite,
+    TemporalRowCoordinates,
     WriteCompletion,
     WriteGroup,
 )
@@ -81,21 +82,30 @@ def test_a_deferred_settled_writes_group_plans_no_step() -> None:
 
 
 def test_an_attempt_that_opened_nothing_owns_nothing_an_insertion_opened() -> None:
-    endpoint = OwnedEndpoint(_ACCOUNT, (1,), OPEN_BITEMPORAL_ENDS)
-    assert not NO_TEMPORAL_WRITE_OWNERSHIP.owns(endpoint)
-    assert not NO_TEMPORAL_WRITE_OWNERSHIP.continues_insertion(endpoint)
-    assert NO_TEMPORAL_WRITE_OWNERSHIP.insertion_coverage(endpoint, None) == ()
+    coordinates = TemporalRowCoordinates(_ACCOUNT, (1,), OPEN_BITEMPORAL_ENDS)
+    assert not NO_TEMPORAL_WRITE_OWNERSHIP.owns(coordinates)
+    assert not NO_TEMPORAL_WRITE_OWNERSHIP.continues_insertion(coordinates)
+    assert NO_TEMPORAL_WRITE_OWNERSHIP.insertion_coverage(coordinates, None) == ()
 
 
-def test_an_attempt_that_opened_nothing_has_proved_and_derived_nothing() -> None:
-    endpoint = OwnedEndpoint(_ACCOUNT, (1,), OPEN_BITEMPORAL_ENDS)
-    state = VersionedObjectStateKey(ObjectKey(_ACCOUNT, (("id", 1),)), 1)
-    assert NO_TEMPORAL_WRITE_OWNERSHIP.proven(state) is None
-    assert tuple(NO_TEMPORAL_WRITE_OWNERSHIP.descendants(state, None)) == ()
-    assert NO_TEMPORAL_WRITE_OWNERSHIP.descent(endpoint) is None
+def test_an_attempt_that_opened_nothing_holds_nothing_for_a_source_to_continue() -> None:
+    coordinates = TemporalRowCoordinates(_ACCOUNT, (1,), OPEN_BITEMPORAL_ENDS)
+    target = ObjectKey(_ACCOUNT, (("id", 1),))
+    state = VersionedObjectStateKey(target, 1)
+    assert not NO_TEMPORAL_WRITE_OWNERSHIP.demanded(state, coordinates)
+    assert NO_TEMPORAL_WRITE_OWNERSHIP.continues(object(), None) is None
+    assert tuple(NO_TEMPORAL_WRITE_OWNERSHIP.current_rows(target, None)) == ()
 
 
-_EFFECTS = ("changed", "advanced", "destroyed", "removed", "opened", "derived", "concludes")
+_EFFECTS = (
+    "changed",
+    "advanced",
+    "destroyed",
+    "removed",
+    "opened",
+    "derived",
+    "current_outputs",
+)
 
 
 @pytest.mark.parametrize("result", [SettledWrite, BoundRange])
@@ -119,9 +129,9 @@ def test_plan_values_are_held_in_slots_on_themselves() -> None:
 
 def test_a_settled_write_publishes_nothing_it_does_not_name() -> None:
     write = SettledWrite()
-    assert [getattr(write, name) for name in _EFFECTS] == [(), (), (), (), NO_OPENINGS, (), None]
+    assert [getattr(write, name) for name in _EFFECTS] == [(), (), (), (), NO_OPENINGS, (), ()]
     assert not any(
         isinstance(getattr(write, field.name), WriteCompletion)
         for field in dataclasses.fields(write)
     )
-    assert (write.claim, write.deferred) == (None, None)
+    assert write.deferred is None

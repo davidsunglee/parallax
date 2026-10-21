@@ -22,17 +22,18 @@ from parallax.core.temporal_write.coverage import (
     CoverageTransform,
     Successor,
 )
-from parallax.core.write_plan.keys import ObjectKey, ObjectStateKey
+from parallax.core.write_plan.keys import ObjectStateKey
 from parallax.core.write_plan.observe import AssignedComparison, PredecessorRow
 from parallax.core.write_plan.payload import RowPayload, WritePayloadPreparer
 from parallax.core.write_plan.plan import (
     OPEN_BITEMPORAL_ENDS,
     TRANSACTION_TIME_ENDS,
     BoundRange,
+    CurrentRowOutput,
     Derivation,
     DerivedRow,
     Openings,
-    OwnedEndpoint,
+    TemporalRowCoordinates,
     TemporalWriteOwnership,
 )
 from parallax.core.write_plan.planned_rows import (
@@ -144,8 +145,9 @@ class PredecessorExpander:
     write's settled facts and the attempt's ownership as it stands then.
     ``key_value`` is a range's one object key. ``gated`` and ``guards`` say
     whether its closes gate and whether the database can prove an unchanged
-    milestone by a guard, and ``derives`` whether a later settled write of the flush
-    relies on what it derives.
+    milestone by a guard. Where a source the attempt may still continue
+    reaches a predecessor the write changes, the write describes what it
+    leaves of that predecessor and the rows execution captures for it.
     ``audit`` finalizes each row the write produces, carried, changed, or new,
     once, and stamps each close it emits; ``payloads`` prepares what an
     object's produced rows persist, so that equal adjacent ones merge
@@ -162,7 +164,6 @@ class PredecessorExpander:
     __slots__ = (
         "_audit",
         "_comparisons",
-        "_derives",
         "_facts",
         "_gated",
         "_guards",
@@ -183,7 +184,6 @@ class PredecessorExpander:
         key_value: object = None,
         gated: bool,
         guards: bool = False,
-        derives: bool = False,
         ownership: TemporalWriteOwnership,
         audit: RowAudit,
         payloads: WritePayloadPreparer,
@@ -194,7 +194,6 @@ class PredecessorExpander:
         self._key_values = (key_value,)
         self._gated = gated
         self._guards = guards
-        self._derives = derives
         self._ownership = ownership
         self._audit = audit
         self._payloads = payloads
@@ -337,15 +336,13 @@ class PredecessorExpander:
         *,
         lineage: tuple[_ResolvedState, TimeInterval] | None = None,
         gaps: Iterable[CoverageGap] = (),
-        concludes: ObjectKey | None = None,
     ) -> BoundRange:
         """One object settled whole: a pending insertion's surviving parts
         (``lineage``, its resolved seed over its own window), each predecessor
         expanded in its role, in the order its own effect runs, and a
         replacement's ``gaps`` — as the steps realizing them and the effects
-        their success publishes, naming the object where its range
-        ``concludes`` it (:attr:`BoundRange.concludes`) (`m-temporal-write`
-        *Merging produced successors*).
+        their success publishes (`m-temporal-write` *Merging produced
+        successors*).
 
         Each predecessor is decided by itself first (:meth:`_reach`): reach,
         preservation and its proof, close and gate, and the rows it produces,
@@ -366,9 +363,15 @@ class PredecessorExpander:
         whose address a merged run absorbed is removed, and every remaining run
         is opened. Every predecessor's own effect keeps its order, ahead of
         every opening, so a lost condition fails before anything new is
-        written, and every original keeps its own proof however few rows the
-        merge leaves. Openings follow in the order their first produced part
-        was: the insertion's parts, each predecessor's successors, the gaps.
+        written, and every predecessor keeps its own effect however few rows
+        the merge leaves. Openings follow in the order their first produced
+        part was: the insertion's parts, each predecessor's successors, the
+        gaps.
+
+        Each changed predecessor a continuable source reaches is described
+        with the rows it left (:class:`Derivation`), and each row produced
+        from one, opened or revised, as an output execution captures
+        (:class:`CurrentRowOutput`).
         """
         settlement = _Settlement()
         if lineage is not None:
@@ -395,7 +398,7 @@ class PredecessorExpander:
                 kept=False,
                 shares=(),
             )
-        return self._settled(settlement, concludes)
+        return self._settled(settlement)
 
     def _reach(
         self,
@@ -437,7 +440,16 @@ class PredecessorExpander:
                 end=_valid_end(coverage),
             )
             settlement.reached.append(
-                _Reached(predecessor, state, coverage, closing, own, owned, code)
+                _Reached(
+                    predecessor,
+                    state,
+                    coverage,
+                    closing,
+                    own,
+                    owned,
+                    code,
+                    demanded=self._ownership.demanded(state, own if owned else None),
+                )
             )
             return
         transform = self._transform
@@ -471,10 +483,23 @@ class PredecessorExpander:
             if owned and ownership.continues_insertion(own)
             else ()
         )
-        reached = _Reached(predecessor, state, coverage, closing, own, owned, code, inserted)
-        settlement.reached.append(reached)
         if disposal == _GUARD:
+            settlement.reached.append(
+                _Reached(predecessor, state, coverage, closing, own, owned, code, inserted)
+            )
             return
+        reached = _Reached(
+            predecessor,
+            state,
+            coverage,
+            closing,
+            own,
+            owned,
+            code,
+            inserted,
+            demanded=ownership.demanded(state, own if owned else None),
+        )
+        settlement.reached.append(reached)
         kept = _kept_index(code)
         # A row a successor may open shares one bindable predecessor; the
         # successor keeping an owned row's address is only ever revised into.
@@ -495,12 +520,12 @@ class PredecessorExpander:
                 shares=_shares(extent, inserted),
             )
 
-    def _settled(self, settlement: _Settlement, concludes: ObjectKey | None) -> BoundRange:
+    def _settled(self, settlement: _Settlement) -> BoundRange:
         facts = self._facts
         reached = settlement.reached
         candidates = settlement.candidates
         if not reached and not candidates:
-            return _NOTHING if concludes is None else BoundRange(steps=(), concludes=concludes)
+            return _NOTHING
         opened: list[_Opened] = []
         revised: list[_Filed] | None = None
         if len(candidates) < 2 or not isinstance(facts.shape, Bitemporal):
@@ -513,18 +538,38 @@ class PredecessorExpander:
                 filed = self._realize(run, opened)
                 if filed is not None:
                     revised = _filing(revised, filed)
-        effects = tuple(step for step in map(self._own, reached) if step is not None)
+        effects, outputs = self._effects(reached)
         opened.sort(key=_first)
         entity = facts.entity.identity
-        inserts = tuple(PlannedInsert(entity=entity, entries=(row,)) for _, row, _, _ in opened)
+        inserts = tuple(PlannedInsert(entity=entity, entries=(row,)) for _, row, _, _, _ in opened)
+        endpoints = tuple(entry_endpoint(facts, row) for _, row, _, _, _ in opened)
+        demanded = any(record.demanded for record in reached)
+        derived: tuple[Derivation, ...] = ()
+        if demanded:
+            outputs.extend(_opened_outputs(opened, endpoints))
+            derived = self._derived(reached, candidates, _by_ends(endpoints, reached))
         return BoundRange(
             steps=(*effects, *inserts),
             changed=tuple(record.state for record in reached if _changes(record.code)),
             removed=tuple(record.own for record in reached if record.code & _DISPOSAL == _REMOVE),
-            opened=_openings(facts, opened, revised or ()),
-            derived=self._derived(reached, candidates) if self._derives else (),
-            concludes=concludes,
+            opened=_openings(opened, endpoints, revised or ()),
+            derived=derived,
+            current_outputs=tuple(outputs),
         )
+
+    def _effects(
+        self, reached: Sequence[_Reached]
+    ) -> tuple[list[PlannedStep], list[CurrentRowOutput]]:
+        """Each reached predecessor's own step, in order, and the output each
+        revision into a row a continuable source reaches persists."""
+        owned = [(record, self._own(record)) for record in reached]
+        effects = [step for _record, step in owned if step is not None]
+        outputs = [
+            _revised_output(record, step)
+            for record, step in owned
+            if record.publishes and isinstance(step, PlannedTemporalRevision)
+        ]
+        return effects, outputs
 
     def _own(self, record: _Reached) -> PlannedStep | None:
         """The step ``record``'s predecessor finally takes of its own: its
@@ -600,6 +645,7 @@ class PredecessorExpander:
                 assert record is not None  # a kept successor keeps its predecessor's address
                 record.code = _REMOVE
         facts = self._facts
+        demanded = any(member.reached is not None and member.reached.demanded for member in run)
         if edge.kept:
             record = edge.reached
             assert record is not None  # a kept successor keeps its predecessor's address
@@ -607,6 +653,8 @@ class PredecessorExpander:
             if _revises(facts, realized, record.predecessor):
                 record.code = _REVISE
                 record.realized = realized
+                record.realized_coverage = merged
+                record.publishes = demanded
                 return record.own, merged, shares
             # The run is the row's own state over its own coverage, which no
             # revision expresses: one that needed no statement was kept
@@ -626,43 +674,42 @@ class PredecessorExpander:
                 row.with_prepared(self._payloads.rebound(payload, row)),
                 merged,
                 shares,
+                demanded,
             )
         )
         return None
 
     def _derived(
-        self, reached: Sequence[_Reached], candidates: Sequence[_Candidate]
+        self,
+        reached: Sequence[_Reached],
+        candidates: Sequence[_Candidate],
+        known: Mapping[tuple[TemporalUpperBound, ...], TemporalRowCoordinates],
     ) -> tuple[Derivation, ...]:
-        """What a later settled write needs of each predecessor the write transformed:
-        its state and coverage, its own address where the attempt owned it, and
-        each row it contributed to — at the predecessor's own key, since no
-        successor assigns a key — with the Valid Time the row covers and the
-        part it contributed."""
-        facts = self._facts
-        entity = facts.entity.identity
-        primary_key = facts.view.primary_key.identity
+        """What the write left of each predecessor it changed that a source
+        the attempt may still continue reaches: its state and coverage, its
+        coordinates where the attempt owned it, and each row it contributed
+        to — the row the write opens or revises there, by the upper ends
+        ``known`` names it at, since every row of one object's write shares
+        its key — with the Valid Time the row covers and the part it
+        contributed."""
         rows: dict[int, list[DerivedRow]] = {}
         for candidate in candidates:
             record = candidate.reached
-            if record is None:
+            if record is None or not record.demanded:
                 continue
             contributed = _interval(candidate.start, candidate.end)
             extent = contributed if candidate.merged is None else candidate.merged
-            endpoint = OwnedEndpoint(
-                entity,
-                (record.predecessor.cell(primary_key),),
-                TRANSACTION_TIME_ENDS if extent is None else bitemporal_ends(extent.end),
-            )
-            rows.setdefault(id(record), []).append(DerivedRow(endpoint, extent, contributed))
+            ends = TRANSACTION_TIME_ENDS if extent is None else bitemporal_ends(extent.end)
+            rows.setdefault(id(record), []).append(DerivedRow(known[ends], extent, contributed))
         return tuple(
             Derivation(
-                original=record.state,
+                predecessor=record.state,
                 valid_time_coverage=record.coverage,
-                owned=record.own if record.owned else None,
+                input_coordinates=record.own if record.owned else None,
                 rows=tuple(rows.get(id(record), ())),
             )
             for record in reached
-            if record.code & _DISPOSAL != _GUARD
+            if record.demanded and _changes(record.code)
         )
 
 
@@ -671,17 +718,25 @@ class _Reached:
     """One predecessor a write settles a statement or a successor for: what its
     disposition decided before the object's produced rows merged and what it
     finally is once they have, the parts of it an insertion contributed where
-    the attempt owned it, and the row it is revised into, if any."""
+    the attempt owned it, and the row it is revised into, if any, over its
+    Valid Time.
+
+    ``demanded`` says a source the attempt may still continue reaches the
+    predecessor, and ``publishes`` that one reaches the row it is revised
+    into, so execution captures that row."""
 
     predecessor: PredecessorRow
     state: ObjectStateKey
     coverage: TimeInterval | None
     closing: PlannedClose
-    own: OwnedEndpoint
+    own: TemporalRowCoordinates
     owned: bool
     code: int
     inserted: tuple[TimeInterval | None, ...] = ()
     realized: WriteRow | None = None
+    realized_coverage: TimeInterval | None = None
+    demanded: bool = False
+    publishes: bool = False
 
 
 @dataclass(slots=True)
@@ -728,11 +783,12 @@ class _Settlement:
         candidates.append(_Candidate(start, end, row, reached, kept, shares, len(candidates)))
 
 
-type _Opened = tuple[int, WriteRow, TimeInterval | None, tuple[TimeInterval | None, ...]]
+type _Opened = tuple[int, WriteRow, TimeInterval | None, tuple[TimeInterval | None, ...], bool]
 """One run opened as a row: its place among the write's openings, the row, its
-Valid Time, and the parts of it an insertion contributed."""
+Valid Time, the parts of it an insertion contributed, and whether a source the
+attempt may still continue reaches it."""
 
-type _Filed = tuple[OwnedEndpoint, TimeInterval | None, tuple[TimeInterval | None, ...]]
+type _Filed = tuple[TemporalRowCoordinates, TimeInterval | None, tuple[TimeInterval | None, ...]]
 """One owned row a run registers, opened or revised into it: its address, its
 Valid Time, and the parts of it an insertion contributed."""
 
@@ -785,24 +841,21 @@ def _joined_shares(run: Sequence[_Candidate]) -> tuple[TimeInterval | None, ...]
 
 
 def _openings(
-    facts: TemporalFacts, opened: Sequence[_Opened], revised: Sequence[_Filed]
+    opened: Sequence[_Opened],
+    endpoints: Sequence[TemporalRowCoordinates | None],
+    revised: Sequence[_Filed],
 ) -> Openings:
-    """The owned rows a write's ``opened`` runs and ``revised`` rows register,
-    each by the parts of it an insertion contributed: none, all of it, or only
-    those."""
-    if not revised and not any(parts for _, _, _, parts in opened):
+    """The owned rows a write's ``opened`` runs, at their ``endpoints``, and
+    its ``revised`` rows register, each by the parts of it an insertion
+    contributed: none, all of it, or only those."""
+    if not revised and not any(parts for _, _, _, parts, _ in opened):
         return Openings(
-            fresh=tuple(
-                endpoint
-                for endpoint in (entry_endpoint(facts, row) for _, row, _, _ in opened)
-                if endpoint is not None
-            )
+            fresh=tuple(coordinates for coordinates in endpoints if coordinates is not None)
         )
-    fresh: list[OwnedEndpoint] = []
-    continued: list[OwnedEndpoint] = []
-    shared: list[tuple[OwnedEndpoint, tuple[TimeInterval, ...]]] = []
-    for _order, row, extent, parts in opened:
-        endpoint = entry_endpoint(facts, row)
+    fresh: list[TemporalRowCoordinates] = []
+    continued: list[TemporalRowCoordinates] = []
+    shared: list[tuple[TemporalRowCoordinates, tuple[TimeInterval, ...]]] = []
+    for (_order, _row, extent, parts, _demanded), endpoint in zip(opened, endpoints, strict=True):
         if endpoint is not None:
             _file(endpoint, extent, parts, fresh, continued, shared)
     for endpoint, extent, parts in revised:
@@ -811,12 +864,12 @@ def _openings(
 
 
 def _file(
-    endpoint: OwnedEndpoint,
+    endpoint: TemporalRowCoordinates,
     extent: TimeInterval | None,
     parts: tuple[TimeInterval | None, ...],
-    fresh: list[OwnedEndpoint],
-    continued: list[OwnedEndpoint],
-    shared: list[tuple[OwnedEndpoint, tuple[TimeInterval, ...]]],
+    fresh: list[TemporalRowCoordinates],
+    continued: list[TemporalRowCoordinates],
+    shared: list[tuple[TemporalRowCoordinates, tuple[TimeInterval, ...]]],
 ) -> None:
     if not parts:
         fresh.append(endpoint)
@@ -830,19 +883,68 @@ def _realize_alone(candidate: _Candidate, opened: list[_Opened]) -> _Filed | Non
     """Store ``candidate``, merged with no neighbour: at the owned address it
     keeps, answering a revision whose insertion parts it reports, or else as
     one row added to ``opened``."""
+    record = candidate.reached
+    extent = _interval(candidate.start, candidate.end)
     if candidate.kept:
-        record = candidate.reached
         assert record is not None  # a kept successor keeps its predecessor's address
         record.realized = candidate.row
+        record.realized_coverage = extent
+        record.publishes = record.demanded
         if (record.code & _DISPOSAL) == _REVISE and _partly(record):
-            return record.own, _interval(candidate.start, candidate.end), candidate.shares
+            return record.own, extent, candidate.shares
         return None
     payload = candidate.payload
     row = candidate.row if payload is None else candidate.row.with_prepared(payload)
     opened.append(
-        (candidate.order, row, _interval(candidate.start, candidate.end), candidate.shares)
+        (
+            candidate.order,
+            row,
+            extent,
+            candidate.shares,
+            record is not None and record.demanded,
+        )
     )
     return None
+
+
+def _revised_output(record: _Reached, step: PlannedTemporalRevision) -> CurrentRowOutput:
+    """The output ``step``, revising ``record``'s owned predecessor in place,
+    persists."""
+    realized = record.realized
+    assert realized is not None  # a revision states the row it revises into
+    return CurrentRowOutput(
+        coordinates=record.own,
+        valid_time_coverage=record.realized_coverage,
+        row=realized,
+        emitter=step,
+        predecessor_document=record.predecessor.document,
+    )
+
+
+def _opened_outputs(
+    opened: Sequence[_Opened], endpoints: Sequence[TemporalRowCoordinates | None]
+) -> list[CurrentRowOutput]:
+    """Each opened row a continuable source reaches whose key is known, at
+    its ``endpoints``, as the output its insert entry persists."""
+    return [
+        CurrentRowOutput(coordinates=coordinates, valid_time_coverage=extent, row=row, emitter=row)
+        for (_order, row, extent, _parts, demanded), coordinates in zip(
+            opened, endpoints, strict=True
+        )
+        if demanded and coordinates is not None
+    ]
+
+
+def _by_ends(
+    endpoints: Sequence[TemporalRowCoordinates | None], reached: Sequence[_Reached]
+) -> dict[tuple[TemporalUpperBound, ...], TemporalRowCoordinates]:
+    """Every row one object's write opens at ``endpoints`` or keeps at an
+    owned predecessor's address, by its upper ends."""
+    known = {record.own.ends: record.own for record in reached if record.owned}
+    for coordinates in endpoints:
+        if coordinates is not None:
+            known[coordinates.ends] = coordinates
+    return known
 
 
 def _filing(revised: list[_Filed] | None, filed: _Filed) -> list[_Filed]:
@@ -1192,9 +1294,11 @@ def _addressed(facts: TemporalFacts) -> frozenset[AttributeIdentity]:
     return frozenset(address)
 
 
-def openings(facts: TemporalFacts, inserts: Sequence[PlannedInsert]) -> tuple[OwnedEndpoint, ...]:
+def openings(
+    facts: TemporalFacts, inserts: Sequence[PlannedInsert]
+) -> tuple[TemporalRowCoordinates, ...]:
     """The owned address of every row ``inserts`` opens whose key is known."""
-    endpoints: list[OwnedEndpoint] = []
+    endpoints: list[TemporalRowCoordinates] = []
     for insert in inserts:
         for entry in insert.entries:
             endpoint = entry_endpoint(facts, entry)
@@ -1203,13 +1307,13 @@ def openings(facts: TemporalFacts, inserts: Sequence[PlannedInsert]) -> tuple[Ow
     return tuple(endpoints)
 
 
-def entry_endpoint(facts: TemporalFacts, entry: WriteRow) -> OwnedEndpoint | None:
+def entry_endpoint(facts: TemporalFacts, entry: WriteRow) -> TemporalRowCoordinates | None:
     attributes = entry.row.attributes
     value = attributes.get(facts.view.primary_key.identity)
     # A key the database allocates is named only once its insert answers it.
     if value is None or isinstance(value, MaxPlusOne):
         return None
-    return OwnedEndpoint(facts.entity.identity, (value,), entry_ends(facts, attributes))
+    return TemporalRowCoordinates(facts.entity.identity, (value,), entry_ends(facts, attributes))
 
 
 def entry_ends(
@@ -1221,8 +1325,8 @@ def entry_ends(
     return TRANSACTION_TIME_ENDS
 
 
-def _target_endpoint(facts: TemporalFacts, target: MilestoneTarget) -> OwnedEndpoint:
-    return OwnedEndpoint(facts.entity.identity, target.key_values, target.end_values)
+def _target_endpoint(facts: TemporalFacts, target: MilestoneTarget) -> TemporalRowCoordinates:
+    return TemporalRowCoordinates(facts.entity.identity, target.key_values, target.end_values)
 
 
 def bitemporal_ends(valid_end: object) -> tuple[TemporalUpperBound, ...]:

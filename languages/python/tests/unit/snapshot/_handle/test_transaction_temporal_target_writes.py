@@ -206,7 +206,7 @@ def test_a_deferred_range_is_bound_once_between_its_coverage_read_and_its_first_
     writes = () if acquired is None else (Write(times=6),)
     port = ScriptedAdapter(Transact(Read(rows=coverage), *writes))
     seen: list[tuple[int, int, int | None]] = []
-    bind = WritePlanner.bind_deferred
+    bind = WritePlanner.bind_range
 
     def recording(
         planner: WritePlanner,
@@ -221,7 +221,7 @@ def test_a_deferred_range_is_bound_once_between_its_coverage_read_and_its_first_
         seen.append((len(_reads(port)), len(_writes(port)), read))
         return bind(planner, description, reused, acquired, **supplied)
 
-    monkeypatch.setattr(WritePlanner, "bind_deferred", recording)
+    monkeypatch.setattr(WritePlanner, "bind_range", recording)
     if acquired is None:
         with raises_contextualized(WritePreconditionError):
             _db(port).transact(lambda tx: _patch(tx, value="150.00"))
@@ -735,8 +735,10 @@ def test_exact_window_target_and_observed_writes_compose_into_one_range(
             source = _STEPS[step](tx, source)
         assert len(_reads(port)) == 1
         tx.find(WherePosition.where(WherePosition.id == 2).as_of(valid_time=_MAR))
-        with pytest.raises(WriteEvidenceError, match="write-evidence-consumed"):
-            tx.amend(source.edit(acct_num="again"))
+        if middle is None:
+            # The composition destroyed the coverage at the source's pin.
+            with pytest.raises(WriteEvidenceError, match="write-evidence-consumed"):
+                tx.amend(source.edit(acct_num="again"))
 
     _db(port).transact(fn, concurrency=concurrency)
     close, opened = _writes(port)
@@ -1096,27 +1098,17 @@ def test_disjoint_targets_of_one_rectangle_close_it_once_and_open_each_piece(
 
 @_STRATEGIES
 @pytest.mark.parametrize("first", ["target", "observed"])
-def test_a_barrier_keeps_each_disjoint_operation_on_its_own_side(
+def test_a_condition_after_a_barrier_restating_the_replaced_start_fails_literally(
     concurrency: _Concurrency, first: str
 ) -> None:
     whole = _rectangle(_JAN, INFINITY_INSTANT)
-    # Before the flush: the observed source, or each Locking acquisition; then
-    # the first unit's coverage unless its observation or its own acquisition
-    # already holds it. The later unit's acquisition is of the rectangle the
-    # first unit closed, so it reads the coverage that unit left.
-    reads = {
-        ("target", "optimistic"): 1,
-        ("target", "locking"): 2,
-        ("observed", "optimistic"): 1,
-        ("observed", "locking"): 2,
-    }[first, concurrency]
+    reads = 1 if concurrency == "optimistic" else 2
     port = ScriptedAdapter(
         Transact(
             Read(rows=[whole], times=reads),
             Write(times=2),
             Write(),
             Read(rows=[_owned(_APR)]),
-            Write(times=2),
         )
     )
 
@@ -1128,32 +1120,26 @@ def test_a_barrier_keeps_each_disjoint_operation_on_its_own_side(
         _barrier(tx)
         _window_patch(tx, _JUN_AUG, "175.00")
 
-    _barriered(port).transact(fn, concurrency=concurrency)
-    assert _sql_kinds(port)[-6:] == ["close", "insert", "barrier", "read", "revise", "insert"]
-    later_read = _reads(port)[-1]
-    assert later_read.binds == (1, _JUN, _AUG, INFINITY_INSTANT)
-    # The later operation's start now stands at a row the first unit derived
-    # from the original the caller stated, which proves the caller's start:
-    # its own row is revised in place, gated on nothing the caller stated.
-    revision, opened = _writes(port)[-2:]
-    assert _T0 not in revision.binds
-    assert [row[2:5] for row in inserted_rows(opened)] == [
-        (Decimal("100.00"), _APR, _JUN),
-        (Decimal("175.00"), _JUN, _AUG),
-    ]
+    with raises_contextualized(WritePreconditionError) as failed:
+        _barriered(port).transact(fn, concurrency=concurrency, max_retries=0)
+    # Nothing the earlier write derived from the state the caller names
+    # stands for that state: the condition fails before anything of the later
+    # operation executes.
+    assert failed.value.expected == _T0
+    assert _sql_kinds(port)[-4:] == ["close", "insert", "barrier", "read"]
+    assert isinstance(port.calls[-1], RollbackCall)
 
 
-def test_an_exact_window_write_after_a_barrier_carries_the_values_the_first_unit_left() -> None:
+def test_an_observed_write_after_a_barrier_continues_from_the_row_the_first_unit_left() -> None:
     whole = _rectangle(_JAN, INFINITY_INSTANT)
-    middle = {**_rectangle(_FEB, _APR, "150.00", tx_start=FIXED)}
     port = ScriptedAdapter(
         Transact(
             Read(rows=[whole], times=2),
             Write(times=2),
             Write(),
-            Read(rows=[middle]),
             Write(),
             Read(rows=[]),
+            Write(),
         )
     )
 
@@ -1163,20 +1149,33 @@ def test_an_exact_window_write_after_a_barrier_carries_the_values_the_first_unit
         _barrier(tx)
         tx.amend(source.edit(acct_num="O"), until=_APR)
         tx.find(WherePosition.where(WherePosition.id == 2).as_of(valid_time=_MAR))
-        with pytest.raises(WriteEvidenceError, match="write-evidence-consumed"):
-            tx.amend(source.edit(acct_num="again"), until=_APR)
+        # Its source continues across the flush through the row its own write
+        # revised, which the attempt still holds.
+        tx.amend(source.edit(acct_num="again"), until=_APR)
 
     _barriered(port).transact(fn)
-    revision = _writes(port)[-1]
-    # The observed write assigns its member over the row the first unit left,
-    # whose other values are the target's, not the ones its source observed.
-    assert revision.sql.startswith("update where_position set acct_num = %s where")
-    assert revision.binds[0] == "O"
-    assert Decimal("100.00") not in revision.binds
+    # The observed writes assign their member over the row the first unit left,
+    # whose other values are the target's, not the ones their source observed,
+    # and neither reads that row again.
+    assert _sql_kinds(port) == [
+        "read",
+        "read",
+        "close",
+        "insert",
+        "barrier",
+        "revise",
+        "read",
+        "revise",
+    ]
+    first, second = _writes(port)[-2], _writes(port)[-1]
+    for revision, value in ((first, "O"), (second, "again")):
+        assert revision.sql.startswith("update where_position set acct_num = %s where")
+        assert revision.binds[0] == value
+        assert Decimal("100.00") not in revision.binds
 
 
 @_STRATEGIES
-def test_a_proof_never_outlives_its_flush_so_a_later_call_restates_its_start(
+def test_a_later_call_restating_a_start_an_earlier_flush_replaced_fails_literally(
     concurrency: _Concurrency,
 ) -> None:
     whole = _rectangle(_JAN, INFINITY_INSTANT)
@@ -1189,8 +1188,8 @@ def test_a_proof_never_outlives_its_flush_so_a_later_call_restates_its_start(
 
     def fn(tx: TxnContext) -> None:
         _window_patch(tx, _FEB_APR, "150.00")
-        # A public read flushes the first write; the original the second
-        # caller states is gone, and no proof survives that flush.
+        # A public read flushes the first write; the state the second caller
+        # states is gone, and what replaced it stands at the attempt's instant.
         tx.find(WherePosition.where(WherePosition.id == 2).as_of(valid_time=_MAR))
         _window_patch(tx, _JUN_AUG, "175.00")
 
@@ -1207,7 +1206,7 @@ def test_a_lost_first_unit_runs_nothing_after_it_and_a_lost_later_one_rolls_back
     def fn(tx: TxnContext) -> None:
         _window_patch(tx, _FEB_APR, "150.00")
         _barrier(tx)
-        _window_patch(tx, _JUN_AUG, "175.00")
+        _window_patch(tx, _JUN_AUG, "175.00", tx_start=FIXED)
 
     with raises_contextualized(WritePreconditionError):
         _barriered(lost_first).transact(fn)
@@ -1221,12 +1220,12 @@ def test_a_lost_first_unit_runs_nothing_after_it_and_a_lost_later_one_rolls_back
             Write(affected=0),
         )
     )
-    with raises_contextualized(OptimisticLockConflictError):
+    with raises_contextualized(WritePreconditionError):
         _barriered(lost_later).transact(fn, max_retries=0)
     assert isinstance(lost_later.calls[-1], RollbackCall)
 
 
-def test_a_chain_across_two_barriers_carries_the_original_through_the_middle_unit() -> None:
+def test_a_chain_across_two_barriers_states_each_start_its_predecessor_left() -> None:
     port = ScriptedAdapter(
         Transact(
             Read(rows=[_rectangle(_JAN, INFINITY_INSTANT)]),
@@ -1244,9 +1243,9 @@ def test_a_chain_across_two_barriers_carries_the_original_through_the_middle_uni
     def fn(tx: TxnContext) -> None:
         _window_patch(tx, _FEB_APR, "150.00")
         _barrier(tx)
-        _window_patch(tx, _JUN_AUG, "175.00")
+        _window_patch(tx, _JUN_AUG, "175.00", tx_start=FIXED)
         _barrier(tx)
-        _window_patch(tx, (_SEP, _DEC), "200.00")
+        _window_patch(tx, (_SEP, _DEC), "200.00", tx_start=FIXED)
 
     _barriered(port).transact(fn)
     assert _sql_kinds(port)[-3:] == ["read", "revise", "insert"]
@@ -1282,43 +1281,28 @@ def test_a_destruction_of_the_same_window_after_a_barrier_removes_what_the_first
     assert removal.sql.startswith("delete from where_position where id = %s and thru_z = %s")
 
 
-def test_a_transaction_time_target_after_a_barrier_revises_the_row_the_first_opened() -> None:
+def test_a_transaction_time_target_after_a_barrier_restating_the_replaced_start_fails() -> None:
     port = ScriptedAdapter(
         Transact(
             Read(rows=[balance_row(in_z=_T0)]),
             Write(times=2),
             Write(),
             Read(rows=[{**balance_row(in_z=FIXED), "val": Decimal("150.00")}]),
-            Write(),
         )
     )
 
     def fn(tx: TxnContext) -> None:
         tx.wire.amend_if("Balance", {"id": 1, "value": "150.00"}, tx_start=_T0)
         _barrier(tx)
+        # Over the same window, admission joins only a write stating the same
+        # start; the first write replaces it before this one binds.
         tx.wire.amend_if("Balance", {"id": 1, "acctNum": "B"}, tx_start=_T0)
 
-    db_for(DomainModel(mm.Balance, WhereTag), port).transact(fn)
-    revision = _writes(port)[-1]
-    assert revision.sql.startswith("update balance set acct_num = %s where bal_id = %s")
-
-
-def test_a_transaction_time_target_restating_the_row_the_first_opened_keeps_it() -> None:
-    # The restated value equals the one the opened row holds, so the row the
-    # first write opened is left as it is: the attempt's ownership proves it.
-    owned = {**balance_row(in_z=FIXED), "val": Decimal("150.00")}
-    port = ScriptedAdapter(
-        Transact(Read(rows=[balance_row(in_z=_T0)]), Write(times=2), Write(), Read(rows=[owned]))
-    )
-
-    def fn(tx: TxnContext) -> None:
-        tx.wire.amend_if("Balance", {"id": 1, "value": "150.00"}, tx_start=_T0)
-        _barrier(tx)
-        tx.wire.amend_if("Balance", {"id": 1, "acctNum": owned["acct_num"]}, tx_start=_T0)
-
-    db_for(DomainModel(mm.Balance, WhereTag), port).transact(fn)
+    with raises_contextualized(WritePreconditionError) as failed:
+        db_for(DomainModel(mm.Balance, WhereTag), port).transact(fn, max_retries=0)
+    assert failed.value.expected == _T0
     assert _sql_kinds(port) == ["read", "close", "insert", "barrier", "read"]
-    assert isinstance(port.calls[-1], CommitCall)
+    assert isinstance(port.calls[-1], RollbackCall)
 
 
 def test_a_deferred_unit_completes_before_a_later_statement_is_prepared(

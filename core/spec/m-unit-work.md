@@ -213,7 +213,7 @@ Three structural rules keep the instruction framework-honest:
   descendant is the root's declaration it inherits unchanged (`m-inheritance`:
   temporality is family-level metadata only the root may declare) — **MUST** carry a
   single row. Each row of a milestone chain closes its own current milestone,
-  consumes its own Temporal Observation, and
+  settles against its own Temporal Observation, and
   opens its own successors, and a temporal entity never collapses into a set-based
   statement (`m-batch-write`), so several rows under one instruction denote several
   independent chains rather than one wider write. An implementation **MUST** refuse
@@ -406,7 +406,7 @@ Three consequences are normative:
 - A value this verb's own source produced that no author has changed is **not** a
   provenance refusal for an `amend` verb. Once its source is admitted
   (*Current-attempt source admission*) it assigns nothing, so it buffers nothing,
-  spends no evidence, issues no statement, and raises nothing. Requiring an
+  claims no state, issues no statement, and raises nothing. Requiring an
   author to test each value before writing it would defeat the change tracking
   the framework performs on the author's behalf.
 - Every refusal is decided from provenance **before** the row is derived, so a
@@ -508,7 +508,7 @@ A keyed `replace` / `replaceUntil` states the complete writable state of the
 object its source addresses, under exactly the authority an amendment of that
 source would have: the source's current-attempt read evidence, or the standing
 authority of an insertion it carries (*Current-attempt source admission*), and
-on a Bitemporal object the start that source names. Provenance, pins, evidence, consumption, and
+on a Bitemporal object the start that source names. Provenance, pins, evidence, continuation, and
 invalidation follow the amendment's rules unchanged; the write takes no
 condition or start of its own.
 
@@ -595,8 +595,9 @@ Submission follows the target Entity's Effective Concurrency Strategy:
   and its shortfall is an ordinary conflict.
 - **Locking** — after the write is judged compatible with the object's pending
   writes, the participation it needs comes from a pending write of the same
-  stated state, else from a live, unspent read of exactly that state this
-  attempt holds under its shared lock, else from one **acquisition**: a point
+  stated state, else from a live read of exactly that state this attempt holds
+  under its shared lock and no completed write of it has changed since, else
+  from one **acquisition**: a point
   read of the stored row under the shared lock (`m-read-lock`) that executes no
   pending write and publishes nothing. The stated revision is compared with the
   row that acquisition holds; a row standing at another revision, or no row, is
@@ -710,20 +711,21 @@ finalize(
 
 **Attempt Ownership** is a read-only view of the current temporal rows the
 attempt's own successful settled writes opened (*Rows the attempt opened*,
-below). Planning reads it to decide what a temporal mutation does to its
-predecessor; it never changes it.
+below), and of what those writes left for its temporal sources (*Observation
+ownership and lifetime*). Planning reads it to decide what a temporal mutation
+does to its predecessor, which of its sources continue, and which current rows
+they bind to; it never changes it.
 
-The returned **Write Plan** is execution-ordered, and its settled writes name
-the source authority of **every** write admitted against
+The returned **Write Plan** is execution-ordered, and its settled writes carry
+the source evidence of **every** write admitted against
 existing state — a write coalesced into another, superseded, or overwritten by a
 later composed assignment included (*Observed-State Coalescing*). A write keeps
 its source condition whatever happens to its values, so a settled write whose
-surviving assignment came from one source still spends every source composed
-into it, even when it emits no statement. Work that stated nothing against
-existing state — folded into a pending insert, cancelled against one, or an
-amendment assigning no member — contributes no claim. Spending is idempotent,
-because consumption records a fact about one source rather than about one
-statement; a claim several settled writes name is spent once.
+surviving assignment came from one source still carries every source composed
+into it, even when it emits no statement, and each such source stays live until
+that settled write completes. Work that stated nothing against existing state —
+folded into a pending insert, cancelled against one, or an amendment assigning
+no member — carries no source.
 
 No second planning operation exists to project the plan.
 
@@ -826,9 +828,9 @@ WritePlan(groups: WriteGroups)
 WriteGroups: an immutable, ordered, possibly empty sequence of Write Groups
 WriteGroup(writes: SettledWrites, steps: PlannedSteps)
 SettledWrites: the group's settled writes in order, at least one, each with the
-    completion its success publishes: the temporal claims it spends, the states
-    it changes, advances, and destroys, and the attempt-owned rows it removes
-    and opens
+    completion its success publishes: the states it changes, advances, and
+    destroys, the temporal rows it derives from its predecessors, the
+    attempt-owned rows it removes and opens, and the current rows it leaves
 PlannedSteps: the immutable, ordered, possibly empty sequence of Planned Steps
     the group's settled writes execute, indexable and repeatable
 ```
@@ -876,7 +878,7 @@ topology and correctness semantics already decided.
   Temporal meaning, concurrency, and gates are fixed when planning returns, and
   binding never recaptures the instant or consults the model: only the physical
   enumeration waits, for the rows read and for the Attempt Ownership and
-  continuity every earlier settled write of the flush published. Binding audits each row
+  source continuation every earlier settled write published. Binding audits each row
   it produces and each close it emits once, as stage 8 does for a write settled
   at planning, changing no topology or gate. A range whose observed rows already cover it
   settles at planning like any other write. A caller-addressed temporal write is
@@ -887,19 +889,21 @@ topology and correctness semantics already decided.
   carries, too, the starting rows its callers' Locking acquisitions retained
   (*Retained starting rows*): one still current at the write's turn is completed
   and reused as coverage, a stale one is discarded unjudged, and only the parts
-  of the window neither those rows nor the observed originals hold are read; a
+  of the window neither those rows, the observed originals, nor the current rows
+  the attempt holds for a continuing source (*Write Groups complete before later
+  work runs*) hold are read; a
   part that read finds nothing in is a gap, read once, and a rectangle created
   concurrently inside a held row's interval is not reached (`m-temporal-write`
   *Concurrent creation in gaps is not coordinated*). A composition
-  an ordering barrier kept after earlier writes of its object reads its whole
-  window when its turn comes — less what its reused retained rows hold — and
-  binds to the current rows alone: each observed
-  condition holds where its rectangle still stands or an earlier settled write
-  of the flush proved it, each caller's start where it stands at the stated
-  start or at a row derived from a proven original that held it at that start
-  (*Write Groups complete before later work runs*); any other caller's start is a failed
-  precondition, and any other observed condition fails as that write's own
-  shortfall would, the caller's first.
+  an ordering barrier kept after earlier writes of its object binds to the
+  current rows of its whole window alone — those the attempt holds for its
+  continuing sources and its reused retained rows, and a read of the rest when
+  its turn comes. Each observed condition holds where its rectangle still
+  stands or its source continues through what the earlier settled writes left
+  of it (*Observation ownership and lifetime*), and each caller's start only
+  where a current row stands at the stated start, literally; any other caller's
+  start is a failed precondition, and any other observed condition fails as
+  that write's own shortfall would, the caller's first.
 - A Write Group's Planned Steps are a **logical** sequence. An implementation MAY
   pack homogeneous runs and expose stable immutable views during iteration
   rather than allocating one container per step; every exposed view is
@@ -956,12 +960,13 @@ group depends on another's completion, because their objects are distinct
 (*Write Group formation*). Completing a settled write:
 
 ```text
-spend the temporal source authority of every write the settled write composed
 record every state the settled write changed, invalidating its observations
 advance the Non-Temporal sources of every versioned state it updated
 end the Non-Temporal sources of every object it deleted
 retire the attempt-owned rows the settled write removed
 register the rows the settled write opened
+continue the temporal sources of every state it transformed through the rows it derived
+hold the current rows its execution stored that a continuing source reaches
 ```
 
 A deferred settled write's changed states, removals, and openings are those its
@@ -985,25 +990,31 @@ whose range did not bind and execute; such a failure dooms the attempt
 flush: a later group, and any read the flush serves, observes the earlier
 groups' published effects.
 
-A settled write that a later settled write of the same flush follows across an
-ordering barrier (*Observed-State Coalescing*) also records, for each original
-it transformed,
-the current rows it derived from that original and the part of each the
-original contributed — the whole row, or only its own part of a row merged from
-several originals' successors (`m-temporal-write` *Merging produced
-successors*). Its guarded effect, or the shared lock it held, has then
-**proven** the original: a condition the later settled write was admitted with
-on that original holds for it, provided every row derived from the original whose part
-lies inside the later settled write's window still stands as it was opened — at its
-owned address, at the attempt's Transaction Instant, from the Valid-Time start
-it was opened with. A caller's start on such a row is proven only by the
-original whose part holds that start, never by another original merged into the
-same row. A row a later settled write derives from such a row descends from each of the
-same originals over the part of it that came from that original's part, and
-from none over the rest. Spending and invalidation apply to
-the earlier settled write's sources as usual: a proof serves only the writes admitted
-before the flush began, never a later submission, and it ends with the flush,
-however the flush ends.
+A completed temporal settled write also records, for each predecessor it
+transformed that a temporal source still reaches — an observed state some live
+source value or pending or planned write still shares, or a row an earlier such
+record reaches — the current rows it derived from that predecessor and the part
+of each the predecessor's sources reach: the whole row, or only their own part
+of a row merged from several predecessors' successors (`m-temporal-write`
+*Merging produced successors*). A row a later settled write derives from such a
+row carries each of the same sources over the part of it that came from their
+part, and none over the rest, however many unobserved rows lie between it and
+the state a source observed; a target-addressed write carries them like any
+other, though it starts none of its own. A merged row may carry several
+sources, each over its own part. Its guarded effect, or the shared lock it
+held, protects what it derived: no other writer can have changed a row the
+attempt opened. The same completion holds the complete stored state of each
+current row such a part reaches, exactly as its execution persisted it, until
+a later completed write derives from, removes, or replaces that row, or until
+no part it holds describes a live observation, whichever of that observation's
+sources still continue. Reading a row holds nothing, and neither does a
+write no source's continuation needs. A later write through a continuing
+source binds to those rows without reading them again or taking another lock;
+coverage no held row covers is read as any range reads it (*Row acquisition*).
+These records serve every later submission of the attempt, whatever flush it
+reaches; nothing releases them at the end of a flush, and the attempt's end
+releases them all. The pre-commit flush, which no submission follows, records
+only what a later barrier region of that same flush continues from.
 
 ## Planned Steps and Write Observations
 
@@ -1023,7 +1034,8 @@ reachable from the source value and **MUST NOT** make eligibility depend on a
 transaction-scoped store. A transaction retains only a **weak index** of the
 states its own reads have seen, a **weak registration** of each Non-Temporal
 source its reads published, the **participation** those reads license, and what
-its own completed writes established about the states they produced. Only a
+its own completed writes established about the states they produced — for a
+temporal source still reaching them, the current rows those writes left. Only a
 value a read of the writing attempt produced is eligible at all
 (*Current-attempt source admission*); among those, eligibility follows the rules
 below.
@@ -1040,12 +1052,27 @@ These rules follow, and an implementation **MUST** exhibit all of them:
   upgrades or overwrites the evidence an older live value carries. Two reads that
   resolve to **one** observed state within a transaction share **one** retained
   observation, exactly as two graph positions reaching one node do.
-- **A successful temporal settled write consumes.** Every Temporal
-  Observation an admitted write used is spent when the settled write it
-  composed into completes — whether or not its own values survived, and whether
-  or not the write emitted a statement — and a value still tied to a spent
-  observation cannot drive another write; the caller must read again. An
-  amendment assigning no member consumes nothing, and a failed flush dooms the
+- **Own writes continue temporal sources.** A temporal source's authority
+  follows what this attempt's completed writes left of the state it observed,
+  and its values and observation never change. Until a completed write changes
+  that state it settles against the state itself. Once one does — through this
+  source, another source, a caller's stated start, or an insertion's authority
+  — it reaches the current rows those writes derived from it, through any
+  number of further completed writes and unobserved rows, without another
+  read, while some part they hold of the state it observed covers its
+  Valid-Time pin, or, read without a finite one, while any part survives. Its
+  write settles against those rows as against any row the attempt opened
+  (*Rows the attempt opened*), under either strategy. A
+  milestone a completed write kept unchanged (`m-temporal-write` *Unchanged
+  milestones*) changes no state, so its sources settle against it as before.
+  Survival is judged per pin, so sources sharing one observation can part: one
+  whose pin a bounded destruction removed is ended while one whose pin
+  survived continues. A pin the attempt's later writes cover again reaches
+  nothing it observed, so an ended source never revives, however the object
+  is written or reinserted since. A write through an ended source is refused
+  at the verb as `write-evidence-consumed`. Lineage serves sources, never
+  conditions: a caller's stated start is judged literally against the current
+  rows, whatever this attempt wrote before it. A failed flush dooms the
   attempt, so nothing needs restoring.
 - **Own writes continue Non-Temporal sources.** A Non-Temporal source's
   authority follows the protected state it reaches, and its values and
@@ -1070,19 +1097,19 @@ These rules follow, and an implementation **MUST** exhibit all of them:
   object was reinserted; a write through it is refused as
   `write-evidence-consumed`. A read after the change publishes fresh evidence.
   The judgment is made once, when the evidence is published, so a later change
-  never makes an already published Non-Temporal source stale: that source
-  follows the continuation rule above.
+  never makes an already published source stale: that source follows the
+  continuation rules above.
 - **An own change invalidates.** When a settled write successfully revises,
   closes, or removes an observed state, every observation of that state the
   attempt's reads produced no longer describes the stored row, even one no
   write used and even when the changed row keeps its address and revision
-  token, and a temporal source tied to it becomes ineligible for further
-  writes. The rule is judged against the state the rows had **when the read
-  acquired them**: evidence built later from an earlier read's rows is
-  ineligible too. A read after the change observes fresh, eligible evidence.
-  Invalidation is per Observed State — an unaffected rectangle of the same
-  object stays eligible — and is distinct from consumption. It moves one way and
-  survives the attempt, exactly as consumption does.
+  token, so no later read reuses it and a source tied to it settles only
+  through the continuation rules above. The rule is judged against the state
+  the rows had **when the read acquired them**: evidence built later from an
+  earlier read's rows is ineligible. A read after the change observes fresh,
+  eligible evidence. Invalidation is per Observed State — an unaffected
+  rectangle of the same object stays as it was — and it moves one way and
+  survives the attempt.
 
 Absence is **structural**:
 
@@ -1581,9 +1608,10 @@ Write Plan.
 Write admission resolves the same strategy through the connected model's
 injected write-evidence policy (`m-opt-lock` "The Optimistic Lock Facet"), which
 also names what each keyed write settles against. The unit of work applies that
-answer to its own state — the participation its reads stamp, the observations a
-flush has consumed, and the claims its buffer holds — and buffering is the one
-operation that admits a write's claim and buffers the write, all or nothing.
+answer to its own state — the participation its reads stamp, what its
+completed writes left of the states its sources observed, and the claims its
+buffer holds — and buffering is the one operation that admits a write's claim
+and buffers the write, all or nothing.
 
 ### The Isolation Level beside it — what the transaction READS
 

@@ -250,34 +250,17 @@ def test_the_statements_execution_runs_are_the_ones_a_dry_traversal_answers(
     assert all(isinstance(call, WriteCall) for call in port.calls)
 
 
-@dataclass
-class _Claim:
-    """Source authority recording how many port calls had been made when a
-    settled write spent it."""
-
-    port: ScriptedAdapter
-    spent_at: int | None = None
-
-    def consume(self) -> None:
-        self.spent_at = len(self.port.calls)
-
-
 def test_a_run_of_openings_never_reaches_into_a_later_groups_steps() -> None:
     first = (close(1), opening(1), opening(2), opening(3))
     second = (opening(5),)
     port = ScriptedAdapter(Write(), Write(affected=3), Write())
-    claims = (_Claim(port), _Claim(port))
-    plan = WritePlan(
-        (
-            WriteGroup((SettledWrite(claim=claims[0]),), first),
-            WriteGroup((SettledWrite(claim=claims[1]),), second),
-        )
-    )
+    plan = WritePlan((WriteGroup((SettledWrite(),), first), WriteGroup((SettledWrite(),), second)))
+    completed: list[int] = []
     with open_flush() as flush:
-        run_plan(port, plan, flush)
+        run_plan(port, plan, flush, completed=completed)
     assert port.calls == [*physical(*first), *physical(*second)]
     # Each group's write completed once its own statements ran.
-    assert [claim.spent_at for claim in claims] == [2, 3]
+    assert completed == [2, 3]
 
 
 def test_a_group_whose_grouped_statement_fails_completes_nothing_and_prepares_no_later_step() -> (
@@ -290,18 +273,13 @@ def test_a_group_whose_grouped_statement_fails_completes_nothing_and_prepares_no
     first = (close(1), opening(1), opening(2), opening(3))
     second = (opening(5),)
     preparer = RecordingPreparer(port, (*first, *second))
-    claims = (_Claim(port), _Claim(port))
-    plan = WritePlan(
-        (
-            WriteGroup((SettledWrite(claim=claims[0]),), first),
-            WriteGroup((SettledWrite(claim=claims[1]),), second),
-        )
-    )
+    plan = WritePlan((WriteGroup((SettledWrite(),), first), WriteGroup((SettledWrite(),), second)))
+    completed: list[int] = []
     with pytest.raises(DatabaseError) as raised, open_flush() as flush:
-        run_plan(port, plan, flush, payloads=preparer)
+        run_plan(port, plan, flush, payloads=preparer, completed=completed)
     assert raised.value is violation
     assert preparer.positions == [0, 1, 2, 3]
-    assert [claim.spent_at for claim in claims] == [None, None]
+    assert completed == []
 
 
 def _builders() -> set[int]:

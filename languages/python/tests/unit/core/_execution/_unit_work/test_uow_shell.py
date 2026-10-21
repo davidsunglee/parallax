@@ -94,7 +94,7 @@ from parallax.core.write_plan import (
 from parallax.core.write_plan.keys import VersionedObjectStateKey
 from parallax.core.write_plan.plan import (
     OPEN_BITEMPORAL_ENDS,
-    OwnedEndpoint,
+    TemporalRowCoordinates,
 )
 from parallax.core.write_plan.steps import INFINITY as PLANNED_INFINITY
 from parallax.core.write_plan.steps import NEW_LINEAGE, Finite, PlannedUpdate
@@ -480,9 +480,9 @@ def test_two_writes_of_one_claim_merge_and_advance_it_once() -> None:
     (step,) = plan_steps(finalized)
     assert isinstance(step, PlannedUpdate)
     assert _member_value(step.assignments.attributes, "balance") == Decimal("150.00")
-    assert [
-        (write.claim, tuple(write.changed), write.advanced) for write in settled_writes(finalized)
-    ] == [(None, (state,), (state,))]
+    assert [(tuple(write.changed), write.advanced) for write in settled_writes(finalized)] == [
+        ((state,), (state,))
+    ]
 
 
 def test_a_fully_empty_transaction_never_touches_the_clock() -> None:
@@ -1093,7 +1093,7 @@ def test_evidence_built_from_a_read_that_predates_an_own_change_is_invalidated()
         uow.buffer(_balance_update(1))
         assert not unsubmitted.invalidated
         uow.read(lambda: None)
-        assert unsubmitted.invalidated and not unsubmitted.consumed
+        assert unsubmitted.invalidated
         assert not unaffected.invalidated
         late = uow.retain(fresh_observation(1), read_at=read_at)
         assert late.invalidated
@@ -1109,7 +1109,7 @@ _JAN = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 _DEC = dt.datetime(2024, 12, 1, tzinfo=dt.UTC)
 
 
-def test_a_write_that_changes_nothing_spends_its_evidence_and_leaves_its_state_fresh() -> None:
+def test_a_write_that_changes_nothing_leaves_its_source_and_its_state_as_they_were() -> None:
     # A termination starting where the rectangle the attempt opened already
     # ends reaches past it, so its coverage is read at execution; finding none
     # there, the range binds to no step at all.
@@ -1157,9 +1157,9 @@ def test_a_write_that_changes_nothing_spends_its_evidence_and_leaves_its_state_f
             )
         )
         uow.read(lambda: None)
-        assert claim.consumed and not claim.invalidated
+        assert not claim.invalidated
         late = uow.retain(RetainedObservation(state, observation, None), read_at=read_at)
-        assert not late.invalidated and not late.consumed
+        assert not late.invalidated
 
     _run(body, meta=_POSITION, steps=simulated, rows=coverage)
     # The range read its coverage and bound to nothing to execute.
@@ -1170,9 +1170,7 @@ def test_a_write_that_changes_nothing_spends_its_evidence_and_leaves_its_state_f
 @pytest.mark.parametrize(
     ("value", "kept"), [("100.00", True), ("150.00", False)], ids=["unchanged", "changed"]
 )
-def test_a_guarded_write_spends_its_source_and_leaves_an_unchanged_state_fresh(
-    value: str, kept: bool
-) -> None:
+def test_a_guarded_write_leaves_an_unchanged_state_fresh(value: str, kept: bool) -> None:
     members = {
         "id": 1,
         "acctNum": "A",
@@ -1202,7 +1200,6 @@ def test_a_guarded_write_spends_its_source_and_leaves_an_unchanged_state_fresh(
             )
         )
         uow.read(lambda: None)
-        assert claim.consumed
         assert claim.invalidated is not kept
         # Evidence an earlier read of the same rows builds now is still evidence
         # of the stored state exactly when the settled write left that state as it was.
@@ -1282,7 +1279,7 @@ def test_a_failed_group_publishes_nothing_while_the_group_before_it_stays_publis
     assert tuple(claim.invalidated for claim in claims) == published
 
 
-def test_a_settled_write_with_no_step_spends_its_source_and_changes_nothing() -> None:
+def test_a_settled_write_with_no_step_changes_nothing() -> None:
     members = {
         "id": 1,
         "acctNum": "A",
@@ -1309,7 +1306,7 @@ def test_a_settled_write_with_no_step_spends_its_source_and_changes_nothing() ->
             )
         )
         uow.read(lambda: None)
-        assert claim.consumed and not claim.invalidated
+        assert not claim.invalidated
 
     _run(
         body,
@@ -1391,7 +1388,7 @@ def _observed_amendment(claim: RetainedObservation) -> AdmittedWrite:
     return buffered_write(observed, claim)
 
 
-def test_a_write_a_barrier_kept_back_binds_on_what_the_earlier_write_spent_and_proved() -> None:
+def test_a_target_a_barrier_kept_back_judges_its_condition_on_what_the_earlier_write_left() -> None:
     original = TemporalObservation(predecessor=_position_row(_JAN, _T0))
     key = corpus_object_key("WherePosition", ("id", 1))
     shape = temporal_read.view(_BARRIERED).shape(key.entity)
@@ -1400,13 +1397,6 @@ def test_a_write_a_barrier_kept_back_binds_on_what_the_earlier_write_spent_and_p
     held: list[RetainedObservation] = []
     coverage = HeldRows(_BARRIERED)
     simulated = _simulated(_BARRIERED)
-    seen: list[tuple[bool, bool, int]] = []
-
-    def reading() -> None:
-        (claim,) = held
-        seen.append((claim.consumed, claim.invalidated, len(simulated.statements)))
-
-    later: list[str] = []
 
     def body(uow: UnitOfWork) -> None:
         claim = uow.retain(RetainedObservation(state, original, uow.participation))
@@ -1414,51 +1404,60 @@ def test_a_write_a_barrier_kept_back_binds_on_what_the_earlier_write_spent_and_p
         uow.buffer(_observed_amendment(claim))
         uow.buffer_predicate(_shell_barrier())
         uow.buffer_target(_position_target(_JUN, _AUG))
-        coverage.rows = [_position_row(_APR, _FIXED)]
         uow.read(lambda: None)
-        later.extend(statement_kinds(simulated.statements[seen[0][2] :]))
-        # A later flush carries no proof: the original's token is stale.
-        coverage.rows = [_position_row(_AUG, _FIXED)]
-        uow.buffer_target(_position_target(_SEP, _OCT))
 
     with pytest.raises(WritePreconditionError):
-        _run(body, meta=_BARRIERED, steps=simulated, rows=_Watched(coverage, reading))
-    # The earlier settled write spent the shared source and invalidated its state
-    # before the later one bound, which then ran no close of its own.
-    assert seen[0][:2] == (True, True)
-    assert later and "close" not in later
-    _assert_optimistic_targets_read_nothing(coverage)
+        _run(body, meta=_BARRIERED, steps=simulated, rows=coverage)
+    # The earlier settled write changed the shared source's state, and the
+    # attempt holds the rows it produced for that source: the later target
+    # binds to them without a read, and the start its caller states,
+    # literally, is gone, so it executes nothing.
+    (claim,) = held
+    assert claim.invalidated
+    assert coverage.requests == []
+    assert statement_kinds(simulated.statements) == ["close", "insert", "update"]
 
 
-def test_an_objects_proofs_serve_every_settled_write_following_it_in_the_flush() -> None:
+def test_writes_of_one_source_barriers_keep_apart_each_continue_from_what_the_last_left() -> None:
     original = TemporalObservation(predecessor=_position_row(_JAN, _T0))
     key = corpus_object_key("WherePosition", ("id", 1))
     shape = temporal_read.view(_BARRIERED).shape(key.entity)
     assert shape is not None
     state = object_state_key_from_observation(key, original, shape)
     held = HeldRows(_BARRIERED)
-    answers = iter([[_position_row(_APR, _FIXED)], [_position_row(_AUG, _FIXED)]])
-    reached: list[int] = []
     simulated = _simulated(_BARRIERED)
-
-    def reading() -> None:
-        reached.append(len(simulated.statements))
-        held.rows = next(answers)
 
     def body(uow: UnitOfWork) -> None:
         claim = uow.retain(RetainedObservation(state, original, uow.participation))
         uow.buffer(_observed_amendment(claim))
         for window in ((_JUN, _AUG), (_SEP, _OCT)):
             uow.buffer_predicate(_shell_barrier())
-            uow.buffer_target(_position_target(*window))
+            uow.buffer(_observed_value(claim, *window))
         uow.read(lambda: None)
 
-    _run(body, meta=_BARRIERED, steps=simulated, rows=_Watched(held, reading))
-    # Each settled write a barrier kept back read its own coverage and bound on what
-    # the earlier settled write proved; the last ran no close of its own.
-    assert len(reached) == 2
-    assert "close" not in statement_kinds(simulated.statements[reached[1] :])
-    _assert_optimistic_targets_read_nothing(held)
+    _run(body, meta=_BARRIERED, steps=simulated, rows=held)
+    # Each settled write a barrier kept back bound to the rows the one before
+    # it produced, which the attempt holds for the source they share: nothing
+    # was read again, and only the first closed anything.
+    assert held.requests == []
+    assert statement_kinds(simulated.statements).count("close") == 1
+
+
+def _observed_value(
+    claim: RetainedObservation, start: dt.datetime, until: dt.datetime
+) -> AdmittedWrite:
+    observed = prepare_wire_write(
+        KeyedWriteInstruction(
+            "amendUntil",
+            "WherePosition",
+            ({"id": 1, "value": "175.00"},),
+            valid_from=start,
+            until=until,
+        ),
+        _BARRIERED,
+    )
+    assert isinstance(observed, PreparedKeyedWrite)
+    return buffered_write(observed, claim)
 
 
 def _account_target(version: int) -> PreparedTargetWrite:
@@ -1539,13 +1538,6 @@ def test_a_locking_caller_addressed_write_is_confirmed_once_on_every_route(route
     _run(lambda uow: buffering(uow, 2), settings=locking, steps=simulated, rows=held)
     assert [type(request) for request in held.requests] == [TargetReadRequest]
     assert _kinds(simulated) == ["update"]
-
-
-def _assert_optimistic_targets_read_nothing(held: HeldRows) -> None:
-    """An Optimistic caller-addressed write reads nothing at its call: every
-    read the unit of work asked for was a deferred range's coverage."""
-    assert held.requests
-    assert all(isinstance(request, CoverageReadRequest) for request in held.requests)
 
 
 def _shell_barrier(
@@ -1652,8 +1644,8 @@ def test_a_pending_opening_settles_as_one_write_of_the_new_lineages_its_edits_le
     assert (tuple(write.changed), tuple(write.opened.fresh)) == ((), ())
 
 
-def _position_endpoint(end: dt.datetime | None) -> OwnedEndpoint:
+def _position_endpoint(end: dt.datetime | None) -> TemporalRowCoordinates:
     entity = corpus_object_key("WherePosition", ("id", 1)).entity
     if end is None:
-        return OwnedEndpoint(entity, (1,), OPEN_BITEMPORAL_ENDS)
-    return OwnedEndpoint(entity, (1,), (Finite(instant=end), PLANNED_INFINITY))
+        return TemporalRowCoordinates(entity, (1,), OPEN_BITEMPORAL_ENDS)
+    return TemporalRowCoordinates(entity, (1,), (Finite(instant=end), PLANNED_INFINITY))

@@ -141,7 +141,7 @@ def test_a_table_a_predicate_submission_writes_states_any_row_of_it(
 
 def test_a_row_no_committed_group_opened_is_refused(damaged_case: CaseLoader) -> None:
     case = damaged_case(_BARRIER)
-    row = _find(_rows(case, "sequence_span"), id=1, from_z="2024-02-01T00:00:00.000000Z")
+    row = _find(_rows(case, "sequence_span"), id=2, from_z="2024-02-01T00:00:00.000000Z")
     row["in_z"] = "2024-10-15T00:00:00.000000Z"
     with pytest.raises(CaseFailure, match="neither a starting row"):
         _grade(case)
@@ -150,7 +150,7 @@ def test_a_row_no_committed_group_opened_is_refused(damaged_case: CaseLoader) ->
 def test_a_starting_milestone_is_closed_and_never_removed(damaged_case: CaseLoader) -> None:
     case = damaged_case(_BARRIER)
     rows = _rows(case, "sequence_span")
-    rows.remove(_find(rows, id=1, in_z=_T0))
+    rows.remove(_find(rows, id=2, in_z=_T0))
     with pytest.raises(CaseFailure, match="drops the starting row"):
         _grade(case)
 
@@ -158,7 +158,7 @@ def test_a_starting_milestone_is_closed_and_never_removed(damaged_case: CaseLoad
 def test_current_rows_of_one_key_never_overlap(damaged_case: CaseLoader) -> None:
     case = damaged_case(_BARRIER)
     row = _find(
-        _rows(case, "sequence_span"), id=1, from_z="2024-01-01T00:00:00.000000Z", out_z=_INF
+        _rows(case, "sequence_span"), id=2, from_z="2024-01-01T00:00:00.000000Z", out_z=_INF
     )
     row["thru_z"] = "2024-03-01T00:00:00.000000Z"
     with pytest.raises(CaseFailure, match="Valid-Time intervals overlap"):

@@ -84,11 +84,12 @@ class ObservedKeyedWrite:
     """Carries verb-time evidence through planning without resolving it again.
 
     ``retained_observation`` is the state the write's source observed, which
-    never changes. A versioned Non-Temporal source's authority may reach a
-    later state this attempt's own completed writes produced from it:
+    never changes. A source's authority may reach a later state this attempt's
+    own completed writes produced from it. For a versioned Non-Temporal source
     ``current`` names that protected state where it is not the observed one,
-    and :attr:`scope` is what the write claims and settles against either way.
-    A temporal write's completion spends the retained observation.
+    and :attr:`scope` is what the write claims and settles against either way;
+    a temporal write settles against what those writes left of its observed
+    state when its range binds.
 
     ``source_evidence`` holds, by identity, the Read Evidence of every source
     whose write composed into this one — it keeps their demand alive while the
@@ -184,7 +185,7 @@ class InsertionKeyedWrite:
     """A keyed write authorized by an admitted insertion rather than by a read.
 
     ``identity`` is the insertion's authority, which the unit of work checks
-    still stands when it admits the write; completion spends nothing of it.
+    still stands when it admits the write; completion changes nothing of it.
     ``scope`` is the claim scope a Non-Temporal write of a stored row takes —
     the exact version this attempt's own writes left the row at, or the object
     itself when the row is unversioned — so it composes with an observed write
@@ -311,16 +312,19 @@ class TemporalContribution:
     """What one admitted write of a temporal object keeps once it is composed:
     its source condition and requested window, not its values.
 
-    ``retained_observation`` is the evidence an observed write settles against,
-    which successful completion spends. A write a caller addressed has none,
-    and ``condition`` is the Transaction-Time start its caller requires of the
-    coverage at its window's start. A write an admitted insertion authorized
-    has neither: its condition is the coverage at its window's start, the
-    insertion's own anchor, which execution requires. Values the write assigned
-    live in the composed transform, where a later write may overwrite them; the
-    condition stays required whatever happens to them. ``retained`` is the
-    starting row a caller-addressed write's Locking admission read whole: data
-    its range may reuse, not part of what the write is.
+    ``retained_observation`` is the evidence an observed write settles
+    against, and ``source_evidence`` the Read Evidence of every source whose
+    write it is, by identity, which keeps their demand alive while the write is
+    pending or planned and which only binding reads, for their pins. A write a
+    caller addressed has neither, and ``condition`` is the Transaction-Time
+    start its caller requires of the coverage at its window's start. A write
+    an admitted insertion authorized has none of them: its condition is the
+    coverage at its window's start, the insertion's own anchor, which execution
+    requires. Values the write assigned live in the composed transform, where a
+    later write may overwrite them; the condition stays required whatever
+    happens to them. ``retained`` is the starting row a caller-addressed
+    write's Locking admission read whole: data its range may reuse, not part
+    of what the write is.
     """
 
     kind: Literal["assignment", "destructive"]
@@ -328,6 +332,7 @@ class TemporalContribution:
     retained_observation: RetainedObservation | None
     condition: ExpectedTxStart | None = None
     retained: RetainedTargetState | None = field(default=None, compare=False)
+    source_evidence: tuple[ReadEvidence, ...] = field(default=(), compare=False)
 
     @property
     def observation(self) -> WriteObservation | None:
@@ -360,40 +365,25 @@ class CoalescedTemporalWrite:
 @dataclass(frozen=True, slots=True)
 class ChainedTemporalWrite(CoalescedTemporalWrite):
     """One ordering-barrier region's composition of a temporal object whose
-    other pending writes stand in other regions of the same buffer.
+    earlier pending writes stand in an earlier region of the same buffer.
 
     A barrier keeps every write on its own side, so each region's writes of the
-    object execute as a settled write of their own. ``follows`` marks a composition an
-    earlier region's writes of the object precede: it binds to the coverage
-    those left, carrying the conditions they already proved. ``leads`` marks
-    one a later region's writes follow: it records what it derived from each
-    original it transformed, for them.
+    object execute as a settled write of their own, and this one binds at its
+    turn to the coverage the earlier ones left.
     """
-
-    leads: bool = False
-    follows: bool = False
 
 
 def chained_temporal_write(
-    held: TemporalKeyedWrite | CoalescedTemporalWrite,
-    key_name: str,
-    *,
-    leads: bool = False,
-    follows: bool = False,
+    held: TemporalKeyedWrite | CoalescedTemporalWrite, key_name: str
 ) -> ChainedTemporalWrite:
-    """``held`` as a composition of its barrier region, leading or following
-    the object's writes in other regions as stated, and as it already did."""
+    """``held`` as a composition of its barrier region that follows the
+    object's writes in an earlier region."""
     composed = held if isinstance(held, CoalescedTemporalWrite) else _composed(held, key_name)
-    if isinstance(composed, ChainedTemporalWrite):
-        leads = leads or composed.leads
-        follows = follows or composed.follows
     return ChainedTemporalWrite(
         target=composed.target,
         key=composed.key,
         contributions=composed.contributions,
         transform=composed.transform,
-        leads=leads,
-        follows=follows,
     )
 
 
@@ -414,6 +404,7 @@ def temporal_contribution(item: TemporalKeyedWrite) -> TemporalContribution:
         retained_observation=item.retained_observation if observed else None,
         condition=expectation if isinstance(expectation, ExpectedTxStart) else None,
         retained=item.retained if targeted else None,
+        source_evidence=item.source_evidence if observed else (),
     )
 
 

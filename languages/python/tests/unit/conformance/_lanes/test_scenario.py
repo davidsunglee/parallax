@@ -1919,17 +1919,17 @@ def test_a_held_groups_case_state_advances_where_its_own_reads_flush_it(
     # of work, as they do in production's, and that unit flushes at the read
     # that flushes the group's own buffer, before the read reaches the port.
     # Both tracked updates settle against one detached copy of the observation
-    # the group's find published, so the tracked flush spends nothing of it.
+    # the group's find published, so the tracked flush changes nothing of it.
     port = FakeWritePort(find_rows=[_ledger_row(2, "200.00", in_z="2024-02-01T00:00:00+00:00")])
     sources = _tracked_sources(monkeypatch)
     applied: list[tuple[str, int, int, bool]] = []
     apply = SimulatedTemporalStore.apply
 
     def recorded(store: SimulatedTemporalStore, model: Any, step: Any) -> None:
-        spent = any(
-            source.observation is not None and source.observation.consumed for source in sources
+        changed = any(
+            source.observation is not None and source.observation.invalidated for source in sources
         )
-        applied.append((type(step).__name__, len(port.reads), len(port.writes), spent))
+        applied.append((type(step).__name__, len(port.reads), len(port.writes), changed))
         apply(store, model, step)
 
     monkeypatch.setattr(SimulatedTemporalStore, "apply", recorded)
@@ -1953,7 +1953,7 @@ def test_a_held_groups_case_state_advances_where_its_own_reads_flush_it(
     original, again = (source.observation for source in sources)
     assert original is not None
     assert original is again and first.retained_observation is not original
-    assert original.consumed
+    assert original.invalidated
 
 
 def test_a_tracked_observation_free_write_keeps_none_of_its_public_source(

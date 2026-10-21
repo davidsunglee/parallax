@@ -66,7 +66,7 @@ from parallax.core.write_plan.plan import (
     OPEN_BITEMPORAL_ENDS,
     AllocatedOpening,
     Openings,
-    OwnedEndpoint,
+    TemporalRowCoordinates,
     WriteCompletion,
 )
 from parallax.core.write_plan.steps import INFINITY as PLANNED_INFINITY
@@ -116,7 +116,7 @@ def _unversioned(entity: EntityIdentity, advanced_from: int | None) -> int | Non
 
 
 def _admitted(*writes: AdmittedWrite, meta: Metamodel = POSITION) -> WriteAdmission:
-    admission = WriteAdmission(meta, inserted_version=_unversioned)
+    admission = WriteAdmission(meta, inserted_version=_unversioned, observations={})
     for write in writes:
         admission.admit(write, confirm_target=_confirmed)
     return admission
@@ -205,7 +205,7 @@ class _Confirmations:
 
 def test_a_pending_write_of_the_targets_state_proves_it_before_confirmation_is_asked() -> None:
     confirm = _Confirmations()
-    admission = WriteAdmission(POSITION, inserted_version=_unversioned)
+    admission = WriteAdmission(POSITION, inserted_version=_unversioned, observations={})
     first = addressed_write(value="150.00")
     admission.admit(first, confirm_target=confirm)
     # A second write over exactly that window starts from the state the first
@@ -215,7 +215,7 @@ def test_a_pending_write_of_the_targets_state_proves_it_before_confirmation_is_a
         admission.admit(addressed_write(tx_start=T1, value="1.00"), confirm_target=confirm)
     assert confirm.asked == [first]
 
-    versioned = WriteAdmission(_ACCOUNT, inserted_version=_unversioned)
+    versioned = WriteAdmission(_ACCOUNT, inserted_version=_unversioned, observations={})
     versioned.admit(_account_observed(1, 3), confirm_target=confirm)
     versioned.admit(_account_target(1, 3), confirm_target=confirm)
     alone = _account_target(2, 3)
@@ -225,7 +225,7 @@ def test_a_pending_write_of_the_targets_state_proves_it_before_confirmation_is_a
 
 def test_an_inserted_objects_target_is_refused_before_its_conflicts_or_confirmation() -> None:
     confirm = _Confirmations()
-    admission = WriteAdmission(_ACCOUNT, inserted_version=lambda _entity, _from: 1)
+    admission = WriteAdmission(_ACCOUNT, inserted_version=lambda _entity, _from: 1, observations={})
     admission.admit(_account_insert(1), confirm_target=confirm)
     admission.drain_planned()
     # A pending write of another state of the object would also refuse it.
@@ -244,7 +244,7 @@ def test_the_write_confirmation_answers_is_the_one_composed() -> None:
     def retaining(item: TargetKeyedWrite) -> TargetKeyedWrite:
         return dataclasses.replace(item, retained=held)
 
-    admission = WriteAdmission(POSITION, inserted_version=_unversioned)
+    admission = WriteAdmission(POSITION, inserted_version=_unversioned, observations={})
     admission.admit(addressed_write(value="150.00"), confirm_target=retaining)
     (composed,) = admission.composed_writes()
     assert isinstance(composed, TargetKeyedWrite)
@@ -255,7 +255,7 @@ def test_the_write_confirmation_answers_is_the_one_composed() -> None:
 # A planned buffer drains into the live ownership; discard spends nothing.    #
 # --------------------------------------------------------------------------- #
 def test_a_batch_composition_left_nothing_of_still_needs_its_flush() -> None:
-    admission = WriteAdmission(_ACCOUNT, inserted_version=_unversioned)
+    admission = WriteAdmission(_ACCOUNT, inserted_version=_unversioned, observations={})
     assert not admission
     _admit(admission, _account_insert(9))
     deletion = prepare_wire_write(
@@ -307,7 +307,7 @@ def test_coalesced_object_claimed_writes_keep_every_distinct_source_evidence() -
 def test_discard_forgets_every_source_registration_and_insertion() -> None:
     source = object_source(_person(1))
     admission = _admitted(_person_write(1, source), meta=_PERSON)
-    admission.register_read_evidence(source, _person(1), read_at=0, fresh=False)
+    admission.register_read_evidence(source, read_at=0, current=lambda _state, _read_at: False)
     assert admission.resolve_source(source) is SourceRefusal.STALE
     insertion = prepare_wire_write(
         KeyedWriteInstruction("insert", "Person", ({"id": 9, "name": "Ada"},)), _PERSON
@@ -315,7 +315,7 @@ def test_discard_forgets_every_source_registration_and_insertion() -> None:
     assert isinstance(insertion, PreparedKeyedWrite)
     _admit(admission, insertion)
     ownership = admission.ownership
-    endpoint = OwnedEndpoint(ENTITY, (1,), OPEN_BITEMPORAL_ENDS)
+    endpoint = TemporalRowCoordinates(ENTITY, (1,), OPEN_BITEMPORAL_ENDS)
     admission.complete(WriteCompletion(opened=Openings(fresh=(endpoint,))), (), at=1)
     admission.discard()
     assert admission.resolve_source(source) == _person(1)
@@ -331,7 +331,7 @@ class _Untraversable:
 
 
 def test_completion_publishes_into_the_ownership_planning_borrowed() -> None:
-    admission = WriteAdmission(POSITION, inserted_version=_unversioned)
+    admission = WriteAdmission(POSITION, inserted_version=_unversioned, observations={})
     ownership = admission.ownership
     _admit(admission, observed_write("amendUntil", START, acctNum="B"))
     admission.drain_planned()
@@ -342,7 +342,7 @@ def test_completion_publishes_into_the_ownership_planning_borrowed() -> None:
         at=1,
     )
     assert admission.ownership is ownership
-    assert ownership.owns(OwnedEndpoint(ENTITY, (42,), OPEN_BITEMPORAL_ENDS))
+    assert ownership.owns(TemporalRowCoordinates(ENTITY, (42,), OPEN_BITEMPORAL_ENDS))
 
 
 def test_a_completed_version_advance_scopes_the_next_write_its_insertion_authorizes() -> None:
@@ -353,7 +353,7 @@ def test_a_completed_version_advance_scopes_the_next_write_its_insertion_authori
         advanced.append(advanced_from)
         return 1 if advanced_from is None else advanced_from + 1
 
-    admission = WriteAdmission(_ACCOUNT, inserted_version=inserted_version)
+    admission = WriteAdmission(_ACCOUNT, inserted_version=inserted_version, observations={})
     _admit(admission, _account_insert(9))
     admission.drain_planned()
     identity = admission.insertion_identity(_account(9))
@@ -377,11 +377,11 @@ def test_a_completed_version_advance_scopes_the_next_write_its_insertion_authori
 
 
 def _stored_insertion_across_two_rows() -> WriteAdmission:
-    admission = WriteAdmission(POSITION, inserted_version=_unversioned)
+    admission = WriteAdmission(POSITION, inserted_version=_unversioned, observations={})
     _admit(admission, _position_insert())
     admission.drain_planned()
-    split = OwnedEndpoint(ENTITY, (1,), (Finite(instant=JUN), PLANNED_INFINITY))
-    tail = OwnedEndpoint(ENTITY, (1,), OPEN_BITEMPORAL_ENDS)
+    split = TemporalRowCoordinates(ENTITY, (1,), (Finite(instant=JUN), PLANNED_INFINITY))
+    tail = TemporalRowCoordinates(ENTITY, (1,), OPEN_BITEMPORAL_ENDS)
     admission.complete(WriteCompletion(opened=Openings(continued=(split, tail))), (), at=1)
     return admission
 
@@ -498,8 +498,8 @@ def test_admission_across_a_barrier_judges_every_write_of_the_object() -> None:
     # One window and one start compose, though they execute as two settled writes.
     _admit(admission, observed_write("amendUntil", WHOLE, valid_from=FEB, until=APR, acctNum="O"))
     first, _barrier_write, second = admission.composed_writes()
-    assert isinstance(first, ChainedTemporalWrite) and first.leads
-    assert isinstance(second, ChainedTemporalWrite) and second.follows
+    assert not isinstance(first, ChainedTemporalWrite)
+    assert isinstance(second, ChainedTemporalWrite)
 
 
 def test_a_write_an_insertion_authorized_never_shares_a_targets_window() -> None:

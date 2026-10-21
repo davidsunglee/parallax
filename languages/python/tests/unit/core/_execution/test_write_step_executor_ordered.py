@@ -234,29 +234,8 @@ def _lowering_recorded(
     return lowered_at
 
 
-@dataclass
-class _Claim:
-    """Source authority recording how many port calls had been made when a
-    settled write spent it."""
-
-    port: ScriptedAdapter
-    spent_at: int | None = None
-
-    def consume(self) -> None:
-        self.spent_at = len(self.port.calls)
-
-
-def _plan(
-    port: ScriptedAdapter, *groups: tuple[PlannedStep, ...]
-) -> tuple[WritePlan, list[_Claim]]:
-    claims = [_Claim(port) for _steps in groups]
-    plan = WritePlan(
-        tuple(
-            WriteGroup((SettledWrite(claim=claim),), steps)
-            for steps, claim in zip(groups, claims, strict=True)
-        )
-    )
-    return plan, claims
+def _plan(*groups: tuple[PlannedStep, ...]) -> WritePlan:
+    return WritePlan(tuple(WriteGroup((SettledWrite(),), steps) for steps in groups))
 
 
 def test_a_run_never_reaches_into_a_later_groups_steps() -> None:
@@ -264,24 +243,24 @@ def test_a_run_never_reaches_into_a_later_groups_steps() -> None:
     port = ScriptedAdapter(
         Write(), Ordered(OrderedWriteResultComplete((1, 1))), Write(), ordered=True
     )
-    plan, claims = _plan(port, steps[:1], steps[1:3], steps[3:])
+    completed: list[int] = []
     with open_flush() as flush:
-        run_plan(port, plan, flush)
+        run_plan(port, _plan(steps[:1], steps[1:3], steps[3:]), flush, completed=completed)
     # The first group's close would be the only one of its run, since a run
     # never reaches into the next group, so it runs alone; so does the last's.
     assert port.calls == [alone(steps[0]), ordered(*steps[1:3]), alone(steps[3])]
-    assert [claim.spent_at for claim in claims] == [1, 2, 3]
+    assert completed == [1, 2, 3]
 
 
 def test_a_failed_run_completes_its_group_never_and_prepares_no_later_groups_step() -> None:
     port = ScriptedAdapter(Ordered(OrderedWriteResultComplete((1, 0))), ordered=True)
     steps = (close(1), close(2), close(3))
     preparer = RecordingPreparer(port, steps)
-    plan, claims = _plan(port, steps[:2], steps[2:])
+    completed: list[int] = []
     with pytest.raises(StaleWriteError), open_flush() as flush:
-        run_plan(port, plan, flush, payloads=preparer)
+        run_plan(port, _plan(steps[:2], steps[2:]), flush, payloads=preparer, completed=completed)
     assert preparer.positions == [0, 1]
-    assert [claim.spent_at for claim in claims] == [None, None]
+    assert completed == []
 
 
 def test_a_step_transport_cannot_carry_ends_the_run_untouched_until_the_run_is_enforced(

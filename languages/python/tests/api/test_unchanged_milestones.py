@@ -13,7 +13,7 @@ from parallax.conformance.scripted_clock import ScriptedClock
 from parallax.core import Attr, Bitemporal, Document, DomainModel, TxTemporal, ValueObject, attr
 from parallax.core.entity._model import model_of
 from parallax.core.execution import ExecutionFailure
-from parallax.core.unit_work import OptimisticLockConflictError, WriteEvidenceError
+from parallax.core.unit_work import OptimisticLockConflictError
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.root_ownership import own_root
 from tests.api._coverage_interleaving import AfterCoverageRead
@@ -209,10 +209,9 @@ def test_an_update_restating_a_transaction_time_row_keeps_its_milestone(
         source = _log_find(tx, entity, representation)
         _update(tx, source, representation, {"amount": 100, "spec": _SPEC})
         fresh = _log_find(tx, entity, representation)
-        # Completion spent the source; a fresh read of the kept row writes again.
-        with pytest.raises(WriteEvidenceError) as spent:
-            _update(tx, source, representation, {"amount": 100})
-        assert spent.value.code == "write-evidence-consumed"
+        # The kept row is still the state the source observed, so the source
+        # writes again beside a fresh read of it.
+        _update(tx, source, representation, {"amount": 100})
         _update(tx, fresh, representation, {"amount": 100})
 
     _db(profile_run, _TA).transact(fn, concurrency=concurrency)

@@ -1180,22 +1180,26 @@ def test_two_sources_of_one_deleted_version_both_end(first_verb: str, second_ver
     assert len(_writes(port)) == 1
 
 
-def test_two_sources_of_one_milestone_are_both_spent() -> None:
+def test_two_sources_of_one_milestone_both_continue_from_what_their_write_left() -> None:
     row = balance_row(in_z=_TX_START)
-    port = ScriptedAdapter(Transact(Read(rows=[row]), Read(rows=[row]), Write(times=2), Read()))
+    port = ScriptedAdapter(
+        Transact(Read(rows=[row]), Read(rows=[row]), Write(times=2), Read(), Write())
+    )
 
     def fn(tx: TxnContext) -> None:
         sources = (_node(tx, _BALANCE_QUERY), _node(tx, _BALANCE_QUERY))
         tx.wire.amend(sources[0], {"value": "6.00"})
         tx.wire.amend(sources[1], {"acctNum": "A-2"})
         tx.wire.find(_BALANCE_QUERY).results()
-        for source in sources:
-            with pytest.raises(WriteEvidenceError) as exc_info:
-                tx.wire.amend(source, {"value": "7.00"})
-            assert exc_info.value.code == "write-evidence-consumed"
+        # Both continue through the row their write produced, which the
+        # attempt holds, so they compose again without reading it.
+        tx.wire.amend(sources[0], {"value": "7.00"})
+        tx.wire.amend(sources[1], {"value": "8.00"})
 
     db_for(BALANCE, port).transact(fn)
-    assert len(_writes(port)) == 2
+    *_first, revision = _writes(port)
+    assert revision.sql.startswith("update balance set val = %s where")
+    assert revision.binds[0] == Decimal("8.00")
 
 
 def test_a_wire_termination_over_another_window_of_one_state_is_refused_synchronously() -> None:

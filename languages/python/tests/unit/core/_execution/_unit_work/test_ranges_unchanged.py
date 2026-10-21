@@ -29,7 +29,7 @@ from parallax.core.write_plan.observe import AssignedComparison
 from parallax.core.write_plan.plan import (
     OPEN_BITEMPORAL_ENDS,
     TRANSACTION_TIME_ENDS,
-    OwnedEndpoint,
+    TemporalRowCoordinates,
 )
 from parallax.core.write_plan.steps import (
     FAILED_PRECONDITION,
@@ -271,7 +271,9 @@ def test_an_owned_original_a_range_leaves_unchanged_is_neither_split_nor_revised
         members={**dict(span_row(JAN, JUN, 100, "a").members), "txStart": NOW}
     )
     later = span_row(JUN, INFINITY, 100, "b")
-    owned = OpenedRows(frozenset({OwnedEndpoint(SPAN, (1,), (Finite(instant=JUN), OPEN_END))}))
+    owned = OpenedRows(
+        frozenset({TemporalRowCoordinates(SPAN, (1,), (Finite(instant=JUN), OPEN_END))})
+    )
     _, bound = bound_range(
         SPANS,
         planned(
@@ -312,8 +314,8 @@ def test_an_update_restating_its_milestone_is_one_guard_on_the_observed_start() 
     assert guard.concurrency.observed_start == T0
     assert guard.affected_rows == ExactCount(expected=1, on_shortfall=OPTIMISTIC_CONFLICT)
     (write,) = settled_writes(plan)
-    # The claim is spent, and the state it observed is named changed by nobody.
-    assert (write.claim, tuple(write.changed)) == (_RESTATED, ())
+    # The state it observed is named changed by nobody.
+    assert tuple(write.changed) == ()
 
 
 def test_without_a_count_that_proves_it_an_unchanged_milestone_is_closed_and_chained() -> None:
@@ -325,7 +327,7 @@ def test_without_a_count_that_proves_it_an_unchanged_milestone_is_closed_and_cha
     assert step_kinds(plan_steps(plan)) == ["PlannedClose", "PlannedInsert"]
     (write,) = settled_writes(plan)
     # Closing it changes the observed state, which the write names itself.
-    assert (write.claim, tuple(write.changed)) == (_RESTATED, (_RESTATED.key,))
+    assert tuple(write.changed) == (_RESTATED.key,)
 
 
 def test_under_locking_the_held_lock_proves_an_unchanged_milestone_without_a_statement() -> None:
@@ -337,10 +339,10 @@ def test_under_locking_the_held_lock_proves_an_unchanged_milestone_without_a_sta
     )
     assert len(plan_steps(plan)) == 0
     (write,) = settled_writes(plan)
-    assert (write.claim, tuple(write.changed)) == (_RESTATED, ())
+    assert tuple(write.changed) == ()
 
 
-_REOPENED = OpenedRows(frozenset({OwnedEndpoint(BALANCE, (1,), TRANSACTION_TIME_ENDS)}))
+_REOPENED = OpenedRows(frozenset({TemporalRowCoordinates(BALANCE, (1,), TRANSACTION_TIME_ENDS)}))
 
 
 def test_a_milestone_the_attempt_opened_needs_no_statement_to_stay_unchanged() -> None:
@@ -394,7 +396,7 @@ def test_a_stale_start_at_an_address_the_attempt_reopened_is_its_callers_precond
 def test_owning_another_row_lends_no_proof_to_an_unchanged_milestone_the_attempt_did_not_open() -> (
     None
 ):
-    another = OpenedRows(frozenset({OwnedEndpoint(BALANCE, (2,), TRANSACTION_TIME_ENDS)}))
+    another = OpenedRows(frozenset({TemporalRowCoordinates(BALANCE, (2,), TRANSACTION_TIME_ENDS)}))
     plan = planned(
         BALANCES,
         observed_write(BALANCES, "Balance", "amend", _RESTATED, value="100.00"),

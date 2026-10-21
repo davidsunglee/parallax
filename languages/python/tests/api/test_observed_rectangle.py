@@ -518,7 +518,7 @@ def test_a_committed_rectangle_written_from_its_own_start_opens_no_empty_head(
 @pytest.mark.parametrize("concurrency", _CONCURRENCIES)
 @pytest.mark.parametrize("representation", _REPRESENTATIONS)
 @pytest.mark.parametrize("entity", [ColumnsLog, DocumentLog])
-def test_an_unsubmitted_read_of_a_changed_row_is_refused_and_a_fresh_read_carries_forward(
+def test_an_unsubmitted_read_of_a_changed_row_continues_and_a_fresh_read_carries_forward(
     profile_run: Any, entity: type[Any], representation: _Representation, concurrency: _Concurrency
 ) -> None:
     db = _attempt_db(profile_run)
@@ -529,13 +529,14 @@ def test_an_unsubmitted_read_of_a_changed_row_is_refused_and_a_fresh_read_carrie
         first = _log_find(tx, entity, representation)
         _log_update(tx, first, representation, "first")
         flushed = _log_find(tx, entity, representation)
-        # A second read of the row the first write changed, never written from.
+        # A second read of the row the first write produced, never written
+        # from: it shares that row's observation with the read that is.
         unsubmitted = _log_find(tx, entity, representation)
         _log_update(tx, flushed, representation, "second")
         _log_find(tx, entity, representation)
-        with pytest.raises(WriteEvidenceError) as refused:
-            _log_update(tx, unsubmitted, representation, "stale")
-        assert refused.value.code == "write-evidence-consumed"
+        # The change the attempt completed leaves the row its sources continue
+        # from, whichever of them wrote it.
+        _log_update(tx, unsubmitted, representation, "continued")
         fresh = _log_find(tx, entity, representation)
         if representation == "typed":
             tx.amend(fresh.edit(spec=AttemptSpec(title="replaced", origin=None)))
@@ -546,14 +547,14 @@ def test_an_unsubmitted_read_of_a_changed_row_is_refused_and_a_fresh_read_carrie
 
     assert _log_rows(profile_run, entity) == [
         (_SEEDED, _ATTEMPT, "seeded", _SPEC_DOCUMENT),
-        (_ATTEMPT, None, "second", other),
+        (_ATTEMPT, None, "continued", other),
     ]
 
 
 @pytest.mark.parametrize("concurrency", _CONCURRENCIES)
 @pytest.mark.parametrize("representation", _REPRESENTATIONS)
 @pytest.mark.parametrize("entity", [ColumnsSpan, DocumentSpan])
-def test_an_own_change_leaves_reads_of_an_unaffected_rectangle_writable(
+def test_an_own_change_leaves_reads_of_the_rectangle_it_changed_and_another_writable(
     profile_run: Any, entity: type[Any], representation: _Representation, concurrency: _Concurrency
 ) -> None:
     profile_run.reset(model_of(_ATTEMPT_MODEL), {})
@@ -567,11 +568,12 @@ def test_an_own_change_leaves_reads_of_an_unaffected_rectangle_writable(
     def edit(tx: TxnContext) -> None:
         early = _span_find(tx, entity, representation, _FEB)
         late = _span_find(tx, entity, representation, _APR)
-        stale_late = _span_find(tx, entity, representation, _APR)
+        also_late = _span_find(tx, entity, representation, _APR)
         _span_update(tx, late, representation, 150)
         _span_find(tx, entity, representation, None)
-        with pytest.raises(WriteEvidenceError):
-            _span_update(tx, stale_late, representation, 175)
+        # Both April reads share the rectangle the write changed; the part of
+        # it holding their pin survives, so both continue there.
+        _span_update(tx, also_late, representation, 175)
         _span_update(tx, early, representation, 60, until=_MAR)
 
     db.transact(edit, concurrency=concurrency)
@@ -582,7 +584,7 @@ def test_an_own_change_leaves_reads_of_an_unaffected_rectangle_writable(
         (_ATTEMPT, None, _JAN, _FEB, 50, _SPEC_DOCUMENT),
         (_ATTEMPT, None, _FEB, _MAR, 60, _SPEC_DOCUMENT),
         (_ATTEMPT, None, _MAR, _APR, 100, _SPEC_DOCUMENT),
-        (_ATTEMPT, None, _APR, None, 150, _SPEC_DOCUMENT),
+        (_ATTEMPT, None, _APR, None, 175, _SPEC_DOCUMENT),
     ]
 
 
@@ -703,12 +705,13 @@ def test_a_streamed_root_fetched_before_an_own_change_cannot_write_its_stale_sta
 @pytest.mark.parametrize("concurrency", _CONCURRENCIES)
 @pytest.mark.parametrize("representation", _REPRESENTATIONS)
 @pytest.mark.parametrize("entity", [ColumnsLog, DocumentLog])
-def test_a_read_stays_writable_until_a_change_to_its_state_completes(
+def test_a_read_stays_writable_through_a_change_to_its_state(
     profile_run: Any, entity: type[Any], representation: _Representation, concurrency: _Concurrency
 ) -> None:
     # A local edit changes nothing stored, and a submitted write changes nothing
     # until its flush completes, so a second read of the same state stays
-    # writable through both; only the completed change makes it ineligible.
+    # writable through both; once the change completes, it continues from the
+    # row the change left.
     db = _attempt_db(profile_run)
     db.transact(lambda tx: tx.insert(entity(id=1, label="seeded", spec=_SPEC)))
     replaced = {"title": "replaced", "origin": None}
@@ -723,14 +726,13 @@ def test_a_read_stays_writable_until_a_change_to_its_state_completes(
             tx.wire.amend(first, {"spec": replaced})
         _log_update(tx, second, representation, "pending")
         _log_find(tx, entity, representation)
-        with pytest.raises(WriteEvidenceError):
-            _log_update(tx, second, representation, "after")
+        _log_update(tx, second, representation, "after")
 
     db.transact(edit, concurrency=concurrency)
 
     assert _log_rows(profile_run, entity) == [
         (_SEEDED, _ATTEMPT, "seeded", _SPEC_DOCUMENT),
-        (_ATTEMPT, None, "pending", replaced),
+        (_ATTEMPT, None, "after", replaced),
     ]
 
 

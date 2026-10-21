@@ -91,7 +91,8 @@ from parallax.core.read_delivery._row_lane import (
 from parallax.core.read_delivery._stream import StreamDelivery, check_batch_size
 from parallax.core.sql_gen._compile import CompiledRead, compile_read
 from parallax.core.temporal_read import Pin
-from parallax.core.write_plan.steps import PlannedStep
+from parallax.core.write_plan.payload import PatchedDocument
+from parallax.core.write_plan.steps import PlannedStep, PlannedTemporalRevision, WriteRow
 
 __all__ = [
     "PredicateWriteAdapter",
@@ -747,7 +748,25 @@ class TxnAttempt(_TxnAttemptBase):
         return flush
 
     def _execute_write_steps(
-        self, steps: tuple[PlannedStep, ...], /, *, allocates: bool
+        self,
+        steps: tuple[PlannedStep, ...],
+        /,
+        *,
+        allocates: bool,
+        capture_insert: Callable[[WriteRow, object | None], None] | None = None,
+        capture_revision: Callable[[PlannedTemporalRevision, PatchedDocument | None], None]
+        | None = None,
     ) -> tuple[object, ...]:
-        """Execute ``steps`` as calls of the current flush's Flush activity."""
-        return self._step_executor.execute(steps, allocates=allocates, flush=self._flush)
+        """Execute ``steps`` as calls of the current flush's Flush activity,
+        handing their demanded payloads to the capture hooks the unit of work
+        gives."""
+        executor = self._step_executor
+        if capture_insert is None and capture_revision is None:
+            return executor.execute(steps, allocates=allocates, flush=self._flush)
+        return executor.execute(
+            steps,
+            allocates=allocates,
+            flush=self._flush,
+            capture_insert=capture_insert,
+            capture_revision=capture_revision,
+        )

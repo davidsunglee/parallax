@@ -11,7 +11,8 @@ from typing import Final
 
 from parallax.conformance._simulated_write_steps import SimulatedWriteSteps
 from parallax.core.sql_gen import LoweredStatement
-from parallax.core.write_plan.steps import PlannedStep
+from parallax.core.write_plan.payload import PatchedDocument
+from parallax.core.write_plan.steps import PlannedStep, PlannedTemporalRevision, WriteRow
 
 __all__ = ["ObservedSteps", "statement_kinds"]
 
@@ -49,11 +50,25 @@ class ObservedSteps:
     failure: BaseException | None = None
     executions: int = 0
 
-    def __call__(self, steps: tuple[PlannedStep, ...], /, *, allocates: bool) -> tuple[object, ...]:
+    def __call__(
+        self,
+        steps: tuple[PlannedStep, ...],
+        /,
+        *,
+        allocates: bool,
+        capture_insert: Callable[[WriteRow, object | None], None] | None = None,
+        capture_revision: Callable[[PlannedTemporalRevision, PatchedDocument | None], None]
+        | None = None,
+    ) -> tuple[object, ...]:
         position = self.executions
         self.executions = position + 1
         if self.observe is not None:
             self.observe(position, steps)
         if position == self.failing and self.failure is not None:
             raise self.failure
-        return self.simulated(steps, allocates=allocates)
+        return self.simulated(
+            steps,
+            allocates=allocates,
+            capture_insert=capture_insert,
+            capture_revision=capture_revision,
+        )

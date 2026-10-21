@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import datetime as dt
 import heapq
-from collections.abc import Callable, Hashable, Iterator, Mapping
+from collections.abc import Callable, Hashable, Iterator, Mapping, Sequence
 from dataclasses import replace
 from enum import Enum
 from operator import attrgetter
@@ -11,6 +12,7 @@ from parallax.core import inheritance, temporal_read
 from parallax.core._execution._unit_work._write_ownership import (
     InsertionRecord,
     SourceRefusal,
+    SourceScope,
     WriteOwnership,
 )
 from parallax.core._execution._unit_work.claims import (
@@ -35,6 +37,7 @@ from parallax.core._execution._unit_work.retain import (
     InsertionIdentity,
     KeyedWriteRefusalAdvice,
     ReadEvidence,
+    RetainedObservation,
 )
 from parallax.core._execution._unit_work.write_items import (
     AdmittedWrite,
@@ -61,11 +64,12 @@ from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.temporal_read import TimeInterval, milestone_edge, valid_time_coverage
 from parallax.core.temporal_write.coverage import NO_TRANSFORM
 from parallax.core.write_plan.keys import ObjectKey, ObjectStateKey, VersionedObjectStateKey
-from parallax.core.write_plan.observe import TemporalObservation
+from parallax.core.write_plan.observe import PredecessorRow, TemporalObservation
 from parallax.core.write_plan.plan import (
     AllocatedOpening,
+    CurrentRowOutput,
     Openings,
-    OwnedEndpoint,
+    TemporalRowCoordinates,
     TemporalWriteOwnership,
     WriteCompletion,
 )
@@ -96,9 +100,10 @@ type WriteEvidenceErrorCode = Literal[
 
 The first three partition what can be wrong with a source's evidence at the
 verb: there is none the target Entity's Effective Concurrency Strategy can use,
-the evidence there is reaches no state this attempt still protects — spent by
-a successful flush, published from rows a completed write changed, or of an
-object a completed deletion removed — or a write already buffered in this unit
+the evidence there is reaches no state this attempt still protects — published
+from rows a completed write changed, of an object a completed deletion removed,
+or of a temporal state a completed write left nothing of at the source's pin —
+or a write already buffered in this unit
 of work claimed the scope this one settles against, for an intent this one
 cannot join. The fourth refuses a caller's own condition on an
 object this attempt inserted, which only that insertion's source or a read
@@ -227,8 +232,11 @@ class WriteAdmission:
 
     Planning borrows :meth:`composed_writes` and :attr:`ownership` without
     changing either; only a successfully planned buffer is drained
-    (:meth:`drain_planned`). The insertions, and the temporal rows the
-    attempt's successful settled writes opened, outlive every buffer.
+    (:meth:`drain_planned`). The insertions, the temporal rows the attempt's
+    successful settled writes opened, and what they did to the states its
+    sources reach outlive every buffer. ``observations`` is the attempt's index
+    of live observed states, which tells ownership which sources a completed
+    write's changes may still serve.
     """
 
     __slots__ = (
@@ -252,6 +260,7 @@ class WriteAdmission:
         meta: Metamodel,
         *,
         inserted_version: Callable[[EntityIdentity, int | None], int | None],
+        observations: Mapping[ObjectStateKey, RetainedObservation],
     ) -> None:
         self._families = inheritance.view(meta)
         self._temporal_facet = temporal_read.view(meta)
@@ -259,7 +268,7 @@ class WriteAdmission:
         # last completed update advanced from: the scope a write its insertion
         # authorized claims once the row is stored.
         self._inserted_version = inserted_version
-        self._ownership = WriteOwnership(version_after=inserted_version)
+        self._ownership = WriteOwnership(version_after=inserted_version, observations=observations)
         self._writes: list[_PendingItem] = []
         # Every claim the buffer holds, by its scope: the position of the write
         # that holds it. A temporal object's writes against its coverage are
@@ -293,6 +302,14 @@ class WriteAdmission:
         """The attempt's live ownership, which planning and deferred binding
         read as the flush's earlier settled writes left it."""
         return self._ownership
+
+    def concluding_ownership(self) -> TemporalWriteOwnership:
+        """The live ownership as the pre-commit flush plans under it: no
+        later submission follows that flush, so only an object an earlier
+        barrier region writes, which a later region's composition continues
+        from within it, demands what its writes leave."""
+        followed = frozenset(() if self._regions is None else self._regions.temporal)
+        return _Concluding(self._ownership, followed)
 
     def admit(
         self,
@@ -414,21 +431,29 @@ class WriteAdmission:
         self._clear_buffer()
 
     def register_read_evidence(
-        self, evidence: ReadEvidence, target: ObjectKey, *, read_at: int, fresh: bool
+        self,
+        evidence: ReadEvidence,
+        *,
+        read_at: int,
+        current: Callable[[ObjectKey | ObjectStateKey, int], bool],
     ) -> None:
-        """Register a published Non-Temporal source's exact ``evidence``
+        """Register a published source's exact ``evidence``
         (:meth:`~parallax.core._execution._unit_work._write_ownership.WriteOwnership.register_read_evidence`)."""
-        self._ownership.register_read_evidence(evidence, target, read_at=read_at, fresh=fresh)
+        self._ownership.register_read_evidence(evidence, read_at=read_at, current=current)
 
-    def resolve_source(
-        self, evidence: ReadEvidence
-    ) -> VersionedObjectStateKey | ObjectKey | SourceRefusal:
-        """The protected current state a registered Non-Temporal source's
-        authority reaches, or why it reaches none."""
+    def resolve_source(self, evidence: ReadEvidence) -> SourceScope | SourceRefusal:
+        """The protected current state a source's authority reaches, or why it
+        reaches none
+        (:meth:`~parallax.core._execution._unit_work._write_ownership.WriteOwnership.resolve_source`)."""
         return self._ownership.resolve_source(evidence)
 
     def complete(
-        self, completion: WriteCompletion, allocated_keys: tuple[object, ...], *, at: int
+        self,
+        completion: WriteCompletion,
+        allocated_keys: tuple[object, ...],
+        *,
+        at: int,
+        captured: tuple[tuple[CurrentRowOutput, object | None], ...] = (),
     ) -> None:
         """Publish one successful settled write's ``completion`` at change count
         ``at``: each versioned row it advanced, which a write a standing
@@ -436,7 +461,7 @@ class WriteAdmission:
         it continues or ends; the owned rows it removed, retired before the rows
         it opened — those whose keys the database allocated named by
         ``allocated_keys`` — are registered, with what it derived from its
-        originals."""
+        predecessors and the rows its execution ``captured``."""
         for state in completion.advanced:
             record = self._ownership.insertion_record(state.object)
             if record is not None:
@@ -447,12 +472,8 @@ class WriteAdmission:
             completion.removed,
             _resolve_allocated_openings(opened, allocated_keys) if allocated_keys else opened,
             completion.derived,
-            completion.concludes,
+            captured,
         )
-
-    def release_continuity(self) -> None:
-        """End what the flush's settled writes proved for later ones."""
-        self._ownership.release_continuity()
 
     def discard(self) -> None:
         """Drop the buffer and its claims, and every insertion, owned row, and
@@ -820,14 +841,9 @@ class WriteAdmission:
             if sealed is None:
                 writes.append(item)
             else:
-                # An earlier region writes the object: that composition hands
-                # on what it derives, and this one starts from it.
-                key_name = self._key_name(item.instruction.target)
-                latest = sealed[-1]
-                earlier = writes[latest]
-                assert isinstance(earlier, _TEMPORAL)
-                writes[latest] = chained_temporal_write(earlier, key_name, leads=True)
-                writes.append(chained_temporal_write(item, key_name, follows=True))
+                # An earlier region writes the object: this composition starts
+                # from what that one leaves.
+                writes.append(chained_temporal_write(item, self._key_name(item.instruction.target)))
             self._temporal[key] = len(writes) - 1
             return
         assert isinstance(held, _TEMPORAL)
@@ -845,16 +861,17 @@ class WriteAdmission:
                     writes[index] = _merged_claimed(held, item)
                     return
                 if verdict == "deduplicate":
+                    writes[index] = _with_composed_authority(held, item, held.instruction)
                     return
                 if verdict == "supersede":
                     writes[index] = None
-                    writes.append(item)
+                    writes.append(_with_composed_authority(item, held, item.instruction))
                     self._temporal[key] = len(writes) - 1
                     return
         key_name = self._key_name(item.instruction.target)
         composed = composed_temporal_write(held, item, key_name)
         writes[index] = (
-            chained_temporal_write(composed, key_name, leads=held.leads, follows=held.follows)
+            chained_temporal_write(composed, key_name)
             if isinstance(held, ChainedTemporalWrite)
             else composed
         )
@@ -876,6 +893,10 @@ class WriteAdmission:
           operations, unless an observed rectangle holds the caller's start at
           another Transaction-Time start, which no current coverage can satisfy;
         * over any other overlapping window, never.
+
+        An observed write whose source continues through what this attempt's
+        completed writes left is judged by the current row the attempt holds
+        there, not by the rectangle its source observed.
         """
         compositions = self._compositions(key)
         if not compositions:
@@ -896,19 +917,20 @@ class WriteAdmission:
             )
         entity = item.instruction.target
         arriving = temporal_contribution(item)
-        start = self._starting_revision(entity, arriving)
+        start = self._starting_revision(entity, key, arriving)
         untargeted: list[tuple[ObjectStateKey | None, WriteIntent]] = []
         for held in compositions:
             for contribution in _contributions(held):
                 if arriving.condition is None and contribution.condition is None:
                     untargeted.append((_scope(contribution), _intent(contribution)))
-                elif not self._separable(entity, contribution, arriving, start):
+                elif not self._separable(entity, key, contribution, arriving, start):
                     return False
         return admits_composed(untargeted, scope, intent) != "incompatible"
 
     def _separable(
         self,
         entity: EntityMetadata,
+        key: ObjectKey,
         held: TemporalContribution,
         arriving: TemporalContribution,
         start: object | None,
@@ -922,24 +944,26 @@ class WriteAdmission:
             return (
                 not (held.kind == "destructive" and arriving.kind == "assignment")
                 and start is not None
-                and self._starting_revision(entity, held) == start
+                and self._starting_revision(entity, key, held) == start
             )
         # Writes without Valid Time span the whole axis, so every two of an
         # object's are equal and only Valid-Time windows differ.
         assert held_window is not None and arriving_window is not None
         if held_window.overlaps(arriving_window):
             return False
-        return self._rectangle_admits(entity, held, arriving) and self._rectangle_admits(
-            entity, arriving, held
+        return self._rectangle_admits(entity, key, held, arriving) and self._rectangle_admits(
+            entity, key, arriving, held
         )
 
     def _rectangle_admits(
         self,
         entity: EntityMetadata,
+        key: ObjectKey,
         addressed: TemporalContribution,
         observed: TemporalContribution,
     ) -> bool:
-        """Whether ``observed``'s rectangle, where it holds ``addressed``'s
+        """Whether ``observed``'s rectangle — or, where its source continues,
+        the current row the attempt holds — where it holds ``addressed``'s
         start, stands at the Transaction-Time start that caller stated."""
         condition = addressed.condition
         observation = observed.observation
@@ -948,27 +972,52 @@ class WriteAdmission:
         shape = self._temporal_facet.shape(entity.identity)
         assert isinstance(shape, temporal_read.Bitemporal)  # disjoint windows are Valid Time's
         window = addressed.valid_time_window
+        assert window is not None  # a Bitemporal write states its window
+        if _continuing(observed):
+            held = self._held_at(key, shape, window.start)
+            return held is None or milestone_edge(shape, held, None).tx_time == condition.instant
         predecessor = observation.predecessor
         coverage = valid_time_coverage(shape, predecessor, None)
-        assert window is not None and coverage is not None  # both lie on Valid Time
+        assert coverage is not None  # a Bitemporal observation lies on Valid Time
         if not coverage.contains(window.start):
             return True
         return milestone_edge(shape, predecessor, None).tx_time == condition.instant
 
     def _starting_revision(
-        self, entity: EntityMetadata, contribution: TemporalContribution
+        self, entity: EntityMetadata, key: ObjectKey, contribution: TemporalContribution
     ) -> object | None:
         """The Transaction-Time start ``contribution`` requires of the coverage
-        at its window's start: its caller's, or the observed rectangle's own.
-        An insertion's write states none."""
+        at its window's start: its caller's, the observed rectangle's own, or,
+        where its source continues, that of the current row the attempt holds
+        there. An insertion's write states none, and neither does a continuing
+        one whose row there the attempt does not hold."""
         if contribution.condition is not None:
             return contribution.condition.instant
         observation = contribution.observation
         if not isinstance(observation, TemporalObservation):
             return None
         shape = self._temporal_facet.shape(entity.identity)
-        assert shape is not None  # the facet covers every accepted Entity
+        assert isinstance(shape, temporal_read.TransactionTimeOnly | temporal_read.Bitemporal)
+        if _continuing(contribution):
+            window = contribution.valid_time_window
+            held = self._held_at(key, shape, None if window is None else window.start)
+            return None if held is None else milestone_edge(shape, held, None).tx_time
         return milestone_edge(shape, observation.predecessor, None).tx_time
+
+    def _held_at(
+        self,
+        key: ObjectKey,
+        shape: temporal_read.TransactionTimeOnly | temporal_read.Bitemporal,
+        instant: dt.datetime | None,
+    ) -> PredecessorRow | None:
+        """The current row of ``key`` holding Valid-Time ``instant`` — its one
+        current row without Valid Time — among those the attempt's completed
+        writes produced and hold, if any."""
+        for row in self._ownership.current_rows(key, None):
+            coverage = valid_time_coverage(shape, row, None)
+            if instant is None or coverage is None or coverage.contains(instant):
+                return row
+        return None
 
     def _states_window(self, key: ObjectKey, window: TimeInterval | None) -> bool:
         """Whether a pending write of temporal object ``key`` states exactly
@@ -1094,6 +1143,44 @@ class WriteAdmission:
         self._regions = None
 
 
+@final
+class _Concluding:
+    """``ownership`` answering every question as it does, except that only
+    the predecessors of ``followed`` objects are demanded."""
+
+    __slots__ = ("_followed", "_ownership")
+
+    def __init__(self, ownership: TemporalWriteOwnership, followed: frozenset[ObjectKey]) -> None:
+        self._ownership = ownership
+        self._followed = followed
+
+    def owns(self, coordinates: TemporalRowCoordinates, /) -> bool:
+        return self._ownership.owns(coordinates)
+
+    def continues_insertion(self, coordinates: TemporalRowCoordinates, /) -> bool:
+        return self._ownership.continues_insertion(coordinates)
+
+    def insertion_coverage(
+        self, coordinates: TemporalRowCoordinates, valid_time_coverage: TimeInterval | None, /
+    ) -> tuple[TimeInterval | None, ...]:
+        return self._ownership.insertion_coverage(coordinates, valid_time_coverage)
+
+    def demanded(
+        self, predecessor: ObjectStateKey, coordinates: TemporalRowCoordinates | None, /
+    ) -> bool:
+        return predecessor.object in self._followed and self._ownership.demanded(
+            predecessor, coordinates
+        )
+
+    def continues(self, observation: Hashable, pin: dt.datetime | None, /) -> bool | None:
+        return self._ownership.continues(observation, pin)
+
+    def current_rows(
+        self, target: ObjectKey, valid_time_window: TimeInterval | None, /
+    ) -> Sequence[PredecessorRow]:
+        return self._ownership.current_rows(target, valid_time_window)
+
+
 class _Regions:
     """The barrier regions of a buffer that holds a readless predicate write.
 
@@ -1133,6 +1220,14 @@ def _composed_intents(
     return tuple(
         (_scope(contribution), _intent(contribution)) for contribution in held.contributions
     )
+
+
+def _continuing(contribution: TemporalContribution) -> bool:
+    """Whether ``contribution``'s sources continue through what the attempt's
+    completed writes left of the state they observed: admission refused every
+    source published stale, so a pending one invalidated is one they changed."""
+    retained = contribution.retained_observation
+    return retained is not None and retained.invalidated
 
 
 def _scope(contribution: TemporalContribution) -> ObjectStateKey | None:
@@ -1261,14 +1356,14 @@ def _coalesced(
 
 def _resolve_allocated_openings(opened: Openings, allocated: tuple[object, ...]) -> Openings:
     named = tuple(
-        _allocated_endpoint(opening, key)
+        _allocated_coordinates(opening, key)
         for opening, key in zip(opened.allocated, allocated, strict=True)
     )
     return Openings(fresh=(*opened.fresh, *named), continued=opened.continued, shared=opened.shared)
 
 
-def _allocated_endpoint(opening: AllocatedOpening, key: object) -> OwnedEndpoint:
-    return OwnedEndpoint(opening.entity, (key,), opening.ends)
+def _allocated_coordinates(opening: AllocatedOpening, key: object) -> TemporalRowCoordinates:
+    return TemporalRowCoordinates(opening.entity, (key,), opening.ends)
 
 
 def _already_claimed(target: EntityMetadata, key: ObjectKey) -> WriteEvidenceError:

@@ -34,9 +34,10 @@ from parallax.core.write_plan.plan import (
     OPEN_BITEMPORAL_ENDS,
     TRANSACTION_TIME_ENDS,
     BoundRange,
+    CurrentRowOutput,
     Derivation,
     DerivedRow,
-    OwnedEndpoint,
+    TemporalRowCoordinates,
     TemporalWriteOwnership,
 )
 from parallax.core.write_plan.steps import (
@@ -123,7 +124,6 @@ def _expansion(
     *,
     gated: bool = True,
     guards: bool = False,
-    derives: bool = False,
     ownership: TemporalWriteOwnership = NO_TEMPORAL_WRITE_OWNERSHIP,
 ) -> PredecessorExpander:
     return PredecessorExpander(
@@ -133,7 +133,6 @@ def _expansion(
         key_value=1,
         gated=gated,
         guards=guards,
-        derives=derives,
         ownership=ownership,
         audit=AuditDecoration(NO_AUDIT, TEST_ACTOR_IDENTITY, inert_instant(), ()),
         payloads=_PAYLOADS[facts.entity.identity],
@@ -184,9 +183,9 @@ def _windows(steps: Iterable[PlannedStep]) -> list[tuple[object, object, object]
     ]
 
 
-def _endpoint(end: object) -> OwnedEndpoint:
+def _endpoint(end: object) -> TemporalRowCoordinates:
     ends = OPEN_BITEMPORAL_ENDS if end is INFINITY else (Finite(instant=end), OPEN_END)
-    return OwnedEndpoint(_SPAN, (1,), ends)
+    return TemporalRowCoordinates(_SPAN, (1,), ends)
 
 
 _STORED = _span(_JAN, INFINITY)
@@ -240,11 +239,8 @@ def test_an_assignment_inside_a_stored_rectangle_closes_it_and_opens_three_succe
         _endpoint(_SEP),
         _endpoint(INFINITY),
     )
-    assert (tuple(expanded.opened.continued), expanded.removed, expanded.concludes) == (
-        (),
-        (),
-        None,
-    )
+    assert (tuple(expanded.opened.continued), expanded.removed) == ((), ())
+    assert (expanded.derived, expanded.current_outputs) == ((), ())
 
 
 def test_a_destruction_terminates_the_rectangle_and_carries_only_what_survives() -> None:
@@ -594,19 +590,32 @@ def test_a_validated_predecessor_the_attempt_opened_is_removed_rather_than_close
 
 
 # --------------------------------------------------------------------------- #
-# What a later unit of the flush relies on.                                    #
+# What a write leaves for the sources the attempt may still continue.          #
 # --------------------------------------------------------------------------- #
 
 
-def test_a_deriving_expansion_records_each_successor_by_address_and_coverage() -> None:
-    expansion = _expansion(
-        _SPAN_FACTS, _assigning(TimeInterval(_MAR, _SEP), {"amount": 300}), derives=True
+def _demanding(*predecessors: PredecessorRow, owned: Iterable[object] = ()) -> OpenedRows:
+    return OpenedRows(
+        frozenset(_endpoint(end) for end in owned),
+        demanded_states=frozenset(_state(_SPAN_FACTS, row) for row in predecessors),
     )
-    (derivation,) = _expand(expansion, _SPAN_FACTS, _STORED).derived
+
+
+def test_a_demanded_predecessor_records_each_successor_and_describes_each_output() -> None:
+    expanded = _expand(
+        _expansion(
+            _SPAN_FACTS,
+            _assigning(TimeInterval(_MAR, _SEP), {"amount": 300}),
+            ownership=_demanding(_STORED),
+        ),
+        _SPAN_FACTS,
+        _STORED,
+    )
+    (derivation,) = expanded.derived
     assert derivation == Derivation(
-        original=_state(_SPAN_FACTS, _STORED),
+        predecessor=_state(_SPAN_FACTS, _STORED),
         valid_time_coverage=TimeInterval(_JAN, INFINITY),
-        owned=None,
+        input_coordinates=None,
         rows=(
             DerivedRow(_endpoint(_MAR), TimeInterval(_JAN, _MAR), TimeInterval(_JAN, _MAR)),
             DerivedRow(_endpoint(_SEP), TimeInterval(_MAR, _SEP), TimeInterval(_MAR, _SEP)),
@@ -615,20 +624,94 @@ def test_a_deriving_expansion_records_each_successor_by_address_and_coverage() -
             ),
         ),
     )
-    (validated,) = _expand(expansion, _SPAN_FACTS, _span(_JAN, _JUN), "validation").derived
-    assert (validated.original, validated.owned, validated.rows) == (
-        _state(_SPAN_FACTS, _span(_JAN, _JUN)),
+    entries = [step.entries[0] for step in expanded.steps if isinstance(step, PlannedInsert)]
+    assert expanded.current_outputs == tuple(
+        CurrentRowOutput(
+            coordinates=coordinates, valid_time_coverage=extent, row=entry, emitter=entry
+        )
+        for coordinates, extent, entry in zip(
+            (_endpoint(_MAR), _endpoint(_SEP), _endpoint(INFINITY)),
+            (TimeInterval(_JAN, _MAR), TimeInterval(_MAR, _SEP), TimeInterval(_SEP, INFINITY)),
+            entries,
+            strict=True,
+        )
+    )
+    assert all(
+        output.emitter is entry
+        for output, entry in zip(expanded.current_outputs, entries, strict=True)
+    )
+
+
+def test_a_validated_demanded_predecessor_leaves_nothing_of_itself() -> None:
+    validated = _span(_JAN, _JUN)
+    expanded = _expand(
+        _expansion(
+            _SPAN_FACTS,
+            _assigning(TimeInterval(_MAR, _SEP), {"amount": 300}),
+            ownership=_demanding(validated),
+        ),
+        _SPAN_FACTS,
+        validated,
+        "validation",
+    )
+    (derivation,) = expanded.derived
+    assert (derivation.predecessor, derivation.input_coordinates, derivation.rows) == (
+        _state(_SPAN_FACTS, validated),
         None,
         (),
     )
-    assert (
-        _expand(
-            _expansion(_SPAN_FACTS, _assigning(TimeInterval(_MAR, _SEP), {"amount": 300})),
-            _SPAN_FACTS,
-            _STORED,
-        ).derived
-        == ()
+    assert expanded.current_outputs == ()
+
+
+def test_a_predecessor_no_source_reaches_describes_nothing_for_continuation() -> None:
+    expanded = _expand(
+        _expansion(_SPAN_FACTS, _assigning(TimeInterval(_MAR, _SEP), {"amount": 300})),
+        _SPAN_FACTS,
+        _STORED,
     )
+    assert (expanded.derived, expanded.current_outputs) == ((), ())
+
+
+def test_an_owned_demanded_row_revised_in_place_is_described_by_its_revision() -> None:
+    expanded = _expand(
+        _expansion(
+            _SPAN_FACTS,
+            _assigning(TimeInterval(_JAN, INFINITY), {"amount": 300}),
+            ownership=_demanding(_OPENED, owned=(INFINITY,)),
+        ),
+        _SPAN_FACTS,
+        _OPENED,
+    )
+    (revision,) = expanded.steps
+    assert isinstance(revision, PlannedTemporalRevision)
+    (output,) = expanded.current_outputs
+    assert (output.coordinates, output.valid_time_coverage, output.emitter) == (
+        _endpoint(INFINITY),
+        TimeInterval(_JAN, INFINITY),
+        revision,
+    )
+    assert output.predecessor_document is _OPENED.document
+    assert output.row.row.attributes[_SPAN_FACTS.view.primary_key.identity] == 1
+    (derivation,) = expanded.derived
+    assert derivation.input_coordinates == _endpoint(INFINITY)
+    assert derivation.rows == (
+        DerivedRow(_endpoint(INFINITY), TimeInterval(_JAN, INFINITY), TimeInterval(_JAN, INFINITY)),
+    )
+
+
+def test_an_unchanged_milestone_describes_nothing_for_continuation() -> None:
+    expanded = _expand(
+        _expansion(
+            _SPAN_FACTS,
+            _assigning(TimeInterval(_JAN, INFINITY), {"amount": 100}),
+            gated=False,
+            ownership=_demanding(_STORED),
+        ),
+        _SPAN_FACTS,
+        _STORED,
+    )
+    assert expanded.steps == ()
+    assert (expanded.derived, expanded.current_outputs) == ((), ())
 
 
 # --------------------------------------------------------------------------- #
