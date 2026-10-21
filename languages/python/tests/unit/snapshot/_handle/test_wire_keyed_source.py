@@ -137,8 +137,8 @@ def test_a_projected_node_enters_the_existing_wire_keyed_source() -> None:
     prepared = source.prepare(_meta(ACCOUNT), "amend", resolved, valid_from=None, until=None)
 
     assert resolved.entity.identity == mm.Account.identity
-    assert prepared.instruction.rows[0] == {"id": 1, "balance": Decimal("125.00")}
-    assert prepared.assigned == {"balance"}
+    assert prepared.rows[0] == {"id": 1, "balance": Decimal("125.00")}
+    assert prepared.assigns
 
 
 def test_the_node_an_insert_answered_names_the_object_its_authority_opened() -> None:
@@ -153,8 +153,8 @@ def test_the_node_an_insert_answered_names_the_object_its_authority_opened() -> 
     prepared = source.prepare(_meta(ACCOUNT), "amend", resolved, valid_from=None, until=None)
 
     assert resolved.entity.identity == mm.Account.identity
-    assert prepared.instruction.rows[0] == {"id": 7, "balance": Decimal("6.00")}
-    assert prepared.assigned == {"balance"}
+    assert prepared.rows[0] == {"id": 7, "balance": Decimal("6.00")}
+    assert prepared.assigns
 
 
 # --------------------------------------------------------------------------- #
@@ -167,8 +167,8 @@ def test_prepare_states_every_authored_member_as_its_literal_assignment() -> Non
 
     prepared = source.prepare(_meta(ACCOUNT), "amend", resolved, valid_from=None, until=None)
 
-    assert prepared.instruction.rows[0] == {"id": 1, "balance": Decimal("125.00")}
-    assert prepared.assigned == {"balance"}
+    assert prepared.rows[0] == {"id": 1, "balance": Decimal("125.00")}
+    assert prepared.assigns
 
 
 def test_a_member_equal_to_what_the_source_published_is_still_assigned() -> None:
@@ -178,8 +178,8 @@ def test_a_member_equal_to_what_the_source_published_is_still_assigned() -> None
 
     prepared = source.prepare(_meta(ACCOUNT), "amend", resolved, valid_from=None, until=None)
 
-    assert prepared.instruction.rows[0] == {"id": 1, "balance": Decimal("100.00")}
-    assert prepared.assigned == {"balance"}
+    assert prepared.rows[0] == {"id": 1, "balance": Decimal("100.00")}
+    assert prepared.assigns
 
 
 def test_a_stated_key_naming_the_published_object_addresses_rather_than_assigns() -> None:
@@ -191,8 +191,8 @@ def test_a_stated_key_naming_the_published_object_addresses_rather_than_assigns(
 
     prepared = source.prepare(_meta(ACCOUNT), "amend", resolved, valid_from=None, until=None)
 
-    assert prepared.instruction.rows[0] == {"id": 1, "balance": Decimal("125.00")}
-    assert prepared.assigned == {"balance"}
+    assert prepared.rows[0] == {"id": 1, "balance": Decimal("125.00")}
+    assert prepared.assigns
 
 
 def test_a_stated_key_naming_another_object_is_refused_while_preparing() -> None:
@@ -211,8 +211,8 @@ def test_a_destructive_verb_authors_its_identity_row_and_assigns_nothing() -> No
 
     prepared = source.prepare(_meta(ACCOUNT), "delete", resolved, valid_from=None, until=None)
 
-    assert prepared.instruction.rows[0] == {"id": 1}
-    assert prepared.assigned == frozenset()
+    assert prepared.rows[0] == {"id": 1}
+    assert not prepared.assigns
 
 
 # --------------------------------------------------------------------------- #

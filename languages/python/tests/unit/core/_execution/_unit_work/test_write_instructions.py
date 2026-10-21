@@ -673,6 +673,61 @@ def test_an_identity_only_patch_is_prepared_as_the_empty_write(prepare: Any) -> 
     assert (prepared.mutation, prepared.assigns) == ("amend", False)
 
 
+@pytest.mark.parametrize("prepare", [wi.prepare_typed_write, wi.prepare_wire_write])
+@pytest.mark.parametrize(
+    ("instruction", "model", "assigns"),
+    [
+        pytest.param(
+            wi.KeyedWriteInstruction("amend", "Account", ({"id": 1},)),
+            "account",
+            False,
+            id="key-only-amend",
+        ),
+        pytest.param(
+            wi.KeyedWriteInstruction("amend", "Account", ({"id": 1, "owner": "Bo"},)),
+            "account",
+            True,
+            id="member-beside-the-key",
+        ),
+        pytest.param(
+            wi.KeyedWriteInstruction("amend", "Account", ({"id": 1}, {"id": 2, "owner": "Bo"})),
+            "account",
+            True,
+            id="one-row-of-several",
+        ),
+        pytest.param(
+            wi.KeyedWriteInstruction("amendUntil", "Position", ({"id": 1},), _I1, _I2),
+            "position",
+            False,
+            id="key-only-bounded-amend",
+        ),
+        pytest.param(
+            wi.KeyedWriteInstruction("delete", "Account", ({"id": 1},)),
+            "account",
+            False,
+            id="delete",
+        ),
+    ],
+)
+def test_a_keyed_write_assigns_when_a_row_states_a_member_beside_the_key(
+    prepare: Any, instruction: wi.KeyedWriteInstruction, model: str, assigns: bool
+) -> None:
+    assert prepare(instruction, _MODELS[model]).assigns is assigns
+
+
+def test_a_keyed_replacement_assigns_the_writable_state_it_completes() -> None:
+    replaced = wi.KeyedWriteInstruction("replace", "WriteTwinLog", ({"id": 5},))
+    assert wi.prepare_typed_write(replaced, _TWIN).assigns is True
+
+
+def test_a_derived_keyed_write_keeps_its_assigns_unless_composition_states_another() -> None:
+    prepared = wi.prepare_typed_write(
+        wi.KeyedWriteInstruction("amend", "Account", ({"id": 1},)), _ACCOUNT
+    )
+    assert wi.derive_keyed_write(prepared, prepared.rows).assigns is False
+    assert wi.derive_keyed_write(prepared, prepared.rows, assigns=True).assigns is True
+
+
 @_BOTH_PRODUCERS
 @pytest.mark.parametrize(
     ("instruction", "model"),

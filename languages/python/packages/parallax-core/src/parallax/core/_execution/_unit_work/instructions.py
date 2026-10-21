@@ -351,11 +351,15 @@ class PreparedKeyedWrite:
     """A keyed mutation over an exact resolved target and owned managed rows.
 
     ``valid_time_window`` is the judged window, ``None`` for a target without
-    Valid Time. Only this module's producers construct one, so holding one
-    means the write was judged admissible against its target.
+    Valid Time. ``assigns`` is whether some row states a member beside the key:
+    a member equal to the value its source published is still stated, so an
+    amendment assigns nothing only when it expresses no member at all. Only this
+    module's producers construct one, so holding one means the write was judged
+    admissible against its target.
     """
 
     mutation: KeyedMutation
+    assigns: bool
     target: EntityMetadata
     rows: tuple[Mapping[str, object], ...]
     valid_time_window: TimeInterval | None
@@ -428,12 +432,14 @@ PreparedWrite = PreparedKeyedWrite | PreparedPredicateWrite
 
 def _prepared_keyed_write(
     mutation: KeyedMutation,
+    assigns: bool,
     target: EntityMetadata,
     rows: tuple[Mapping[str, object], ...],
     valid_time_window: TimeInterval | None,
 ) -> PreparedKeyedWrite:
     prepared = object.__new__(PreparedKeyedWrite)
     object.__setattr__(prepared, "mutation", mutation)
+    object.__setattr__(prepared, "assigns", assigns)
     object.__setattr__(prepared, "target", target)
     object.__setattr__(prepared, "rows", rows)
     object.__setattr__(prepared, "valid_time_window", valid_time_window)
@@ -479,7 +485,11 @@ def target_instruction(prepared: PreparedTargetWrite) -> PreparedKeyedWrite:
     authorized the write; nothing is judged again.
     """
     return _prepared_keyed_write(
-        prepared.mutation, prepared.target, (prepared.row,), prepared.valid_time_window
+        prepared.mutation,
+        prepared.assigns,
+        prepared.target,
+        (prepared.row,),
+        prepared.valid_time_window,
     )
 
 
@@ -488,12 +498,18 @@ def derive_keyed_write(
     rows: tuple[Mapping[str, object], ...],
     *,
     mutation: KeyedMutation | None = None,
+    assigns: bool | None = None,
 ) -> PreparedKeyedWrite:
     """Derive a keyed prepared product while retaining owned values by identity,
-    under ``mutation`` where composition changed the verb over the same window."""
+    under ``mutation`` where composition changed the verb over the same window.
+
+    ``rows`` keep ``prepared``'s ``assigns`` unless ``assigns`` states another:
+    a derivation keeping or splitting its assigning rows keeps it, and one
+    overlaying another write's members states whether either assigns."""
     sealed = tuple(cast("Mapping[str, object]", retain_document_value(row)) for row in rows)
     return _prepared_keyed_write(
         prepared.mutation if mutation is None else mutation,
+        prepared.assigns if assigns is None else assigns,
         prepared.target,
         sealed,
         prepared.valid_time_window,
@@ -1080,7 +1096,7 @@ def _prepare_keyed_write(
         instruction,
         model,
         entity,
-        _member_selection(model, entity),
+        _family_position(model, entity),
         window,
         converter=converter,
         source_access=source_access,
@@ -1462,7 +1478,7 @@ def _prepare_target_payload(
         converter=converter,
         source_access=source_access,
     )
-    return prepared, any(name != key for name in prepared)
+    return prepared, _states_beside(key, (prepared,))
 
 
 def _judge_row_members(
@@ -1608,14 +1624,15 @@ def _prepare_keyed_payload(
     instruction: KeyedWriteInstruction,
     model: AcceptedMetamodel,
     entity: EntityMetadata,
-    selection: inheritance.EntityMemberSelection,
+    position: inheritance.InheritanceEntityView,
     valid_time_window: TimeInterval | None,
     *,
     converter: _LeafConverter,
     source_access: SourceAccess,
     authored_members: Set[str] | None,
 ) -> PreparedKeyedWrite:
-    """Judge a keyed write's rows: subtype shape, members, then values.
+    """Judge a keyed write's rows: subtype shape, members, then values, and
+    whether any of them assigns a member beside the key.
 
     A keyed row key must name a member the target's family makes applicable —
     ANCESTRY-EFFECTIVE, so a concrete subtype's write naming an inherited key is
@@ -1630,6 +1647,8 @@ def _prepare_keyed_payload(
     replacement completes and judges the object's whole writable state exactly
     as a caller-conditioned one does.
     """
+    selection = position.member_selection
+    key = position.primary_key.identity.name
     inserting = instruction.mutation in INSERT_MUTATIONS
     for row in instruction.rows:
         _judge_row_members(
@@ -1641,22 +1660,23 @@ def _prepare_keyed_payload(
             "keyed",
         )
     if instruction.mutation in REPLACE_MUTATIONS:
-        position = _family_position(model, entity)
+        replaced = tuple(
+            _assigned_row(
+                model,
+                entity,
+                position,
+                row,
+                replaces=True,
+                converter=converter,
+                source_access=source_access,
+            )
+            for row in instruction.rows
+        )
         return _prepared_keyed_write(
             instruction.mutation,
+            _states_beside(key, replaced),
             entity,
-            tuple(
-                _assigned_row(
-                    model,
-                    entity,
-                    position,
-                    row,
-                    replaces=True,
-                    converter=converter,
-                    source_access=source_access,
-                )
-                for row in instruction.rows
-            ),
+            replaced,
             valid_time_window,
         )
     transformed = tuple(
@@ -1693,12 +1713,14 @@ def _prepare_keyed_payload(
             mutation=instruction.mutation,
             known_failures=result.failures,
         )
+    rows = tuple(result.value for result in transformed)
     return _prepared_keyed_write(
-        instruction.mutation,
-        entity,
-        tuple(result.value for result in transformed),
-        valid_time_window,
+        instruction.mutation, _states_beside(key, rows), entity, rows, valid_time_window
     )
+
+
+def _states_beside(key: str, rows: tuple[Mapping[str, object], ...]) -> bool:
+    return any(name != key for row in rows for name in row)
 
 
 def _refuse_framework_owned(

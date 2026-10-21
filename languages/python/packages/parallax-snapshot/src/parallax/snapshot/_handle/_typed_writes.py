@@ -6,7 +6,6 @@ from typing import Any, cast
 
 from parallax.core._execution._family import family_view
 from parallax.core._execution._keyed_writes import (
-    PreparedSourceWrite,
     ResolvedKeyedInsert,
     ResolvedKeyedWriteSource,
     TargetRevisionArguments,
@@ -173,7 +172,7 @@ class TypedKeyedWriteSource:
         *,
         valid_from: dt.datetime | None,
         until: dt.datetime | None,
-    ) -> PreparedSourceWrite:
+    ) -> PreparedKeyedWrite:
         """The instruction this value authors.
 
         An amendment authors the value's identity plus every member its edit
@@ -184,10 +183,10 @@ class TypedKeyedWriteSource:
         replacement authors the value's complete writable state, whatever its
         chain touched. A destructive or close verb names no member at all and
         authors its identity row alone, and so does an amendment off a value
-        whose chain touched nothing — the empty set the ingress drops.
+        whose chain touched nothing — the empty write the ingress drops.
         """
-        row, assigned, explicit = self._authored(model, mutation, resolved.entity)
-        instruction = prepared_typed_write(
+        row, explicit = self._authored(model, mutation, resolved.entity)
+        return prepared_typed_write(
             model,
             mutation,
             resolved.entity,
@@ -196,32 +195,27 @@ class TypedKeyedWriteSource:
             until=until,
             members=explicit,
         )
-        return PreparedSourceWrite(instruction=instruction, assigned=assigned)
 
     def _authored(
         self, meta: Metamodel, mutation: KeyedMutation, entity: EntityMetadata
-    ) -> tuple[Mapping[str, object], frozenset[str], Callable[[], Mapping[str, object]] | None]:
-        """The row this value authors, the members it assigns, and the explicit
-        assignments preparation judges into that row once the target and
-        window admit the write."""
+    ) -> tuple[Mapping[str, object], Callable[[], Mapping[str, object]] | None]:
+        """The row this value authors, and the explicit assignments preparation
+        judges into that row once the target and window admit the write."""
         value, codec = self._value, self._codec
         if mutation in REPLACE_MUTATIONS:
-            row = codec.writable_row(value)
-            key = family_view(meta, entity).primary_key.identity.name
-            return row, frozenset(name for name in row if name != key), None
+            return codec.writable_row(value), None
         if mutation not in ASSIGNMENT_MUTATIONS:
-            return codec.identity_row(value), frozenset(), None
+            return codec.identity_row(value), None
         if self._assignments:
             assignments = write_assignments(self._assignments)
             return (
                 codec.identity_row(value),
-                frozenset(assignment.attr.attribute for assignment in self._assignments),
                 lambda: instructions.assigned_members(meta, entity, assignments),
             )
         authored = codec.authored_row(value)
         if authored is None:
-            return codec.identity_row(value), frozenset(), None
-        return authored.row, frozenset(authored.originals), None
+            return codec.identity_row(value), None
+        return authored.row, None
 
 
 class TypedKeyedInsertSource:

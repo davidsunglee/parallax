@@ -1147,7 +1147,7 @@ def _merge_assignment_into_insert(
     for name, value in assigned.rows[0].items():
         if name != key_name:
             merged[name] = value
-    return derive_keyed_write(insert, (merged,))
+    return derive_keyed_write(insert, (merged,), assigns=insert.assigns or assigned.assigns)
 
 
 def _merged_claimed(base: _Claimed, arriving: _Claimed) -> _Claimed:
@@ -1210,10 +1210,13 @@ def _coalesced(
     """``base`` over the ``merged`` row, replacing where either write did: a
     replacement's complete state overlaid by an amendment, or overlaying one,
     is still the complete state a replacement establishes over its window."""
+    assigns = base.assigns or arriving.assigns
     if arriving.mutation not in REPLACE_MUTATIONS or base.mutation in REPLACE_MUTATIONS:
-        return derive_keyed_write(base, (merged,))
+        return derive_keyed_write(base, (merged,), assigns=assigns)
     bounded = base.mutation.endswith("Until")
-    return derive_keyed_write(base, (merged,), mutation="replaceUntil" if bounded else "replace")
+    return derive_keyed_write(
+        base, (merged,), mutation="replaceUntil" if bounded else "replace", assigns=assigns
+    )
 
 
 def _resolve_allocated_openings(opened: Openings, allocated: tuple[object, ...]) -> Openings:
