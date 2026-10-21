@@ -357,8 +357,8 @@ def _settled_statement(
     those statements, and every entry of one object reaches the one statement they
     coalesce into. Two statements addressing one object are refused as firmly as
     none: coalescing leaves an object at most one surviving existing-row write per
-    observed state, and the second would be graded against evidence the first
-    already consumed.
+    observed state, so a second statement would grade a write the buffer never
+    kept.
 
     ``aligned`` collects the statements entries reached, which is what lets the
     caller name a golden addressing an object the buffer never writes.

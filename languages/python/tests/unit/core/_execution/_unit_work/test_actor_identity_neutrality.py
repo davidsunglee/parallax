@@ -86,7 +86,7 @@ def _assert_neutral(
 ) -> None:
     subject_instant = None if tx_instant_literal is None else instant_at(tx_instant_literal)
     login_instant = None if tx_instant_literal is None else instant_at(tx_instant_literal)
-    # One composed buffer, so both plans spend the identical retained evidence.
+    # One composed buffer, so both plans settle against the identical retained evidence.
     buffered = observed_buffer(buffer, model, observations)
     subject_plan = _plan_under(
         _SUBJECT, buffered, model, concurrency=concurrency, tx_instant=subject_instant

@@ -883,10 +883,10 @@ def _temporal_singleton_refusal(entity_name: str, instruction: KeyedWriteInstruc
     """Why a TEMPORAL target refuses ``instruction``'s ROW COUNT, or ``None``
     when this rule has nothing to say about it.
 
-    Each row of a milestone chain closes its own current milestone, consumes its
-    own Temporal Observation, and opens its own successors, and a temporal
-    entity never collapses into a set-based statement (`m-batch-write`), so
-    several rows under one keyed instruction denote several independent chains
+    Each row of a milestone chain closes its own current milestone, settles
+    against its own Temporal Observation, and opens its own successors, and a
+    temporal entity never collapses into a set-based statement (`m-batch-write`),
+    so several rows under one keyed instruction denote several independent chains
     rather than one wider write (`m-unit-work` "A temporal keyed instruction
     carries exactly one row").
     """
@@ -895,8 +895,8 @@ def _temporal_singleton_refusal(entity_name: str, instruction: KeyedWriteInstruc
     return (
         f"{entity_name!r}: a keyed {instruction.mutation!r} on a temporal target carries "
         f"{len(instruction.rows)} rows — a temporal keyed instruction carries exactly one "
-        "(m-unit-work), since each row closes its own milestone, consumes its own "
-        "observation, and chains its own successors; author one instruction per row"
+        "(m-unit-work), since each row closes its own milestone, settles against its "
+        "own observation, and chains its own successors; author one instruction per row"
     )
 
 

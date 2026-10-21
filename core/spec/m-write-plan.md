@@ -319,7 +319,7 @@ An **Object Key** is Entity Identity plus ordered primary-key values and
 deliberately carries no version and no temporal coordinate: it addresses the
 object **across** its states, which is what write coalescing, cancellation, and
 buffered-insert recognition each ask about. An **Object State Key** addresses
-**one** of those states, which is what observation eligibility and consumption
+**one** of those states, which is what observation eligibility and claims
 ask about. Inserts and unversioned Non-Temporal writes observe no state and
 therefore have no Object State Key at all; the absence is the missing arm,
 never a key with an empty coordinate. The two differ in what follows from that

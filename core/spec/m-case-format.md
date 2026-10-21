@@ -2591,8 +2591,8 @@ target's temporal profile and versioning rather than against any row's contents)
 
 - `temporal-keyed-write-multi-row` — a keyed instruction on a **temporal** target
   carries more than one row. Each row of a milestone chain closes its own current
-  milestone, consumes its own Temporal Observation, and opens its own successors,
-  and a temporal target never collapses into a set-based statement
+  milestone, settles against its own Temporal Observation, and opens its own
+  successors, and a temporal target never collapses into a set-based statement
   (`m-batch-write`), so several rows under one instruction denote several
   independent chains rather than one wider write (`m-unit-work` "A temporal keyed
   instruction carries exactly one row"). Refusing is the rule: settling the first

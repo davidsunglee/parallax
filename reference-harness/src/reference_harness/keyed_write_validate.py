@@ -8,7 +8,7 @@ predicate-selected instruction's target and assignments. This one judges the
 
 * ``temporal-keyed-write-multi-row`` — a keyed instruction on a **temporal**
   target carries more than one row. Each row of a milestone chain closes its own
-  current milestone, consumes its own Temporal Observation, and opens its own
+  current milestone, settles against its own Temporal Observation, and opens its own
   successors, and a temporal target never collapses into a set-based statement
   (`m-batch-write`), so several rows under one instruction denote several
   independent chains rather than one wider write. Settling the first row and
@@ -133,6 +133,6 @@ def validate_keyed_write(entity: Entity, instruction: Mapping[str, Any]) -> None
         TEMPORAL_KEYED_WRITE_MULTI_ROW,
         f"a keyed {mutation!r} on the temporal entity {entity.name!r} carries {len(rows)} rows "
         f"— a temporal keyed instruction carries exactly one (m-unit-work), since each row "
-        f"closes its own milestone, consumes its own observation, and chains its own "
+        f"closes its own milestone, settles against its own observation, and chains its own "
         f"successors; author one instruction per row",
     )

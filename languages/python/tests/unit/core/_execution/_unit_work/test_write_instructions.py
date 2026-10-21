@@ -1362,10 +1362,11 @@ def test_a_milestone_verb_is_accepted_on_a_temporal_target(instruction: dict[str
 
 def test_a_plural_keyed_instruction_is_rejected_on_a_temporal_target() -> None:
     # The converse half of the target-profile quadrant above. Each row of a
-    # milestone chain closes its own milestone, consumes its own observation, and
-    # opens its own successors, so several rows under one instruction denote
-    # several chains rather than one wider write (m-unit-work). The refusal
-    # carries a `rule`, since the corpus grades it as a named pre-SQL rejection.
+    # milestone chain closes its own milestone, settles against its own
+    # observation, and opens its own successors, so several rows under one
+    # instruction denote several chains rather than one wider write
+    # (m-unit-work). The refusal carries a `rule`, since the corpus grades it as
+    # a named pre-SQL rejection.
     plural = wi.deserialize(
         {
             "mutation": "amend",
