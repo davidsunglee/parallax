@@ -8,10 +8,10 @@ from parallax.core._execution._family import family_view
 from parallax.core._execution._keyed_writes import (
     ResolvedKeyedInsert,
     ResolvedKeyedWriteSource,
-    TargetRevisionArguments,
     keyed_instruction,
 )
 from parallax.core._execution._publication import SelectedWriteModel
+from parallax.core._execution._transaction._attempt import TargetWriteInput
 from parallax.core._execution._unit_work import instructions
 from parallax.core._execution._unit_work.instructions import (
     ASSIGNMENT_MUTATIONS,
@@ -22,9 +22,7 @@ from parallax.core._execution._unit_work.instructions import (
     PredicateWriteInstruction,
     PreparedKeyedWrite,
     PreparedPredicateWrite,
-    PreparedTargetWrite,
     TargetMutation,
-    TargetWriteInstruction,
     WriteAssignment,
 )
 from parallax.core.entity import AttributeAssignment, EntityRowCodec
@@ -336,28 +334,13 @@ class TypedInstanceTargetWriteAdapter:
     def __init__(self, instance: EntityBase) -> None:
         self._instance = instance
 
-    def prepare(
-        self,
-        write_model: SelectedWriteModel,
-        mutation: TargetMutation,
-        revision_arguments: TargetRevisionArguments,
-        *,
-        valid_from: dt.datetime | None,
-        until: dt.datetime | None,
-    ) -> PreparedTargetWrite:
-        meta = write_model.model.meta
-        entity = metadata_of_instance(meta, self._instance)
-        instruction = TargetWriteInstruction(
-            mutation,
-            entity.identity.canonical,
-            write_model.codec.writable_row(self._instance),
-            revision_arguments.if_version,
-            revision_arguments.if_tx_start,
-            valid_from,
-            until,
-            revision_arguments.stated,
+    def write_input(
+        self, write_model: SelectedWriteModel, mutation: TargetMutation
+    ) -> TargetWriteInput:
+        entity = metadata_of_instance(write_model.model.meta, self._instance)
+        return TargetWriteInput(
+            entity.identity.canonical, write_model.codec.writable_row(self._instance), "typed"
         )
-        return instructions.prepare_typed_write(instruction, meta)
 
 
 class TypedKeyTargetWriteAdapter:
@@ -387,15 +370,9 @@ class TypedKeyTargetWriteAdapter:
         self._assignments = assignments
         self._key = key
 
-    def prepare(
-        self,
-        write_model: SelectedWriteModel,
-        mutation: TargetMutation,
-        revision_arguments: TargetRevisionArguments,
-        *,
-        valid_from: dt.datetime | None,
-        until: dt.datetime | None,
-    ) -> PreparedTargetWrite:
+    def write_input(
+        self, write_model: SelectedWriteModel, mutation: TargetMutation
+    ) -> TargetWriteInput:
         meta = write_model.model.meta
         entity = metadata_of_class(meta, self._entity_class)
         key, assignments = self._key, self._assignments
@@ -410,17 +387,9 @@ class TypedKeyTargetWriteAdapter:
             return instructions.assigned_members(meta, entity, write_assignments(assignments))
 
         key_name = family_view(meta, entity).primary_key.identity.name
-        instruction = TargetWriteInstruction(
-            mutation,
-            entity.identity.canonical,
-            {key_name: key},
-            revision_arguments.if_version,
-            revision_arguments.if_tx_start,
-            valid_from,
-            until,
-            revision_arguments.stated,
+        return TargetWriteInput(
+            entity.identity.canonical, {key_name: key}, "typed", members=members
         )
-        return instructions.prepare_typed_write(instruction, meta, members=members)
 
 
 def metadata_of_class(meta: Metamodel, entity_class: object) -> EntityMetadata:

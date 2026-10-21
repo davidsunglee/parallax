@@ -9,13 +9,16 @@ from parallax.core._execution._family import family_view
 from parallax.core._execution._keyed_writes import (
     ResolvedKeyedInsert,
     ResolvedKeyedWriteSource,
-    TargetRevisionArguments,
     keyed_instruction,
     retained,
 )
 from parallax.core._execution._options import OMITTED, Omitted
 from parallax.core._execution._publication import SelectedWriteModel
-from parallax.core._execution._transaction._attempt import TxnAttempt, WriteVerb
+from parallax.core._execution._transaction._attempt import (
+    TargetWriteInput,
+    TxnAttempt,
+    WriteVerb,
+)
 from parallax.core._execution._unit_work import instructions
 from parallax.core._execution._unit_work.instructions import (
     AMEND_MUTATIONS,
@@ -26,9 +29,7 @@ from parallax.core._execution._unit_work.instructions import (
     PredicateWriteInstruction,
     PreparedKeyedWrite,
     PreparedPredicateWrite,
-    PreparedTargetWrite,
     TargetMutation,
-    TargetWriteInstruction,
     WriteAssignment,
 )
 from parallax.core.execution_lifecycle._activity import refuse_reentry
@@ -260,14 +261,14 @@ class WireTargetWriteAdapter:
     must be omitted when a published node states the data. Its primary-key
     entries name the object and are no assignment; every other entry is
     assigned, a framework-owned one refused, and a destructive write states
-    none. The revision the attempt hands :meth:`prepare` is the write's whole
-    condition: nothing ``document`` or ``target`` carries, and no read's
-    evidence, stands in for it.
+    none. The revision the attempt states is the write's whole condition:
+    nothing ``document`` or ``target`` carries, and no read's evidence, stands
+    in for it.
 
-    Inert when constructed. Once :meth:`prepare` is asked, the addressing and
-    the document's own shape are judged first, and constructing the canonical
-    instruction refuses a reserved observation key; preparation then judges
-    the target, the window, the revision, and the payload.
+    Inert when constructed. Once :meth:`write_input` is asked, the addressing
+    and the document's own shape are judged; the attempt's canonical
+    instruction then refuses a reserved observation key, and preparation
+    judges the target, the window, the revision, and the payload.
     """
 
     __slots__ = ("_document", "_target")
@@ -276,15 +277,9 @@ class WireTargetWriteAdapter:
         self._target = target
         self._document = document
 
-    def prepare(
-        self,
-        write_model: SelectedWriteModel,
-        mutation: TargetMutation,
-        revision_arguments: TargetRevisionArguments,
-        *,
-        valid_from: dt.datetime | None,
-        until: dt.datetime | None,
-    ) -> PreparedTargetWrite:
+    def write_input(
+        self, write_model: SelectedWriteModel, mutation: TargetMutation
+    ) -> TargetWriteInput:
         meta = write_model.model.meta
         target, document = self._target, self._document
         if isinstance(target, str):
@@ -311,17 +306,7 @@ class WireTargetWriteAdapter:
                 + (" or a node Parallax published" if mutation in REPLACE_MUTATIONS else "")
                 + f", and {type(target).__name__} is neither"
             )
-        instruction = TargetWriteInstruction(
-            mutation,
-            entity_name,
-            row,
-            revision_arguments.if_version,
-            revision_arguments.if_tx_start,
-            valid_from,
-            until,
-            revision_arguments.stated,
-        )
-        return instructions.prepare_wire_write(instruction, meta, authored_members=row.keys())
+        return TargetWriteInput(entity_name, row, "wire", authored_members=row.keys())
 
 
 def _target_document(mutation: TargetMutation) -> str:

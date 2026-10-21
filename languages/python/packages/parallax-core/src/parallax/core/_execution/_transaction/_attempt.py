@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Set
+from dataclasses import dataclass
 from typing import Any, Literal, Protocol, Self, cast
 
 from parallax.core import deep_fetch
@@ -10,7 +11,6 @@ from parallax.core._execution._keyed_writes import (
     KeyedInsertSource,
     KeyedWriteSource,
     OpenedKeyedWrite,
-    TargetRevisionArguments,
     keyed_insert,
     keyed_write,
     stated_valid_from,
@@ -40,8 +40,10 @@ from parallax.core._execution._unit_work.instructions import (
     KeyedMutation,
     PredicateMutation,
     PreparedPredicateWrite,
-    PreparedTargetWrite,
     TargetMutation,
+    TargetWriteInstruction,
+    prepare_typed_write,
+    prepare_wire_write,
 )
 from parallax.core._execution._unit_work.retain import ReadEvidence
 from parallax.core._execution._unit_work.strategy import ActorIdentity
@@ -103,6 +105,7 @@ __all__ = [
     "PredicateWriteAdapter",
     "ReadOnlyTxnAttempt",
     "TargetWriteAdapter",
+    "TargetWriteInput",
     "TxnAttempt",
     "WriteVerb",
 ]
@@ -129,29 +132,35 @@ WriteVerb = Literal["amend", "replace", "delete", "terminate"]
 selects the bounded form."""
 
 
+@dataclass(frozen=True, slots=True)
+class TargetWriteInput:
+    """What a representation answers about one target write: the Entity
+    spelling, the row naming the object beside the members it states, which
+    leaf converter judges its values, and the members preparation judges as
+    assignments — named outright, or produced once the write is admitted.
+    The attempt states every other part of the canonical instruction."""
+
+    entity: str
+    row: Mapping[str, object]
+    representation: Literal["typed", "wire"]
+    authored_members: Set[str] | None = None
+    members: Callable[[], Mapping[str, object]] | None = None
+
+
 class TargetWriteAdapter(Protocol):
-    """A representation's target write, inert until the
-    attempt asks for it.
+    """A representation's target write, inert until the attempt asks for it.
 
     Constructed around the caller's original addressed input, judging nothing,
     so no representation refusal precedes the attempt's re-entry and
-    stated-start checks. :meth:`prepare` is asked once, after both, with the
-    caller's revision keywords encoded but unjudged: it captures that input,
-    authors the canonical instruction under ``revision_arguments``, and returns
-    what the one write preparation produced for it, borrowing ``write_model``
-    for the call alone. No source evidence, pin, provenance, or insertion
+    stated-start checks. :meth:`write_input` is asked once, after both: it
+    captures that input and judges its shape, borrowing ``write_model`` for
+    the call alone. No source evidence, pin, provenance, or insertion
     authority admits the write.
     """
 
-    def prepare(
-        self,
-        write_model: SelectedWriteModel,
-        mutation: TargetMutation,
-        revision_arguments: TargetRevisionArguments,
-        *,
-        valid_from: dt.datetime | None,
-        until: dt.datetime | None,
-    ) -> PreparedTargetWrite: ...
+    def write_input(
+        self, write_model: SelectedWriteModel, mutation: TargetMutation
+    ) -> TargetWriteInput: ...
 
 
 def _window_mutation[M: KeyedMutation](
@@ -617,18 +626,37 @@ class TxnAttempt(_TxnAttemptBase):
         Concurrency Strategy needs participation.
 
         Re-entry is refused first, then a stated start judged, and only then is
-        ``adapter`` asked to prepare the write under this attempt's write
-        projection: the target, the window, the revision, and the payload are
-        preparation's to judge. A stated ``until``, ``None`` included, selects
-        the bounded verb, and every revision keyword stated, ``None`` included,
-        reaches preparation as stated.
+        ``adapter`` asked for its input under this attempt's write projection.
+        The canonical instruction states that input under the caller's
+        revision and window, and the target, the window, the revision, and the
+        payload are preparation's to judge. A stated ``until``, ``None``
+        included, selects the bounded verb, and every revision keyword stated,
+        ``None`` included, reaches preparation as stated.
         """
         refuse_reentry(self._lifecycle)
         start = stated_valid_from(valid_from)
         mutation, bound = _bounded_mutation(verb, until)
         revision = target_revision_arguments(version=version, tx_start=tx_start)
-        prepared = adapter.prepare(self._write, mutation, revision, valid_from=start, until=bound)
-        self._uow.buffer_target(prepared)
+        write = adapter.write_input(self._write, mutation)
+        instruction = TargetWriteInstruction(
+            mutation,
+            write.entity,
+            write.row,
+            revision.if_version,
+            revision.if_tx_start,
+            start,
+            bound,
+            revision.stated,
+        )
+        prepare = prepare_typed_write if write.representation == "typed" else prepare_wire_write
+        self._uow.buffer_target(
+            prepare(
+                instruction,
+                self._write.model.meta,
+                authored_members=write.authored_members,
+                members=write.members,
+            )
+        )
 
     # Row acquisition.
 
