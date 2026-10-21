@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Final
 
-from parallax.core._execution._family import family_view
 from parallax.core._execution._keyed_writes import (
     Provenance,
     ResolvedKeyedInsert,
@@ -12,8 +11,7 @@ from parallax.core._execution._keyed_writes import (
 from parallax.core._execution._unit_work.retain import KeyedWriteRefusalAdvice
 from parallax.core.entity import Entity as EntityBase
 from parallax.core.entity import lifecycle_state_of
-from parallax.core.metamodel import EntityMetadata, Metamodel
-from parallax.core.write_plan import ObjectKey
+from parallax.core.metamodel import EntityMetadata
 from parallax.snapshot._inspection import (
     RootConformance,
     SnapshotNodeState,
@@ -31,7 +29,6 @@ from parallax.snapshot._publication._wire import (
 __all__ = [
     "TYPED_KEYED_WRITE_ADVICE",
     "WIRE_KEYED_WRITE_ADVICE",
-    "object_key_from_row",
     "resolve_keyed_insert",
     "resolve_keyed_write_source",
 ]
@@ -132,23 +129,6 @@ def resolve_keyed_insert(
         provenance="this" if stored or authoring_of(value) is not None else "none",
         advice=WIRE_KEYED_WRITE_ADVICE,
     )
-
-
-def object_key_from_row(
-    entity: EntityMetadata, model: Metamodel, row: Mapping[str, object]
-) -> ObjectKey:
-    """The object an authored ``row`` of ``entity`` addresses — the same
-    :class:`~parallax.core.write_plan.ObjectKey` Read Evidence names its object
-    by and `unit_work.object_key` computes at flush, so a verb-time refusal and
-    the flush-time settle never name the object two different ways.
-
-    The key keeps the row's own concrete Entity Identity, never
-    family-normalized, and pairs the family key's canonical attribute name with
-    the value ``row`` states for it. ``row`` comes from the representation's
-    own authoring, so this neither acquires nor re-encodes one.
-    """
-    name = family_view(model, entity).primary_key.identity.name
-    return ObjectKey(entity.identity, ((name, row[name]),))
 
 
 def _typed_provenance(value: EntityBase, state: SnapshotNodeState | None) -> Provenance:
