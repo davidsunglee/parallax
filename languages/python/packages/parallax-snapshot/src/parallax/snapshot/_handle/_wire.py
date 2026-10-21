@@ -4,7 +4,6 @@ import datetime as dt
 from collections.abc import Mapping
 from typing import Any
 
-from parallax.core._execution._keyed_writes import window_mutation
 from parallax.core._execution._options import OMITTED, Omitted
 from parallax.core._execution._read_policy import ReadQuery
 from parallax.core._execution._scope import ExecutionScope
@@ -193,15 +192,7 @@ class WireTransactionView(WireDatabaseView):
         a stated bound is a bound whatever its value — ``None`` is refused — and
         a target with no Valid Time takes neither.
         """
-        mutation, bound = window_mutation("insert", "insertUntil", until)
-        return wire_insert(
-            self._attempt,
-            entity_name,
-            data,
-            mutation=mutation,
-            valid_from=valid_from,
-            until=bound,
-        )
+        return wire_insert(self._attempt, entity_name, data, valid_from=valid_from, until=until)
 
     def amend(
         self,
@@ -226,8 +217,7 @@ class WireTransactionView(WireDatabaseView):
         exactly as ``tx.amend``'s does, so the method takes no condition or
         ``valid_from``; ``until`` follows :meth:`insert`'s rules.
         """
-        mutation, bound = window_mutation("amend", "amendUntil", until)
-        wire_keyed_write(self._attempt, mutation, source, changes, until=bound)
+        wire_keyed_write(self._attempt, "amend", source, changes, until=until)
 
     def amend_if(
         self,
@@ -282,8 +272,7 @@ class WireTransactionView(WireDatabaseView):
         method takes no condition or ``valid_from``; ``until`` follows
         :meth:`insert`'s rules.
         """
-        mutation, bound = window_mutation("replace", "replaceUntil", until)
-        wire_keyed_write(self._attempt, mutation, source, data, until=bound)
+        wire_keyed_write(self._attempt, "replace", source, data, until=until)
 
     def replace_if(
         self,
@@ -390,8 +379,7 @@ class WireTransactionView(WireDatabaseView):
         as ``tx.terminate`` does: a Transaction-Time-Only milestone closes, and a
         Bitemporal target's current coverage ends from where ``observed`` was
         read, through infinity or up to the exclusive ``until``."""
-        mutation, bound = window_mutation("terminate", "terminateUntil", until)
-        wire_keyed_write(self._attempt, mutation, observed, until=bound)
+        wire_keyed_write(self._attempt, "terminate", observed, until=until)
 
     def amend_where(self, target: WirePredicateTarget, changes: WireChanges, /) -> int:
         """Amend every row ``target`` selects now, in one readless statement,

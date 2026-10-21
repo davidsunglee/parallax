@@ -16,7 +16,7 @@ from parallax.core._execution._keyed_writes import (
 )
 from parallax.core._execution._options import OMITTED, Omitted
 from parallax.core._execution._publication import SelectedWriteModel
-from parallax.core._execution._transaction._attempt import TxnAttempt
+from parallax.core._execution._transaction._attempt import TxnAttempt, WriteVerb
 from parallax.core._execution._unit_work import instructions
 from parallax.core._execution._unit_work.instructions import (
     AMEND_MUTATIONS,
@@ -91,9 +91,8 @@ def wire_insert(
     entity_name: str,
     data: Mapping[str, object],
     *,
-    mutation: KeyedMutation,
     valid_from: dt.datetime | Omitted = OMITTED,
-    until: dt.datetime | None = None,
+    until: dt.datetime | Omitted = OMITTED,
 ) -> WireEntity:
     """Buffer a Wire ``insert`` / ``insertUntil`` of ``data`` under
     ``entity_name``, and answer the frozen node it opened.
@@ -131,21 +130,18 @@ def wire_insert(
     and after a flush, and compose with the insert while it is pending.
     """
     opened = attempt.keyed_insert(
-        WireKeyedInsertSource(entity_name, data),
-        mutation,
-        valid_from=valid_from,
-        until=until,
+        WireKeyedInsertSource(entity_name, data), valid_from=valid_from, until=until
     )
     return opened_wire_entity(attempt.model, opened.identity, opened.row, opened.authority)
 
 
 def wire_keyed_write(
     attempt: TxnAttempt,
-    mutation: KeyedMutation,
+    verb: WriteVerb,
     observed: object,
     changes: WireChanges | Omitted | None = None,
     *,
-    until: dt.datetime | None = None,
+    until: dt.datetime | Omitted = OMITTED,
 ) -> None:
     """Buffer a Wire keyed write against the state ``observed`` came from.
 
@@ -172,7 +168,7 @@ def wire_keyed_write(
     every member it does name is assigned, whatever value the source published
     for it.
     """
-    attempt.keyed_write(WireKeyedWriteSource(observed, changes), mutation, until=until)
+    attempt.keyed_write(WireKeyedWriteSource(observed, changes), verb, until=until)
 
 
 class WirePredicateWriteAdapter:

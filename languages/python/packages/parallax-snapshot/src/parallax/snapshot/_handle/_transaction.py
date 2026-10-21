@@ -3,7 +3,6 @@ from __future__ import annotations
 import datetime as dt
 from typing import Any
 
-from parallax.core._execution._keyed_writes import window_mutation
 from parallax.core._execution._options import OMITTED, Omitted, ReadOnlyTxnOptions, TxnOptions
 from parallax.core._execution._transaction._attempt import ReadOnlyTxnAttempt, TxnAttempt
 from parallax.core.entity import AttributeAssignment, EntityRowCodec
@@ -148,12 +147,8 @@ class TxnContext:
         with no Valid Time refuses one outright. The window is judged at THIS
         call, before any buffering. Both bounds come from these arguments, never
         from instance fields: an As-Of Axis endpoint is framework-owned."""
-        mutation, bound = window_mutation("insert", "insertUntil", until)
         opened = self._attempt.keyed_insert(
-            TypedKeyedInsertSource(instance, self._codec),
-            mutation,
-            valid_from=valid_from,
-            until=bound,
+            TypedKeyedInsertSource(instance, self._codec), valid_from=valid_from, until=until
         )
         bind_insertion(instance, opened.authority)
 
@@ -194,9 +189,8 @@ class TxnContext:
         read at Valid-Time ``LATEST`` names no start and is refused. ``until``
         follows :meth:`insert`'s rules, and is judged at THIS call even when
         nothing is assigned."""
-        mutation, bound = window_mutation("amend", "amendUntil", until)
         self._attempt.keyed_write(
-            TypedKeyedWriteSource(source, self._codec, assignments), mutation, until=bound
+            TypedKeyedWriteSource(source, self._codec, assignments), "amend", until=until
         )
 
     def amend_if[E: EntityBase](
@@ -267,8 +261,9 @@ class TxnContext:
         scheduled termination included, reading the later coverage its window
         reaches at flush. Failed authority never licenses it to open coverage:
         a replacement is no upsert. ``until`` follows :meth:`insert`'s rules."""
-        mutation, bound = window_mutation("replace", "replaceUntil", until)
-        self._attempt.keyed_write(TypedKeyedWriteSource(source, self._codec), mutation, until=bound)
+        self._attempt.keyed_write(
+            TypedKeyedWriteSource(source, self._codec), "replace", until=until
+        )
 
     def replace_if(
         self,
@@ -394,9 +389,8 @@ class TxnContext:
         every interval of current coverage from there — through infinity when
         ``until`` is omitted, or up to the exclusive ``until``; history and
         coverage outside that window survive."""
-        mutation, bound = window_mutation("terminate", "terminateUntil", until)
         self._attempt.keyed_write(
-            TypedKeyedWriteSource(node_or_instance, self._codec), mutation, until=bound
+            TypedKeyedWriteSource(node_or_instance, self._codec), "terminate", until=until
         )
 
     def find[S](self, query: ObjectQuery[Any, S]) -> Snapshot[S]:
