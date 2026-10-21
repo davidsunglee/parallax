@@ -1746,10 +1746,11 @@ refused before any database: a submission's `on` resolves as *Settling against a
 grouped find* states, every `then.units` label names a group, a flush failure is
 reported where the group last flushes, and one group's submissions state one
 Transaction Instant. A find flushes what its group has pending, and so does a
-predicate submission, which then executes in that flush; so neither an
-already-claimed refusal's earlier write nor a failing flush's submissions are
-separated from it by either, and a flush failure a predicate submission's flush
-reports is at that submission's step. For a committed group the independent evidence that the
+predicate submission that writes something, which then executes in that flush;
+so neither an already-claimed refusal's earlier write nor a failing flush's
+submissions are separated from it by either, and a flush failure a predicate
+submission's flush reports is at that submission's step. An empty predicate
+submission opens no flush (`m-batch-write`) and separates nothing. For a committed group the independent evidence that the
 stated rows are right is each language runner's real-database run against them.
 
 An adapter runs a state-graded case through its public verbs alone and reports
