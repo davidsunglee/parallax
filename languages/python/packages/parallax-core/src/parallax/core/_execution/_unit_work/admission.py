@@ -1,11 +1,9 @@
 from __future__ import annotations
 
 import datetime as dt
-import heapq
 from collections.abc import Callable, Hashable, Iterator, Mapping, Sequence
 from dataclasses import replace
 from enum import Enum
-from operator import attrgetter
 from typing import Final, Literal, cast, final
 
 from parallax.core import inheritance, temporal_read
@@ -30,7 +28,6 @@ from parallax.core._execution._unit_work.instructions import (
     INSERT_MUTATIONS,
     REPLACE_MUTATIONS,
     PreparedKeyedWrite,
-    PreparedPredicateWrite,
     derive_keyed_write,
 )
 from parallax.core._execution._unit_work.retain import (
@@ -42,11 +39,9 @@ from parallax.core._execution._unit_work.retain import (
 from parallax.core._execution._unit_work.write_items import (
     AdmittedWrite,
     AfterRemoval,
-    ChainedTemporalWrite,
     ClaimedKeyedWrite,
     CoalescedTemporalWrite,
     CoalescedWrite,
-    FollowingKeyedWrite,
     InsertionKeyedWrite,
     ObjectClaimedWrite,
     ObservedKeyedWrite,
@@ -56,7 +51,6 @@ from parallax.core._execution._unit_work.write_items import (
     TemporalKeyedWrite,
     buffered_claim_scope,
     buffered_object_key,
-    chained_temporal_write,
     composed_temporal_write,
     temporal_contribution,
 )
@@ -219,17 +213,6 @@ class WriteAdmission:
       coalesce, as a non-temporal pair does. Writes of the object over disjoint
       windows stay separate operations inside it, each with its own condition.
 
-    A readless predicate write is an ordering barrier no write composes across:
-    a write of an object whose insert stands before one is a write of the row
-    that insert opens, a temporal object's writes on each side of one compose
-    apart
-    (:class:`~parallax.core._execution._unit_work.write_items.ChainedTemporalWrite`),
-    and a Non-Temporal write of a scope whose earlier write stands before one
-    follows it as a write of its own
-    (:class:`~parallax.core._execution._unit_work.write_items.FollowingKeyedWrite`).
-    Admission still judges each arriving write against every pending write of
-    its object.
-
     Planning borrows :meth:`composed_writes` and :attr:`ownership` without
     changing either; only a successfully planned buffer is drained
     (:meth:`drain_planned`). The insertions, the temporal rows the attempt's
@@ -248,7 +231,6 @@ class WriteAdmission:
         "_inserted_version",
         "_linked",
         "_ownership",
-        "_regions",
         "_removals",
         "_temporal",
         "_temporal_facet",
@@ -288,9 +270,6 @@ class WriteAdmission:
         # The scope each claimed object is claimed at, built by the first
         # question that needs it and kept current from then on.
         self._claimed_objects: dict[ObjectKey, Hashable] | None = None
-        # Where the latest barrier stands and what the regions before it hold —
-        # allocated by the first barrier, since most buffers carry none.
-        self._regions: _Regions | None = None
 
     def __bool__(self) -> bool:
         """Whether the buffer has anything for a flush to process —
@@ -305,11 +284,10 @@ class WriteAdmission:
 
     def concluding_ownership(self) -> TemporalWriteOwnership:
         """The live ownership as the pre-commit flush plans under it: no
-        later submission follows that flush, so only an object an earlier
-        barrier region writes, which a later region's composition continues
-        from within it, demands what its writes leave."""
-        followed = frozenset(() if self._regions is None else self._regions.temporal)
-        return _Concluding(self._ownership, followed)
+        later submission follows that flush, and no write of it continues from
+        what another of its writes leaves, so nothing its writes leave is
+        demanded."""
+        return _Concluding(self._ownership)
 
     def admit(
         self,
@@ -340,12 +318,8 @@ class WriteAdmission:
         """
         if isinstance(item, TargetKeyedWrite):
             self._admit_target(item, confirm_target)
-        elif isinstance(item, PreparedPredicateWrite):
-            self._seal()
-            self._writes.append(item)
-        else:
-            return self._admit_keyed(item, insertion_advice)
-        return BufferOutcome.BUFFERED
+            return BufferOutcome.BUFFERED
+        return self._admit_keyed(item, insertion_advice)
 
     def _admit_keyed(
         self,
@@ -383,7 +357,6 @@ class WriteAdmission:
         marked as such."""
         written: list[CoalescedWrite] = []
         after_removal = self._after_removal or ()
-        follows = {} if self._regions is None else self._regions.follows
         for index, item in enumerate(self._writes):
             if item is None:
                 continue
@@ -391,15 +364,6 @@ class WriteAdmission:
                 # An insert is a bare instruction, or an opening composed over it.
                 assert isinstance(item, PreparedKeyedWrite | PendingOpening)
                 written.append(AfterRemoval(item))
-                continue
-            if isinstance(item, PendingOpening):
-                written.append(item)
-                continue
-            advances = follows.get(index)
-            if advances is not None and isinstance(
-                item, ObservedKeyedWrite | InsertionKeyedWrite | TargetKeyedWrite
-            ):
-                written.append(FollowingKeyedWrite(item, advances))
             else:
                 written.append(item)
         return tuple(written)
@@ -671,14 +635,8 @@ class WriteAdmission:
 
     def _foldable(self, record: InsertionRecord) -> bool:
         """Whether a write of ``record``'s object composes with its
-        still-pending insert: one is pending, and no barrier stands between
-        them."""
-        position = record.pending_position
-        return (
-            record.pending_state == "opening"
-            and position is not None
-            and not self._closed(position)
-        )
+        still-pending insert, which is whether one is pending."""
+        return record.pending_state == "opening" and record.pending_position is not None
 
     def _opening_admits(self, record: InsertionRecord, instruction: PreparedKeyedWrite) -> bool:
         """Whether ``instruction`` composes with the still-pending opening of
@@ -766,12 +724,6 @@ class WriteAdmission:
             if self._removals is None:
                 self._removals = set()
             self._removals.add(key)
-            if record is not None and record.pending_state == "opening":
-                # A barrier kept this removal after the object's pending
-                # insert, which therefore executes and opens the row this one
-                # removes.
-                record.pending_state = "before_removal"
-                record.stored_count = 1
         if temporal:
             assert isinstance(item, ObservedKeyedWrite | InsertionKeyedWrite | TargetKeyedWrite)
             self._add_temporal(item, key)
@@ -802,16 +754,6 @@ class WriteAdmission:
                 self._conditioned = {}
             self._conditioned[key] = scope
         index = self._claims.get(scope)
-        if index is not None and self._closed(index) and verdict in ("coalesce", "supersede"):
-            # A barrier stands between the two: each keeps its own side, and
-            # this one starts from the state the earlier one leaves.
-            regions = self._regions
-            assert regions is not None  # a closed region exists only behind a barrier
-            writes.append(item)
-            position = len(writes) - 1
-            regions.follows[position] = regions.follows.get(index, 0) + 1
-            self._claim(scope, position, key)
-            return
         if verdict == "coalesce":
             assert index is not None  # an unclaimed scope admits
             base = writes[index]
@@ -837,13 +779,7 @@ class WriteAdmission:
         index = self._temporal.get(key)
         held = None if index is None else writes[index]
         if index is None or held is None:
-            sealed = None if self._regions is None else self._regions.temporal.get(key)
-            if sealed is None:
-                writes.append(item)
-            else:
-                # An earlier region writes the object: this composition starts
-                # from what that one leaves.
-                writes.append(chained_temporal_write(item, self._key_name(item.instruction.target)))
+            writes.append(item)
             self._temporal[key] = len(writes) - 1
             return
         assert isinstance(held, _TEMPORAL)
@@ -868,18 +804,12 @@ class WriteAdmission:
                     writes.append(_with_composed_authority(item, held, item.instruction))
                     self._temporal[key] = len(writes) - 1
                     return
-        key_name = self._key_name(item.instruction.target)
-        composed = composed_temporal_write(held, item, key_name)
-        writes[index] = (
-            chained_temporal_write(composed, key_name)
-            if isinstance(held, ChainedTemporalWrite)
-            else composed
-        )
+        writes[index] = composed_temporal_write(held, item, self._key_name(item.instruction.target))
 
     def _admits_temporal(self, item: TemporalKeyedWrite, key: ObjectKey) -> bool:
         """Whether ``item``, a write of temporal object ``key`` against its
         existing coverage, composes with that object's pending writes — every
-        one of them, in every barrier region, overwritten ones included.
+        one of them, overwritten ones included.
 
         Observed writes and those an insertion authorized compose with each
         other by the window algebra
@@ -1032,19 +962,12 @@ class WriteAdmission:
         """Whether the pending writes of ``key`` remove everything its
         admissions opened, so a further insertion of it is a first opening.
 
-        An insertion still pending is removed whole only from beyond a barrier,
-        since a removal beside it cancels it instead. A Non-Temporal or
-        Transaction-Time-Only removal there already counts the insertion as
-        stored, so only a Bitemporal opening is judged here: the writes buffered
-        after it must destroy all the coverage it opens.
+        An insertion still pending is never removed whole: a removal beside it
+        folds into it and cancels it instead.
         """
-        if record.pending_state != "opening":
-            return record.has_stored_coverage and self._removes_stored(key, record)
-        window = record.valid_time_window
-        position = record.pending_position
-        if window is None or position is None or self._foldable(record):
+        if record.pending_state == "opening":
             return False
-        return window.first_uncovered(self._destroyed_coverage(key, after=position)) is None
+        return record.has_stored_coverage and self._removes_stored(key, record)
 
     def _removes_stored(self, key: ObjectKey, record: InsertionRecord) -> bool:
         """Whether the pending writes of ``key`` remove everything its admitted
@@ -1061,58 +984,21 @@ class WriteAdmission:
         window = self._ownership.removal_window(record)
         return window.first_uncovered(self._destroyed_coverage(key)) is None
 
-    def _destroyed_coverage(self, key: ObjectKey, *, after: int = -1) -> Iterator[TimeInterval]:
+    def _destroyed_coverage(self, key: ObjectKey) -> Iterator[TimeInterval]:
         """The Valid-Time intervals the pending writes of Bitemporal object
-        ``key`` buffered after position ``after`` destroy, ordered by start.
-
-        Each barrier region's composition yields its own destroyed segments,
-        already ordered, and a lone destructive write its prepared window.
-        Regions stand in authored order rather than temporal order, so their
-        streams are merged by start, holding one interval per region rather
-        than copying any. Duplicate and overlapping intervals may remain. The
-        view reads the buffer as it stands, so it is consumed before the buffer
+        ``key`` destroy, ordered by start: its composition's destroyed
+        segments, or a lone destructive write's prepared window. The view
+        reads the buffer as it stands, so it is consumed before the buffer
         changes.
         """
-        streams = [_destroyed(held) for held in self._compositions(key, after)]
-        if len(streams) == 1:
-            return streams[0]
-        return heapq.merge(*streams, key=_START)
+        return (interval for held in self._compositions(key) for interval in _destroyed(held))
 
-    def _compositions(self, key: ObjectKey, after: int = -1) -> tuple[_PendingTemporal, ...]:
-        """Every pending composition of temporal object ``key`` buffered after
-        position ``after``, in authored order, one per barrier region that
-        writes it."""
+    def _compositions(self, key: ObjectKey) -> tuple[_PendingTemporal, ...]:
+        """The pending composition of temporal object ``key``, or none."""
         index = self._temporal.get(key)
         held = None if index is None else self._writes[index]
         assert held is None or isinstance(held, _TEMPORAL)
-        # The current region follows every position a caller asks after.
-        assert index is None or index > after
-        sealed = None if self._regions is None else self._regions.temporal.get(key)
-        if sealed is None:
-            return () if held is None else (held,)
-        writes = self._writes
-        earlier = tuple(
-            cast("_PendingTemporal", writes[position]) for position in sealed if position > after
-        )
-        return earlier if held is None else (*earlier, held)
-
-    def _seal(self) -> None:
-        """Close the current barrier region at the barrier about to be
-        appended: no later write combines with a write before it."""
-        regions = self._regions
-        if regions is None:
-            regions = self._regions = _Regions()
-        regions.start = len(self._writes)
-        temporal = self._temporal
-        for key, index in temporal.items():
-            regions.temporal.setdefault(key, []).append(index)
-        temporal.clear()
-
-    def _closed(self, index: int) -> bool:
-        """Whether the pending write at ``index`` stands before the latest
-        barrier."""
-        regions = self._regions
-        return regions is not None and index < regions.start
+        return () if held is None else (held,)
 
     def _is_temporal(self, item: AdmittedWrite) -> bool:
         """Whether ``item`` is a write of a temporal object against its existing
@@ -1140,19 +1026,17 @@ class WriteAdmission:
         self._linked = None
         self._conditioned = None
         self._claimed_objects = None
-        self._regions = None
 
 
 @final
 class _Concluding:
-    """``ownership`` answering every question as it does, except that only
-    the predecessors of ``followed`` objects are demanded."""
+    """``ownership`` answering every question as it does, except that no
+    predecessor is demanded."""
 
-    __slots__ = ("_followed", "_ownership")
+    __slots__ = ("_ownership",)
 
-    def __init__(self, ownership: TemporalWriteOwnership, followed: frozenset[ObjectKey]) -> None:
+    def __init__(self, ownership: TemporalWriteOwnership) -> None:
         self._ownership = ownership
-        self._followed = followed
 
     def owns(self, coordinates: TemporalRowCoordinates, /) -> bool:
         return self._ownership.owns(coordinates)
@@ -1168,9 +1052,8 @@ class _Concluding:
     def demanded(
         self, predecessor: ObjectStateKey, coordinates: TemporalRowCoordinates | None, /
     ) -> bool:
-        return predecessor.object in self._followed and self._ownership.demanded(
-            predecessor, coordinates
-        )
+        del predecessor, coordinates
+        return False
 
     def continues(self, observation: Hashable, pin: dt.datetime | None, /) -> bool | None:
         return self._ownership.continues(observation, pin)
@@ -1179,24 +1062,6 @@ class _Concluding:
         self, target: ObjectKey, valid_time_window: TimeInterval | None, /
     ) -> Sequence[PredecessorRow]:
         return self._ownership.current_rows(target, valid_time_window)
-
-
-class _Regions:
-    """The barrier regions of a buffer that holds a readless predicate write.
-
-    ``start`` is the position of the latest barrier: every write before it
-    stands in a closed region. ``temporal`` holds where each temporal object's
-    compositions in closed regions stand, in order, and ``follows`` how many
-    earlier writes of its scope each Non-Temporal write a barrier kept apart
-    follows.
-    """
-
-    __slots__ = ("follows", "start", "temporal")
-
-    def __init__(self) -> None:
-        self.start = 0
-        self.temporal: dict[ObjectKey, list[int]] = {}
-        self.follows: dict[int, int] = {}
 
 
 def _note_scope(objects: dict[ObjectKey, Hashable], key: ObjectKey, scope: ClaimScope) -> None:
@@ -1253,9 +1118,6 @@ def _destroyed(held: _PendingTemporal) -> Iterator[TimeInterval]:
         window = instruction.valid_time_window
         assert window is not None  # only a Bitemporal object's coverage is asked for
         yield window
-
-
-_START: Final = attrgetter("start")
 
 
 def _targeted(held: _PendingTemporal) -> bool:

@@ -10,8 +10,8 @@ SAME production wiring ``parallax.core._execution._planning.build_write_planner`
 builds — asserting complete ``PlannedStep`` shapes and plan-wide ordering,
 never a private stage function: same-transaction coalescing (insert-then-update
 in place per temporal flavor; insert-then-delete cancellation), dependency
-ordering over the descriptor graph and the readless-predicate-write barriers
-that partition it, empty-change-set elision, batching (`m-batch-write`),
+ordering over the descriptor graph, empty-change-set elision, batching
+(`m-batch-write`),
 optimistic-mode gates, and temporal in-place adjacency.
 """
 
@@ -32,6 +32,7 @@ from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work import keys as keys_module
 from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedWrite,
+    PreparedPredicateWrite,
     derive_keyed_write,
     prepare_typed_write,
 )
@@ -136,7 +137,7 @@ _B1_MANAGED = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 _INSTANT = inert_instant()
 
 
-type _TestAdmittedWrite = AdmittedWrite | KeyedWriteInstruction | PredicateWriteInstruction
+type _TestAdmittedWrite = AdmittedWrite | KeyedWriteInstruction
 
 
 def _plan(
@@ -522,29 +523,6 @@ def test_delete_of_a_row_not_inserted_this_transaction_is_not_coalesced() -> Non
     assert isinstance(step, PlannedDelete)
 
 
-def test_multi_row_and_predicate_writes_do_not_coalesce() -> None:
-    # Wallet is unversioned and non-temporal, so a readless predicate write is
-    # legal there. Neither input is a single-object keyed write, so both pass
-    # through as independent steps.
-    multi = KeyedWriteInstruction(
-        "insert",
-        "Wallet",
-        (
-            {"id": 8, "owner": "A", "balance": Decimal("1.00")},
-            {"id": 9, "owner": "B", "balance": Decimal("2.00")},
-        ),
-    )
-    predicate = PredicateWriteInstruction(
-        "delete",
-        PredicateSelection(
-            "Wallet",
-            predicate_algebra.Comparison("eq", predicate_algebra.FieldSubject("Wallet.id"), 1),
-        ),
-    )
-    plan = _plan([multi, predicate], _WALLET)
-    assert len(plan_steps(plan)) == 2
-
-
 # --------------------------------------------------------------------------- #
 # Dependency ordering (foreign-key parents-before-children).                  #
 # --------------------------------------------------------------------------- #
@@ -663,8 +641,8 @@ def test_ordering_reads_each_ranked_writes_compiled_rank_once_and_derives_none(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # Ranks are the Relationship Facet's, compiled with the model: a flush only
-    # reads one per insert or delete. Updates keep authored order and the
-    # barrier keeps its place, so neither asks.
+    # reads one per insert or delete. Updates keep authored order, so they never
+    # ask.
     planner = build_write_planner(_ORDERS)
     facet = relationship.view(_ORDERS)
     asked: list[str] = []
@@ -684,7 +662,6 @@ def test_ordering_reads_each_ranked_writes_compiled_rank_once_and_derives_none(
             "insert", "OrderItem", ({"id": 10, "orderId": 1, "sku": "A", "quantity": 1},)
         ),
         KeyedWriteInstruction("amend", "OrderItem", ({"id": 11, "quantity": 5},)),
-        _predicate_update("Order"),
         KeyedWriteInstruction("delete", "OrderStatus", ({"id": 100},)),
         KeyedWriteInstruction(
             "insert", "OrderTag", ({"id": 7, "orderId": 1, "label": "x", "priority": 1},)
@@ -704,9 +681,8 @@ def test_ordering_reads_each_ranked_writes_compiled_rank_once_and_derives_none(
         == _shape(second)
         == [
             ("insert", "OrderItem"),
-            ("update", "OrderItem"),
-            ("update", "Order"),
             ("insert", "OrderTag"),
+            ("update", "OrderItem"),
             ("delete", "OrderStatus"),
         ]
     )
@@ -741,129 +717,39 @@ def test_an_undeclared_entitys_keyed_update_survives_elision_to_the_same_refusal
 
 
 # --------------------------------------------------------------------------- #
-# Readless predicate-write ordering barriers (ADR 0043).                      #
+# A predicate-selected write is planned alone, as its one readless statement.  #
 # --------------------------------------------------------------------------- #
-# One assignable string Attribute per Orders entity this barrier suite
-# targets, since each declares a different member name.
-_ASSIGNABLE_MEMBER = {"Order": "name", "OrderItem": "sku", "OrderTag": "label"}
-
-
-def _predicate_update(entity: str) -> PredicateWriteInstruction:
-    member = _ASSIGNABLE_MEMBER[entity]
-    return PredicateWriteInstruction(
-        "amend",
-        PredicateSelection(
-            entity,
-            predicate_algebra.Comparison("eq", predicate_algebra.FieldSubject(f"{entity}.id"), 1),
-        ),
-        assignments=(WriteAssignment(f"{entity}.{member}", "Z"),),
+def _predicate_step(
+    instruction: PredicateWriteInstruction, model: Metamodel
+) -> PlannedUpdate | PlannedDelete:
+    prepared = prepare_typed_write(instruction, model)
+    assert isinstance(prepared, PreparedPredicateWrite)
+    return build_write_planner(model).predicate_step(
+        prepared, actor_identity=TEST_ACTOR_IDENTITY, transaction_instant=_INSTANT
     )
 
 
-def test_no_keyed_write_crosses_a_readless_predicate_write_in_either_direction() -> None:
-    # The bucket sort alone would hoist the trailing insert to the front and
-    # push the leading delete to the back, moving BOTH across the predicate
-    # write — a readless predicate does not reveal which rows it matches, so
-    # either move could change what it writes. The barrier pins all three.
-    buffer: list[_TestAdmittedWrite] = [
-        KeyedWriteInstruction("delete", "OrderItem", ({"id": 10},)),
-        _predicate_update("Order"),
-        KeyedWriteInstruction(
-            "insert",
-            "Order",
-            (
-                {
-                    "id": 2,
-                    "name": "N",
-                    "qty": 1,
-                    "price": Decimal("1.0"),
-                    "active": True,
-                    "orderedOn": dt.date(2024, 1, 1),
-                },
+def test_a_predicate_update_is_one_unversioned_statement_over_its_selection() -> None:
+    step = _predicate_step(
+        PredicateWriteInstruction(
+            "amend",
+            PredicateSelection(
+                "Order",
+                predicate_algebra.Comparison("eq", predicate_algebra.FieldSubject("Order.id"), 1),
             ),
+            assignments=(WriteAssignment("Order.name", "Z"),),
         ),
-    ]
-    plan = _plan(buffer, _ORDERS)
-    assert _shape(plan) == [
-        ("delete", "OrderItem"),
-        ("update", "Order"),
-        ("insert", "Order"),
-    ]
-    predicate_step = plan_steps(plan)[1]
-    assert isinstance(predicate_step, PlannedUpdate)
-    assert isinstance(predicate_step.target, ResolvedMutationSelection)
-    assert predicate_step.target.predicate == predicate_algebra.validate_predicate(
-        predicate_step.target.target,
+        _ORDERS,
+    )
+    assert isinstance(step, PlannedUpdate)
+    assert step.concurrency == UNVERSIONED
+    assert step.affected_rows == ANY_COUNT
+    assert isinstance(step.target, ResolvedMutationSelection)
+    assert step.target.predicate == predicate_algebra.validate_predicate(
+        step.target.target,
         predicate_algebra.Comparison("eq", predicate_algebra.FieldSubject("Order.id"), 1),
         _ORDERS,
     )
-
-
-def test_fk_ordering_still_applies_independently_within_each_barrier_region() -> None:
-    # Ordering is unconstrained WITHIN a region: each side is bucketed and
-    # ordered on its own (parents before children), and the two sides never
-    # see each other's items.
-    buffer: list[_TestAdmittedWrite] = [
-        KeyedWriteInstruction(
-            "insert", "OrderItem", ({"id": 10, "orderId": 1, "sku": "A", "quantity": 1},)
-        ),
-        KeyedWriteInstruction(
-            "insert",
-            "Order",
-            (
-                {
-                    "id": 1,
-                    "name": "N",
-                    "qty": 1,
-                    "price": Decimal("1.0"),
-                    "active": True,
-                    "orderedOn": dt.date(2024, 1, 1),
-                },
-            ),
-        ),
-        _predicate_update("OrderTag"),
-        KeyedWriteInstruction(
-            "insert", "OrderTag", ({"id": 1000, "orderId": 1, "label": "x", "priority": 1},)
-        ),
-        KeyedWriteInstruction("insert", "OrderStatus", ({"id": 100, "orderId": 1, "code": "new"},)),
-    ]
-    plan = _plan(buffer, _ORDERS)
-    assert _entities(plan) == ["Order", "OrderItem", "OrderTag", "OrderStatus", "OrderTag"]
-
-
-def test_two_readless_predicate_writes_partition_the_buffer_into_three_regions() -> None:
-    buffer: list[_TestAdmittedWrite] = [
-        KeyedWriteInstruction("delete", "Order", ({"id": 1},)),
-        _predicate_update("Order"),
-        KeyedWriteInstruction("delete", "OrderItem", ({"id": 10},)),
-        KeyedWriteInstruction(
-            "insert",
-            "Order",
-            (
-                {
-                    "id": 2,
-                    "name": "N",
-                    "qty": 1,
-                    "price": Decimal("1.0"),
-                    "active": True,
-                    "orderedOn": dt.date(2024, 1, 1),
-                },
-            ),
-        ),
-        _predicate_update("OrderItem"),
-        KeyedWriteInstruction(
-            "insert", "OrderItem", ({"id": 11, "orderId": 2, "sku": "A", "quantity": 1},)
-        ),
-    ]
-    plan = _plan(buffer, _ORDERS)
-    assert _shape(plan) == [
-        ("delete", "Order"),
-        ("update", "Order"),
-        ("insert", "Order"),
-        ("delete", "OrderItem"),
-        ("update", "OrderItem"),
-        ("insert", "OrderItem"),
-    ]
 
 
 # --------------------------------------------------------------------------- #
@@ -1168,20 +1054,19 @@ def test_an_unversioned_multi_key_update_settles_to_one_aggregate_planned_step()
     assert step.affected_rows == ExactCount(3, MISSING_TARGET)
 
 
-def test_a_readless_predicate_write_carries_an_unbounded_expectation() -> None:
-    predicate = PredicateWriteInstruction(
-        "delete",
-        PredicateSelection(
-            "Wallet",
-            predicate_algebra.Comparison(
-                "lessThan", predicate_algebra.FieldSubject("Wallet.balance"), "200.00"
-            ),
-        ),
+def test_a_readless_predicate_delete_carries_an_unbounded_expectation() -> None:
+    predicate = predicate_algebra.Comparison(
+        "lessThan", predicate_algebra.FieldSubject("Wallet.balance"), "200.00"
     )
-    plan = _plan([predicate], _WALLET)
-    (step,) = plan_steps(plan)
+    step = _predicate_step(
+        PredicateWriteInstruction("delete", PredicateSelection("Wallet", predicate)), _WALLET
+    )
     assert isinstance(step, PlannedDelete)
     assert step.affected_rows == ANY_COUNT
+    assert isinstance(step.target, ResolvedMutationSelection)
+    assert step.target.predicate == predicate_algebra.validate_predicate(
+        step.target.target, predicate, _WALLET
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -1289,29 +1174,6 @@ def test_batching_never_merges_a_row_carrying_a_recorded_observation() -> None:
         },
     )
     assert len(plan_steps(plan)) == 2
-
-
-def test_batching_never_touches_a_predicate_write() -> None:
-    predicate = PredicateWriteInstruction(
-        "delete",
-        PredicateSelection(
-            "Wallet",
-            predicate_algebra.Comparison(
-                "lessThan", predicate_algebra.FieldSubject("Wallet.balance"), "1.00"
-            ),
-        ),
-    )
-    plan = _plan([predicate], _WALLET)
-    (step,) = plan_steps(plan)
-    assert isinstance(step, PlannedDelete)
-    assert isinstance(step.target, ResolvedMutationSelection)
-    assert step.target.predicate == predicate_algebra.validate_predicate(
-        step.target.target,
-        predicate_algebra.Comparison(
-            "lessThan", predicate_algebra.FieldSubject("Wallet.balance"), "1.00"
-        ),
-        _WALLET,
-    )
 
 
 # --------------------------------------------------------------------------- #
@@ -1493,9 +1355,9 @@ def test_a_prepared_finalize_resolves_targets_without_any_entity_spelling_scan(
 ) -> None:
     # Spelling resolution is raw authored input's own branch, and the buffer a
     # flush plans holds none: every arm settlement forks on is driven here —
-    # keyed insert, observed versioned update, readless predicate write, and a
-    # bitemporal mutation — with the scan wired to fail, so reaching it at all
-    # is the failure rather than a slow path.
+    # keyed insert, observed versioned update, and a bitemporal mutation — and
+    # so is a readless predicate write's own planning, with the scan wired to
+    # fail, so reaching it at all is the failure rather than a slow path.
     model = formed(
         DescriptorMetamodel(
             entities=(
@@ -1523,6 +1385,8 @@ def test_a_prepared_finalize_resolves_targets_without_any_entity_spelling_scan(
         ),
         account_update,
         position_update,
+    ]
+    predicate = prepare_typed_write(
         PredicateWriteInstruction(
             "delete",
             PredicateSelection(
@@ -1530,7 +1394,9 @@ def test_a_prepared_finalize_resolves_targets_without_any_entity_spelling_scan(
                 predicate_algebra.Comparison("eq", predicate_algebra.FieldSubject("Wallet.id"), 2),
             ),
         ),
-    ]
+        model,
+    )
+    assert isinstance(predicate, PreparedPredicateWrite)
     prepared = observed_buffer(
         buffer,
         model,
@@ -1546,7 +1412,8 @@ def test_a_prepared_finalize_resolves_targets_without_any_entity_spelling_scan(
     # Key derivation's binding is the one a flush could reach the model's
     # spelling rule through.
     monkeypatch.setattr(keys_module, "entity_by_name", refuse)
-    plan = build_write_planner(model).finalize(
+    planner = build_write_planner(model)
+    plan = planner.finalize(
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=instant_at("2024-06-01T00:00:00+00:00"),
@@ -1558,7 +1425,12 @@ def test_a_prepared_finalize_resolves_targets_without_any_entity_spelling_scan(
     assert kinds.count("insert") >= 2  # the Wallet insert, plus the bitemporal successors
     assert "close" in kinds
     assert kinds.count("update") == 1  # the addressed Account update
-    assert kinds[-1] == "delete"  # the readless predicate write, held at the barrier
+    step = planner.predicate_step(
+        predicate,
+        actor_identity=TEST_ACTOR_IDENTITY,
+        transaction_instant=instant_at("2024-06-01T00:00:00+00:00"),
+    )
+    assert isinstance(step, PlannedDelete)
 
 
 # --------------------------------------------------------------------------- #

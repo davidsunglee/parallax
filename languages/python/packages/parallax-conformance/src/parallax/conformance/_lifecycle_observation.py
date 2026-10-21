@@ -135,6 +135,7 @@ _READ_INTERFACE: Final[dict[ReadInterface, str]] = {
 
 _FLUSH_TRIGGER: Final[dict[FlushTrigger, str]] = {
     "read_dependency": "read-dependency",
+    "predicate_write": "predicate-write",
     "pre_commit": "pre-commit",
 }
 

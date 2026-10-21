@@ -80,7 +80,10 @@ structured-document value. `executeWrite`
 returns the concrete driver's native affected-row count and no rows; whether that
 count includes rows an `UPDATE` matched and left unchanged is the dialect's
 declared fact (`m-dialect` *Unchanged-row count*), and an adapter reports counts
-with the meaning its dialect declares.
+with the meaning its dialect declares. Where the dialect requires a connection
+mode for that meaning, every connection the adapter opens establishes it, and the
+count is the configured driver's own result: an adapter never adjusts, recovers,
+or recomputes it.
 
 `transaction(body)` returns one closed, ephemeral boundary outcome rather than
 raising away which boundary failed:

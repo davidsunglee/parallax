@@ -238,7 +238,7 @@ def _scenario_document(write: list[Any], **top: Any) -> dict[str, Any]:
     }
 
 
-_BARRIER = {
+_PREDICATE_WRITE = {
     "mutation": "amend",
     "target": {
         "entity": "OrderItem",
@@ -248,12 +248,12 @@ _BARRIER = {
 }
 
 
-def test_a_golden_graded_buffer_is_keyed_and_a_state_graded_one_carries_barriers() -> None:
+def test_a_golden_graded_buffer_is_keyed_and_a_state_graded_one_carries_predicate_writes() -> None:
     validator = Draft202012Validator({"$ref": _CASE_URL}, registry=_REGISTRY)
-    golden = _scenario_document([_BARRIER])
+    golden = _scenario_document([_PREDICATE_WRITE])
     assert next(validator.iter_errors(golden), None) is not None
     state = _scenario_document(
-        [_BARRIER],
+        [_PREDICATE_WRITE],
         grading="state",
         compileEligibility={"mode": "run-only", "reason": "query-result-dependent"},
     )
@@ -307,7 +307,7 @@ def _state_graded(steps: list[dict[str, Any]]) -> dict[str, Any]:
             ],
             id="a-keyed-submission-of-two-rows",
         ),
-        pytest.param([{"uow": "g", "write": _BARRIER}], id="an-unbuffered-predicate-write"),
+        pytest.param([{"uow": "g", "write": _PREDICATE_WRITE}], id="a-direct-predicate-write"),
         pytest.param([{"uow": "g", "write": "amend"}], id="a-write-label"),
         pytest.param([_STATE_FIND, {"action": "flush"}], id="an-action-step"),
         pytest.param([_STATE_GRAPH_FIND], id="a-graph-observable"),

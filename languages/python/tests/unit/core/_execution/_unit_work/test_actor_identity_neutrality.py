@@ -9,8 +9,13 @@ from decimal import Decimal
 from parallax.conformance import models
 from parallax.core import predicate as predicate_algebra
 from parallax.core._execution._planning import build_write_planner
+from parallax.core._execution._unit_work.instructions import (
+    PreparedPredicateWrite,
+    prepare_typed_write,
+)
 from parallax.core._execution._unit_work.strategy import ActorIdentity
 from parallax.core._execution._unit_work.write_items import OrderedWrite
+from parallax.core._execution._write_lowering import lowered
 from parallax.core.base import INFINITY
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import Metamodel
@@ -77,7 +82,7 @@ def _statements(plan: WritePlan, model: Metamodel) -> list[LoweredStatement]:
 
 
 def _assert_neutral(
-    buffer: list[AdmittedWrite | KeyedWriteInstruction | PredicateWriteInstruction],
+    buffer: list[AdmittedWrite | KeyedWriteInstruction],
     model: Metamodel,
     *,
     observations: dict[ObjectKey, WriteObservation] | None = None,
@@ -140,11 +145,22 @@ def test_a_readless_predicate_write_is_actor_neutral() -> None:
             ),
         ),
     )
-    _assert_neutral([predicate], _WALLET)
+    prepared = prepare_typed_write(predicate, _WALLET)
+    assert isinstance(prepared, PreparedPredicateWrite)
+    planner = build_write_planner(_WALLET)
+    subject, login = (
+        planner.predicate_step(prepared, actor_identity=actor, transaction_instant=inert_instant())
+        for actor in (_SUBJECT, _LOGIN)
+    )
+    assert subject == login
+    statement = lowered(subject, LayoutPayloadPreparer(_WALLET), _WALLET, POSTGRES)
+    rendered = repr(subject) + f"{statement.sql}{statement.binds!r}"
+    assert _SUBJECT.value not in rendered
+    assert _LOGIN.value not in rendered
 
 
 def test_a_batched_insert_run_is_actor_neutral() -> None:
-    buffer: list[AdmittedWrite | KeyedWriteInstruction | PredicateWriteInstruction] = [
+    buffer: list[AdmittedWrite | KeyedWriteInstruction] = [
         KeyedWriteInstruction(
             "insert", "Wallet", ({"id": 1, "owner": "Ada", "balance": Decimal("1")},)
         ),

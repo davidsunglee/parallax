@@ -10,7 +10,6 @@ from decimal import Decimal
 import pytest
 
 from parallax.core import MAX, Attr, DomainModel, Entity, TxTemporal, attr
-from parallax.core import predicate as predicate_algebra
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work.instructions import prepare_typed_write
 from parallax.core._execution._unit_work.write_items import CoalescedWrite
@@ -20,10 +19,7 @@ from parallax.core.metamodel import EntityIdentity, Metamodel
 from parallax.core.unit_work import (
     Concurrency,
     KeyedWriteInstruction,
-    PredicateSelection,
-    PredicateWriteInstruction,
     TransactionInstant,
-    WriteAssignment,
     WritePlanningRequest,
     object_key,
 )
@@ -91,7 +87,7 @@ def _finalize(
 
 
 def _plan(
-    buffer: Sequence[KeyedWriteInstruction | PredicateWriteInstruction],
+    buffer: Sequence[KeyedWriteInstruction],
     model: Metamodel,
     observations: Mapping[ObjectKey, WriteObservation] | None = None,
     *,
@@ -331,22 +327,6 @@ def test_an_insert_whose_key_the_database_decides_stands_alone(
     plan = _finalize([computed, computed], _ALLOCATED, instant=instant_at("2024-01-10T00:00:00Z"))
     assert _sizes(plan) == [1, 1]
     assert all(bool(group.writes[0].opened.allocated) is allocates for group in plan.groups)
-
-
-def test_a_readless_predicate_write_is_a_group_of_its_own_no_group_crosses() -> None:
-    predicate = PredicateWriteInstruction(
-        "amend",
-        PredicateSelection(
-            "Wallet",
-            predicate_algebra.Comparison("eq", predicate_algebra.FieldSubject("Wallet.id"), 9),
-        ),
-        assignments=(WriteAssignment("Wallet.owner", "Z"),),
-    )
-    plan = _plan(
-        [_amend_wallet(1, "1.00"), _amend_wallet(2, "2.00"), predicate, _amend_wallet(3, "3.00")],
-        _WALLET,
-    )
-    assert _sizes(plan) == [2, 1, 1]
 
 
 def _entity(model: Metamodel, name: str) -> EntityIdentity:

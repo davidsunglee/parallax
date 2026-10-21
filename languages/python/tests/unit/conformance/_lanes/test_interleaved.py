@@ -469,6 +469,75 @@ def test_run_interleaved_group_buffers_a_non_last_write_without_flushing() -> No
     ]
 
 
+def test_each_interleaved_groups_predicate_write_reports_the_count_its_verb_returned() -> None:
+    case = dataclasses.replace(
+        _synthetic_write(
+            "scenario",
+            {
+                "model": "models/wallet.yaml",
+                "when": {
+                    "uow": {"concurrency": "optimistic"},
+                    "scenario": [
+                        {
+                            "uow": "x",
+                            "write": [
+                                {
+                                    "mutation": "insert",
+                                    "entity": "Wallet",
+                                    "rows": [{"id": 9, "owner": "Turing", "balance": "5.00"}],
+                                }
+                            ],
+                        },
+                        {
+                            "uow": "x",
+                            "write": {
+                                "mutation": "amend",
+                                "target": {
+                                    "entity": "Wallet",
+                                    "predicate": {
+                                        "lessThan": {"path": "Wallet.balance", "value": "100.00"}
+                                    },
+                                },
+                                "assignments": [{"attr": "Wallet.owner", "value": "Ada"}],
+                            },
+                            "expectAffectedRows": 2,
+                        },
+                        {
+                            "uow": "y",
+                            "write": {
+                                "mutation": "delete",
+                                "target": {
+                                    "entity": "Wallet",
+                                    "predicate": {
+                                        "lessThan": {"path": "Wallet.balance", "value": "0.00"}
+                                    },
+                                },
+                            },
+                            "expectAffectedRows": 0,
+                        },
+                    ],
+                },
+                "then": {"databaseCalls": 3},
+            },
+        ),
+        model="models/wallet.yaml",
+    )
+    ours_port = ScriptedPort(write_affected=[1, 2])
+    peer_port = ScriptedPort(write_affected=[0])
+
+    run = run_interleaved_scenario_case(
+        case, ScriptedPort(), _ScriptedExecutions(ours_port, peer_port)
+    )
+
+    # The insert's statement ran in the same Flush, but the count is the
+    # predicate statement's own.
+    assert [sql.split(" ")[0] for sql, _ in ours_port.writes] == ["insert", "update"]
+    assert run.step_affected_rows == [
+        {"at": "/scenario/1", "affectedRows": 2},
+        {"at": "/scenario/2", "affectedRows": 0},
+    ]
+
+
 def test_run_interleaved_scenario_case_reraises_an_unexpected_worker_failure() -> None:
     # A worker thread's own UNEXPECTED defect (never a witnessed path) must
     # surface loudly on the main thread rather than hang the choreography —

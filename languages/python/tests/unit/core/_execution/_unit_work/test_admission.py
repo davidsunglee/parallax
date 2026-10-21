@@ -16,13 +16,11 @@ import pytest
 
 from parallax.conformance.class_models import MODELS as CLASS_MODELS
 from parallax.core import inheritance
-from parallax.core import predicate as predicate_algebra
 from parallax.core._execution._unit_work._write_ownership import SourceRefusal
 from parallax.core._execution._unit_work.admission import BufferOutcome, WriteAdmission
 from parallax.core._execution._unit_work.instructions import (
     ExpectedTxStart,
     PreparedKeyedWrite,
-    PreparedPredicateWrite,
     prepare_wire_write,
 )
 from parallax.core._execution._unit_work.retain import (
@@ -33,7 +31,6 @@ from parallax.core._execution._unit_work.retain import (
 from parallax.core._execution._unit_work.write_items import (
     AdmittedWrite,
     AfterRemoval,
-    ChainedTemporalWrite,
     CoalescedTemporalWrite,
     InsertionKeyedWrite,
     ObjectClaimedWrite,
@@ -45,11 +42,8 @@ from parallax.core.entity._model import model_of
 from parallax.core.metamodel import EntityIdentity, Metamodel
 from parallax.core.unit_work import (
     KeyedWriteInstruction,
-    PredicateSelection,
-    PredicateWriteInstruction,
     RetainedObservation,
     TargetWriteInstruction,
-    WriteAssignment,
     WriteEvidenceError,
     buffered_write,
 )
@@ -172,22 +166,6 @@ def _account_amend(account_id: int) -> PreparedKeyedWrite:
         KeyedWriteInstruction("amend", "Account", ({"id": account_id, "owner": "Cy"},)), _ACCOUNT
     )
     assert isinstance(prepared, PreparedKeyedWrite)
-    return prepared
-
-
-def _barrier() -> PreparedPredicateWrite:
-    prepared = prepare_wire_write(
-        PredicateWriteInstruction(
-            "amend",
-            PredicateSelection(
-                "Wallet",
-                predicate_algebra.Comparison("eq", predicate_algebra.FieldSubject("Wallet.id"), 1),
-            ),
-            assignments=(WriteAssignment("Wallet.owner", "Q"),),
-        ),
-        _WALLET,
-    )
-    assert isinstance(prepared, PreparedPredicateWrite)
     return prepared
 
 
@@ -397,22 +375,25 @@ def _position_insert() -> PreparedKeyedWrite:
     return prepared
 
 
-@pytest.mark.parametrize("earlier_region", [True, False], ids=["both-regions", "later-only"])
-def test_a_removal_split_by_a_barrier_reaches_the_whole_insertion_in_start_order(
-    earlier_region: bool,
+@pytest.mark.parametrize("earlier", [True, False], ids=["both-rows", "later-only"])
+def test_a_composed_removal_reaches_the_whole_insertion_only_with_every_row(
+    earlier: bool,
 ) -> None:
-    # The later rectangle is destroyed before the barrier and the earlier one
-    # after it; only both together remove what the insertion opened, so only
-    # then does its next insertion follow the removal.
+    # The later rectangle is destroyed first and the earlier one after it;
+    # only both together remove what the insertion opened, so only then does
+    # its next insertion follow the removal.
     admission = _stored_insertion_across_two_rows()
     later = retained(rectangle(JUN, INFINITY, "1.00", tx_start=_INSERTED_AT))
-    earlier = retained(rectangle(FEB, JUN, "1.00", tx_start=_INSERTED_AT))
-    _admit(admission, observed_write("terminate", later, valid_from=JUN, until=None), _barrier())
-    if earlier_region:
-        _admit(admission, observed_write("terminateUntil", earlier, valid_from=FEB, until=JUN))
+    earlier_rectangle = retained(rectangle(FEB, JUN, "1.00", tx_start=_INSERTED_AT))
+    _admit(admission, observed_write("terminate", later, valid_from=JUN, until=None))
+    if earlier:
+        _admit(
+            admission,
+            observed_write("terminateUntil", earlier_rectangle, valid_from=FEB, until=JUN),
+        )
     _admit(admission, _position_insert())
     reinsertion = admission.composed_writes()[-1]
-    assert isinstance(reinsertion, AfterRemoval) is earlier_region
+    assert isinstance(reinsertion, AfterRemoval) is earlier
 
 
 # --------------------------------------------------------------------------- #
@@ -490,16 +471,6 @@ def test_a_shared_token_names_whatever_rectangle_holds_each_start() -> None:
             observed_write("amendUntil", START, valid_from=FEB, until=APR, acctNum="O"),
             addressed_write(valid_from=SEP, until=OCT, tx_start=tx_start, value="1.00"),
         )
-
-
-def test_admission_across_a_barrier_judges_every_write_of_the_object() -> None:
-    admission = _admitted(addressed_write(valid_from=FEB, until=APR, value="1.00"), _barrier())
-    _refused(admission, observed_write("amendUntil", WHOLE, valid_from=MAR, until=JUN, acctNum="O"))
-    # One window and one start compose, though they execute as two settled writes.
-    _admit(admission, observed_write("amendUntil", WHOLE, valid_from=FEB, until=APR, acctNum="O"))
-    first, _barrier_write, second = admission.composed_writes()
-    assert not isinstance(first, ChainedTemporalWrite)
-    assert isinstance(second, ChainedTemporalWrite)
 
 
 def test_a_write_an_insertion_authorized_never_shares_a_targets_window() -> None:

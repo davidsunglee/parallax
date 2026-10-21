@@ -10,9 +10,10 @@ the drive is then followed all the way to the statements it emits.
 The chain is closed link by link. Every planning the drive performed ran on a
 planner the factory built. Every step sequence taken through a
 ``LoweringCursor`` is by identity the steps of one Write Group of a plan one of
-those plannings returned, whether execution or a simulated step execution
-lowers it, and the groups streamed are the groups planned, each once and in
-order, so a factory plan the lane discarded is named too. Every step
+those plannings returned, or the one step a predicate-selected write's planning
+returned, whether execution or a simulated step execution lowers it, and the
+sequences streamed are the sequences planned, each once and in order, so a
+factory plan the lane discarded is named too. Every step
 rendered by ``compile_write_step`` — the function that turns a settled step into
 a statement of its own — or carried into a grouped insert the cursor builds is
 by identity a step of one of those streamed sequences. An
@@ -64,6 +65,7 @@ import pytest
 from parallax.conformance import case_format, engine
 from parallax.core._execution import _planning, _write_lowering
 from parallax.core._execution._publication import write_projection
+from parallax.core._execution._unit_work.instructions import PreparedPredicateWrite
 from parallax.core._execution._unit_work.strategy import (
     AuditStrategy,
     BatchingStrategy,
@@ -83,7 +85,13 @@ from parallax.core.sql_gen._write import StepPayload, compile_write_step
 from parallax.core.unit_work import NO_AUDIT, WritePlanner, WritePlanningRequest
 from parallax.core.write_plan import WritePlan
 from parallax.core.write_plan.payload import WritePayloadPreparer
-from parallax.core.write_plan.steps import PlannedInsert, PlannedStep, WriteRow
+from parallax.core.write_plan.steps import (
+    PlannedDelete,
+    PlannedInsert,
+    PlannedStep,
+    PlannedUpdate,
+    WriteRow,
+)
 from parallax.snapshot import TxnContext
 from tests._support import mirrored_models as mm
 from tests._support.db_port import (
@@ -114,11 +122,13 @@ class _Built:
 
 @dataclass(frozen=True, slots=True)
 class _Planning:
-    """One planning: its receiver, what it was asked to plan, and what it returned."""
+    """One planning: its receiver, the shapes of what it was asked to plan, and
+    the step sequences it returned — a plan's Write Groups, or a predicate
+    write's one statement."""
 
     planner: WritePlanner
-    request: WritePlanningRequest
-    plan: WritePlan
+    shapes: list[str]
+    sequences: tuple[tuple[PlannedStep, ...], ...]
 
 
 @dataclass(slots=True)
@@ -133,27 +143,37 @@ class _Composition:
     lowered: list[tuple[PlannedStep, ...]]
     rendered: list[PlannedStep]
 
-    def escaped(self) -> list[WritePlanningRequest]:
-        """The plannings whose receiver the composition root did not build."""
+    def escaped(self) -> list[list[str]]:
+        """The shapes of the plannings whose receiver the composition root did
+        not build."""
         return [
-            one.request
+            one.shapes
             for one in self.planned
             if not any(one.planner is built.planner for built in self.built)
         ]
 
     def planned_groups(self) -> list[tuple[PlannedStep, ...]]:
-        return [group.steps for one in self.planned for group in one.plan.groups]
+        return [steps for one in self.planned for steps in one.sequences]
 
     def unaccounted(self) -> list[tuple[PlannedStep, ...]]:
         """The streamed sequences no planning recorded here produced."""
         planned = self.planned_groups()
         return [
-            streamed for streamed in self.lowered if not any(streamed is steps for steps in planned)
+            streamed
+            for streamed in self.lowered
+            if not any(_identical(streamed, steps) for steps in planned)
         ]
 
     def steps_of_lowered_plans(self) -> list[PlannedStep]:
         """Every step the streamed sequences hold, in the order streaming reaches them."""
         return [step for streamed in self.lowered for step in streamed]
+
+
+def _identical(streamed: tuple[PlannedStep, ...], planned: tuple[PlannedStep, ...]) -> bool:
+    """Whether ``streamed`` holds exactly ``planned``'s steps, each by identity."""
+    return len(streamed) == len(planned) and all(
+        step is held for step, held in zip(streamed, planned, strict=True)
+    )
 
 
 def _bindings_of(original: object) -> list[tuple[ModuleType, str]]:
@@ -219,7 +239,13 @@ def _watch(lane: str, monkeypatch: pytest.MonkeyPatch) -> _Composition:
 
     def finalize(self: WritePlanner, request: WritePlanningRequest) -> WritePlan:
         finalized = finalizing(self, request)
-        seen.planned.append(_Planning(planner=self, request=request, plan=finalized))
+        seen.planned.append(
+            _Planning(
+                planner=self,
+                shapes=[type(item).__name__ for item in request.buffered_writes],
+                sequences=tuple(group.steps for group in finalized.groups),
+            )
+        )
         return finalized
 
     def cursor(
@@ -254,6 +280,7 @@ def _watch(lane: str, monkeypatch: pytest.MonkeyPatch) -> _Composition:
 
     monkeypatch.setattr(_planning, "WritePlanner", construct)
     monkeypatch.setattr(WritePlanner, "finalize", finalize)
+    _watch_predicate_plannings(seen, monkeypatch)
     monkeypatch.setattr(LoweringCursor, "lowered_grouped_insert", group)
     watched: tuple[tuple[object, object], ...] = (
         (cursor, LoweringCursor),
@@ -268,12 +295,29 @@ def _watch(lane: str, monkeypatch: pytest.MonkeyPatch) -> _Composition:
     return seen
 
 
+def _watch_predicate_plannings(seen: _Composition, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Record every predicate-selected write any planner plans into ``seen``,
+    as the one-step sequence it lowers to."""
+    predicating = WritePlanner.predicate_step
+
+    def predicate_step(
+        self: WritePlanner, prepared: PreparedPredicateWrite, /, **identity: Any
+    ) -> PlannedUpdate | PlannedDelete:
+        step = predicating(self, prepared, **identity)
+        seen.planned.append(
+            _Planning(planner=self, shapes=[type(prepared).__name__], sequences=((step,),))
+        )
+        return step
+
+    monkeypatch.setattr(WritePlanner, "predicate_step", predicate_step)
+
+
 def _assert_planned_only_through_the_factory(seen: _Composition, plannings: int) -> None:
     escaped = seen.escaped()
     assert not escaped, (
         f"{seen.lane}: {len(escaped)} of {len(seen.planned)} plannings ran on a planner the "
         f"composition root did not build (it built {len(seen.built)}); the first of them "
-        f"planned {_buffer_shapes(escaped[0])}"
+        f"planned {escaped[0]}"
     )
     unaccounted = seen.unaccounted()
     assert not unaccounted, (
@@ -281,9 +325,10 @@ def _assert_planned_only_through_the_factory(seen: _Composition, plannings: int)
         f"write-lowering seam without any planning recorded here having produced them, so "
         f"something other than this factory's planners planned them"
     )
-    assert [id(steps) for steps in seen.planned_groups()] == [
-        id(streamed) for streamed in seen.lowered
-    ], (
+    planned = seen.planned_groups()
+    assert len(planned) == len(seen.lowered) and all(
+        _identical(streamed, steps) for streamed, steps in zip(seen.lowered, planned, strict=True)
+    ), (
         f"{seen.lane}: {len(seen.planned)} plannings produced {len(seen.planned_groups())} Write "
         f"Groups but {len(seen.lowered)} step sequences reached the write-lowering seam — a "
         f"plan this factory produced was discarded, or a group was lowered twice"
@@ -301,12 +346,6 @@ def _assert_planned_only_through_the_factory(seen: _Composition, plannings: int)
         f"not {plannings} — a drive that obtained a plan anywhere else comes up short here "
         f"rather than escaping above"
     )
-
-
-def _buffer_shapes(request: WritePlanningRequest) -> list[str]:
-    """One planning's buffer as the item shapes it held — what a failure needs to
-    say about a planning nothing here accounts for."""
-    return [type(item).__name__ for item in request.buffered_writes]
 
 
 def test_the_database_lane_plans_every_ingress_through_one_factory_planner(

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import cast
 
 from parallax.core import read_delivery
@@ -64,6 +64,10 @@ class Emission:
         }
 
 
+def _no_counts() -> list[dict[str, object]]:
+    return []
+
+
 @dataclass(frozen=True, slots=True)
 class ScenarioRun:
     """What running one scenario case observed, by channel
@@ -80,7 +84,8 @@ class ScenarioRun:
     retained view on the snapshot lane, a find step's own materialized graph on
     both. All three are in step order. ``units`` holds each `uow` group's fate by
     label, and ``table_state`` the tables read back once every step ran, where
-    the case states them.
+    the case states them. ``step_affected_rows`` holds, in step order, the count
+    each direct predicate-write step's verb returned.
     """
 
     emissions: list[Emission]
@@ -90,6 +95,7 @@ class ScenarioRun:
     step_graphs: list[dict[str, object]]
     units: dict[str, dict[str, object]] | None = None
     table_state: dict[str, list[MappingRow]] | None = None
+    step_affected_rows: list[dict[str, object]] = field(default_factory=_no_counts)
 
 
 def driver_binds(binds: Sequence[object]) -> list[object]:

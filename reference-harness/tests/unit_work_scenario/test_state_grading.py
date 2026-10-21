@@ -24,14 +24,14 @@ from .conftest import (
 type CaseLoader = Callable[[str], Case]
 
 _NON_TEMPORAL = (
-    "m-unit-work-049-a-barrier-keeps-non-temporal-writes-on-their-own-sides"
+    "m-unit-work-049-non-temporal-writes-on-either-side-of-a-predicate-write"
     "-layout-twin-columns.yaml"
 )
 _REFUSALS = (
     "m-unit-work-047-a-refused-submission-leaves-earlier-work-pending-layout-twin-columns.yaml"
 )
-_BARRIER = (
-    "m-temporal-write-046-a-barrier-keeps-each-operation-on-its-own-side-layout-twin-columns.yaml"
+_TEMPORAL = (
+    "m-temporal-write-046-operations-on-either-side-of-a-predicate-write-layout-twin-columns.yaml"
 )
 _ROLLBACK = (
     "m-temporal-write-048-a-read-between-writes-completes-the-earlier-layout-twin-columns.yaml"
@@ -95,7 +95,7 @@ def _find(rows: list[dict[str, Any]], **cells: Any) -> dict[str, Any]:
 # --- what a state-graded run asks the database for ---------------------------
 
 
-@pytest.mark.parametrize("name", [_NON_TEMPORAL, _REFUSALS, _BARRIER, _ROLLBACK])
+@pytest.mark.parametrize("name", [_NON_TEMPORAL, _REFUSALS, _TEMPORAL, _ROLLBACK])
 def test_a_state_graded_case_reads_back_its_starting_rows_and_executes_nothing(
     corpus_case: CaseLoader, name: str
 ) -> None:
@@ -111,7 +111,7 @@ def test_a_state_graded_case_reads_back_its_starting_rows_and_executes_nothing(
 
 
 def test_a_key_no_submission_names_keeps_its_starting_rows(damaged_case: CaseLoader) -> None:
-    case = damaged_case(_BARRIER)
+    case = damaged_case(_TEMPORAL)
     _find(_rows(case, "sequence_span"), id=4, out_z=_INF)["amount"] = 101
     with pytest.raises(CaseFailure, match="changes key 4, but no committed submission names it"):
         _grade(case)
@@ -129,10 +129,10 @@ def test_a_key_only_a_rolled_back_group_names_keeps_its_starting_rows(
 def test_a_table_a_predicate_submission_writes_states_any_row_of_it(
     damaged_case: CaseLoader,
 ) -> None:
-    # The barrier selects rows only its predicate decides, so every row of its table
-    # is the case's to state.
+    # The predicate write selects rows only its predicate decides, so every row of
+    # its table is the case's to state.
     case = damaged_case(_NON_TEMPORAL)
-    _find(_rows(case, "sequence_tag"), id=2)["label"] = "seen-by-the-barrier"
+    _find(_rows(case, "sequence_tag"), id=2)["label"] = "seen-by-the-predicate"
     _grade(case)
 
 
@@ -140,7 +140,7 @@ def test_a_table_a_predicate_submission_writes_states_any_row_of_it(
 
 
 def test_a_row_no_committed_group_opened_is_refused(damaged_case: CaseLoader) -> None:
-    case = damaged_case(_BARRIER)
+    case = damaged_case(_TEMPORAL)
     row = _find(_rows(case, "sequence_span"), id=2, from_z="2024-02-01T00:00:00.000000Z")
     row["in_z"] = "2024-10-15T00:00:00.000000Z"
     with pytest.raises(CaseFailure, match="neither a starting row"):
@@ -148,7 +148,7 @@ def test_a_row_no_committed_group_opened_is_refused(damaged_case: CaseLoader) ->
 
 
 def test_a_starting_milestone_is_closed_and_never_removed(damaged_case: CaseLoader) -> None:
-    case = damaged_case(_BARRIER)
+    case = damaged_case(_TEMPORAL)
     rows = _rows(case, "sequence_span")
     rows.remove(_find(rows, id=2, in_z=_T0))
     with pytest.raises(CaseFailure, match="drops the starting row"):
@@ -156,7 +156,7 @@ def test_a_starting_milestone_is_closed_and_never_removed(damaged_case: CaseLoad
 
 
 def test_current_rows_of_one_key_never_overlap(damaged_case: CaseLoader) -> None:
-    case = damaged_case(_BARRIER)
+    case = damaged_case(_TEMPORAL)
     row = _find(
         _rows(case, "sequence_span"), id=2, from_z="2024-01-01T00:00:00.000000Z", out_z=_INF
     )
@@ -190,6 +190,23 @@ def test_a_find_between_two_writes_leaves_nothing_pending(damaged_case: CaseLoad
                 entry["on"] += 2
     with pytest.raises(CaseFailure, match="no earlier write of its object is pending"):
         _grade(case)
+
+
+def test_a_predicate_submission_between_two_writes_leaves_nothing_pending(
+    damaged_case: CaseLoader,
+) -> None:
+    case = damaged_case(_NON_TEMPORAL)
+    case.when["scenario"][1]["write"][2]["expectError"] = "write-evidence-already-claimed"
+    with pytest.raises(CaseFailure, match="no earlier write of its object is pending"):
+        _grade(case)
+
+
+def test_a_predicate_submission_flushes_the_writes_buffered_before_it(
+    damaged_case: CaseLoader,
+) -> None:
+    case = damaged_case(_NON_TEMPORAL)
+    case.when["scenario"][1]["write"][2]["expectError"] = "write-evidence-consumed"
+    _grade(case)
 
 
 def test_an_inserted_object_refusal_is_a_caller_addressed_write_of_an_insert(
@@ -246,14 +263,14 @@ def test_a_flush_failure_names_a_shortfall_its_group_can_reach(damaged_case: Cas
 
 
 def test_every_group_of_a_state_graded_case_states_its_fate(damaged_case: CaseLoader) -> None:
-    case = damaged_case(_BARRIER)
+    case = damaged_case(_TEMPORAL)
     del case.then["units"]["observed"]
     with pytest.raises(CaseFailure, match="states no fate for group"):
         assert_judged(case)
 
 
 def test_a_fate_names_a_group(damaged_case: CaseLoader) -> None:
-    case = damaged_case(_BARRIER)
+    case = damaged_case(_TEMPORAL)
     case.then["units"]["elsewhere"] = {"outcome": "committed"}
     with pytest.raises(CaseFailure, match="label no `uow` group"):
         assert_judged(case)
@@ -264,6 +281,40 @@ def test_a_flush_failure_is_reported_where_its_group_last_flushes(
 ) -> None:
     case = damaged_case(_ROLLBACK)
     case.then["units"]["stale"]["flushFailure"]["at"] = 8
+    with pytest.raises(CaseFailure, match="last flush runs at 'commit'"):
+        assert_judged(case)
+
+
+def test_a_flush_failure_is_reported_where_a_predicate_submission_last_flushes(
+    damaged_case: CaseLoader,
+) -> None:
+    case = damaged_case(_NON_TEMPORAL)
+    del case.when["scenario"][3]["write"][2]
+    case.then["units"]["versioned"] = {
+        "outcome": "rolledBack",
+        "flushFailure": {
+            "at": 3,
+            "entity": "SequenceAccount",
+            "key": {"id": 1},
+            "shortfall": "optimisticConflict",
+        },
+    }
+    assert_judged(case)
+
+
+def test_a_predicate_submission_flush_followed_by_pending_writes_is_not_the_last(
+    damaged_case: CaseLoader,
+) -> None:
+    case = damaged_case(_NON_TEMPORAL)
+    case.then["units"]["versioned"] = {
+        "outcome": "rolledBack",
+        "flushFailure": {
+            "at": 3,
+            "entity": "SequenceAccount",
+            "key": {"id": 1},
+            "shortfall": "optimisticConflict",
+        },
+    }
     with pytest.raises(CaseFailure, match="last flush runs at 'commit'"):
         assert_judged(case)
 
@@ -286,7 +337,7 @@ def test_a_flush_failure_needs_a_flush(damaged_case: CaseLoader) -> None:
 
 
 def test_a_group_holds_one_transaction_instant(damaged_case: CaseLoader) -> None:
-    case = damaged_case(_BARRIER)
+    case = damaged_case(_TEMPORAL)
     case.when["scenario"][0]["write"][2]["at"] = "2024-11-09T00:00:00.000000Z"
     with pytest.raises(CaseFailure, match="one unit of work holds one"):
         assert_judged(case)
@@ -298,7 +349,7 @@ def test_a_group_holds_one_transaction_instant(damaged_case: CaseLoader) -> None
         pytest.param(
             lambda steps: steps[4]["write"][2].update(on="/scenario/4/write/1"),
             "is not an earlier insert submission",
-            id="a-pointer-to-a-barrier",
+            id="a-pointer-to-a-predicate-write",
         ),
         pytest.param(
             lambda steps: steps[4]["write"][2].update(on="/scenario/5/write/0"),
@@ -337,7 +388,7 @@ def test_a_state_graded_case_groups_every_write(damaged_case: CaseLoader) -> Non
 
 
 def test_a_state_graded_case_states_every_table_it_writes(damaged_case: CaseLoader) -> None:
-    case = damaged_case(_BARRIER)
+    case = damaged_case(_TEMPORAL)
     del case.then["tableState"]["sequence_tag"]
     with pytest.raises(CaseFailure, match="states no rows for \\['sequence_tag'\\]"):
         assert_judged(case)
@@ -372,11 +423,15 @@ def test_a_golden_graded_scenarios_table_state_is_graded(
             ),
         ]
 
-    case = corpus_case("m-batch-write-011-readless-predicate-ordering-barrier.yaml")
+    case = corpus_case(
+        "m-batch-write-011-readless-predicate-write-runs-after-what-its-unit-buffered.yaml"
+    )
     with ScriptedProvider(script=script(case)) as db:
         assert_unit_work_scenario(case, db)
 
-    damaged = damaged_case("m-batch-write-011-readless-predicate-ordering-barrier.yaml")
+    damaged = damaged_case(
+        "m-batch-write-011-readless-predicate-write-runs-after-what-its-unit-buffered.yaml"
+    )
     stated = script(damaged)
     damaged.then["tableState"]["order_item"][0]["sku"] = "B-200"
     with pytest.raises(CaseFailure, match="state after the scenario"):

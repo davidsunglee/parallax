@@ -46,15 +46,18 @@ opens a transaction with no unit of work at all. Within one unit of work:
 - A read that depends on a not-yet-flushed write **MUST** observe that write: the
   unit of work flushes pending writes before serving a dependent read
   (read-your-own-writes), so a query never returns stale in-transaction state.
-- Those two are the **whole** trigger vocabulary: a **read dependency** and the
-  boundary's **pre-commit** flush. There is no size threshold, no periodic flush,
-  and no caller-invoked one — physical write timing stays encapsulated, and a
-  flush that reached the database is therefore attributable to exactly one of
-  the two. The joined (nested) boundary adds no third trigger: it shares the
-  outer unit of work's buffer, and the outer boundary's pre-commit flush is what
-  flushes it. The second trigger is named for when it runs, because
-  **finalization** already names the planner stage every flush of either trigger
-  goes through.
+- A predicate-selected write's one readless statement runs **at its call**
+  (`m-batch-write`): it never enters the buffer, and every write buffered before
+  it is flushed first, in the same flush as that statement.
+- Those three are the **whole** trigger vocabulary: a **read dependency**, a
+  **predicate write**, and the boundary's **pre-commit** flush. There is no size
+  threshold, no periodic flush, and no caller-invoked one — physical write
+  timing stays encapsulated, and a flush that reached the database is therefore
+  attributable to exactly one of the three. The joined (nested) boundary adds no
+  further trigger: it shares the outer unit of work's buffer, and the outer
+  boundary's pre-commit flush is what flushes it. The last trigger is named for
+  when it runs, because **finalization** already names the planner stage every
+  flush of every trigger goes through.
 
 Where an implementation owns connection lifetimes (`m-db-port`), each **attempt**
 holds one connection. It is acquired after the attempt begins and before the
@@ -117,7 +120,12 @@ triggered the flush. A doomed attempt accepts no further reads, writes, or
 flushes, refuses commit, withholds the callback's return value, and rolls back,
 even when the callback caught the failure and returned normally; the first
 cause is retained. A refusal raised while a write is prepared, admitted, or
-planned precedes execution and does not doom the attempt.
+planned precedes execution and does not doom the attempt. That holds for a
+predicate-selected write's own statement too: a refusal building or auditing it
+after its flush executed the writes buffered before it fails that flush without
+dooming the attempt and returns none of those writes to the buffer, while a
+failure lowering, executing, or enforcing it dooms the attempt as any execution
+failure does.
 
 The suite proves this with a **rollback scenario**: a find, a write step whose
 golden DML is applied and then **rolled back**, and the *same* find re-issued —
@@ -152,8 +160,8 @@ how `m-predicate` hosts `predicate.schema.json`; `m-case-format` and
   every row of a `target` (`entity` plus a bare `m-predicate` predicate)
   matching that predicate, with `assignments` on the amendment and a `row`
   stating the complete writable state on the replacement, written by one
-  readless statement and so admitted only over an unversioned, non-temporal
-  target, which has no history to close and no Valid Time to bound
+  readless statement at its call and so admitted only over an unversioned,
+  non-temporal target, which has no history to close and no Valid Time to bound
   (`m-batch-write`);
 - a **caller-addressed** (target) instruction — an amendment (`amend` /
   `amendUntil`), a complete replacement (`replace` / `replaceUntil`), a
@@ -656,7 +664,7 @@ When the write's range reaches its turn, the row is **current** if no settled
 write completed since its read has changed that exact milestone (*Write Groups
 complete before later work runs*) — even one that kept its address and
 revision. A write that kept the milestone unchanged, or changed other states, does
-not make it stale, and neither does an ordering barrier by itself. A current row
+not make it stale. A current row
 is **completed** — each pending occurrence judged as an ordinary read judges it,
 with no statement, Database Call, or activity, and a finding refusing the write
 at that turn — and joins the range's coverage exactly as a row its coverage read
@@ -695,7 +703,7 @@ is readless (`m-batch-write`), so it requests no acquisition at all.
 One **Write Planner** turns a flush's buffered intent into finalized semantic
 steps. It is model-scoped, constructed once per accepted Metamodel with its
 immutable batching, concurrency, temporal, and provenance strategies already
-wired, and it exposes exactly **one** planning operation:
+wired, and it exposes exactly **one** planning operation over buffered writes:
 
 ```text
 finalize(
@@ -727,7 +735,16 @@ that settled write completes. Work that stated nothing against existing state �
 folded into a pending insert, cancelled against one, or an amendment assigning
 no member — carries no source.
 
-No second planning operation exists to project the plan.
+No second planning operation exists to project the plan. A predicate-selected
+write is planned apart, by one more operation answering the one Planned Step its
+readless statement executes as — unversioned, expecting any count, an update
+decorated once by the configured audit — and no settled write, completion, or
+Write Group:
+
+```text
+predicateStep(prepared: PreparedPredicateWrite, actor_identity: ActorIdentity,
+              transaction_instant: TransactionInstant) -> PlannedStep
+```
 
 A caller **MUST NOT** be required — or able — to sequence coalescing,
 cancellation, no-op elimination, batching, dependency ordering, Transaction
@@ -765,7 +782,7 @@ The Write Planner privately owns this stage order:
 1. resolve identities and coalesce buffered intent
 2. eliminate known cancellation and no-op work
 3. form compatible batches
-4. dependency-order writes within barrier regions
+4. dependency-order writes into mutation phases
 5. validate the observation each surviving write carries
 6. resolve the Transaction Instant only if surviving work needs it
 7. temporal expansion: expand each temporal write's Coverage Transform over the
@@ -843,7 +860,7 @@ topology and correctness semantics already decided.
 
 - A Write Plan **MUST NOT** retain a Transaction Instant, a raw Write
   Observation, the transaction's Concurrency Preference, an Actor Identity, a strategy
-  object, a barrier marker, a private group, or any other planning context.
+  object, a private group, or any other planning context.
   Derived values are materialized *into* the steps instead. A Write Group is the
   plan's produced execution structure, not planning context.
 - A Write Plan **MAY** retain an immutable value a strategy, a clock, or a facet
@@ -894,33 +911,25 @@ topology and correctness semantics already decided.
   work runs*) hold are read; a
   part that read finds nothing in is a gap, read once, and a rectangle created
   concurrently inside a held row's interval is not reached (`m-temporal-write`
-  *Concurrent creation in gaps is not coordinated*). A composition
-  an ordering barrier kept after earlier writes of its object binds to the
-  current rows of its whole window alone — those the attempt holds for its
-  continuing sources and its reused retained rows, and a read of the rest when
-  its turn comes. Each observed condition holds where its rectangle still
-  stands or its source continues through what the earlier settled writes left
-  of it (*Observation ownership and lifetime*), and each caller's start only
-  where a current row stands at the stated start, literally; any other caller's
-  start is a failed precondition, and any other observed condition fails as
-  that write's own shortfall would, the caller's first.
+  *Concurrent creation in gaps is not coordinated*). Each caller's start holds
+  only where a current row stands at the stated start, literally; any other
+  caller's start is a failed precondition.
 - A Write Group's Planned Steps are a **logical** sequence. An implementation MAY
   pack homogeneous runs and expose stable immutable views during iteration
   rather than allocating one container per step; every exposed view is
   immutable and stable, and equal views need not have object identity.
-- Each settled write — one keyed write with its expanded temporal topology, one
-  batch, or one readless predicate write — retains its own completion facts,
+- Each settled write — one keyed write with its expanded temporal topology, or
+  one batch — retains its own completion facts,
   produced values like its steps, and belongs to exactly one Write Group. A
   deferred settled write's group plans no step of its own.
 
 ### Write Group formation
 
 Settlement forms the Write Groups as it settles the sequence stage 4 ordered.
-Within each region (*Buffered, batched, ordered writes*), the inserts, then the
-updates, then the deletes are each one **mutation phase**. A readless predicate
-write is a phase of its own at its barrier, and an insert that must follow the
-removal clearing its way starts a new region. A Write Group never spans two
-mutation phases.
+A flush's writes form one **region**, except that an insert which must follow
+the removal clearing its way starts a new one. Within each region the inserts,
+then the updates, then the deletes are each one **mutation phase**. A Write
+Group never spans two mutation phases.
 
 Consecutive settled writes of one mutation phase share a Write Group while the
 objects they write are distinct:
@@ -932,9 +941,8 @@ objects they write are distinct:
 - A group holds at most 64 settled writes, so a group's inserts wait behind the
   effects of at most that many settled writes, however many the flush holds.
 - A deferred settled write, a write whose insert the database allocates a key
-  for, and a write naming no complete key — a readless predicate write, or an
-  insert whose key is absent or database-computed — each form a group of their
-  own.
+  for, and a write naming no complete key — an insert whose key is absent or
+  database-computed — each form a group of their own.
 - A settled write with no step joins like any other and completes with its group.
 
 A group's Planned Steps are every settled write's effects — each step that is
@@ -979,7 +987,8 @@ an unversioned row's object, which observes no state — whether or not its
 values equal what was stored; an update of a versioned row advances that state
 to the version it writes, and a keyed deletion destroys every object it
 addresses, all of a batch's included (*Observation ownership and lifetime*).
-A readless predicate write identifies no object and publishes none of these.
+A predicate-selected write is no settled write: it identifies no object and
+publishes none of these.
 Removals are retired before openings
 are registered, so a row removed and reopened at one physical address remains
 owned, and an insertion whose last tagged row the settled write removed still
@@ -1013,8 +1022,8 @@ source binds to those rows without reading them again or taking another lock;
 coverage no held row covers is read as any range reads it (*Row acquisition*).
 These records serve every later submission of the attempt, whatever flush it
 reaches; nothing releases them at the end of a flush, and the attempt's end
-releases them all. The pre-commit flush, which no submission follows, records
-only what a later barrier region of that same flush continues from.
+releases them all. The pre-commit flush, which no submission follows and none of
+whose writes continues from another, records none.
 
 ## Planned Steps and Write Observations
 
@@ -1088,7 +1097,8 @@ These rules follow, and an implementation **MUST** exhibit all of them:
   for good: an insertion admitted at the same key later grants a fresh
   authority, which no earlier source shares. A write through an ended source is
   refused at the verb as `write-evidence-consumed`. A readless predicate write
-  ends nothing and advances nothing, since it identifies no row.
+  ends nothing and advances nothing, since it identifies no row (*Readless
+  writes identify no target*).
 - **A source publishes as fresh as its read.** Evidence published from rows a
   read acquired before a settled write of this attempt completed a change of
   what it observed — a versioned or temporal row's observed state, or an
@@ -1153,7 +1163,8 @@ A predicate-selected write's assignments are literal too: its one readless
 statement writes every row its predicate matches, whatever that row already
 holds. An amendment of it expressing no member is empty as well, and so is a
 replacement of an Entity whose only writable member is its key, since the
-key is never written; each is dropped once judged (`m-batch-write`).
+key is never written; each answers zero once judged, running nothing
+(`m-batch-write`).
 
 ## Buffered, batched, ordered writes
 
@@ -1167,32 +1178,28 @@ wherever possible:
 - Operations are **ordered** so that a parent row is inserted before a child
   that references it (and deleted after), honoring foreign-key constraints.
 
-Ordering is otherwise **unconstrained**, with one exception: a **readless
-predicate write** (`m-batch-write`) is a hard **ordering barrier**. It keeps its
-authored position and partitions the buffer into independently reorderable
-**regions**; batching and foreign-key ordering apply within a region alone, and
-no write crosses the barrier in either direction. A readless predicate does not
-reveal which rows it matches, so moving a write across it could change what it
-writes (ADR 0043). The barrier is **private planning structure only** — it
-produces no group, wrapper, flag, or identifier in the Write Plan, just a
-position nothing passes. No two writes combine across it, whatever they have in
-common, so every effect executes on the side of the barrier it was buffered on:
+Ordering is otherwise **unconstrained**. No buffered write is ordered against a
+predicate-selected write: that write's one readless statement runs at its call,
+after every write buffered before it, in a flush of its own (`m-batch-write`
+*A predicate-selected write executes at its call*), and every write buffered
+after it reaches a later flush. Each write is admitted as it always is, against
+what the earlier flushes completed (*Observation ownership and lifetime*,
+*Insertion authority*).
 
-- A temporal object's writes on each side of a barrier compose apart, each
-  region's into its own settled write, though admission judges every one of
-  them together (*Observed-State Coalescing*); the later one binds to what the
-  earlier left (*deferred settled write*).
-- Two Non-Temporal writes of one claim scope on two sides of a barrier stay two
-  writes. Admission still judges the later against the earlier, and an
-  assignment after a destruction is refused as it is within a region, while a
-  repeated destruction still adds nothing. Otherwise the later write executes
-  after the barrier against the state the earlier one leaves: a versioned row
-  is gated on, and advances from, the version the earlier write produced.
-- A write of an object whose insert was buffered before a barrier does not fold
-  into that insert (*Same-transaction write coalescing*): the insert executes
-  before the barrier, and the write revises or removes the row it opened after
-  it, as a write through the insertion's source does once that insert has
-  flushed (*Insertion authority*).
+### Readless writes identify no target
+
+A readless predicate write never reveals which rows it matched, so its
+completion publishes nothing about any object: it changes no observed state,
+advances or ends no source, and leaves no fact a later write is judged against.
+An unversioned Non-Temporal source of the attempt stays usable after one, its
+shared lock standing. A later amendment through such a source writes only the
+members it assigns, so a member the predicate write assigned and the amendment
+does not keeps the predicate write's value, while a replacement writes its
+source's complete literal state, the predicate write's assignments included. A
+source whose row a predicate deletion removed is still admitted; its keyed write
+then fails its own affected-row expectation (*Affected-row enforcement*) — unlike
+a completed keyed deletion, which ends the source at the verb. Nothing reads the
+rows a predicate write reached, re-evaluates its predicate, or records them.
 
 ## Same-transaction write coalescing
 
@@ -1241,9 +1248,9 @@ pending insert.
   verbs. A bounded termination of part of a Bitemporal opening removes only its
   own window; the pair does not cancel, and the flush opens what survives.
 
-These combinations hold within one barrier region; a write buffered after a
-readless predicate write never combines with a pending insert buffered before
-it (*Buffered, batched, ordered writes*).
+A predicate-selected write's flush executes a pending insert, so a write of the
+object buffered after it revises or removes the row that insert opened, through
+the insertion's authority (*Insertion authority*), rather than combining with it.
 
 Coalescing is a property of **one** unit of work; across two committed transactions
 the milestone modules chain and split as usual. The rule is centralized here because
@@ -1344,8 +1351,7 @@ classification.
 
 A caller-addressed write of a **temporal** object joins that object's
 composition (next paragraph), judged against every write of the object still
-pending — overwritten ones, and those in other barrier regions, included — and
-not only the latest. Against each one, at least one of the two caller-addressed:
+pending — overwritten ones included — and not only the latest. Against each one, at least one of the two caller-addressed:
 
 - over **exactly the same window**, the two are one operation and start from
   one state: the caller's stated Transaction-Time start and the observed
@@ -1371,8 +1377,7 @@ window.
 **A temporal object's observed writes compose by object.** Writes of one temporal
 object through observed sources — whichever states they observed and whatever
 Valid-Time windows they request — form one pending composition at the position
-of the first in their barrier region, judged against every write of the object
-still pending:
+of the first, judged against every write of the object still pending:
 
 - an **assignment** composes in authored order: where requested windows
   overlap, the later assignment's value wins member by member, and outside the
@@ -1399,9 +1404,9 @@ write would settle against is already claimed by pending work it cannot join. Th
 remedy is the ordinary one: a participating read force-flushes the buffered intent
 and returns fresh state, which nothing claims.
 
-A readless predicate write claims nothing: it observes no state, and the
-ordering barrier it raises keeps every write on its own side (*Buffered,
-batched, ordered writes*).
+A readless predicate write claims nothing: it observes no state and is never
+buffered, and the flush it executes in ends every claim pending before it
+(*Buffered, batched, ordered writes*).
 
 A coalescing witness encodes **both** buffered mutations explicitly by authoring
 the write step as an ordered **buffer-and-flush** scenario. `/scenario/<n>/write`

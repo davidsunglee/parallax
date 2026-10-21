@@ -164,6 +164,7 @@ __all__ = [
     "run_standalone_find",
     "run_write_sequence_case",
     "scenario_group_step_indices",
+    "step_affected_rows",
     "step_query",
     "step_rows",
     "write_entries",
@@ -1152,7 +1153,7 @@ class _SimulatedUnit:
         if isinstance(instruction, PreparedTargetWrite):
             self._admit(instruction)
             return
-        assert isinstance(instruction, PreparedKeyedWrite)  # predicate writes buffer apart
+        assert isinstance(instruction, PreparedKeyedWrite)  # predicate writes execute apart
         key = object_key(instruction, self._model)
         observation = write.supplied_observation
         if instruction.mutation in INSERT_MUTATIONS:
@@ -1182,8 +1183,12 @@ class _SimulatedUnit:
         retained = None if published is None else self._retained(published.key, published.evidence)
         self._settled(instruction, key, retained)
 
-    def buffer_predicate(self, prepared: PreparedPredicateWrite) -> None:
-        self._uow.buffer_predicate(prepared)
+    def execute_predicate(self, prepared: PreparedPredicateWrite) -> int:
+        """Execute ``prepared`` once everything buffered has flushed before it,
+        as the attempt's own predicate-selected write runs."""
+        affected = self._uow.execute_predicate(prepared)
+        self.inserted.clear()
+        return affected
 
     def read[T](self, read_fn: Callable[[], T]) -> T:
         """``read_fn``'s answer, run once everything buffered has flushed, as a
@@ -1272,6 +1277,7 @@ def _simulated_unit(
         clock=_pinned_clock(tx_instant),
         meta=model,
         execute_write_steps=steps,
+        execute_counted_step=steps.counted,
         acquire_rows=store.acquisition(model),
         planner=planner,
         actor_identity=_PLANNING_ACTOR,
@@ -1346,9 +1352,9 @@ def _lower_predicate_write_step(
     """Lower an ungrouped READLESS scenario predicate-write step
     (`m-batch-write-005`/``-006``) to its statements as its own simulated
     transaction, with no database: the SAME ``build_write_planner`` planning
-    and unit of work every other write path reaches (batching is a structural
-    no-op for a lone predicate write). That is one statement, or none for the
-    empty amendment the unit of work drops (`m-batch-write-050`).
+    and unit of work every other write path reaches. That is one statement,
+    or none for the empty amendment the unit of work answers without one
+    (`m-batch-write-050`).
 
     The case-format preparation seam normalizes only carrier differences before
     strict Wire preparation. The prepared product retains managed values, and
@@ -1369,17 +1375,18 @@ def _lower_predicate_write_step(
             record_statements=True,
         ) as unit,
     ):
-        unit.buffer_predicate(prepared)
+        unit.execute_predicate(prepared)
     statements = tuple(unit.statements)
     assert len(statements) <= 1  # a readless predicate write is at most one statement
     return statements
 
 
-def _buffer_wire_predicate_write(
+def _execute_wire_predicate_write(
     tx: TxnContext, model: AcceptedMetamodel, raw_write: Mapping[str, object]
-) -> None:
-    """Buffer one scenario predicate write through its public Wire verb, which
-    prepares the case's own authored target and changes or row, once.
+) -> int:
+    """Execute one scenario predicate write through its public Wire verb, which
+    prepares the case's own authored target and changes or row, once, and
+    answer the count the verb returned.
 
     Only a synthetic case's managed carrier values are spelled in Wire first
     (:func:`~parallax.conformance._case_ingress.normalize_case_write`). Dict
@@ -1392,7 +1399,7 @@ def _buffer_wire_predicate_write(
     target = cast("Mapping[str, object]", raw_write["target"])
     match authored.mutation:
         case "amend":
-            tx.wire.amend_where(
+            return tx.wire.amend_where(
                 target,
                 {
                     assignment.attr.rpartition(".")[2]: assignment.value
@@ -1401,9 +1408,9 @@ def _buffer_wire_predicate_write(
             )
         case "replace":
             assert authored.row is not None  # a replacement states its row
-            tx.wire.replace_where(target, authored.row)
+            return tx.wire.replace_where(target, authored.row)
         case "delete":
-            tx.wire.delete_where(target)
+            return tx.wire.delete_where(target)
 
 
 def _compile_find(
@@ -1690,8 +1697,8 @@ def _lower_group(
     the pre-commit flush. A DOOMED group still flushes, and its transaction
     then restores every row it advanced. What a flush emitted is attributed as
     the run lane attributes a held group's delivered writes
-    (:func:`group_writes`): all of it to the last write step buffered before
-    that flush.
+    (:func:`group_writes`): a read's flush to the last write step buffered
+    before it, and a predicate write's flush to the predicate's own step.
     """
     store = context.case_state()
     model = context.model
@@ -1719,13 +1726,14 @@ def _lower_group(
                 continue
             raw_write = step["write"]
             if is_predicate_write_step(raw_write):
-                unit.buffer_predicate(
+                state.buffered.append((index, len(unit.statements)))
+                unit.execute_predicate(
                     _prepared_case_predicate_write(cast("Mapping[str, object]", raw_write), model)
                 )
             else:
                 for write in _resolve_entries(write_entries(raw_write), model, store, []):
                     unit.buffer(write)
-            state.buffered.append((index, len(unit.statements)))
+                state.buffered.append((index, len(unit.statements)))
             lowered.append(
                 LoweredStep(f"/scenario/{index}/write", (), True, step.get("rollback") is True)
             )
@@ -2318,14 +2326,15 @@ def _run_readless_predicate_write(
     lifecycle: LifecycleRun,
     *,
     rollback: bool,
-) -> tuple[tuple[LoweredStatement, ...], int]:
+) -> tuple[tuple[LoweredStatement, ...], int, int]:
     """Execute a READLESS scenario predicate-write step (`m-batch-write-005`/
     ``-006``) through the SAME production ``db.transact`` entry point every
     other write path uses. The public Wire verb prepares the case's authored
     target and changes.
 
     The reported emission is the DML the lifecycle delivered, whose compiler
-    metadata renders the canonical Wire binds used for grading.
+    metadata renders the canonical Wire binds used for grading, beside the
+    Database Calls it made and the count the verb returned.
     """
     instant = normalize_instant(dt.datetime.fromisoformat(tx_instant))
     observed = lifecycle.observation()
@@ -2337,13 +2346,15 @@ def _run_readless_predicate_write(
         lifecycle_provider=observed.provider,
     ) as _root_database:
         database = _root_database.using_database_login()
+        affected: list[int] = []
 
         def body(tx: TxnContext) -> None:
-            _buffer_wire_predicate_write(tx, context.model, raw_write)
+            affected.append(_execute_wire_predicate_write(tx, context.model, raw_write))
 
         with absorbing_rollback():
             transact(database, body, **context.requests)
-        return observed.writes, observed.database_calls
+        (count,) = affected
+        return observed.writes, observed.database_calls, count
 
 
 def scenario_group_step_indices(steps: Sequence[Mapping[str, object]]) -> dict[str, list[int]]:
@@ -2509,6 +2520,10 @@ def _empty_buffered() -> list[tuple[int, int]]:
     return []
 
 
+def _empty_affected() -> dict[int, int]:
+    return {}
+
+
 @dataclass(frozen=True, slots=True)
 class GroupState:
     """What ONE `uow` group accumulates as its own steps run, and nothing wider.
@@ -2524,9 +2539,10 @@ class GroupState:
     holds the keys whose temporal write already settled against this group's
     reads (:class:`GroupEvidenceResolver`). ``buffered`` holds each write step's index,
     in step order, beside how many writes the group had delivered once that step
-    finished buffering (:func:`group_writes`). All five are built fresh per
-    group, never a scenario-wide store, so no value crosses a transaction
-    boundary.
+    finished buffering, or, for a predicate write, before it executed
+    (:func:`group_writes`). ``affected`` holds the count each predicate-write
+    step's verb returned, by step index. All six are built fresh per group,
+    never a scenario-wide store, so no value crosses a transaction boundary.
     """
 
     published: list[WireEntity] = field(default_factory=_empty_published)
@@ -2534,6 +2550,7 @@ class GroupState:
     opened: dict[ObjectKey, WireEntity] = field(default_factory=_empty_opened)
     settled: set[ObjectKey] = field(default_factory=_empty_settled)
     buffered: list[tuple[int, int]] = field(default_factory=_empty_buffered)
+    affected: dict[int, int] = field(default_factory=_empty_affected)
 
 
 def group_writes(
@@ -2542,13 +2559,16 @@ def group_writes(
     """Each write step's share of the writes one held group's flushes delivered,
     keyed by step index.
 
-    A held group's buffered writes reach the wire when a later read forces a
-    flush, or at its boundary, so the step a delivered write belongs to is read
-    off when it was delivered: each write step owns what was delivered after it
-    finished buffering and before the next write step had, and the last owns
-    everything after. Write steps buffered before one flush therefore report that
+    A held group's buffered writes reach the wire when a later read or
+    predicate write forces a flush, or at its boundary, so the step a delivered
+    write belongs to is read off when it was delivered: each write step owns
+    what was delivered after its mark and before the next write step's, and the
+    last owns everything after. A keyed write step's mark is where it finished
+    buffering, so write steps buffered before a read's flush report that
     flush's statements under the last of them, because what one flush delivers
-    carries no trace of the step that buffered each write.
+    carries no trace of the step that buffered each write. A predicate write's
+    mark is where it was called, so it reports the whole flush it executed in:
+    everything buffered before it, then its own statement.
     """
     shares: dict[int, tuple[LoweredStatement, ...]] = {}
     buffered = state.buffered
@@ -2999,13 +3019,15 @@ class _StepRead:
 @dataclass(frozen=True, slots=True)
 class _GroupRun:
     """One `uow` group's own report: its steps' lowered emissions in step order,
-    the Database Calls its single transaction made, and the per-step observations
-    its read steps filled, each in step order."""
+    the Database Calls its single transaction made, the per-step observations
+    its read steps filled, each in step order, and the count each of its
+    predicate-write steps returned, by step index."""
 
     lowered: list[LoweredStep]
     database_calls: int
     step_rows: list[dict[str, object]]
     step_graphs: list[dict[str, object]]
+    affected: dict[int, int]
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -3085,14 +3107,14 @@ def run_group_step(
     therefore caller-authored: a DB-computed write marker is a choreography unit
     of its own and no group step may carry one (`m-case-format` "Buffered keyed
     write instructions"), which this refuses by name rather than leaving to the
-    verb that would reject the value. A READLESS predicate-write step buffers
+    verb that would reject the value. A READLESS predicate-write step executes
     exactly as an ungrouped one does (:func:`_run_readless_predicate_write`),
-    but into the group's held transaction — and into ``tracked`` — so the flush
-    that delivers it also orders the keyed writes buffered on either side of
-    it. A write step's
+    but in the group's held transaction — and in ``tracked`` — so the flush
+    it executes in first delivers what the group buffered before it; the
+    count its verb returned is recorded in ``state``. A write step's
     statements are those the group's flushes deliver for it, which its runner
     attributes once they ran (:func:`group_writes`), so the step answers none of
-    its own; it records in ``state`` that it finished buffering. A FIND step
+    its own; it records in ``state`` where it stands among them. A FIND step
     runs through ``tx.wire.find`` — the participating
     Wire read, which force-flushes any pending buffered write, takes the read
     lock its target Entity's own Effective Concurrency Strategy calls for, and
@@ -3115,10 +3137,10 @@ def run_group_step(
     model = context.model
     if "write" in step and is_predicate_write_step(step["write"]):
         raw_write = cast("Mapping[str, object]", step["write"])
-        if tracked is not None:
-            tracked.buffer_predicate(_prepared_case_predicate_write(raw_write, model))
-        _buffer_wire_predicate_write(tx, model, raw_write)
         state.buffered.append((index, len(observation.writes)))
+        if tracked is not None:
+            tracked.execute_predicate(_prepared_case_predicate_write(raw_write, model))
+        state.affected[index] = _execute_wire_predicate_write(tx, model, raw_write)
         return (
             LoweredStep(f"/scenario/{index}/write", (), True, step.get("rollback") is True),
             None,
@@ -3278,7 +3300,9 @@ def _run_uow_group(
         # Every statement this ONE transaction put on the wire, which is where the
         # group's Database Calls come from rather than from a second count this lane
         # keeps.
-        return _GroupRun(reported, observation.database_calls, rows_observed, step_graphs)
+        return _GroupRun(
+            reported, observation.database_calls, rows_observed, step_graphs, state.affected
+        )
     finally:
         session.close()
 
@@ -3342,7 +3366,7 @@ def _submit(
     refusal = entry.get("expectError")
     try:
         if "target" in entry:
-            _buffer_wire_predicate_write(tx, model, entry)
+            _execute_wire_predicate_write(tx, model, entry)
         elif "row" in entry:
             target = _build_target_instruction(entry, model).instruction
             assert isinstance(target, PreparedTargetWrite)  # a `row` entry is caller-addressed
@@ -3426,8 +3450,9 @@ def _run_state_graded_group(
     Each submission goes to the verb its form names; each find reads through the
     group's transaction. A group whose fate is a plain rollback abandons its unit
     of work once its last step ran; any other runs to commit, and a flush that
-    fails ends it where it ran — at the find whose read flushed, or at commit —
-    which is the fate it reports.
+    fails ends it where it ran — at the find whose read flushed, at the write
+    step whose predicate submission flushed, or at commit — which is the fate it
+    reports.
     """
     label = cast("str", steps[start]["uow"])
     fate = case_document.unit_fate(case, label)
@@ -3551,7 +3576,8 @@ def run_scenario_case(
     read observed inside the group's transaction.
     `stepRows` is filled on both lanes too, by every read step this run drives —
     ungrouped, grouped, and streamed alike — and by every accepted `mutate`
-    declaring `expectRows`."""
+    declaring `expectRows`. `stepAffectedRows` holds the count each direct
+    predicate-write step's verb returned, grouped or not."""
     lifecycle = lifecycle_run(lifecycle)
     if case.document.get("grading") == "state":
         return _run_state_graded_case(case, port, lifecycle)
@@ -3580,6 +3606,7 @@ def run_scenario_case(
     )
     lowered: list[LoweredStep] = []
     units: dict[str, dict[str, object]] = {}
+    affected: dict[int, int] = {}
     database_calls = 0
     try:
         seed_store_from_fixtures(case, model, store)
@@ -3605,6 +3632,7 @@ def run_scenario_case(
                 lowered.extend(group.lowered)
                 rows_observed.extend(group.step_rows)
                 step_graphs.extend(group.step_graphs)
+                affected.update(group.affected)
                 database_calls += group.database_calls
                 index = end + 1
                 continue
@@ -3627,7 +3655,7 @@ def run_scenario_case(
             if is_predicate_write_step(raw_write):
                 raw_predicate_write = cast("Mapping[str, object]", raw_write)
                 tx_instant = entry_instant(raw_predicate_write)
-                ran, predicate_calls = _run_readless_predicate_write(
+                ran, predicate_calls, affected[index] = _run_readless_predicate_write(
                     port,
                     context,
                     raw_predicate_write,
@@ -3654,8 +3682,25 @@ def run_scenario_case(
         else None
     )
     return ScenarioRun(
-        emissions, database_calls, [], rows_observed, step_graphs, units, table_state
+        emissions,
+        database_calls,
+        [],
+        rows_observed,
+        step_graphs,
+        units,
+        table_state,
+        step_affected_rows(affected),
     )
+
+
+def step_affected_rows(affected: Mapping[int, int]) -> list[dict[str, object]]:
+    """The `stepAffectedRows` observation (`m-conformance-adapter`): each
+    predicate-write step's pointer and the count its verb returned, in step
+    order."""
+    return [
+        {"at": f"/scenario/{index}", "affectedRows": count}
+        for index, count in sorted(affected.items())
+    ]
 
 
 def run_write_sequence_case(

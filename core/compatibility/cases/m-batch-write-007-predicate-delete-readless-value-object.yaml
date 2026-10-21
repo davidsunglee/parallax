@@ -14,6 +14,7 @@ when:
               path: parallax.compatibility.Customer.address.city
               value: Boston
       databaseCalls: 1
+      expectAffectedRows: 1
       statements:
         - sql:
             postgres: delete from customer where jsonb_extract_path_text(address, ?) = ?

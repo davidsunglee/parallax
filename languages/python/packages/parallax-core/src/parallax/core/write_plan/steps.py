@@ -408,8 +408,7 @@ class ResolvedMutationSelection:
 
     It carries the predicate and nothing else: the enclosing step already names
     the Entity, and a Resolved Mutation Selection's presence already implies an unversioned
-    Non-Temporal step, an unbounded expected effect, and ordering-barrier
-    behavior.
+    Non-Temporal step and an unbounded expected effect.
     """
 
     target: EntityMetadata

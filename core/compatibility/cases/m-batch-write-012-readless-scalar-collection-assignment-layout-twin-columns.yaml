@@ -26,6 +26,7 @@ when:
           - attr: parallax.compatibility.CollectionTwinItem.counts
             value: [5, 5]
       databaseCalls: 1
+      expectAffectedRows: 2
       statements:
         - sql:
             postgres: update collection_twin set counts = ?, tags = ?, parts = ? where id < ?

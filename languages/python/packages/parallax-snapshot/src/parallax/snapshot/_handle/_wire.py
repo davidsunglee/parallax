@@ -393,24 +393,25 @@ class WireTransactionView(WireDatabaseView):
         mutation, bound = window_mutation("terminate", "terminateUntil", until)
         wire_keyed_write(self._attempt, mutation, observed, until=bound)
 
-    def amend_where(self, target: WirePredicateTarget, changes: WireChanges, /) -> None:
-        """Buffer an amendment of every row ``target`` selects, in one readless
-        statement, exactly as ``tx.amend_where`` does: the members ``changes``
-        names, every other member kept.
+    def amend_where(self, target: WirePredicateTarget, changes: WireChanges, /) -> int:
+        """Amend every row ``target`` selects now, in one readless statement,
+        exactly as ``tx.amend_where`` does: the members ``changes`` names,
+        every other member kept, answering how many rows it matched.
 
         ``target`` is a Typed Object Query, held to ``tx.amend_where``'s rules
         and kept as authored, or the canonical ``{entity, predicate}``
         selection document. ``changes`` lowers to the same canonical assignment
         algebra ``tx.amend_where``'s ``.set(...)`` spelling does; ``{}`` is the
-        empty amendment, judged and then dropped, so no statement runs."""
-        self._attempt.predicate_write(WirePredicateWriteAdapter(target, changes), "amend")
+        empty amendment, judged and then answered ``0``, so no statement
+        runs."""
+        return self._attempt.predicate_write(WirePredicateWriteAdapter(target, changes), "amend")
 
     def replace_where(
         self, target: WirePredicateTarget, data: Mapping[str, object] | WireEntity, /
-    ) -> None:
-        """Buffer a replacement of every row ``target`` selects, in one readless
+    ) -> int:
+        """Replace every row ``target`` selects now, in one readless
         statement, exactly as ``tx.replace_where`` does, under
-        :meth:`amend_where`'s target rules.
+        :meth:`amend_where`'s target and count rules.
 
         ``data`` is the selected objects' whole writable state in accepted wire
         spellings, completed as :meth:`replace` completes it, a read-only
@@ -420,14 +421,15 @@ class WireTransactionView(WireDatabaseView):
         the node must be one of the selected Entity. A primary-key entry
         addresses nothing, since ``target`` selects the rows, so it is accepted
         and never written."""
-        self._attempt.predicate_write(WirePredicateWriteAdapter(target, data), "replace")
+        return self._attempt.predicate_write(WirePredicateWriteAdapter(target, data), "replace")
 
-    def delete_where(self, target: WirePredicateTarget, /) -> None:
-        """Buffer a deletion of every row ``target`` selects, in one readless
-        statement, under :meth:`amend_where`'s target rules.
+    def delete_where(self, target: WirePredicateTarget, /) -> int:
+        """Delete every row ``target`` selects now, in one readless statement,
+        under :meth:`amend_where`'s target rules, answering how many rows it
+        deleted.
 
         The sanctioned spelling for unconditional intent: it says outright that
         the caller means to remove whatever matches, rather than arriving there
         by building a value nothing was read into.
         """
-        self._attempt.predicate_write(WirePredicateWriteAdapter(target), "delete")
+        return self._attempt.predicate_write(WirePredicateWriteAdapter(target), "delete")

@@ -19,6 +19,7 @@ when:
           balance: "150.00"
           owner: Replaced
       databaseCalls: 1
+      expectAffectedRows: 2
       statements:
         - sql:
             postgres: update wallet set owner = ?, balance = ? where balance < ?

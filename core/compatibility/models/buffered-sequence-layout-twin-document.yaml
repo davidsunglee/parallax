@@ -8,11 +8,11 @@
 #
 # The three Entities divide the write surface the way a buffered sequence crosses it.
 # `SequenceSpan` is Bitemporal, so its writes are ranges over current coverage that
-# compose, stay apart over disjoint windows, and continue across a barrier.
+# compose, stay apart over disjoint windows, and continue across a predicate write.
 # `SequenceAccount` is a versioned Non-Temporal row, whose writes on two sides of a
-# barrier advance its version once each. `SequenceTag` is an unversioned Non-Temporal
-# row, which a readless predicate write can select, so it carries the barrier and the
-# Non-Temporal same-key writes the barrier must keep on their own sides.
+# predicate write advance its version once each. `SequenceTag` is an unversioned
+# Non-Temporal row, which a readless predicate write can select, so it carries the
+# predicate write and the Non-Temporal same-key writes on either side of it.
 #
 # Every member name is its Column's name, so a read publishes the same row under
 # either layout.

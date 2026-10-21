@@ -420,17 +420,18 @@ Final:  [January, February) | [February, April) first amendment
         | [April, June) | [June, August) second amendment | [August, infinity)
 ```
 
-When an ordering barrier separates such operations (`m-unit-work`
-*Buffered, batched, ordered writes*), each executes on its own side. The later
-one binds to the coverage its window reaches when its turn comes, and finds the
-rectangles the earlier one opened at the attempt's own `txInstant`. A caller's
-`ifTxStart` is judged literally against them: a start the earlier operation's
-inactivation moved to the attempt's instant no longer stands at the stated
-start, so it fails as that caller's precondition. An observed source continues
-through the rectangles the earlier operation derived from what it read
-(`m-unit-work` *Observation ownership and lifetime*), and the later operation
-revises or removes those rectangles like any the attempt opened, so the attempt
-adds no history of its own.
+When a flush — a read's, or a predicate-selected write's (`m-unit-work`
+*Buffered, batched, ordered writes*) — completes the earlier operation before
+the later one is admitted, the later one binds to the coverage its window
+reaches when its turn comes, and finds the rectangles the earlier one opened at
+the attempt's own `txInstant`. A caller's `ifTxStart` is judged literally
+against them: a start the earlier operation's inactivation moved to the
+attempt's instant no longer stands at the stated start, so it fails as that
+caller's precondition. An observed source continues through the rectangles the
+earlier operation derived from what it read (`m-unit-work` *Observation
+ownership and lifetime*), and the later operation revises or removes those
+rectangles like any the attempt opened, so the attempt adds no history of its
+own.
 
 **Concurrent creation in gaps is not coordinated.** The existing-row guards and
 shared locks above protect rows that exist when the flush reads them. A
@@ -439,8 +440,7 @@ or a gap an amendment passes over, and both commits can leave overlapping
 coverage; no isolation level is raised to prevent it. The result breaks
 *Milestones of one object never overlap*: it is invalid storage, not a second
 valid state. A write binds to the rows
-it already holds — the rectangles it observed, unless an ordering barrier
-follows earlier writes of its object; the current rectangles the attempt's own
+it already holds — the rectangles it observed; the current rectangles the attempt's own
 completed writes produced for a source continuing through them (`m-unit-work`
 *Observation ownership and lifetime*); the starting rectangles a Locking
 acquisition retained that are still current; and a pending insertion's own

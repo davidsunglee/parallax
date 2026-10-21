@@ -947,7 +947,7 @@ _TERMINATE_MUTATIONS = ("terminate", "terminateUntil")
 
 
 # `m-dialect` *Unchanged-row count*.
-_COUNTS_UNCHANGED_ROWS = frozenset({"postgres"})
+_COUNTS_UNCHANGED_ROWS = frozenset({"postgres", "mariadb"})
 
 
 def _is_bitemporal(entity: Entity) -> bool:

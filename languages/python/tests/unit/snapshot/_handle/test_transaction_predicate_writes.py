@@ -2,7 +2,7 @@
 
 The set-based verb family covers the mutation-compatibility guard, Assignment
 composition, the replaced state, inheritance rejection, the readless statement an unversioned
-non-temporal target buffers, and the refusal of every target that needs an
+non-temporal target executes, and the refusal of every target that needs an
 observation (`m-batch-write`).
 
 The codec's effective-change comparison is driven directly off positional rows
@@ -167,9 +167,9 @@ _NESTED_READLESS_META = DomainModel(NestedReadlessVoyage)
 
 # --------------------------------------------------------------------------- #
 # Predicate-selected `_where` verb family over a readless target: one        #
-# statement, buffered, with no read.                                           #
+# statement, executed at the call, with no read.                               #
 # --------------------------------------------------------------------------- #
-def test_readless_update_where_buffers_one_statement_no_read() -> None:
+def test_readless_update_where_executes_one_statement_no_read() -> None:
     port = ScriptedAdapter(Transact(Write()))
 
     def fn(tx: TxnContext) -> None:
@@ -296,7 +296,7 @@ def test_readless_document_scalar_assignment_still_reaches_planning() -> None:
     assert [type(op) for op in port.calls] == [BeginCall, WriteCall, CommitCall]
 
 
-def test_readless_delete_where_buffers_one_statement_no_read() -> None:
+def test_readless_delete_where_executes_one_statement_no_read() -> None:
     port = ScriptedAdapter(Transact(Write()))
 
     def fn(tx: TxnContext) -> None:
@@ -401,7 +401,7 @@ def test_replace_where_refuses_a_payload_of_another_entity() -> None:
     assert not any(isinstance(op, (ReadCall, WriteCall)) for op in port.calls)
 
 
-def test_readless_update_where_through_a_shared_join_buffers_one_statement_no_read() -> None:
+def test_readless_update_where_through_a_shared_join_executes_one_statement_no_read() -> None:
     port = ScriptedAdapter(Transact(Write()))
 
     def fn(tx: TxnContext) -> None:
@@ -807,7 +807,7 @@ def test_delete_where_refuses_an_attribute_outside_the_written_position() -> Non
 # port is touched (`m-batch-write`). The exact advice for every verb and kind  #
 # is `test_predicate_write_order.py`'s subject.                                #
 # --------------------------------------------------------------------------- #
-_OBSERVED_TARGETS: Final[list[tuple[str, DomainModel, Callable[[TxnContext], None]]]] = [
+_OBSERVED_TARGETS: Final[list[tuple[str, DomainModel, Callable[[TxnContext], object]]]] = [
     (
         "versioned",
         MODELS["account"],

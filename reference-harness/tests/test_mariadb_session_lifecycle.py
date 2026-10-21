@@ -25,6 +25,7 @@ from reference_harness.providers.mariadb import (
     _RESTORE_SNAPSHOT_ISOLATION,
     _SAVE_ACCESS_MODE,
     _SAVE_SNAPSHOT_ISOLATION,
+    CONNECTION_FLAGS,
     MariaDbProvider,
 )
 
@@ -98,11 +99,13 @@ class _Driver:
         self.saved: list[int] = []
         self.failures: dict[str, Exception] = {}
         self.connections: list[_Connection] = []
+        self.parameters: list[dict[str, object]] = []
 
-    def connect(self, **_: object) -> _Connection:
+    def connect(self, **parameters: object) -> _Connection:
         saved = self.saved[len(self.connections)] if self.saved else 0
         connection = _Connection(saved, self.failures)
         self.connections.append(connection)
+        self.parameters.append(parameters)
         return connection
 
     @property
@@ -355,3 +358,19 @@ def test_a_failed_access_mode_restore_surfaces_the_reached_outcome_and_closes(
         "the session's last transaction committed"
     ]
     assert driver.calls[-3:] == [_restore(0), _RESTORE_ACCESS_MODE % 0, "close"]
+
+
+def test_every_connection_a_provider_opens_counts_the_rows_it_matches(
+    driver: _Driver,
+) -> None:
+    # Whatever parameters the provider was handed, a held session and a peer
+    # both negotiate CLIENT_FOUND_ROWS, so an UPDATE counts its unchanged matches.
+    owner = MariaDbProvider(None, "harness", {"user": "u", "client_flag": 0})
+    with owner.open_session("read-committed"):
+        pass
+    with owner.open_peer():
+        pass
+    assert [
+        (parameters["client_flag"], parameters["autocommit"]) for parameters in driver.parameters
+    ] == [(CONNECTION_FLAGS, False), (CONNECTION_FLAGS, True)]
+    assert all(parameters["user"] == "u" for parameters in driver.parameters)

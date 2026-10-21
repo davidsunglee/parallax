@@ -105,6 +105,7 @@ def _uow(
         clock=FixedClock(dt.datetime(2024, 6, 1, tzinfo=dt.UTC)),
         meta=meta,
         execute_write_steps=flushes.simulated,
+        execute_counted_step=flushes.simulated.counted,
         acquire_rows=NO_ROW_READS if rows is None else rows,
         planner=planner,
         actor_identity=TEST_ACTOR_IDENTITY,
@@ -159,10 +160,9 @@ def _account_patch(*, version: int = 3) -> PreparedTargetWrite:
 # --------------------------------------------------------------------------- #
 # A predicate write is readless.                                              #
 # --------------------------------------------------------------------------- #
-def test_a_predicate_write_is_buffered_readless_and_reads_nothing() -> None:
+def test_a_predicate_write_executes_readless_and_reads_nothing() -> None:
     uow, flushes = _uow(_PERSON)
-    uow.buffer_predicate(_predicate(_PERSON, "Person"))
-    uow.flush(trigger="pre_commit")
+    uow.execute_predicate(_predicate(_PERSON, "Person"))
     # One unconditioned delete of the matching rows, which nothing read.
     (statement,) = flushes.simulated.statements
     assert statement.sql == "delete from person where id = ?"

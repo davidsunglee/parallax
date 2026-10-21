@@ -485,7 +485,9 @@ def test_write_run_sweep(case: case_format.Case, profile: Profile, profile_run: 
     sequence in one transaction. Grading: the envelope's per-step emissions equal the
     golden DML and its total Database Calls the case's `then.databaseCalls`; every scenario
     row-observing step's `stepRows` observation equals its `expectRows`
-    (:func:`_grade_step_rows`), each group's fate the one `then.units` states, and
+    (:func:`_grade_step_rows`), every direct predicate-write step's
+    `stepAffectedRows` observation its `expectAffectedRows`
+    (:func:`_grade_step_affected_rows`), each group's fate the one `then.units` states, and
     the tables a scenario's `then.tableState` states hold its rows;
     a writeSequence's committed `tableState` observation equals `then.tableState`,
     table for table. The binds each golden write handed the driver carry the
@@ -548,6 +550,7 @@ def _grade_write_run(
     if case.shape == "scenario":
         steps = cast("list[dict[str, Any]]", case_document(case)["when"]["scenario"])
         _grade_step_rows(case, model, steps, envelope)
+        _grade_step_affected_rows(case, steps, envelope)
         # `expectError` steps grade through the adapter's `errors` observation
         # (`m-conformance-adapter` / `errorObservation.errorClass`): one entry
         # per declaring step, in step order — and NO entry for any other
@@ -728,6 +731,23 @@ def _grade_step_rows(
             continue
         compare = compare_rows_in_order if streamed else compare_rows
         compare(entry["rows"], expected_rows)
+
+
+def _grade_step_affected_rows(
+    case: case_format.Case, steps: list[dict[str, Any]], envelope: Any
+) -> None:
+    """Grade every direct predicate-write step's `expectAffectedRows` against the
+    run's own `stepAffectedRows` observation: the count its public verb returned,
+    at that step's own pointer, in step order. The whole ordered list is
+    asserted, so a run that dropped or invented a count fails on it, and a run
+    reporting none for a case stating none reports the empty list."""
+    expected = [
+        {"at": f"/scenario/{index}", "affectedRows": step["expectAffectedRows"]}
+        for index, step in enumerate(steps)
+        if "expectAffectedRows" in step
+    ]
+    observed = envelope["observations"].get("stepAffectedRows", [])
+    assert observed == expected, (case.case_id, observed)
 
 
 # The `stepRows` oracle's own directional proof, run without a database: an
@@ -1326,3 +1346,39 @@ def _grade_success_rounds(
                 )
             if step.affected_rows is not None:
                 assert outcome.affected == step.affected_rows, (case.case_id, node)
+
+
+def _counted_case() -> tuple[case_format.Case, list[dict[str, Any]]]:
+    case = next(c for c in _WRITE_CASES if c.case_id == "m-execution-lifecycle-011")
+    return case, cast("list[dict[str, Any]]", case_document(case)["when"]["scenario"])
+
+
+def _counted_envelope(counts: list[tuple[int, int]]) -> dict[str, Any]:
+    return {
+        "observations": {
+            "stepAffectedRows": [
+                {"at": f"/scenario/{index}", "affectedRows": count} for index, count in counts
+            ]
+        }
+    }
+
+
+def test_grade_step_affected_rows_accepts_the_counts_each_predicate_step_states() -> None:
+    case, steps = _counted_case()
+    _grade_step_affected_rows(case, steps, _counted_envelope([(1, 3), (2, 0), (3, 0)]))
+
+
+@pytest.mark.parametrize(
+    "counts",
+    [
+        [(1, 2), (2, 0), (3, 0)],
+        [(1, 3), (2, 0)],
+        [(0, 1), (1, 3), (2, 0), (3, 0)],
+        [],
+    ],
+    ids=["a-changed-count", "a-missing-step", "an-invented-step", "no-counts"],
+)
+def test_grade_step_affected_rows_refuses_any_other_report(counts: list[tuple[int, int]]) -> None:
+    case, steps = _counted_case()
+    with pytest.raises(AssertionError):
+        _grade_step_affected_rows(case, steps, _counted_envelope(counts))

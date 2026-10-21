@@ -16,7 +16,8 @@ when:
               value: "200.00"
         assignments: []
       databaseCalls: 0
-      note: the empty amendment is judged, then dropped before it is buffered, so it emits no statement
+      expectAffectedRows: 0
+      note: the empty amendment is judged, then answers zero without a statement or a flush
     - objectQuery:
         target: parallax.compatibility.Wallet
         predicate:

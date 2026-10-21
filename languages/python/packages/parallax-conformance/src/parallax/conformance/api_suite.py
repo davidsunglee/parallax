@@ -1551,7 +1551,7 @@ _BUFFERED_SEQUENCE_REASON: Final[str] = (
     "a state-graded buffered sequence, run per layout arm through the public verbs by "
     "the run conformance lane and checked for consistency by the reference harness; "
     "its developer spellings are the real-database public witnesses of the target, "
-    "disjoint, barrier and dependent-read suites, so a story here would add no "
+    "disjoint, predicate-write and dependent-read suites, so a story here would add no "
     "developer surface"
 )
 
@@ -1579,6 +1579,7 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-execution-lifecycle-001": _EXECUTION_LIFECYCLE_SWEEP_GRADED_REASON,
     "m-execution-lifecycle-002": _EXECUTION_LIFECYCLE_SWEEP_GRADED_REASON,
     "m-execution-lifecycle-003": _EXECUTION_LIFECYCLE_SWEEP_GRADED_REASON,
+    "m-execution-lifecycle-011": _EXECUTION_LIFECYCLE_SWEEP_GRADED_REASON,
     "m-execution-lifecycle-004": _EXECUTION_LIFECYCLE_BOUNDARY_RUNNER_REASON,
     "m-execution-lifecycle-005": _EXECUTION_LIFECYCLE_BOUNDARY_RUNNER_REASON,
     "m-execution-lifecycle-007": _EXECUTION_LIFECYCLE_STREAMED_ROOT_REASON,

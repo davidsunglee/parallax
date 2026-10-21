@@ -11,7 +11,13 @@ from parallax.core.dialect import Dialect
 from parallax.core.metamodel import Metamodel
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.write_plan.payload import PatchedDocument, WritePayloadPreparer
-from parallax.core.write_plan.steps import PlannedStep, PlannedTemporalRevision, WriteRow
+from parallax.core.write_plan.steps import (
+    PlannedDelete,
+    PlannedStep,
+    PlannedTemporalRevision,
+    PlannedUpdate,
+    WriteRow,
+)
 
 __all__ = ["SimulatedWriteSteps"]
 
@@ -33,14 +39,25 @@ class SimulatedWriteSteps:
 
     Steps that allocate answer the next of ``allocated_results`` as their
     keys, one tuple per such execution and unchecked; one with none left to
-    answer is a misconfigured simulation. A store is never answered keys no
+    answer is a misconfigured simulation. A predicate-selected step executed
+    for its count (:meth:`counted`) answers the next of ``counts``, or zero
+    once none is left: no simulated row is matched. A store is never answered keys no
     database allocated, so a simulation with one is given none. Database gates
     and affected-row enforcement are not simulated. Recording hands the
     payloads it lowers to the capture hooks a unit of work gives, as execution
     does; without recording nothing is captured.
     """
 
-    __slots__ = ("_allocated", "_dialect", "_meta", "_payloads", "_record", "_statements", "_store")
+    __slots__ = (
+        "_allocated",
+        "_counts",
+        "_dialect",
+        "_meta",
+        "_payloads",
+        "_record",
+        "_statements",
+        "_store",
+    )
 
     def __init__(
         self,
@@ -51,6 +68,7 @@ class SimulatedWriteSteps:
         store: SimulatedTemporalStore | None = None,
         record_statements: bool = True,
         allocated_results: Iterable[tuple[object, ...]] = (),
+        counts: Iterable[int] = (),
     ) -> None:
         allocated = tuple(allocated_results)
         if store is None and not record_statements:
@@ -66,6 +84,7 @@ class SimulatedWriteSteps:
         self._store = store
         self._record = record_statements
         self._allocated = iter(allocated)
+        self._counts = iter(counts)
         self._statements: list[LoweredStatement] = []
 
     @property
@@ -111,6 +130,12 @@ class SimulatedWriteSteps:
             allocated = scripted
         self._statements.extend(lowered)
         return allocated
+
+    def counted(self, step: PlannedUpdate | PlannedDelete, /) -> int:
+        """Execute ``step`` as :meth:`__call__` executes a sequence of one,
+        answering the next scripted count."""
+        self((step,), allocates=False)
+        return next(self._counts, 0)
 
 
 def _first_refusal(

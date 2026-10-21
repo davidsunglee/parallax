@@ -6,8 +6,9 @@ Each settled step lowers alone through the shipped seam
 Planned Step, whatever statements execution then groups them into. A unit test
 usually pins the statements of one instruction, so this plans it — through the
 SAME production wiring :func:`~parallax.core._execution._planning.build_write_planner`
-builds — as the one-instruction buffer it means, and hands back the lowered
-statements in order.
+builds — as the one-instruction buffer it means, or as the one statement a
+predicate-selected write executes as, and hands back the lowered statements in
+order.
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ from collections.abc import Iterable, Iterator
 
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work.instructions import (
+    PreparedPredicateWrite,
     PreparedTargetWrite,
     PreparedWrite,
     WriteInstruction,
@@ -92,17 +94,29 @@ def _stream(
     ownership: TemporalWriteOwnership,
 ) -> list[tuple[PlannedStep, LoweredStatement]]:
     instant = inert_instant() if tx_instant is None else tx_instant
-    plan = build_write_planner(model).finalize(
-        WritePlanningRequest(
-            actor_identity=TEST_ACTOR_IDENTITY,
-            transaction_instant=instant,
-            concurrency=concurrency,
-            buffered_writes=[observed_write(_prepared(instruction, model), model, observation)],
-            ownership=ownership,
-            counts_unchanged_rows=dialect.counts_unchanged_rows,
+    planner = build_write_planner(model)
+    prepared = _prepared(instruction, model)
+    if isinstance(prepared, PreparedPredicateWrite):
+        assert observation is None  # a readless predicate write observes nothing
+        steps: tuple[PlannedStep, ...] = (
+            planner.predicate_step(
+                prepared, actor_identity=TEST_ACTOR_IDENTITY, transaction_instant=instant
+            ),
         )
-    )
-    return list(lowered_steps(plan_steps(plan), LayoutPayloadPreparer(model), model, dialect))
+    else:
+        steps = plan_steps(
+            planner.finalize(
+                WritePlanningRequest(
+                    actor_identity=TEST_ACTOR_IDENTITY,
+                    transaction_instant=instant,
+                    concurrency=concurrency,
+                    buffered_writes=[observed_write(prepared, model, observation)],
+                    ownership=ownership,
+                    counts_unchanged_rows=dialect.counts_unchanged_rows,
+                )
+            )
+        )
+    return list(lowered_steps(steps, LayoutPayloadPreparer(model), model, dialect))
 
 
 def _prepared(instruction: WriteInstruction, model: Metamodel) -> PreparedWrite:

@@ -1,5 +1,5 @@
 model: models/buffered-sequence-layout-twin-columns.yaml
-tags: [m-temporal-write, m-unit-work, m-batch-write, m-opt-lock, m-storage-layout, m-sql, scenario, target-write, readless, barrier, layout-twin, columns, slice-snapshot-1, slice-managed-1]
+tags: [m-temporal-write, m-unit-work, m-batch-write, m-opt-lock, m-storage-layout, m-sql, scenario, target-write, readless, predicate-write, layout-twin, columns, slice-snapshot-1, slice-managed-1]
 shape: scenario
 grading: state
 compileEligibility:
@@ -37,7 +37,7 @@ when:
           validFrom: "2024-06-01T00:00:00.000000Z"
           until: "2024-08-01T00:00:00.000000Z"
           at: "2024-11-01T00:00:00.000000Z"
-      note: "P, the barrier, then P over a disjoint window stating the original's start, which the first P replaced: a literal condition fails"
+      note: "P, the predicate write that executes it, then P over a disjoint window stating the original's start, which the first P replaced: a literal condition fails"
     - uow: observed
       objectQuery:
         target: parallax.compatibility.SequenceSpan
@@ -101,7 +101,7 @@ when:
           validFrom: "2024-06-01T00:00:00.000000Z"
           until: "2024-08-01T00:00:00.000000Z"
           at: "2024-11-02T00:00:00.000000Z"
-      note: "O, the barrier, then O over a disjoint window"
+      note: "O, the predicate write that executes it, then O over a disjoint window through a source of the same observed state, read at June"
     - uow: carried
       objectQuery:
         target: parallax.compatibility.SequenceSpan
@@ -146,7 +146,7 @@ when:
           validFrom: "2024-02-01T00:00:00.000000Z"
           until: "2024-03-01T00:00:00.000000Z"
           at: "2024-11-03T00:00:00.000000Z"
-      note: "P, the barrier, then O over the same window"
+      note: "P, the predicate write that executes it, then O over the same window"
     - uow: reopened
       write:
         - mutation: insert
@@ -177,7 +177,7 @@ when:
             - { id: 5, amount: 200, label: f, memo: { note: n5b } }
           validFrom: "2024-01-01T00:00:00.000000Z"
           at: "2024-11-04T00:00:00.000000Z"
-      note: "an opening, the barrier, its whole removal, then a fresh opening of the key"
+      note: "an opening, the predicate write that executes it, its whole removal, then a fresh opening of the key"
 then:
   units:
     targets:

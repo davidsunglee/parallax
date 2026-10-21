@@ -435,3 +435,43 @@ def _uncommitted_write_then_reference_sql_case() -> Case:
         raw=raw,
         model=load_model(COMPATIBILITY_ROOT, "models/account.yaml"),
     )
+
+
+# --- a direct predicate write's stated count --------------------------------
+
+
+def test_a_predicate_writes_stated_count_is_what_its_statement_reports(corpus_case) -> None:
+    case = corpus_case("m-batch-write-005-predicate-delete-readless.yaml")
+    (observed,) = _observed(case)
+    # The step's reference oracle reads the same rows its find observed.
+    with ScriptedProvider(script=[Affected(2), observed, observed]) as db:
+        assert_unit_work_scenario(case, db)
+
+
+def test_a_predicate_write_whose_statement_reports_another_count_is_refused(corpus_case) -> None:
+    case = corpus_case("m-batch-write-005-predicate-delete-readless.yaml")
+    with (
+        pytest.raises(CaseFailure, match="returns 2, and its statement reported 1"),
+        ScriptedProvider(script=[Affected(1)]) as db,
+    ):
+        assert_unit_work_scenario(case, db)
+
+
+def test_an_empty_predicate_write_states_the_zero_it_runs_no_statement_for(corpus_case) -> None:
+    case = corpus_case("m-batch-write-050-predicate-amend-assigning-nothing-is-dropped.yaml")
+    (observed,) = _observed(case)
+    with ScriptedProvider(script=[observed, observed]) as db:
+        assert_unit_work_scenario(case, db)
+
+
+def test_a_grouped_predicate_writes_count_is_its_own_statements(corpus_case) -> None:
+    # The group's earlier insert reports its own row; the predicate update after
+    # it reports every row it matched, the one it left unchanged included.
+    case = corpus_case(
+        "m-execution-lifecycle-011-a-predicate-write-flushes-what-its-unit-buffered.yaml"
+    )
+    with (
+        pytest.raises(CaseFailure, match="returns 3, and its statement reported 2"),
+        ScriptedProvider(script=[Affected(1), Affected(2)]) as db,
+    ):
+        assert_unit_work_scenario(case, db)

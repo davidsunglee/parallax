@@ -205,7 +205,9 @@ class DatabaseCallFinished(_Event):
 
 @dataclass(frozen=True, slots=True)
 class FlushCompleted:
-    """Every write the Flush still held after planning reached the database.
+    """Every write the Flush still held after planning, and the statement of
+    the predicate-selected write it executed for where there is one, reached
+    the database.
 
     A Flush planning reduced to no DML at all completes exactly like one that
     ran statements: the buffer was spent either way.
@@ -225,11 +227,13 @@ type FlushOutcome = FlushCompleted | FlushFailed
 
 @dataclass(frozen=True, slots=True)
 class FlushStarted(_Event):
-    """A nonempty unit-of-work buffer is being flushed for ``trigger``.
+    """A nonempty unit-of-work buffer, or a predicate-selected write with
+    whatever is buffered before it, is being flushed for ``trigger``.
 
     It starts BEFORE planning, so a Flush a planning refusal ended is still a
     Flush that started, and it spans planning, lowering, every Database Call, and
-    affected-row enforcement. An empty buffer produces no activity at all.
+    affected-row enforcement. An empty buffer, or an empty predicate-selected
+    write, produces no activity at all.
     """
 
     trigger: FlushTrigger

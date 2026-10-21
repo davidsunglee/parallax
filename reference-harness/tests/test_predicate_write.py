@@ -55,6 +55,7 @@ def _scenario_case(instruction: dict[str, object]) -> dict[str, object]:
                 {
                     "write": instruction,
                     "databaseCalls": 1,
+                    "expectAffectedRows": 1,
                     "statements": [
                         {
                             "sql": {"postgres": "update wallet set balance = ? where id = ?"},
@@ -549,3 +550,17 @@ def test_model_validator_rejects_invalid_predicate_write(
     entity = _wallet_entity()
     with pytest.raises(PredicateWriteValidationError, match=message):
         validate_predicate_write(entity, instruction, [entity.definition])
+
+
+def test_a_direct_predicate_write_step_states_the_count_its_verb_returns() -> None:
+    case = _scenario_case(_update_instruction())
+    step = case["when"]["scenario"][0]  # type: ignore[index]
+    del step["expectAffectedRows"]
+    assert next(_schema().iter_errors(case), None) is not None
+
+
+def test_a_count_belongs_to_no_buffered_write_step() -> None:
+    case = _scenario_case(_update_instruction())
+    step = case["when"]["scenario"][0]  # type: ignore[index]
+    step["write"] = [{"mutation": "delete", "entity": "Wallet", "rows": [{"id": 1}]}]
+    assert next(_schema().iter_errors(case), None) is not None

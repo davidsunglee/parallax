@@ -258,8 +258,22 @@ def _seed_rows_for(story: WriteStory) -> list[MappingRow]:
 
 def _port_for(story: WriteStory) -> _KeyedSeedPort:
     return _KeyedSeedPort(
-        rows=_seed_rows_for(story), reads=_READ_ROWS_BY_CASE.get(story.case_id, [])
+        rows=_seed_rows_for(story),
+        reads=_READ_ROWS_BY_CASE.get(story.case_id, []),
+        counts=_stated_counts(story.case_id),
     )
+
+
+def _stated_counts(case_id: str) -> list[int]:
+    """The count each predicate-write step of a scenario case states, in step
+    order: what the case's own database answers that step's one statement."""
+    case = _CASES.get(case_id)
+    if case is None or case.shape != "scenario":
+        return []
+    steps = cast("list[dict[str, Any]]", case_document(case)["when"]["scenario"])
+    return [
+        cast("int", step["expectAffectedRows"]) for step in steps if "expectAffectedRows" in step
+    ]
 
 
 # The kit answers a read by POSITION, and this one cannot: a story's reads are
@@ -292,16 +306,23 @@ class _KeyedSeedPort(ConnectsAsItself):
     two finds of one key at different as-of coordinates return different
     milestones, and deciding which is a temporal query this double does not
     answer. A read past the script's end falls back to the keyed selection.
+    A write reports one affected row, or the next of ``counts`` while any is
+    left.
     """
 
     dialect: Dialect = POSTGRES
 
     def __init__(
-        self, *, rows: Sequence[MappingRow] = (), reads: Sequence[Sequence[MappingRow]] = ()
+        self,
+        *,
+        rows: Sequence[MappingRow] = (),
+        reads: Sequence[Sequence[MappingRow]] = (),
+        counts: Sequence[int] = (),
     ) -> None:
         self.calls: list[PortCall] = []
         self._rows = [dict(row) for row in rows]
         self._scripted = [[dict(row) for row in answer] for answer in reads]
+        self._counts = list(counts)
 
     def execute(
         self, sql: str, binds: Sequence[Bind], document_reads: Sequence[tuple[int, int]] = ()
@@ -314,7 +335,7 @@ class _KeyedSeedPort(ConnectsAsItself):
 
     def execute_write(self, sql: str, binds: Sequence[Bind]) -> int:
         self.calls.append(WriteCall(sql, tuple(binds)))
-        return 1
+        return self._counts.pop(0) if self._counts else 1
 
     def transaction[T](
         self,
@@ -671,7 +692,7 @@ def test_idiomatic_write_build_rejects_the_corpus_rule(case_id: str) -> None:
 # SAME classified rule, before anything reaches the port (`api_suite.EXAMPLES`'#
 # own entries are these exact snippets).                                      #
 # --------------------------------------------------------------------------- #
-REJECTED_PREDICATE_WRITES: dict[str, tuple[str, Callable[[TxnContext], None]]] = {
+REJECTED_PREDICATE_WRITES: dict[str, tuple[str, Callable[[TxnContext], object]]] = {
     "m-batch-write-047": (
         "account",
         lambda tx: tx.amend_where(

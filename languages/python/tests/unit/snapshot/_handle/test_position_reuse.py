@@ -344,7 +344,7 @@ def test_a_keyed_insert_resolves_no_position(
 
 
 _FAMILY_TARGETS: dict[
-    str, tuple[Callable[[TxnContext], None], str, dict[str, object], dict[str, object]]
+    str, tuple[Callable[[TxnContext], object], str, dict[str, object], dict[str, object]]
 ] = {
     "tph-concrete": (
         lambda tx: tx.amend_where(Bird.where(Bird.id == 1), Bird.wingspan.set(30)),

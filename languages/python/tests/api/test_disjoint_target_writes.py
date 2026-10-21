@@ -1,15 +1,15 @@
 """Separate operations over disjoint windows of one temporal object, and the
-ordering barriers between them, against real Postgres.
+predicate writes between them, against real Postgres.
 
 Two writes of one bitemporal object whose requested windows share no instant —
 adjacent ones included — stand together as separate operations, each keeping
 its own condition: a caller's stated Transaction-Time start, or the rectangle an
 observed source read. Both may start inside one stored rectangle, which a flush
-then transforms once. A readless predicate write between them is an ordering
-barrier: each operation executes on its own side, and the later one finds the
-rows the earlier one derived from the original it states, which that earlier
-unit's guarded effect proved. Every case reads back every row, current and
-historical, under both storage layouts.
+then transforms once. A readless predicate write between them flushes the
+earlier operation at its call, before the later one is submitted, and the later
+one finds the rows the earlier one derived from the original it states, which
+that earlier flush's guarded effect proved. Every case reads back every row,
+current and historical, under both storage layouts.
 
 Standalone Docker-backed proofs, like `test_temporal_target_writes.py`; every
 `Database` connects with a
@@ -196,7 +196,7 @@ def _find(tx: TxnContext, entity: type[Any], at: dt.datetime) -> Any:
     return tx.find(entity.where(entity.id == 1).as_of(valid_time=at)).result()
 
 
-def _barrier(tx: TxnContext) -> None:
+def _predicate_write(tx: TxnContext) -> None:
     tx.amend_where(Tag.where(Tag.id == 1), Tag.label.set("q"))
 
 
@@ -400,7 +400,7 @@ def test_a_window_overlapping_a_targets_unequally_is_refused_and_earlier_work_st
 
 
 # --------------------------------------------------------------------------- #
-# Ordering barriers: each operation on its own side, proven across it.         #
+# Predicate writes: each operation on its own side, proven across one.        #
 # --------------------------------------------------------------------------- #
 def _install(profile_run: Any, entity: type[Any], body: str) -> None:
     """A trigger on the tag table, which the readless predicate write updates:
@@ -455,14 +455,14 @@ def _across(sequence: tuple[str, str]) -> tuple[_Operation, _Operation]:
 def _write_across(tx: TxnContext, entity: type[Any], first: _Operation, second: _Operation) -> None:
     sources = [_find(tx, entity, op.start) if op.kind in "OD" else None for op in (first, second)]
     first.write(tx, entity, sources[0])
-    _barrier(tx)
+    _predicate_write(tx)
     second.write(tx, entity, sources[1])
 
 
 @_SPAN_AXES
 @_STRATEGIES
 @pytest.mark.parametrize("sequence", list(_ACROSS))
-def test_a_barrier_between_disjoint_operations_keeps_each_on_its_own_side(
+def test_a_predicate_write_between_disjoint_operations_keeps_each_on_its_own_side(
     profile_run: Any, entity: type[Any], concurrency: _Concurrency, sequence: str
 ) -> None:
     db = _seeded(profile_run, entity, _TA)
@@ -470,7 +470,7 @@ def test_a_barrier_between_disjoint_operations_keeps_each_on_its_own_side(
     first, second = _across(_ACROSS[sequence])
 
     db.transact(lambda tx: _write_across(tx, entity, first, second), concurrency=concurrency)
-    # When the barrier ran, the first operation had split the original into
+    # When the predicate write ran, the first operation had split the original into
     # three rows and the second had not yet written.
     assert _audited(profile_run) == [(1, 3)]
     assert _tag_label(profile_run) == "q"
@@ -483,7 +483,7 @@ def test_a_barrier_between_disjoint_operations_keeps_each_on_its_own_side(
 @_SPAN_AXES
 @_STRATEGIES
 @pytest.mark.parametrize("first", ["P", "O"], ids=["target-then-target", "observed-then-target"])
-def test_a_target_after_a_barrier_stating_the_start_the_first_replaced_fails_literally(
+def test_a_target_after_a_predicate_write_stating_the_start_the_first_replaced_fails_literally(
     profile_run: Any, entity: type[Any], concurrency: _Concurrency, first: str
 ) -> None:
     db = _seeded(profile_run, entity, _TA)
@@ -505,7 +505,7 @@ def test_a_target_after_a_barrier_stating_the_start_the_first_replaced_fails_lit
 
 @_SPAN_AXES
 @_STRATEGIES
-def test_a_write_of_the_same_window_after_a_barrier_carries_the_values_left_before_it(
+def test_a_write_of_the_same_window_after_a_predicate_write_carries_the_values_left_before_it(
     profile_run: Any, entity: type[Any], concurrency: _Concurrency
 ) -> None:
     db = _seeded(profile_run, entity, _TA)
@@ -515,7 +515,7 @@ def test_a_write_of_the_same_window_after_a_barrier_carries_the_values_left_befo
         tx.wire.amend_if(
             _name(entity), {"id": 1, "amount": 150}, valid_from=_FEB, until=_APR, tx_start=_T0
         )
-        _barrier(tx)
+        _predicate_write(tx)
         tx.amend(source.edit(label="o"), until=_APR)
 
     db.transact(fn, concurrency=concurrency)
@@ -531,7 +531,7 @@ def test_a_write_of_the_same_window_after_a_barrier_carries_the_values_left_befo
 
 @_SPAN_AXES
 @_STRATEGIES
-def test_overlapping_observed_writes_on_either_side_of_a_barrier_apply_in_authored_order(
+def test_overlapping_observed_writes_on_either_side_of_a_predicate_write_apply_in_authored_order(
     profile_run: Any, entity: type[Any], concurrency: _Concurrency
 ) -> None:
     db = _seeded(profile_run, entity, _TA)
@@ -540,7 +540,7 @@ def test_overlapping_observed_writes_on_either_side_of_a_barrier_apply_in_author
     def fn(tx: TxnContext) -> None:
         early, later = _find(tx, entity, _MAR), _find(tx, entity, _APR)
         tx.amend(early.edit(label="e"), until=_JUN)
-        _barrier(tx)
+        _predicate_write(tx)
         tx.amend(later.edit(amount=175), until=_AUG)
 
     db.transact(fn, concurrency=concurrency)
@@ -566,7 +566,7 @@ _BREAKS = {
 @_SPAN_AXES
 @_STRATEGIES
 @pytest.mark.parametrize("broken", list(_BREAKS))
-def test_a_side_effect_that_breaks_continuity_across_a_barrier_fails_the_later_operation(
+def test_a_side_effect_that_breaks_continuity_across_a_predicate_write_fails_the_later_operation(
     profile_run: Any, entity: type[Any], concurrency: _Concurrency, broken: str
 ) -> None:
     db = _seeded(profile_run, entity, _TA)
@@ -577,7 +577,7 @@ def test_a_side_effect_that_breaks_continuity_across_a_barrier_fails_the_later_o
         tx.wire.amend_if(
             _name(entity), {"id": 1, "amount": 150}, valid_from=_FEB, until=_APR, tx_start=_T0
         )
-        _barrier(tx)
+        _predicate_write(tx)
         tx.wire.amend_if(
             _name(entity), {"id": 1, "amount": 175}, valid_from=_JUN, until=_AUG, tx_start=_T0
         )
@@ -585,7 +585,7 @@ def test_a_side_effect_that_breaks_continuity_across_a_barrier_fails_the_later_o
     with pytest.raises(ExecutionFailure) as failed:
         db.transact(fn, concurrency=concurrency)
     # The later caller states the original the first operation closed, which
-    # no current row stands at, whatever the barrier's side effect did.
+    # no current row stands at, whatever the predicate write's side effect did.
     assert isinstance(failed.value.cause, WritePreconditionError)
     assert _rows(profile_run, entity) == before
     assert _tag_label(profile_run) == "t"
@@ -659,9 +659,11 @@ def _interleaved(
 
 
 @_SPAN_AXES
-@pytest.mark.parametrize("barrier", [False, True], ids=["one-unit", "across-a-barrier"])
+@pytest.mark.parametrize(
+    "predicate_write", [False, True], ids=["one-unit", "across-a-predicate-write"]
+)
 def test_a_shared_original_revised_after_the_flush_read_fails_at_its_one_guard(
-    profile_run: Any, entity: type[Any], barrier: bool
+    profile_run: Any, entity: type[Any], predicate_write: bool
 ) -> None:
     _seeded(profile_run, entity)
     peer_db = _db(profile_run, _TP)
@@ -680,8 +682,8 @@ def test_a_shared_original_revised_after_the_flush_read_fails_at_its_one_guard(
         tx.wire.amend_if(
             _name(entity), {"id": 1, "amount": 150}, valid_from=_FEB, until=_APR, tx_start=_T0
         )
-        if barrier:
-            _barrier(tx)
+        if predicate_write:
+            _predicate_write(tx)
         tx.wire.amend_if(
             _name(entity), {"id": 1, "amount": 175}, valid_from=_JUN, until=_AUG, tx_start=_T0
         )
@@ -803,12 +805,12 @@ def test_a_disjoint_observed_original_lost_without_retries_rolls_every_effect_ba
 
 
 # --------------------------------------------------------------------------- #
-# Across a barrier on a Transaction-Time-Only object, and through an          #
+# Across a predicate write on a Transaction-Time-Only object, and through an  #
 # insertion's own source.                                                     #
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize("entity", (ColumnsLog, DocumentLog), ids=["columns", "document"])
 @_STRATEGIES
-def test_a_transaction_time_write_after_a_barrier_restating_the_first_ones_start_fails(
+def test_a_transaction_time_write_after_a_predicate_write_restating_the_first_ones_start_fails(
     profile_run: Any, entity: type[Any], concurrency: _Concurrency
 ) -> None:
     profile_run.reset(model_of(_MODEL), {})
@@ -822,7 +824,7 @@ def test_a_transaction_time_write_after_a_barrier_restating_the_first_ones_start
 
     def fn(tx: TxnContext) -> None:
         tx.wire.amend_if(_name(entity), {"id": 1, "label": "p"}, tx_start=_T0)
-        _barrier(tx)
+        _predicate_write(tx)
         # Both callers state the milestone the first one closes; when the
         # second binds, the row stands at the first one's own start instead.
         tx.wire.amend_if(_name(entity), {"id": 1, "spec": {"title": "s2"}}, tx_start=_T0)
@@ -841,7 +843,7 @@ def test_a_transaction_time_write_after_a_barrier_restating_the_first_ones_start
 
 @_SPAN_AXES
 @_STRATEGIES
-def test_an_insertion_sources_edits_on_both_sides_of_a_barrier_keep_one_instant(
+def test_an_insertion_sources_edits_on_both_sides_of_a_predicate_write_keep_one_instant(
     profile_run: Any, entity: type[Any], concurrency: _Concurrency
 ) -> None:
     profile_run.reset(model_of(_MODEL), {})
@@ -855,7 +857,7 @@ def test_an_insertion_sources_edits_on_both_sides_of_a_barrier_keep_one_instant(
         )
         _find(tx, entity, _JAN)
         tx.wire.amend(inserted, {"amount": 150}, until=_APR)
-        _barrier(tx)
+        _predicate_write(tx)
         tx.wire.amend(inserted, {"label": "z"}, until=_JUN)
 
     db.transact(fn, concurrency=concurrency)

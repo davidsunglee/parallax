@@ -20,6 +20,7 @@ when:
           owner: Lin
           balance: "300.00"
       databaseCalls: 1
+      expectAffectedRows: 1
       statements:
         - sql:
             postgres: update wallet set owner = ?, balance = ? where owner = ?

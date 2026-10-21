@@ -1392,9 +1392,7 @@ rectangles holding callers' starts are inactivated, revised, removed, or
 guarded first, in the order the callers stated them, then the others in
 Valid-Time order. A
 replacement's openings over the gaps of its extent follow every rectangle's
-successors, in Valid-Time order. A composition an ordering barrier kept after
-earlier writes of its object reads its whole window, from its first window's
-start, once its turn comes, less what its reused acquired rows hold. Under
+successors, in Valid-Time order. Under
 Locking the write's submission first reads its starting rectangle alone, with
 the predecessor projection and the read-lock suffix:
 

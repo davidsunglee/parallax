@@ -9,7 +9,6 @@ from parallax.core._execution._unit_work.instructions import (
     ASSIGNMENT_MUTATIONS,
     INSERT_MUTATIONS,
     PreparedKeyedWrite,
-    PreparedPredicateWrite,
 )
 from parallax.core._execution._unit_work.non_temporal_settlement import (
     DELETION,
@@ -35,7 +34,6 @@ from parallax.core._execution._unit_work.strategy import (
 )
 from parallax.core._execution._unit_work.write_items import (
     CoalescedTemporalWrite,
-    FollowingKeyedWrite,
     InsertionKeyedWrite,
     MutationPhase,
     ObjectClaimedBatch,
@@ -45,7 +43,7 @@ from parallax.core._execution._unit_work.write_items import (
     PendingOpening,
     TargetKeyedWrite,
 )
-from parallax.core.inheritance import InheritanceEntityView, InheritanceFacet
+from parallax.core.inheritance import InheritanceFacet
 from parallax.core.metamodel import AttributeIdentity, EntityMetadata, Metamodel
 from parallax.core.temporal_read import (
     Bitemporal,
@@ -84,15 +82,12 @@ from parallax.core.write_plan.planned_rows import (
     resolve_row,
 )
 from parallax.core.write_plan.steps import (
-    ANY_COUNT,
     FAILED_PRECONDITION,
     NEW_LINEAGE,
     RETURNED_MAX_PLUS_ONE,
-    UNVERSIONED,
     ExactCount,
     MaxPlusOne,
     PlannedAssignments,
-    PlannedDelete,
     PlannedInsert,
     PlannedStep,
     PlannedUpdate,
@@ -262,10 +257,6 @@ class WritePlanCompiler:
         audit: AuditDecoration,
         guards: bool,
     ) -> tuple[SettledWrite, tuple[PlannedStep, ...]]:
-        advances = 0
-        if isinstance(item, FollowingKeyedWrite):
-            advances = item.advances
-            item = item.write
         shape = self._carrier_shape(item)
         if isinstance(item, PendingOpening):
             assert isinstance(shape, Bitemporal)  # only a Bitemporal opening is composed
@@ -274,17 +265,13 @@ class WritePlanCompiler:
             )
         if isinstance(shape, TransactionTimeOnly | Bitemporal):
             assert not isinstance(
-                item,
-                PreparedKeyedWrite
-                | PreparedPredicateWrite
-                | ObjectClaimedWrite
-                | ObjectClaimedBatch,
+                item, PreparedKeyedWrite | ObjectClaimedWrite | ObjectClaimedBatch
             )
             return self._range(
                 item, shape, concurrency, transaction_instant, ownership, audit, guards=guards
             )
         assert not isinstance(item, CoalescedTemporalWrite)
-        settled = self._settle_keyed(item, concurrency, transaction_instant, shape, audit, advances)
+        settled = self._settle_keyed(item, concurrency, transaction_instant, shape, audit)
         evidence = _source_evidence(item)
         if not evidence:
             write = SettledWrite(
@@ -320,7 +307,6 @@ class WritePlanCompiler:
         self,
         item: (
             PreparedKeyedWrite
-            | PreparedPredicateWrite
             | ObservedKeyedWrite
             | ObjectClaimedWrite
             | ObjectClaimedBatch
@@ -331,14 +317,8 @@ class WritePlanCompiler:
         tx_instant: TransactionInstant,
         shape: TemporalShape | None,
         audit: AuditDecoration,
-        advances: int = 0,
     ) -> BoundRange:
-        """One ordered keyed write's settled steps and completion.
-        ``advances`` is how many versions earlier writes of its scope a barrier
-        kept before it advance the row past the state that scope names."""
-        if isinstance(item, PreparedPredicateWrite):
-            view = entity_view(self._families, item.selection.target)
-            return BoundRange(steps=(_readless_step(item, view, audit),))
+        """One ordered keyed write's settled steps and completion."""
         observation: WriteObservation | None = None
         scope: ObjectStateKey | ObjectKey | None = None
         if isinstance(item, PreparedKeyedWrite):
@@ -350,9 +330,7 @@ class WritePlanCompiler:
                 scope = item.scope
             elif not isinstance(item, ObjectClaimedWrite | ObjectClaimedBatch):
                 scope = item.scope
-        own_version: int | None = None
-        if isinstance(scope, VersionedObjectStateKey):
-            own_version = self._advanced(scope.version, advances)
+        own_version = scope.version if isinstance(scope, VersionedObjectStateKey) else None
         return self._settle(
             instruction,
             observation,
@@ -363,12 +341,6 @@ class WritePlanCompiler:
             own_version=own_version,
             conditioned=isinstance(item, TargetKeyedWrite),
         )
-
-    def _advanced(self, version: int, advances: int) -> int:
-        arithmetic = self._concurrency.version_arithmetic()
-        for _ in range(advances):
-            version = arithmetic.advance(version)
-        return version
 
     # Stages 5, 6, 7: validate the observation the item arrived carrying, #
 
@@ -719,12 +691,8 @@ class WritePlanCompiler:
 
 
 def _object_keys(item: OrderedWrite, families: InheritanceFacet) -> tuple[_GroupKey, ...] | None:
-    """``None`` where a row names no complete key: a readless predicate write,
-    or an insert whose key is absent or the database computes."""
-    if isinstance(item, FollowingKeyedWrite):
-        item = item.write
-    if isinstance(item, PreparedPredicateWrite):
-        return None
+    """``None`` where a row names no complete key: an insert whose key is
+    absent or the database computes."""
     if isinstance(item, CoalescedTemporalWrite):
         target, rows = item.target, (item.key,)
     elif isinstance(item, PendingOpening):
@@ -834,28 +802,6 @@ def _addressed_assignments(
         facts.entity,
         facts.view,
         {name: value for name, value in row.items() if name not in key_names},
-    )
-
-
-def _readless_step(
-    instruction: PreparedPredicateWrite, view: InheritanceEntityView, audit: AuditDecoration
-) -> PlannedStep:
-    """A readless predicate-selected write's one unversioned statement over
-    every row its selection matches, an update decorated once."""
-    entity = instruction.selection.target
-    target = instruction.selection
-    if instruction.mutation == "delete":
-        return PlannedDelete(
-            entity=entity.identity, target=target, concurrency=UNVERSIONED, affected_rows=ANY_COUNT
-        )
-    return audit.decorate_update(
-        PlannedUpdate(
-            entity=entity.identity,
-            target=target,
-            assignments=planned_assignments(entity, view, instruction.row),
-            concurrency=UNVERSIONED,
-            affected_rows=ANY_COUNT,
-        )
     )
 
 

@@ -17,9 +17,10 @@ import datetime as dt
 import gc
 import weakref
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal
 from types import TracebackType
+from typing import Any
 
 import pytest
 
@@ -29,6 +30,7 @@ from parallax.conformance.class_models import MODELS as CLASS_MODELS
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import Attr, DomainModel, Entity, attr, inheritance, opt_lock, temporal_read
 from parallax.core import predicate as predicate_algebra
+from parallax.core._execution import _planning as planning_composition
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
 from parallax.core._execution._unit_work.acquisition import (
@@ -48,13 +50,17 @@ from parallax.core._execution._unit_work.instructions import (
     prepare_wire_write,
 )
 from parallax.core._execution._unit_work.retain import InsertionIdentity, ReadEvidence
+from parallax.core._execution._unit_work.strategy import ActorIdentity
 from parallax.core._execution._unit_work.uow import EscapedTransactionError, OpenFlush
 from parallax.core._execution._unit_work.write_items import (
     InsertionKeyedWrite,
     ObservedKeyedWrite,
     target_write,
 )
-from parallax.core._execution._unit_work.write_runner import ExecuteWriteSteps
+from parallax.core._execution._unit_work.write_runner import (
+    ExecuteCountedStep,
+    ExecuteWriteSteps,
+)
 from parallax.core.base import INFINITY
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._model import model_of
@@ -77,6 +83,7 @@ from parallax.core.unit_work import (
     UnitOfWorkError,
     WriteAssignment,
     WriteEvidenceError,
+    WritePlanner,
     WritePlanningRequest,
     WritePreconditionError,
     buffered_write,
@@ -97,9 +104,15 @@ from parallax.core.write_plan.plan import (
     TemporalRowCoordinates,
 )
 from parallax.core.write_plan.steps import INFINITY as PLANNED_INFINITY
-from parallax.core.write_plan.steps import NEW_LINEAGE, Finite, PlannedUpdate
+from parallax.core.write_plan.steps import (
+    NEW_LINEAGE,
+    Finite,
+    PlannedDelete,
+    PlannedUpdate,
+)
 from tests._support.clock_probes import CountingClock
 from tests._support.planner_probes import (
+    NO_COUNTED_STEPS,
     TEST_ACTOR_IDENTITY,
     admitted_writes,
     object_source,
@@ -111,6 +124,7 @@ from tests.unit._where_position_model import (
     WherePosition,
 )
 from tests.unit.core._execution._unit_work._acquired_rows_support import HeldRows
+from tests.unit.core._execution._unit_work._audit_support import RecordingAudit
 from tests.unit.core._execution._unit_work._flush_support import ObservedSteps, statement_kinds
 
 PERSON = CLASS_MODELS["person"]
@@ -142,6 +156,7 @@ def _run[T](
     opening: OpenFlush | None = None,
     rows: AcquireRows | None = None,
     lifetime: TxnAttemptLifetime | None = None,
+    counted: ExecuteCountedStep | None = None,
 ) -> T:
     """Drive ``body`` against a unit of work whose row reads answer ``rows``, or
     find no row at all, and whose spans ``steps`` executes, then flush what it
@@ -159,6 +174,7 @@ def _run[T](
         clock=clock or FixedClock(_FIXED),
         meta=resolved_meta,
         execute_write_steps=steps or _simulated(resolved_meta),
+        execute_counted_step=counted or NO_COUNTED_STEPS,
         acquire_rows=rows or HeldRows(resolved_meta),
         planner=build_write_planner(resolved_meta),
         actor_identity=TEST_ACTOR_IDENTITY,
@@ -850,21 +866,9 @@ def test_every_other_accepted_item_reports_plain_buffering() -> None:
     with pytest.raises(_Abandoned):
         _run(body)
 
-    predicate = prepare_typed_write(
-        PredicateWriteInstruction(
-            "delete",
-            PredicateSelection(
-                "Person",
-                predicate_algebra.Comparison("eq", predicate_algebra.FieldSubject("Person.id"), 3),
-            ),
-        ),
-        _PERSON_META,
-    )
-
     def unversioned(uow: UnitOfWork) -> None:
         assert uow.buffer(_person_write("amend", 1)) is BufferOutcome.BUFFERED
         assert uow.buffer(_person_write("delete", 2)) is BufferOutcome.BUFFERED
-        assert uow.buffer(predicate) is BufferOutcome.BUFFERED
         raise _Abandoned
 
     with pytest.raises(_Abandoned):
@@ -1322,7 +1326,11 @@ class ShellTag(Entity, table="shell_tag", namespace="parallax.compatibility"):
     label: Attr[str] = attr(max_length=16)
 
 
-_BARRIERED = model_of(DomainModel(WherePosition, ShellTag))
+class ShellKey(Entity, table="shell_key", namespace="parallax.compatibility"):
+    id: Attr[int] = attr(primary_key=True)
+
+
+_PREDICATED = model_of(DomainModel(WherePosition, ShellTag, ShellKey))
 _T0 = dt.datetime(2023, 12, 1, tzinfo=dt.UTC)
 _FEB, _APR, _JUN, _AUG, _SEP, _OCT = (
     dt.datetime(2024, month, 1, tzinfo=dt.UTC) for month in (2, 4, 6, 8, 9, 10)
@@ -1367,7 +1375,7 @@ def _position_target(start: dt.datetime, until: dt.datetime) -> PreparedTargetWr
             valid_from=start,
             until=until,
         ),
-        _BARRIERED,
+        _PREDICATED,
     )
     assert isinstance(prepared, PreparedTargetWrite)
     return prepared
@@ -1382,63 +1390,65 @@ def _observed_amendment(claim: RetainedObservation) -> AdmittedWrite:
             valid_from=_FEB,
             until=_APR,
         ),
-        _BARRIERED,
+        _PREDICATED,
     )
     assert isinstance(observed, PreparedKeyedWrite)
     return buffered_write(observed, claim)
 
 
-def test_a_target_a_barrier_kept_back_judges_its_condition_on_what_the_earlier_write_left() -> None:
+def test_a_target_after_a_predicate_write_judges_its_condition_on_what_the_earlier_write_left() -> (
+    None
+):
     original = TemporalObservation(predecessor=_position_row(_JAN, _T0))
     key = corpus_object_key("WherePosition", ("id", 1))
-    shape = temporal_read.view(_BARRIERED).shape(key.entity)
+    shape = temporal_read.view(_PREDICATED).shape(key.entity)
     assert shape is not None
     state = object_state_key_from_observation(key, original, shape)
     held: list[RetainedObservation] = []
-    coverage = HeldRows(_BARRIERED)
-    simulated = _simulated(_BARRIERED)
+    coverage = HeldRows(_PREDICATED)
+    simulated = _simulated(_PREDICATED)
 
     def body(uow: UnitOfWork) -> None:
         claim = uow.retain(RetainedObservation(state, original, uow.participation))
         held.append(claim)
         uow.buffer(_observed_amendment(claim))
-        uow.buffer_predicate(_shell_barrier())
+        uow.execute_predicate(_shell_predicate_write())
         uow.buffer_target(_position_target(_JUN, _AUG))
         uow.read(lambda: None)
 
     with pytest.raises(WritePreconditionError):
-        _run(body, meta=_BARRIERED, steps=simulated, rows=coverage)
-    # The earlier settled write changed the shared source's state, and the
-    # attempt holds the rows it produced for that source: the later target
-    # binds to them without a read, and the start its caller states,
-    # literally, is gone, so it executes nothing.
+        _run(body, meta=_PREDICATED, steps=simulated, rows=coverage, counted=simulated.counted)
+    # The predicate write's flush completed the earlier write, which changed
+    # the shared source's state; the start the later target's caller states,
+    # literally, is gone from the coverage it reads, so it executes nothing.
     (claim,) = held
     assert claim.invalidated
-    assert coverage.requests == []
     assert statement_kinds(simulated.statements) == ["close", "insert", "update"]
 
 
-def test_writes_of_one_source_barriers_keep_apart_each_continue_from_what_the_last_left() -> None:
+def test_writes_of_one_source_predicate_writes_flush_each_continue_from_what_the_last_left() -> (
+    None
+):
     original = TemporalObservation(predecessor=_position_row(_JAN, _T0))
     key = corpus_object_key("WherePosition", ("id", 1))
-    shape = temporal_read.view(_BARRIERED).shape(key.entity)
+    shape = temporal_read.view(_PREDICATED).shape(key.entity)
     assert shape is not None
     state = object_state_key_from_observation(key, original, shape)
-    held = HeldRows(_BARRIERED)
-    simulated = _simulated(_BARRIERED)
+    held = HeldRows(_PREDICATED)
+    simulated = _simulated(_PREDICATED)
 
     def body(uow: UnitOfWork) -> None:
         claim = uow.retain(RetainedObservation(state, original, uow.participation))
         uow.buffer(_observed_amendment(claim))
         for window in ((_JUN, _AUG), (_SEP, _OCT)):
-            uow.buffer_predicate(_shell_barrier())
+            uow.execute_predicate(_shell_predicate_write())
             uow.buffer(_observed_value(claim, *window))
         uow.read(lambda: None)
 
-    _run(body, meta=_BARRIERED, steps=simulated, rows=held)
-    # Each settled write a barrier kept back bound to the rows the one before
-    # it produced, which the attempt holds for the source they share: nothing
-    # was read again, and only the first closed anything.
+    _run(body, meta=_PREDICATED, steps=simulated, rows=held, counted=simulated.counted)
+    # Each later write bound to the rows the one before it produced, which
+    # the attempt holds for the source they share: nothing was read again, and
+    # only the first closed anything.
     assert held.requests == []
     assert statement_kinds(simulated.statements).count("close") == 1
 
@@ -1454,7 +1464,7 @@ def _observed_value(
             valid_from=start,
             until=until,
         ),
-        _BARRIERED,
+        _PREDICATED,
     )
     assert isinstance(observed, PreparedKeyedWrite)
     return buffered_write(observed, claim)
@@ -1476,7 +1486,7 @@ def _account_target(version: int) -> PreparedTargetWrite:
     [
         pytest.param(_ACCOUNT, lambda: _account_target(3), (), id="non-temporal"),
         pytest.param(
-            _BARRIERED,
+            _PREDICATED,
             lambda: _position_target(_JUN, _AUG),
             (_position_row(_JAN, _T0),),
             id="temporal",
@@ -1540,10 +1550,10 @@ def test_a_locking_caller_addressed_write_is_confirmed_once_on_every_route(route
     assert _kinds(simulated) == ["update"]
 
 
-def _shell_barrier(
+def _shell_predicate_write(
     assignments: tuple[WriteAssignment, ...] = (WriteAssignment("ShellTag.label", "q"),),
 ) -> PreparedPredicateWrite:
-    barrier = prepare_wire_write(
+    prepared = prepare_wire_write(
         PredicateWriteInstruction(
             "amend",
             PredicateSelection(
@@ -1554,10 +1564,144 @@ def _shell_barrier(
             ),
             assignments=assignments,
         ),
-        _BARRIERED,
+        _PREDICATED,
     )
-    assert isinstance(barrier, PreparedPredicateWrite)
-    return barrier
+    assert isinstance(prepared, PreparedPredicateWrite)
+    return prepared
+
+
+def _tag_insert(tag_id: int) -> PreparedKeyedWrite:
+    return _prepared_keyed(
+        KeyedWriteInstruction("insert", "ShellTag", ({"id": tag_id, "label": "t"},)), _PREDICATED
+    )
+
+
+# --------------------------------------------------------------------------- #
+# A predicate-selected write executes at the call, after what is buffered.     #
+# --------------------------------------------------------------------------- #
+@dataclass(slots=True)
+class _Counted:
+    """Counted step execution through ``simulated``, answering ``count``, or
+    raising ``failure`` instead where it is given."""
+
+    simulated: SimulatedWriteSteps
+    order: list[str]
+    count: int = 3
+    failure: BaseException | None = None
+
+    def __call__(self, step: PlannedUpdate | PlannedDelete, /) -> int:
+        self.order.append("counted")
+        if self.failure is not None:
+            raise self.failure
+        self.simulated.counted(step)
+        return self.count
+
+
+def test_a_predicate_write_runs_after_everything_buffered_in_one_flush_and_answers_its_count() -> (
+    None
+):
+    order: list[str] = []
+    simulated = _simulated(_PREDICATED)
+    steps = ObservedSteps(simulated, observe=lambda _position, _steps: order.append("executed"))
+    answered: list[int] = []
+
+    def body(uow: UnitOfWork) -> None:
+        uow.buffer(_tag_insert(2))
+        answered.append(uow.execute_predicate(_shell_predicate_write()))
+        # Nothing is left buffered for a later flush.
+        uow.read(lambda: None)
+
+    _run(
+        body,
+        meta=_PREDICATED,
+        steps=steps,
+        opening=_opener(order),
+        counted=_Counted(simulated, order, count=7),
+    )
+    assert answered == [7]
+    assert order == ["opened:predicate_write", "executed", "counted", "left:predicate_write"]
+    assert statement_kinds(simulated.statements) == ["insert", "update"]
+
+
+def test_a_predicate_write_with_nothing_buffered_is_its_flushs_only_statement() -> None:
+    order: list[str] = []
+    simulated = _simulated(_PREDICATED)
+    steps = ObservedSteps(simulated, observe=lambda _position, _steps: order.append("executed"))
+
+    def body(uow: UnitOfWork) -> int:
+        return uow.execute_predicate(_shell_predicate_write())
+
+    assert (
+        _run(
+            body,
+            meta=_PREDICATED,
+            steps=steps,
+            opening=_opener(order),
+            counted=_Counted(simulated, order, count=0),
+        )
+        == 0
+    )
+    assert order == ["opened:predicate_write", "counted", "left:predicate_write"]
+
+
+def test_a_predicate_write_whose_buffered_writes_cancelled_executes_no_other_statement() -> None:
+    order: list[str] = []
+    simulated = _simulated(_PREDICATED)
+
+    def body(uow: UnitOfWork) -> None:
+        uow.buffer(_tag_insert(2))
+        assert uow.buffer(
+            _prepared_keyed(KeyedWriteInstruction("delete", "ShellTag", ({"id": 2},)), _PREDICATED)
+        ) is (BufferOutcome.CANCELLED_PENDING_INSERT)
+        uow.execute_predicate(_shell_predicate_write())
+
+    _run(
+        body,
+        meta=_PREDICATED,
+        steps=simulated,
+        opening=_opener(order),
+        counted=_Counted(simulated, order),
+    )
+    assert order == ["opened:predicate_write", "counted", "left:predicate_write"]
+    assert statement_kinds(simulated.statements) == ["update"]
+
+
+@pytest.mark.parametrize("mutation", ["amend", "replace"])
+def test_an_empty_predicate_write_answers_zero_and_leaves_the_buffer_pending(
+    mutation: str,
+) -> None:
+    order: list[str] = []
+    simulated = _simulated(_PREDICATED)
+    empty = (
+        _shell_predicate_write(assignments=())
+        if mutation == "amend"
+        else prepare_wire_write(
+            PredicateWriteInstruction(
+                "replace",
+                PredicateSelection("ShellKey", predicate_algebra.TrueNode()),
+                row={},
+            ),
+            _PREDICATED,
+        )
+    )
+    assert isinstance(empty, PreparedPredicateWrite)
+    assert not empty.assigns
+
+    def body(uow: UnitOfWork) -> None:
+        uow.buffer(_tag_insert(2))
+        assert uow.execute_predicate(empty) == 0
+        order.append("answered")
+
+    _run(
+        body,
+        meta=_PREDICATED,
+        steps=simulated,
+        opening=_opener(order),
+        counted=_Counted(simulated, order),
+    )
+    # The buffered insert waited for the pre-commit flush.
+    assert order == ["answered", "opened:pre_commit", "left:pre_commit"]
+    assert statement_kinds(simulated.statements) == ["insert"]
 
 
 def test_an_empty_predicate_write_is_refused_once_the_lifetime_has_ended() -> None:
@@ -1566,9 +1710,9 @@ def test_an_empty_predicate_write_is_refused_once_the_lifetime_has_ended() -> No
     def body(tx: UnitOfWork) -> None:
         captured["tx"] = tx
 
-    _run(body, meta=_BARRIERED)
+    _run(body, meta=_PREDICATED)
     with pytest.raises(EscapedTransactionError):
-        captured["tx"].buffer_predicate(_shell_barrier(assignments=()))
+        captured["tx"].execute_predicate(_shell_predicate_write(assignments=()))
 
 
 def test_a_doomed_lifetime_refuses_an_empty_predicate_write() -> None:
@@ -1579,12 +1723,141 @@ def test_a_doomed_lifetime_refuses_an_empty_predicate_write() -> None:
     def body(tx: UnitOfWork) -> None:
         lifetime.doom(RuntimeError("doomed"))
         with pytest.raises(RollbackOnlyError) as exc:
-            tx.buffer_predicate(_shell_barrier(assignments=()))
+            tx.execute_predicate(_shell_predicate_write(assignments=()))
         refused.append(exc.value)
 
     with pytest.raises(RollbackOnlyError):
-        _run(body, meta=_BARRIERED, lifetime=lifetime)
+        _run(body, meta=_PREDICATED, lifetime=lifetime)
     assert refused
+
+
+def test_a_planning_refusal_before_a_predicate_write_keeps_the_buffer_and_the_attempt() -> None:
+    order: list[str] = []
+    bare_close = _prepared_keyed(
+        KeyedWriteInstruction(
+            "amendUntil",
+            "WherePosition",
+            ({"id": 1, "acctNum": "O"},),
+            valid_from=_FEB,
+            until=_APR,
+        ),
+        _PREDICATED,
+    )
+    simulated = _simulated(_PREDICATED)
+
+    def body(uow: UnitOfWork) -> None:
+        uow.buffer(bare_close)
+        with pytest.raises(WritePlanningError):
+            uow.execute_predicate(_shell_predicate_write())
+        assert uow.read(lambda: "still usable") == "still usable"
+
+    # The refused write is still buffered, so the commit flush refuses it again
+    # rather than the attempt being doomed.
+    with pytest.raises(WritePlanningError):
+        _run(
+            body,
+            meta=_PREDICATED,
+            steps=simulated,
+            opening=_opener(order),
+            counted=_Counted(simulated, order),
+        )
+    assert order[:2] == ["opened:predicate_write", "failed:predicate_write"]
+    assert "counted" not in order
+
+
+def test_an_execution_failure_before_a_predicate_write_dooms_it_unplanned(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    failure = RuntimeError("the insert failed")
+    order: list[str] = []
+    simulated = _simulated(_PREDICATED)
+    steps = ObservedSteps(simulated, failing=0, failure=failure)
+    planned: list[object] = []
+    planning = WritePlanner.predicate_step
+
+    def recording(self: WritePlanner, *args: Any, **kwargs: Any) -> PlannedUpdate | PlannedDelete:
+        planned.append(args)
+        return planning(self, *args, **kwargs)
+
+    monkeypatch.setattr(WritePlanner, "predicate_step", recording)
+
+    def body(uow: UnitOfWork) -> None:
+        uow.buffer(_tag_insert(2))
+        with pytest.raises(RuntimeError, match="the insert failed"):
+            uow.execute_predicate(_shell_predicate_write())
+
+    with pytest.raises(RollbackOnlyError) as doomed:
+        _run(body, meta=_PREDICATED, steps=steps, counted=_Counted(simulated, order))
+    assert doomed.value.__cause__ is failure
+    assert (planned, order) == ([], [])
+
+
+def test_a_refused_predicate_step_fails_its_flush_without_dooming_or_restoring_earlier_work(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    order: list[str] = []
+    monkeypatch.setattr(planning_composition, "NO_AUDIT", _ReshapingAudit())
+    simulated = _simulated(_PREDICATED)
+
+    def body(uow: UnitOfWork) -> str:
+        uow.buffer(_tag_insert(2))
+        with pytest.raises(WritePlanningError):
+            uow.execute_predicate(_shell_predicate_write())
+        return uow.read(lambda: "still usable")
+
+    assert (
+        _run(
+            body,
+            meta=_PREDICATED,
+            steps=simulated,
+            opening=_opener(order),
+            counted=_Counted(simulated, order),
+        )
+        == "still usable"
+    )
+    # The insert the flush executed stays executed; nothing restores it to the
+    # buffer for the pre-commit flush, which has nothing to do.
+    assert order == ["opened:predicate_write", "failed:predicate_write"]
+    assert statement_kinds(simulated.statements) == ["insert"]
+
+
+def test_a_failure_executing_a_predicate_write_dooms_the_attempt() -> None:
+    failure = RuntimeError("the predicate statement failed")
+    order: list[str] = []
+    simulated = _simulated(_PREDICATED)
+
+    def body(uow: UnitOfWork) -> str:
+        with pytest.raises(RuntimeError, match="the predicate statement failed"):
+            uow.execute_predicate(_shell_predicate_write())
+        with pytest.raises(RollbackOnlyError) as refused:
+            uow.read(lambda: None)
+        assert refused.value.__cause__ is failure
+        return "withheld"
+
+    with pytest.raises(RollbackOnlyError):
+        _run(
+            body,
+            meta=_PREDICATED,
+            steps=simulated,
+            opening=_opener(order),
+            counted=_Counted(simulated, order, failure=failure),
+        )
+    assert order == ["opened:predicate_write", "counted", "failed:predicate_write"]
+
+
+class _ReshapingAudit(RecordingAudit):
+    """An audit decorating every update into an update of another Entity,
+    which no decoration may change."""
+
+    def decorate_update(
+        self,
+        update: PlannedUpdate,
+        *,
+        actor_identity: ActorIdentity,
+        transaction_instant: TransactionInstant,
+    ) -> PlannedUpdate:
+        del actor_identity, transaction_instant
+        return replace(update, entity=corpus_object_key("WherePosition", ("id", 1)).entity)
 
 
 def _opening_geometry(plan: WritePlan) -> set[tuple[object, object, object]]:
@@ -1606,24 +1879,24 @@ def test_a_pending_opening_settles_as_one_write_of_the_new_lineages_its_edits_le
             ({"id": 1, "acctNum": "A", "value": Decimal("1.00")},),
             valid_from=_FEB,
         ),
-        _BARRIERED,
+        _PREDICATED,
     )
     edit = _prepared_keyed(
         KeyedWriteInstruction(
             "amendUntil", "WherePosition", ({"id": 1, "value": Decimal("2.00")},), _FEB, _APR
         ),
-        _BARRIERED,
+        _PREDICATED,
     )
     destroy = _prepared_keyed(
         KeyedWriteInstruction("terminateUntil", "WherePosition", ({"id": 1},), _JUN, _AUG),
-        _BARRIERED,
+        _PREDICATED,
     )
-    plan = build_write_planner(_BARRIERED).finalize(
+    plan = build_write_planner(_PREDICATED).finalize(
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=TransactionInstant(FixedClock(_FIXED)),
             concurrency="optimistic",
-            buffered_writes=admitted_writes(_BARRIERED, [insert, edit, destroy]),
+            buffered_writes=admitted_writes(_PREDICATED, [insert, edit, destroy]),
         )
     )
     # No predecessor is fabricated for the insert: every surviving part of its

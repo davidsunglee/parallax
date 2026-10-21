@@ -139,7 +139,7 @@ def _window_contents(cell: support.Cell) -> tuple[support.Outcome, support.Outco
         counted = support.Outcome(statements=expected.statements, reads=expected.reads)
         if cell.algorithm == "replacement-gaps":
             return nothing, expected
-        if cell.algorithm == "destruction-merge":
+        if cell.algorithm == "destruction-composition":
             # Every flush and read of the scenario precedes the reinsertion.
             return counted, counted
         # Only the read flushing the first removal falls between the windows.

@@ -882,7 +882,9 @@ def test_a_readless_write_converts_only_the_elements_of_owners_its_rows_reach(
     assert cause.native_code == "22P02"
 
 
-def test_a_key_selecting_readless_write_stays_a_barrier(profile_run: Any) -> None:
+def test_a_key_selecting_readless_write_runs_after_what_was_buffered_before_it(
+    profile_run: Any,
+) -> None:
     db = _served(profile_run)
     _seed_baskets(db)
 

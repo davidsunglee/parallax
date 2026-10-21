@@ -341,12 +341,12 @@ def test_run_scenario_case_groups_a_committing_uow_span_into_one_transaction() -
     assert port.commits == 1 and port.rollbacks == 0
 
 
-def test_run_scenario_case_holds_a_grouped_readless_predicate_write_in_the_groups_flush() -> None:
-    # m-batch-write-011: the predicate write is buffered into the group's own
-    # transaction rather than run as a unit of its own, so the one flush at the
-    # boundary delivers it between the keyed writes buffered on either side. The
-    # run reports what that flush delivered, under the last write step buffered
-    # before it: nothing a flush delivers names the step that buffered it.
+def test_run_scenario_case_runs_a_grouped_predicate_write_after_what_its_group_buffered() -> None:
+    # m-batch-write-011: the predicate write runs at its own step, inside the
+    # group's transaction rather than as a unit of its own, in the flush that
+    # first delivers the delete its group buffered before it. The run reports
+    # that flush under the predicate's step, the inserts buffered after it
+    # under the step that buffered them, and the count the verb returned.
     port = FakeWritePort(
         find_rows=[
             {
@@ -362,11 +362,12 @@ def test_run_scenario_case_holds_a_grouped_readless_predicate_write_in_the_group
     assert run.database_calls == 5
     assert [e.case_pointer for e in run.emissions] == [
         "/scenario/0/objectQuery",
-        "/scenario/3/write",
-        "/scenario/3/write",
+        "/scenario/2/write",
+        "/scenario/2/write",
         "/scenario/3/write",
         "/scenario/3/write",
     ]
+    assert run.step_affected_rows == [{"at": "/scenario/2", "affectedRows": 1}]
     # What is reported is what the port executed, in the order it executed it.
     assert [e.sql.replace("?", "%s") for e in run.emissions[1:]] == [sql for sql, _ in port.writes]
     assert [sql.split("(")[0] for sql, _ in port.writes] == [
@@ -1497,26 +1498,32 @@ def test_a_restated_occurrence_is_assigned_literally_beside_the_stored_keys_it_l
 # execution: the compile lane records what its flushes lower to, and the run  #
 # lane tracks case state through the same unit of work, lowering nothing.     #
 # --------------------------------------------------------------------------- #
-@pytest.mark.parametrize(
-    ("case_id", "pointers"),
-    [
-        pytest.param(
-            "m-batch-write-011",
-            ["/scenario/0/objectQuery", *["/scenario/3/write"] * 4],
-            id="barrier-group",
-        ),
-        pytest.param("m-execution-lifecycle-002", ["/scenario/1/write"] * 2, id="pre-commit"),
-    ],
-)
-def test_a_flushes_statements_are_reported_under_the_last_write_buffered_before_it(
-    case_id: str, pointers: list[str]
-) -> None:
-    # Each case's group buffers every write before one pre-commit flush, so
-    # everything that flush emits belongs to the group's last write step — the
-    # rule the run lane reports a held group's delivered writes by.
-    compiled, database_calls = scenario.compile_scenario_case(_load_case(case_id), "postgres")
-    assert [emission.case_pointer for emission in compiled] == pointers
-    assert database_calls == len(pointers)
+def test_a_flushes_statements_are_reported_under_the_last_write_buffered_before_it() -> None:
+    # The group buffers every write before one pre-commit flush, so everything
+    # that flush emits belongs to the group's last write step — the rule the run
+    # lane reports a held group's delivered writes by.
+    compiled, database_calls = scenario.compile_scenario_case(
+        _load_case("m-execution-lifecycle-002"), "postgres"
+    )
+    assert [emission.case_pointer for emission in compiled] == ["/scenario/1/write"] * 2
+    assert database_calls == 2
+
+
+def test_a_predicate_writes_flush_is_reported_under_the_predicates_own_step() -> None:
+    # The predicate's flush delivers the delete its group buffered before it,
+    # then its own statement; the inserts buffered after it reach the
+    # pre-commit flush under the step that buffered them.
+    compiled, database_calls = scenario.compile_scenario_case(
+        _load_case("m-batch-write-011"), "postgres"
+    )
+    assert [emission.case_pointer for emission in compiled] == [
+        "/scenario/0/objectQuery",
+        "/scenario/2/write",
+        "/scenario/2/write",
+        "/scenario/3/write",
+        "/scenario/3/write",
+    ]
+    assert database_calls == 5
 
 
 def _account_insert(account_id: int) -> dict[str, object]:

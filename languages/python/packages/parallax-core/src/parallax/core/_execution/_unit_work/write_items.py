@@ -20,9 +20,7 @@ from parallax.core._execution._unit_work.instructions import (
     ExpectedTxStart,
     ExpectedVersion,
     PreparedKeyedWrite,
-    PreparedPredicateWrite,
     PreparedTargetWrite,
-    PreparedWrite,
     TargetExpectation,
     target_instruction,
 )
@@ -43,11 +41,9 @@ from parallax.core.write_plan.observe import WriteObservation
 __all__ = [
     "AdmittedWrite",
     "AfterRemoval",
-    "ChainedTemporalWrite",
     "ClaimedKeyedWrite",
     "CoalescedTemporalWrite",
     "CoalescedWrite",
-    "FollowingKeyedWrite",
     "InsertionKeyedWrite",
     "MutationPhase",
     "ObjectClaimedBatch",
@@ -62,7 +58,6 @@ __all__ = [
     "buffered_instruction",
     "buffered_object_key",
     "buffered_write",
-    "chained_temporal_write",
     "composed_temporal_write",
     "singleton_transform",
     "target_write",
@@ -362,31 +357,6 @@ class CoalescedTemporalWrite:
         return self.transform.assigns
 
 
-@dataclass(frozen=True, slots=True)
-class ChainedTemporalWrite(CoalescedTemporalWrite):
-    """One ordering-barrier region's composition of a temporal object whose
-    earlier pending writes stand in an earlier region of the same buffer.
-
-    A barrier keeps every write on its own side, so each region's writes of the
-    object execute as a settled write of their own, and this one binds at its
-    turn to the coverage the earlier ones left.
-    """
-
-
-def chained_temporal_write(
-    held: TemporalKeyedWrite | CoalescedTemporalWrite, key_name: str
-) -> ChainedTemporalWrite:
-    """``held`` as a composition of its barrier region that follows the
-    object's writes in an earlier region."""
-    composed = held if isinstance(held, CoalescedTemporalWrite) else _composed(held, key_name)
-    return ChainedTemporalWrite(
-        target=composed.target,
-        key=composed.key,
-        contributions=composed.contributions,
-        transform=composed.transform,
-    )
-
-
 type TemporalKeyedWrite = ObservedKeyedWrite | InsertionKeyedWrite | TargetKeyedWrite
 """One keyed write of a temporal object that composes with that object's other
 pending writes: an observed one, one an admitted insertion authorized, or one a
@@ -559,38 +529,16 @@ class AfterRemoval:
     insert: PreparedKeyedWrite | PendingOpening
 
 
-@dataclass(frozen=True, slots=True)
-class FollowingKeyedWrite:
-    """A Non-Temporal write of one claimed scope that an ordering barrier keeps
-    after the writes of that scope standing before it.
-
-    Those writes execute first, each advancing a versioned row once, so this
-    one starts from the state they leave: ``advances`` versions past the state
-    its own scope names.
-    """
-
-    write: ObservedKeyedWrite | InsertionKeyedWrite | TargetKeyedWrite
-    advances: int
-
-
-AdmittedWrite = (
-    PreparedKeyedWrite
-    | PreparedPredicateWrite
-    | ClaimedKeyedWrite
-    | InsertionKeyedWrite
-    | TargetKeyedWrite
-)
+AdmittedWrite = PreparedKeyedWrite | ClaimedKeyedWrite | InsertionKeyedWrite | TargetKeyedWrite
 
 
 type OrderedWrite = (
     PreparedKeyedWrite
-    | PreparedPredicateWrite
     | ObservedKeyedWrite
     | ObjectClaimedWrite
     | ObjectClaimedBatch
     | InsertionKeyedWrite
     | TargetKeyedWrite
-    | FollowingKeyedWrite
     | CoalescedTemporalWrite
     | PendingOpening
 )
@@ -604,16 +552,16 @@ instruction.
 """
 
 type MutationPhase = tuple[OrderedWrite, ...]
-"""A region's ordered writes of one mutation kind — its inserts, its updates,
-or its deletes — or one readless predicate write standing alone as a barrier.
-The planner hands settlement a flush's phases in flush order."""
+"""A region's ordered writes of one mutation kind: its inserts, its updates,
+or its deletes. The planner hands settlement a flush's phases in flush
+order."""
 
 type CoalescedWrite = OrderedWrite | AfterRemoval
 """One coalesced write as finalization receives it: what settlement
 reads, or inserts that must follow an earlier removal."""
 
 
-def buffered_instruction(item: AdmittedWrite) -> PreparedWrite:
+def buffered_instruction(item: AdmittedWrite) -> PreparedKeyedWrite:
     """The write instruction ``item`` carries, unwrapped from any envelope."""
     if isinstance(
         item,

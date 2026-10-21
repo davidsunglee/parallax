@@ -17,6 +17,7 @@ when:
         assignments:
           - { attr: parallax.compatibility.LeaseNote.text, value: lapsed }
       databaseCalls: 1
+      expectAffectedRows: 2
       statements:
         - sql:
             postgres: update lease_note set note_text = ? where not exists (select 1 from lease t1 where t1.id = lease_id and t1.term = ? and t1.out_z = ?)

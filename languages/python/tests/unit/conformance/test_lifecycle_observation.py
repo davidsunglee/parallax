@@ -192,6 +192,9 @@ def test_a_flush_states_the_trigger_that_produced_it() -> None:
     assert _transition(FlushStarted(_EXECUTION, 1, 1, None, "read_dependency")) == {
         "flushStarted": {"trigger": "read-dependency"}
     }
+    assert _transition(FlushStarted(_EXECUTION, 1, 1, None, "predicate_write")) == {
+        "flushStarted": {"trigger": "predicate-write"}
+    }
     assert _transition(FlushStarted(_EXECUTION, 1, 1, None, "pre_commit")) == {
         "flushStarted": {"trigger": "pre-commit"}
     }

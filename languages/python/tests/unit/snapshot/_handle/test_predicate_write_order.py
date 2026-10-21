@@ -5,7 +5,7 @@ then the representation's own capture of its selection and assignments, then
 the one preparation that judges whether the target can be written without being
 read at all, and then the predicate, the family, every assignment's member or
 replaced state's member, and their values, in that order, and only then the
-buffering of one readless statement, or of nothing for an amendment assigning
+execution of one readless statement, or of nothing for an amendment assigning
 nothing. What a row fixes is the ANSWER
 that order gives — the refusal's class, code, message, the point it landed at,
 and the DML emitted — beside the whole port chronology, so a refusal that read
@@ -189,7 +189,7 @@ _ADMITTED: Final[tuple[_Row, ...]] = (
 
 
 @pytest.mark.parametrize("row", _ADMITTED, ids=str)
-def test_an_admitted_predicate_write_is_buffered_as_one_readless_statement(row: _Row) -> None:
+def test_an_admitted_predicate_write_executes_one_readless_statement(row: _Row) -> None:
     _assert_row(row)
 
 
@@ -538,9 +538,9 @@ def test_an_amendment_assigning_nothing_is_judged_and_then_dropped(row: _Row) ->
 
 
 # --------------------------------------------------------------------------- #
-# A predicate write reads nothing, so it flushes nothing pending: an admitted  #
-# one is buffered behind an earlier insert, and a refused one reaches the      #
-# database for nothing at all.                                                 #
+# An admitted predicate write executes after the insert pending before it,    #
+# and reads nothing; a refused one is refused before it flushes anything, so   #
+# its attempt reaches the database for nothing at all.                         #
 # --------------------------------------------------------------------------- #
 _PENDING: Final[tuple[_Row, ...]] = (
     _Row(
@@ -567,5 +567,5 @@ _PENDING: Final[tuple[_Row, ...]] = (
 
 
 @pytest.mark.parametrize("row", _PENDING, ids=str)
-def test_a_predicate_write_flushes_no_pending_write(row: _Row) -> None:
+def test_a_predicate_write_executes_after_the_write_pending_before_it(row: _Row) -> None:
     _assert_row(row)

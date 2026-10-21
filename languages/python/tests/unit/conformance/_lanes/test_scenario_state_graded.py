@@ -18,7 +18,7 @@ from tests._support.repo import REPO_ROOT
 from tests.unit.conformance._recording_ports import FakeWritePort
 
 _CORPUS = REPO_ROOT / "core" / "compatibility"
-_BARRIER_CASE = "m-unit-work-049-a-barrier-keeps-non-temporal-writes-on-their-own-sides"
+_PREDICATE_WRITE_CASE = "m-unit-work-049-non-temporal-writes-on-either-side-of-a-predicate-write"
 _ACCOUNT_ROW = {"id": 1, "owner": "Ada", "balance": decimal.Decimal("5.00"), "version": 1}
 _FIND = {
     "uow": "g",
@@ -52,7 +52,7 @@ def test_every_submission_reaches_its_own_verb_and_the_run_reports_what_it_left(
     (case,) = (
         case
         for case in case_format.load_cases()
-        if case.path.name == f"{_BARRIER_CASE}-layout-twin-columns.yaml"
+        if case.path.name == f"{_PREDICATE_WRITE_CASE}-layout-twin-columns.yaml"
     )
     tag = {"id": 1, "quantity": 5, "label": "t"}
     account = {"id": 1, "balance": 10, "version": 1, "memo": {"note": "m1"}}
