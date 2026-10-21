@@ -165,9 +165,10 @@ selection document — never an Object Query node or its document — and a
 replacement's data as a document or as a node Parallax published for the
 selected Entity. A replacement payload's key addresses nothing and is never
 written. A set-based write is one readless statement, so it takes no window, and
-over a versioned or temporal Entity it is refused at the call with a
-`WriteInstructionError` naming the keyed and conditional verbs that write such
-an Entity (`m-batch-write`). Every verb of the family returns an `int`, the
+over a versioned or temporal Entity it is refused at the call with an
+`InstructionRejectedError`, the `WriteInstructionError` whose `rule` is
+`set-based-write-target-unsupported`, naming the keyed and conditional verbs that
+write such an Entity (`m-batch-write`). Every verb of the family returns an `int`, the
 affected-row count `m-batch-write` defines: the statement runs at the call,
 after the writes the transaction buffered before it, so its database errors
 raise there.
