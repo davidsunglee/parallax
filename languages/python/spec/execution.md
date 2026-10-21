@@ -241,8 +241,8 @@ triggers, creates a new row version, and holds the row's write lock until the
 transaction ends, including across any later dependent read. Another
 transaction that read the same milestone can still write it once this one
 commits, where a close would have made it conflict. Under Locking, and for rows
-the transaction opened itself, nothing is written. A source-authorized write
-still spends its source, so a later write needs a fresh read either way. A
+the transaction opened itself, nothing is written. Either way the milestone's
+sources stay as they were, so a later write through one needs no fresh read. A
 conditional write's guard binds its `tx_start` instead, so losing that
 milestone is still the caller's failed precondition; a versioned non-temporal
 target advances its version, equal values included.

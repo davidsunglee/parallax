@@ -116,8 +116,8 @@ A row merged from several adjacent produced rows of identical persisted state
 (`m-temporal-write` *Merging produced successors*) is one Write Row over the
 merged Valid Time. Its origin is the origin of the produced row whose prepared
 state it stores, which describes how that state is assembled, not which
-predecessors it covers: every merged row's contributions, each an original over
-the part of the row it contributed, belong to the completion its settled write publishes
+predecessors it covers: every merged row's contributions, each a predecessor
+over the part of the row it contributed, belong to the completion its settled write publishes
 (`m-unit-work` *Write Groups complete before later work runs*), never to a
 second origin or a list of predecessors on the row.
 

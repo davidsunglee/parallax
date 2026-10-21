@@ -56,8 +56,8 @@ from parallax.core.write_plan.plan import (
     BoundRange,
     DeferredRange,
     Openings,
-    OwnedEndpoint,
     SettledWrite,
+    TemporalRowCoordinates,
     TemporalWriteOwnership,
     WritePlan,
 )
@@ -232,9 +232,9 @@ def test_a_range_binds_alike_whether_planning_knew_its_coverage_or_execution_rea
         tuple(planned.opened.fresh),
         (),
     ]
-    assert (bound.removed, bound.derived, bound.concludes) == ((), (), None)
-    # A deferred settled write's plan entry publishes nothing of its own beside its claim.
-    assert (tuple(read.changed), read.opened, read.claim) == ((), Openings(), head)
+    assert (bound.removed, bound.derived, bound.current_outputs) == ((), (), ())
+    # A deferred settled write's plan entry publishes nothing of its own.
+    assert (tuple(read.changed), read.opened) == ((), Openings())
 
 
 def test_a_read_that_found_no_row_binds_the_range_to_what_it_observed() -> None:
@@ -256,7 +256,7 @@ def test_a_caller_start_the_read_did_not_find_fails_as_its_precondition() -> Non
 
 def test_binding_reads_the_ownership_the_attempt_holds_when_it_binds() -> None:
     settled, _acquisition = _deferred(_plan(_target(_JUN, _SEP)))
-    endpoint = OwnedEndpoint(_SPAN, (1,), (OPEN_END, OPEN_END))
+    endpoint = TemporalRowCoordinates(_SPAN, (1,), (OPEN_END, OPEN_END))
 
     stored = _bind(settled, [_TAIL])
     owned = _bind(settled, [_TAIL], ownership=OpenedRows(frozenset({endpoint})))
@@ -266,7 +266,7 @@ def test_binding_reads_the_ownership_the_attempt_holds_when_it_binds() -> None:
     # revises that row in place rather than closing it into history.
     assert [type(step) for step in owned.steps] == [PlannedTemporalRevision, PlannedInsert]
     assert tuple(owned.opened.fresh) == (
-        OwnedEndpoint(_SPAN, (1,), (Finite(instant=_SEP), OPEN_END)),
+        TemporalRowCoordinates(_SPAN, (1,), (Finite(instant=_SEP), OPEN_END)),
     )
     assert tuple(owned.changed) == tuple(stored.changed) == (_retained(_TAIL).key,)
 
@@ -355,7 +355,9 @@ def test_a_deferred_range_its_planner_did_not_finalize_is_refused_before_any_rea
     [
         (NO_TEMPORAL_WRITE_OWNERSHIP, PlannedClose),
         (
-            OpenedRows(frozenset({OwnedEndpoint(_SPAN, (1,), (Finite(instant=_JUN), OPEN_END))})),
+            OpenedRows(
+                frozenset({TemporalRowCoordinates(_SPAN, (1,), (Finite(instant=_JUN), OPEN_END))})
+            ),
             PlannedTemporalRemoval,
         ),
     ],
@@ -388,7 +390,7 @@ def test_an_overlapped_observation_is_retired_by_whoever_owns_its_row(
     assert tuple(write.removed) == (
         ()
         if retired is PlannedClose
-        else (OwnedEndpoint(_SPAN, (1,), (Finite(instant=_JUN), OPEN_END)),)
+        else (TemporalRowCoordinates(_SPAN, (1,), (Finite(instant=_JUN), OPEN_END)),)
     )
 
 
@@ -424,7 +426,6 @@ def test_a_lone_observed_write_inside_its_predecessor_binds_at_once_from_its_own
     assert built.built == 0
     (write,) = settled_writes(plan)
     assert write.deferred is None
-    assert write.claim is head
     assert [type(step) for step in plan_steps(plan)] == [
         PlannedClose,
         PlannedInsert,
@@ -444,10 +445,9 @@ def test_a_lone_write_reaching_past_what_it_observed_reads_only_the_rest(
 ) -> None:
     head = _retained(_HEAD)
     built = _Compositions(monkeypatch)
-    settled, acquisition = _deferred(_plan(_update(head, _MAR, _SEP)))
+    _settled, acquisition = _deferred(_plan(_update(head, _MAR, _SEP)))
     assert built.built == 0
     assert acquisition.terms[0].valid_time_windows == (temporal_read.TimeInterval(_JUN, _SEP),)
-    assert settled.claim is head
 
 
 @pytest.mark.parametrize("observation", [None, VersionObservation(observed_version=1)])

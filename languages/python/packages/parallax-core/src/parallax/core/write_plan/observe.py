@@ -303,6 +303,27 @@ class PredecessorRow:
         object.__setattr__(predecessor, "_absent", absent)
         return predecessor
 
+    @classmethod
+    def adopt_written(
+        cls,
+        attributes: Mapping[AttributeIdentity, object],
+        value_objects: Mapping[ValueObjectIdentity, object],
+        document: object | None,
+    ) -> PredecessorRow:
+        """Adopt the complete state a write persisted — its finalized members,
+        already immutable, and the recursively immutable document it stored —
+        keyed by declared name, without copying either."""
+        members = {identity.name: value for identity, value in attributes.items()}
+        for identity, value in value_objects.items():
+            members[identity.path[-1]] = value
+        predecessor = object.__new__(cls)
+        object.__setattr__(predecessor, "members", EntityStateRow(members))
+        object.__setattr__(predecessor, "document", document)
+        object.__setattr__(predecessor, "_selection", None)
+        object.__setattr__(predecessor, "_row", ())
+        object.__setattr__(predecessor, "_absent", None)
+        return predecessor
+
     def with_bindable_document(self) -> PredecessorRow:
         """This row with its document recursively immutable, the form every
         successor binds and patches.

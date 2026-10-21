@@ -11,7 +11,7 @@ from typing import Literal
 import pytest
 
 from parallax.core.dialect import POSTGRES
-from parallax.core.unit_work import OptimisticLockConflictError, WriteEvidenceError
+from parallax.core.unit_work import OptimisticLockConflictError
 from parallax.snapshot import TxnContext
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
@@ -109,7 +109,7 @@ def test_a_retried_conflict_reads_the_row_again_and_its_guard_matches() -> None:
     assert [call.sql for call in _writes(port)] == [_GUARD, _GUARD]
 
 
-def test_a_guarded_source_is_spent_and_a_fresh_read_writes_again() -> None:
+def test_a_guarded_source_still_describes_its_state_and_writes_again() -> None:
     port = ScriptedAdapter(
         Transact(
             Read(rows=[balance_row(in_z=_T0)]),
@@ -123,18 +123,23 @@ def test_a_guarded_source_is_spent_and_a_fresh_read_writes_again() -> None:
         fetched = tx.find(mm.Balance.where(mm.Balance.id == 1)).result()
         tx.amend(fetched.edit(value=Decimal("5.00")))
         fresh = tx.find(mm.Balance.where(mm.Balance.id == 1)).result()
-        with pytest.raises(WriteEvidenceError) as spent:
-            tx.amend(fetched.edit(value=Decimal("5.00")))
-        assert spent.value.code == "write-evidence-consumed"
+        # The guard changed nothing, so the earlier source and the fresh read
+        # observe the one state the row is still in, and compose as one write.
+        tx.amend(fetched.edit(value=Decimal("5.00")))
         tx.amend(fresh.edit(value=Decimal("5.00")))
 
     db_for(BALANCE, port).transact(fn)
     assert [call.sql for call in _writes(port)] == [_GUARD, _GUARD]
 
 
-def test_a_wire_projection_of_a_guarded_source_shares_its_spent_evidence() -> None:
+def test_a_wire_projection_of_a_guarded_source_shares_its_unchanged_evidence() -> None:
     port = ScriptedAdapter(
-        Transact(Read(rows=[balance_row(in_z=_T0)]), Write(), Read(rows=[balance_row(in_z=_T0)]))
+        Transact(
+            Read(rows=[balance_row(in_z=_T0)]),
+            Write(),
+            Read(rows=[balance_row(in_z=_T0)]),
+            Write(),
+        )
     )
 
     def fn(tx: TxnContext) -> None:
@@ -142,12 +147,10 @@ def test_a_wire_projection_of_a_guarded_source_shares_its_spent_evidence() -> No
         projected = snapshot.wire().result()
         tx.amend(snapshot.result().edit(value=Decimal("5.00")))
         tx.find(mm.Balance.where(mm.Balance.id == 1)).result()
-        with pytest.raises(WriteEvidenceError) as spent:
-            tx.wire.amend(projected, {"value": "5.00"})
-        assert spent.value.code == "write-evidence-consumed"
+        tx.wire.amend(projected, {"value": "5.00"})
 
     db_for(BALANCE, port).transact(fn)
-    assert [call.sql for call in _writes(port)] == [_GUARD]
+    assert [call.sql for call in _writes(port)] == [_GUARD, _GUARD]
 
 
 # --------------------------------------------------------------------------- #
@@ -201,10 +204,14 @@ def test_a_range_guards_its_unchanged_rectangles_where_it_would_have_closed_them
 @pytest.mark.parametrize(
     ("value", "kept"), [("100.00", True), ("120.00", False)], ids=["kept", "rewritten"]
 )
-def test_a_read_of_a_rectangle_the_range_kept_stays_writable(value: str, kept: bool) -> None:
-    # The range spends only its own source. A rectangle it rewrote is a state
-    # this attempt changed, so an earlier read of it is stale; one it kept is not.
-    # Rewritten, its three closes precede one insert of four openings: [May,
+def test_a_read_of_a_rectangle_the_range_kept_or_rewrote_stays_writable(
+    value: str, kept: bool
+) -> None:
+    # A rectangle the range kept is still the state the earlier read observed.
+    # One it rewrote is a state this attempt changed: the source continues at
+    # its November pin through the row the range left there, which the
+    # attempt holds, so it is written without being read again. Rewritten,
+    # the range's three closes precede one insert of four openings: [May,
     # August) and [August, October) now hold one value and open as one row.
     port = ScriptedAdapter(
         Transact(
@@ -213,7 +220,7 @@ def test_a_read_of_a_rectangle_the_range_kept_stays_writable(value: str, kept: b
             Read(rows=_COVERAGE),
             Write(times=4),
             Read(rows=[]),
-            *((Write(times=3),) if kept else ()),
+            Write(times=3 if kept else 2),
         )
     )
     november = dt.datetime(2024, 11, 1, tzinfo=dt.UTC)
@@ -223,11 +230,10 @@ def test_a_read_of_a_rectangle_the_range_kept_stays_writable(value: str, kept: b
         last = _find(tx, november)
         tx.amend(source.edit(value=Decimal(value)), until=_OCT)
         tx.find(WherePosition.where(WherePosition.id == 2).as_of(valid_time=_MAR)).result_or_none()
-        if kept:
-            tx.amend(last.edit(acct_num="B"), until=_DEC)
-            return
-        with pytest.raises(WriteEvidenceError) as stale:
-            tx.amend(last.edit(acct_num="B"), until=_DEC)
-        assert stale.value.code == "write-evidence-consumed"
+        tx.amend(last.edit(acct_num="B"), until=_DEC)
 
     db_for(WHERE_POSITION_META, port).transact(fn)
+    if not kept:
+        revision, opened = _writes(port)[-2:]
+        assert revision.sql.startswith("update where_position set acct_num = %s")
+        assert opened.sql.startswith("insert into where_position")

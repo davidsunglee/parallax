@@ -11,10 +11,12 @@ import pytest
 from parallax.core import temporal_read
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work.instructions import prepare_wire_write
+from parallax.core._execution._unit_work.retain import ParticipationToken, ReadEvidence
 from parallax.core._execution._unit_work.write_items import (
     CoalescedTemporalWrite,
     ObservedKeyedWrite,
 )
+from parallax.core._execution._unit_work.write_settlement import SettledWriteWithSource
 from parallax.core.base import INFINITY
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.unit_work import (
@@ -42,7 +44,7 @@ from parallax.core.write_plan.keys import (
     VersionedObjectStateKey,
     object_state_key_from_observation,
 )
-from parallax.core.write_plan.plan import CombinedSourceAuthority, WritePlan
+from parallax.core.write_plan.plan import WritePlan
 from tests._support.clock_probes import instant_at
 from tests._support.planner_probes import (
     TEST_ACTOR_IDENTITY,
@@ -84,13 +86,24 @@ _STALE = _observation(_JAN, "100.00")
 _CURRENT = _observation(_MAR, "120.00")
 
 
+_PARTICIPATION = ParticipationToken()
+
+
+def _source(observation: RetainedObservation) -> ReadEvidence:
+    return ReadEvidence(_ENTITY, _OBJECT, _PARTICIPATION, observation)
+
+
 def _write(
-    mutation: KeyedMutation, evidence: RetainedObservation, **members: object
+    mutation: KeyedMutation,
+    evidence: RetainedObservation,
+    *,
+    source: ReadEvidence | None = None,
+    **members: object,
 ) -> ObservedKeyedWrite:
     prepared = prepare_wire_write(
         KeyedWriteInstruction(mutation, "Balance", ({"id": 1, **members},)), _BALANCE
     )
-    item = buffered_write(prepared, evidence)
+    item = buffered_write(prepared, evidence, source=source)
     assert isinstance(item, ObservedKeyedWrite)
     return item
 
@@ -110,8 +123,12 @@ def test_two_observations_of_one_transaction_time_row_validate_the_earlier() -> 
     # Two observations of one Transaction-Time-Only row cannot both be current:
     # the later-authored one is the milestone the composition rewrites, and the
     # earlier is closed on its own gated address first, so a stale condition
-    # fails before anything opens. Both sources are spent by the one write.
-    plan = _plan(_write("amend", _STALE, value="150.00"), _write("amend", _CURRENT, value="175.00"))
+    # fails before anything opens. The one write keeps both sources' evidence.
+    stale, current = _source(_STALE), _source(_CURRENT)
+    plan = _plan(
+        _write("amend", _STALE, source=stale, value="150.00"),
+        _write("amend", _CURRENT, source=current, value="175.00"),
+    )
     steps = list(plan_steps(plan))
     assert [type(step) for step in steps] == [PlannedClose, PlannedClose, PlannedInsert]
     assert [step.cause for step in steps if isinstance(step, PlannedClose)] == [
@@ -125,9 +142,8 @@ def test_two_observations_of_one_transaction_time_row_validate_the_earlier() -> 
         Decimal("175.00")
     )
     (write,) = settled_writes(plan)
-    assert isinstance(write.claim, CombinedSourceAuthority)
-    write.claim.consume()
-    assert _STALE.consumed and _CURRENT.consumed
+    assert isinstance(write, SettledWriteWithSource)
+    assert [id(evidence) for evidence in write.source_evidence] == [id(stale), id(current)]
 
 
 def test_terminations_through_two_observations_compose_to_destruction_alone() -> None:
@@ -174,10 +190,29 @@ def test_an_assignment_after_a_destruction_over_its_coverage_is_refused() -> Non
     assert refused.value.code == "write-evidence-already-claimed"
 
 
-def test_completions_spend_every_member() -> None:
-    first, second = _observation(_JAN, "1.00"), _observation(_MAR, "2.00")
-    CombinedSourceAuthority((first, second)).consume()
-    assert first.consumed and second.consumed
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [("terminate", "terminate"), ("amend", "terminate"), ("amend", "amend")],
+    ids=["deduplicated", "superseded", "coalesced"],
+)
+def test_every_equal_but_distinct_source_of_one_observation_survives_its_writes_composing(
+    first: KeyedMutation, second: KeyedMutation
+) -> None:
+    current = _observation(_MAR, "120.00")
+    earlier, later = _source(current), _source(current)
+    assert earlier == later and earlier is not later
+    (write,) = settled_writes(
+        _plan(
+            _write(first, current, source=earlier, value="1.00")
+            if first == "amend"
+            else _write(first, current, source=earlier),
+            _write(second, current, source=later, value="2.00")
+            if second == "amend"
+            else _write(second, current, source=later),
+        )
+    )
+    assert isinstance(write, SettledWriteWithSource)
+    assert sorted(map(id, write.source_evidence)) == sorted((id(earlier), id(later)))
 
 
 def test_a_bitemporal_write_carrying_no_temporal_observation_is_refused_as_unobserved() -> None:

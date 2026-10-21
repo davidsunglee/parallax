@@ -1,14 +1,21 @@
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Iterable
+from collections.abc import Hashable, Iterable, Sequence
 from dataclasses import dataclass
 from typing import Final, Protocol
 
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.write_plan.keys import ObjectKey, ObjectStateKey, VersionedObjectStateKey
-from parallax.core.write_plan.steps import INFINITY, PlannedStep, TemporalUpperBound
+from parallax.core.write_plan.observe import PredecessorRow
+from parallax.core.write_plan.steps import (
+    INFINITY,
+    PlannedStep,
+    PlannedTemporalRevision,
+    TemporalUpperBound,
+    WriteRow,
+)
 
 __all__ = [
     "NO_OPENINGS",
@@ -17,15 +24,13 @@ __all__ = [
     "TRANSACTION_TIME_ENDS",
     "AllocatedOpening",
     "BoundRange",
-    "CombinedSourceAuthority",
+    "CurrentRowOutput",
     "DeferredRange",
     "Derivation",
     "DerivedRow",
-    "Descent",
     "Openings",
-    "OwnedEndpoint",
     "SettledWrite",
-    "SourceAuthority",
+    "TemporalRowCoordinates",
     "TemporalWriteOwnership",
     "WriteCompletion",
     "WriteGroup",
@@ -34,13 +39,14 @@ __all__ = [
 
 
 @dataclass(frozen=True, slots=True)
-class OwnedEndpoint:
-    """One temporal row's complete physical address: its Entity, its family
-    primary-key values in key order, and one exclusive upper bound per As-Of
-    Axis in canonical axis order.
+class TemporalRowCoordinates:
+    """The coordinates identifying one physical temporal row: its Entity, its
+    family primary-key values in key order, and one **exclusive upper bound**
+    per As-Of Axis in canonical axis order.
 
-    Axis starts and payload are not part of it, so a same-address revision
-    leaves the endpoint unchanged.
+    Axis starts and payload are not part of them, so a same-address revision
+    keeps its row's coordinates. They identify a row and prove nothing: neither
+    that this attempt owns it nor that any source may write it.
     """
 
     entity: EntityIdentity
@@ -57,161 +63,150 @@ OPEN_BITEMPORAL_ENDS: Final[tuple[TemporalUpperBound, ...]] = (INFINITY, INFINIT
 
 @dataclass(frozen=True, slots=True)
 class DerivedRow:
-    """One current row a settled write left of an original: its address, the Valid Time
-    the row covers, and the part of it the original contributed — the whole
-    row unless the row merged successors of several contributors. Both are
-    ``None`` on a Transaction-Time-Only object."""
+    """One current row a settled write left of a predecessor: its coordinates,
+    the Valid Time the row covers, and the part of it the predecessor
+    contributed — the whole row unless the row merged successors of several
+    predecessors. Both are ``None`` on a Transaction-Time-Only object."""
 
-    endpoint: OwnedEndpoint
+    coordinates: TemporalRowCoordinates
     valid_time_coverage: TimeInterval | None
     contributed: TimeInterval | None
 
 
 @dataclass(frozen=True, slots=True)
 class Derivation:
-    """One original a settled write transformed under protection — a guarded
+    """One predecessor a settled write changed under protection — a guarded
     effect that succeeded, or the shared lock the write held — and the current
-    rows it left in that original's place.
+    rows it left in that predecessor's place.
 
-    ``original`` is the exact state the write found, ``valid_time_coverage`` the
-    Valid Time it covered (``None`` on a Transaction-Time-Only object), and
-    ``owned`` its own address where the attempt had opened it. ``rows`` holds
-    each nonempty row the write derived from it, a row revised in place among
-    them, with the part of each the original contributed.
+    ``predecessor`` is the exact state the write found, ``valid_time_coverage``
+    the Valid Time it covered (``None`` on a Transaction-Time-Only object), and
+    ``input_coordinates`` its coordinates where the attempt had opened it,
+    ``None`` for any other predecessor. ``rows`` holds each nonempty row the
+    write derived from it, a row revised in place among them, with the part of
+    each the predecessor contributed. It describes one execution's geometry and
+    is never retained as history.
     """
 
-    original: ObjectStateKey
+    predecessor: ObjectStateKey
     valid_time_coverage: TimeInterval | None
-    owned: OwnedEndpoint | None
+    input_coordinates: TemporalRowCoordinates | None
     rows: tuple[DerivedRow, ...]
 
 
 @dataclass(frozen=True, slots=True)
-class Descent:
-    """What one current row the attempt opened derives from within the running
-    flush: the Valid Time it covers as opened (``None`` on a
-    Transaction-Time-Only object), and each protected original that stood
-    before the flush began, through however many of its settled writes, beside the
-    disjoint part of the row it contributed. A row merged from several
-    originals' successors names each; any other names one, over the whole
-    row."""
+class CurrentRowOutput:
+    """A current row a settled write produces that a source of the attempt may
+    continue from, described before execution: its ``coordinates``, the Valid
+    Time it covers (``None`` on a Transaction-Time-Only object), its complete
+    logical ``row``, and the ``emitter`` that persists it — the insert entry,
+    which is ``row`` itself, or the in-place revision of a row whose raw
+    document was ``predecessor_document``.
 
+    It is a description, not a captured value: execution pairs it with the
+    persisted document the emitter's payload actually stores.
+    """
+
+    coordinates: TemporalRowCoordinates
     valid_time_coverage: TimeInterval | None
-    contributions: tuple[tuple[ObjectStateKey, TimeInterval | None], ...]
-
-    def original_at(self, instant: dt.datetime | None) -> ObjectStateKey | None:
-        """The original whose contribution holds ``instant`` — ``None`` on a
-        Transaction-Time-Only object, whose row has one — or ``None`` where
-        none does."""
-        for original, contributed in self.contributions:
-            if contributed is None or (instant is not None and contributed.contains(instant)):
-                return original
-        return None
+    row: WriteRow
+    emitter: WriteRow | PlannedTemporalRevision
+    predecessor_document: object | None = None
 
 
 class TemporalWriteOwnership(Protocol):
     """Read-only access to the temporal rows the planning attempt opened
-    successfully, and to what the running flush's earlier settled writes proved.
+    successfully, and to what its completed writes left for the sources it
+    may still continue.
 
     It reads the attempt's own record of executed openings, never an
     inference from a row's Transaction-Time start equalling the attempt's
     instant, and is neither a copy of that record nor source authority.
     """
 
-    def owns(self, endpoint: OwnedEndpoint, /) -> bool: ...
+    def owns(self, coordinates: TemporalRowCoordinates, /) -> bool: ...
 
-    def continues_insertion(self, endpoint: OwnedEndpoint, /) -> bool:
+    def continues_insertion(self, coordinates: TemporalRowCoordinates, /) -> bool:
         """Whether an admitted insertion contributed any part of the owned row
-        ``endpoint`` (:meth:`insertion_coverage`)."""
+        at ``coordinates`` (:meth:`insertion_coverage`)."""
         ...
 
     def insertion_coverage(
-        self, endpoint: OwnedEndpoint, valid_time_coverage: TimeInterval | None, /
+        self, coordinates: TemporalRowCoordinates, valid_time_coverage: TimeInterval | None, /
     ) -> tuple[TimeInterval | None, ...]:
-        """The parts of the owned row ``endpoint``, which covers
+        """The parts of the owned row at ``coordinates``, which covers
         ``valid_time_coverage``, that an admitted insertion standing when it
         opened contributed, in order — the whole row, or only some of a row
         that merged other coverage — so that the same parts of its successors
         continue it. Empty where no insertion contributed any."""
         ...
 
-    def proven(self, original: ObjectStateKey, /) -> Derivation | None:
-        """How an earlier settled write of the running flush transformed
-        ``original``, if one did."""
+    def demanded(
+        self, predecessor: ObjectStateKey, coordinates: TemporalRowCoordinates | None, /
+    ) -> bool:
+        """Whether a source the attempt may still continue reaches the current
+        row in state ``predecessor`` — at ``coordinates``, where the attempt
+        opened it — so changing it must say what it leaves in its place."""
         ...
 
-    def descendants(
-        self, original: ObjectStateKey, valid_time_window: TimeInterval | None, /
-    ) -> Iterable[tuple[OwnedEndpoint, Descent]]:
-        """The current rows the running flush derived from ``original``, which
-        it proved (:meth:`proven`), whose part ``original`` contributed overlaps
-        ``valid_time_window`` — every one of them where it is ``None`` — in
-        Valid-Time order. The traversal is consumed before ownership changes."""
+    def continues(self, observation: Hashable, pin: dt.datetime | None, /) -> bool | None:
+        """Whether a source sharing ``observation`` continues at Valid-Time
+        ``pin`` — at any surviving part where ``pin`` is ``None`` — through
+        what the attempt's completed writes left of the state it observed;
+        ``None`` where no completed write changed that state."""
         ...
 
-    def descent(self, endpoint: OwnedEndpoint, /) -> Descent | None:
-        """What the current row ``endpoint`` derives from within the running
-        flush, if anything."""
+    def current_rows(
+        self, target: ObjectKey, valid_time_window: TimeInterval | None, /
+    ) -> Sequence[PredecessorRow]:
+        """The complete state of every current row of ``target`` overlapping
+        ``valid_time_window`` — every one where it is ``None`` — that the
+        attempt's completed writes produced and still hold, in Valid-Time
+        order, whichever source's continuation they are held for."""
         ...
 
 
 @dataclass(frozen=True, slots=True)
 class _NoTemporalWriteOwnership:
-    def owns(self, endpoint: OwnedEndpoint, /) -> bool:
-        del endpoint
+    def owns(self, coordinates: TemporalRowCoordinates, /) -> bool:
+        del coordinates
         return False
 
-    def continues_insertion(self, endpoint: OwnedEndpoint, /) -> bool:
-        del endpoint
+    def continues_insertion(self, coordinates: TemporalRowCoordinates, /) -> bool:
+        del coordinates
         return False
 
     def insertion_coverage(
-        self, endpoint: OwnedEndpoint, valid_time_coverage: TimeInterval | None, /
+        self, coordinates: TemporalRowCoordinates, valid_time_coverage: TimeInterval | None, /
     ) -> tuple[TimeInterval | None, ...]:
-        del endpoint, valid_time_coverage
+        del coordinates, valid_time_coverage
         return ()
 
-    def proven(self, original: ObjectStateKey, /) -> Derivation | None:
-        del original
+    def demanded(
+        self, predecessor: ObjectStateKey, coordinates: TemporalRowCoordinates | None, /
+    ) -> bool:
+        del predecessor, coordinates
+        return False
+
+    def continues(self, observation: Hashable, pin: dt.datetime | None, /) -> bool | None:
+        del observation, pin
         return None
 
-    def descendants(
-        self, original: ObjectStateKey, valid_time_window: TimeInterval | None, /
-    ) -> Iterable[tuple[OwnedEndpoint, Descent]]:
-        del original, valid_time_window
+    def current_rows(
+        self, target: ObjectKey, valid_time_window: TimeInterval | None, /
+    ) -> Sequence[PredecessorRow]:
+        del target, valid_time_window
         return ()
-
-    def descent(self, endpoint: OwnedEndpoint, /) -> Descent | None:
-        del endpoint
-        return None
 
 
 NO_TEMPORAL_WRITE_OWNERSHIP: Final[TemporalWriteOwnership] = _NoTemporalWriteOwnership()
 """The ownership of an attempt that has opened nothing."""
 
 
-class SourceAuthority(Protocol):
-    """Temporal source authority admission already accepted, which a
-    successful settled write spends."""
-
-    def consume(self) -> None: ...
-
-
-@dataclass(frozen=True, slots=True)
-class CombinedSourceAuthority:
-    """Several distinct source authorities one settled write spends together."""
-
-    members: tuple[SourceAuthority, ...]
-
-    def consume(self) -> None:
-        for member in self.members:
-            member.consume()
-
-
 @dataclass(frozen=True, slots=True)
 class AllocatedOpening:
     """A row a settled write opens whose key the database allocates: its
-    address is complete once the insert that opens it answers the key."""
+    coordinates are complete once the insert that opens it answers the key."""
 
     entity: EntityIdentity
     ends: tuple[TemporalUpperBound, ...]
@@ -224,13 +219,13 @@ class Openings:
     contributed whole, ``shared`` each row it contributed only some parts of,
     with those parts in order, and ``fresh`` every other row. A row the write
     revised in place into a merged extent, or whose insertion's parts it
-    narrowed, is among them again under its own address. ``allocated`` holds,
+    narrowed, is among them again at its own coordinates. ``allocated`` holds,
     in step order, each row whose key its insert answers."""
 
-    fresh: Iterable[OwnedEndpoint] = ()
-    continued: Iterable[OwnedEndpoint] = ()
+    fresh: Iterable[TemporalRowCoordinates] = ()
+    continued: Iterable[TemporalRowCoordinates] = ()
     allocated: tuple[AllocatedOpening, ...] = ()
-    shared: Iterable[tuple[OwnedEndpoint, tuple[TimeInterval, ...]]] = ()
+    shared: Iterable[tuple[TemporalRowCoordinates, tuple[TimeInterval, ...]]] = ()
 
 
 NO_OPENINGS: Final[Openings] = Openings()
@@ -248,21 +243,19 @@ class WriteCompletion:
     names the protected state each surviving versioned Non-Temporal update
     advanced from, and ``destroyed`` every Non-Temporal object a keyed deletion
     removed. ``removed`` and ``opened`` are the owned rows it retires and
-    registers. ``derived`` records the originals the write transformed and the
-    rows it left of each, for a later settled write of the same flush whose
-    conditions those originals carry; a write no later one depends on records
-    none. ``concludes`` names the object of a range that follows ordering
-    barriers and leads none: no later settled write of the flush consumes what
-    earlier ones proved about that object.
+    registers. ``derived`` describes what the write left of each temporal
+    predecessor a source of the attempt may still continue from, and
+    ``current_outputs`` the rows among them that execution captures as it
+    persists them; a write no such source reaches describes neither.
     """
 
     changed: Iterable[ObjectKey | ObjectStateKey] = ()
     advanced: tuple[VersionedObjectStateKey, ...] = ()
     destroyed: tuple[ObjectKey, ...] = ()
-    removed: Iterable[OwnedEndpoint] = ()
+    removed: Iterable[TemporalRowCoordinates] = ()
     opened: Openings = NO_OPENINGS
     derived: tuple[Derivation, ...] = ()
-    concludes: ObjectKey | None = None
+    current_outputs: tuple[CurrentRowOutput, ...] = ()
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -288,17 +281,15 @@ class SettledWrite(WriteCompletion):
     its success publishes.
 
     Its completion is published only once every step of its Write Group has
-    succeeded, and before any later group executes, after it spends the
-    temporal source authority ``claim``. Removals are retired before openings
-    are registered, so a row removed and reopened at one address remains owned,
-    and an insertion whose last row the write removed still stands when a row
-    the write opened continues it.
+    succeeded, and before any later group executes. Removals are retired before
+    openings are registered, so a row removed and reopened at the same
+    coordinates remains owned, and an insertion whose last row the write
+    removed still stands when a row the write opened continues it.
 
     A settled write with a ``deferred`` range has no planned step of its own:
     its steps and completion come from binding that range at its turn.
     """
 
-    claim: SourceAuthority | None = None
     deferred: DeferredRange | None = None
 
 

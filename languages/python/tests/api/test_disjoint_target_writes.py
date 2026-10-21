@@ -437,11 +437,26 @@ def _audited(profile_run: Any) -> list[tuple[object, ...]]:
 
 
 _ACROSS = {
-    "target-then-target": ("P", "P"),
     "target-then-observed": ("P", "O"),
-    "observed-then-target": ("O", "P"),
     "replacement-then-destruction": ("R", "D"),
 }
+
+
+def _across(sequence: tuple[str, str]) -> tuple[_Operation, _Operation]:
+    first, second = (
+        _Operation(kind, start, until, order)
+        for order, (kind, (start, until)) in enumerate(
+            zip(sequence, ((_FEB, _APR), (_JUN, _AUG)), strict=True)
+        )
+    )
+    return first, second
+
+
+def _write_across(tx: TxnContext, entity: type[Any], first: _Operation, second: _Operation) -> None:
+    sources = [_find(tx, entity, op.start) if op.kind in "OD" else None for op in (first, second)]
+    first.write(tx, entity, sources[0])
+    _barrier(tx)
+    second.write(tx, entity, sources[1])
 
 
 @_SPAN_AXES
@@ -452,29 +467,40 @@ def test_a_barrier_between_disjoint_operations_keeps_each_on_its_own_side(
 ) -> None:
     db = _seeded(profile_run, entity, _TA)
     _install(profile_run, entity, _audit_current_rows(entity))
-    first, second = (
-        _Operation(kind, start, until, order)
-        for order, (kind, (start, until)) in enumerate(
-            zip(_ACROSS[sequence], ((_FEB, _APR), (_JUN, _AUG)), strict=True)
-        )
-    )
+    first, second = _across(_ACROSS[sequence])
 
-    def fn(tx: TxnContext) -> None:
-        sources = [
-            _find(tx, entity, op.start) if op.kind in "OD" else None for op in (first, second)
-        ]
-        first.write(tx, entity, sources[0])
-        _barrier(tx)
-        second.write(tx, entity, sources[1])
-
-    db.transact(fn, concurrency=concurrency)
+    db.transact(lambda tx: _write_across(tx, entity, first, second), concurrency=concurrency)
     # When the barrier ran, the first operation had split the original into
     # three rows and the second had not yet written.
     assert _audited(profile_run) == [(1, 3)]
     assert _tag_label(profile_run) == "q"
     # Each operation's own effect stands at one instant, with no history of the
-    # attempt's own: the second revised or removed the rows the first opened.
+    # attempt's own: the second's source continued through the rows the first
+    # opened, and revised or removed them.
     assert _rows(profile_run, entity) == _expected((first, second))
+
+
+@_SPAN_AXES
+@_STRATEGIES
+@pytest.mark.parametrize("first", ["P", "O"], ids=["target-then-target", "observed-then-target"])
+def test_a_target_after_a_barrier_stating_the_start_the_first_replaced_fails_literally(
+    profile_run: Any, entity: type[Any], concurrency: _Concurrency, first: str
+) -> None:
+    db = _seeded(profile_run, entity, _TA)
+    before = _rows(profile_run, entity)
+    earlier, later = _across((first, "P"))
+
+    with pytest.raises(ExecutionFailure) as failed:
+        db.transact(
+            lambda tx: _write_across(tx, entity, earlier, later),
+            concurrency=concurrency,
+            max_retries=0,
+        )
+    # The later caller states the original the first operation closed; what
+    # the first derived from it proves nothing for that literal condition.
+    assert isinstance(failed.value.cause, WritePreconditionError)
+    assert _rows(profile_run, entity) == before
+    assert _tag_label(profile_run) == "t"
 
 
 @_SPAN_AXES
@@ -558,8 +584,8 @@ def test_a_side_effect_that_breaks_continuity_across_a_barrier_fails_the_later_o
 
     with pytest.raises(ExecutionFailure) as failed:
         db.transact(fn, concurrency=concurrency)
-    # The row the barrier's side effect changed is no longer what the first
-    # unit derived from the original the caller stated, so nothing proves it.
+    # The later caller states the original the first operation closed, which
+    # no current row stands at, whatever the barrier's side effect did.
     assert isinstance(failed.value.cause, WritePreconditionError)
     assert _rows(profile_run, entity) == before
     assert _tag_label(profile_run) == "t"
@@ -597,8 +623,9 @@ def test_after_a_read_flushes_one_window_a_later_window_restates_its_start(
             _name(entity), {"id": 1, "amount": 150}, valid_from=_FEB, until=_APR, tx_start=_T0
         )
         current = _find(tx, entity, _JUN)
-        with pytest.raises(WriteEvidenceError, match="write-evidence-consumed"):
-            tx.amend(early.edit(label="stale"), until=_AUG)
+        # The read before the flush continues through the row the target
+        # left at its pin; the fresh read's later label wins where both write.
+        tx.amend(early.edit(label="continued"), until=_AUG)
         tx.amend(current.edit(label="fresh"), until=_AUG)
         tx.wire.amend_if(
             _name(entity), {"id": 1, "amount": 175}, valid_from=_SEP, until=_OCT, tx_start=_TB
@@ -781,7 +808,7 @@ def test_a_disjoint_observed_original_lost_without_retries_rolls_every_effect_ba
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize("entity", (ColumnsLog, DocumentLog), ids=["columns", "document"])
 @_STRATEGIES
-def test_a_transaction_time_write_after_a_barrier_revises_the_row_the_first_opened(
+def test_a_transaction_time_write_after_a_barrier_restating_the_first_ones_start_fails(
     profile_run: Any, entity: type[Any], concurrency: _Concurrency
 ) -> None:
     profile_run.reset(model_of(_MODEL), {})
@@ -796,21 +823,20 @@ def test_a_transaction_time_write_after_a_barrier_revises_the_row_the_first_open
     def fn(tx: TxnContext) -> None:
         tx.wire.amend_if(_name(entity), {"id": 1, "label": "p"}, tx_start=_T0)
         _barrier(tx)
-        # Both callers state the milestone the first one closes; the second's
-        # stands at the row the first opened from it.
+        # Both callers state the milestone the first one closes; when the
+        # second binds, the row stands at the first one's own start instead.
         tx.wire.amend_if(_name(entity), {"id": 1, "spec": {"title": "s2"}}, tx_start=_T0)
 
-    db.transact(fn, concurrency=concurrency)
+    with pytest.raises(ExecutionFailure) as failed:
+        db.transact(fn, concurrency=concurrency, max_retries=0)
+    assert isinstance(failed.value.cause, WritePreconditionError)
     members = ", ".join(_member(entity, name) for name in ("label", "spec"))
     rows = profile_run.port.execute(
         "select in_z, case when out_z = 'infinity' then null else out_z end, "
         f"{members} from {_TABLES[entity]} order by in_z",
         [],
     )
-    assert [tuple(row) for row in rows] == [
-        (_T0, _TA, "seed", _S1),
-        (_TA, None, "p", {"title": "s2"}),
-    ]
+    assert [tuple(row) for row in rows] == [(_T0, None, "seed", _S1)]
 
 
 @_SPAN_AXES

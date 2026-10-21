@@ -150,7 +150,7 @@ def admitted_writes(
     """``writes`` admitted in authored order into one buffer, and that
     buffer's composed writes, under the Optimistic strategy, whose confirmation
     of a caller's revision reads nothing."""
-    admission = WriteAdmission(model, inserted_version=_no_insertion_authorizes)
+    admission = WriteAdmission(model, inserted_version=_no_insertion_authorizes, observations={})
     for item in writes:
         admission.admit(item, confirm_target=_optimistic)
     return admission.composed_writes()

@@ -16,7 +16,7 @@ from parallax.core._execution._unit_work.instructions import (
     PreparedPredicateWrite,
     derive_keyed_write,
 )
-from parallax.core._execution._unit_work.ranges import DeferredTemporalRange, bind_deferred
+from parallax.core._execution._unit_work.ranges import DeferredTemporalRange, bind_range
 from parallax.core._execution._unit_work.strategy import (
     ActorIdentity,
     AuditDecoration,
@@ -73,7 +73,8 @@ class WritePlanningRequest:
     composed it, in authored order: one item per coalesced write, one composed
     write per temporal object's observed writes, and no write a later one
     cancelled. ``ownership`` answers which current temporal rows the planning
-    attempt already opened; planning reads it and never changes it.
+    attempt already opened and what its completed writes left for the sources
+    it may still continue; planning reads it and never changes it.
     ``counts_unchanged_rows`` says the database's write count includes rows an
     update matched and left unchanged, so a guard can prove a milestone a write
     leaves unchanged (`m-dialect`).
@@ -91,7 +92,7 @@ class WritePlanner:
     """The model-scoped, stateless Write Planner (`m-unit-work`).
 
     Constructed once per accepted Metamodel with its strategy adapters already
-    wired; :meth:`finalize` plans a flush, and :meth:`bind_deferred` binds a
+    wired; :meth:`finalize` plans a flush, and :meth:`bind_range` binds a
     deferred range of a plan it finalized once that range's coverage is read.
     No caller sequences coalescing, batching, ordering, temporal expansion,
     observation validation, instant acquisition, or audit by hand.
@@ -158,7 +159,7 @@ class WritePlanner:
     def finalize(self, request: WritePlanningRequest) -> WritePlan:
         """Plan one flush: eliminate no-ops, batch, order into mutation phases,
         and hand them all to the compiler — answering the plan, whose settled
-        writes carry the claims their writes held. Admission already
+        writes carry the source evidence their writes held. Admission already
         composed the buffer, so finalization indexes nothing again.
 
         Pure with respect to its inputs — no database I/O, no direct clock
@@ -175,8 +176,8 @@ class WritePlanner:
         The Write Plan
         :meth:`~parallax.core._execution._unit_work.write_settlement.WritePlanCompiler.compile`
         answers is returned unchanged, because its Write Groups, provenance, and
-        each settled write's claim are decided there and nothing is left for
-        the planner to add.
+        each settled write's completion are decided there and nothing is left
+        for the planner to add.
         """
         survivors = [
             item
@@ -196,7 +197,7 @@ class WritePlanner:
             counts_unchanged_rows=request.counts_unchanged_rows,
         )
 
-    def bind_deferred(
+    def bind_range(
         self,
         description: DeferredTemporalRange,
         reused: PredecessorRows | None,
@@ -212,13 +213,13 @@ class WritePlanner:
         where there was none.
 
         Its temporal meaning, concurrency, and gates were fixed when the plan
-        was made; binding reads ``ownership`` as the running flush's earlier
-        Write Groups left it and never recaptures the instant. The configured audit
+        was made; binding reads ``ownership`` as the attempt's completed Write
+        Groups left it and never recaptures the instant. The configured audit
         finalizes each row the binding produces once, and decorates each close
         it emits, with ``actor_identity`` and ``transaction_instant``, changing no
         topology and classifying no gate.
         """
-        return bind_deferred(
+        return bind_range(
             description,
             reused,
             acquired,

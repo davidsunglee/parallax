@@ -1626,6 +1626,8 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
             "m-temporal-write-071",
             "m-temporal-write-072",
             "m-temporal-write-073",
+            "m-temporal-write-074",
+            "m-temporal-write-075",
         ),
         _BUFFERED_SEQUENCE_REASON,
     ),

@@ -41,7 +41,7 @@ from parallax.core.write_plan.plan import (
     OPEN_BITEMPORAL_ENDS,
     BoundRange,
     DerivedRow,
-    OwnedEndpoint,
+    TemporalRowCoordinates,
     TemporalWriteOwnership,
 )
 from parallax.core.write_plan.steps import INFINITY as OPEN_END
@@ -116,12 +116,16 @@ def _expansion(
     *,
     gated: bool = True,
     guards: bool = True,
-    derives: bool = False,
+    demanded: tuple[PredecessorRow, ...] = (),
     ownership: TemporalWriteOwnership = NO_TEMPORAL_WRITE_OWNERSHIP,
     audit: RowAudit | None = None,
     payloads: _CountingPayloads | None = None,
 ) -> PredecessorExpander:
     facts = _facts(meta)
+    if demanded:
+        ownership = OpenedRows(
+            frozenset(), demanded_states=frozenset(_state(facts, row) for row in demanded)
+        )
     return PredecessorExpander(
         facts,
         transform,
@@ -129,7 +133,6 @@ def _expansion(
         key_value=1,
         gated=gated,
         guards=guards,
-        derives=derives,
         ownership=ownership,
         audit=audit or AuditDecoration(NO_AUDIT, TEST_ACTOR_IDENTITY, inert_instant(), ()),
         payloads=payloads or _CountingPayloads(LayoutPayloadPreparer(meta)),
@@ -218,9 +221,9 @@ def _kinds(steps: Iterable[PlannedStep]) -> list[type[PlannedStep]]:
     return [type(step) for step in steps]
 
 
-def _endpoint(end: object) -> OwnedEndpoint:
+def _endpoint(end: object) -> TemporalRowCoordinates:
     ends = OPEN_BITEMPORAL_ENDS if end is INFINITY else (Finite(instant=end), OPEN_END)
-    return OwnedEndpoint(_SPAN, (1,), ends)
+    return TemporalRowCoordinates(_SPAN, (1,), ends)
 
 
 # --------------------------------------------------------------------------- #
@@ -551,13 +554,15 @@ def test_an_owned_row_merged_with_a_later_stored_rows_part_is_removed_and_the_ru
 
 
 # --------------------------------------------------------------------------- #
-# Contributions: what each original and insertion contributed.                 #
+# Contributions: what each predecessor and insertion contributed.              #
 # --------------------------------------------------------------------------- #
 @_LAYOUTS
-def test_each_original_derives_only_its_own_part_of_a_merged_row(meta: Metamodel) -> None:
+def test_each_predecessor_derives_only_its_own_part_of_a_merged_row(meta: Metamodel) -> None:
     first, second = _span(meta, _JAN, _APR, 100), _span(meta, _APR, _JUL, 200)
     settled = _settle(
-        _expansion(meta, _amending(TimeInterval(_FEB, _JUN), {"amount": 150}), derives=True),
+        _expansion(
+            meta, _amending(TimeInterval(_FEB, _JUN), {"amount": 150}), demanded=(first, second)
+        ),
         meta,
         first,
         second,
@@ -572,6 +577,34 @@ def test_each_original_derives_only_its_own_part_of_a_merged_row(meta: Metamodel
         DerivedRow(_endpoint(_JUN), merged, TimeInterval(_APR, _JUN)),
         DerivedRow(_endpoint(_JUL), TimeInterval(_JUN, _JUL), TimeInterval(_JUN, _JUL)),
     )
+    assert [
+        (output.coordinates, output.valid_time_coverage) for output in settled.current_outputs
+    ] == [
+        (_endpoint(_FEB), TimeInterval(_JAN, _FEB)),
+        (_endpoint(_JUN), merged),
+        (_endpoint(_JUL), TimeInterval(_JUN, _JUL)),
+    ]
+
+
+@_LAYOUTS
+def test_a_merged_row_one_demanded_predecessor_reaches_is_described_whole(
+    meta: Metamodel,
+) -> None:
+    first, second = _span(meta, _JAN, _APR, 100), _span(meta, _APR, _JUL, 200)
+    settled = _settle(
+        _expansion(meta, _amending(TimeInterval(_FEB, _JUN), {"amount": 150}), demanded=(second,)),
+        meta,
+        first,
+        second,
+    )
+    (derivation,) = settled.derived
+    assert derivation.predecessor == _state(_facts(meta), second)
+    assert [
+        (output.coordinates, output.valid_time_coverage) for output in settled.current_outputs
+    ] == [
+        (_endpoint(_JUN), TimeInterval(_FEB, _JUN)),
+        (_endpoint(_JUL), TimeInterval(_JUN, _JUL)),
+    ]
 
 
 @_LAYOUTS
@@ -747,7 +780,7 @@ def test_rows_revised_apart_each_keep_their_own_parts_of_an_insertion(meta: Meta
 
 
 @_LAYOUTS
-def test_an_original_derives_its_own_part_of_a_row_merged_with_an_insertions(
+def test_a_predecessor_derives_its_own_part_of_a_row_merged_with_an_insertions(
     meta: Metamodel,
 ) -> None:
     facts = _facts(meta)
@@ -759,7 +792,7 @@ def test_an_original_derives_its_own_part_of_a_row_merged_with_an_insertions(
         TimeInterval(_JAN, _JUN), {"amount": 300, "label": "r", "memo": None}, replaces=True
     )
     stored = _span(meta, _APR, _JUL, 200, "b")
-    settled = _expansion(meta, replacing, derives=True).settle(
+    settled = _expansion(meta, replacing, demanded=(stored,)).settle(
         ((stored, "coverage", _state(facts, stored), TimeInterval(_APR, _JUL)),),
         lineage=(seed, TimeInterval(_JAN, _APR)),
     )
@@ -771,13 +804,15 @@ def test_an_original_derives_its_own_part_of_a_row_merged_with_an_insertions(
 
 
 @_LAYOUTS
-def test_a_guarded_unchanged_original_derives_nothing(meta: Metamodel) -> None:
+def test_a_guarded_unchanged_predecessor_derives_nothing(meta: Metamodel) -> None:
     kept, changed = _span(meta, _JAN, _MAR, 150), _span(meta, _MAR, _JUN, 100)
     settled = _settle(
-        _expansion(meta, _amending(TimeInterval(_JAN, _JUN), {"amount": 150}), derives=True),
+        _expansion(
+            meta, _amending(TimeInterval(_JAN, _JUN), {"amount": 150}), demanded=(kept, changed)
+        ),
         meta,
         kept,
         changed,
     )
     (derivation,) = settled.derived
-    assert derivation.original == _state(_facts(meta), changed)
+    assert derivation.predecessor == _state(_facts(meta), changed)

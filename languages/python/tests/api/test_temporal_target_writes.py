@@ -680,13 +680,18 @@ def test_target_and_observed_writes_of_one_window_compose_into_one_range(
                     **({"amount": 175} if source.amount != 175 else {"label": "o"})
                 )
                 tx.amend(source, until=_SEP)
-        # A dependent read flushes the range, which spends the observed source.
+        # A dependent read flushes the range. The observed source continues
+        # through the row it left at the source's pin, unless it left none.
         _span_find(tx, entity, _JAN)
-        with pytest.raises(WriteEvidenceError, match="write-evidence-consumed"):
+        if _SEQUENCES[sequence] is None:
+            with pytest.raises(WriteEvidenceError, match="write-evidence-consumed"):
+                tx.amend(source.edit(label="again"), until=_SEP)
+        else:
             tx.amend(source.edit(label="again"), until=_SEP)
 
     db.transact(fn, concurrency=concurrency)
-    middle = _SEQUENCES[sequence]
+    composed = _SEQUENCES[sequence]
+    middle = None if composed is None else (composed[0], "again", *composed[2:])
     seed: _SpanRow = (100, "a", _S1, _M)
     expected: list[_SpanRow] = [
         (_T0, _TA, _JAN, None, *seed),
@@ -739,9 +744,11 @@ def test_a_target_then_a_read_then_an_observed_write_each_stand_on_their_own(
         fresh = _span_find(tx, entity, _JUN)
         assert fresh.amount == 150
         # The read taken before the target's flush describes a state that flush
-        # replaced; the fresh one writes, and keeps the patched amount.
-        with pytest.raises(WriteEvidenceError, match="write-evidence-consumed"):
-            tx.amend(before.edit(label="stale"))
+        # replaced, and continues through the row it left at its pin; the fresh
+        # one continues through what that write left in turn, and both keep the
+        # patched amount.
+        tx.amend(before.edit(label="continued"))
+        _span_find(tx, entity, _JAN)
         tx.amend(fresh.edit(label="fresh"))
 
     db.transact(fn, concurrency=concurrency)

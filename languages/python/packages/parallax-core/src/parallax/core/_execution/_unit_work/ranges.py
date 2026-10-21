@@ -18,7 +18,11 @@ from parallax.core._execution._unit_work.effects import (
     enforce_affected_rows,
 )
 from parallax.core._execution._unit_work.instructions import ExpectedTxStart
-from parallax.core._execution._unit_work.retain import RetainedObservation, RetainedTargetState
+from parallax.core._execution._unit_work.retain import (
+    ReadEvidence,
+    RetainedObservation,
+    RetainedTargetState,
+)
 from parallax.core._execution._unit_work.strategy import AuditDecoration
 from parallax.core._execution._unit_work.write_items import (
     ChainedTemporalWrite,
@@ -45,19 +49,13 @@ from parallax.core.temporal_write.expansion import (
     ExpansionRole,
     PredecessorExpander,
     TemporalFacts,
-    bitemporal_ends,
 )
 from parallax.core.write_plan.keys import ObjectKey, ObjectStateKey, TemporalObjectStateKey
 from parallax.core.write_plan.observe import PredecessorRow, TemporalObservation
 from parallax.core.write_plan.payload import WritePayloadPreparer
 from parallax.core.write_plan.plan import (
-    TRANSACTION_TIME_ENDS,
     BoundRange,
-    CombinedSourceAuthority,
     DeferredRange,
-    Descent,
-    OwnedEndpoint,
-    SourceAuthority,
     TemporalWriteOwnership,
 )
 from parallax.core.write_plan.planned_rows import resolve_row
@@ -66,9 +64,9 @@ from parallax.core.write_plan.steps import TERMINATED, KeyTarget, PlannedValue
 
 __all__ = [
     "DeferredTemporalRange",
-    "bind_deferred",
+    "bind_range",
     "coverage_reads",
-    "range_claims",
+    "range_source_evidence",
     "retained_completion",
     "settle_opening",
     "settle_range",
@@ -81,70 +79,149 @@ statement's cost grows faster than the round trip a larger statement saves."""
 
 
 @dataclass(frozen=True, slots=True)
-class _Original:
-    """One current row a range transforms: its complete predecessor state, the
-    exact state it is, and the Valid Time it covers — ``None`` on a
-    Transaction-Time-Only target."""
+class _RangePredecessor:
+    """One current row a range transforms: its complete state, the exact state
+    it is, and the Valid Time it covers — ``None`` on a Transaction-Time-Only
+    target."""
 
     predecessor: PredecessorRow
     state: ObjectStateKey
     valid_time_coverage: TimeInterval | None
 
 
-def range_claims(item: CoalescedTemporalWrite | TemporalKeyedWrite) -> SourceAuthority | None:
-    """The distinct retained observations a range's write spends, each once."""
+@dataclass(frozen=True, slots=True)
+class _ObservedSource:
+    """The observation one contribution of a range was admitted through, and
+    the Valid-Time pins its sources were read at — ``None`` for a read that
+    named no finite one — which judge whether the attempt's completed writes
+    left anything of the observed state for them."""
+
+    observation: RetainedObservation
+    pins: tuple[dt.datetime | None, ...]
+
+
+def range_source_evidence(
+    item: CoalescedTemporalWrite | TemporalKeyedWrite,
+) -> tuple[ReadEvidence, ...]:
+    """The distinct Read Evidence of every source whose write a range composes,
+    by identity, in authored order."""
     if isinstance(item, ObservedKeyedWrite):
-        return item.retained_observation
+        return item.source_evidence
     if not isinstance(item, CoalescedTemporalWrite):
-        return None
-    distinct: list[RetainedObservation] = []
+        return ()
+    distinct: list[ReadEvidence] = []
     for contribution in item.contributions:
-        retained = contribution.retained_observation
-        if retained is not None and all(retained is not held for held in distinct):
-            distinct.append(retained)
-    if not distinct:
-        return None
-    if len(distinct) == 1:
-        return distinct[0]
-    return CombinedSourceAuthority(tuple(distinct))
+        for evidence in contribution.source_evidence:
+            if all(evidence is not held for held in distinct):
+                distinct.append(evidence)
+    return tuple(distinct)
 
 
-def _known_originals(
+def _continuation(ownership: TemporalWriteOwnership, source: _ObservedSource) -> bool | None:
+    """Whether every source of ``source`` continues through what the
+    attempt's completed writes left of its observed state, ``False`` where
+    some source's pin lost it, and ``None`` where no completed write changed
+    that state."""
+    reach: bool | None = None
+    for pin in source.pins:
+        continues = ownership.continues(source.observation, pin)
+        if continues is None:
+            return None
+        if not continues:
+            return False
+        reach = True
+    return reach
+
+
+def _observed_source(
+    observation: RetainedObservation, evidence: tuple[ReadEvidence, ...]
+) -> _ObservedSource:
+    return _ObservedSource(
+        observation, tuple(_finite_valid_time(source) for source in evidence) or (None,)
+    )
+
+
+def _finite_valid_time(evidence: ReadEvidence) -> dt.datetime | None:
+    pin = evidence.pin
+    valid_time = None if pin is None else pin.valid_time
+    return valid_time if isinstance(valid_time, dt.datetime) else None
+
+
+def _known_predecessors(
     composed: CoalescedTemporalWrite,
     facts: TemporalFacts,
     key_attribute: AttributeIdentity,
     key_value: object,
-) -> tuple[tuple[_Original, ...], tuple[_Original, ...]]:
-    """The originals a composed range's own observations already know, as the
-    ones the transform binds — disjoint, ordered by start — beside the ones it
-    only validates.
+    ownership: TemporalWriteOwnership,
+) -> tuple[tuple[_RangePredecessor, ...], tuple[_RangePredecessor, ...]]:
+    """The predecessors a composed range already knows, as the ones the
+    transform binds — disjoint, ordered by start — beside the ones it only
+    validates.
 
-    Each distinct observed state is one original, in authored order. Two
-    observations whose coverage overlaps cannot both describe current state, so
-    the later-authored one is bound and the earlier is validated alone: its
+    Each distinct observed state the attempt's completed writes did not change
+    is one predecessor, in authored order. A source whose observed state they
+    changed brings no predecessor of its own: it continues through the current
+    rows they produced and the attempt holds, which follow every observation.
+    Two predecessors whose coverage overlaps cannot both describe current
+    state, so the later one is bound and the earlier is validated alone: its
     guarded effect fails unless the database itself holds overlapping current
     coverage.
     """
-    distinct: list[_Original] = []
+    distinct: list[_RangePredecessor] = []
+    continuing = False
     for contribution in composed.contributions:
         retained = contribution.retained_observation
         if retained is None:  # an insertion or a caller authorized it, and it observed nothing
             continue
+        if _continuation(ownership, _observed_source(retained, contribution.source_evidence)):
+            continuing = True
+            continue
         observation = retained.evidence
         assert isinstance(observation, TemporalObservation)  # a temporal write observes a milestone
-        original = _original(facts, key_attribute, key_value, observation.predecessor, retained.key)
-        if all(original.state != held.state for held in distinct):
-            distinct.append(original)
-    bound: list[_Original] = []
-    validated: list[_Original] = []
-    for original in reversed(distinct):
-        if any(_overlapping(original, held) for held in bound):
-            validated.append(original)
+        predecessor = _predecessor(
+            facts, key_attribute, key_value, observation.predecessor, retained.key
+        )
+        if all(predecessor.state != held.state for held in distinct):
+            distinct.append(predecessor)
+    if continuing:
+        _add_current(
+            distinct,
+            facts,
+            key_attribute,
+            key_value,
+            ownership,
+            composed.transform.valid_time_window,
+        )
+    bound: list[_RangePredecessor] = []
+    validated: list[_RangePredecessor] = []
+    for predecessor in reversed(distinct):
+        if any(_overlapping(predecessor, held) for held in bound):
+            validated.append(predecessor)
         else:
-            bound.append(original)
+            bound.append(predecessor)
     _order_by_start(bound)
     validated.reverse()
     return tuple(bound), tuple(validated)
+
+
+def _add_current(
+    predecessors: list[_RangePredecessor],
+    facts: TemporalFacts,
+    key_attribute: AttributeIdentity,
+    key_value: object,
+    ownership: TemporalWriteOwnership,
+    window: TimeInterval | None,
+) -> None:
+    """Add to ``predecessors`` every current row of the object over ``window``
+    the attempt's completed writes produced and hold, whichever source's
+    continuation holds it, except a state already among them."""
+    target = _object_key(facts, key_attribute, key_value)
+    known = {held.state for held in predecessors}
+    for row in ownership.current_rows(target, window):
+        predecessor = _predecessor(facts, key_attribute, key_value, row, None)
+        if predecessor.state not in known:
+            known.add(predecessor.state)
+            predecessors.append(predecessor)
 
 
 _START: Final = attrgetter("start")
@@ -172,30 +249,30 @@ def _anchored_at(window: TimeInterval | None) -> object:
 
 
 @dataclass(frozen=True, slots=True)
-class _StartingCondition:
-    """A caller's condition on a composed range: the coverage at the start of
-    the caller's prepared ``valid_time_window`` — the current row, where it is
-    ``None`` on a Transaction-Time-Only object — stands at Transaction-Time
-    start ``expected``. The window is also what the caller asked to revise
-    whatever it reaches over."""
+class _TargetCondition:
+    """A caller's literal condition on a composed range: the coverage at the
+    start of the caller's prepared ``valid_time_window`` — the current row,
+    where it is ``None`` on a Transaction-Time-Only object — stands at
+    Transaction-Time start ``expected``. The window is also what the caller
+    asked to revise whatever it reaches over."""
 
     valid_time_window: TimeInterval | None
     expected: dt.datetime
 
 
-def _conditions(composed: CoalescedTemporalWrite) -> tuple[_StartingCondition, ...]:
-    """The distinct starting conditions the callers of a composed range's
+def _conditions(composed: CoalescedTemporalWrite) -> tuple[_TargetCondition, ...]:
+    """The distinct target conditions the callers of a composed range's
     addressed writes state, in authored order: one per exact-window operation,
     where admission let in only writes that agree on it, and another for each
     operation over a disjoint window. Admission lets no two addressed windows
     share a start unless they are equal, so the distinct conditions keep every
     distinct addressed window."""
-    conditions: list[_StartingCondition] = []
+    conditions: list[_TargetCondition] = []
     for contribution in composed.contributions:
         condition = contribution.condition
         if condition is None:
             continue
-        stated = _StartingCondition(contribution.valid_time_window, condition.instant)
+        stated = _TargetCondition(contribution.valid_time_window, condition.instant)
         if stated not in conditions:
             conditions.append(stated)
     return tuple(conditions)
@@ -207,36 +284,36 @@ def _object_key(
     return ObjectKey(facts.entity.identity, ((key_attribute.name, key_value),))
 
 
-def _original(
+def _predecessor(
     facts: TemporalFacts,
     key_attribute: AttributeIdentity,
     key_value: object,
-    predecessor: PredecessorRow,
+    row: PredecessorRow,
     state: ObjectStateKey | None,
-) -> _Original:
+) -> _RangePredecessor:
     shape = facts.shape
     if state is None:
         state = TemporalObjectStateKey(
-            _object_key(facts, key_attribute, key_value), milestone_edge(shape, predecessor, None)
+            _object_key(facts, key_attribute, key_value), milestone_edge(shape, row, None)
         )
-    return _Original(
-        predecessor=predecessor,
+    return _RangePredecessor(
+        predecessor=row,
         state=state,
-        valid_time_coverage=valid_time_coverage(shape, predecessor, None),
+        valid_time_coverage=valid_time_coverage(shape, row, None),
     )
 
 
-def _holds_start(window: TimeInterval | None, original: _Original) -> bool:
-    """Whether ``original`` holds ``window``'s start — the current row itself
-    where ``window`` is ``None`` on a Transaction-Time-Only object."""
+def _holds_start(window: TimeInterval | None, predecessor: _RangePredecessor) -> bool:
+    """Whether ``predecessor`` holds ``window``'s start — the current row
+    itself where ``window`` is ``None`` on a Transaction-Time-Only object."""
     if window is None:
         return True
-    coverage = original.valid_time_coverage
+    coverage = predecessor.valid_time_coverage
     assert coverage is not None  # one object's windows and coverage share its shape
     return coverage.contains(window.start)
 
 
-def _overlapping(first: _Original, second: _Original) -> bool:
+def _overlapping(first: _RangePredecessor, second: _RangePredecessor) -> bool:
     first_coverage = first.valid_time_coverage
     second_coverage = second.valid_time_coverage
     return (
@@ -246,66 +323,68 @@ def _overlapping(first: _Original, second: _Original) -> bool:
     )
 
 
-def _valid_time_coverages(originals: Iterable[_Original]) -> Iterator[TimeInterval]:
-    """The Valid Time each of a Bitemporal range's bound ``originals`` covers,
-    in the start order their owner already established."""
-    for original in originals:
-        coverage = original.valid_time_coverage
+def _valid_time_coverages(predecessors: Iterable[_RangePredecessor]) -> Iterator[TimeInterval]:
+    """The Valid Time each of a Bitemporal range's bound ``predecessors``
+    covers, in the start order their owner already established."""
+    for predecessor in predecessors:
+        coverage = predecessor.valid_time_coverage
         assert coverage is not None  # only a Bitemporal range traverses coverage
         yield coverage
 
 
-def _order_by_start(originals: list[_Original]) -> None:
-    """Order a range's originals by their Valid-Time starts. Those of a
+def _order_by_start(predecessors: list[_RangePredecessor]) -> None:
+    """Order a range's predecessors by their Valid-Time starts. Those of a
     Transaction-Time-Only object have none to order by and stay as they are."""
-    if originals and originals[0].valid_time_coverage is not None:
-        originals.sort(key=_coverage_start)
+    if predecessors and predecessors[0].valid_time_coverage is not None:
+        predecessors.sort(key=_coverage_start)
 
 
-def _coverage_start(original: _Original) -> dt.datetime:
-    coverage = original.valid_time_coverage
-    assert coverage is not None  # only a Bitemporal range orders its originals
+def _coverage_start(predecessor: _RangePredecessor) -> dt.datetime:
+    coverage = predecessor.valid_time_coverage
+    assert coverage is not None  # only a Bitemporal range orders its predecessors
     return coverage.start
 
 
-def _holds(original: _Original, anchor: object) -> bool:
-    """Whether ``original`` holds the insertion ``anchor`` of a Bitemporal
+def _holds(predecessor: _RangePredecessor, anchor: object) -> bool:
+    """Whether ``predecessor`` holds the insertion ``anchor`` of a Bitemporal
     range."""
-    coverage = original.valid_time_coverage
+    coverage = predecessor.valid_time_coverage
     assert coverage is not None and isinstance(anchor, dt.datetime)  # a Bitemporal anchor
     return coverage.contains(anchor)
 
 
-def _physical(original: _Original) -> tuple[ObjectStateKey, object | None]:
-    """The physical row ``original`` is: its state, which names its start on
-    each axis, and the Valid-Time end its address holds."""
-    return original.state, _valid_end(original)
+def _physical(predecessor: _RangePredecessor) -> tuple[ObjectStateKey, object | None]:
+    """The physical row ``predecessor`` is: its state, which names its start on
+    each axis, and the Valid-Time end its coordinates hold."""
+    return predecessor.state, _valid_end(predecessor)
 
 
 def _expansions(
-    starts: Sequence[_Original], validations: Sequence[_Original], originals: Sequence[_Original]
+    starts: Sequence[_RangePredecessor],
+    validations: Sequence[_RangePredecessor],
+    predecessors: Sequence[_RangePredecessor],
 ) -> Iterator[tuple[PredecessorRow, ExpansionRole, ObjectStateKey, TimeInterval | None]]:
-    """Each original in the role it settles in, in the order its own effect
-    runs: the starts, the validations, then every other original."""
-    for original in starts:
-        yield _expanded(original, "starting")
-    for original in validations:
-        yield _expanded(original, "validation")
-    for original in originals:
-        if not starts or all(original is not start for start in starts):
-            yield _expanded(original, "coverage")
+    """Each predecessor in the role it settles in, in the order its own effect
+    runs: the starts, the validations, then every other predecessor."""
+    for predecessor in starts:
+        yield _expanded(predecessor, "starting")
+    for predecessor in validations:
+        yield _expanded(predecessor, "validation")
+    for predecessor in predecessors:
+        if not starts or all(predecessor is not start for start in starts):
+            yield _expanded(predecessor, "coverage")
 
 
 def _expanded(
-    original: _Original, role: ExpansionRole
+    predecessor: _RangePredecessor, role: ExpansionRole
 ) -> tuple[PredecessorRow, ExpansionRole, ObjectStateKey, TimeInterval | None]:
-    return original.predecessor, role, original.state, original.valid_time_coverage
+    return predecessor.predecessor, role, predecessor.state, predecessor.valid_time_coverage
 
 
-def _valid_end(original: _Original) -> object | None:
-    """The Valid-Time end cell ``original`` covers to, which its physical address
-    holds; ``None`` on a Transaction-Time-Only object."""
-    coverage = original.valid_time_coverage
+def _valid_end(predecessor: _RangePredecessor) -> object | None:
+    """The Valid-Time end cell ``predecessor`` covers to, which its coordinates
+    hold; ``None`` on a Transaction-Time-Only object."""
+    coverage = predecessor.valid_time_coverage
     return None if coverage is None else coverage.end
 
 
@@ -327,9 +406,7 @@ class _RangeMeaning:
     ``facts.instant`` is the attempt's resolved instant. ``valid_time_window``
     is the final transform's enclosing window, derived once when settlement
     begins and shared by the coverage check, acquisition, and continuation;
-    ``None`` on a Transaction-Time-Only object. ``derives`` says a later settled write
-    of the same flush depends on what this one does to its originals, so its
-    bound range records it (:class:`Derivation`). ``opening`` is the pending
+    ``None`` on a Transaction-Time-Only object. ``opening`` is the pending
     insertion a replacement reaching past it settles with.
     """
 
@@ -340,8 +417,7 @@ class _RangeMeaning:
     key_attribute: AttributeIdentity
     key_value: object
     anchor: object = _UNANCHORED
-    conditions: tuple[_StartingCondition, ...] = ()
-    derives: bool = False
+    conditions: tuple[_TargetCondition, ...] = ()
     guards: bool = False
     opening: _OpeningSeed | None = None
 
@@ -363,22 +439,18 @@ class _TemporalRangeBinder:
 
     def bind(
         self,
-        originals: Sequence[_Original],
-        validations: Sequence[_Original],
-        discharged: frozenset[int] = frozenset(),
-        *,
-        concludes: bool = False,
+        predecessors: Sequence[_RangePredecessor],
+        validations: Sequence[_RangePredecessor],
     ) -> BoundRange:
-        """The steps the transform takes over ``originals``, after a guarded
-        validation of each of ``validations``, naming the object where the
-        range ``concludes`` it (:attr:`BoundRange.concludes`).
+        """The steps the transform takes over ``predecessors``, after a guarded
+        validation of each of ``validations``.
 
-        Every original's own effect — a validation, a close, a same-address
+        Every predecessor's own effect — a validation, a close, a same-address
         revision, or a removal — runs before any successor opens, so a lost
         source condition fails before the range writes anything new. The
         object settles whole through the range's one
         :class:`PredecessorExpander`, so equal adjacent rows it produces merge
-        while each original keeps its own effect and proof.
+        while each predecessor keeps its own effect.
 
         A range one of whose writes an insertion authorized requires current
         coverage at that insertion's anchor and fails as a missing target
@@ -387,42 +459,42 @@ class _TemporalRangeBinder:
 
         A range a caller addressed requires the coverage at each of its
         operations' starts to stand at the Transaction-Time start that caller
-        stated, and fails as that caller's precondition otherwise — before
-        anything executes where the coverage shows it, and at that original's
-        gate where only execution can. The originals they start from are
-        affected first, in the order the callers stated them, so a lost start
-        fails ahead of every other original's effect; one guard serves every
-        start one original holds. A condition an earlier settled write of the flush
-        already proved (``discharged``, by its position) is judged no further.
-        Validations follow, then the remaining originals, and a replacement's
-        extent then opens its complete state over every gap the originals leave.
+        stated, literally, and fails as that caller's precondition otherwise —
+        before anything executes where the coverage shows it, and at that
+        predecessor's gate where only execution can. A start the attempt's own
+        completed writes replaced stands at the attempt's own instant, so a
+        condition stating the start they replaced fails. The predecessors the
+        conditions start from are affected first, in the order the callers
+        stated them, so a lost start fails ahead of every other predecessor's
+        effect; one guard serves every start one predecessor holds. Validations
+        follow, then the remaining predecessors, and a replacement's extent then
+        opens its complete state over every gap the predecessors leave.
 
         A pending insertion the range settles with opens what the transform
-        leaves of its own window as new lineages, ahead of the originals'
+        leaves of its own window as new lineages, ahead of the predecessors'
         successors, and its window is coverage no gap opening refills.
         """
         meaning = self.meaning
-        self._require_anchor(originals)
-        starts = self._starts(originals, discharged)
+        self._require_anchor(predecessors)
+        starts = self._starts(predecessors)
         transform = meaning.transform
         seed = meaning.opening
         gaps = (
-            transform.gaps(_with_opening(_valid_time_coverages(originals), seed))
+            transform.gaps(_with_opening(_valid_time_coverages(predecessors), seed))
             if transform.replaces and isinstance(meaning.facts.shape, Bitemporal)
             else ()
         )
         return self.expansion.settle(
-            _expansions(starts, validations, originals),
+            _expansions(starts, validations, predecessors),
             lineage=None if seed is None else (seed.state, seed.window),
             gaps=gaps,
-            concludes=meaning.object_key if concludes else None,
         )
 
-    def _require_anchor(self, originals: Sequence[_Original]) -> None:
+    def _require_anchor(self, predecessors: Sequence[_RangePredecessor]) -> None:
         anchor = self.meaning.anchor
         if anchor is _UNANCHORED:
             return
-        if any(anchor is _EXISTENCE or _holds(original, anchor) for original in originals):
+        if any(anchor is _EXISTENCE or _holds(row, anchor) for row in predecessors):
             return
         raise MissingTargetError(self.meaning.facts.entity.identity, self._key_target(), 1, 0)
 
@@ -431,26 +503,18 @@ class _TemporalRangeBinder:
             key_attributes=(self.meaning.key_attribute,), key_values=((self.meaning.key_value,),)
         )
 
-    def _starts(
-        self, originals: Sequence[_Original], discharged: frozenset[int]
-    ) -> tuple[_Original, ...]:
-        """The distinct originals the range's caller-addressed operations start
-        from, in the order their conditions were stated, once the coverage shows
-        each stands at its caller's Transaction-Time start; the first that does
-        not fails as that caller's precondition."""
+    def _starts(self, predecessors: Sequence[_RangePredecessor]) -> tuple[_RangePredecessor, ...]:
+        """The distinct predecessors the range's caller-addressed operations
+        start from, in the order their conditions were stated, once the
+        coverage shows each stands at its caller's Transaction-Time start; the
+        first that does not fails as that caller's precondition."""
         conditions = self.meaning.conditions
         if not conditions:
             return ()
-        starts: list[_Original] = []
-        for position, condition in enumerate(conditions):
-            if position in discharged:
-                continue
+        starts: list[_RangePredecessor] = []
+        for condition in conditions:
             start = next(
-                (
-                    original
-                    for original in originals
-                    if _holds_start(condition.valid_time_window, original)
-                ),
+                (row for row in predecessors if _holds_start(condition.valid_time_window, row)),
                 None,
             )
             if start is None or self._tx_start(start) != condition.expected:
@@ -459,11 +523,11 @@ class _TemporalRangeBinder:
                 starts.append(start)
         return tuple(starts)
 
-    def _tx_start(self, original: _Original) -> object:
+    def _tx_start(self, predecessor: _RangePredecessor) -> object:
         tx_start = self.meaning.facts.shape.transaction_time.start_attribute
-        return original.predecessor.cell(tx_start)
+        return predecessor.predecessor.cell(tx_start)
 
-    def _failed(self, condition: _StartingCondition) -> WritePreconditionError:
+    def _failed(self, condition: _TargetCondition) -> WritePreconditionError:
         return WritePreconditionError(
             self.meaning.facts.entity.identity,
             {self.meaning.key_attribute.name: self.meaning.key_value},
@@ -472,196 +536,125 @@ class _TemporalRangeBinder:
 
     def acquired(
         self,
-        acquired: Sequence[_Original],
-        known: Sequence[_Original],
-    ) -> tuple[_Original, ...]:
+        acquired: Sequence[_RangePredecessor],
+        known: Sequence[_RangePredecessor],
+    ) -> tuple[_RangePredecessor, ...]:
         """``known`` together with each current row of ``acquired`` — those the
-        range reused and those it read — at an address none of them holds,
+        range reused and those it read — at coordinates none of them holds,
         ordered by start.
 
         A caller-addressed operation's start names one current row, so more than
         one current row holding that start is Cardinality Corruption — an
         invariant failure that outranks the caller's precondition. Under Locking
-        every known original is held under the shared lock, so it is current
-        beside the acquired rows and is counted with them; under Optimistic a
-        known original may be stale, so only the acquired rows are current
-        evidence and a stale original is left to its own gate.
+        every known predecessor is held under the shared lock or was written by
+        the attempt itself, so it is current beside the acquired rows and is
+        counted with them; under Optimistic an observed predecessor may be
+        stale, so only the acquired rows are current evidence and a stale one
+        is left to its own gate.
         """
-        ends = {_valid_end(original) for original in known}
-        merged = [*known, *(o for o in acquired if _valid_end(o) not in ends)]
+        ends = {_valid_end(predecessor) for predecessor in known}
+        merged = [*known, *(row for row in acquired if _valid_end(row) not in ends)]
         self._require_one_start(acquired if self.meaning.gated else merged)
         _order_by_start(merged)
         return tuple(merged)
 
     def continued(
         self,
-        read: Sequence[_Original],
-        known: Sequence[_Original],
-    ) -> tuple[tuple[_Original, ...], frozenset[int]]:
+        current: Sequence[_RangePredecessor],
+        observed: Sequence[_RangePredecessor],
+        sources: Sequence[_ObservedSource],
+    ) -> tuple[_RangePredecessor, ...]:
         """The rows a range an ordering barrier kept after earlier writes of its
-        object binds to — the current rows of its whole window — beside the
-        positions of the caller conditions the flush has already proved.
+        object binds to: the ``current`` rows of its whole window, ordered.
 
-        The settled writes before the barrier may have transformed the originals this
-        range's writes were admitted against. An observed original still
-        standing is an ordinary original. One the flush transformed under
-        protection has proven its condition, provided every row derived from it
-        within the window still stands as it was opened; the range then binds to
-        those rows and their current values. Any other observed original has
-        lost its condition, which fails as that write's own shortfall would.
-
-        A caller's start standing at its stated Transaction-Time start is judged
-        as usual. One standing at a row the flush derived from a proven original
-        that held the caller's start at that stated start is proven too. Any
-        other start is the caller's failed precondition, which outranks an
-        observed loss.
+        The settled writes before the barrier may have changed the states this
+        range's writes were admitted against. An ``observed`` predecessor still
+        among the current rows is an ordinary predecessor, and the sources of
+        one those writes changed continue through what they left of it, while
+        some part holds each source's pin. Any other observed predecessor has
+        lost its condition, which fails as that write's own shortfall would,
+        unless a caller's literal condition the current rows contradict fails
+        first.
         """
-        self._require_one_start(read)
-        standing = {original.state for original in read}
+        self._require_one_start(current)
+        standing = {predecessor.state for predecessor in current}
         lost = next(
             (
-                original
-                for original in known
-                if original.state not in standing and not self._intact(original.state, read)
+                predecessor
+                for predecessor, source in zip(observed, sources, strict=True)
+                if predecessor.state not in standing and not _continuation(self.ownership, source)
             ),
             None,
         )
-        discharged: set[int] = set()
-        for position, condition in enumerate(self.meaning.conditions):
-            start = next(
-                (
-                    original
-                    for original in read
-                    if _holds_start(condition.valid_time_window, original)
-                ),
-                None,
-            )
-            if start is None:
-                raise self._failed(condition)
-            if self._tx_start(start) == condition.expected:
-                continue
-            if not self._descends(start, condition, read):
-                raise self._failed(condition)
-            discharged.add(position)
         if lost is not None:
+            self._starts(current)
             enforce_affected_rows(
                 self.expansion.closing(lost.predecessor, lost.valid_time_coverage, TERMINATED),
                 0,
             )
-        ordered = list(read)
+        ordered = list(current)
         _order_by_start(ordered)
-        return tuple(ordered), frozenset(discharged)
+        return tuple(ordered)
 
-    def read(self, rows: Sequence[PredecessorRows]) -> list[_Original]:
-        """Every row of ``rows`` as an original, each physical row once
+    def read(self, rows: Sequence[PredecessorRows]) -> list[_RangePredecessor]:
+        """Every row of ``rows`` as a predecessor, each physical row once
         (:func:`_distinct`)."""
         return _distinct(
-            [
-                [self.original(predecessor) for predecessor in _acquired_predecessors(acquired)]
-                for acquired in rows
-            ]
+            [[self.predecessor(row) for row in _acquired_rows(acquired)] for acquired in rows]
         )
 
-    def original(self, predecessor: PredecessorRow) -> _Original:
-        """One current row of the range's object as an original."""
+    def held(self) -> list[_RangePredecessor]:
+        """Every current row of the range's window the attempt's completed
+        writes produced and hold, as a predecessor."""
         meaning = self.meaning
-        return _original(meaning.facts, meaning.key_attribute, meaning.key_value, predecessor, None)
+        return [
+            self.predecessor(row)
+            for row in self.ownership.current_rows(meaning.object_key, meaning.valid_time_window)
+        ]
 
-    def _require_one_start(self, current: Sequence[_Original]) -> None:
+    def predecessor(self, row: PredecessorRow) -> _RangePredecessor:
+        """One current row of the range's object as a predecessor."""
+        meaning = self.meaning
+        return _predecessor(meaning.facts, meaning.key_attribute, meaning.key_value, row, None)
+
+    def _require_one_start(self, current: Sequence[_RangePredecessor]) -> None:
         for condition in self.meaning.conditions:
-            starting = sum(
-                1 for original in current if _holds_start(condition.valid_time_window, original)
-            )
+            starting = sum(1 for row in current if _holds_start(condition.valid_time_window, row))
             if starting > 1:
                 raise CardinalityCorruptionError(
                     self.meaning.facts.entity.identity, self._key_target(), 1, starting
                 )
 
-    def _endpoint(self, original: _Original) -> OwnedEndpoint:
-        coverage = original.valid_time_coverage
-        ends = TRANSACTION_TIME_ENDS if coverage is None else bitemporal_ends(coverage.end)
-        return OwnedEndpoint(self.meaning.facts.entity.identity, (self.meaning.key_value,), ends)
-
-    def _opened_here(self, original: _Original) -> Descent | None:
-        """What a current row the flush derived descends from, provided it
-        stands exactly as it was opened: at an owned address, at this attempt's
-        Transaction-Time start, from the Valid-Time start it was opened with."""
-        endpoint = self._endpoint(original)
-        if (
-            not self.ownership.owns(endpoint)
-            or self._tx_start(original) != self.meaning.facts.instant
-        ):
-            return None
-        descent = self.ownership.descent(endpoint)
-        if descent is None or descent.valid_time_coverage != original.valid_time_coverage:
-            return None
-        return descent
-
-    def _descends(
-        self, start: _Original, condition: _StartingCondition, read: Sequence[_Original]
-    ) -> bool:
-        """Whether ``start`` is a row the flush derived from a proven original
-        that held ``condition``'s start at its stated Transaction-Time start,
-        with everything else derived from that original intact."""
-        descent = self._opened_here(start)
-        if descent is None:
-            return False
-        window = condition.valid_time_window
-        # The row holds the caller's start in the part one original contributed;
-        # only that original's proof can stand for the caller's condition there.
-        original = descent.original_at(None if window is None else window.start)
-        if original is None:
-            return False
-        proof = self.ownership.proven(original)
-        if proof is None or not isinstance(original, TemporalObjectStateKey):
-            return False
-        milestone = original.milestone
-        if milestone.tx_time != condition.expected:
-            return False
-        coverage = proof.valid_time_coverage
-        if window is not None and (coverage is None or not coverage.contains(window.start)):
-            return False
-        return self._intact(original, read)
-
-    def _intact(self, original: ObjectStateKey, read: Sequence[_Original]) -> bool:
-        """Whether the flush transformed ``original`` under protection and every
-        row it derived from it that lies inside this range's window still stands
-        as it was opened."""
-        if self.ownership.proven(original) is None:
-            return False
-        present = {self._endpoint(row): row for row in read}
-        for endpoint, _descent in self.ownership.descendants(
-            original, self.meaning.valid_time_window
-        ):
-            row = present.get(endpoint)
-            if row is None or self._opened_here(row) is None:
-                return False
-        return True
-
 
 @dataclass(frozen=True, slots=True)
 class DeferredTemporalRange(DeferredRange):
     """A range whose requested window reaches coverage no planning input knew,
-    as the finalized data :func:`bind_deferred` binds once its unit of work has
+    as the finalized data :func:`bind_range` binds once its unit of work has
     read that coverage.
 
     It holds what settlement decided and nothing that could decide again: no
-    claim, ownership, audit, clock, or model. ``retained`` are the starting
-    rows its callers' Locking admissions read whole, each reused only if it is
-    still current when the range binds (:func:`retained_completion`); the
-    coverage neither they nor the observed originals hold is read then
-    (:func:`coverage_reads`), and the rows read join the observed originals at
-    every address those do not already hold. Binding then proceeds exactly as
-    for a range bound at planning. A ``continued`` range follows earlier writes
-    of its object across an ordering barrier, so it binds to the current rows
-    alone — the reused rows and those it read — judging its observed originals
-    and caller conditions against what the earlier settled writes proved.
+    ownership, audit, clock, or model. ``predecessors`` are the current rows
+    planning knew — observed ones, and those the attempt's completed writes
+    produced and hold for a source continuing through them. ``retained`` are
+    the starting rows its callers' Locking admissions read whole, each reused
+    only if it is still current when the range binds
+    (:func:`retained_completion`); the coverage none of them holds is read then
+    (:func:`coverage_reads`), and the rows read join the known predecessors at
+    every coordinates those do not already hold. Binding then proceeds exactly
+    as for a range bound at planning.
+
+    A ``continued`` range follows earlier writes of its object across an
+    ordering barrier, so it binds to the current rows alone — those the
+    attempt's completed writes produced and hold when it binds, the reused
+    rows, and those it read — judging its observed ``predecessors``, through
+    their ``sources``, against what the earlier settled writes left.
     """
 
     meaning: _RangeMeaning
-    originals: tuple[_Original, ...]
-    validations: tuple[_Original, ...]
+    predecessors: tuple[_RangePredecessor, ...]
+    validations: tuple[_RangePredecessor, ...]
     continued: bool = False
+    sources: tuple[_ObservedSource, ...] = ()
     retained: tuple[RetainedTargetState, ...] = ()
 
 
@@ -685,26 +678,27 @@ def settle_range(
     transform is built once, here, from that carrier; a composition brings the
     transform its buffering composed.
 
-    Every distinct observed predecessor is an original: each is validated by
-    its own guarded effect before any successor opens, and the transform is
-    bound to the ones that do not overlap a later-authored observation of the
-    same coverage. Where those originals cover the whole requested window the
-    range binds now; otherwise the coverage beyond them is read at execution
-    and the range binds then. A write an insertion authorized observed nothing,
-    so a range of such writes alone always reads its coverage, and requires
-    coverage at the insertion's anchor once read. So does a write a caller
-    addressed, whose caller's condition requires the coverage at its start to
-    stand at the Transaction-Time start it states; the starting row its Locking
-    admission read whole travels with the range, which reuses it as coverage
-    if it is still current at execution. A range bound now reuses none, and
-    releases each such row here.
+    Every distinct observed state the attempt's completed writes did not
+    change is a predecessor: each is validated by its own guarded effect
+    before any successor opens, and the transform is bound to the ones that do
+    not overlap a later-authored observation of the same coverage. A source
+    whose observed state those writes changed continues through the current
+    rows they produced and the attempt holds, which join the predecessors
+    without being read. Where the predecessors cover the whole requested
+    window the range binds now; otherwise the coverage beyond them is read at
+    execution and the range binds then. A write an insertion authorized
+    observed nothing, so a range of such writes alone always reads its
+    coverage, and requires coverage at the insertion's anchor once read. So
+    does a write a caller addressed, whose caller's condition requires the
+    coverage at its start to stand at the Transaction-Time start it states;
+    the starting row its Locking admission read whole travels with the range,
+    which reuses it as coverage if it is still current at execution. A range
+    bound now reuses none, and releases each such row here.
 
     A composition an ordering barrier kept after earlier writes of the same
     object (:class:`~parallax.core._execution._unit_work.write_items.ChainedTemporalWrite`)
-    always binds at execution: the settled writes before the barrier changed coverage
-    no planning input knows, and the conditions it was admitted with may
-    already have been proven on the originals those settled writes transformed. One a
-    later region follows records what it derives.
+    always binds at execution: the settled writes before the barrier change
+    coverage no planning input knows.
 
     ``instant`` is the attempt's already-resolved Transaction Instant, which a
     deferred range retains as a value.
@@ -712,10 +706,11 @@ def settle_range(
     key_attribute = view.primary_key.identity
     entity, key_value, transform = _range_of(item, key_attribute)
     facts = TemporalFacts(entity=entity, view=view, shape=shape, instant=instant)
-    originals, validations, anchor, conditions, retained = _known(
-        item, facts, key_attribute, key_value
+    if isinstance(item, ChainedTemporalWrite):
+        return _following(item, facts, key_attribute, key_value, transform, gated, guards)
+    predecessors, validations, anchor, conditions, retained = _known(
+        item, facts, key_attribute, key_value, ownership
     )
-    chained = item if isinstance(item, ChainedTemporalWrite) else None
     window = transform.valid_time_window
     meaning = _RangeMeaning(
         facts=facts,
@@ -726,28 +721,64 @@ def settle_range(
         key_value=key_value,
         anchor=anchor,
         conditions=conditions,
-        derives=chained is not None and chained.leads,
         guards=guards,
     )
-    if chained is not None and chained.follows:
-        return DeferredTemporalRange(
-            meaning=meaning,
-            originals=originals,
-            validations=validations,
-            continued=True,
-            retained=retained,
-        )
     if window is not None:
-        reached = window.first_uncovered(_valid_time_coverages(originals)) is not None
+        reached = window.first_uncovered(_valid_time_coverages(predecessors)) is not None
     else:
-        reached = not originals
+        reached = not predecessors
     if reached:
         return DeferredTemporalRange(
-            meaning=meaning, originals=originals, validations=validations, retained=retained
+            meaning=meaning, predecessors=predecessors, validations=validations, retained=retained
         )
     for state in retained:
         state.take()
-    return _binding(meaning, ownership, audit, payloads).bind(originals, validations)
+    return _binding(meaning, ownership, audit, payloads).bind(predecessors, validations)
+
+
+def _following(
+    item: ChainedTemporalWrite,
+    facts: TemporalFacts,
+    key_attribute: AttributeIdentity,
+    key_value: object,
+    transform: CoverageTransform,
+    gated: bool,
+    guards: bool,
+) -> DeferredTemporalRange:
+    """A composition kept after earlier writes of its object as the range
+    that binds at its turn, carrying the predecessors its sources observed
+    to judge then."""
+    observed: list[_RangePredecessor] = []
+    sources: list[_ObservedSource] = []
+    for contribution in item.contributions:
+        retained = contribution.retained_observation
+        if retained is None:
+            continue
+        observation = retained.evidence
+        assert isinstance(observation, TemporalObservation)  # a temporal write observes a milestone
+        observed.append(
+            _predecessor(facts, key_attribute, key_value, observation.predecessor, retained.key)
+        )
+        sources.append(_observed_source(retained, contribution.source_evidence))
+    meaning = _RangeMeaning(
+        facts=facts,
+        transform=transform,
+        valid_time_window=transform.valid_time_window,
+        gated=gated,
+        key_attribute=key_attribute,
+        key_value=key_value,
+        anchor=_anchor(item),
+        conditions=_conditions(item),
+        guards=guards,
+    )
+    return DeferredTemporalRange(
+        meaning=meaning,
+        predecessors=tuple(observed),
+        validations=(),
+        continued=True,
+        sources=tuple(sources),
+        retained=_retained(item),
+    )
 
 
 def settle_opening(
@@ -770,10 +801,11 @@ def settle_opening(
     A replacement it authorized reaching past the insertion's window
     establishes its complete state there exactly as one reaching past a stored
     row does: the stored coverage beyond the window is read at execution, each
-    row it reaches is transformed under its own proof, and the replacement's
-    gaps open. An amendment or a destruction reaches past the window only as
-    far as such a replacement does, and transforms what it reaches there too.
-    ``instant`` is the attempt's already-resolved Transaction Instant.
+    row it reaches is transformed under its own condition, and the
+    replacement's gaps open. An amendment or a destruction reaches past the
+    window only as far as such a replacement does, and transforms what it
+    reaches there too. ``instant`` is the attempt's already-resolved
+    Transaction Instant.
     """
     insert = opening.insert
     entity = insert.target
@@ -804,7 +836,7 @@ def settle_opening(
         guards=guards,
         opening=_OpeningSeed((attributes, value_objects), window),
     )
-    return DeferredTemporalRange(meaning=meaning, originals=(), validations=())
+    return DeferredTemporalRange(meaning=meaning, predecessors=(), validations=())
 
 
 def _with_opening(
@@ -830,46 +862,59 @@ def _range_of(
     )
 
 
+def _retained(composed: CoalescedTemporalWrite) -> tuple[RetainedTargetState, ...]:
+    return tuple(
+        contribution.retained
+        for contribution in composed.contributions
+        if contribution.retained is not None
+    )
+
+
 def _known(
     item: CoalescedTemporalWrite | TemporalKeyedWrite,
     facts: TemporalFacts,
     key_attribute: AttributeIdentity,
     key_value: object,
+    ownership: TemporalWriteOwnership,
 ) -> tuple[
-    tuple[_Original, ...],
-    tuple[_Original, ...],
+    tuple[_RangePredecessor, ...],
+    tuple[_RangePredecessor, ...],
     object,
-    tuple[_StartingCondition, ...],
+    tuple[_TargetCondition, ...],
     tuple[RetainedTargetState, ...],
 ]:
-    """What planning knows of ``item``'s range: the originals it binds and
-    validates, its insertion anchor, its callers' starting conditions, and the
+    """What planning knows of ``item``'s range: the predecessors it binds and
+    validates, its insertion anchor, its callers' target conditions, and the
     starting rows their admissions retained."""
     if isinstance(item, CoalescedTemporalWrite):
-        originals, validations = _known_originals(item, facts, key_attribute, key_value)
-        retained = tuple(
-            contribution.retained
-            for contribution in item.contributions
-            if contribution.retained is not None
+        predecessors, validations = _known_predecessors(
+            item, facts, key_attribute, key_value, ownership
         )
-        return originals, validations, _anchor(item), _conditions(item), retained
+        return predecessors, validations, _anchor(item), _conditions(item), _retained(item)
     window = item.instruction.valid_time_window
     if isinstance(item, InsertionKeyedWrite):
         return (), (), _anchored_at(window), (), ()
     if isinstance(item, TargetKeyedWrite):
         expectation = item.expectation
         conditions = (
-            (_StartingCondition(window, expectation.instant),)
+            (_TargetCondition(window, expectation.instant),)
             if isinstance(expectation, ExpectedTxStart)
             else ()
         )
         retained = () if item.retained is None else (item.retained,)
         return (), (), _UNANCHORED, conditions, retained
-    retained = item.retained_observation
-    observation = retained.evidence
+    observed = item.retained_observation
+    if _continuation(ownership, _observed_source(observed, item.source_evidence)):
+        current: list[_RangePredecessor] = []
+        _add_current(current, facts, key_attribute, key_value, ownership, window)
+        _order_by_start(current)
+        return tuple(current), (), _UNANCHORED, (), ()
+    observation = observed.evidence
     assert isinstance(observation, TemporalObservation)  # settlement refuses any other
-    original = _original(facts, key_attribute, key_value, observation.predecessor, retained.key)
-    return (original,), (), _UNANCHORED, (), ()
+    predecessor = _predecessor(
+        facts, key_attribute, key_value, observation.predecessor, observed.key
+    )
+    return (predecessor,), (), _UNANCHORED, (), ()
 
 
 def retained_completion(
@@ -877,8 +922,8 @@ def retained_completion(
 ) -> CompletionRequest | None:
     """The completion of every starting row ``description`` retained that is
     still ``current`` — no change the attempt completed since its read replaced
-    it — and that no other original of the range already is, or ``None`` where
-    none is reusable.
+    it — and that no other predecessor of the range already is, or ``None``
+    where none is reusable.
 
     Each retained row is taken from its state here, reused or not, so a stale
     one is discarded without being judged. A range gated by Optimistic proofs
@@ -889,7 +934,9 @@ def retained_completion(
     if not retained:
         return None
     meaning = description.meaning
-    held = {original.state for original in (*description.originals, *description.validations)}
+    held = {
+        predecessor.state for predecessor in (*description.predecessors, *description.validations)
+    }
     rows: list[tuple[object, ...]] = []
     documents: list[object | None] = []
     for state in retained:
@@ -916,23 +963,33 @@ def retained_completion(
 
 
 def coverage_reads(
-    description: DeferredTemporalRange, reused: PredecessorRows | None
+    description: DeferredTemporalRange,
+    reused: PredecessorRows | None,
+    ownership: TemporalWriteOwnership,
 ) -> tuple[CoverageReadRequest, ...]:
     """The reads of the coverage ``description``'s window needs that nothing
-    already holds: the observed originals of a range that follows no barrier,
-    the ``reused`` starting rows, and a pending insertion's own window.
+    already holds: the known predecessors of a range that follows no barrier,
+    the current rows ``ownership`` holds for one that does, the ``reused``
+    starting rows, and a pending insertion's own window.
 
     What remains of a Bitemporal window is read as its sorted, disjoint parts,
     in reads naming a bounded number of them each; nothing is read where
     nothing remains. A Transaction-Time-Only object's one current row is read
-    unless a reused or observed row already is it.
+    unless a reused, known, or held row already is it.
     """
     meaning = description.meaning
-    originals = () if description.continued else description.originals
+    known: Sequence[_RangePredecessor] = (
+        [
+            _predecessor(meaning.facts, meaning.key_attribute, meaning.key_value, row, None)
+            for row in ownership.current_rows(meaning.object_key, meaning.valid_time_window)
+        ]
+        if description.continued
+        else description.predecessors
+    )
     window = meaning.valid_time_window
     if window is None:
-        return () if originals or reused is not None else (_coverage(meaning, ()),)
-    covered = [original.valid_time_coverage for original in originals]
+        return () if known or reused is not None else (_coverage(meaning, ()),)
+    covered = [predecessor.valid_time_coverage for predecessor in known]
     if reused is not None:
         shape = meaning.facts.shape
         covered.extend(valid_time_coverage(shape, reused, index) for index in range(len(reused)))
@@ -990,7 +1047,7 @@ def coverage_requests(
         yield CoverageReadRequest(entity, key_attribute, tuple(pending), locking)
 
 
-def bind_deferred(
+def bind_range(
     description: DeferredTemporalRange,
     reused: PredecessorRows | None,
     acquired: Sequence[PredecessorRows],
@@ -1000,18 +1057,22 @@ def bind_deferred(
     payloads: WritePayloadPreparer,
 ) -> BoundRange:
     """``description`` bound to the current rows its window holds — the
-    starting rows it ``reused`` and the coverage ``acquired`` beside them —
-    through the same binding a range known at planning takes, under the
-    attempt's current ``ownership``, every produced row finalized and every
-    emitted close decorated once."""
+    starting rows it ``reused`` and the coverage ``acquired`` beside them, and
+    for a range following an ordering barrier the rows the attempt's completed
+    writes produced and hold — through the same binding a range known at
+    planning takes, under the attempt's current ``ownership``, every produced
+    row finalized and every emitted close decorated once."""
     binding = _binding(description.meaning, ownership, audit, payloads)
     current = binding.read(acquired if reused is None else (reused, *acquired))
     if description.continued:
-        originals, discharged = binding.continued(
-            current, (*description.originals, *description.validations)
-        )
-        return binding.bind(originals, (), discharged, concludes=not description.meaning.derives)
-    return binding.bind(binding.acquired(current, description.originals), description.validations)
+        held = binding.held()
+        physical = {_physical(predecessor) for predecessor in held}
+        current = [*held, *(row for row in current if _physical(row) not in physical)]
+        predecessors = binding.continued(current, description.predecessors, description.sources)
+        return binding.bind(predecessors, ())
+    return binding.bind(
+        binding.acquired(current, description.predecessors), description.validations
+    )
 
 
 def _binding(
@@ -1030,7 +1091,6 @@ def _binding(
             key_value=meaning.key_value,
             gated=meaning.gated,
             guards=meaning.guards,
-            derives=meaning.derives,
             ownership=ownership,
             audit=audit,
             payloads=payloads,
@@ -1038,21 +1098,22 @@ def _binding(
     )
 
 
-def _distinct(reads: Sequence[list[_Original]]) -> list[_Original]:
-    """Every original of ``reads`` once per physical row: a row an earlier read
-    already returned, at the same state and Valid-Time end, is not repeated,
-    while every row one read returns stays, however it overlaps the others."""
+def _distinct(reads: Sequence[list[_RangePredecessor]]) -> list[_RangePredecessor]:
+    """Every predecessor of ``reads`` once per physical row: a row an earlier
+    read already returned, at the same state and Valid-Time end, is not
+    repeated, while every row one read returns stays, however it overlaps the
+    others."""
     if len(reads) < 2:
         return reads[0] if reads else []
-    originals: list[_Original] = []
+    predecessors: list[_RangePredecessor] = []
     earlier: set[tuple[ObjectStateKey, object | None]] = set()
     for read in reads:
-        originals.extend(original for original in read if _physical(original) not in earlier)
-        earlier.update(_physical(original) for original in read)
-    return originals
+        predecessors.extend(row for row in read if _physical(row) not in earlier)
+        earlier.update(_physical(row) for row in read)
+    return predecessors
 
 
-def _acquired_predecessors(rows: PredecessorRows) -> Iterator[PredecessorRow]:
+def _acquired_rows(rows: PredecessorRows) -> Iterator[PredecessorRow]:
     for index in range(len(rows)):
         yield PredecessorRow.over_row(
             rows.selection, rows.rows[index], rows.document(index), rows.absent

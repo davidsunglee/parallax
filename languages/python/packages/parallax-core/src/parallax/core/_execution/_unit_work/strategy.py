@@ -194,7 +194,7 @@ class WriteEvidencePolicy(Protocol):
     claims — from the mutation alone: nothing for an insert, the supplied
     retained observation for a versioned or temporal family, and the supplied
     object key for an unversioned Non-Temporal one. Neither reads participation,
-    consumption, or claims, which are the unit of work's own state, and
+    continuation, or claims, which are the unit of work's own state, and
     neither refuses anything.
     """
 

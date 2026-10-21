@@ -289,7 +289,10 @@ the source's own finite Valid-Time pin — the coordinate the read stood at, not
 the observed rectangle's start — or, for a source an insertion of the same
 attempt authored, that insertion's `validFrom`, its anchor (`m-unit-work`
 *Insertion authority*). A source read at Valid-Time `latest` names no instant
-and is refused, as is a source neither anchors. Its **requested extent** is
+and is refused, as is a source neither anchors. A source whose observed state
+this attempt's completed writes transformed keeps its pin, and writes only while
+what they left of that state covers it (`m-unit-work` *Observation ownership
+and lifetime*). Its **requested extent** is
 `[validFrom, until)`, through infinity when unbounded, and the write applies to
 every current-on-Transaction-Time rectangle of the object that overlaps it and
 that the write holds or reads (*Concurrent creation in gaps is not
@@ -419,13 +422,15 @@ Final:  [January, February) | [February, April) first amendment
 
 When an ordering barrier separates such operations (`m-unit-work`
 *Buffered, batched, ordered writes*), each executes on its own side. The later
-one reads the coverage its window reaches when its turn comes, and finds the
-rectangles the earlier one opened at the attempt's own `txInstant`: its
-condition on the original they derive from was proven by the earlier
-operation's guarded inactivation or held shared lock, and holds while every
-rectangle derived from that original inside its window stands as it was opened.
-It then revises or removes those rectangles like any the attempt opened, so the
-attempt adds no history of its own.
+one binds to the coverage its window reaches when its turn comes, and finds the
+rectangles the earlier one opened at the attempt's own `txInstant`. A caller's
+`ifTxStart` is judged literally against them: a start the earlier operation's
+inactivation moved to the attempt's instant no longer stands at the stated
+start, so it fails as that caller's precondition. An observed source continues
+through the rectangles the earlier operation derived from what it read
+(`m-unit-work` *Observation ownership and lifetime*), and the later operation
+revises or removes those rectangles like any the attempt opened, so the attempt
+adds no history of its own.
 
 **Concurrent creation in gaps is not coordinated.** The existing-row guards and
 shared locks above protect rows that exist when the flush reads them. A
@@ -435,7 +440,9 @@ coverage; no isolation level is raised to prevent it. The result breaks
 *Milestones of one object never overlap*: it is invalid storage, not a second
 valid state. A write binds to the rows
 it already holds — the rectangles it observed, unless an ordering barrier
-follows earlier writes of its object; the starting rectangles a Locking
+follows earlier writes of its object; the current rectangles the attempt's own
+completed writes produced for a source continuing through them (`m-unit-work`
+*Observation ownership and lifetime*); the starting rectangles a Locking
 acquisition retained that are still current; and a pending insertion's own
 window — and
 reads only the coverage of its extent those leave. A rectangle
@@ -609,10 +616,10 @@ successor, wherever its unchanged state is proven without changing it:
 
 Either way nothing is closed or opened, the milestone keeps its Transaction-Time
 start and its history gains nothing, and the write's other milestones transform
-as usual. The settled write still completes: it spends every source it composed, and it
-changes no state of the kept milestone, so an observation of that state from
-another source stays eligible, another transaction's revision token for it
-still holds, and a caller's stated start still names it. A stale stated start is
+as usual. The settled write still completes, and it changes no state of the
+kept milestone, so every observation of that state, its own sources' included,
+stays eligible, another transaction's revision token for it still holds, and a
+caller's stated start still names it. A stale stated start is
 still its caller's failed precondition. A guard is not zero work: it is a
 database write that fires update triggers and keeps its lock through any later
 dependent read until the transaction ends.
@@ -716,9 +723,9 @@ that predecessor is removed under its gate and the merged row opened. Equal
 stored state does not make one predecessor's assignments stand for another's:
 only the predecessor ending the merged row is revised, and only by its own.
 
-Every original's part of a merged row is recorded with the settled write's completion
-(`m-unit-work` *Write Groups complete before later work runs*): writes the
-flush admitted before a barrier follow each original to the merged row over the
+Every predecessor's part of a merged row is recorded with the settled write's
+completion (`m-unit-work` *Write Groups complete before later work runs*): a
+source continuing through a predecessor follows it to the merged row over the
 part it contributed, never over the rest, and an insertion keeps only the part
 of the row its own coverage became.
 

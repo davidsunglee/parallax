@@ -38,7 +38,7 @@ from parallax.core.execution import (
     KeyedWriteValueError,
     TransactionTimePinReadOnlyError,
 )
-from parallax.core.unit_work import WriteEvidenceError, WritePreconditionError
+from parallax.core.unit_work import WritePreconditionError
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.adoption import raises_contextualized
 from tests._support.root_ownership import own_root
@@ -326,7 +326,7 @@ def test_a_historical_read_of_a_merged_original_writes_nothing(
 
 @_SPAN_AXES
 @pytest.mark.parametrize("unchanged", [False, True], ids=["changed", "unchanged"])
-def test_a_source_a_completed_write_spent_is_refused_however_its_rows_merged(
+def test_a_source_continues_from_its_pin_however_its_rows_merged(
     profile_run: Any, entity: type[Any], unchanged: bool
 ) -> None:
     db = _seeded(profile_run, entity, _TA)
@@ -334,12 +334,33 @@ def test_a_source_a_completed_write_spent_is_refused_however_its_rows_merged(
     def fn(tx: TxnContext) -> None:
         source = _find(tx, entity, _FEB)
         tx.amend(source.edit(amount=100 if unchanged else 150), until=_JUN)
-        _find(tx, entity, _MAY)  # flush the write that spent the source
-        with pytest.raises(WriteEvidenceError) as spent:
-            tx.amend(source.edit(label="z"), until=_MAR)
-        assert spent.value.code == "write-evidence-consumed"
+        _find(tx, entity, _MAY)  # flush the write through the source
+        # Changed, the source continues through the merged row its own state
+        # contributed to at its February pin, keeping that row's amount;
+        # unchanged, its state was kept and is still current.
+        tx.amend(source.edit(label="z"), until=_MAR)
 
     db.transact(fn)
+    amount = 100 if unchanged else 150
+    current = (
+        [
+            (_TA, None, _JAN, _FEB, 100, "a", _S),
+            (_TA, None, _FEB, _MAR, 100, "z", _S),
+            (_TA, None, _MAR, _APR, 100, "a", _S),
+            (_TA, None, _APR, _JUN, 100, "a", _S),
+        ]
+        if unchanged
+        else [
+            (_TA, None, _JAN, _FEB, 100, "a", _S),
+            (_TA, None, _FEB, _MAR, amount, "z", _S),
+            (_TA, None, _MAR, _JUN, amount, "a", _S),
+        ]
+    )
+    assert _rows(profile_run, entity) == [
+        *_history(),
+        *current,
+        (_TA, None, _JUN, _JUL, 200, "a", _S),
+    ]
 
 
 def _barrier(tx: TxnContext) -> None:

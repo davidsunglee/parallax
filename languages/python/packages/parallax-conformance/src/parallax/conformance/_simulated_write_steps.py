@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 
 from parallax.conformance.simulated_temporal_store import (
     SimulatedStoreError,
@@ -10,8 +10,8 @@ from parallax.core._execution._write_lowering import stream_physical
 from parallax.core.dialect import Dialect
 from parallax.core.metamodel import Metamodel
 from parallax.core.sql_gen import LoweredStatement
-from parallax.core.write_plan.payload import WritePayloadPreparer
-from parallax.core.write_plan.steps import PlannedStep
+from parallax.core.write_plan.payload import PatchedDocument, WritePayloadPreparer
+from parallax.core.write_plan.steps import PlannedStep, PlannedTemporalRevision, WriteRow
 
 __all__ = ["SimulatedWriteSteps"]
 
@@ -35,7 +35,9 @@ class SimulatedWriteSteps:
     keys, one tuple per such execution and unchecked; one with none left to
     answer is a misconfigured simulation. A store is never answered keys no
     database allocated, so a simulation with one is given none. Database gates
-    and affected-row enforcement are not simulated.
+    and affected-row enforcement are not simulated. Recording hands the
+    payloads it lowers to the capture hooks a unit of work gives, as execution
+    does; without recording nothing is captured.
     """
 
     __slots__ = ("_allocated", "_dialect", "_meta", "_payloads", "_record", "_statements", "_store")
@@ -71,10 +73,28 @@ class SimulatedWriteSteps:
         """Every statement the executed steps so far lowered to, in order."""
         return tuple(self._statements)
 
-    def __call__(self, steps: tuple[PlannedStep, ...], /, *, allocates: bool) -> tuple[object, ...]:
+    def __call__(
+        self,
+        steps: tuple[PlannedStep, ...],
+        /,
+        *,
+        allocates: bool,
+        capture_insert: Callable[[WriteRow, object | None], None] | None = None,
+        capture_revision: Callable[[PlannedTemporalRevision, PatchedDocument | None], None]
+        | None = None,
+    ) -> tuple[object, ...]:
         lowered: tuple[LoweredStatement, ...] = ()
         if self._record:
-            lowered = tuple(stream_physical(steps, self._payloads, self._meta, self._dialect))
+            lowered = tuple(
+                stream_physical(
+                    steps,
+                    self._payloads,
+                    self._meta,
+                    self._dialect,
+                    capture_insert=capture_insert,
+                    capture_revision=capture_revision,
+                )
+            )
         store = self._store
         if store is not None:
             refusal = _first_refusal(store, self._meta, steps)

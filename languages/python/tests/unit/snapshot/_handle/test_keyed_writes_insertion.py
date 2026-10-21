@@ -995,15 +995,14 @@ def test_a_retry_admits_the_insertion_afresh_and_expires_the_first_attempts_draf
     assert len(_writes(port)) == 2
 
 
-def test_composition_spends_the_observed_source_and_not_the_insertions_authority() -> None:
+def test_composition_continues_the_observed_source_beside_the_insertions_authority() -> None:
     port = ScriptedAdapter(
         Transact(
             Write(),
             Read(rows=[_rectangle(_MAR, _SEP)]),
             Write(times=2),
             Read(rows=[_rectangle(_MAR, _MAY, "150.00")]),
-            Read(rows=[_rectangle(_MAR, _MAY, "150.00")]),
-            Write(),
+            Write(times=2),
         )
     )
 
@@ -1014,15 +1013,19 @@ def test_composition_spends_the_observed_source_and_not_the_insertions_authority
         tx.amend(opened.edit(value=Decimal("150.00")), until=_JUN)
         tx.amend(observed.edit(value=Decimal("175.00")), until=_AUG)
         _read_at(tx, _MAR)
-        with pytest.raises(WriteEvidenceError) as refused:
-            tx.amend(observed.edit(value=Decimal("1.00")), until=_AUG)
-        assert refused.value.code == "write-evidence-consumed"
+        # The observed source continues at its May pin through the rows the
+        # composition left, which the attempt holds, beside the insertion's
+        # own authority.
+        tx.amend(observed.edit(value=Decimal("1.00")), until=_AUG)
         tx.amend(opened.edit(value=Decimal("125.00")), until=_MAY)
 
     _transact(port, fn)
-    last = _writes(port)[-1]
-    assert last.sql.startswith("update where_position set value = %s")
-    assert last.binds[0] == Decimal("125.00")
+    first, second = _writes(port)[-2:]
+    assert all(
+        revision.sql.startswith("update where_position set value = %s")
+        for revision in (first, second)
+    )
+    assert {first.binds[0], second.binds[0]} == {Decimal("125.00"), Decimal("1.00")}
 
 
 def test_a_reinsertion_at_identical_coordinates_revives_no_earlier_observation() -> None:

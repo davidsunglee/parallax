@@ -46,7 +46,11 @@ from parallax.core._execution._unit_work.instructions import (
     prepare_typed_write,
     prepare_wire_write,
 )
-from parallax.core._execution._unit_work.write_runner import ExecuteWriteSteps, run_write_plan
+from parallax.core._execution._unit_work.write_runner import (
+    ExecuteWriteSteps,
+    _CurrentRowCapture,  # pyright: ignore[reportPrivateUsage] - the capture a running group builds
+    run_write_plan,
+)
 from parallax.core.base import INFINITY
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._model import model_of
@@ -77,9 +81,10 @@ from parallax.core.write_plan import (
 from parallax.core.write_plan.plan import (
     OPEN_BITEMPORAL_ENDS,
     BoundRange,
+    CurrentRowOutput,
     DeferredRange,
-    OwnedEndpoint,
     SettledWrite,
+    TemporalRowCoordinates,
     TemporalWriteOwnership,
     WriteGroup,
     WritePlan,
@@ -102,7 +107,13 @@ from tests.unit.core._execution._unit_work._temporal_targets_support import (
     T0,
     rectangle,
 )
-from tests.unit.core._execution._write_step_support import POSITION_META, close
+from tests.unit.core._execution._write_step_support import (
+    POSITION,
+    POSITION_META,
+    close,
+    insert,
+    revision,
+)
 
 _FIXED: Final = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 
@@ -137,21 +148,14 @@ def _simulated(meta: Metamodel, *allocated: tuple[object, ...]) -> SimulatedWrit
 # Each Write Group's settled writes complete before a later group executes.   #
 # --------------------------------------------------------------------------- #
 @dataclass
-class _Claim:
-    """Source authority recording whether a settled write spent it."""
-
-    consumed: bool = False
-
-    def consume(self) -> None:
-        self.consumed = True
-
-
-@dataclass
 class _Executions:
+    """Each execution's steps beside the settled writes completed before it,
+    counted by the changes they recorded in ``uow``."""
+
     steps: ObservedSteps
-    claims: tuple[_Claim, ...]
-    seen: list[tuple[tuple[PlannedStep, ...], tuple[bool, ...]]] = field(
-        default_factory=list[tuple[tuple[PlannedStep, ...], tuple[bool, ...]]]
+    uow: UnitOfWork | None = None
+    seen: list[tuple[tuple[PlannedStep, ...], int]] = field(
+        default_factory=list[tuple[tuple[PlannedStep, ...], int]]
     )
 
     def __post_init__(self) -> None:
@@ -159,83 +163,78 @@ class _Executions:
 
     def _observe(self, position: int, steps: tuple[PlannedStep, ...]) -> None:
         del position
-        self.seen.append((steps, tuple(claim.consumed for claim in self.claims)))
+        uow = self.uow
+        assert uow is not None
+        self.seen.append((steps, uow.freshness))
+
+    def run(self, plan: WritePlan) -> None:
+        self.uow = _uow(POSITION_META, self.steps)
+        run_write_plan(self.uow, plan, self.steps)
 
 
 def _group(*writes: SettledWrite, steps: tuple[PlannedStep, ...] = ()) -> WriteGroup:
     return WriteGroup(writes, steps)
 
 
+def _changing(key: int) -> SettledWrite:
+    """A settled write whose completion records one change."""
+    return SettledWrite(changed=(corpus_object_key("Position", ("id", key)),))
+
+
 def test_each_group_executes_its_own_steps_once_every_earlier_group_completed() -> None:
-    claims = (_Claim(), _Claim(), _Claim())
     plan = WritePlan(
         (
-            _group(SettledWrite(claim=claims[0]), steps=(close(1), close(2))),
-            _group(SettledWrite(claim=claims[1])),
-            _group(SettledWrite(claim=claims[2]), steps=(close(3),)),
+            _group(_changing(1), steps=(close(1), close(2))),
+            _group(_changing(2)),
+            _group(_changing(3), steps=(close(3),)),
         )
     )
     simulated = _simulated(POSITION_META)
-    executions = _Executions(ObservedSteps(simulated), claims)
-    run_write_plan(_uow(POSITION_META, executions.steps), plan, executions.steps)
+    executions = _Executions(ObservedSteps(simulated))
+    executions.run(plan)
     # Each execution is handed its group's own tuple, a group with no step
     # included, and a settled write with no step completes once it ran.
-    assert [steps for steps, _spent in executions.seen] == [group.steps for group in plan.groups]
+    assert [steps for steps, _completed in executions.seen] == [
+        group.steps for group in plan.groups
+    ]
     assert all(
         steps is group.steps
-        for (steps, _spent), group in zip(executions.seen, plan.groups, strict=True)
+        for (steps, _completed), group in zip(executions.seen, plan.groups, strict=True)
     )
-    assert [spent for _steps, spent in executions.seen] == [
-        (False, False, False),
-        (True, False, False),
-        (True, True, False),
-    ]
-    assert all(claim.consumed for claim in claims)
+    assert [completed for _steps, completed in executions.seen] == [0, 1, 2]
+    assert executions.uow is not None and executions.uow.freshness == 3
     assert statement_kinds(simulated.statements) == ["close", "close", "close"]
 
 
 def test_every_settled_write_of_a_group_completes_once_its_steps_succeeded() -> None:
-    claims = (_Claim(), _Claim(), _Claim())
     plan = WritePlan(
         (
-            _group(
-                SettledWrite(claim=claims[0]),
-                SettledWrite(claim=claims[1]),
-                steps=(close(1), close(2)),
-            ),
-            _group(SettledWrite(claim=claims[2]), steps=(close(3),)),
+            _group(_changing(1), _changing(2), steps=(close(1), close(2))),
+            _group(_changing(3), steps=(close(3),)),
         )
     )
-    executions = _Executions(ObservedSteps(_simulated(POSITION_META)), claims)
-    run_write_plan(_uow(POSITION_META, executions.steps), plan, executions.steps)
-    assert [spent for _steps, spent in executions.seen] == [
-        (False, False, False),
-        (True, True, False),
-    ]
+    executions = _Executions(ObservedSteps(_simulated(POSITION_META)))
+    executions.run(plan)
+    assert [completed for _steps, completed in executions.seen] == [0, 2]
 
 
 def test_a_group_whose_steps_fail_completes_nothing_and_no_later_group_executes() -> None:
-    claims = (_Claim(), _Claim(), _Claim())
     failure = ValueError("the group's steps fail")
     plan = WritePlan(
         (
-            _group(SettledWrite(claim=claims[0]), steps=(close(1),)),
-            _group(
-                SettledWrite(claim=claims[1]),
-                SettledWrite(claim=claims[2]),
-                steps=(close(2), close(3)),
-            ),
+            _group(_changing(1), steps=(close(1),)),
+            _group(_changing(2), _changing(3), steps=(close(2), close(3))),
             _group(SettledWrite(), steps=(close(4),)),
         )
     )
     simulated = _simulated(POSITION_META)
-    executions = _Executions(ObservedSteps(simulated, failing=1, failure=failure), claims)
+    executions = _Executions(ObservedSteps(simulated, failing=1, failure=failure))
     with pytest.raises(ValueError, match="steps fail") as raised:
-        run_write_plan(_uow(POSITION_META, executions.steps), plan, executions.steps)
+        executions.run(plan)
     assert raised.value is failure
     # The earlier group stays published; the failed one publishes nothing.
     assert executions.steps.executions == 2
-    assert [claim.consumed for claim in claims] == [True, False, False]
+    assert executions.uow is not None and executions.uow.freshness == 1
     assert statement_kinds(simulated.statements) == ["close"]
 
 
@@ -328,12 +327,19 @@ def test_a_write_answered_another_number_of_keys_than_it_opens_completes_nothing
     (group,) = plan.groups
     (write,) = group.writes
     assert len(write.opened.allocated) == 1
-    claim = _Claim()
-    claimed = WritePlan((WriteGroup((dataclasses.replace(write, claim=claim),), group.steps),))
+    changing = WritePlan(
+        (
+            WriteGroup(
+                (dataclasses.replace(write, changed=(ObjectKey(Span.identity, (("id", 1),)),)),),
+                group.steps,
+            ),
+        )
+    )
     simulated = _simulated(_SPANS, answered)
+    uow = _uow(_SPANS, simulated)
     with pytest.raises(UnitOfWorkError, match=rf"opening 1 row\(s\).*{len(answered)} key\(s\)"):
-        run_write_plan(_uow(_SPANS, simulated), claimed, simulated)
-    assert not claim.consumed
+        run_write_plan(uow, changing, simulated)
+    assert uow.freshness == 0
 
 
 def test_a_flush_whose_write_answered_the_wrong_keys_dooms_the_attempt() -> None:
@@ -343,6 +349,24 @@ def test_a_flush_whose_write_answered_the_wrong_keys_dooms_the_attempt() -> None
         uow.read(lambda: None)
     with pytest.raises(RollbackOnlyError):
         uow.read(lambda: None)
+
+
+def test_a_capture_stages_only_the_emitters_its_outputs_describe() -> None:
+    described, other = revision(1), revision(2)
+    (entry,) = insert(1).entries
+    output = CurrentRowOutput(
+        coordinates=TemporalRowCoordinates(POSITION, (1,), OPEN_BITEMPORAL_ENDS),
+        valid_time_coverage=None,
+        row=entry,
+        emitter=described,
+    )
+    capture = _CurrentRowCapture((output,))
+    capture.capture_revision(other, None)
+    capture.capture_insert(entry, None)
+    assert capture.take_rows((output,)) == ()
+    capture.capture_revision(described, None)
+    assert capture.take_rows((output,)) == ((output, None),)
+    assert capture.take_rows((output,)) == ()
 
 
 # --------------------------------------------------------------------------- #
@@ -404,22 +428,23 @@ def _retained_row(key: int) -> RetainedObservation:
 
 
 def test_a_deferred_range_binds_only_once_every_earlier_write_completed() -> None:
-    claim = _retained_row(2)
     simulated = _simulated(TARGET_POSITION)
-    reads: list[tuple[type[RowRequest], bool, int]] = []
+    reads: list[tuple[type[RowRequest], int, int]] = []
+    uow: UnitOfWork | None = None
 
     def watch(request: RowRequest) -> None:
-        reads.append((type(request), claim.consumed, len(simulated.statements)))
+        assert uow is not None
+        reads.append((type(request), uow.freshness, len(simulated.statements)))
 
     held = HeldRows(TARGET_POSITION, [rectangle(_JAN, INFINITY, "100.00")], overlapping=True)
     uow = _uow(TARGET_POSITION, simulated, rows=_Watched(held, watch))
-    uow.buffer(_observed_amend(2, claim))
+    uow.buffer(_observed_amend(2, _retained_row(2)))
     uow.buffer_target(_target(_APR, _SEP, "150.00"))
     uow.flush(trigger="pre_commit")
-    # The earlier write had executed and spent its source when the range read
-    # its coverage; the range's own steps ran after.
-    ((kind, spent, executed),) = reads
-    assert (kind, spent) == (CoverageReadRequest, True)
+    # The earlier write had executed and completed when the range read its
+    # coverage; the range's own steps ran after.
+    ((kind, completed, executed),) = reads
+    assert (kind, completed) == (CoverageReadRequest, 1)
     assert 0 < executed < len(simulated.statements)
 
 
@@ -428,7 +453,7 @@ def test_a_deferred_write_executes_its_group_then_the_exact_steps_its_range_boun
 ) -> None:
     plans: list[WritePlan] = []
     ranges: list[BoundRange] = []
-    finalize, bind = WritePlanner.finalize, WritePlanner.bind_deferred
+    finalize, bind = WritePlanner.finalize, WritePlanner.bind_range
 
     def planning(planner: WritePlanner, request: WritePlanningRequest) -> WritePlan:
         plans.append(finalize(planner, request))
@@ -439,7 +464,7 @@ def test_a_deferred_write_executes_its_group_then_the_exact_steps_its_range_boun
         return ranges[-1]
 
     monkeypatch.setattr(WritePlanner, "finalize", planning)
-    monkeypatch.setattr(WritePlanner, "bind_deferred", binding)
+    monkeypatch.setattr(WritePlanner, "bind_range", binding)
     executed: list[tuple[PlannedStep, ...]] = []
     steps = ObservedSteps(
         _simulated(TARGET_POSITION), observe=lambda _position, held: executed.append(held)
@@ -469,7 +494,7 @@ def test_planning_and_deferred_binding_borrow_the_one_live_ownership(
     # completion publishes into the very ownership the range then binds under.
     planned: list[TemporalWriteOwnership] = []
     bound: list[tuple[TemporalWriteOwnership, bool]] = []
-    finalize, bind = WritePlanner.finalize, WritePlanner.bind_deferred
+    finalize, bind = WritePlanner.finalize, WritePlanner.bind_range
 
     def planning(planner: WritePlanner, request: WritePlanningRequest) -> WritePlan:
         planned.append(request.ownership)
@@ -478,21 +503,21 @@ def test_planning_and_deferred_binding_borrow_the_one_live_ownership(
     def binding(planner: WritePlanner, *args: Any, **kwargs: Any) -> BoundRange:
         ownership = kwargs["ownership"]
         # The earlier write amended object 2 from April on, opening its current tail.
-        opened = OwnedEndpoint(
+        opened = TemporalRowCoordinates(
             corpus_object_key("Position", ("id", 2)).entity, (2,), OPEN_BITEMPORAL_ENDS
         )
         bound.append((ownership, ownership.owns(opened)))
         return bind(planner, *args, **kwargs)
 
     monkeypatch.setattr(WritePlanner, "finalize", planning)
-    monkeypatch.setattr(WritePlanner, "bind_deferred", binding)
+    monkeypatch.setattr(WritePlanner, "bind_range", binding)
     simulated = _simulated(TARGET_POSITION)
     held = HeldRows(TARGET_POSITION, [rectangle(_JAN, INFINITY, "100.00")], overlapping=True)
     uow = _uow(TARGET_POSITION, simulated, rows=held)
     uow.buffer(_observed_amend(2, _retained_row(2)))
     uow.buffer_target(_target(_APR, _SEP, "150.00"))
     live = uow._admission.ownership  # pyright: ignore[reportPrivateUsage] - the ownership both stages borrow
-    uow.flush(trigger="pre_commit")
+    uow.flush(trigger="read_dependency")
     assert planned == [live]
     assert planned[0] is live
     ((ownership, published),) = bound
@@ -630,24 +655,24 @@ def test_a_write_kept_behind_a_barrier_binds_on_the_rows_and_ownership_earlier_w
         _BARRIERED,
     )
     assert isinstance(amendment, PreparedKeyedWrite)
-    target = prepare_wire_write(
-        TargetWriteInstruction(
+    later = prepare_wire_write(
+        KeyedWriteInstruction(
             "amendUntil",
             "WherePosition",
-            {"id": 1, "value": "175.00"},
-            if_tx_start=_T0,
+            ({"id": 1, "value": "175.00"},),
             valid_from=_JUN,
             until=_AUG,
         ),
         _BARRIERED,
     )
-    assert isinstance(target, PreparedTargetWrite)
+    assert isinstance(later, PreparedKeyedWrite)
+    observed = uow.retain(retained_observation(amendment, _BARRIERED, observation))
     with store.transaction(rollback=False):
-        uow.buffer(
-            buffered_write(amendment, retained_observation(amendment, _BARRIERED, observation))
-        )
+        uow.buffer(buffered_write(amendment, observed))
         uow.buffer_predicate(_barrier())
-        uow.buffer_target(target)
+        # A later write of the same source, kept behind the barrier, continues
+        # through what the earlier write left of the state they observed.
+        uow.buffer(buffered_write(later, observed))
         uow.flush(trigger="pre_commit")
     hundred, changed = Decimal("100.00"), Decimal("175.00")
     # The kept-back write read its coverage once the earlier write had

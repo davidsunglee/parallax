@@ -57,6 +57,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 
 import pytest
 
@@ -226,9 +227,10 @@ def _watch(lane: str, monkeypatch: pytest.MonkeyPatch) -> _Composition:
         payloads: WritePayloadPreparer,
         meta: Metamodel,
         dialect: Dialect,
+        **capture: Any,
     ) -> LoweringCursor:
         seen.lowered.append(steps)
-        return cursoring(steps, payloads, meta, dialect)
+        return cursoring(steps, payloads, meta, dialect, **capture)
 
     def render(
         step: PlannedStep, payload: StepPayload, meta: Metamodel, dialect: Dialect

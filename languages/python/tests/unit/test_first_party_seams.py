@@ -220,7 +220,7 @@ def test_a_baseline_equal_update_writes_literally_and_changes_its_claims_state()
     update = writes[1]
     assert update.sql == UPDATE_SQL
     assert update.binds == (Decimal("10"), 2, 3, 1)
-    assert spent.invalidated and not spent.consumed
+    assert spent.invalidated
 
 
 def test_a_surviving_write_changes_its_own_claims_state() -> None:
@@ -236,7 +236,7 @@ def test_a_surviving_write_changes_its_own_claims_state() -> None:
         return claim
 
     claim = _run(port, fn)
-    assert claim.invalidated and not claim.consumed
+    assert claim.invalidated
     assert claim.evidence == VersionObservation(observed_version=1)
     assert port.calls[2] == WriteCall(UPDATE_SQL, (Decimal("11.00"), 2, 3, 1))
 

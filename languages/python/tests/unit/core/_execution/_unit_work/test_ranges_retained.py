@@ -81,7 +81,7 @@ def _planned(
     if follows:
         (composed,) = buffered
         assert not isinstance(composed, RetainedObservation)
-        buffered = [chained_temporal_write(composed, "id", follows=True)]  # type: ignore[arg-type]
+        buffered = [chained_temporal_write(composed, "id")]  # type: ignore[arg-type]
     plan = build_write_planner(POSITION).finalize(
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,

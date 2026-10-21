@@ -21,7 +21,7 @@ from parallax.core._execution._unit_work.non_temporal_settlement import (
 )
 from parallax.core._execution._unit_work.ranges import (
     DeferredTemporalRange,
-    range_claims,
+    range_source_evidence,
     settle_opening,
     settle_range,
 )
@@ -107,11 +107,12 @@ __all__ = ["SettledWriteWithSource", "WritePlanCompiler"]
 @dataclass(frozen=True, slots=True, kw_only=True)
 class SettledWriteWithSource(SettledWrite):
     """A settled write that keeps alive the exact Read Evidence of every
-    Non-Temporal source whose write it settled, by identity.
+    source whose write it settled, by identity.
 
     ``source_evidence`` is an inert lifetime edge: while the plan holding the
-    write stays reachable its sources stay registered, and nothing reads it —
-    completion publishes from the write's own completion.
+    write stays reachable its sources stay registered and their observations
+    live, and nothing reads it — completion publishes from the write's own
+    completion.
     """
 
     source_evidence: tuple[ReadEvidence, ...]
@@ -186,9 +187,8 @@ class WritePlanCompiler:
     ) -> WritePlan:
         """Every mutation phase, in flush order, as one Write Plan.
 
-        Each settled write carries the temporal claim its surviving write
-        settled against, or the exact Read Evidence of the Non-Temporal sources
-        it settled (:class:`SettledWriteWithSource`). An item the planner's
+        Each settled write carries the exact Read Evidence of every source it
+        settled (:class:`SettledWriteWithSource`). An item the planner's
         earlier stages retired — folded into a pending insert, cancelled against
         one, or eliminated as a known no-op — never reaches this loop, and
         therefore no settled write carries the evidence it was holding.
@@ -202,8 +202,9 @@ class WritePlanCompiler:
         temporal write needs it.
 
         Each ordered item settles into one settled write, which records what
-        its success publishes: the claim it spends, the states it changes,
-        advances, or destroys, and the rows it removes and opens. Consecutive settled writes
+        its success publishes: the states it changes, advances, or destroys,
+        the rows it removes and opens, and what it leaves for the temporal
+        sources it reaches. Consecutive settled writes
         of one mutation phase over distinct objects share a Write Group of at
         most :data:`_GROUP_WRITES`, laid out as every write's effects and then
         every write's inserts, each write's own order kept. A deferred write, a
@@ -493,17 +494,28 @@ class WritePlanCompiler:
             payloads=self._payloads,
             guards=guards,
         )
-        claim = range_claims(item)
+        evidence = range_source_evidence(item)
         if isinstance(ranged, DeferredTemporalRange):
-            return SettledWrite(claim=claim, deferred=ranged), ()
-        write = SettledWrite(
-            claim=claim,
-            changed=ranged.changed,
-            removed=ranged.removed,
-            opened=ranged.opened,
-            derived=ranged.derived,
-            concludes=ranged.concludes,
-        )
+            if not evidence:
+                return SettledWrite(deferred=ranged), ()
+            return SettledWriteWithSource(source_evidence=evidence, deferred=ranged), ()
+        if not evidence:
+            write = SettledWrite(
+                changed=ranged.changed,
+                removed=ranged.removed,
+                opened=ranged.opened,
+                derived=ranged.derived,
+                current_outputs=ranged.current_outputs,
+            )
+        else:
+            write = SettledWriteWithSource(
+                source_evidence=evidence,
+                changed=ranged.changed,
+                removed=ranged.removed,
+                opened=ranged.opened,
+                derived=ranged.derived,
+                current_outputs=ranged.current_outputs,
+            )
         return write, ranged.steps
 
     def _settle_insert(
@@ -660,6 +672,7 @@ class WritePlanCompiler:
             removed=ranged.removed,
             opened=ranged.opened,
             derived=ranged.derived,
+            current_outputs=ranged.current_outputs,
         )
         return write, ranged.steps
 

@@ -8,7 +8,7 @@ import datetime as dt
 from collections.abc import Generator
 from contextlib import contextmanager
 from decimal import Decimal
-from typing import Final
+from typing import Any, Final
 
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.scripted_clock import FixedClock
@@ -33,6 +33,7 @@ from parallax.core.unit_work import TransactionSettings, UnitOfWork
 from parallax.core.write_payload import LayoutPayloadPreparer
 from parallax.core.write_plan import SUPERSEDED, WritePlan
 from parallax.core.write_plan.payload import AssignmentPayload, RowPayload, WritePayloadPreparer
+from parallax.core.write_plan.plan import CurrentRowOutput, WriteCompletion
 from parallax.core.write_plan.steps import (
     INFINITY,
     NEW_LINEAGE,
@@ -254,18 +255,23 @@ def run_plan(
     payloads: WritePayloadPreparer | None = None,
     *,
     units: list[UnitOfWork] | None = None,
+    completed: list[int] | None = None,
 ) -> None:
     """``plan`` run group by group by a fresh unit of work, each group's steps
     executed by the production executor of an attempt over ``port`` as calls
     of ``flush``, preparing payloads through ``payloads`` where given; the unit
-    of work is appended to ``units`` before the plan runs."""
+    of work is appended to ``units`` before the plan runs, and ``completed``
+    records how many calls ``port`` had received as each settled write
+    completed."""
     executor = step_executor(port, meta, payloads)
 
-    def execute(steps: tuple[PlannedStep, ...], /, *, allocates: bool) -> tuple[object, ...]:
-        return executor.execute(steps, allocates=allocates, flush=flush)
+    def execute(
+        steps: tuple[PlannedStep, ...], /, *, allocates: bool, **capture: Any
+    ) -> tuple[object, ...]:
+        return executor.execute(steps, allocates=allocates, flush=flush, **capture)
 
     planner = build_write_planner(meta)
-    uow = UnitOfWork(
+    uow = (UnitOfWork if completed is None else _recording(port, completed))(
         settings=TransactionSettings(),
         lifetime=TxnAttemptLifetime(),
         clock=FixedClock(T1),
@@ -279,6 +285,22 @@ def run_plan(
     if units is not None:
         units.append(uow)
     run_write_plan(uow, plan, execute)
+
+
+def _recording(port: ScriptedAdapter, completed: list[int]) -> type[UnitOfWork]:
+    class _Recording(UnitOfWork):
+        __slots__ = ()
+
+        def _complete_write(
+            self,
+            completion: WriteCompletion,
+            allocated: tuple[object, ...],
+            captured: tuple[tuple[CurrentRowOutput, object | None], ...] = (),
+        ) -> None:
+            completed.append(len(port.calls))
+            super()._complete_write(completion, allocated, captured)
+
+    return _Recording
 
 
 def statement(step: PlannedStep) -> LoweredStatement:

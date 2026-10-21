@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Iterator
-from typing import Final, NamedTuple
+from collections.abc import Callable, Iterator
+from typing import Final, NamedTuple, cast
 
 from parallax.core.dialect import Dialect
 from parallax.core.metamodel import (
@@ -17,6 +17,7 @@ from parallax.core.sql_gen._write import (
     compile_write_step,
     effect_parameter_ceiling,
 )
+from parallax.core.storage_layout import RelationalDocument
 from parallax.core.write_plan.payload import (
     AssignmentPayload,
     PatchedDocument,
@@ -70,9 +71,22 @@ class LoweringCursor:
     Execution's route from a sequence of Planned Steps to statements: taking a
     step reads it and prepares nothing, so a step can be looked at before
     anything is prepared for it, and only preparing or lowering it can fail.
+
+    Each insert entry's payload, as it is demanded, hands ``capture_insert``
+    the entry and the Structured Column document it stores — ``None`` where it
+    stores none — and each temporal revision's hands ``capture_revision`` the
+    revision and the patches it applies to that document — ``None`` where it
+    applies none — where they are given.
     """
 
-    __slots__ = ("_dialect", "_meta", "_payloads", "_steps")
+    __slots__ = (
+        "_capture_insert",
+        "_capture_revision",
+        "_dialect",
+        "_meta",
+        "_payloads",
+        "_steps",
+    )
 
     def __init__(
         self,
@@ -80,24 +94,56 @@ class LoweringCursor:
         payloads: WritePayloadPreparer,
         meta: Metamodel,
         dialect: Dialect,
+        *,
+        capture_insert: Callable[[WriteRow, object | None], None] | None = None,
+        capture_revision: Callable[[PlannedTemporalRevision, PatchedDocument | None], None]
+        | None = None,
     ) -> None:
         self._steps = iter(steps)
         self._payloads = payloads
         self._meta = meta
         self._dialect = dialect
+        self._capture_insert = capture_insert
+        self._capture_revision = capture_revision
 
     def take(self) -> PlannedStep | None:
         """The next step, or ``None`` once the steps are exhausted."""
         return next(self._steps, None)
 
     def lowered(self, step: PlannedStep) -> LoweredStatement:
-        return lowered(step, self._payloads, self._meta, self._dialect)
+        return self._lowered(step)
 
     def ordered_parameter_ceiling(self, step: PlannedStep) -> int | None:
         return ordered_parameter_ceiling(step, self._dialect)
 
     def lowered_within(self, step: PlannedStep, parameter_ceiling: int) -> LoweredStatement:
-        return lowered_within(step, parameter_ceiling, self._payloads, self._meta, self._dialect)
+        return _within(step, parameter_ceiling, self._lowered(step))
+
+    def _lowered(self, step: PlannedStep) -> LoweredStatement:
+        payload = _demanded(step, self._payloads)
+        if self._capture_insert is not None or self._capture_revision is not None:
+            self._capture(step, payload)
+        return compile_write_step(step, payload, self._meta, self._dialect)
+
+    def _capture(self, step: PlannedStep, payload: StepPayload) -> None:
+        capture_insert = self._capture_insert
+        if isinstance(step, PlannedInsert):
+            if capture_insert is not None:
+                for entry, prepared in zip(
+                    step.entries, cast("tuple[RowPayload, ...]", payload), strict=True
+                ):
+                    capture_insert(entry, _stored_document(prepared))
+            return
+        capture_revision = self._capture_revision
+        if isinstance(step, PlannedTemporalRevision) and capture_revision is not None:
+            capture_revision(step, _document_patches(cast("AssignmentPayload", payload)))
+
+    def _captured_row(self, entity: EntityIdentity, entry: WriteRow) -> RowPayload:
+        payload = _row_payload(self._payloads, entity, entry)
+        capture_insert = self._capture_insert
+        if capture_insert is not None:
+            capture_insert(entry, _stored_document(payload))
+        return payload
 
     def grouped_insert_start(self, step: PlannedStep) -> PlannedInsert | None:
         """``step`` where it can begin a grouped insert — a single-entry insert
@@ -127,9 +173,8 @@ class LoweringCursor:
         (entry,) = first.entries
         entity = first.entity
         members = entry.row.members
-        payloads = self._payloads
         builder = InsertStatementBuilder(
-            entity, entry, _row_payload(payloads, entity, entry), self._meta, self._dialect
+            entity, entry, self._captured_row(entity, entry), self._meta, self._dialect
         )
         binds = self._dialect.max_bind_parameters
         following: PlannedStep | None = None
@@ -139,7 +184,7 @@ class LoweringCursor:
             if joining is None:
                 break
             try:
-                builder.append(joining, _row_payload(payloads, entity, joining))
+                builder.append(joining, self._captured_row(entity, joining))
             except Exception as error:
                 return GroupedInsert(builder.finish(), None, error)
             following = None
@@ -151,10 +196,15 @@ def stream_physical(
     payloads: WritePayloadPreparer,
     meta: Metamodel,
     dialect: Dialect,
+    *,
+    capture_insert: Callable[[WriteRow, object | None], None] | None = None,
+    capture_revision: Callable[[PlannedTemporalRevision, PatchedDocument | None], None]
+    | None = None,
 ) -> Iterator[LoweredStatement]:
     """Each statement ``steps`` execute as, in order: a run of compatible
     single-entry inserts as the one statement inserting them all, and every
-    other step as the one statement it lowers to.
+    other step as the one statement it lowers to, each payload captured as
+    :class:`LoweringCursor` captures it.
 
     The runs are selected and lowered by the very cursor operations execution
     selects and lowers them by, so the statements a dry traversal of settled
@@ -162,7 +212,14 @@ def stream_physical(
     later insert's failure answers the statement holding the inserts before
     it, then raises that failure.
     """
-    cursor = LoweringCursor(steps, payloads, meta, dialect)
+    cursor = LoweringCursor(
+        steps,
+        payloads,
+        meta,
+        dialect,
+        capture_insert=capture_insert,
+        capture_revision=capture_revision,
+    )
     step = cursor.take()
     while step is not None:
         first = cursor.grouped_insert_start(step)
@@ -225,7 +282,12 @@ def lowered_within(
     A statement exceeding its promise is refused as a lowering failure rather
     than presented to transport selected on the strength of that promise.
     """
-    statement = lowered(step, payloads, meta, dialect)
+    return _within(step, parameter_ceiling, lowered(step, payloads, meta, dialect))
+
+
+def _within(
+    step: PlannedStep, parameter_ceiling: int, statement: LoweredStatement
+) -> LoweredStatement:
     binds = len(statement.binds)
     if binds > parameter_ceiling:
         raise SqlGenError(
@@ -269,6 +331,24 @@ def _row_payload(
     payloads: WritePayloadPreparer, entity: EntityIdentity, entry: WriteRow
 ) -> RowPayload:
     return payloads.row(entity, entry) if entry.prepared is None else entry.prepared
+
+
+def _stored_document(payload: RowPayload) -> object | None:
+    """The complete Structured Column document ``payload`` stores, or ``None``
+    where its Table has none."""
+    for contributor, value in zip(payload.contributors, payload.values, strict=True):
+        if isinstance(contributor, RelationalDocument):
+            return value
+    return None
+
+
+def _document_patches(payload: AssignmentPayload) -> PatchedDocument | None:
+    """The prepared patches ``payload`` applies to its row's Structured Column,
+    ``None`` where it leaves the document as stored."""
+    for value in payload.values:
+        if isinstance(value, PatchedDocument):
+            return value
+    return None
 
 
 def _generates(entry: WriteRow) -> bool:

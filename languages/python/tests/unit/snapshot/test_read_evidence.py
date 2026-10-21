@@ -707,7 +707,7 @@ def test_a_successful_flush_leaves_its_sources_observation_literal() -> None:
     node, hint = account_db(port).transact(fn)
     observation = cast("Any", hint).observation
     assert observation.evidence == VersionObservation(observed_version=4)
-    assert observation.invalidated and not observation.consumed
+    assert observation.invalidated
     assert (node.balance, node.version) == (Decimal("100.00"), 4)
 
 
