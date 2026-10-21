@@ -839,6 +839,12 @@ class PlannedTemporalRevision:
     Transaction-Time start. Only a row the attempt itself opened is revised in
     place; a row that existed before the attempt is closed instead, so its
     history survives.
+
+    ``predecessor_document_is_object`` records whether the revised row's
+    retained raw document was known to be an object. Only then can patching its
+    shared Structured Column be predicted (`m-temporal-write` *Ownership
+    disposal*), so lowering refuses a revision that patches the document
+    without it.
     """
 
     entity: EntityIdentity
@@ -846,6 +852,7 @@ class PlannedTemporalRevision:
     assignments: PlannedAssignments
     concurrency: TemporalConcurrency
     affected_rows: ExactCount
+    predecessor_document_is_object: bool
 
     def __post_init__(self) -> None:
         _require_one_milestone(self.entity, self.concurrency, self.affected_rows, "revision")

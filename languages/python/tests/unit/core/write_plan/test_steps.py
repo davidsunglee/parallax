@@ -422,6 +422,7 @@ def test_an_owned_revision_and_removal_each_address_one_current_milestone() -> N
             assignments=_BALANCE_SET,
             concurrency=UNGATED,
             affected_rows=two,
+            predecessor_document_is_object=False,
         )
     with pytest.raises(ValueError, match="addresses one current milestone"):
         PlannedTemporalRemoval(

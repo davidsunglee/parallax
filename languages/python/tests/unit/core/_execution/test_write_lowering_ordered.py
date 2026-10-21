@@ -124,6 +124,7 @@ def _effects(
             assignments=PlannedAssignments(attributes=revised),
             concurrency=gate,
             affected_rows=ExactCount(1, OPTIMISTIC_CONFLICT),
+            predecessor_document_is_object=True,
         ),
     ]
 

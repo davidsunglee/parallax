@@ -60,7 +60,11 @@ from parallax.core import (
 from parallax.core import predicate as oa
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work.instructions import WriteInstruction
-from parallax.core._execution._write_lowering import lowered
+from parallax.core._execution._write_lowering import (
+    lowered,
+    lowered_within,
+    ordered_parameter_ceiling,
+)
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import INFINITY as OPEN_BOUND
 from parallax.core.base import INT64, STRING, TIMESTAMP, FrozenMap
@@ -107,7 +111,13 @@ from parallax.core.write_plan import (
     WriteObservation,
     WritePlanningError,
 )
-from parallax.core.write_plan.payload import AssignmentPayload, PatchedDocument, RowPayload
+from parallax.core.write_plan.payload import (
+    AssignmentPayload,
+    PatchedDocument,
+    RowPayload,
+    WritePayloadPreparer,
+)
+from parallax.core.write_plan.plan import SettledWrite, WriteGroup, WritePlan
 from parallax.core.write_plan.steps import (
     ANY_COUNT,
     MAX_PLUS_ONE,
@@ -119,11 +129,13 @@ from parallax.core.write_plan.steps import (
     UNVERSIONED,
     ExactCount,
     KeyTarget,
+    MilestoneTarget,
     NewLineage,
     PlannedAssignments,
     PlannedDelete,
     PlannedRow,
     PlannedStep,
+    PlannedTemporalRevision,
     PlannedUpdate,
     ResolvedMutationSelection,
     SelfIncrement,
@@ -132,8 +144,10 @@ from parallax.core.write_plan.steps import (
     VersionGate,
     WriteRow,
 )
+from parallax.core.write_plan.steps import INFINITY as OPEN_END
 from parallax.descriptor import _records
 from tests._support.clock_probes import inert_instant
+from tests._support.db_port import ScriptedAdapter, Write, WriteCall
 from tests._support.lowering_probes import lower_instruction, lower_instruction_steps, lowered_steps
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY, observed_buffer, plan_steps
 from tests.unit._corpus_identity_support import corpus_object_key
@@ -141,6 +155,7 @@ from tests.unit._corpus_model_support import formed, records
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._document_layout_support import PERSON, document_model
 from tests.unit._metamodel_support import Declaration, attribute, identity, key, source
+from tests.unit.core._execution._write_step_support import open_flush, run_plan
 
 ACCOUNT = corpus_model("account")
 ORDERS = corpus_model("orders")
@@ -1700,6 +1715,149 @@ def test_a_revision_binds_the_very_values_its_prepared_patches_encode() -> None:
     (bound,) = (bind for bind in statement.binds if isinstance(bind, JsonDocument))
     assert bound.value is occurrence.value
     assert name.value == "Ada"
+
+
+# --------------------------------------------------------------------------- #
+# A temporal revision patches its row's shared Structured Column only where   #
+# expansion knew that row held an object there; the refusal comes at the      #
+# revision's own payload demand, once its assignments are prepared.          #
+# --------------------------------------------------------------------------- #
+_SPANS_DOCUMENT = corpus_model("buffered-sequence-layout-twin-document")
+_SPANS_COLUMNS = corpus_model("buffered-sequence-layout-twin-columns")
+_SEQUENCE_SPAN = EntityIdentity("parallax.compatibility", "SequenceSpan")
+
+
+def _span_attribute(name: str) -> AttributeIdentity:
+    return AttributeIdentity(_SEQUENCE_SPAN, name)
+
+
+def _span_revision(
+    assigned: Mapping[str, object], *, predecessor_document_is_object: bool, key: int = 1
+) -> PlannedTemporalRevision:
+    return PlannedTemporalRevision(
+        entity=_SEQUENCE_SPAN,
+        target=MilestoneTarget(
+            key_attributes=(_span_attribute("id"),),
+            key_values=(key,),
+            end_attributes=(_span_attribute("validEnd"), _span_attribute("txEnd")),
+            end_values=(OPEN_END, OPEN_END),
+        ),
+        assignments=PlannedAssignments(
+            attributes={_span_attribute(name): value for name, value in assigned.items()}
+        ),
+        concurrency=UNGATED,
+        affected_rows=ExactCount(expected=1, on_shortfall=STALE_WRITE),
+        predecessor_document_is_object=predecessor_document_is_object,
+    )
+
+
+class _CountingPreparer(LayoutPayloadPreparer):
+    __slots__ = ("prepared",)
+
+    def __init__(self, meta: Metamodel) -> None:
+        super().__init__(meta)
+        self.prepared: list[PlannedAssignments] = []
+
+    def assignments(
+        self, entity: EntityIdentity, assignments: PlannedAssignments
+    ) -> AssignmentPayload:
+        self.prepared.append(assignments)
+        return super().assignments(entity, assignments)
+
+
+def _lowered_alone(
+    step: PlannedStep, payloads: WritePayloadPreparer, meta: Metamodel
+) -> LoweredStatement:
+    return lowered(step, payloads, meta, POSTGRES)
+
+
+def _lowered_for_ordered_transport(
+    step: PlannedStep, payloads: WritePayloadPreparer, meta: Metamodel
+) -> LoweredStatement:
+    ceiling = ordered_parameter_ceiling(step, POSTGRES)
+    assert ceiling is not None
+    return lowered_within(step, ceiling, payloads, meta, POSTGRES)
+
+
+_ROUTES = pytest.mark.parametrize(
+    "lower", [_lowered_alone, _lowered_for_ordered_transport], ids=["alone", "ordered"]
+)
+
+
+@_ROUTES
+def test_a_revision_patching_a_document_not_known_to_be_an_object_is_refused_once_prepared(
+    lower: Callable[[PlannedStep, WritePayloadPreparer, Metamodel], LoweredStatement],
+) -> None:
+    step = _span_revision({"amount": 300}, predecessor_document_is_object=False)
+    payloads = _CountingPreparer(_SPANS_DOCUMENT)
+    with pytest.raises(SqlGenError, match="not known to be an object"):
+        lower(step, payloads, _SPANS_DOCUMENT)
+    assert [assignments is step.assignments for assignments in payloads.prepared] == [True]
+
+
+@_ROUTES
+def test_a_revision_patching_a_document_known_to_be_an_object_prepares_it_once(
+    lower: Callable[[PlannedStep, WritePayloadPreparer, Metamodel], LoweredStatement],
+) -> None:
+    step = _span_revision({"amount": 300}, predecessor_document_is_object=True)
+    payloads = _CountingPreparer(_SPANS_DOCUMENT)
+    statement = lower(step, payloads, _SPANS_DOCUMENT)
+    assert "jsonb_set(" in statement.sql
+    assert [assignments is step.assignments for assignments in payloads.prepared] == [True]
+
+
+@pytest.mark.parametrize(
+    ("meta", "assigned"),
+    [
+        (_SPANS_DOCUMENT, {"validStart": dt.datetime(2024, 3, 1, tzinfo=dt.UTC)}),
+        (_SPANS_COLUMNS, {"amount": 300}),
+    ],
+    ids=["document-direct-column", "columns"],
+)
+def test_a_revision_patching_no_document_lowers_whatever_its_predecessor_held(
+    meta: Metamodel, assigned: Mapping[str, object]
+) -> None:
+    step = _span_revision(assigned, predecessor_document_is_object=False)
+    statement = lowered(step, LayoutPayloadPreparer(meta), meta, POSTGRES)
+    assert statement.sql.startswith("update sequence_span set ")
+    assert "jsonb_set(" not in statement.sql
+
+
+def test_a_refused_revision_fails_its_group_after_earlier_groups_completed() -> None:
+    # Execution demands each step's payload at its own turn: the earlier group
+    # and the refused group's own earlier step have run, the refused group
+    # completes none of its writes, and no later group executes.
+    claims = (_Claim(), _Claim(), _Claim(), _Claim())
+    known = _span_revision({"amount": 300}, predecessor_document_is_object=True, key=1)
+    plan = WritePlan(
+        (
+            WriteGroup((SettledWrite(claim=claims[0]),), (known,)),
+            WriteGroup(
+                (SettledWrite(claim=claims[1]), SettledWrite(claim=claims[2])),
+                (
+                    _span_revision({"amount": 300}, predecessor_document_is_object=True, key=2),
+                    _span_revision({"amount": 300}, predecessor_document_is_object=False, key=3),
+                ),
+            ),
+            WriteGroup(
+                (SettledWrite(claim=claims[3]),),
+                (_span_revision({"amount": 300}, predecessor_document_is_object=True, key=4),),
+            ),
+        )
+    )
+    port = ScriptedAdapter(Write(), Write())
+    with open_flush() as flush, pytest.raises(SqlGenError, match="not known to be an object"):
+        run_plan(port, plan, flush, _SPANS_DOCUMENT)
+    assert [call.binds[-3] for call in port.calls if isinstance(call, WriteCall)] == [1, 2]
+    assert [claim.consumed for claim in claims] == [True, False, False, False]
+
+
+@dataclasses.dataclass
+class _Claim:
+    consumed: bool = False
+
+    def consume(self) -> None:
+        self.consumed = True
 
 
 def test_the_compiler_places_no_cell_its_layout_does_not_hold() -> None:

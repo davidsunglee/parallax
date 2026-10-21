@@ -657,6 +657,20 @@ nothing and keeps its start leaves it as it was. Where successors merge, the row
 that keeps an address is the merged one, so a revision or removal of an owned
 predecessor is chosen only once they have (*Merging produced successors*).
 
+Under Relational Document Layout a revision's document-resident assignments
+patch the stored Structured Column in place, so what the row holds afterward
+follows from the patches alone only where that column holds an object
+(`m-dialect` *Document mutation-expression form*). The revision therefore
+carries whether the predecessor it revises was retained holding an object
+document (`m-write-plan` *The Planned Step algebra*): an absent, SQL NULL, JSON
+null, array, or scalar document is not one. A revision whose prepared
+assignments patch the Structured Column of a predecessor not known to hold an
+object is refused as a lowering failure when its payload is demanded, before
+its statement executes. That is an execution failure (`m-unit-work` *Abort*):
+earlier Write Groups stay completed, its own group completes nothing, and no
+later group executes. A revision assigning only direct Columns, a successor
+insert, and a readless predicate update are unaffected.
+
 ### Merging produced successors
 
 Once every predecessor of one object is decided, the rows the write produces for

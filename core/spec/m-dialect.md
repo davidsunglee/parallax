@@ -477,14 +477,27 @@ it renders the sequence `m-sql` hands it, which is canonical logical placement
 order. A dialect MUST NOT reorder, deduplicate, or merge assignments.
 
 Both engines create only the **final** path segment: an assignment whose parent
-is absent, JSON null, or a non-object silently leaves the document unchanged.
-That is a bound this seam has to be given, not one it works around — and
+below the root is absent, JSON null, or a non-object silently leaves the
+document unchanged. That is a bound this seam has to be given, not one it works
+around — and
 `m-storage-layout` gives it: every assigned Document Path is one segment, whose
 parent is the Structured Column's own root object, which every governed row
 carries. A dialect therefore emits one call per assigned path and MUST NOT
 substitute an empty object, type-test a subtree, or write one back; assigning an
 occurrence stores the document the mutation supplied, and no stored state is read
 back into it.
+
+Over an object root, the expression replaces or adds each assigned top-level key
+and leaves every other key as stored, which is exactly what applying the same
+prepared patches in memory predicts (`m-document-codec`). A root that is not an
+object is external state no governed write produces, and there the engine's own
+result stands and the in-memory application, which builds an object, does not
+predict it. On Postgres a path into a JSON-null or scalar root fails with
+`22023`, a non-numeric segment into an array root fails with `22P02` while a
+numeric one replaces or appends an element, and a SQL NULL column stays SQL NULL.
+MariaDB's behavior at a non-object root is not established here. A temporal
+revision that patches a row not known to hold an object root is refused before
+it executes (`m-temporal-write` *Ownership disposal*).
 
 Because the bind-hole structure diverges — the same two assignments are four
 holes inside two nested Postgres calls and four holes inside one MariaDB call,

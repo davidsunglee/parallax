@@ -24,7 +24,8 @@ PlannedStep =
   | PlannedUpdate(entity, target, assignments, concurrency, affected_rows)
   | PlannedClose(entity, target, assignments, cause, concurrency, affected_rows)
   | PlannedDelete(entity, target, concurrency, affected_rows)
-  | PlannedTemporalRevision(entity, target, assignments, concurrency, affected_rows)
+  | PlannedTemporalRevision(entity, target, assignments, concurrency, affected_rows,
+                            predecessor_document_is_object)
   | PlannedTemporalRemoval(entity, target, concurrency, affected_rows)
   | PlannedTemporalGuard(entity, target, concurrency: TemporalGate, affected_rows)
 ```
@@ -50,7 +51,10 @@ object, driver value, physical column name, property name, or SQL ordering.
   opened, in place at its complete physical address. Its assignments carry
   writable payload and, on a Bitemporal row, a moved Valid-Time start; they never
   carry the logical key, an axis end, or the Transaction-Time start. Its expected
-  effect is exactly one row.
+  effect is exactly one row. It also records whether the predecessor it revises
+  was retained holding an object document, which decides whether its
+  document-resident assignments may execute (`m-temporal-write` *Ownership
+  disposal*).
 - **Planned Temporal Removal** physically removes one current milestone the
   attempt itself opened. Its expected effect is exactly one row. It removes
   uncommitted state of the attempt's own: a milestone that existed before the
