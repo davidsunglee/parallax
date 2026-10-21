@@ -166,6 +166,12 @@ _READLESS_PREDICATE_WRITE_SCENARIOS: Final[frozenset[str]] = frozenset(
         "m-batch-write-051",
         "m-batch-write-052",
         "m-batch-write-053",
+        "m-batch-write-056",
+        "m-batch-write-057",
+        "m-batch-write-058",
+        "m-batch-write-059",
+        "m-batch-write-060",
+        "m-batch-write-061",
     }
 )
 _GROUPED_PREDICATE_WRITE_SCENARIOS: Final[frozenset[str]] = frozenset({"m-batch-write-011"})
