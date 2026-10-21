@@ -558,11 +558,11 @@ def keyed_write(
     value no authority, and a source a read published keeps its own evidence
     whatever this transaction inserted.
 
-    An evidence refusal names the object the source's Read Evidence or
-    insertion authority names, or, for a source carrying neither, the one its
-    prepared row keys: both name their object by the rule a row is keyed by,
-    so a refusal at the verb and the settle at flush never name one object two
-    ways.
+    An evidence refusal names the object the source's Read Evidence names, or,
+    for a source carrying none, the one its prepared row keys — never a lapsed
+    insertion's, since a value derived from it since may key another row. Both
+    name their object by the rule a row is keyed by, so a refusal at the verb
+    and the settle at flush never name one object two ways.
 
     A source-backed write states no start of its own: a Bitemporal one starts
     at its source's finite Valid-Time pin, or at the anchor its insertion was
@@ -599,17 +599,17 @@ def keyed_write(
     if authorized:
         item = buffered_write(prepared.instruction, None, authority=authoring)
     else:
-        named = resolved.object_key
-        addressed = object_key(prepared.instruction, meta) if named is None else named
+        read = resolved.read_evidence
+        addressed = object_key(prepared.instruction, meta) if read is None else read.object_key
         # An identity row always states its object's key.
         assert addressed is not None
         evidence = uow.resolve_read_evidence(
             resolved.entity,
-            resolved.read_evidence,
+            read,
             mutation=mutation,
             object_key=addressed,
         )
-        item = buffered_write(prepared.instruction, evidence, source=resolved.read_evidence)
+        item = buffered_write(prepared.instruction, evidence, source=read)
     if mutation in AMEND_MUTATIONS and not prepared.assigned:
         return
     uow.buffer(item)
