@@ -420,6 +420,7 @@ def _live_memory(
     *,
     collect_at_page_boundary: bool,
 ) -> tuple[float, str, tuple[float, ...]]:
+    memory_instruments.require_own_interpreter("Snapshot live_memory")
     page_size = (
         (
             _page_size(path)
@@ -521,6 +522,7 @@ def _stress_timing(
 
 
 def _stress_memory(prepared: _PreparedStress, path: str) -> tuple[float, str, tuple[float, ...]]:
+    memory_instruments.require_own_interpreter("Snapshot stress_memory")
     if path.endswith("preparedSetKiB"):
 
         def planned(sample: Callable[[], None]) -> None:
@@ -668,6 +670,8 @@ def _cold_plan(
 ) -> tuple[float, str, tuple[float, ...]]:
     """``prepared``'s read compiled into its empty cache: each sample one
     compilation on a cache emptied outside the region it measures."""
+    if metric != "elapsedUs":
+        memory_instruments.require_own_interpreter("Snapshot cold_plan")
     if metric == "elapsedUs":
         milliseconds = _timed(
             prepared.plan, warmups=warmups, measured=measured, prepare=prepared.reset
@@ -729,6 +733,7 @@ def _traced(
     product keeps reachable, or the high-water mark it rose to, above the level
     the process settled at before it, with ``prepare`` restoring its
     precondition outside both."""
+    memory_instruments.require_own_interpreter("Snapshot traced")
     with untraced():
         prepare()
         work()
@@ -940,6 +945,8 @@ def _structural_read(
     it plans, materializes, and publishes ``READ_GEOMETRY_ROOTS`` freshly
     composed rows.
     """
+    if metric != "elapsedUsPerRoot":
+        memory_instruments.require_own_interpreter("Snapshot structural_read")
     roots = READ_GEOMETRY_ROOTS
     root = Database(port.open(), model)
     database = root.using_database_login()

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import datetime as dt
 import gc
+import sys
 from collections.abc import Callable
 from decimal import Decimal
 from typing import Any, Literal
@@ -59,6 +60,7 @@ from tests._support.db_port import (
     WriteCall,
     inserted_rows,
 )
+from tests._support.root_ownership import close_owned_roots
 from tests.unit._transact_support import (
     BALANCE,
     FIXED,
@@ -70,6 +72,11 @@ from tests.unit._transact_support import (
 from tests.unit._where_position_model import (
     WHERE_POSITION_META,
     WherePosition,
+)
+from tests.unit.memory_instruments import (
+    in_a_child_interpreter,
+    serve_one_measurement,
+    tracked_objects,
 )
 
 type _Concurrency = Literal["optimistic", "locking"]
@@ -575,15 +582,14 @@ def test_a_target_after_a_predicate_write_acquires_the_row_an_earlier_write_revi
 
 def _retained_alive() -> int:
     gc.collect()
-    return sum(1 for held in gc.get_objects() if type(held) is RetainedTargetState)
+    return sum(1 for held in tracked_objects() if type(held) is RetainedTargetState)
 
 
 class _Abandoned(Exception):
     pass
 
 
-@pytest.mark.parametrize("ends", ["committed", "abandoned"])
-def test_an_acquired_starting_row_lives_only_while_its_write_is_pending(ends: str) -> None:
+def _starting_row_lives_only_while_its_write_is_pending(ends: str) -> None:
     whole = _rectangle(_JAN, INFINITY_INSTANT)
     writes = (Write(times=4),) if ends == "committed" else ()
     port = ScriptedAdapter(Transact(Read(rows=[whole]), *writes))
@@ -601,6 +607,13 @@ def test_an_acquired_starting_row_lives_only_while_its_write_is_pending(ends: st
     else:
         _db(port).transact(fn, concurrency="locking")
     assert _retained_alive() == 0
+
+
+@in_a_child_interpreter
+def test_an_acquired_starting_row_lives_only_while_its_write_is_pending() -> None:
+    for ends in ("committed", "abandoned"):
+        with close_owned_roots():
+            _starting_row_lives_only_while_its_write_is_pending(ends)
 
 
 # --------------------------------------------------------------------------- #
@@ -1459,3 +1472,7 @@ def test_a_termination_states_its_key_alone() -> None:
 
     _db(port).transact(fn)
     assert _calls(port) == []
+
+
+if __name__ == "__main__":
+    serve_one_measurement(sys.argv[1])

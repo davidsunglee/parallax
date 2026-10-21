@@ -23,10 +23,11 @@ from typing import Any, cast
 
 import pytest
 
-from parallax.conformance import adapter, case_format, sweep
+from parallax.conformance import adapter, case_format
 from parallax.conformance.profile import profile_for
 from parallax.core.db_port import DatabaseConnection, Row, TransactionOutcome
 from parallax.core.dialect import POSTGRES, Dialect
+from tests._support.case_corpus import reachable_cases
 from tests._support.corpus import case_document
 from tests._support.db_port import ConnectsAsItself
 from tests._support.repo import validate_adapter_envelope
@@ -36,7 +37,7 @@ from tests._support.repo import validate_adapter_envelope
 # shape never needs, and the envelope still names the profile the request was made
 # against.
 _PROFILE = profile_for("pg-full")
-_REACHABLE_REJECTED = [c for c in sweep.reachable_cases() if c.shape == "rejected"]
+_REACHABLE_REJECTED = [c for c in reachable_cases() if c.shape == "rejected"]
 
 
 class _RefusingPort(ConnectsAsItself):

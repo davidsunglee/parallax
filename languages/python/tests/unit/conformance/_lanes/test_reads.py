@@ -11,7 +11,6 @@ from __future__ import annotations
 import dataclasses
 import datetime as dt
 import decimal
-import functools
 import re
 from collections.abc import Mapping
 from pathlib import Path
@@ -19,7 +18,7 @@ from typing import Any, Final, cast
 
 import pytest
 
-from parallax.conformance import case_format, sweep
+from parallax.conformance import case_format
 from parallax.conformance._lanes import reads
 from parallax.conformance._lifecycle_observation import lifecycle_run
 from parallax.conformance._mechanism.envelope import EngineError
@@ -36,6 +35,8 @@ from parallax.core.metamodel import (
     ValueObjectAttributeIdentity,
     ValueObjectIdentity,
 )
+from tests._support.case_corpus import case as corpus_case
+from tests._support.case_corpus import cases as corpus_cases
 from tests.unit.conformance._recording_ports import FakeDbPort, QueueDbPort
 
 
@@ -63,23 +64,8 @@ def _entry(entry: dict[str, object], key: str) -> MappingRow:
     return cast("MappingRow", entry[key])
 
 
-@functools.cache
-def _corpus() -> tuple[case_format.Case, ...]:
-    return tuple(case_format.load_cases())
-
-
-@functools.cache
-def _reachable_by_id() -> Mapping[str, case_format.Case]:
-    return {case.case_id: case for case in sweep.reachable_cases(cases=list(_corpus()))}
-
-
-@functools.cache
-def _corpus_by_id() -> Mapping[str, case_format.Case]:
-    return {case.case_id: case for case in _corpus()}
-
-
 def _case(case_id: str) -> case_format.Case:
-    return _reachable_by_id()[case_id]
+    return corpus_case(case_id, reachable=True)
 
 
 def _load_case(case_id: str) -> case_format.Case:
@@ -87,7 +73,7 @@ def _load_case(case_id: str) -> case_format.Case:
     # IMPLEMENTED_MODULES` reachability: these lane-level tests exercise the
     # entry point on its own terms, never gated on whether the case has ALSO
     # been flipped visible in the sweep.
-    return _corpus_by_id()[case_id]
+    return corpus_case(case_id)
 
 
 def test_compile_read_case_matches_golden() -> None:
@@ -223,7 +209,7 @@ def test_the_compile_lane_refuses_a_deferred_execution_feature() -> None:
 
 
 def test_compile_rejects_non_read_shape() -> None:
-    write_seq = next(c for c in _corpus() if c.shape == "writeSequence")
+    write_seq = next(c for c in corpus_cases() if c.shape == "writeSequence")
     with pytest.raises(EngineError, match="only `read`-shape compile"):
         reads.compile_read_case(write_seq, "postgres")
 

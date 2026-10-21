@@ -320,6 +320,7 @@ def _timed(driver: Driver) -> int:
 
 
 def _peak(driver: Driver) -> int:
+    memory_instruments.require_own_interpreter("write-lowering peak")
     marks: list[int] = []
 
     def opened() -> None:
@@ -383,6 +384,7 @@ class _RegionalPeak:
         self.highest = 0
 
     def open(self) -> None:
+        memory_instruments.require_own_interpreter("write-lowering regional peak")
         gc.collect()
         gc.collect()
         self._floor = tracemalloc.get_traced_memory()[0]

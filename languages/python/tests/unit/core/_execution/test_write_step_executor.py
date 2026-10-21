@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import datetime as dt
 import gc
+import sys
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Final
@@ -57,6 +58,11 @@ from tests.unit.core._execution._write_step_support import (
     physical,
     run_plan,
     step_executor,
+)
+from tests.unit.memory_instruments import (
+    in_a_child_interpreter,
+    serve_one_measurement,
+    tracked_objects,
 )
 
 _GROUPED_INSERT_CAP: Final = "parallax.core._execution._write_lowering._GROUPED_INSERT_ROWS"
@@ -285,10 +291,11 @@ def test_a_group_whose_grouped_statement_fails_completes_nothing_and_prepares_no
 def _builders() -> set[int]:
     gc.collect()
     return {
-        id(item) for item in gc.get_objects() if type(item).__name__ == "InsertStatementBuilder"
+        id(item) for item in tracked_objects() if type(item).__name__ == "InsertStatementBuilder"
     }
 
 
+@in_a_child_interpreter
 def test_a_grouped_run_keeps_no_builder_alive_once_it_ran_or_its_failure_is_released() -> None:
     before = _builders()
     port = ScriptedAdapter(Write(affected=3))
@@ -299,3 +306,7 @@ def test_a_grouped_run_keeps_no_builder_alive_once_it_ran_or_its_failure_is_rele
     assert isinstance(executed.raised, SqlGenError)
     executed.raised = None
     assert _builders() <= before
+
+
+if __name__ == "__main__":
+    serve_one_measurement(sys.argv[1])

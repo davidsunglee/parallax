@@ -74,7 +74,11 @@ default:
 # its line at all, which the contract permits of a non-blocking command and which
 # says nothing about any gate above it.
 [doc("Merge gate: every blocking check a merge waits on.")]
-check: check-gates check-dbfree check-db report-check-summary
+check: check-gates check-lanes report-check-summary
+
+[private]
+[parallel]
+check-lanes: check-dbfree check-db
 
 [doc("Complete gate: the merge gate plus the cost class CI also runs.")]
 check-all: check check-cost report-check-all-summary
@@ -289,13 +293,19 @@ harness-format:
 python-check: python-check-dbfree python-check-db python-check-cost
 
 [doc("Every Python check that needs no live database.")]
-python-check-dbfree: python-format-check python-lint python-typecheck python-check-imports python-check-database-access python-check-dead-code python-test-dbfree python-coverage-diff python-check-distribution-metadata python-check-lock python-audit python-audit-dependencies
+python-check-dbfree: python-check-static python-check-coverage
 
 [doc("Every Python check that needs a live database (Docker).")]
 python-check-db: python-test-db
 
 [doc("Every Python check needing an interpreter no other test shares, or the committed cost evidence.")]
 python-check-cost shard="1/1": python-check-instrument-access python-check-evidence (python-test-cost shard)
+
+[doc("Independent Python source, packaging, and dependency validation.")]
+python-check-static: python-format-check python-lint python-typecheck python-check-database-access python-check-dead-code python-check-distribution-metadata python-check-lock python-audit python-audit-dependencies
+
+[doc("Database-free test coverage and the source boundaries its exemptions require.")]
+python-check-coverage: python-check-imports python-coverage-diff
 
 [metadata("runtime:slow", "scheduling:dbfree")]
 [doc("Every Python test whose fixture closure reaches no database, plus branch coverage.")]

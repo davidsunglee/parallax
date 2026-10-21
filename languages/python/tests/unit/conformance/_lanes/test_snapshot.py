@@ -14,14 +14,13 @@ import copy
 import dataclasses
 import datetime as dt
 import decimal
-import functools
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, cast
 
 import pytest
 
-from parallax.conformance import case_format, models, sweep
+from parallax.conformance import case_format, models
 from parallax.conformance._database_control import CaseDatabase
 from parallax.conformance._lanes import snapshot
 from parallax.conformance._lifecycle_observation import lifecycle_run
@@ -52,41 +51,14 @@ from parallax.core.metamodel import (
     ValueObjectShapeKey,
 )
 from parallax.core.temporal_read import Pin
+from tests._support.case_corpus import case as corpus_case
 from tests._support.db_port import body_outcome
 from tests.unit._metamodel_support import Declaration, attribute, key, source
 from tests.unit.conformance._recording_ports import FakeDbPort, FakeWritePort, QueueDbPort
 
 
-# One corpus read serves the whole module, and both indexes project it: what
-# they answer is shared between tests, so a test that edits a document deep-copies
-# it first.
-@functools.cache
-def _corpus() -> tuple[case_format.Case, ...]:
-    return tuple(case_format.load_cases())
-
-
-def _by_id(cases: Sequence[case_format.Case]) -> Mapping[str, case_format.Case]:
-    # A case id is unique within its module, so a collision here means two case
-    # files claim one id; keying them into a dict would silently resolve every
-    # lookup to whichever file sorts last.
-    index: dict[str, case_format.Case] = {}
-    for case in cases:
-        claimed = index.setdefault(case.case_id, case)
-        if claimed is not case:
-            raise ValueError(
-                f"case id {case.case_id!r} is claimed by both "
-                f"{claimed.path.name} and {case.path.name}"
-            )
-    return index
-
-
-@functools.cache
-def _reachable_by_id() -> Mapping[str, case_format.Case]:
-    return _by_id(sweep.reachable_cases(cases=list(_corpus())))
-
-
 def _case(case_id: str) -> case_format.Case:
-    return _reachable_by_id()[case_id]
+    return corpus_case(case_id, reachable=True)
 
 
 def _synthetic_write(shape: str, document: dict[str, object]) -> case_format.Case:

@@ -7,14 +7,13 @@ from __future__ import annotations
 
 import dataclasses
 import decimal
-import functools
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from typing import Any, cast
 
 import pytest
 
-from parallax.conformance import case_format, models, sweep
+from parallax.conformance import case_format, models
 from parallax.conformance._actual_wire import ActualWireProjection
 from parallax.core import inheritance, storage_layout
 from parallax.core.base import INFINITY
@@ -26,35 +25,11 @@ from parallax.core.metamodel import (
 from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.wire import WireEncodingError
 from parallax.core.write_plan import ObjectKey
-
-
-@functools.cache
-def _corpus() -> tuple[case_format.Case, ...]:
-    return tuple(case_format.load_cases())
-
-
-def _by_id(cases: Sequence[case_format.Case]) -> Mapping[str, case_format.Case]:
-    # A case id is unique within its module, so a collision here means two case
-    # files claim one id; keying them into a dict would silently resolve every
-    # lookup to whichever file sorts last.
-    index: dict[str, case_format.Case] = {}
-    for case in cases:
-        claimed = index.setdefault(case.case_id, case)
-        if claimed is not case:
-            raise ValueError(
-                f"case id {case.case_id!r} is claimed by both "
-                f"{claimed.path.name} and {case.path.name}"
-            )
-    return index
-
-
-@functools.cache
-def _reachable_by_id() -> Mapping[str, case_format.Case]:
-    return _by_id(sweep.reachable_cases(cases=list(_corpus())))
+from tests._support.case_corpus import case as corpus_case
 
 
 def _case(case_id: str) -> case_format.Case:
-    return _reachable_by_id()[case_id]
+    return corpus_case(case_id, reachable=True)
 
 
 def test_run_read_case_wire_renders_managed_row_values() -> None:

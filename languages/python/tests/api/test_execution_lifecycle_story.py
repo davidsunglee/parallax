@@ -8,7 +8,7 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Any
 
-from parallax.conformance import case_format, engine, execution_lifecycle_stories
+from parallax.conformance import engine, execution_lifecycle_stories
 from parallax.conformance._lifecycle_recording import RecordingLifecycleProvider
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.story_models import Account
@@ -30,6 +30,7 @@ from parallax.core.execution_lifecycle import (
     RootExecution,
 )
 from parallax.snapshot import connect
+from tests._support.case_corpus import case as corpus_case
 from tests._support.corpus import case_fixtures
 from tests._support.root_ownership import own_root
 
@@ -37,7 +38,7 @@ _CASE_ID = "m-execution-lifecycle-001"
 
 
 def _seeded(profile_run: Any) -> Any:
-    case = next(case for case in case_format.load_cases() if case.case_id == _CASE_ID)
+    case = corpus_case(_CASE_ID)
     profile_run.reset(engine.load_case_setup_metamodel(case), case_fixtures(case))
     return profile_run.port
 

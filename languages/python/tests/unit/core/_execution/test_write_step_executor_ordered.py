@@ -16,6 +16,7 @@ says the transport answered.
 from __future__ import annotations
 
 import gc
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from decimal import Decimal
@@ -97,6 +98,11 @@ from tests.unit.core._execution._write_step_support import (
     slot,
     statement,
     step_executor,
+)
+from tests.unit.memory_instruments import (
+    in_a_child_interpreter,
+    serve_one_measurement,
+    tracked_objects,
 )
 
 _CAP = "parallax.core._execution._write_step_executor._ORDERED_STATEMENTS"
@@ -886,9 +892,10 @@ class _Counting:
 
 def _alive(*names: str) -> set[int]:
     gc.collect()
-    return {id(item) for item in gc.get_objects() if type(item).__name__ in names}
+    return {id(item) for item in tracked_objects() if type(item).__name__ in names}
 
 
+@in_a_child_interpreter
 def test_an_observed_run_leaves_neither_its_invocation_nor_its_observation_alive() -> None:
     kinds = ("OrderedInvocation", "_LiveOrderedCalls")
     before = _alive(*kinds)
@@ -900,3 +907,7 @@ def test_an_observed_run_leaves_neither_its_invocation_nor_its_observation_alive
     # Every call started and finished, and none of it outlived the execution.
     assert provider.events >= 80
     assert _alive(*kinds) <= before
+
+
+if __name__ == "__main__":
+    serve_one_measurement(sys.argv[1])

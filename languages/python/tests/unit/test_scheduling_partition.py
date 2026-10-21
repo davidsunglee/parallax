@@ -166,7 +166,7 @@ def test_the_deployed_cells_partition_the_cost_class_and_leave_the_rest_whole() 
     # whole class in collection order, the stored durations, and the cell count —
     # hold every cost item exactly once and none is empty (§9). One real sharded
     # session pins the prediction: its cost items are its cell's part, and its
-    # other items are exactly the unsharded session's, which is what confines
+    # other items are exactly the full collection's, which is what confines
     # `--shard` to the class CI splits.
     cells = _deployed_cells()
     parsed = [cost_durations.index_and_count(cell) for cell in cells]
@@ -175,9 +175,10 @@ def test_the_deployed_cells_partition_the_cost_class_and_leave_the_rest_whole() 
     # Halfway along the vector: neither the first nor the last cell, so a hook
     # that ran one end of the vector whatever cell it was given fails here.
     spot_checked = cells[len(cells) // 2]
-    cost_class, whole, under_one_cell = selections(
-        [("cost", WHOLE_CLASS), (None, WHOLE_CLASS), (None, spot_checked)]
-    )
+    cost_session, sharded_session = selections([("cost", WHOLE_CLASS), (None, spot_checked)])
+    cost_class = cost_session.selected
+    whole = cost_session.collected
+    under_one_cell = sharded_session.selected
     shard_of = cost_durations.shard_of_each(
         cost_durations.weights(cost_class, cost_durations.known()), len(cells)
     )

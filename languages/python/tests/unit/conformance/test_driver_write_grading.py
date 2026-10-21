@@ -5,12 +5,13 @@ from __future__ import annotations
 
 import pytest
 
-from parallax.conformance import case_format, engine
+from parallax.conformance import engine
+from tests._support.case_corpus import case as corpus_case
 from tests._support.driver_writes import RecordingCaseDatabase, assert_driver_write_zero_signs
 from tests._support.sweep_goldens import write_golden_statements
 from tests.unit.conformance._recording_ports import FakeWritePort
 
-_CASE = next(case for case in case_format.load_cases() if case.case_id == "m-core-010")
+_CASE = corpus_case("m-core-010")
 _GOLDEN = write_golden_statements(_CASE)
 
 

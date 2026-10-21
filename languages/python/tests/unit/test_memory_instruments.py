@@ -8,7 +8,11 @@ from pathlib import Path
 
 import pytest
 
-from tests.unit.memory_instruments import OWN_INTERPRETER_VARIABLE, require_own_interpreter
+from tests.unit.memory_instruments import (
+    OWN_INTERPRETER_VARIABLE,
+    require_own_interpreter,
+    tracked_objects,
+)
 
 
 def test_a_reader_refuses_a_process_no_boundary_started(
@@ -17,6 +21,16 @@ def test_a_reader_refuses_a_process_no_boundary_started(
     monkeypatch.delenv(OWN_INTERPRETER_VARIABLE, raising=False)
     with pytest.raises(RuntimeError, match="in_a_child_interpreter"):
         require_own_interpreter("a reader")
+
+
+def test_heap_enumeration_refuses_a_process_no_boundary_started(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv(OWN_INTERPRETER_VARIABLE, raising=False)
+    # Reaching the reader through a helper must enforce the same boundary.
+    read = tracked_objects
+    with pytest.raises(RuntimeError, match="in_a_child_interpreter"):
+        read()
 
 
 _BOUNDARY_PROBE = (

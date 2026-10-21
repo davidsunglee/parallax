@@ -59,6 +59,7 @@ from parallax.core.execution import (
 from parallax.core.sql_gen import LoweredStatement
 from parallax.snapshot import Database, ReadOnlyTxnContext, ScopedDatabase, TxnContext
 from tests._support.adoption import raises_contextualized
+from tests._support.case_corpus import case as corpus_case
 from tests._support.db_port import (
     ConnectsAsItself,
     Ordered,
@@ -855,7 +856,7 @@ _ROOT_WITNESS_ATTEMPTS: dict[str, tuple[int, str, str, int]] = {
 def test_a_root_configured_witness_resolves_its_effective_options_and_attempts(
     case_id: str,
 ) -> None:
-    case = next(c for c in case_format.load_cases() if c.case_id == case_id)
+    case = corpus_case(case_id)
     max_retries, concurrency, isolation, attempts = _ROOT_WITNESS_ATTEMPTS[case_id]
     effective = case_format.effective_options(case)
     assert effective == TxnOptions(
@@ -908,7 +909,7 @@ def test_every_attempt_of_a_root_configured_case_opens_at_the_resolved_level(
     # level EVERY attempt was opened at — the retried attempt of a deadlock case
     # included — and it is the level the case resolves for itself, whether that
     # value came from the root, from the call, or from the call over the root.
-    case = next(c for c in case_format.load_cases() if c.case_id == case_id)
+    case = corpus_case(case_id)
     fault = boundary_runner.fault_kind(case)
     outcome = boundary_runner.outcome(case, POSTGRES)
     assert outcome is not None

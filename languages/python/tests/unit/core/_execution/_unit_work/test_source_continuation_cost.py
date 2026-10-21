@@ -1,5 +1,4 @@
-"""What a writable attempt keeps of the sources its reads publish (`cost`
-class for the byte readings).
+"""What a writable attempt keeps of the sources its reads publish.
 
 A Non-Temporal source's authority continues through the attempt's own
 completed writes, and ends with a completed deletion of its object, so a read
@@ -20,10 +19,9 @@ from __future__ import annotations
 import gc
 import sys
 import tracemalloc
+import weakref
 from collections.abc import Callable
 from typing import Any, Final
-
-import pytest
 
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.core._execution._unit_work._write_ownership import (
@@ -48,6 +46,7 @@ from tests.unit.memory_instruments import (
     retained,
     retained_increment,
     serve_one_measurement,
+    tracked_objects,
 )
 
 _FEW: Final = 8
@@ -154,9 +153,10 @@ def test_a_registration_keeps_none_of_the_values_its_read_published() -> None:
     def body(tx: Any) -> None:
         published = tx.find(mm.Person.where(mm.Person.id >= 1)).results()
         evidence = [_evidence_of(value) for value in published]
+        alive = [weakref.ref(value) for value in published]
         del published
         gc.collect()
-        assert not any(isinstance(held, mm.Person) for held in gc.get_objects())
+        assert all(reference() is None for reference in alive)
         assert len(evidence) == _MANY
 
     _after_reinsertion(_MANY, body, Read(rows=_ROWS[_MANY]))
@@ -199,17 +199,14 @@ def _amending(count: int) -> tuple[Any, ...]:
 
 def _held_for_continuation() -> tuple[int, int]:
     gc.collect()
-    objects = gc.get_objects()
+    objects = tracked_objects()
     return (
         sum(1 for held in objects if isinstance(held, _Origin)),
         sum(1 for held in objects if isinstance(held, _CurrentRows)),
     )
 
 
-@pytest.mark.parametrize("delivery", ["eager", "stream"])
-def test_a_temporal_read_holds_nothing_for_continuation_until_a_write_changes_its_state(
-    delivery: str,
-) -> None:
+def _temporal_read_holds_nothing_for_continuation(delivery: str) -> None:
     rows = _POSITIONS[_MANY]
     reads = [Read(rows=rows)] if delivery == "eager" else paged_reads(rows, size=BATCH)
     port = ScriptedAdapter(Transact(*reads, *_amending(_WRITTEN)))
@@ -230,6 +227,12 @@ def test_a_temporal_read_holds_nothing_for_continuation_until_a_write_changes_it
     # Each written object's changed state has one origin, and the rows its
     # write produced are held for it alone.
     assert held == [(0, 0), (_WRITTEN, _WRITTEN)]
+
+
+@in_a_child_interpreter
+def test_a_temporal_read_holds_nothing_for_continuation_until_a_write_changes_its_state() -> None:
+    for delivery in ("eager", "stream"):
+        _temporal_read_holds_nothing_for_continuation(delivery)
 
 
 def _writing_a_few(count: int) -> Seam:

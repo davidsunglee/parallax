@@ -13,7 +13,7 @@ read a clock, or construct anything at all.
 
 from __future__ import annotations
 
-import gc
+import sys
 from collections.abc import Sequence
 from decimal import Decimal
 from types import MethodType
@@ -79,6 +79,11 @@ from tests._support.db_port import (
 )
 from tests._support.root_ownership import own_root
 from tests.unit._transact_support import ACCOUNT, FIND_SQL_UNLOCKED, FIXED, NEW_ROW, ORDERS
+from tests.unit.memory_instruments import (
+    in_a_child_interpreter,
+    serve_one_measurement,
+    tracked_objects,
+)
 
 _ORDER_ROW: MappingRow = {
     "id": 1,
@@ -568,6 +573,7 @@ def test_the_default_path_never_sizes_the_rows_it_is_handed() -> None:
     assert _Rows.sizings == 0
 
 
+@in_a_child_interpreter
 def test_the_default_path_binds_no_method_to_enter_or_leave_a_scope() -> None:
     # `with` reaches `__enter__`/`__exit__` through the descriptor protocol, so
     # an ordinary method pair would have the interpreter build a method object
@@ -581,7 +587,7 @@ def test_the_default_path_binds_no_method_to_enter_or_leave_a_scope() -> None:
     ):
         bound = [
             obj
-            for obj in gc.get_objects()
+            for obj in tracked_objects()
             if isinstance(obj, MethodType) and (obj.__self__ is read or obj.__self__ is call)
         ]
     assert bound == []
@@ -772,3 +778,7 @@ def test_a_participating_reads_started_event_carries_no_edition_of_its_own() -> 
     (started,) = [event for event in root.events if isinstance(event, ReadStarted)]
     assert started.parent_activity_id is not None
     assert started.edition is None
+
+
+if __name__ == "__main__":
+    serve_one_measurement(sys.argv[1])

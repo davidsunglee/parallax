@@ -11,24 +11,18 @@ from __future__ import annotations
 
 import datetime as dt
 import decimal
-import functools
-from collections.abc import Mapping
 
-from parallax.conformance import case_format, engine, sweep
+from parallax.conformance import case_format, engine
 from parallax.conformance._lanes import scenario, snapshot
 from parallax.conformance._lifecycle_observation import lifecycle_run
 from parallax.conformance._mechanism import case_document
 from parallax.core.db_port import MappingRow
+from tests._support.case_corpus import case as corpus_case
 from tests.unit.conformance._recording_ports import FakeWritePort
 
 
-@functools.cache
-def _reachable_by_id() -> Mapping[str, case_format.Case]:
-    return {case.case_id: case for case in sweep.reachable_cases(cases=case_format.load_cases())}
-
-
 def _case(case_id: str) -> case_format.Case:
-    return _reachable_by_id()[case_id]
+    return corpus_case(case_id, reachable=True)
 
 
 _KEYED_SCENARIO = "m-unit-work-001"

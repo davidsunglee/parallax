@@ -7,6 +7,8 @@ import tracemalloc
 from contextlib import redirect_stdout
 from typing import cast
 
+import pytest
+
 import write_lowering_overhead
 import write_lowering_reading
 from parallax.core import document_codec
@@ -16,6 +18,7 @@ from parallax.core.metamodel import Multiplicity
 from parallax.core.write_payload import _preparer as payload_preparer
 from tests.unit import _write_lowering_support as lowering_support
 from tests.unit.memory_instruments import (
+    OWN_INTERPRETER_VARIABLE,
     in_a_child_interpreter,
     serve_one_measurement,
     untraced,
@@ -118,12 +121,16 @@ def test_a_cross_object_child_answers_exactly_the_reports_flush_cells() -> None:
     } == set(write_lowering_overhead.CROSS_OBJECT_CASE_NAMES)
 
 
-def test_a_stopwatch_sums_its_regions_and_a_regional_peak_keeps_the_highest_rise() -> None:
+def test_a_stopwatch_sums_its_regions() -> None:
     stopwatch = write_lowering_reading._Stopwatch()  # pyright: ignore[reportPrivateUsage] - instrument under test
     for _ in range(2):
         stopwatch.open()
         stopwatch.close()
     assert stopwatch.total >= 0
+
+
+@in_a_child_interpreter
+def test_a_regional_peak_keeps_the_highest_rise() -> None:
     peak = write_lowering_reading._RegionalPeak()  # pyright: ignore[reportPrivateUsage] - instrument under test
     held: list[bytearray] = []
     tracemalloc.start()
@@ -139,6 +146,15 @@ def test_a_stopwatch_sums_its_regions_and_a_regional_peak_keeps_the_highest_rise
     finally:
         tracemalloc.stop()
     assert 1 << 20 <= peak.highest < 1 << 21
+
+
+def test_a_regional_peak_refuses_a_shared_interpreter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv(OWN_INTERPRETER_VARIABLE, raising=False)
+    peak = write_lowering_reading._RegionalPeak()  # pyright: ignore[reportPrivateUsage] - instrument boundary under test
+    with pytest.raises(RuntimeError, match="in_a_child_interpreter"):
+        peak.open()
 
 
 def _reading(name: str) -> dict[str, object]:

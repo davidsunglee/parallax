@@ -12,7 +12,6 @@ import copy
 import dataclasses
 import datetime as dt
 import decimal
-import functools
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, cast
@@ -53,18 +52,14 @@ from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.metamodel import AttributeIdentity
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.write_plan import ObjectKey
+from tests._support.case_corpus import case as corpus_case
 from tests._support.db_port import body_outcome
 from tests.unit.conformance._coverage_rows_support import coverage_members, read_coverage
 from tests.unit.conformance._recording_ports import FakeWritePort
 
 
-@functools.cache
-def _corpus_by_id() -> Mapping[str, case_format.Case]:
-    return {case.case_id: case for case in case_format.load_cases()}
-
-
 def _load_case(case_id: str) -> case_format.Case:
-    return _corpus_by_id()[case_id]
+    return corpus_case(case_id)
 
 
 class _CorruptionPort:

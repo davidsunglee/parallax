@@ -8,22 +8,16 @@ with its Clock-context ``at`` dropped.
 
 from __future__ import annotations
 
-import functools
 from pathlib import Path
 
-from parallax.conformance import case_format, sweep
+from parallax.conformance import case_format
 from parallax.conformance._mechanism import case_document
-
-
-@functools.cache
-def _corpus() -> tuple[case_format.Case, ...]:
-    return tuple(case_format.load_cases())
+from tests._support.case_corpus import case as corpus_case
+from tests._support.case_corpus import cases as corpus_cases
 
 
 def _case(case_id: str) -> case_format.Case:
-    return next(
-        case for case in sweep.reachable_cases(cases=list(_corpus())) if case.case_id == case_id
-    )
+    return corpus_case(case_id, reachable=True)
 
 
 def _synthetic(document: dict[str, object]) -> case_format.Case:
@@ -39,7 +33,7 @@ def _synthetic(document: dict[str, object]) -> case_format.Case:
 
 def test_eligibility_reads_the_case_declaration() -> None:
     assert case_document.eligibility(_case("m-value-object-001")) is None
-    cases = _corpus()
+    cases = corpus_cases()
     run_only = [c for c in cases if case_document.eligibility(c) is not None]
     assert run_only, "the corpus declares at least one run-only case"
     first = case_document.eligibility(run_only[0])

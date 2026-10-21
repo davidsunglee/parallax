@@ -20,13 +20,14 @@ contributes to the database-free branch-coverage gate even though the rest of
 
 from __future__ import annotations
 
-from parallax.conformance import case_format, sweep
+from parallax.conformance import case_format
 from parallax.conformance.claim import SNAPSHOT_CLAIM
 from parallax.core._execution._features import (
     _DEFERRED_EXECUTION_FEATURES,  # pyright: ignore[reportPrivateUsage] - the inventory is package-private on purpose; nothing but this proof reads it
 )
+from tests._support.case_corpus import reachable_cases
 
-_REACHABLE = sweep.reachable_cases()
+_REACHABLE = reachable_cases()
 
 
 def test_the_inventory_is_nonempty_free_form_feature_tags() -> None:

@@ -155,8 +155,25 @@ jobs:
           PARALLAX_DATABASES: ${{ matrix.database }}
         run: just harness-check-db
 
-  # Every Python check that needs no live database. No Docker.
-  python-check-dbfree:
+  # Static validation runs beside the tests; their canonical aggregates have
+  # disjoint execution owners, including the native-source prerequisites.
+  python-check-static:
+    runs-on: ubuntu-latest
+    env:
+      UV_FROZEN: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: extractions/setup-just@v4
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.14"
+      - name: Sync Python workspace (frozen)
+        working-directory: languages/python
+        run: uv sync --frozen
+      - name: just python-check-static
+        run: just python-check-static
+
+  python-check-coverage:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -177,17 +194,12 @@ jobs:
       - name: Sync Python workspace (frozen)
         working-directory: languages/python
         run: uv sync --frozen
-
-      # The latest supported interpreter owns the complete database-free gate,
-      # including the branch-coverage and diff-coverage verdicts.
-      - name: just python-check-dbfree
+      - name: just python-check-coverage
         if: matrix.python-version == '3.14'
-        run: just python-check-dbfree
+        run: just python-check-coverage
 
-      # The previous supported interpreter proves runtime compatibility without
-      # recomputing coverage. Before Python 3.14, coverage.py cannot use
-      # sys.monitoring for branch coverage and falls back to the slower C tracer.
-      # Remove this step and the condition above when Python 3.13 rolls off.
+      # Python 3.13 proves runtime compatibility without the slower branch
+      # tracer; the latest interpreter owns both coverage verdicts above.
       - name: just python-test-dbfree
         if: matrix.python-version != '3.14'
         env:
@@ -236,6 +248,7 @@ jobs:
         shard: ["1/6", "2/6", "3/6", "4/6", "5/6", "6/6"]
     env:
       UV_FROZEN: "1"
+      PYTEST_ADDOPTS: "--durations=0 --junitxml=reports/cost-tests.xml -o junit_duration_report=call"
     steps:
       - uses: actions/checkout@v7
       - uses: extractions/setup-just@v4
@@ -247,6 +260,14 @@ jobs:
         run: uv sync --frozen
       - name: just python-test-cost (shard ${{ matrix.shard }})
         run: just python-test-cost ${{ matrix.shard }}
+
+      - name: Retain cost test durations
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: cost-test-durations-${{ github.run_attempt }}-${{ strategy.job-index }}
+          path: languages/python/reports/cost-tests.xml
+          retention-days: 7
 
   # The cost class's confinement check, beside the tests it confines.
   python-check-instrument-access:

@@ -6,18 +6,15 @@ Everything the runner does not require lives under ``_support/``.
 from __future__ import annotations
 
 import os
-import subprocess
 import sys
 from collections.abc import Iterator
 from contextlib import ExitStack
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
 from tests._support import committed_evidence, cost_durations
-from tests._support.distributions import ALL_PACKAGES, Wheelhouse
-from tests._support.repo import PY_ROOT
+from tests._support.distributions import Wheelhouse, build_wheelhouse
 from tests._support.root_ownership import close_owned_roots
 
 if TYPE_CHECKING:
@@ -294,31 +291,9 @@ def pytest_terminal_summary(terminalreporter: Any) -> None:
 
 
 @pytest.fixture(scope="session")
-def wheelhouse(tmp_path_factory: pytest.TempPathFactory) -> Wheelhouse:
-    """Build every distribution wheel once per session into a temp directory."""
-    out = tmp_path_factory.mktemp("wheelhouse")
-    for package in ALL_PACKAGES:
-        subprocess.run(
-            [
-                "uv",
-                "build",
-                "--package",
-                package,
-                "--wheel",
-                "--python",
-                sys.executable,
-                "--out-dir",
-                str(out),
-            ],
-            cwd=PY_ROOT,
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-    wheels: dict[str, Path] = {}
-    for package in ALL_PACKAGES:
-        dist = package.replace("-", "_")
-        matches = sorted(out.glob(f"{dist}-*.whl"))
-        assert matches, f"no wheel built for {package}"
-        wheels[package] = matches[-1]
-    return Wheelhouse(directory=out, wheels=wheels)
+def wheelhouse(
+    tmp_path_factory: pytest.TempPathFactory, request: pytest.FixtureRequest
+) -> Wheelhouse:
+    base = tmp_path_factory.getbasetemp()
+    shared = base.parent if hasattr(request.config, "workerinput") else base
+    return build_wheelhouse(shared / "wheelhouse")

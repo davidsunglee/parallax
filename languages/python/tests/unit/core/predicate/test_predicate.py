@@ -17,10 +17,10 @@ from typing import Any, cast
 
 import pytest
 
-from parallax.conformance import case_format
 from parallax.core import predicate
 from parallax.core.predicate import CanonicalDocumentError, QueryDefinitionError
 from parallax.core.predicate._nodes import QUERY_DEFINITION_CODES
+from tests._support.case_corpus import cases as corpus_cases
 from tests._support.corpus import case_document
 from tests._support.repo import REPO_ROOT
 
@@ -28,7 +28,7 @@ from tests._support.repo import REPO_ROOT
 def _predicates() -> list[tuple[str, dict[str, Any]]]:
     """The `predicate` clause of every Object Query the corpus authors."""
     found: list[tuple[str, dict[str, Any]]] = []
-    for case in case_format.load_cases():
+    for case in corpus_cases():
         when: Any = case_document(case).get("when") or {}
         query: Any = when.get("objectQuery")
         if isinstance(query, dict):

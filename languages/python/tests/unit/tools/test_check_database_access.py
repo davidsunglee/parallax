@@ -327,8 +327,11 @@ def test_every_declared_instance_member_is_a_declared_seam() -> None:
 
 
 def test_an_instance_member_that_is_not_a_declared_seam_is_reported(
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _minimal_tree(tmp_path)
+    monkeypatch.setattr(access, "TESTS_ROOT", tmp_path)
     # A member matched on a typed receiver is resolved by nothing else, so one
     # renamed away would go on guarding a spelling that no longer exists. Holding
     # it to being a declared seam puts it back under the resolution check.
@@ -340,8 +343,11 @@ def test_an_instance_member_that_is_not_a_declared_seam_is_reported(
 
 
 def test_a_profile_whose_provisioner_is_not_a_declared_seam_is_reported(
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _minimal_tree(tmp_path)
+    monkeypatch.setattr(access, "TESTS_ROOT", tmp_path)
     # Matching the member by name guards nothing if the member stops reaching an
     # acquisition, so the two halves are checked against each other.
     monkeypatch.setattr(
@@ -504,6 +510,11 @@ def test_a_classifier_designating_a_different_fixture_is_a_violation(tmp_path: P
 # --------------------------------------------------------------------------
 def test_the_real_test_tree_confines_database_access() -> None:
     assert access.main([]) == 0
+
+
+def test_explicit_check_uses_the_same_gate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _minimal_tree(tmp_path)
+    monkeypatch.setattr(access, "TESTS_ROOT", tmp_path)
     assert access.main(["--check"]) == 0
 
 
@@ -525,7 +536,9 @@ def test_a_planted_rogue_acquisition_fails(tmp_path: Path, monkeypatch: pytest.M
     assert access.main([]) == 1
 
 
-def test_an_unresolved_seam_fails_the_gate(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_an_unresolved_seam_fails_the_gate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _minimal_tree(tmp_path)
+    monkeypatch.setattr(access, "TESTS_ROOT", tmp_path)
     monkeypatch.setattr(
         access,
         "DATABASE_SEAMS",

@@ -121,8 +121,8 @@
 
 - name: class-aggregate-composing-the-other-class
   file: justfile
-  old: "python-check-dbfree: python-format-check"
-  new: "python-check-dbfree: python-test-db python-format-check"
+  old: "python-check-dbfree: python-check-static"
+  new: "python-check-dbfree: python-test-db python-check-static"
   code: foreign-test-in-aggregate
   message: "`python-check-dbfree` composes `python-test-db`"
 
@@ -170,8 +170,8 @@
 
 - name: blocking-command-no-aggregate-runs
   file: justfile
-  old: "python-check-dbfree: python-format-check python-lint python-typecheck"
-  new: "python-check-dbfree: python-format-check python-typecheck"
+  old: "python-check-static: python-format-check python-lint python-typecheck"
+  new: "python-check-static: python-format-check python-typecheck"
   code: unowned-gate
   message: "`python-lint` performs a blocking `lint` that `check-all` never runs"
   problems: 1

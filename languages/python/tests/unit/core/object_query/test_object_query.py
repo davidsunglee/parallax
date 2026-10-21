@@ -13,12 +13,12 @@ from typing import Any, cast
 
 import pytest
 
-from parallax.conformance import case_format
 from parallax.core import object_query as oq
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.object_query._nodes import IncludePathNode
 from parallax.core.object_query.serde import serialize
 from parallax.core.predicate import CanonicalDocumentError, QueryDefinitionError, TrueNode
+from tests._support.case_corpus import cases as corpus_cases
 from tests._support.corpus import case_document
 
 _ORDER = "parallax.compatibility.Order"
@@ -27,7 +27,7 @@ _ORDER = "parallax.compatibility.Order"
 def _authored_queries() -> list[tuple[str, dict[str, Any]]]:
     """Every Object Query the corpus authors — reads and read steps alike."""
     found: list[tuple[str, dict[str, Any]]] = []
-    for case in case_format.load_cases():
+    for case in corpus_cases():
         when: Any = case_document(case).get("when") or {}
         query: Any = when.get("objectQuery")
         if isinstance(query, dict):

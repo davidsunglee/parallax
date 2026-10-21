@@ -6,13 +6,11 @@ one and the arm has no corpus witness.
 
 from __future__ import annotations
 
-import functools
-from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
 
-from parallax.conformance import case_format, sweep
+from parallax.conformance import case_format
 from parallax.conformance._lanes import evolution
 from parallax.conformance._mechanism.envelope import EngineError
 from parallax.core.metamodel import EntityIdentity, Table
@@ -22,15 +20,11 @@ from parallax.evolution.schema_delta import (
     UnsupportedSchemaEvolutionError,
     UnsupportedSchemaOperation,
 )
-
-
-@functools.cache
-def _reachable_by_id() -> Mapping[str, case_format.Case]:
-    return {case.case_id: case for case in sweep.reachable_cases(cases=case_format.load_cases())}
+from tests._support.case_corpus import case as corpus_case
 
 
 def _case(case_id: str) -> case_format.Case:
-    return _reachable_by_id()[case_id]
+    return corpus_case(case_id, reachable=True)
 
 
 def _evolution_case(document: dict[str, object]) -> case_format.Case:
