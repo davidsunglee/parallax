@@ -11,6 +11,7 @@ interrupted operation leaves behind never returns to the pool.
 
 from __future__ import annotations
 
+import select
 import signal
 import threading
 import time
@@ -266,6 +267,24 @@ def test_a_server_error_fails_its_own_statement_and_confirms_what_it_kept_from_r
         runtime.close()
 
 
+# The server sends its replies once its 8 KiB output buffer fills, which this
+# many guards' replies do several times over. Holding the rest of the queue
+# until they reach the socket makes them arrive while later statements queue,
+# however the server's pace compares with the client's.
+_ANSWERING_PREFIX = 1000
+
+
+def _until_answered(pgconn: Any) -> None:
+    """Block until the server has answered something on ``pgconn``."""
+    deadline = time.monotonic() + 30.0
+    while (remaining := deadline - time.monotonic()) > 0:
+        sending = [pgconn.socket] if pgconn.flush() else []
+        readable, _, _ = select.select([pgconn.socket], sending, [], remaining)
+        if readable:
+            return
+    pytest.fail("the server answered none of the queued statements")
+
+
 @pytest.mark.adapter_smoke
 def test_counts_arriving_while_later_statements_queue_stay_with_their_own_statements(
     profile_run: Any, monkeypatch: pytest.MonkeyPatch
@@ -280,6 +299,8 @@ def test_counts_arriving_while_later_statements_queue_stay_with_their_own_statem
     def counting_execute(self: Any, *args: Any, **kwargs: Any) -> Any:
         executed = execute(self, *args, **kwargs)
         queued[0] += 1
+        if queued[0] == _ANSWERING_PREFIX and not arrivals:
+            _until_answered(self.connection.pgconn)
         return executed
 
     def observed_check(self: Any, results: Any) -> None:
