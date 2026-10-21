@@ -45,48 +45,48 @@ def _account(model: Metamodel) -> EntityMetadata:
 class _KeyedSource:
     def __init__(self, selected: list[Selected]) -> None:
         self._selected = selected
-        self._mutation: KeyedMutation | None = None
 
     def capture(self, mutation: KeyedMutation, /) -> None:
-        self._mutation = mutation
+        return None
 
     def resolve(self, model: Metamodel, mutation: KeyedMutation, /) -> ResolvedKeyedWriteSource:
         return ResolvedKeyedWriteSource(_account(model), None, None, "this", _ADVICE)
 
     def prepare(
         self,
+        model: Metamodel,
+        mutation: KeyedMutation,
         resolved: ResolvedKeyedWriteSource,
         /,
         *,
         valid_from: dt.datetime | None,
         until: dt.datetime | None,
     ) -> NoReturn:
-        assert self._mutation is not None
-        self._selected.append((self._mutation, until))
+        self._selected.append((mutation, until))
         raise _Prepared
 
 
 class _InsertSource:
     def __init__(self, selected: list[Selected]) -> None:
         self._selected = selected
-        self._mutation: KeyedMutation | None = None
 
     def capture(self, mutation: KeyedMutation, /) -> None:
-        self._mutation = mutation
+        return None
 
     def resolve(self, model: Metamodel, mutation: KeyedMutation, /) -> ResolvedKeyedInsert:
         return ResolvedKeyedInsert(_account(model), None, "none", _ADVICE)
 
     def prepare(
         self,
+        model: Metamodel,
+        mutation: KeyedMutation,
         resolved: ResolvedKeyedInsert,
         /,
         *,
         valid_from: dt.datetime | None,
         until: dt.datetime | None,
     ) -> NoReturn:
-        assert self._mutation is not None
-        self._selected.append((self._mutation, until))
+        self._selected.append((mutation, until))
         raise _Prepared
 
 

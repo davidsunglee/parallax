@@ -296,6 +296,15 @@ class ResolvedKeyedWriteSource:
     advice: KeyedWriteRefusalAdvice
     authoring: InsertionIdentity | None = None
 
+    @property
+    def object_key(self) -> ObjectKey | None:
+        """The object the Read Evidence or the insertion's authoring names, or
+        ``None`` for a source carrying neither, whose object only its prepared
+        row names."""
+        if self.read_evidence is not None:
+            return self.read_evidence.object_key
+        return None if self.authoring is None else self.authoring.object_key
+
 
 @dataclass(frozen=True, slots=True)
 class PreparedSourceWrite:
@@ -312,7 +321,6 @@ class PreparedSourceWrite:
     """
 
     instruction: PreparedKeyedWrite
-    object_key: ObjectKey
     assigned: frozenset[str]
 
 
@@ -370,9 +378,11 @@ class KeyedWriteSource(Protocol):
     :meth:`capture` judges and freezes whatever the representation alone can be
     wrong about — a Wire change document's own shape; nothing at all for a Typed
     value, whose shape its class fixes. :meth:`resolve` answers the source facts.
-    :meth:`prepare` acquires the authored row, builds the instruction with the
-    caller's raw bounds, and has core preparation judge it — target and window
-    first, then payload — answering the originals beside it.
+    :meth:`prepare` is handed the model and mutation :meth:`resolve` was,
+    beside its answer; it acquires the authored row, builds the instruction with the caller's raw
+    bounds, and has core preparation judge it — target and window first, then
+    payload — answering the originals beside it. A representation that addresses
+    members by the source's object reads it off ``resolved``.
     """
 
     def capture(self, mutation: KeyedMutation, /) -> None: ...
@@ -381,6 +391,8 @@ class KeyedWriteSource(Protocol):
 
     def prepare(
         self,
+        model: Metamodel,
+        mutation: KeyedMutation,
         resolved: ResolvedKeyedWriteSource,
         /,
         *,
@@ -406,6 +418,8 @@ class KeyedInsertSource(Protocol):
 
     def prepare(
         self,
+        model: Metamodel,
+        mutation: KeyedMutation,
         resolved: ResolvedKeyedInsert,
         /,
         *,
@@ -544,6 +558,12 @@ def keyed_write(
     value no authority, and a source a read published keeps its own evidence
     whatever this transaction inserted.
 
+    An evidence refusal names the object the source's Read Evidence or
+    insertion authority names, or, for a source carrying neither, the one its
+    prepared row keys: both name their object by the rule a row is keyed by,
+    so a refusal at the verb and the settle at flush never name one object two
+    ways.
+
     A source-backed write states no start of its own: a Bitemporal one starts
     at its source's finite Valid-Time pin, or at the anchor its insertion was
     admitted with (:func:`source_start`). Preparation then judges that start
@@ -575,15 +595,19 @@ def keyed_write(
     )
     validate_source_pin(resolved.entity.identity, resolved.pin)
     valid_from = source_start(meta, resolved, mutation, anchor)
-    prepared = source.prepare(resolved, valid_from=valid_from, until=until)
+    prepared = source.prepare(meta, mutation, resolved, valid_from=valid_from, until=until)
     if authorized:
         item = buffered_write(prepared.instruction, None, authority=authoring)
     else:
+        named = resolved.object_key
+        addressed = object_key(prepared.instruction, meta) if named is None else named
+        # An identity row always states its object's key.
+        assert addressed is not None
         evidence = uow.resolve_read_evidence(
             resolved.entity,
             resolved.read_evidence,
             mutation=mutation,
-            object_key=prepared.object_key,
+            object_key=addressed,
         )
         item = buffered_write(prepared.instruction, evidence, source=resolved.read_evidence)
     if mutation in AMEND_MUTATIONS and not prepared.assigned:
@@ -687,7 +711,7 @@ def keyed_insert(
         inserted=False,
         advice=resolved.advice,
     )
-    prepared = opening.prepare(resolved, valid_from=start, until=until)
+    prepared = opening.prepare(meta, mutation, resolved, valid_from=start, until=until)
     opened = object_key(prepared, meta)
     # A Create Payload is a complete document, so the row it buffers always names
     # its own object by the time validation has admitted it.

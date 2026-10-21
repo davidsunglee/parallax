@@ -29,13 +29,11 @@ from parallax.core.base import INFINITY, SQL_NULL
 from parallax.core.db_port import MappingRow
 from parallax.core.metamodel import Metamodel
 from parallax.core.temporal_read import TimeInterval
-from parallax.core.write_plan import ObjectKey
 from parallax.snapshot import TxnContext, WireEntity
 from parallax.snapshot._handle._wire_writes import (
     WireKeyedInsertSource,
     WireKeyedWriteSource,
 )
-from parallax.snapshot._publication._wire import authoring_of
 from tests._support import mirrored_models as mm
 from tests._support.db_port import Read, ScriptedAdapter, Transact, Write
 from tests._support.model_capabilities import cataloged_for
@@ -122,17 +120,12 @@ def test_an_insert_payload_that_is_no_document_is_judged_at_capture() -> None:
 # Resolve: which Entity a node names.                                         #
 # --------------------------------------------------------------------------- #
 def test_a_published_node_names_its_own_concrete_entity() -> None:
-    # A standalone read publishes a stored node of this source and leaves no
-    # Read Evidence on it, so the object the write addresses comes from the row
-    # the node's own key authors.
     source = WireKeyedWriteSource(_account_node(), {"balance": "125.00"})
     source.capture("amend")
 
     resolved = source.resolve(_meta(ACCOUNT), "amend")
-    prepared = source.prepare(resolved, valid_from=None, until=None)
 
     assert resolved.entity.identity == mm.Account.identity
-    assert prepared.object_key == ObjectKey(mm.Account.identity, (("id", 1),))
 
 
 def test_a_projected_node_enters_the_existing_wire_keyed_source() -> None:
@@ -141,7 +134,7 @@ def test_a_projected_node_enters_the_existing_wire_keyed_source() -> None:
     source.capture("amend")
 
     resolved = source.resolve(_meta(ACCOUNT), "amend")
-    prepared = source.prepare(resolved, valid_from=None, until=None)
+    prepared = source.prepare(_meta(ACCOUNT), "amend", resolved, valid_from=None, until=None)
 
     assert resolved.entity.identity == mm.Account.identity
     assert prepared.instruction.rows[0] == {"id": 1, "balance": Decimal("125.00")}
@@ -157,12 +150,9 @@ def test_the_node_an_insert_answered_names_the_object_its_authority_opened() -> 
     source.capture("amend")
 
     resolved = source.resolve(_meta(ACCOUNT), "amend")
-    prepared = source.prepare(resolved, valid_from=None, until=None)
+    prepared = source.prepare(_meta(ACCOUNT), "amend", resolved, valid_from=None, until=None)
 
-    authority = authoring_of(opened)
-    assert authority is not None
     assert resolved.entity.identity == mm.Account.identity
-    assert prepared.object_key is authority.object_key
     assert prepared.instruction.rows[0] == {"id": 7, "balance": Decimal("6.00")}
     assert prepared.assigned == {"balance"}
 
@@ -175,11 +165,10 @@ def test_prepare_states_every_authored_member_as_its_literal_assignment() -> Non
     source.capture("amend")
     resolved = source.resolve(_meta(ACCOUNT), "amend")
 
-    prepared = source.prepare(resolved, valid_from=None, until=None)
+    prepared = source.prepare(_meta(ACCOUNT), "amend", resolved, valid_from=None, until=None)
 
     assert prepared.instruction.rows[0] == {"id": 1, "balance": Decimal("125.00")}
     assert prepared.assigned == {"balance"}
-    assert prepared.object_key == ObjectKey(mm.Account.identity, (("id", 1),))
 
 
 def test_a_member_equal_to_what_the_source_published_is_still_assigned() -> None:
@@ -187,7 +176,7 @@ def test_a_member_equal_to_what_the_source_published_is_still_assigned() -> None
     source.capture("amend")
     resolved = source.resolve(_meta(ACCOUNT), "amend")
 
-    prepared = source.prepare(resolved, valid_from=None, until=None)
+    prepared = source.prepare(_meta(ACCOUNT), "amend", resolved, valid_from=None, until=None)
 
     assert prepared.instruction.rows[0] == {"id": 1, "balance": Decimal("100.00")}
     assert prepared.assigned == {"balance"}
@@ -200,11 +189,10 @@ def test_a_stated_key_naming_the_published_object_addresses_rather_than_assigns(
     source.capture("amend")
     resolved = source.resolve(_meta(ACCOUNT), "amend")
 
-    prepared = source.prepare(resolved, valid_from=None, until=None)
+    prepared = source.prepare(_meta(ACCOUNT), "amend", resolved, valid_from=None, until=None)
 
     assert prepared.instruction.rows[0] == {"id": 1, "balance": Decimal("125.00")}
     assert prepared.assigned == {"balance"}
-    assert prepared.object_key == ObjectKey(mm.Account.identity, (("id", 1),))
 
 
 def test_a_stated_key_naming_another_object_is_refused_while_preparing() -> None:
@@ -213,7 +201,7 @@ def test_a_stated_key_naming_another_object_is_refused_while_preparing() -> None
     resolved = source.resolve(_meta(ACCOUNT), "amend")
 
     with pytest.raises(instructions.WriteInstructionError, match="another object"):
-        source.prepare(resolved, valid_from=None, until=None)
+        source.prepare(_meta(ACCOUNT), "amend", resolved, valid_from=None, until=None)
 
 
 def test_a_destructive_verb_authors_its_identity_row_and_assigns_nothing() -> None:
@@ -221,7 +209,7 @@ def test_a_destructive_verb_authors_its_identity_row_and_assigns_nothing() -> No
     source.capture("delete")
     resolved = source.resolve(_meta(ACCOUNT), "delete")
 
-    prepared = source.prepare(resolved, valid_from=None, until=None)
+    prepared = source.prepare(_meta(ACCOUNT), "delete", resolved, valid_from=None, until=None)
 
     assert prepared.instruction.rows[0] == {"id": 1}
     assert prepared.assigned == frozenset()
@@ -243,7 +231,13 @@ def test_an_insert_source_authors_the_whole_create_payload() -> None:
     source = WireKeyedInsertSource(_ACCOUNT, {"id": 7, "owner": "Newton", "balance": "5.00"})
     source.capture("insert")
 
-    prepared = source.prepare(source.resolve(_meta(ACCOUNT), "insert"), valid_from=None, until=None)
+    prepared = source.prepare(
+        _meta(ACCOUNT),
+        "insert",
+        source.resolve(_meta(ACCOUNT), "insert"),
+        valid_from=None,
+        until=None,
+    )
 
     assert isinstance(prepared, PreparedKeyedWrite)
     assert prepared.rows[0] == {"id": 7, "owner": "Newton", "balance": Decimal("5.00")}
@@ -255,13 +249,15 @@ def test_an_insert_source_hands_its_raw_window_to_preparation() -> None:
     resolved = source.resolve(_meta(WHERE_POSITION_META), "insert")
     stated = dt.datetime(2024, 1, 1, 2, tzinfo=dt.timezone(dt.timedelta(hours=2)))
 
-    prepared = source.prepare(resolved, valid_from=stated, until=None)
+    prepared = source.prepare(
+        _meta(WHERE_POSITION_META), "insert", resolved, valid_from=stated, until=None
+    )
 
     assert prepared.valid_time_window == TimeInterval(_TX_START, INFINITY)
     with pytest.raises(
         instructions.WriteInstructionError, match="a bitemporal 'insert' requires valid_from"
     ):
-        source.prepare(resolved, valid_from=None, until=None)
+        source.prepare(_meta(WHERE_POSITION_META), "insert", resolved, valid_from=None, until=None)
 
 
 def test_an_insert_source_refuses_a_framework_owned_member_before_it_authors() -> None:
@@ -272,4 +268,4 @@ def test_an_insert_source_refuses_a_framework_owned_member_before_it_authors() -
     resolved = source.resolve(_meta(ACCOUNT), "insert")
 
     with pytest.raises(instructions.WriteInstructionError, match="framework-owned"):
-        source.prepare(resolved, valid_from=None, until=None)
+        source.prepare(_meta(ACCOUNT), "insert", resolved, valid_from=None, until=None)

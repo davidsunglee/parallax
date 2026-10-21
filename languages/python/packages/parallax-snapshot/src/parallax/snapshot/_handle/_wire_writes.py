@@ -38,7 +38,6 @@ from parallax.core.object_query._fluent import ObjectQuery
 from parallax.core.wire import WireValue, decode_wire
 from parallax.core.write_plan import ObjectKey
 from parallax.snapshot._handle._sources import (
-    object_key_from_row,
     resolve_keyed_insert,
     resolve_keyed_write_source,
 )
@@ -399,15 +398,6 @@ def _mutable_copy(value: object) -> object:
     return value
 
 
-def _source_object_key(resolved: ResolvedKeyedWriteSource) -> ObjectKey | None:
-    """The object the source's Read Evidence or insertion authority names, or
-    ``None`` for a node carrying neither — one a standalone, read-only, or
-    milestone-set read published — whose key the prepared row states instead."""
-    if resolved.read_evidence is not None:
-        return resolved.read_evidence.object_key
-    return None if resolved.authoring is None else resolved.authoring.object_key
-
-
 def _prepared_wire_write(
     meta: Metamodel,
     mutation: KeyedMutation,
@@ -480,15 +470,13 @@ class WireKeyedWriteSource:
     source published, read once the model is known.
     """
 
-    __slots__ = ("_authored", "_changes", "_meta", "_mutation", "_observed", "_source")
+    __slots__ = ("_authored", "_changes", "_observed", "_source")
 
     def __init__(self, observed: object, changes: WireChanges | Omitted | None) -> None:
         self._observed = observed
         self._changes = changes
         self._authored: Mapping[str, object] | None = {}
         self._source: WireEntity | None = None
-        self._meta: Metamodel | None = None
-        self._mutation: KeyedMutation | None = None
 
     def capture(self, mutation: KeyedMutation, /) -> None:
         changes = self._changes
@@ -500,14 +488,14 @@ class WireKeyedWriteSource:
         )
 
     def resolve(self, model: Metamodel, mutation: KeyedMutation, /) -> ResolvedKeyedWriteSource:
-        self._meta = model
-        self._mutation = mutation
         node, entity = _keyed_source(mutation, self._observed)
         self._source = node
         return resolve_keyed_write_source(_concrete_entity(model, entity), node)
 
     def prepare(
         self,
+        model: Metamodel,
+        mutation: KeyedMutation,
         resolved: ResolvedKeyedWriteSource,
         /,
         *,
@@ -524,16 +512,16 @@ class WireKeyedWriteSource:
         replacement handed no document states the source's published writable
         state instead, which stands alone exactly as a stated document does.
         """
-        meta, mutation, node = self._retained()
+        node = retained(self._source)
         entity = resolved.entity
-        object_key = _source_object_key(resolved)
+        object_key = resolved.object_key
         authored = self._authored
         if authored is None:
-            authored = _published_writable(meta, entity, node, copy=False)
-        identity = _published_identity(meta, entity, node)
+            authored = _published_writable(model, entity, node, copy=False)
+        identity = _published_identity(model, entity, node)
         if not any(name in authored for name in identity):
             instruction = _prepared_wire_write(
-                meta,
+                model,
                 mutation,
                 entity,
                 {**identity, **authored},
@@ -545,7 +533,7 @@ class WireKeyedWriteSource:
         else:
             stated = authored
             instruction = _prepared_wire_write(
-                meta,
+                model,
                 mutation,
                 entity,
                 identity,
@@ -553,22 +541,11 @@ class WireKeyedWriteSource:
                 valid_from=valid_from,
                 until=until,
                 members=lambda: instructions.addressed_members(
-                    meta, entity, _published_address(meta, entity, node, object_key), stated
+                    model, entity, _published_address(model, entity, node, object_key), stated
                 ),
             )
             assigned = frozenset(name for name in authored if name not in identity)
-        return PreparedSourceWrite(
-            instruction=instruction,
-            object_key=(
-                object_key
-                if object_key is not None
-                else object_key_from_row(entity, meta, instruction.rows[0])
-            ),
-            assigned=assigned,
-        )
-
-    def _retained(self) -> tuple[Metamodel, KeyedMutation, WireEntity]:
-        return retained(self._meta), retained(self._mutation), retained(self._source)
+        return PreparedSourceWrite(instruction=instruction, assigned=assigned)
 
 
 class WireKeyedInsertSource:
@@ -596,27 +573,25 @@ class WireKeyedInsertSource:
     unit of work after preparation, and a payload repeated is refused there.
     """
 
-    __slots__ = ("_data", "_entity_name", "_meta", "_mutation", "_payload")
+    __slots__ = ("_data", "_entity_name", "_payload")
 
     def __init__(self, entity_name: str, data: Mapping[str, object]) -> None:
         self._entity_name = entity_name
         self._data = data
         self._payload: Mapping[str, object] = {}
-        self._meta: Metamodel | None = None
-        self._mutation: KeyedMutation | None = None
 
     def capture(self, mutation: KeyedMutation, /) -> None:
         self._payload = _authored_document(self._data, f"a Wire `{mutation}` payload")
 
     def resolve(self, model: Metamodel, mutation: KeyedMutation, /) -> ResolvedKeyedInsert:
-        self._meta = model
-        self._mutation = mutation
         return resolve_keyed_insert(
             instructions.resolve_target(model, self._entity_name), self._data
         )
 
     def prepare(
         self,
+        model: Metamodel,
+        mutation: KeyedMutation,
         resolved: ResolvedKeyedInsert,
         /,
         *,
@@ -627,9 +602,8 @@ class WireKeyedInsertSource:
         caller's authoring: a framework-owned member is refused, because the
         interval bounds are stamped at flush from the Clock Strategy and the
         version is derived."""
-        meta, mutation = self._retained()
         return _prepared_wire_write(
-            meta,
+            model,
             mutation,
             resolved.entity,
             self._payload,
@@ -637,9 +611,6 @@ class WireKeyedInsertSource:
             valid_from=valid_from,
             until=until,
         )
-
-    def _retained(self) -> tuple[Metamodel, KeyedMutation]:
-        return retained(self._meta), retained(self._mutation)
 
 
 def _keyed_source(mutation: KeyedMutation, observed: object) -> tuple[WireEntity, EntityIdentity]:

@@ -38,7 +38,6 @@ from parallax.core.metamodel import Metamodel
 from parallax.core.read_delivery import InvalidData
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.unit_work import WriteInstructionError
-from parallax.core.write_plan import ObjectKey
 from parallax.snapshot._handle._typed_writes import (
     TypedKeyedInsertSource,
     TypedKeyedWriteSource,
@@ -146,11 +145,10 @@ def test_prepare_states_every_touched_member_as_its_literal_assignment() -> None
     source = TypedKeyedWriteSource(edited, codec)
     resolved = source.resolve(meta, "amend")
 
-    prepared = source.prepare(resolved, valid_from=None, until=None)
+    prepared = source.prepare(meta, "amend", resolved, valid_from=None, until=None)
 
     assert prepared.instruction.rows[0] == {"id": 1, "balance": Decimal("125.00")}
     assert prepared.assigned == {"balance"}
-    assert prepared.object_key == ObjectKey(mm.Account.identity, (("id", 1),))
 
 
 def test_a_wholly_restoring_chain_still_assigns_the_member_it_took_back() -> None:
@@ -160,7 +158,9 @@ def test_a_wholly_restoring_chain_still_assigns_the_member_it_took_back() -> Non
     restored = _published_account().edit(balance=Decimal("125.00")).edit(balance=Decimal("100.00"))
     source = TypedKeyedWriteSource(restored, codec)
 
-    prepared = source.prepare(source.resolve(meta, "amend"), valid_from=None, until=None)
+    prepared = source.prepare(
+        meta, "amend", source.resolve(meta, "amend"), valid_from=None, until=None
+    )
 
     assert prepared.instruction.rows[0] == {"id": 1, "balance": Decimal("100.00")}
     assert prepared.assigned == {"balance"}
@@ -178,7 +178,9 @@ def test_a_correction_states_what_current_authoring_admits_over_any_stored_origi
         _published_contact().edit(address=_COMPLETE_ADDRESS), row_codec_for(CONTACT_MODEL)
     )
 
-    prepared = source.prepare(source.resolve(meta, "amend"), valid_from=None, until=None)
+    prepared = source.prepare(
+        meta, "amend", source.resolve(meta, "amend"), valid_from=None, until=None
+    )
 
     assert prepared.instruction.rows[0]["address"] == {
         "street": "Main",
@@ -193,7 +195,9 @@ def test_an_untouched_copy_authors_its_identity_row_alone() -> None:
     meta, codec = _accounts()
     source = TypedKeyedWriteSource(_published_account(), codec)
 
-    prepared = source.prepare(source.resolve(meta, "amend"), valid_from=None, until=None)
+    prepared = source.prepare(
+        meta, "amend", source.resolve(meta, "amend"), valid_from=None, until=None
+    )
 
     assert prepared.instruction.rows[0] == {"id": 1}
     assert prepared.assigned == frozenset()
@@ -203,21 +207,12 @@ def test_a_destructive_verb_authors_its_identity_row_and_assigns_nothing() -> No
     meta, codec = _accounts()
     source = TypedKeyedWriteSource(_published_account(), codec)
 
-    prepared = source.prepare(source.resolve(meta, "delete"), valid_from=None, until=None)
+    prepared = source.prepare(
+        meta, "delete", source.resolve(meta, "delete"), valid_from=None, until=None
+    )
 
     assert prepared.instruction.rows[0] == {"id": 1}
     assert prepared.assigned == frozenset()
-
-
-def test_a_value_no_read_produced_keys_its_object_off_the_row_it_authors() -> None:
-    # There is no hint to read the object off, and the refusal a claim raises
-    # still has to name the object the write addressed.
-    meta, codec = _accounts()
-    source = TypedKeyedWriteSource(new_account().edit(balance=Decimal("9.00")), codec)
-
-    prepared = source.prepare(source.resolve(meta, "amend"), valid_from=None, until=None)
-
-    assert prepared.object_key == ObjectKey(mm.Account.identity, (("id", 7),))
 
 
 # --------------------------------------------------------------------------- #
@@ -235,7 +230,9 @@ def test_an_insert_source_authors_the_whole_create_payload() -> None:
     meta, codec = _accounts()
     source = TypedKeyedInsertSource(new_account(), codec)
 
-    prepared = source.prepare(source.resolve(meta, "insert"), valid_from=None, until=None)
+    prepared = source.prepare(
+        meta, "insert", source.resolve(meta, "insert"), valid_from=None, until=None
+    )
 
     assert prepared.rows[0] == {"id": 7, "owner": "Newton", "balance": Decimal("5.00")}
 
@@ -249,11 +246,11 @@ def test_an_insert_source_hands_its_raw_window_to_preparation() -> None:
     resolved = source.resolve(meta, "insert")
     stated = dt.datetime(2024, 1, 1, 2, tzinfo=dt.timezone(dt.timedelta(hours=2)))
 
-    prepared = source.prepare(resolved, valid_from=stated, until=None)
+    prepared = source.prepare(meta, "insert", resolved, valid_from=stated, until=None)
 
     assert prepared.valid_time_window == TimeInterval(_TX_START, INFINITY)
     with pytest.raises(WriteInstructionError, match="a bitemporal 'insert' requires valid_from"):
-        source.prepare(resolved, valid_from=None, until=None)
+        source.prepare(meta, "insert", resolved, valid_from=None, until=None)
 
 
 # --------------------------------------------------------------------------- #

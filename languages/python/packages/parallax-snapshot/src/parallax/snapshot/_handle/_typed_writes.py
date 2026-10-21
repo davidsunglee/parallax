@@ -11,7 +11,6 @@ from parallax.core._execution._keyed_writes import (
     ResolvedKeyedWriteSource,
     TargetRevisionArguments,
     keyed_instruction,
-    retained,
 )
 from parallax.core._execution._publication import SelectedWriteModel
 from parallax.core._execution._unit_work import instructions
@@ -42,7 +41,6 @@ from parallax.core.object_query._fluent import ObjectQuery, mutation_selection
 # per-name underscores, which under pyright strict would make every intra-package
 # import a reportPrivateUsage error.
 from parallax.snapshot._handle._sources import (
-    object_key_from_row,
     resolve_keyed_insert,
     resolve_keyed_write_source,
 )
@@ -140,13 +138,9 @@ class TypedKeyedWriteSource:
     :meth:`capture` judges the one authoring fact a Typed amendment can still
     get wrong: explicit ``assignments`` beside a value whose edit chain already
     authored history, which would give one write two authors.
-
-    The mutation and the accepted Metamodel arrive at the phases the protocol
-    hands them to and are retained for :meth:`prepare`, which authors the
-    instruction and is handed neither.
     """
 
-    __slots__ = ("_assignments", "_codec", "_meta", "_mutation", "_value")
+    __slots__ = ("_assignments", "_codec", "_value")
 
     def __init__(
         self,
@@ -157,8 +151,6 @@ class TypedKeyedWriteSource:
         self._value = value
         self._codec = codec
         self._assignments = assignments
-        self._meta: Metamodel | None = None
-        self._mutation: KeyedMutation | None = None
 
     def capture(self, mutation: KeyedMutation, /) -> None:
         if self._assignments and self._codec.has_edit_history(self._value):
@@ -170,12 +162,12 @@ class TypedKeyedWriteSource:
 
     def resolve(self, model: Metamodel, mutation: KeyedMutation, /) -> ResolvedKeyedWriteSource:
         """The facts this value states about the state the write revises."""
-        self._meta = model
-        self._mutation = mutation
         return resolve_keyed_write_source(metadata_of_instance(model, self._value), self._value)
 
     def prepare(
         self,
+        model: Metamodel,
+        mutation: KeyedMutation,
         resolved: ResolvedKeyedWriteSource,
         /,
         *,
@@ -193,16 +185,10 @@ class TypedKeyedWriteSource:
         chain touched. A destructive or close verb names no member at all and
         authors its identity row alone, and so does an amendment off a value
         whose chain touched nothing — the empty set the ingress drops.
-
-        The object a refusal reports comes from the source's own hint where there
-        is one, and is derived from the authored row where there is not — the two
-        agree by construction, because a read keys its hint by the same rule a
-        written row is keyed by.
         """
-        meta, mutation = self._retained()
-        row, assigned, explicit = self._authored(meta, mutation, resolved.entity)
+        row, assigned, explicit = self._authored(model, mutation, resolved.entity)
         instruction = prepared_typed_write(
-            meta,
+            model,
             mutation,
             resolved.entity,
             row,
@@ -210,15 +196,7 @@ class TypedKeyedWriteSource:
             until=until,
             members=explicit,
         )
-        return PreparedSourceWrite(
-            instruction=instruction,
-            object_key=(
-                resolved.read_evidence.object_key
-                if resolved.read_evidence is not None
-                else object_key_from_row(resolved.entity, meta, instruction.rows[0])
-            ),
-            assigned=assigned,
-        )
+        return PreparedSourceWrite(instruction=instruction, assigned=assigned)
 
     def _authored(
         self, meta: Metamodel, mutation: KeyedMutation, entity: EntityMetadata
@@ -245,9 +223,6 @@ class TypedKeyedWriteSource:
             return codec.identity_row(value), frozenset(), None
         return authored.row, frozenset(authored.originals), None
 
-    def _retained(self) -> tuple[Metamodel, KeyedMutation]:
-        return retained(self._meta), retained(self._mutation)
-
 
 class TypedKeyedInsertSource:
     """The Typed Keyed Insert Source: what a fresh Entity instance answers the
@@ -260,24 +235,22 @@ class TypedKeyedInsertSource:
     against.
     """
 
-    __slots__ = ("_codec", "_instance", "_meta", "_mutation")
+    __slots__ = ("_codec", "_instance")
 
     def __init__(self, instance: EntityBase, codec: EntityRowCodec) -> None:
         self._instance = instance
         self._codec = codec
-        self._meta: Metamodel | None = None
-        self._mutation: KeyedMutation | None = None
 
     def capture(self, mutation: KeyedMutation, /) -> None:
         return None
 
     def resolve(self, model: Metamodel, mutation: KeyedMutation, /) -> ResolvedKeyedInsert:
-        self._meta = model
-        self._mutation = mutation
         return resolve_keyed_insert(metadata_of_instance(model, self._instance), self._instance)
 
     def prepare(
         self,
+        model: Metamodel,
+        mutation: KeyedMutation,
         resolved: ResolvedKeyedInsert,
         /,
         *,
@@ -285,8 +258,8 @@ class TypedKeyedInsertSource:
         until: dt.datetime | None,
     ) -> PreparedKeyedWrite:
         return prepared_typed_write(
-            retained(self._meta),
-            retained(self._mutation),
+            model,
+            mutation,
             resolved.entity,
             self._codec.full_row(self._instance),
             valid_from=valid_from,
