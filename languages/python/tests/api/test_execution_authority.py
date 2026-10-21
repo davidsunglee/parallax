@@ -17,6 +17,7 @@ from parallax.core.execution import TxnOptions
 from parallax.core.execution_lifecycle import TransactionAttemptStarted
 from parallax.core.object_query import deserialize
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
+from tests._support.case_corpus import case as corpus_case
 from tests._support.corpus import case_fixtures
 
 type _AuthorityMode = Literal["database-login", "principal"]
@@ -29,9 +30,7 @@ class _Principal:
 
 
 def _authority_case() -> case_format.Case:
-    return next(
-        case for case in case_format.load_cases() if case.case_id == "m-execution-authority-001"
-    )
+    return corpus_case("m-execution-authority-001")
 
 
 def _target_node() -> dict[str, object]:

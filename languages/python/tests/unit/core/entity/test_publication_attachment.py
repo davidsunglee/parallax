@@ -24,6 +24,7 @@ that disagree in exactly one way.
 from __future__ import annotations
 
 import gc
+import sys
 import weakref
 from typing import Any, cast
 
@@ -65,6 +66,11 @@ from parallax.core.metamodel import (
 from tests._support.model_capabilities import graph_construction_for, row_codec_for
 from tests.unit.core.entity._compact_support import carries_instance_storage, layout_slots, raw_row
 from tests.unit.core.entity._value_object_document_support import inserted_document
+from tests.unit.memory_instruments import (
+    in_a_child_interpreter,
+    serve_one_measurement,
+    tracked_objects,
+)
 
 _NS = "publication"
 
@@ -433,6 +439,7 @@ def test_a_cyclic_published_graph_is_collected_whole() -> None:
     assert [reference() for reference in alive] == [None, None]
 
 
+@in_a_child_interpreter
 def test_no_call_scope_outlives_the_construction_that_made_it() -> None:
     # The presence-bitmap memo lives on the call scope, so what keeps it from
     # being a process-wide cache is that the scope itself is unreachable once
@@ -440,7 +447,7 @@ def test_no_call_scope_outlives_the_construction_that_made_it() -> None:
     # promoted to module scope would still pass every behavioral assertion here.
     _published()
     gc.collect()
-    assert [held for held in gc.get_objects() if type(held) is _CallScope] == []
+    assert [held for held in tracked_objects() if type(held) is _CallScope] == []
 
 
 # --------------------------------------------------------------------------- #
@@ -806,3 +813,7 @@ def test_a_relationship_two_ancestries_declare_at_different_levels_is_refused() 
     refusal = _refusal_across(_DECLARING_LEVELS[0], _DECLARING_LEVELS[1])
     assert "the model lays out relationship 0 ('peer')" in refusal.message
     assert refusal.identity == RelationshipIdentity(EntityIdentity(_NS, "TieRoot"), "peer")
+
+
+if __name__ == "__main__":
+    serve_one_measurement(sys.argv[1])

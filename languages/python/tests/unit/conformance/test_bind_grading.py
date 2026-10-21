@@ -17,21 +17,20 @@ import pytest
 from parallax.conformance import case_format, engine
 from parallax.core.base import FLOAT32, FLOAT64, INT64, STRING, Decimal
 from tests._support.bind_positions import Document, statement_bind_positions
+from tests._support.case_corpus import case as corpus_case
 from tests._support.corpus import case_document, compare_binds
 from tests._support.sweep_goldens import assert_wire_binds, write_golden_statements
 
-_CASES = {c.case_id: c for c in case_format.load_cases()}
-
 
 def _golden(case_id: str, index: int = 0) -> tuple[case_format.Case, str, list[Any]]:
-    case = _CASES[case_id]
+    case = corpus_case(case_id)
     sql, binds = write_golden_statements(case)[index]
     return case, sql, binds
 
 
 def _read_statement(case_id: str) -> tuple[case_format.Case, str, list[Any]]:
     """A read case's one Postgres golden statement."""
-    case = _CASES[case_id]
+    case = corpus_case(case_id)
     (entry,) = cast("list[dict[str, Any]]", case_document(case)["then"]["statements"])
     sql = cast("str", entry["sql"] if isinstance(entry["sql"], str) else entry["sql"]["postgres"])
     binds = entry.get("binds", [])
@@ -99,7 +98,7 @@ def test_a_document_path_assignment_types_each_value_bind() -> None:
 
 
 def test_a_shared_document_is_typed_by_the_owner_its_row_tags() -> None:
-    case = _CASES["m-inheritance-125"]
+    case = corpus_case("m-inheritance-125")
     model = engine.load_case_metamodel(case)
     details: list[object] = []
     for sql, binds in write_golden_statements(case):
@@ -139,6 +138,6 @@ _CASH_DETAIL = "cast(jsonb_extract_path_text(p.payload, ?) as numeric) = ?"
 def test_a_shared_document_is_typed_only_by_a_tag_its_own_row_is_pinned_to(
     where: str, binds: list[object], expected: dict[int, object]
 ) -> None:
-    model = engine.load_case_metamodel(_CASES["m-inheritance-125"])
+    model = engine.load_case_metamodel(corpus_case("m-inheritance-125"))
     sql = f"select p.id from payment_document p where {where}"
     assert statement_bind_positions(model, sql, binds) == expected

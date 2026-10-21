@@ -7,8 +7,6 @@ naming the case — an input the validators accept, a malformed input, and a
 
 from __future__ import annotations
 
-import functools
-from collections.abc import Mapping
 from pathlib import Path
 from typing import cast
 
@@ -17,11 +15,7 @@ import pytest
 from parallax.conformance import case_format
 from parallax.conformance._lanes import rejected
 from parallax.conformance._mechanism.envelope import EngineError
-
-
-@functools.cache
-def _corpus_by_id() -> Mapping[str, case_format.Case]:
-    return {case.case_id: case for case in case_format.load_cases()}
+from tests._support.case_corpus import case as corpus_case
 
 
 def _load_case(case_id: str) -> case_format.Case:
@@ -29,7 +23,7 @@ def _load_case(case_id: str) -> case_format.Case:
     # IMPLEMENTED_MODULES` reachability: these lane-level tests exercise
     # `run_rejected_case` on its own terms, never gated on whether the case has
     # ALSO been flipped visible in the sweep.
-    return _corpus_by_id()[case_id]
+    return corpus_case(case_id)
 
 
 def _synthetic_rejected(when: dict[str, object]) -> case_format.Case:

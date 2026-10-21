@@ -21,10 +21,11 @@ from typing import Any, cast
 
 import pytest
 
-from parallax.conformance import adapter, case_format, engine, sweep
+from parallax.conformance import adapter, case_format, engine
 from parallax.conformance.profile import profile_for
 from parallax.core.db_port import DatabaseConnection, Row, TransactionOutcome
 from parallax.core.dialect import POSTGRES, Dialect
+from tests._support.case_corpus import reachable_cases
 from tests._support.corpus import case_document
 from tests._support.db_port import ConnectsAsItself
 from tests._support.repo import validate_adapter_envelope
@@ -38,7 +39,7 @@ from tests.compatibility._float_zero_support import spell_float_zero_negative
 
 pytestmark = pytest.mark.compile_sweep
 
-_REACHABLE = sweep.reachable_cases()
+_REACHABLE = reachable_cases()
 # The declared profile the lane-dispatch check below makes its `run` request under,
 # read off the one roster; nothing here provisions it, because the case is refused
 # before a database is needed, so the run is built over a stand-in port.

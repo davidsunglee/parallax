@@ -30,6 +30,7 @@ from snapshot_delivery_reading import (
     _leaf_read,  # pyright: ignore[reportPrivateUsage] - the leaf-type reading is under test
     _plan,  # pyright: ignore[reportPrivateUsage] - the plan reading is under test
     _timed,  # pyright: ignore[reportPrivateUsage] - sampling protocol is under test
+    _traced,  # pyright: ignore[reportPrivateUsage] - instrument boundary under test
     geometry_address,
     leaf_address,
     plan_address,
@@ -38,7 +39,12 @@ from tests._support.root_ownership import own_root
 from tests.unit import _delivery_control_support as control_support
 from tests.unit import _leaf_type_support as leaf_support
 from tests.unit import _structural_geometry_support as geometry_support
-from tests.unit.memory_instruments import in_a_child_interpreter, retained, serve_one_measurement
+from tests.unit.memory_instruments import (
+    OWN_INTERPRETER_VARIABLE,
+    in_a_child_interpreter,
+    retained,
+    serve_one_measurement,
+)
 
 
 class _Stream:
@@ -150,6 +156,21 @@ from types import ModuleType
 
 import snapshot_delivery_reading
 
+
+def timed(work, *, warmups, measured, prepare=lambda: None):
+    prepare()
+    work()
+    return (1.0,) * measured
+
+
+def traced(work, metric, *, prepare=lambda: None):
+    prepare()
+    work()
+    return 1.0, "KiB", (1.0,)
+
+
+snapshot_delivery_reading._timed = timed
+snapshot_delivery_reading._traced = traced
 snapshot_delivery_reading.main(sys.argv[1:])
 # A support module the child has registered but never run is not yet a plain module.
 print(" ".join(sorted(
@@ -205,6 +226,14 @@ def test_a_reading_child_runs_only_the_support_module_its_address_reads(
 
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout.splitlines()[-1] == support
+
+
+def test_a_traced_reading_refuses_a_shared_interpreter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv(OWN_INTERPRETER_VARIABLE, raising=False)
+    with pytest.raises(RuntimeError, match="in_a_child_interpreter"):
+        _traced(lambda: None, "retainedKiB")
 
 
 def test_geometry_addresses_name_a_level_layout_and_metric() -> None:

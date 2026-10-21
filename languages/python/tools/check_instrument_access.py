@@ -7,7 +7,9 @@ classified ``dbfree`` while needing an interpreter no other test shares.
 
 **The rule is over direct calls.** A ``test_*`` function that calls a reader —
 by the name it was imported under from ``memory_instruments``, or as an attribute
-of that module — must carry ``@in_a_child_interpreter``. Every other route is
+of that module — must carry ``@in_a_child_interpreter``. Raw ``gc`` heap
+enumeration and ``tracemalloc`` readings in test and support modules must use
+the instruments instead. Every indirect route to an instrument is
 answered where the reading is taken: each reader refuses to run in a process the
 boundary did not start, so a test reaching one through a helper, a wrapper, or
 import-time code fails in the shared process instead of passing against its heap.
@@ -74,6 +76,17 @@ WHOLE_INTERPRETER_READERS: frozenset[str] = frozenset(
         "retained",
         "retained_increment",
         "survivors",
+        "tracked_objects",
+    }
+)
+
+RAW_READERS = frozenset(
+    {
+        "gc.get_objects",
+        "gc.get_referrers",
+        "tracemalloc.get_traced_memory",
+        "tracemalloc.take_snapshot",
+        "tracemalloc.reset_peak",
     }
 )
 
@@ -187,6 +200,25 @@ def _called_readers(function: _Function, readers: dict[str, str], modules: set[s
     return called
 
 
+def _raw_readings(tree: ast.Module) -> list[tuple[int, str]]:
+    aliases: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            aliases.update((alias.asname or alias.name, alias.name) for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            aliases.update(
+                (alias.asname or alias.name, f"{node.module}.{alias.name}") for alias in node.names
+            )
+    readings: list[tuple[int, str]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.expr) and (reader := _dotted(node)) is not None:
+            head, separator, tail = reader.partition(".")
+            resolved = f"{aliases.get(head, head)}{separator}{tail}"
+            if resolved in RAW_READERS:
+                readings.append((node.lineno, resolved))
+    return readings
+
+
 def _check_structure() -> list[Finding]:
     """The three facts the rule rests on."""
     findings: list[Finding] = []
@@ -265,12 +297,23 @@ def _check_evidence() -> list[Finding]:
 
 
 def audit(root: Path) -> list[Finding]:
-    """Every finding the direct-call rule raises over the test modules under
+    """Every boundary violation in the test and support modules under
     *root*, which a scratch tree can stand in for."""
     findings: list[Finding] = []
-    for path in sorted(root.rglob("test_*.py")):
+    for path in sorted(root.rglob("*.py")):
+        if path.resolve() == INSTRUMENTS.resolve():
+            continue
         tree = ast.parse(path.read_text())
         relative = str(path.relative_to(root.parent))
+        for line, reader in _raw_readings(tree):
+            findings.append(
+                Finding(
+                    relative,
+                    line,
+                    f"raw whole-interpreter reader `{reader}` bypasses the guarded "
+                    f"`{INSTRUMENT_MODULE_NAME}` entry points",
+                )
+            )
         readers, modules = _instrument_bindings(tree)
         functions = sorted(
             (

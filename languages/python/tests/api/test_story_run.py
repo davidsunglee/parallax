@@ -14,7 +14,7 @@ from typing import Any, cast
 
 import pytest
 
-from parallax.conformance import case_format, engine
+from parallax.conformance import engine
 from parallax.conformance._lanes import scenario as scenario_lane
 from parallax.conformance._lifecycle_observation import LifecycleObservation
 from parallax.conformance._mechanism import envelope
@@ -61,6 +61,7 @@ from parallax.snapshot import (
     view,
 )
 from tests._support.adoption import raises_contextualized
+from tests._support.case_corpus import case as corpus_case
 from tests._support.corpus import (
     CollectionKinds,
     case_document,
@@ -73,12 +74,10 @@ from tests._support.corpus import (
 from tests._support.db_port import ConnectsAsItself
 from tests._support.root_ownership import own_root
 
-_CASES = {c.case_id: c for c in case_format.load_cases()}
-
 
 def _scenario_steps(case_id: str) -> list[dict[str, Any]]:
     """The case's own ``when.scenario`` steps, in authored order."""
-    return cast("list[dict[str, Any]]", case_document(_CASES[case_id])["when"]["scenario"])
+    return cast("list[dict[str, Any]]", case_document(corpus_case(case_id))["when"]["scenario"])
 
 
 def _scenario_finds(case_id: str) -> list[dict[str, Any]]:
@@ -102,7 +101,7 @@ def _reset_for(case_id: str, profile_run: Any) -> DomainModel:
     carries the class index a story's own observing find needs to materialize
     typed instances.
     """
-    case = _CASES[case_id]
+    case = corpus_case(case_id)
     profile_run.reset(engine.load_case_setup_metamodel(case), case_fixtures(case))
     apply_given_apply(case, profile_run.port, SimulatedTemporalStore())
     return MODELS[Path(case.model).stem]
@@ -135,7 +134,7 @@ def test_story_runs_through_the_shipped_surface(story: WriteStory, profile_run: 
     # equal the case's `then.tableState`, table for table.
     expected_state = cast(
         "dict[str, list[dict[str, Any]]]",
-        case_document(_CASES[story.case_id])["then"]["tableState"],
+        case_document(corpus_case(story.case_id))["then"]["tableState"],
     )
     observed_state = engine.read_table_state(profile_run.port, model_of(meta))
     assert set(observed_state) >= set(expected_state), (story.case_id, observed_state)
@@ -464,7 +463,7 @@ def _assert_surviving_view(case_id: str, entity: str, nodes: Sequence[object]) -
     compare_graph(
         {entity: list(nodes)},
         _access_expect_graph(case_id),
-        CollectionKinds(engine.load_case_metamodel(_CASES[case_id])),
+        CollectionKinds(engine.load_case_metamodel(corpus_case(case_id))),
     )
 
 
@@ -480,7 +479,7 @@ def _assert_read_step_graph(case_id: str, index: int, snapshot: Snapshot[Any]) -
     traversal of Typed fields participates.
     """
     step = _scenario_steps(case_id)[index]
-    case = _CASES[case_id]
+    case = corpus_case(case_id)
     model = engine.load_case_metamodel(case)
     query = scenario_lane.step_query(step, model)
     observed = scenario_lane.read_step_graph(case, model, index, step, query, snapshot.wire())
@@ -501,7 +500,7 @@ def _assert_find_step_rows(case_id: str, index: int, snapshot: Snapshot[Any]) ->
     another row — or whose read-back reached rows the case does not state —
     fails on the step it mirrors rather than on the relationship view alone.
     """
-    case = _CASES[case_id]
+    case = corpus_case(case_id)
     model = engine.load_case_metamodel(case)
     step = _scenario_finds(case_id)[index]
     query = scenario_lane.step_query(step, model)
@@ -538,7 +537,7 @@ def _assert_composition_units(case_id: str, db: _CountingDatabase) -> None:
         if "write" in step or "objectQuery" in step
     ]
     assert db.database_calls == expected, case_id
-    assert sum(db.database_calls) == case_document(_CASES[case_id])["then"]["databaseCalls"], (
+    assert sum(db.database_calls) == case_document(corpus_case(case_id))["then"]["databaseCalls"], (
         case_id
     )
 
@@ -694,7 +693,7 @@ def test_a_grouped_read_observes_its_own_relationship_writes(profile_run: Any) -
     # read for the write, because the group's own find already published the row
     # its update settles against.
     steps = _scenario_steps(story.case_id)
-    assert db.database_calls == [case_document(_CASES[story.case_id])["then"]["databaseCalls"]]
+    assert db.database_calls == [case_document(corpus_case(story.case_id))["then"]["databaseCalls"]]
     assert _kind_runs(db) == [
         ("read", steps[0]["databaseCalls"]),
         ("write", steps[1]["databaseCalls"]),
@@ -1114,7 +1113,7 @@ def test_a_guarded_root_continues_through_a_narrowed_hop(profile_run: Any) -> No
 
 
 def _read_case_query(case_id: str) -> tuple[Any, Any]:
-    case = _CASES[case_id]
+    case = corpus_case(case_id)
     model = engine.load_case_metamodel(case)
     when = cast("dict[str, object]", case_document(case)["when"])
     return model, scenario_lane.step_query({"objectQuery": when["objectQuery"]}, model)
@@ -1130,7 +1129,7 @@ def _projected_graph(case_id: str, snapshot: Snapshot[Any]) -> dict[str, list[ob
 
 
 def _assert_projected_graph(case_id: str, snapshot: Snapshot[Any]) -> None:
-    case = _CASES[case_id]
+    case = corpus_case(case_id)
     model = engine.load_case_metamodel(case)
     compare_graph(
         _projected_graph(case_id, snapshot),
@@ -1234,7 +1233,7 @@ def test_tpcs_narrow_to_abstract_subtype_materializes_typed_per_variant_instance
 
 def _assert_customer_predicate_rows(case_id: str, snapshot: Any) -> None:
     """Compare the corpus's id/name projection with the materialized instances."""
-    expected = cast("list[dict[str, Any]]", case_document(_CASES[case_id])["then"]["rows"])
+    expected = cast("list[dict[str, Any]]", case_document(corpus_case(case_id))["then"]["rows"])
     observed = [
         {field: row[field] for field in ("id", "name")}
         for row in _projected_rows(case_id, snapshot)
@@ -1307,8 +1306,7 @@ def test_customer_locations_deep_fetch_materializes_the_child_document_too(
 def test_every_graph_story_mirrors_an_active_case_exactly_once() -> None:
     assert len(_GRAPH_STORIES_BY_ID) == len(GRAPH_STORIES)
     for story in GRAPH_STORIES:
-        assert story.case_id in _CASES, story.case_id
-        model_ref = str(case_document(_CASES[story.case_id])["model"])
+        model_ref = str(case_document(corpus_case(story.case_id))["model"])
         assert story.model == model_ref.removeprefix("models/").removesuffix(".yaml"), story.case_id
 
 
@@ -1405,7 +1403,7 @@ def test_read_story_runs_through_the_shipped_surface(story: ReadStory, profile_r
         snapshot = db.transact(lambda tx: tx.find(story.build()), concurrency=story.concurrency)
     else:
         snapshot = db.find(story.build())
-    then = cast("dict[str, Any]", case_document(_CASES[story.case_id])["then"])
+    then = cast("dict[str, Any]", case_document(corpus_case(story.case_id))["then"])
     expected_rows = cast("list[dict[str, Any]]", then["rows"])
     expects_variant = any("familyVariant" in row for row in expected_rows)
     observed_rows = [
@@ -1442,7 +1440,6 @@ def test_every_read_story_mirrors_an_active_case_exactly_once() -> None:
     by_id = {story.case_id: story for story in READ_STORIES}
     assert len(by_id) == len(READ_STORIES)
     for story in READ_STORIES:
-        assert story.case_id in _CASES, story.case_id
-        assert _CASES[story.case_id].shape == "read", story.case_id
-        model_ref = str(case_document(_CASES[story.case_id])["model"])
+        assert corpus_case(story.case_id).shape == "read", story.case_id
+        model_ref = str(case_document(corpus_case(story.case_id))["model"])
         assert story.model == model_ref.removeprefix("models/").removesuffix(".yaml"), story.case_id

@@ -27,7 +27,6 @@ built cache paid once is inside the window rather than before it.
 from __future__ import annotations
 
 import gc
-import os
 import subprocess
 import sys
 import tracemalloc
@@ -57,12 +56,12 @@ from tests.unit.core.execution_lifecycle._lifecycle_cost_support import (
     rows,
 )
 from tests.unit.memory_instruments import (
-    OWN_INTERPRETER_VARIABLE,
     REPEATS,
     Seam,
     allocation,
     first_run,
     in_a_child_interpreter,
+    require_own_interpreter,
     serve_one_measurement,
     survivors,
 )
@@ -200,20 +199,18 @@ def _first_run_in_a_child(seam: str) -> tuple[int, int]:
     """:func:`~memory_instruments.first_run` for ``seam``, in a process that
     has run nothing else.
 
-    The child inherits this process's environment, marked as an interpreter of
-    its own, so every comparison below grades two children that differ only in
-    the seam they are asked for. It
-    needs no import root handed to it: ``python -m <this module>`` from the
-    workspace root puts that root first on the child's path, and both support
-    modules resolve under ``tests`` there as they do here.
+    The child inherits this boundary-started process's environment, so each
+    comparison grades two children differing only in the seam they are asked for. It
+    inherits the boundary's import path and pinned hash seed, so support modules
+    resolve under ``tests`` as they do here.
     """
+    require_own_interpreter("a first-run measurement child")
     report = subprocess.run(
-        [sys.executable, "-m", __name__, seam],
+        [sys.executable, __file__, seam],
         cwd=PY_ROOT,
         capture_output=True,
         text=True,
         check=True,
-        env=os.environ | {OWN_INTERPRETER_VARIABLE: "1"},
     )
     kept, transient = report.stdout.split()
     return int(kept), int(transient)
@@ -349,6 +346,7 @@ def test_an_unobserved_transaction_leaves_no_tracked_object_alive_either() -> No
     assert _survivors_without_coverage_state(_unobserved_transaction) == []
 
 
+@in_a_child_interpreter
 def test_the_first_run_in_a_process_costs_what_a_warmed_one_does() -> None:
     # A warmed measurement pays every one-time cost outside its own window, so a
     # cache filled on first use — the shape the specification's "no allocation"
@@ -362,6 +360,7 @@ def test_the_first_run_in_a_process_costs_what_a_warmed_one_does() -> None:
     assert _first_run_in_a_child("transaction") == control
 
 
+@in_a_child_interpreter
 def test_a_declined_roots_first_run_costs_only_its_permitted_opening() -> None:
     # The warmed declined measurement grades a REPEATED opening, so a cost the
     # decline path pays once — a cache filled the first time a root is refused —

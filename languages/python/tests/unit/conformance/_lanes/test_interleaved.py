@@ -17,7 +17,6 @@ import copy
 import dataclasses
 import datetime as dt
 import decimal
-import functools
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, Final, cast
@@ -33,15 +32,11 @@ from parallax.core.db_port import MappingRow, Row
 from parallax.core.dialect import Dialect
 from parallax.core.execution import TxnOptions
 from parallax.snapshot import Database, ScopedDatabase
+from tests._support.case_corpus import case as corpus_case
 from tests._support.root_ownership import own_root
 from tests.unit._second_dialect import BACKTICKED
 from tests.unit.conformance._lanes._scripted_port import ScriptedPort
 from tests.unit.conformance._wire_value_support import wire_value
-
-
-@functools.cache
-def _corpus_by_id() -> Mapping[str, case_format.Case]:
-    return {case.case_id: case for case in case_format.load_cases()}
 
 
 def _load_case(case_id: str) -> case_format.Case:
@@ -49,7 +44,7 @@ def _load_case(case_id: str) -> case_format.Case:
     # IMPLEMENTED_MODULES` reachability: these lane-level tests exercise
     # `run_interleaved_scenario_case` on its own terms, never gated on whether
     # the case has ALSO been flipped visible in the sweep.
-    return _corpus_by_id()[case_id]
+    return corpus_case(case_id)
 
 
 def _own_copy(case: case_format.Case) -> case_format.Case:

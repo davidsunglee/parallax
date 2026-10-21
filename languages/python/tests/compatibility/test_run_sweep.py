@@ -27,6 +27,7 @@ from parallax.conformance.profile import Profile
 from parallax.core import storage_layout
 from parallax.core.metamodel import Metamodel
 from tests._support.bind_positions import assert_zero_signs, statement_bind_positions
+from tests._support.case_corpus import reachable_cases
 from tests._support.corpus import (
     CollectionKinds,
     case_document,
@@ -96,9 +97,8 @@ RUN_EXERCISED = frozenset(COMPILE_EXERCISED)
 
 
 def _reachable_run_cases() -> list[case_format.Case]:
-    from parallax.conformance import sweep
 
-    reachable = sweep.reachable_cases()
+    reachable = reachable_cases()
     return [
         c
         for c in reachable
@@ -450,11 +450,10 @@ _GIVEN_APPLY_SCENARIOS_EXERCISED: Final[frozenset[str]] = frozenset({"m-batch-wr
 
 
 def _reachable_write_cases() -> list[case_format.Case]:
-    from parallax.conformance import sweep
 
     return [
         c
-        for c in sweep.reachable_cases()
+        for c in reachable_cases()
         if (
             c.case_id in WRITE_EXERCISED
             or c.case_id in _SNAPSHOT_INCLUDE_SCENARIOS_EXERCISED
@@ -896,9 +895,8 @@ def _assert_layout_shaped_table_state(
 
 
 def _reachable_interleaved_uow_group_cases() -> list[case_format.Case]:
-    from parallax.conformance import sweep
 
-    return [c for c in sweep.reachable_cases() if c.case_id in _INTERLEAVED_RUNNER_CASES]
+    return [c for c in reachable_cases() if c.case_id in _INTERLEAVED_RUNNER_CASES]
 
 
 _INTERLEAVED_CASES = _reachable_interleaved_uow_group_cases()
@@ -982,9 +980,8 @@ _EDIT_OCCURRENCE_CASES: Final[tuple[str, ...]] = ("m-edit-010", "m-edit-011")
 def test_edit_occurrence_run_grades_each_derived_copy(
     case_id: str, profile: Profile, profile_run: Any
 ) -> None:
-    from parallax.conformance import sweep
 
-    (case,) = [c for c in sweep.reachable_cases() if c.case_id == case_id]
+    (case,) = [c for c in reachable_cases() if c.case_id == case_id]
     model = engine.load_case_metamodel(case)
     profile_run.reset(engine.load_case_setup_metamodel(case), case_fixtures(case))
 
@@ -999,11 +996,10 @@ def test_edit_occurrence_run_grades_each_derived_copy(
 
 def _reachable_error_cases() -> list[case_format.Case]:
     """The single-connection error-shape cases (statement trigger, no choreography)."""
-    from parallax.conformance import sweep
 
     return [
         c
-        for c in sweep.reachable_cases()
+        for c in reachable_cases()
         if c.shape == "error" and "concurrency" not in (case_document(c).get("when") or {})
     ]
 
@@ -1082,9 +1078,8 @@ _CONFLICT_CASES_EXERCISED: Final[frozenset[str]] = frozenset(
 
 
 def _reachable_conflict_cases() -> list[case_format.Case]:
-    from parallax.conformance import sweep
 
-    return [c for c in sweep.reachable_cases() if c.case_id in _CONFLICT_CASES_EXERCISED]
+    return [c for c in reachable_cases() if c.case_id in _CONFLICT_CASES_EXERCISED]
 
 
 _CONFLICT_CASES = _reachable_conflict_cases()
@@ -1185,9 +1180,8 @@ _RUN_ONLY_WRITE_SEQUENCES_EXERCISED: Final[frozenset[str]] = frozenset(
 
 
 def _reachable_run_only_write_sequence_cases() -> list[case_format.Case]:
-    from parallax.conformance import sweep
 
-    return [c for c in sweep.reachable_cases() if c.case_id in _RUN_ONLY_WRITE_SEQUENCES_EXERCISED]
+    return [c for c in reachable_cases() if c.case_id in _RUN_ONLY_WRITE_SEQUENCES_EXERCISED]
 
 
 _RUN_ONLY_WRITE_SEQUENCE_CASES = _reachable_run_only_write_sequence_cases()
@@ -1240,11 +1234,10 @@ def test_run_only_write_sequence_run_sweep(
 # every other declared option.                                               #
 # --------------------------------------------------------------------------- #
 def _reachable_concurrency_rounds_cases() -> list[case_format.Case]:
-    from parallax.conformance import sweep
 
     return [
         c
-        for c in sweep.reachable_cases()
+        for c in reachable_cases()
         if c.shape in ("error", "concurrencySuccess")
         and "concurrency" in (case_document(c).get("when") or {})
     ]

@@ -242,6 +242,7 @@ from tests.unit.memory_instruments import (
     retained,
     serve_one_measurement,
     survivors,
+    tracked_objects,
 )
 
 SMALL_ROWS: Final = 500
@@ -408,12 +409,12 @@ def _left_behind(work: Callable[[], None]) -> list[object]:
     leaves this measuring what a ROOT costs rather than what a connection does.
     """
     gc.collect()
-    known = [obj for obj in gc.get_objects() if _lifecycle_object(obj)]
+    known = [obj for obj in tracked_objects() if _lifecycle_object(obj)]
     identities = {id(obj) for obj in known}
     work()
     gc.collect()
     survived = [
-        obj for obj in gc.get_objects() if _lifecycle_object(obj) and id(obj) not in identities
+        obj for obj in tracked_objects() if _lifecycle_object(obj) and id(obj) not in identities
     ]
     return survived
 

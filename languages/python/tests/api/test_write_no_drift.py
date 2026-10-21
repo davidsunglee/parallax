@@ -14,7 +14,6 @@ from typing import Any, Final, cast
 import pytest
 from pydantic import ValidationError
 
-from parallax.conformance import case_format
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.read_models import Balance, Payment
 from parallax.conformance.stories import WRITE_STORIES, WriteStory
@@ -43,6 +42,7 @@ from parallax.core.metamodel import EntityMetadata
 from parallax.core.unit_work import KeyedWriteInstruction, WriteRejectedError
 from parallax.snapshot import Database, ScopedDatabase, TxnContext
 from tests._support.adoption import raises_contextualized
+from tests._support.case_corpus import case as corpus_case
 from tests._support.corpus import case_document, compare_binds
 from tests._support.db_port import (
     BeginCall,
@@ -57,7 +57,6 @@ from tests._support.db_port import (
 from tests._support.document_reads import fold_mapping_rows
 from tests._support.root_ownership import own_root
 
-_CASES = {c.case_id: c for c in case_format.load_cases()}
 _STORIES = {story.case_id: story for story in WRITE_STORIES}
 
 # The driver-native infinity sentinel (`m-core`/`m-dialect`): a real Postgres
@@ -267,8 +266,11 @@ def _port_for(story: WriteStory) -> _KeyedSeedPort:
 def _stated_counts(case_id: str) -> list[int]:
     """The count each predicate-write step of a scenario case states, in step
     order: what the case's own database answers that step's one statement."""
-    case = _CASES.get(case_id)
-    if case is None or case.shape != "scenario":
+    try:
+        case = corpus_case(case_id)
+    except KeyError:
+        return []
+    if case.shape != "scenario":
         return []
     steps = cast("list[dict[str, Any]]", case_document(case)["when"]["scenario"])
     return [
@@ -384,8 +386,8 @@ def _scenario_goldens(
     case_id: str, *, skip_rollback: bool = False
 ) -> list[tuple[str, list[object]]]:
     """The case's flattened per-step golden statements in driver form."""
-    doc = case_document(_CASES[case_id])
-    if _CASES[case_id].shape == "writeSequence":
+    doc = case_document(corpus_case(case_id))
+    if corpus_case(case_id).shape == "writeSequence":
         return _driver_goldens(cast("list[dict[str, Any]]", doc["then"]["statements"]))
     out: list[tuple[str, list[object]]] = []
     units = cast("dict[str, dict[str, Any]]", doc.get("then", {}).get("units", {}))
@@ -426,7 +428,7 @@ def _observed_statements(
     never folded into the byte-exact DML compare. A ``scenario`` case's own
     per-step goldens already include find steps, so nothing changes there."""
     _assert_reads_are_proper_selects(port)
-    if _CASES[case_id].shape == "writeSequence":
+    if corpus_case(case_id).shape == "writeSequence":
         return port.writes()
     coverage = _COVERAGE_READS_BY_CASE.get(case_id, frozenset())
     return [
@@ -542,7 +544,7 @@ def test_boundary_story_withholds_the_callback_value() -> None:
 
 def _case_model_stem(case_id: str) -> str:
     """The `MODELS` key the case's own `model` reference names."""
-    model_ref = str(case_document(_CASES[case_id])["model"])
+    model_ref = str(case_document(corpus_case(case_id))["model"])
     return model_ref.removeprefix("models/").removesuffix(".yaml")
 
 
@@ -551,7 +553,6 @@ def test_every_write_story_mirrors_an_active_case_exactly_once() -> None:
     # case, every mirrored case real, and each story's model is its case's.
     assert len(_STORIES) == len(WRITE_STORIES)
     for story in WRITE_STORIES:
-        assert story.case_id in _CASES, story.case_id
         assert story.model == _case_model_stem(story.case_id), story.case_id
 
 
@@ -643,7 +644,7 @@ def test_the_class_grammar_refuses_the_corpus_incomplete_document(case_id: str) 
     "case_id", sorted(INCOMPLETE_DOCUMENT_BUILDERS), ids=sorted(INCOMPLETE_DOCUMENT_BUILDERS)
 )
 def test_the_declared_structure_classifies_the_corpus_rule(case_id: str) -> None:
-    case = _CASES[case_id]
+    case = corpus_case(case_id)
     expected_rule = case_document(case)["then"]["rejectedRule"]
     domain_model = MODELS[_case_model_stem(case_id)]
     model = model_of(domain_model)
@@ -674,7 +675,7 @@ def test_a_complete_document_still_constructs() -> None:
     "case_id", sorted(REJECTED_WRITE_BUILDERS), ids=sorted(REJECTED_WRITE_BUILDERS)
 )
 def test_idiomatic_write_build_rejects_the_corpus_rule(case_id: str) -> None:
-    case = _CASES[case_id]
+    case = corpus_case(case_id)
     expected_rule = case_document(case)["then"]["rejectedRule"]
     port = _KeyedSeedPort()
     db = own_root(
@@ -717,7 +718,7 @@ REJECTED_PREDICATE_WRITES: dict[str, tuple[str, Callable[[TxnContext], object]]]
 @pytest.mark.parametrize("case_id", sorted(REJECTED_PREDICATE_WRITES))
 def test_idiomatic_predicate_write_rejects_the_corpus_rule(case_id: str) -> None:
     model, write = REJECTED_PREDICATE_WRITES[case_id]
-    expected_rule = case_document(_CASES[case_id])["then"]["rejectedRule"]
+    expected_rule = case_document(corpus_case(case_id))["then"]["rejectedRule"]
     port = _KeyedSeedPort()
     db = own_root(Database.connect(port, MODELS[model])).using_database_login()
     with raises_contextualized(instructions.InstructionRejectedError) as exc_info:

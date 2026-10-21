@@ -31,7 +31,42 @@ def test_a_test_carrying_the_boundary_calls_its_reader_legally(tmp_path: Path) -
 
 def test_the_real_test_tree_confines_whole_interpreter_readings() -> None:
     assert guard.main([]) == 0
+
+
+def test_the_explicit_check_option_runs_the_same_guard(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(guard, "TESTS_ROOT", tmp_path)
     assert guard.main(["--check"]) == 0
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "import gc\n\ndef helper():\n    return gc.get_objects()\n",
+        "from gc import get_objects as heap\n\ndef helper():\n    return heap()\n",
+        "import gc\nread = gc.get_objects\n\ndef helper():\n    return read()\n",
+        "import tracemalloc as tracer\n\ndef helper():\n    return tracer.get_traced_memory()\n",
+        "from tracemalloc import take_snapshot as sample\n\ndef helper():\n    return sample()\n",
+        (
+            f"import gc\nfrom memory_instruments import {guard.BOUNDARY}\n\n"
+            f"@{guard.BOUNDARY}\ndef test_probe():\n    gc.get_objects()\n"
+        ),
+    ],
+    ids=[
+        "heap-helper",
+        "heap-alias",
+        "reader-binding",
+        "trace-module",
+        "trace-alias",
+        "decorated-raw",
+    ],
+)
+def test_raw_readers_cannot_bypass_the_instrument_entry_points(tmp_path: Path, source: str) -> None:
+    (tmp_path / "support.py").write_text(source)
+    findings = guard.audit(tmp_path)
+    assert len(findings) == 1
+    assert "raw whole-interpreter reader" in findings[0].message
 
 
 @pytest.mark.parametrize(
@@ -69,6 +104,7 @@ def test_a_planted_reading_fails_the_gate(
 def test_an_evidence_location_the_loaders_do_not_read_fails_the_gate(
     constant: str, moved: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setattr(guard, "TESTS_ROOT", tmp_path)
     source = guard.EVIDENCE.read_text()
     declared = f'{constant}: Final = "'
     assert source.count(declared) == 1

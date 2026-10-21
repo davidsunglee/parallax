@@ -39,7 +39,7 @@ from typing import Any, cast
 
 import pytest
 
-from parallax.conformance import case_format, engine, graph_stories
+from parallax.conformance import engine, graph_stories
 from parallax.conformance._decoration import DecoratingAdapter
 from parallax.conformance._lanes import scenario as scenario_lane
 from parallax.conformance._mechanism import envelope
@@ -73,6 +73,7 @@ from parallax.core.execution import (
 from parallax.core.unit_work import Clock, Concurrency
 from parallax.snapshot import Database, ScopedDatabase, Snapshot, TxnContext, is_view_loaded
 from tests._support.adoption import raises_contextualized
+from tests._support.case_corpus import case as corpus_case
 from tests._support.corpus import (
     CollectionKinds,
     case_document,
@@ -393,8 +394,6 @@ _WRITING_STORIES: frozenset[Callable[..., Any]] = frozenset(
 )
 
 
-_CASES = {case.case_id: case for case in case_format.load_cases()}
-
 # Each story by the callable that IS it. A test naming the behaviour it drives
 # names the run function, so this is the lookup every one of them wants, and
 # keying on the function rather than the case id keeps the reference resolvable
@@ -413,7 +412,7 @@ def _golden_write_binds(case_id: str) -> list[list[object]]:
     the API suite is not the grader of (`m-api-conformance` "Golden SQL text is
     out of scope").
     """
-    steps = cast("list[dict[str, Any]]", case_document(_CASES[case_id])["when"]["scenario"])
+    steps = cast("list[dict[str, Any]]", case_document(corpus_case(case_id))["when"]["scenario"])
     writes = [step for step in steps if "write" in step]
     assert writes, case_id
     return [
@@ -849,7 +848,7 @@ def _wire_twin(story: graph_stories.GraphStory, captured: _CapturedRead) -> Snap
 
 
 def _authored_reads(case_id: str) -> list[tuple[int | None, Any, Mapping[str, object]]]:
-    case = _CASES[case_id]
+    case = corpus_case(case_id)
     document = case_document(case)
     model = engine.load_case_metamodel(case)
     when = cast("Mapping[str, object]", document["when"])
@@ -875,7 +874,7 @@ def _assert_authored_observation(
     authored: Mapping[str, object],
     snapshot: Snapshot[Any],
 ) -> None:
-    case = _CASES[case_id]
+    case = corpus_case(case_id)
     model = engine.load_case_metamodel(case)
     row_oracle = authored.get("expectRows", authored.get("rows"))
     if row_oracle is not None:
@@ -928,7 +927,7 @@ def _assert_authored_observation(
 
 
 def _reset_audit_story(story: graph_stories.GraphStory, profile_run: Any) -> None:
-    case = _CASES[story.case_id]
+    case = corpus_case(story.case_id)
     profile_run.reset(engine.load_case_setup_metamodel(case), case_fixtures(case))
     apply_given_apply(case, profile_run.port, SimulatedTemporalStore())
 
@@ -971,7 +970,9 @@ def test_every_graph_story_and_child_shape_case_has_one_audit_partition() -> Non
     assert residual_ids == (CHILD_SHAPE_GRAPH_STORY_RESIDUALS | CHILD_SHAPE_CASES_WITHOUT_STORIES)
     assert story_ids & residual_ids == CHILD_SHAPE_GRAPH_STORY_RESIDUALS
     assert {
-        case_id for case_id in CHILD_SHAPE_GRAPH_STORY_RESIDUALS if _CASES[case_id].shape == "read"
+        case_id
+        for case_id in CHILD_SHAPE_GRAPH_STORY_RESIDUALS
+        if corpus_case(case_id).shape == "read"
     } == CHILD_SHAPE_GRAPH_STORY_RESIDUALS
     assert CHILD_SHAPE_CASES_WITHOUT_STORIES.isdisjoint(story_ids)
     assert set(_EXTRA_CAPTURED_READS) == {"m-snapshot-read-017"}
@@ -979,17 +980,17 @@ def test_every_graph_story_and_child_shape_case_has_one_audit_partition() -> Non
     assert {
         story.case_id
         for story in graph_stories.GRAPH_STORIES
-        if _CASES[story.case_id].shape == "read"
+        if corpus_case(story.case_id).shape == "read"
     } | {
         story.case_id
         for story in graph_stories.GRAPH_STORIES
-        if _CASES[story.case_id].shape == "scenario"
+        if corpus_case(story.case_id).shape == "scenario"
     } == story_ids
 
 
 def _scenario_object_queries(case_id: str) -> list[dict[str, Any]]:
     """The Object Query documents the case's own scenario finds author, in order."""
-    steps = cast("list[dict[str, Any]]", case_document(_CASES[case_id])["when"]["scenario"])
+    steps = cast("list[dict[str, Any]]", case_document(corpus_case(case_id))["when"]["scenario"])
     return [cast("dict[str, Any]", step["objectQuery"]) for step in steps if "objectQuery" in step]
 
 
@@ -1049,7 +1050,7 @@ def test_every_scenario_story_is_query_graded_or_reasoned() -> None:
     assert graded | excluded == {
         story.case_id
         for story in graph_stories.GRAPH_STORIES
-        if _CASES[story.case_id].shape == "scenario"
+        if corpus_case(story.case_id).shape == "scenario"
     }
     assert all(_SCENARIO_FIND_EXCLUSIONS.values())
 

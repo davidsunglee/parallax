@@ -12,15 +12,14 @@ import copy
 import dataclasses
 import datetime as dt
 import decimal
-import functools
 import re
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, Final, cast
 
 import pytest
 
-from parallax.conformance import _simulated_write_steps, case_format, models, sweep
+from parallax.conformance import _simulated_write_steps, case_format, models
 from parallax.conformance._actual_wire import ActualWireProjection
 from parallax.conformance._lanes import scenario
 from parallax.conformance._lifecycle_observation import (
@@ -83,46 +82,14 @@ from parallax.core.write_plan import (
 from parallax.core.write_plan.keys import TemporalObjectStateKey, VersionedObjectStateKey
 from parallax.core.write_plan.steps import PlannedClose
 from parallax.snapshot._publication._wire import read_evidence_of
+from tests._support.case_corpus import case as corpus_case
 from tests._support.sweep_goldens import write_golden_statements
 from tests.unit.conformance._lanes._scripted_port import ScriptedPort
 from tests.unit.conformance._recording_ports import FakeWritePort
 
 
-# One corpus read serves the whole module, and both indexes project it: what
-# they answer is shared between tests, so a test that edits a document takes
-# `_own_copy` first.
-@functools.cache
-def _corpus() -> tuple[case_format.Case, ...]:
-    return tuple(case_format.load_cases())
-
-
-def _by_id(cases: Sequence[case_format.Case]) -> Mapping[str, case_format.Case]:
-    # A case id is unique within its module, so a collision here means two case
-    # files claim one id; keying them into a dict would silently resolve every
-    # lookup to whichever file sorts last.
-    index: dict[str, case_format.Case] = {}
-    for case in cases:
-        claimed = index.setdefault(case.case_id, case)
-        if claimed is not case:
-            raise ValueError(
-                f"case id {case.case_id!r} is claimed by both "
-                f"{claimed.path.name} and {case.path.name}"
-            )
-    return index
-
-
-@functools.cache
-def _reachable_by_id() -> Mapping[str, case_format.Case]:
-    return _by_id(sweep.reachable_cases(cases=list(_corpus())))
-
-
-@functools.cache
-def _corpus_by_id() -> Mapping[str, case_format.Case]:
-    return _by_id(_corpus())
-
-
 def _case(case_id: str) -> case_format.Case:
-    return _reachable_by_id()[case_id]
+    return corpus_case(case_id, reachable=True)
 
 
 def _load_case(case_id: str) -> case_format.Case:
@@ -130,7 +97,7 @@ def _load_case(case_id: str) -> case_format.Case:
     # IMPLEMENTED_MODULES` reachability: these engine-function-level tests
     # exercise `run_conflict_case` on its own terms, never gated on whether
     # the case has ALSO been flipped visible in the sweep.
-    return _corpus_by_id()[case_id]
+    return corpus_case(case_id)
 
 
 def _own_copy(case: case_format.Case) -> case_format.Case:

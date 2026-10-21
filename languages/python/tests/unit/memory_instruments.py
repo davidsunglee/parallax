@@ -103,6 +103,7 @@ __all__ = [
     "serve_one_measurement",
     "survivors",
     "takes_its_own_interpreter",
+    "tracked_objects",
     "untraced",
     "warmed",
 ]
@@ -157,6 +158,12 @@ def require_own_interpreter(reader: str) -> None:
             f"own: take it inside a test decorated with @in_a_child_interpreter, whose "
             f"child sets {OWN_INTERPRETER_VARIABLE}"
         )
+
+
+def tracked_objects() -> list[object]:
+    """The interpreter's GC-tracked objects, read only inside its boundary."""
+    require_own_interpreter("tracked_objects")
+    return gc.get_objects()
 
 
 @contextmanager

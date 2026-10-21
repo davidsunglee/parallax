@@ -12,10 +12,11 @@ import snapshot_delivery_overhead as snapshot_report
 import write_lowering_overhead as write_report
 from interpreter_matrix import supported_minors
 from parallax.conformance.budget import BYTE_UNITS, GATED_WINDOWS, BudgetContract, MemoryGates
+from parallax.conformance.workloads import LEAF_TYPE_IDS, STRUCTURAL_LAYOUTS
 from tests.unit import _delivery_control_support as control_support
 from tests.unit import _memory_gate_support as gate_support
 from tests.unit._session_selection_support import WHOLE_CLASS, selections
-from tests.unit._workload_spelling_support import CONTROL_PREFIX
+from tests.unit._workload_spelling_support import CONTROL_PREFIX, LEAF_PREFIX
 
 
 @pytest.mark.usefixtures("committed_cost_evidence")
@@ -26,7 +27,7 @@ def test_every_memory_gate_is_owned_by_one_collected_cost_item() -> None:
     # session collects it — never inferred from a report member's registration
     # — and the table is a partition: every gate claimed, none twice.
     (cost_class,) = selections([("cost", WHOLE_CLASS)])
-    collected = set(cost_class)
+    collected = set(cost_class.selected)
     for owner in gate_support.OWNERS:
         assert owner.nodeid in collected, owner.nodeid
         assert owner.gates(), owner.nodeid
@@ -79,6 +80,25 @@ def test_the_owners_partition_every_address_the_instruments_gate() -> None:
     )
     assert set(every_predicted.addresses) == set(predicted)
     assert gate_support.unowned_gates(every_predicted) == ()
+    assert len({owner.nodeid for owner in gate_support.OWNERS}) == len(gate_support.OWNERS)
+
+    leaf_addresses = {
+        frozenset(
+            (subject, workload, cell)
+            for subject, workload, cell in predicted
+            if subject == gate_support.SNAPSHOT_SUBJECT
+            and workload == f"{LEAF_PREFIX}{type_id}"
+            and cell.startswith(f"{layout}.")
+        )
+        for type_id in LEAF_TYPE_IDS
+        for layout in STRUCTURAL_LAYOUTS
+    }
+    claimed_leaf_addresses = {
+        frozenset((gate.subject, gate.workload, gate.cell) for gate in owner.gates(every_predicted))
+        for owner in gate_support.LEAF_READ_OWNERS
+    }
+    assert all(leaf_addresses)
+    assert claimed_leaf_addresses == leaf_addresses
 
 
 @pytest.mark.usefixtures("committed_cost_evidence")

@@ -7,7 +7,7 @@ from uuid import UUID
 
 import pytest
 
-from parallax.conformance import case_format, models
+from parallax.conformance import models
 from parallax.conformance._lifecycle_observation import LifecycleObservation
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.graph_stories import GRAPH_STORIES
@@ -50,6 +50,7 @@ from parallax.descriptor import (
     domain_model_from_yaml,
 )
 from parallax.snapshot import connect
+from tests._support.case_corpus import case as corpus_case
 from tests._support.corpus import case_document, case_fixtures
 from tests._support.root_ownership import own_root
 
@@ -229,7 +230,7 @@ def test_structured_and_collection_identifiers_still_fail_at_class_creation() ->
 def test_every_identifier_executes_its_matching_graph(
     profile_run: Any, case_id: str, descriptor_backed: bool
 ) -> None:
-    case = next(case for case in case_format.load_cases() if case.case_id == case_id)
+    case = corpus_case(case_id)
     document = case_document(case)
     root_entity = document["when"]["objectQuery"]["target"].rsplit(".", 1)[-1]
     story = next(story for story in GRAPH_STORIES if story.case_id == case_id)

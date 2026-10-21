@@ -31,6 +31,7 @@ from parallax.core.read_delivery import InvalidDataError
 from parallax.core.unit_work import WriteEvidenceError
 from parallax.snapshot import TxnContext, connect
 from tests._support.adoption import raises_contextualized
+from tests._support.case_corpus import case as corpus_case
 from tests._support.corpus import case_fixtures
 from tests._support.root_ownership import own_root
 
@@ -41,7 +42,7 @@ _CUSTOMER = "parallax.compatibility.Customer"
 
 
 def _case(case_id: str) -> case_format.Case:
-    return next(case for case in case_format.load_cases() if case.case_id == case_id)
+    return corpus_case(case_id)
 
 
 def _seeded(profile_run: Any, case_id: str = _CASE_ID) -> Any:

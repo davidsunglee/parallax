@@ -22,7 +22,7 @@ from uuid import UUID
 
 import pytest
 
-from parallax.conformance import case_format, engine
+from parallax.conformance import engine
 from parallax.conformance._lanes import scenario
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.graph_models import POLICY_MODEL, Policy
@@ -76,6 +76,7 @@ from parallax.snapshot import (
 from parallax.snapshot._handle import _typed_writes as typed_writes
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
+from tests._support.case_corpus import case as corpus_case
 from tests._support.db_port import (
     BeginCall,
     CommitCall,
@@ -873,9 +874,7 @@ def test_a_predicate_write_needing_an_observation_is_refused_at_the_call(
 # clause now, so a write target carrying one is a malformed document rather    #
 # than a rule a validator applies.                                              #
 # --------------------------------------------------------------------------- #
-_READLESS_ENGINE_META = engine.load_case_metamodel(
-    next(case for case in case_format.load_cases() if case.case_id == "m-batch-write-005")
-)
+_READLESS_ENGINE_META = engine.load_case_metamodel(corpus_case("m-batch-write-005"))
 
 
 def _refused_predicates(entity: str) -> list[tuple[str, str, dict[str, object]]]:

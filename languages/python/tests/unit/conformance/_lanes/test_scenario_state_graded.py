@@ -14,6 +14,7 @@ from parallax.conformance._mechanism.envelope import EngineError
 from parallax.core.metamodel import AttributeIdentity, entity_by_name
 from parallax.core.unit_work import OptimisticLockConflictError, WriteEvidenceError
 from parallax.core.write_plan.steps import INFINITY, MilestoneTarget
+from tests._support.case_corpus import cases as corpus_cases
 from tests._support.repo import REPO_ROOT
 from tests.unit.conformance._recording_ports import FakeWritePort
 
@@ -51,7 +52,7 @@ def _update(row: dict[str, Any], **entry: Any) -> dict[str, Any]:
 def test_every_submission_reaches_its_own_verb_and_the_run_reports_what_it_left() -> None:
     (case,) = (
         case
-        for case in case_format.load_cases()
+        for case in corpus_cases()
         if case.path.name == f"{_PREDICATE_WRITE_CASE}-layout-twin-columns.yaml"
     )
     tag = {"id": 1, "quantity": 5, "label": "t"}

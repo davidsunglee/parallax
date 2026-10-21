@@ -16,19 +16,18 @@ from typing import Any, cast
 
 import pytest
 
-from parallax.conformance import case_format, engine
+from parallax.conformance import engine
+from tests._support.case_corpus import case as corpus_case
 from tests._support.corpus import CollectionKinds, case_document, compare_graph
 from tests._support.graph_residuals import (
     CHILD_LEVEL_GRAPH_SHAPE_RESIDUALS,
     classify_child_graph_shape_residuals,
 )
 
-_CASES = {c.case_id: c for c in case_format.load_cases()}
-
 
 def _authored_graph(case_id: str) -> tuple[dict[str, Any], CollectionKinds]:
     """One case's own authored `then.graph`, and the kinds its model declares."""
-    case = _CASES[case_id]
+    case = corpus_case(case_id)
     graph = copy.deepcopy(cast("dict[str, Any]", case_document(case)["then"]["graph"]))
     return graph, CollectionKinds(engine.load_case_metamodel(case))
 
@@ -66,7 +65,7 @@ def test_a_child_level_value_object_many_compares_positionally() -> None:
 
 
 def test_one_node_grades_against_the_entity_it_names() -> None:
-    case = _CASES["m-value-object-023"]
+    case = corpus_case("m-value-object-023")
     kinds = CollectionKinds(engine.load_case_metamodel(case), "Customer")
     expected = cast("dict[str, Any]", case_document(case)["then"]["graph"]["Customer"][0])
     observed = copy.deepcopy(expected)
@@ -79,7 +78,7 @@ def test_one_node_grades_against_the_entity_it_names() -> None:
 def _authored_step_graph(case_id: str, step: int) -> tuple[dict[str, Any], CollectionKinds]:
     """One scenario step's own authored `expectGraph`, and the kinds its model
     declares — the per-step analogue of :func:`_authored_graph`."""
-    case = _CASES[case_id]
+    case = corpus_case(case_id)
     steps = cast("list[dict[str, Any]]", case_document(case)["when"]["scenario"])
     graph = copy.deepcopy(cast("dict[str, Any]", steps[step]["expectGraph"]))
     return graph, CollectionKinds(engine.load_case_metamodel(case))

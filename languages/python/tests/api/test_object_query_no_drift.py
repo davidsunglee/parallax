@@ -15,7 +15,6 @@ from typing import Any, cast
 
 import pytest
 
-from parallax.conformance import case_format
 from parallax.conformance.animal_owner import ANIMAL_MODEL as ANIMAL_OWNER_MODEL
 from parallax.conformance.animal_owner import Person as AnimalOwnerPerson
 from parallax.conformance.class_models import MODELS as CLASS_MODELS
@@ -69,6 +68,7 @@ from parallax.core.object_query import LATEST, deserialize
 from tests._support import inheritance_models as im
 from tests._support import snapshot_models as sm
 from tests._support import value_object_models as vm
+from tests._support.case_corpus import case as corpus_case
 from tests._support.corpus import case_document
 from tests._support.query_probes import canonical_document, typed_resolved
 
@@ -248,7 +248,6 @@ BUILDERS: dict[str, Callable[[], ObjectQuery[Any, Any]]] = {
     "m-edit-009": lambda: Note.where(Note.id == 1),
 }
 
-_CASES = {c.case_id: c for c in case_format.load_cases()}
 _DESCRIPTOR_MODELS = load_domain_models()
 
 
@@ -259,17 +258,17 @@ _UNFINISHED: frozenset[str] = frozenset({"m-navigate-007", "m-navigate-011"})
 
 
 def _case_query(case_id: str) -> dict[str, Any]:
-    when = case_document(_CASES[case_id])["when"]
+    when = case_document(corpus_case(case_id))["when"]
     return (
         when["edit"]["source"]["objectQuery"]
-        if _CASES[case_id].shape == "edit"
+        if corpus_case(case_id).shape == "edit"
         else when["objectQuery"]
     )
 
 
 @pytest.mark.parametrize("case_id", sorted(BUILDERS), ids=sorted(BUILDERS))
 def test_the_idiomatic_query_builds_the_corpus_object_query(case_id: str) -> None:
-    model = CLASS_MODELS[Path(_CASES[case_id].model).stem]
+    model = CLASS_MODELS[Path(corpus_case(case_id).model).stem]
     assert canonical_document(BUILDERS[case_id](), model) == _case_query(case_id)
 
 
@@ -279,7 +278,7 @@ def test_the_idiomatic_query_resolves_as_its_canonical_query_does(case_id: str) 
     # the Typed query resolves through its declared facts alone, adopting its
     # prepared operands, and converges on the product the canonical query's
     # decoded literals resolve to.
-    model = _DESCRIPTOR_MODELS[Path(_CASES[case_id].model).stem]
+    model = _DESCRIPTOR_MODELS[Path(corpus_case(case_id).model).stem]
     query = BUILDERS[case_id]()
     canonical = preflight(object_query_node(query, model), model=model_of(model), form="graph")
     assert typed_resolved(query, model) == canonical
@@ -287,7 +286,7 @@ def test_the_idiomatic_query_resolves_as_its_canonical_query_does(case_id: str) 
 
 @pytest.mark.parametrize("case_id", sorted(_UNFINISHED))
 def test_a_model_without_entity_classes_refuses_an_unfinished_path(case_id: str) -> None:
-    model = _DESCRIPTOR_MODELS[Path(_CASES[case_id].model).stem]
+    model = _DESCRIPTOR_MODELS[Path(corpus_case(case_id).model).stem]
     with pytest.raises(QueryDefinitionError, match="through Wire instead"):
         typed_resolved(BUILDERS[case_id](), model)
 
@@ -371,7 +370,7 @@ AUTHORING_REJECTIONS: dict[str, Callable[[], object]] = {
 
 @pytest.mark.parametrize("case_id", sorted(AUTHORING_REJECTIONS), ids=sorted(AUTHORING_REJECTIONS))
 def test_serialized_only_rejections_fail_at_native_query_authoring(case_id: str) -> None:
-    assert case_document(_CASES[case_id])["then"]["rejectedRule"] in {
+    assert case_document(corpus_case(case_id))["then"]["rejectedRule"] in {
         "neutral-literal-type-mismatch",
         "string-predicate-non-string-member",
     }
@@ -382,7 +381,7 @@ def test_serialized_only_rejections_fail_at_native_query_authoring(case_id: str)
 
 @pytest.mark.parametrize("case_id", sorted(REJECTED_BUILDERS), ids=sorted(REJECTED_BUILDERS))
 def test_the_idiomatic_query_rejects_the_corpus_rule_at_the_read_gate(case_id: str) -> None:
-    expected_rule = case_document(_CASES[case_id])["then"]["rejectedRule"]
+    expected_rule = case_document(corpus_case(case_id))["then"]["rejectedRule"]
     query = REJECTED_BUILDERS[case_id]()
     with pytest.raises(ModelRejectedError) as typed:
         typed_resolved(query, REJECTED_MODELS[case_id])
@@ -390,14 +389,14 @@ def test_the_idiomatic_query_rejects_the_corpus_rule_at_the_read_gate(case_id: s
     with pytest.raises(ModelRejectedError) as exported:
         object_query_node(query, REJECTED_MODELS[case_id])
     assert exported.value.rule == expected_rule
-    corpus_query = deserialize(case_document(_CASES[case_id])["when"]["objectQuery"])
+    corpus_query = deserialize(case_document(corpus_case(case_id))["when"]["objectQuery"])
     with pytest.raises(ModelRejectedError) as corpus:
         preflight(corpus_query, model=model_of(REJECTED_MODELS[case_id]), form="graph")
     assert corpus.value.rule == expected_rule
 
 
 def test_duplicate_subtype_selection_is_rejected_during_query_construction() -> None:
-    expected = case_document(_CASES["m-inheritance-133"])["when"]["objectQuery"]
+    expected = case_document(corpus_case("m-inheritance-133"))["when"]["objectQuery"]
     assert expected["narrowTo"] == [
         "parallax.compatibility.Dog",
         "parallax.compatibility.Dog",

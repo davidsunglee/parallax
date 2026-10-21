@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from typing import Final
 
 from parallax.conformance.budget import MemoryGate, MemoryGates, ScalingDomain
-from parallax.conformance.workloads import LEAF_TYPE_IDS
+from parallax.conformance.workloads import LEAF_TYPE_IDS, STRUCTURAL_LAYOUTS
 from tests.unit._workload_spelling_support import (
     GEOMETRY_PREFIX,
     GUARDED_PREFIX,
@@ -44,6 +44,7 @@ class GateOwner:
     test: str
     subject: str
     selects: Callable[[str], bool]
+    cell_prefix: str = ""
 
     @property
     def nodeid(self) -> str:
@@ -52,7 +53,9 @@ class GateOwner:
     def gates(self, gates: MemoryGates | None = None) -> tuple[MemoryGate, ...]:
         active = gates or MemoryGates.load()
         return tuple(
-            gate for gate in active.subject_gates(self.subject) if self.selects(gate.workload)
+            gate
+            for gate in active.subject_gates(self.subject)
+            if self.selects(gate.workload) and gate.cell.startswith(self.cell_prefix)
         )
 
     def workloads(self, gates: MemoryGates | None = None) -> tuple[str, ...]:
@@ -81,15 +84,15 @@ def _exactly(*names: str) -> Callable[[str], bool]:
 LEAF_READ_OWNERS: Final[tuple[GateOwner, ...]] = tuple(
     GateOwner(
         SNAPSHOT_MODULE,
-        f"test_the_{type_id}_leaf_reads_stay_within_their_memory_gates",
+        f"test_the_{type_id}_leaf_reads_under_{layout}_stay_within_their_memory_gates",
         SNAPSHOT_SUBJECT,
         _exactly(f"{LEAF_PREFIX}{type_id}"),
+        f"{layout}.",
     )
     for type_id in LEAF_TYPE_IDS
+    for layout in STRUCTURAL_LAYOUTS
 )
-"""One owner per measured leaf type, so the costliest read family spreads over
-as many cost items as it has types instead of weighing on one shard; the gate
-module defines each owner's test from this table."""
+"""One cost item per measured leaf type and storage layout."""
 
 OWNERS: Final[tuple[GateOwner, ...]] = (
     GateOwner(
