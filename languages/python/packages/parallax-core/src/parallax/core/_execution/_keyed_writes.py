@@ -44,7 +44,6 @@ __all__ = [
     "KeyedWriteSource",
     "KeyedWriteValueError",
     "OpenedKeyedWrite",
-    "PreparedSourceWrite",
     "Provenance",
     "ResolvedKeyedInsert",
     "ResolvedKeyedWriteSource",
@@ -307,24 +306,6 @@ class ResolvedKeyedWriteSource:
 
 
 @dataclass(frozen=True, slots=True)
-class PreparedSourceWrite:
-    """What a Keyed Write Source answers once its write has been prepared.
-
-    ``instruction`` carries the identity plus every member the caller
-    expressed, canonical and owned; ``assigned`` names those members, identity
-    excluded. They are the write's literal assignment set: a member equal to
-    the value the source published is still assigned, and only an update that
-    expresses no member at all is empty.
-
-    A destructive or close verb names no member, so ``assigned`` is empty and
-    the instruction is the identity row alone.
-    """
-
-    instruction: PreparedKeyedWrite
-    assigned: frozenset[str]
-
-
-@dataclass(frozen=True, slots=True)
 class ResolvedKeyedInsert:
     """What a Keyed Insert Source answers about the row a verb opens.
 
@@ -379,10 +360,11 @@ class KeyedWriteSource(Protocol):
     wrong about — a Wire change document's own shape; nothing at all for a Typed
     value, whose shape its class fixes. :meth:`resolve` answers the source facts.
     :meth:`prepare` is handed the model and mutation :meth:`resolve` was,
-    beside its answer; it acquires the authored row, builds the instruction with the caller's raw
-    bounds, and has core preparation judge it — target and window first, then
-    payload — answering the originals beside it. A representation that addresses
-    members by the source's object reads it off ``resolved``.
+    beside its answer; it acquires the authored row — the identity plus every
+    member the caller expressed, and nothing else — builds the instruction with
+    the caller's raw bounds, and has core preparation judge it, target and
+    window first, then payload. A representation that addresses members by the
+    source's object reads it off ``resolved``.
     """
 
     def capture(self, mutation: KeyedMutation, /) -> None: ...
@@ -398,7 +380,7 @@ class KeyedWriteSource(Protocol):
         *,
         valid_from: dt.datetime | None,
         until: dt.datetime | None,
-    ) -> PreparedSourceWrite: ...
+    ) -> PreparedKeyedWrite: ...
 
 
 class KeyedInsertSource(Protocol):
@@ -407,9 +389,7 @@ class KeyedInsertSource(Protocol):
 
     The same three phases in the same order, over the facts an opening row has:
     no hint, no identity row derived ahead of the instruction, and no originals
-    to compare against. :meth:`prepare` answers the prepared write
-    itself rather than a record pairing it with originals, because an insert
-    reduces no effective change set.
+    to compare against.
     """
 
     def capture(self, mutation: KeyedMutation, /) -> None: ...
@@ -597,10 +577,10 @@ def keyed_write(
     valid_from = source_start(meta, resolved, mutation, anchor)
     prepared = source.prepare(meta, mutation, resolved, valid_from=valid_from, until=until)
     if authorized:
-        item = buffered_write(prepared.instruction, None, authority=authoring)
+        item = buffered_write(prepared, None, authority=authoring)
     else:
         read = resolved.read_evidence
-        addressed = object_key(prepared.instruction, meta) if read is None else read.object_key
+        addressed = object_key(prepared, meta) if read is None else read.object_key
         # An identity row always states its object's key.
         assert addressed is not None
         evidence = uow.resolve_read_evidence(
@@ -609,8 +589,8 @@ def keyed_write(
             mutation=mutation,
             object_key=addressed,
         )
-        item = buffered_write(prepared.instruction, evidence, source=read)
-    if mutation in AMEND_MUTATIONS and not prepared.assigned:
+        item = buffered_write(prepared, evidence, source=read)
+    if mutation in AMEND_MUTATIONS and not prepared.assigns:
         return
     uow.buffer(item)
 

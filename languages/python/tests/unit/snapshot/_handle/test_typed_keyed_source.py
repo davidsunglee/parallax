@@ -147,8 +147,8 @@ def test_prepare_states_every_touched_member_as_its_literal_assignment() -> None
 
     prepared = source.prepare(meta, "amend", resolved, valid_from=None, until=None)
 
-    assert prepared.instruction.rows[0] == {"id": 1, "balance": Decimal("125.00")}
-    assert prepared.assigned == {"balance"}
+    assert prepared.rows[0] == {"id": 1, "balance": Decimal("125.00")}
+    assert prepared.assigns
 
 
 def test_a_wholly_restoring_chain_still_assigns_the_member_it_took_back() -> None:
@@ -162,8 +162,8 @@ def test_a_wholly_restoring_chain_still_assigns_the_member_it_took_back() -> Non
         meta, "amend", source.resolve(meta, "amend"), valid_from=None, until=None
     )
 
-    assert prepared.instruction.rows[0] == {"id": 1, "balance": Decimal("100.00")}
-    assert prepared.assigned == {"balance"}
+    assert prepared.rows[0] == {"id": 1, "balance": Decimal("100.00")}
+    assert prepared.assigns
 
 
 def test_a_correction_states_what_current_authoring_admits_over_any_stored_original() -> None:
@@ -182,13 +182,13 @@ def test_a_correction_states_what_current_authoring_admits_over_any_stored_origi
         meta, "amend", source.resolve(meta, "amend"), valid_from=None, until=None
     )
 
-    assert prepared.instruction.rows[0]["address"] == {
+    assert prepared.rows[0]["address"] == {
         "street": "Main",
         "city": "Berlin",
         "geo": {"country": "DE", "point": {"lat": 1.0, "lon": 2.0}},
         "phones": (),
     }
-    assert prepared.assigned == {"address"}
+    assert prepared.assigns
 
 
 def test_an_untouched_copy_authors_its_identity_row_alone() -> None:
@@ -199,8 +199,8 @@ def test_an_untouched_copy_authors_its_identity_row_alone() -> None:
         meta, "amend", source.resolve(meta, "amend"), valid_from=None, until=None
     )
 
-    assert prepared.instruction.rows[0] == {"id": 1}
-    assert prepared.assigned == frozenset()
+    assert prepared.rows[0] == {"id": 1}
+    assert not prepared.assigns
 
 
 def test_a_destructive_verb_authors_its_identity_row_and_assigns_nothing() -> None:
@@ -211,8 +211,8 @@ def test_a_destructive_verb_authors_its_identity_row_and_assigns_nothing() -> No
         meta, "delete", source.resolve(meta, "delete"), valid_from=None, until=None
     )
 
-    assert prepared.instruction.rows[0] == {"id": 1}
-    assert prepared.assigned == frozenset()
+    assert prepared.rows[0] == {"id": 1}
+    assert not prepared.assigns
 
 
 # --------------------------------------------------------------------------- #

@@ -13,7 +13,6 @@ import pytest
 
 from parallax.core._execution._keyed_writes import (
     OpenedKeyedWrite,
-    PreparedSourceWrite,
     ResolvedKeyedInsert,
     ResolvedKeyedWriteSource,
     keyed_instruction,
@@ -101,11 +100,8 @@ class _AmendingAccountOne:
         *,
         valid_from: dt.datetime | None,
         until: dt.datetime | None,
-    ) -> PreparedSourceWrite:
-        row = {"id": 1, "balance": Decimal("9.00")}
-        return PreparedSourceWrite(
-            _prepared(model, mutation, resolved.entity, row), frozenset({"balance"})
-        )
+    ) -> PreparedKeyedWrite:
+        return _prepared(model, mutation, resolved.entity, {"id": 1, "balance": Decimal("9.00")})
 
 
 class _OpeningAccountSeven:

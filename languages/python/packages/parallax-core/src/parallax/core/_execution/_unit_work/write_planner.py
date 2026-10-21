@@ -500,7 +500,11 @@ def _merge_rows(run: Sequence[PreparedKeyedWrite]) -> PreparedKeyedWrite:
     single-row instructions, in run (buffer) order — the same
     entity/mutation/Valid-Time window every member of the run already shares."""
     first = run[0]
-    return derive_keyed_write(first, tuple(row for w in run for row in w.rows))
+    return derive_keyed_write(
+        first,
+        tuple(row for w in run for row in w.rows),
+        assigns=any(w.assigns for w in run),
+    )
 
 
 def _without_noop_rows(

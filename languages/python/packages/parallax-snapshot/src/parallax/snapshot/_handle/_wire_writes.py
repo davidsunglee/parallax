@@ -7,7 +7,6 @@ from typing import Any, cast
 from parallax.core import predicate as predicate_algebra
 from parallax.core._execution._family import family_view
 from parallax.core._execution._keyed_writes import (
-    PreparedSourceWrite,
     ResolvedKeyedInsert,
     ResolvedKeyedWriteSource,
     TargetRevisionArguments,
@@ -501,7 +500,7 @@ class WireKeyedWriteSource:
         *,
         valid_from: dt.datetime | None,
         until: dt.datetime | None,
-    ) -> PreparedSourceWrite:
+    ) -> PreparedKeyedWrite:
         """The instruction this document authors: the source's identity plus
         every member the document states, its key members set aside once they
         are judged to name the source's own object.
@@ -520,7 +519,7 @@ class WireKeyedWriteSource:
             authored = _published_writable(model, entity, node, copy=False)
         identity = _published_identity(model, entity, node)
         if not any(name in authored for name in identity):
-            instruction = _prepared_wire_write(
+            return _prepared_wire_write(
                 model,
                 mutation,
                 entity,
@@ -529,23 +528,19 @@ class WireKeyedWriteSource:
                 valid_from=valid_from,
                 until=until,
             )
-            assigned = frozenset(authored)
-        else:
-            stated = authored
-            instruction = _prepared_wire_write(
-                model,
-                mutation,
-                entity,
-                identity,
-                None,
-                valid_from=valid_from,
-                until=until,
-                members=lambda: instructions.addressed_members(
-                    model, entity, _published_address(model, entity, node, object_key), stated
-                ),
-            )
-            assigned = frozenset(name for name in authored if name not in identity)
-        return PreparedSourceWrite(instruction=instruction, assigned=assigned)
+        stated = authored
+        return _prepared_wire_write(
+            model,
+            mutation,
+            entity,
+            identity,
+            None,
+            valid_from=valid_from,
+            until=until,
+            members=lambda: instructions.addressed_members(
+                model, entity, _published_address(model, entity, node, object_key), stated
+            ),
+        )
 
 
 class WireKeyedInsertSource:
