@@ -1234,14 +1234,12 @@ def marked_flushes(regions: FlushRegions) -> Generator[None]:
 
 
 def write_lowering_digest() -> str:
-    """The SHA-256 digest of every source this workload is defined by."""
+    from tests.unit._workload_digest_support import WRITE_SOURCES, canonical_source
+
     digest = hashlib.sha256()
-    for module in (
-        Path(__file__),
-        Path(geometry_support.__file__),
-        Path(leaf_support.__file__),
-    ):
-        digest.update(module.read_bytes())
+    for index, relative in enumerate(WRITE_SOURCES):
+        source = (Path(__file__).parents[2] / relative).read_text(encoding="utf-8")
+        digest.update(canonical_source(source, omit_digest=index == 0))
         digest.update(b"\0")
     digest.update(structural_digest().encode("utf-8"))
     digest.update(leaf_type_digest().encode("utf-8"))

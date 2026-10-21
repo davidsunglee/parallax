@@ -458,6 +458,51 @@ def test_the_workload_digest_covers_every_defining_source(monkeypatch: pytest.Mo
     assert lowering_support.write_lowering_digest() != digest
 
 
+@pytest.mark.parametrize("prose", ["# Revised comment\n", '"""Revised module prose."""\n'])
+def test_workload_identity_ignores_prose(prose: str) -> None:
+    from tests.unit._workload_digest_support import canonical_source
+
+    before = '"Original prose."\nVALUE = "operational"\n"Attribute prose."\n'
+    after = prose + 'VALUE = "operational"\n"New attribute prose."\n'
+    assert canonical_source(before) == canonical_source(after)
+    assert canonical_source(before) != canonical_source(after.replace('"operational"', '"changed"'))
+
+
+@pytest.mark.parametrize(
+    "relative",
+    [
+        "tests/unit/_write_lowering_support.py",
+        "tests/unit/_structural_geometry_support.py",
+        "tests/unit/_leaf_type_support.py",
+        "tests/unit/_workload_spelling_support.py",
+    ],
+)
+def test_the_write_digest_ignores_prose_and_tracks_operational_code(
+    monkeypatch: pytest.MonkeyPatch, relative: str
+) -> None:
+    baseline = lowering_support.write_lowering_digest()
+    source_path = Path(lowering_support.__file__).parents[2] / relative
+    read_text = Path.read_text
+
+    def prose(path: Path, *args: Any, **kwargs: Any) -> str:
+        source = read_text(path, *args, **kwargs)
+        return (
+            source.replace('"""', '"""Revised documentation.\n', 1)
+            if path == source_path
+            else source
+        )
+
+    monkeypatch.setattr(Path, "read_text", prose)
+    assert lowering_support.write_lowering_digest() == baseline
+
+    def operational(path: Path, *args: Any, **kwargs: Any) -> str:
+        source = read_text(path, *args, **kwargs)
+        return source + '\nWORKLOAD_INPUT = "changed"\n' if path == source_path else source
+
+    monkeypatch.setattr(Path, "read_text", operational)
+    assert lowering_support.write_lowering_digest() != baseline
+
+
 # --------------------------------------------------------------------------- #
 # The child protocol and the envelope.                                         #
 # --------------------------------------------------------------------------- #

@@ -697,3 +697,176 @@ def test_a_source_absent_at_a_commit_has_no_text_there() -> None:
     assert cost_report.text_at(head, contract) == cost_report.committed_contract().authored.decode()
     with pytest.raises(ValueError, match="does not exist at"):
         cost_report.text_at(head, cost_report.WORKSPACE / "spec" / "no-such-source.yaml")
+
+
+def _stale_write_capture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    from tests.unit._workload_digest_support import WRITE_SOURCES, write_digest
+
+    portfolio = _stale_capture(tmp_path, monkeypatch)
+    document = json.loads(portfolio.read_text())
+    sources = [(cost_report.WORKSPACE / source).read_text() for source in WRITE_SOURCES]
+    manifests = [workloads.structural_digest(), workloads.leaf_type_digest()]
+    recorded = write_digest(sources, manifests, legacy=True)
+    for member in document["members"]:
+        provenance = member["provenance"]
+        if provenance["workloadDigest"] == RECORDED_DIGEST:
+            provenance["workloadDigest"] = workload_digest()
+        if member["subject"] == cost_report.WRITE_SUBJECT:
+            provenance["workloadDigest"] = recorded
+    portfolio.write_text(json.dumps(document))
+    monkeypatch.setattr(cost_report, "is_published", _unpublished)
+
+    def frozen(_workspace: Path) -> tuple[int, str, str]:
+        return 0, json.dumps(manifests), ""
+
+    monkeypatch.setattr(cost_report, "run_write_code_identity", frozen)
+    return portfolio
+
+
+def test_redigest_write_family_preserves_capture_after_prose_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tests.unit._workload_digest_support import WRITE_SOURCES
+
+    portfolio = _stale_write_capture(tmp_path, monkeypatch)
+    source_path = cost_report.WORKSPACE / WRITE_SOURCES[0]
+    original = source_path.read_text()
+    before = json.loads(portfolio.read_text())
+    conditions = json.loads((portfolio.parent / "conditions.json").read_text())
+    durations = (portfolio.parent / "durations.json").read_bytes()
+    with monkeypatch.context() as patched:
+        read_text = Path.read_text
+
+        def revised(path: Path, *args: Any, **kwargs: Any) -> str:
+            text = read_text(path, *args, **kwargs)
+            return "# Revised wording.\n" + text if path == source_path else text
+
+        patched.setattr(Path, "read_text", revised)
+
+        def captured(_commit: str, path: Path) -> str:
+            return original if path == source_path else read_text(path)
+
+        patched.setattr(cost_report, "text_at", captured)
+        assert cost_report.main(["--redigest", str(portfolio)]) == 0
+        current = cost_report.write_report.lowering_support.write_lowering_digest()
+    after = json.loads(portfolio.read_text())
+    for old, new in zip(before["members"], after["members"], strict=True):
+        if old["subject"] == cost_report.WRITE_SUBJECT:
+            assert new == {**old, "provenance": {**old["provenance"], "workloadDigest": current}}
+        else:
+            assert new == old
+    adjusted = json.loads((portfolio.parent / "conditions.json").read_text())
+    amendment = adjusted.pop("adjustment")["redigested"]
+    assert adjusted == conditions
+    assert amendment["producingCommit"] == PRODUCING_COMMIT
+    assert amendment["members"] == [cost_report.WRITE_SUBJECT]
+    assert (portfolio.parent / "durations.json").read_bytes() == durations
+
+
+def _change_write_source(portfolio: Path, monkeypatch: pytest.MonkeyPatch, damage: str) -> None:
+    def changed(_commit: str, path: Path) -> str:
+        if damage == "missing":
+            raise ValueError("missing source")
+        source = path.read_text()
+        if path.name == "_workload_spelling_support.py":
+            return (
+                source.replace('"read-"', '"changed-"')
+                if damage == "literal"
+                else source + '\nraise RuntimeError("changed")\n'
+            )
+        return source
+
+    if damage != "missing":
+        path = portfolio.parent / "conditions.json"
+        conditions = json.loads(path.read_text())
+        relative = "tests/unit/_workload_spelling_support.py"
+        conditions["members"][cost_report.WRITE_SUBJECT]["sources"][relative] = hashlib.sha256(
+            changed(PRODUCING_COMMIT, cost_report.WORKSPACE / relative).encode()
+        ).hexdigest()
+        path.write_text(json.dumps(conditions))
+    monkeypatch.setattr(cost_report, "text_at", changed)
+
+
+@pytest.mark.parametrize(
+    "damage", ["source", "literal", "recorded", "manifest", "missing", "contract", "adjustment"]
+)
+def test_write_redigest_refuses_unproven_capture_without_writes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, damage: str
+) -> None:
+    portfolio = _stale_write_capture(tmp_path, monkeypatch)
+    if damage in {"source", "literal", "missing"}:
+        _change_write_source(portfolio, monkeypatch, damage)
+    elif damage == "recorded":
+        document = json.loads(portfolio.read_text())
+        for member in document["members"]:
+            if member["subject"] == cost_report.WRITE_SUBJECT:
+                member["provenance"]["workloadDigest"] = "e" * 64
+        portfolio.write_text(json.dumps(document))
+    elif damage == "manifest":
+
+        def different(_workspace: Path) -> tuple[int, str, str]:
+            return 0, '["different", "frozen"]', ""
+
+        monkeypatch.setattr(cost_report, "run_write_code_identity", different)
+    elif damage == "contract":
+        monkeypatch.setattr(cost_report, "committed_contract", _changed_contract)
+    else:
+        path = portfolio.parent / "conditions.json"
+        document = json.loads(path.read_text())
+        document["adjustment"] = {}
+        path.write_text(json.dumps(document))
+    _refused_without_writes(portfolio)
+
+
+@pytest.mark.parametrize("result", [(1, "", "unavailable"), (0, "not JSON", "")])
+def test_write_redigest_requires_successful_frozen_manifest_proof(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, result: tuple[int, str, str]
+) -> None:
+    portfolio = _stale_write_capture(tmp_path, monkeypatch)
+
+    def unavailable(_workspace: Path) -> tuple[int, str, str]:
+        return result
+
+    monkeypatch.setattr(cost_report, "run_write_code_identity", unavailable)
+    _refused_without_writes(portfolio)
+
+
+def test_write_redigest_requires_original_source_conditions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    portfolio = _stale_write_capture(tmp_path, monkeypatch)
+    path = portfolio.parent / "conditions.json"
+    conditions = json.loads(path.read_text())
+    conditions["members"][cost_report.WRITE_SUBJECT]["sources"].pop(
+        "tests/unit/_workload_spelling_support.py"
+    )
+    path.write_text(json.dumps(conditions))
+    _refused_without_writes(portfolio)
+
+
+def test_redigest_amends_both_stale_families_in_one_disclosed_adjustment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    portfolio = _stale_write_capture(tmp_path, monkeypatch)
+    document = json.loads(portfolio.read_text())
+    for member in document["members"]:
+        if member["provenance"]["workloadDigest"] == workload_digest():
+            member["provenance"]["workloadDigest"] = RECORDED_DIGEST
+    portfolio.write_text(json.dumps(document))
+
+    def published(_commit: str) -> bool:
+        return True
+
+    monkeypatch.setattr(cost_report, "is_published", published)
+    assert cost_report.main(["--redigest", str(portfolio)]) == 0
+    after = json.loads(portfolio.read_text())
+    for member in after["members"]:
+        if member["subject"] == cost_report.WRITE_SUBJECT:
+            assert (
+                member["provenance"]["workloadDigest"]
+                == cost_report.write_report.lowering_support.write_lowering_digest()
+            )
+        elif member["subject"] != cost_report.FEATURE_SUBJECT:
+            assert member["provenance"]["workloadDigest"] == workload_digest()
+    conditions = json.loads((portfolio.parent / "conditions.json").read_text())
+    assert len(conditions["adjustment"]["redigested"]["workloadDigests"]) == 2

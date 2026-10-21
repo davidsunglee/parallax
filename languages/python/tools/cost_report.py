@@ -121,6 +121,7 @@ from snapshot_delivery_overhead import (
 from snapshot_delivery_overhead import (
     unit as snapshot_unit,
 )
+from tests.unit._workload_digest_support import WRITE_SOURCES, write_digest
 
 WORKSPACE: Final = Path(__file__).resolve().parents[1]
 PORTFOLIO_VERSION: Final = 1
@@ -241,12 +242,7 @@ MEMBER_SOURCES: Final[Mapping[str, MemberSources]] = {
             "tools/write_lowering_reading.py",
             "tests/unit/memory_instruments.py",
         ),
-        (
-            "tests/unit/_write_lowering_support.py",
-            "tests/unit/_structural_geometry_support.py",
-            "tests/unit/_leaf_type_support.py",
-            "tests/unit/_workload_spelling_support.py",
-        ),
+        WRITE_SOURCES,
     ),
     FEATURE_SUBJECT: MemberSources(
         (
@@ -1830,21 +1826,109 @@ def _prove_measurement_unchanged(
         )
 
 
+def run_write_code_identity(workspace: Path) -> tuple[int, str, str]:
+    return _run_frozen(
+        workspace,
+        [
+            "-c",
+            "import json; from parallax.conformance import workloads; "
+            "print(json.dumps([workloads.structural_digest(), workloads.leaf_type_digest()]))",
+        ],
+    )
+
+
+def _prove_write_unchanged(
+    commit: str, recorded: str, conditions: Conditions, worktree: WorktreeFactory
+) -> str:
+    sources = [text_at(commit, WORKSPACE / relative) for relative in WRITE_SOURCES]
+    captured_sources = conditions[WRITE_SUBJECT].sources
+    for relative, source in zip(WRITE_SOURCES, sources, strict=True):
+        if captured_sources.get(relative) != hashlib.sha256(source.encode("utf-8")).hexdigest():
+            raise ValueError(
+                f"the captured write-lowering source {relative} differs at {commit[:12]}"
+            )
+    try:
+        with worktree(commit) as checkout:
+            manifests = _code_identity(
+                run_write_code_identity, checkout / "languages" / "python", commit[:12]
+            )
+    except subprocess.CalledProcessError as error:
+        raise ValueError(
+            f"git could not check out {commit[:12]}: {error.stderr or error}"
+        ) from error
+    if (
+        not isinstance(manifests, list)
+        or len(cast("list[object]", manifests)) != 2
+        or not all(isinstance(value, str) for value in cast("list[object]", manifests))
+    ):
+        raise ValueError("the write-lowering frozen manifests are not two digests")
+    frozen = cast("list[str]", manifests)
+    historical = write_digest(sources, frozen)
+    if recorded not in {historical, write_digest(sources, frozen, legacy=True)}:
+        raise ValueError("the recorded write-lowering digest does not match its producing source")
+    current = write_report.lowering_support.write_lowering_digest()
+    if historical != current:
+        raise ValueError("the write-lowering workload code or frozen manifests differ from HEAD's")
+    return current
+
+
+def _snapshot_redigest(
+    document: Document, commit: str, runner: CodeIdentityRunner, worktree: WorktreeFactory
+) -> tuple[str, str] | None:
+    snapshot = _snapshot(document)
+    if snapshot is None:
+        raise ValueError("the portfolio has no single snapshot-delivery member")
+    recorded = str(cast("Document", snapshot["provenance"])["workloadDigest"])
+    current = workload_digest()
+    if recorded == current:
+        return None
+    if not is_published(commit):
+        raise ValueError(f"the producing commit {commit[:12]} is not an ancestor of HEAD")
+    _prove_measurement_unchanged(commit, current, runner, worktree)
+    return recorded, current
+
+
+def _redigest_revisions(
+    document: Document,
+    commit: str,
+    conditions: Conditions,
+    runner: CodeIdentityRunner,
+    worktree: WorktreeFactory,
+) -> dict[str, tuple[str, str]]:
+    revisions: dict[str, tuple[str, str]] = {}
+    snapshot_change = _snapshot_redigest(document, commit, runner, worktree)
+    members = cast("Sequence[Document]", document["members"])
+    for member in members:
+        subject = str(member["subject"])
+        provenance = cast("Document", member["provenance"])
+        recorded = str(provenance["workloadDigest"])
+        if snapshot_change is not None and recorded == snapshot_change[0]:
+            revisions[subject] = snapshot_change
+        if (
+            subject == WRITE_SUBJECT
+            and recorded != write_report.lowering_support.write_lowering_digest()
+        ):
+            if provenance["dirty"]:
+                raise ValueError("the write-lowering capture names a dirty producing tree")
+            revisions[subject] = (
+                recorded,
+                _prove_write_unchanged(commit, recorded, conditions, worktree),
+            )
+    return revisions
+
+
 def redigest(
     portfolio: Path,
     runner: CodeIdentityRunner | None = None,
     worktree: WorktreeFactory | None = None,
 ) -> None:
-    """Re-state a capture's workload digest under HEAD's digest definition.
+    """Re-state stale Snapshot and write-lowering workload identities.
 
-    Refused unless what was measured provably did not change since the one
-    producing commit every member names: that commit is an ancestor of HEAD,
-    the members embed HEAD's committed Budget Contract, the measured inputs the
-    commit holds digest to HEAD's workload digest, and the commit's own code
-    reports HEAD's generated-key offset, frozen manifests, and generated rows.
-    Every member recording the snapshot-delivery member's workload digest takes
-    HEAD's; readings, comparisons, other provenance, and measurement conditions
-    stay as captured, and an existing adjustment is never overwritten.
+    Snapshot requires a producing ancestor and its original dynamic input proof.
+    Write lowering also accepts a resolvable rebased producer, after verifying
+    its recorded source hashes, legacy or canonical digest, executable syntax,
+    and frozen manifests. All proofs complete before any evidence is replaced;
+    measurements, producing provenance, and captured conditions stay intact.
     """
     document, conditions, durations = _reclassification_inputs(portfolio)
     members = cast("Sequence[Document]", document["members"])
@@ -1853,30 +1937,49 @@ def redigest(
     if len(commits) != 1:
         raise ValueError("the members name different producing commits")
     (commit,) = commits
-    if COMMIT_PATTERN.fullmatch(commit) is None or not is_published(commit):
-        raise ValueError(f"the producing commit {commit[:12]} is not an ancestor of HEAD")
+    if COMMIT_PATTERN.fullmatch(commit) is None:
+        raise ValueError("the producing commit is not a full Git identity")
     if provenances[0]["budgetContractDigest"] != committed_contract().digest:
         raise ValueError(
             "the members embed a Budget Contract other than HEAD's committed one; "
             "reclassify or recapture instead"
         )
-    snapshot = _snapshot(document)
-    if snapshot is None:
-        raise ValueError("the portfolio has no single snapshot-delivery member")
-    recorded = cast("Document", snapshot["provenance"])["workloadDigest"]
-    current = workload_digest()
-    if recorded == current:
-        raise ValueError("the snapshot-delivery workload digest is already HEAD's")
-    _prove_measurement_unchanged(
-        commit, current, runner or run_code_identity, worktree or base_worktree
+    revisions = _redigest_revisions(
+        document,
+        commit,
+        load_conditions(portfolio.parent / CONDITIONS_FILE),
+        runner or run_code_identity,
+        worktree or base_worktree,
     )
+    if not revisions:
+        raise ValueError("the supported workload digests are already HEAD's")
     restated: dict[str, Document] = {
-        str(member["subject"]): {**member, "provenance": {**provenance, "workloadDigest": current}}
+        str(member["subject"]): {
+            **member,
+            "provenance": {**provenance, "workloadDigest": revisions[str(member["subject"])][1]},
+        }
         for member, provenance in zip(members, provenances, strict=True)
-        if provenance["workloadDigest"] == recorded
+        if str(member["subject"]) in revisions
     }
     for member in restated.values():
         validate(member)
+    digests = sorted(set(revisions.values()))
+    identity: Document = (
+        {"workloadDigest": {"atCapture": digests[0][0], "redigestedUnder": digests[0][1]}}
+        if len(digests) == 1
+        else {
+            "workloadDigests": [
+                {
+                    "members": sorted(
+                        subject for subject, change in revisions.items() if change == (old, new)
+                    ),
+                    "atCapture": old,
+                    "redigestedUnder": new,
+                }
+                for old, new in digests
+            ]
+        }
+    )
     _write_adjusted(
         portfolio,
         {
@@ -1887,7 +1990,7 @@ def redigest(
         conditions,
         {
             "redigested": {
-                "workloadDigest": {"atCapture": recorded, "redigestedUnder": current},
+                **identity,
                 "producingCommit": commit,
                 "members": sorted(restated),
                 "unchanged": (
