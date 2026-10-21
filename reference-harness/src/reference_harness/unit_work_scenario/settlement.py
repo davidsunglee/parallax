@@ -27,8 +27,8 @@ rows is. The proofs read the document and those rows alone:
   already-claimed submission meets an earlier pending write of its object in its
   group, an inserted-object refusal is a caller-addressed write of an object
   the group inserted earlier, and a consumed-evidence refusal is a keyed write
-  of an object an earlier write of its group wrote and a find or a predicate
-  submission of the group has since flushed;
+  of an object an earlier write of its group wrote and a find or a flushing
+  predicate submission of the group has since flushed;
 - **flush failures** — the object a failure names is one the failing flush
   writes, by a submission still pending when it began that the Shortfall can
   arise from.
@@ -259,7 +259,7 @@ def _assert_frame(
     submissions: tuple[Submission, ...],
 ) -> None:
     if any(
-        submission.kind == "predicate" and _predicate_table(case, submission) == table
+        submission.flushes and _predicate_table(case, submission) == table
         for submission in committed
     ):
         return
@@ -454,8 +454,8 @@ def _names_same_object(first: Submission, second: Submission) -> bool:
 
 def _pending_at(scenario: CompiledScenario, earlier: Submission, later: Submission) -> bool:
     """Whether *earlier* is still pending when *later* is submitted: *earlier*
-    is not a predicate submission, which executes at its call, and neither a
-    find nor a predicate submission of their group runs between them, since
+    is not a predicate submission, which is never buffered, and neither a find
+    nor a flushing predicate submission of their group runs between them, since
     each flushes what is pending."""
     group_of = {step.index: step.group for step in scenario.steps}
     label = group_of[later.step]
@@ -469,8 +469,7 @@ def _pending_at(scenario: CompiledScenario, earlier: Submission, later: Submissi
             for step in scenario.steps
         )
         and not any(
-            other.kind == "predicate"
-            and other.refusal is None
+            other.flushes
             and group_of[other.step] == label
             and span[0] < (other.step, other.position) < span[1]
             for other in scenario.submissions()

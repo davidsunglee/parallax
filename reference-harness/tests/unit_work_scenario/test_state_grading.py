@@ -136,6 +136,39 @@ def test_a_table_a_predicate_submission_writes_states_any_row_of_it(
     _grade(case)
 
 
+def test_an_empty_predicate_submission_writes_no_table_to_state(
+    damaged_case: CaseLoader,
+) -> None:
+    case = damaged_case(_REFUSALS)
+    case.when["scenario"][2]["write"].insert(
+        2,
+        {
+            "mutation": "amend",
+            "target": {
+                "entity": "parallax.compatibility.SequenceTag",
+                "predicate": {
+                    "lessThan": {"path": "parallax.compatibility.SequenceTag.quantity", "value": 2}
+                },
+            },
+            "assignments": [],
+        },
+    )
+    _grade(case)
+
+
+def test_an_empty_predicate_submission_writes_no_row_of_its_table(
+    damaged_case: CaseLoader,
+) -> None:
+    case = damaged_case(_NON_TEMPORAL)
+    for step in case.when["scenario"]:
+        for entry in step.get("write", []):
+            if "target" in entry:
+                entry["assignments"] = []
+    _find(_rows(case, "sequence_tag"), id=2)["label"] = "seen-by-nothing"
+    with pytest.raises(CaseFailure, match="no committed submission names it"):
+        _grade(case)
+
+
 # --- milestones and overlap --------------------------------------------------
 
 
@@ -206,6 +239,16 @@ def test_a_predicate_submission_flushes_the_writes_buffered_before_it(
 ) -> None:
     case = damaged_case(_NON_TEMPORAL)
     case.when["scenario"][1]["write"][2]["expectError"] = "write-evidence-consumed"
+    _grade(case)
+
+
+def test_an_empty_predicate_submission_leaves_the_writes_before_it_pending(
+    damaged_case: CaseLoader,
+) -> None:
+    case = damaged_case(_NON_TEMPORAL)
+    entries = case.when["scenario"][1]["write"]
+    entries[1]["assignments"] = []
+    entries[2]["expectError"] = "write-evidence-already-claimed"
     _grade(case)
 
 
@@ -317,6 +360,48 @@ def test_a_predicate_submission_flush_followed_by_pending_writes_is_not_the_last
     }
     with pytest.raises(CaseFailure, match="last flush runs at 'commit'"):
         assert_judged(case)
+
+
+def test_an_empty_predicate_submission_opens_no_flush_to_fail(
+    damaged_case: CaseLoader,
+) -> None:
+    case = damaged_case(_NON_TEMPORAL)
+    entries = case.when["scenario"][3]["write"]
+    entries[1]["assignments"] = []
+    del entries[2]
+    case.then["units"]["versioned"] = {
+        "outcome": "rolledBack",
+        "flushFailure": {
+            "at": 3,
+            "entity": "SequenceAccount",
+            "key": {"id": 1},
+            "shortfall": "optimisticConflict",
+        },
+    }
+    with pytest.raises(CaseFailure, match="last flush runs at 'commit'"):
+        assert_judged(case)
+
+
+def test_a_flush_failure_names_what_the_last_of_one_steps_flushes_writes(
+    damaged_case: CaseLoader,
+) -> None:
+    # The account write executes in the first predicate's flush; the step's last
+    # flush runs only the second predicate, which can fall short of nothing.
+    case = damaged_case(_NON_TEMPORAL)
+    entries = case.when["scenario"][3]["write"]
+    entries[2] = dict(entries[1])
+    case.then["units"]["versioned"] = {
+        "outcome": "rolledBack",
+        "flushFailure": {
+            "at": 3,
+            "entity": "SequenceAccount",
+            "key": {"id": 1},
+            "shortfall": "optimisticConflict",
+        },
+    }
+    case.then["tableState"]["sequence_account"] = [dict(_STARTING_ACCOUNTS[0])]
+    with pytest.raises(CaseFailure, match="no submission pending at that flush writes it"):
+        _grade(case)
 
 
 def test_a_flush_failure_needs_a_flush(damaged_case: CaseLoader) -> None:

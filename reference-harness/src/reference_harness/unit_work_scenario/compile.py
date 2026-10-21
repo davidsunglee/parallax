@@ -28,9 +28,9 @@ Each buffered entry is a **submission**, addressed by its own pointer
 submission's ``on`` names an earlier find of its own group or an earlier,
 unrefused insert of it; every label ``then.units`` names is a group; a flush
 failure is reported where the group last flushes, a find or a predicate
-submission flushing what the group has pending; a group's submissions share one
-Transaction Instant; and the submission forms and refusals only a state-graded
-case may carry appear nowhere else.
+submission that writes something flushing what the group has pending; a group's
+submissions share one Transaction Instant; and the submission forms and
+refusals only a state-graded case may carry appear nowhere else.
 """
 
 from __future__ import annotations
@@ -118,7 +118,9 @@ class Submission:
     primary-key values by attribute name — and are ``None`` for a predicate
     write, which names rows only its predicate selects. ``refusal`` is the code
     the entry declares its verb refuses it with, and ``settles_on`` the find its
-    ``on`` names, resolved.
+    ``on`` names, resolved. ``empty`` marks a predicate write that writes
+    nothing — an amendment assigning nothing, or a replacement of an Entity
+    whose only writable member is its key — whose verb opens no flush.
     """
 
     pointer: str
@@ -130,6 +132,7 @@ class Submission:
     key: Mapping[str, Any] | None
     refusal: str | None
     settles_on: _SettledOn | None
+    empty: bool
 
     @property
     def mutation(self) -> str:
@@ -138,6 +141,12 @@ class Submission:
     @property
     def inserts(self) -> bool:
         return self.kind == "keyed" and self.mutation in _INSERT_MUTATIONS
+
+    @property
+    def flushes(self) -> bool:
+        """Whether its call runs a flush: an accepted predicate write that
+        writes something, which executes in the flush it runs."""
+        return self.kind == "predicate" and self.refusal is None and not self.empty
 
     def names(self, entity: Entity, key: Mapping[str, Any]) -> bool:
         """Whether this submission writes the object ``key`` names of ``entity``."""
@@ -482,6 +491,20 @@ def _submission(case: Case, index: int, position: int, entry: Mapping[str, Any])
         key=key,
         refusal=refusal if isinstance(refusal, str) else None,
         settles_on=_settled_on(case, index, entry),
+        empty=kind == "predicate" and _writes_nothing(case, entry),
+    )
+
+
+def _writes_nothing(case: Case, entry: Mapping[str, Any]) -> bool:
+    mutation = entry.get("mutation")
+    if mutation == "amend":
+        return not entry.get("assignments")
+    if mutation != "replace":
+        return False
+    target = entry.get("target") or {}
+    entity = case.model.entity(str(target.get("entity", "")))
+    return not entity.value_objects and all(
+        attribute.get("primaryKey") or attribute.get("readOnly") for attribute in entity.attributes
     )
 
 
@@ -599,9 +622,9 @@ def _flush_failure(
         return None
     flushes = _group_flushes(members)
     candidates: dict[int | Literal["commit"], tuple[str, ...]] = {}
-    for at, flushed in flushes:
-        if at == flushes[-1][0] and at in ("commit", members[-1].index):
-            candidates[at] = candidates.get(at, ()) + flushed
+    if flushes and flushes[-1][0] in ("commit", members[-1].index):
+        at, flushed = flushes[-1]
+        candidates[at] = flushed
     if authored.get("at") not in candidates:
         where = (
             "nothing"
@@ -626,18 +649,20 @@ def _group_flushes(
     members: list[_CompiledStep],
 ) -> list[tuple[int | Literal["commit"], tuple[str, ...]]]:
     """Each nonempty flush a group runs, in order: where it runs — a find's or a
-    predicate submission's step, or ``"commit"`` — beside the pointers of the
-    submissions it ran: those still pending when it began, and a predicate
-    submission's own, which executes in the flush its call runs."""
+    flushing predicate submission's step, or ``"commit"`` — beside the pointers
+    of the submissions it ran: those still pending when it began, and a
+    predicate submission's own, which executes in the flush its call runs. A
+    predicate submission writing nothing runs nothing and leaves what is
+    pending as it was."""
     flushes: list[tuple[int | Literal["commit"], tuple[str, ...]]] = []
     pending: list[str] = []
     for step in members:
         if isinstance(step, _GroupedWrite):
             for submission in step.submissions:
-                if submission.refusal is not None:
+                if submission.refusal is not None or submission.empty:
                     continue
                 pending.append(submission.pointer)
-                if submission.kind == "predicate":
+                if submission.flushes:
                     flushes.append((step.index, tuple(pending)))
                     pending = []
         elif isinstance(step, _RowPublishingStep) and pending:
@@ -681,6 +706,8 @@ def _assert_state_graded_document(
             )
     written: set[str] = set()
     for submission in submissions:
+        if submission.empty:
+            continue
         if submission.entity is not None:
             written.add(submission.entity.table)
         else:
