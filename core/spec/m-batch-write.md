@@ -265,6 +265,7 @@ versioned per-key delete. The predicate-write witnesses prove a distinct target:
 | `m-batch-write-053` | unversioned, non-temporal `OrderItem` replacement through a shared to-one join | the key-selecting form; the omitted nullable `shippedOn` written null |
 | `m-batch-write-054` | unversioned, non-temporal document-mapped `Traveler` replacement | omitted members completed as JSON null and the empty array at their paths; an undeclared document key survives |
 | `m-batch-write-055` | non-versioned `Wallet` replacement omitting `balance` | refused: `write-required-attribute-missing` |
+| `m-batch-write-062`/`-063` | non-versioned `Wallet` and `Shipment` amendments assigning an undecodable member and Value Object leaf | refused: `neutral-literal-type-mismatch`, as a replacement stating either is |
 | `m-batch-write-047` | versioned `Account` update | refused before its predicate and assignments: `set-based-write-target-unsupported` |
 | `m-batch-write-048` | Transaction-Time-Only `Balance` delete | refused: `set-based-write-target-unsupported` |
 | `m-batch-write-049` | Bitemporal `Position` replacement | refused: `set-based-write-target-unsupported` |
